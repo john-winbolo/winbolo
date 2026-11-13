@@ -451,6 +451,7 @@ void transportUdpServerFuzzInit(ServerSim *sim) {
     udpServerFreeScriptUploadBufs();  /* the memset would lose them */
     memset(&udpServer, 0, sizeof(udpServer));
     memset(punchQueue, 0, sizeof(punchQueue));
+    serverBotHostsReset();
     udpServer.sock = INVALID_SOCKET;
     udpServer.running = true;
     udpServer.tickCount = 0;

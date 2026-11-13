@@ -419,6 +419,23 @@ struct ClientSim {
     /* Lobby state (client-side mirror of server lobby) */
     ClientLobbySlot  lobbySlots[16];    /* MAX_TANKS */
     ClientSpectatorSlot spectatorSlots[MAX_SPECTATORS]; /* spectator roster mirror */
+    ClientBotHostRow    botHostRows[CLIENT_BOT_HOST_ROWS]; /* Bot Host list mirror */
+    /* The last CTRL_BOT_TIMING: every bot's think timing for System Info,
+     * as the record's bytes (overrun_record.h). botTimingLen 0: none yet. */
+    uint16_t         botTimingLen;
+    uint8_t          botTimingBytes[OVERRUN_RECORD_MAX_BYTES];
+    /* CTRL_BOT_HOST_TICKET: the server lets this player's computer run
+     * bots for it. botHostTicketGen rises with each ticket, so the Bot Host
+     * inside the program sees a new one. */
+    bool             botHostTicketValid;
+    uint8_t          botHostTicketPlayer;
+    uint8_t          botHostTicket[BOT_HOST_TICKET_LEN];
+    char             botHostTicketBrain[BOT_HOST_BRAIN_NAME_LEN];
+    uint32_t         botHostTicketGen;
+    /* A bot connection of the Bot Host inside the program. It runs on the
+     * host's own thread and must never reach the front end: the screen,
+     * the sound and the dialogs belong to the player's own ClientSim. */
+    bool             noFrontEnd;
     int              countdownSeconds;  /* 0 = not counting down */
     bool             mapDownloadComplete; /* Gate for ready button */
     bool             inLobby;           /* TRUE if server is lobby-enabled */
@@ -473,6 +490,12 @@ struct ClientSim {
                                      * lobby-settings event, false until the
                                      * first one lands, which plays every
                                      * sound centred */
+    bool             serverBotSlotsHave; /* CTRL_SERVER_BOT_SLOTS came */
+    ClientServerBotSlots serverBotSlots;
+    int              lobbyHostBotCapacity; /* the server's host bot
+                                     * capacity from the lobby
+                                     * settings: 0..16, -1 no cap,
+                                     * -2 its CPU speed test runs */
     uint8_t          overviewWindow; /* OverviewWindow the server asked for */
     uint8_t          lineOfSight;     /* LineOfSightMode the server asked for */
     bool             lobbySmartPingsOff; /* the server refuses smart pings; raw
@@ -1119,6 +1142,12 @@ struct ClientSim {
      * transport fields (connection-lifetime state). */
     struct ServerSim *boundServerSim;
 
+    /* A Bot Host bot's way out for what a hosted bot hands its ServerSim:
+     * the internal team message and the smart ping. NULL everywhere but on
+     * a Bot Host. Preserved across clientSimCreate's memset with the
+     * transport fields. */
+    const struct ClientSimBrainRelay *brainRelay;
+
     /* Unified rejection-reason buffer. Local connect failures write
      * directly here; UDP JOIN_REJECT mirrors its reason here too. The
      * clientSimGetConnectErrorReason accessor reads from this field. */
@@ -1239,6 +1268,17 @@ BOLO_STATIC_ASSERT(offsetof(struct ClientSim, sim) == 0,
  * JOIN_REJECT handler. */
 void                    clientSimSetBoundServerSim(ClientSim *cs, struct ServerSim *sim);
 struct ServerSim       *clientSimGetBoundServerSim(const ClientSim *cs);
+
+/* What a brain on a Bot Host sends where an in-process bot would hand it to
+ * its bound ServerSim. Both are called on the thread running the think. */
+typedef struct ClientSimBrainRelay {
+    void  *ctx;
+    void (*internalMsg)(void *ctx, BYTE fromPlayer, const char *msg);
+    void (*ping)(void *ctx, BYTE fromPlayer, uint8_t kind,
+                 uint16_t worldX, uint16_t worldY);
+} ClientSimBrainRelay;
+void clientSimSetBrainRelay(ClientSim *cs, const ClientSimBrainRelay *relay);
+const ClientSimBrainRelay *clientSimGetBrainRelay(const ClientSim *cs);
 void                    clientSimSetConnectErrorReason(ClientSim *cs, const char *str);
 void                    clientSimSetConnectErrorId(ClientSim *cs, unsigned int id);
 

@@ -39,6 +39,7 @@
 #include "client_snapshot.h"  /* clientApplyEntityChange */
 #include "client_sim_internal.h"
 #include "client_sim.h"
+#include "bot_host_cpu.h"  /* BOT_HOST_CPU_UNKNOWN */
 #include "client_command.h"  /* VIEW_KIND_ALLY, VIEW_CYCLE_FROM_NONE */
 #include "bolo_map.h"    /* mapClampToRules — the re-clamp a new table needs */
 #include "sim_rules.h"   /* simRulesCheckCarried — the check before the keep */
@@ -420,6 +421,158 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         }
         break;
 
+    case CTRL_BOT_HOST_TICKET:
+        /* Only a player's own connection gets one; a bot connection or a
+         * spectator has no use for it. */
+        if (!cs->isBot && !cs->isSpectator) {
+            cs->botHostTicketValid = true;
+            cs->botHostTicketPlayer = evt->u.botHostTicket.player;
+            memcpy(cs->botHostTicket, evt->u.botHostTicket.ticket,
+                   sizeof(cs->botHostTicket));
+            SDL_strlcpy(cs->botHostTicketBrain, evt->u.botHostTicket.brain,
+                        sizeof(cs->botHostTicketBrain));
+            cs->botHostTicketGen++;
+        }
+        break;
+
+    case CTRL_BOT_HOST_STATUS:
+        if (evt->u.botHostStatus.idx < CLIENT_BOT_HOST_ROWS) {
+            ClientBotHostRow *r = &cs->botHostRows[evt->u.botHostStatus.idx];
+            /* The CPU estimate comes in its own event: a row that stays
+             * connected keeps it, a new row has none yet. */
+            uint8_t cpu = r->connected ? r->cpu : (uint8_t)BOT_HOST_CPU_UNKNOWN;
+            bool cpuBotHave = r->connected && r->cpuBotHave;
+            uint8_t cpuBotOwner = r->cpuBotOwner;
+            uint32_t cpuBot = r->cpuBot;
+            uint8_t cpuBotSrc = r->cpuBotSrc;
+            uint16_t lagMs = r->connected ? r->lagMs
+                                          : (uint16_t)BOT_HOST_LAG_UNKNOWN;
+            /* The held seats come in their own event too. */
+            uint16_t held = r->connected ? r->held : 0;
+            /* The row's computer and override, as the CPU estimate. */
+            ClientBotHostRow keep = *r;
+            bool keepSlots = r->connected && r->rowSlotsHave;
+            memset(r, 0, sizeof(*r));
+            r->lagMs = (uint16_t)BOT_HOST_LAG_UNKNOWN;
+            r->cpu = (uint8_t)BOT_HOST_CPU_UNKNOWN;
+            r->cpuBot = BOT_HOST_CPU_MILLI_UNKNOWN;
+            r->cpuBotOwner = (uint8_t)BOT_HOST_CPU_OWNER_NONE;
+            r->connected = evt->u.botHostStatus.connected != 0;
+            if (r->connected) {
+                r->cpu     = cpu;
+                r->lagMs   = lagMs;
+                r->held    = held;
+                if (keepSlots) {
+                    r->rowSlotsHave = true;
+                    r->machineKind  = keep.machineKind;
+                    r->machineOther = keep.machineOther;
+                    r->machineZero  = keep.machineZero;
+                    r->slotOverride = keep.slotOverride;
+                    r->slotLocked   = keep.slotLocked;
+                }
+                if (keep.connected && keep.rowLimitsHave) {
+                    r->rowLimitsHave = true;
+                    r->limitCeiling  = keep.limitCeiling;
+                    r->limitReserve  = keep.limitReserve;
+                    r->limitFits     = keep.limitFits;
+                }
+                if (cpuBotHave) {
+                    r->cpuBotHave = true;
+                    r->cpuBotOwner = cpuBotOwner;
+                    r->cpuBot = cpuBot;
+                    r->cpuBotSrc = cpuBotSrc;
+                }
+                r->state   = evt->u.botHostStatus.state;
+                r->percent = evt->u.botHostStatus.percent;
+                r->used    = evt->u.botHostStatus.used;
+                r->slots   = evt->u.botHostStatus.slots;
+                r->seats   = evt->u.botHostStatus.seats;
+                r->recState   = evt->u.botHostStatus.recState;
+                r->recPercent = evt->u.botHostStatus.recPercent;
+                r->recBotsDone = evt->u.botHostStatus.recBotsDone;
+                r->recBots     = evt->u.botHostStatus.recBots;
+                SDL_strlcpy(r->name, evt->u.botHostStatus.name,
+                            sizeof(r->name));
+            }
+        }
+        break;
+
+    case CTRL_BOT_HOST_CPU:
+        if (evt->u.botHostCpu.idx < CLIENT_BOT_HOST_ROWS) {
+            ClientBotHostRow *r = &cs->botHostRows[evt->u.botHostCpu.idx];
+            if (r->connected) r->cpu = evt->u.botHostCpu.cpu;
+        }
+        break;
+
+    case CTRL_SERVER_BOT_SLOTS:
+        cs->serverBotSlotsHave = true;
+        cs->serverBotSlots.value =
+            lobbyHostBotCapacityFromWire(evt->u.serverBotSlots.value);
+        cs->serverBotSlots.recommended =
+            lobbyHostBotCapacityFromWire(evt->u.serverBotSlots.recommended);
+        cs->serverBotSlots.locked = evt->u.serverBotSlots.locked != 0;
+        break;
+
+    case CTRL_BOT_HOST_ROW_SLOTS:
+        if (evt->u.botHostRowSlots.idx < CLIENT_BOT_HOST_ROWS) {
+            ClientBotHostRow *r = &cs->botHostRows[evt->u.botHostRowSlots.idx];
+            if (r->connected) {
+                r->rowSlotsHave = true;
+                r->machineKind  = evt->u.botHostRowSlots.machineKind;
+                r->machineOther = evt->u.botHostRowSlots.machineOther;
+                r->machineZero  = evt->u.botHostRowSlots.zero != 0;
+                r->slotOverride = evt->u.botHostRowSlots.slotOverride;
+                r->slotLocked   = evt->u.botHostRowSlots.slotLocked != 0;
+            }
+        }
+        break;
+
+    case CTRL_BOT_HOST_ROW_LIMITS:
+        if (evt->u.botHostRowLimits.idx < CLIENT_BOT_HOST_ROWS) {
+            ClientBotHostRow *r = &cs->botHostRows[evt->u.botHostRowLimits.idx];
+            if (r->connected) {
+                r->rowLimitsHave = true;
+                r->limitCeiling = evt->u.botHostRowLimits.ceiling;
+                r->limitReserve = evt->u.botHostRowLimits.reserve;
+                r->limitFits    = evt->u.botHostRowLimits.fits;
+            }
+        }
+        break;
+
+    case CTRL_BOT_HOST_LAG:
+        if (evt->u.botHostLag.idx < CLIENT_BOT_HOST_ROWS) {
+            ClientBotHostRow *r = &cs->botHostRows[evt->u.botHostLag.idx];
+            if (r->connected) r->lagMs = evt->u.botHostLag.lagMs;
+        }
+        break;
+
+    case CTRL_BOT_HOST_HELD:
+        if (evt->u.botHostHeld.idx < CLIENT_BOT_HOST_ROWS) {
+            ClientBotHostRow *r = &cs->botHostRows[evt->u.botHostHeld.idx];
+            if (r->connected) r->held = evt->u.botHostHeld.held;
+        }
+        break;
+
+    case CTRL_BOT_TIMING:
+        if (evt->u.botTiming.len <= sizeof(cs->botTimingBytes)) {
+            memcpy(cs->botTimingBytes, evt->u.botTiming.bytes,
+                   evt->u.botTiming.len);
+            cs->botTimingLen = evt->u.botTiming.len;
+        }
+        break;
+
+    case CTRL_BOT_HOST_CPU_BOT:
+        if (evt->u.botHostCpuBot.idx < CLIENT_BOT_HOST_ROWS) {
+            ClientBotHostRow *r = &cs->botHostRows[evt->u.botHostCpuBot.idx];
+            if (r->connected) {
+                r->cpuBotHave = true;
+                r->cpuBotOwner = evt->u.botHostCpuBot.owner;
+                r->cpuBot = evt->u.botHostCpuBot.milli;
+                r->cpuBotSrc = evt->u.botHostCpuBot.source;
+            }
+        }
+        break;
+
     case CTRL_SPECTATOR_CHAT: {
         /* A spectator's lobby chat line. Resolve the sender's name from the
          * mirrored spectator roster and render it [Spectator]-tagged in the
@@ -550,6 +703,8 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         cs->classicMode = evt->u.lobbySettings.lobbyClassicMode;
         cs->alliesInTrees = evt->u.lobbySettings.lobbyAlliesInTrees;
         cs->positionalSound = evt->u.lobbySettings.lobbyPositionalSound;
+        cs->lobbyHostBotCapacity = lobbyHostBotCapacityFromWire(
+            evt->u.lobbySettings.lobbyHostBotCapacity);
         /* The server chooses what the map overview keeps live and what
          * blocks sight inside it; the keys no longer do. A byte this
          * build has no name for reads as the default rather than
@@ -1021,7 +1176,7 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
          * arrives carrying inLobby=true, which only happens on hosts
          * with lobbyEnabled. */
         cs->inLobby = true;
-        frontEndAudioReturningToLobby(false);
+        if (!cs->noFrontEnd) frontEndAudioReturningToLobby(false);
         /* Clear the predicted-tank latch so the next round's first
          * snapshot takes clientApplySnapshot's first-snapshot init
          * branch (sets stocks, jump-cuts the camera via
@@ -1051,7 +1206,7 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         /* Round-only scope: the previous round's stats panel clears when
          * the next round's countdown starts. */
         cs->lastRoundStatsValid = false;
-        frontEndAudioReturningToLobby(false);
+        if (!cs->noFrontEnd) frontEndAudioReturningToLobby(false);
         break;
     case CTRL_GAME_PHASE_RUNNING:
         cs->netStat = netRunning;
@@ -1120,7 +1275,7 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
          * snapshot doesn't register a spurious death or respawn edge against
          * the previous game's last value. */
         cs->lastServerDestroyed = FALSE;
-        frontEndAudioReturningToLobby(false);
+        if (!cs->noFrontEnd) frontEndAudioReturningToLobby(false);
         break;
     case CTRL_GAME_PHASE_GAME_OVER:
         /* Reset countdown unconditionally — used to be gated on
@@ -1136,7 +1291,7 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         /* Silence in-flight playback so engine/shell/explosion
          * sounds don't keep draining behind the "Returning to
          * lobby" caption. Restored on the next phase event. */
-        frontEndAudioReturningToLobby(true);
+        if (!cs->noFrontEnd) frontEndAudioReturningToLobby(true);
         break;
 
     case CTRL_GAME_OVER: {

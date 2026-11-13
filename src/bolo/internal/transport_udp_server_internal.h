@@ -24,6 +24,7 @@
 #include <stdint.h>
 #include <stdio.h>   /* FILENAME_MAX — uploadPersistDir */
 
+#include "bot_host_machine.h" /* BotHostSlotOverride, MACHINE_HASH_LEN */
 #include "global.h"         /* BYTE, MAX_TANKS, PlayerBitMap */
 #include "lang_message.h"   /* langid — the localized server->client sends */
 #include "platform_net.h"   /* SOCKET, struct sockaddr_in */
@@ -32,7 +33,14 @@
 #include "transport_udp.h"  /* UdpServerClient, MAX_SPECTATORS, SubscriberHandle */
 #include "transport_udp_internal.h" /* ClientEventQueue, UDP_MAX_PAYLOAD */
 #include "channel_mux.h"    /* ChannelMux */
+#include "control_event.h"  /* BOT_HOST_BRAIN_NAME_LEN, BOT_HOST_INIT_ARG_LEN */
+#include "client_command.h" /* CmdBotStats */
 #include "bulk_transfer.h"  /* BulkSender, BulkReceiver */
+#include "brain_sync.h"     /* BrainSyncManifest — the Bot Host brain sync */
+#include "brain_pack.h"     /* BrainPackWriter — the packed brain sync */
+#include "bot_host_link.h"  /* BotHostAllow, BotHostAnnounce — -bothosts */
+#include "bot_host_guard.h" /* BotHostResetLimit */
+#include "bothost_record.h"  /* BotHostRecord — serverBotHostRecordPut */
 #include "upload_policy.h"  /* UploadPolicy, ScriptUploadPolicy */
 #include "net_impair.h"     /* NetImpair */
 #include "../../winbolonet/winbolonet_core.h" /* WINBOLONET_KEY_LEN */
@@ -227,6 +235,224 @@ typedef struct {
 #define PUNCH_QUEUE_SIZE        8
 #define PUNCH_BURST_PACKETS     5
 #define PUNCH_BURST_INTERVAL    3   /* 3 ticks @ 50 Hz ≈ 60 ms */
+
+/* A Bot Host control connection. It holds no tank seat and is never shown to
+ * players; the server sends it the assign, unassign, init table, hint and team
+ * message events on its own CHANNEL_CONTROL. */
+typedef struct {
+    struct sockaddr_in addr;
+    /* Where the host listens for QUERY and INVITE: the join's address with
+     * the listen port the join carries (0 from a host that sent none). */
+    struct sockaddr_in listenAddr;
+    bool     connected;
+    uint64_t connId;
+    char     name[JOIN_BOT_HOST_NAME_LEN];
+    /* Bot seats this server may give the host: the join's count, then each
+     * CTRL_BOT_HOST_SLOTS. A host shared with other servers lowers it as
+     * they take its slots. */
+    uint8_t  slots;
+    /* The host's estimate of its machine's CPU its bots use
+     * (CTRL_BOT_HOST_CPU, bot_host_cpu.h); BOT_HOST_CPU_UNKNOWN until it
+     * sends one, and always from an older host. */
+    uint8_t  cpu;
+    /* The part of its machine's CPU one of its bots uses, in thousandths of
+     * a percent (CTRL_BOT_HOST_CPU_BOT, bot_host_cpu.h). cpuBotHave: the
+     * host sent one (an older host never does); a later unknown keeps the
+     * value it had. */
+    uint32_t cpuBot;
+    bool     cpuBotHave;
+    /* The host's full-budget estimate of one bot's part
+     * (CTRL_BOT_HOST_CPU_BUDGET); cpuBudgetHave: one came (an older host
+     * never sends one). */
+    uint32_t cpuBudget;
+    bool     cpuBudgetHave;
+    /* The host machine's free CPU percent, all cores
+     * (CTRL_BOT_HOST_CPU_FREE, every 5 s), and the tick it came;
+     * BOT_HOST_FREE_UNKNOWN until one comes, and always from an older
+     * host. */
+    uint8_t  cpuFree;
+    uint32_t cpuFreeTick;
+    /* A player's own Bot Host (the one inside that player's client): it
+     * joined with the player's ticket, and it goes when that player's
+     * connection (ownerConnId) goes. */
+    bool     playerHost;
+    uint8_t  ownerSlot;
+    uint64_t ownerConnId;
+    uint32_t lastReceivedTick;
+    uint32_t outSequence;
+    uint16_t pingMs;
+    /* The lag the placement counts (botHostPlaceStep): the round trip to
+     * the player for a player's own host, else to the host, smoothed over
+     * about 10 s. lagKnown is false until a round trip is measured. */
+    double   lagMs;
+    bool     lagKnown;
+    uint32_t lagConnTick;        /* tickCount the host joined */
+    /* Bot Hosts on one computer (bot_host_machine.h). joinSeq: the join
+     * order. machineHash: the host's answer to the salt round machineSeq
+     * (machineHave: it answered one). */
+    uint32_t joinSeq;
+    bool     machineHave;
+    uint32_t machineSeq;
+    uint8_t  machineHash[MACHINE_HASH_LEN];
+    /* CTRL_BOT_HOST_SAME_SERVER went to this player's host: it is on the
+     * server's computer and stopped for this connection, so it is sent no
+     * brain files and is not waited for. */
+    bool     sameServerSent;
+    /* The row's slot override: from the lobby, or locked by
+     * -bothost-slots. */
+    BotHostSlotOverride slotOvr;
+    /* CTRL_BOT_HOST_LIMITS from the host (dynamic slots): limHave once one
+     * came (an older host never sends one, and keeps fixed slots). limStart
+     * and limReserve may be BOT_HOST_LIMIT_NONE: the server's own value.
+     * The ceiling is the host's CTRL_BOT_HOST_SLOTS. */
+    bool     limHave;
+    uint8_t  limStart;
+    uint8_t  limCeil;
+    uint8_t  limReserve;
+    ChannelMux channelMux;
+
+    /* Brain sync. The manifest and the file pieces go out on this
+     * connection's CHANNEL_BULK through bulk. manifestOwed: the current
+     * manifest is still to be sent. */
+    BulkSender bulk;
+    bool     manifestOwed;
+    uint32_t syncSentTick;       /* tickCount the current manifest went out */
+    uint32_t syncGen;            /* manifest generation the host reported on */
+    uint32_t syncDone;           /* bytes the host has downloaded */
+    uint32_t syncTotal;          /* bytes it has to download */
+    bool     syncReady;          /* it holds every file of syncGen */
+    bool     syncLate;           /* past the sync time limit for this gen */
+    /* After the sync time limit the host takes no bots for that game: not
+     * while botManagerGameStarts is at most skipUntilStarts. */
+    bool     skipGame;
+    uint32_t skipUntilStarts;
+    /* Files asked for, as (brain << 16) | file, oldest first. */
+    uint32_t fileReq[32];
+    int      fileReqCount;
+    /* FILE_REQs taken for the current list (a limit on repeats). */
+    int      fileReqTaken;
+    /* Download resets (BRAIN_PACK_CAP_RESET) of the current list: past a
+     * few, a reset leaves fileReqTaken and packReqSeen as they are. */
+    BotHostResetLimit resetLimit;
+    /* The file being sent, a piece per bulk transfer. */
+    bool     fileSending;
+    uint32_t fileId;
+    uint32_t fileOffset;
+    uint32_t fileSize;
+    uint8_t *fileData;
+
+    /* The packed sync (brain_pack.h). capsSeen: the host sent
+     * CTRL_BOT_HOST_SYNC_CAPS. joinTick: tickCount it was accepted, for
+     * the caps wait. manifestV2: the manifest it was sent is the v2 form. */
+    bool     capsSeen;
+    uint8_t  caps;
+    uint32_t joinTick;
+    bool     manifestV2;
+    /* Pack requests waiting, oldest first. */
+    int      packQueue;
+    uint8_t  packQBrain[BRAIN_SYNC_MAX_BRAINS];
+    uint8_t  packQBits[BRAIN_SYNC_MAX_BRAINS][BRAIN_PACK_BITMAP_BYTES];
+    /* Brain b of the current manifest runs from the host's install: its
+     * pack request asked for no file and took every file from there. A
+     * host that runs only official brains (-bothost-code official, or
+     * BRAIN_PACK_CAP_OFFICIAL_ONLY) is given only such brains' bots. */
+    bool     brainInPlace[BRAIN_SYNC_MAX_BRAINS];
+    /* Brain b's PACK_REQ was taken for the current list: a repeat is
+     * dropped. */
+    bool     packReqSeen[BRAIN_SYNC_MAX_BRAINS];
+    /* The stream being sent: its brain, its bitmap, the next file to look
+     * at, the piece count, and the file being read into it. */
+    BrainPackWriter *packW;
+    int      packBrain;
+    uint8_t  packBits[BRAIN_PACK_BITMAP_BYTES];
+    int      packNext;
+    uint32_t packSeq;
+    bool     packFileOpen;
+    uint8_t *packData;
+    uint32_t packSize;
+    uint32_t packOff;
+    /* For the one log line of a generation: the requests in, the files of
+     * the manifest, how many were sent, and how many the host had. */
+    int      packReqs;
+    uint32_t packStartTick;
+    uint32_t packFilesAll;
+    uint32_t packFilesSent;
+    uint32_t packFromInstall;
+    uint32_t packFromCache;
+    uint64_t packRaw;
+    uint64_t packComp;
+    bool     packLogged;
+
+    /* Brain recordings of the host's bots (udp_server_botrec.c). */
+    uint32_t recSentSeq;      /* the block state last told to the host */
+    uint32_t recClearSent;    /* the cleardebug count last told to it */
+    bool     recUploadOwed;   /* an UPLOAD is to be sent */
+    bool     recUploadPaced;
+    uint8_t  recState;        /* BOT_HOST_REC_STATE_* the host reported */
+    uint8_t  recPercent;
+    uint8_t  recBotsDone;     /* UPLOADING: bots whose files are sent */
+    uint8_t  recBots;         /* UPLOADING: bots with files to send */
+    bool     recLowDiskLogged;
+    bool     recMergeWant;    /* a finished upload waits for the merge */
+    BulkReceiver recRecv;
+    /* The block being received: its staging folder, and the file open. */
+    char     recBlock[BOT_HOST_REC_BLOCK_LEN];
+    char     recStage[600];
+    bool     recNoSession;    /* no finished session folder: nothing written */
+    bool     recBad;          /* a piece was refused: the upload fails */
+    FILE    *recFile;
+    char     recFileName[96];
+    uint32_t recFileOffset;
+    uint32_t recFiles;        /* files finished */
+    uint32_t recFilesOpened;  /* files opened: the file cap counts these */
+    uint64_t recBytes;        /* bytes written */
+    bool     recDoneOwed;     /* the host's DONE came; the bytes may not have */
+    uint32_t recDoneFiles;
+    uint32_t recDoneBytes;
+    uint32_t recDoneTick;
+} BotHostConn;
+
+/* Where one bot seat's brain runs.
+ *   LOCAL   - in-process.
+ *   PENDING - an assign went to a host; the brain still runs in-process
+ *             until the host's bot connection binds with the token.
+ *   BOUND   - the bot connection is bound; the brain still runs in-process
+ *             until the first input arrives from the host.
+ *   REMOTE  - the brain runs on the host. */
+enum {
+    BOT_SEAT_LOCAL = 0,
+    BOT_SEAT_PENDING,
+    BOT_SEAT_BOUND,
+    BOT_SEAT_REMOTE
+};
+
+typedef struct {
+    uint8_t  state;
+    int8_t   host;               /* index into botHosts[], -1 when LOCAL */
+    uint8_t  token[JOIN_BOT_SLOT_TOKEN_LEN];
+    uint16_t gen;                /* rises with every assign for the seat */
+    uint32_t sinceTick;          /* tickCount the state was entered */
+    uint32_t lastPollTick;       /* tickCount of the last settings check */
+    /* The settings the host was last sent, compared by the settings check. */
+    char     brain[BOT_HOST_BRAIN_NAME_LEN];
+    uint8_t  ai;
+    uint8_t  team;
+    char     initArg[BOT_HOST_INIT_ARG_LEN];
+    /* A round started: the host is owed a reload once the bot connection
+     * holds the round's map. */
+    bool     reloadOwed;
+    /* The seat fell back to in-process: it goes back to a host only at the
+     * next round start or in the lobby. */
+    bool     noReturn;
+    /* Full-view seats: the server's mines are sent to the bot connection
+     * once its map download is done, a column range per tick. */
+    bool     mineSeedDone;
+    uint16_t mineSeedColumn;
+    /* The gen of the assign that placed the seat on its host (the one with
+     * the token): the hosted marker in brainrec.btr names it, and the
+     * host's recording file of the seat carries it too. */
+    uint16_t placeGen;
+} BotHostSeat;
 
 /* Server-side global state */
 typedef struct UdpServerState {
@@ -467,6 +693,53 @@ typedef struct UdpServerState {
      * without this the only case that matters, the leaver being the one talker,
      * computes back to the same empty set and is never sent. */
     bool voiceTalkingResend;
+
+    /* Bot Host. botHostEnabled is set by -bothostkey or -bothosts; with it
+     * off every Bot Host join is refused and no seat ever leaves the
+     * process. With a list only the listed hosts are heard; with a key a
+     * host must give it; with both, both. */
+    bool        botHostEnabled;
+    /* A key or a list is set: hosts other than the players' own may join.
+     * Without it the only hosts are the players' own. */
+    bool        botHostOpen;
+    /* -noplayerbothosts: the players are sent no ticket. */
+    bool        noPlayerBotHosts;
+    /* Each player's ticket, made for its connection (playerTicketConnId),
+     * and the tickCount and game start count it last went out at. */
+    uint8_t     playerTicket[MAX_TANKS][BOT_HOST_TICKET_LEN];
+    uint64_t    playerTicketConnId[MAX_TANKS];
+    uint32_t    playerTicketTick[MAX_TANKS];
+    uint32_t    playerTicketStarts[MAX_TANKS];
+    char        botHostKey[JOIN_BOT_HOST_KEY_LEN + 1];
+    int          botHostAllowCount;
+    BotHostAllow botHostAllow[BOT_HOST_LINK_MAX_ADDRS];
+    char         botHostAllowText[BOT_HOST_LINK_MAX_ADDRS][BOT_HOST_LINK_HOST_LEN + 8];
+    /* The last ANNOUNCE from each listed host and when it came (tickCount,
+     * 0: none yet). */
+    BotHostAnnounce botHostAnnounce[BOT_HOST_LINK_MAX_ADDRS];
+    uint32_t     botHostAnnounceTick[BOT_HOST_LINK_MAX_ADDRS];
+    /* Ask every listed host for free slots at the next service. */
+    const char  *botHostQueryWhy;
+    int          botHostLastHumans;
+    /* tickCount since which no bots were wanted, 0 while they are. */
+    uint32_t     botHostUnwantedSince;
+    /* Hosts not on the list that were already logged, so each is logged
+     * once. */
+    struct sockaddr_in botHostIgnored[32];
+    int          botHostIgnoredCount;
+    BotHostConn botHosts[MAX_BOT_HOSTS];
+    BotHostSeat botSeats[MAX_TANKS];
+    int         botHostLastState; /* serverState seen last tick, -1 at start */
+    uint32_t    botHostLastGameStarts; /* botManagerGameStarts seen last tick */
+    /* The brain files a Bot Host must hold before it takes bots, and the
+     * generation that rises each time they change. Gen 0 is no manifest. */
+    BrainSyncManifest brainManifest;
+    uint32_t    brainManifestGen;
+    uint8_t    *brainManifestBlob;
+    size_t      brainManifestBlobLen;
+    /* The same manifest in the v2 form, for hosts that take packed sync. */
+    uint8_t    *brainManifestBlob2;
+    size_t      brainManifestBlob2Len;
 } UdpServerState;
 
 extern UdpServerState udpServer;
@@ -607,6 +880,99 @@ bool     serverChooseUnverifiedSuffix(const char *baseName, int excludeSlot,
  * rename notice and the join chat line through the two broadcast helpers. The
  * rest of the file is public API and is declared in transport_udp.h. */
 void serverDisconnectClient(struct ServerSim *sim, int idx, bool graceful);
+
+/* Bot Host connections and the seats they run. Owned by
+ * src/server/udp/udp_server_bothost.c. The join handler hands it the two Bot
+ * Host join kinds; the dispatcher hands it the host's ping, channel frame and
+ * quit and a bot connection's first input and its two Bot Host commands; the
+ * timeout sweep services it once per tick. serverBotSlotLost is what every
+ * path that would tear a player down calls instead for a bot connection: the
+ * seat goes back in-process without a word to anyone. */
+bool serverFillRandomBytes(uint8_t *buf, size_t n);
+int  serverFindBotHost(const struct sockaddr_in *addr);
+void serverSendBotHostAccept(int h, struct ServerSim *sim);
+void serverAcceptBotHost(struct ServerSim *sim,
+                         const struct sockaddr_in *fromAddr,
+                         const char *name, const uint8_t *extra,
+                         int extraLen);
+void serverBindBotSlot(struct ServerSim *sim,
+                       const struct sockaddr_in *fromAddr,
+                       const uint8_t *extra, int extraLen,
+                       uint8_t clientType);
+bool serverBotHostHandlePing(const uint8_t *buf, int len,
+                             const struct sockaddr_in *fromAddr);
+bool serverBotHostHandleChannel(const uint8_t *buf, int len,
+                                const struct sockaddr_in *fromAddr);
+bool serverBotHostHandleQuit(struct ServerSim *sim,
+                             const struct sockaddr_in *fromAddr);
+/* PACKET_BOT_HOST_ANNOUNCE from any address: invite a listed host with free
+ * slots while this server wants bots run. */
+void serverBotHostHandleAnnounce(struct ServerSim *sim, const uint8_t *buf,
+                                 int len, const struct sockaddr_in *fromAddr);
+bool serverBotSlotOnInput(struct ServerSim *sim, int slot);
+void serverBotSlotLost(struct ServerSim *sim, int slot, const char *why);
+/* Player slot is leaving: the Bot Host inside its client is dropped and its
+ * bots come back in-process. */
+void serverBotHostPlayerGone(struct ServerSim *sim, int slot, const char *why);
+/* The server as one Bot Host: its slots (its own capacity answer) and the
+ * bots whose brains it runs itself now. */
+int serverBotHostServerSlots(struct ServerSim *sim);
+int serverBotHostServerBots(struct ServerSim *sim);
+/* The brain name a bot's brain path gives, as the Bot Hosts know it: the
+ * folder that holds its init.lua, with opt/ read as its parent folder
+ * ("brains/GoalHunter/opt/init.lua" gives "GoalHunter"). */
+void serverBotHostBrainName(const char *path, char *out, size_t sz);
+void serverBotSlotTeamMsg(struct ServerSim *sim, int slot, const char *text);
+void serverBotSlotStats(struct ServerSim *sim, int slot,
+                        const CmdBotStats *st);
+bool serverBotSlotPingAllowed(struct ServerSim *sim, int slot);
+/* Adds one log_BotHostData record to the round log when the server runs
+ * with -record-bothost-data and the log records; else writes nothing.
+ * Returns true when it was written. */
+bool serverBotHostRecordPut(const BotHostRecord *rec);
+void serverServiceBotHosts(struct ServerSim *sim);
+/* CTRL_BOT_TIMING to every player and spectator: once a second while the
+ * game has bots, then once with no bots when the last bot goes. Each
+ * server tick. */
+void serverServiceBotTiming(struct ServerSim *sim);
+void serverBotHostsReset(void);
+/* One CTRL_BOT_HOST_STATUS per connected Bot Host through deliver: the join
+ * replay's part of the lobby's Bot Host list. serverEnumSpectatorRoster
+ * calls it. */
+void serverEnumBotHostRows(void (*deliver)(void *, const ControlEvent *),
+                           void *deliverCtx);
+/* Queue one control event on Bot Host h's control channel. */
+bool serverBotHostSendEvent(int h, const ControlEvent *evt);
+
+/* Bot Host brain recordings (udp_server_botrec.c). */
+/* CTRL_BOT_HOST_REC from host h. */
+void serverBotRecOnControl(int h, const ControlEvent *evt);
+/* Drain host h's CHANNEL_BULK: its recording pieces. */
+void serverBotRecDrainBulk(int h);
+/* Per tick, under the tick mutex: tell the hosts the block state, run and
+ * finish merges. inLobby: the server is in its lobby now. */
+void serverBotRecService(struct ServerSim *sim, bool inLobby);
+/* The server went back to its lobby: hosts send their finished blocks. */
+void serverBotRecOnLobby(void);
+/* A game started: uploads go on slowly. */
+void serverBotRecOnGameStart(void);
+/* Host h connected (inLobby: the server is in its lobby) or is going. */
+void serverBotRecHostConnected(int h, bool inLobby);
+void serverBotRecHostGone(int h);
+/* The rec state and percent for host h's lobby row. */
+void serverBotRecRow(int h, uint8_t *state, uint8_t *percent,
+                     uint8_t *botsDone, uint8_t *bots);
+/* True while host h sends or waits for a merge: it is not released. */
+bool serverBotRecBusy(int h);
+/* One recording piece (BULK_KIND_REC_CHUNK) from host h. The bulk sink
+ * calls it; the unit tests call it straight. */
+void serverBotRecPiece(int h, const BulkStreamHeader *hd,
+                       const uint8_t *data);
+/* Note that this server asked host (by name and kind) to record block, as
+ * an OPEN does: an upload is taken only for such a block. For the unit
+ * tests, which send pieces with no OPEN. */
+void serverBotRecNoteAsked(const char *block, const char *host,
+                           bool playerHost);
 void serverSendServerEnglishBroadcast(struct ServerSim *sim,
                                       const char *message);
 void serverSendServerMessage(struct ServerSim *sim, langid id, int argCount,
@@ -694,6 +1060,10 @@ void serverDisconnectSpectator(struct ServerSim *sim, int s, bool graceful);
 void serverEnumSpectatorRoster(void *enumCtx,
                                void (*deliver)(void *, const ControlEvent *),
                                void *deliverCtx);
+/* Send a lobby event to every connected player client (bot connections of a
+ * Bot Host left out) and every live spectator, as the spectator roster rows
+ * go. */
+void serverBroadcastLobbyControl(const ControlEvent *evt);
 int  serverFindSpectator(const struct sockaddr_in *addr);
 void serverSendSpectatorAccept(int s, struct ServerSim *sim,
                                const struct sockaddr_in *addr);

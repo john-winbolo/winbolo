@@ -31,14 +31,17 @@ static char g_path[FILENAME_MAX];
  * does sync) and SCENARIO PANEL POPOUT (where each popped-out scenario
  * panel's window sat, in this machine's desktop coordinates, as WINDOW is).
  * SCENARIO PANEL SHOWN is a choice, not a place, so it syncs, and so does
- * SCENARIO PANEL BG, the background opacity of each [SCENARIO PANEL] row. This
+ * SCENARIO PANEL BG, the background opacity of each [SCENARIO PANEL] row.
+ * BOT HOST holds this computer's Max slots for its Bot Host (bothost_optout.h),
+ * which fits this machine's CPU only. This
  * array is the single source of truth for "never synced" — both the upload
  * serializer and the sync-dirty trigger consult it. */
 static const char *const kDeviceLocalSections[] = { "WINBOLO.NET", "DEVICE",
                                                     "MAPEDITOR", "LOGVIEWER",
                                                     "WINDOW", "HOSTING",
                                                     "VOICE.DEVICE",
-                                                    "SCENARIO PANEL POPOUT" };
+                                                    "SCENARIO PANEL POPOUT",
+                                                    "BOT HOST" };
 #define PREFS_DEVICE_LOCAL_COUNT \
     (sizeof(kDeviceLocalSections) / sizeof(kDeviceLocalSections[0]))
 

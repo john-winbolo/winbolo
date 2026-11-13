@@ -142,6 +142,17 @@ PingBand pingDisplayBand(const PingDisplay *d);
  * ~5s refresh is far too slow to strobe. */
 PingBand pingBandClassify(uint16_t pingMs);
 
+/* Which theme colour a lobby ping shows in: the player list's rule, which
+ * the Bot Host rows use too (lobbyPingColor). Good is the online colour,
+ * fair the high-ping colour, and poor (or no measurement) the
+ * disconnected colour. */
+typedef enum {
+    PING_COLOR_ONLINE = 0,
+    PING_COLOR_HIGH_PING,
+    PING_COLOR_DISCONNECTED
+} PingColorRole;
+PingColorRole pingColorRole(uint16_t pingMs);
+
 #ifdef __cplusplus
 }
 #endif

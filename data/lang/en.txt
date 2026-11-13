@@ -418,6 +418,59 @@ STR_DLGLOBBY_TEAM_LEFT_FMT={player} left {string1}.
 # Lobby roster header above the spectator list ({number} = live count)
 STR_DLGLOBBY_SPECTATORS_FMT=Spectators ({number}):
 
+# Lobby list of the Bot Hosts that run the server's bots. Header ({number} =
+# hosts); a row ({string1} = host name, {string2} = its state, {number} = bots
+# it runs, {number2} = the slots it has); the states
+STR_DLGLOBBY_BOTHOSTS_FMT=Bot Hosts ({number}):
+STR_DLGLOBBY_BOTHOST_ROW_FMT={string1}: {string2}, {number} of {number2} slots
+STR_DLGLOBBY_BOTHOST_CONNECTED=connected
+STR_DLGLOBBY_BOTHOST_SYNCING_FMT=syncing {number}%
+STR_DLGLOBBY_BOTHOST_READY=ready
+STR_DLGLOBBY_BOTHOST_LATE=too slow, not used this game
+STR_DLGLOBBY_BOTHOST_REC_UPLOAD_FMT=uploading recordings {number}%, {number2} of {number3} bots
+STR_DLGLOBBY_BOTHOST_REC_LOWDISK=not recording: low disk
+STR_DLGLOBBY_BOTHOST_REC_MERGING=merging recordings
+
+# The Bot Host inside this client: the lobby line under the Bot Host rows
+# ({number} = bots it runs now, {number2} = bots it can run), and the
+# newswire line when the count changes ({number} = bots it runs now)
+STR_DLGLOBBY_CLIENT_BOTHOST_FMT=This computer runs {number} of the server's bots (room for {number2})
+STR_CLIENT_BOTHOST_NEWS_FMT=This computer now runs {number} of the server's bots for this game
+
+# The server's own row at the bottom of the lobby's Bot Host rows: its
+# name, and what it shows in place of the brain file state
+STR_DLGLOBBY_BOTHOST_SERVER_NAME=Server
+STR_DLGLOBBY_BOTHOST_SERVER_STATE=runs bots itself
+
+# The lobby's Server bot slots row (Server Settings), and a Bot Host row that
+# gets 0 slots because it shares its computer with the server or another
+# host, with its slot box
+STR_DLGLOBBY_SERVER_BOT_SLOTS=Server bot slots
+STR_DLGLOBBY_SERVER_BOT_SLOTS_OVER=More than the {number} slots this server's CPU test recommends. Bots on the server may think slower and play worse.
+STR_DLGLOBBY_SERVER_BOT_SLOTS_LOCKED=Set by -botcapacity on the server
+STR_DLGLOBBY_SERVER_BOT_SLOTS_NONE=No limit
+STR_DLGLOBBY_SERVER_BOT_SLOTS_MEASURING=CPU test running
+STR_DLGLOBBY_SERVER_BOT_SLOTS_TIP=How many bots the server runs in its own process. Its CPU test recommends {number}.
+STR_DLGLOBBY_BOTHOST_SAME_SERVER={string1}: same computer as the server (0 slots)
+STR_DLGLOBBY_BOTHOST_SAME_HOST={string1}: same computer as {string2} (0 slots)
+STR_DLGLOBBY_BOTHOSTS_NOTE=Bots move between hosts by lag and free CPU.
+STR_DLGLOBBY_BOTHOST_RESERVE_FMT={string1} — tries to keep {number}% CPU free.
+STR_DLGLOBBY_BOTHOST_MAX_LABEL=Max slots
+STR_DLGLOBBY_BOTHOST_MAX_OVER=More than the {number} slots this computer's CPU estimate says fit. Its bots may think slower and play worse.
+STR_DLGLOBBY_BOTHOST_MAX_OWN_TIP=The most of the server's bots this computer runs. The server starts it lower and adds bots while the computer has free CPU. Saved on this computer for later games. 0 runs no bot here.
+STR_DLGLOBBY_BOTHOST_MAX_PLAYER_TIP=The most bots this player's computer runs. Only that player can change it.
+STR_DLGLOBBY_BOTHOST_MAX_DEDICATED_TIP=The most bots this Bot Host runs. Set by --slots-max on the Bot Host.
+
+# The question this computer's Bot Host asks before it runs bot code a
+# server sent: its title, text and two buttons
+STR_DLGLOBBY_BOTHOST_CONSENT_TITLE=Run this server's own bot code?
+STR_DLGLOBBY_BOTHOST_CONSENT_TEXT=This server wants to send its own bot code to this computer and run some of its bots here. This code is not the code installed with WinBolo. It runs in a sandbox, but the sandbox cannot stop every attack. Click Yes only if you trust this server. If you click No, this computer runs none of the server's bots and you play as usual. You are asked again each time you join this server.
+STR_DLGLOBBY_BOTHOST_CONSENT_YES=Yes, run its code
+STR_DLGLOBBY_BOTHOST_CONSENT_NO=No
+
+# Why Ready is off while a Bot Host gets the server's brain files ({number} = %)
+STR_DLGLOBBY_READY_BOTHOST_SYNC_FMT=Bot Host syncing {number}%
+
 # Sender-name tag prepended to a spectator's lobby chat line
 STR_DLGLOBBY_SPECTATOR_TAG=[Spectator] {string1}
 
@@ -1462,6 +1515,8 @@ STR_DLGSYSINFO_BRAIN=Brain
 STR_DLGSYSINFO_SIMULATION=Simulation
 STR_DLGSYSINFO_BOTPREP=Bot prep
 STR_DLGSYSINFO_BRAIN_OVERRUNS=Brain overruns
+STR_DLGSYSINFO_HOST_SERVER=Server:
+STR_DLGSYSINFO_HOST_BOTHOST_FMT=Bot Host {string1}:
 STR_MENU_ABOUT_APP=About WinBolo
 STR_MENU_PREFERENCES=Preferences…
 STR_MENU_SERVICES=Services
@@ -1558,6 +1613,10 @@ STR_DLGLOBBY_TOOLTIP_JOIN=Move yourself to Team {number}.
 STR_DLGLOBBY_BOT_NAMING=Bot Naming:
 STR_DLGLOBBY_ADDBOT_LBL=Add Bot
 STR_DLGLOBBY_TOOLTIP_ADDBOT=Add a bot to Team {number}, named from the selected pool.
+STR_DLGLOBBY_ADDBOT_MEASURING=Measuring this computer's speed. Bots can be added in a moment.
+STR_DLGLOBBY_ADDBOT_FULL=This computer can run {number} of these bots at full strength.
+STR_DLGLOBBY_ADDBOT_SERVER_MEASURING=The server is measuring its speed. Bots can be added in a moment.
+STR_DLGLOBBY_ADDBOT_SERVER_FULL=The server can run {number} of these bots at full strength.
 STR_DLGLOBBY_TOOLTIP_RMTEAM=Remove Team {number} (and its bots).
 STR_DLGLOBBY_TOOLTIP_DRAG=Drag onto a team to move
 STR_DLGLOBBY_TAG_HOST=HOST
@@ -3043,6 +3102,65 @@ STR_MAPEDIT_ANDROID_NOFILES=Nothing here yet. Maps you save, here or from a game
 
 # The replay's recording mode button, which shows the GIF controls
 STR_REEL_RECORD_MODE_TIP=Recording mode: shows the GIF controls
+
+# The Log Viewer's Bot Hosts window: title, no-data line, host names, graph lines, decisions, tooltip lines
+STR_LV_WIN_BOT_HOSTS=Bot Hosts
+STR_LV_BOTHOST_NONE=No bot host data in this replay (record with -record-bothost-data)
+STR_LV_BOTHOST_SERVER=Server
+STR_LV_BOTHOST_PLAYER={string1} (player {number})
+STR_LV_BOTHOST_LISTED={string1} (listed Bot Host)
+STR_LV_BOTHOST_UNNAMED=Bot Host {number}
+STR_LV_BOTHOST_RATE=Overrun rate (top of the graph: {string1}%)
+STR_LV_BOTHOST_FREE=Free CPU %
+STR_LV_BOTHOST_BOT_CPU=Bot CPU %
+STR_LV_BOTHOST_BOTS=Bots
+STR_LV_BOTHOST_LIMIT=Limit
+STR_LV_BOTHOST_DEC_TRIGGER=Overrun trigger
+STR_LV_BOTHOST_DEC_MOVE=Bot moved
+STR_LV_BOTHOST_DEC_CUT=Limit lowered
+STR_LV_BOTHOST_DEC_RAISE=Limit raised
+STR_LV_BOTHOST_DEC_RAISE_REFUSED=Raise refused
+STR_LV_BOTHOST_DEC_PLACE_REFUSED=Placement refused
+STR_LV_BOTHOST_DEC_OTHER=Decision {number}
+STR_LV_BOTHOST_TIP_TIME=At {string1}
+STR_LV_BOTHOST_TIP_REASON=Reason: {string1}
+STR_LV_BOTHOST_TIP_PREDICTED=Predicted free CPU: {string1}
+STR_LV_BOTHOST_TIP_COST=One-bot cost: {string1}
+STR_LV_BOTHOST_TIP_FREE_AVG=Free CPU average: {string1}
+STR_LV_BOTHOST_TIP_LOWEST_CLEAN=Lowest clean free CPU: {string1}
+STR_LV_BOTHOST_TIP_HIGHEST_BAD=Highest bad free CPU: {string1}
+STR_LV_BOTHOST_TIP_LIMIT=Limit: {string1} before, {string2} after
+STR_LV_BOTHOST_TIP_BAD_SHARE=Bad probes: {number} of {number2}
+STR_LV_BOTHOST_TIP_SEAT=Bot: player {number}
+STR_LV_BOTHOST_TIP_TO=To: {string1}
+STR_LV_BOTHOST_NOT_KNOWN=not known
+STR_LV_BOTHOST_NO_LIMIT=none
+STR_LV_BOTHOST_TIP_PROBE=Overrun rate: {string1}% ({number} of {number2} thinks)
+STR_LV_BOTHOST_TIP_BAD_PROBE=Bad probe
+STR_LV_BOTHOST_TIP_READING=Free CPU: {string1}, bot CPU: {string2}
+STR_LV_BOTHOST_TIP_BOTS=Bots: {number}, slots: {number2}, limit: {string1}
+STR_LV_BOTHOST_DEC_WOULD_MOVE=Would move (moves off)
+STR_LV_BOTHOST_DEC_NO_BETTER=No better host
+STR_LV_BOTHOST_TIP_WINDOW_RATE=Rate over the window: {string1}
+STR_LV_BOTHOST_DEC_LIMIT_RAISE=Dynamic raise
+STR_LV_BOTHOST_DEC_LIMIT_START=Game starts at the start
+STR_LV_BOTHOST_DEC_LIMIT_CARRY=Game keeps the last limit
+STR_LV_BOTHOST_TIP_DYNAMIC=Dynamic slots: start {string1}, ceiling {number}
+STR_LV_BOTHOST_TIP_RATES=Source rate: {string1}, target rate: {string2}
+STR_LV_BOTHOST_TIP_MOVE_RULE=Rule: {string1}, moves so far (m): {number}
+STR_LV_BOTHOST_TIP_STAY=Stay: {string1}, needs: {string2}
+STR_LV_BOTHOST_RULE_NORMAL=normal
+STR_LV_BOTHOST_RULE_EMERGENCY=emergency
+STR_LV_BOTHOST_RULE_TRIAL=trial
+
+# The dedicated server's newswire lines for a bot held because neither the
+# server nor a Bot Host has a slot for it (-bothost-enforce-server-limit)
+STR_BOTHOST_BOT_PAUSED={player} is paused: no room to run its bot
+STR_BOTHOST_BOT_RUNS_AGAIN={player} runs again
+# The lobby's Bot Host row of a player's computer when the server sent no
+# name: the player's number, or a plain name when that is not known
+STR_DLGLOBBY_BOTHOST_PLAYER_NAME=Player {number}
+STR_DLGLOBBY_BOTHOST_NO_NAME=Bot Host
 
 # The Log Viewer's Chat panel: title, empty line, team and private notes
 STR_LV_WIN_CHAT=Chat

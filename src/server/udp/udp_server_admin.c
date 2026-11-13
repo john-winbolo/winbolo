@@ -182,7 +182,7 @@ static bool serverClientsAllLocked(void) {
     int i;
     bool anyConnected = false;
     for (i = 0; i < MAX_TANKS; i++) {
-        if (udpServer.clients[i].connected) {
+        if (udpServer.clients[i].connected && !udpServer.clients[i].botSlot) {
             anyConnected = true;
             if (!udpServer.clientLocked[i]) return false;
         }
@@ -198,6 +198,11 @@ void serverDisconnectClient(ServerSim *sim, int idx, bool graceful) {
      * clear the flag so the drain can't later tear down a fresh occupant that
      * reused the slot after this teardown frees it. */
     udpServer.pendingSimRemove[idx] = false;
+    if (!udpServer.clients[idx].botSlot) {
+        /* The Bot Host inside the leaving player's client goes with it. */
+        serverBotHostPlayerGone(sim, idx, graceful ? "its player left"
+                                                   : "its player timed out");
+    }
 
     {
         UdpServerClient *c = &udpServer.clients[idx];
@@ -385,6 +390,11 @@ void transportUdpServerDrainPendingRemovals(ServerSim *sim) {
          * disconnected it (and cleared this flag before any reuse), so there is
          * nothing to tear down. */
         if (!udpServer.clients[i].connected) continue;
+        /* A Bot Host bot connection goes; the bot stays, back in-process. */
+        if (udpServer.clients[i].botSlot) {
+            serverBotSlotLost(sim, i, "control channel overflow");
+            continue;
+        }
         /* Same teardown order every other disconnect path uses — the download
          * buffer is caller-owned, serverDisconnectClient does not free it. */
         serverCleanupMapDownload(i);
@@ -441,6 +451,8 @@ void transportUdpServerKickPlayer(ServerSim *sim, const char *playerName) {
 
     for (i = 0; i < MAX_TANKS; i++) {
         if (!udpServer.clients[i].connected) continue;
+        /* A Bot Host bot is a bot: the bot loop below kicks it. */
+        if (udpServer.clients[i].botSlot) continue;
         if (playerNameCompare(udpServer.clients[i].playerName, playerName) == 0) {
             const char *kickArgs[1];
             snprintf(msg, sizeof(msg), "%s has been server kicked.",
@@ -507,7 +519,7 @@ void transportUdpServerDisconnectAll(ServerSim *sim) {
     bool anyConnected = false;
 
     for (i = 0; i < MAX_TANKS; i++) {
-        if (udpServer.clients[i].connected) {
+        if (udpServer.clients[i].connected && !udpServer.clients[i].botSlot) {
             anyConnected = true;
             break;
         }
@@ -537,7 +549,10 @@ void transportUdpServerDisconnectAll(ServerSim *sim) {
      * is index-based and doesn't compact the arrays, so a plain forward loop is
      * safe. */
     for (i = 0; i < MAX_TANKS; i++) {
-        if (udpServer.clients[i].connected) {
+        /* A Bot Host bot connection stays with its bot. It ignores the
+         * CTRL_SERVER_SHUTDOWN above and takes the new map like any client
+         * still connected at the map change. */
+        if (udpServer.clients[i].connected && !udpServer.clients[i].botSlot) {
             serverCleanupMapDownload(i);
             serverDisconnectClient(sim, i, FALSE);
         }
@@ -569,6 +584,8 @@ void transportUdpServerEnforcePing(ServerSim *sim) {
         UdpServerClient *client = &udpServer.clients[i];
         uint16_t ping;
         if (!client->connected) continue;
+        /* A Bot Host bot is held to no ping limit, as an in-process bot. */
+        if (client->botSlot) continue;
 
         /* Already queued for teardown by an earlier strike — the slot stays
          * connected until the drain runs, so skip it rather than re-striking
@@ -757,6 +774,7 @@ void transportUdpServerPrintStatus(bool toFile) {
 
     for (i = 0; i < MAX_TANKS; i++) {
         if (!udpServer.clients[i].connected) continue;
+        if (udpServer.clients[i].botSlot) continue;
         fprintf(stdout, "%s (slot %d, ping %dms)\n",
                 udpServer.clients[i].playerName, i,
                 udpServer.clients[i].pingMs);

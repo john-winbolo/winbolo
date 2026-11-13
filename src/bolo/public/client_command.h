@@ -84,7 +84,11 @@ typedef enum {
     CMD_PLAYER_PING_MUTE,
     CMD_LOBBY_RELOAD_SCENARIO,
     CMD_SET_SCRIPT_LIST,
-    CMD_SET_SCRIPT_SETTING
+    CMD_SET_SCRIPT_SETTING,
+    /* Bot Host bot connections only; the server refuses both from any other
+     * connection. */
+    CMD_BOT_TEAM_MSG,
+    CMD_BOT_STATS
 } ClientCommandType;
 
 /* Reject codes returned by serverSimApplyCommand. The dispatcher
@@ -509,6 +513,31 @@ typedef struct {
     uint16_t worldY;
 } CmdPing;
 
+/* CMD_BOT_TEAM_MSG — a bot team message from a brain running on a Bot Host.
+ * The server takes it only from a Bot Host bot connection and fans it out to
+ * the sending bot's allied bots, wherever their brains run. Humans never
+ * receive it. text is never empty. */
+#define CMD_BOT_TEAM_MSG_LEN   (PACKET_MAX_CHAT_MESSAGE + 2)
+typedef struct {
+    char text[CMD_BOT_TEAM_MSG_LEN];
+} CmdBotTeamMsg;
+
+/* CMD_BOT_STATS — a Bot Host bot's think statistics, sent about once a second
+ * from its bot connection. Times are in tenths of a millisecond. The server
+ * shows them in the operator's info and status output. */
+#define CMD_BOT_STATS_HOST_LEN 32
+typedef struct {
+    uint16_t lastThinkTenths;
+    uint16_t avgThinkTenths;
+    uint16_t maxThinkTenths;
+    uint16_t targetTenths;
+    uint32_t thinkCount;
+    uint32_t overrunCount;
+    uint32_t killCount;     /* thinks cut short by the time budget */
+    uint8_t  tier;          /* the brain's tier this tick, 0 for unknown */
+    char     hostName[CMD_BOT_STATS_HOST_LEN];
+} CmdBotStats;
+
 /* ClientCommand — variant tag + payload that travels client→server.
  *
  * cmdSeq: per-command sequence number assigned by the client; used
@@ -558,6 +587,8 @@ typedef struct ClientCommand {
         CmdPlayerPingMute      playerPingMute;
         CmdSetScriptList       setScriptList;
         CmdSetScriptSetting    setScriptSetting;
+        CmdBotTeamMsg          botTeamMsg;
+        CmdBotStats            botStats;
     } u;
 } ClientCommand;
 

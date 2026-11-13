@@ -97,10 +97,14 @@
 #include "../gui/gamefront.h"
 #include "../common/sentry_integration.h"
 #include "../common/wb_log.h"
+#include "cpu_speed_test.h"
+#include "cpu_speed_store.h"
+#include "cpu_speed_capacity.h"
 #include "../common/prefs.h"
 #include "../winbolonet/winbolonet_core.h"
 #include "cmd_stdin.h"
 #include "../scenario/scenario_host.h"
+#include "../bothost/bothost_embed.h" /* this computer's own Bot Host */
 
 /* ------------------------------------------------------------------ */
 /* Globals needed by the game engine                                   */
@@ -152,6 +156,17 @@ static char optScriptUploads[16] = "";
 static ScriptUploadPolicy optScriptUploadPolicy = SCRIPT_UPLOAD_OFF;
 /* Run every scenario script with the full Lua library and no limits. */
 static bool optUnsafeScripts = false;
+/* This computer's own Bot Host (bothost_embed.h): off, a fixed slot count,
+ * its brain cache, and a test of a crash (the host and the player vanish
+ * at that tick with no word to the server). */
+static bool optNoBotHost = false;
+static int optBotHostSlots = 0;
+static char optBotHostCache[1024] = "";
+static int optVanishAtTick = 0;
+/* A test of the lobby's Max slots: set this computer's Max slots to 0 at
+ * one tick and back to the brain's answer at another (0: never). */
+static int optBotHostMaxZeroAtTick = 0;
+static int optBotHostMaxAutoAtTick = 0;
 static bool optLogBinary = FALSE;
 static uint64_t optSeed = 0;
 static bool optSeedSet = FALSE;
@@ -356,6 +371,10 @@ static void logEventsDeliverCb(void *ctx, const ControlEvent *evt) {
    * replaced are dropped too, in case a recording replays one. */
   if (evt->type == CTRL_LOBBY_BOT_POOL_INFO) return;
   if (evt->type == CTRL_LOBBY_BOT_POOL_CHUNK) return;
+
+  /* The bots' think timing for System Info: wall-clock numbers that differ
+   * on each run, so never part of a baseline. */
+  if (evt->type == CTRL_BOT_TIMING) return;
 
   /* Same story for the per-brain announce lines: they are lobby display
    * data whose count depends on which brains exist on the machine the
@@ -2102,6 +2121,7 @@ static void printUsage(const char *prog) {
     "  Fast mode:    %s --fast --map FILE [options]\n"
     "\n"
     "Common options:\n"
+    "  --cputest         Run the 2 s CPU speed test, print the result and exit\n"
     "  --name NAME       Player name (default: HeadlessBot)\n"
     "  --brain PATH      Path to the Lua brain this process's own player runs\n"
     "  --ticks N         Run for N game ticks then exit (0 = unlimited)\n"
@@ -2147,6 +2167,23 @@ static void printUsage(const char *prog) {
     "                    is packed into the file or sits beside it; every other\n"
     "                    map is unaffected) (default), allow keeps them for\n"
     "                    the session, persist keeps them for good\n"
+    "  --no-bothost      Do not run the server's bots on this computer\n"
+    "  --bothost-slots N Offer the server N bot slots (default: the brain's\n"
+    "                    own capacity answer for this computer)\n"
+    "  --bothost-cache DIR\n"
+    "                    Where this computer's Bot Host keeps the server's\n"
+    "                    brain files (default: bothost_cache beside the program)\n"
+    "  --bothost-record  Let this computer's Bot Host record the bots it runs\n"
+    "                    when the server asks (default: it records nothing)\n"
+    "  --vanish-at-tick N\n"
+    "                    A crash test: at game tick N the program ends at once,\n"
+    "                    with no quit to the server from the player or its Bot Host\n"
+    "  --bothost-max-zero-at-tick N\n"
+    "                    At game tick N, set this computer's Max slots to 0:\n"
+    "                    the server takes this computer's bots back (a test)\n"
+    "  --bothost-max-auto-at-tick N\n"
+    "                    At game tick N, set Max slots to the brain's answer\n"
+    "                    again: this computer offers its slots again (a test)\n"
     "  --allow-unsafe-scripts\n"
     "                    Run scenario scripts with the full Lua standard\n"
     "                    library, no memory cap, no time limits and precompiled\n"
@@ -2313,6 +2350,21 @@ static bool parseArgs(int argc, char **argv) {
       optNoScenarios = true;
     } else if (strcmp(argv[i], "--scriptuploads") == 0 && i + 1 < argc) {
       strncpy(optScriptUploads, argv[++i], sizeof(optScriptUploads) - 1);
+    } else if (strcmp(argv[i], "--no-bothost") == 0) {
+      optNoBotHost = true;
+    } else if (strcmp(argv[i], "--bothost-slots") == 0 && i + 1 < argc) {
+      optBotHostSlots = atoi(argv[++i]);
+    } else if (strcmp(argv[i], "--bothost-cache") == 0 && i + 1 < argc) {
+      SDL_strlcpy(optBotHostCache, argv[++i], sizeof(optBotHostCache));
+    } else if (strcmp(argv[i], "--bothost-record") == 0 ||
+               strcmp(argv[i], "-bothost-record") == 0) {
+      botHostEmbedSetRecord(true);
+    } else if (strcmp(argv[i], "--vanish-at-tick") == 0 && i + 1 < argc) {
+      optVanishAtTick = atoi(argv[++i]);
+    } else if (strcmp(argv[i], "--bothost-max-zero-at-tick") == 0 && i + 1 < argc) {
+      optBotHostMaxZeroAtTick = atoi(argv[++i]);
+    } else if (strcmp(argv[i], "--bothost-max-auto-at-tick") == 0 && i + 1 < argc) {
+      optBotHostMaxAutoAtTick = atoi(argv[++i]);
     } else if (strcmp(argv[i], "--allow-unsafe-scripts") == 0 ||
                strcmp(argv[i], "-allow-unsafe-scripts") == 0) {
       optUnsafeScripts = true;
@@ -3028,6 +3080,24 @@ static int runNetworkMode(void) {
   /* Open state log */
   logStateOpen(optLogState);
 
+  /* This computer's own Bot Host: it starts when the server's ticket comes. */
+  {
+    BotHostEmbedSettings bh;
+    char cache[1024];
+    memset(&bh, 0, sizeof(bh));
+    bh.disabled = optNoBotHost;
+    bh.slots = optBotHostSlots;
+    if (optBotHostCache[0] != '\0') {
+      SDL_strlcpy(cache, optBotHostCache, sizeof(cache));
+    } else {
+      const char *base = SDL_GetBasePath();
+      SDL_snprintf(cache, sizeof(cache), "%sbothost_cache",
+                   base != NULL ? base : "");
+    }
+    bh.cacheDir = cache;
+    botHostEmbedSetSettings(&bh);
+  }
+
   /* Main game loop */
   oldTick = SDL_GetTicks();
 
@@ -3124,8 +3194,30 @@ static int runNetworkMode(void) {
       break;
     }
 
+    /* The lobby's Max slots, as the player would set it. */
+    if (optBotHostMaxZeroAtTick > 0 && tickCount == optBotHostMaxZeroAtTick) {
+      fprintf(stderr, "Setting this computer's Max slots to 0 at tick %d "
+                      "(a test).\n", tickCount);
+      botHostEmbedSetMax(0);
+    }
+    if (optBotHostMaxAutoAtTick > 0 && tickCount == optBotHostMaxAutoAtTick) {
+      fprintf(stderr, "Setting this computer's Max slots to the brain's "
+                      "answer at tick %d (a test).\n", tickCount);
+      botHostEmbedSetMax(-1);
+    }
+    /* This computer's Bot Host: start, stop, the bot count. */
+    botHostEmbedService(humanSim);
+    if (optVanishAtTick > 0 && tickCount >= optVanishAtTick) {
+      fprintf(stderr, "Vanishing at tick %d (a crash test).\n", tickCount);
+      fflush(stderr);
+      fflush(stdout);
+      botHostEmbedStop(false);
+      _Exit(3);
+    }
+
     SDL_Delay(1); /* Don't busy-wait */
   }
+  botHostEmbedLeave("the player left the game");
 
   /* Cleanup */
   if (!optQuiet) {
@@ -3156,8 +3248,46 @@ static int runNetworkMode(void) {
 /* Main                                                                */
 /* ------------------------------------------------------------------ */
 
+/* --cputest (or -cputest): the 2 s CPU speed test, as WinBoloDS -cputest
+   gives it. The line to read and the JSON line go to stdout and the result
+   is stored for this version. WinBoloDS also prints each brain's capacity
+   answer; this does not. Returns 0 when every CRC matched, else 1. */
+static int headlessCpuSpeedTest(void) {
+  CpuSpeedResult result;
+  char line[1024];
+  bool ran;
+
+  if (!SDL_Init(0)) {
+    fprintf(stderr, "Error: SDL_Init failed: %s\n", SDL_GetError());
+    return 1;
+  }
+  ran = cpuSpeedTestRun(NULL, &result);
+  cpuSpeedFormatLine(&result, line, sizeof(line));
+  printf("%s\n", line);
+  cpuSpeedFormatJson(&result, line, sizeof(line));
+  printf("%s\n", line);
+  fflush(stdout);
+  if (ran && result.crcOk) {
+    char path[1024];
+    if (cpuSpeedStoreSave(WINBOLO_VERSION, CPU_SPEED_CONTEXT_CPUTEST,
+                          &result) &&
+        cpuSpeedStorePath(path, sizeof(path))) {
+      fprintf(stderr, "Stored in %s\n", path);
+    } else {
+      fprintf(stderr, "The result could not be stored\n");
+    }
+  }
+  return (ran && result.crcOk) ? 0 : 1;
+}
+
 int main(int argc, char *argv[]) {
   int result;
+
+  for (int i = 1; i < argc; i++) {
+    if (strcmp(argv[i], "--cputest") == 0 || strcmp(argv[i], "-cputest") == 0) {
+      return headlessCpuSpeedTest();
+    }
+  }
 
   bolo_srand((uint64_t)time(NULL) ^ (uint64_t)getpid());
   sentryInit("WinBoloHeadless", argc, argv);
@@ -3182,6 +3312,9 @@ int main(int argc, char *argv[]) {
 
   wb_log_init("WinBolo", "WinBoloHeadless", "winbolo-headless.log");
   atexit(wb_log_shutdown);
+
+  /* A stored CPU speed test result gives Brain.capacity its machine facts. */
+  (void)cpuSpeedApplyStoredToBrains(WINBOLO_VERSION);
 
   if (!serverSimBotPoolInit(0)) {
     fprintf(stderr, "serverSimBotPoolInit failed\n");

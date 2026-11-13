@@ -94,6 +94,12 @@ that can be combined with it, except the Steamworks SDK, which is covered by
 - License: Zlib
 - https://github.com/madler/zlib
 
+### Zstandard (zstd)
+- Version: 1.5.7
+- License: BSD 3-Clause (zstd is dual-licensed BSD 3-Clause or GPLv2; WinBolo uses it under BSD 3-Clause)
+- https://github.com/facebook/zstd
+- Compresses the brain recordings and the Bot Host brain packs. Built as a static library from its build/cmake folder.
+
 ### cJSON
 - Version: 1.7.18
 - License: MIT
@@ -276,6 +282,20 @@ that can be combined with it, except the Steamworks SDK, which is covered by
 - Unmodified apart from the origin line at the top of each copy. The licence
   asks for no credit; the entry is here so the file is not taken for WinBolo's
   own code.
+
+### CoreMark
+- Location: src/third_party/coremark/
+- Commit: 1f483d5b8316753a742cbf5590caf5bd0a4e4777 (eembc/coremark)
+- License: Apache 2.0, with the EEMBC Acceptable Use Agreement for the
+  CoreMark name (src/third_party/coremark/LICENSE.md)
+- https://github.com/eembc/coremark
+- Author: EEMBC (Shay Gal-On)
+- The 2 s CPU speed test (-cputest, src/cpu_speed/). Its numbers are for
+  comparing machines. WinBolo calls them the CPU speed score (speed_1t,
+  speed_all); they are not CoreMark scores and do not carry that name.
+- The upstream files are unmodified. WinBolo's own port files are in
+  src/third_party/coremark/winbolo/ in place of CoreMark's port directories;
+  see src/third_party/coremark/WINBOLO_CHANGES.txt.
 
 ## Controller Glyphs
 

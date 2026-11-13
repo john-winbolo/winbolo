@@ -86,6 +86,7 @@ static NSMenuItem *s_lv_winHudItem         = nil;
 static NSMenuItem *s_lv_winOverviewItem    = nil;
 static NSMenuItem *s_lv_winTankItem        = nil;
 static NSMenuItem *s_lv_winChatItem        = nil;
+static NSMenuItem *s_lv_winBotHostsItem    = nil;
 static NSMenuItem *s_lv_winClipsItem       = nil;
 static NSMenuItem *s_lv_winScnPanelItem    = nil;
 static NSMenuItem *s_lv_dockEnabledItem    = nil;
@@ -148,6 +149,7 @@ static void lv_push_sdl_quit(void) {
 - (void)onToggleOverview:(id)sender;
 - (void)onToggleTank:(id)sender;
 - (void)onToggleChat:(id)sender;
+- (void)onToggleBotHosts:(id)sender;
 - (void)onToggleClips:(id)sender;
 - (void)onToggleScenarioPanel:(id)sender;
 - (void)onToggleDockEnabled:(id)sender;
@@ -310,6 +312,7 @@ static void lv_push_sdl_quit(void) {
 - (void)onToggleOverview:(id)sender { (void)sender; lv_g_show_overview_window = !lv_g_show_overview_window; }
 - (void)onToggleTank:(id)sender { (void)sender; lv_g_show_tank_window = !lv_g_show_tank_window; }
 - (void)onToggleChat:(id)sender { (void)sender; lv_g_show_chat_window = !lv_g_show_chat_window; }
+- (void)onToggleBotHosts:(id)sender { (void)sender; lv_g_show_bot_hosts_window = !lv_g_show_bot_hosts_window; }
 - (void)onToggleClips:(id)sender {
     (void)sender;
     /* Not while a GIF is made: its progress window is over everything. */
@@ -860,6 +863,14 @@ void lv_mac_menubar_install(struct SDL_Window *win, struct LogViewerState *lvSta
     [winMenu addItem:winScnPanel];
     s_lv_winScnPanelItem = winScnPanel;
 
+    NSMenuItem *winBotHosts = [[NSMenuItem alloc]
+        initWithTitle:LANG_STR(STR_LV_WIN_BOT_HOSTS)
+        action:@selector(onToggleBotHosts:)
+        keyEquivalent:@""];
+    [winBotHosts setTarget:s_lv_bridge];
+    [winMenu addItem:winBotHosts];
+    s_lv_winBotHostsItem = winBotHosts;
+
     [winMenu addItem:[NSMenuItem separatorItem]];
 
     /* The right-side dock, as in the in-window menu: the option, the reset
@@ -1049,6 +1060,7 @@ void lv_mac_menubar_uninstall(void) {
     s_lv_winOverviewItem = nil;
     s_lv_winTankItem = nil;
     s_lv_winChatItem = nil;
+    s_lv_winBotHostsItem = nil;
     s_lv_winClipsItem = nil;
     s_lv_winScnPanelItem = nil;
     s_lv_dockEnabledItem = nil;
@@ -1165,6 +1177,7 @@ void lv_mac_menubar_refresh(const struct LvMenuState *s) {
     if (s_lv_winOverviewItem) [s_lv_winOverviewItem setState:(s->showOverview ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_lv_winTankItem) [s_lv_winTankItem setState:(s->showTank ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_lv_winChatItem) [s_lv_winChatItem setState:(s->showChat ? NSControlStateValueOn : NSControlStateValueOff)];
+    if (s_lv_winBotHostsItem) [s_lv_winBotHostsItem setState:(s->showBotHosts ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_lv_winClipsItem) {
         [s_lv_winClipsItem setHidden:(s->gifAvailable ? NO : YES)];
         [s_lv_winClipsItem setState:(s->showClips ? NSControlStateValueOn : NSControlStateValueOff)];

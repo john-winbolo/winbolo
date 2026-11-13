@@ -43,6 +43,7 @@
 #include "upload_policy.h"     /* ScriptUploadPolicy — script-upload accessors below */
 #include "spec_delay.h"        /* HOSTING_SPEC_DELAY_* — hostingSpecDelayResolve below */
 #include "scenario_identity.h" /* SCN_AUTHOR_LEN — a scenario row's author below */
+#include "overrun_record.h"    /* OverrunRecord — serverSimFillOverrunRecord below */
 
 /* MapGenConfig is defined in src/bolo/public/mapgen.h.
  * Forward-declared here so the public server_sim header doesn't
@@ -407,8 +408,16 @@ typedef struct ServerSimBotConfig {
     aiType      ai;
     gameType    gameType;
     bool        hiddenMines;
-    BYTE        teamNumber;  /* 0 = no team */
+    BYTE        teamNumber;  /* 0 = no team; SERVER_SIM_BOT_TEAM_DEFAULT = the
+                                join rule's team (see below) */
 } ServerSimBotConfig;
+
+/* teamNumber value that asks serverSimAddBot for the team the join rule
+ * gives any new player (player 0 on team 1, player 1 on team 2, then the
+ * smallest team in use), so a -bots bot or a plain lobby Add Bot is on a
+ * team from the moment it is created, whether it runs at once or waits for
+ * a Bot Host slot. */
+#define SERVER_SIM_BOT_TEAM_DEFAULT ((BYTE)0xFF)
 
 /*********************************************************
  *NAME:          serverSimAddBot
@@ -447,6 +456,12 @@ typedef struct {
     uint32_t overrunCount;      /* overruns this game */
     uint32_t thinkCount;        /* total thinks this game
                                  * (overrun-rate denominator) */
+    bool     remote;            /* the brain runs on a Bot Host */
+    bool     held;              /* back from a Bot Host, no brain yet */
+    double   avgThinkMs;        /* Bot Host only: its running average */
+    uint32_t killCount;         /* Bot Host only: thinks cut by the budget */
+    uint8_t  tier;              /* Bot Host only: the brain's last tier */
+    char     hostName[32];      /* Bot Host only: the host's name */
 } BotInfo;
 
 /* Bot pool snapshot populated by serverSimGetBotPoolStats. POD;
@@ -464,6 +479,17 @@ typedef struct {
     uint32_t totalOverruns;     /* sum of overrunCount across bots (this game) */
     uint32_t totalThinks;       /* sum of thinkCount across bots this game
                                  * (overrun-rate denominator) */
+    int      brainCapacity;     /* the smallest capacity answer among the
+                                 * active bots' brains: how many bots this
+                                 * machine can run at full strength
+                                 * (brain_capacity.h). -1 when no active bot
+                                 * has an answer. Advice only; it does not
+                                 * change how many bots start. */
+    int      hostBotCapacity;   /* serverSimGetHostBotCapacity: how many bots
+                                 * this server runs in its own process, from
+                                 * its CPU speed test and its bot brain, or
+                                 * -botcapacity. 0..16; -1 no cap; -2 while
+                                 * the test runs. The lobby Add Bot limit. */
 } BotPoolStats;
 
 /* This process's own memory, in bytes, filled by serverSimReadProcessMemory.
@@ -619,6 +645,11 @@ void serverSimBotTick(ServerSim *sim, aiType ai);
 BYTE   serverSimGetNumBots(ServerSim *sim);
 bool   serverSimHasAnyBot(ServerSim *sim);
 bool   serverSimIsBot(ServerSim *sim, BYTE playerNum);
+/* The bot seats with no bot manager entry, bit n for player n: a seat held
+ * for a bot that is not on the field yet. The lobby lists them by name
+ * under the server's Bot Host row (CTRL_BOT_HOST_HELD); nothing counts or
+ * places them. */
+uint16_t serverSimHeldBotSeats(ServerSim *sim);
 /* Mark a slot whose in-process consumer reads the map square a sound was
  * raised at — the gym agent, the headless brain harness. A human client is
  * sent a near/far tier and a bearing in place of the square; a bot-manager
@@ -1428,6 +1459,26 @@ void serverSimPrintOverrunStats(ServerSim *sim, uint32_t roundSeconds);
  *                closes, FALSE for a timed one
  *********************************************************/
 void serverSimLogOverrunStats(ServerSim *sim, uint32_t roundFrames, bool roundEnd);
+
+/*********************************************************
+ *NAME:          serverSimFillOverrunRecord
+ *PURPOSE:
+ *  Fills out with the numbers serverSimLogOverrunStats
+ *  writes: the server's timing, the bot pool's, and each
+ *  bot in the game with the host its brain runs on. The
+ *  round log and the clients' System Info (CTRL_BOT_TIMING)
+ *  both use it. Resets no counter. A NULL sim gives a
+ *  record with no bots.
+ *
+ *ARGUMENTS:
+ *  sim         - Pointer to the ServerSim
+ *  roundFrames - Running 20 ms server frames of the round so far
+ *  roundEnd    - TRUE for the record written as the round's log
+ *                closes, FALSE otherwise
+ *  out         - The record
+ *********************************************************/
+void serverSimFillOverrunRecord(ServerSim *sim, uint32_t roundFrames, bool roundEnd,
+                                OverrunRecord *out);
 
 /*********************************************************
  *NAME:          serverSimSaveMap
@@ -2348,6 +2399,49 @@ bool          serverSimIsAcceptingJoins(const ServerSim *sim);
 BYTE          serverSimGetMaxPlayers(const ServerSim *sim);
 /* Cap on AI bots addable in the lobby; 0 = no cap. */
 BYTE          serverSimGetMaxBots(const ServerSim *sim);
+/* How many bots this server can run in its own process at full strength:
+ * the dedicated server's CPU speed test and its bot brain's capacity answer,
+ * or -botcapacity. 0..16 (BRAIN_CAPACITY_MIN..MAX); NONE when nothing set a
+ * value (no cap); MEASURING while the test runs, when the lobby takes no
+ * Add Bot. A lobby Add Bot past it is refused with CMD_REJECT_BOT_LIMIT.
+ * Bots a scenario adds are not limited by it, but they count. The lobby
+ * settings event carries it to clients. Setting a new value publishes the
+ * lobby settings. */
+#define SERVER_HOST_BOT_CAPACITY_NONE      (-1)
+#define SERVER_HOST_BOT_CAPACITY_MEASURING (-2)
+int           serverSimGetHostBotCapacity(const ServerSim *sim);
+void          serverSimSetHostBotCapacity(ServerSim *sim, int capacity);
+/* The lobby's Server bot slots. serverSimGetHostBotCapacity above gives
+ * the value in use: the lobby's choice (0..16) when a player made one,
+ * else the host bot capacity. The host bot capacity itself (the CPU speed
+ * test, or -botcapacity) is the recommended value. */
+int           serverSimGetHostBotCapacityRecommended(const ServerSim *sim);
+/* The lobby's choice, 0..16, or -1 when there is none. */
+int           serverSimGetServerBotSlots(const ServerSim *sim);
+bool          serverSimIsServerBotSlotsLocked(const ServerSim *sim);
+/* Sets the choice (0..16; a value above the recommended one is taken).
+ * False, and no change, for a value out of range or while locked.
+ * Publishes the lobby settings and CTRL_SERVER_BOT_SLOTS. */
+bool          serverSimSetServerBotSlots(ServerSim *sim, int slots);
+/* -botcapacity N: the choice is N and no player may change it. */
+void          serverSimLockServerBotSlots(ServerSim *sim, int slots);
+/* The CTRL_SERVER_BOT_SLOTS event for the value now. */
+void          serverSimFillServerBotSlotsEvent(const ServerSim *sim,
+                                               struct ControlEvent *evt);
+/* The game bot limit: the lobby's Add Bot limit and the number its button
+ * shows. With Bot Hosts it is the server's bot slots plus the slots of
+ * every Bot Host that runs bots (serverSimSetGameBotLimit, from the UDP
+ * server); without, the server's own (serverSimGetHostBotCapacity). Same
+ * form: 0..16, SERVER_HOST_BOT_CAPACITY_NONE, _MEASURING. -bots, scenario,
+ * sidecar and headless bots are not limited by it. */
+int           serverSimGetGameBotLimit(const ServerSim *sim);
+/* set false: follow the server's own again. Publishes the lobby settings
+ * when the value changes. */
+void          serverSimSetGameBotLimit(ServerSim *sim, int limit, bool set);
+/* Whether a lobby Add Bot fits under the host bot capacity: false while
+ * the test runs, and false when lobbyBots (the bots in the lobby now) has
+ * reached a capacity of 0..16. True when there is no cap. */
+bool          serverSimHostBotCapacityAllowsAdd(int capacity, int lobbyBots);
 /* Cap on spectator connections; 0 = spectating disabled (no MAX_TANKS fallback). */
 BYTE          serverSimGetMaxSpectators(const ServerSim *sim);
 /* Set the spectator cap at runtime (0 disables spectating). */

@@ -7,12 +7,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <zlib.h>
 
 #include <SDL3/SDL.h>   /* SDL_GetPerformanceCounter for the perf log */
+#include <zlib.h>        /* block log compression */
 
 #include "brain_record.h"
 #include "brain_record_ticks.h"  /* tick-range note written at close */
+#include "brain_record_io.h"
 #include "server_sim.h"
 #include "input_packet.h"
 #include "brain_overlay.h"
@@ -23,17 +24,20 @@
 #include "bases.h"       /* basesIsActive — the base on-map mask */
 #include "brain_record_dij.h"  /* v8 recorded Dijkstra box */
 #include "brain_pathfinder.h"  /* DijkstraSlate, DIJKSTRA_NUM_SLATES */
+#include "brain_record_host.h" /* the per-bot body encoder, the hosted marker */
+#include "braincore.h"   /* brainCoreReleaseLogFiles */
 
 #define BRAINREC_MAP_TILES (MAP_ARRAY_SIZE * MAP_ARRAY_SIZE)
 
 /* ---- module state ---------------------------------------------------- */
-/* The .btr is written as a streaming gzip: each frame is compressed on the fly
- * by gzwrite (no raw buffering, no compress-at-end). g_sinceFlush throttles
- * gzflush so a hard kill loses at most ~1-2s while keeping a good ratio. */
+/* The .btr is written through the zstd container (brain_record_io.h): each
+ * frame is compressed on the fly, and a new independent zstd frame starts at
+ * every periodic map keyframe. g_sinceFlush throttles the flush so a hard kill
+ * loses at most ~1-2s while keeping a good ratio. */
 static bool     g_enabled  = false;
-static gzFile   g_gz       = NULL;
+static BrainRecOut *g_out  = NULL;
 static uint32_t g_sinceFlush = 0;
-static bool     g_failed   = false;   /* gave up opening (no dir / gzopen err) */
+static bool     g_failed   = false;   /* gave up opening (no dir / open error) */
 static uint32_t g_lastTick = 0xFFFFFFFFu;
 static int      g_openAttempts = 0;
 static char     g_sessionDir[512] = {0};  /* resolved DEBUG_SESSION_DIR */
@@ -58,16 +62,17 @@ static uint32_t g_frameCount = 0;
 
 /* First and last frame tick written to the open .btr, and how many frames.
  * At close they go into brainrec_ticks.txt, so BrainTest can show the game
- * length without reading the whole gzip stream. */
+ * length without reading the whole recording. */
 static uint32_t g_fileFirstTick = 0;
 static uint32_t g_fileLastTick  = 0;
 static uint64_t g_fileFrames    = 0;
 
 /* Close the open .btr and write its tick-range note beside it. */
 static void closeFileWithTicks(void) {
-    if (!g_gz) return;
-    gzclose(g_gz);
-    g_gz = NULL;
+    if (!g_out) return;
+    if (!brainRecOutClose(g_out))
+        fprintf(stderr, "brain_record: write error closing the recording\n");
+    g_out = NULL;
     if (g_fileFrames > 0 && g_sessionDir[0]) {
         if (!brainRecTicksWrite(g_sessionDir, g_fileFirstTick, g_fileLastTick, g_fileFrames))
             fprintf(stderr, "brain_record: could not write %s/%s\n",
@@ -135,6 +140,17 @@ const char *brainRecordPoolExpr(void) {
         : "return (brain.get_pool_breakdown_raw"
           " or brain.get_pool_breakdown_json)()";
 }
+void brainRecordGetParts(bool *viz, int *poolMode) {
+    if (viz) *viz = g_recViz;
+    if (poolMode) *poolMode = g_poolMode;
+}
+
+/* Bot Host seats (brain_record_host.h): the server answers which bot runs on
+ * a host. g_body is the per-bot body scratch, reused every entry. */
+static BrainRecordHostedFn g_hostedFn = NULL;
+static BrainRecBuf         g_body;
+
+void brainRecordSetHostedInfoFn(BrainRecordHostedFn fn) { g_hostedFn = fn; }
 
 /* Worker-prefetched pool JSON, one slot per bot. Workers build the JSON in
  * parallel right after their bot's think (bot_manager runBotThinkJob); the
@@ -251,29 +267,10 @@ static void perf_dump(uint32_t tick) {
 }
 
 /* Small write helpers — native byte order (same build both ends), streamed
- * through gzip. */
-static void wr_u8 (uint8_t v)  { gzwrite(g_gz, &v, 1); }
-static void wr_u16(uint16_t v) { gzwrite(g_gz, &v, (unsigned)sizeof v); }
-static void wr_u32(uint32_t v) { gzwrite(g_gz, &v, (unsigned)sizeof v); }
-static void wr_f32(float v)    { gzwrite(g_gz, &v, (unsigned)sizeof v); }
-static void wr_buf(const void *p, size_t n) { if (n) gzwrite(g_gz, p, (unsigned)n); }
-
-/* Write one overlay command in packed form: fixed numeric fields + a
- * length-prefixed text string (0 bytes when the command has no label, which is
- * ~99% of them). Replaces the raw 160-byte struct memcpy — same data, no dead
- * text padding. */
-static void wr_overlay_packed(const OverlayCmd *c) {
-    wr_u8((uint8_t)c->type);
-    wr_f32(c->x1); wr_f32(c->y1); wr_f32(c->x2); wr_f32(c->y2);
-    wr_f32(c->radius);
-    wr_u8(c->r); wr_u8(c->g); wr_u8(c->b); wr_u8(c->a);
-    wr_u8(c->anchor);
-    wr_u8(c->viz_idx);
-    uint8_t tl = 0;
-    while (tl < OVERLAY_TEXT_MAX && c->text[tl] != '\0') tl++;
-    wr_u8(tl);
-    if (tl) wr_buf(c->text, tl);
-}
+ * through the zstd container. */
+static void wr_u8 (uint8_t v)  { brainRecOutWrite(g_out, &v, 1); }
+static void wr_u32(uint32_t v) { brainRecOutWrite(g_out, &v, sizeof v); }
+static void wr_buf(const void *p, size_t n) { if (n) brainRecOutWrite(g_out, p, n); }
 
 void brainRecordSetEnabled(bool enabled) { g_enabled = enabled; }
 bool brainRecordIsEnabled(void)          { return g_enabled; }
@@ -359,9 +356,9 @@ static void saveSessionMap(ServerSim *sim) {
 /* Lazily open <sessionDir>/brainrec.btr. The session dir normally comes
  * straight from brainRecordSetSessionDir() (winbolods creates it under
  * -braindebug). As a fallback, if it wasn't set we read DEBUG_SESSION_DIR off
- * the first bot's Lua state. Returns true once g_gz is ready. */
+ * the first bot's Lua state. Returns true once g_out is ready. */
 static bool ensureOpen(ServerSim *sim) {
-    if (g_gz)     return true;
+    if (g_out)    return true;
     if (g_failed) return false;
 
     /* Resolve the dir. Prefer an explicitly-set one (no bot dependency). */
@@ -389,11 +386,11 @@ static bool ensureOpen(ServerSim *sim) {
     char path[600];
     snprintf(path, sizeof(path), "%s/%s", g_sessionDir, BRAINREC_FILENAME);
 
-    /* Streaming gzip. "wb1" = fastest deflate level — the data (zero-padded
-     * structs, repetitive JSON) is highly compressible, so level 1 keeps most
-     * of the ratio while minimising per-tick CPU on the sim thread. */
-    g_gz = gzopen(path, "wb1");
-    if (!g_gz) {
+    /* Streaming zstd (level and window in brain_record_io.h). The data
+     * (zero-padded structs, pool JSON that repeats frame to frame) is highly
+     * compressible, and the long window finds the previous frames. */
+    g_out = brainRecOutOpen(path);
+    if (!g_out) {
         g_failed = true;
         fprintf(stderr, "brain_record: could not open '%s' for writing\n", path);
         return false;
@@ -405,7 +402,7 @@ static bool ensureOpen(ServerSim *sim) {
     hdr.version = BRAINREC_VERSION;
     const char *mn = serverSimGetMapName(sim);
     if (mn) { strncpy(hdr.mapName, mn, sizeof(hdr.mapName) - 1); }
-    gzwrite(g_gz, &hdr, (unsigned)sizeof hdr);
+    brainRecOutWrite(g_out, &hdr, sizeof hdr);
     saveSessionMap(sim);
 
     /* One-time legend: overlay viz_idx -> category name, so the loader can
@@ -453,8 +450,8 @@ static bool ensureOpen(ServerSim *sim) {
         }
         for (int i = 0; i < MAX_TANKS; i++) if (slotLegend[i]) free(slotLegend[i]);
         uint32_t llen = combined ? (uint32_t)n : 0u;
-        gzwrite(g_gz, &llen, (unsigned)sizeof llen);
-        if (llen) gzwrite(g_gz, combined, llen);
+        brainRecOutWrite(g_out, &llen, sizeof llen);
+        if (llen) brainRecOutWrite(g_out, combined, llen);
         free(combined);
         g_legendBytes = llen;
     }
@@ -492,39 +489,16 @@ static bool ensureOpen(ServerSim *sim) {
     return true;
 }
 
-/* Write the compact goal-info block for one bot. */
-static void writeGoalInfo(ServerSim *sim, BYTE slot) {
-    BrainGoalInfo gi;
-    bool ok = serverSimGetBotGoalInfo(sim, slot, &gi);
-    if (!ok) {
-        /* empty kind + 0 candidates */
-        char empty[32]; memset(empty, 0, sizeof empty);
-        wr_buf(empty, 32);                 /* kind */
-        wr_u32(0); wr_u32(0); wr_u32(0);   /* mx, my, target_id */
-        wr_buf(empty, 32);                 /* substate */
-        wr_u16(0);                         /* numCandidates */
-        return;
-    }
-    wr_buf(gi.kind, 32);
-    wr_u32((uint32_t)gi.mx);
-    wr_u32((uint32_t)gi.my);
-    wr_u32((uint32_t)gi.target_id);
-    wr_buf(gi.substate, 32);
-
-    int nc = gi.num_candidates;
-    if (nc < 0) nc = 0;
-    if (nc > BRAIN_GOAL_MAX_CANDIDATES) nc = BRAIN_GOAL_MAX_CANDIDATES;
-    wr_u16((uint16_t)nc);
-    for (int i = 0; i < nc; i++) {
-        BrainRecCandidate c;
-        memset(&c, 0, sizeof c);
-        memcpy(c.desc, gi.candidates[i].desc, sizeof c.desc);
-        c.desc[sizeof c.desc - 1] = '\0';
-        c.cost         = gi.candidates[i].cost;
-        c.winner       = gi.candidates[i].winner ? 1 : 0;
-        c.phase_weight = gi.candidates[i].phase_weight;
-        wr_buf(&c, sizeof c);
-    }
+/* Whether writeMap will write a periodic keyframe this frame (the first frame
+ * with a map, then every BRAINREC_MAP_KEYFRAME_INTERVAL frames). The recorder
+ * asks before the frame starts so that frame can open a new zstd block: a
+ * reader can then start decoding at that block and get a full map at once.
+ * The forced keyframe (more than 1/4 of the tiles changed) is decided later
+ * and does not start a block. */
+static bool periodicKeyframeDue(ServerSim *sim) {
+    GameSim *gs = serverSimGetGameSim(sim);
+    if (!gs || !gs->mp) return false;
+    return !g_hasPrevMap || (g_frameCount % BRAINREC_MAP_KEYFRAME_INTERVAL) == 0;
 }
 
 /* Write the terrain block: keyframe (full map) or delta (changed tiles only).
@@ -671,6 +645,7 @@ void brainRecordTick(ServerSim *sim) {
                            evt, MAX_SNAPSHOT_EVENTS,
                            true /* noCull: god view */);
 
+    if (periodicKeyframeDue(sim)) brainRecOutNewBlock(g_out);
     wr_u32(BRAINREC_FRAME_MAGIC);
     wr_u32(tick);
     if (g_fileFrames == 0) g_fileFirstTick = tick;
@@ -732,54 +707,54 @@ void brainRecordTick(ServerSim *sim) {
         BYTE slot = (BYTE)i;
 
         wr_u8(slot);
+
+        /* A bot whose brain runs on a Bot Host: no brain here, so write the
+         * hosted marker (brain_record_host.h). The host's own records
+         * replace it when its files are merged after the game. */
+        {
+            uint16_t placeGen = 0;
+            char hostName[32];
+            hostName[0] = 0;
+            if (g_hostedFn != NULL && g_hostedFn(slot, &placeGen, hostName)) {
+                brainRecBufReset(&g_body);
+                brainRecBodyEncodeHosted(&g_body, placeGen, hostName,
+                                         serverSimGetLastProcessedInput(sim, slot));
+                wr_buf(g_body.data, g_body.len);
+                free(g_poolStash[slot]);
+                g_poolStash[slot] = NULL;
+                continue;
+            }
+        }
+
         double thinkMs = serverSimGetBotLastThinkMs(sim, slot);
         g_pfThinkMs += thinkMs;
-        wr_f32((float)thinkMs);
 
-        writeGoalInfo(sim, slot);
+        BrainGoalInfo gi;
+        bool haveGoal = serverSimGetBotGoalInfo(sim, slot, &gi);
 
         /* Overlay (visualizer) commands the brain emitted this tick, written
          * packed (variable-length), minus the skip-listed categories
          * (label_overlays etc.) which are dropped from disk entirely.
          * -bd-noviz: write an empty block (the brain also stops emitting,
-         * so ocount is 0 anyway — this keeps the file valid regardless). */
+         * so ocount is 0 anyway -- this keeps the file valid regardless). */
         uint64_t _tb0 = SDL_GetPerformanceCounter();
-        if (!g_recViz) {
-            wr_u32(0);
-        } else {
-            OverlayCmdBuffer *ovl = serverSimGetBotOverlayCmds(sim, slot);
-            uint32_t ocount = (ovl && ovl->count > 0) ? (uint32_t)ovl->count : 0;
-            uint32_t kept = ocount;
-            /* This slot's own skip set when it has one, else the fallback. */
-            const bool *skip = (slot < MAX_TANKS && g_haveSkipSlot[slot]) ? g_skipVizSlot[slot]
-                             : (g_haveSkip ? g_skipViz : NULL);
-            if (skip && ocount) {
-                kept = 0;
-                for (uint32_t k = 0; k < ocount; k++)
-                    if (!skip[ovl->cmds[k].viz_idx]) kept++;
-            }
-            wr_u32(kept);
-            for (uint32_t k = 0; k < ocount; k++) {
-                if (skip && skip[ovl->cmds[k].viz_idx]) continue;
-                wr_overlay_packed(&ovl->cmds[k]);
-            }
-            g_pfOvlCmds += kept;
-        }
+        OverlayCmdBuffer *ovl = g_recViz ? serverSimGetBotOverlayCmds(sim, slot) : NULL;
+        /* This slot's own skip set when it has one, else the fallback. */
+        const bool *skip = (slot < MAX_TANKS && g_haveSkipSlot[slot]) ? g_skipVizSlot[slot]
+                         : (g_haveSkip ? g_skipViz : NULL);
         uint64_t _tb1 = SDL_GetPerformanceCounter();
-        g_pfOvlMs += perf_ms(_tb0, _tb1);
 
         /* Pool-breakdown JSON (what the BrainTest Pool Info panel renders).
-         * -bd-nopool: skip the per-bot Lua JSON build entirely — it's the
+         * -bd-nopool: skip the per-bot Lua JSON build entirely -- it's the
          * eval itself (string building + GC) that costs, not the bytes.
          * Round-robin mode captures ONE bot per frame. The string normally
          * arrives PREFETCHED from the bot's own worker thread (built in
-         * parallel right after its think — see runBotThinkJob), so this
+         * parallel right after its think -- see runBotThinkJob), so this
          * serial section only writes; the inline eval is the fallback for
          * a budget-killed think or a bot that skipped its job. */
-        if (!brainRecordPoolCaptureWanted(sim, slot)) {
-            wr_u32(0);
-        } else {
-            char *pj = g_poolStash[slot];
+        char *pj = NULL;
+        if (brainRecordPoolCaptureWanted(sim, slot)) {
+            pj = g_poolStash[slot];
             g_poolStash[slot] = NULL;
             if (!pj) {
                 uint64_t _te0 = SDL_GetPerformanceCounter();
@@ -787,13 +762,19 @@ void brainRecordTick(ServerSim *sim) {
                 brainRecordAddPoolEvalMs(slot,
                     perf_ms(_te0, SDL_GetPerformanceCounter()));
             }
-            uint32_t plen = pj ? (uint32_t)strlen(pj) : 0;
-            wr_u32(plen);
-            if (plen) wr_buf(pj, plen);
-            if (pj) free(pj);
-            g_pfPoolBytes += plen;
+            g_pfPoolBytes += pj ? strlen(pj) : 0;
         }
-        g_pfPoolMs += perf_ms(_tb1, SDL_GetPerformanceCounter());
+
+        /* The body is built by the encoder the Bot Host uses too, so a
+         * hosted bot's merged entries are byte for byte what this writes. */
+        brainRecBufReset(&g_body);
+        g_pfOvlCmds += brainRecBodyEncode(&g_body, (float)thinkMs,
+                                          haveGoal ? &gi : NULL, ovl, skip, pj);
+        wr_buf(g_body.data, g_body.len);
+        if (pj) free(pj);
+        uint64_t _tb2 = SDL_GetPerformanceCounter();
+        g_pfOvlMs  += perf_ms(_tb0, _tb1);
+        g_pfPoolMs += perf_ms(_tb1, _tb2);
     }
 
     /* ── Per-player alliance bitmaps (v5) ── MAX_TANKS uint32s, written every
@@ -830,11 +811,11 @@ void brainRecordTick(ServerSim *sim) {
     /* ── Recorded Dijkstra box (v8) ── keyframe on the map's keyframes. */
     writeDijkstra(sim, mapKeyframe);
 
-    /* Throttled gzip flush: a Z_SYNC_FLUSH every ~64 frames keeps the on-disk
-     * gzip valid (a hard kill loses at most ~1-2s) without the ratio hit of
-     * flushing every frame. A clean shutdown gzcloses for the final bytes. */
+    /* Throttled flush: a zstd flush every ~64 frames puts every frame so far
+     * in the file (a hard kill loses at most ~1-2s) without the ratio cost of
+     * flushing every frame. A clean close also writes the seek table. */
     if (++g_sinceFlush >= 64) {
-        gzflush(g_gz, Z_SYNC_FLUSH);
+        brainRecOutFlush(g_out);
         g_sinceFlush = 0;
     }
 
@@ -884,4 +865,270 @@ void brainRecordShutdown(void) {
     g_perfTried = false;
     g_perfWallStart = 0;
     perf_free_pool_stash();
+}
+
+/* ── Block log compression (see brain_record.h) ─────────────────────── */
+
+static bool logNameMatches(const char *name) {
+    size_t n = strlen(name);
+    if (strncmp(name, "print2_bot", 10) == 0 && n > 4 && strcmp(name + n - 4, ".log") == 0)
+        return true;
+    if ((strncmp(name, "player", 6) == 0 || strncmp(name, "brain_p", 7) == 0) &&
+        n > 6 && strcmp(name + n - 6, ".jsonl") == 0)
+        return true;
+    return false;
+}
+
+/* Compress one file to <path>.gz and remove the plain file. */
+static bool compressOneLog(const char *path) {
+    char gz[1024], tmp[1024];
+    if (snprintf(gz, sizeof gz, "%s.gz", path) >= (int)sizeof gz) return false;
+    if (snprintf(tmp, sizeof tmp, "%s.gz.tmp", path) >= (int)sizeof tmp) return false;
+    SDL_PathInfo pi;
+    if (SDL_GetPathInfo(gz, &pi)) return false;   /* done before; leave both */
+
+    FILE *in = fopen(path, "rb");
+    if (!in) return false;
+    gzFile out = gzopen(tmp, "wb6");
+    if (!out) { fclose(in); return false; }
+    bool ok = true;
+    static const size_t CHUNK = 1u << 20;
+    unsigned char *buf = (unsigned char *)malloc(CHUNK);
+    if (!buf) ok = false;
+    while (ok) {
+        size_t got = fread(buf, 1, CHUNK, in);
+        if (got == 0) break;
+        if (gzwrite(out, buf, (unsigned)got) != (int)got) ok = false;
+    }
+    if (ferror(in)) ok = false;
+    free(buf);
+    fclose(in);
+    if (gzclose(out) != Z_OK) ok = false;
+    if (!ok || !SDL_RenamePath(tmp, gz)) {
+        SDL_RemovePath(tmp);
+        return false;
+    }
+    if (!SDL_RemovePath(path)) {
+        /* Something still has the plain file open: keep it, drop the copy. */
+        SDL_RemovePath(gz);
+        return false;
+    }
+    return true;
+}
+
+/* The matching names are collected first and compressed after, so the
+ * directory is not changed while it is being listed. */
+typedef struct {
+    char **names;
+    int    n, cap;
+} LogEnumCtx;
+
+static SDL_EnumerationResult SDLCALL logEnumCb(void *ud, const char *dirname,
+                                               const char *fname) {
+    LogEnumCtx *c = (LogEnumCtx *)ud;
+    (void)dirname;
+    if (!logNameMatches(fname)) return SDL_ENUM_CONTINUE;
+    if (c->n == c->cap) {
+        int nc = c->cap ? c->cap * 2 : 32;
+        char **nv = (char **)realloc(c->names, (size_t)nc * sizeof *nv);
+        if (!nv) return SDL_ENUM_FAILURE;
+        c->names = nv;
+        c->cap = nc;
+    }
+    c->names[c->n] = SDL_strdup(fname);
+    if (c->names[c->n]) c->n++;
+    return SDL_ENUM_CONTINUE;
+}
+
+/* ── Block folder locks (see brain_record.h) ─────────────────────────── */
+
+#define DIRLOCK_MAX 16
+static SDL_InitState  g_dirLockState;
+static SDL_Mutex     *g_dirLockMx = NULL;
+static SDL_Condition *g_dirLockCv = NULL;
+static char           g_dirLocked[DIRLOCK_MAX][128];
+
+static bool dirLockInit(void) {
+    if (SDL_ShouldInit(&g_dirLockState)) {
+        g_dirLockMx = SDL_CreateMutex();
+        g_dirLockCv = SDL_CreateCondition();
+        SDL_SetInitialized(&g_dirLockState, g_dirLockMx != NULL && g_dirLockCv != NULL);
+    }
+    return g_dirLockMx != NULL && g_dirLockCv != NULL;
+}
+
+/* The last path part of dir: the block folder's name. */
+static void dirKey(const char *dir, char *out, size_t sz) {
+    size_t n = strlen(dir), s, len;
+    while (n > 0 && (dir[n - 1] == '/' || dir[n - 1] == '\\')) n--;
+    s = n;
+    while (s > 0 && dir[s - 1] != '/' && dir[s - 1] != '\\') s--;
+    len = n - s;
+    if (len >= sz) len = sz - 1;
+    memcpy(out, dir + s, len);
+    out[len] = '\0';
+}
+
+static bool dirKeySame(const char *a, const char *b) {
+    char ka[128], kb[128];
+    if (!a || !a[0] || !b || !b[0]) return false;
+    dirKey(a, ka, sizeof ka);
+    dirKey(b, kb, sizeof kb);
+    return ka[0] != '\0' && SDL_strcasecmp(ka, kb) == 0;
+}
+
+static int dirLockFind(const char *key) {
+    for (int i = 0; i < DIRLOCK_MAX; i++) {
+        if (g_dirLocked[i][0] && SDL_strcasecmp(g_dirLocked[i], key) == 0) return i;
+    }
+    return -1;
+}
+
+bool brainRecordDirLock(const char *dir) {
+    char key[128];
+    if (!dir || !dir[0]) return false;
+    dirKey(dir, key, sizeof key);
+    if (!key[0] || !dirLockInit()) return false;
+    SDL_LockMutex(g_dirLockMx);
+    for (;;) {
+        if (dirLockFind(key) < 0) {
+            for (int i = 0; i < DIRLOCK_MAX; i++) {
+                if (!g_dirLocked[i][0]) {
+                    SDL_strlcpy(g_dirLocked[i], key, sizeof g_dirLocked[i]);
+                    SDL_UnlockMutex(g_dirLockMx);
+                    return true;
+                }
+            }
+        }
+        SDL_WaitCondition(g_dirLockCv, g_dirLockMx);
+    }
+}
+
+void brainRecordDirUnlock(const char *dir) {
+    char key[128];
+    int i;
+    if (!dir || !dir[0]) return;
+    dirKey(dir, key, sizeof key);
+    if (!key[0] || !dirLockInit()) return;
+    SDL_LockMutex(g_dirLockMx);
+    i = dirLockFind(key);
+    if (i >= 0) g_dirLocked[i][0] = '\0';
+    SDL_BroadcastCondition(g_dirLockCv);
+    SDL_UnlockMutex(g_dirLockMx);
+}
+
+static int compressLogsLocked(const char *dir);
+
+int brainRecordCompressLogsNow(const char *dir) {
+    if (!dir || !dir[0]) return 0;
+    /* A Bot Host merge into this folder ends first. */
+    bool locked = brainRecordDirLock(dir);
+    int n = compressLogsLocked(dir);
+    if (locked) brainRecordDirUnlock(dir);
+    return n;
+}
+
+static int compressLogsLocked(const char *dir) {
+    LogEnumCtx c;
+    memset(&c, 0, sizeof c);
+    SDL_EnumerateDirectory(dir, logEnumCb, &c);
+    int done = 0;
+    for (int i = 0; i < c.n; i++) {
+        char path[1024];
+        if (snprintf(path, sizeof path, "%s/%s", dir, c.names[i]) < (int)sizeof path &&
+            compressOneLog(path))
+            done++;
+        SDL_free(c.names[i]);
+    }
+    free(c.names);
+    return done;
+}
+
+#define LOGZ_MAX_JOBS 8
+typedef struct {
+    SDL_Thread   *th;
+    SDL_AtomicInt done;   /* the thread has finished its folder */
+    char          dir[512];
+} LogZJob;
+static LogZJob g_logzJobs[LOGZ_MAX_JOBS];
+static char    g_logzDeferred[512];
+
+static int SDLCALL logzThreadFn(void *arg) {
+    LogZJob *j = (LogZJob *)arg;
+    int n = brainRecordCompressLogsNow(j->dir);
+    fprintf(stderr, "brain_record: compressed %d log file(s) in %s\n", n, j->dir);
+    SDL_SetAtomicInt(&j->done, 1);
+    return 0;
+}
+
+bool brainRecordLogCompressPending(const char *dir) {
+    if (!dir || !dir[0]) return false;
+    if (dirKeySame(dir, g_sessionDir)) return true;    /* the open block */
+    if (dirKeySame(dir, g_logzDeferred)) return true;  /* waits for the next block */
+    for (int i = 0; i < LOGZ_MAX_JOBS; i++) {
+        if (g_logzJobs[i].th && SDL_GetAtomicInt(&g_logzJobs[i].done) == 0 &&
+            dirKeySame(dir, g_logzJobs[i].dir))
+            return true;
+    }
+    return false;
+}
+
+void brainRecordCompressLogsAsync(const char *dir) {
+    if (!dir || !dir[0]) return;
+    /* The print2 writer keeps its files open; close them first. */
+    brainCoreReleaseLogFiles();
+    int slot = -1;
+    /* A finished thread gives back its slot first. Without this every slot
+     * stays taken after eight folders, and each new folder then waits on
+     * the tick thread for slot 0's gzip, which can be the newest one. */
+    for (int i = 0; i < LOGZ_MAX_JOBS; i++) {
+        if (g_logzJobs[i].th != NULL &&
+            SDL_GetAtomicInt(&g_logzJobs[i].done) != 0) {
+            SDL_WaitThread(g_logzJobs[i].th, NULL);
+            g_logzJobs[i].th = NULL;
+        }
+    }
+    for (int i = 0; i < LOGZ_MAX_JOBS; i++) {
+        if (g_logzJobs[i].th == NULL) { slot = i; break; }
+    }
+    if (slot < 0) {
+        /* All slots busy: wait for the oldest one. Blocks lasting 15
+         * minutes make this rare. */
+        SDL_WaitThread(g_logzJobs[0].th, NULL);
+        g_logzJobs[0].th = NULL;
+        slot = 0;
+    }
+    LogZJob *j = &g_logzJobs[slot];
+    SDL_strlcpy(j->dir, dir, sizeof j->dir);
+    SDL_SetAtomicInt(&j->done, 0);
+    j->th = SDL_CreateThread(logzThreadFn, "brainrec_logz", j);
+    if (!j->th) {
+        /* No thread: do it here rather than not at all. */
+        brainRecordCompressLogsNow(dir);
+    }
+}
+
+void brainRecordDeferLogCompress(const char *dir) {
+    if (!dir || !dir[0]) return;
+    if (g_logzDeferred[0] && strcmp(g_logzDeferred, dir) != 0)
+        brainRecordCompressLogsAsync(g_logzDeferred);
+    SDL_strlcpy(g_logzDeferred, dir, sizeof g_logzDeferred);
+}
+
+void brainRecordRunDeferredLogCompress(void) {
+    if (!g_logzDeferred[0]) return;
+    char dir[512];
+    SDL_strlcpy(dir, g_logzDeferred, sizeof dir);
+    g_logzDeferred[0] = '\0';
+    brainRecordCompressLogsAsync(dir);
+}
+
+void brainRecordFinishLogCompress(void) {
+    brainRecordRunDeferredLogCompress();
+    for (int i = 0; i < LOGZ_MAX_JOBS; i++) {
+        if (g_logzJobs[i].th) {
+            SDL_WaitThread(g_logzJobs[i].th, NULL);
+            g_logzJobs[i].th = NULL;
+        }
+    }
 }

@@ -95,9 +95,10 @@ BrainRecWalkStatus brainRecWalkPreamble(BrainRecReader *r,
 BrainRecWalkStatus brainRecWalkFrame(BrainRecReader *r, BrainRecFrameInfo *out);
 
 /* Read a whole brainrec.btr file and report the tick of its first and last
- * frame and how many frames it has. The last frame's tick is only known at
- * the end of the gzip stream, so this reads all of it: about 5 s for a
- * 450 MB file. Callers that can, read brainrec_ticks.txt first (see
+ * frame and how many frames it has. The file is zstd or old gzip (read
+ * through brain_record_io.h). The last frame's tick is only known at the
+ * end of the data, so this walks all of it: about 5 s for a 450 MB gzip
+ * file. Callers that can, read brainrec_ticks.txt first (see
  * brain_record_ticks.h). A file cut off mid-frame (a killed server) reports
  * the frames before the cut. cancelled (may be NULL) is asked as the read
  * goes; when it returns true the walk stops and this returns false.
@@ -105,6 +106,11 @@ BrainRecWalkStatus brainRecWalkFrame(BrainRecReader *r, BrainRecFrameInfo *out);
 bool brainRecWalkFileTicks(const char *btrPath, uint32_t *firstTick,
                            uint32_t *lastTick, uint64_t *frames,
                            bool (*cancelled)(void *ctx), void *cancelCtx);
+/* Point r at an open .btr container reader (brain_record_io.h), so a
+ * caller walks a zstd or a gzip file the same way. r->version is left 0
+ * for brainRecWalkPreamble to fill. */
+struct BrainRecIn;
+void brainRecWalkReaderFromIn(BrainRecReader *r, struct BrainRecIn *in);
 
 #ifdef __cplusplus
 }

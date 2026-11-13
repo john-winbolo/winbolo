@@ -459,6 +459,66 @@
 #define STR_DLGLOBBY_SPECTATORS_FMT         1848
 /* Sender-name tag prepended to a spectator's lobby chat line */
 #define STR_DLGLOBBY_SPECTATOR_TAG          1866
+/* Lobby list of the Bot Hosts that run the server's bots: header ({number}
+ * = hosts), a row ({string1} = host name, {string2} = its state, {number} =
+ * bots it runs, {number2} = bots it can run), and the states */
+#define STR_DLGLOBBY_BOTHOSTS_FMT           3599
+#define STR_DLGLOBBY_BOTHOST_ROW_FMT        3429
+#define STR_DLGLOBBY_BOTHOST_CONNECTED      3430
+#define STR_DLGLOBBY_BOTHOST_SYNCING_FMT    3431
+#define STR_DLGLOBBY_BOTHOST_READY          3432
+#define STR_DLGLOBBY_BOTHOST_LATE           3433
+/* Why Ready is off while a Bot Host gets the brain files ({number} = %) */
+#define STR_DLGLOBBY_READY_BOTHOST_SYNC_FMT 3434
+/* A Bot Host's brain recordings, in place of its state on its row:
+ * sending them ({number} = %, {number2} = bots sent, {number3} = bots to
+ * send), stopped for low disk, and the server merging them */
+#define STR_DLGLOBBY_BOTHOST_REC_UPLOAD_FMT 3435
+#define STR_DLGLOBBY_BOTHOST_REC_LOWDISK    3436
+#define STR_DLGLOBBY_BOTHOST_REC_MERGING    3437
+/* The Bot Host inside this client: the lobby line under the Bot Host rows
+ * ({number} = bots it runs now, {number2} = bots it can run), and the
+ * newswire line when the count changes ({number} = bots it runs now) */
+#define STR_DLGLOBBY_CLIENT_BOTHOST_FMT     3600
+#define STR_CLIENT_BOTHOST_NEWS_FMT         3601
+/* The server's own row at the bottom of the lobby's Bot Host rows: its
+ * name, and what it shows in place of the brain file state */
+#define STR_DLGLOBBY_BOTHOST_SERVER_NAME    3602
+#define STR_DLGLOBBY_BOTHOST_SERVER_STATE   3603
+/* The lobby's Server bot slots row (Server Settings): its label, the
+ * warning on a value above the CPU test's recommendation ({number}), the
+ * mouse-over while -botcapacity locks it, the box with no cap, the box
+ * while the CPU test runs, and the mouse-over with the recommendation
+ * ({number}) */
+#define STR_DLGLOBBY_SERVER_BOT_SLOTS 3899
+#define STR_DLGLOBBY_SERVER_BOT_SLOTS_OVER 3900
+#define STR_DLGLOBBY_SERVER_BOT_SLOTS_LOCKED 3901
+#define STR_DLGLOBBY_SERVER_BOT_SLOTS_NONE 3902
+#define STR_DLGLOBBY_SERVER_BOT_SLOTS_MEASURING 3903
+#define STR_DLGLOBBY_SERVER_BOT_SLOTS_TIP 3904
+/* A Bot Host row that gets 0 slots because it shares its computer with the
+ * server ({string1} the row's name) or with another host ({string2}) */
+#define STR_DLGLOBBY_BOTHOST_SAME_SERVER 3905
+#define STR_DLGLOBBY_BOTHOST_SAME_HOST 3906
+/* Dynamic bot slots in the lobby's Bot Host rows: the note under the
+ * heading; a row ({string1} the row's name, {number} the free CPU percent
+ * it tries to keep); its Max slots box: the label, the mouse-over on a
+ * value above the slots its CPU estimate says fit ({number}), and the
+ * mouse-over on the player's own row, another player's row and a Bot Host
+ * program's row */
+#define STR_DLGLOBBY_BOTHOSTS_NOTE 3931
+#define STR_DLGLOBBY_BOTHOST_RESERVE_FMT 3932
+#define STR_DLGLOBBY_BOTHOST_MAX_LABEL 3933
+#define STR_DLGLOBBY_BOTHOST_MAX_OVER 3934
+#define STR_DLGLOBBY_BOTHOST_MAX_OWN_TIP 3935
+#define STR_DLGLOBBY_BOTHOST_MAX_PLAYER_TIP 3936
+#define STR_DLGLOBBY_BOTHOST_MAX_DEDICATED_TIP 3937
+/* The question this computer's Bot Host asks before it runs bot code a
+ * server sent (a client built with WINBOLO_BOTHOST_OFFICIAL_ONLY off) */
+#define STR_DLGLOBBY_BOTHOST_CONSENT_TITLE 3927
+#define STR_DLGLOBBY_BOTHOST_CONSENT_TEXT 3928
+#define STR_DLGLOBBY_BOTHOST_CONSENT_YES 3929
+#define STR_DLGLOBBY_BOTHOST_CONSENT_NO 3930
 /* Map-preview start-picker tooltips and the assign-to-someone menu */
 #define STR_STARTPICK_TIP_FREE_HOST         1512
 #define STR_STARTPICK_TIP_FREE              1513
@@ -1573,6 +1633,12 @@
 #define STR_DLGSYSINFO_SIMULATION           1236
 #define STR_DLGSYSINFO_BOTPREP              1237
 #define STR_DLGSYSINFO_BRAIN_OVERRUNS       1238
+/* The header over each host's bot rows, in System Info and in the Log
+   Viewer's Server timing: HOST_SERVER for bots in the server's process,
+   HOST_BOTHOST_FMT for a Bot Host, string1 its name as the lobby rows show
+   it ("?" when the name is not known). */
+#define STR_DLGSYSINFO_HOST_SERVER          3185
+#define STR_DLGSYSINFO_HOST_BOTHOST_FMT     3186
 
 /* macOS native menu — App / File / Window menu items mirrored by
  * src/gui/sdl3/platform/mac_menubar.mm. Not used by the in-window menu. */
@@ -1690,6 +1756,12 @@
 #define STR_DLGLOBBY_BOT_NAMING             1315
 #define STR_DLGLOBBY_ADDBOT_LBL             1316
 #define STR_DLGLOBBY_TOOLTIP_ADDBOT         1317
+/* Why Add Bot is off: the CPU speed test is running, or the bots that run
+   on this computer have reached the brain's capacity answer. */
+#define STR_DLGLOBBY_ADDBOT_MEASURING       3490
+#define STR_DLGLOBBY_ADDBOT_FULL            3491
+#define STR_DLGLOBBY_ADDBOT_SERVER_MEASURING 3492
+#define STR_DLGLOBBY_ADDBOT_SERVER_FULL     3493
 #define STR_DLGLOBBY_TOOLTIP_RMTEAM         1318
 #define STR_DLGLOBBY_TOOLTIP_DRAG           1319
 #define STR_DLGLOBBY_TAG_HOST               1320
@@ -3672,6 +3744,74 @@
 
 /* The replay's recording mode button, which shows the GIF controls */
 #define STR_REEL_RECORD_MODE_TIP                 3150
+
+/* The Log Viewer's Bot Hosts window (log_BotHostData): title, the line for a
+ * replay with no records, host names, the graph's lines, the decisions and
+ * the lines of a marker's tooltip */
+#define STR_LV_WIN_BOT_HOSTS                     3860
+#define STR_LV_BOTHOST_NONE                      3861
+#define STR_LV_BOTHOST_SERVER                    3862
+#define STR_LV_BOTHOST_PLAYER                    3863
+#define STR_LV_BOTHOST_LISTED                    3864
+#define STR_LV_BOTHOST_UNNAMED                   3865
+#define STR_LV_BOTHOST_RATE                      3866
+#define STR_LV_BOTHOST_FREE                      3867
+#define STR_LV_BOTHOST_BOT_CPU                   3868
+#define STR_LV_BOTHOST_BOTS                      3869
+#define STR_LV_BOTHOST_LIMIT                     3870
+#define STR_LV_BOTHOST_DEC_TRIGGER               3871
+#define STR_LV_BOTHOST_DEC_MOVE                  3872
+#define STR_LV_BOTHOST_DEC_CUT                   3873
+#define STR_LV_BOTHOST_DEC_RAISE                 3874
+#define STR_LV_BOTHOST_DEC_RAISE_REFUSED         3875
+#define STR_LV_BOTHOST_DEC_PLACE_REFUSED         3876
+#define STR_LV_BOTHOST_DEC_OTHER                 3877
+#define STR_LV_BOTHOST_TIP_TIME                  3878
+#define STR_LV_BOTHOST_TIP_REASON                3879
+#define STR_LV_BOTHOST_TIP_PREDICTED             3880
+#define STR_LV_BOTHOST_TIP_COST                  3881
+#define STR_LV_BOTHOST_TIP_FREE_AVG              3882
+#define STR_LV_BOTHOST_TIP_LOWEST_CLEAN          3883
+#define STR_LV_BOTHOST_TIP_HIGHEST_BAD           3884
+#define STR_LV_BOTHOST_TIP_LIMIT                 3885
+#define STR_LV_BOTHOST_TIP_BAD_SHARE             3886
+#define STR_LV_BOTHOST_TIP_SEAT                  3887
+#define STR_LV_BOTHOST_TIP_TO                    3888
+#define STR_LV_BOTHOST_NOT_KNOWN                 3889
+#define STR_LV_BOTHOST_NO_LIMIT                  3890
+#define STR_LV_BOTHOST_TIP_PROBE                 3891
+#define STR_LV_BOTHOST_TIP_BAD_PROBE             3892
+#define STR_LV_BOTHOST_TIP_READING               3893
+#define STR_LV_BOTHOST_TIP_BOTS                  3894
+/* A decision marker: the bot would move, but -bothost-nomove keeps it */
+#define STR_LV_BOTHOST_DEC_WOULD_MOVE            3895
+/* The overrun move (bothost record version 2): the decision, the window
+ * rate, the rates, rule, m and stay of a move, and the rule names */
+#define STR_LV_BOTHOST_DEC_NO_BETTER             3915
+#define STR_LV_BOTHOST_TIP_WINDOW_RATE           3916
+#define STR_LV_BOTHOST_TIP_RATES                 3917
+#define STR_LV_BOTHOST_TIP_MOVE_RULE             3918
+#define STR_LV_BOTHOST_TIP_STAY                  3919
+#define STR_LV_BOTHOST_RULE_NORMAL               3920
+#define STR_LV_BOTHOST_RULE_EMERGENCY            3921
+#define STR_LV_BOTHOST_RULE_TRIAL                3922
+/* Dynamic slots (bothost record version 3): the decisions (a raise, a game
+ * at the start, a game at the last game's limit) and a probe's start
+ * ({string1}) and ceiling ({number}) */
+#define STR_LV_BOTHOST_DEC_LIMIT_RAISE           3938
+#define STR_LV_BOTHOST_DEC_LIMIT_START           3939
+#define STR_LV_BOTHOST_DEC_LIMIT_CARRY           3940
+#define STR_LV_BOTHOST_TIP_DYNAMIC               3941
+
+/* The dedicated server's newswire lines for a bot held because neither the
+ * server nor a Bot Host has a slot for it (-bothost-enforce-server-limit) */
+#define STR_BOTHOST_BOT_PAUSED                   3923
+#define STR_BOTHOST_BOT_RUNS_AGAIN               3924
+
+/* The lobby's Bot Host row of a player's computer when the server sent no
+ * name: the player's number, or, when that is not known, a plain name */
+#define STR_DLGLOBBY_BOTHOST_PLAYER_NAME         3925
+#define STR_DLGLOBBY_BOTHOST_NO_NAME             3926
 
 /* The Log Viewer's Chat panel: title, empty line, team and private notes */
 #define STR_LV_WIN_CHAT                          3100

@@ -45,9 +45,115 @@
 #include "sim_rules_names.h" /* SIM_RULE_COUNT — the scenario rules event's
                              * row cap, taken from the rule list itself */
 
+#include "scenario_table.h" /* SCN_TABLE_KEY_LEN for the Bot Host table events */
+#include "overrun_record.h" /* OVERRUN_RECORD_MAX_BYTES for CTRL_BOT_TIMING */
+
+/* Field sizes of the Bot Host events. */
+#define BOT_HOST_TOKEN_LEN        16   /* == JOIN_BOT_SLOT_TOKEN_LEN */
+#define BOT_HOST_EVT_NAME_LEN     PACKET_MAX_PLAYER_NAME
+#define BOT_HOST_BRAIN_NAME_LEN   64
+/* The bytes of a CTRL_BOT_HOST_TICKET ticket. */
+#define BOT_HOST_TICKET_LEN       16
+#define BOT_HOST_INIT_ARG_LEN     128  /* == BRAIN_INIT_ARG_MAX */
+#define BOT_HOST_TEAM_MSG_LEN     (PACKET_MAX_CHAT_MESSAGE + 2) /* == BRAIN_INBOX_MSG_LEN */
+#define BOT_HOST_STATUS_NAME_LEN  CLIENT_BOT_HOST_NAME_LEN /* == JOIN_BOT_HOST_NAME_LEN */
+#define BOT_HOST_STATUS_ROWS      CLIENT_BOT_HOST_ROWS     /* == MAX_BOT_HOSTS + 1:
+                                                           * the last is the
+                                                           * server's own row */
+/* CTRL_BOT_HOST_SLOTS refuseSeat when no assign is turned down. */
+#define BOT_HOST_SLOTS_NO_REFUSE  0xFFu
+/* CTRL_BOT_HOST_CPU idx from a Bot Host: its own estimate. */
+#define BOT_HOST_CPU_IDX_SELF     0xFFu
+/* CTRL_BOT_HOST_CPU_BOT owner of a row that is not a player's own host. */
+#define BOT_HOST_CPU_OWNER_NONE   0xFFu
+/* CTRL_BOT_HOST_LAG: no lag measured yet. */
+#define BOT_HOST_LAG_UNKNOWN      0xFFFFu
+#define BOT_HOST_LAG_SEND_STEP_MS 5
+/* CTRL_BOT_HOST_MACHINE_*: the salt and the answer (machine_id.h). */
+#define BOT_HOST_MACHINE_SALT_LEN 16   /* == MACHINE_SALT_LEN */
+#define BOT_HOST_MACHINE_HASH_LEN 32   /* == MACHINE_HASH_LEN */
+/* CTRL_BOT_HOST_PACK_REQ: one bit per brain file, BRAIN_SYNC_MAX_FILES
+ * of them (== BRAIN_PACK_BITMAP_BYTES of brain_pack.h). */
+#define BOT_HOST_PACK_BITMAP_BYTES 128
+/* CTRL_BOT_HOST_LIMITS and _ROW_LIMITS: no value. */
+#define BOT_HOST_LIMIT_NONE 0xFFu
+/* CTRL_BOT_HOST_ROW_SLOTS: no override, and no other row. */
+#define BOT_HOST_SLOT_OVERRIDE_NONE 0xFFu
+#define BOT_HOST_MACHINE_OTHER_NONE 0xFFu
+
+/* BOT_HOST_SYNC_* (the brain sync states) and BOT_HOST_REC_STATE_* (the
+ * recording states) are in client_sim.h. */
+
+/* CTRL_BOT_HOST_REC ops. Server to host: */
+#define BOT_HOST_REC_OP_OPEN     1  /* a block opened: record into it */
+#define BOT_HOST_REC_OP_CLOSE    2  /* the block closed: finish its files */
+#define BOT_HOST_REC_OP_UPLOAD   3  /* send the finished blocks now */
+#define BOT_HOST_REC_OP_HOLD     4  /* a game runs: stop sending */
+#define BOT_HOST_REC_OP_CLEAR    5  /* delete this server's recordings */
+#define BOT_HOST_REC_OP_ACK      6  /* a block upload was taken (state) */
+/* Host to server: */
+#define BOT_HOST_REC_OP_STATE    16 /* the recording state and progress */
+#define BOT_HOST_REC_OP_DONE     17 /* every file of the block is sent */
+#define BOT_HOST_REC_OP_CLEARED  18 /* CLEAR done: a, b = bytes lo, hi */
+#define BOT_HOST_REC_OP_MAX      18
+/* OPEN flags: the debug parts the server records. */
+#define BOT_HOST_REC_F_VIZ       0x01u
+#define BOT_HOST_REC_F_PRINT2    0x02u
+#define BOT_HOST_REC_F_JSONL     0x04u
+#define BOT_HOST_REC_F_POOL      0x08u
+/* OPEN flag: the server reads the raw pool capture (WBPR2), so the host
+ * may record it in place of the panel JSON. Without it, and before the
+ * OPEN, the host records JSON, which every reader accepts. A server whose
+ * reader takes only JSON never sets it. 0x10 is LOWDISK; keep them apart. */
+#define BOT_HOST_REC_F_POOL_RAW  0x20u
+/* UPLOAD flag: send slowly, a game may start any time (map rotation). */
+#define BOT_HOST_REC_F_PACED     0x01u
+/* DONE and STATE flag: the host stopped recording for low disk. */
+#define BOT_HOST_REC_F_LOWDISK   0x10u
+/* ACK results, in state. The host keeps its files in every case; only
+ * CLEAR deletes them. */
+#define BOT_HOST_REC_ACK_MERGED  1  /* every host file was read and filled
+                                     * entries: the host marks the block
+                                     * uploaded */
+#define BOT_HOST_REC_ACK_SAVED   2  /* older servers: kept beside the session;
+                                     * the host marks the block uploaded */
+#define BOT_HOST_REC_ACK_FAILED  3  /* not merged: the host keeps the block
+                                     * not uploaded and sends it again */
+/* ACK FAILED: the reason in percent, the host files that could not be read
+ * in botsDone, the host files that filled no entry in botsTotal. */
+#define BOT_HOST_REC_FAIL_NONE       0
+#define BOT_HOST_REC_FAIL_BROKEN     1  /* the upload came in broken */
+#define BOT_HOST_REC_FAIL_NO_SESSION 2  /* no such finished session folder */
+#define BOT_HOST_REC_FAIL_NO_THREAD  3  /* the merge could not start */
+#define BOT_HOST_REC_FAIL_MERGE      4  /* the merge stopped on an error */
+#define BOT_HOST_REC_FAIL_NO_BTR     5  /* the session has no brainrec.btr */
+#define BOT_HOST_REC_FAIL_UNREADABLE 6  /* a host file could not be read */
+#define BOT_HOST_REC_FAIL_NO_FILL    7  /* a host file filled no entry */
+#define BOT_HOST_REC_BLOCK_LEN   64
+
 #ifndef LOBBY_TEAM_NAME_LEN
 #define LOBBY_TEAM_NAME_LEN 32
 #endif
+
+/* The lobby settings byte for the server's host bot capacity
+ * (serverSimGetHostBotCapacity). 0..16 is the number itself. */
+#define LOBBY_HOST_BOT_CAPACITY_WIRE_NONE      0xFF
+#define LOBBY_HOST_BOT_CAPACITY_WIRE_MEASURING 0xFE
+
+/* The sim's value (0..16, -1 no cap, -2 measuring) as the byte, and back.
+ * A byte this build does not know reads as no cap: the server checks every
+ * add itself, so a wrong read here only shows a button the server refuses. */
+static inline uint8_t lobbyHostBotCapacityToWire(int capacity) {
+    if (capacity == -2) return LOBBY_HOST_BOT_CAPACITY_WIRE_MEASURING;
+    if (capacity < 0) return LOBBY_HOST_BOT_CAPACITY_WIRE_NONE;
+    if (capacity > MAX_TANKS) return (uint8_t)MAX_TANKS;
+    return (uint8_t)capacity;
+}
+static inline int lobbyHostBotCapacityFromWire(uint8_t wire) {
+    if (wire == LOBBY_HOST_BOT_CAPACITY_WIRE_MEASURING) return -2;
+    if (wire > MAX_TANKS) return -1;
+    return (int)wire;
+}
 
 typedef enum {
     CTRL_ALLIANCE_REQUEST,
@@ -419,6 +525,205 @@ typedef enum {
      * Appended at the END, like every type above it: the tables in
      * transport_control_codec.c are indexed by this enum. */
     CTRL_SCN_POPUP,
+    /* Bot Host events. The server sends all five on a Bot Host's control
+     * connection only, straight onto that connection's CHANNEL_CONTROL and
+     * never through the control bus, so no player and no spectator ever
+     * receives one. Each names the bot seat it is about.
+     *
+     * CTRL_BOT_HOST_ASSIGN — run a brain for this seat: open a bot
+     * connection with the token and run the named brain at the given AI
+     * level with the given init arg. A later assign for a seat the host
+     * already runs carries a higher gen and replaces the brain settings;
+     * reload set asks the host to make a new brain (a round start). */
+    CTRL_BOT_HOST_ASSIGN,
+    /* CTRL_BOT_HOST_UNASSIGN — stop the brain for this seat and close its
+     * bot connection. */
+    CTRL_BOT_HOST_UNASSIGN,
+    /* CTRL_BOT_INIT_TABLE — one entry of the seat's BRAIN_INIT table, the
+     * table a scenario gives the bot. Entries arrive idx 0..count-1 in order;
+     * the host takes the table when idx == count - 1. An empty table is one
+     * event with count 0. */
+    CTRL_BOT_INIT_TABLE,
+    /* CTRL_BOT_HINT — one entry of a scenario hint for the seat's brain, in
+     * the same form as CTRL_BOT_INIT_TABLE. The host calls the brain's hint
+     * handler when the last entry arrives. */
+    CTRL_BOT_HINT,
+    /* CTRL_BOT_TEAM_MSG — a bot team message from an allied bot, for the
+     * seat's brain inbox. Humans never receive these. */
+    CTRL_BOT_TEAM_MSG,
+    /* CTRL_BOT_HOST_STATUS — one row of the lobby's Bot Host list: a
+     * connected Bot Host's name, its slots, and how far its brain sync has
+     * gone. The server sends it to lobby players and spectators when a row
+     * changes, and in the join replay, so the lobby can show the hosts
+     * where it lists spectators, with the bots placed on each host. A Bot
+     * Host is never a player: it has no roster row and no join or leave
+     * line. connected 0 clears the row. */
+    CTRL_BOT_HOST_STATUS,
+    /* CTRL_BOT_HOST_FILE_REQ — Bot Host to server, on the host's control
+     * connection: send this file of the brain manifest. The server answers
+     * on CHANNEL_BULK with the file in BULK_KIND_BRAIN_CHUNK pieces. */
+    CTRL_BOT_HOST_FILE_REQ,
+    /* CTRL_BOT_HOST_SYNC — Bot Host to server: how far the host is with the
+     * manifest of generation gen (bytes done and to do), and ready once it
+     * holds every file of it. */
+    CTRL_BOT_HOST_SYNC,
+    /* CTRL_BOT_HOST_SLOTS — Bot Host to server: the bot seats this server
+     * may give the host now, which is the seats it runs for this server
+     * plus the seats of its pool no server holds. A host shared by several
+     * servers sends it each time that number changes. With refuseSeat below
+     * MAX_TANKS it also turns down the assign of that seat (refuseGen is the
+     * assign's gen): its pool filled first, and the seat stays in-process. */
+    CTRL_BOT_HOST_SLOTS,
+    /* CTRL_BOT_HOST_REC — brain recordings of the bots a Bot Host runs,
+     * both ways on the host's control connection. The server tells the
+     * host when a -brain-debug session block opens and closes, and when to
+     * upload; the host records each of its bots into a folder of the same
+     * name, uploads the finished blocks on CHANNEL_BULK in
+     * BULK_KIND_REC_CHUNK pieces, and reports its state. op is a
+     * BOT_HOST_REC_OP_* value. */
+    CTRL_BOT_HOST_REC,
+    /* CTRL_BOT_HOST_TICKET — server to one player, straight onto that
+     * player's CHANNEL_CONTROL and never through the control bus: the
+     * one-time ticket that lets the player's own computer run bots for the
+     * server. The player's client starts a Bot Host of its own inside the
+     * program and joins with it, giving the ticket and its player number;
+     * the server takes that host only while the player is connected, only
+     * from the player's address, and drops it when the player leaves.
+     * brain names the server's bot brain, for the client's capacity check.
+     * An older client has no decoder for the type and skips it. */
+    CTRL_BOT_HOST_TICKET,
+    /* CTRL_BOT_HOST_CPU — the estimate of how much of its machine's CPU a
+     * Bot Host's bots use (bot_host_cpu.h), one byte. Bot Host to server on
+     * the host's control connection (idx BOT_HOST_CPU_IDX_SELF), each time
+     * the byte changes; server to lobby players and spectators for row idx
+     * of the Bot Host list, after that row's CTRL_BOT_HOST_STATUS. It is a
+     * type of its own, not a byte added to CTRL_BOT_HOST_SLOTS or
+     * CTRL_BOT_HOST_STATUS, because those decoders take only their exact
+     * length: an older server or client would drop the whole message. An
+     * older peer has no decoder for this type and skips it. */
+    CTRL_BOT_HOST_CPU,
+    /* CTRL_BOT_HOST_CPU_FREE — Bot Host to server on the host's control
+     * connection, one reading each 5 s: the free (idle) CPU of the host's
+     * whole machine, all cores, 0..100, or BOT_HOST_CPU_UNKNOWN when it is
+     * not known (machine_cpu_free.h). Only the percent: no core count and
+     * no CPU name. The server's bot placement keeps a history of these
+     * (botHostOverrunProbe). A type of its own, as CTRL_BOT_HOST_CPU, so an
+     * older server skips it. */
+    CTRL_BOT_HOST_CPU_FREE,
+    /* CTRL_BOT_HOST_CPU_BOT — the part of its machine's CPU that one of a
+     * Bot Host's bots uses, in thousandths of a percent (bot_host_cpu.h), as
+     * a uint32. CTRL_BOT_HOST_CPU's whole percent is too coarse for one bot.
+     * Bot Host to server (idx BOT_HOST_CPU_IDX_SELF) when it changes; server
+     * to lobby players and spectators for row idx, with owner: the player
+     * whose own computer the host is, or BOT_HOST_CPU_OWNER_NONE. A type of
+     * its own, as CTRL_BOT_HOST_CPU, so an older peer skips it. */
+    CTRL_BOT_HOST_CPU_BOT,
+    /* CTRL_BOT_HOST_LAG — server to lobby players and spectators: the lag
+     * the server measures to Bot Host row idx for the bot placement (the
+     * round trip, smoothed over about 10 s), in ms, or BOT_HOST_LAG_UNKNOWN.
+     * Sent when it changes by BOT_HOST_LAG_SEND_STEP_MS or more, at most
+     * once each second. The lobby shows it as the row's ping. A type of its
+     * own, as CTRL_BOT_HOST_CPU, so an older client skips it; a row with no
+     * CTRL_BOT_HOST_LAG shows no ping. */
+    CTRL_BOT_HOST_LAG,
+    /* CTRL_SERVER_BOT_SLOTS — server to lobby players and spectators: the
+     * lobby's Server bot slots. value is the number in use (0..16, or the
+     * LOBBY_HOST_BOT_CAPACITY_WIRE_* bytes), recommended the CPU test's
+     * (or -botcapacity's) number in the same form, locked non-zero when
+     * -botcapacity set it. Sent with every lobby settings event and on
+     * join. A type of its own, so an older client skips it; a client with
+     * none shows no Server bot slots row. */
+    CTRL_SERVER_BOT_SLOTS,
+    /* CTRL_BOT_HOST_MACHINE_SALT — server to Bot Host: a new random salt.
+     * The host answers with CTRL_BOT_HOST_MACHINE_ANSWER, so the server can
+     * find hosts on one computer (bot_host_machine.h). A new salt goes out
+     * when a host joins, and for each lobby and each game. An older host
+     * skips it and gives no answer: it counts as another computer. */
+    CTRL_BOT_HOST_MACHINE_SALT,
+    /* CTRL_BOT_HOST_MACHINE_ANSWER — Bot Host to server: the salt and
+     * SHA-256(machine id || salt). The id never leaves the computer. A
+     * host answers each salt once only. */
+    CTRL_BOT_HOST_MACHINE_ANSWER,
+    /* CTRL_BOT_HOST_ROW_SLOTS — server to lobby players and spectators: for
+     * Bot Host row idx, what it shares its computer with (machineKind, a
+     * BOT_HOST_MACHINE_* of bot_host_machine.h, and machineOther, the row
+     * of the other host, or BOT_HOST_MACHINE_OTHER_NONE), whether that
+     * gives it 0 slots (zero), and the row's slot override (0..16, or
+     * BOT_HOST_SLOT_OVERRIDE_NONE) and whether -bothost-slots locks it.
+     * Sent when it changes and on join. A type of its own, so an older
+     * client skips it and shows the row as before. */
+    CTRL_BOT_HOST_ROW_SLOTS,
+    /* CTRL_BOT_HOST_SYNC_CAPS — Bot Host to server, once it is connected:
+     * the brain sync ways it can take (BRAIN_PACK_CAP_* of brain_pack.h).
+     * With BRAIN_PACK_CAP_PACKED the server sends the v2 manifest and
+     * answers CTRL_BOT_HOST_PACK_REQ. A type of its own, so an older server
+     * skips it and keeps the old way; an older host sends none, and the
+     * server keeps the old way for it. */
+    CTRL_BOT_HOST_SYNC_CAPS,
+    /* CTRL_BOT_HOST_PACK_REQ — Bot Host to server, one per brain of a v2
+     * manifest: the files of brain the host needs (a bitmap of fileCount
+     * bits) and how many it has from its install and from its cache. The
+     * server sends the files set in the bitmap as one zstd stream in
+     * BULK_KIND_BRAIN_PACK pieces; none for an empty bitmap. */
+    CTRL_BOT_HOST_PACK_REQ,
+    /* CTRL_BOT_HOST_CPU_BUDGET — Bot Host to server: the full-budget
+     * estimate of one bot's part of its machine's CPU, in thousandths of a
+     * percent (bot_host_cpu.h): the think budget the host would give a new
+     * bot over the time between thinks, over its logical cores. Only the
+     * number; the core count stays on the machine. The server shows it
+     * while the host has no measured value, and uses it as the one-bot cost
+     * of the free CPU check. Sent on connect and when it changes. A type of
+     * its own, so an older server skips it. */
+    CTRL_BOT_HOST_CPU_BUDGET,
+    /* CTRL_BOT_HOST_SAME_SERVER — server to a player's own Bot Host (the
+     * one inside a client), once a connection: the host is on the server's
+     * computer (kind, BOT_HOST_MACHINE_SERVER of bot_host_machine.h), so it
+     * gets 0 slots. The host stops for this join: no brain files, no CPU
+     * readings, 0 slots, no bots. It stays connected, so the lobby keeps
+     * its row. A type of its own, so an older host skips it and only gets
+     * 0 slots, as before. */
+    CTRL_BOT_HOST_SAME_SERVER,
+    /* CTRL_BOT_TIMING — server to every player and spectator, once a
+     * second while the game has bots, and once with no bots when the last
+     * bot goes: each bot's think timing for System Info. The body is a
+     * log_OverrunStats record (overrun_record.h, docs/replay-format.md), so
+     * it holds each bot's player slot, last and peak think, overruns and
+     * thinks, the host its brain runs on, and the host name table, at most
+     * OVERRUN_RECORD_MAX_BYTES (781). A type of its own, so an older client
+     * has no decoder for it and skips it; a client of an older server gets
+     * none and shows no bot rows when it does not host the game. */
+    CTRL_BOT_TIMING,
+    /* CTRL_BOT_HOST_HELD — server to lobby players and spectators: for the
+     * server's own row of the Bot Host list (idx MAX_BOT_HOSTS), the lobby
+     * bot seats with no bot running anywhere yet, such as a scenario's
+     * seats held for a later wave, bit n for player n. The lobby lists
+     * them under that row by name, with the server's bots. They are not
+     * in the row's used count or its seats, and the bot placement does not
+     * read them. Sent when the bits change and on join. A type of its own,
+     * not a field added to CTRL_BOT_HOST_STATUS, because that decoder takes
+     * only its exact length: an older client skips this type and lists
+     * the row as before. */
+    CTRL_BOT_HOST_HELD,
+    /* CTRL_BOT_HOST_LIMITS — both ways, for dynamic slots
+     * (-bothost-dynamic-slots). Server to Bot Host, once a connection,
+     * with every byte BOT_HOST_LIMIT_NONE: the server knows dynamic slots,
+     * so the host may offer its ceiling. Bot Host to server, as its answer
+     * and when a value changes: start, the slots a game starts at; ceiling,
+     * the most it runs (its CTRL_BOT_HOST_SLOTS then counts up to it); and
+     * reserve, the free CPU percent it tries to keep. BOT_HOST_LIMIT_NONE
+     * in start or reserve: the server's own value (-bothost-client-start,
+     * -bothost-raise-reserve-pct). A host with no hello offers only its
+     * start, so an older server never sees the ceiling as its slots; an
+     * older host sends no answer and keeps fixed slots. */
+    CTRL_BOT_HOST_LIMITS,
+    /* CTRL_BOT_HOST_ROW_LIMITS — server to lobby players and spectators:
+     * for Bot Host row idx, its ceiling (the row's Max slots), the free
+     * CPU percent it tries to keep, and the slots its own CPU estimate says
+     * fit while it keeps that free (BOT_HOST_LIMIT_NONE before the first
+     * CPU reading). Sent when it changes and on join. A type of its own,
+     * so an older client skips it; a client of an older server gets none
+     * and shows the row with no Max slots box. */
+    CTRL_BOT_HOST_ROW_LIMITS,
     CTRL_EVENT_TYPE_COUNT   /* sentinel — must stay last */
 } ControlEventType;
 
@@ -897,6 +1202,14 @@ typedef struct ControlEvent {
                                             * byte follows modsOff in the fixed
                                             * part; a body without it reads as
                                             * off, every sound centred. */
+            uint8_t  lobbyHostBotCapacity; /* how many bots the server runs
+                                            * in its own process at full
+                                            * strength: 0..16, or
+                                            * LOBBY_HOST_BOT_CAPACITY_WIRE_NONE
+                                            * (no cap) or _MEASURING (its CPU
+                                            * speed test runs). The byte after
+                                            * positionalSound; a body without
+                                            * it reads as no cap. */
             /* The scenario this lobby is running, if any. scenarioSource
              * none means there is none and the five fields below are empty:
              * a lobby with no scenario writes none of these bytes, so a
@@ -1417,6 +1730,211 @@ typedef struct ControlEvent {
             uint32_t id;
             uint32_t len;    /* compressed blob bytes, <= LOBBY_BOT_CATALOG_WIRE_MAX */
         } lobbyBotPoolInfo;
+
+        /* CTRL_BOT_HOST_ASSIGN — see the enum. */
+        struct {
+            uint8_t  seat;
+            uint8_t  reload;       /* 1: make a new brain now */
+            uint8_t  ai;           /* aiType */
+            uint8_t  team;
+            uint16_t gen;          /* rises with every change for the seat */
+            uint32_t startTick;    /* BRAIN_START_ENGINE_TICK for the brain */
+            uint32_t brainVersion; /* the brain file's version stamp */
+            uint8_t  token[BOT_HOST_TOKEN_LEN];
+            char     name[BOT_HOST_EVT_NAME_LEN];
+            char     brain[BOT_HOST_BRAIN_NAME_LEN];
+            char     initArg[BOT_HOST_INIT_ARG_LEN];
+        } botHostAssign;
+
+        /* CTRL_BOT_HOST_UNASSIGN — see the enum. */
+        struct {
+            uint8_t seat;
+        } botHostUnassign;
+
+        /* CTRL_BOT_INIT_TABLE and CTRL_BOT_HINT — one table entry. key is
+         * empty when count is 0. */
+        struct {
+            uint8_t seat;
+            uint8_t idx;
+            uint8_t count;
+            char    key[SCN_TABLE_KEY_LEN];
+            char    value[SCN_TABLE_VALUE_LEN];
+        } botTableEntry;
+
+        /* CTRL_BOT_TEAM_MSG — see the enum. */
+        struct {
+            uint8_t seat;        /* the receiving bot */
+            uint8_t fromPlayer;  /* the sending bot */
+            char    text[BOT_HOST_TEAM_MSG_LEN];
+        } botTeamMsg;
+
+        /* CTRL_BOT_HOST_STATUS — see the enum. */
+        struct {
+            uint8_t idx;         /* the host's row, below BOT_HOST_STATUS_ROWS */
+            uint8_t connected;
+            uint8_t state;       /* BOT_HOST_SYNC_* */
+            uint8_t percent;     /* 0..100, while state is SYNCING or LATE */
+            uint8_t used;        /* bot seats the host runs */
+            uint8_t slots;       /* bot seats the host offers */
+            /* The bots placed on the host, bit n for player n; the lobby
+             * looks their names up in the roster. */
+            uint16_t seats;
+            uint8_t recState;    /* BOT_HOST_REC_STATE_* */
+            uint8_t recPercent;  /* 0..100, while recState is UPLOADING */
+            uint8_t recBotsDone; /* UPLOADING: bots whose files are sent */
+            uint8_t recBots;     /* UPLOADING: bots with files to send */
+            char    name[BOT_HOST_STATUS_NAME_LEN];
+        } botHostStatus;
+
+        /* CTRL_BOT_HOST_CPU — see the enum. */
+        struct {
+            uint8_t idx;   /* the row, or BOT_HOST_CPU_IDX_SELF from a host */
+            uint8_t cpu;   /* 0..100, BOT_HOST_CPU_UNDER_ONE or _UNKNOWN */
+        } botHostCpu;
+
+        /* CTRL_BOT_HOST_CPU_FREE — see the enum. */
+        struct {
+            uint8_t free;  /* 0..100 or BOT_HOST_CPU_UNKNOWN */
+        } botHostCpuFree;
+
+        /* CTRL_BOT_HOST_CPU_BOT — see the enum. */
+        struct {
+            uint8_t  idx;    /* the row, or BOT_HOST_CPU_IDX_SELF from a host */
+            uint8_t  owner;  /* a player number, or BOT_HOST_CPU_OWNER_NONE */
+            uint32_t milli;  /* 1..100000, or BOT_HOST_CPU_MILLI_UNKNOWN */
+            uint8_t  source;  /* BOT_HOST_CPU_SRC_* (bot_host_cpu.h), server
+                               * to client; an older server sends none and
+                               * it reads as measured */
+        } botHostCpuBot;
+
+        /* CTRL_SERVER_BOT_SLOTS — see the enum. */
+        struct {
+            uint8_t value;
+            uint8_t recommended;
+            uint8_t locked;
+        } serverBotSlots;
+
+        /* CTRL_BOT_HOST_LAG — see the enum. */
+        struct {
+            uint8_t  idx;    /* the row */
+            uint16_t lagMs;  /* 1..65534, or BOT_HOST_LAG_UNKNOWN */
+        } botHostLag;
+
+        /* CTRL_BOT_HOST_MACHINE_SALT — see the enum. */
+        struct {
+            uint8_t salt[BOT_HOST_MACHINE_SALT_LEN];
+        } botHostMachineSalt;
+
+        /* CTRL_BOT_HOST_MACHINE_ANSWER — see the enum. */
+        struct {
+            uint8_t salt[BOT_HOST_MACHINE_SALT_LEN];
+            uint8_t hash[BOT_HOST_MACHINE_HASH_LEN];
+        } botHostMachineAnswer;
+
+        /* CTRL_BOT_HOST_ROW_SLOTS — see the enum. */
+        struct {
+            uint8_t idx;           /* the row, 0..MAX_BOT_HOSTS - 1 */
+            uint8_t machineKind;
+            uint8_t machineOther;
+            uint8_t zero;
+            uint8_t slotOverride;
+            uint8_t slotLocked;
+        } botHostRowSlots;
+
+        /* CTRL_BOT_HOST_SYNC_CAPS — see the enum. */
+        struct {
+            uint8_t caps;        /* BRAIN_PACK_CAP_* bits */
+        } botHostSyncCaps;
+
+        /* CTRL_BOT_HOST_PACK_REQ — see the enum. */
+        struct {
+            uint32_t gen;        /* the manifest generation */
+            uint8_t  brain;      /* index into the manifest's brains */
+            uint16_t fileCount;  /* the brain's files: the bits that count */
+            uint16_t fromInstall;
+            uint16_t fromCache;
+            uint8_t  bits[BOT_HOST_PACK_BITMAP_BYTES];
+        } botHostPackReq;
+
+        /* CTRL_BOT_HOST_CPU_BUDGET — see the enum. */
+        struct {
+            uint32_t milli;      /* BOT_HOST_CPU_MILLI_* */
+        } botHostCpuBudget;
+
+        /* CTRL_BOT_HOST_SAME_SERVER — see the enum. */
+        struct {
+            uint8_t kind;        /* BOT_HOST_MACHINE_SERVER */
+        } botHostSameServer;
+
+        /* CTRL_BOT_TIMING — see the enum. The record as overrunRecordEncode
+         * wrote it; overrunRecordDecode reads it. */
+        struct {
+            uint16_t len;
+            uint8_t  bytes[OVERRUN_RECORD_MAX_BYTES];
+        } botTiming;
+
+        /* CTRL_BOT_HOST_HELD — see the enum. */
+        struct {
+            uint8_t  idx;    /* the row, MAX_BOT_HOSTS for the server's */
+            uint16_t held;   /* bit n for player n */
+        } botHostHeld;
+
+        /* CTRL_BOT_HOST_FILE_REQ — see the enum. */
+        struct {
+            uint32_t gen;        /* the manifest generation */
+            uint8_t  brain;      /* index into the manifest's brains */
+            uint16_t file;       /* index into that brain's files */
+        } botHostFileReq;
+
+        /* CTRL_BOT_HOST_SYNC — see the enum. */
+        struct {
+            uint32_t gen;
+            uint32_t done;       /* bytes downloaded */
+            uint32_t total;      /* bytes to download */
+            uint8_t  ready;      /* every file of gen is held and checked */
+        } botHostSync;
+
+        /* CTRL_BOT_HOST_SLOTS — see the enum. */
+        struct {
+            uint8_t  slots;      /* at most BOT_HOST_MAX_SLOTS */
+            uint8_t  refuseSeat; /* BOT_HOST_SLOTS_NO_REFUSE: none */
+            uint16_t refuseGen;
+        } botHostSlots;
+
+        /* CTRL_BOT_HOST_REC — see the enum. */
+        struct {
+            uint8_t  op;         /* BOT_HOST_REC_OP_* */
+            uint8_t  flags;      /* BOT_HOST_REC_F_* */
+            uint8_t  state;      /* STATE: BOT_HOST_REC_STATE_*; ACK: result */
+            uint8_t  percent;    /* STATE: upload progress, 0..100 */
+            uint8_t  botsDone;   /* STATE: bots whose files are sent */
+            uint8_t  botsTotal;  /* STATE: bots with files to send */
+            uint32_t a;          /* OPEN: start tick; DONE: files; CLEARED: bytes lo */
+            uint32_t b;          /* DONE: bytes; CLEARED: bytes hi */
+            char     block[BOT_HOST_REC_BLOCK_LEN]; /* session folder name */
+        } botHostRec;
+
+        /* CTRL_BOT_HOST_TICKET — see the enum. */
+        struct {
+            uint8_t player;      /* the receiving player's number */
+            uint8_t ticket[BOT_HOST_TICKET_LEN];
+            char    brain[BOT_HOST_BRAIN_NAME_LEN];
+        } botHostTicket;
+
+        /* CTRL_BOT_HOST_LIMITS — see the enum. */
+        struct {
+            uint8_t start;       /* BOT_HOST_LIMIT_NONE: the server's */
+            uint8_t ceiling;     /* at most BOT_HOST_MAX_SLOTS */
+            uint8_t reserve;     /* percent; BOT_HOST_LIMIT_NONE: the server's */
+        } botHostLimits;
+
+        /* CTRL_BOT_HOST_ROW_LIMITS — see the enum. */
+        struct {
+            uint8_t idx;         /* the row, 0..MAX_BOT_HOSTS - 1 */
+            uint8_t ceiling;     /* 0..16 */
+            uint8_t reserve;     /* percent */
+            uint8_t fits;        /* BOT_HOST_LIMIT_NONE: not known */
+        } botHostRowLimits;
     } u;
 } ControlEvent;
 

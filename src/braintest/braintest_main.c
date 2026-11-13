@@ -99,7 +99,7 @@
 #include "braintest_loadbrowser.h"
 #include "braintest_session_ticks.h"
 #include "braintest_tank_dead.h"
-#include <zlib.h>
+#include "brain_record_io.h"
 #include <time.h>
 #include "braintest_viz_registry.h"
 #include "braintest_vizwindow.h"
@@ -731,28 +731,28 @@ static void recordingReconstructMap(RecordingBuffer *rb, int targetFrame) {
 }
 
 /* ================================================================== */
-/* Session loading: read a winbolods brainrec.btr (gzipped) into the   */
+/* Session loading: read a winbolods brainrec.btr (zstd or gzip) into */
 /* recording buffer so the existing playback/scrub machinery replays   */
 /* it. See src/bolo/brain_record.c and src/bolo/public/brain_record.h  */
 /* for the on-disk format, and BRAINREC_VERSION for the one version    */
 /* this build reads.                                                   */
 /* ================================================================== */
 
-static uint8_t  bt_gz_u8 (gzFile g){ uint8_t v=0;  gzread(g,&v,1); return v; }
-static uint16_t bt_gz_u16(gzFile g){ uint16_t v=0; gzread(g,&v,2); return v; }
-static uint32_t bt_gz_u32(gzFile g){ uint32_t v=0; gzread(g,&v,4); return v; }
-static float    bt_gz_f32(gzFile g){ float v=0;    gzread(g,&v,4); return v; }
+static uint8_t  bt_gz_u8 (BrainRecIn *g){ uint8_t v=0;  brainRecInRead(g,&v,1); return v; }
+static uint16_t bt_gz_u16(BrainRecIn *g){ uint16_t v=0; brainRecInRead(g,&v,2); return v; }
+static uint32_t bt_gz_u32(BrainRecIn *g){ uint32_t v=0; brainRecInRead(g,&v,4); return v; }
+static float    bt_gz_f32(BrainRecIn *g){ float v=0;    brainRecInRead(g,&v,4); return v; }
 
 /* Peek a session header (+ first frame) to learn the map name and how many
  * bot slots it used — needed BEFORE the sim/bots are created at startup.
  * Returns true on a valid, version-matching brainrec.btr. */
 static bool btPeekSession(const char *path, char mapNameOut[64], int *numBotsOut,
                           bool deepScan) {
-    gzFile g = gzopen(path, "rb");
+    BrainRecIn *g = brainRecInOpen(path);
     if (!g) return false;
     BrainRecHeader hdr;
-    if (gzread(g, &hdr, (unsigned)sizeof hdr) != (int)sizeof hdr
-        || !brainRecMagicMatches(&hdr)) { gzclose(g); return false; }
+    if (brainRecInRead(g, &hdr, sizeof hdr) != sizeof hdr
+        || !brainRecMagicMatches(&hdr)) { brainRecInClose(g); return false; }
     if (!brainRecVersionReadable(&hdr)) {
         /* Say which version it is rather than reading it: the frame bodies
            of a file older than v6 are raw snapshot structs of a different
@@ -761,12 +761,12 @@ static bool btPeekSession(const char *path, char mapNameOut[64], int *numBotsOut
                         "record the session again\n",
                 path, (unsigned)hdr.version, (unsigned)BRAINREC_VERSION_MIN_READ,
                 (unsigned)BRAINREC_VERSION);
-        gzclose(g);
+        brainRecInClose(g);
         return false;
     }
     if (mapNameOut) { memcpy(mapNameOut, hdr.mapName, 64); mapNameOut[63] = '\0'; }
     uint32_t llen = bt_gz_u32(g);
-    if (llen) gzseek(g, llen, SEEK_CUR);
+    if (llen) brainRecInSkip(g, llen);
     /* Bot roster: shallow scan reads the FIRST frame only (cheap — good
      * enough for the session browser's count column). deepScan walks
      * EVERY frame and unions the slots: bots that only exist mid-game
@@ -777,38 +777,38 @@ static bool btPeekSession(const char *path, char mapNameOut[64], int *numBotsOut
     uint32_t fm = bt_gz_u32(g);
     while (fm == BRAINREC_FRAME_MAGIC) {
         bt_gz_u32(g); /* tick */
-        uint8_t tc = bt_gz_u8(g); gzseek(g, (z_off_t)tc * (int)sizeof(TankSnapshot),  SEEK_CUR);
-        uint8_t sc = bt_gz_u8(g); gzseek(g, (z_off_t)sc * (int)sizeof(ShellSnapshot), SEEK_CUR);
-        uint8_t bc = bt_gz_u8(g); gzseek(g, (z_off_t)bc * (int)sizeof(BaseSnapshot),  SEEK_CUR);
-        uint8_t pc = bt_gz_u8(g); gzseek(g, (z_off_t)pc * (int)sizeof(PillSnapshot),  SEEK_CUR);
+        uint8_t tc = bt_gz_u8(g); brainRecInSkip(g, (uint64_t)tc * sizeof(TankSnapshot));
+        uint8_t sc = bt_gz_u8(g); brainRecInSkip(g, (uint64_t)sc * sizeof(ShellSnapshot));
+        uint8_t bc = bt_gz_u8(g); brainRecInSkip(g, (uint64_t)bc * sizeof(BaseSnapshot));
+        uint8_t pc = bt_gz_u8(g); brainRecInSkip(g, (uint64_t)pc * sizeof(PillSnapshot));
         uint8_t kf = bt_gz_u8(g);
-        if (kf) gzseek(g, MAP_ARRAY_SIZE * MAP_ARRAY_SIZE, SEEK_CUR);
-        else { uint32_t nd = bt_gz_u32(g); gzseek(g, (z_off_t)nd * 5, SEEK_CUR); }
+        if (kf) brainRecInSkip(g, MAP_ARRAY_SIZE * MAP_ARRAY_SIZE);
+        else { uint32_t nd = bt_gz_u32(g); brainRecInSkip(g, (uint64_t)nd * 5); }
         uint8_t nbot = bt_gz_u8(g);
         for (int b = 0; b < nbot; b++) {
             uint8_t slot = bt_gz_u8(g);
             if (slot > maxSlot) maxSlot = slot;
-            gzseek(g, 4, SEEK_CUR);                 /* thinkMs */
-            gzseek(g, 32 + 12 + 32, SEEK_CUR);      /* goalinfo head */
-            uint16_t nc = bt_gz_u16(g); gzseek(g, (z_off_t)nc * (int)sizeof(BrainRecCandidate), SEEK_CUR);
+            brainRecInSkip(g, 4);                 /* thinkMs */
+            brainRecInSkip(g, 32 + 12 + 32);      /* goalinfo head */
+            uint16_t nc = bt_gz_u16(g); brainRecInSkip(g, (uint64_t)nc * sizeof(BrainRecCandidate));
             uint32_t oc = bt_gz_u32(g);
             for (uint32_t k = 0; k < oc; k++) {     /* packed overlay: 28 + textLen */
-                gzseek(g, 27, SEEK_CUR);
+                brainRecInSkip(g, 27);
                 uint8_t tl = bt_gz_u8(g);
-                if (tl) gzseek(g, tl, SEEK_CUR);
+                if (tl) brainRecInSkip(g, tl);
             }
-            uint32_t pl = bt_gz_u32(g); if (pl) gzseek(g, pl, SEEK_CUR);
+            uint32_t pl = bt_gz_u32(g); if (pl) brainRecInSkip(g, pl);
         }
-        gzseek(g, MAX_TANKS * 4, SEEK_CUR);   /* v5 per-player alliance words */
-        if (hdr.version >= 7u) gzseek(g, 8, SEEK_CUR);   /* v7 on-map masks */
+        brainRecInSkip(g, MAX_TANKS * 4);   /* v5 per-player alliance words */
+        if (hdr.version >= 7u) brainRecInSkip(g, 8);   /* v7 on-map masks */
         if (hdr.version >= 8u) {                          /* v8 Dijkstra box */
             uint32_t dl = bt_gz_u32(g);
-            if (dl) gzseek(g, (z_off_t)dl, SEEK_CUR);
+            if (dl) brainRecInSkip(g, dl);
         }
         if (!deepScan) break;
         fm = bt_gz_u32(g);
     }
-    gzclose(g);
+    brainRecInClose(g);
     if (numBotsOut) *numBotsOut = (maxSlot >= 0) ? maxSlot + 1 : 1;
     return true;
 }
@@ -978,11 +978,11 @@ static void btParseLegendPairs(const char *lj, uint8_t remap[256]) {
 }
 
 static int btLoadSession(BrainTestApp *app, const char *path) {
-    gzFile g = gzopen(path, "rb");
+    BrainRecIn *g = brainRecInOpen(path);
     if (!g) return -1;
     BrainRecHeader hdr;
-    if (gzread(g, &hdr, (unsigned)sizeof hdr) != (int)sizeof hdr
-        || !brainRecMagicMatches(&hdr)) { gzclose(g); return -1; }
+    if (brainRecInRead(g, &hdr, sizeof hdr) != sizeof hdr
+        || !brainRecMagicMatches(&hdr)) { brainRecInClose(g); return -1; }
     if (!brainRecVersionReadable(&hdr)) {
         /* Same refusal as the peek above, and for the same reason: a file
            older than v6 has frames of a size this build cannot walk. */
@@ -990,7 +990,7 @@ static int btLoadSession(BrainTestApp *app, const char *path) {
                         "record the session again\n",
                 path, (unsigned)hdr.version, (unsigned)BRAINREC_VERSION_MIN_READ,
                 (unsigned)BRAINREC_VERSION);
-        gzclose(g);
+        brainRecInClose(g);
         return -1;
     }
 
@@ -1006,7 +1006,7 @@ static int btLoadSession(BrainTestApp *app, const char *path) {
     uint32_t llen = bt_gz_u32(g);
     if (llen) {
         char *lj = (char *)malloc(llen + 1);
-        gzread(g, lj, llen); lj[llen] = '\0';
+        brainRecInRead(g, lj, llen); lj[llen] = '\0';
         char *slots = strstr(lj, "\"slots\"");
         /* Global part: everything before "slots" (or the whole blob). */
         {
@@ -1070,23 +1070,23 @@ static int btLoadSession(BrainTestApp *app, const char *path) {
 
     RecordingBuffer *rb = &app->recording;
     int loaded = 0;
-    /* Progress = compressed bytes consumed (gzoffset) vs the .btr file size.
+    /* Progress = compressed bytes consumed vs the .btr file size.
      * Roughly linear, good enough for a 15-minute load bar. */
     Sint64 gzTotal = 0;
     { SDL_PathInfo pi; if (SDL_GetPathInfo(path, &pi)) gzTotal = (Sint64)pi.size; }
     Uint64 lastDrawMs = 0;
     for (;;) {
         uint32_t fm = bt_gz_u32(g);
-        if (gzeof(g) || fm != BRAINREC_FRAME_MAGIC) break;
+        if (fm != BRAINREC_FRAME_MAGIC) break;
 
         Uint64 nowMs = SDL_GetTicks();
         if (nowMs - lastDrawMs >= 50) {   /* ~20 fps; keeps load overhead tiny */
             lastDrawMs = nowMs;
             double pct = gzTotal > 0
-                ? (double)gzoffset(g) * 100.0 / (double)gzTotal : -1.0;
+                ? (double)brainRecInCompressedPos(g) * 100.0 / (double)gzTotal : -1.0;
             if (!btDrawLoadProgress(app, pct, rb->count)) {
                 /* Window closed during load — cancel cleanly. */
-                gzclose(g);
+                brainRecInClose(g);
                 fprintf(stderr, "Load session: canceled by user at %d frames.\n", rb->count);
                 exit(0);
             }
@@ -1104,12 +1104,12 @@ static int btLoadSession(BrainTestApp *app, const char *path) {
         f->tick = bt_gz_u32(g);
 
         /* World snapshot. */
-        f->tankCount  = bt_gz_u8(g); if (f->tankCount)  gzread(g, f->tanks,      f->tankCount  * (unsigned)sizeof(TankSnapshot));
-        f->shellCount = bt_gz_u8(g); if (f->shellCount) gzread(g, f->snapShells, f->shellCount * (unsigned)sizeof(ShellSnapshot));
-        f->baseCount  = bt_gz_u8(g); if (f->baseCount)  gzread(g, f->snapBases,  f->baseCount  * (unsigned)sizeof(BaseSnapshot));
+        f->tankCount  = bt_gz_u8(g); if (f->tankCount)  brainRecInRead(g, f->tanks,      f->tankCount  * (unsigned)sizeof(TankSnapshot));
+        f->shellCount = bt_gz_u8(g); if (f->shellCount) brainRecInRead(g, f->snapShells, f->shellCount * (unsigned)sizeof(ShellSnapshot));
+        f->baseCount  = bt_gz_u8(g); if (f->baseCount)  brainRecInRead(g, f->snapBases,  f->baseCount  * (unsigned)sizeof(BaseSnapshot));
         uint8_t pc = bt_gz_u8(g); f->pillCount = pc;
         for (int i = 0; i < pc; i++) {
-            PillSnapshot ps; gzread(g, &ps, (unsigned)sizeof ps);
+            PillSnapshot ps; brainRecInRead(g, &ps, (unsigned)sizeof ps);
             f->snapPills[i].x      = ps.x;
             f->snapPills[i].y      = ps.y;
             f->snapPills[i].owner  = ps.owner;
@@ -1123,7 +1123,7 @@ static int btLoadSession(BrainTestApp *app, const char *path) {
         if (kf) {
             f->isKeyframe = true;
             f->fullMap = (BYTE *)malloc(MAP_ARRAY_SIZE * MAP_ARRAY_SIZE);
-            gzread(g, f->fullMap, MAP_ARRAY_SIZE * MAP_ARRAY_SIZE);
+            brainRecInRead(g, f->fullMap, MAP_ARRAY_SIZE * MAP_ARRAY_SIZE);
         } else {
             uint32_t nd = bt_gz_u32(g);
             f->mapDeltaCount = (int)nd;
@@ -1143,9 +1143,9 @@ static int btLoadSession(BrainTestApp *app, const char *path) {
             uint8_t slot = bt_gz_u8(g);
             f->thinkMs = bt_gz_f32(g);   /* HUD shows followed bot; close enough */
             char kind[32], substate[32];
-            gzread(g, kind, 32);
+            brainRecInRead(g, kind, 32);
             int gmx = (int)bt_gz_u32(g), gmy = (int)bt_gz_u32(g), gtgt = (int)bt_gz_u32(g);
-            gzread(g, substate, 32);
+            brainRecInRead(g, substate, 32);
             uint16_t nc = bt_gz_u16(g);
             bool useGoal = (slot == 0);   /* scrubber markers track bot 0 */
             if (useGoal) {
@@ -1156,7 +1156,7 @@ static int btLoadSession(BrainTestApp *app, const char *path) {
                 f->goalInfoValid = true;
             }
             for (uint16_t c = 0; c < nc; c++) {
-                BrainRecCandidate cand; gzread(g, &cand, (unsigned)sizeof cand);
+                BrainRecCandidate cand; brainRecInRead(g, &cand, (unsigned)sizeof cand);
                 if (useGoal && c < BRAIN_GOAL_MAX_CANDIDATES) {
                     memcpy(f->goalInfo.candidates[c].desc, cand.desc, sizeof cand.desc);
                     f->goalInfo.candidates[c].desc[sizeof cand.desc - 1] = '\0';
@@ -1179,10 +1179,10 @@ static int btLoadSession(BrainTestApp *app, const char *path) {
                     pcap = pcap ? pcap * 2 : (size_t)oc * 30u + 512u;
                     pk = (uint8_t *)realloc(pk, pcap);
                 }
-                gzread(g, pk + plen, 28);                    /* 27 fixed + textLen */
+                brainRecInRead(g, pk + plen, 28);                    /* 27 fixed + textLen */
                 pk[plen + 26] = vizRemap[keepBot ? slot : 0][pk[plen + 26]];  /* remap viz_idx, this slot's table */
                 uint8_t tl = pk[plen + 27];
-                if (tl) gzread(g, pk + plen + 28, tl);
+                if (tl) brainRecInRead(g, pk + plen + 28, tl);
                 plen += 28u + tl;
             }
             if (keepBot && pk) {
@@ -1194,7 +1194,7 @@ static int btLoadSession(BrainTestApp *app, const char *path) {
 
             uint32_t pl = bt_gz_u32(g);
             char *pj = NULL;
-            if (pl) { pj = (char *)malloc(pl + 1); gzread(g, pj, pl); pj[pl] = '\0';
+            if (pl) { pj = (char *)malloc(pl + 1); brainRecInRead(g, pj, pl); pj[pl] = '\0';
                       poolPjCount++; }
             if (keepBot && pj && poolPanelForBot[slot] >= 0) {
                 f->recordedPanels[poolPanelForBot[slot]] = pj;
@@ -1226,10 +1226,10 @@ static int btLoadSession(BrainTestApp *app, const char *path) {
                     uint8_t *nb = (uint8_t *)realloc(dijScratch, dl);
                     if (nb) { dijScratch = nb; dijScratchCap = dl; }
                 }
-                if (dl <= dijScratchCap && gzread(g, dijScratch, dl) == (int)dl) {
+                if (dl <= dijScratchCap && brainRecInRead(g, dijScratch, dl) == (size_t)dl) {
                     brainRecDijStoreSet(&g_dijStore, rb->count, dijScratch, dl);
                 } else if (dl > dijScratchCap) {
-                    gzseek(g, (z_off_t)dl, SEEK_CUR);
+                    brainRecInSkip(g, dl);
                 }
             }
         }
@@ -1237,7 +1237,13 @@ static int btLoadSession(BrainTestApp *app, const char *path) {
         rb->count++;
         loaded++;
     }
-    gzclose(g);
+    if (brainRecInTruncated(g))
+        fprintf(stderr, "Load session: the recording ends inside a compressed block "
+                        "(the server did not close it); loaded the %d frames before that.\n",
+                loaded);
+    else if (brainRecInError(g))
+        fprintf(stderr, "Load session: decode error after %d frames.\n", loaded);
+    brainRecInClose(g);
     free(dijScratch);
     if (brainRecDijStoreHasData(&g_dijStore)) {
         fprintf(stderr, "Load session: recorded Dijkstra box (%dx%d) in %d of %d frames, "
@@ -1334,7 +1340,7 @@ static void sessionPollPendingTicks(void) {
  * the dir-name timestamp) was wrong for an -asap server, and for every
  * brainrec_split part, whose names all keep the game's start time. */
 /* Peek cache: the O dialog rescans on every press, and each entry's peek
- * gz-decompresses a first frame. With a couple of hundred sessions that was
+ * decompresses a first frame. With a couple of hundred sessions that was
  * seconds of main-thread stall per press. Keyed on dir name + brainrec
  * size + mtime, so a session that changed on disk is peeked again. */
 typedef struct {

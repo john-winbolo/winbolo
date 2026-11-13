@@ -333,6 +333,10 @@ typedef struct {
      * path and the real-error remove-the-bot path. Reset to false at
      * the top of each tick. */
     bool wasKilled;
+    /* How many bots of this brain this machine can run at full strength:
+     * the brain's Brain.capacity answer, kept by brain name + version
+     * (brain_capacity.h). BRAIN_CAPACITY_UNKNOWN (-1) when not asked. */
+    int capacity;
 } LuaBrainInstance;
 
 /*********************************************************
@@ -354,6 +358,48 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
                             const char *name, struct ClientSim *cs,
                             aiType aiMode, bool debug_mode,
                             int player_num, const ScnTable *init);
+
+/*********************************************************
+*NAME:          luaBrainQueryCapacity
+*PURPOSE:
+*  Loads the brain at path without a game (no brain.open)
+*  and returns its capacity answer: how many bots of it
+*  this machine can run (brain_capacity.h). The answer is
+*  kept, so a later load of the same brain name and
+*  version does not ask again. BRAIN_CAPACITY_UNKNOWN (-1)
+*  when the brain does not load. For -cputest.
+*********************************************************/
+int luaBrainQueryCapacity(const char *path, const char *name);
+
+/*********************************************************
+*NAME:          luaBrainInstanceCreateSandboxed
+*PURPOSE:
+*  luaBrainInstanceCreate, but the VM is sandboxed even
+*  when --allow-unsafe-brains is on. For the Bot Host
+*  inside a client: brains a server placed on a player's
+*  computer never get the unsafe libraries.
+*********************************************************/
+bool luaBrainInstanceCreateSandboxed(LuaBrainInstance *inst, const char *path,
+                                     const char *name, struct ClientSim *cs,
+                                     aiType aiMode, bool debug_mode,
+                                     int player_num, const ScnTable *init);
+
+/*********************************************************
+*NAME:          luaBrainQueryCapacityLimited
+*PURPOSE:
+*  luaBrainQueryCapacity for the Bot Host inside a client:
+*  the VM is sandboxed, runs without the LuaJIT compiler,
+*  and the brain's chunk and capacity code together stop
+*  with an error after budgetMs (0: no time limit) or once
+*  *abortFlag is not 0 (NULL: none). A brain that errors,
+*  loops, or throws from an __index cannot crash or freeze
+*  the caller; the answer is then BRAIN_CAPACITY_UNKNOWN or
+*  the default.
+*********************************************************/
+struct SDL_AtomicInt;
+int luaBrainQueryCapacityLimited(const char *path, const char *name,
+                                 unsigned budgetMs,
+                                 struct SDL_AtomicInt *abortFlag);
 
 /*********************************************************
 *NAME:          luaBrainsSetRunScript
@@ -403,6 +449,13 @@ void luaBrainsSetProfile(int profile, int profile_log, int pool_viz);
  * stays on. print2 → _PRINT2_ENABLED, pool → BRAIN_POOL_VIZ,
  * viz → _BT_VIZ_COLLECT="off", jsonl → BRAIN_LOG_JSON/_JSONL_LOGGER_ENABLED. */
 void luaBrainsSetDebugParts(int print2_on, int pool_on, int viz_on, int jsonl_on);
+void luaBrainsGetDebugParts(int *print2_on, int *pool_on, int *viz_on,
+                            int *jsonl_on);
+
+/* A folder sandboxed brains may also open files in (NULL or "" for none).
+ * The Bot Host sets its recordings folder so print2 logs can be written
+ * there; nothing else sets it. */
+void luaBrainsSetExtraWriteRoot(const char *dir);
 
 /* Drives the BRAIN_INSTR_PROFILE Lua global. When set, GoalHunter runs its
  * sampling profiler around each think and writes per-bot p<N>_profile.tsv.

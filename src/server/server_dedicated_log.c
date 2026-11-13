@@ -618,6 +618,10 @@ void serverDedicatedLogSetServeMode(int mode) {
     s_serveMode = mode;
 }
 
+void serverDedicatedLogSetBotHostData(bool on) {
+    transportUdpServerSetBotHostRecord(on);
+}
+
 /* RoundLogSource::serveEnabled. Auto resolves here rather than at install
  * because winbolonetIsRunning() can flip after the recorder is installed. */
 static bool serverDedicatedLogServeAllowed(void) {

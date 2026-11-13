@@ -38,6 +38,10 @@
 #include "server_sim_internal.h"  /* serverSimLagLogDue, playerPing, statLastRewindTicks */
 #include "server_lifecycle.h"      /* serverOverrunStatsDue */
 #include "overrun_record.h"         /* log_OverrunStats payload */
+#include "bothost_record.h"         /* log_BotHostData payload */
+#include "bot_host_link.h"           /* BotHostNoMove */
+#include "transport_udp.h"          /* transportUdpServerSetBotHostRecord */
+#include "transport_udp_server_internal.h" /* serverBotHostRecordPut */
 #include "game_sim.h"       /* GameSim.tanks — set the stocks a snapshot records */
 #include "tank.h"           /* tankSetShells / tankSetMines / ... */
 #include "unzip.h"
@@ -107,6 +111,7 @@ static int eventFixedBytesAfterCode(uint8_t code) {
         case log_MapName:          return -1;  /* 0 + pstr */
         case log_PlayerLag:        return 4;   /* player, RTT (BE u16), rewind */
         case log_OverrunStats:     return -3;  /* 44 + 13 a bot, checked below */
+        case log_BotHostData:      return -4;  /* by kind, checked below */
         default:                   return -2;  /* unknown */
     }
 }
@@ -237,7 +242,8 @@ static bool skipSnapshot(const uint8_t *buf, size_t len, size_t *pos) {
  * event was seen, or when the payload is longer than `bytes`. */
 typedef struct {
     uint8_t code;
-    uint8_t bytes[512];  /* a log_OverrunStats record is up to 252 */
+    uint8_t bytes[1024]; /* a log_OverrunStats record is up to
+                          * OVERRUN_RECORD_MAX_BYTES (781) */
     int     len;
 } eventPayloadCapture;
 
@@ -312,12 +318,21 @@ static int walkLog(const uint8_t *buf, size_t len, size_t startPos,
                     /* else trust the framed length, as the reader does */
                 } else if (fixed == -3) {
                     /* log_OverrunStats: the fixed part, then the bots its
-                     * count byte says. */
+                     * count byte says; version 2 adds the host bytes and
+                     * the host table after them. */
+                    int base;
                     if (plen < OVERRUN_RECORD_HEAD_BYTES) return -13;
-                    if (plen != OVERRUN_RECORD_HEAD_BYTES +
-                                buf[payloadStart + OVERRUN_RECORD_HEAD_BYTES - 1] *
-                                    OVERRUN_RECORD_BOT_BYTES) {
+                    base = OVERRUN_RECORD_HEAD_BYTES +
+                           buf[payloadStart + OVERRUN_RECORD_HEAD_BYTES - 1] *
+                               OVERRUN_RECORD_BOT_BYTES;
+                    if (buf[payloadStart] < 2 ? plen != base : plen < base + 1) {
                         return -13;                    /* length disagrees */
+                    }
+                } else if (fixed == -4) {
+                    /* log_BotHostData: its kind's fields must be there. */
+                    BotHostRecord bhr;
+                    if (!botHostRecordDecode(buf + payloadStart, plen, &bhr)) {
+                        return -14;
                     }
                 } else if (fixed >= 0) {
                     if (plen != fixed) return -7;      /* length disagrees */
@@ -1080,7 +1095,9 @@ int run_log_roundtrip_overrun_stats(void) {
         rec.bots[i].thinks = 90000u + (uint32_t)i;
     }
     len = overrunRecordEncode(&rec, payload, (int)sizeof(payload));
-    UT_ASSERT_MSG(len == OVERRUN_RECORD_HEAD_BYTES + 3 * OVERRUN_RECORD_BOT_BYTES,
+    /* Version 2: the bots, one host byte each (all on the server here) and
+     * an empty host table. */
+    UT_ASSERT_MSG(len == OVERRUN_RECORD_HEAD_BYTES + 3 * OVERRUN_RECORD_BOT_BYTES + 3 + 1,
                   "encoded %d bytes", len);
     /* Big-endian fields where the layout puts them. */
     UT_ASSERT(payload[0] == OVERRUN_RECORD_VERSION && payload[1] == OVERRUN_RECORD_FLAG_BOTS);
@@ -1092,8 +1109,11 @@ int run_log_roundtrip_overrun_stats(void) {
     UT_ASSERT(overrunRecordEncode(&rec, payload, len - 1) == 0);
     UT_ASSERT(!overrunRecordDecode(payload, OVERRUN_RECORD_HEAD_BYTES - 1, &back));
     /* A count past the bytes there keeps the bots that are there. */
-    UT_ASSERT(overrunRecordDecode(payload, len - 1, &back));
+    UT_ASSERT(overrunRecordDecode(payload,
+                                  OVERRUN_RECORD_HEAD_BYTES + 2 * OVERRUN_RECORD_BOT_BYTES + 5,
+                                  &back));
     UT_ASSERT(back.botCount == 2);
+    UT_ASSERT(back.bots[0].host == OVERRUN_RECORD_HOST_NONE);
 
     ServerSim *sim = ut_make_running_sim("Tester");
     UT_ASSERT_MSG(sim != NULL, "ut_make_running_sim failed");
@@ -1791,5 +1811,501 @@ int run_log_roundtrip_tank_stock_record(void) {
     UT_ASSERT_MSG(stock.bytes[2] == 5,  "mines = %d", stock.bytes[2]);
     UT_ASSERT_MSG(stock.bytes[3] == 34, "armour = %d", stock.bytes[3]);
     UT_ASSERT_MSG(stock.bytes[4] == 7,  "trees = %d", stock.bytes[4]);
+    return 0;
+}
+
+/* ================================================================
+ * log_BotHostData (bothost_record.h): the bot placement's records.
+ * ================================================================ */
+
+/* Every log_BotHostData record in a log, in order. Returns the count, or -1
+ * when the stream does not walk. */
+static int collectBotHostRecords(const uint8_t *buf, size_t len, size_t pos,
+                                 BotHostRecord *out, int max) {
+    int n = 0;
+    while (pos < len) {
+        int code = buf[pos++];
+        if (code == LOG_QUIT) {
+            return n;
+        } else if (code == LOG_NOEVENTS) {
+            pos += 1;
+        } else if (code == LOG_NOEVENTS_LONG) {
+            pos += 2;
+        } else if (code == LOG_EVENT_SNAPSHOT) {
+            if (!skipSnapshot(buf, len, &pos)) return -1;
+        } else if (code == LOG_EVENT || code == LOG_EVENT_LONG) {
+            int count;
+            if (code == LOG_EVENT) {
+                if (pos + 1 > len) return -1;
+                count = buf[pos];
+                pos += 1;
+            } else {
+                if (pos + 2 > len) return -1;
+                count = (buf[pos + 1] << 8) | buf[pos];
+                pos += 2;
+            }
+            for (int i = 0; i < count; i++) {
+                if (pos + 3 > len) return -1;
+                int ev = buf[pos];
+                int plen = (buf[pos + 1] << 8) | buf[pos + 2];
+                pos += 3;
+                if (pos + (size_t)plen > len) return -1;
+                if (ev == log_BotHostData) {
+                    if (n < max && !botHostRecordDecode(buf + pos, plen, &out[n])) {
+                        return -1;
+                    }
+                    n++;
+                }
+                pos += (size_t)plen;
+            }
+        } else {
+            return -1;
+        }
+    }
+    return -1;
+}
+
+/* The four kinds the server writes, as it fills them. */
+static int bothostSampleRecords(BotHostRecord *r) {
+    memset(r, 0, 4 * sizeof(*r));
+    r[0].kind = BOTHOST_RECORD_HOST;
+    r[0].host = 1;
+    r[0].player = 3;
+    strcpy(r[0].name, "Bot Host A");
+    r[1].kind = BOTHOST_RECORD_PROBE;
+    r[1].host = 1;
+    r[1].bots = 4; r[1].slots = 6; r[1].limit = BOTHOST_RECORD_NONE;
+    r[1].thinks = 200; r[1].overruns = 9; r[1].flags = BOTHOST_RECORD_PROBE_BAD;
+    r[1].badProbes = 24; r[1].probes = 30;
+    r[2].kind = BOTHOST_RECORD_READING;
+    r[2].host = 0;
+    r[2].freePct = 35; r[2].botCpu = 22; r[2].bots = 3;
+    r[2].flags = BOTHOST_RECORD_READING_RAN;
+    r[3].kind = BOTHOST_RECORD_DECISION;
+    r[3].host = 1;
+    r[3].decision = BOTHOST_DECISION_CUT;
+    r[3].limitBefore = BOTHOST_RECORD_NONE; r[3].limitAfter = 3;
+    r[3].badProbes = 24; r[3].probes = 30;
+    r[3].flags = BOTHOST_RECORD_DEC_COST | BOTHOST_RECORD_DEC_FREE;
+    r[3].predictedTenths = -12; r[3].costTenths = 55; r[3].freeAvgTenths = 43;
+    r[3].lowestClean = 20; r[3].highestBad = 8;
+    r[3].seat = BOTHOST_RECORD_NONE; r[3].toHost = BOTHOST_RECORD_NONE;
+    strcpy(r[3].reason, "overruns");
+    for (int i = 0; i < 4; i++) r[i].version = BOTHOST_RECORD_VERSION;
+    return 4;
+}
+
+/* Each record kind goes into the round log and comes back with every
+ * field; the walk checks each framed length against its decode; the
+ * client's replay reader decodes the file with the records in it. */
+int run_log_roundtrip_bothost_data(void) {
+    char fname[64];
+    BotHostRecord rec[4], back[8];
+    uint8_t payload[BOTHOST_RECORD_MAX_BYTES];
+    int n = bothostSampleRecords(rec);
+
+    mkTempPath(fname, sizeof(fname), "bothostdata");
+    remove(fname);
+    ServerSim *sim = ut_make_running_sim("Tester");
+    UT_ASSERT_MSG(sim != NULL, "ut_make_running_sim failed");
+    logSetStopHook(NULL);
+    logCreate();
+    UT_ASSERT_MSG(logStart(fname, sim, 0, MAX_TANKS, FALSE), "logStart failed");
+    for (int i = 0; i < n; i++) {
+        int len = botHostRecordEncode(&rec[i], payload, (int)sizeof(payload));
+        UT_ASSERT_MSG(len > 0, "record %d did not encode", i);
+        logAddEvent(log_BotHostData, 0, 0, 0, 0, (unsigned short)len,
+                    (char *)payload);
+    }
+    logWriteTick();
+    logStop();
+    logDestroy();
+    serverSimDestroy(sim);
+
+    uint8_t *buf = NULL;
+    size_t   blen = 0;
+    UT_ASSERT_MSG(extractLogDat(fname, &buf, &blen), "extractLogDat failed");
+    size_t  blockStart = 0;
+    uint8_t version    = 0;
+    UT_ASSERT_MSG(locateSnapshotMarker(buf, blen, &blockStart, &version),
+                  "header parse failed");
+    uint8_t got[64];
+    int     nGot = 0, nSnap = 0;
+    int rc = walkLog(buf, blen, blockStart, got, &nGot, (int)sizeof(got),
+                     &nSnap, NULL);
+    int nBack = collectBotHostRecords(buf, blen, blockStart, back, 8);
+    free(buf);
+    UT_ASSERT_MSG(rc == 0, "walkLog rc=%d", rc);
+    UT_ASSERT_MSG(nBack == n, "%d log_BotHostData records (want %d)", nBack, n);
+    for (int i = 0; i < n; i++) {
+        UT_ASSERT_MSG(memcmp(&back[i], &rec[i], sizeof(rec[i])) == 0,
+                      "record %d differs", i);
+    }
+
+    ReplayWorld    *world = (ReplayWorld *)malloc(sizeof(*world));
+    ReplayFileInfo  info;
+    UT_ASSERT_MSG(world != NULL, "out of memory");
+    bool decoded = replayHarnessDecodeFile(fname, world, &info);
+    free(world);
+    remove(fname);
+    UT_ASSERT_MSG(decoded, "the replay reader could not decode the file");
+    return 0;
+}
+
+/* One recorded round of `frames` frames. Each frame calls
+ * serverBotHostRecordPut `puts` times; *written counts the calls that
+ * wrote. Returns its log.dat (the caller frees *buf). */
+static bool recordBotHostRound(const char *tag, int puts, uint32_t frames,
+                               uint8_t **buf, size_t *blen, int *written) {
+    ReplayHarness h;
+    BotHostRecord rec[4];
+    bothostSampleRecords(rec);
+    memset(&h, 0, sizeof(h));
+    *buf = NULL;
+    *blen = 0;
+    *written = 0;
+    bolo_srand(0x0B0705u);
+    if (!replayHarnessPrepare(&h, tag, "Tester")) {
+        replayHarnessStop(&h);
+        return false;
+    }
+    h.sim->timeCreated = 1700000000u;
+    if (!replayHarnessBeginRecording(&h)) {
+        replayHarnessStop(&h);
+        return false;
+    }
+    logSetStopHook(NULL);
+    for (uint32_t frame = 1; frame <= frames; frame++) {
+        /* Before the tick: the tick writes the events added before it. */
+        for (int k = 0; k < puts; k++) {
+            if (serverBotHostRecordPut(&rec[k % 4])) (*written)++;
+        }
+        replayHarnessTick(&h, 2);
+    }
+    bool stopped = replayHarnessStopRecording(&h);
+    bool extracted = stopped && extractLogDat(h.path, buf, blen);
+    replayHarnessStop(&h);
+    remove(h.path);
+    return extracted;
+}
+
+/* With the option off the server writes no record, and the log is byte for
+ * byte the log of the same round with no record calls. With it on, every
+ * call writes one. */
+int run_bothost_record_off_writes_nothing(void) {
+    uint8_t *plain = NULL, *off = NULL, *on = NULL;
+    size_t   plainLen = 0, offLen = 0, onLen = 0;
+    int      written = 0;
+    BotHostRecord back[64];
+
+    transportUdpServerSetBotHostRecord(false);
+    UT_ASSERT(recordBotHostRound("bhrec_plain", 0, 120, &plain, &plainLen, &written));
+    UT_ASSERT(recordBotHostRound("bhrec_off", 3, 120, &off, &offLen, &written));
+    UT_ASSERT_MSG(written == 0, "%d records written with the option off", written);
+    UT_ASSERT_MSG(offLen == plainLen && memcmp(off, plain, plainLen) == 0,
+                  "the log with the option off differs (%u and %u bytes)",
+                  (unsigned)offLen, (unsigned)plainLen);
+    free(plain);
+    free(off);
+
+    /* Outside a recording the option on writes nothing either. */
+    transportUdpServerSetBotHostRecord(true);
+    {
+        BotHostRecord r[4];
+        bothostSampleRecords(r);
+        UT_ASSERT(!serverBotHostRecordPut(&r[0]));
+    }
+    bool ok = recordBotHostRound("bhrec_on", 1, 40, &on, &onLen, &written);
+    transportUdpServerSetBotHostRecord(false);
+    UT_ASSERT(ok);
+    UT_ASSERT_MSG(written == 40, "%d records written with the option on", written);
+    {
+        size_t  blockStart = 0;
+        uint8_t version    = 0;
+        int     n;
+        UT_ASSERT(locateSnapshotMarker(on, onLen, &blockStart, &version));
+        n = collectBotHostRecords(on, onLen, blockStart, back, 64);
+        free(on);
+        UT_ASSERT_MSG(n == 40, "%d log_BotHostData records in the log", n);
+    }
+    return 0;
+}
+
+/* -bothost-nomove: the overrun check's "would move" decision goes into the
+ * round log as decision 7 with its seat, place and numbers. */
+int run_bot_host_nomove_would_move_record(void) {
+    ReplayHarness h;
+    BotHostRecord r, back[16];
+    BotHostNoMove nm;
+    uint8_t *buf = NULL;
+    size_t   blen = 0;
+    int      written = 0, n, i, found = 0;
+
+    botHostNoMoveInit(&nm, true);
+    memset(&r, 0, sizeof(r));
+    r.version = BOTHOST_RECORD_VERSION;
+    r.kind = BOTHOST_RECORD_DECISION;
+    r.host = 1;
+    r.decision = (uint8_t)botHostNoMoveOverrunDecision(&nm, true);
+    UT_ASSERT(r.decision == BOTHOST_DECISION_WOULD_MOVE);
+    r.limitBefore = BOTHOST_RECORD_NONE; r.limitAfter = 3;
+    r.badProbes = 24; r.probes = 30;
+    r.flags = BOTHOST_RECORD_DEC_COST | BOTHOST_RECORD_DEC_FREE;
+    r.predictedTenths = 120; r.costTenths = 50; r.freeAvgTenths = 170;
+    r.lowestClean = 15; r.highestBad = 9;
+    r.seat = 4; r.toHost = 0;
+    strcpy(r.reason, "would move (moves off)");
+
+    memset(&h, 0, sizeof(h));
+    bolo_srand(0x0B0707u);
+    UT_ASSERT(replayHarnessPrepare(&h, "bhnomove", "Tester"));
+    h.sim->timeCreated = 1700000000u;
+    UT_ASSERT(replayHarnessBeginRecording(&h));
+    logSetStopHook(NULL);
+    transportUdpServerSetBotHostRecord(true);
+    for (i = 0; i < 10; i++) {
+        if (i == 3 && serverBotHostRecordPut(&r)) written++;
+        replayHarnessTick(&h, 2);
+    }
+    transportUdpServerSetBotHostRecord(false);
+    UT_ASSERT(replayHarnessStopRecording(&h));
+    UT_ASSERT(extractLogDat(h.path, &buf, &blen));
+    replayHarnessStop(&h);
+    remove(h.path);
+    UT_ASSERT_MSG(written == 1, "%d records written", written);
+    {
+        size_t  blockStart = 0;
+        uint8_t version    = 0;
+        UT_ASSERT(locateSnapshotMarker(buf, blen, &blockStart, &version));
+        n = collectBotHostRecords(buf, blen, blockStart, back, 16);
+    }
+    free(buf);
+    UT_ASSERT_MSG(n == 1, "%d log_BotHostData records", n);
+    for (i = 0; i < n; i++) {
+        if (back[i].kind == BOTHOST_RECORD_DECISION &&
+            back[i].decision == BOTHOST_DECISION_WOULD_MOVE &&
+            back[i].seat == 4 && back[i].toHost == 0 &&
+            back[i].predictedTenths == 120 &&
+            strcmp(back[i].reason, "would move (moves off)") == 0) {
+            found++;
+        }
+    }
+    UT_ASSERT(found == 1);
+    return 0;
+}
+
+/* A version 2 record with bots on the server and on two Bot Hosts: the host
+ * bytes and the host table encode after the bots, a name used twice is in
+ * the table once, and the record decodes to the same hosts. */
+static void overrunHostTestRecord(OverrunRecord *rec) {
+    memset(rec, 0, sizeof(*rec));
+    rec->version = OVERRUN_RECORD_VERSION;
+    rec->flags = OVERRUN_RECORD_FLAG_BOTS;
+    rec->roundFrames = 1500u;
+    rec->botCount = 4;
+    for (int i = 0; i < 4; i++) {
+        rec->bots[i].player = (uint8_t)(i + 1);
+        rec->bots[i].last = (uint16_t)(20 + i);
+        rec->bots[i].peak = (uint16_t)(200 + i);
+        rec->bots[i].overruns = (uint32_t)i;
+        rec->bots[i].thinks = 1000u + (uint32_t)i;
+    }
+    rec->bots[0].host = (uint8_t)OVERRUN_RECORD_HOST_SERVER;
+    rec->bots[1].host = overrunRecordHostPlace(rec, "Alice");
+    rec->bots[2].host = overrunRecordHostPlace(rec, "Bob");
+    rec->bots[3].host = overrunRecordHostPlace(rec, "Alice");
+}
+
+int run_overrun_record_hosts(void) {
+    OverrunRecord rec;
+    OverrunRecord back;
+    uint8_t payload[OVERRUN_RECORD_MAX_BYTES];
+    int len;
+    int tail;
+
+    overrunHostTestRecord(&rec);
+    UT_ASSERT(rec.hostCount == 2);
+    UT_ASSERT(rec.bots[1].host == 1 && rec.bots[2].host == 2 && rec.bots[3].host == 1);
+
+    len = overrunRecordEncode(&rec, payload, (int)sizeof(payload));
+    tail = OVERRUN_RECORD_HEAD_BYTES + 4 * OVERRUN_RECORD_BOT_BYTES;
+    UT_ASSERT_MSG(len == tail + 4 + 1 + (1 + 5) + (1 + 3), "encoded %d bytes", len);
+    UT_ASSERT(payload[0] == 2);
+    /* The host bytes, the count, then each name as a length and its bytes. */
+    UT_ASSERT(payload[tail] == 0 && payload[tail + 1] == 1 &&
+              payload[tail + 2] == 2 && payload[tail + 3] == 1);
+    UT_ASSERT(payload[tail + 4] == 2);
+    UT_ASSERT(payload[tail + 5] == 5 && memcmp(payload + tail + 6, "Alice", 5) == 0);
+    UT_ASSERT(payload[tail + 11] == 3 && memcmp(payload + tail + 12, "Bob", 3) == 0);
+    UT_ASSERT(overrunRecordEncode(&rec, payload, len - 1) == 0);
+
+    UT_ASSERT(overrunRecordDecode(payload, len, &back));
+    UT_ASSERT_MSG(memcmp(&back, &rec, sizeof(rec)) == 0,
+                  "the decoded record differs from the one written");
+    UT_ASSERT(overrunRecordBotOnServer(&back.bots[0]));
+    UT_ASSERT(overrunRecordBotHostName(&back, &back.bots[0]) == NULL);
+    UT_ASSERT(!overrunRecordBotOnServer(&back.bots[1]));
+    UT_ASSERT(strcmp(overrunRecordBotHostName(&back, &back.bots[1]), "Alice") == 0);
+    UT_ASSERT(strcmp(overrunRecordBotHostName(&back, &back.bots[2]), "Bob") == 0);
+    UT_ASSERT(strcmp(overrunRecordBotHostName(&back, &back.bots[3]), "Alice") == 0);
+
+    /* A cut host table: the bots stay, every host is not known. */
+    UT_ASSERT(overrunRecordDecode(payload, len - 1, &back));
+    UT_ASSERT(back.botCount == 4 && back.hostCount == 0);
+    UT_ASSERT(back.hostNames[0][0] == '\0');
+    for (int i = 0; i < 4; i++) {
+        UT_ASSERT(back.bots[i].host == OVERRUN_RECORD_HOST_NONE);
+        UT_ASSERT(!overrunRecordBotOnServer(&back.bots[i]));
+    }
+    /* Only the host bytes there: not known either. */
+    UT_ASSERT(overrunRecordDecode(payload, tail + 4, &back));
+    UT_ASSERT(back.botCount == 4 && back.bots[0].host == OVERRUN_RECORD_HOST_NONE);
+
+    /* A host byte past the table reads as not known; the others stay. */
+    payload[tail + 2] = 9;
+    UT_ASSERT(overrunRecordDecode(payload, len, &back));
+    UT_ASSERT(back.bots[2].host == OVERRUN_RECORD_HOST_NONE);
+    UT_ASSERT(overrunRecordBotHostName(&back, &back.bots[2]) == NULL);
+    UT_ASSERT(back.bots[1].host == 1 && back.bots[3].host == 1);
+
+    /* A host table count past the most there can be: not known. */
+    payload[tail + 2] = 2;
+    payload[tail + 4] = OVERRUN_RECORD_MAX_HOSTS + 1;
+    UT_ASSERT(overrunRecordDecode(payload, len, &back));
+    UT_ASSERT(back.hostCount == 0 && back.bots[1].host == OVERRUN_RECORD_HOST_NONE);
+
+    /* The encoder writes a host byte past the table as not known. */
+    overrunHostTestRecord(&rec);
+    rec.bots[2].host = 7;
+    len = overrunRecordEncode(&rec, payload, (int)sizeof(payload));
+    UT_ASSERT(len > 0 && payload[tail + 2] == OVERRUN_RECORD_HOST_NONE);
+    return 0;
+}
+
+/* A version 1 record (no host bytes) decodes with every host not known,
+ * so the viewer's Host column is blank; bytes after its bots are left. */
+int run_overrun_record_v1_hosts(void) {
+    OverrunRecord rec;
+    OverrunRecord back;
+    uint8_t payload[OVERRUN_RECORD_MAX_BYTES];
+    int len;
+    int v1Len;
+
+    overrunHostTestRecord(&rec);
+    len = overrunRecordEncode(&rec, payload, (int)sizeof(payload));
+    UT_ASSERT(len > 0);
+    payload[0] = 1;
+    v1Len = OVERRUN_RECORD_HEAD_BYTES + 4 * OVERRUN_RECORD_BOT_BYTES;
+    for (int pass = 0; pass < 2; pass++) {
+        /* Pass 0: a version 1 record as it was written. Pass 1: the same
+         * with bytes after it, which a version 1 reader skips. */
+        UT_ASSERT(overrunRecordDecode(payload, pass == 0 ? v1Len : len, &back));
+        UT_ASSERT(back.version == 1 && back.botCount == 4 && back.hostCount == 0);
+        UT_ASSERT(back.bots[3].player == 4 && back.bots[3].thinks == 1003u);
+        for (int i = 0; i < 4; i++) {
+            UT_ASSERT(back.bots[i].host == OVERRUN_RECORD_HOST_NONE);
+            UT_ASSERT(!overrunRecordBotOnServer(&back.bots[i]));
+            UT_ASSERT(overrunRecordBotHostName(&back, &back.bots[i]) == NULL);
+        }
+    }
+    return 0;
+}
+
+/* overrunRecordHostPlace: a name used again shares its place, an empty name
+ * or a full table gives not known, and a long name is cut to 31 bytes. */
+int run_overrun_record_host_place(void) {
+    OverrunRecord rec;
+    char name[64];
+    char longA[48];
+    char longB[48];
+
+    memset(&rec, 0, sizeof(rec));
+    UT_ASSERT(overrunRecordHostPlace(&rec, "") == OVERRUN_RECORD_HOST_NONE);
+    UT_ASSERT(overrunRecordHostPlace(&rec, NULL) == OVERRUN_RECORD_HOST_NONE);
+    UT_ASSERT(overrunRecordHostPlace(NULL, "x") == OVERRUN_RECORD_HOST_NONE);
+    UT_ASSERT(rec.hostCount == 0);
+
+    memset(longA, 'a', 40);
+    longA[40] = '\0';
+    memcpy(longB, longA, sizeof(longA));
+    longB[35] = 'b';   /* past the 31 bytes kept */
+    UT_ASSERT(overrunRecordHostPlace(&rec, longA) == 1);
+    UT_ASSERT(strlen(rec.hostNames[0]) == OVERRUN_RECORD_HOST_NAME_LEN - 1);
+    UT_ASSERT(overrunRecordHostPlace(&rec, longB) == 1);
+    UT_ASSERT(rec.hostCount == 1);
+
+    for (int i = 1; i < OVERRUN_RECORD_MAX_HOSTS; i++) {
+        snprintf(name, sizeof(name), "host%d", i);
+        UT_ASSERT(overrunRecordHostPlace(&rec, name) == (uint8_t)(i + 1));
+    }
+    UT_ASSERT(rec.hostCount == OVERRUN_RECORD_MAX_HOSTS);
+    UT_ASSERT(overrunRecordHostPlace(&rec, "one more") == OVERRUN_RECORD_HOST_NONE);
+    UT_ASSERT(overrunRecordHostPlace(&rec, "host5") == 6);
+    UT_ASSERT(rec.hostCount == OVERRUN_RECORD_MAX_HOSTS);
+    return 0;
+}
+
+/* System Info and the Log Viewer group the bots by host: the server first,
+ * then the host table in order, then the bots whose host is not known. */
+int run_overrun_record_sections(void) {
+    OverrunRecord rec;
+    OverrunRecord back;
+    uint8_t payload[OVERRUN_RECORD_MAX_BYTES];
+    uint8_t keys[OVERRUN_RECORD_MAX_SECTIONS];
+    int len;
+    int n;
+
+    overrunHostTestRecord(&rec);   /* hosts 0, Alice, Bob, Alice */
+    n = overrunRecordSections(&rec, keys, OVERRUN_RECORD_MAX_SECTIONS);
+    UT_ASSERT_MSG(n == 3, "%d sections", n);
+    UT_ASSERT(keys[0] == OVERRUN_RECORD_HOST_SERVER && keys[1] == 1 && keys[2] == 2);
+    UT_ASSERT(overrunRecordBotInSection(&rec, &rec.bots[0], OVERRUN_RECORD_HOST_SERVER));
+    UT_ASSERT(!overrunRecordBotInSection(&rec, &rec.bots[0], 1));
+    UT_ASSERT(overrunRecordBotInSection(&rec, &rec.bots[1], 1));
+    UT_ASSERT(overrunRecordBotInSection(&rec, &rec.bots[3], 1));
+    UT_ASSERT(overrunRecordBotInSection(&rec, &rec.bots[2], 2));
+    UT_ASSERT(!overrunRecordBotInSection(&rec, &rec.bots[2], 1));
+    UT_ASSERT(!overrunRecordBotInSection(NULL, &rec.bots[0], 0));
+    UT_ASSERT(!overrunRecordBotInSection(&rec, NULL, 0));
+
+    /* The cap is kept. */
+    UT_ASSERT(overrunRecordSections(&rec, keys, 2) == 2);
+    UT_ASSERT(keys[0] == OVERRUN_RECORD_HOST_SERVER && keys[1] == 1);
+    UT_ASSERT(overrunRecordSections(&rec, keys, 0) == 0);
+    UT_ASSERT(overrunRecordSections(NULL, keys, 4) == 0);
+    UT_ASSERT(overrunRecordSections(&rec, NULL, 4) == 0);
+
+    /* No bot on the server: the hosts only, in table order. */
+    rec.bots[0].host = 2;
+    n = overrunRecordSections(&rec, keys, OVERRUN_RECORD_MAX_SECTIONS);
+    UT_ASSERT(n == 2 && keys[0] == 1 && keys[1] == 2);
+
+    /* Unknown hosts and bytes past the table go last, in one section. */
+    rec.bots[0].host = OVERRUN_RECORD_HOST_SERVER;
+    rec.bots[2].host = OVERRUN_RECORD_HOST_NONE;
+    rec.bots[3].host = 9;
+    n = overrunRecordSections(&rec, keys, OVERRUN_RECORD_MAX_SECTIONS);
+    UT_ASSERT_MSG(n == 3, "%d sections", n);
+    UT_ASSERT(keys[0] == OVERRUN_RECORD_HOST_SERVER && keys[1] == 1);
+    UT_ASSERT(keys[2] == OVERRUN_RECORD_HOST_NONE);
+    UT_ASSERT(overrunRecordBotInSection(&rec, &rec.bots[2], OVERRUN_RECORD_HOST_NONE));
+    UT_ASSERT(overrunRecordBotInSection(&rec, &rec.bots[3], OVERRUN_RECORD_HOST_NONE));
+    UT_ASSERT(!overrunRecordBotInSection(&rec, &rec.bots[3], 9));
+
+    /* No host known for any bot: one plain list. */
+    for (int i = 0; i < 4; i++) rec.bots[i].host = OVERRUN_RECORD_HOST_NONE;
+    UT_ASSERT(overrunRecordSections(&rec, keys, OVERRUN_RECORD_MAX_SECTIONS) == 0);
+    rec.botCount = 0;
+    UT_ASSERT(overrunRecordSections(&rec, keys, OVERRUN_RECORD_MAX_SECTIONS) == 0);
+
+    /* A version 1 record has no hosts: one plain list. */
+    overrunHostTestRecord(&rec);
+    len = overrunRecordEncode(&rec, payload, (int)sizeof(payload));
+    UT_ASSERT(len > 0);
+    payload[0] = 1;
+    UT_ASSERT(overrunRecordDecode(payload,
+                                  OVERRUN_RECORD_HEAD_BYTES + 4 * OVERRUN_RECORD_BOT_BYTES,
+                                  &back));
+    UT_ASSERT(overrunRecordSections(&back, keys, OVERRUN_RECORD_MAX_SECTIONS) == 0);
     return 0;
 }

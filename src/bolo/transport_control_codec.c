@@ -54,6 +54,7 @@
 #include "channel_mux.h"   /* CHANNEL_CONTROL_SEG — the scenario rules
                             * fragment is pinned against it below */
 #include "control_event.h"
+#include "bot_host_cpu.h"   /* botHostCpuFromWire */
 #include "netpacks.h"
 #include "player_flags.h"  /* CLIENT_TYPE_COUNT / CLIENT_TYPE_UNKNOWN */
 #include "transport_udp_internal.h"
@@ -515,7 +516,7 @@ static EncodeResult encodeSpectatorChatBody(const ControlEvent *evt,
  *   [pillDecay 2 BE] [baseDecay 2 BE] [allyDecay 2 BE]
  *   [classicMode 1] [alliesInTrees 1] [voiceMode 1]
  *   [overviewWindow 1] [lineOfSight 1] [smartPingsOff 1] [modsOff 1]
- *   [positionalSound 1]
+ *   [positionalSound 1] [hostBotCapacity 1]
  *
  * A new field goes where it belongs in the layout, and every field
  * after it moves; the sender and the receiver are built from the same
@@ -532,10 +533,11 @@ static EncodeResult encodeSpectatorChatBody(const ControlEvent *evt,
  * + hostSlot(1) + three view
  * policies(3) + three view decay seconds(6) + classicMode(1)
  * + alliesInTrees(1) + voiceMode(1) + overviewWindow(1) + lineOfSight(1)
- * + smartPingsOff(1) + modsOff(1) + positionalSound(1). */
+ * + smartPingsOff(1) + modsOff(1) + positionalSound(1)
+ * + hostBotCapacity(1). */
 #define LOBBY_SETTINGS_WIRE_PAYLOAD \
     (LOBBY_SETTINGS_WIRE_PAYLOAD_BASE + 4 + 1 + 1 + 4 + 1 + 3 + 6 + 1 + 1 + 1 \
-     + 1 + 1 + 1 + 1 + 1)
+     + 1 + 1 + 1 + 1 + 1 + 1)
 
 /* The scenario tail, written only when the lobby has one. A lobby with no
  * scenario writes exactly LOBBY_SETTINGS_WIRE_PAYLOAD bytes and nothing
@@ -549,7 +551,7 @@ static EncodeResult encodeSpectatorChatBody(const ControlEvent *evt,
  * so none of the offsets ahead of it move.
  *
  * Worst case measured: 1 + 1 + 64 + 128 + 256 + 1 + 1 + 1 + 1 + 1 = 455, on
- * top of LOBBY_SETTINGS_WIRE_PAYLOAD's 83, so 538 bytes against a 1021-byte
+ * top of LOBBY_SETTINGS_WIRE_PAYLOAD's 84, so 539 bytes against a 1021-byte
  * segment. The two asserts behind the encoder are what hold that. */
 #define LOBBY_SETTINGS_WIRE_SCENARIO_MAX                                   \
     (1 + 1 + (1 + (LOBBY_SCENARIO_NAME_LEN - 1))                           \
@@ -631,6 +633,8 @@ static EncodeResult encodeLobbySettingsBody(const ControlEvent *evt,
     buf[pos++] = evt->u.lobbySettings.lobbyModsOff ? 1 : 0;
     /* Plain sense: 1 means sounds carry a side and a banded distance. */
     buf[pos++] = evt->u.lobbySettings.lobbyPositionalSound ? 1 : 0;
+    /* The server's host bot capacity: 0..16, 0xFF no cap, 0xFE measuring. */
+    buf[pos++] = evt->u.lobbySettings.lobbyHostBotCapacity;
     /* Nothing past here for a lobby with no scenario. */
     if (hasScenario) {
         buf[pos++] = (uint8_t)evt->u.lobbySettings.scenarioSource;
@@ -2755,6 +2759,14 @@ static bool decodeLobbySettingsBody(const uint8_t *buf, size_t len,
     if (len >= pos + 1) {
         outEvt->u.lobbySettings.lobbyPositionalSound = buf[pos++] ? true : false;
     }
+    /* The host bot capacity, the last byte of the fixed part. A short body
+     * reads as no cap, which the zero the memset left would not say: 0 is a
+     * server that runs no bots. */
+    outEvt->u.lobbySettings.lobbyHostBotCapacity =
+        LOBBY_HOST_BOT_CAPACITY_WIRE_NONE;
+    if (len >= pos + 1) {
+        outEvt->u.lobbySettings.lobbyHostBotCapacity = buf[pos++];
+    }
     /* The scenario tail. A body that stops here came from a lobby with no
      * scenario, and the memset above has already left every field of it
      * empty with the source reading as lobbyScenarioNone. */
@@ -3494,6 +3506,1062 @@ static bool decodeScnPopupBody(const uint8_t *buf, size_t len,
     return true;
 }
 
+/* -- Bot Host events --------------------------------------------------
+ *
+ * Strings travel as [len 1][bytes len], with no terminator. A length that
+ * does not fit the field it decodes into is refused, so a decoded event
+ * always holds terminated strings. */
+
+/* Writes one length-prefixed string. False when it does not fit. */
+static bool botHostPutStr(uint8_t *buf, size_t cap, size_t *pos,
+                          const char *str, size_t fieldCap) {
+    size_t n = strnlen(str, fieldCap);
+    if (n >= fieldCap || n > 255) return false;
+    if (*pos + 1 + n > cap) return false;
+    buf[(*pos)++] = (uint8_t)n;
+    memcpy(buf + *pos, str, n);
+    *pos += n;
+    return true;
+}
+
+/* Reads one length-prefixed string into a field of fieldCap bytes. */
+static bool botHostGetStr(const uint8_t *buf, size_t len, size_t *pos,
+                          char *out, size_t fieldCap) {
+    size_t n;
+    if (*pos + 1 > len) return false;
+    n = buf[(*pos)++];
+    if (n >= fieldCap || *pos + n > len) return false;
+    memcpy(out, buf + *pos, n);
+    out[n] = '\0';
+    *pos += n;
+    return true;
+}
+
+/* CTRL_BOT_HOST_ASSIGN body:
+ *   [seat 1][reload 1][ai 1][team 1][gen 2][startTick 4][brainVersion 4]
+ *   [token BOT_HOST_TOKEN_LEN][name str][brain str][initArg str] */
+#define BOT_HOST_ASSIGN_FIXED_LEN (4 + 2 + 4 + 4 + BOT_HOST_TOKEN_LEN)
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeBotHostAssignBody(const ControlEvent *evt,
+                                            const struct UdpServerClient *recipient,
+                                            uint8_t *buf, size_t bufCap,
+                                            size_t *outLen) {
+    size_t pos = 0;
+    (void)recipient;
+    if (bufCap < BOT_HOST_ASSIGN_FIXED_LEN) return ENCODE_OVERFLOW;
+    buf[pos++] = evt->u.botHostAssign.seat;
+    buf[pos++] = evt->u.botHostAssign.reload;
+    buf[pos++] = evt->u.botHostAssign.ai;
+    buf[pos++] = evt->u.botHostAssign.team;
+    packU16(buf + pos, evt->u.botHostAssign.gen);           pos += 2;
+    packU32(buf + pos, evt->u.botHostAssign.startTick);     pos += 4;
+    packU32(buf + pos, evt->u.botHostAssign.brainVersion);  pos += 4;
+    memcpy(buf + pos, evt->u.botHostAssign.token, BOT_HOST_TOKEN_LEN);
+    pos += BOT_HOST_TOKEN_LEN;
+    if (!botHostPutStr(buf, bufCap, &pos, evt->u.botHostAssign.name,
+                       sizeof(evt->u.botHostAssign.name)) ||
+        !botHostPutStr(buf, bufCap, &pos, evt->u.botHostAssign.brain,
+                       sizeof(evt->u.botHostAssign.brain)) ||
+        !botHostPutStr(buf, bufCap, &pos, evt->u.botHostAssign.initArg,
+                       sizeof(evt->u.botHostAssign.initArg))) {
+        return ENCODE_OVERFLOW;
+    }
+    *outLen = pos;
+    return ENCODE_OK;
+}
+
+static bool decodeBotHostAssignBody(const uint8_t *buf, size_t len,
+                                    ControlEvent *outEvt) {
+    size_t pos = 0;
+    if (buf == NULL || outEvt == NULL) return false;
+    if (len < BOT_HOST_ASSIGN_FIXED_LEN) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_BOT_HOST_ASSIGN;
+    outEvt->u.botHostAssign.seat   = buf[pos++];
+    outEvt->u.botHostAssign.reload = buf[pos++];
+    outEvt->u.botHostAssign.ai     = buf[pos++];
+    outEvt->u.botHostAssign.team   = buf[pos++];
+    outEvt->u.botHostAssign.gen          = unpackU16(buf + pos); pos += 2;
+    outEvt->u.botHostAssign.startTick    = unpackU32(buf + pos); pos += 4;
+    outEvt->u.botHostAssign.brainVersion = unpackU32(buf + pos); pos += 4;
+    memcpy(outEvt->u.botHostAssign.token, buf + pos, BOT_HOST_TOKEN_LEN);
+    pos += BOT_HOST_TOKEN_LEN;
+    if (outEvt->u.botHostAssign.seat >= MAX_TANKS) return false;
+    if (!botHostGetStr(buf, len, &pos, outEvt->u.botHostAssign.name,
+                       sizeof(outEvt->u.botHostAssign.name)) ||
+        !botHostGetStr(buf, len, &pos, outEvt->u.botHostAssign.brain,
+                       sizeof(outEvt->u.botHostAssign.brain)) ||
+        !botHostGetStr(buf, len, &pos, outEvt->u.botHostAssign.initArg,
+                       sizeof(outEvt->u.botHostAssign.initArg))) {
+        return false;
+    }
+    return pos == len;
+}
+
+/* CTRL_BOT_HOST_UNASSIGN body: [seat 1]. */
+/* recipient: safe — ignored. */
+static EncodeResult encodeBotHostUnassignBody(const ControlEvent *evt,
+                                              const struct UdpServerClient *recipient,
+                                              uint8_t *buf, size_t bufCap,
+                                              size_t *outLen) {
+    (void)recipient;
+    if (bufCap < 1) return ENCODE_OVERFLOW;
+    buf[0] = evt->u.botHostUnassign.seat;
+    *outLen = 1;
+    return ENCODE_OK;
+}
+
+static bool decodeBotHostUnassignBody(const uint8_t *buf, size_t len,
+                                      ControlEvent *outEvt) {
+    if (buf == NULL || outEvt == NULL || len != 1) return false;
+    if (buf[0] >= MAX_TANKS) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_BOT_HOST_UNASSIGN;
+    outEvt->u.botHostUnassign.seat = buf[0];
+    return true;
+}
+
+/* CTRL_BOT_INIT_TABLE and CTRL_BOT_HINT body:
+ *   [seat 1][idx 1][count 1][key str][value str]
+ * count is at most SCN_TABLE_MAX, and idx is below count unless count is 0,
+ * when idx is 0 and both strings are empty. */
+static EncodeResult encodeBotTableEntryBody(const ControlEvent *evt,
+                                            uint8_t *buf, size_t bufCap,
+                                            size_t *outLen) {
+    size_t pos = 0;
+    if (bufCap < 3) return ENCODE_OVERFLOW;
+    buf[pos++] = evt->u.botTableEntry.seat;
+    buf[pos++] = evt->u.botTableEntry.idx;
+    buf[pos++] = evt->u.botTableEntry.count;
+    if (!botHostPutStr(buf, bufCap, &pos, evt->u.botTableEntry.key,
+                       sizeof(evt->u.botTableEntry.key)) ||
+        !botHostPutStr(buf, bufCap, &pos, evt->u.botTableEntry.value,
+                       sizeof(evt->u.botTableEntry.value))) {
+        return ENCODE_OVERFLOW;
+    }
+    *outLen = pos;
+    return ENCODE_OK;
+}
+
+static bool decodeBotTableEntryBody(const uint8_t *buf, size_t len,
+                                    ControlEvent *outEvt,
+                                    ControlEventType type) {
+    size_t pos = 0;
+    if (buf == NULL || outEvt == NULL || len < 3) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = type;
+    outEvt->u.botTableEntry.seat  = buf[pos++];
+    outEvt->u.botTableEntry.idx   = buf[pos++];
+    outEvt->u.botTableEntry.count = buf[pos++];
+    if (outEvt->u.botTableEntry.seat >= MAX_TANKS) return false;
+    if (outEvt->u.botTableEntry.count > SCN_TABLE_MAX) return false;
+    if (outEvt->u.botTableEntry.count == 0) {
+        if (outEvt->u.botTableEntry.idx != 0) return false;
+    } else if (outEvt->u.botTableEntry.idx >= outEvt->u.botTableEntry.count) {
+        return false;
+    }
+    if (!botHostGetStr(buf, len, &pos, outEvt->u.botTableEntry.key,
+                       sizeof(outEvt->u.botTableEntry.key)) ||
+        !botHostGetStr(buf, len, &pos, outEvt->u.botTableEntry.value,
+                       sizeof(outEvt->u.botTableEntry.value))) {
+        return false;
+    }
+    return pos == len;
+}
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeBotInitTableBody(const ControlEvent *evt,
+                                           const struct UdpServerClient *recipient,
+                                           uint8_t *buf, size_t bufCap,
+                                           size_t *outLen) {
+    (void)recipient;
+    return encodeBotTableEntryBody(evt, buf, bufCap, outLen);
+}
+
+static bool decodeBotInitTableBody(const uint8_t *buf, size_t len,
+                                   ControlEvent *outEvt) {
+    return decodeBotTableEntryBody(buf, len, outEvt, CTRL_BOT_INIT_TABLE);
+}
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeBotHintBody(const ControlEvent *evt,
+                                      const struct UdpServerClient *recipient,
+                                      uint8_t *buf, size_t bufCap,
+                                      size_t *outLen) {
+    (void)recipient;
+    return encodeBotTableEntryBody(evt, buf, bufCap, outLen);
+}
+
+static bool decodeBotHintBody(const uint8_t *buf, size_t len,
+                              ControlEvent *outEvt) {
+    return decodeBotTableEntryBody(buf, len, outEvt, CTRL_BOT_HINT);
+}
+
+/* CTRL_BOT_TEAM_MSG body: [seat 1][fromPlayer 1][text str]. The text is
+ * never empty. */
+/* recipient: safe — ignored. */
+static EncodeResult encodeBotTeamMsgBody(const ControlEvent *evt,
+                                         const struct UdpServerClient *recipient,
+                                         uint8_t *buf, size_t bufCap,
+                                         size_t *outLen) {
+    size_t pos = 0;
+    (void)recipient;
+    if (evt->u.botTeamMsg.text[0] == '\0') return ENCODE_SKIP;
+    if (bufCap < 2) return ENCODE_OVERFLOW;
+    buf[pos++] = evt->u.botTeamMsg.seat;
+    buf[pos++] = evt->u.botTeamMsg.fromPlayer;
+    if (!botHostPutStr(buf, bufCap, &pos, evt->u.botTeamMsg.text,
+                       sizeof(evt->u.botTeamMsg.text))) {
+        return ENCODE_OVERFLOW;
+    }
+    *outLen = pos;
+    return ENCODE_OK;
+}
+
+static bool decodeBotTeamMsgBody(const uint8_t *buf, size_t len,
+                                 ControlEvent *outEvt) {
+    size_t pos = 0;
+    if (buf == NULL || outEvt == NULL || len < 3) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_BOT_TEAM_MSG;
+    outEvt->u.botTeamMsg.seat       = buf[pos++];
+    outEvt->u.botTeamMsg.fromPlayer = buf[pos++];
+    if (outEvt->u.botTeamMsg.seat >= MAX_TANKS ||
+        outEvt->u.botTeamMsg.fromPlayer >= MAX_TANKS) {
+        return false;
+    }
+    if (!botHostGetStr(buf, len, &pos, outEvt->u.botTeamMsg.text,
+                       sizeof(outEvt->u.botTeamMsg.text))) {
+        return false;
+    }
+    if (outEvt->u.botTeamMsg.text[0] == '\0') return false;
+    return pos == len;
+}
+
+/* CTRL_BOT_HOST_STATUS body:
+ *   [idx 1][connected 1][state 1][percent 1][used 1][slots 1][seats 2]
+ *   [recState 1][recPercent 1][recBotsDone 1][recBots 1][name str]. seats
+ * has bit n set for player n placed on the host. A row with connected 0
+ * carries an empty name. */
+#define BOT_HOST_STATUS_FIXED_LEN 12
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeBotHostStatusBody(const ControlEvent *evt,
+                                            const struct UdpServerClient *recipient,
+                                            uint8_t *buf, size_t bufCap,
+                                            size_t *outLen) {
+    size_t pos = 0;
+    (void)recipient;
+    if (bufCap < BOT_HOST_STATUS_FIXED_LEN) return ENCODE_OVERFLOW;
+    buf[pos++] = evt->u.botHostStatus.idx;
+    buf[pos++] = evt->u.botHostStatus.connected;
+    buf[pos++] = evt->u.botHostStatus.state;
+    buf[pos++] = evt->u.botHostStatus.percent;
+    buf[pos++] = evt->u.botHostStatus.used;
+    buf[pos++] = evt->u.botHostStatus.slots;
+    packU16(buf + pos, evt->u.botHostStatus.seats);
+    pos += 2;
+    buf[pos++] = evt->u.botHostStatus.recState;
+    buf[pos++] = evt->u.botHostStatus.recPercent;
+    buf[pos++] = evt->u.botHostStatus.recBotsDone;
+    buf[pos++] = evt->u.botHostStatus.recBots;
+    if (!botHostPutStr(buf, bufCap, &pos, evt->u.botHostStatus.name,
+                       sizeof(evt->u.botHostStatus.name))) {
+        return ENCODE_OVERFLOW;
+    }
+    *outLen = pos;
+    return ENCODE_OK;
+}
+
+static bool decodeBotHostStatusBody(const uint8_t *buf, size_t len,
+                                    ControlEvent *outEvt) {
+    size_t pos = 0;
+    if (buf == NULL || outEvt == NULL) return false;
+    if (len < BOT_HOST_STATUS_FIXED_LEN) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_BOT_HOST_STATUS;
+    outEvt->u.botHostStatus.idx       = buf[pos++];
+    outEvt->u.botHostStatus.connected = buf[pos++] ? 1 : 0;
+    outEvt->u.botHostStatus.state     = buf[pos++];
+    outEvt->u.botHostStatus.percent   = buf[pos++];
+    outEvt->u.botHostStatus.used      = buf[pos++];
+    outEvt->u.botHostStatus.slots     = buf[pos++];
+    outEvt->u.botHostStatus.seats     = unpackU16(buf + pos);
+    pos += 2;
+    outEvt->u.botHostStatus.recState   = buf[pos++];
+    outEvt->u.botHostStatus.recPercent = buf[pos++];
+    outEvt->u.botHostStatus.recBotsDone = buf[pos++];
+    outEvt->u.botHostStatus.recBots     = buf[pos++];
+    if (outEvt->u.botHostStatus.recState > BOT_HOST_REC_STATE_MERGING ||
+        outEvt->u.botHostStatus.recPercent > 100 ||
+        outEvt->u.botHostStatus.recBots > MAX_TANKS ||
+        outEvt->u.botHostStatus.recBotsDone >
+            outEvt->u.botHostStatus.recBots) {
+        return false;
+    }
+    if (outEvt->u.botHostStatus.idx >= BOT_HOST_STATUS_ROWS) return false;
+    if (outEvt->u.botHostStatus.state > BOT_HOST_SYNC_LATE) return false;
+    if (outEvt->u.botHostStatus.percent > 100) return false;
+    if (outEvt->u.botHostStatus.used > MAX_TANKS ||
+        outEvt->u.botHostStatus.slots > MAX_TANKS) {
+        return false;
+    }
+    {
+        /* Each bot the host runs is one seat bit. */
+        uint16_t m = outEvt->u.botHostStatus.seats;
+        int n = 0;
+        while (m != 0) {
+            n += (int)(m & 1u);
+            m >>= 1;
+        }
+        if (n != outEvt->u.botHostStatus.used) return false;
+    }
+    if (!botHostGetStr(buf, len, &pos, outEvt->u.botHostStatus.name,
+                       sizeof(outEvt->u.botHostStatus.name))) {
+        return false;
+    }
+    return pos == len;
+}
+
+/* CTRL_BOT_HOST_CPU body: [idx 1][cpu 1]. idx is a row below
+ * BOT_HOST_STATUS_ROWS, or BOT_HOST_CPU_IDX_SELF from a Bot Host. Bytes
+ * after the two are skipped, so the message can grow; a cpu byte that is
+ * not a percent or BOT_HOST_CPU_UNDER_ONE reads as unknown. */
+#define BOT_HOST_CPU_LEN 2
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeBotHostCpuBody(const ControlEvent *evt,
+                                         const struct UdpServerClient *recipient,
+                                         uint8_t *buf, size_t bufCap,
+                                         size_t *outLen) {
+    (void)recipient;
+    if (bufCap < BOT_HOST_CPU_LEN) return ENCODE_OVERFLOW;
+    buf[0] = evt->u.botHostCpu.idx;
+    buf[1] = botHostCpuFromWire(evt->u.botHostCpu.cpu);
+    *outLen = BOT_HOST_CPU_LEN;
+    return ENCODE_OK;
+}
+
+static bool decodeBotHostCpuBody(const uint8_t *buf, size_t len,
+                                 ControlEvent *outEvt) {
+    if (buf == NULL || outEvt == NULL || len < BOT_HOST_CPU_LEN) return false;
+    if (buf[0] >= BOT_HOST_STATUS_ROWS && buf[0] != BOT_HOST_CPU_IDX_SELF) {
+        return false;
+    }
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_BOT_HOST_CPU;
+    outEvt->u.botHostCpu.idx = buf[0];
+    outEvt->u.botHostCpu.cpu = botHostCpuFromWire(buf[1]);
+    return true;
+}
+
+/* CTRL_BOT_HOST_CPU_FREE body: [free 1]. Bytes after it are skipped, so
+ * the message can grow; a byte above 100 reads as unknown. */
+#define BOT_HOST_CPU_FREE_LEN 1
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeBotHostCpuFreeBody(const ControlEvent *evt,
+                                             const struct UdpServerClient *recipient,
+                                             uint8_t *buf, size_t bufCap,
+                                             size_t *outLen) {
+    (void)recipient;
+    if (bufCap < BOT_HOST_CPU_FREE_LEN) return ENCODE_OVERFLOW;
+    buf[0] = evt->u.botHostCpuFree.free <= 100
+                 ? evt->u.botHostCpuFree.free
+                 : (uint8_t)BOT_HOST_CPU_UNKNOWN;
+    *outLen = BOT_HOST_CPU_FREE_LEN;
+    return ENCODE_OK;
+}
+
+static bool decodeBotHostCpuFreeBody(const uint8_t *buf, size_t len,
+                                     ControlEvent *outEvt) {
+    if (buf == NULL || outEvt == NULL || len < BOT_HOST_CPU_FREE_LEN) {
+        return false;
+    }
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_BOT_HOST_CPU_FREE;
+    outEvt->u.botHostCpuFree.free =
+        buf[0] <= 100 ? buf[0] : (uint8_t)BOT_HOST_CPU_UNKNOWN;
+    return true;
+}
+
+/* CTRL_BOT_HOST_CPU_BOT body: [idx 1][owner 1][milli 4][source 1]. Bytes
+ * after the seven are skipped, so the message can grow; a milli that is 0
+ * or above 100% reads as unknown. An older peer sends only the first six,
+ * and the value then reads as measured. */
+#define BOT_HOST_CPU_BOT_LEN     6
+#define BOT_HOST_CPU_BOT_LEN_SRC 7
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeBotHostCpuBotBody(const ControlEvent *evt,
+                                            const struct UdpServerClient *recipient,
+                                            uint8_t *buf, size_t bufCap,
+                                            size_t *outLen) {
+    uint32_t milli;
+    (void)recipient;
+    if (bufCap < BOT_HOST_CPU_BOT_LEN_SRC) return ENCODE_OVERFLOW;
+    milli = botHostCpuMilliFromWire(evt->u.botHostCpuBot.milli);
+    buf[0] = evt->u.botHostCpuBot.idx;
+    buf[1] = evt->u.botHostCpuBot.owner;
+    packU32(buf + 2, milli);
+    buf[6] = evt->u.botHostCpuBot.source;
+    *outLen = BOT_HOST_CPU_BOT_LEN_SRC;
+    return ENCODE_OK;
+}
+
+static bool decodeBotHostCpuBotBody(const uint8_t *buf, size_t len,
+                                    ControlEvent *outEvt) {
+    if (buf == NULL || outEvt == NULL || len < BOT_HOST_CPU_BOT_LEN) {
+        return false;
+    }
+    if (buf[0] >= BOT_HOST_STATUS_ROWS && buf[0] != BOT_HOST_CPU_IDX_SELF) {
+        return false;
+    }
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_BOT_HOST_CPU_BOT;
+    outEvt->u.botHostCpuBot.idx = buf[0];
+    outEvt->u.botHostCpuBot.owner =
+        buf[1] < MAX_TANKS ? buf[1] : (uint8_t)BOT_HOST_CPU_OWNER_NONE;
+    outEvt->u.botHostCpuBot.milli = botHostCpuMilliFromWire(unpackU32(buf + 2));
+    outEvt->u.botHostCpuBot.source =
+        len >= BOT_HOST_CPU_BOT_LEN_SRC && buf[6] <= BOT_HOST_CPU_SRC_BUDGET
+            ? buf[6] : (uint8_t)BOT_HOST_CPU_SRC_MEASURED;
+    return true;
+}
+
+/* CTRL_SERVER_BOT_SLOTS body: [value 1][recommended 1][flags 1], bit 0 of
+ * flags = locked. Later bytes skipped. */
+#define SERVER_BOT_SLOTS_LEN 3
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeServerBotSlotsBody(const ControlEvent *evt,
+                                             const struct UdpServerClient *recipient,
+                                             uint8_t *buf, size_t bufCap,
+                                             size_t *outLen) {
+    (void)recipient;
+    if (bufCap < SERVER_BOT_SLOTS_LEN) return ENCODE_OVERFLOW;
+    buf[0] = evt->u.serverBotSlots.value;
+    buf[1] = evt->u.serverBotSlots.recommended;
+    buf[2] = evt->u.serverBotSlots.locked ? 1u : 0u;
+    *outLen = SERVER_BOT_SLOTS_LEN;
+    return ENCODE_OK;
+}
+
+static bool decodeServerBotSlotsBody(const uint8_t *buf, size_t len,
+                                     ControlEvent *outEvt) {
+    if (buf == NULL || outEvt == NULL || len < SERVER_BOT_SLOTS_LEN) {
+        return false;
+    }
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_SERVER_BOT_SLOTS;
+    outEvt->u.serverBotSlots.value = buf[0];
+    outEvt->u.serverBotSlots.recommended = buf[1];
+    outEvt->u.serverBotSlots.locked = (buf[2] & 1u) ? 1u : 0u;
+    return true;
+}
+
+/* CTRL_BOT_HOST_LAG body: [idx 1][lagMs 2]. Bytes after the three are
+ * skipped, so the message can grow; a lag of 0 reads as unknown. */
+#define BOT_HOST_LAG_LEN 3
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeBotHostLagBody(const ControlEvent *evt,
+                                         const struct UdpServerClient *recipient,
+                                         uint8_t *buf, size_t bufCap,
+                                         size_t *outLen) {
+    (void)recipient;
+    if (bufCap < BOT_HOST_LAG_LEN) return ENCODE_OVERFLOW;
+    buf[0] = evt->u.botHostLag.idx;
+    packU16(buf + 1, evt->u.botHostLag.lagMs == 0
+                         ? (uint16_t)BOT_HOST_LAG_UNKNOWN
+                         : evt->u.botHostLag.lagMs);
+    *outLen = BOT_HOST_LAG_LEN;
+    return ENCODE_OK;
+}
+
+static bool decodeBotHostLagBody(const uint8_t *buf, size_t len,
+                                 ControlEvent *outEvt) {
+    uint16_t lag;
+    if (buf == NULL || outEvt == NULL || len < BOT_HOST_LAG_LEN) return false;
+    if (buf[0] >= BOT_HOST_STATUS_ROWS) return false;
+    lag = unpackU16(buf + 1);
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_BOT_HOST_LAG;
+    outEvt->u.botHostLag.idx = buf[0];
+    outEvt->u.botHostLag.lagMs = lag == 0 ? (uint16_t)BOT_HOST_LAG_UNKNOWN : lag;
+    return true;
+}
+
+/* CTRL_BOT_HOST_MACHINE_SALT body: [salt 16]. Later bytes skipped. */
+static EncodeResult encodeBotHostMachineSaltBody(const ControlEvent *evt,
+                                                 const struct UdpServerClient *recipient,
+                                                 uint8_t *buf, size_t bufCap,
+                                                 size_t *outLen) {
+    (void)recipient;
+    if (bufCap < BOT_HOST_MACHINE_SALT_LEN) return ENCODE_OVERFLOW;
+    memcpy(buf, evt->u.botHostMachineSalt.salt, BOT_HOST_MACHINE_SALT_LEN);
+    *outLen = BOT_HOST_MACHINE_SALT_LEN;
+    return ENCODE_OK;
+}
+
+static bool decodeBotHostMachineSaltBody(const uint8_t *buf, size_t len,
+                                         ControlEvent *outEvt) {
+    if (buf == NULL || outEvt == NULL || len < BOT_HOST_MACHINE_SALT_LEN) {
+        return false;
+    }
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_BOT_HOST_MACHINE_SALT;
+    memcpy(outEvt->u.botHostMachineSalt.salt, buf, BOT_HOST_MACHINE_SALT_LEN);
+    return true;
+}
+
+/* CTRL_BOT_HOST_MACHINE_ANSWER body: [salt 16][hash 32]. Later bytes
+ * skipped. */
+#define BOT_HOST_MACHINE_ANSWER_LEN \
+    (BOT_HOST_MACHINE_SALT_LEN + BOT_HOST_MACHINE_HASH_LEN)
+
+static EncodeResult encodeBotHostMachineAnswerBody(const ControlEvent *evt,
+                                                   const struct UdpServerClient *recipient,
+                                                   uint8_t *buf, size_t bufCap,
+                                                   size_t *outLen) {
+    (void)recipient;
+    if (bufCap < BOT_HOST_MACHINE_ANSWER_LEN) return ENCODE_OVERFLOW;
+    memcpy(buf, evt->u.botHostMachineAnswer.salt, BOT_HOST_MACHINE_SALT_LEN);
+    memcpy(buf + BOT_HOST_MACHINE_SALT_LEN, evt->u.botHostMachineAnswer.hash,
+           BOT_HOST_MACHINE_HASH_LEN);
+    *outLen = BOT_HOST_MACHINE_ANSWER_LEN;
+    return ENCODE_OK;
+}
+
+static bool decodeBotHostMachineAnswerBody(const uint8_t *buf, size_t len,
+                                           ControlEvent *outEvt) {
+    if (buf == NULL || outEvt == NULL || len < BOT_HOST_MACHINE_ANSWER_LEN) {
+        return false;
+    }
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_BOT_HOST_MACHINE_ANSWER;
+    memcpy(outEvt->u.botHostMachineAnswer.salt, buf, BOT_HOST_MACHINE_SALT_LEN);
+    memcpy(outEvt->u.botHostMachineAnswer.hash, buf + BOT_HOST_MACHINE_SALT_LEN,
+           BOT_HOST_MACHINE_HASH_LEN);
+    return true;
+}
+
+/* CTRL_BOT_HOST_ROW_SLOTS body: [idx][machineKind][machineOther]
+ * [slotOverride][flags], flags bit 0 = locked, bit 1 = zero. Later bytes
+ * skipped. A row that is not a Bot Host row, or an override above 16 that
+ * is not "none", is refused. */
+#define BOT_HOST_ROW_SLOTS_LEN 5
+
+static EncodeResult encodeBotHostRowSlotsBody(const ControlEvent *evt,
+                                              const struct UdpServerClient *recipient,
+                                              uint8_t *buf, size_t bufCap,
+                                              size_t *outLen) {
+    (void)recipient;
+    if (bufCap < BOT_HOST_ROW_SLOTS_LEN) return ENCODE_OVERFLOW;
+    buf[0] = evt->u.botHostRowSlots.idx;
+    buf[1] = evt->u.botHostRowSlots.machineKind;
+    buf[2] = evt->u.botHostRowSlots.machineOther;
+    buf[3] = evt->u.botHostRowSlots.slotOverride;
+    buf[4] = (uint8_t)((evt->u.botHostRowSlots.slotLocked ? 1u : 0u) |
+                       (evt->u.botHostRowSlots.zero ? 2u : 0u));
+    *outLen = BOT_HOST_ROW_SLOTS_LEN;
+    return ENCODE_OK;
+}
+
+static bool decodeBotHostRowSlotsBody(const uint8_t *buf, size_t len,
+                                      ControlEvent *outEvt) {
+    if (buf == NULL || outEvt == NULL || len < BOT_HOST_ROW_SLOTS_LEN) {
+        return false;
+    }
+    if (buf[0] >= BOT_HOST_STATUS_ROWS - 1) return false;   /* not the server row */
+    if (buf[3] != BOT_HOST_SLOT_OVERRIDE_NONE && buf[3] > MAX_TANKS) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_BOT_HOST_ROW_SLOTS;
+    outEvt->u.botHostRowSlots.idx = buf[0];
+    outEvt->u.botHostRowSlots.machineKind = buf[1];
+    outEvt->u.botHostRowSlots.machineOther =
+        buf[2] < BOT_HOST_STATUS_ROWS - 1 ? buf[2]
+                                          : (uint8_t)BOT_HOST_MACHINE_OTHER_NONE;
+    outEvt->u.botHostRowSlots.slotOverride = buf[3];
+    outEvt->u.botHostRowSlots.slotLocked = (buf[4] & 1u) ? 1u : 0u;
+    outEvt->u.botHostRowSlots.zero = (buf[4] & 2u) ? 1u : 0u;
+    return true;
+}
+
+/* CTRL_BOT_HOST_SYNC_CAPS body: [caps 1]. Later bytes skipped. */
+static EncodeResult encodeBotHostSyncCapsBody(const ControlEvent *evt,
+                                              const struct UdpServerClient *recipient,
+                                              uint8_t *buf, size_t bufCap,
+                                              size_t *outLen) {
+    (void)recipient;
+    if (bufCap < 1) return ENCODE_OVERFLOW;
+    buf[0] = evt->u.botHostSyncCaps.caps;
+    *outLen = 1;
+    return ENCODE_OK;
+}
+
+static bool decodeBotHostSyncCapsBody(const uint8_t *buf, size_t len,
+                                      ControlEvent *outEvt) {
+    if (buf == NULL || outEvt == NULL || len < 1) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_BOT_HOST_SYNC_CAPS;
+    outEvt->u.botHostSyncCaps.caps = buf[0];
+    return true;
+}
+
+/* CTRL_BOT_HOST_CPU_BUDGET body: [milli 4]. Later bytes skipped. */
+static EncodeResult encodeBotHostCpuBudgetBody(const ControlEvent *evt,
+                                               const struct UdpServerClient *recipient,
+                                               uint8_t *buf, size_t bufCap,
+                                               size_t *outLen) {
+    (void)recipient;
+    if (bufCap < 4) return ENCODE_OVERFLOW;
+    packU32(buf, botHostCpuMilliFromWire(evt->u.botHostCpuBudget.milli));
+    *outLen = 4;
+    return ENCODE_OK;
+}
+
+static bool decodeBotHostCpuBudgetBody(const uint8_t *buf, size_t len,
+                                       ControlEvent *outEvt) {
+    if (buf == NULL || outEvt == NULL || len < 4) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_BOT_HOST_CPU_BUDGET;
+    outEvt->u.botHostCpuBudget.milli = botHostCpuMilliFromWire(unpackU32(buf));
+    return true;
+}
+
+/* CTRL_BOT_HOST_SAME_SERVER body: [kind 1]. Later bytes skipped. */
+static EncodeResult encodeBotHostSameServerBody(const ControlEvent *evt,
+                                                const struct UdpServerClient *recipient,
+                                                uint8_t *buf, size_t bufCap,
+                                                size_t *outLen) {
+    (void)recipient;
+    if (bufCap < 1) return ENCODE_OVERFLOW;
+    buf[0] = evt->u.botHostSameServer.kind;
+    *outLen = 1;
+    return ENCODE_OK;
+}
+
+static bool decodeBotHostSameServerBody(const uint8_t *buf, size_t len,
+                                        ControlEvent *outEvt) {
+    if (buf == NULL || outEvt == NULL || len < 1) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_BOT_HOST_SAME_SERVER;
+    outEvt->u.botHostSameServer.kind = buf[0];
+    return true;
+}
+
+/* CTRL_BOT_TIMING body: a log_OverrunStats record (overrun_record.h), as
+ * overrunRecordEncode wrote it. The decoder takes a body that
+ * overrunRecordDecode reads, so a later record version, with more bytes
+ * after the ones this build knows, passes through whole. */
+BOLO_STATIC_ASSERT(OVERRUN_RECORD_MAX_BYTES <= CONTROL_BODY_MAX,
+                   bot_timing_worst_case_fits_control_segment);
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeBotTimingBody(const ControlEvent *evt,
+                                        const struct UdpServerClient *recipient,
+                                        uint8_t *buf, size_t bufCap,
+                                        size_t *outLen) {
+    size_t n = evt->u.botTiming.len;
+    (void)recipient;
+    if (n < OVERRUN_RECORD_HEAD_BYTES || n > sizeof(evt->u.botTiming.bytes)) {
+        return ENCODE_OVERFLOW;
+    }
+    if (bufCap < n) return ENCODE_OVERFLOW;
+    memcpy(buf, evt->u.botTiming.bytes, n);
+    *outLen = n;
+    return ENCODE_OK;
+}
+
+static bool decodeBotTimingBody(const uint8_t *buf, size_t len,
+                                ControlEvent *outEvt) {
+    OverrunRecord rec;
+    if (buf == NULL || outEvt == NULL) return false;
+    if (len > sizeof(outEvt->u.botTiming.bytes)) {
+        len = sizeof(outEvt->u.botTiming.bytes);
+    }
+    if (!overrunRecordDecode(buf, (int)len, &rec)) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_BOT_TIMING;
+    outEvt->u.botTiming.len = (uint16_t)len;
+    memcpy(outEvt->u.botTiming.bytes, buf, len);
+    return true;
+}
+
+/* CTRL_BOT_HOST_HELD body: [idx 1][held 2]. Bytes after the three are
+ * skipped, so the message can grow. */
+#define BOT_HOST_HELD_LEN 3
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeBotHostHeldBody(const ControlEvent *evt,
+                                          const struct UdpServerClient *recipient,
+                                          uint8_t *buf, size_t bufCap,
+                                          size_t *outLen) {
+    (void)recipient;
+    if (bufCap < BOT_HOST_HELD_LEN) return ENCODE_OVERFLOW;
+    buf[0] = evt->u.botHostHeld.idx;
+    packU16(buf + 1, evt->u.botHostHeld.held);
+    *outLen = BOT_HOST_HELD_LEN;
+    return ENCODE_OK;
+}
+
+static bool decodeBotHostHeldBody(const uint8_t *buf, size_t len,
+                                  ControlEvent *outEvt) {
+    if (buf == NULL || outEvt == NULL || len < BOT_HOST_HELD_LEN) return false;
+    if (buf[0] >= BOT_HOST_STATUS_ROWS) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_BOT_HOST_HELD;
+    outEvt->u.botHostHeld.idx = buf[0];
+    outEvt->u.botHostHeld.held = unpackU16(buf + 1);
+    return true;
+}
+
+/* CTRL_BOT_HOST_LIMITS body: [start 1][ceiling 1][reserve 1]. Later bytes
+ * skipped. A ceiling above 16 that is not "none", or a
+ * reserve above 100 that is not "none", is refused. */
+#define BOT_HOST_LIMITS_LEN 3
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeBotHostLimitsBody(const ControlEvent *evt,
+                                            const struct UdpServerClient *recipient,
+                                            uint8_t *buf, size_t bufCap,
+                                            size_t *outLen) {
+    (void)recipient;
+    if (bufCap < BOT_HOST_LIMITS_LEN) return ENCODE_OVERFLOW;
+    buf[0] = evt->u.botHostLimits.start;
+    buf[1] = evt->u.botHostLimits.ceiling;
+    buf[2] = evt->u.botHostLimits.reserve;
+    *outLen = BOT_HOST_LIMITS_LEN;
+    return ENCODE_OK;
+}
+
+static bool decodeBotHostLimitsBody(const uint8_t *buf, size_t len,
+                                    ControlEvent *outEvt) {
+    if (buf == NULL || outEvt == NULL || len < BOT_HOST_LIMITS_LEN) {
+        return false;
+    }
+    if (buf[1] != BOT_HOST_LIMIT_NONE && buf[1] > MAX_TANKS) {
+        return false;
+    }
+    if (buf[2] != BOT_HOST_LIMIT_NONE && buf[2] > 100) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_BOT_HOST_LIMITS;
+    outEvt->u.botHostLimits.start =
+        buf[0] != BOT_HOST_LIMIT_NONE && buf[0] > MAX_TANKS
+            ? (uint8_t)MAX_TANKS : buf[0];
+    outEvt->u.botHostLimits.ceiling = buf[1];
+    outEvt->u.botHostLimits.reserve = buf[2];
+    return true;
+}
+
+/* CTRL_BOT_HOST_ROW_LIMITS body: [idx 1][ceiling 1][reserve 1][fits 1].
+ * Later bytes skipped. A row that is not a Bot Host row, a ceiling above
+ * 16 or a reserve above 100 is refused. */
+#define BOT_HOST_ROW_LIMITS_LEN 4
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeBotHostRowLimitsBody(const ControlEvent *evt,
+                                               const struct UdpServerClient *recipient,
+                                               uint8_t *buf, size_t bufCap,
+                                               size_t *outLen) {
+    (void)recipient;
+    if (bufCap < BOT_HOST_ROW_LIMITS_LEN) return ENCODE_OVERFLOW;
+    buf[0] = evt->u.botHostRowLimits.idx;
+    buf[1] = evt->u.botHostRowLimits.ceiling;
+    buf[2] = evt->u.botHostRowLimits.reserve;
+    buf[3] = evt->u.botHostRowLimits.fits;
+    *outLen = BOT_HOST_ROW_LIMITS_LEN;
+    return ENCODE_OK;
+}
+
+static bool decodeBotHostRowLimitsBody(const uint8_t *buf, size_t len,
+                                       ControlEvent *outEvt) {
+    if (buf == NULL || outEvt == NULL || len < BOT_HOST_ROW_LIMITS_LEN) {
+        return false;
+    }
+    if (buf[0] >= BOT_HOST_STATUS_ROWS - 1) return false;   /* not the server row */
+    if (buf[1] > MAX_TANKS || buf[2] > 100) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_BOT_HOST_ROW_LIMITS;
+    outEvt->u.botHostRowLimits.idx = buf[0];
+    outEvt->u.botHostRowLimits.ceiling = buf[1];
+    outEvt->u.botHostRowLimits.reserve = buf[2];
+    outEvt->u.botHostRowLimits.fits = buf[3];
+    return true;
+}
+
+/* CTRL_BOT_HOST_PACK_REQ body: [gen 4][brain 1][fileCount 2]
+ * [fromInstall 2][fromCache 2][bits (fileCount + 7) / 8]. A fileCount of 0
+ * or above 8 * BOT_HOST_PACK_BITMAP_BYTES, or a body too short for its
+ * bits, is refused; later bytes are skipped. */
+#define BOT_HOST_PACK_REQ_HEAD 11
+
+static EncodeResult encodeBotHostPackReqBody(const ControlEvent *evt,
+                                             const struct UdpServerClient *recipient,
+                                             uint8_t *buf, size_t bufCap,
+                                             size_t *outLen) {
+    size_t nb;
+    uint16_t fc = evt->u.botHostPackReq.fileCount;
+    (void)recipient;
+    if (fc == 0 || fc > 8u * BOT_HOST_PACK_BITMAP_BYTES) return ENCODE_OVERFLOW;
+    nb = ((size_t)fc + 7u) / 8u;
+    if (bufCap < BOT_HOST_PACK_REQ_HEAD + nb) return ENCODE_OVERFLOW;
+    packU32(buf, evt->u.botHostPackReq.gen);
+    buf[4] = evt->u.botHostPackReq.brain;
+    packU16(buf + 5, fc);
+    packU16(buf + 7, evt->u.botHostPackReq.fromInstall);
+    packU16(buf + 9, evt->u.botHostPackReq.fromCache);
+    memcpy(buf + BOT_HOST_PACK_REQ_HEAD, evt->u.botHostPackReq.bits, nb);
+    *outLen = BOT_HOST_PACK_REQ_HEAD + nb;
+    return ENCODE_OK;
+}
+
+static bool decodeBotHostPackReqBody(const uint8_t *buf, size_t len,
+                                     ControlEvent *outEvt) {
+    uint16_t fc;
+    size_t nb;
+    if (buf == NULL || outEvt == NULL || len < BOT_HOST_PACK_REQ_HEAD) {
+        return false;
+    }
+    fc = unpackU16(buf + 5);
+    if (fc == 0 || fc > 8u * BOT_HOST_PACK_BITMAP_BYTES) return false;
+    nb = ((size_t)fc + 7u) / 8u;
+    if (len < BOT_HOST_PACK_REQ_HEAD + nb) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_BOT_HOST_PACK_REQ;
+    outEvt->u.botHostPackReq.gen = unpackU32(buf);
+    outEvt->u.botHostPackReq.brain = buf[4];
+    outEvt->u.botHostPackReq.fileCount = fc;
+    outEvt->u.botHostPackReq.fromInstall = unpackU16(buf + 7);
+    outEvt->u.botHostPackReq.fromCache = unpackU16(buf + 9);
+    memcpy(outEvt->u.botHostPackReq.bits, buf + BOT_HOST_PACK_REQ_HEAD, nb);
+    /* Bits past fileCount in the last byte are not files. */
+    if (fc % 8u != 0) {
+        outEvt->u.botHostPackReq.bits[nb - 1] &= (uint8_t)((1u << (fc % 8u)) - 1u);
+    }
+    return true;
+}
+
+/* CTRL_BOT_HOST_FILE_REQ body: [gen 4][brain 1][file 2]. */
+#define BOT_HOST_FILE_REQ_LEN 7
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeBotHostFileReqBody(const ControlEvent *evt,
+                                             const struct UdpServerClient *recipient,
+                                             uint8_t *buf, size_t bufCap,
+                                             size_t *outLen) {
+    (void)recipient;
+    if (bufCap < BOT_HOST_FILE_REQ_LEN) return ENCODE_OVERFLOW;
+    packU32(buf, evt->u.botHostFileReq.gen);
+    buf[4] = evt->u.botHostFileReq.brain;
+    packU16(buf + 5, evt->u.botHostFileReq.file);
+    *outLen = BOT_HOST_FILE_REQ_LEN;
+    return ENCODE_OK;
+}
+
+static bool decodeBotHostFileReqBody(const uint8_t *buf, size_t len,
+                                     ControlEvent *outEvt) {
+    if (buf == NULL || outEvt == NULL || len != BOT_HOST_FILE_REQ_LEN) {
+        return false;
+    }
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_BOT_HOST_FILE_REQ;
+    outEvt->u.botHostFileReq.gen   = unpackU32(buf);
+    outEvt->u.botHostFileReq.brain = buf[4];
+    outEvt->u.botHostFileReq.file  = unpackU16(buf + 5);
+    return true;
+}
+
+/* CTRL_BOT_HOST_SYNC body: [gen 4][done 4][total 4][ready 1]. done is at
+ * most total. */
+#define BOT_HOST_SYNC_LEN 13
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeBotHostSyncBody(const ControlEvent *evt,
+                                          const struct UdpServerClient *recipient,
+                                          uint8_t *buf, size_t bufCap,
+                                          size_t *outLen) {
+    (void)recipient;
+    if (bufCap < BOT_HOST_SYNC_LEN) return ENCODE_OVERFLOW;
+    packU32(buf, evt->u.botHostSync.gen);
+    packU32(buf + 4, evt->u.botHostSync.done);
+    packU32(buf + 8, evt->u.botHostSync.total);
+    buf[12] = evt->u.botHostSync.ready ? 1 : 0;
+    *outLen = BOT_HOST_SYNC_LEN;
+    return ENCODE_OK;
+}
+
+static bool decodeBotHostSyncBody(const uint8_t *buf, size_t len,
+                                  ControlEvent *outEvt) {
+    if (buf == NULL || outEvt == NULL || len != BOT_HOST_SYNC_LEN) {
+        return false;
+    }
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_BOT_HOST_SYNC;
+    outEvt->u.botHostSync.gen   = unpackU32(buf);
+    outEvt->u.botHostSync.done  = unpackU32(buf + 4);
+    outEvt->u.botHostSync.total = unpackU32(buf + 8);
+    outEvt->u.botHostSync.ready = buf[12] ? 1 : 0;
+    if (outEvt->u.botHostSync.done > outEvt->u.botHostSync.total) return false;
+    return true;
+}
+
+/* CTRL_BOT_HOST_SLOTS body: [slots 1][refuseSeat 1][refuseGen 2]. slots is
+ * at most BOT_HOST_MAX_SLOTS (MAX_TANKS); refuseSeat is a seat below
+ * MAX_TANKS or BOT_HOST_SLOTS_NO_REFUSE. */
+#define BOT_HOST_SLOTS_LEN 4
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeBotHostSlotsBody(const ControlEvent *evt,
+                                           const struct UdpServerClient *recipient,
+                                           uint8_t *buf, size_t bufCap,
+                                           size_t *outLen) {
+    (void)recipient;
+    if (bufCap < BOT_HOST_SLOTS_LEN) return ENCODE_OVERFLOW;
+    buf[0] = evt->u.botHostSlots.slots;
+    buf[1] = evt->u.botHostSlots.refuseSeat;
+    packU16(buf + 2, evt->u.botHostSlots.refuseGen);
+    *outLen = BOT_HOST_SLOTS_LEN;
+    return ENCODE_OK;
+}
+
+static bool decodeBotHostSlotsBody(const uint8_t *buf, size_t len,
+                                   ControlEvent *outEvt) {
+    if (buf == NULL || outEvt == NULL || len != BOT_HOST_SLOTS_LEN) {
+        return false;
+    }
+    if (buf[0] > MAX_TANKS) return false;
+    if (buf[1] >= MAX_TANKS && buf[1] != BOT_HOST_SLOTS_NO_REFUSE) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_BOT_HOST_SLOTS;
+    outEvt->u.botHostSlots.slots      = buf[0];
+    outEvt->u.botHostSlots.refuseSeat = buf[1];
+    outEvt->u.botHostSlots.refuseGen  = unpackU16(buf + 2);
+    return true;
+}
+
+/* CTRL_BOT_HOST_TICKET body: [player 1][ticket BOT_HOST_TICKET_LEN]
+ * [brain str]. */
+#define BOT_HOST_TICKET_FIXED_LEN (1 + BOT_HOST_TICKET_LEN)
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeBotHostTicketBody(const ControlEvent *evt,
+                                            const struct UdpServerClient *recipient,
+                                            uint8_t *buf, size_t bufCap,
+                                            size_t *outLen) {
+    size_t pos = 0;
+    (void)recipient;
+    if (bufCap < BOT_HOST_TICKET_FIXED_LEN) return ENCODE_OVERFLOW;
+    buf[pos++] = evt->u.botHostTicket.player;
+    memcpy(buf + pos, evt->u.botHostTicket.ticket, BOT_HOST_TICKET_LEN);
+    pos += BOT_HOST_TICKET_LEN;
+    if (!botHostPutStr(buf, bufCap, &pos, evt->u.botHostTicket.brain,
+                       sizeof(evt->u.botHostTicket.brain))) {
+        return ENCODE_OVERFLOW;
+    }
+    *outLen = pos;
+    return ENCODE_OK;
+}
+
+static bool decodeBotHostTicketBody(const uint8_t *buf, size_t len,
+                                    ControlEvent *outEvt) {
+    size_t pos = 0;
+    if (buf == NULL || outEvt == NULL) return false;
+    if (len < BOT_HOST_TICKET_FIXED_LEN) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_BOT_HOST_TICKET;
+    outEvt->u.botHostTicket.player = buf[pos++];
+    if (outEvt->u.botHostTicket.player >= MAX_TANKS) return false;
+    memcpy(outEvt->u.botHostTicket.ticket, buf + pos, BOT_HOST_TICKET_LEN);
+    pos += BOT_HOST_TICKET_LEN;
+    if (!botHostGetStr(buf, len, &pos, outEvt->u.botHostTicket.brain,
+                       sizeof(outEvt->u.botHostTicket.brain))) {
+        return false;
+    }
+    return pos == len;
+}
+
+/* CTRL_BOT_HOST_REC body:
+ *   [op 1][flags 1][state 1][percent 1][botsDone 1][botsTotal 1][a 4][b 4]
+ *   [block str]. block holds only [A-Za-z0-9_-]; it is empty for HOLD,
+ * UPLOAD, CLEAR, CLEARED and STATE. */
+#define BOT_HOST_REC_FIXED_LEN 14
+
+/* True when s is a session folder name a peer may use as one path part. */
+static bool botHostRecBlockOk(const char *s) {
+    size_t i;
+    for (i = 0; s[i] != '\0'; i++) {
+        char c = s[i];
+        if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+              (c >= '0' && c <= '9') || c == '_' || c == '-')) {
+            return false;
+        }
+    }
+    return true;
+}
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeBotHostRecBody(const ControlEvent *evt,
+                                         const struct UdpServerClient *recipient,
+                                         uint8_t *buf, size_t bufCap,
+                                         size_t *outLen) {
+    size_t pos = 0;
+    (void)recipient;
+    if (bufCap < BOT_HOST_REC_FIXED_LEN) return ENCODE_OVERFLOW;
+    buf[pos++] = evt->u.botHostRec.op;
+    buf[pos++] = evt->u.botHostRec.flags;
+    buf[pos++] = evt->u.botHostRec.state;
+    buf[pos++] = evt->u.botHostRec.percent;
+    buf[pos++] = evt->u.botHostRec.botsDone;
+    buf[pos++] = evt->u.botHostRec.botsTotal;
+    packU32(buf + pos, evt->u.botHostRec.a);
+    pos += 4;
+    packU32(buf + pos, evt->u.botHostRec.b);
+    pos += 4;
+    if (!botHostPutStr(buf, bufCap, &pos, evt->u.botHostRec.block,
+                       sizeof(evt->u.botHostRec.block))) {
+        return ENCODE_OVERFLOW;
+    }
+    *outLen = pos;
+    return ENCODE_OK;
+}
+
+static bool decodeBotHostRecBody(const uint8_t *buf, size_t len,
+                                 ControlEvent *outEvt) {
+    size_t pos = 0;
+    if (buf == NULL || outEvt == NULL) return false;
+    if (len < BOT_HOST_REC_FIXED_LEN) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_BOT_HOST_REC;
+    outEvt->u.botHostRec.op        = buf[pos++];
+    outEvt->u.botHostRec.flags     = buf[pos++];
+    outEvt->u.botHostRec.state     = buf[pos++];
+    outEvt->u.botHostRec.percent   = buf[pos++];
+    outEvt->u.botHostRec.botsDone  = buf[pos++];
+    outEvt->u.botHostRec.botsTotal = buf[pos++];
+    outEvt->u.botHostRec.a = unpackU32(buf + pos);
+    pos += 4;
+    outEvt->u.botHostRec.b = unpackU32(buf + pos);
+    pos += 4;
+    if (outEvt->u.botHostRec.op == 0 ||
+        outEvt->u.botHostRec.op > BOT_HOST_REC_OP_MAX) {
+        return false;
+    }
+    if (outEvt->u.botHostRec.percent > 100) return false;
+    if (outEvt->u.botHostRec.botsDone > MAX_TANKS ||
+        outEvt->u.botHostRec.botsTotal > MAX_TANKS) {
+        return false;
+    }
+    if (!botHostGetStr(buf, len, &pos, outEvt->u.botHostRec.block,
+                       sizeof(outEvt->u.botHostRec.block))) {
+        return false;
+    }
+    if (!botHostRecBlockOk(outEvt->u.botHostRec.block)) return false;
+    return pos == len;
+}
+
 /* CTRL_SCN_MARKER body: [id 1][kind 1][x 1][y 1][slot 1][colour 1]. */
 #define SCN_MARKER_BODY_LEN 6
 
@@ -4014,6 +5082,33 @@ static const ControlEncodeBodyFn s_bodyEncoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_LOBBY_SCRIPT_SETTING]  = encodeLobbyScriptSettingBody,
     [CTRL_LOBBY_BRAIN_ANNOUNCE]  = encodeLobbyBrainAnnounceBody,
     [CTRL_LOBBY_BOT_POOL_INFO]   = encodeLobbyBotPoolInfoBody,
+    [CTRL_BOT_HOST_ASSIGN]       = encodeBotHostAssignBody,
+    [CTRL_BOT_HOST_UNASSIGN]     = encodeBotHostUnassignBody,
+    [CTRL_BOT_INIT_TABLE]        = encodeBotInitTableBody,
+    [CTRL_BOT_HINT]              = encodeBotHintBody,
+    [CTRL_BOT_TEAM_MSG]          = encodeBotTeamMsgBody,
+    [CTRL_BOT_HOST_STATUS]       = encodeBotHostStatusBody,
+    [CTRL_BOT_HOST_FILE_REQ]     = encodeBotHostFileReqBody,
+    [CTRL_BOT_HOST_SYNC]         = encodeBotHostSyncBody,
+    [CTRL_BOT_HOST_SLOTS]        = encodeBotHostSlotsBody,
+    [CTRL_BOT_HOST_REC]          = encodeBotHostRecBody,
+    [CTRL_BOT_HOST_TICKET]       = encodeBotHostTicketBody,
+    [CTRL_BOT_HOST_CPU]          = encodeBotHostCpuBody,
+    [CTRL_BOT_HOST_CPU_FREE]     = encodeBotHostCpuFreeBody,
+    [CTRL_BOT_HOST_CPU_BOT]      = encodeBotHostCpuBotBody,
+    [CTRL_BOT_HOST_LAG]          = encodeBotHostLagBody,
+    [CTRL_SERVER_BOT_SLOTS]      = encodeServerBotSlotsBody,
+    [CTRL_BOT_HOST_MACHINE_SALT]   = encodeBotHostMachineSaltBody,
+    [CTRL_BOT_HOST_MACHINE_ANSWER] = encodeBotHostMachineAnswerBody,
+    [CTRL_BOT_HOST_ROW_SLOTS]      = encodeBotHostRowSlotsBody,
+    [CTRL_BOT_HOST_SYNC_CAPS]      = encodeBotHostSyncCapsBody,
+    [CTRL_BOT_HOST_PACK_REQ]       = encodeBotHostPackReqBody,
+    [CTRL_BOT_HOST_CPU_BUDGET]     = encodeBotHostCpuBudgetBody,
+    [CTRL_BOT_HOST_SAME_SERVER]    = encodeBotHostSameServerBody,
+    [CTRL_BOT_TIMING]              = encodeBotTimingBody,
+    [CTRL_BOT_HOST_HELD]           = encodeBotHostHeldBody,
+    [CTRL_BOT_HOST_LIMITS]         = encodeBotHostLimitsBody,
+    [CTRL_BOT_HOST_ROW_LIMITS]     = encodeBotHostRowLimitsBody,
 };
 
 static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
@@ -4072,6 +5167,33 @@ static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_LOBBY_SCRIPT_SETTING]  = decodeLobbyScriptSettingBody,
     [CTRL_LOBBY_BRAIN_ANNOUNCE]  = decodeLobbyBrainAnnounceBody,
     [CTRL_LOBBY_BOT_POOL_INFO]   = decodeLobbyBotPoolInfoBody,
+    [CTRL_BOT_HOST_ASSIGN]       = decodeBotHostAssignBody,
+    [CTRL_BOT_HOST_UNASSIGN]     = decodeBotHostUnassignBody,
+    [CTRL_BOT_INIT_TABLE]        = decodeBotInitTableBody,
+    [CTRL_BOT_HINT]              = decodeBotHintBody,
+    [CTRL_BOT_TEAM_MSG]          = decodeBotTeamMsgBody,
+    [CTRL_BOT_HOST_STATUS]       = decodeBotHostStatusBody,
+    [CTRL_BOT_HOST_FILE_REQ]     = decodeBotHostFileReqBody,
+    [CTRL_BOT_HOST_SYNC]         = decodeBotHostSyncBody,
+    [CTRL_BOT_HOST_SLOTS]        = decodeBotHostSlotsBody,
+    [CTRL_BOT_HOST_REC]          = decodeBotHostRecBody,
+    [CTRL_BOT_HOST_TICKET]       = decodeBotHostTicketBody,
+    [CTRL_BOT_HOST_CPU]          = decodeBotHostCpuBody,
+    [CTRL_BOT_HOST_CPU_FREE]     = decodeBotHostCpuFreeBody,
+    [CTRL_BOT_HOST_CPU_BOT]      = decodeBotHostCpuBotBody,
+    [CTRL_BOT_HOST_LAG]          = decodeBotHostLagBody,
+    [CTRL_SERVER_BOT_SLOTS]      = decodeServerBotSlotsBody,
+    [CTRL_BOT_HOST_MACHINE_SALT]   = decodeBotHostMachineSaltBody,
+    [CTRL_BOT_HOST_MACHINE_ANSWER] = decodeBotHostMachineAnswerBody,
+    [CTRL_BOT_HOST_ROW_SLOTS]      = decodeBotHostRowSlotsBody,
+    [CTRL_BOT_HOST_SYNC_CAPS]      = decodeBotHostSyncCapsBody,
+    [CTRL_BOT_HOST_PACK_REQ]       = decodeBotHostPackReqBody,
+    [CTRL_BOT_HOST_CPU_BUDGET]     = decodeBotHostCpuBudgetBody,
+    [CTRL_BOT_HOST_SAME_SERVER]    = decodeBotHostSameServerBody,
+    [CTRL_BOT_TIMING]              = decodeBotTimingBody,
+    [CTRL_BOT_HOST_HELD]           = decodeBotHostHeldBody,
+    [CTRL_BOT_HOST_LIMITS]         = decodeBotHostLimitsBody,
+    [CTRL_BOT_HOST_ROW_LIMITS]     = decodeBotHostRowLimitsBody,
 };
 
 ControlEncodeFn transportControlCodecEncoder(ControlEventType type) {
@@ -4194,6 +5316,33 @@ const char *controlEventTypeName(ControlEventType type) {
     case CTRL_SCN_STATUS:             return "CTRL_SCN_STATUS";
     case CTRL_VOICE_EVERYONE:         return "CTRL_VOICE_EVERYONE";
     case CTRL_SCN_POPUP:              return "CTRL_SCN_POPUP";
+    case CTRL_BOT_HOST_ASSIGN:        return "CTRL_BOT_HOST_ASSIGN";
+    case CTRL_BOT_HOST_UNASSIGN:      return "CTRL_BOT_HOST_UNASSIGN";
+    case CTRL_BOT_INIT_TABLE:         return "CTRL_BOT_INIT_TABLE";
+    case CTRL_BOT_HINT:               return "CTRL_BOT_HINT";
+    case CTRL_BOT_TEAM_MSG:           return "CTRL_BOT_TEAM_MSG";
+    case CTRL_BOT_HOST_STATUS:        return "CTRL_BOT_HOST_STATUS";
+    case CTRL_BOT_HOST_FILE_REQ:      return "CTRL_BOT_HOST_FILE_REQ";
+    case CTRL_BOT_HOST_SYNC:          return "CTRL_BOT_HOST_SYNC";
+    case CTRL_BOT_HOST_SLOTS:         return "CTRL_BOT_HOST_SLOTS";
+    case CTRL_BOT_HOST_REC:           return "CTRL_BOT_HOST_REC";
+    case CTRL_BOT_HOST_TICKET:        return "CTRL_BOT_HOST_TICKET";
+    case CTRL_BOT_HOST_CPU:           return "CTRL_BOT_HOST_CPU";
+    case CTRL_BOT_HOST_CPU_FREE:      return "CTRL_BOT_HOST_CPU_FREE";
+    case CTRL_BOT_HOST_CPU_BOT:       return "CTRL_BOT_HOST_CPU_BOT";
+    case CTRL_BOT_HOST_LAG:           return "CTRL_BOT_HOST_LAG";
+    case CTRL_SERVER_BOT_SLOTS:       return "CTRL_SERVER_BOT_SLOTS";
+    case CTRL_BOT_HOST_MACHINE_SALT:  return "CTRL_BOT_HOST_MACHINE_SALT";
+    case CTRL_BOT_HOST_MACHINE_ANSWER: return "CTRL_BOT_HOST_MACHINE_ANSWER";
+    case CTRL_BOT_HOST_ROW_SLOTS:     return "CTRL_BOT_HOST_ROW_SLOTS";
+    case CTRL_BOT_HOST_SYNC_CAPS:     return "CTRL_BOT_HOST_SYNC_CAPS";
+    case CTRL_BOT_HOST_PACK_REQ:      return "CTRL_BOT_HOST_PACK_REQ";
+    case CTRL_BOT_HOST_CPU_BUDGET:    return "CTRL_BOT_HOST_CPU_BUDGET";
+    case CTRL_BOT_HOST_SAME_SERVER:   return "CTRL_BOT_HOST_SAME_SERVER";
+    case CTRL_BOT_TIMING:             return "CTRL_BOT_TIMING";
+    case CTRL_BOT_HOST_HELD:          return "CTRL_BOT_HOST_HELD";
+    case CTRL_BOT_HOST_LIMITS:        return "CTRL_BOT_HOST_LIMITS";
+    case CTRL_BOT_HOST_ROW_LIMITS:    return "CTRL_BOT_HOST_ROW_LIMITS";
     case CTRL_EVENT_TYPE_COUNT:
         break;
     }

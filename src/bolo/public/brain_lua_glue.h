@@ -91,6 +91,12 @@ void brainCoreRegisterVizDetail(struct lua_State *L);
  * and not only on internal/braincore.h — that header is T2 and a frontend
  * never sees it. Full contract documented there. */
 void brainCoreSetLogFlushHook(void (*fn)(void));
+/* The same for the hook that closes the writer's open files (see
+ * internal/braincore.h, brainCoreSetLogReleaseHook). */
+void brainCoreSetLogReleaseHook(void (*fn)(void));
+/* Close the writer's open files now (a no-op with no hook). The Bot Host
+ * calls it before it gzips a finished block's logs. */
+void brainCoreReleaseLogFiles(void);
 /* Whether the host runs this brain in debug mode, which alone lets a crash
  * write files. The host says so here, out of the brain's reach, because the
  * brain can write its BRAIN_DEBUG_MODE and DEBUG_SESSION_DIR globals. */

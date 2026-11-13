@@ -187,8 +187,35 @@ void lv_screenOverrunNow(LvOverrunNow *out) {
   }
 }
 
+/* --- Bot host records --------------------------------------------------
+ * What the server's bot placement measured and chose for each host, as the
+ * recording's log_BotHostData records state them (bothost_record.h).
+ * Collected the way the overrun records are: by the load's walk and by
+ * playback, which on a live feed is the only collector. */
+static LvBotHostTrack s_botHostTrack;
+
+/* Read the payload at the cursor, evLen bytes, into the track at ms. The
+   caller sets the cursor to the frame's end after. FALSE when the bytes are
+   not there. */
+static bool lv_botHostReadPayload(uint32_t ms, unsigned short evLen) {
+  BYTE b[BOTHOST_RECORD_MAX_BYTES];
+  int want = evLen < (unsigned short) sizeof(b) ? (int) evLen : (int) sizeof(b);
+  if (want < 3) {
+    return TRUE;   /* too short to be one: consumed and ignored */
+  }
+  if (logReadBytes(b, want) != want) {
+    return FALSE;
+  }
+  lv_botHostTrackAddPayload(&s_botHostTrack, ms, b, want);
+  return TRUE;
+}
+
+const LvBotHostTrack *lv_screenBotHostTrack(void) {
+  return &s_botHostTrack;
+}
+
 /* Drop the records, the history and the view, as every load and close
-   does. The overrun records go with them. */
+   does. The overrun and bot host records go with them. */
 static void lv_lagReset(void) {
   int i;
   for (i = 0; i < LV_LAG_SLOTS; i++) {
@@ -202,6 +229,7 @@ static void lv_lagReset(void) {
     lv_lagTrackClear(&s_lagJoins[i]);
   }
   lv_overrunTrackClear(&s_overrunTrack);
+  lv_botHostTrackClear(&s_botHostTrack);
 }
 
 /* Take one log_PlayerLag payload's first four bytes (the player, the RTT as
@@ -3589,6 +3617,14 @@ void lv_screenProcessLog(unsigned short numEvents) {
         lv_overrunReadPayload(g_lv->timeRunning, evLen);
       }
       break;
+    case log_BotHostData:
+      /* The server's bot placement for one host. Only a framed file has
+         them, and the frame's length below ends the record wherever the
+         read stopped. */
+      if (isV2) {
+        lv_botHostReadPayload(g_lv->timeRunning, evLen);
+      }
+      break;
     case log_BaseSetOwner:
       logReadBytes(&opt1, 1);
       logReadBytes(&opt2, 1);
@@ -5146,6 +5182,7 @@ typedef struct {
   bool     wt;         /* server tick count and anchors; framed files only */
   bool     lag;        /* log_PlayerLag into the lag tracks; framed files only */
   bool     overrun;    /* log_OverrunStats into the overrun track; framed files only */
+  bool     botHost;    /* log_BotHostData into the bot host track; framed files only */
   /* Set by walkScanEvents for the block it read, for the server tick count:
      whether it held log_EntityMasks, and its first four-byte log_ServerTick. */
   bool     masks;
@@ -5210,6 +5247,12 @@ static bool walkScanEvents(LvLoadWalk *w, unsigned short numEvents, uint32_t ms)
       if (w->overrun && code == log_OverrunStats &&
           !lv_overrunReadPayload(ms, evLen)) {
         w->overrun = FALSE;
+      }
+      if (w->botHost && code == log_BotHostData) {
+        lv_logSetPosition(payloadPos);
+        if (!lv_botHostReadPayload(ms, evLen)) {
+          w->botHost = FALSE;
+        }
       }
       if (w->pres &&
           (code == log_ScnPanel || code == log_ScnScore ||
@@ -5302,6 +5345,7 @@ static void lv_walkLoadBegin(void) {
   s_walk.w.wt      = s_walk.w.framed;
   s_walk.w.lag     = s_walk.w.framed;
   s_walk.w.overrun = s_walk.w.framed;
+  s_walk.w.botHost = s_walk.w.framed;
 
   lv_ruleChangesClear();
   lv_presReset();

@@ -1051,6 +1051,10 @@ void serverSimPublishLobbySettings(ServerSim *sim) {
     memset(&evt, 0, sizeof(evt));
     serverSimFillLobbySettingsEvent(sim, &evt);
     serverSimPublishControl(sim, &evt);
+    /* The Server bot slots with every settings publish: its value in use
+     * follows the host bot capacity, which publishes through here. */
+    serverSimFillServerBotSlotsEvent(sim, &evt);
+    serverSimPublishControl(sim, &evt);
 }
 
 /* Whether this write is one the attached scenario fixes: the game type it

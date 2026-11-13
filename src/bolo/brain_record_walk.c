@@ -13,10 +13,9 @@
  *********************************************************/
 #include "brain_record_walk.h"
 
-#include <stdlib.h>
 #include <string.h>
-#include <zlib.h>
 
+#include "brain_record_io.h"
 #include "brain_record.h"  /* BrainRecHeader / BrainRecCandidate / magics */
 #include "input_packet.h"  /* TankSnapshot / ShellSnapshot / BaseSnapshot / PillSnapshot */
 
@@ -162,11 +161,12 @@ BrainRecWalkStatus brainRecWalkFrame(BrainRecReader *r, BrainRecFrameInfo *out) 
 
 /* ---- Whole-file tick range ----------------------------------------------- */
 
-#define WALK_TICKS_BUF (256 * 1024)
+/* Skip in chunks of this many bytes, so a cancel is seen inside a large
+ * block. */
+#define WALK_TICKS_SKIP_CHUNK (256u * 1024u)
 
 typedef struct {
-    gzFile         g;
-    unsigned char *buf;
+    BrainRecIn    *in;
     bool         (*cancelled)(void *ctx);
     void          *cancelCtx;
     bool           stop;
@@ -180,18 +180,15 @@ static bool walkTicksStop(WalkTicksSrc *s) {
 static size_t walkTicksRead(void *ctx, void *dst, size_t len) {
     WalkTicksSrc *s = (WalkTicksSrc *)ctx;
     if (walkTicksStop(s)) return 0;
-    int got = gzread(s->g, dst, (unsigned)len);
-    return got > 0 ? (size_t)got : 0;
+    return brainRecInRead(s->in, dst, len);
 }
 
-/* Skip by reading into the buffer: the bytes are inflated either way, and
- * this keeps the cancel check between chunks of a large block. */
 static bool walkTicksSkip(void *ctx, size_t len) {
     WalkTicksSrc *s = (WalkTicksSrc *)ctx;
     while (len > 0) {
         if (walkTicksStop(s)) return false;
-        unsigned chunk = (unsigned)(len < WALK_TICKS_BUF ? len : WALK_TICKS_BUF);
-        if (gzread(s->g, s->buf, chunk) != (int)chunk) return false;
+        size_t chunk = len < WALK_TICKS_SKIP_CHUNK ? len : WALK_TICKS_SKIP_CHUNK;
+        if (!brainRecInSkip(s->in, (uint64_t)chunk)) return false;
         len -= chunk;
     }
     return true;
@@ -209,11 +206,8 @@ bool brainRecWalkFileTicks(const char *btrPath, uint32_t *firstTick,
     memset(&src, 0, sizeof src);
     src.cancelled = cancelled;
     src.cancelCtx = cancelCtx;
-    src.g = gzopen(btrPath, "rb");
-    if (!src.g) return false;
-    gzbuffer(src.g, WALK_TICKS_BUF);
-    src.buf = (unsigned char *)malloc(WALK_TICKS_BUF);
-    if (!src.buf) { gzclose(src.g); return false; }
+    src.in = brainRecInOpen(btrPath);   /* zstd or old gzip */
+    if (!src.in) return false;
 
     memset(&r, 0, sizeof r);
     r.ctx  = &src;
@@ -229,11 +223,25 @@ bool brainRecWalkFileTicks(const char *btrPath, uint32_t *firstTick,
         }
     }
     bool stopped = src.stop;
-    free(src.buf);
-    gzclose(src.g);
+    brainRecInClose(src.in);
     if (stopped || n == 0) return false;
     if (firstTick) *firstTick = first;
     if (lastTick)  *lastTick  = last;
     if (frames)    *frames    = n;
     return true;
+}
+
+static size_t walkInRead(void *ctx, void *dst, size_t len) {
+    return brainRecInRead((BrainRecIn *)ctx, dst, len);
+}
+
+static bool walkInSkip(void *ctx, size_t len) {
+    return brainRecInSkip((BrainRecIn *)ctx, (uint64_t)len);
+}
+
+void brainRecWalkReaderFromIn(BrainRecReader *r, struct BrainRecIn *in) {
+    memset(r, 0, sizeof *r);
+    r->ctx  = in;
+    r->read = walkInRead;
+    r->skip = walkInSkip;
 }
