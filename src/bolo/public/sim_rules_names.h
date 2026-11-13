@@ -385,6 +385,21 @@ SimRuleValueKind simRulesRuleValueKind(int rule);
  * wherever they are written down and there is no second list of them. */
 double simRulesClassicValue(int rule);
 
+/* The first version whose classic lgm_blast_shape is 2, the circle of 144.
+ * Builds before it played 0, the old WinBolo circle of 128, as classic. */
+#define SIM_RULES_LGM_BLAST_144_MAJOR    2
+#define SIM_RULES_LGM_BLAST_144_MINOR    2
+#define SIM_RULES_LGM_BLAST_144_REVISION 2
+
+/* The lgm_blast_shape a game made by this version played when nothing set
+ * the rule: 0 (the circle of 128) for a version older than
+ * SIM_RULES_LGM_BLAST_144_*, else 2 (the circle of 144). A recording holds
+ * only the rules a script set or changed, and its header holds the version
+ * that wrote it, so this gives the shape of a recording with no
+ * lgm_blast_shape in it. */
+int simRulesLgmBlastShapeForVersion(unsigned major, unsigned minor,
+                                    unsigned revision);
+
 /* The range a value for this rule is accepted in. lo is always stated. hi
  * is the fixed ceiling and is read only when hasHi; a row with a floor and
  * no fixed ceiling leaves it false. cappedBy names a rule whose own value

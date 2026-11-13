@@ -4782,6 +4782,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     # A builder walled in behind his own tank while a pillbox shoots at it,
     # over a lagged link and a clean one.
     tests/unit/test_lgm_under_fire.c
+    # The server rewinding a builder when a shell goes off near him.
+    tests/unit/test_lgm_kill_rewind.c
     # The client's own check of the rules table before it keeps one.
     tests/unit/test_sim_rules_client_check.c
     # The sixteen pillbox pictures against a pill armour cap above 15.
@@ -6704,6 +6706,8 @@ set(_unit_test_names
     lgm_blast_shape_solid_square
     lgm_blast_shape_classic_matches_old
     lgm_blast_shape_pill_range
+    lgm_blast_shape_classic_144
+    lgm_blast_shape_for_version
     teleport_erases_tank_rewind_record
     teleport_shell_hits_new_place
     teleport_rewind_refills
@@ -6729,6 +6733,13 @@ set(_unit_test_names
     lgm_wall_behind_tank_under_fire_lagged
     lgm_wall_behind_tank_under_fire_nolag
     loopback_password
+    # The server rewinding a builder when a shell goes off near him: a lagged
+    # shooter, its clean-link control, the rewind window's bound, and a pill
+    # shell testing the man where he is, whatever his owner's lag.
+    lgm_kill_rewind_lagged_shooter
+    lgm_kill_rewind_nolag_control
+    lgm_kill_rewind_bounded
+    lgm_kill_rewind_pill_owner_lag
     loopback_lobby_running_loss
     loopback_quiet_lobby_control_loss
     loopback_command_liveness

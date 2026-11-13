@@ -2624,6 +2624,14 @@ int run_loopback_join_loss(void);
 int run_lgm_wall_behind_tank_under_fire_lagged(void);
 int run_lgm_wall_behind_tank_under_fire_nolag(void);
 int run_loopback_password(void);
+/* The server rewinding a builder to where the firing side saw him when a
+ * shell goes off near him (test_lgm_kill_rewind.c): a lagged shooter, its
+ * clean-link control, the rewind window's bound, and a pill shell that tests
+ * the man where he is, whatever his owner's lag. */
+int run_lgm_kill_rewind_lagged_shooter(void);
+int run_lgm_kill_rewind_nolag_control(void);
+int run_lgm_kill_rewind_bounded(void);
+int run_lgm_kill_rewind_pill_owner_lag(void);
 int run_loopback_lobby_running_loss(void);
 /* Quiet-lobby reliable control delivery under loss with no input flowing:
  * proves control acks ride the standalone PACKET_CHANNEL trailer. */
@@ -3161,6 +3169,8 @@ int run_lgm_blast_shape_mac_area(void);
 int run_lgm_blast_shape_solid_square(void);
 int run_lgm_blast_shape_classic_matches_old(void);
 int run_lgm_blast_shape_pill_range(void);
+int run_lgm_blast_shape_classic_144(void);
+int run_lgm_blast_shape_for_version(void);
 int run_teleport_erases_tank_rewind_record(void);
 int run_teleport_shell_hits_new_place(void);
 int run_teleport_rewind_refills(void);

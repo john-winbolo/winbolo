@@ -7,13 +7,13 @@
  * The open-ground area round an explosion that kills a builder
  * (lgm_blast_shape, lgmBlastOpenGroundCatches, lgmBlastCatches).
  *
- *   0 "Half-square circle" — the WinBolo rule and the default: a circle of
- *     radius 128 world units (half a square), edge included.
+ *   0 "Half-square circle" — the old WinBolo rule: a circle of radius 128
+ *     world units (half a square), edge included.
  *   1 "Mac Bolo box" — |dx| < 128 and |dy| < 128, as Mac Bolo's
  *     drawexplosion routine tests it (explode() in the Go port), centre to
  *     centre.
- *   2 "Mac Bolo equivalent area circle" — a circle of radius 144, edge
- *     included, about the area of the box.
+ *   2 "Mac Bolo equivalent area circle" — the default: a circle of radius
+ *     144, edge included, about the area of the box.
  *
  * Each case checks one shape twice: the shape test on its own, at 127, 128,
  * 129, 143, 144 and 145 world units straight across on both axes and both
@@ -24,7 +24,8 @@
  * shape. Another checks that shape 0 is the old test exactly, pill_range
  * limit included. The last checks that every shape stops at pill_range
  * when pill_range is under its reach, in the shape test and on a running
- * sim.
+ * sim. The classic case checks that the classic table plays the circle of
+ * 144 on a running sim: 140 straight across dies, 150 lives.
  */
 
 #include <stdbool.h>
@@ -41,6 +42,7 @@
 #include "bases.h"                 /* basesExistPos */
 #include "lgm.h"                   /* lgmDeathCheckAtPosition, LGM_BLAST_* */
 #include "sim_rules.h"             /* SimRules */
+#include "sim_rules_names.h"       /* simRulesLgmBlastShapeForVersion */
 #include "util.h"                  /* utilIsItemInRange */
 #include "test_harness.h"
 
@@ -185,9 +187,10 @@ static int lbsCheckSim(int shape) {
 
     sim = lbsMakeSim(&cx, &cy);
     UT_ASSERT_MSG(sim != NULL, "could not build a running sim");
-    UT_ASSERT_MSG(sim->sim.rules.lgm_blast_shape == 0,
-                  "a new round has lgm_blast_shape %d, not 0",
-                  (int) sim->sim.rules.lgm_blast_shape);
+    UT_ASSERT_MSG(sim->sim.rules.lgm_blast_shape == LGM_BLAST_SHAPE_CLASSIC,
+                  "a new round has lgm_blast_shape %d, not the classic %d",
+                  (int) sim->sim.rules.lgm_blast_shape,
+                  LGM_BLAST_SHAPE_CLASSIC);
     sim->sim.rules.lgm_blast_shape = shape;
     lx = (WORLD) (((WORLD) cx << M_W_SHIFT_SIZE) + MAP_SQUARE_MIDDLE);
     ly = (WORLD) (((WORLD) cy << M_W_SHIFT_SIZE) + MAP_SQUARE_MIDDLE);
@@ -215,7 +218,6 @@ static int lbsCheckSim(int shape) {
 }
 
 int run_lgm_blast_shape_half_square(void) {
-    UT_ASSERT(LGM_BLAST_SHAPE_CLASSIC == LGM_BLAST_SHAPE_HALF_SQUARE);
     UT_ASSERT(lbsCheckPure(LGM_BLAST_SHAPE_HALF_SQUARE) == 0);
     UT_ASSERT(lbsCheckSim(LGM_BLAST_SHAPE_HALF_SQUARE) == 0);
     return 0;
@@ -391,5 +393,94 @@ int run_lgm_blast_shape_pill_range(void) {
         }
         serverSimDestroy(sim);
     }
+    return 0;
+}
+
+/* The classic table plays the Mac Bolo equivalent area circle, radius 144.
+ * On a running sim with the round's own rules (nothing set by the test), a
+ * builder on grass 140 world units straight across from an explosion on
+ * grass dies and one 150 across lives, on both axes and both signs. Under
+ * the old WinBolo circle of 128 the builder at 140 would live. */
+int run_lgm_blast_shape_classic_144(void) {
+    static const struct {
+        long off;
+        bool dies;
+    } kPoints[] = { { 140, true }, { 150, false } };
+    ServerSim *sim;
+    BYTE       cx = 0, cy = 0;
+    WORLD      lx, ly;
+    int        i, q;
+
+    UT_ASSERT(LGM_BLAST_SHAPE_CLASSIC == LGM_BLAST_SHAPE_MAC_AREA);
+    UT_ASSERT(LGM_BLAST_MAC_AREA_RADIUS == 144);
+    sim = lbsMakeSim(&cx, &cy);
+    UT_ASSERT_MSG(sim != NULL, "could not build a running sim");
+    if (sim->sim.rules.lgm_blast_shape != LGM_BLAST_SHAPE_MAC_AREA) {
+        int got = (int) sim->sim.rules.lgm_blast_shape;
+        serverSimDestroy(sim);
+        UT_ASSERT_MSG(false, "a new round has lgm_blast_shape %d, not %d",
+                      got, LGM_BLAST_SHAPE_MAC_AREA);
+    }
+    lx = (WORLD) (((WORLD) cx << M_W_SHIFT_SIZE) + MAP_SQUARE_MIDDLE);
+    ly = (WORLD) (((WORLD) cy << M_W_SHIFT_SIZE) + MAP_SQUARE_MIDDLE);
+    for (i = 0; i < (int) (sizeof(kPoints) / sizeof(kPoints[0])); i++) {
+        for (q = 0; q < 4; q++) {
+            long  s  = (q & 1) ? -1 : 1;
+            long  dx = (q & 2) ? 0 : kPoints[i].off * s;
+            long  dy = (q & 2) ? kPoints[i].off * s : 0;
+            bool  got = lbsBlastKills(sim, lx, ly, (WORLD) ((long) lx + dx),
+                                      (WORLD) ((long) ly + dy));
+
+            if (got != kPoints[i].dies) {
+                serverSimDestroy(sim);
+                UT_ASSERT_MSG(false,
+                              "classic table: an explosion (%ld,%ld) from "
+                              "the builder %s him, wanted %s", dx, dy,
+                              got ? "killed" : "spared",
+                              kPoints[i].dies ? "killed" : "spared");
+            }
+        }
+    }
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* The shape a recording with no lgm_blast_shape in it played, from the
+ * version in its header. Versions before 2.2.2 played the old WinBolo
+ * circle of 128 (0) as classic; 2.2.2 and later play the circle of 144
+ * (2). This build's own version must give the classic shape, or its new
+ * recordings would read back as 128. */
+int run_lgm_blast_shape_for_version(void) {
+    static const struct {
+        unsigned major, minor, revision;
+        int      shape;
+    } kRows[] = {
+        { 1, 17, 0, LGM_BLAST_SHAPE_HALF_SQUARE },
+        { 1, 91, 0, LGM_BLAST_SHAPE_HALF_SQUARE },
+        { 2,  1, 9, LGM_BLAST_SHAPE_HALF_SQUARE },
+        { 2,  2, 0, LGM_BLAST_SHAPE_HALF_SQUARE },
+        { 2,  2, 1, LGM_BLAST_SHAPE_HALF_SQUARE },
+        { 2,  2, 2, LGM_BLAST_SHAPE_MAC_AREA },
+        { 2,  2, 3, LGM_BLAST_SHAPE_MAC_AREA },
+        { 2,  3, 0, LGM_BLAST_SHAPE_MAC_AREA },
+        { 3,  0, 0, LGM_BLAST_SHAPE_MAC_AREA },
+    };
+    int i;
+
+    for (i = 0; i < (int) (sizeof(kRows) / sizeof(kRows[0])); i++) {
+        int got = simRulesLgmBlastShapeForVersion(kRows[i].major,
+                                                  kRows[i].minor,
+                                                  kRows[i].revision);
+        UT_ASSERT_MSG(got == kRows[i].shape, "version %u.%u.%u: shape %d, want %d",
+                      kRows[i].major, kRows[i].minor, kRows[i].revision, got,
+                      kRows[i].shape);
+    }
+    UT_ASSERT_MSG(simRulesLgmBlastShapeForVersion(BOLO_VERSION_MAJOR,
+                                                  BOLO_VERSION_MINOR,
+                                                  BOLO_VERSION_REVISION) ==
+                      LGM_BLAST_SHAPE_CLASSIC,
+                  "this build (%u.%u.%u) does not give the classic shape",
+                  (unsigned) BOLO_VERSION_MAJOR, (unsigned) BOLO_VERSION_MINOR,
+                  (unsigned) BOLO_VERSION_REVISION);
     return 0;
 }
