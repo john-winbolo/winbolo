@@ -2919,11 +2919,6 @@ static void hostTick(uint32_t startLate) {
     }
 
     sendEnd = SDL_GetPerformanceCounter();
-    /* A tick that built a brain or ran a first think has one-time setup
-     * in it (the brain build, the recording's first file). Such a sample
-     * is not the normal serial work. As the first sample it would seed the
-     * average high and hold the budget at its 1 ms floor for many ticks,
-     * so those ticks are left out. */
     if (active > 0) {
         HostTickStats *ts = &tickStats;
         double before = (double)(brainStart - setupStart) * 1000.0 / freq;
@@ -2955,6 +2950,11 @@ static void hostTick(uint32_t startLate) {
             memset(ts, 0, sizeof(*ts));
         }
     }
+    /* A tick that built a brain or ran a first think has one-time setup
+     * in it (the brain build, the recording's first file). Such a sample
+     * is not the normal serial work. As the first sample it would seed the
+     * average high and hold the budget at its 1 ms floor for many ticks,
+     * so those ticks are left out. */
     if (!built && !anyFirst) {
         double serialMs = (double)(brainStart - setupStart);
         if (optBudgetLegacy) serialMs += (double)(sendEnd - brainEnd);
