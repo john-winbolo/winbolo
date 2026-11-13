@@ -725,8 +725,7 @@ int run_bot_host_dyn_pct_off(void) {
     UT_ASSERT(dynRunOver(st, &cfg, &d, 29) == 0 && st->limit == 2);
     UT_ASSERT(dynRun(st, &cfg, &d, 1) == 1 && st->limit == 4);
     for (k = 0; k < st->readingCount; k++) UT_ASSERT(!st->reading[k].bad);
-    printf("  check off: 2, 4 at 30 s, overruns or not
-");
+    printf("  check off: 2, 4 at 30 s, overruns or not\n");
 
     /* Under the reserve for a full window: under, and the row's fit is
      * known: (20 + 10 - 25) / 5 = 1. */
@@ -760,8 +759,7 @@ int run_bot_host_dyn_pct_off(void) {
     UT_ASSERT(st->limit == -1 && botHostOverrunLimit(st, 8) == 8);
     UT_ASSERT(st->probeCount == 0 && st->readingCount == 0);
     UT_ASSERT(botHostOverrunFits(st, &cfg, 2) == -1);
-    printf("  fixed slots or KEEL with the check off: no probe, no limit
-");
+    printf("  fixed slots or KEEL with the check off: no probe, no limit\n");
     free(st);
     return 0;
 }
