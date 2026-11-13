@@ -5940,6 +5940,7 @@ set(_unit_test_names
     brain_sandbox_hostile_astar_log_removed
     brain_sandbox_hostile_file_jail
     brain_sandbox_hostile_off_map_terrain
+    brain_sandbox_jit_limits
     brain_msgh_budget_kill_no_traceback
     brain_msgh_real_error_keeps_traceback
     brain_inbox_push_peek_fifo
