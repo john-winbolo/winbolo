@@ -63,8 +63,9 @@
 -- number, so 2 is the nearest it comes to Mac Bolo.
 --
 -- Builder blast. A shell or mine that goes off on open ground kills a
--- builder near it. WinBolo counts "near" as a circle of radius 128 world
--- units, half a square, edge included. Mac Bolo counts it as a box: under
+-- builder near it. WinBolo counts "near" as a circle of radius 144 world
+-- units, edge included (it was 128, half a square, before the
+-- lgm_blast_shape rule). Mac Bolo counts it as a box: under
 -- 128 from the explosion on each axis, so it reaches further on a
 -- diagonal, about 180 at the corners. This part sets lgm_blast_shape to 1,
 -- the box. An explosion on a building, a half building, a pillbox or a
@@ -300,7 +301,8 @@ if PARACHUTE then
 end
 
 if BUILDER_BLAST then
-  -- 1 is the Mac Bolo box, 0 the classic circle of radius 128.
+  -- 1 is the Mac Bolo box, 2 the classic circle of radius 144 and 0 the
+  -- old WinBolo circle of radius 128.
   rules.lgm_blast_shape = 1
 end
 

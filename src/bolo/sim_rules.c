@@ -51,6 +51,12 @@
 BOLO_STATIC_ASSERT(CTRL_SIM_RULES_BUILDING_LIFE_CLASSIC == BUILDING_LIFE,
                    ctrl_sim_rules_building_life_classic_matches);
 
+/* The same for lgm_blast_shape: a body that stops short of it decodes as
+   this value, so it must be the classic table's. */
+BOLO_STATIC_ASSERT(CTRL_SIM_RULES_LGM_BLAST_SHAPE_CLASSIC ==
+                       LGM_BLAST_SHAPE_CLASSIC,
+                   ctrl_sim_rules_lgm_blast_shape_classic_matches);
+
 void simRulesClassic(SimRules *out) {
     if (out == NULL) {
         return;
@@ -265,10 +271,11 @@ void simRulesClassic(SimRules *out) {
     out->man_dead_pill_terrain_speed = 0;
 
     /* ---- Builder blast shape ---- */
-    /* LGM_BLAST_SHAPE_HALF_SQUARE (0): an explosion on open ground catches
-     * a builder within half a square (128) of it, a circle, the WinBolo
-     * way. LGM_BLAST_SHAPE_MAC_BOX (1) is Mac Bolo's box, and
-     * LGM_BLAST_SHAPE_MAC_AREA (2) a circle of the box's area. */
+    /* LGM_BLAST_SHAPE_MAC_AREA (2): an explosion on open ground catches a
+     * builder within 144 of it, a circle of about the area of Mac Bolo's
+     * box. LGM_BLAST_SHAPE_HALF_SQUARE (0) is the old WinBolo circle of
+     * half a square (128), and LGM_BLAST_SHAPE_MAC_BOX (1) Mac Bolo's
+     * box. */
     out->lgm_blast_shape = LGM_BLAST_SHAPE_CLASSIC;
 
 }

@@ -81,18 +81,18 @@ static inline bool hitRulesTankShellInZone(int dx, int dy, int radius) {
    world units (256 to a square).
    - LGM_BLAST_SHAPE_HALF_SQUARE: "Half-square circle". A circle of radius
      HIT_RULES_HALF_SQUARE (128), edge included, the WinBolo rule. Every
-     WinBolo before this rule played it. The classic table plays this
-     shape (LGM_BLAST_SHAPE_CLASSIC).
+     WinBolo before this rule played it.
    - LGM_BLAST_SHAPE_MAC_BOX: "Mac Bolo box". |dx| < 128 and |dy| < 128,
      edge left out. Mac Bolo tests each axis on its own in this way.
    - LGM_BLAST_SHAPE_MAC_AREA: "Mac Bolo equivalent area circle". A circle
      of radius LGM_BLAST_MAC_AREA_RADIUS, edge included: 256 / sqrt(pi) is
-     about 144.4, so it covers about the same area as the box.
+     about 144.4, so it covers about the same area as the box. The classic
+     table plays this shape (LGM_BLAST_SHAPE_CLASSIC).
    Every shape also stops at the pill_range rule. */
 #define LGM_BLAST_SHAPE_HALF_SQUARE 0
 #define LGM_BLAST_SHAPE_MAC_BOX     1
 #define LGM_BLAST_SHAPE_MAC_AREA    2
-#define LGM_BLAST_SHAPE_CLASSIC     LGM_BLAST_SHAPE_HALF_SQUARE
+#define LGM_BLAST_SHAPE_CLASSIC     LGM_BLAST_SHAPE_MAC_AREA
 #define LGM_BLAST_MAC_BOX_HALF      128
 #define LGM_BLAST_MAC_AREA_RADIUS   144
 
