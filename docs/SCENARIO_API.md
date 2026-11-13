@@ -1681,8 +1681,10 @@ with eight players the bases restock eight times as often as the number
 says.
 
 **The game clock is the exception.** `set_game_time` and `add_game_time` are
-counted in `game.tick()`'s own units, 100 a second, because the round's time
-limit comes down on every half-step. A minute is 6000, not 3000.
+counted in `game.tick()`'s own units, 100 a second. A minute is 6000, not
+3000. The round's time limit itself is kept in frames, 50 a second, the unit
+the lobby sets it in, so the server halves the number and rounds an odd one up
+to the next frame.
 
 **Before the round runs, the clock is slower.** In the lobby the counter
 moves once a frame rather than twice, and timers are measured against it, so
@@ -2162,7 +2164,7 @@ to escort a person stays where it is.
 | `game.lang(p)` | The language seat `p`'s player reads, as their lang file's name in lower case: `"en"`, `"de"`, `"pt-br"`. `"en"` whenever the server does not know. See [Text in the player's language](#text-in-the-players-language). |
 | `game.input(p)` | What seat `p`'s player plays with: `"keyboard"`, `"touch"` or `"controller"`. `"keyboard"` whenever the server does not know. See [Text for the player's input](#text-for-the-players-input). |
 | `game.end_round([text[, winner_team]])` | Ends the round now, with the line the lobby shows and the team that won it. |
-| `game.set_game_time(ticks)` | How long the round has left, in `game.tick()`'s own units: 100 a second, so a minute is 6000. |
+| `game.set_game_time(ticks)` | How long the round has left, in `game.tick()`'s own units: 100 a second, so a minute is 6000. The clock runs in frames of two ticks, so an odd number rounds up by one tick. |
 | `game.add_game_time(ticks)` | Adds to what the round has left, or takes away with a negative, in the same units. A round with no time limit has nothing to add to, so give it a length first. |
 | `game.tutorial_done(p)` | Says that seat `p`'s player has finished a tutorial. In a single-player game of a map in the shipped `data/maps/tutorials` folder, the main menu stops showing its Tutorial button. Anywhere else it changes nothing. See [Finishing a tutorial](#finishing-a-tutorial). |
 
