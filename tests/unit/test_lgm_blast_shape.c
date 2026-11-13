@@ -172,7 +172,7 @@ static bool lbsBlastKills(ServerSim *sim, WORLD lx, WORLD ly, WORLD wx,
     gs->lgmen[0]->y      = ly;
     lgmDeathCheckAtPosition(gs, &gs->lgmen[0], lx, ly, wx, wy, NEUTRAL,
                             NEUTRAL, DMG_SRC_UNKNOWN, DMG_NO_PILL,
-                            &gs->tanks[0]);
+                            &gs->tanks[0], FALSE);
     return gs->lgmen[0]->isDead != FALSE;
 }
 
