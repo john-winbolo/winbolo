@@ -80,6 +80,7 @@ static void closeFileWithTicks(void) {
     }
     g_fileFrames = 0;
 }
+
 /* Recorded Dijkstra box (v8): what a reader holds after the last frame, so
  * the next frame writes only what changed. Heap, because it is ~150 KB. */
 static BrainRecDijState *g_dijPrev = NULL;

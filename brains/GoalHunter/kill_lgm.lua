@@ -813,9 +813,10 @@ function M.predict_dest_hold(tank_wx, tank_wy, lgm, h, pill)
   local sl = M.sightlen_for(D)
   local T_full = M.flight_ticks(sl)
   local T_entry = M.shell_tile_entry_ticks(tank_wx, tank_wy, pill.mx, pill.my, T_full)
-  local s_full  = math.floor(T_full * M.lead_scale() + 0.5)
+  local LEAD = M.lead_scale()
+  local s_full  = math.floor(T_full * LEAD + 0.5)
   if s_full < 1 then s_full = 1 end
-  local s_entry = math.floor(T_entry * M.lead_scale() + 0.5)
+  local s_entry = math.floor(T_entry * LEAD + 0.5)
   if s_entry < 1 then s_entry = 1 end
   local s_enter, s_arrive, stalled = M.dest_pill_timeline(lgm.wx, lgm.wy, pill, s_full)
   if stalled then return nil end
@@ -836,7 +837,7 @@ function M.predict_dest_hold(tank_wx, tank_wy, lgm, h, pill)
       T_x, s_x = T_entry, s_entry
     else
       s_x = s_arrive
-      T_x = math.floor(s_arrive / M.lead_scale() + 0.5)
+      T_x = math.floor(s_arrive / LEAD + 0.5)
     end
     how = "dead: repaired before the shell leaves the tile"
   else
@@ -1084,5 +1085,86 @@ function M.gunrange_key(current_sightLen, target_sightLen)
 end
 
 M.SPLASH_WU = SPLASH_WU
+
+-- --------------------------------------------------------------------------
+-- M.tuning() — the ONE place that reads the LGM-kill master switch.
+--
+-- C.LGM_KILL_IMPROVED switches the whole 2026-09-13 package: the package fire
+-- check, the 10-tile candidate track radius, the nearest-to-pill pick, the
+-- sight that follows the candidate from admission, and the quarter-tile aim
+-- refinement.  OFF (easy, medium, and PRESETS.keel) every value below is the
+-- pre-package one, so the brain plays exactly as it did before: the shared
+-- check is C.KILL_LGM_FIRE_WU, the capture shot uses
+-- C.CAPTURE_LGM_HUNT_FIRE_WU (100 when it is -1), candidate admission by the
+-- old along-the-ray test, min-perp ranking, a held range key from 2 steps
+-- out, no aim refinement.
+--
+-- The individual knobs stay the VALUES; the master decides whether they are
+-- read at all.  Callers take ONE table and test one field, instead of asking
+-- `if C.LGM_KILL_IMPROVED` at every check.
+--
+-- The table is built once and cached: preset= / cfg= / level overrides are
+-- applied at chunk load (init.lua, right after require("constants")), long
+-- before the first think.  The one later writer is Brain.on_init (a runtime
+-- preset= or cfg= from game.bot_init), and it calls M.reset_tuning() so the
+-- next use rebuilds the table.  Each bot has its own lua_State, so this cache
+-- is this bot's alone.
+-- --------------------------------------------------------------------------
+local _tuning
+
+function M.tuning()
+  if _tuning then return _tuning end
+  local on = C.LGM_KILL_IMPROVED and true or false
+  -- Shared evaluator check: the package knob when on, else today's
+  -- KILL_LGM_FIRE_WU (128, keel 64).
+  local fire_wu
+  if on then fire_wu = C.LGM_KILL_FIRE_WU or 128
+  else fire_wu = C.KILL_LGM_FIRE_WU or 64 end
+  -- Capture-hunt shot: its own override when set (>= 0).  Otherwise the
+  -- shared check when on, and the pre-package 100 when off.
+  local o = C.CAPTURE_LGM_HUNT_FIRE_WU or -1
+  local cap_wu
+  if o >= 0 then cap_wu = o
+  elseif on then cap_wu = fire_wu
+  else cap_wu = 100 end
+  -- Armour-trigger hunt shot: the shared check when on; the old 64 when off
+  -- (that site never read KILL_LGM_FIRE_WU).
+  local armour_wu = on and fire_wu or 64
+  -- Open-ground "can this heading kill him at all" test (perp distance from the
+  -- shell ray to the man).  Never TIGHTER than the old 128: with the package off
+  -- it is exactly 128, and with a wider fire check it opens to match, so the
+  -- perp test can never refuse a shot the fire check would have taken.
+  local perp_wu = 128
+  if on and fire_wu > perp_wu then perp_wu = fire_wu end
+  _tuning = {
+    on              = on,
+    fire_wu         = fire_wu,
+    capture_fire_wu = cap_wu,
+    armour_fire_wu  = armour_wu,
+    perp_wu         = perp_wu,
+    engine_kill_wu  = C.LGM_ENGINE_KILL_WU or 128,
+    -- Candidate admission: with the package ON, a straight-line radius from the
+    -- TANK in wu; nil means the old along-the-ray admission (see init.lua).
+    track_wu        = on and ((C.CAPTURE_LGM_HUNT_TRACK_TILES or 10) * 256) or nil,
+    pick_near_pill  = on and (C.CAPTURE_LGM_HUNT_PICK_NEAREST_PILL and true or false) or false,
+    hold_min_steps  = on and (C.CAPTURE_SIGHT_HOLD_MIN_STEPS or 2) or 2,
+    -- Aim target.  nil with the package off, which switches the whole
+    -- refinement search out and leaves the old aim exactly as it was.
+    aim_wu          = on and (C.LGM_KILL_AIM_WU or 64) or nil,
+    -- How close the man must be before the refinement runs at all: the
+    -- straight-line distance from the tank to his predicted point, in TILES.
+    -- 0 means no limit.  nil with the package off, where aim_wu is nil too and
+    -- the search never runs.
+    aim_tiles       = on and (C.LGM_KILL_AIM_TILES or 5) or nil,
+    aim_throttle    = on and (C.LGM_KILL_AIM_THROTTLE and true or false) or false,
+  }
+  return _tuning
+end
+
+-- Drop the cached table, so the next M.tuning() reads the constants again.
+-- Called by Brain.on_init after a runtime preset= / cfg= write.
+function M.reset_tuning()
+  _tuning = nil
+end
 
 return M
