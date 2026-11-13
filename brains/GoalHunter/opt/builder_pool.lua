@@ -1552,6 +1552,11 @@ function M.update_job(state, world, info, now)
   if outcome == "ok" then
   else
   end
+  -- QUICK_REPAIR_DONE / QUICK_REPAIR_ABORT: how a quick repair ended.
+  if job.quick then
+  end
+  -- REPAIR_CLAIM_CLEAR: the repair claim leaves with the job (bpj goes back
+  -- to "-" on the next /info extra send).
   state._bp_last = { type = job.type, mx = job.mx, my = job.my,
                      outcome = outcome, lgm_dead = dead or nil, tick = now }
   state._bp_job = nil
@@ -2320,6 +2325,7 @@ function M.rung(state, world, info, now)
   end
   bp.job = state._bp_job
   bp.dispatch = nil
+  -- REPAIR_CLAIM_TX: the repair claim allies will read on our next bpj.
   local seed = state._bp_seed
   state._bp_seed = nil
   -- Feeder bookkeeping. A seeded repair is still a repair as far as the rest
@@ -2337,6 +2343,10 @@ function M.rung(state, world, info, now)
   -- because that half of the line is what the arena tests and a grep read, and
   -- the field ORDER up to front= is fixed by tests/repair_priority_test.py's
   -- DISP_RE -- so this goes on the end and nothing moves.
+  -- QUICK_REPAIR_SEND: one searchable line when the quick repair of a take
+  -- blocker (C.QUICK_REPAIR_ON_TAKE) actually sends the builder.
+  if row.quick then
+  end
   -- BP_PRED: the ROUTE the return leg was priced against, tile by tile, on the
   -- one tick it actually decided something. The trip on the dispatch line is
   -- only hand-checkable if the reader can see the path pred{} was read off --
