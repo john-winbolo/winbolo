@@ -233,3 +233,22 @@ int run_bothost_rec_lowdisk_keeps_files(void) {
     hostRecShutdown();
     return 0;
 }
+
+/* The pool block follows the OPEN flags: JSON unless the server sets
+ * BOT_HOST_REC_F_POOL_RAW (a reader that takes only JSON never does), and
+ * the raw flag keeps clear of every other OPEN flag and of LOWDISK. */
+int run_bothost_rec_pool_raw_flag(void) {
+    const char *json = "return brain.get_pool_breakdown_json()";
+    const char *e;
+    UT_ASSERT(strcmp(hostRecPoolExpr(0), json) == 0);
+    UT_ASSERT(strcmp(hostRecPoolExpr(BOT_HOST_REC_F_VIZ | BOT_HOST_REC_F_POOL |
+                                     BOT_HOST_REC_F_PRINT2 |
+                                     BOT_HOST_REC_F_JSONL), json) == 0);
+    e = hostRecPoolExpr(BOT_HOST_REC_F_POOL | BOT_HOST_REC_F_POOL_RAW);
+    UT_ASSERT(strstr(e, "get_pool_breakdown_raw") != NULL);
+    UT_ASSERT(strstr(e, "or brain.get_pool_breakdown_json") != NULL);
+    UT_ASSERT((BOT_HOST_REC_F_POOL_RAW &
+               (BOT_HOST_REC_F_VIZ | BOT_HOST_REC_F_PRINT2 | BOT_HOST_REC_F_JSONL |
+                BOT_HOST_REC_F_POOL | BOT_HOST_REC_F_LOWDISK)) == 0);
+    return 0;
+}

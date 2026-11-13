@@ -860,6 +860,7 @@ static const UnitTestEntry s_tests[] = {
     { "brainrec_host_merge_verdict", run_brainrec_host_merge_verdict },
     { "bothost_rec_upload_keeps_files", run_bothost_rec_upload_keeps_files },
     { "bothost_rec_lowdisk_keeps_files", run_bothost_rec_lowdisk_keeps_files },
+    { "bothost_rec_pool_raw_flag", run_bothost_rec_pool_raw_flag },
     { "brainrec_host_path_checks", run_brainrec_host_path_checks },
     { "brainrec_dir_lock_orders_merge_and_gzip", run_brainrec_dir_lock_orders_merge_and_gzip },
     { "brainrec_host_make_absolute", run_brainrec_host_make_absolute },

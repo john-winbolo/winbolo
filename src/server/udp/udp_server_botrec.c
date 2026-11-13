@@ -695,6 +695,8 @@ static uint8_t recOpenFlags(int *poolMode) {
     if (p2) f |= BOT_HOST_REC_F_PRINT2;
     if (jsonl) f |= BOT_HOST_REC_F_JSONL;
     if (pool && *poolMode != 0) f |= BOT_HOST_REC_F_POOL;
+    /* No BOT_HOST_REC_F_POOL_RAW: this server records the pool as JSON and
+     * its reader takes only JSON, so the hosts record JSON too. */
     return f;
 }
 

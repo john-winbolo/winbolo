@@ -69,6 +69,11 @@ void hostRecSeatThink(int idx, int srv, uint8_t slot, uint16_t placeGen,
                       struct lua_State *L, const OverlayCmdBuffer *ovl,
                       bool debug, int rrIndex, int rrCount);
 
+/* The Lua expression for the pool block, from the OPEN flags: the raw
+ * capture when BOT_HOST_REC_F_POOL_RAW is set (falling back to JSON for a
+ * brain without it), else the panel JSON. */
+const char *hostRecPoolExpr(uint8_t flags);
+
 /* Once per host tick: the disk check, the uploads, the state reports. */
 void hostRecService(uint32_t nowMs);
 

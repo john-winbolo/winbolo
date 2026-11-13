@@ -368,6 +368,16 @@ void hostRecSeatGone(int idx) {
     memset(rs, 0, sizeof(*rs));
 }
 
+const char *hostRecPoolExpr(uint8_t flags) {
+    /* The raw capture only when the server says it reads it; a brain
+     * without the raw function gives JSON in that case too. */
+    if (flags & BOT_HOST_REC_F_POOL_RAW) {
+        return "return (brain.get_pool_breakdown_raw"
+               " or brain.get_pool_breakdown_json)()";
+    }
+    return "return brain.get_pool_breakdown_json()";
+}
+
 void hostRecSeatThink(int idx, int srv, uint8_t slot, uint16_t placeGen,
                       uint32_t seq, uint32_t estTick, float thinkMs,
                       struct lua_State *L, const OverlayCmdBuffer *ovl,
@@ -418,7 +428,7 @@ void hostRecSeatThink(int idx, int srv, uint8_t slot, uint16_t placeGen,
         bool want = poolMode == 2 ||
                     (rrCount > 0 && (int)((seq / 2u) % (uint32_t)rrCount) == rrIndex);
         if (want) {
-            pj = botBrainEvalLuaString(L, "return brain.get_pool_breakdown_json()");
+            pj = botBrainEvalLuaString(L, hostRecPoolExpr(flags));
         }
     }
     brainRecBufReset(&s_body);
