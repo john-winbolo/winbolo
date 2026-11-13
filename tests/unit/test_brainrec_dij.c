@@ -371,6 +371,66 @@ int run_brainrec_dij_changed_only(void) {
     return 0;
 }
 
+/* The start heading (PF_START_HEADING) goes through the block: a slate
+ * with a heading reads back with it, a heading change alone writes one meta
+ * record and no node, and a slate with no heading reads back as 0 / 0 (the
+ * value every file made before the recorder filled the field holds). */
+int run_brainrec_dij_src_heading(void) {
+    TSlate t;
+    UT_ASSERT(tSlateAlloc(&t));
+    BrainRecDijState *prev = (BrainRecDijState *)malloc(sizeof *prev);
+    BrainRecDijState *rd   = (BrainRecDijState *)malloc(sizeof *rd);
+    UT_ASSERT(prev && rd);
+    brainRecDijStateClear(prev);
+    brainRecDijStateClear(rd);
+    BrainRecDijBuf buf = {0};
+    TCount c;
+
+    static BrainRecDijBotIn in;
+    memset(&in, 0, sizeof in);
+    in.hasTank = true; in.tx = 100; in.ty = 100;
+    tSlateFill(&t, 100, 100, 3, 10.0f, false, 1.0f, 0, 0, 255, 255);
+    in.slates[0].active = true;
+    in.slates[0].g_cost = t.g;
+    in.slates[0].dir_at = t.d;
+    tMeta(&in.slates[0].meta, 1, 100, 100, 50, 0);
+    in.slates[0].meta.has_src_heading = 1;
+    in.slates[0].meta.src_heading     = 0xC0;
+    const BrainRecDijBotIn *bots[BRAINREC_DIJ_MAX_BOTS] = {0};
+    bots[2] = &in;
+
+    UT_ASSERT(brainRecDijEncodeFrame(prev, bots, true, &buf));
+    UT_ASSERT(brainRecDijDecodeFrame(rd, buf.data, buf.len));
+    UT_ASSERT_MSG(rd->bots[2].slates[0].meta.has_src_heading == 1
+                  && rd->bots[2].slates[0].meta.src_heading == 0xC0,
+                  "heading read back as %u / %u, want 1 / 192",
+                  rd->bots[2].slates[0].meta.has_src_heading,
+                  rd->bots[2].slates[0].meta.src_heading);
+    UT_ASSERT(tBoxMatches(&rd->bots[2], 0, &in));
+
+    /* Only the heading changes: one meta record, no reset, no node. */
+    in.slates[0].meta.src_heading = 0x40;
+    UT_ASSERT(brainRecDijEncodeFrame(prev, bots, false, &buf));
+    UT_ASSERT(tCountBlock(buf.data, buf.len, &c));
+    UT_ASSERT_MSG(c.metas == 1 && c.resets == 0 && c.landWrites == 0,
+                  "heading change: %d metas %d resets %d nodes", c.metas, c.resets, c.landWrites);
+    UT_ASSERT(brainRecDijDecodeFrame(rd, buf.data, buf.len));
+    UT_ASSERT(rd->bots[2].slates[0].meta.src_heading == 0x40);
+
+    /* The heading is turned off: reads back as no heading. */
+    in.slates[0].meta.has_src_heading = 0;
+    in.slates[0].meta.src_heading     = 0;
+    UT_ASSERT(brainRecDijEncodeFrame(prev, bots, false, &buf));
+    UT_ASSERT(brainRecDijDecodeFrame(rd, buf.data, buf.len));
+    UT_ASSERT(rd->bots[2].slates[0].meta.has_src_heading == 0
+              && rd->bots[2].slates[0].meta.src_heading == 0);
+
+    brainRecDijBufFree(&buf);
+    free(prev); free(rd);
+    tSlateFree(&t);
+    return 0;
+}
+
 int run_brainrec_dij_boat_layer(void) {
     TSlate t;
     UT_ASSERT(tSlateAlloc(&t));

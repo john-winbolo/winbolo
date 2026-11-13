@@ -565,12 +565,10 @@ static void fillDijBot(ServerSim *sim, BYTE slot, BrainRecDijBotIn *in) {
         si->meta.src_y        = (uint8_t)ds->src_y;
         si->meta.in_boat      = (uint8_t)(ds->in_boat ? 1 : 0);
         si->meta.allow_boat   = (uint8_t)(ds->allow_boat ? 1 : 0);
-#ifdef BRAIN_PF_SLATE_HAS_SRC_HEADING
-        /* Only a pathfinder with the start-heading slate fields defines
-         * this; without them the record says "no heading". */
+        /* Start heading (PF_START_HEADING). has_src_heading 0 = no heading;
+         * files made before this field was filled hold 0 here too. */
         si->meta.has_src_heading = (uint8_t)(ds->has_src_heading ? 1 : 0);
         si->meta.src_heading     = (uint8_t)(ds->src_heading & 0xFF);
-#endif
         si->meta.danger_scale   = ds->danger_scale;
         si->meta.started_tick   = ds->started_tick;
         si->meta.done           = (uint8_t)(ds->done ? 1 : 0);

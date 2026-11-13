@@ -60,6 +60,7 @@
 #include "brain_record_walk.h"
 #include "brain_record_ticks.h"
 #include "pool_render_host.h"
+#include "brain_value_pack.h"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -116,6 +117,13 @@ static bool btrTeePoolBlock(void *ctx) {
     BtrTee *t = (BtrTee *)ctx;
     uint32_t pl = 0;
     if (brainRecInRead(t->in, &pl, 4) != 4) return false;
+    /* A pool block is never bigger than one packed value; a larger length
+     * is a corrupt file, so refuse it before the allocation. */
+    if (pl > BRAIN_VALUE_MAX_BYTES) {
+        fprintf(stderr, "brainrec_split: pool block of %u bytes is past the %u byte limit\n",
+                (unsigned)pl, (unsigned)BRAIN_VALUE_MAX_BYTES);
+        return false;
+    }
     char *blk = (char *)malloc((size_t)pl + 1);
     if (!blk) return false;
     if (pl && brainRecInRead(t->in, blk, pl) != pl) { free(blk); return false; }

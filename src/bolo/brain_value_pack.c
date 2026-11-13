@@ -51,6 +51,9 @@ enum {
   BP_END   = 0x08
 };
 
+/* Largest array size hint the decoder passes to lua_createtable. */
+#define BP_ARRAY_HINT_MAX 4096u
+
 /* ---- encode --------------------------------------------------------- */
 
 typedef struct {
@@ -311,7 +314,16 @@ static bool decValue(lua_State *L, PackDec *d, int depth, bool isKey) {
     /* Every item takes at least one byte, so a count past the end is a
      * lie; checking it first keeps a bad block from a huge allocation. */
     if (narr > d->len - d->pos) return decFail(d, "a table count past the end");
-    lua_createtable(L, (int)narr, 0);
+    /* The count is only a size hint. Clamp it to the bytes left and to a
+     * fixed limit: nested tables each check against the same bytes left,
+     * so without the fixed limit 64 levels could each ask for ~16M slots
+     * up front. Lua grows the array as the items arrive. */
+    {
+      size_t left = d->len - d->pos;
+      size_t hint = narr < left ? (size_t)narr : left;
+      if (hint > BP_ARRAY_HINT_MAX) hint = BP_ARRAY_HINT_MAX;
+      lua_createtable(L, (int)hint, 0);
+    }
     for (uint32_t i = 1; i <= narr; i++) {
       if (!decValue(L, d, depth + 1, false)) return false;
       lua_rawseti(L, -2, (int)i);

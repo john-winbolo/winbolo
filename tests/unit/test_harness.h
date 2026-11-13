@@ -1718,6 +1718,7 @@ int run_brainrec_dij_reset_on_new_start(void);
 int run_brainrec_dij_keyframe_equals_replay(void);
 int run_brainrec_dij_old_file_loads(void);
 int run_brainrec_dij_danger_box(void);
+int run_brainrec_dij_src_heading(void);
 
 /* A session keeps its own map (test_brainrec_session_map.c): the map saved
  * beside brainrec.btr reads back whole and loads with every base where the

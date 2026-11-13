@@ -6821,6 +6821,7 @@ set(_unit_test_names
     brainrec_host_upload_no_session
     brainrec_host_merge_dir_other_names
     brainrec_host_upload_file_cap
+    brainrec_dij_src_heading
     lv_tank_stocks_from_snapshot
     lv_team_colours_from_snapshot
     lv_team_colours_events

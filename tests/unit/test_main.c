@@ -919,6 +919,7 @@ static const UnitTestEntry s_tests[] = {
     { "brainrec_host_upload_no_session", run_brainrec_host_upload_no_session },
     { "brainrec_host_merge_dir_other_names", run_brainrec_host_merge_dir_other_names },
     { "brainrec_host_upload_file_cap", run_brainrec_host_upload_file_cap },
+    { "brainrec_dij_src_heading",                run_brainrec_dij_src_heading                },
     { "lv_tank_stocks_from_snapshot",            run_lv_tank_stocks_from_snapshot            },
     { "lv_team_colours_from_snapshot",           run_lv_team_colours_from_snapshot           },
     { "lv_team_colours_events",                  run_lv_team_colours_events                  },
