@@ -521,8 +521,14 @@ void lgmDeathCheck(struct GameSim *sim, lgm *lgman, WORLD wx, WORLD wy, BYTE own
 *  pill   - The pill index whose shell it was, or
 *           DMG_NO_PILL
 *  tnk    - Pointer to the tank
+*  squareHit - TRUE when the explosion is a shell's hit on the
+*           pillbox on its square (shellsCalcCollision
+*           outSquareHit), the shot that kills the pill
+*           included: the builder dies only if he is on that
+*           square, as for a hit on a live pill. FALSE for
+*           every other blast (lgmDeathCheck passes FALSE)
 *********************************************************/
-void lgmDeathCheckAtPosition(struct GameSim *sim, lgm *lgman, WORLD lgmWorldX, WORLD lgmWorldY, WORLD wx, WORLD wy, BYTE owner, BYTE attacker, BYTE cause, BYTE pill, tank *tnk);
+void lgmDeathCheckAtPosition(struct GameSim *sim, lgm *lgman, WORLD lgmWorldX, WORLD lgmWorldY, WORLD wx, WORLD wy, BYTE owner, BYTE attacker, BYTE cause, BYTE pill, tank *tnk, bool squareHit);
 
 /*********************************************************
 *NAME:          lgmDeathCheckSeenOut
@@ -554,8 +560,9 @@ void lgmDeathCheckAtPosition(struct GameSim *sim, lgm *lgman, WORLD lgmWorldX, W
 *  pill   - The pill index whose shell it was, or
 *           DMG_NO_PILL
 *  tnk    - Pointer to the tank
+*  squareHit - As lgmDeathCheckAtPosition
 *********************************************************/
-void lgmDeathCheckSeenOut(struct GameSim *sim, lgm *lgman, WORLD lgmWorldX, WORLD lgmWorldY, WORLD wx, WORLD wy, BYTE owner, BYTE attacker, BYTE cause, BYTE pill, tank *tnk);
+void lgmDeathCheckSeenOut(struct GameSim *sim, lgm *lgman, WORLD lgmWorldX, WORLD lgmWorldY, WORLD wx, WORLD wy, BYTE owner, BYTE attacker, BYTE cause, BYTE pill, tank *tnk, bool squareHit);
 
 /*********************************************************
 *NAME:          lgmKillInTank
