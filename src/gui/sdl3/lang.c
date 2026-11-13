@@ -288,7 +288,6 @@ static const LangEntry langTable[] = {
     {560,  "Don't label own tank"},
     {561,  "Pillbox Labels"},
     {562,  "Refuelling Base Labels"},
-    {563,  "Hide Main View"},
     {564,  "Device:"},
     {565,  "Desktop"},
     {566,  "WinBolo"},
@@ -1418,6 +1417,10 @@ static const LangEntry langTable[] = {
 
     {3150, "Recording mode: shows the GIF controls"},
 
+    {3165, "Match display (vsync)"},
+    {3166, "{number} fps"},
+    {3167, "Unlimited (vsync off)"},
+    {3168, "How often the game window is drawn. Match display draws once for each refresh of the screen. A number draws no more than that many frames each second, which can save power. Unlimited turns vsync off and draws as fast as the computer can, and the picture can tear. The game itself runs at the same speed with every choice."},
     /* The Log Viewer's Chat panel */
     {3100, "Chat"},
     {3101, "No chat messages yet."},

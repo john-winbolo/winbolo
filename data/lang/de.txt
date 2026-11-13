@@ -339,7 +339,6 @@ STR_LONG=Lang
 STR_MENU_NO_OWN_LABEL=Eigenen Panzer nicht beschriften
 STR_MENU_PILLBOX_LABELS=Bunker-Beschriftungen
 STR_MENU_BASE_LABELS=Nachschubbasen-Beschriftungen
-STR_MENU_HIDE_MAIN=Hauptansicht ausblenden
 STR_MENU_DEVICE=Gerät:
 STR_MENU_DESKTOP=Desktop
 STR_MENU_WINBOLO=WinBolo

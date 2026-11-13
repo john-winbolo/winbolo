@@ -53,6 +53,18 @@ extern "C" {
 #include "../../lang.h"
 #include "imgui_messagebox.h"
 }
+#include "imgui_settings.h"  /* IMGUI_FRAME_LIMIT_UI */
+
+/* A message box can open from inside the game loop, where the Unlimited
+ * Frame Rate choice has turned vsync off. These loops have no wait of
+ * their own, so each one turns vsync on while it is open (winbolo.c).
+ * Only desktop builds have the choice and winbolo.c. */
+#if IMGUI_FRAME_LIMIT_UI
+extern "C" void windowFrameLimitDialog(bool open);
+static void msgBoxFrameLimit(bool open) { windowFrameLimitDialog(open); }
+#else
+static void msgBoxFrameLimit(bool open) { (void)open; }
+#endif
 
 static const int ICON_SIZE = 48;
 static const float DIALOG_WIDTH_FRACTION = 0.5f;
@@ -473,6 +485,7 @@ extern "C" int imguiMessageBoxEx(const char *title, const char *message,
     /* Prevent double-showing from overlapping detection paths. */
     if (s_messageBoxActive) return IMGUI_MSG_RESULT_OK;
     s_messageBoxActive = true;
+    msgBoxFrameLimit(true);
 
     /* Save caller's ImGui context (may be NULL). */
     ImGuiContext *callerCtx = ImGui::GetCurrentContext();
@@ -669,6 +682,7 @@ extern "C" int imguiMessageBoxEx(const char *title, const char *message,
     ImGui::SetCurrentContext(callerCtx);
 
     SDL_FlushEvent(SDL_EVENT_QUIT);
+    msgBoxFrameLimit(false);
     s_messageBoxActive = false;
     return result;
 }
@@ -685,6 +699,7 @@ extern "C" int imguiPasswordPrompt(const char *title, const char *message,
 
     if (s_messageBoxActive) return IMGUI_MSG_RESULT_CANCEL;
     s_messageBoxActive = true;
+    msgBoxFrameLimit(true);
 
     ImGuiContext *callerCtx = ImGui::GetCurrentContext();
 
@@ -883,6 +898,7 @@ extern "C" int imguiPasswordPrompt(const char *title, const char *message,
     ImGui::SetCurrentContext(callerCtx);
 
     SDL_FlushEvent(SDL_EVENT_QUIT);
+    msgBoxFrameLimit(false);
     s_messageBoxActive = false;
     return result;
 }
@@ -896,6 +912,7 @@ extern "C" int imguiMessageBoxRich(const char *title,
 
     if (s_messageBoxActive) return IMGUI_MSG_RESULT_OK;
     s_messageBoxActive = true;
+    msgBoxFrameLimit(true);
 
     ImGuiContext *callerCtx = ImGui::GetCurrentContext();
 
@@ -1042,6 +1059,7 @@ extern "C" int imguiMessageBoxRich(const char *title,
     dialogRestoreLogicalPresentation(renderer, savedLogW, savedLogH, savedLogMode);
     ImGui::SetCurrentContext(callerCtx);
     SDL_FlushEvent(SDL_EVENT_QUIT);
+    msgBoxFrameLimit(false);
     s_messageBoxActive = false;
     return result;
 }
