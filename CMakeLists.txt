@@ -6653,6 +6653,7 @@ set(_unit_test_names
     lgm_blast_shape_solid_square
     lgm_blast_shape_classic_matches_old
     lgm_blast_shape_pill_range
+    lgm_blast_shape_classic_144
     teleport_erases_tank_rewind_record
     teleport_shell_hits_new_place
     teleport_rewind_refills
