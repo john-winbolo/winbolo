@@ -3389,9 +3389,11 @@ endif()
 add_executable(brainrec_split
     src/tools/brainrec_split.c
     src/bolo/brain_record_walk.c
+    src/bolo/brain_value_pack.c
     src/bolo/pool_render_host.c)
 bolo_apply_include_rules(brainrec_split runtime_only)
-# lua_static: pool_render_host.c, for --render-pool (raw pool blocks to JSON).
+# lua_static: pool_render_host.c and brain_value_pack.c, for --render-pool (raw pool
+# blocks to JSON).
 target_link_libraries(brainrec_split PRIVATE SDL3::SDL3 zlibstatic lua_static)
 if(WIN32)
     target_link_libraries(brainrec_split PRIVATE psapi)
@@ -5956,6 +5958,8 @@ set(_unit_test_names
     brain_sandbox_hostile_astar_log_removed
     brain_sandbox_hostile_file_jail
     brain_sandbox_hostile_off_map_terrain
+    brain_sandbox_hostile_pack_encode
+    brain_sandbox_hostile_pack_decode
     brain_msgh_budget_kill_no_traceback
     brain_msgh_real_error_keeps_traceback
     brain_inbox_push_peek_fifo

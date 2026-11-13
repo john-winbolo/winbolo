@@ -19811,7 +19811,7 @@ end
 --
 -- THE CAPTURE IS A REPORT. IT MUST NOT CHANGE BRAIN STATE. It only reads:
 -- the tables it returns hold references to the live ones, and the only thing
--- that touches them afterwards is string.buffer.encode, which reads. The old
+-- that touches them afterwards is brain_value_encode, which reads. The old
 -- breakdown wrote into the brain (refuel shape fields and formula caches on
 -- cost_cache entries, stale on defend rows, imminent on pool rows); the
 -- render now does those writes on its own decoded copy.
@@ -19982,20 +19982,18 @@ M.capture_pool_raw = (function()
 end)()
 
 -- The recorded block: the capture, packed (see pool_render.pack). Falls back
--- to the JSON when this Lua has no string.buffer (PUC Lua on the WASM build).
+-- to the JSON when the host gave this Lua no brain_value_encode.
 function M.get_pool_breakdown_raw(state)
   if not PR.HAVE_RAW then return M.get_pool_breakdown_json(state) end
   return PR.pack(M.capture_pool_raw(state))
 end
 
--- The pool panel JSON, built in the brain: render(decode(encode(capture))),
--- the same path a recorded raw block takes, so the two cannot disagree.
--- The packed round trip (or the deep copy, without string.buffer) keeps the
--- render's writes off the live tables.
+-- The pool panel JSON, built in the brain: render(copy(capture)), the same
+-- render a recorded raw block takes, so the two cannot disagree. The deep
+-- copy keeps the render's writes off the live tables. (A brain has
+-- brain_value_encode but no decode, so this path does not pack.)
 function M.get_pool_breakdown_json(state)
-  local cap = M.capture_pool_raw(state)
-  if PR.HAVE_RAW then cap = PR.round_trip(cap) else cap = PR.copy(cap) end
-  return PR.render(cap)
+  return PR.render(PR.copy(M.capture_pool_raw(state)))
 end
 
 -- Draw persistent wsim path overlays (called every tick from init.lua)

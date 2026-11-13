@@ -30,6 +30,7 @@ add_library(bolo_static STATIC
     brain_pathfinder.c
     brain_pathfinder_serial.c
     brain_sandbox.c
+    brain_value_pack.c
     brain_worldsim.c
     braincore.c
     building.c

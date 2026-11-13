@@ -1,13 +1,14 @@
 /*
  * pool_render_host.c -- see public/pool_render_host.h.
  *
- * One plain lua_State (standard libraries only, no brain globals), kept open
- * between calls. Its package.path holds only the brain directory, so
+ * One plain lua_State (standard libraries and brain_value_decode, no brain
+ * globals), kept open between calls. Its package.path holds only the brain directory, so
  * require "pool_render" finds the brain's own pool_render.lua, json.lua,
  * bitcompat.lua and constants.lua. A change of brain directory opens a new
  * state.
  */
 #include "pool_render_host.h"
+#include "brain_value_pack.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -22,8 +23,10 @@ static char g_dir[1024];
 static int g_renderRef = LUA_NOREF;
 
 bool poolRenderIsRaw(const char *blob) {
-    return blob && strncmp(blob, POOL_RENDER_RAW_TAG,
-                           sizeof(POOL_RENDER_RAW_TAG) - 1) == 0;
+    return blob && (strncmp(blob, POOL_RENDER_RAW_TAG,
+                            sizeof(POOL_RENDER_RAW_TAG) - 1) == 0 ||
+                    strncmp(blob, POOL_RENDER_RAW_TAG_V1,
+                            sizeof(POOL_RENDER_RAW_TAG_V1) - 1) == 0);
 }
 
 char *poolRenderDupBrainString(const char *s, size_t len) {
@@ -103,6 +106,8 @@ static const char *openState(const char *brainDir) {
     lua_State *L = luaL_newstate();
     if (!L) return "pool render: out of memory";
     luaL_openlibs(L);
+    /* pool_render.unpack reads a raw block with this (see brain_value_pack.h). */
+    brainValueRegisterDecode(L);
     lua_getglobal(L, "package");
     lua_pushfstring(L, "%s/?.lua", brainDir);
     lua_setfield(L, -2, "path");
