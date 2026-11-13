@@ -51,6 +51,17 @@
 BOLO_STATIC_ASSERT(CTRL_SIM_RULES_BUILDING_LIFE_CLASSIC == BUILDING_LIFE,
                    ctrl_sim_rules_building_life_classic_matches);
 
+/* The same for lgm_blast_shape: a body that stops short of it decodes as
+   this value, so it must be the classic table's. */
+BOLO_STATIC_ASSERT(CTRL_SIM_RULES_LGM_BLAST_SHAPE_CLASSIC ==
+                       LGM_BLAST_SHAPE_CLASSIC,
+                   ctrl_sim_rules_lgm_blast_shape_classic_matches);
+
+/* simRulesLgmBlastShapeForVersion answers LGM_BLAST_SHAPE_CLASSIC for this
+   version and later, so the classic shape must be the circle of 144. */
+BOLO_STATIC_ASSERT(LGM_BLAST_SHAPE_CLASSIC == LGM_BLAST_SHAPE_MAC_AREA,
+                   lgm_blast_shape_classic_is_144_circle);
+
 void simRulesClassic(SimRules *out) {
     if (out == NULL) {
         return;
@@ -265,10 +276,11 @@ void simRulesClassic(SimRules *out) {
     out->man_dead_pill_terrain_speed = 0;
 
     /* ---- Builder blast shape ---- */
-    /* LGM_BLAST_SHAPE_HALF_SQUARE (0): an explosion on open ground catches
-     * a builder within half a square (128) of it, a circle, the WinBolo
-     * way. LGM_BLAST_SHAPE_MAC_BOX (1) is Mac Bolo's box, and
-     * LGM_BLAST_SHAPE_MAC_AREA (2) a circle of the box's area. */
+    /* LGM_BLAST_SHAPE_MAC_AREA (2): an explosion on open ground catches a
+     * builder within 144 of it, a circle of about the area of Mac Bolo's
+     * box. LGM_BLAST_SHAPE_HALF_SQUARE (0) is the old WinBolo circle of
+     * half a square (128), and LGM_BLAST_SHAPE_MAC_BOX (1) Mac Bolo's
+     * box. */
     out->lgm_blast_shape = LGM_BLAST_SHAPE_CLASSIC;
 
 }
@@ -1081,6 +1093,26 @@ double simRulesClassicValue(int rule) {
         return (double) rate;
     }
     return (double) words[rule];
+}
+
+int simRulesLgmBlastShapeForVersion(unsigned major, unsigned minor,
+                                    unsigned revision) {
+    unsigned long have = ((unsigned long) major << 16) |
+                         ((unsigned long) minor << 8) | revision;
+    unsigned long first =
+        ((unsigned long) SIM_RULES_LGM_BLAST_144_MAJOR << 16) |
+        ((unsigned long) SIM_RULES_LGM_BLAST_144_MINOR << 8) |
+        SIM_RULES_LGM_BLAST_144_REVISION;
+
+    /* Each field is one byte on the wire and in the recording header, so
+       a larger value is out of range: take it as the newest version. */
+    if (major > 255 || minor > 255 || revision > 255) {
+        return LGM_BLAST_SHAPE_CLASSIC;
+    }
+    if (have < first) {
+        return LGM_BLAST_SHAPE_HALF_SQUARE;
+    }
+    return LGM_BLAST_SHAPE_CLASSIC;
 }
 
 bool simRulesRuleRange(int rule, SimRuleRange *out) {
