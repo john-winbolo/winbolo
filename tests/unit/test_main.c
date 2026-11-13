@@ -2701,6 +2701,7 @@ static const UnitTestEntry s_tests[] = {
     { "lv_scripts_json_hostile_values",                  run_lv_scripts_json_hostile_values                  },
     { "lv_scripts_json_over_cap",                        run_lv_scripts_json_over_cap                        },
     { "lv_scripts_json_close_clears",                    run_lv_scripts_json_close_clears                    },
+    { "lv_scripts_json_blast_shape_by_version",          run_lv_scripts_json_blast_shape_by_version          },
     { "lv_rule_changes_collected",                       run_lv_rule_changes_collected                       },
     { "lv_rule_changes_seek",                            run_lv_rule_changes_seek                            },
     { "lv_rule_changes_plain_round",                     run_lv_rule_changes_plain_round                     },
