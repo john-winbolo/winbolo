@@ -2690,7 +2690,7 @@ void tankDropPills(GameSim *sim, tank *value) {
   conv >>= TANK_SHIFT_MAPSIZE;
   ty = (BYTE) conv;
 
-  pillsDropSpiralStart(&spiral, tx, ty);
+  pillsDropSpiralStart(&spiral, tx, ty, gameSimGetTankPlayer(sim, value));
   while (NonEmpty((*value)->carryPills) &&
          pillsDropSpiralFind(sim, &spiral, &mx, &my)) {
     /* The search and the drop make the same square test, so this only

@@ -2029,6 +2029,8 @@ static const UnitTestEntry s_tests[] = {
     { "tank_drop_pills_hostile_map",             run_tank_drop_pills_hostile_map             },
     { "tank_drop_pills_no_room",                 run_tank_drop_pills_no_room                 },
     { "tank_drop_pills_quit_no_room",            run_tank_drop_pills_quit_no_room            },
+    { "tank_drop_pills_quit_map_event",          run_tank_drop_pills_quit_map_event          },
+    { "tank_drop_pills_no_room_other_tank",      run_tank_drop_pills_no_room_other_tank      },
     { "lgm_drop_pill_spiral",                    run_lgm_drop_pill_spiral                    },
     { "lgm_drop_pill_no_room",                   run_lgm_drop_pill_no_room                   },
     { "util_spiral_north",                       run_util_spiral_north                       },

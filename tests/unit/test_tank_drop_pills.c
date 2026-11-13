@@ -30,7 +30,12 @@
  *                                    under the pills to river
  * run_tank_drop_pills_quit_no_room — the same map, with the player quitting:
  *                                    the pills are on the map afterwards
- * run_lgm_drop_pill_spiral         — the builder's pill goes down on the same
+ * run_tank_drop_pills_quit_map_event — and the cleared squares reach the
+ *                                    clients: kept between ticks, they are
+ *                                    in the next frame's map events
+ * run_tank_drop_pills_no_room_other_tank — the second pass leaves the boat
+ *                                    under another player's tank alone
+ * run_lgm_drop_pill_spiral        — the builder's pill goes down on the same
  *                                    spiral round his square
  * run_lgm_drop_pill_no_room        — and on a map of buildings, the second
  *                                    pass turns the building under the pill
@@ -349,6 +354,101 @@ int run_tank_drop_pills_quit_no_room(void) {
                       (unsigned) n, (unsigned) p.x, (unsigned) p.y,
                       (unsigned) mapGetPos(&sim->sim.mp, p.x, p.y));
     }
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* Whether events[0..count) has a map change of (x, y) to terrain. */
+static bool tdp_has_map_change(const GameEvent *events, int count, BYTE x,
+                               BYTE y, BYTE terrain) {
+    int i;
+
+    for (i = 0; i < count; i++) {
+        if (events[i].type == EVENT_MAP_CHANGE && events[i].data[0] == x &&
+            events[i].data[1] == y && events[i].data[2] == terrain) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/* A quit is handled between ticks, where no map-change callback is
+ * installed. The boats the drop turns to river must still reach the clients:
+ * they are kept for the next frame, and the next running frame puts them in
+ * its map events after it clears them. */
+int run_tank_drop_pills_quit_map_event(void) {
+    ServerSim *sim = ut_make_running_sim("Tester");
+
+    UT_ASSERT(sim != NULL);
+    UT_ASSERT(sim->state == serverStateRunning);
+    UT_ASSERT(tdp_setup(sim, 128, 128, 2) == 0);
+    tdp_fill(sim, BOAT);
+    mapSetChangeCallback(NULL);
+    sim->pendingMapEventCount = 0;
+
+    serverSimRemovePlayer(sim, TDP_SLOT);
+
+    UT_ASSERT(mapGetPos(&sim->sim.mp, 128, 128) == RIVER);
+    UT_ASSERT(mapGetPos(&sim->sim.mp, 128, 127) == RIVER);
+    UT_ASSERT_MSG(tdp_has_map_change(sim->pendingMapEvents,
+                                     sim->pendingMapEventCount, 128, 128, RIVER),
+                  "no map change kept for (128,128), %u kept",
+                  (unsigned) sim->pendingMapEventCount);
+    UT_ASSERT(tdp_has_map_change(sim->pendingMapEvents,
+                                 sim->pendingMapEventCount, 128, 127, RIVER));
+    UT_ASSERT_MSG(mapGetChangeCallback() == NULL,
+                  "the quit left a map-change callback installed");
+
+    serverSimTick(sim);
+
+    UT_ASSERT_MSG(sim->pendingMapEventCount == 0,
+                  "%u map changes still kept after the frame",
+                  (unsigned) sim->pendingMapEventCount);
+    UT_ASSERT_MSG(tdp_has_map_change(sim->mapEvents, sim->mapEventCount,
+                                     128, 128, RIVER),
+                  "the frame's map events do not have (128,128)");
+    UT_ASSERT(tdp_has_map_change(sim->mapEvents, sim->mapEventCount,
+                                 128, 127, RIVER));
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* Another player's live tank sits on a boat on the square the second pass
+ * would take next. Turning that boat to river would leave the tank marked as
+ * on a boat, so the pass passes over its square to the next one. The dropping
+ * tank's own square is still taken first. */
+int run_tank_drop_pills_no_room_other_tank(void) {
+    ServerSim *sim = ut_make_running_sim("Tester");
+    GameSim *gs;
+    tank *t;
+    tank *other;
+
+    UT_ASSERT(sim != NULL);
+    gs = &sim->sim;
+    t = &gs->tanks[TDP_SLOT];
+    UT_ASSERT(tdp_setup(sim, 128, 128, 2) == 0);
+    tdp_fill(sim, BOAT);
+    UT_ASSERT(gs->tanks[1] == NULL);
+    tankCreate(gs, &gs->tanks[1]);
+    other = &gs->tanks[1];
+    UT_ASSERT(*other != NULL);
+    tankSetLocationData(other, (WORLD) ((128 << TANK_SHIFT_MAPSIZE) + MAP_SQUARE_MIDDLE),
+                        (WORLD) ((127 << TANK_SHIFT_MAPSIZE) + MAP_SQUARE_MIDDLE),
+                        0, 0, TRUE);
+    UT_ASSERT(tankIsOnBoat(other));
+
+    tankDropPills(gs, t);
+
+    UT_ASSERT(tankGetNumCarriedPills(t) == 0);
+    UT_ASSERT(tdp_assert_at(sim, 2, 128, 128) == 0);
+    UT_ASSERT(tdp_assert_at(sim, 1, 129, 127) == 0);
+    UT_ASSERT(mapGetPos(&gs->mp, 128, 128) == RIVER);
+    UT_ASSERT(mapGetPos(&gs->mp, 129, 127) == RIVER);
+    UT_ASSERT_MSG(mapGetPos(&gs->mp, 128, 127) == BOAT,
+                  "the boat under the other tank is gone");
+    UT_ASSERT(tankIsOnBoat(other));
 
     serverSimDestroy(sim);
     return 0;

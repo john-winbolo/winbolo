@@ -1092,6 +1092,7 @@ typedef struct {
   utilSpiralCursor cursor;
   int maxRing;  /* Last ring holding any minable square */
   int pass;     /* 0 for the first pass, 1 for the second */
+  BYTE dropper; /* Player whose tank is dropping, or NEUTRAL */
 } pillsDropSpiral;
 
 /*********************************************************
@@ -1114,11 +1115,15 @@ bool pillsDropCanLand(struct GameSim *sim, int mx, int my);
 *  Starts a drop search with its cursor on the centre.
 *
 *ARGUMENTS:
-*  s  - The search
-*  cx - X map square to search round
-*  cy - Y map square to search round
+*  s       - The search
+*  cx      - X map square to search round
+*  cy      - Y map square to search round
+*  dropper - The player whose tank drops the pills, or
+*            NEUTRAL. The second pass of the search does
+*            not clear a square under a live tank, except
+*            this one: it is dying or leaving the game.
 *********************************************************/
-void pillsDropSpiralStart(pillsDropSpiral *s, BYTE cx, BYTE cy);
+void pillsDropSpiralStart(pillsDropSpiral *s, BYTE cx, BYTE cy, BYTE dropper);
 
 /*********************************************************
 *NAME:          pillsDropSpiralFind
@@ -1133,10 +1138,11 @@ void pillsDropSpiralStart(pillsDropSpiral *s, BYTE cx, BYTE cy);
 *  If no square in the minable area will hold a pill,
 *  the search starts again from the centre. This second
 *  pass takes the first square in the minable area with
-*  no pill and no base, and turns a building or
-*  half-building there to rubble and a boat to river.
-*  Answers FALSE only if that pass also finds nothing,
-*  which needs a minable area full of pills and bases.
+*  no pill, no base and no live tank other than the
+*  dropper's, and turns a building or half-building there
+*  to rubble and a boat to river. Answers FALSE only if
+*  that pass also finds nothing, which needs a minable
+*  area full of pills, bases and tanks.
 *
 *ARGUMENTS:
 *  sim - The game

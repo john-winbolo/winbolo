@@ -1368,6 +1368,7 @@ void serverSimResetGameWorld(ServerSim *sim) {
        bound and would write nothing for as long as the lobby lasted. */
     sim->eventCount = 0;
     sim->mapEventCount = 0;
+    sim->pendingMapEventCount = 0;
     /* And any fill a scenario still had squares owing on. Its rectangle was
        aimed at the map that has just been replaced above, so carrying it on
        would paint the reloaded one. The roster changes it had queued name
@@ -1761,6 +1762,7 @@ void serverSimStartGameInPlace(ServerSim *sim) {
      * snapshot's own arrays, not these queues, so flushing loses nothing. */
     sim->eventCount = 0;
     sim->mapEventCount = 0;
+    sim->pendingMapEventCount = 0;
     /* A fill queued by a lobby hook is lobby work too, and this path does not
        reload the map, so nothing else would drop it: without this the squares
        it still owes land partway into the round that is starting. The

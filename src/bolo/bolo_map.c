@@ -62,6 +62,10 @@ void mapSetChangeCallback(MapChangeCallback cb) {
     mapChangeCb = cb;
 }
 
+MapChangeCallback mapGetChangeCallback(void) {
+    return mapChangeCb;
+}
+
 /* The bases, pillboxes and starts that lead a compressed map, ahead of the
  * terrain. */
 #define MAP_COMPRESSED_HEADER_LEN (SIZEOF_BASES + SIZEOF_PILLS + SIZEOF_STARTS)
