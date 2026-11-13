@@ -6935,7 +6935,7 @@ function Brain.think(info)
           _ev.gunrange_off = target_sl and math.abs(cur_sl - target_sl) or 99
           _ev.land_off_wu  = impact_off
           -- Fire when the burst lands within kill_lgm.tuning().fire_wu of
-          -- the predicted man: C.LGM_KILL_FIRE_WU (256, one tile) while the
+          -- the predicted man: C.LGM_KILL_FIRE_WU (128, the blast reach) while the
           -- LGM-kill package is on (hard), else C.KILL_LGM_FIRE_WU, the
           -- engine's full kill radius (128 wu).  KEEL used 64, half of it,
           -- and held fire on shots that would kill.
@@ -7376,7 +7376,7 @@ function Brain.think(info)
         end
 
         -- ── STEP 4b: aim refinement to a QUARTER TILE (C.LGM_KILL_AIM_WU) ──
-        -- Shoot at a tile, aim for a quarter tile.  While a candidate is being
+        -- Shoot inside the blast reach, aim for a quarter tile.  While a candidate is being
         -- hunted and the AIM ERROR -- the distance from the predicted impact
         -- point to his predicted point -- is still above KT.aim_wu, every tick
         -- picks the action that makes it smaller.  Nothing here delays or

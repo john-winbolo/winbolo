@@ -3009,21 +3009,19 @@ M.LGM_KILL_IMPROVED    = true
 -- all.  The exact-tile test is separate in the code and is NOT changed by this
 -- knob; it matches the engine and must stay.
 --
--- Why the default is WIDER than the engine's 128: the check compares
--- PREDICTED points, not real ones.  A shot allowed at up to one full tile of
--- predicted offset still lands inside the killing half-tile whenever the
--- prediction was half right, and a reload is cheap -- refusing the shot
--- costs more than a miss does.  KEEL: 64.
-M.LGM_KILL_FIRE_WU     = 256  -- wu: take the shot inside one full tile
+-- The default equals the real open-ground blast: 128 wu.  2026-11-13 Andrew
+-- set it to 128 (it was 256) because a shot whose predicted impact is more
+-- than 128 wu from the predicted builder does not kill him.  KEEL: 64.
+M.LGM_KILL_FIRE_WU     = 128  -- wu: take the shot inside the engine's blast reach
 
 -- ── Aim target: a QUARTER tile (2026-09-13, Andrew) ───────────────────────
 -- LGM_KILL_FIRE_WU says when the shot is worth taking.  This says when the AIM
 -- is finished.  Aim error = the distance from the predicted impact point (at
 -- the length the shot will actually fly at) to the man's predicted point.
 -- Above this the capture hunt keeps closing the error every tick; the shot
--- still goes the moment the error is inside the fire check, so "shoot at a
--- tile, aim for a quarter tile" -- each shell is fired while the next one is
--- being aimed better.
+-- still goes the moment the error is inside the fire check, so "shoot inside
+-- the blast reach, aim for a quarter tile" -- each shell is fired while the
+-- next one is being aimed better.
 --
 -- Why the aim needed help at all.  Nothing ever "held" the aim once a shot was
 -- allowed; these are floors the old code could not get under:
@@ -3162,7 +3160,7 @@ M.CAPTURE_LGM_HUNT_RADIUS_CAP_BY_DIST = false
 -- brads toward the man, and only so far as the resulting ray still crosses the
 -- pill tile, so the drive-over capture is never sacrificed for the shot.  The
 -- shot itself is opportunistic: drive the gunsight onto the man and fire when
--- the predicted impact lands within a tile of him (or in his exact tile if he
+-- the predicted impact lands inside the fire check (or in his exact tile if he
 -- stands on a solid square -- see below).
 --
 -- SWEEP_FOCUS_RADIUS: within this Euclidean distance (tiles) of the swept pill

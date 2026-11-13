@@ -55,7 +55,7 @@ end
 -- ── 1. defaults in constants.lua ──────────────────────────────────────────
 print("defaults")
 check("LGM_KILL_IMPROVED = true", C.LGM_KILL_IMPROVED == true, C.LGM_KILL_IMPROVED)
-check("LGM_KILL_FIRE_WU = 256", C.LGM_KILL_FIRE_WU == 256, C.LGM_KILL_FIRE_WU)
+check("LGM_KILL_FIRE_WU = 128", C.LGM_KILL_FIRE_WU == 128, C.LGM_KILL_FIRE_WU)
 check("CAPTURE_LGM_HUNT_FIRE_WU = -1", C.CAPTURE_LGM_HUNT_FIRE_WU == -1, C.CAPTURE_LGM_HUNT_FIRE_WU)
 check("CAPTURE_LGM_HUNT_TRACK_TILES = 10", C.CAPTURE_LGM_HUNT_TRACK_TILES == 10, C.CAPTURE_LGM_HUNT_TRACK_TILES)
 check("CAPTURE_LGM_HUNT_PICK_NEAREST_PILL = true", C.CAPTURE_LGM_HUNT_PICK_NEAREST_PILL == true)
@@ -70,10 +70,10 @@ local hard = (C.MODE_LEVELS.default or {}).hard
 check("default/hard sets no LGM_KILL_IMPROVED", hard and hard.LGM_KILL_IMPROVED == nil)
 local t = tuning_with(hard)
 check("on", t.on == true, t.on)
-check("fire_wu = 256", t.fire_wu == 256, t.fire_wu)
-check("capture_fire_wu follows the shared check (256)", t.capture_fire_wu == 256, t.capture_fire_wu)
-check("armour_fire_wu = 256", t.armour_fire_wu == 256, t.armour_fire_wu)
-check("perp_wu opens to the fire check (256)", t.perp_wu == 256, t.perp_wu)
+check("fire_wu = 128", t.fire_wu == 128, t.fire_wu)
+check("capture_fire_wu follows the shared check (128)", t.capture_fire_wu == 128, t.capture_fire_wu)
+check("armour_fire_wu = 128", t.armour_fire_wu == 128, t.armour_fire_wu)
+check("perp_wu equals the fire check (128)", t.perp_wu == 128, t.perp_wu)
 check("track_wu = 10 tiles", t.track_wu == 10 * 256, t.track_wu)
 check("pick_near_pill", t.pick_near_pill == true)
 check("hold_min_steps = 2", t.hold_min_steps == 2, t.hold_min_steps)
@@ -137,7 +137,7 @@ check("keel no aim refinement", k.aim_wu == nil and k.aim_tiles == nil)
 -- ── 5. CAPTURE_LGM_HUNT_FIRE_WU override ──────────────────────────────────
 print("capture override")
 local ov = tuning_with({ CAPTURE_LGM_HUNT_FIRE_WU = 150 })
-check("on: override 150 moves the capture shot only", ov.capture_fire_wu == 150 and ov.fire_wu == 256,
+check("on: override 150 moves the capture shot only", ov.capture_fire_wu == 150 and ov.fire_wu == 128,
       tostring(ov.capture_fire_wu) .. "/" .. tostring(ov.fire_wu))
 local ovo = tuning_with({ LGM_KILL_IMPROVED = false, CAPTURE_LGM_HUNT_FIRE_WU = 80 })
 check("off: override 80 is still read", ovo.capture_fire_wu == 80, ovo.capture_fire_wu)
@@ -151,7 +151,7 @@ package.loaded["kill_lgm"] = nil
 local KL = require("kill_lgm")
 local first = KL.tuning()
 C.LGM_KILL_FIRE_WU = 999
-check("second call returns the cached table", KL.tuning() == first and KL.tuning().fire_wu == 256)
+check("second call returns the cached table", KL.tuning() == first and KL.tuning().fire_wu == 128)
 KL.reset_tuning()     -- what Brain.on_init does after a runtime preset= / cfg=
 check("reset_tuning: the next call reads the constants again",
       KL.tuning() ~= first and KL.tuning().fire_wu == 999, KL.tuning().fire_wu)

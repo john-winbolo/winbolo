@@ -1088,7 +1088,7 @@ M.SPLASH_WU = SPLASH_WU
 -- --------------------------------------------------------------------------
 -- M.tuning() — the ONE place that reads the LGM-kill master switch.
 --
--- C.LGM_KILL_IMPROVED switches the whole 2026-09-13 package: the wider fire
+-- C.LGM_KILL_IMPROVED switches the whole 2026-09-13 package: the package fire
 -- check, the 10-tile candidate track radius, the nearest-to-pill pick, the
 -- sight that follows the candidate from admission, and the quarter-tile aim
 -- refinement.  OFF (easy, medium, and PRESETS.keel) every value below is the
@@ -1117,7 +1117,7 @@ function M.tuning()
   -- Shared evaluator check: the package knob when on, else today's
   -- KILL_LGM_FIRE_WU (128, keel 64).
   local fire_wu
-  if on then fire_wu = C.LGM_KILL_FIRE_WU or 256
+  if on then fire_wu = C.LGM_KILL_FIRE_WU or 128
   else fire_wu = C.KILL_LGM_FIRE_WU or 64 end
   -- Capture-hunt shot: its own override when set (>= 0).  Otherwise the
   -- shared check when on, and the pre-package 100 when off.
