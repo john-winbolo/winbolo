@@ -57,6 +57,11 @@ BOLO_STATIC_ASSERT(CTRL_SIM_RULES_LGM_BLAST_SHAPE_CLASSIC ==
                        LGM_BLAST_SHAPE_CLASSIC,
                    ctrl_sim_rules_lgm_blast_shape_classic_matches);
 
+/* simRulesLgmBlastShapeForVersion answers LGM_BLAST_SHAPE_CLASSIC for this
+   version and later, so the classic shape must be the circle of 144. */
+BOLO_STATIC_ASSERT(LGM_BLAST_SHAPE_CLASSIC == LGM_BLAST_SHAPE_MAC_AREA,
+                   lgm_blast_shape_classic_is_144_circle);
+
 void simRulesClassic(SimRules *out) {
     if (out == NULL) {
         return;
@@ -1088,6 +1093,26 @@ double simRulesClassicValue(int rule) {
         return (double) rate;
     }
     return (double) words[rule];
+}
+
+int simRulesLgmBlastShapeForVersion(unsigned major, unsigned minor,
+                                    unsigned revision) {
+    unsigned long have = ((unsigned long) major << 16) |
+                         ((unsigned long) minor << 8) | revision;
+    unsigned long first =
+        ((unsigned long) SIM_RULES_LGM_BLAST_144_MAJOR << 16) |
+        ((unsigned long) SIM_RULES_LGM_BLAST_144_MINOR << 8) |
+        SIM_RULES_LGM_BLAST_144_REVISION;
+
+    /* Each field is one byte on the wire and in the recording header, so
+       a larger value is out of range: take it as the newest version. */
+    if (major > 255 || minor > 255 || revision > 255) {
+        return LGM_BLAST_SHAPE_CLASSIC;
+    }
+    if (have < first) {
+        return LGM_BLAST_SHAPE_HALF_SQUARE;
+    }
+    return LGM_BLAST_SHAPE_CLASSIC;
 }
 
 bool simRulesRuleRange(int rule, SimRuleRange *out) {
