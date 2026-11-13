@@ -332,6 +332,82 @@ do
   check("shell ends on a wall he is not on -> nil", REAL(w, inf, 103, 100) == nil)
   TER[100 * 256 + 103] = nil
 
+  -- A forest or a boat stops every shell, and with
+  -- C.BLAST_TERRAIN_SQUARE_HIT that hit is the square rule. On (102,100), a
+  -- pill's shell with life 19 enters it on tick 13 (x 26336) while he is at
+  -- 25936 on square 101: he lives. Without the knob it flies on and expires
+  -- on tick 20 at 26112, 64 from him: certain death.
+  local old_tsh = C.BLAST_TERRAIN_SQUARE_HIT
+  for _, tt in ipairs({ { C.T_FOREST, "forest" }, { C.T_BOAT, "boat" } }) do
+    TER[100 * 256 + 102] = tt[1]
+    inf.objects = { shot(26752, WX, 192, 255, 19) }
+    C.BLAST_TERRAIN_SQUARE_HIT = true
+    check("shell ends on a " .. tt[2] .. " he is not on -> nil",
+          REAL(w, inf, 103, 100) == nil)
+    C.BLAST_TERRAIN_SQUARE_HIT = nil
+    h = REAL(w, inf, 103, 100)
+    check("knob unset: it flies over the " .. tt[2] .. " -> certain death",
+          h ~= nil and h.how == "expiry", h and h.how)
+    TER[100 * 256 + 102] = nil
+  end
+  -- A forest on (101,100), his square: a pill's shell with life 30 enters it
+  -- on tick 21 (x 26080) while he is at 26064 on it: the square rule kills
+  -- him. Without the knob it flies on and ends on our tank on tick 29, 368
+  -- from him.
+  TER[100 * 256 + 101] = C.T_FOREST
+  inf.objects = { shot(26752, WX, 192, 255, 30) }
+  C.BLAST_TERRAIN_SQUARE_HIT = true
+  h = REAL(w, inf, 103, 100)
+  check("shell ends on the forest he is on -> certain death",
+        h ~= nil and h.how == "terrain" and h.solid, h and h.how)
+  C.BLAST_TERRAIN_SQUARE_HIT = nil
+  check("knob unset: it flies over his forest -> nil", REAL(w, inf, 103, 100) == nil)
+  TER[100 * 256 + 101] = nil
+  C.BLAST_TERRAIN_SQUARE_HIT = old_tsh
+
+  -- A dead pill on (102,100): a pill's shell with life 19 flies over it and
+  -- expires on tick 20 at x 26112, the west edge of that square. He is at
+  -- 25728 + 16*20 = 26048 then, on square 101, 64 away. With
+  -- C.BLAST_DEAD_PILL_OPEN the dead pill's square is open ground and the
+  -- blast kills him; without it the square is solid and he lives. A live
+  -- pill there stops the shell at the square's centre: he lives either way.
+  local function pill_on(health)
+    w.pill_at = { [100 * 256 + 102] = { { id = 1, pill = { health = health,
+                                                           in_tank = false } } } }
+  end
+  inf.objects = { shot(26752, WX, 192, 255, 19) }
+  pill_on(0)
+  C.BLAST_DEAD_PILL_OPEN = true
+  h = REAL(w, inf, 103, 100)
+  check("blast on a dead pill's edge, he is across it -> certain death",
+        h ~= nil and h.how == "expiry", h and h.how)
+  C.BLAST_DEAD_PILL_OPEN = false
+  check("  knob off: the dead pill's square is solid -> nil",
+        REAL(w, inf, 103, 100) == nil)
+  C.BLAST_DEAD_PILL_OPEN = true
+  pill_on(5)
+  check("  a live pill there stops the shell -> nil", REAL(w, inf, 103, 100) == nil)
+
+  -- The shot that kills a pill: health 1 on (102,100). A pill's shell from
+  -- x 27620 going west enters that square on tick 40 (27620 - 32*40 =
+  -- 26340) and hits the pill; the blast is at the square's centre, 26240.
+  -- He is at 25728 + 16*40 = 26368 then: the first world unit of square
+  -- 103, 128 from the centre, inside the open-ground circle. A hit on a pill
+  -- is a hit on its square, the killing shot too, so he lives. With the
+  -- shell 10 ticks closer the hit is on tick 30 and he is at 26208, on the
+  -- pill's square: certain death, on the square rule.
+  pill_on(1)
+  inf.objects = { shot(27620, WX, 192, 255, 50) }
+  check("  the shot that kills a pill: he is just off its square -> nil",
+        REAL(w, inf, 103, 100) == nil)
+  inf.objects = { shot(27300, WX, 192, 255, 50) }
+  h = REAL(w, inf, 103, 100)
+  check("  the shot that kills a pill: he is on its square -> certain death",
+        h ~= nil and h.how == "pill" and h.solid == true and h.t == 30,
+        h and (h.how .. " t=" .. tostring(h.t)))
+  C.BLAST_DEAD_PILL_OPEN = nil
+  w.pill_at = {}
+
   -- Our own builder back in the tank: a shell that lands on the tank square
   -- late (life 63 from far east, he is home by tick 2*48+20 = 116 > 63, so
   -- use a short errand: (101,100), 16 steps, home after tick 52).

@@ -599,9 +599,20 @@ end
 --     shell; a base that stops it (below) - the square's centre; a wall
 --     (building / half building) - the square's centre.
 --   * the builder test (lgm.c lgmBlastCatches) for every blast: a blast on a
---     building, a half building, a pill on the ground (alive or dead) or a
---     base kills only a builder on that square; elsewhere one within
---     MAP_SQUARE_MIDDLE (<=).
+--     building, a half building, a live pill on the ground or a base kills
+--     only a builder on that square; elsewhere (a dead pill's square too)
+--     one within MAP_SQUARE_MIDDLE (<=). C.BLAST_DEAD_PILL_OPEN false (KEEL,
+--     or unset) counts a dead pill as solid too, the old engine rule.
+--     A shell that hits a pill (1 below) or a wall (4 below) is a hit on
+--     that square whatever the hit leaves there (shells.c outSquareHit), so
+--     the shot that kills a pill and the shot that turns a wall to rubble
+--     use the square rule too. The brain cannot see how many hits a wall
+--     has left; it does not need to, as every hit on it is the square rule.
+--     With C.BLAST_TERRAIN_SQUARE_HIT (unset = off) a forest or a boat,
+--     which stop every shell, end it too (4 below), with the same square
+--     rule. A boat's shell on the shore or a bridge is a hit on its square
+--     as well, but the brain cannot see which shells a boat fired, so those
+--     fly on.
 --   * a tank's shell tests the builder where he was r ticks earlier
 --     (shellsBlastTestBuilder). A bot's shell rewinds 1; a human's rewinds
 --     his measured view age (up to LAG_COMP_MAX_TICKS 14) minus
@@ -660,27 +671,37 @@ local function man_at_cd(nw, dwell, t, home_x, home_y)
   return WALK[i * 2 - 1], WALK[i * 2]
 end
 
--- lgmBlastCatches's "solid" square: a building, a half building, a pill on
--- the ground (pillsExistPos: alive or dead, not in a tank) or a base.
+-- lgmBlastCatches's "solid" square: a building, a half building, a live pill
+-- on the ground (pillsIsPillHit: armour > 0, not in a tank) or a base. A dead
+-- pill's square is open ground. C.BLAST_DEAD_PILL_OPEN false (KEEL, or
+-- unset) keeps the old rule, where any pill on the ground (pillsExistPos,
+-- alive or dead) was solid.
 local function blast_square_solid(world, mx, my)
   local tt = U.ttype(mx, my)
   if tt == C.T_BUILDING or tt == C.T_HALFBUILD then return true end
   local k = my * 256 + mx
   local lst = world and world.pill_at and world.pill_at[k]
   if lst then
+    local dead_open = C.BLAST_DEAD_PILL_OPEN
     for i = 1, #lst do
       local p = lst[i].pill
-      if p and not p.in_tank then return true end
+      if p and not p.in_tank and (not dead_open or (p.health or 0) > 0) then
+        return true
+      end
     end
   end
   if world and world.base_at and world.base_at[k] then return true end
   return false
 end
 
-local function blast_catches(world, lx, ly, ex, ey, kill2)
+-- pill_hit: the blast is a shell's hit on the pill or the wall on its
+-- square. That is the square rule whatever the hit leaves there, the shot
+-- that kills the pill or turns the wall to rubble included (lgm.c
+-- lgmBlastCatches, squareHit).
+local function blast_catches(world, lx, ly, ex, ey, kill2, pill_hit)
   local emx = bit.rshift(math.floor(ex), 8)
   local emy = bit.rshift(math.floor(ey), 8)
-  if blast_square_solid(world, emx, emy) then
+  if pill_hit or blast_square_solid(world, emx, emy) then
     return bit.rshift(math.floor(lx), 8) == emx
        and bit.rshift(math.floor(ly), 8) == emy
   end
@@ -830,10 +851,12 @@ function M.lgm_certain_death(world, info, dest_mx, dest_my)
       local function test(t, ex, ey, how)
         for r = r_lo, r_hi do
           local lx, ly = man_at_cd(nw, dwell, t - r, home_x, home_y)
-          if lx and blast_catches(world, lx, ly, ex, ey, KILL2) then
+          if lx and blast_catches(world, lx, ly, ex, ey, KILL2,
+                                  how == "pill" or how == "wall"
+                                  or how == "terrain") then
             return { t = t, sx = ex, sy = ey, lx = lx, ly = ly, src = src,
                      how = how, solid = (how == "wall" or how == "pill"
-                                         or how == "base"),
+                                         or how == "base" or how == "terrain"),
                      walk_n = nw,
                      rewind = (r_lo == r_hi) and tostring(r)
                               or string.format("%d of %d..%d", r, r_lo, r_hi) }
@@ -887,7 +910,9 @@ function M.lgm_certain_death(world, info, dest_mx, dest_my)
           ended = true
           break
         end
-        -- (3) a base that stops it; (4) a wall (not on a base square).
+        -- (3) a base that stops it; (4) a wall, or with
+        -- C.BLAST_TERRAIN_SQUARE_HIT a forest or a boat (not on a base
+        -- square).
         local on_base = world and world.base_at and world.base_at[smy * 256 + smx]
         if on_base and base_stops_for_sure(world, info, ob, smx, smy) then
           local h = test(t, cx, cy, "base")
@@ -899,6 +924,12 @@ function M.lgm_certain_death(world, info, dest_mx, dest_my)
           local tt = U.ttype(smx, smy)
           if tt == C.T_BUILDING or tt == C.T_HALFBUILD then
             local h = test(t, cx, cy, "wall")
+            if h then return h end
+            ended = true
+            break
+          end
+          if (tt == C.T_FOREST or tt == C.T_BOAT) and C.BLAST_TERRAIN_SQUARE_HIT then
+            local h = test(t, cx, cy, "terrain")
             if h then return h end
             ended = true
             break
