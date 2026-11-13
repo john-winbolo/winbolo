@@ -111,6 +111,67 @@ int run_lv_hitbox_sums(void) {
     UT_ASSERT_MSG(lvHitboxBuilderReach(100) == 100, "a short pill range limits it");
     UT_ASSERT_MSG(lvHitboxBuilderReach(0) == 0, "pill range 0");
 
+    /* The lgm_blast_shape rule: 0 the circle above, 1 the Mac Bolo box,
+       2 a circle of 144. pill_range limits all three (checked below). */
+    {
+        /* The builder in the middle of his square; the same points as
+           test_lgm_blast_shape.c: across at 127/128/129 and 143/144/145,
+           and on the diagonal at 100 and 120. */
+        static const struct { double dx, dy; bool dies[3]; } rows[] = {
+            { 127.0,   0.0, { true,  true,  true  } },
+            { 128.0,   0.0, { true,  false, true  } },
+            { 129.0,   0.0, { false, false, true  } },
+            { 143.0,   0.0, { false, false, true  } },
+            { 144.0,   0.0, { false, false, true  } },
+            { 145.0,   0.0, { false, false, false } },
+            { 100.0, 100.0, { false, true,  true  } },
+            { 120.0, 120.0, { false, true,  false } },
+        };
+        int shape, i, q;
+        for (shape = 0; shape < 3; shape++) {
+            for (i = 0; i < (int)(sizeof(rows) / sizeof(rows[0])); i++) {
+                for (q = 0; q < 4; q++) {
+                    double dx = rows[i].dx * ((q & 1) ? -1.0 : 1.0);
+                    double dy = rows[i].dy * ((q & 2) ? -1.0 : 1.0);
+                    bool got = lvHitboxBuilderCaughtShape(128.0 + dx, 128.0 + dy,
+                                                          128.0, 128.0, 0, shape,
+                                                          2048);
+                    UT_ASSERT_MSG(got == rows[i].dies[shape],
+                                  "shape %d at (%g,%g): %s, wanted %s", shape,
+                                  dx, dy, got ? "caught" : "missed",
+                                  rows[i].dies[shape] ? "caught" : "missed");
+                }
+            }
+        }
+        /* A solid square still catches only on his own square. */
+        UT_ASSERT_MSG(!lvHitboxBuilderCaughtShape(256.0, 128.0, 200.0, 128.0,
+                                                  SQ(2, 1), 1, 2048),
+                      "shape 1: a building next door catches nobody");
+        UT_ASSERT_MSG(lvHitboxBuilderCaughtShape(250.0, 250.0, 128.0, 128.0,
+                                                 SQ(1, 1), 2, 2048),
+                      "shape 2: a building on his square catches him");
+    }
+    {
+        /* pill_range limits every shape, as lgmBlastOpenGroundCatches: the
+           box at 150 loses its corners, shape 2 at 100 is a circle of 100. */
+        UT_ASSERT_MSG(lvHitboxBuilderCaughtShape(255.0, 128.0, 128.0, 128.0, 0, 1, 150),
+                      "box, pill range 150: 127 across");
+        UT_ASSERT_MSG(lvHitboxBuilderCaughtShape(228.0, 228.0, 128.0, 128.0, 0, 1, 150),
+                      "box, pill range 150: (100,100) is 141 away");
+        UT_ASSERT_MSG(!lvHitboxBuilderCaughtShape(238.0, 238.0, 128.0, 128.0, 0, 1, 150),
+                      "box, pill range 150: (110,110) is 156 away");
+        UT_ASSERT_MSG(lvHitboxBuilderCaughtShape(228.0, 128.0, 128.0, 128.0, 0, 2, 100),
+                      "shape 2, pill range 100: 100 across");
+        UT_ASSERT_MSG(!lvHitboxBuilderCaughtShape(229.0, 128.0, 128.0, 128.0, 0, 2, 100),
+                      "shape 2, pill range 100: 101 across");
+        UT_ASSERT_MSG(lvHitboxBuilderCaughtShape(228.0, 128.0, 128.0, 128.0, 0, 0, 100),
+                      "shape 0, pill range 100: 100 across");
+        UT_ASSERT_MSG(!lvHitboxBuilderCaughtShape(229.0, 128.0, 128.0, 128.0, 0, 0, 100),
+                      "shape 0, pill range 100: 101 across");
+        UT_ASSERT_MSG(!lvHitboxBuilderCaughtShape(128.0, 128.0, 128.0, 128.0, 0, 1, -1),
+                      "pill range under 0 catches nobody");
+    }
+
     /* Open ground all round: a circle of 128, the edge itself caught. */
     UT_ASSERT_MSG(lvHitboxBuilderCaught(128.0, 128.0, 128.0, 128.0, 0, 128), "on him");
     UT_ASSERT_MSG(lvHitboxBuilderCaught(256.0, 128.0, 128.0, 128.0, 0, 128), "128 away");
@@ -362,8 +423,8 @@ int run_lv_hitbox_lgm_pick(void) {
 /* Every line of an outline has the area on one side and not on the other.
    A circle segment is a chord, a little inside the circle, so it is tested
    on the circle at its middle; an edge piece is tested across itself. */
-static int outlineBorderHolds(const LvHitOutline *o, double bx, double by, unsigned solid,
-                              int reach) {
+static int outlineBorderHoldsShape(const LvHitOutline *o, double bx, double by,
+                                   unsigned solid, int shape, int pillRange, int reach) {
     int run, p;
     for (run = 0; run < o->nRuns; run++) {
         for (p = o->runStart[run]; p + 1 < o->runStart[run + 1]; p++) {
@@ -382,13 +443,22 @@ static int outlineBorderHolds(const LvHitOutline *o, double bx, double by, unsig
                 nx = -uy / len;
                 ny = ux / len;
             }
-            in = lvHitboxBuilderCaught(mx - nx * 0.01, my - ny * 0.01, bx, by, solid, reach);
-            out = lvHitboxBuilderCaught(mx + nx * 0.01, my + ny * 0.01, bx, by, solid, reach);
+            in = lvHitboxBuilderCaughtShape(mx - nx * 0.01, my - ny * 0.01, bx, by, solid,
+                                            shape, pillRange);
+            out = lvHitboxBuilderCaughtShape(mx + nx * 0.01, my + ny * 0.01, bx, by, solid,
+                                             shape, pillRange);
             UT_ASSERT_MSG(in != out, "the line %.3f,%.3f to %.3f,%.3f is not on the border",
                           a.x, a.y, b.x, b.y);
         }
     }
     return 0;
+}
+
+/* The same for the classic shape: reach is the pill range and the circle. */
+static int outlineBorderHolds(const LvHitOutline *o, double bx, double by, unsigned solid,
+                              int reach) {
+    return outlineBorderHoldsShape(o, bx, by, solid, LV_HITBOX_BUILDER_SHAPE_CIRCLE, reach,
+                                   reach);
 }
 
 /* Whether the outline has a point at (x, y), to within 1e-6 world units. */
@@ -446,5 +516,47 @@ int run_lv_hitbox_outline(void) {
        ends at angle 0). */
     lvHitboxBuilderOutline(128.0, 128.0, 0, 128, &o);
     UT_ASSERT_MSG(o.nRuns <= 2, "%d runs for a plain circle", o.nRuns);
+
+    /* The other lgm_blast_shape values: the Mac Bolo box, with its corners
+       cut by a short pill_range or not, and the circle of 144. circle is
+       the circle on the border (0 for none). */
+    {
+        static const struct {
+            double bx, by;
+            unsigned solid;
+            int shape, pillRange, circle;
+        } shapes[] = {
+            {128.0, 128.0, 0, 1, 2048, 0},
+            {128.0, 128.0, 0, 1, 150, 150},
+            {200.0, 60.0, SQ(2, 1) | SQ(1, 0), 1, 2048, 0},
+            {200.0, 60.0, SQ(2, 1) | SQ(1, 0), 1, 150, 150},
+            {128.0, 128.0, 0, 2, 2048, 144},
+            {30.0, 220.0, SQ(0, 1) | SQ(1, 2), 2, 2048, 144},
+            {30.0, 220.0, SQ(0, 1), 2, 100, 100},
+        };
+        for (c = 0; c < sizeof(shapes) / sizeof(shapes[0]); c++) {
+            lvHitboxBuilderOutlineShape(shapes[c].bx, shapes[c].by, shapes[c].solid,
+                                        shapes[c].shape, shapes[c].pillRange, &o);
+            UT_ASSERT_MSG(o.nRuns > 0, "shape case %u has no outline", (unsigned)c);
+            if (outlineBorderHoldsShape(&o, shapes[c].bx, shapes[c].by, shapes[c].solid,
+                                        shapes[c].shape, shapes[c].pillRange,
+                                        shapes[c].circle) != 0) {
+                return 1;
+            }
+        }
+        /* The box with its corners cut: the side x = 256 stops where the
+           circle of 150 meets it, at 128 plus or minus sqrt(150^2 - 128^2). */
+        lvHitboxBuilderOutlineShape(128.0, 128.0, 0, 1, 150, &o);
+        UT_ASSERT_MSG(outlineHasPoint(&o, 256.0, 128.0 - sqrt(150.0 * 150.0 - 128.0 * 128.0)),
+                      "the box side does not stop where the pill_range circle meets it");
+        /* The box's bottom side, y = 60 + 128 = 188, cuts the building's
+           edge x = 256: the run along that edge stops at the corner. */
+        lvHitboxBuilderOutlineShape(200.0, 60.0, SQ(2, 1) | SQ(1, 0), 1, 2048, &o);
+        UT_ASSERT_MSG(outlineHasPoint(&o, 256.0, 188.0),
+                      "the edge x = 256 does not stop at the box's bottom side");
+        /* With the cut on the wrong axis the run went on to y = 192. */
+        UT_ASSERT_MSG(!outlineHasPoint(&o, 256.0, 192.0),
+                      "the edge x = 256 runs past the box's bottom side");
+    }
     return 0;
 }

@@ -891,6 +891,26 @@ static void lv_ruleChangesClear(void) {
   g_lv->ruleChangesTruncated = FALSE;
 }
 
+/* The value of a rule the recording never set. A recording holds only the
+ * rules a script set or changed, so a rule it does not hold played the
+ * classic value of the build that wrote it. lgm_blast_shape is the one rule
+ * whose classic value changed: builds before 2.2.2 played 0 (the circle of
+ * 128) and later ones 2 (the circle of 144), so for a loaded recording it
+ * comes from the version in the header (simRulesLgmBlastShapeForVersion). A
+ * version of 0.0.0 says nothing (a spectator seed before its version is
+ * filled in), and with no recording open the answer is this build's. */
+static double lv_screenRuleUnsetValue(int index) {
+  if (index == SIM_RULE_lgm_blast_shape && g_lv != NULL &&
+      g_lv->logLoaded == TRUE &&
+      (g_lv->versionMajor != 0 || g_lv->versionMinor != 0 ||
+       g_lv->versionRevision != 0)) {
+    return (double) simRulesLgmBlastShapeForVersion(g_lv->versionMajor,
+                                                    g_lv->versionMinor,
+                                                    g_lv->versionRevision);
+  }
+  return simRulesClassicValue(index);
+}
+
 double lv_screenRuleValueAt(int index, uint32_t ms) {
   const LvRuleChange *c;
   bool                found  = FALSE;
@@ -920,7 +940,7 @@ double lv_screenRuleValueAt(int index, uint32_t ms) {
       return g_lv->scripts.rules[i].value;
     }
   }
-  return simRulesClassicValue(index);
+  return lv_screenRuleUnsetValue(index);
 }
 
 /* The table of the times each builder was away, further down. */
@@ -966,6 +986,17 @@ static void lv_rulesRefresh(void) {
       lv_screenRuleValueAt(SIM_RULE_tank_hit_radius, t), 1, 255);
   g_lv->rules.pillRange      = lv_rulesClampInt(
       lv_screenRuleValueAt(SIM_RULE_pill_range, t), 0, 65535);
+  /* The engine plays any lgm_blast_shape other than 1 or 2 as 0, the
+     circle of 128 (hitRulesBuilderOpenGroundShape), so a value outside 0 to
+     2 reads as 0 here. A server holds the rule to 0 to 2, so only a
+     hand-made file can have one. */
+  {
+    double shape = lv_screenRuleValueAt(SIM_RULE_lgm_blast_shape, t);
+    g_lv->rules.lgmBlastShape = (shape >= (double)LGM_BLAST_SHAPE_HALF_SQUARE &&
+                                 shape <= (double)LGM_BLAST_SHAPE_MAC_AREA)
+                                    ? (int)shape
+                                    : LGM_BLAST_SHAPE_HALF_SQUARE;
+  }
   /* The tank's hit zone: the circle, or the square of games from before it
      (1.91 and earlier), from the header's version and whether the file has
      rule records. */
@@ -6276,6 +6307,7 @@ LogViewerState *lv_decoderCreate(bool fromMainMenu) {
   lv->rules.pillMaxArmour  = 15;
   lv->rules.tankHitRadius  = 112;   /* TANK_HIT_RADIUS */
   lv->rules.pillRange      = 2048;  /* PILLBOX_RANGE */
+  lv->rules.lgmBlastShape  = LGM_BLAST_SHAPE_CLASSIC;
 
   lv->fromMainMenu = fromMainMenu;
   lv->screenSizeX = MAIN_SCREEN_SIZE_X + 15; /* default 30 */

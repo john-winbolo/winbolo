@@ -4684,6 +4684,7 @@ int run_lv_scripts_json_wrong_version(void);
 int run_lv_scripts_json_hostile_values(void);
 int run_lv_scripts_json_over_cap(void);
 int run_lv_scripts_json_close_clears(void);
+int run_lv_scripts_json_blast_shape_by_version(void);
 /* The log viewer's rules at the playhead (test_lv_rule_changes.c, with the
  * rule-change round recorded by lv_scripts_fixture.c): a mid-round change
  * collected at load, LvRules right after seeking either way, a plain round
