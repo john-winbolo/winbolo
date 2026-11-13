@@ -1411,8 +1411,102 @@ void lv_screenUpdateView(updateType value) {
 *ARGUMENTS:
 *
 *********************************************************/
+/* The frame (timeRunning + 1, 0 for none) on which a recorded health event
+   took each pill from above 0 armour to 0: the hit that killed it. Read by
+   the builder hit box through lv_screenPillHitNow. A stamp, not a flag, so a
+   seek or a rewind that does not read that frame again never shows it. */
+static uint32_t s_pillHitAt[MAX_PILLS];
+
+/* A recorded health event for pill `pill`: notes a hit that killed it, then
+   sets the armour. */
+static void lv_screenPillSetHealth(BYTE pill, BYTE health) {
+  if (pill < MAX_PILLS && g_lv->pb != NULL) {
+    if (g_lv->pb->item[pill].armour > 0 && health == 0) {
+      s_pillHitAt[pill] = g_lv->timeRunning + 1;
+    }
+  }
+  lv_pillsSetHealth(&g_lv->pb, pill, health);
+}
+
+bool lv_screenPillHitNow(BYTE pill) {
+  if (pill >= MAX_PILLS || g_lv == NULL) return false;
+  return s_pillHitAt[pill] != 0 && s_pillHitAt[pill] == g_lv->timeRunning + 1;
+}
+
+/* The squares a recorded map change shows a shell's hit on, each with the
+   frame (timeRunning + 1) of the change. Read by the builder hit box through
+   lv_screenSquareHitNow. Stamps, as for the pills; a frame holds few such
+   hits, so a small ring is enough. */
+#define LV_SQUARE_HIT_SLOTS 64
+typedef struct {
+  BYTE     x, y;
+  uint32_t at;
+} LvSquareHit;
+static LvSquareHit s_squareHitAt[LV_SQUARE_HIT_SLOTS];
+static unsigned    s_squareHitNext = 0;
+
+/* Whether a map change from old to terrain is what a shell's hit on that
+   square makes (shellsCalcCollision): a wall to rubble (its last hit), a
+   forest to grass, a boat to river, and, for a boat's shell, grass to swamp,
+   swamp or rubble to river and a bridge to river. Each is a hit on the
+   square (outSquareHit). Mines are left out of both: a shell keeps them.
+   The hits that change a square to something solid (a wall to a half
+   building) or change nothing are not needed or not recorded. Two other
+   changes look the same: a tank boarding a boat (boat to river) and a
+   builder cutting a tree (forest to grass). They stamp the square too, which
+   matters only for a blast on that square on that same frame. */
+static bool lv_screenShellHitChange(BYTE old, BYTE terrain) {
+  if (old >= MINE_START && old <= MINE_END) old = (BYTE)(old - MINE_SUBTRACT);
+  if (terrain >= MINE_START && terrain <= MINE_END) terrain = (BYTE)(terrain - MINE_SUBTRACT);
+  switch (old) {
+    case BUILDING:
+    case HALFBUILDING:
+      return terrain == RUBBLE;
+    case FOREST:
+      return terrain == GRASS;
+    case GRASS:
+      return terrain == SWAMP;
+    case BOAT:
+    case SWAMP:
+    case RUBBLE:
+    case ROAD:
+      return terrain == RIVER;
+    default:
+      return false;
+  }
+}
+
+/* A recorded map change: notes a shell's hit on the square, then sets the
+   square. */
+static void lv_screenMapChange(BYTE x, BYTE y, BYTE terrain) {
+  BYTE old = lv_mapGetPos(&g_lv->mp, x, y);
+  if (lv_screenShellHitChange(old, terrain)) {
+    LvSquareHit *w = &s_squareHitAt[s_squareHitNext];
+    w->x = x;
+    w->y = y;
+    w->at = g_lv->timeRunning + 1;
+    s_squareHitNext = (s_squareHitNext + 1) % LV_SQUARE_HIT_SLOTS;
+  }
+  lv_mapSetPos(&g_lv->mp, x, y, terrain);
+}
+
+bool lv_screenSquareHitNow(BYTE x, BYTE y) {
+  unsigned i;
+  if (g_lv == NULL) return false;
+  for (i = 0; i < LV_SQUARE_HIT_SLOTS; i++) {
+    const LvSquareHit *w = &s_squareHitAt[i];
+    if (w->at != 0 && w->at == g_lv->timeRunning + 1 && w->x == x && w->y == y) {
+      return true;
+    }
+  }
+  return false;
+}
+
 void lv_screenSetup() {
   int a = 0;
+  memset(s_pillHitAt, 0, sizeof(s_pillHitAt));
+  memset(s_squareHitAt, 0, sizeof(s_squareHitAt));
+  s_squareHitNext = 0;
   /* Every load path runs through here, so drop the previous log's recorded
      settings before the new one's walk can collect its own. */
   lv_screenStoreGameSettings(NULL, 0);
@@ -3113,7 +3207,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
       logReadBytes(&opt1, 1);
       logReadBytes(&opt2, 1);
       logReadBytes(&opt3, 1);
-      lv_mapSetPos(&g_lv->mp, opt1, opt2, opt3);
+      lv_screenMapChange(opt1, opt2, opt3);
       break;
     case log_ChangeName:
       logReadBytes(&opt1, 1);
@@ -3533,10 +3627,10 @@ void lv_screenProcessLog(unsigned short numEvents) {
       logReadBytes(&opt1, 1);
       if (g_lv->loadedLogVersion >= LOG_VERSION_V3) {
         logReadBytes(&opt2, 1);
-        lv_pillsSetHealth(&g_lv->pb, opt1, opt2);
+        lv_screenPillSetHealth(opt1, opt2);
       } else {
         lv_utilGetNibbles(opt1, &opt2, &opt3);
-        lv_pillsSetHealth(&g_lv->pb, opt2, opt3);
+        lv_screenPillSetHealth(opt2, opt3);
       }
       break;
     case log_PillSetInTank:

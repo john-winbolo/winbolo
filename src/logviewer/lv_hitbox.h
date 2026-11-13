@@ -22,10 +22,18 @@
  *
  *  - A builder: lgmBlastCatches (src/bolo/lgm.c). An
  *    explosion catches a builder when it is on a square that
- *    is not a building, a half building, a pillbox or a base,
- *    and no more than half a square (128) from him. On one of
- *    those squares it catches him only when it is on his own
- *    square. The distance comes from utilIsItemInRange with
+ *    is not a building, a half building, a live pillbox or a
+ *    base, and no more than half a square (128) from him. A
+ *    dead pillbox's square is open ground (pillsIsPillHit,
+ *    armour above 0; lvHitboxPillSolid), except on the frame
+ *    of the hit that killed it: that shot is a hit on the
+ *    pill's square. A square that the frame's shot changed
+ *    (a wall to rubble, a forest to grass, a boat to river,
+ *    the shore or a bridge a boat's shell hit) is solid on
+ *    that frame too (lvHitboxSquareSolid): that shot was a
+ *    hit on the square. On
+ *    one of those squares it catches him only when it is on
+ *    his own square. The distance comes from utilIsItemInRange with
  *    the pill_range rule as its limit, so when pill_range is
  *    under 128 the circle is pill_range across, not 128.
  *    The lgm_blast_shape rule changes the open-ground area: 0
@@ -311,6 +319,29 @@ static inline int lvHitboxBuilderReach(int pillRange) {
     return pillRange < LV_HITBOX_BUILDER_REACH ? pillRange : LV_HITBOX_BUILDER_REACH;
 }
 
+/* Whether a pillbox makes its square solid for the builder test: it is on
+   the map, not in a tank, and alive (armour above 0), as pillsIsPillHit
+   asks in lgmBlastCatches. A dead pillbox's square is open ground. armour is
+   the pill's armour as the recording has it. hitNow: the pill lost its last
+   armour on this frame. That was a hit on the pill, and a shell's hit on a
+   pill is a hit on its square whatever armour it leaves (shells.c
+   outSquareHit), so the square stays solid on that frame. */
+static inline bool lvHitboxPillSolid(bool onMap, bool inTank, unsigned armour,
+                                     bool hitNow) {
+    return onMap && !inTank && (armour > 0 || hitNow);
+}
+
+/* Whether a square's terrain makes it solid for the builder test. wall: the
+   square is a building or a half building as the recording has it.
+   hitNow: a shell's hit on this square changed it on this frame: a wall to
+   rubble (its last hit), a forest to grass, a boat to river, or a boat's
+   shell on the shore or a bridge. Each is a hit on the square (shells.c
+   outSquareHit), so the square is solid on that frame although the
+   recording already has it as open ground. */
+static inline bool lvHitboxSquareSolid(bool wall, bool hitNow) {
+    return wall || hitNow;
+}
+
 /* The builder test, as lgmBlastCatches makes it, for an explosion at (x, y)
    and a builder at (bx, by), both in world units measured from the top left
    corner of the square the builder is on. So the builder's square is the one
@@ -318,7 +349,8 @@ static inline int lvHitboxBuilderReach(int pillRange) {
    by 256 (rounding down). solid is a mask of the 3 by 3 squares round the
    builder's: bit (row * 3 + col), with col and row 0, 1 or 2 and the
    builder's own square at col 1, row 1. A set bit is a building, a half
-   building, a pillbox or a base.
+   building, a live pillbox (lvHitboxPillSolid), a square the frame's shot
+   hit (lvHitboxSquareSolid) or a base.
 
    shape is the lgm_blast_shape rule and pillRange the pill_range rule, as
    hitRulesBuilderCaughtShape (hit_rules.h, the engine's own rule) takes

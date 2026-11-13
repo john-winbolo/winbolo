@@ -12,8 +12,10 @@
  *       miss; that the builder's catch distance is 128, or pill_range when
  *       that is less; and that the builder test catches an explosion on
  *       open ground no more than that far from him, an explosion on a
- *       building, a half building, a pillbox or a base only on his own
- *       square, and nothing off the 3 by 3 squares round his.
+ *       building, a half building, a live pillbox or a base only on his own
+ *       square, and nothing off the 3 by 3 squares round his. A dead
+ *       pillbox's square is open ground (lvHitboxPillSolid). A square a
+ *       shell's hit changed on this frame is solid (lvHitboxSquareSolid).
  *       It also checks the places the circles go round: the middle of the
  *       art pixel a recording holds, with the builder's 1 and 2 put back,
  *       and the offsets the game draws the tank and builder pictures at.
@@ -199,6 +201,68 @@ int run_lv_hitbox_sums(void) {
                   "the open square above, inside the circle");
     UT_ASSERT_MSG(!lvHitboxBuilderCaught(128.0, -1.0, 128.0, 128.0, SQ(1, 1), 128),
                   "the open square above, outside the circle");
+
+    /* Which pillboxes make a square solid: only a live one on the map. */
+    UT_ASSERT_MSG(lvHitboxPillSolid(true, false, 15, false), "a live pill is solid");
+    UT_ASSERT_MSG(lvHitboxPillSolid(true, false, 1, false), "armour 1 is solid");
+    UT_ASSERT_MSG(!lvHitboxPillSolid(true, false, 0, false), "a dead pill is open ground");
+    UT_ASSERT_MSG(lvHitboxPillSolid(true, false, 0, true),
+                  "the frame of the hit that killed a pill: its square is solid");
+    UT_ASSERT_MSG(!lvHitboxPillSolid(true, true, 15, false), "a pill in a tank is not there");
+    UT_ASSERT_MSG(!lvHitboxPillSolid(false, false, 15, false), "a removed pill is not there");
+
+    /* A dead pill to his right is open ground: an explosion just across the
+       edge, 10 from him, catches him; the same explosion with a live pill
+       there does not. */
+    {
+        unsigned deadMask = lvHitboxPillSolid(true, false, 0, false) ? SQ(2, 1) : 0;
+        unsigned liveMask = lvHitboxPillSolid(true, false, 15, false) ? SQ(2, 1) : 0;
+        UT_ASSERT_MSG(lvHitboxBuilderCaught(260.0, 128.0, 250.0, 128.0, deadMask, 128),
+                      "a dead pill's square next to him catches across the edge");
+        UT_ASSERT_MSG(!lvHitboxBuilderCaught(260.0, 128.0, 250.0, 128.0, liveMask, 128),
+                      "a live pill's square next to him does not");
+    }
+
+    /* The shot that kills a pill on his own square: the blast at the square's
+       middle catches him in its far corner, 178 away, because the pill was
+       hit on this frame. A dead pill there with no hit this frame is open
+       ground and the same blast misses him. */
+    {
+        unsigned hitMask  = lvHitboxPillSolid(true, false, 0, true) ? SQ(1, 1) : 0;
+        unsigned deadMask = lvHitboxPillSolid(true, false, 0, false) ? SQ(1, 1) : 0;
+        UT_ASSERT_MSG(lvHitboxBuilderCaught(128.0, 128.0, 2.0, 2.0, hitMask, 128),
+                      "the killing shot catches him in the far corner of the pill's square");
+        UT_ASSERT_MSG(!lvHitboxBuilderCaught(128.0, 128.0, 2.0, 2.0, deadMask, 128),
+                      "a blast on a dead pill's square with no hit misses him there");
+    }
+
+    /* Which terrain makes a square solid: a building or a half building,
+       and a square a shell's hit changed on this frame (a wall to rubble on
+       its last hit, a forest to grass, a boat to river, the shore or a
+       bridge a boat's shell hit). */
+    UT_ASSERT_MSG(lvHitboxSquareSolid(true, false), "a wall is solid");
+    UT_ASSERT_MSG(lvHitboxSquareSolid(false, true),
+                  "the frame of a shell's hit that changed the square: it is solid");
+    UT_ASSERT_MSG(!lvHitboxSquareSolid(false, false),
+                  "rubble, grass or river with no hit this frame is open ground");
+
+    /* The shot that turns a wall to rubble, on the square to his left: the
+       blast at that square's middle, 128 from him on the first world unit of
+       his own square, does not catch him, as
+       for any hit on a wall. The same blast on rubble with no hit this frame
+       does. And the same shot on his own square catches him in its far
+       corner, 178 away. */
+    {
+        unsigned leftHit   = lvHitboxSquareSolid(false, true) ? SQ(0, 1) : 0;
+        unsigned leftOpen  = lvHitboxSquareSolid(false, false) ? SQ(0, 1) : 0;
+        unsigned ownHit    = lvHitboxSquareSolid(false, true) ? SQ(1, 1) : 0;
+        UT_ASSERT_MSG(!lvHitboxBuilderCaught(-128.0, 128.0, 0.0, 128.0, leftHit, 128),
+                      "the rubble shot on the next square misses him 128 away");
+        UT_ASSERT_MSG(lvHitboxBuilderCaught(-128.0, 128.0, 0.0, 128.0, leftOpen, 128),
+                      "a blast on rubble with no hit catches him 128 away");
+        UT_ASSERT_MSG(lvHitboxBuilderCaught(128.0, 128.0, 2.0, 2.0, ownHit, 128),
+                      "the rubble shot catches him in the far corner of its square");
+    }
 
     /* A short pill range. */
     UT_ASSERT_MSG(lvHitboxBuilderCaught(228.0, 128.0, 128.0, 128.0, 0, 100), "100 away");
