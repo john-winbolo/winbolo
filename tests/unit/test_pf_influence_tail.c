@@ -295,3 +295,80 @@ int run_pf_tail_contact_makes_a_front_line(void) {
     brainPathfinderDestroy(pf);
     return 0;
 }
+
+/* ------------------------------------------------------------------ */
+/* Own-ground distance (brainPathfinderBuildOwnDist): the Chebyshev      */
+/* distance from every tile to the nearest tile with influence > 0,     */
+/* clamped to a cap. GoalHunter's turtle far-base cost reads it.        */
+/* ------------------------------------------------------------------ */
+
+static int brute_own_dist(const int *sx, const int *sy, int n, int x, int y, int cap) {
+    int i, best = cap;
+    for (i = 0; i < n; i++) {
+        int dx = sx[i] - x, dy = sy[i] - y, d;
+        if (dx < 0) dx = -dx;
+        if (dy < 0) dy = -dy;
+        d = dx > dy ? dx : dy;
+        if (d < best) best = d;
+    }
+    return best;
+}
+
+int run_pf_own_dist_matches_brute_force(void) {
+    BrainPathfinder *pf = fresh_pf();
+    int sx[24], sy[24], n = 0, i, x, y, got;
+    unsigned int lcg = 12345u;
+    UT_ASSERT(pf != NULL);
+    /* 24 positive tiles (some on the map edge), plus negative and zero
+     * tiles that must not count as ground. */
+    for (i = 0; i < 24; i++) {
+        lcg = lcg * 1103515245u + 12345u; x = (int)((lcg >> 16) & 255);
+        lcg = lcg * 1103515245u + 12345u; y = (int)((lcg >> 16) & 255);
+        if (i == 0) { x = 0; y = 0; }
+        if (i == 1) { x = 255; y = 128; }
+        seed(pf, x, y, 5 + i);
+        sx[n] = x; sy[n] = y; n++;
+    }
+    for (i = 0; i < 40; i++) {
+        lcg = lcg * 1103515245u + 12345u; x = (int)((lcg >> 16) & 255);
+        lcg = lcg * 1103515245u + 12345u; y = (int)((lcg >> 16) & 255);
+        if (pf->influence_grid[y * PF_MAPSZ + x] <= 0) seed(pf, x, y, -50);
+    }
+    got = brainPathfinderBuildOwnDist(pf, 64);
+    UT_ASSERT_MSG(got == n, "source count %d, want %d", got, n);
+    for (y = 0; y < PF_MAPSZ; y++) {
+        for (x = 0; x < PF_MAPSZ; x++) {
+            int want = brute_own_dist(sx, sy, n, x, y, 64);
+            int have = brainPathfinderOwnDistAt(pf, x, y);
+            UT_ASSERT_MSG(have == want, "(%d,%d): got %d want %d", x, y, have, want);
+        }
+    }
+    brainPathfinderDestroy(pf);
+    return 0;
+}
+
+int run_pf_own_dist_cap_empty_and_edges(void) {
+    BrainPathfinder *pf = fresh_pf();
+    UT_ASSERT(pf != NULL);
+    /* No positive tile: count 0, every tile reads the cap. */
+    seed(pf, 100, 100, -100);
+    UT_ASSERT(brainPathfinderBuildOwnDist(pf, 32) == 0);
+    UT_ASSERT(brainPathfinderOwnDistAt(pf, 100, 100) == 32);
+    UT_ASSERT(brainPathfinderOwnDistAt(pf, 0, 255) == 32);
+    /* Off the map reads 255. */
+    UT_ASSERT(brainPathfinderOwnDistAt(pf, -1, 0) == 255);
+    UT_ASSERT(brainPathfinderOwnDistAt(pf, 0, 256) == 255);
+    /* One source in the far corner: the backward sweep carries it. */
+    seed(pf, 255, 255, 1);
+    UT_ASSERT(brainPathfinderBuildOwnDist(pf, 32) == 1);
+    UT_ASSERT(brainPathfinderOwnDistAt(pf, 255, 255) == 0);
+    UT_ASSERT_MSG(brainPathfinderOwnDistAt(pf, 250, 255) == 5, "got %d", brainPathfinderOwnDistAt(pf, 250, 255));
+    UT_ASSERT_MSG(brainPathfinderOwnDistAt(pf, 245, 240) == 15, "diagonal: got %d", brainPathfinderOwnDistAt(pf, 245, 240));
+    UT_ASSERT(brainPathfinderOwnDistAt(pf, 200, 255) == 32);   /* 55 away, clamped */
+    /* The cap is clamped to 254. */
+    UT_ASSERT(brainPathfinderBuildOwnDist(pf, 1000) == 1);
+    UT_ASSERT_MSG(brainPathfinderOwnDistAt(pf, 0, 0) == 254, "got %d", brainPathfinderOwnDistAt(pf, 0, 0));
+    UT_ASSERT(brainPathfinderOwnDistAt(pf, 5, 255) == 250);
+    brainPathfinderDestroy(pf);
+    return 0;
+}
