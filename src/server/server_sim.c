@@ -312,6 +312,7 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     SDL_strlcpy(sim->teams[2].name, "Team 2", LOBBY_TEAM_NAME_LEN);
 
     sim->openHost            = FALSE;
+    sim->scriptUploadPolicy  = SCRIPT_UPLOAD_OFF;
     sim->allowNewPlayers     = TRUE;   /* lobby starts open */
     sim->autoLockOnGameStart = FALSE;
     sim->savedAllowNewPlayers = TRUE;

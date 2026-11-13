@@ -57,7 +57,7 @@ static int                childExitCode;
 static BotHostChildEnd    childEnd;
 static bool               childOfficialWanted;
 static bool               childTableWanted;
-static bool               childWithhold;
+static int                childMax;
 static char               childLine[512];
 static size_t             childLineLen;
 static bool               childSandboxed;
@@ -491,7 +491,7 @@ BotHostChildStart botHostChildClientStart(const BotHostChildParams *p,
                                           const uint8_t *ticket,
                                           size_t ticketLen,
                                           const BotHostChildLimits *lim,
-                                          bool withhold, bool sandbox) {
+                                          int max, bool sandbox) {
     char exe[1024], log[1024], err[256], why[512];
     char argBuf[4096], hex[128], line[160];
     const char *argv[BOT_HOST_CHILD_MAX_ARGS];
@@ -559,13 +559,14 @@ BotHostChildStart botHostChildClientStart(const BotHostChildParams *p,
     }
     childOfficialWanted = p->officialOnly;
     childTableWanted = p->shippedTable;
-    childWithhold = withhold;
+    childMax = max;
     /* Until its first line: it runs, with no slots yet. */
     childStatus.running = true;
     botHostChildTicketHex(ticket, ticketLen, hex, sizeof(hex));
     SDL_snprintf(line, sizeof(line), "ticket %s", hex);
     childWrite(line);
-    childWrite(withhold ? "withhold 1" : "withhold 0");
+    SDL_snprintf(line, sizeof(line), "max %d", max);
+    childWrite(line);
 #ifdef _WIN32
     const char *cpuNote = "";
 #else
@@ -740,10 +741,12 @@ void botHostChildClientStatus(BotHostChildStatus *out) {
     if (childProc == NULL || childEnded) out->running = false;
 }
 
-void botHostChildClientSetWithhold(bool on) {
-    if (childProc == NULL || childEnded || on == childWithhold) return;
-    childWithhold = on;
-    childWrite(on ? "withhold 1" : "withhold 0");
+void botHostChildClientSetMax(int max) {
+    char line[32];
+    if (childProc == NULL || childEnded || max == childMax) return;
+    childMax = max;
+    SDL_snprintf(line, sizeof(line), "max %d", max);
+    childWrite(line);
 }
 
 void botHostChildClientConsent(bool yes) {

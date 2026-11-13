@@ -23,6 +23,7 @@
  *             0xFF (a listed host, or the server).
  *    PROBE    [bots 1][slots 1][limit 1][thinks 2][overruns 2]
  *             [flags 1][badProbes 1][probes 1][windowRate 2]
+ *             [ceiling 1][start 1]
  *             one per host each second. limit 0xFF: none.
  *             flags bit 0: this second's rate is above the
  *             target rate. probes: the probes in the window.
@@ -30,7 +31,12 @@
  *             window); 0xFF from version 2. windowRate (version
  *             2): the host's rate over the window, overruns /
  *             thinks, in hundredths of a percent (0xFFFF: not
- *             known).
+ *             known). ceiling and start (version 3): the
+ *             host's dynamic slots, the most its live limit may
+ *             reach and the limit a game starts at; 0xFF: the
+ *             host has no dynamic slots (its limit is then 0xFF
+ *             until a step down, as in version 2). slots is the
+ *             ceiling too.
  *    READING  [free 1][botCpu 1][bots 1][flags 1]
  *             one per host each free CPU sample. free 0xFF:
  *             not known; botCpu is the CTRL_BOT_HOST_CPU byte.
@@ -60,6 +66,11 @@
  *             move, needStay: the stay the rule asked for (0:
  *             none); 0xFFFF in both: none. MOVE, WOULD_MOVE and
  *             NO_BETTER carry them; the others have none.
+ *             LIMIT_RAISE (version 3): the dynamic limit went up
+ *             (by up to the raise step); LIMIT_START: a game
+ *             started at the host's start; LIMIT_CARRY: a game
+ *             started at the limit the last game ended with.
+ *             limitBefore and limitAfter carry the change.
  *    CPU      [shown 4][source 1][budget 4][botCpu 1][bots 1]
  *             [overrunTenths 2][free 1][slots 1]
  *             one per host each free CPU sample (5 s), while
@@ -94,7 +105,7 @@
 #include <stdint.h>
 #include <string.h>
 
-#define BOTHOST_RECORD_VERSION 2
+#define BOTHOST_RECORD_VERSION 3
 
 enum {
   BOTHOST_RECORD_HOST     = 1,
@@ -126,8 +137,13 @@ enum {
   BOTHOST_DECISION_HOLD           = 11, /* a bot was held: no place has a
                                          * slot for it
                                          * (-bothost-enforce-server-limit) */
-  BOTHOST_DECISION_RESUME         = 12  /* a held bot runs again where a
+  BOTHOST_DECISION_RESUME         = 12, /* a held bot runs again where a
                                          * place has a slot */
+  BOTHOST_DECISION_LIMIT_RAISE    = 13, /* version 3: the dynamic limit
+                                         * went up */
+  BOTHOST_DECISION_LIMIT_START    = 14, /* a game starts at the start */
+  BOTHOST_DECISION_LIMIT_CARRY    = 15  /* a game starts at the limit the
+                                         * last game ended with */
 };
 
 /* The rule of a move (DECISION rule). */
@@ -170,6 +186,8 @@ typedef struct {
   uint8_t  badProbes;  /* PROBE and DECISION (version 1) */
   uint8_t  probes;     /* PROBE and DECISION */
   uint16_t windowRate; /* PROBE: hundredths of a percent */
+  uint8_t  ceiling;    /* PROBE (version 3): 0xFF none */
+  uint8_t  start;      /* PROBE (version 3): 0xFF none */
   /* READING */
   uint8_t  freePct;
   uint8_t  botCpu;
@@ -295,6 +313,8 @@ static inline int botHostRecordEncode(const BotHostRecord *rec, uint8_t *out, in
     *p++ = rec->badProbes;
     *p++ = rec->probes;
     botHostRecordPut16(p, rec->windowRate); p += 2;
+    *p++ = rec->ceiling;
+    *p++ = rec->start;
     break;
   case BOTHOST_RECORD_READING:
     *p++ = rec->freePct;
@@ -385,7 +405,16 @@ static inline bool botHostRecordDecode(const uint8_t *in, int len, BotHostRecord
     rec->badProbes = in[pos++];
     rec->probes    = in[pos++];
     rec->windowRate = (uint16_t) BOTHOST_RECORD_RATE_NONE;
-    if (len >= pos + 2) rec->windowRate = botHostRecordGet16(in + pos);
+    rec->ceiling = (uint8_t) BOTHOST_RECORD_NONE;
+    rec->start = (uint8_t) BOTHOST_RECORD_NONE;
+    if (len >= pos + 2) {
+      rec->windowRate = botHostRecordGet16(in + pos);
+      pos += 2;
+    }
+    if (len >= pos + 2) {
+      rec->ceiling = in[pos++];
+      rec->start   = in[pos++];
+    }
     return true;
   case BOTHOST_RECORD_READING:
     if (len < pos + 4) return false;

@@ -274,6 +274,52 @@ void botHostSlotOverrideJoin(BotHostSlotOverride *o, const BotHostSlotFlags *f,
     o->locked = n >= 0;
 }
 
+bool botHostSlotSetAllowed(bool playerHost, int owner, int player) {
+    return playerHost && owner >= 0 && player == owner;
+}
+
+int botHostDynamicForRun(int dynamic, bool seed, bool luaSeed,
+                         bool noBudgetKill) {
+    if (seed && luaSeed && noBudgetKill) return 0;
+    return dynamic;
+}
+
+bool botHostParsePercent(const char *text, int *out) {
+    int v = 0;
+    const char *p = text;
+    if (p == NULL || *p == '\0') return false;
+    while (*p >= '0' && *p <= '9') {
+        v = v * 10 + (*p - '0');
+        if (v > 100) return false;
+        p++;
+    }
+    if (*p != '\0') return false;
+    if (out != NULL) *out = v;
+    return true;
+}
+
+void botHostDynamicFlagsInit(BotHostDynamicFlags *f) {
+    if (f == NULL) return;
+    f->dynamic = f->serverMax = f->clientStart = -1;
+    f->raiseReservePct = f->clientReservePct = f->raiseLagMaxMs = -1;
+    f->raiseStep = f->raiseAfterCutSecs = f->carryLimit = -1;
+    f->reserveRecentSecs = -1;
+}
+
+void botHostDynamicFlagsKeel(BotHostDynamicFlags *f) {
+    if (f == NULL) return;
+    f->dynamic = 0;
+    f->serverMax = 0;          /* the ceiling is the start */
+    f->clientStart = 0;        /* a player's computer: its slots */
+    f->raiseReservePct = 0;
+    f->clientReservePct = 0;
+    f->raiseLagMaxMs = 0;
+    f->raiseStep = 1;
+    f->raiseAfterCutSecs = 0;
+    f->carryLimit = 0;
+    f->reserveRecentSecs = 0;
+}
+
 bool botHostSlotOverrideSet(BotHostSlotOverride *o, int reported, int value) {
     int v;
     if (o == NULL || o->locked) return false;

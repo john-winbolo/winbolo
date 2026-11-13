@@ -97,6 +97,15 @@ void brainCoreSetLogReleaseHook(void (*fn)(void));
 /* Close the writer's open files now (a no-op with no hook). The Bot Host
  * calls it before it gzips a finished block's logs. */
 void brainCoreReleaseLogFiles(void);
+/* Whether the host runs this brain in debug mode, which alone lets a crash
+ * write files. The host says so here, out of the brain's reach, because the
+ * brain can write its BRAIN_DEBUG_MODE and DEBUG_SESSION_DIR globals. */
+void brainCoreSetHostDebugMode(struct lua_State *L, bool on);
+/* Read or write a global without running a metatable the brain set on _G. Get
+ * pushes the value; Set pops it. For host code outside any lua_pcall, where an
+ * error from such a metatable would end the program. */
+void brainCoreGetGlobalRaw(struct lua_State *L, const char *name);
+void brainCoreSetGlobalRaw(struct lua_State *L, const char *name);
 bool brainCoreCallThink(struct lua_State *L, BrainInfo *info, bool *out_killed);
 bool brainCoreCallMethod(struct lua_State *L, BrainInfo *info, const char *method);
 

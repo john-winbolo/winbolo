@@ -370,10 +370,11 @@ if(WINBOLO_LUAJIT)
     #    supported path. XCFLAGS=-fPIC so the static lib links into winbolo_gym.
     if(MSVC)
         set(_lj_lib "${_lj_src}/src/lua51.lib")
-        set(_lj_msvc_env "")
+        string(JOIN " " _lj_msvc_cl ${BOLO_LUAJIT_LOCKDOWN_XCFLAGS})
         if(WINBOLO_LUAJIT_DETERMINISTIC)
-            set(_lj_msvc_env "CL=/DLUAJIT_SECURITY_PRNG=0")
+            string(APPEND _lj_msvc_cl " /DLUAJIT_SECURITY_PRNG=0")
         endif()
+        set(_lj_msvc_env "CL=${_lj_msvc_cl}")
         ExternalProject_Add(luajit_ext
             SOURCE_DIR        "${_lj_src}"
             BUILD_IN_SOURCE   TRUE
@@ -387,15 +388,23 @@ if(WINBOLO_LUAJIT)
             # (minilua, buildvm) as bare names too, and those fail the same way
             # -- so unset the variable for the whole build step instead.
             # cl.exe appends the CL environment variable to every compile, so
-            # the determinism define reaches all of msvcbuild.bat's compiles
-            # (the bat never sets CL itself) without patching LuaJIT source.
-            BUILD_COMMAND     ${CMAKE_COMMAND} -E env
+            # the lockdown and determinism defines reach all of msvcbuild.bat's
+            # compiles (the bat never sets CL itself) without patching LuaJIT
+            # source. The one thing CL cannot reach is the `-D FFI` the bat
+            # hands DynASM, which the first command takes out (see the patch
+            # header).
+            BUILD_COMMAND     ${CMAKE_COMMAND} -E chdir "${_lj_src}"
+                              ${CMAKE_COMMAND} -P
+                              "${CMAKE_SOURCE_DIR}/cmake/patches/luajit_msvc_no_ffi.cmake"
+            COMMAND           ${CMAKE_COMMAND} -E env
                               --unset=NoDefaultCurrentDirectoryInExePath
                               ${_lj_msvc_env}
                               ${CMAKE_COMMAND} -E chdir "${_lj_src}/src"
                               cmd /c .\\msvcbuild.bat static
             INSTALL_COMMAND   ""
             BUILD_BYPRODUCTS  "${_lj_lib}")
+        # msvcbuild.bat compiles every file on each run, so no clean is needed.
+        bolo_luajit_rebuild_on_change(luajit_ext "${_lj_msvc_env}")
     elseif(CMAKE_SYSTEM_NAME STREQUAL "iOS")
         # iOS runs LuaJIT's interpreter alone: an App Store app may not write
         # code and then run it, so LUAJIT_DISABLE_JIT leaves the trace
@@ -475,7 +484,7 @@ if(WINBOLO_LUAJIT)
             ARCHES       ${_lj_archs}
             LIB_VAR      _lj_lib)
     else()
-        set(_lj_xcflags "-fPIC")
+        string(JOIN " " _lj_xcflags -fPIC ${BOLO_LUAJIT_LOCKDOWN_XCFLAGS})
         if(WINBOLO_LUAJIT_DETERMINISTIC)
             string(APPEND _lj_xcflags " -DLUAJIT_SECURITY_PRNG=0")
         endif()
@@ -518,6 +527,7 @@ if(WINBOLO_LUAJIT)
                 COMMAND           lipo -create ${_lj_slices} -output "${_lj_lib}"
                 INSTALL_COMMAND   ""
                 BUILD_BYPRODUCTS  "${_lj_lib}")
+            bolo_luajit_rebuild_on_change(luajit_ext "${_lj_xcflags}")
 
             # The build step above runs once and is then held off by its stamp,
             # and everything it produces lives in the shared _deps source tree
@@ -541,13 +551,17 @@ if(WINBOLO_LUAJIT)
                           -P "${CMAKE_SOURCE_DIR}/cmake/luajit_fat_check.cmake")
         else()
             set(_lj_lib "${_lj_src}/src/libluajit.a")
+            # The clean makes a rerun after a change of flags rebuild every
+            # object; make alone would keep the ones it already has.
             ExternalProject_Add(luajit_ext
                 SOURCE_DIR        "${_lj_src}"
                 BUILD_IN_SOURCE   TRUE
                 CONFIGURE_COMMAND ""
-                BUILD_COMMAND     ${_lj_make}
+                BUILD_COMMAND     make -C "${_lj_src}" clean
+                COMMAND           ${_lj_make}
                 INSTALL_COMMAND   ""
                 BUILD_BYPRODUCTS  "${_lj_lib}")
+            bolo_luajit_rebuild_on_change(luajit_ext "${_lj_xcflags}")
         endif()
     endif()
 
@@ -3464,6 +3478,7 @@ set(BOTHOST_SOURCES
     src/gui/sdl3/lang.c
     src/gui/sdl3/dns_lookups.c
     src/bothost/bothost_main.c src/headless/headless_frontend.c
+    src/bothost/bothost_optout.c
     src/bothost/bothost_rec.c
     # --embed-child: the game's built-in Bot Host as a child process. It
     # runs the embed copy of bothost_main.c, as the game does
@@ -4892,6 +4907,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_wbn_map.c
     tests/unit/test_wbn_map_fetch_policy.c
     tests/unit/test_brain_crash_log.c
+    tests/unit/test_brain_binding_bounds.c
+    tests/unit/test_brain_sandbox_hostile.c
     tests/unit/test_brain_push_rules.c
     tests/unit/test_brain_inbox.c
     tests/unit/test_brain_list_scan.c
@@ -4946,6 +4963,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # list a server and a Bot Host use to find each other.
     tests/unit/test_bot_host_link.c
     tests/unit/test_bot_host_keep.c
+    # A Bot Host that joins a game in progress: the lag rule of the keep
+    # placement and System Info's hosts with no bot.
+    tests/unit/test_bot_host_midgame.c
     # The overrun check of the bot placement, the free CPU percent and the
     # log_BotHostData payload.
     tests/unit/test_bot_host_overrun.c
@@ -4953,8 +4973,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # CTRL_BOT_HOST_CPU and the client's row.
     tests/unit/test_bot_host_cpu.c
     tests/unit/test_bot_host_machine.c
-    # The lobby's one-game opt-out from running bots on this computer: the
-    # 0-slot report, the server giving the bots back, the client's state.
+    # A Bot Host's slots: Max slots (0 runs no bot on this computer) and its
+    # saved value, the 0-slot report, the server giving the bots back, and
+    # the dynamic slots (the raise rule, the reserve, carry, KEEL, the
+    # limits on the wire, the owner-only change).
     tests/unit/test_bot_host_optout.c
     src/bothost/bothost_optout.c
     # The built-in Bot Host as a child process: arguments, the line codec,
@@ -6323,6 +6345,27 @@ set(_unit_test_names
     brain_crash_log_writes_file
     brain_crash_log_falls_back_to_luaptr
     brain_push_rules_written_on_change
+    brain_bounds_tail_bad_steps
+    brain_bounds_tail_bad_neutral
+    brain_bounds_think_errors
+    brain_bounds_wrapper_called_from_lua
+    brain_bounds_kill_outside_think
+    brain_bounds_host_globals_raw
+    brain_bounds_on_init_metatable
+    brain_crash_log_outside_think
+    brain_bounds_deserialize_open
+    brain_bounds_next_step_bad_start
+    brain_bounds_shells_at_bad_tile
+    brain_bounds_push_replaced_info
+    brain_bounds_stamps_bad_tables
+    brain_bounds_threat_range
+    brain_crash_log_ignores_brain_globals
+    brain_sandbox_hostile_native_preloads
+    brain_sandbox_hostile_bytecode_init
+    brain_sandbox_hostile_loaders_removed
+    brain_sandbox_hostile_astar_log_removed
+    brain_sandbox_hostile_file_jail
+    brain_sandbox_hostile_off_map_terrain
     brain_msgh_budget_kill_no_traceback
     brain_msgh_real_error_keeps_traceback
     brain_inbox_push_peek_fifo
@@ -6450,6 +6493,8 @@ set(_unit_test_names
     bot_host_place_keep_bad_source
     bot_host_place_keep_no_return
     bot_host_place_keep_oil_rig
+    bot_host_place_keep_lag_join
+    bot_host_sysinfo_empty_hosts
     bot_host_place_keep_scaled_wait
     bot_host_place_keep_step_min_old
     bot_host_place_keep_free_batch
@@ -6515,7 +6560,15 @@ set(_unit_test_names
     bot_host_same_server_stop
     bot_host_optout_slots_codec
     bot_host_optout_give_back
-    bot_host_optout_client_reset
+    bot_host_max_saved
+    bot_host_dyn_raise_rule
+    bot_host_dyn_under_reserve
+    bot_host_dyn_carry
+    bot_host_dyn_keel
+    bot_host_dyn_pct_off
+    bot_host_dyn_determinism
+    bot_host_limits_codec
+    bot_host_slot_owner_only
     internal_msg_skips_sender_self
     internal_msg_skips_non_allied_bot
     internal_msg_skips_inactive_bot_slot
@@ -6604,6 +6657,7 @@ set(_unit_test_names
     brainrec_host_merge_verdict
     bothost_rec_upload_keeps_files
     bothost_rec_lowdisk_keeps_files
+    bothost_rec_pool_raw_flag
     brainrec_host_path_checks
     brainrec_dir_lock_orders_merge_and_gzip
     brainrec_host_make_absolute
@@ -7896,6 +7950,7 @@ set(_unit_test_names
     unfielded_seat_unfield_keeps_sync
     unfielded_seat_spawn_keeps_alliances
     unfielded_seat_on_the_wire
+    unfielded_seat_server_row_lists_held
     scenario_wave_cost_refield_resumes
     scenario_wave_cost_seats_swap_counts
     scenario_wave_cost_other_brain_rebuilds
@@ -8460,6 +8515,7 @@ set(_unit_test_names
     scenario_compose_commit_map_fixed_operator_mod
     scenario_compose_map_kind_cached
     scenario_compose_fallback_strict
+    scenario_compose_mods_after_scenario_type
     scenario_compose_needs_bots_any_mod
     scenario_compose_needs_bots_scenario_and_mod
     scenario_compose_on_tick_bottom_first

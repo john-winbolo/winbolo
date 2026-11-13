@@ -635,7 +635,7 @@ int run_bot_host_place_keep_step_min_old(void) {
     (void)keepProbe(&st, &cfg, 100, 3, 3, &rep);
     UT_ASSERT(botHostOverrunRate(&st, &cfg, &pct) && keepNear(pct, 3.0));
     /* A new game starts again with the full window. */
-    botHostOverrunNewGame(&st);
+    (void)botHostOverrunNewGame(&st, &cfg);
     for (k = 1; k < 30; k++) {
         (void)keepProbe(&st, &cfg, 100, 3, 3, &rep);
         UT_ASSERT(!botHostOverrunRate(&st, &cfg, &pct));

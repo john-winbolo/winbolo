@@ -186,7 +186,7 @@ static const double kTickMs = 1000.0 / 50.0;
  * The EWMA only measures the serial stages inside botManagerTick itself,
  * so this fills in for the rest of serverInstanceTick. Refine via direct
  * measurement from server_lifecycle.c if profiling shows a mismatch. */
-static const double kReservedSimMs = 6.0;
+static const double kReservedSimMs = BOT_RUNNER_SERVER_SIM_RESERVE_MS;
 /* Headroom subtracted from the per-tick budget. */
 static const double kSafetyMs = 2.0;
 
@@ -273,7 +273,7 @@ static bool botReadSessionDir(lua_State *L, char *out, size_t outsz) {
     int top = lua_gettop(L);
     bool ok = false;
     out[0] = '\0';
-    lua_getglobal(L, "DEBUG_SESSION_DIR");
+    brainCoreGetGlobalRaw(L, "DEBUG_SESSION_DIR");
     if (lua_isstring(L, -1)) {
         const char *s = lua_tostring(L, -1);
         if (s && s[0]) {
@@ -514,7 +514,7 @@ void botManagerFlushBrainLogs(ServerSim *sim) {
         if (!bot->active || bot->brain.L == NULL) continue;
         lua_State *L = bot->brain.L;
         int top = lua_gettop(L);
-        lua_getglobal(L, "__brain_flush_logs");
+        brainCoreGetGlobalRaw(L, "__brain_flush_logs");
         if (lua_isfunction(L, -1)) {
             /* Best-effort: a flush failure must never disturb the sim. */
             (void)lua_pcall(L, 0, 0, 0);
@@ -1655,13 +1655,19 @@ void botRunnerBeginTick(BotContext *bot, double targetMs) {
 }
 
 double botRunnerTargetMs(double serialMsEwma, int runners, int activeBots) {
+    return botRunnerTargetMsReserve(serialMsEwma, kReservedSimMs, runners,
+                                    activeBots);
+}
+
+double botRunnerTargetMsReserve(double serialMsEwma, double reservedSimMs,
+                                int runners, int activeBots) {
     if (s_slowMoDebug) {
         return BOT_SLOWMO_BUDGET_MS;
     }
     if (activeBots <= 0) {
         return kTickMs;
     }
-    double brainBudget = kTickMs - serialMsEwma - kReservedSimMs - kSafetyMs;
+    double brainBudget = kTickMs - serialMsEwma - reservedSimMs - kSafetyMs;
     if (brainBudget < 1.0) {
         brainBudget = 1.0;
     }
@@ -2706,7 +2712,7 @@ bool botManagerSetLuaGlobalString(ServerSim *sim, BYTE playerNum,
      * which are not Lua escapes, so the chunk would fail to load and the
      * global would silently stay unset. */
     lua_pushstring(L, value);
-    lua_setglobal(L, name);
+    brainCoreSetGlobalRaw(L, name);
     return true;
 }
 
@@ -2935,7 +2941,7 @@ bool botBrainGetGoalInfo(lua_State *L, BrainGoalInfo *out) {
      * kind, mx, my, substate, pool.
      * The brain table is stored as lowercase "brain" global
      * (set by luaBrainInstanceCreate). */
-    lua_getglobal(L, "brain");
+    brainCoreGetGlobalRaw(L, "brain");
     if (!lua_istable(L, -1)) { lua_pop(L, 1); return false; }
 
     lua_getfield(L, -1, "get_debug_info");

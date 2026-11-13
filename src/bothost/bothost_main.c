@@ -32,7 +32,14 @@
  *
  * Usage:
  *   WinBoloBotHost --servers ADDR[:PORT],... [--listen PORT] [--key KEY]
- *                  [--slots N] [--threads N] [--name NAME] [--cachedir DIR]
+ *                  [--slots N] [--slots-max N] [--cpu-reserve PCT]
+ *                  [--threads N] [--name NAME] [--cachedir DIR]
+ *
+ * Dynamic slots: a server that knows them sends the CTRL_BOT_HOST_LIMITS
+ * hello. The host then offers it its ceiling (--slots-max) and tells it
+ * its start (--slots) and the free CPU it tries to keep (--cpu-reserve);
+ * the server starts the host at --slots and raises it while it has free
+ * CPU. An older server sends no hello and gets at most --slots.
  */
 
 #ifdef _WIN32
@@ -118,6 +125,13 @@
 
 static uint16_t optListenPort  = BOT_HOST_DEFAULT_LISTEN_PORT;
 static int      optSlots       = 4;
+/* --slots-max: the ceiling for a server with dynamic slots; 0 for
+ * max(--slots, logical CPUs - 1), at most BOT_HOST_MAX_SLOTS. */
+static int      optSlotsMax    = 0;
+/* --cpu-reserve: the free CPU percent this host tries to keep. The server
+ * gives it no raise and no new bot that would take the free CPU under it;
+ * the bots may still push the CPU past it when no other place has room. */
+static int      optCpuReserve  = BOT_HOST_RAISE_RESERVE_PCT_DEFAULT;
 static int      optThreads     = 0;
 static char     optKey[JOIN_BOT_HOST_KEY_LEN + 1];
 static char     optName[JOIN_BOT_HOST_NAME_LEN];
@@ -148,11 +162,12 @@ static int      embedSlotsFixed;
 static uint32_t embedCapacityGen;
 /* The server refused the host: it does not try again. */
 static bool     embedRefused;
-/* The player turned off "run bots on this computer" for this game: the
- * host offers the server 0 slots and takes no new seat, but stays
- * connected, so it can offer its slots again. Set by the client's main
- * thread (botHostEmbedSetWithhold), read by the host's thread. */
-static SDL_AtomicInt embedWithhold;
+/* The player's Max slots plus 1, so 0 (the start value) is
+ * BOT_HOST_MAX_AUTO. Max 0: the host offers the server 0 slots and takes no
+ * new seat, but stays connected, so it can offer its slots again. Set by
+ * the client's main thread (botHostEmbedSetMax), read by the host's
+ * thread. */
+static SDL_AtomicInt embedMaxPlus1;
 /* WINBOLO_BOTHOST_OFFICIAL_ONLY (a CMake option, on by default): the Bot
  * Host inside a client runs only the brains of its own install, checked
  * file by file with SHA-256. No brain file is taken from a server; a brain
@@ -227,10 +242,11 @@ static bool hostStopped(void) {
 #endif
 }
 
-/* The host offers no slots now (the Bot Host inside a client only). */
+/* The host offers no slots now (the Bot Host inside a client only): its
+ * player set Max slots 0, or it stopped for this join. */
 static bool hostWithheld(void) {
     return HOST_EMBED &&
-           (SDL_GetAtomicInt(&embedWithhold) != 0 || hostStopped());
+           (SDL_GetAtomicInt(&embedMaxPlus1) == 1 || hostStopped());
 }
 
 /* One line on stderr, and in the log file for the Bot Host inside a
@@ -322,6 +338,18 @@ typedef struct {
     /* --lockstep: the newest snapshot's serverTick when the brains last
      * thought. */
     uint32_t    lockTick;
+
+    /* The pool capture, made on the seat's worker right after its think.
+     * The main thread sets the plan before the dispatch (poolExpr NULL:
+     * no capture this tick); the worker sets poolDoneExpr and poolBuf;
+     * the main thread reads them only after botWorkerPoolRun returns and
+     * hands poolBuf to hostRecSeatThink the same tick. */
+    const char   *poolExpr;
+    uint8_t       poolMode;
+    int           poolRrIndex;
+    int           poolRrCount;
+    const char   *poolDoneExpr;
+    char         *poolBuf;
 } HostSeat;
 
 /* The pool: one entry per slot, whichever server holds it. */
@@ -427,6 +455,11 @@ typedef struct {
     ChannelMux mux;
     /* The slot count last sent in CTRL_BOT_HOST_SLOTS, -1 for none. */
     int        lastSlotsSent;
+    /* The server sent the dynamic slots hello (CTRL_BOT_HOST_LIMITS): it
+     * is offered the ceiling. lastLimitsSent: the answer last sent, packed
+     * (hostLimitsPacked), -1 for none. */
+    bool       limHello;
+    int        lastLimitsSent;
     /* The CPU byte last sent in CTRL_BOT_HOST_CPU, -1 for none. */
     int        lastCpuSent;
     /* The per-bot value last sent in CTRL_BOT_HOST_CPU_BOT; 0 for none, so
@@ -535,15 +568,39 @@ static bool syncOffersNone(const HostSync *hs) {
     return false;
 }
 
-/* The slots server srv may use now: its own seats and the free ones;
- * none while the player withholds this computer (hostWithheld), or while
+/* The most bots this host runs (its ceiling): the Bot Host program's
+ * --slots-max, at least --slots; the host inside a client its player's
+ * Max slots, or the brain's answer when the player set none. */
+static int hostCeiling(void) {
+#ifdef WINBOLO_BOTHOST_EMBED
+    return botHostMaxCeiling(SDL_GetAtomicInt(&embedMaxPlus1) - 1, optSlots);
+#else
+    return optSlotsMax > optSlots ? optSlotsMax : optSlots;
+#endif
+}
+
+/* The slots server srv counts on in all: the ceiling for a server that
+ * sent the dynamic slots hello, else at most the start (--slots, or the
+ * brain's answer). */
+static int capFor(int srv) {
+    bool hello = srv >= 0 && srv < serverCount && servers[srv].limHello;
+    return botHostMaxOffer(hostCeiling(), optSlots, hello);
+}
+
+/* The slots server srv may use now: its own seats and the free ones, at
+ * most capFor (a lowered Max shows the server its bots are over it); none
+ * while the player set Max 0 or the host stopped (hostWithheld), or while
  * the host may run none of the server's bots (syncOffersNone). */
 static int poolSlotsFor(int srv) {
+    int cap, n, free;
     if (hostWithheld()) return 0;
     if (srv >= 0 && srv < serverCount && syncOffersNone(&servers[srv].sync)) {
         return 0;
     }
-    return poolUsedFor(srv) + poolFree();
+    cap = capFor(srv);
+    free = cap - poolUsed();
+    n = poolUsedFor(srv) + (free > 0 ? free : 0);
+    return n < cap ? n : cap;
 }
 
 static HostSeat *seatFind(int srv, uint8_t seat) {
@@ -556,10 +613,10 @@ static HostSeat *seatFind(int srv, uint8_t seat) {
     return NULL;
 }
 
-static HostSeat *seatTakeFree(void) {
+static HostSeat *seatTakeFree(int srv) {
     int i;
     if (hostWithheld()) return NULL;
-    if (poolUsed() >= optSlots) return NULL;
+    if (poolUsed() >= capFor(srv)) return NULL;
     for (i = 0; i < BOT_HOST_MAX_SLOTS; i++) {
         if (!seats[i].used) return &seats[i];
     }
@@ -743,6 +800,39 @@ static void ctlSendSlots(HostServer *sv, uint8_t refuseSeat, uint16_t refuseGen)
     evt.u.botHostSlots.refuseGen = refuseGen;
     ctlSendEvent(sv, &evt);
     sv->lastSlotsSent = slots;
+}
+
+/* The dynamic slots answer, packed to see a change: start, ceiling and
+ * reserve. The host inside a client leaves start and reserve to the server
+ * (-bothost-client-start, -bothost-client-reserve-pct). */
+static void hostLimits(uint8_t *start, uint8_t *ceiling, uint8_t *reserve) {
+    int c = hostStopped() ? 0 : hostCeiling();
+    *ceiling = (uint8_t)(c > BOT_HOST_MAX_SLOTS ? BOT_HOST_MAX_SLOTS : c);
+    if (HOST_EMBED) {
+        *start = (uint8_t)BOT_HOST_LIMIT_NONE;
+        *reserve = (uint8_t)BOT_HOST_LIMIT_NONE;
+    } else {
+        *start = (uint8_t)(optSlots < c ? optSlots : c);
+        *reserve = (uint8_t)optCpuReserve;
+    }
+}
+
+static int hostLimitsPacked(void) {
+    uint8_t s, c, r;
+    hostLimits(&s, &c, &r);
+    return (int)s | ((int)c << 8) | ((int)r << 16);
+}
+
+/* Tell a server with dynamic slots this host's start, ceiling and
+ * reserve. */
+static void ctlSendLimits(HostServer *sv) {
+    ControlEvent evt;
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_BOT_HOST_LIMITS;
+    hostLimits(&evt.u.botHostLimits.start, &evt.u.botHostLimits.ceiling,
+               &evt.u.botHostLimits.reserve);
+    ctlSendEvent(sv, &evt);
+    sv->lastLimitsSent = hostLimitsPacked();
 }
 
 /* ------------------------------------------------------------------ */
@@ -941,8 +1031,8 @@ static int embedCapacityFor(const HostServer *sv) {
 
 /* The slots this computer offers: the server's bot brain's own answer for
  * this machine, once its files are here. It is set before the ready
- * report, so the server never places more. Not while the player has
- * turned bots off on this computer, nor while the host may run none of the
+ * report, so the server never places more. Not while the player has set
+ * Max slots 0 on this computer, nor while the host may run none of the
  * server's bots: the brain's code does not run then. */
 static void syncCapacityIfOwed(HostServer *sv) {
     HostSync *hs = &sv->sync;
@@ -1650,7 +1740,7 @@ static void syncDrainBulk(HostServer *sv) {
 static void seatPrintCount(void) {
     int i;
     fprintf(stderr, "Bot Host \"%s\": %d/%d slots used", optName, poolUsed(),
-            optSlots);
+            hostCeiling());
     for (i = 0; i < serverCount; i++) {
         int n = poolUsedFor(i);
         if (n > 0) fprintf(stderr, ", %d for %s", n, servers[i].label);
@@ -1727,6 +1817,9 @@ static void seatRelayPing(void *ctx, BYTE fromPlayer, uint8_t kind,
 
 static void seatDestroyBrain(HostSeat *hs) {
     hostRecSeatGone((int)(hs - seats));
+    free(hs->poolBuf);
+    hs->poolBuf = NULL;
+    hs->poolDoneExpr = NULL;
     if (hs->bot.brain.L != NULL || hs->bot.brain.running) {
         luaBrainInstanceDestroy(&hs->bot.brain);
     }
@@ -1920,12 +2013,13 @@ static void onAssign(HostServer *sv, const ControlEvent *evt) {
     }
     if (newPlacement) {
         bool wasUsed = hs != NULL;
-        if (hs == NULL) hs = seatTakeFree();
+        if (hs == NULL) hs = seatTakeFree(srv);
         if (hs == NULL) {
             /* Every slot is taken (another server was first): the seat
              * stays in-process on its server. */
             fprintf(stderr, "[bothost] bot %d of %s turned down: all %d "
-                            "slots are taken\n", (int)s, sv->label, optSlots);
+                            "slots are taken\n", (int)s, sv->label,
+                    capFor(srv));
             ctlSendSlots(sv, s, evt->u.botHostAssign.gen);
             return;
         }
@@ -2086,6 +2180,21 @@ static void onMachineSalt(HostServer *sv, const ControlEvent *evt) {
     ctlSendEvent(sv, &a);
 }
 
+/* The server knows dynamic slots: from now on it is offered the ceiling,
+ * and it is sent the start, ceiling and reserve (the service sends them
+ * again when one changes). */
+static void onLimits(HostServer *sv, const ControlEvent *evt) {
+    (void)evt;
+    if (!sv->limHello) {
+        HOST_EVENT("[bothost] Bot Host \"%s\": %s has dynamic slots; this "
+                   "host starts at %d and goes up to %d", optName, sv->label,
+                   optSlots < hostCeiling() ? optSlots : hostCeiling(),
+                   hostCeiling());
+    }
+    sv->limHello = true;
+    sv->lastLimitsSent = -1;
+}
+
 /* The server is on this computer: the host stops for this join. Its bots
  * (none should be here) go back, the brain files on the way are dropped
  * and the session folder goes; 0 slots go out on the next service
@@ -2128,6 +2237,7 @@ static void ctlHandleControl(HostServer *sv, const uint8_t *msg, uint16_t len) {
         case CTRL_BOT_TEAM_MSG:      onTeamMsg(sv, &evt);   break;
         case CTRL_BOT_HOST_MACHINE_SALT: onMachineSalt(sv, &evt); break;
         case CTRL_BOT_HOST_SAME_SERVER:  onSameServer(sv, &evt);  break;
+        case CTRL_BOT_HOST_LIMITS:       onLimits(sv, &evt);      break;
         case CTRL_BOT_HOST_REC:
             hostRecOnEvent(serverIndex(sv), &evt);
             break;
@@ -2188,6 +2298,8 @@ static void ctlReceive(HostServer *sv) {
                     sv->state = CTL_CONNECTED;
                     sv->lastPingMs = 0;
                     sv->lastSlotsSent = -1;
+                    sv->limHello = false;
+                    sv->lastLimitsSent = -1;
                     sv->lastCpuSent = -1;
                     sv->lastCpuBotSent = 0;
                     sv->lastCpuBudgetSent = 0;
@@ -2311,6 +2423,9 @@ static void ctlService(HostServer *sv) {
             }
             syncServicePending(sv);
             syncCapacityIfOwed(sv);
+            if (sv->limHello && hostLimitsPacked() != sv->lastLimitsSent) {
+                ctlSendLimits(sv);
+            }
             if (poolSlotsFor(serverIndex(sv)) != sv->lastSlotsSent) {
                 ctlSendSlots(sv, BOT_HOST_SLOTS_NO_REFUSE, 0);
             }
@@ -2493,9 +2608,38 @@ static void listenReceive(void) {
 /* The think loop                                                      */
 /* ------------------------------------------------------------------ */
 
+/* The per-bot budget. serialMsEwma is the serial work in each tick that
+ * runs before the brain workers and so delays them: the seats' network
+ * ticks and the think setup. The work after the workers (sending the
+ * inputs, the recorder, the stats) is not in it, and there is no reserve
+ * for a game sim: this host runs none. --budget-legacy on puts back the
+ * old formula: the work after the workers is in serialMsEwma, and the
+ * server's 6 ms sim reserve comes off the budget. */
 static double serialMsEwma = 0.0;
 static double lastTargetMs = 0.0;
+static bool   optBudgetLegacy = false;
+
+/* Tick timing for the once-a-minute log line: ticks with bots, how many
+ * took longer than one tick, the longest, and the averages of the parts.
+ * startLateMax is how late the main loop started a tick (ms). */
+typedef struct {
+    uint32_t ticks, over;
+    double   sumTotal, sumBefore, sumBrain, sumAfter, sumTarget;
+    double   maxTotal, maxBrain, maxAfter;
+    uint32_t startLateMax;
+} HostTickStats;
+static HostTickStats tickStats;
+#define BOT_HOST_TICK_STATS_TICKS 3000   /* one line a minute */
 static int    jobIndices[BOT_HOST_MAX_SLOTS];
+
+/* The per-bot budget for `bots` bots, by the formula --budget-legacy
+ * picks. */
+static double hostTargetMs(int runners, int bots) {
+    if (optBudgetLegacy) {
+        return botRunnerTargetMs(serialMsEwma, runners, bots);
+    }
+    return botRunnerTargetMsReserve(serialMsEwma, 0.0, runners, bots);
+}
 
 static void hostThinkJob(int index, void *userData) {
     HostSeat *hs = &seats[index];
@@ -2509,6 +2653,28 @@ static void hostThinkJob(int index, void *userData) {
     }
     botRunnerPrepareThink(&hs->bot, gs, &mods);
     botRunnerThink(&hs->job, lastTargetMs, hs->inputTick);
+
+    /* The pool capture, here on the worker, as the server does it
+     * (bot_manager.c runBotThinkJob). botRunnerThink has measured
+     * lastThinkMs and taken off the budget hook before this, so the
+     * capture can neither be stopped by the budget nor count as think
+     * time. Skipped after a budget stop (the brain state is partial) and
+     * after a crash (the seat goes). The seq is the one the recorder
+     * uses: the think's own input packet sets the new offset. */
+    hs->poolDoneExpr = NULL;
+    free(hs->poolBuf);   /* NULL: the recorder takes it every tick */
+    hs->poolBuf = NULL;
+    if (hs->poolExpr != NULL && !hs->job.wasKilled && !hs->job.needRemove &&
+        hs->bot.brain.L != NULL) {
+        uint32_t seq = hs->job.hasInput ? hs->job.pkt1.tick
+                                        : hs->inputTick + hs->recSeqOffset;
+        if (hostRecPoolWanted(hs->poolMode, seq, hs->poolRrIndex,
+                              hs->poolRrCount)) {
+            hs->poolBuf = botBrainEvalLuaString(hs->bot.brain.L,
+                                                hs->poolExpr);
+            hs->poolDoneExpr = hs->poolExpr;
+        }
+    }
 }
 
 static void seatSendStats(HostSeat *hs) {
@@ -2534,8 +2700,9 @@ static void seatSendStats(HostSeat *hs) {
 
 /* Bot connections: keep them ticking, notice when they end, and build the
  * brains that are owed. */
-static void seatsService(void) {
+static bool seatsService(void) {
     int i;
+    bool built = false;
     for (i = 0; i < BOT_HOST_MAX_SLOTS; i++) {
         HostSeat *hs = &seats[i];
         ClientConnectState st;
@@ -2575,18 +2742,21 @@ static void seatsService(void) {
         }
         if (hs->wantBuild && !hs->awaitTable) {
             seatBuildBrain(hs);
+            built = true;
         }
     }
+    return built;
 }
 
 static void hostTick(void) {
     int i, active = 0, runners;
     bool anyFirst = false;
+    bool built;
     Uint64 setupStart, brainStart, brainEnd, sendEnd;
     double freq = (double)SDL_GetPerformanceFrequency();
 
     setupStart = SDL_GetPerformanceCounter();
-    seatsService();
+    built = seatsService();
     if (embedLockstep) {
         for (i = 0; i < BOT_HOST_MAX_SLOTS; i++) {
             if (seats[i].used && seats[i].cs != NULL) {
@@ -2621,7 +2791,7 @@ static void hostTick(void) {
 
     runners = botWorkerPoolGetSize() + 1;
     if (optThreads > runners) runners = optThreads;
-    lastTargetMs = botRunnerTargetMs(serialMsEwma, runners, active);
+    lastTargetMs = hostTargetMs(runners, active);
     {
         /* The budget a new bot would get: one more than the bots this host
          * runs now. The brain picks its tier from this budget; the budget
@@ -2629,8 +2799,7 @@ static void hostTick(void) {
         uint64_t tickMs = SDL_GetTicks();
         if (hostCpuBudgetMilli == BOT_HOST_CPU_MILLI_UNKNOWN ||
             tickMs - hostCpuBudgetAtMs >= BOT_HOST_BUDGET_EVERY_MS) {
-            double newBotMs = botRunnerTargetMs(serialMsEwma, runners,
-                                                poolUsed() + 1);
+            double newBotMs = hostTargetMs(runners, poolUsed() + 1);
             hostCpuBudgetMilli = botHostCpuMilliBudget(
                 newBotMs, (double)BOT_HOST_TICK_MS,
                 SDL_GetNumLogicalCPUCores());
@@ -2639,8 +2808,23 @@ static void hostTick(void) {
     }
     for (i = 0; i < active; i++) {
         HostSeat *hs = &seats[jobIndices[i]];
+        int k;
         botRunnerBeginTick(&hs->bot, lastTargetMs);
         if (hs->bot.brain.isFirst) anyFirst = true;
+        /* The pool capture plan for the worker: the recorder's state and
+         * the seat's round-robin place, the same count as the recorder's
+         * below. When a seat goes between the think and the recorder the
+         * count there can differ; then the recorder frees the capture or
+         * makes it itself. */
+        hs->poolExpr = hostRecSeatPoolPlan(
+            hs->srv, servers[hs->srv].sync.man.debugMode, &hs->poolMode);
+        hs->poolRrIndex = 0;
+        hs->poolRrCount = 0;
+        for (k = 0; k < active && hs->poolExpr != NULL; k++) {
+            if (seats[jobIndices[k]].srv != hs->srv) continue;
+            if (k < i) hs->poolRrIndex++;
+            hs->poolRrCount++;
+        }
     }
 
     brainStart = SDL_GetPerformanceCounter();
@@ -2711,8 +2895,13 @@ static void hostTick(void) {
     for (i = 0; i < active; i++) {
         HostSeat *hs = &seats[jobIndices[i]];
         int k, rrIndex = 0, rrCount = 0;
+        char *poolBuf = hs->poolBuf;
+        const char *poolDoneExpr = hs->poolDoneExpr;
+        hs->poolBuf = NULL;
+        hs->poolDoneExpr = NULL;
         if (!hs->used || hs->bot.brain.L == NULL || hs->job.wasKilled ||
             hs->job.needRemove) {
+            free(poolBuf);
             continue;
         }
         for (k = 0; k < active; k++) {
@@ -2727,7 +2916,7 @@ static void hostTick(void) {
                          (float)hs->bot.lastThinkMs, hs->bot.brain.L,
                          &hs->bot.brain.overlay,
                          servers[hs->srv].sync.man.debugMode, rrIndex,
-                         rrCount);
+                         rrCount, poolBuf, poolDoneExpr);
     }
     hostRecService(nowMs());
 
@@ -2756,9 +2945,45 @@ static void hostTick(void) {
     }
 
     sendEnd = SDL_GetPerformanceCounter();
-    {
-        double serialMs = ((double)(brainStart - setupStart) +
-                           (double)(sendEnd - brainEnd)) * 1000.0 / freq;
+    /* A tick that built a brain or ran a first think has one-time setup
+     * in it (the brain build, the recording's first file). Such a sample
+     * is not the normal serial work. As the first sample it would seed the
+     * average high and hold the budget at its 1 ms floor for many ticks,
+     * so those ticks are left out. */
+    if (active > 0) {
+        HostTickStats *ts = &tickStats;
+        double before = (double)(brainStart - setupStart) * 1000.0 / freq;
+        double brain = (double)(brainEnd - brainStart) * 1000.0 / freq;
+        double after = (double)(sendEnd - brainEnd) * 1000.0 / freq;
+        double total = before + brain + after;
+        ts->ticks++;
+        if (total > (double)BOT_HOST_TICK_MS) ts->over++;
+        ts->sumTotal += total;
+        ts->sumBefore += before;
+        ts->sumBrain += brain;
+        ts->sumAfter += after;
+        ts->sumTarget += lastTargetMs;
+        if (total > ts->maxTotal) ts->maxTotal = total;
+        if (brain > ts->maxBrain) ts->maxBrain = brain;
+        if (after > ts->maxAfter) ts->maxAfter = after;
+        if (ts->ticks >= BOT_HOST_TICK_STATS_TICKS) {
+            double n = (double)ts->ticks;
+            fprintf(stderr, "[bothost] ticks %u: %u over %d ms, longest "
+                            "%.1f ms, avg %.1f ms (before the brains %.2f, "
+                            "brains %.1f max %.1f, after %.2f max %.1f), "
+                            "target avg %.1f ms, latest start %u ms\n",
+                    (unsigned)ts->ticks, (unsigned)ts->over,
+                    BOT_HOST_TICK_MS, ts->maxTotal, ts->sumTotal / n,
+                    ts->sumBefore / n, ts->sumBrain / n, ts->maxBrain,
+                    ts->sumAfter / n, ts->maxAfter, ts->sumTarget / n,
+                    (unsigned)ts->startLateMax);
+            memset(ts, 0, sizeof(*ts));
+        }
+    }
+    if (!built && !anyFirst) {
+        double serialMs = (double)(brainStart - setupStart);
+        if (optBudgetLegacy) serialMs += (double)(sendEnd - brainEnd);
+        serialMs = serialMs * 1000.0 / freq;
         if (serialMsEwma <= 0.0) serialMsEwma = serialMs;
         else serialMsEwma = 0.1 * serialMs + 0.9 * serialMsEwma;
     }
@@ -2781,7 +3006,19 @@ static void printUsage(const char *prog) {
             "  --listen PORT   UDP port for the servers' queries and invites\n"
             "                  (default %d). List it in the server's -bothosts.\n"
             "  --slots N       bots this host runs at most, for all servers\n"
-            "                  together (default 4)\n"
+            "                  together (default 4); with a server that has\n"
+            "                  dynamic slots, the bots it starts a game with\n"
+            "  --slots-max N   with dynamic slots, the most bots the server\n"
+            "                  may raise this host to (default: --slots or\n"
+            "                  logical CPUs - 1, the larger, at most %d)\n"
+            "  --cpu-reserve P the free CPU percent this host tries to keep:\n"
+            "                  the server gives it no raise and no new bot\n"
+            "                  that would take it under P; the bots may still\n"
+            "                  push the CPU past it when no other place has\n"
+            "                  room (default %d)\n"
+            "  --keel          --slots-max = --slots and --cpu-reserve 0\n"
+            "                  (fixed slots, as before); a flag given as\n"
+            "                  well still counts\n"
             "  --threads N     brain threads (default: one per CPU core)\n"
             "  --key KEY       the servers' -bothostkey, when they have one\n"
             "  --name NAME     the name the server operators and players see\n"
@@ -2790,21 +3027,30 @@ static void printUsage(const char *prog) {
             "                  (default: bothost_cache next to this program)\n"
             "  --record-min-free-gb N  record the bots of a -brain-debug\n"
             "                  server only while the cache's disk has N GB\n"
-            "                  free (default 50)\n",
-            prog, BOT_HOST_DEFAULT_SERVER_PORT, BOT_HOST_DEFAULT_LISTEN_PORT);
+            "                  free (default 50)\n"
+            "  --budget-legacy on|off  on: the old think budget (the\n"
+            "                  recorder's work and the server's 6 ms sim\n"
+            "                  reserve come off each bot's budget). Default\n"
+            "                  off\n",
+            prog, BOT_HOST_DEFAULT_SERVER_PORT, BOT_HOST_DEFAULT_LISTEN_PORT,
+            BOT_HOST_MAX_SLOTS, BOT_HOST_RAISE_RESERVE_PCT_DEFAULT);
 }
 
 static double optRecordMinFreeGb = 50.0;
 
 static bool parseArgs(int argc, char **argv) {
     int i;
-    bool haveServers = false;
+    bool haveServers = false, keel = false, haveReserve = false;
     for (i = 1; i < argc; i++) {
         const char *a = argv[i];
         const char *v = (i + 1 < argc) ? argv[i + 1] : NULL;
         if (strcmp(a, "--help") == 0 || strcmp(a, "-h") == 0) {
             printUsage(argv[0]);
             return false;
+        }
+        if (strcmp(a, "--keel") == 0) {
+            keel = true;
+            continue;
         }
         if (v == NULL) {
             fprintf(stderr, "%s needs a value\n", a);
@@ -2833,6 +3079,19 @@ static bool parseArgs(int argc, char **argv) {
                 fprintf(stderr, "--slots takes 1 to %d\n", BOT_HOST_MAX_SLOTS);
                 return false;
             }
+        } else if (strcmp(a, "--slots-max") == 0) {
+            optSlotsMax = atoi(v);
+            if (optSlotsMax < 1 || optSlotsMax > BOT_HOST_MAX_SLOTS) {
+                fprintf(stderr, "--slots-max takes 1 to %d\n",
+                        BOT_HOST_MAX_SLOTS);
+                return false;
+            }
+        } else if (strcmp(a, "--cpu-reserve") == 0) {
+            if (!botHostParsePercent(v, &optCpuReserve)) {
+                fprintf(stderr, "--cpu-reserve takes 0 to 100\n");
+                return false;
+            }
+            haveReserve = true;
         } else if (strcmp(a, "--threads") == 0) {
             optThreads = atoi(v);
             if (optThreads < 0) optThreads = 0;
@@ -2847,6 +3106,15 @@ static bool parseArgs(int argc, char **argv) {
             SDL_strlcpy(optName, v, sizeof(optName));
         } else if (strcmp(a, "--cachedir") == 0) {
             SDL_strlcpy(optCacheDir, v, sizeof(optCacheDir));
+        } else if (strcmp(a, "--budget-legacy") == 0) {
+            if (strcmp(v, "on") == 0 || strcmp(v, "1") == 0) {
+                optBudgetLegacy = true;
+            } else if (strcmp(v, "off") == 0 || strcmp(v, "0") == 0) {
+                optBudgetLegacy = false;
+            } else {
+                fprintf(stderr, "--budget-legacy takes on or off\n");
+                return false;
+            }
         } else if (strcmp(a, "--record-min-free-gb") == 0) {
             optRecordMinFreeGb = atof(v);
             if (optRecordMinFreeGb < 0.0) optRecordMinFreeGb = 0.0;
@@ -2887,6 +3155,11 @@ static bool parseArgs(int argc, char **argv) {
         SDL_strlcpy(optName, "Bot Host", sizeof(optName));
     }
     SDL_strlcpy(optStatsName, optName, sizeof(optStatsName));
+    /* The KEEL values: fixed slots, no reserve. */
+    if (keel && !haveReserve) optCpuReserve = 0;
+    optSlotsMax = botHostSlotsMaxDefault(optSlotsMax, optSlots,
+                                         SDL_GetNumLogicalCPUCores(), keel);
+    if (optSlotsMax < optSlots) optSlotsMax = optSlots;
     return true;
 }
 
@@ -2998,9 +3271,10 @@ int main(int argc, char *argv[]) {
     }
 
     fprintf(stderr, "[bothost] WinBoloBotHost \"%s\": %d slots for %d "
-                    "server%s, listening on UDP port %u\n",
+                    "server%s, listening on UDP port %u; with dynamic slots "
+                    "up to %d, trying to keep %d%% CPU free\n",
             optName, optSlots, serverCount, serverCount == 1 ? "" : "s",
-            (unsigned)optListenPort);
+            (unsigned)optListenPort, optSlotsMax, optCpuReserve);
     for (i = 0; i < serverCount; i++) {
         fprintf(stderr, "[bothost]   server %s\n", servers[i].label);
     }
@@ -3036,6 +3310,9 @@ int main(int argc, char *argv[]) {
         }
         t = nowMs();
         if ((int32_t)(t - nextTick) >= 0) {
+            if (t - nextTick > tickStats.startLateMax) {
+                tickStats.startLateMax = t - nextTick;
+            }
             hostTick();
             nextTick += BOT_HOST_TICK_MS;
             /* After a long stall, start counting again from now. */
@@ -3400,15 +3677,28 @@ void botHostEmbedSweepSessions(const char *cacheDir) {
     }
 }
 
-void botHostInprocSetWithhold(bool on) {
-    int v = on ? 1 : 0;
-    if (SDL_GetAtomicInt(&embedWithhold) == v) return;
-    SDL_SetAtomicInt(&embedWithhold, v);
+void botHostInprocSetMax(int max) {
+    int v;
+    if (max < 0) max = BOT_HOST_MAX_AUTO;
+    if (max > BOT_HOST_MAX_TOP) max = BOT_HOST_MAX_TOP;
+    v = max + 1;
+    if (SDL_GetAtomicInt(&embedMaxPlus1) == v) return;
+    SDL_SetAtomicInt(&embedMaxPlus1, v);
     if (embedThread == NULL) return;
-    HOST_EVENT("[bothost] Bot Host \"%s\": %s", optName,
-               on ? "the player turned bots off on this computer for this "
-                    "game; it offers 0 slots"
-                  : "the player turned bots on again; it offers its slots");
+    if (max == 0) {
+        HOST_EVENT("[bothost] Bot Host \"%s\": the player set Max slots 0; "
+                   "it offers 0 slots", optName);
+    } else if (max < 0) {
+        HOST_EVENT("[bothost] Bot Host \"%s\": the player set Max slots to "
+                   "the brain's answer", optName);
+    } else {
+        HOST_EVENT("[bothost] Bot Host \"%s\": the player set Max slots %d",
+                   optName, max);
+    }
+}
+
+int botHostEmbedGetMax(void) {
+    return SDL_GetAtomicInt(&embedMaxPlus1) - 1;
 }
 
 void botHostInprocGetStatus(BotHostEmbedStatus *out) {

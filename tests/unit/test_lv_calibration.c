@@ -2254,7 +2254,7 @@ int run_lv_bothost_read(void) {
   nZero = nProbe0;
 
   UT_ASSERT(nServer == 3 + 1 + 1 + 6 && nAlice == 3 + 1 + 1 + 5);
-  UT_ASSERT(nProbe1 == 15 && nReading1 == 7 && nProbe0 == 15);
+  UT_ASSERT(nProbe1 == 17 && nReading1 == 7 && nProbe0 == 17);
   UT_ASSERT(nDecision1 == 3 + 16 + 1 + 8 + 10);
 
   b.len = 0;

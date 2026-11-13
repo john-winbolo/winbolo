@@ -11,9 +11,8 @@
  * not used again: the host starts again only with a new ticket, which the
  * server makes for each new connection (a rejoin).
  *
- * It also keeps the lobby's one-game opt-out (bothost_optout.h): while it
- * is on, the host offers the server 0 slots, and the server takes its bots
- * back. It is not saved, and it goes off for the next game.
+ * The player's Max slots (bothost_optout.h) is the host's own setting
+ * (botHostEmbedSetMax); Max 0 offers the server 0 slots.
  *
  * The host runs as a child process (WinBoloBotHost --embed-child,
  * src/bothost_child/bothost_child.h) unless the settings say "in this
@@ -55,9 +54,6 @@ static uint8_t embedBlocked[BOT_HOST_TICKET_LEN];
 static bool embedHaveBlocked = false;
 /* The bot count last told on the newswire. */
 static int embedLastBots = 0;
-/* The lobby's "Don't run bots on this computer for this game". */
-static BotHostOptOut embedOptOut;
-
 /* Where the running host is: a child process or a thread here. */
 enum { EMBED_NONE, EMBED_THREAD, EMBED_CHILD };
 static int embedWhere = EMBED_NONE;
@@ -72,16 +68,13 @@ static BotHostChildRestart embedRestart;
 static uint8_t embedRestartTicket[BOT_HOST_TICKET_LEN];
 static bool embedHaveRestartTicket = false;
 /* What the host is told, kept for a child started later. */
-static bool embedWithholdNow = false;
+static int embedMaxNow = BOT_HOST_MAX_AUTO;
 static bool embedRecordNow = false;
 /* The last start found no sandbox: it said so in its own line. */
 static bool embedStartNoBots = false;
 /* The last start waits for the sandbox's folders: it tries again on a
  * later frame. */
 static bool embedStartWait = false;
-
-BOLO_STATIC_ASSERT(BOT_HOST_OPTOUT_TICKET_LEN == BOT_HOST_TICKET_LEN,
-                   optout_keeps_a_whole_ticket);
 
 void botHostEmbedSettingsDefaults(BotHostEmbedSettings *settings) {
     if (settings == NULL) return;
@@ -169,7 +162,7 @@ static BotHostChildStart embedStartChild(const BotHostEmbedConfig *cfg) {
     }
     embedChildLimits(&lim);
     return botHostChildClientStart(&p, cfg->ticket, BOT_HOST_TICKET_LEN,
-                                   &lim, embedWithholdNow,
+                                   &lim, embedMaxNow,
                                    !embedSettings.childNoSandbox);
 }
 
@@ -239,10 +232,12 @@ void botHostEmbedGetStatus(BotHostEmbedStatus *out) {
     out->consentAsking = cst.consentAsking;
 }
 
-void botHostEmbedSetWithhold(bool on) {
-    embedWithholdNow = on;
-    botHostInprocSetWithhold(on);
-    if (embedWhere == EMBED_CHILD) botHostChildClientSetWithhold(on);
+void botHostEmbedSetMax(int max) {
+    if (max < 0) max = BOT_HOST_MAX_AUTO;
+    if (max > BOT_HOST_MAX_TOP) max = BOT_HOST_MAX_TOP;
+    embedMaxNow = max;
+    botHostInprocSetMax(max);
+    if (embedWhere == EMBED_CHILD) botHostChildClientSetMax(max);
 }
 
 void botHostEmbedConsentAnswer(bool yes) {
@@ -405,8 +400,6 @@ void botHostEmbedService(struct ClientSim *cs) {
         embedRestart.waiting = false;
         embedHaveTicket = false;
         embedCs = NULL;
-        botHostOptOutInit(&embedOptOut);
-        botHostEmbedSetWithhold(false);
         return;
     }
     if (embedSettings.disabled) return;
@@ -422,10 +415,6 @@ void botHostEmbedService(struct ClientSim *cs) {
     }
 
     haveTicket = clientSimGetBotHostTicket(cs, &player, ticket, brain, NULL);
-    /* Before a start too, so a host started with the opt-out on joins
-     * with 0 slots. */
-    botHostEmbedSetWithhold(
-        botHostOptOutCheck(&embedOptOut, cs, haveTicket ? ticket : NULL));
     if (botHostEmbedRunning()) {
         if (cs != embedCs || !haveTicket ||
             memcmp(ticket, embedTicketNow, sizeof(ticket)) != 0) {
@@ -496,40 +485,4 @@ void botHostEmbedLeave(const char *why) {
     embedStopNow(true, why != NULL ? why : "the player left the game");
     embedHaveTicket = false;
     embedCs = NULL;
-    botHostOptOutInit(&embedOptOut);
-    botHostEmbedSetWithhold(false);
-}
-
-bool botHostEmbedOffered(struct ClientSim *cs) {
-    uint8_t ticket[BOT_HOST_TICKET_LEN];
-    BotHostEmbedStatus st;
-    if (cs == NULL || embedSettings.disabled) return false;
-    if (!clientSimGetBotHostTicket(cs, NULL, ticket, NULL, NULL)) return false;
-    /* Refused, or a game the player left: no host runs on it. */
-    if (embedHaveBlocked &&
-        memcmp(ticket, embedBlocked, sizeof(ticket)) == 0) {
-        return false;
-    }
-    /* The server is on this computer: the host is stopped for this join,
-     * so there is nothing to opt out of. The opt-out itself is kept. */
-    botHostEmbedGetStatus(&st);
-    if (st.running && st.sameServer && cs == embedCs) return false;
-    return true;
-}
-
-void botHostEmbedSetOptOut(struct ClientSim *cs, bool on) {
-    uint8_t ticket[BOT_HOST_TICKET_LEN];
-    bool have = cs != NULL &&
-                clientSimGetBotHostTicket(cs, NULL, ticket, NULL, NULL);
-    botHostOptOutSet(&embedOptOut, on, cs, have ? ticket : NULL);
-    fprintf(stderr, "[bothost] the player turned this computer's bots %s "
-                    "for this game\n", embedOptOut.on ? "off" : "on");
-    botHostEmbedSetWithhold(embedOptOut.on);
-}
-
-bool botHostEmbedOptOut(struct ClientSim *cs) {
-    uint8_t ticket[BOT_HOST_TICKET_LEN];
-    bool have = cs != NULL &&
-                clientSimGetBotHostTicket(cs, NULL, ticket, NULL, NULL);
-    return botHostOptOutCheck(&embedOptOut, cs, have ? ticket : NULL);
 }

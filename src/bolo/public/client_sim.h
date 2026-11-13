@@ -147,6 +147,10 @@ typedef struct {
     uint8_t used;      /* bot seats it runs */
     uint8_t slots;     /* bot seats it offers */
     uint16_t seats;    /* its bots: bit n for player n */
+    /* The server's row only (CTRL_BOT_HOST_HELD): the lobby bot seats with
+     * no bot running yet, bit n for player n. Listed with the row's bots by
+     * name, and not in used or seats. 0 from an older server. */
+    uint16_t held;
     uint8_t recState;  /* BOT_HOST_REC_STATE_* */
     uint8_t recPercent; /* recording upload progress, 0..100 */
     uint8_t recBotsDone; /* bots whose recordings are sent */
@@ -184,6 +188,15 @@ typedef struct {
     bool    machineZero;
     uint8_t slotOverride;
     bool    slotLocked;
+    /* CTRL_BOT_HOST_ROW_LIMITS: rowLimitsHave once the server sends one
+     * (an older server never does). limitCeiling: the row's Max slots;
+     * limitReserve: the free CPU percent it tries to keep; limitFits: the
+     * slots its CPU estimate says fit while it keeps that free, 0xFF
+     * before the first reading. */
+    bool    rowLimitsHave;
+    uint8_t limitCeiling;
+    uint8_t limitReserve;
+    uint8_t limitFits;
     char    name[CLIENT_BOT_HOST_NAME_LEN];
 } ClientBotHostRow;
 
@@ -797,6 +810,13 @@ const ClientSpectatorSlot *clientSimGetSpectatorSlot(const ClientSim *cs, uint8_
 
 /* Bot Host list row mirror; out-of-range idx returns NULL. */
 const ClientBotHostRow *clientSimGetBotHostRow(const ClientSim *cs, uint8_t idx);
+
+/* The connected Bot Host rows (not the server's own row) that run no bot
+ * now, in row order: up to cap row numbers into idx. Returns how many.
+ * System Info lists the hosts by their bots (CTRL_BOT_TIMING), so it shows
+ * these below that list; without them a host that joins a game in progress
+ * is not seen there until it gets a bot. */
+int clientSimBotHostRowsNoBots(const ClientSim *cs, uint8_t *idx, int cap);
 
 /* The bots' think timing from the server's last CTRL_BOT_TIMING (sent once
  * a second while the game has bots), read into out. False when none came

@@ -591,6 +591,27 @@ int run_wbn_map_fetch_policy(void);
 int run_brain_crash_log_writes_file(void);
 int run_brain_crash_log_falls_back_to_luaptr(void);
 int run_brain_push_rules_written_on_change(void);
+int run_brain_bounds_tail_bad_steps(void);
+int run_brain_bounds_tail_bad_neutral(void);
+int run_brain_bounds_think_errors(void);
+int run_brain_bounds_wrapper_called_from_lua(void);
+int run_brain_bounds_kill_outside_think(void);
+int run_brain_bounds_host_globals_raw(void);
+int run_brain_bounds_on_init_metatable(void);
+int run_brain_crash_log_outside_think(void);
+int run_brain_bounds_deserialize_open(void);
+int run_brain_bounds_next_step_bad_start(void);
+int run_brain_bounds_shells_at_bad_tile(void);
+int run_brain_bounds_push_replaced_info(void);
+int run_brain_bounds_stamps_bad_tables(void);
+int run_brain_bounds_threat_range(void);
+int run_brain_crash_log_ignores_brain_globals(void);
+int run_brain_sandbox_hostile_native_preloads(void);
+int run_brain_sandbox_hostile_bytecode_init(void);
+int run_brain_sandbox_hostile_loaders_removed(void);
+int run_brain_sandbox_hostile_astar_log_removed(void);
+int run_brain_sandbox_hostile_file_jail(void);
+int run_brain_sandbox_hostile_off_map_terrain(void);
 int run_brain_msgh_budget_kill_no_traceback(void);
 int run_brain_msgh_real_error_keeps_traceback(void);
 int run_brain_inbox_push_peek_fifo(void);
@@ -978,6 +999,9 @@ int run_bot_host_enforce_fall_back_holds(void);
 int run_bot_host_enforce_host_resumes(void);
 int run_bot_host_enforce_leave_resumes(void);
 int run_bot_host_enforce_off_keeps_fall_back(void);
+/* A Bot Host that joins a game in progress (test_bot_host_midgame.c). */
+int run_bot_host_place_keep_lag_join(void);
+int run_bot_host_sysinfo_empty_hosts(void);
 /* The overrun check of the bot placement, the free CPU percent and the
  * log_BotHostData payload (test_bot_host_overrun.c). */
 int run_bot_host_overrun_window_rate(void);
@@ -1035,11 +1059,19 @@ int run_bot_host_machine_codec(void);
 int run_bot_host_machine_join_wait(void);
 int run_bot_host_same_server_codec(void);
 int run_bot_host_same_server_stop(void);
-/* The lobby's one-game opt-out from running bots on this computer
+/* A Bot Host's slots: Max slots and the dynamic slots
  * (test_bot_host_optout.c). */
 int run_bot_host_optout_slots_codec(void);
 int run_bot_host_optout_give_back(void);
-int run_bot_host_optout_client_reset(void);
+int run_bot_host_max_saved(void);
+int run_bot_host_dyn_raise_rule(void);
+int run_bot_host_dyn_under_reserve(void);
+int run_bot_host_dyn_carry(void);
+int run_bot_host_dyn_keel(void);
+int run_bot_host_dyn_pct_off(void);
+int run_bot_host_dyn_determinism(void);
+int run_bot_host_limits_codec(void);
+int run_bot_host_slot_owner_only(void);
 
 /* Internal brain-message routing (test_brain_internal_msg_routing.c) —
  * pins botManagerDeliverInternalMessage: bot brains sending with
@@ -1614,6 +1646,7 @@ int run_brainrec_host_merge_verdict(void);
 /* The Bot Host's recorder keeps its blocks (test_bothost_rec.c). */
 int run_bothost_rec_upload_keeps_files(void);
 int run_bothost_rec_lowdisk_keeps_files(void);
+int run_bothost_rec_pool_raw_flag(void);
 int run_brainrec_host_path_checks(void);
 int run_brainrec_dir_lock_orders_merge_and_gzip(void);
 int run_brainrec_host_make_absolute(void);
@@ -3906,6 +3939,7 @@ int run_unfielded_seat_unfield_is_quiet(void);
 int run_unfielded_seat_unfield_keeps_sync(void);
 int run_unfielded_seat_spawn_keeps_alliances(void);
 int run_unfielded_seat_on_the_wire(void);
+int run_unfielded_seat_server_row_lists_held(void);
 
 /* What a wave costs (test_scenario_wave_cost.c): the brain, the ClientSim and
  * the control subscription behind a held seat, built across the countdown
@@ -4744,6 +4778,7 @@ int run_scenario_compose_commit_map_keeps_operator_mod(void);
 int run_scenario_compose_commit_map_fixed_operator_mod(void);
 int run_scenario_compose_map_kind_cached(void);
 int run_scenario_compose_fallback_strict(void);
+int run_scenario_compose_mods_after_scenario_type(void);
 int run_scenario_compose_needs_bots_any_mod(void);
 int run_scenario_compose_needs_bots_scenario_and_mod(void);
 int run_scenario_compose_on_tick_bottom_first(void);

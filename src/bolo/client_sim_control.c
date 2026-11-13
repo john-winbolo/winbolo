@@ -447,6 +447,8 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
             uint8_t cpuBotSrc = r->cpuBotSrc;
             uint16_t lagMs = r->connected ? r->lagMs
                                           : (uint16_t)BOT_HOST_LAG_UNKNOWN;
+            /* The held seats come in their own event too. */
+            uint16_t held = r->connected ? r->held : 0;
             /* The row's computer and override, as the CPU estimate. */
             ClientBotHostRow keep = *r;
             bool keepSlots = r->connected && r->rowSlotsHave;
@@ -459,6 +461,7 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
             if (r->connected) {
                 r->cpu     = cpu;
                 r->lagMs   = lagMs;
+                r->held    = held;
                 if (keepSlots) {
                     r->rowSlotsHave = true;
                     r->machineKind  = keep.machineKind;
@@ -466,6 +469,12 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
                     r->machineZero  = keep.machineZero;
                     r->slotOverride = keep.slotOverride;
                     r->slotLocked   = keep.slotLocked;
+                }
+                if (keep.connected && keep.rowLimitsHave) {
+                    r->rowLimitsHave = true;
+                    r->limitCeiling  = keep.limitCeiling;
+                    r->limitReserve  = keep.limitReserve;
+                    r->limitFits     = keep.limitFits;
                 }
                 if (cpuBotHave) {
                     r->cpuBotHave = true;
@@ -518,10 +527,29 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         }
         break;
 
+    case CTRL_BOT_HOST_ROW_LIMITS:
+        if (evt->u.botHostRowLimits.idx < CLIENT_BOT_HOST_ROWS) {
+            ClientBotHostRow *r = &cs->botHostRows[evt->u.botHostRowLimits.idx];
+            if (r->connected) {
+                r->rowLimitsHave = true;
+                r->limitCeiling = evt->u.botHostRowLimits.ceiling;
+                r->limitReserve = evt->u.botHostRowLimits.reserve;
+                r->limitFits    = evt->u.botHostRowLimits.fits;
+            }
+        }
+        break;
+
     case CTRL_BOT_HOST_LAG:
         if (evt->u.botHostLag.idx < CLIENT_BOT_HOST_ROWS) {
             ClientBotHostRow *r = &cs->botHostRows[evt->u.botHostLag.idx];
             if (r->connected) r->lagMs = evt->u.botHostLag.lagMs;
+        }
+        break;
+
+    case CTRL_BOT_HOST_HELD:
+        if (evt->u.botHostHeld.idx < CLIENT_BOT_HOST_ROWS) {
+            ClientBotHostRow *r = &cs->botHostRows[evt->u.botHostHeld.idx];
+            if (r->connected) r->held = evt->u.botHostHeld.held;
         }
         break;
 

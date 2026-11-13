@@ -16,8 +16,8 @@
  */
 
 /* The estimate of how much of its machine's CPU a Bot Host (or the server,
- * for the bots it runs itself) uses for bot brains, as the lobby shows it:
- * "(Estimated 12% of the machine's CPU)".
+ * for the bots it runs itself) uses for bot brains. The server's bot
+ * placement and its round log use it; the lobby does not show it.
  *
  * Each machine works out its own percent and sends only that one byte. No
  * core count, CPU name or other hardware detail leaves the machine.
@@ -87,10 +87,10 @@ static inline uint32_t botHostCpuMilliBudget(double budgetMs, double everyMs,
     return botHostCpuMilliPerBot(budgetMs, everyMs, cores);
 }
 
-/* Where a per-bot value the lobby shows comes from, in this order: the
- * value measured from the bots thinking now; the last value measured for
- * that host in this server session; the full-budget estimate; none (the
- * lobby then says the CPU test is running). The round log records it. */
+/* Where a per-bot value comes from, in this order: the value measured
+ * from the bots thinking now; the last value measured for that host in this
+ * server session; the full-budget estimate; none. The round log records
+ * it. */
 #define BOT_HOST_CPU_SRC_NONE      0u
 #define BOT_HOST_CPU_SRC_MEASURED  1u
 #define BOT_HOST_CPU_SRC_LAST      2u
@@ -105,7 +105,7 @@ static inline uint32_t botHostCpuMilliFromWire(uint32_t v) {
     return v;
 }
 
-/* The lobby's text for a percent, never "0": 10 or more as a whole number
+/* The text for a percent, never "0": 10 or more as a whole number
  * ("12"), 1 to under 10 with one decimal ("3.4"), under 1 with two
  * significant digits ("0.42", "0.035"). The smallest value shown is 0.001. */
 static inline void botHostCpuFormatPct(double pct, char *out, size_t cap) {

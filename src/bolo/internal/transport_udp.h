@@ -38,6 +38,7 @@
 #include "gametype.h"
 #include "client_connect_state.h"
 #include "server_sim.h"      /* SubscriberHandle */
+#include "bot_host_machine.h" /* BotHostDynamicFlags */
 
 /* Forward declarations */
 struct ClientSim;
@@ -927,6 +928,8 @@ typedef struct {
     int freeHistorySecs; /* the free CPU history kept */
 } BotHostOverrunFlags;
 void transportUdpServerSetBotHostOverrun(const BotHostOverrunFlags *f);
+/* Dynamic bot slots: BotHostDynamicFlags (bot_host_machine.h). */
+void transportUdpServerSetBotHostDynamic(const BotHostDynamicFlags *f);
 /* Writes what the placement measured and chose into the round log (.wbv)
  * as log_BotHostData records (bothost_record.h). Off by default. */
 void transportUdpServerSetBotHostRecord(bool on);
@@ -956,11 +959,13 @@ bool transportUdpServerAddBotHostSlots(const char *arg, char *err,
                                        size_t errSz);
 /* The lobby's slot override of Bot Host row `row` (LST_BOT_HOST_SLOTS):
  * value 0 up to the slots the host reports, or 0xFF for none; player is
- * the player who set it. */
+ * the player who set it. Only for a player's own host, by that player: a
+ * dedicated host's Max slots is its own --slots-max. */
 enum {
     BOT_HOST_SLOT_SET_OK = 0,
     BOT_HOST_SLOT_SET_LOCKED,    /* -bothost-slots locks the row */
     BOT_HOST_SLOT_SET_INVALID,   /* above the host's slots, or no such row */
+    BOT_HOST_SLOT_SET_NOT_OWNER, /* only a player's own host, by that player */
 };
 struct ServerSim;
 int  serverBotHostSetSlotOverride(struct ServerSim *sim, int row, int value,

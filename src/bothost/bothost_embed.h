@@ -73,12 +73,17 @@ bool botHostEmbedRunning(void);
  * (marked, and no running client holds their lock). */
 void botHostEmbedSweepSessions(const char *cacheDir);
 void botHostEmbedGetStatus(BotHostEmbedStatus *out);
-/* on: the host offers the server 0 slots (CTRL_BOT_HOST_SLOTS), so the
- * server takes its bots back, and it takes no new seat; it stays connected.
- * off: it offers its slots again. It holds across a start and a stop; the
- * clients' side (botHostEmbedService) sets it each frame from the lobby's
- * one-game opt-out. Main thread only. */
-void botHostEmbedSetWithhold(bool on);
+/* The player's Max slots (bothost_optout.h): 0 to 16, or
+ * BOT_HOST_MAX_AUTO for the brain's answer. It is this computer's ceiling:
+ * a server with dynamic slots may raise its bots up to it (an older server
+ * gets at most the brain's answer). 0: the host offers 0 slots, so the
+ * server takes its bots back, and it takes no new seat; it stays
+ * connected. Lowered below the bots it runs: the server moves them, else
+ * holds them. It holds across a start and a stop; the client reads it from
+ * its config at start and the lobby's Max slots box sets it. Main thread
+ * only. */
+void botHostEmbedSetMax(int max);
+int  botHostEmbedGetMax(void);
 /* The player's answer while BotHostEmbedStatus.consentAsking: yes, the
  * host takes the server's code for this join; no, it offers 0 slots for
  * this join. Main thread. */
@@ -106,7 +111,7 @@ bool botHostInprocStart(const BotHostEmbedConfig *cfg);
 void botHostInprocStop(bool tellServer);
 bool botHostInprocRunning(void);
 void botHostInprocGetStatus(BotHostEmbedStatus *out);
-void botHostInprocSetWithhold(bool on);
+void botHostInprocSetMax(int max);
 void botHostInprocConsentAnswer(bool yes);
 void botHostInprocSetRecord(bool on);
 /* on: run only the install's brains, as a client built with
@@ -168,21 +173,6 @@ void botHostEmbedService(struct ClientSim *cs);
 
 /* Stop at once: the player quits the game. */
 void botHostEmbedLeave(const char *why);
-
-/* The lobby's one-game opt-out: "Don't run bots on this computer for this
- * game". It is never saved. It goes off again when the player is in
- * another game: a new connection (a new ticket), another ClientSim, or no
- * game at all. botHostEmbedService sends it to the host each frame. */
-
-/* True while the server lets this computer run bots in the game of cs
- * (its ticket came, hosting is not off, the server did not refuse the
- * host, and the server is not on this computer): the lobby shows the
- * opt-out only then. */
-bool botHostEmbedOffered(struct ClientSim *cs);
-/* Turn the opt-out on or off for the game of cs. */
-void botHostEmbedSetOptOut(struct ClientSim *cs, bool on);
-/* The opt-out for the game of cs; false for any other game. */
-bool botHostEmbedOptOut(struct ClientSim *cs);
 
 #ifdef __cplusplus
 }

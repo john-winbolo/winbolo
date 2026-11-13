@@ -1401,7 +1401,7 @@ int botHostChildMain(int argc, char **argv) {
     /* It may wait in a read for ever; the process ends without it. */
     SDL_DetachThread(reader);
 
-    /* The game's first lines: the ticket, then the opt-out. */
+    /* The game's first lines: the ticket, then Max slots. */
     waitStartMs = (uint32_t)SDL_GetTicks();
     while (!haveTicket) {
         while (takeLine(line, sizeof(line))) {
@@ -1409,10 +1409,8 @@ int botHostChildMain(int argc, char **argv) {
             if (strncmp(line, "ticket ", 7) == 0) {
                 haveTicket = botHostChildTicketParse(line + 7, ticket,
                                                      sizeof(ticket));
-            } else if (strcmp(line, "withhold 1") == 0) {
-                botHostInprocSetWithhold(true);
-            } else if (strcmp(line, "withhold 0") == 0) {
-                botHostInprocSetWithhold(false);
+            } else if (strncmp(line, "max ", 4) == 0) {
+                botHostInprocSetMax(atoi(line + 4));
             } else if (strcmp(line, "quit") == 0) {
                 return BOT_HOST_CHILD_EXIT_OK;
             }
@@ -1466,10 +1464,8 @@ int botHostChildMain(int argc, char **argv) {
                 /* The id and salts count only before the host starts. */
             } else if (strcmp(line, "quit") == 0) {
                 quit = true;
-            } else if (strcmp(line, "withhold 1") == 0) {
-                botHostInprocSetWithhold(true);
-            } else if (strcmp(line, "withhold 0") == 0) {
-                botHostInprocSetWithhold(false);
+            } else if (strncmp(line, "max ", 4) == 0) {
+                botHostInprocSetMax(atoi(line + 4));
             } else if (strcmp(line, "consent 1") == 0) {
                 botHostInprocConsentAnswer(true);
             } else if (strcmp(line, "consent 0") == 0) {

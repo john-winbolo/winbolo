@@ -9,7 +9,7 @@
  * The game's own Bot Host (bothost_embed.h) can run in the game's process,
  * on a thread, or in a child process: WinBoloBotHost started with
  * --embed-child. The child runs the same code the thread runs (the ticket
- * join, official-only brains, the consent question, the one-game opt-out,
+ * join, official-only brains, the consent question, the player's Max slots,
  * the capacity answer, the recording rules) and connects to the server the
  * normal way. A brain crash or a stuck brain then stops only the child, and
  * the operating system limits the child's memory and CPU:
@@ -50,7 +50,8 @@
  * builds with no child (Web, Android) run brains with no OS sandbox.
  *
  * The game and the child talk in lines of text:
- *   game to child (stdin):  "ticket <hex>", "withhold 0|1", "consent 0|1",
+ *   game to child (stdin):  "ticket <hex>", "max <n>" (Max slots: -1 for
+ *                           the brain's answer, 0 to 16), "consent 0|1",
  *                           "quit"; in the sandbox also, before the
  *                           ticket, "machineid <hex>" and "salts <hex>..."
  *                           (the game's machine id and the salts it
@@ -103,8 +104,9 @@ extern "C" {
 
 /* The line protocol's version, in the child's hello. 2: fullmap= in the
  * hello, the sandbox lines and the relay. 3: the dedicated server's child
- * (--ds-child, --lockstep and the brain options). */
-#define BOT_HOST_CHILD_PROTOCOL 3
+ * (--ds-child, --lockstep and the brain options). 4: "max <n>" (Max
+ * slots) in place of "withhold 0|1". */
+#define BOT_HOST_CHILD_PROTOCOL 4
 
 /* The limits' defaults. 0 turns a limit off. Values to confirm. */
 #define BOT_HOST_CHILD_DEFAULT_MEM_MB   4096
@@ -474,7 +476,7 @@ BotHostChildStart botHostChildClientStart(const BotHostChildParams *p,
                                           const uint8_t *ticket,
                                           size_t ticketLen,
                                           const BotHostChildLimits *lim,
-                                          bool withhold, bool sandbox);
+                                          int max, bool sandbox);
 /* Once a frame: reads the child's lines, sees whether it still runs. */
 void botHostChildClientPoll(void);
 /* tellServer: "quit", stdin closed, a short wait, then the kill; false:
@@ -484,7 +486,7 @@ void botHostChildClientStop(bool tellServer);
 bool botHostChildClientActive(void);
 /* The last status the child sent; running is false once it ended. */
 void botHostChildClientStatus(BotHostChildStatus *out);
-void botHostChildClientSetWithhold(bool on);
+void botHostChildClientSetMax(int max);
 void botHostChildClientConsent(bool yes);
 
 /* How the child ended (valid when botHostChildClientActive and the status

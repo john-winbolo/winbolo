@@ -75,6 +75,8 @@
 /* CTRL_BOT_HOST_PACK_REQ: one bit per brain file, BRAIN_SYNC_MAX_FILES
  * of them (== BRAIN_PACK_BITMAP_BYTES of brain_pack.h). */
 #define BOT_HOST_PACK_BITMAP_BYTES 128
+/* CTRL_BOT_HOST_LIMITS and _ROW_LIMITS: no value. */
+#define BOT_HOST_LIMIT_NONE 0xFFu
 /* CTRL_BOT_HOST_ROW_SLOTS: no override, and no other row. */
 #define BOT_HOST_SLOT_OVERRIDE_NONE 0xFFu
 #define BOT_HOST_MACHINE_OTHER_NONE 0xFFu
@@ -99,6 +101,11 @@
 #define BOT_HOST_REC_F_PRINT2    0x02u
 #define BOT_HOST_REC_F_JSONL     0x04u
 #define BOT_HOST_REC_F_POOL      0x08u
+/* OPEN flag: the server reads the raw pool capture (WBPR2), so the host
+ * may record it in place of the panel JSON. Without it, and before the
+ * OPEN, the host records JSON, which every reader accepts. A server whose
+ * reader takes only JSON never sets it. 0x10 is LOWDISK; keep them apart. */
+#define BOT_HOST_REC_F_POOL_RAW  0x20u
 /* UPLOAD flag: send slowly, a game may start any time (map rotation). */
 #define BOT_HOST_REC_F_PACED     0x01u
 /* DONE and STATE flag: the host stopped recording for low disk. */
@@ -593,8 +600,7 @@ typedef enum {
      * type of its own, not a byte added to CTRL_BOT_HOST_SLOTS or
      * CTRL_BOT_HOST_STATUS, because those decoders take only their exact
      * length: an older server or client would drop the whole message. An
-     * older peer has no decoder for this type and skips it; a row with no
-     * CTRL_BOT_HOST_CPU shows no percent. */
+     * older peer has no decoder for this type and skips it. */
     CTRL_BOT_HOST_CPU,
     /* CTRL_BOT_HOST_CPU_FREE — Bot Host to server on the host's control
      * connection, one reading each 5 s: the free (idle) CPU of the host's
@@ -610,8 +616,7 @@ typedef enum {
      * Bot Host to server (idx BOT_HOST_CPU_IDX_SELF) when it changes; server
      * to lobby players and spectators for row idx, with owner: the player
      * whose own computer the host is, or BOT_HOST_CPU_OWNER_NONE. A type of
-     * its own, as CTRL_BOT_HOST_CPU, so an older peer skips it; a row with
-     * no CTRL_BOT_HOST_CPU_BOT shows the CTRL_BOT_HOST_CPU text. */
+     * its own, as CTRL_BOT_HOST_CPU, so an older peer skips it. */
     CTRL_BOT_HOST_CPU_BOT,
     /* CTRL_BOT_HOST_LAG — server to lobby players and spectators: the lag
      * the server measures to Bot Host row idx for the bot placement (the
@@ -688,6 +693,37 @@ typedef enum {
      * has no decoder for it and skips it; a client of an older server gets
      * none and shows no bot rows when it does not host the game. */
     CTRL_BOT_TIMING,
+    /* CTRL_BOT_HOST_HELD — server to lobby players and spectators: for the
+     * server's own row of the Bot Host list (idx MAX_BOT_HOSTS), the lobby
+     * bot seats with no bot running anywhere yet, such as a scenario's
+     * seats held for a later wave, bit n for player n. The lobby lists
+     * them under that row by name, with the server's bots. They are not
+     * in the row's used count or its seats, and the bot placement does not
+     * read them. Sent when the bits change and on join. A type of its own,
+     * not a field added to CTRL_BOT_HOST_STATUS, because that decoder takes
+     * only its exact length: an older client skips this type and lists
+     * the row as before. */
+    CTRL_BOT_HOST_HELD,
+    /* CTRL_BOT_HOST_LIMITS — both ways, for dynamic slots
+     * (-bothost-dynamic-slots). Server to Bot Host, once a connection,
+     * with every byte BOT_HOST_LIMIT_NONE: the server knows dynamic slots,
+     * so the host may offer its ceiling. Bot Host to server, as its answer
+     * and when a value changes: start, the slots a game starts at; ceiling,
+     * the most it runs (its CTRL_BOT_HOST_SLOTS then counts up to it); and
+     * reserve, the free CPU percent it tries to keep. BOT_HOST_LIMIT_NONE
+     * in start or reserve: the server's own value (-bothost-client-start,
+     * -bothost-raise-reserve-pct). A host with no hello offers only its
+     * start, so an older server never sees the ceiling as its slots; an
+     * older host sends no answer and keeps fixed slots. */
+    CTRL_BOT_HOST_LIMITS,
+    /* CTRL_BOT_HOST_ROW_LIMITS — server to lobby players and spectators:
+     * for Bot Host row idx, its ceiling (the row's Max slots), the free
+     * CPU percent it tries to keep, and the slots its own CPU estimate says
+     * fit while it keeps that free (BOT_HOST_LIMIT_NONE before the first
+     * CPU reading). Sent when it changes and on join. A type of its own,
+     * so an older client skips it; a client of an older server gets none
+     * and shows the row with no Max slots box. */
+    CTRL_BOT_HOST_ROW_LIMITS,
     CTRL_EVENT_TYPE_COUNT   /* sentinel — must stay last */
 } ControlEventType;
 
@@ -1819,6 +1855,12 @@ typedef struct ControlEvent {
             uint8_t  bytes[OVERRUN_RECORD_MAX_BYTES];
         } botTiming;
 
+        /* CTRL_BOT_HOST_HELD — see the enum. */
+        struct {
+            uint8_t  idx;    /* the row, MAX_BOT_HOSTS for the server's */
+            uint16_t held;   /* bit n for player n */
+        } botHostHeld;
+
         /* CTRL_BOT_HOST_FILE_REQ — see the enum. */
         struct {
             uint32_t gen;        /* the manifest generation */
@@ -1860,6 +1902,21 @@ typedef struct ControlEvent {
             uint8_t ticket[BOT_HOST_TICKET_LEN];
             char    brain[BOT_HOST_BRAIN_NAME_LEN];
         } botHostTicket;
+
+        /* CTRL_BOT_HOST_LIMITS — see the enum. */
+        struct {
+            uint8_t start;       /* BOT_HOST_LIMIT_NONE: the server's */
+            uint8_t ceiling;     /* at most BOT_HOST_MAX_SLOTS */
+            uint8_t reserve;     /* percent; BOT_HOST_LIMIT_NONE: the server's */
+        } botHostLimits;
+
+        /* CTRL_BOT_HOST_ROW_LIMITS — see the enum. */
+        struct {
+            uint8_t idx;         /* the row, 0..MAX_BOT_HOSTS - 1 */
+            uint8_t ceiling;     /* 0..16 */
+            uint8_t reserve;     /* percent */
+            uint8_t fits;        /* BOT_HOST_LIMIT_NONE: not known */
+        } botHostRowLimits;
     } u;
 } ControlEvent;
 

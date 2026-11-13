@@ -49,7 +49,6 @@
 extern "C" {
 #include "client_sim.h"      /* ClientSim + lobby getters; MAX_TANKS, BrainList, PingBand */
 #include "client_net.h"      /* clientSimNetSend* — kick, host transfer, claim start */
-#include "bot_host_cpu.h"    /* BOT_HOST_CPU_* — the Bot Host rows' CPU estimate */
 #include "control_event.h"   /* BOT_HOST_CPU_OWNER_NONE, BOT_HOST_LAG_UNKNOWN */
 #include "bot_host_machine.h"  /* BOT_HOST_MACHINE_SERVER */
 #include "bolo_rand.h"       /* bolo_rand_below — random pool for a team's first bot */
@@ -67,6 +66,8 @@ extern "C" {
 #include "../../map_preview_popup.h"  /* mapPreviewPopupFocusMapSquare */
 #include "../../../../winbolonet/winbolonet_core.h"  /* winbolonetIsRunning */
 #include "../../../../bothost/bothost_embed.h" /* botHostEmbedGetStatus — this computer's own Bot Host */
+#include "../../../../bothost/bothost_optout.h" /* botHostMaxFormat — the saved Max slots */
+#include "../../../../common/prefs.h"           /* prefsSetString — the saved Max slots */
 #if defined(WINBOLO_VOICE)
 #include "../../../voice.h"   /* voiceGetTalkingMap — lobby mic icons;
                                * the own-row voice sub-row's state */
@@ -662,92 +663,52 @@ static void renderSpectatorGroup(ClientSim *cs, int myPlayerNum, float s) {
  * it runs itself, against its own capacity) is always the last; it is not a
  * connection and has no controls. Nothing is drawn when the server sends no
  * rows (a local game, or a server with Bot Hosts off). */
-/* The one-game opt-out: "Don't run bots on this computer for this game",
- * for a player whose computer the server lets run its bots. On: this
- * computer's Bot Host offers the server 0 slots and the server takes its
- * bots back; off again: it offers its slots again. Never saved: it is off
- * again in the next game (bothost_optout.h). Shown with the
- * "this computer runs bots" line, and also in a build that hides that line
- * (WINBOLO_HIDE_CLIENT_BOT_HOST_MSG). */
-static void renderClientBotHostOptOut(ClientSim *cs) {
-    if (!botHostEmbedOffered(cs)) return;
-    bool off = botHostEmbedOptOut(cs);
-    char label[256];
-    SDL_snprintf(label, sizeof(label), "%s##clientBotHostOptOut",
-                 langGetText(STR_DLGLOBBY_CLIENT_BOTHOST_OPTOUT));
-    if (ImGui::Checkbox(label, &off)) {
-        botHostEmbedSetOptOut(cs, off);
-    }
-    if (ImGui::IsItemHovered() && ImGui::BeginTooltip()) {
-        ImGui::PushTextWrapPos(ImGui::GetFontSize() * 28.0f);
-        ImGui::TextUnformatted(
-            langGetText(STR_DLGLOBBY_CLIENT_BOTHOST_OPTOUT_TIP));
-        ImGui::PopTextWrapPos();
-        ImGui::EndTooltip();
-    }
-}
-
 /* WINBOLO_HIDE_LOBBY_BOT_HOSTS hides the whole Bot Hosts list below (rows,
- * slot boxes and the "this computer runs bots" line). Only the opt-out box
- * stays. System Info still shows every bot's host. */
+ * Max slots boxes and the "this computer runs bots" line). The saved Max
+ * slots still holds. System Info still shows every bot's host. */
 #ifndef WINBOLO_HIDE_LOBBY_BOT_HOSTS
-/* The row's slot box: "Slots [All (4)]", 0 up to the slots the host offers.
- * It only lowers, and it lasts for this lobby. Read-only for a player who
- * may not change Server Settings, and for everyone when -bothost-slots on
- * the server set it. */
-static void renderBotHostSlotsBox(ClientSim *cs, int idx,
-                                  const ClientBotHostRow *r, bool mayEdit) {
-    const bool editable = mayEdit && !r->slotLocked;
-    const bool none = r->slotOverride == BOT_HOST_SLOT_OVERRIDE_NONE;
-    char preview[64];
-    MessageArgs aa = {};
-    aa.number = r->slots;
-    char allText[64];
-    SDL_strlcpy(allText, langGetTextFmt(STR_DLGLOBBY_BOTHOST_SLOTS_ALL, &aa),
-                sizeof(allText));
-    if (none) {
-        SDL_strlcpy(preview, allText, sizeof(preview));
-    } else {
-        SDL_snprintf(preview, sizeof(preview), "%u", (unsigned)r->slotOverride);
+/* The row's "Max slots [N]" box: the most bots the server may raise the
+ * host to (its ceiling), 0 to 16. Values above the slots its CPU estimate
+ * says fit while it keeps its reserve free show greyer, as in the Server
+ * bot slots row; no grey before the first reading. Only the player at a
+ * player's computer changes it, on their own row: it is saved in this
+ * client's config, and the host tells the server at once. A Bot Host
+ * program's row and other players' rows are read-only. */
+static void renderBotHostMaxBox(int idx, const ClientBotHostRow *r,
+                                bool own) {
+    int value = r->rowLimitsHave ? (int)r->limitCeiling : (int)r->slots;
+    if (own) {
+        const int max = botHostEmbedGetMax();
+        if (max >= 0) value = max;
     }
-    const ImGuiStyle &st = ImGui::GetStyle();
-    const float comboW = ImMax(ImGui::CalcTextSize(allText).x,
-                               ImGui::CalcTextSize(preview).x)
-                       + st.FramePadding.x * 2.0f + ImGui::GetFrameHeight();
+    const int fits = (r->rowLimitsHave && r->limitFits != BOT_HOST_LIMIT_NONE)
+                         ? (int)r->limitFits : -1;
+    char preview[16];
+    SDL_snprintf(preview, sizeof(preview), "%d", value);
+    MessageArgs ma = {};
+    ma.number = fits;
+    char overTip[256];
+    SDL_strlcpy(overTip, langGetTextFmt(STR_DLGLOBBY_BOTHOST_MAX_OVER, &ma),
+                sizeof(overTip));
+    const bool player = r->cpuBotHave &&
+                        r->cpuBotOwner != BOT_HOST_CPU_OWNER_NONE;
+    const char *tip = langGetText(own ? STR_DLGLOBBY_BOTHOST_MAX_OWN_TIP
+                                  : player ? STR_DLGLOBBY_BOTHOST_MAX_PLAYER_TIP
+                                           : STR_DLGLOBBY_BOTHOST_MAX_DEDICATED_TIP);
     ImGui::PushID(idx);
     ImGui::Indent(ImGui::GetTreeNodeToLabelSpacing());
     ImGui::AlignTextToFramePadding();
-    ImGui::TextDisabled("%s", langGetText(STR_DLGLOBBY_BOTHOST_SLOTS_LABEL));
+    ImGui::TextDisabled("%s", langGetText(STR_DLGLOBBY_BOTHOST_MAX_LABEL));
     ImGui::SameLine();
-    if (!editable) ImGui::BeginDisabled();
-    ImGui::SetNextItemWidth(comboW);
-    bool open = ImGui::BeginCombo("##bothostslots", preview);
-    if (!open && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-        ImGui::SetTooltip("%s", langGetText(r->slotLocked
-                                    ? STR_DLGLOBBY_BOTHOST_SLOTS_LOCKED
-                                    : STR_DLGLOBBY_BOTHOST_SLOTS_TIP));
+    const int v = lobbyBotSlotsCombo("##bothostmax", value, preview, fits,
+                                     own, tip, false, overTip);
+    if (v >= 0 && own) {
+        char text[16];
+        botHostMaxFormat(v, text, sizeof(text));
+        prefsSetString(BOT_HOST_MAX_PREFS_SECTION, BOT_HOST_MAX_PREFS_KEY,
+                       text);
+        botHostEmbedSetMax(v);
     }
-    if (open) {
-        uint8_t msg[2];
-        msg[0] = (uint8_t)idx;
-        if (ImGui::Selectable(allText, none) && !none) {
-            msg[1] = (uint8_t)BOT_HOST_SLOT_OVERRIDE_NONE;
-            lobbySendSetting(cs, LST_BOT_HOST_SLOTS, msg, 2);
-        }
-        if (none) ImGui::SetItemDefaultFocus();
-        for (int v = 0; v <= (int)r->slots; v++) {
-            char item[8];
-            const bool sel = !none && v == (int)r->slotOverride;
-            SDL_snprintf(item, sizeof(item), "%d", v);
-            if (ImGui::Selectable(item, sel) && !sel) {
-                msg[1] = (uint8_t)v;
-                lobbySendSetting(cs, LST_BOT_HOST_SLOTS, msg, 2);
-            }
-            if (sel) ImGui::SetItemDefaultFocus();
-        }
-        ImGui::EndCombo();
-    }
-    if (!editable) ImGui::EndDisabled();
     ImGui::Unindent(ImGui::GetTreeNodeToLabelSpacing());
     ImGui::PopID();
 }
@@ -767,13 +728,13 @@ static const char *botHostRowName(const ClientBotHostRow *r) {
 }
 
 static void renderBotHostGroup(ClientSim *cs, int myPlayerNum) {
-    /* Who may change the row's slots: the players who may change Server
-     * Settings. */
-    const bool mayEdit = !clientSimIsSpectator(cs) &&
-        (lobbyIsHost(cs, myPlayerNum) || clientSimGetLobbyOpenHost(cs) ||
-         (myPlayerNum >= 0 && myPlayerNum < MAX_TANKS &&
-          (clientSimGetLobbySlot(cs, (BYTE)myPlayerNum)->clientFlags &
-           PLAYER_FLAG_ADMIN)));
+    /* The player's own computer: its row is the one whose owner is this
+     * player, while this computer's Bot Host runs. */
+    BotHostEmbedStatus own;
+    botHostEmbedGetStatus(&own);
+    const bool ownRunning = !clientSimIsSpectator(cs) && own.running &&
+                            own.connected && !own.sameServer &&
+                            myPlayerNum >= 0 && myPlayerNum < MAX_TANKS;
     int count = 0;
     bool serverRow = false;
     for (int idx = 0; ; idx++) {
@@ -786,16 +747,15 @@ static void renderBotHostGroup(ClientSim *cs, int myPlayerNum) {
             count++;
         }
     }
-    if (count == 0 && !serverRow) {
-        /* No rows yet: the opt-out still shows when the ticket is here. */
-        renderClientBotHostOptOut(cs);
-        return;
-    }
+    if (count == 0 && !serverRow) return;
 
     {
         MessageArgs args = {};
         args.number = count;
         ImGui::TextDisabled("%s", langGetTextFmt(STR_DLGLOBBY_BOTHOSTS_FMT, &args));
+        if (count > 0) {
+            ImGui::TextDisabled("%s", langGetText(STR_DLGLOBBY_BOTHOSTS_NOTE));
+        }
     }
     for (int idx = 0; ; idx++) {
         const ClientBotHostRow *r = clientSimGetBotHostRow(cs, (uint8_t)idx);
@@ -869,13 +829,35 @@ static void renderBotHostGroup(ClientSim *cs, int myPlayerNum) {
         }
         args.number2 = effSlots;
 
-        /* The row, then the host's bots in brackets by their roster names:
-         * "Laptop: ready, 2 of 2 slots (ALF, Sonny Chiba)". */
+        /* The row: "Laptop: ready, 2 of 2 slots". A Bot Host row from a
+         * server with dynamic slots says the free CPU it tries to keep in
+         * its place ("Laptop — tries to keep 25% CPU free."), with the
+         * state after it while the host is not ready, and the line above
+         * as its mouse-over. */
         char line[512];
-        SDL_strlcpy(line, langGetTextFmt(STR_DLGLOBBY_BOTHOST_ROW_FMT, &args),
-                    sizeof(line));
+        char rowTip[512];
+        SDL_strlcpy(rowTip, langGetTextFmt(STR_DLGLOBBY_BOTHOST_ROW_FMT, &args),
+                    sizeof(rowTip));
+        SDL_strlcpy(line, rowTip, sizeof(line));
+        const bool limits = !isServer && r->rowLimitsHave;
+        if (limits) {
+            MessageArgs la = {};
+            SDL_strlcpy(la.string1, args.string1, sizeof(la.string1));
+            la.number = r->limitReserve;
+            SDL_strlcpy(line,
+                        langGetTextFmt(STR_DLGLOBBY_BOTHOST_RESERVE_FMT, &la),
+                        sizeof(line));
+            if (r->state != BOT_HOST_SYNC_READY ||
+                r->recState == BOT_HOST_REC_STATE_UPLOADING ||
+                r->recState == BOT_HOST_REC_STATE_MERGING ||
+                r->recState == BOT_HOST_REC_STATE_LOWDISK) {
+                SDL_strlcat(line, " (", sizeof(line));
+                SDL_strlcat(line, args.string2, sizeof(line));
+                SDL_strlcat(line, ")", sizeof(line));
+            }
+        }
         /* A host that shares its computer: the line ends at "(0 slots)",
-         * with no bot names, no CPU text and no ping. */
+         * with no bot names and no ping. */
         const bool sameComputer =
             !isServer && r->rowSlotsHave && r->machineZero;
         if (sameComputer) {
@@ -898,9 +880,14 @@ static void renderBotHostGroup(ClientSim *cs, int myPlayerNum) {
                             sizeof(line));
             }
         }
+        /* The server's row lists its bots by their roster names, and the
+         * lobby bot seats with no bot running yet (a scenario's seats held
+         * for a later wave). They are not in its count. A Bot Host row
+         * names no bot: bots move between hosts. */
+        const unsigned listed = isServer ? (r->seats | r->held) : 0u;
         bool first = true;
         for (int s = 0; s < MAX_TANKS && !sameComputer; s++) {
-            if ((r->seats & (1u << s)) == 0) continue;
+            if ((listed & (1u << s)) == 0) continue;
             const ClientLobbySlot *ls = clientSimGetLobbySlot(cs, (BYTE)s);
             const char *nm = (ls != NULL && ls->connected && ls->playerName[0])
                                  ? ls->playerName : "?";
@@ -910,82 +897,18 @@ static void renderBotHostGroup(ClientSim *cs, int myPlayerNum) {
         }
         if (!first) SDL_strlcat(line, ")", sizeof(line));
 
-        /* How much of its machine's CPU one bot uses, as that machine
-         * estimates it: "(Estimated 3.4% per bot of the server's CPU)". The
-         * server sends the measured value, else the last one measured in
-         * this server session, else the full-budget estimate; with none of
-         * them the row says the CPU test is running. A row from an older
-         * server or host has only the whole percent of all its bots:
-         * "(Estimated 12% of the machine's CPU)", "<1%" for 0, and the CPU
-         * test text while it has none. The text is never blank and never
-         * 0. */
-        char cpuText[160] = "";
-        if (sameComputer) {
-            /* No CPU text after "(0 slots)". */
-        } else if (r->cpuBotHave) {
-            if (r->cpuBot != BOT_HOST_CPU_MILLI_UNKNOWN) {
-                MessageArgs ca = {};
-                int sid;
-                /* The full-budget estimate is an upper limit: "At most". */
-                bool atMost = r->cpuBotSrc == BOT_HOST_CPU_SRC_BUDGET;
-                botHostCpuFormatMilli(r->cpuBot, ca.string1, sizeof(ca.string1));
-                if (isServer) {
-                    sid = atMost ? STR_DLGLOBBY_BOTHOST_CPU_MAX_SERVER
-                                 : STR_DLGLOBBY_BOTHOST_CPU_BOT_SERVER;
-                } else if (r->cpuBotOwner != BOT_HOST_CPU_OWNER_NONE &&
-                           r->cpuBotOwner == clientSimGetMyPlayerNum(cs)) {
-                    sid = atMost ? STR_DLGLOBBY_BOTHOST_CPU_MAX_SELF
-                                 : STR_DLGLOBBY_BOTHOST_CPU_BOT_SELF;
-                } else {
-                    const ClientLobbySlot *os =
-                        r->cpuBotOwner < MAX_TANKS
-                            ? clientSimGetLobbySlot(cs, (BYTE)r->cpuBotOwner)
-                            : NULL;
-                    sid = atMost ? STR_DLGLOBBY_BOTHOST_CPU_MAX_OTHER
-                                 : STR_DLGLOBBY_BOTHOST_CPU_BOT_OTHER;
-                    SDL_strlcpy(ca.string2,
-                                (os != NULL && os->connected && os->playerName[0])
-                                    ? os->playerName : botHostRowName(r),
-                                sizeof(ca.string2));
-                }
-                SDL_strlcpy(cpuText, langGetTextFmt(sid, &ca), sizeof(cpuText));
-            } else {
-                SDL_strlcpy(cpuText,
-                            langGetText(STR_DLGLOBBY_BOTHOST_CPU_TESTING),
-                            sizeof(cpuText));
-            }
-        } else if (r->cpu == BOT_HOST_CPU_UNDER_ONE || r->cpu == 0) {
-            SDL_strlcpy(cpuText, langGetText(STR_DLGLOBBY_BOTHOST_CPU_UNDER_ONE),
-                        sizeof(cpuText));
-        } else if (r->cpu <= 100) {
-            MessageArgs ca = {};
-            ca.number = r->cpu;
-            SDL_strlcpy(cpuText, langGetTextFmt(STR_DLGLOBBY_BOTHOST_CPU_FMT, &ca),
-                        sizeof(cpuText));
-        } else {
-            SDL_strlcpy(cpuText, langGetText(STR_DLGLOBBY_BOTHOST_CPU_TESTING),
-                        sizeof(cpuText));
-        }
-
-        /* The host's ping, in the player list's form and colours ("45ms").
-         * A player's own Bot Host shows that player's game ping, the player
-         * list's own value; the server sends the same for the row, and the
-         * player list's copy is used here once the row's owner is known
-         * (CTRL_BOT_HOST_CPU_BOT), so the two never differ. Else the lag
-         * the server measures for the placement, smoothed over about 10 s.
-         * None on the server's own row, and none from an older server. */
+        /* A Bot Host program's ping, in the player list's form and colours
+         * ("45ms"): the lag the server measures for the placement, smoothed
+         * over about 10 s. None on a player's computer (the player list
+         * shows that player's ping), none on the server's own row, and none
+         * from an older server. */
         char pingText[16] = "";
-        uint16_t rowPing = r->lagMs;
-        if (!isServer && r->cpuBotHave &&
-            r->cpuBotOwner != BOT_HOST_CPU_OWNER_NONE &&
-            r->cpuBotOwner < MAX_TANKS) {
-            const ClientLobbySlot *os =
-                clientSimGetLobbySlot(cs, (BYTE)r->cpuBotOwner);
-            if (os != NULL && os->connected && os->pingMs > 0) {
-                rowPing = (uint16_t)os->pingMs;
-            }
-        }
-        if (!isServer && !sameComputer && rowPing != BOT_HOST_LAG_UNKNOWN) {
+        const uint16_t rowPing = r->lagMs;
+        const bool playerRow = !isServer && r->cpuBotHave &&
+                               r->cpuBotOwner != BOT_HOST_CPU_OWNER_NONE &&
+                               r->cpuBotOwner < MAX_TANKS;
+        if (!isServer && !playerRow && !sameComputer &&
+            rowPing != BOT_HOST_LAG_UNKNOWN) {
             SDL_snprintf(pingText, sizeof(pingText), "%dms", (int)rowPing);
         }
 
@@ -1003,41 +926,18 @@ static void renderBotHostGroup(ClientSim *cs, int myPlayerNum) {
         const float rowAvail = ImGui::GetContentRegionAvail().x;
         const float indent = ImGui::GetTreeNodeToLabelSpacing();
         bool pingDrawn = pingText[0] == '\0';
-        if (cpuText[0] == '\0') {
-            if (!pingDrawn && ImGui::CalcTextSize(line).x + pingW <= rowAvail) {
-                ImGui::TextUnformatted(line);
-                ImGui::SameLine();
-                ImGui::TextColored(lobbyPingColor(rowPing), "%s", pingText);
-                pingDrawn = true;
-            } else {
-                ImGui::TextWrapped("%s", line);
+        if (!pingDrawn && ImGui::CalcTextSize(line).x + pingW <= rowAvail) {
+            ImGui::TextUnformatted(line);
+            if (limits && ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("%s", rowTip);
             }
+            ImGui::SameLine();
+            ImGui::TextColored(lobbyPingColor(rowPing), "%s", pingText);
+            pingDrawn = true;
         } else {
-            /* On the row's line when the whole text fits; else on a line of
-             * its own under the row, so the row itself does not wrap in the
-             * middle of the estimate. */
-            char full[700];
-            SDL_snprintf(full, sizeof(full), "%s %s", line, cpuText);
-            if (ImGui::CalcTextSize(full).x + pingW <= rowAvail) {
-                ImGui::TextUnformatted(full);
-                if (!pingDrawn) {
-                    ImGui::SameLine();
-                    ImGui::TextColored(lobbyPingColor(rowPing), "%s", pingText);
-                    pingDrawn = true;
-                }
-            } else {
-                if (!pingDrawn &&
-                    ImGui::CalcTextSize(line).x + pingW <= rowAvail) {
-                    ImGui::TextUnformatted(line);
-                    ImGui::SameLine();
-                    ImGui::TextColored(lobbyPingColor(rowPing), "%s", pingText);
-                    pingDrawn = true;
-                } else {
-                    ImGui::TextWrapped("%s", line);
-                }
-                ImGui::Indent(indent);
-                ImGui::TextWrapped("%s", cpuText);
-                ImGui::Unindent(indent);
+            ImGui::TextWrapped("%s", line);
+            if (limits && ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("%s", rowTip);
             }
         }
         if (!pingDrawn) {
@@ -1046,11 +946,14 @@ static void renderBotHostGroup(ClientSim *cs, int myPlayerNum) {
             ImGui::Unindent(indent);
         }
         if (dim) ImGui::PopStyleColor();
-        /* No slot box when the host has no slots to give: it offers 0, or
-         * its computer's slots go to the server or another row. A slot box
-         * lowered to 0 stays, so it can be raised again. */
-        if (!isServer && r->rowSlotsHave && !r->machineZero && r->slots > 0) {
-            renderBotHostSlotsBox(cs, idx, r, mayEdit);
+        /* The Max slots box: on each Bot Host row from a server with
+         * dynamic slots, and on the player's own row from any server, so
+         * Max 0 stays one click away. None on a row whose computer's slots
+         * go to the server or another row. */
+        const bool ownRow = playerRow && ownRunning &&
+                            (int)r->cpuBotOwner == myPlayerNum;
+        if (!isServer && !sameComputer && (limits || ownRow)) {
+            renderBotHostMaxBox(idx, r, ownRow);
         }
     }
 #ifndef WINBOLO_HIDE_CLIENT_BOT_HOST_MSG
@@ -1069,7 +972,6 @@ static void renderBotHostGroup(ClientSim *cs, int myPlayerNum) {
         }
     }
 #endif
-    renderClientBotHostOptOut(cs);
 }
 #endif /* !WINBOLO_HIDE_LOBBY_BOT_HOSTS */
 
@@ -3185,9 +3087,7 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
     /* Connected spectators, listed below the teams + unassigned tray. */
     renderSpectatorGroup(cs, myPlayerNum, s);
     /* Connected Bot Hosts, below the spectators. */
-#ifdef WINBOLO_HIDE_LOBBY_BOT_HOSTS
-    renderClientBotHostOptOut(cs);
-#else
+#ifndef WINBOLO_HIDE_LOBBY_BOT_HOSTS
     renderBotHostGroup(cs, myPlayerNum);
 #endif
 

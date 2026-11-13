@@ -153,7 +153,7 @@ static bool optStdin = FALSE;
 static bool optNoScenarios = false;
 /* The --scriptuploads word as typed, and the policy it resolves to. */
 static char optScriptUploads[16] = "";
-static ScriptUploadPolicy optScriptUploadPolicy = SCRIPT_UPLOAD_ALLOW;
+static ScriptUploadPolicy optScriptUploadPolicy = SCRIPT_UPLOAD_OFF;
 /* Run every scenario script with the full Lua library and no limits. */
 static bool optUnsafeScripts = false;
 /* This computer's own Bot Host (bothost_embed.h): off, a fixed slot count,
@@ -170,11 +170,10 @@ static int optBotHostMemMb = -1;
 static int optBotHostCpuPct = -1;
 /* The child with no file sandbox and its own network (--bothost-no-sandbox). */
 static bool optBotHostNoSandbox = false;
-/* A test of the lobby's one-game opt-out: turn "Don't run bots on this
- * computer for this game" on at one tick and off again at another (0:
- * never). */
-static int optBotHostOptOutAtTick = 0;
-static int optBotHostOptInAtTick = 0;
+/* A test of the lobby's Max slots: set this computer's Max slots to 0 at
+ * one tick and back to the brain's answer at another (0: never). */
+static int optBotHostMaxZeroAtTick = 0;
+static int optBotHostMaxAutoAtTick = 0;
 static bool optLogBinary = FALSE;
 static uint64_t optSeed = 0;
 static bool optSeedSet = FALSE;
@@ -2173,8 +2172,8 @@ static void printUsage(const char *prog) {
     "                    does not run a script carried by a map a client\n"
     "                    uploaded (those maps play plainly, whether the script\n"
     "                    is packed into the file or sits beside it; every other\n"
-    "                    map is unaffected), allow keeps them for the session\n"
-    "                    (default), persist keeps them for good\n"
+    "                    map is unaffected) (default), allow keeps them for\n"
+    "                    the session, persist keeps them for good\n"
     "  --no-bothost      Do not run the server's bots on this computer\n"
     "  --bothost-slots N Offer the server N bot slots (default: the brain's\n"
     "                    own capacity answer for this computer)\n"
@@ -2199,13 +2198,12 @@ static void printUsage(const char *prog) {
     "  --vanish-at-tick N\n"
     "                    A crash test: at game tick N the program ends at once,\n"
     "                    with no quit to the server from the player or its Bot Host\n"
-    "  --bothost-optout-at-tick N\n"
-    "                    At game tick N, turn on the lobby's \"Don't run bots on\n"
-    "                    this computer for this game\": the server takes this\n"
-    "                    computer's bots back (a test)\n"
-    "  --bothost-optin-at-tick N\n"
-    "                    At game tick N, turn it off again: this computer offers\n"
-    "                    its slots again (a test)\n"
+    "  --bothost-max-zero-at-tick N\n"
+    "                    At game tick N, set this computer's Max slots to 0:\n"
+    "                    the server takes this computer's bots back (a test)\n"
+    "  --bothost-max-auto-at-tick N\n"
+    "                    At game tick N, set Max slots to the brain's answer\n"
+    "                    again: this computer offers its slots again (a test)\n"
     "  --allow-unsafe-scripts\n"
     "                    Run scenario scripts with the full Lua standard\n"
     "                    library, no memory cap, no time limits and precompiled\n"
@@ -2394,10 +2392,10 @@ static bool parseArgs(int argc, char **argv) {
       optBotHostNoSandbox = true;
     } else if (strcmp(argv[i], "--vanish-at-tick") == 0 && i + 1 < argc) {
       optVanishAtTick = atoi(argv[++i]);
-    } else if (strcmp(argv[i], "--bothost-optout-at-tick") == 0 && i + 1 < argc) {
-      optBotHostOptOutAtTick = atoi(argv[++i]);
-    } else if (strcmp(argv[i], "--bothost-optin-at-tick") == 0 && i + 1 < argc) {
-      optBotHostOptInAtTick = atoi(argv[++i]);
+    } else if (strcmp(argv[i], "--bothost-max-zero-at-tick") == 0 && i + 1 < argc) {
+      optBotHostMaxZeroAtTick = atoi(argv[++i]);
+    } else if (strcmp(argv[i], "--bothost-max-auto-at-tick") == 0 && i + 1 < argc) {
+      optBotHostMaxAutoAtTick = atoi(argv[++i]);
     } else if (strcmp(argv[i], "--allow-unsafe-scripts") == 0 ||
                strcmp(argv[i], "-allow-unsafe-scripts") == 0) {
       optUnsafeScripts = true;
@@ -3231,16 +3229,16 @@ static int runNetworkMode(void) {
       break;
     }
 
-    /* The lobby's one-game opt-out, as the player would click it. */
-    if (optBotHostOptOutAtTick > 0 && tickCount == optBotHostOptOutAtTick) {
-      fprintf(stderr, "Turning this computer's bots off for this game at "
-                      "tick %d (a test).\n", tickCount);
-      botHostEmbedSetOptOut(humanSim, true);
-    }
-    if (optBotHostOptInAtTick > 0 && tickCount == optBotHostOptInAtTick) {
-      fprintf(stderr, "Turning this computer's bots on again at tick %d "
+    /* The lobby's Max slots, as the player would set it. */
+    if (optBotHostMaxZeroAtTick > 0 && tickCount == optBotHostMaxZeroAtTick) {
+      fprintf(stderr, "Setting this computer's Max slots to 0 at tick %d "
                       "(a test).\n", tickCount);
-      botHostEmbedSetOptOut(humanSim, false);
+      botHostEmbedSetMax(0);
+    }
+    if (optBotHostMaxAutoAtTick > 0 && tickCount == optBotHostMaxAutoAtTick) {
+      fprintf(stderr, "Setting this computer's Max slots to the brain's "
+                      "answer at tick %d (a test).\n", tickCount);
+      botHostEmbedSetMax(-1);
     }
     /* This computer's Bot Host: start, stop, the bot count. */
     botHostEmbedService(humanSim);

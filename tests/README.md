@@ -283,6 +283,16 @@ bot_host_link.c). A layout that is lopsided but good stays as it is:
   spread). The console says the severity (rate / P) and the wait for a
   bad rate, and the shortage, the bots given and how many each target
   took for a batch.
+- Lag between Bot Hosts: a Bot Host gives a bot to another Bot Host with
+  much less lag (both lags known; the target's 1 + lag / R at most 67% of
+  the source's, and the target's score for one more bot at most 67% of the
+  source's score now; the target good and with room). So a Bot Host that
+  joins a game in progress, or comes back to it, takes bots from a host
+  with much more lag. The server is never the source or the target of this
+  rule, and the counts alone move nothing. `-bothost-lag-ref-ms 0` turns it
+  off with the other lag rules. Reason "lower lag". Unit tests:
+  `bot_host_place_keep_lag_join` and `bot_host_sysinfo_empty_hosts` (System
+  Info lists a connected Bot Host that runs no bot below the bot rows).
 - `-bothost-spread-even` brings back the old even spread: bots also move
   between good places so that each is about equally full, with the lag
   rules below. The stay rule still holds.
@@ -334,7 +344,7 @@ lag to each host also counts:
   lower than its score now, so small changes in lag move no bots.
 - `-bothost-lag-ref-ms <ms>` sets R (default 100). 0 turns all the lag
   rules off: the placement is then the one without lag.
-- `-bothost-lag-max-ms <ms>` sets L (default 250). 0: no ceiling.
+- `-bothost-lag-max-ms <ms>` sets L (default 300). 0: no ceiling.
 - The unit test `bot_host_place_lag` prints the spread with and without
   lag for hosts of 8, 4, 2 and 1 slots.
 

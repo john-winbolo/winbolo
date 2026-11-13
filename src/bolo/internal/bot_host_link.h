@@ -174,7 +174,7 @@ typedef struct {
  * part lower than its score now (0.33: 33% lower), so small changes in
  * lag do not move bots back and forth. */
 #define BOT_HOST_LAG_REF_MS_DEFAULT 100
-#define BOT_HOST_LAG_MAX_MS_DEFAULT 250
+#define BOT_HOST_LAG_MAX_MS_DEFAULT 300
 #define BOT_HOST_LAG_GAIN_DEFAULT   0.33
 
 typedef struct {
@@ -238,10 +238,19 @@ int  botHostPlacePickOther(const BotHostPlaceHost *hosts, int n,
  *   2. Bad (bad: see BotHostPlaceHost): a host that runs its bots badly
  *      gives one, to a place that is not bad, unless badHold is set. The
  *      server itself takes no bot past its slots in this case.
- * The place a bot goes to: the server itself first, while it is open, not
- * bad and below its slots; else the best host by the scores of
- * botHostPlacePickLag (a host that is not bad first, for rule 1 any host
- * after that). So new bots, which start on the server, stay there while
+ *   3. Lag (with the lag rules on): a Bot Host gives one to another Bot
+ *      Host when both lags are known, the target is not bad and has room,
+ *      the target's lag factor (1 + lag / refMs) is at most (1 - gain) x
+ *      the source's, and the target's score for one more bot is at most
+ *      (1 - gain) x the source's score now. So a host that joins a game
+ *      in progress (or comes back) with much less lag takes bots from a
+ *      host with much more lag. Only lag moves a bot by this rule, never
+ *      the counts alone; the server itself is never the source or the
+ *      target here, so no bot moves between the server and a host by lag.
+ * The place a bot goes to (rules 1 and 2): the server itself first, while
+ * it is open, not bad and below its slots; else the best host by the
+ * scores of botHostPlacePickLag (a host that is not bad first, for rule 1
+ * any host after that). So new bots, which start on the server, stay there while
  * it has slots and is good, and only the bots it cannot take go to Bot
  * Hosts.
  *
@@ -252,7 +261,8 @@ typedef enum {
     BOT_HOST_SPREAD_NONE = 0,
     BOT_HOST_SPREAD_OVER_SLOTS,  /* rule 1: the source is over its slots */
     BOT_HOST_SPREAD_BAD,         /* rule 2: the source runs its bots badly */
-    BOT_HOST_SPREAD_EVEN         /* the old even spread */
+    BOT_HOST_SPREAD_EVEN,        /* the old even spread */
+    BOT_HOST_SPREAD_LAG          /* rule 3: a Bot Host with much less lag */
 } BotHostSpreadWhy;
 
 /* One move by the rules above: a bot of *from to *to, and why. False when
@@ -378,7 +388,30 @@ int  botHostTrailPickSeat(const BotHostTrail *t, const int *seats,
  *
  * The limit is for one game: the server clears it, the probes and the
  * step down at a new game and a new round (botHostOverrunNewGame), and
- * all of the state when a host joins again (botHostOverrunReset). */
+ * all of the state when a host joins again (botHostOverrunReset).
+ *
+ * Dynamic slots (-bothost-dynamic-slots, cfg dynamic). A place with a
+ * start (botHostOverrunSetStart) always has a live limit between 0 and its
+ * ceiling (the slots it reports). The limit starts at the start; at a new
+ * game it is the start again, or, with carryLimit, the limit the last game
+ * ended with. While the game runs the limit goes up by up to raiseStep
+ * bots (at most once each stepSecs, never above the ceiling) only when all
+ * of these hold:
+ *   a. the place is full: its bots are at the limit;
+ *   b. the overrun rate over a full window is not above pct;
+ *   c. the predicted free CPU (the free CPU average less n one-bot costs)
+ *      stays above the place's reserve (reservePct; 0: above 0);
+ *   d. the place's lag is known and at most raiseLagMaxMs (0: no check);
+ *   e. no step down came in the last raiseAfterCutSecs.
+ * The step downs are as above. The reserve is soft: the place tries to
+ * keep reservePct of its CPU free. With reserveNew it also refuses new
+ * bots that would take the predicted free CPU under it
+ * (botHostOverrunMayTake). A place whose free CPU is under its reserve
+ * counts as bad (botHostOverrunUnderReserve): it gives one bot each
+ * stepSecs to a place with room. With no room its bots stay and keep
+ * running, so they may push the CPU past the reserve. A short dip does not
+ * count: the average over a full window and the average of the last
+ * reserveRecentSecs must both be under the reserve. */
 #define BOT_HOST_OVR_PCT_DEFAULT           0.5
 #define BOT_HOST_OVR_EMERGENCY_PCT_DEFAULT 5.0
 #define BOT_HOST_OVR_GAIN_DEFAULT          0.5
@@ -408,6 +441,18 @@ int  botHostTrailPickSeat(const BotHostTrail *t, const int *seats,
 #define BOT_HOST_FREE_MAX_READINGS 600
 /* A free CPU reading that is not known. */
 #define BOT_HOST_FREE_UNKNOWN     0xFFu
+/* The dynamic slot knobs (servermain.c -bothost-*). */
+#define BOT_HOST_DYN_SLOTS_DEFAULT        true
+#define BOT_HOST_RAISE_RESERVE_PCT_DEFAULT 25
+#define BOT_HOST_CLIENT_RESERVE_PCT_DEFAULT 25
+#define BOT_HOST_RAISE_LAG_MAX_MS_DEFAULT  200
+#define BOT_HOST_RAISE_STEP_DEFAULT        2
+#define BOT_HOST_RAISE_AFTER_CUT_DEFAULT   120
+#define BOT_HOST_CARRY_LIMIT_DEFAULT       true
+#define BOT_HOST_CLIENT_START_DEFAULT      2
+/* The recent free CPU average of the under-reserve rule, in seconds; 0:
+ * only the full window counts. */
+#define BOT_HOST_RESERVE_RECENT_SECS_DEFAULT 10
 
 typedef struct {
     double pct;            /* the target rate in percent; 0: the check is off */
@@ -421,6 +466,14 @@ typedef struct {
     bool   freeBatch;      /* low free CPU gives up to n bots in one step */
     int    freeSampleSecs;
     int    freeHistorySecs;
+    /* Dynamic slots: only for a place with a start. */
+    bool   dynamic;
+    int    raiseStep;          /* the most bots one raise adds */
+    int    raiseLagMaxMs;      /* d. of the raise; 0: no lag check */
+    int    raiseAfterCutSecs;  /* e. of the raise */
+    bool   carryLimit;         /* the limit carries into the next game */
+    int    reserveRecentSecs;  /* the under-reserve rule's recent average;
+                                * 0: off */
 } BotHostOverrunCfg;
 
 typedef struct {
@@ -454,6 +507,14 @@ typedef struct {
      * raise rule do not use it. */
     double   costFallback;
     bool     costFallbackKnown;
+    /* Dynamic slots (botHostOverrunSetStart): the start, -1 for none (the
+     * place then has no live limit), the free CPU the place tries to keep
+     * in percent, whether that refuses new bots too, and the probes since
+     * the last step down. */
+    int      start;
+    double   reservePct;
+    bool     reserveNew;
+    int      sinceCut;
 } BotHostOverrunState;
 
 typedef struct {
@@ -463,6 +524,8 @@ typedef struct {
     int      slots;        /* the slots the host reports */
     uint8_t  botCpu;       /* its CTRL_BOT_HOST_CPU byte */
     uint8_t  freePct;      /* its last free CPU reading */
+    double   lagMs;        /* its lag, below 0: not known (dynamic raise) */
+    bool     running;      /* the game runs (dynamic raise) */
 } BotHostOverrunProbe;
 
 typedef enum {
@@ -470,7 +533,8 @@ typedef enum {
     BOT_HOST_OVR_OVER,     /* the rate is above pct and a move may come
                             * now: the caller looks for one
                             * (botHostOvrPickMove) */
-    BOT_HOST_OVR_RAISE,    /* the limit goes up by 1 */
+    BOT_HOST_OVR_RAISE,    /* the limit goes up (by 1; dynamic: by up to
+                            * raiseStep) */
     BOT_HOST_OVR_REFUSE    /* a raise was looked at and refused */
 } BotHostOverrunAction;
 
@@ -500,8 +564,35 @@ void botHostOverrunCfgDefaults(BotHostOverrunCfg *cfg);
 /* Clears the state: no limit, no probes, no history. */
 void botHostOverrunReset(BotHostOverrunState *st);
 /* A new game or round: no limit, no probes, no step down; the free CPU
- * history and the one-bot cost stay. */
-void botHostOverrunNewGame(BotHostOverrunState *st);
+ * history and the one-bot cost stay. A place with a start gets the start
+ * as its limit, or with carryLimit keeps the limit it has. Returns the
+ * BOTHOST_DECISION_LIMIT_START or _LIMIT_CARRY the record logs, 0 for a
+ * place with no start. */
+int  botHostOverrunNewGame(BotHostOverrunState *st,
+                           const BotHostOverrunCfg *cfg);
+/* Dynamic slots for a place: start (-1: none, the place has no live
+ * limit), its ceiling, the free CPU it tries to keep (reservePct) and
+ * whether that refuses new bots (reserveNew). Called each placement step;
+ * a new start puts the limit at it. The limit stays at most the
+ * ceiling. */
+void botHostOverrunSetStart(BotHostOverrunState *st, int start, int ceiling,
+                            double reservePct, bool reserveNew);
+/* The place has a live limit (a start with dynamic slots on). */
+bool botHostOverrunDynamic(const BotHostOverrunState *st,
+                           const BotHostOverrunCfg *cfg);
+/* A place under its reserve, while it has bots and a reserve: the window
+ * is full (windowSecs of probes since the last change, so after a move the
+ * averages show the bot that left) and both its free CPU average over the
+ * window and the average of its last reserveRecentSecs (0: not checked)
+ * are below reservePct. So a dip that has ended stops the moves at once. */
+bool botHostOverrunUnderReserve(const BotHostOverrunState *st,
+                                const BotHostOverrunCfg *cfg, int bots);
+/* The bots the place's free CPU fits while it keeps its reserve free: the
+ * free CPU average plus its bots' cost less the reserve, over the one-bot
+ * cost (the measured one, else the full-budget estimate). -1 when not
+ * known (no reading or no cost yet). */
+int  botHostOverrunFits(const BotHostOverrunState *st,
+                        const BotHostOverrunCfg *cfg, int bots);
 /* The host may take one more bot now by the free CPU evidence (it has
  * bots now; latestFree is its last free CPU reading). Slots and the limit
  * are checked by the placement, not here. rep (may be NULL) gets the
@@ -567,7 +658,8 @@ bool botHostOverrunRate(const BotHostOverrunState *st,
  * stepSecs). Returns the new limit. */
 int  botHostOverrunMoved(BotHostOverrunState *st, int bots);
 /* As botHostOverrunMoved for n bots given in one step (the free CPU
- * batch): the limit becomes bots - n. */
+ * batch): the limit becomes bots - n. It counts as a step down for the
+ * dynamic raise (raiseAfterCutSecs). */
 int  botHostOverrunMovedN(BotHostOverrunState *st, int bots, int n);
 /* A bad place gave one bot for its overrun rate (the placement, not the
  * overrun move): the probes start again, so its next rate is measured

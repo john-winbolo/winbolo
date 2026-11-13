@@ -418,13 +418,22 @@ typedef struct BotManager {
  *                         the bot's own ClientSim world and own tank.
  * botRunnerThink        - the think itself: deadline, budget hook, brain
  *                         tick and both input packets stamped for `tick`.
- * botRunnerTargetMs     - the per-bot budget from the 20 ms formula. */
+ * botRunnerTargetMs     - the per-bot budget from the 20 ms formula, with
+ *                         the server's 6 ms reserve for its game sim.
+ * botRunnerTargetMsReserve - the same formula with the caller's own sim
+ *                         reserve. The Bot Host runs no game sim and
+ *                         passes 0. */
 void   botRunnerWireBrain(BotContext *bot);
 void   botRunnerBeginTick(BotContext *bot, double targetMs);
 void   botRunnerPrepareThink(BotContext *bot, GameSim *world,
                              const TankModifiers *mods);
 void   botRunnerThink(BotJobCtx *j, double targetMs, uint32_t tick);
 double botRunnerTargetMs(double serialMsEwma, int runners, int activeBots);
+double botRunnerTargetMsReserve(double serialMsEwma, double reservedSimMs,
+                                int runners, int activeBots);
+/* The server's sim reserve in botRunnerTargetMs, for the Bot Host's
+ * --budget-legacy option. */
+#define BOT_RUNNER_SERVER_SIM_RESERVE_MS 6.0
 
 /* The BRAIN_INIT_ARG a brain built for this seat now would read: `staged`
  * (may be NULL) plus the seat's mode and difficulty tokens when the brain

@@ -128,6 +128,7 @@ bool spectatorRun(struct SDL_Window *window, struct SDL_Renderer *renderer,
 #include "dialogs/imgui_lobby.h"
 
 #include "../../bothost/bothost_embed.h" /* botHostEmbedService / Leave */
+#include "../../bothost/bothost_optout.h" /* botHostMaxParse */
 
 #if defined(WINBOLO_VOICE)
 #include "../voice.h"
@@ -282,7 +283,7 @@ int            gameFrontHostingUploadMaxStorage = 8;
 /* Persist upload dir. Empty until gameFrontGetPrefs seeds the default
  * (<prefs path>uploads) or the user picks one. */
 char           gameFrontHostingUploadDir[FILENAME_MAX] = "";
-int            gameFrontHostingScriptUploadPolicy     = SCRIPT_UPLOAD_ALLOW;
+int            gameFrontHostingScriptUploadPolicy     = SCRIPT_UPLOAD_OFF;
 bool           gameFrontHostingShareScripts           = TRUE;
 int            gameFrontHostingScriptUploadMaxFiles   = 32;
 int            gameFrontHostingScriptUploadMaxStorage = 64;
@@ -4522,6 +4523,12 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   prefsGetString("SETTINGS", "UDP Port", def, buff, FILENAME_MAX);
   gameFrontMyUdp = atoi(buff);
 
+  /* The Max slots of this computer's Bot Host (the lobby's own Bot Host
+   * row); a missing key is the brain's answer. */
+  prefsGetString(BOT_HOST_MAX_PREFS_SECTION, BOT_HOST_MAX_PREFS_KEY, "Auto",
+                 buff, FILENAME_MAX);
+  botHostEmbedSetMax(botHostMaxParse(buff));
+
   /* Hosting settings ([HOSTING] section — the port/spectator/upload knobs
    * for a game hosted from the finder). Clamp on read to the same ranges the
    * UI enforces so a hand-edited INI can't inject an out-of-range value. */
@@ -4537,7 +4544,7 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   gameFrontHostingAllowSpec = YESNO_TO_TRUEFALSE(buff[0]);
   prefsGetString("HOSTING", "Run Map Scripts", "Yes", buff, FILENAME_MAX);
   gameFrontHostingScripts = YESNO_TO_TRUEFALSE(buff[0]);
-  prefsGetString("HOSTING", "Script Upload Policy", "Allow", buff, FILENAME_MAX);
+  prefsGetString("HOSTING", "Script Upload Policy", "Off", buff, FILENAME_MAX);
   gameFrontHostingScriptUploadPolicy = scriptUploadPolicyResolve(buff);
   prefsGetString("HOSTING", "Share Scripts", "Yes", buff, FILENAME_MAX);
   gameFrontHostingShareScripts = YESNO_TO_TRUEFALSE(buff[0]);

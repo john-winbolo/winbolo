@@ -645,6 +645,11 @@ void serverSimBotTick(ServerSim *sim, aiType ai);
 BYTE   serverSimGetNumBots(ServerSim *sim);
 bool   serverSimHasAnyBot(ServerSim *sim);
 bool   serverSimIsBot(ServerSim *sim, BYTE playerNum);
+/* The bot seats with no bot manager entry, bit n for player n: a seat held
+ * for a bot that is not on the field yet. The lobby lists them by name
+ * under the server's Bot Host row (CTRL_BOT_HOST_HELD); nothing counts or
+ * places them. */
+uint16_t serverSimHeldBotSeats(ServerSim *sim);
 /* Mark a slot whose in-process consumer reads the map square a sound was
  * raised at — the gym agent, the headless brain harness. A human client is
  * sent a near/far tier and a bearing in place of the square; a bot-manager
@@ -3037,7 +3042,7 @@ bool serverSimVoiceSidesAllow(const ServerSim *sim, BYTE to, BYTE talker);
  * ALLOW keeps them for the session, PERSIST keeps them for good. Set once
  * from ServerInstanceConfig.scriptUploadPolicy at startup and carried to
  * clients on the lobby-settings event. The getter returns
- * SCRIPT_UPLOAD_ALLOW for a NULL sim. */
+ * SCRIPT_UPLOAD_OFF for a NULL sim. */
 void               serverSimSetScriptUploadPolicy(ServerSim *sim, ScriptUploadPolicy p);
 ScriptUploadPolicy serverSimGetScriptUploadPolicy(const ServerSim *sim);
 
@@ -3082,11 +3087,11 @@ uint32_t    serverSimScriptDirsGen(void);
 /* Resolve the script upload policy from its command-line or preference
  * word. A non-empty word is matched against off / allow / persist
  * ignoring case; an unknown word logs a warning naming it and resolves to
- * SCRIPT_UPLOAD_ALLOW. No word (NULL or empty) gives SCRIPT_UPLOAD_ALLOW. */
+ * SCRIPT_UPLOAD_OFF. No word (NULL or empty) gives SCRIPT_UPLOAD_OFF. */
 ScriptUploadPolicy scriptUploadPolicyResolve(const char *word);
 
 /* The preference spelling of a policy: "Off", "Allow" or "Persist".
- * Anything out of range reads as "Allow". */
+ * Anything out of range reads as "Off". */
 const char        *scriptUploadPolicyWord(ScriptUploadPolicy p);
 
 /* Read the "Spectator Delay" preference: whole seconds, 0 = live. A number

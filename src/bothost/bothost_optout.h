@@ -1,17 +1,17 @@
 /*
- * The lobby's one-game opt-out from running bots on this computer: "Don't
- * run bots on this computer for this game". The Bot Host inside each client
- * runs the server's bots by default; a player can turn it off for the game
- * they are in, and only for that game.
+ * A Bot Host's slots: the player's Max slots of the Bot Host inside a
+ * client, what a host offers a server, and the stop of the built-in host
+ * on the server's own computer.
  *
- * The state is never saved and is in no config file. It belongs to one
- * game: the ClientSim and the CTRL_BOT_HOST_TICKET ticket it was turned on
- * with. The server sends a new ticket on each new connection (a rejoin, the
- * next round of a map rotation), so a new ticket, another ClientSim or no
- * game at all turns it off again.
+ * Max slots is the lobby's "Max slots" box on the player's own Bot Host
+ * row, saved in the client config ("BOT HOST", "Max Slots"). 0 runs no
+ * bot on this computer (it replaces the old one-game opt-out); 1 to 16 is
+ * the most bots; "Auto" (BOT_HOST_MAX_AUTO) is the bot brain's own answer
+ * for this computer. With dynamic slots the server starts the host at a
+ * few bots and raises it up to Max while the computer has free CPU.
  *
  * Plain C with no other part of the program, so the unit tests can drive
- * it. bothost_embed_service.c keeps the one copy the client uses.
+ * it. The Bot Host program uses the offer rule too.
  */
 #ifndef BOTHOST_OPTOUT_H
 #define BOTHOST_OPTOUT_H
@@ -23,37 +23,40 @@
 extern "C" {
 #endif
 
-/* == BOT_HOST_TICKET_LEN (control_event.h); bothost_embed_service.c
- * checks it. */
-#define BOT_HOST_OPTOUT_TICKET_LEN 16
+#include <stddef.h>
 
-typedef struct {
-    bool        on;
-    const void *game;   /* the ClientSim it was turned on in */
-    uint8_t     ticket[BOT_HOST_OPTOUT_TICKET_LEN];
-} BotHostOptOut;
+/* Max slots: the brain's own answer. */
+#define BOT_HOST_MAX_AUTO   (-1)
+/* The most Max slots (== BOT_HOST_MAX_SLOTS, bot_host_link.h). */
+#define BOT_HOST_MAX_TOP    16
+/* The client config's place for Max slots. */
+#define BOT_HOST_MAX_PREFS_SECTION "BOT HOST"
+#define BOT_HOST_MAX_PREFS_KEY     "Max Slots"
 
-/* Off, for no game. */
-void botHostOptOutInit(BotHostOptOut *o);
-
-/* The player turns it on or off in game (a ClientSim) with that game's
- * ticket. On with no game or no ticket stays off. */
-void botHostOptOutSet(BotHostOptOut *o, bool on, const void *game,
-                      const uint8_t *ticket);
-
-/* Whether it is on for game with ticket (NULL: no ticket now). When game
- * or ticket is not the one it was turned on with, it goes off first, so it
- * never carries over to another game. */
-bool botHostOptOutCheck(BotHostOptOut *o, const void *game,
-                        const uint8_t *ticket);
+/* Max slots from its saved text: "0" to "16" (a larger number is 16), and
+ * BOT_HOST_MAX_AUTO for NULL, "", "Auto" or any other text. */
+int  botHostMaxParse(const char *text);
+/* Its saved text: "Auto" or the number. */
+void botHostMaxFormat(int max, char *out, size_t outSize);
+/* The most bots the host runs (its ceiling): max, or capacity (the
+ * brain's answer) for BOT_HOST_MAX_AUTO; 0 to BOT_HOST_MAX_TOP. */
+int  botHostMaxCeiling(int max, int capacity);
+/* The slots a host offers a server: the ceiling to a server that sent the
+ * dynamic slots hello (CTRL_BOT_HOST_LIMITS), else at most its start, so
+ * an older server never counts the ceiling as the host's slots. */
+int  botHostMaxOffer(int ceiling, int start, bool hello);
+/* The Bot Host program's ceiling: slotsMax (--slots-max) when given (above
+ * 0), else slots with --keel, else the larger of slots and cpus - 1; at
+ * most BOT_HOST_MAX_TOP. */
+int  botHostSlotsMaxDefault(int slotsMax, int slots, int cpus, bool keel);
 
 /* The built-in Bot Host on the server's own computer. When the server
  * finds that this computer is its own (CTRL_BOT_HOST_SAME_SERVER), the
  * host stops for this join: it takes no brain files (and drops the ones on
  * the way), reads no CPU, offers 0 slots and takes no bot. It stays
  * connected, so the lobby keeps its row. The next join (a new start of the
- * host) clears it, and the server checks again. It is not the opt-out
- * above and does not change it. */
+ * host) clears it, and the server checks again. It does not change Max
+ * slots. */
 #define BOT_HOST_RUN_SAME_SERVER_KIND 1   /* == BOT_HOST_MACHINE_SERVER */
 
 typedef struct {

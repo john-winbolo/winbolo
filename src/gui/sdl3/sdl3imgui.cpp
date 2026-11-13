@@ -1657,29 +1657,54 @@ static void overviewInWindowChoose(bool on) {
  * reach them; those are the panel's real form, not a stand-in, and the rules
  * keyed on this must leave them exactly as they were. False on the tablet /
  * mobile builds for the same reason: they have no pop-outs at all. The web
- * has no pop-outs either, but while its full screen map is up the panels
- * take the same in-window rules the desktop uses. */
+ * has no pop-outs either, so with a keyboard and mouse its in-window panels
+ * are always in the place of the desktop's pop-outs and take their rules, with
+ * or without the full screen map. */
 static bool panelsStandInForPopOuts(void) {
-#if !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
+#if defined(__EMSCRIPTEN__)
+    return !uiModeIsTablet();
+#elif !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
     return !uiModeIsTablet() && sdl3DrawIsOverviewInWindow();
 #else
     return false;
 #endif
 }
 
+/* True when the panels standing in for pop-outs leave the keyboard with the
+ * game. Not with a controller connected: it navigates these panels with the
+ * same stick and buttons that drive the tank, so it needs them to hold focus,
+ * and the Players panel to suspend the game as it always has. */
+static bool panelsShareKeyboard(void) {
+    return panelsStandInForPopOuts() && !inputGamepadIsConnected();
+}
+
 /* -------------------------------------------------------
  * System Info panel
  * ------------------------------------------------------- */
 
-/* Tick / brain timing graph state — only populated while
- * the System Info dialog is open. Sampled once per second
- * to match the ping graph's cadence. */
+/* Tick / brain timing graph state and the server telemetry text — only
+ * populated while the System Info dialog is open. Sampled once per second
+ * to match the ping graph's cadence: the figures change every tick, too fast
+ * to read if they are redrawn as they change. */
 #define SYS_GRAPH_SIZE 120   /* ~2 minutes at 1 sample/sec */
+#define SYS_SAMPLE_PERIOD_MS 1000
 static float    s_tickHistory[SYS_GRAPH_SIZE];
 static float    s_brainHistory[SYS_GRAPH_SIZE];
 static int      s_sysHistoryOffset = 0;
 static int      s_sysHistoryCount  = 0;
 static uint32_t s_sysLastSampleTick = 0;
+
+/* What the panel shows of the local server sim, as of the last sample. */
+typedef struct {
+    bool         valid;          /* holds a read of the current sim */
+    bool         hasBots;
+    BotPoolStats pool;
+    BotInfo      bots[MAX_TANKS];
+    bool         botValid[MAX_TANKS];
+    double       simLast;
+    double       simEwma;
+} SysServerStats;
+static SysServerStats s_sysServer;
 
 /* The Memory block's figures. Read every SYS_MEM_PERIOD_MS while the panel
  * is open and drawn from this cache between reads. The desktop and iOS show
@@ -1718,6 +1743,7 @@ static void sysInfoGraphReset(void) {
     s_sysHistoryOffset = 0;
     s_sysHistoryCount  = 0;
     s_sysLastSampleTick = 0;
+    s_sysServer.valid = false;
     memset(&s_sysMem, 0, sizeof(s_sysMem));
     s_sysMemValid    = false;
     s_sysMemHosting  = false;
@@ -1807,15 +1833,32 @@ static void renderSysInfoMemory(ServerSim *spSim) {
 }
 #endif
 
-/* Sample once per second. tickMs and brainPhaseMs are the
- * "last" values from server_lifecycle / bot_manager — already
+/* Sample once per second, for the graphs and the text together. The
+ * figures are the values from server_lifecycle / bot_manager — already
  * updated each tick by the server timer thread. */
-static void sysInfoGraphSample(double tickMs, double brainPhaseMs) {
-    uint32_t now = SDL_GetTicks();
-    if (now - s_sysLastSampleTick < 1000 && s_sysHistoryCount > 0) return;
+static void sysInfoServerSample(ServerSim *spSim) {
+    uint32_t now = (uint32_t)SDL_GetTicks();
+    if (s_sysServer.valid && now - s_sysLastSampleTick < SYS_SAMPLE_PERIOD_MS) return;
     s_sysLastSampleTick = now;
-    s_tickHistory[s_sysHistoryOffset]  = (float)tickMs;
-    s_brainHistory[s_sysHistoryOffset] = (float)brainPhaseMs;
+
+    double tickLast = 0.0, tickEwma = 0.0;
+
+    /* The server timer thread writes these file-statics every
+     * tick. Take the same mutex serverInstanceTick uses so the
+     * snapshot is consistent. */
+    threadsWaitForMutex();
+    s_sysServer.hasBots = serverSimHasAnyBot(spSim);
+    serverSimGetBotPoolStats(spSim, &s_sysServer.pool);
+    for (int i = 0; i < MAX_TANKS; i++) {
+        s_sysServer.botValid[i] = serverSimGetBotInfo(spSim, (BYTE)i, &s_sysServer.bots[i]);
+    }
+    serverLifecycleGetTickStats(&tickLast, &tickEwma);
+    serverLifecycleGetSimStats(&s_sysServer.simLast, &s_sysServer.simEwma);
+    threadsReleaseMutex();
+    s_sysServer.valid = true;
+
+    s_tickHistory[s_sysHistoryOffset]  = (float)tickLast;
+    s_brainHistory[s_sysHistoryOffset] = (float)s_sysServer.pool.lastBrainPhaseMs;
     s_sysHistoryOffset = (s_sysHistoryOffset + 1) % SYS_GRAPH_SIZE;
     if (s_sysHistoryCount < SYS_GRAPH_SIZE) s_sysHistoryCount++;
 }
@@ -1920,6 +1963,52 @@ static void renderSysInfoBots(void) {
     }
 }
 
+/* The connected Bot Hosts that run no bot now, below the bot rows: the
+ * rows above come from the bots, so a host that joined a game in progress
+ * (or lost its bots) would not be listed at all. Each gets its header and
+ * its lobby line ("andrew-lenovo: ready, 0 of 16 slots"). True when it
+ * drew any. */
+static bool renderSysInfoEmptyHosts(const ClientSim *cs) {
+    uint8_t idx[CLIENT_BOT_HOST_ROWS];
+    int n = clientSimBotHostRowsNoBots(cs, idx, CLIENT_BOT_HOST_ROWS);
+    for (int k = 0; k < n; k++) {
+        const ClientBotHostRow *r = clientSimGetBotHostRow(cs, idx[k]);
+        if (r == NULL) continue;
+        const char *name = r->name[0] ? r->name : "?";
+        MessageArgs head = {};
+        SDL_strlcpy(head.string1, name, sizeof(head.string1));
+        ImGui::TextUnformatted(langGetTextFmt(STR_DLGSYSINFO_HOST_BOTHOST_FMT, &head));
+        MessageArgs row = {};
+        SDL_strlcpy(row.string1, name, sizeof(row.string1));
+        switch (r->state) {
+            case BOT_HOST_SYNC_SYNCING: {
+                MessageArgs pa = {};
+                pa.number = r->percent;
+                SDL_strlcpy(row.string2,
+                            langGetTextFmt(STR_DLGLOBBY_BOTHOST_SYNCING_FMT, &pa),
+                            sizeof(row.string2));
+                break;
+            }
+            case BOT_HOST_SYNC_READY:
+                SDL_strlcpy(row.string2, langGetText(STR_DLGLOBBY_BOTHOST_READY),
+                            sizeof(row.string2));
+                break;
+            case BOT_HOST_SYNC_LATE:
+                SDL_strlcpy(row.string2, langGetText(STR_DLGLOBBY_BOTHOST_LATE),
+                            sizeof(row.string2));
+                break;
+            default:
+                SDL_strlcpy(row.string2, langGetText(STR_DLGLOBBY_BOTHOST_CONNECTED),
+                            sizeof(row.string2));
+                break;
+        }
+        row.number = r->used;
+        row.number2 = r->slots;
+        ImGui::Text("  %s", langGetTextFmt(STR_DLGLOBBY_BOTHOST_ROW_FMT, &row));
+    }
+    return n > 0;
+}
+
 static void renderSysInfoContent(ClientSim *cs) {
     float drawPct  = (windowGetDrawTime() / 1000.0f) * 100.0f;
     float simPct   = (windowGetSimTime()  / 1000.0f) * 100.0f;
@@ -1950,22 +2039,12 @@ static void renderSysInfoContent(ClientSim *cs) {
     /* Server-side bot/sim telemetry. Only present when a local
      * server sim is ticking (single-player or local listen-server). */
     if (spSim != NULL) {
-        BotPoolStats ps = {};
-        double tickLast = 0.0, tickEwma = 0.0;
-        double simLast  = 0.0, simEwma  = 0.0;
-        bool   hasBots  = false;
+        sysInfoServerSample(spSim);
 
-        /* The server timer thread writes these file-statics every
-         * tick. Take the same mutex serverInstanceTick uses so the
-         * snapshot is consistent. Cheap — these are quick reads. */
-        threadsWaitForMutex();
-        hasBots = serverSimHasAnyBot(spSim);
-        serverSimGetBotPoolStats(spSim, &ps);
-        serverLifecycleGetTickStats(&tickLast, &tickEwma);
-        serverLifecycleGetSimStats(&simLast, &simEwma);
-        threadsReleaseMutex();
-
-        sysInfoGraphSample(tickLast, ps.lastBrainPhaseMs);
+        const BotPoolStats &ps = s_sysServer.pool;
+        const double simLast = s_sysServer.simLast;
+        const double simEwma = s_sysServer.simEwma;
+        const bool hasBots = s_sysServer.hasBots;
 
         ImGui::Separator();
         ImGui::TextUnformatted(langGetText(STR_DLGSYSINFO_SERVER));
@@ -2040,6 +2119,7 @@ static void renderSysInfoContent(ClientSim *cs) {
             sysInfoBotsRefresh(spSim, cs);
             renderSysInfoBots();
         }
+        if (cs != NULL) (void)renderSysInfoEmptyHosts(cs);
 
         /* Text-only stats for the remaining metrics. simLast > 0
          * means at least one running-state tick has happened —
@@ -2055,12 +2135,21 @@ static void renderSysInfoContent(ClientSim *cs) {
                         ps.lastSerialMs, ps.ewmaSerialMs);
         }
     } else {
+        /* Hosting again starts from a fresh read, not the last game's. */
+        s_sysServer.valid = false;
+
         /* A game joined on another server: the bot rows the server sends
          * (CTRL_BOT_TIMING), none from an older server. */
         sysInfoBotsRefresh(NULL, cs);
-        if (s_sysBotHave && s_sysBotRowCount > 0) {
+        const bool botRows = s_sysBotHave && s_sysBotRowCount > 0;
+        if (botRows) {
             ImGui::Separator();
             renderSysInfoBots();
+        }
+        uint8_t anyEmpty[1];
+        if (cs != NULL && clientSimBotHostRowsNoBots(cs, anyEmpty, 1) > 0) {
+            if (!botRows) ImGui::Separator();
+            (void)renderSysInfoEmptyHosts(cs);
         }
     }
 }
@@ -10744,8 +10833,18 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
        never fires — the release lands with no active id to complete the
        click. An active item also means the player is driving the UI, not the
        tank, so the keyboard isn't being stolen from the game in that instant;
-       the drop resumes the moment the press completes and ActiveId clears. */
-    if (cs && !clientSimIsInLobby(cs) && !sdl3ImguiIsDialogOpen() &&
+       the drop resumes the moment the press completes and ActiveId clears.
+
+       A panel that shares the keyboard counts as no panel here: it is still
+       mouse-driven, since the drop waits for ActiveId, but left focused it
+       would keep the same latch and eat those same keys. Send Message is not
+       among them, because this would pull the focus its text box is asking
+       for on the frames before WantTextInput comes up. */
+    bool onlySharingPanels = panelsShareKeyboard() &&
+        !s_showSendMsg && !s_showSettings && !s_brainSettingsOpen &&
+        !s_allianceVisible && GImGui->OpenPopupStack.Size == 0;
+    if (cs && !clientSimIsInLobby(cs) &&
+        (!sdl3ImguiIsDialogOpen() || onlySharingPanels) &&
         !ImGui::GetIO().WantTextInput &&
         GImGui->ActiveId == 0) {
         ImGui::SetWindowFocus(nullptr);
@@ -11776,7 +11875,7 @@ bool sdl3ImguiWantsKeyboard(void) {
     ImGuiIO &io = ImGui::GetIO();
     ImGuiContext *g = ImGui::GetCurrentContext();
 
-    /* Standing in for a pop-out, these four must not suspend the game: a
+    /* Standing in for a pop-out, these panels must not suspend the game: a
        pop-out is a separate OS window, so the player kept driving with System
        Info up and the OS-focus gate in input.c muted the keys only once the
        pop-out actually took focus. The in-window stand-in has to match, or
@@ -11784,7 +11883,9 @@ bool sdl3ImguiWantsKeyboard(void) {
        on screen saying why. Send Message still suspends while its box holds
        the caret — that is io.WantTextInput above, and clicking back onto the
        map drops the caret and hands the keys back, the way clicking the game
-       window behind the pop-out does.
+       window behind the pop-out does. The Players panel follows them only
+       without a controller, which would steer the tank while navigating its
+       rows (panelsShareKeyboard).
 
        Everywhere else they keep blocking, unchanged: the tablet panels, and
        the same panels opened from Settings > Session on a desktop or a Deck,
@@ -11792,12 +11893,12 @@ bool sdl3ImguiWantsKeyboard(void) {
     bool infoPanelsBlock = !panelsStandInForPopOuts() &&
                            (s_showSysInfo || s_showNetInfo ||
                             s_showGameInfo || s_showSendMsg);
+    bool playersPanelBlocks = s_showPlayersPanel && !panelsShareKeyboard();
 
     InputGateState st;
     st.textInputActive             = io.WantTextInput;
-    st.blockingModalOpen           = infoPanelsBlock ||
-                                     s_showPlayersPanel || s_showSettings ||
-                                     s_brainSettingsOpen;
+    st.blockingModalOpen           = infoPanelsBlock || playersPanelBlocks ||
+                                     s_showSettings || s_brainSettingsOpen;
     /* Every popup currently on the stack is blocking (menu-bar dropdowns and
        the password / change-name / key-setup / pause / quick-chat modals).
        The transient notifications — alliance request and vote widgets — are

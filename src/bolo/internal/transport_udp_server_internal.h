@@ -306,6 +306,14 @@ typedef struct {
     /* The row's slot override: from the lobby, or locked by
      * -bothost-slots. */
     BotHostSlotOverride slotOvr;
+    /* CTRL_BOT_HOST_LIMITS from the host (dynamic slots): limHave once one
+     * came (an older host never sends one, and keeps fixed slots). limStart
+     * and limReserve may be BOT_HOST_LIMIT_NONE: the server's own value.
+     * The ceiling is the host's CTRL_BOT_HOST_SLOTS. */
+    bool     limHave;
+    uint8_t  limStart;
+    uint8_t  limCeil;
+    uint8_t  limReserve;
     ChannelMux channelMux;
 
     /* Brain sync. The manifest and the file pieces go out on this

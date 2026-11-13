@@ -655,7 +655,7 @@ int run_bot_host_overrun_new_game_reset(void) {
     readings = st.readingCount;
     UT_ASSERT(readings > 0 && st.costKnown);
 
-    botHostOverrunNewGame(&st);
+    (void)botHostOverrunNewGame(&st, &cfg);
     UT_ASSERT(botHostOverrunLimit(&st, 8) == 8);
     UT_ASSERT(!st.cut && st.probeCount == 0);
     UT_ASSERT(st.readingCount == readings && st.costKnown);
@@ -806,13 +806,19 @@ int run_bothost_record_roundtrip(void) {
     r.bots = 6; r.slots = 7; r.limit = BOTHOST_RECORD_NONE;
     r.thinks = 300; r.overruns = 4; r.flags = BOTHOST_RECORD_PROBE_BAD;
     r.badProbes = 17; r.probes = 30; r.windowRate = 152;
+    r.ceiling = 9; r.start = 2;
     n = botHostRecordEncode(&r, buf, (int)sizeof(buf));
-    UT_ASSERT(n == 15);
+    UT_ASSERT(n == 17);
     UT_ASSERT(buf[6] == 0x01 && buf[7] == 0x2C);  /* thinks 300 big-endian */
     UT_ASSERT(botHostRecordDecode(buf, n, &b));
     UT_ASSERT(b.bots == 6 && b.slots == 7 && b.limit == BOTHOST_RECORD_NONE &&
               b.thinks == 300 && b.overruns == 4 && b.flags == 1 &&
               b.badProbes == 17 && b.probes == 30 && b.windowRate == 152);
+    UT_ASSERT(b.ceiling == 9 && b.start == 2);
+    /* A version 2 probe (15 bytes): no ceiling or start. */
+    UT_ASSERT(botHostRecordDecode(buf, 15, &b) && b.windowRate == 152 &&
+              b.ceiling == (uint8_t) BOTHOST_RECORD_NONE &&
+              b.start == (uint8_t) BOTHOST_RECORD_NONE);
     /* A version 1 probe (13 bytes): no window rate. */
     UT_ASSERT(botHostRecordDecode(buf, 13, &b) &&
               b.windowRate == BOTHOST_RECORD_RATE_NONE && b.probes == 30);
@@ -942,7 +948,7 @@ int run_bot_host_nomove_no_move_running(void) {
 }
 
 /* The fall-backs still happen with the flag: a host that offers 0 slots
- * (the opt-out) gives every bot back, a host with fewer slots than bots
+ * (Max 0) gives every bot back, a host with fewer slots than bots
  * gives one back, and a bot that came back stays on the server. */
 int run_bot_host_nomove_fallback(void) {
     BotHostNoMove nm;
