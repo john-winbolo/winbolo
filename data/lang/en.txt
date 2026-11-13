@@ -1255,6 +1255,11 @@ STR_LV_LAG_OFF=Turn off
 STR_LV_LAG_HUD_TIP={string1}, {number} ms round trip
 STR_LV_LAG_MENU=See What the Selected Player Saw
 STR_LV_LAG_MENU_TIP=Draw the round as the selected tank's player saw it on their own screen. The recording must hold lag records
+STR_LV_SCREEN_TRUE_SHELLS=Toggle Screen-True Own Shells
+STR_LV_SCREEN_TRUE_SHELLS_TIP=On: the selected player's own shells are drawn at the present, as their own screen drew them at once. Off: they are drawn at the old time, as every other shell is
+STR_LV_SCREEN_TRUE_EXPL=Toggle Screen-True Local Explosions
+STR_LV_SCREEN_TRUE_EXPL_TIP=On: the selected player's own shells explode at once where they end, and the server's later explosion of each is hidden. Off: each one explodes when the server's explosion comes
+STR_LV_SCREEN_TRUE_EXPL_OFF_TIP=Turn on Toggle Screen-True Own Shells first
 STR_LV_LAG_LINE_BOT=Lag: a bot, screen {number} ms behind
 STR_LV_TIMING_HEADER=Server timing
 STR_LV_TIMING_AT=Recorded at {string1} of the round
@@ -1307,6 +1312,10 @@ STR_LV_PILL_NUMBERS_TIP=The number of each pillbox beside it on the map, the num
 STR_LV_PILL_NUMBERS_LIST=Numbers: {string1}
 STR_LV_MSG_PILL_CAPTURED={player} captured Neutral Pillbox {number}
 STR_LV_MSG_PILL_STOLEN={player} just stole pillbox {number} from {other}
+
+# Log viewer: the hit area round each tank and builder on the map (Options)
+STR_LV_HIT_BOXES=Toggle Hit Boxes
+STR_LV_HIT_BOXES_TIP=Over each tank on the map, the circle a shell must reach to hit it. Over each builder out of his tank, the area an explosion must be in to kill him
 
 # Log viewer dialogs
 STR_LV_ASSIGN_COLOURS_HINT=Assign colours to each player team:
