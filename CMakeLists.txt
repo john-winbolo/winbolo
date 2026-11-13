@@ -3483,7 +3483,7 @@ set(BOTHOST_SOURCES
     # --embed-child: the game's built-in Bot Host as a child process. It
     # runs the embed copy of bothost_main.c, as the game does
     # (bothost_child.h).
-    src/bothost/bothost_embed.c src/bothost/bothost_optout.c
+    src/bothost/bothost_embed.c
     src/bothost_child/bothost_child.c src/bothost_child/bothost_child_main.c
     src/third_party/tweetnacl/tweetnacl.c
 )
@@ -6477,6 +6477,7 @@ set(_unit_test_names
     bothost_child_copy_wanted
     bothost_child_env_keep
     bothost_ds_child_where
+    bothost_ds_child_first_lines
     bot_host_lockstep
     bothost_child_seccomp
     bothost_child_stdin_full

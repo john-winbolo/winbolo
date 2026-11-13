@@ -165,7 +165,7 @@ static bool     embedRefused;
 /* The player's Max slots plus 1, so 0 (the start value) is
  * BOT_HOST_MAX_AUTO. Max 0: the host offers the server 0 slots and takes no
  * new seat, but stays connected, so it can offer its slots again. Set by
- * the client's main thread (botHostEmbedSetMax), read by the host's
+ * the client's main thread (botHostInprocSetMax), read by the host's
  * thread. */
 static SDL_AtomicInt embedMaxPlus1;
 /* WINBOLO_BOTHOST_OFFICIAL_ONLY (a CMake option, on by default): the Bot

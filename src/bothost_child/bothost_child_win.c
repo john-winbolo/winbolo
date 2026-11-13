@@ -172,8 +172,6 @@ static bool aclHasGrant(PACL acl, PSID sid, DWORD rights, bool dir) {
     return false;
 }
 
-static wchar_t *utf8ToWide(const char *s);
-
 /* Grants sid rights on path (inherited by all in it for a folder).
  * ERROR_SUCCESS when it has them now. */
 static DWORD grantPath(const char *path, PSID sid, DWORD rights, bool dir) {
