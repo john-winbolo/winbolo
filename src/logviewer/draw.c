@@ -2481,7 +2481,7 @@ BYTE lv_drawGetHitBoxes(void) {
 
 static void lvDrawRingBand(float cx, float cy, float rIn, float rOut, SDL_FColor col);
 
-/* Each builder's outline (lvHitboxBuilderOutline) on the screen, worked out
+/* Each builder's outline (lvHitboxBuilderOutlineShape) on the screen, worked out
    once each time the hit areas are drawn and then drawn twice, dark and in
    its colour. */
 #define LV_HIT_SCREEN_PTS (MAX_TANKS * LV_HITBOX_OUTLINE_MAX_PTS)
@@ -2525,7 +2525,7 @@ static void lvDrawHitBoxesOverBlit(const SDL_FRect *src, const SDL_FRect *dst) {
     SDL_BlendMode oldBlend = SDL_BLENDMODE_NONE;
     Uint8 oldR, oldG, oldB, oldA;
     bool alive[MAX_TANKS];
-    int tankZone, tankSize, builderReach;
+    int tankZone, tankSize, builderPillRange, builderShape;
 
     if (!s_hitBoxes || lv == NULL) return;
     if (s_tankBarCount == 0 && s_hitLgmCount == 0) return;
@@ -2537,7 +2537,8 @@ static void lvDrawHitBoxesOverBlit(const SDL_FRect *src, const SDL_FRect *dst) {
     }
     tankZone = lv->rules.tankHitZone;
     tankSize = lvHitboxTankZoneSize(tankZone, lv->rules.tankHitRadius);
-    builderReach = lvHitboxBuilderReach(lv->rules.pillRange);
+    builderShape = lv->rules.lgmBlastShape;
+    builderPillRange = lv->rules.pillRange;
     lv_clientMutexRelease();
 
     scale = dst->w / src->w;
@@ -2554,7 +2555,8 @@ static void lvDrawHitBoxesOverBlit(const SDL_FRect *src, const SDL_FRect *dst) {
         float ox = dst->x + (h->sqX - src->x) * scale;
         float oy = dst->y + (h->sqY - src->y) * scale;
         int run, p;
-        lvHitboxBuilderOutline(h->bx, h->by, h->solid, builderReach, &s_hitOutline);
+        lvHitboxBuilderOutlineShape(h->bx, h->by, h->solid, builderShape, builderPillRange,
+                                    &s_hitOutline);
         for (run = 0; run < s_hitOutline.nRuns && nRuns < LV_HIT_SCREEN_RUNS; run++) {
             int a = s_hitOutline.runStart[run], b = s_hitOutline.runStart[run + 1];
             if (nPts + (b - a) > LV_HIT_SCREEN_PTS) break;
@@ -2610,7 +2612,8 @@ static void lvDrawHitBoxesOverBlit(const SDL_FRect *src, const SDL_FRect *dst) {
             }
         }
 
-        /* Builders: the area of lgmBlastCatches, worked out above. */
+        /* Builders: the area of lgmBlastCatches, in the lgm_blast_shape
+           rule's shape, worked out above. */
         if (pass == 0) {
             SDL_SetRenderDrawColor(sdlRenderer, 0, 0, 0, 200);
         } else {
