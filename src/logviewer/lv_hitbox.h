@@ -311,17 +311,6 @@ static inline int lvHitboxBuilderReach(int pillRange) {
     return pillRange < LV_HITBOX_BUILDER_REACH ? pillRange : LV_HITBOX_BUILDER_REACH;
 }
 
-/* The same along an axis for each lgm_blast_shape value: the circle above
-   for 0, the box's half side for 1 and the radius 144 for 2. pill_range
-   limits all three, as in hitRulesBuilderOpenGroundShape (hit_rules.h). */
-static inline int lvHitboxBuilderReachForShape(int shape, int pillRange) {
-    int reach = LV_HITBOX_BUILDER_REACH;
-    if (pillRange < 0) return 0;
-    if (shape == LV_HITBOX_BUILDER_SHAPE_BOX) reach = LV_HITBOX_BUILDER_BOX_HALF;
-    if (shape == LV_HITBOX_BUILDER_SHAPE_AREA) reach = LV_HITBOX_BUILDER_AREA_REACH;
-    return pillRange < reach ? pillRange : reach;
-}
-
 /* The builder test, as lgmBlastCatches makes it, for an explosion at (x, y)
    and a builder at (bx, by), both in world units measured from the top left
    corner of the square the builder is on. So the builder's square is the one
