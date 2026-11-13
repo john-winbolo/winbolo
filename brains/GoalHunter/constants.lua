@@ -638,12 +638,18 @@ M.ATTACK_PILL_STANDOFF = 7.4  -- desired engagement distance from pill (max shel
 -- at once (the intercept term read the tank). The tank's place is its last
 -- tile in this player's perc.enemy_tanks, if seen in the last
 -- ATK_REPRICE_TANK_SEEN_TICKS ticks.
+-- ATK_REPRICE_EVENTS is the master: false = no event re-price (init.lua
+-- does not call note_reprice_events), the old behaviour. PRESETS.keel = false.
+M.ATK_REPRICE_EVENTS          = true
 M.ATK_REPRICE_TANK_PAD        = 2
 M.ATK_REPRICE_TANK_SEEN_TICKS = 50
 -- repair_pill give-way (init.lua, REPAIR_GIVE_WAY): when the tank cannot get
 -- to the pill (its pool-5 row is INF for a reason other than the builder_can
 -- split), the goal drops and the pill tile is kept out of pool 5 for this
 -- many ticks (4 s), so the next replan does not choose it again at once.
+-- REPAIR_GIVE_WAY is the master: false = the committed repair_pill goal never
+-- gives way for these reasons, the old behaviour. PRESETS.keel = false.
+M.REPAIR_GIVE_WAY             = true
 M.REPAIR_GIVE_WAY_BLOCK_TICKS = 200
 M.ATTACK_PILL_STANDOFF_CHARGE = 7.0  -- non-PPT charge pulls the engage spot in to here on the first charge tick (PPT keeps its shielded standoff)
 M.ATTACK_PILL_RANGE    = 9.5  -- max distance to start shooting
@@ -7470,6 +7476,10 @@ M.PRESETS = {
     -- pill he walked through (look further along his line). KEEL: neither.
     LGM_DEST_INTERCEPT            = false,
     LGM_DEST_PASS_THROUGH         = false,
+    -- 2026-11-03: attack_pill event re-price and repair_pill give-way.
+    -- KEEL: neither.
+    ATK_REPRICE_EVENTS            = false,
+    REPAIR_GIVE_WAY               = false,
   },
   -- nolgm_off: RUDDER as it stood BEFORE the loaded, builder-less work
   -- (2026-09-08) -- every knob that work added, at its pre-change value, and

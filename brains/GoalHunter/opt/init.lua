@@ -3423,7 +3423,13 @@ function Brain.think(info)
   -- attack_pill event re-price: a known pill died or changed owner, or an
   -- enemy tank near a pill died. Marks the affected pool-6 entries for an
   -- at-once re-price and asks for a fresh short slate below.
-  goals.note_reprice_events(state, world, info)
+  -- C.ATK_REPRICE_EVENTS off: no re-price, and the snapshot is dropped so
+  -- turning it on later starts with a fresh one.
+  if C.ATK_REPRICE_EVENTS then
+    goals.note_reprice_events(state, world, info)
+  else
+    state._atk_reprice_snap = nil
+  end
 
   -- ── Incremental Dijkstra scheduler ──
   --
@@ -4833,7 +4839,8 @@ function Brain.think(info)
       if not p or p.owner ~= "friendly" or p.health >= C.PILLS_MAX_HEALTH
          or info.man_status == C.LGM_DEAD then goal_valid = false end
       -- The tank cannot get there: give way (goals.repair_give_way_reason).
-      if goal_valid then
+      -- C.REPAIR_GIVE_WAY off: the goal never gives way for this.
+      if goal_valid and C.REPAIR_GIVE_WAY then
         local why = goals.repair_give_way_reason(state, gmx, gmy, now)
         local bk = U.mkey(gmx, gmy)
         if why then

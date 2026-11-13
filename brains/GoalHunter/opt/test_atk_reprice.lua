@@ -181,5 +181,30 @@ do
   check("killer is not the dead tank", state._atk_reprice == nil)
 end
 
+-- ── masters: ATK_REPRICE_EVENTS and REPAIR_GIVE_WAY ───────────────────────
+-- Default on (today's behaviour), PRESETS.keel off (the old behaviour). The
+-- switch sits at the call sites in init.lua, so the check reads that file:
+-- the re-price call and the give-way test are each reached only with the
+-- master on, and the off branch of the re-price drops the snapshot.
+do
+  check("ATK_REPRICE_EVENTS default true", C.ATK_REPRICE_EVENTS == true, C.ATK_REPRICE_EVENTS)
+  check("REPAIR_GIVE_WAY default true", C.REPAIR_GIVE_WAY == true, C.REPAIR_GIVE_WAY)
+  local k = C.PRESETS and C.PRESETS.keel or {}
+  check("keel ATK_REPRICE_EVENTS false", k.ATK_REPRICE_EVENTS == false, k.ATK_REPRICE_EVENTS)
+  check("keel REPAIR_GIVE_WAY false", k.REPAIR_GIVE_WAY == false, k.REPAIR_GIVE_WAY)
+  local f = io.open("init.lua", "rb")
+  local src = f and f:read("*a") or ""
+  if f then f:close() end
+  local on, off = src:match("if C%.ATK_REPRICE_EVENTS then%s+(goals%.note_reprice_events%(state, world, info%))%s+else%s+(state%._atk_reprice_snap = nil)%s+end")
+  check("init.lua: re-price only with ATK_REPRICE_EVENTS on", on ~= nil, on)
+  check("init.lua: off drops the re-price snapshot", off ~= nil, off)
+  local _, n = src:gsub("goals%.note_reprice_events%(", "")
+  check("init.lua: one re-price call", n == 1, n)
+  local gw = src:match("if goal_valid and C%.REPAIR_GIVE_WAY then%s+local why = goals%.repair_give_way_reason%(")
+  check("init.lua: give-way only with REPAIR_GIVE_WAY on", gw ~= nil, gw)
+  local _, m = src:gsub("goals%.repair_give_way_reason%(", "")
+  check("init.lua: one give-way call", m == 1, m)
+end
+
 print(string.format("%d passed, %d failed", pass, fail))
 if fail > 0 then os.exit(1) end
