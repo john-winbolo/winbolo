@@ -40,6 +40,7 @@
 #include "types.h"
 #include "tank.h"
 #include "shells.h"
+#include "util.h"
 
 /* Forward declaration for players pointer type (defined in players.h) */
 struct playersObj;
@@ -132,8 +133,8 @@ static inline bool    pillPosCurrentFromByte(uint8_t b) {
 #define PILLBOX_MASSAGE_COSINE 0.5
 
 /* Whether pillboxes limit the shells in the air at one tank, and the limit.
-   A pillbox whose nearest target already has that many coming at it fires at
-   the next nearest instead, or holds its shot. The classic table plays with
+   A pillbox whose nearest target already has that many coming at it loses
+   its shot and reloads, as Mac Bolo's does. The classic table plays with
    the limit off. */
 #define PILLBOX_SHELL_CAP          0
 #define PILLBOX_MAX_SHELLS_AT_TANK 12
@@ -884,21 +885,6 @@ BYTE pillsGetNumActive(pillboxes *value);
 BYTE pillsGetPillNetData(pillboxes *value, BYTE *buff);
 
 /*********************************************************
-*NAME:          pillsDropSetNeutralOwner
-*AUTHOR:        John Morrison
-*CREATION DATE: 1/11/99
-*LAST MODIFIED: 1/11/99
-*PURPOSE:
-*  Changes all pills of owner owner back to neutral. Also
-*  if they are inside a tank it drops them.
-*
-*ARGUMENTS:
-*  value - Pointer to the pillbox structure
-*  owner - Owner to set back to neutral
-*********************************************************/
-void pillsDropSetNeutralOwner(struct GameSim *sim, BYTE owner);
-
-/*********************************************************
 *NAME:          basesMigrate
 *AUTHOR:        John Morrison
 *CREATION DATE: 1/11/99
@@ -929,21 +915,6 @@ void pillsMigrate(struct GameSim *sim, BYTE oldOwner, BYTE newOwner);
 *  newOwner - Owner to replace with
 *********************************************************/
 void pillsMigratePlanted(struct GameSim *sim, BYTE oldOwner, BYTE newOwner);
-
-/*********************************************************
-*NAME:          pillsExplicitDrop
-*AUTHOR:        John Morrison
-*CREATION DATE: 10/11/99
-*LAST MODIFIED: 10/11/99
-*PURPOSE:
-*  Drops all pills of owner owner
-*
-*
-*ARGUMENTS:
-*  value - Pointer to the pillbox structure
-*  owner - Owner to set back to neutral
-*********************************************************/
-void pillsExplicitDrop(struct GameSim *sim, BYTE owner);
 
 /*********************************************************
 *NAME:          pillsGetBrainPillsInRect
@@ -1112,17 +1083,11 @@ void pillsClampToRules(struct GameSim *sim, pillboxes *value);
 void pillsFillToRules(struct GameSim *sim, pillboxes *value);
 
 /* The search for somewhere to put down a pillbox that was being carried:
-   Mac Bolo's gen_scatter spiral. The cursor starts on the centre square,
-   then walks square rings of growing radius, each starting on the square
-   straight north of the centre and going clockwise. Squares are kept as int
-   so a ring running off the edge of the map never wraps round to the far
-   side, and the walk ends after the last ring that touches the minable
-   area. */
+   Mac Bolo's gen_scatter spiral, a utilSpiralCursor that starts each ring
+   on the square straight north of the centre (UTIL_SPIRAL_NORTH). The walk
+   ends after the last ring that touches the minable area. */
 typedef struct {
-  int cx;       /* The centre square */
-  int cy;
-  int x;        /* The cursor */
-  int y;
+  utilSpiralCursor cursor;
   int maxRing;  /* Last ring holding any minable square */
 } pillsDropSpiral;
 

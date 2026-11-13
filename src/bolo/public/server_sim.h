@@ -2653,10 +2653,7 @@ typedef struct {
                                  Filled by this computer's own listings and
                                  never by what a server sends. */
     /* Who wrote it and when it last changed (scenario_identity.h), "" for
-       not stated. identityKnown is false for a row from a server too old to
-       send them, which a chooser shows as nothing rather than as unknown;
-       a listing this computer reads itself always knows. */
-    bool     identityKnown;
+       not stated. */
     char     author[SCN_AUTHOR_LEN];
     char     updated[SCN_UPDATED_LEN];
 } ServerScenarioEntry;
@@ -2951,7 +2948,7 @@ bool serverSimVoiceSidesAllow(const ServerSim *sim, BYTE to, BYTE talker);
  * ALLOW keeps them for the session, PERSIST keeps them for good. Set once
  * from ServerInstanceConfig.scriptUploadPolicy at startup and carried to
  * clients on the lobby-settings event. The getter returns
- * SCRIPT_UPLOAD_ALLOW for a NULL sim. */
+ * SCRIPT_UPLOAD_OFF for a NULL sim. */
 void               serverSimSetScriptUploadPolicy(ServerSim *sim, ScriptUploadPolicy p);
 ScriptUploadPolicy serverSimGetScriptUploadPolicy(const ServerSim *sim);
 
@@ -2996,11 +2993,11 @@ uint32_t    serverSimScriptDirsGen(void);
 /* Resolve the script upload policy from its command-line or preference
  * word. A non-empty word is matched against off / allow / persist
  * ignoring case; an unknown word logs a warning naming it and resolves to
- * SCRIPT_UPLOAD_ALLOW. No word (NULL or empty) gives SCRIPT_UPLOAD_ALLOW. */
+ * SCRIPT_UPLOAD_OFF. No word (NULL or empty) gives SCRIPT_UPLOAD_OFF. */
 ScriptUploadPolicy scriptUploadPolicyResolve(const char *word);
 
 /* The preference spelling of a policy: "Off", "Allow" or "Persist".
- * Anything out of range reads as "Allow". */
+ * Anything out of range reads as "Off". */
 const char        *scriptUploadPolicyWord(ScriptUploadPolicy p);
 
 /* Read the "Spectator Delay" preference: whole seconds, 0 = live. A number

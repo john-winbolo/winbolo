@@ -42,6 +42,9 @@ static void lvEventArrayFree(LvEventArray *a) {
   int i;
   for (i = 0; i < a->count; i++) {
     free(a->items[i].text);
+    free(a->items[i].chatFrom);
+    free(a->items[i].chatNote);
+    free(a->items[i].chatText);
   }
   free(a->items);
   a->items = NULL;
@@ -226,6 +229,35 @@ const LvEvent *lvEventListAt(int i) {
 
 LvEvent *lvEventListEdit(int i) {
   return (LvEvent *)lvEventListAt(i);
+}
+
+bool lvEventListSetChat(LvEvent *e, const char *from, const char *note,
+                        const char *text) {
+  char *f;
+  char *n = NULL;
+  char *t;
+
+  if (e == NULL || from == NULL || text == NULL) {
+    return false;
+  }
+  f = lvEventDupText(from);
+  t = lvEventDupText(text);
+  if (note != NULL) {
+    n = lvEventDupText(note);
+  }
+  if (f == NULL || t == NULL || (note != NULL && n == NULL)) {
+    free(f);
+    free(n);
+    free(t);
+    return false;
+  }
+  free(e->chatFrom);
+  free(e->chatNote);
+  free(e->chatText);
+  e->chatFrom = f;
+  e->chatNote = n;
+  e->chatText = t;
+  return true;
 }
 
 bool lvEventListAppendText(int i, const char *suffix) {

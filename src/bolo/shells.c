@@ -1136,31 +1136,11 @@ bool shellsCalcCollision(GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, s
 *  angle - The angle the shell is travelling
 *********************************************************/
 BYTE shellsCheckRoad(GameSim *sim, BYTE mapX, BYTE mapY, TURNTYPE dir) {
-  map *mp = &sim->mp;
-  pillboxes *pb = &sim->pb;
-  bases *bs = &sim->bs;
   BYTE returnValue; /* Value to return */
-  BYTE dir16;       /* Angle converted to 16 direction */
 
   returnValue = ROAD;
-  dir16 = utilGet16Dir(dir);
-
-  if (dir16 < BRADIANS_NEAST || dir16 >= BRADIANS_NWEST) {
-    if (mapIsLand(mp, pb, bs, mapX, (BYTE) (mapY-1)) == FALSE) {
-      returnValue = RIVER;
-    }
-  } else if (dir16 >= BRADIANS_NEAST && dir16 < BRADIANS_SEAST) {
-    if (mapIsLand(mp, pb, bs, (BYTE) (mapX+1), mapY) == FALSE) {
-      returnValue = RIVER;
-    }
-  } else if (dir16 >= BRADIANS_SEAST && dir16 < BRADIANS_SWEST) {
-    if (mapIsLand(mp, pb, bs, mapX, (BYTE) (mapY+1)) == FALSE) {
-      returnValue = RIVER;
-    }
-  } else {
-    if (mapIsLand(mp, pb, bs, (BYTE) (mapX-1), mapY) == FALSE) {
-      returnValue = RIVER;
-    }
+  if (shellsRoadShotAway(sim, mapX, mapY, dir) == TRUE) {
+    returnValue = RIVER;
   }
 
   /* Play the sound if required */
@@ -1169,6 +1149,33 @@ BYTE shellsCheckRoad(GameSim *sim, BYTE mapX, BYTE mapY, TURNTYPE dir) {
   }
 
    return returnValue;
+}
+
+/*********************************************************
+*NAME:          shellsRoadShotAway
+*PURPOSE:
+*  The test shellsCheckRoad makes, with no sound and no
+*  change: true when the square past the road in the
+*  shell's direction is not land, so the road goes to
+*  river. The client asks it to choose the early own shell
+*  blast's sound (client_sim.c).
+*********************************************************/
+bool shellsRoadShotAway(GameSim *sim, BYTE mapX, BYTE mapY, TURNTYPE dir) {
+  map *mp = &sim->mp;
+  pillboxes *pb = &sim->pb;
+  bases *bs = &sim->bs;
+  BYTE dir16;       /* Angle converted to 16 direction */
+
+  dir16 = utilGet16Dir(dir);
+
+  if (dir16 < BRADIANS_NEAST || dir16 >= BRADIANS_NWEST) {
+    return mapIsLand(mp, pb, bs, mapX, (BYTE) (mapY-1)) == FALSE;
+  } else if (dir16 >= BRADIANS_NEAST && dir16 < BRADIANS_SEAST) {
+    return mapIsLand(mp, pb, bs, (BYTE) (mapX+1), mapY) == FALSE;
+  } else if (dir16 >= BRADIANS_SEAST && dir16 < BRADIANS_SWEST) {
+    return mapIsLand(mp, pb, bs, mapX, (BYTE) (mapY+1)) == FALSE;
+  }
+  return mapIsLand(mp, pb, bs, (BYTE) (mapX-1), mapY) == FALSE;
 }
 
 /*********************************************************

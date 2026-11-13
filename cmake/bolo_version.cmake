@@ -49,7 +49,7 @@ if(DEFINED CACHE{WINBOLO_VERSION})
     set(_WINBOLO_VERSION_PREV_DEFAULT "$CACHE{WINBOLO_VERSION_DEFAULT_SEEN}")
     unset(WINBOLO_VERSION CACHE)
 endif()
-set(WINBOLO_VERSION "2.2.0" CACHE STRING "WinBolo numeric version number, major.minor.revision (drives network protocol bytes)")
+set(WINBOLO_VERSION "2.2.1" CACHE STRING "WinBolo numeric version number, major.minor.revision (drives network protocol bytes)")
 set(WINBOLO_VERSION_DEFAULT_SEEN "${WINBOLO_VERSION}" CACHE INTERNAL
     "The WINBOLO_VERSION default the last configure saw")
 if(DEFINED _WINBOLO_VERSION_CACHED)
@@ -63,7 +63,7 @@ if(DEFINED _WINBOLO_VERSION_CACHED)
 endif()
 unset(_WINBOLO_VERSION_CACHED)
 unset(_WINBOLO_VERSION_PREV_DEFAULT)
-set(WINBOLO_VERSION_SUFFIX "a" CACHE STRING "Display-only version suffix (UI text only, ignored by the network protocol)")
+set(WINBOLO_VERSION_SUFFIX "" CACHE STRING "Display-only version suffix (UI text only, ignored by the network protocol)")
 
 # Human-facing version string. Only affects displayed text; the network
 # protocol bytes below are derived from WINBOLO_VERSION alone.

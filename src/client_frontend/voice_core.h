@@ -66,6 +66,11 @@ void voiceEncoderDestroy(VoiceEncoder *enc);
  * Returns bytes written to out, or a negative value on failure. */
 int voiceEncoderEncode(VoiceEncoder *enc, const int16_t *pcm,
                        uint8_t *out, int outCap);
+/* Forget everything the encoder has seen, keeping its settings, so the next
+ * frame encodes exactly as it would from a newly created encoder.  Called
+ * at the start of each utterance: otherwise its first frame is coded
+ * against the tail of the previous one.  NULL is a no-op. */
+void voiceEncoderReset(VoiceEncoder *enc);
 
 VoiceDecoder *voiceDecoderCreate(void);
 void voiceDecoderDestroy(VoiceDecoder *dec);
@@ -74,6 +79,19 @@ void voiceDecoderDestroy(VoiceDecoder *dec);
  * Returns samples decoded, or a negative value on failure. */
 int voiceDecoderDecode(VoiceDecoder *dec, const uint8_t *data, int len,
                        int16_t *pcm);
+/* The decoder's half of voiceEncoderReset: the next packet decodes exactly
+ * as it would on a newly created decoder.  NULL is a no-op. */
+void voiceDecoderReset(VoiceDecoder *dec);
+
+/* 5 ms.  Long enough that a step in the waveform becomes a ramp the ear does
+ * not hear as a click, short enough not to swallow the start of a word. */
+#define VOICE_FADE_SAMPLES 240
+
+/* Scale count samples in place by a gain moving linearly from `from` on the
+ * first sample to `to` on the last.  Gains are expected within 0..1, so the
+ * result cannot leave the S16 range.  A single sample takes `to`, the gain
+ * the ramp arrives at; a count of zero or less, or NULL, does nothing. */
+void voiceFadeApply(int16_t *pcm, int count, float from, float to);
 
 /* Flags byte carried with each frame. The wire framing in
  * src/bolo/internal/voice_segment.h defines the same bit; that header is a

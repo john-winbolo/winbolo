@@ -2693,9 +2693,8 @@ static int sbUnsafeRun(int (*body)(void)) {
 }
 
 /* The names the switch is meant to open, each printed as present or absent
- * from on_start. ffi is asked through require, because LuaJIT's full open
- * leaves it in package.preload rather than on a global; with require gone, as
- * it is in the sandbox, ffi is absent too. */
+ * from on_start. ffi is not among them: LuaJIT is built without it
+ * (BOLO_LUAJIT_LOCKDOWN_XCFLAGS), so no switch can open it. */
 static const char kSbUnsafeLibLua[] =
     "scenario = { name = \"Open\", api = 1 }\n"
     "local function say(n, v)\n"
@@ -2710,14 +2709,13 @@ static const char kSbUnsafeLibLua[] =
     "  say(\"string.dump\", string.dump ~= nil)\n"
     "  say(\"math.randomseed\", math.randomseed ~= nil)\n"
     "  say(\"jit\", jit ~= nil)\n"
-    "  say(\"ffi\", require ~= nil and (pcall(require, \"ffi\")))\n"
     "end\n";
 
 static const char *const kSbUnsafeLibNames[] = {
     "io.open", "os.execute", "require", "debug.getinfo", "load",
     "string.dump", "math.randomseed",
 #ifdef WINBOLO_LUAJIT
-    "jit", "ffi",
+    "jit",
 #endif
 };
 

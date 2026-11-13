@@ -126,11 +126,13 @@ struct BrainPathfinder {
    * ocean. Computed once per map in brainPathfinderSetMap. */
   uint8_t  coastal_boat_mask[65536];
   const BYTE *coastal_mask_map;       /* map ptr the mask was computed for (recompute on change) */
-  /* LGM-impassable tiles (1 = blocked). Stamped by the brain each tick with
-   * enemy bases the LGM can't walk onto — the engine's mapGetManSpeed returns
-   * speed 0 there (basesCantDrive: non-ally, non-neutral, armour > capture),
-   * but the brain LGM sim only sees terrain type (refbase = walkable), so it
-   * would otherwise march the LGM straight into an enemy base. */
+  /* LGM overlay: 0 = the terrain decides, BRAIN_PF_LGM_BLOCKED = a wall,
+   * BRAIN_PF_LGM_ROAD = road speed (a dead pillbox). Stamped by the brain
+   * each tick with live pills and enemy bases the LGM can't walk onto —
+   * the engine's mapGetManSpeed returns speed 0 there (basesCantDrive:
+   * non-ally, non-neutral, armour > capture), but the brain LGM sim only
+   * sees terrain type (refbase = walkable), so it would otherwise march the
+   * LGM straight into an enemy base. */
   uint8_t  lgm_block[65536];
   /* The man's speed per terrain type (0..15) and on his blessed tile, for
    * the LGM walk sim. brainPathfinderCreate seeds them with the classic
@@ -262,6 +264,12 @@ struct BrainPathfinder {
   float   *edge_cost;          /* malloc'd: 131072 * 8 floats = 4MB */
   int      edge_cost_valid;    /* 0 = stale (rebuild needed), 1 = current */
   const BYTE *edge_cost_map;   /* map pointer the cache was built from */
+  /* The map bytes the table was built from. The brain's map is one buffer
+   * that changes in place as squares are seen or changed, so the pointer
+   * compare above never sees those changes. brainPathfinderSyncEdgeCosts
+   * compares the live map with this copy and rebuilds only the entries
+   * next to a square whose terrain type changed. */
+  BYTE     edge_cost_src[65536];
 
   /* Binary min-heap */
   BrainPFHeapEntry *heap;
@@ -572,6 +580,16 @@ int brainPathfinderDijkstraTracePathByKind(BrainPathfinder *pf, int kind,
  * Call this whenever the map changes (which is rare for the brain). */
 void  brainPathfinderRebuildEdgeCosts(BrainPathfinder *pf);
 
+/* Bring the edge cost grid up to date with the live map. If the grid is not
+ * valid, or the map pointer changed, this is a full rebuild. Otherwise it
+ * compares the map with the bytes the grid was built from and rebuilds the
+ * entries out of each square next to a square whose terrain type changed
+ * (both layers, all 8 directions). Above BRAINPF_EDGE_SYNC_FULL_AT changed
+ * squares it does a full rebuild instead. Gives the same grid as a full
+ * rebuild. Returns the number of squares whose terrain type changed, or -1
+ * when it did a full rebuild. */
+int   brainPathfinderSyncEdgeCosts(BrainPathfinder *pf);
+
 /* Configuration */
 void brainPathfinderSetTerrainCost(BrainPathfinder *pf, int type, float cost);
 void brainPathfinderSetBoatCost(BrainPathfinder *pf, int type, float cost);
@@ -719,10 +737,18 @@ int brainPathfinderLgmWalkPath(BrainPathfinder *pf,
  * cannot walk there. */
 int brainPathfinderLgmManSpeed(BrainPathfinder *pf, BYTE mx, BYTE my);
 
-/* LGM-impassable overlay: clear all, then mark (mx,my) tiles the LGM can't
- * cross (enemy bases). Brain stamps these each tick before LGM reach checks. */
+/* LGM overlay: clear all, then mark (mx,my) tiles the LGM can't cross
+ * (live pills, enemy bases) and tiles he crosses at road speed whatever the
+ * terrain (dead pills: mapGetManSpeed with man_dead_pill_terrain_speed 0).
+ * Brain stamps these each tick before LGM reach checks. A blocked mark is
+ * not overwritten by a road mark. */
+#define BRAIN_PF_LGM_BLOCKED 1
+#define BRAIN_PF_LGM_ROAD    2
+/* The brain map's terrain type for road: the lgm_man_speed index. */
+#define BRAIN_PF_TERRAIN_ROAD 4
 void brainPathfinderClearLgmBlock(BrainPathfinder *pf);
 void brainPathfinderSetLgmBlock(BrainPathfinder *pf, BYTE mx, BYTE my);
+void brainPathfinderSetLgmRoad(BrainPathfinder *pf, BYTE mx, BYTE my);
 
 /* The man's walk speed on terrain `type` (0..15), or on his blessed tile when
  * `type` is -1, for every LGM walk sim above. Speed is clamped to 0..255.

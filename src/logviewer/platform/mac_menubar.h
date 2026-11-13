@@ -41,6 +41,7 @@ struct LvMenuState {
     bool showHud;
     bool showOverview;
     bool showTank;
+    bool showChat;
     bool showScenarioPanel;
     bool tankBars;             /* Options > Tank Bars checkmark */
     bool builderStatus;        /* Options > Tank Builder Status checkmark */
@@ -55,6 +56,10 @@ struct LvMenuState {
     bool fullScreen;           /* Windows > Enter Full Screen checkmark */
     bool canFullScreen;        /* the window can go into and out of full screen */
     bool live;                 /* a live game watched from the game: File has only Leave spectating */
+    bool gifAvailable;         /* this build has GIFs and the Clips window */
+    bool recordMode;           /* Action > Recording Mode checkmark (lv_clip_gif_mode_on) */
+    bool canToggleRecordMode;  /* Action > Recording Mode enable (lv_clip_gif_can_toggle_mode) */
+    bool showClips;            /* Windows > Clips checkmark */
 };
 
 /* Build and install the native macOS NSMenu on NSApp.mainMenu. The

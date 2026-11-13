@@ -47,6 +47,21 @@ endif()
 
 include(cmake/bolo_version.cmake)
 
+# The commit hash and build date go only on the two files that print them.
+# Both values are read at configure time, and every edit to this file
+# reconfigures, so as target-wide defines they changed the compile command of
+# every source in every target that carried them (about 1,000 files, the 570
+# of WinBoloUnitTests among them) and MSBuild recompiled the lot after nearly
+# any commit. Here a new hash or date recompiles these two files and nothing
+# else. Every target that compiles them is defined in this file, which is the
+# scope a source file property has.
+set_source_files_properties(
+    src/gui/sdl3/dialogs/imgui_about.cpp
+    src/logviewer/imgui/imgui_dialogs.cpp
+    PROPERTIES COMPILE_DEFINITIONS
+    "WINBOLO_GIT_HASH=\"${WINBOLO_GIT_HASH}\";WINBOLO_BUILD_DATE=\"${WINBOLO_BUILD_DATE}\";WINBOLO_BUILD_YEAR=\"${WINBOLO_BUILD_YEAR}\""
+)
+
 # Global macOS bundle metadata. Set once here so every MACOSX_BUNDLE target
 # (WinBolo, Log Viewer, Map Editor) picks up matching version/copyright keys
 # in its Info.plist, and so the deployment target applies to all of them.
@@ -343,10 +358,11 @@ if(WINBOLO_LUAJIT)
     #    supported path. XCFLAGS=-fPIC so the static lib links into winbolo_gym.
     if(MSVC)
         set(_lj_lib "${_lj_src}/src/lua51.lib")
-        set(_lj_msvc_env "")
+        string(JOIN " " _lj_msvc_cl ${BOLO_LUAJIT_LOCKDOWN_XCFLAGS})
         if(WINBOLO_LUAJIT_DETERMINISTIC)
-            set(_lj_msvc_env "CL=/DLUAJIT_SECURITY_PRNG=0")
+            string(APPEND _lj_msvc_cl " /DLUAJIT_SECURITY_PRNG=0")
         endif()
+        set(_lj_msvc_env "CL=${_lj_msvc_cl}")
         ExternalProject_Add(luajit_ext
             SOURCE_DIR        "${_lj_src}"
             BUILD_IN_SOURCE   TRUE
@@ -360,15 +376,23 @@ if(WINBOLO_LUAJIT)
             # (minilua, buildvm) as bare names too, and those fail the same way
             # -- so unset the variable for the whole build step instead.
             # cl.exe appends the CL environment variable to every compile, so
-            # the determinism define reaches all of msvcbuild.bat's compiles
-            # (the bat never sets CL itself) without patching LuaJIT source.
-            BUILD_COMMAND     ${CMAKE_COMMAND} -E env
+            # the lockdown and determinism defines reach all of msvcbuild.bat's
+            # compiles (the bat never sets CL itself) without patching LuaJIT
+            # source. The one thing CL cannot reach is the `-D FFI` the bat
+            # hands DynASM, which the first command takes out (see the patch
+            # header).
+            BUILD_COMMAND     ${CMAKE_COMMAND} -E chdir "${_lj_src}"
+                              ${CMAKE_COMMAND} -P
+                              "${CMAKE_SOURCE_DIR}/cmake/patches/luajit_msvc_no_ffi.cmake"
+            COMMAND           ${CMAKE_COMMAND} -E env
                               --unset=NoDefaultCurrentDirectoryInExePath
                               ${_lj_msvc_env}
                               ${CMAKE_COMMAND} -E chdir "${_lj_src}/src"
                               cmd /c .\\msvcbuild.bat static
             INSTALL_COMMAND   ""
             BUILD_BYPRODUCTS  "${_lj_lib}")
+        # msvcbuild.bat compiles every file on each run, so no clean is needed.
+        bolo_luajit_rebuild_on_change(luajit_ext "${_lj_msvc_env}")
     elseif(CMAKE_SYSTEM_NAME STREQUAL "iOS")
         # iOS runs LuaJIT's interpreter alone: an App Store app may not write
         # code and then run it, so LUAJIT_DISABLE_JIT leaves the trace
@@ -448,7 +472,7 @@ if(WINBOLO_LUAJIT)
             ARCHES       ${_lj_archs}
             LIB_VAR      _lj_lib)
     else()
-        set(_lj_xcflags "-fPIC")
+        string(JOIN " " _lj_xcflags -fPIC ${BOLO_LUAJIT_LOCKDOWN_XCFLAGS})
         if(WINBOLO_LUAJIT_DETERMINISTIC)
             string(APPEND _lj_xcflags " -DLUAJIT_SECURITY_PRNG=0")
         endif()
@@ -491,6 +515,7 @@ if(WINBOLO_LUAJIT)
                 COMMAND           lipo -create ${_lj_slices} -output "${_lj_lib}"
                 INSTALL_COMMAND   ""
                 BUILD_BYPRODUCTS  "${_lj_lib}")
+            bolo_luajit_rebuild_on_change(luajit_ext "${_lj_xcflags}")
 
             # The build step above runs once and is then held off by its stamp,
             # and everything it produces lives in the shared _deps source tree
@@ -514,13 +539,17 @@ if(WINBOLO_LUAJIT)
                           -P "${CMAKE_SOURCE_DIR}/cmake/luajit_fat_check.cmake")
         else()
             set(_lj_lib "${_lj_src}/src/libluajit.a")
+            # The clean makes a rerun after a change of flags rebuild every
+            # object; make alone would keep the ones it already has.
             ExternalProject_Add(luajit_ext
                 SOURCE_DIR        "${_lj_src}"
                 BUILD_IN_SOURCE   TRUE
                 CONFIGURE_COMMAND ""
-                BUILD_COMMAND     ${_lj_make}
+                BUILD_COMMAND     make -C "${_lj_src}" clean
+                COMMAND           ${_lj_make}
                 INSTALL_COMMAND   ""
                 BUILD_BYPRODUCTS  "${_lj_lib}")
+            bolo_luajit_rebuild_on_change(luajit_ext "${_lj_xcflags}")
         endif()
     endif()
 
@@ -820,7 +849,8 @@ else()
         src/gui/sdl3/dialogs/lobby/lobby_rating.cpp
         src/gui/sdl3/dialogs/lobby/lobby_reel.cpp
         src/gui/sdl3/dialogs/lobby/lobby_clip_gif.cpp
-        src/gui/sdl3/dialogs/lobby/lobby_clip_gif_gallery.cpp
+        src/gui/sdl3/dialogs/clip_gif_capture.cpp
+        src/gui/sdl3/dialogs/clip_gif_gallery.cpp
         src/gui/sdl3/dialogs/lobby/lobby_chooser.cpp
         src/gui/sdl3/dialogs/lobby/lobby_scenario_chooser.cpp
         src/gui/sdl3/dialogs/lobby/lobby_wbn_maps.cpp
@@ -1495,9 +1525,6 @@ target_compile_definitions(WinBoloIOS PRIVATE
     __IPHONEOS__=1
     WINBOLO_VERSION="${WINBOLO_VERSION}"
     WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
-    WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
-    WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
-    WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
     BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
     BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
     BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
@@ -1664,11 +1691,12 @@ target_sources(WinBoloIOS PRIVATE ${IOS_MAPEDITOR_SOURCES})
 target_compile_definitions(WinBoloIOS PRIVATE MAPEDITOR_WBN_OPEN=1)
 source_group("Map Editor" FILES ${IOS_MAPEDITOR_SOURCES})
 target_include_directories(WinBoloIOS PRIVATE src/third_party/ImGuiColorTextEdit)
-# The recap's clip GIF export and the encoder's one implementation TU. The
-# clip is written into Documents (lobby_clip_gif.cpp), as there is no save
-# dialog.
+# The recap's clips (Preview clip and Save clip) and the encoder's one
+# implementation TU. The GIF is written into Documents (clip_gif_capture.cpp),
+# as there is no save dialog.
 target_sources(WinBoloIOS PRIVATE
     src/gui/sdl3/dialogs/lobby/lobby_clip_gif.cpp
+    src/gui/sdl3/dialogs/clip_gif_capture.cpp
     src/third_party/msf_gif/msf_gif_impl.c
     # The GIF length rules the reel's length field and marker use. The GIF
     # gallery is not in the iOS build (BOLO_CLIP_GIF_GALLERY).
@@ -1953,6 +1981,9 @@ if(ENABLE_SENTRY AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS" AND NOT EMSCRIPTEN)
     #     collisions inside libc++ headers (isnan / isfinite) hit
     #     crashpad TUs that include <format> / <cmath>. Upstream
     #     crashpad has not been updated for these yet.
+    # src/common/sentry_nsexception.m depends on the inproc choice on
+    # Apple: its on_crash hook does not run under crashpad on macOS, so
+    # moving macOS to crashpad loses the NSException name in reports.
     if(MINGW OR APPLE)
         set(SENTRY_BACKEND "inproc" CACHE STRING "" FORCE)
     else()
@@ -2092,7 +2123,7 @@ set(CLIENT_SOURCES
     src/client_frontend/client_frontend_tick.c
     src/client_frontend/client_frontend_common.c
     src/client_frontend/client_frontend_sp.c
-    src/gui/sdl3/dialog_backend.c src/gui/sdl3/dialogs/imgui_welcome.cpp src/gui/sdl3/dialogs/imgui_mapchooser.cpp src/gui/sdl3/dialogs/imgui_udpsetup.cpp src/gui/sdl3/dialogs/imgui_gamebrowser.cpp src/gui/sdl3/dialogs/imgui_setname.cpp src/gui/sdl3/dialogs/imgui_trackersetup.cpp src/gui/sdl3/dialogs/imgui_winbolonet.cpp src/gui/sdl3/dialogs/imgui_messagebox.cpp src/gui/sdl3/dialogs/imgui_keycap.cpp src/gui/sdl3/dialogs/imgui_lobby.cpp src/gui/sdl3/dialogs/lobby/lobby_assets.cpp src/gui/sdl3/dialogs/lobby/lobby_chat.cpp src/gui/sdl3/dialogs/lobby/lobby_settings.cpp src/gui/sdl3/dialogs/lobby/lobby_status.cpp src/gui/sdl3/dialogs/lobby/lobby_players.cpp src/gui/sdl3/dialogs/lobby/lobby_map_preview.cpp src/gui/sdl3/dialogs/lobby/lobby_commands.cpp src/gui/sdl3/dialogs/lobby/lobby_recap.cpp src/gui/sdl3/dialogs/lobby/lobby_rating.cpp src/gui/sdl3/dialogs/lobby/lobby_reel.cpp src/gui/sdl3/dialogs/lobby/lobby_clip_gif.cpp src/gui/sdl3/dialogs/lobby/lobby_clip_gif_gallery.cpp src/gui/sdl3/dialogs/lobby/lobby_chooser.cpp src/gui/sdl3/dialogs/lobby/lobby_scenario_chooser.cpp src/gui/sdl3/dialogs/lobby/lobby_wbn_maps.cpp src/gui/sdl3/dialogs/imgui_settings.cpp src/gui/sdl3/dialogs/imgui_keysetup.cpp src/gui/sdl3/dialogs/imgui_deck_pause.cpp src/gui/sdl3/dialogs/imgui_tutorial_overlay.cpp src/gui/sdl3/dialogs/imgui_keyboard.cpp src/gui/sdl3/dialogs/imgui_quickchat.cpp src/gui/sdl3/dialogs/imgui_controller_prompt.cpp src/gui/sdl3/dialogs/imgui_controller_disconnect.cpp src/gui/sdl3/dialogs/imgui_onboarding.cpp src/gui/sdl3/dialogs/imgui_nav_outline.cpp src/gui/sdl3/dialogs/dialog_quit.cpp src/gui/sdl3/dialogs/imgui_wbn_browser.cpp src/gui/sdl3/dialogs/imgui_news.cpp src/gui/sdl3/dialogs/imgui_about.cpp src/gui/sdl3/dialogs/dialog_footer.cpp
+    src/gui/sdl3/dialog_backend.c src/gui/sdl3/dialogs/imgui_welcome.cpp src/gui/sdl3/dialogs/imgui_mapchooser.cpp src/gui/sdl3/dialogs/imgui_udpsetup.cpp src/gui/sdl3/dialogs/imgui_gamebrowser.cpp src/gui/sdl3/dialogs/imgui_setname.cpp src/gui/sdl3/dialogs/imgui_trackersetup.cpp src/gui/sdl3/dialogs/imgui_winbolonet.cpp src/gui/sdl3/dialogs/imgui_messagebox.cpp src/gui/sdl3/dialogs/imgui_keycap.cpp src/gui/sdl3/dialogs/imgui_lobby.cpp src/gui/sdl3/dialogs/lobby/lobby_assets.cpp src/gui/sdl3/dialogs/lobby/lobby_chat.cpp src/gui/sdl3/dialogs/lobby/lobby_settings.cpp src/gui/sdl3/dialogs/lobby/lobby_status.cpp src/gui/sdl3/dialogs/lobby/lobby_players.cpp src/gui/sdl3/dialogs/lobby/lobby_map_preview.cpp src/gui/sdl3/dialogs/lobby/lobby_commands.cpp src/gui/sdl3/dialogs/lobby/lobby_recap.cpp src/gui/sdl3/dialogs/lobby/lobby_rating.cpp src/gui/sdl3/dialogs/lobby/lobby_reel.cpp src/gui/sdl3/dialogs/lobby/lobby_clip_gif.cpp src/gui/sdl3/dialogs/clip_gif_capture.cpp src/gui/sdl3/dialogs/clip_gif_gallery.cpp src/gui/sdl3/dialogs/lobby/lobby_chooser.cpp src/gui/sdl3/dialogs/lobby/lobby_scenario_chooser.cpp src/gui/sdl3/dialogs/lobby/lobby_wbn_maps.cpp src/gui/sdl3/dialogs/imgui_settings.cpp src/gui/sdl3/dialogs/imgui_keysetup.cpp src/gui/sdl3/dialogs/imgui_deck_pause.cpp src/gui/sdl3/dialogs/imgui_tutorial_overlay.cpp src/gui/sdl3/dialogs/imgui_keyboard.cpp src/gui/sdl3/dialogs/imgui_quickchat.cpp src/gui/sdl3/dialogs/imgui_controller_prompt.cpp src/gui/sdl3/dialogs/imgui_controller_disconnect.cpp src/gui/sdl3/dialogs/imgui_onboarding.cpp src/gui/sdl3/dialogs/imgui_nav_outline.cpp src/gui/sdl3/dialogs/dialog_quit.cpp src/gui/sdl3/dialogs/imgui_wbn_browser.cpp src/gui/sdl3/dialogs/imgui_news.cpp src/gui/sdl3/dialogs/imgui_about.cpp src/gui/sdl3/dialogs/dialog_footer.cpp
     src/gui/sdl3/dialogs/imgui_star_rating.cpp
     src/gui/sdl3/dialogs/wbn_browser_sort.c
     src/gui/sdl3/map_preview_popup.cpp
@@ -2239,10 +2270,14 @@ set(LOGVIEWER_LIB_SOURCES
     src/logviewer/imgui/imgui_hud.cpp
     src/logviewer/imgui/imgui_overview.cpp
     src/logviewer/imgui/imgui_tank.cpp
+    src/logviewer/imgui/imgui_chat.cpp
     src/logviewer/imgui/imgui_lv_icons.cpp
     src/logviewer/imgui/imgui_game_view.cpp
     src/logviewer/imgui/imgui_comments.cpp
     src/logviewer/imgui/imgui_logviewer_menu.cpp
+    # Action > Recording Mode and Windows > Clips. The GIF code and the gallery
+    # it uses are in CLIENT_SOURCES already.
+    src/logviewer/imgui/imgui_clip_gif.cpp
     src/logviewer/platform/platform_config.c
     src/logviewer/platform/platform_dialogs.c
     # The client links the real game-view renderer (game_view.c) plus an
@@ -2264,9 +2299,6 @@ target_compile_definitions(WinBolo PRIVATE
     MAPEDITOR_WBN_OPEN=1
     WINBOLO_VERSION="${WINBOLO_VERSION}"
     WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
-    WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
-    WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
-    WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
     BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
     BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
     BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
@@ -2424,6 +2456,13 @@ if(HAVE_SENTRY)
         target_compile_definitions(WinBolo PRIVATE SENTRY_DSN="${SENTRY_DSN}")
     endif()
     target_link_libraries(WinBolo PRIVATE sentry::sentry)
+    if(APPLE AND SENTRY_BACKEND STREQUAL "inproc")
+        # Names uncaught NSExceptions in the crash event. Needs on_crash,
+        # which sentry-native only runs for the inproc backend on macOS.
+        target_sources(WinBolo PRIVATE src/common/sentry_nsexception.m)
+        target_compile_definitions(WinBolo PRIVATE HAVE_SENTRY_NSEXCEPTION=1)
+        target_link_libraries(WinBolo PRIVATE "-framework Foundation")
+    endif()
 endif()
 
 # Steamworks SDK integration (optional)
@@ -2697,9 +2736,6 @@ target_sources(WinBoloDS PRIVATE src/steam/steam_wrapper_stub.c
 target_compile_definitions(WinBoloDS PRIVATE
     WINBOLO_VERSION="${WINBOLO_VERSION}"
     WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
-    WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
-    WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
-    WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
     BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
     BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
     BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
@@ -2774,6 +2810,13 @@ if(HAVE_SENTRY)
         target_compile_definitions(WinBoloDS PRIVATE SENTRY_DSN="${SENTRY_DSN}")
     endif()
     target_link_libraries(WinBoloDS PRIVATE sentry::sentry)
+    if(APPLE AND SENTRY_BACKEND STREQUAL "inproc")
+        # Names uncaught NSExceptions in the crash event. Needs on_crash,
+        # which sentry-native only runs for the inproc backend on macOS.
+        target_sources(WinBoloDS PRIVATE src/common/sentry_nsexception.m)
+        target_compile_definitions(WinBoloDS PRIVATE HAVE_SENTRY_NSEXCEPTION=1)
+        target_link_libraries(WinBoloDS PRIVATE "-framework Foundation")
+    endif()
 endif()
 
 # Copy geo database to server output directory
@@ -2889,10 +2932,12 @@ set(LOGVIEWER_IMGUI_SOURCES
     src/logviewer/imgui/imgui_hud.cpp
     src/logviewer/imgui/imgui_overview.cpp
     src/logviewer/imgui/imgui_tank.cpp
+    src/logviewer/imgui/imgui_chat.cpp
     src/logviewer/imgui/imgui_lv_icons.cpp
     src/logviewer/imgui/imgui_game_view.cpp
     src/logviewer/imgui/imgui_comments.cpp
     src/logviewer/imgui/imgui_logviewer_menu.cpp
+    src/logviewer/imgui/imgui_clip_gif.cpp
     src/gui/sdl3/dialogs/imgui_nav_outline.cpp
     src/gui/sdl3/dialogs/dialog_quit.cpp
     src/gui/sdl3/mapview.c
@@ -2917,6 +2962,18 @@ set(LOGVIEWER_WBN_BROWSER_SOURCES
     src/logviewer/imgui/imgui_lv_browser_stubs.cpp
 )
 
+# Action > Recording Mode and Windows > Clips (imgui_clip_gif.cpp): the GIF
+# encoder, the GIF rules and metadata files, the clipboard copy, Preview
+# clip and Save clip with the progress window, and the gallery window. The
+# game's replay uses the same files, which CLIENT_SOURCES also lists.
+set(LOGVIEWER_CLIP_GIF_SOURCES
+    src/third_party/msf_gif/msf_gif_impl.c
+    src/gui/sdl3/dialogs/clip_gif_core.c
+    src/gui/sdl3/dialogs/clip_gif_clipboard.c
+    src/gui/sdl3/dialogs/clip_gif_capture.cpp
+    src/gui/sdl3/dialogs/clip_gif_gallery.cpp
+)
+
 set(LOGVIEWER_PLATFORM_SOURCES
     src/logviewer/platform/platform_config.c
     src/logviewer/platform/platform_dialogs.c
@@ -2934,6 +2991,7 @@ add_executable(LogViewer
     ${LOGVIEWER_PLATFORM_SOURCES}
     ${LOGVIEWER_WBN_SOURCES}
     ${LOGVIEWER_WBN_BROWSER_SOURCES}
+    ${LOGVIEWER_CLIP_GIF_SOURCES}
     # Spectator replay translator: spec_seed_load.c calls specReplay* but the
     # standalone links no bolo sim, so compile the translator in directly. It
     # pulls only public bolo headers (spectator_replay.h / log.h / platform_net.h)
@@ -2987,9 +3045,6 @@ add_executable(LogViewer
 target_compile_definitions(LogViewer PRIVATE
     WINBOLO_VERSION="${WINBOLO_VERSION}"
     WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
-    WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
-    WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
-    WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
     BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
     BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
     BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
@@ -3118,9 +3173,6 @@ target_compile_definitions(WinBoloHeadless PRIVATE
     HAVE_SCREEN_C=1
     WINBOLO_VERSION="${WINBOLO_VERSION}"
     WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
-    WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
-    WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
-    WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
     BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
     BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
     BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
@@ -3171,6 +3223,13 @@ if(HAVE_SENTRY)
         target_compile_definitions(WinBoloHeadless PRIVATE SENTRY_DSN="${SENTRY_DSN}")
     endif()
     target_link_libraries(WinBoloHeadless PRIVATE sentry::sentry)
+    if(APPLE AND SENTRY_BACKEND STREQUAL "inproc")
+        # Names uncaught NSExceptions in the crash event. Needs on_crash,
+        # which sentry-native only runs for the inproc backend on macOS.
+        target_sources(WinBoloHeadless PRIVATE src/common/sentry_nsexception.m)
+        target_compile_definitions(WinBoloHeadless PRIVATE HAVE_SENTRY_NSEXCEPTION=1)
+        target_link_libraries(WinBoloHeadless PRIVATE "-framework Foundation")
+    endif()
 endif()
 
 # Copy shared libraries and brain scripts next to headless executable
@@ -3234,9 +3293,6 @@ target_compile_definitions(winbolo_gym PRIVATE
     WINBOLO_GYM_EXPORTS=1
     WINBOLO_VERSION="${WINBOLO_VERSION}"
     WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
-    WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
-    WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
-    WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
     BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
     BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
     BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
@@ -3394,9 +3450,6 @@ target_compile_definitions(BrainTest PRIVATE
     HAVE_SCREEN_C=1
     WINBOLO_VERSION="${WINBOLO_VERSION}"
     WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
-    WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
-    WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
-    WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
     BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
     BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
     BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
@@ -3551,9 +3604,6 @@ target_compile_definitions(MapEditor PRIVATE
     MAPEDITOR_WBN_OPEN=1
     WINBOLO_VERSION="${WINBOLO_VERSION}"
     WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
-    WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
-    WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
-    WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
     BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
     BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
     BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
@@ -3630,9 +3680,6 @@ target_compile_definitions(MakeTileTestMap PRIVATE
     HAVE_SCREEN_C=1
     WINBOLO_VERSION="${WINBOLO_VERSION}"
     WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
-    WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
-    WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
-    WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
     BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
     BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
     BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION})
@@ -4059,6 +4106,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_alliance_reset.c
     tests/unit/test_alliance_leave.c
     tests/unit/test_alliance_request.c
+    tests/unit/test_team_sides.c
     tests/unit/test_round_start_owners.c
     tests/unit/test_lobby_add_bot_dispatch.c
     tests/unit/test_lobby_bot_config_memory.c
@@ -4236,6 +4284,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # Where a dead tank's pills land: Mac Bolo's spiral round the tank, the
     # squares it passes over, the map edge, and a map built to have no room.
     tests/unit/test_tank_drop_pills.c
+    # The spiral cursor in util.c: the ring order from a north start (pill
+    # drops) and from a north-west corner (start scatter).
+    tests/unit/test_util_spiral.c
     # The builder ops: the five arms, the refusals each one answers with, the
     # wood a dispatched order costs, and the loss a scripted death records.
     tests/unit/test_scenario_builder_arms.c
@@ -4450,6 +4501,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_upload_busy.c
     tests/unit/test_upload_filename_safe.c
     tests/unit/test_lobby_time_minutes_valid.c
+    # Lobby settings the round then plays: the time limit and hidden mines.
+    tests/unit/test_lobby_round_settings.c
     tests/unit/test_lobby_bot_name.c
     tests/unit/test_lobby_map_list_chunked.c
     # The lobby's reload request: who may ask, when, and what a lobby with
@@ -4476,6 +4529,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_wbn_map.c
     tests/unit/test_wbn_map_fetch_policy.c
     tests/unit/test_brain_crash_log.c
+    tests/unit/test_brain_binding_bounds.c
+    tests/unit/test_brain_sandbox_hostile.c
     tests/unit/test_brain_push_rules.c
     tests/unit/test_brain_inbox.c
     tests/unit/test_brain_list_scan.c
@@ -4490,6 +4545,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_pf_start_heading.c
     tests/unit/test_pf_route_keep.c
     tests/unit/test_pf_offchain_root.c
+    tests/unit/test_pf_edge_cost_sync.c
     tests/unit/test_pf_influence_tail.c
     # Bench (does nothing unless WB_BENCH=1): the decoy-square blocker step.
     tests/unit/test_bench_decoy_step.c
@@ -4541,6 +4597,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_autolock_on_game_start.c
     tests/unit/test_lobby_transfer_host.c
     tests/unit/test_treegrow_no_sea.c
+    tests/unit/test_treegrow_build_target.c
     tests/unit/test_pill_repair_load.c
     tests/unit/test_entity_lifecycle.c
     tests/unit/test_entity_event.c
@@ -4572,6 +4629,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_tank_alliance_unfielded.c
     tests/unit/test_tank_death_state.c
     tests/unit/test_tank_knockback.c
+    tests/unit/test_tank_mine_sweep.c
     tests/unit/test_tank_status_wire.c
     tests/unit/test_voice_flags.c
     tests/unit/test_voice_talking_codec.c
@@ -4603,6 +4661,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_lgm_draw_centre.c
     tests/unit/test_view_state.c
     tests/unit/test_view_target_codec.c
+    tests/unit/test_control_event_names.c
     tests/unit/test_view_target_apply.c
     tests/unit/test_view_cycling.c
     tests/unit/test_pill_pos_current.c
@@ -4616,6 +4675,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # only the test itself is added here; the setting store it also exercises
     # comes in with gfx_settings.c above.
     tests/unit/test_fog_roads.c
+    # What Alt+Enter does in a game the server keeps in classic mode;
+    # header-only logic (fullscreen_key.h).
+    tests/unit/test_fullscreen_key.c
     tests/unit/test_overview_hud_layout.cpp
     tests/unit/test_newswire_slide.c
     tests/unit/test_sight.c
@@ -4648,8 +4710,13 @@ set(WINBOLO_UNITTESTS_SOURCES
     # test_stubs.c provides here, so it compiles in without lang.c.
     tests/unit/test_sim_rules_describe.c
     src/gui/sdl3/sim_rules_phrase.c
+    # shell_start_add in the pillbox aim solver's lead.
+    tests/unit/test_pill_aim_start_add.c
     # pill_shell_cap and pill_max_shells_at_tank, driven through pillsUpdate.
     tests/unit/test_pill_shell_cap.c
+    # pill_aim_iterations: a budget past 255 ends, and a budget of 1 aims at
+    # the tank.
+    tests/unit/test_pill_aim_budget.c
     # The range behind each rule, against the validator that refuses on it.
     tests/unit/test_sim_rules_range.c
     # A description id per rule, and the range in words. The phrase file above
@@ -4937,9 +5004,15 @@ set(WINBOLO_UNITTESTS_SOURCES
     # plus the shell's offset from the rewound hit point, not at the shell,
     # which a lag-compensated test leaves behind the tank.
     tests/unit/test_tank_blast_at_tank.c
+    # How the early own shell blast matches the server's explosion and sound
+    # of the same shell (test_early_blast.c).
+    tests/unit/test_early_blast.c
     # tank_hit_sets_off_mines: whether a shell that hits a tank sets off the
     # mines on its square.
     tests/unit/test_tank_hit_mines.c
+    # man_dead_pill_terrain_speed: the builder's speed on the square of a
+    # dead pillbox.
+    tests/unit/test_man_dead_pill_speed.c
     tests/unit/test_teleport_clears_rewind.c
     tests/unit/test_shell_rewind_rules.c
     tests/unit/test_input_gate.c
@@ -5101,6 +5174,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_lv_event_list.c
     # WinBolo.net log browser table sort rule (test_wbn_browser_sort.c).
     tests/unit/test_wbn_browser_sort.c
+    # The focus outline's key rule: the first Enter, Space or arrow with the
+    # outline hidden only shows it (test_nav_outline.cpp).
+    tests/unit/test_nav_outline.cpp
     # The game browser's server version test (browser_version.h) and the
     # protocol bytes from WINBOLO_VERSION (test_browser_version.c).
     tests/unit/test_browser_version.c
@@ -5209,6 +5285,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # Which parts of the viewer a frame of the overview draws, for a log
     # file and for a live feed (lv_panel_set.h, header only).
     tests/unit/test_lv_panel_set.c
+    # The Chat panel: its fade by replay time and the lines it lists
+    # (lv_chat_view.h, header only), and the chat parts of a line of the
+    # events list (lv_event_list.c).
+    tests/unit/test_lv_chat_view.c
     # The viewer's playback times as text, to the hundredth of a second, and
     # the ring flashed on the map round an event's place (lv_time_fmt.h,
     # lv_event_flash.h, header only).
@@ -5327,6 +5407,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     src/logviewer/lv_event_list.c
     # The WinBolo.net log browser's sort rule, for test_wbn_browser_sort.c.
     src/gui/sdl3/dialogs/wbn_browser_sort.c
+    # The focus outline, for test_nav_outline.cpp (needs imgui_backends).
+    src/gui/sdl3/dialogs/imgui_nav_outline.cpp
     # The recap clip GIF rules, for test_clip_gif_core.c.
     src/gui/sdl3/dialogs/clip_gif_core.c
 )
@@ -5346,6 +5428,7 @@ target_sources(WinBoloUnitTests PRIVATE src/steam/steam_wrapper_stub.c
     tests/unit/test_voice_jitter.c
     tests/unit/test_voice_jitter_loss.c
     tests/unit/test_voice_flood_cap.c
+    tests/unit/test_voice_map_change.c
     src/bolo/voice_segment.c
     tests/unit/test_voice_segment.c
     src/bolo/voice_talker_select.c
@@ -5354,9 +5437,6 @@ target_compile_definitions(WinBoloUnitTests PRIVATE
     HAVE_SCREEN_C=1
     WINBOLO_VERSION="${WINBOLO_VERSION}"
     WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
-    WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
-    WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
-    WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
     BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
     BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
     BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
@@ -5463,7 +5543,9 @@ target_link_libraries(WinBoloUnitTests PRIVATE
     # so the include dir doesn't propagate transitively).
     mdns
     # voice_core.c is compiled into this target for the codec round-trip test.
-    Opus::opus)
+    Opus::opus
+    # imgui_nav_outline.cpp and test_nav_outline.cpp drive a real ImGui context.
+    imgui_backends)
 
 if(WIN32)
     target_link_libraries(WinBoloUnitTests PRIVATE ws2_32 winmm user32)
@@ -5647,6 +5729,7 @@ set(_unit_test_names
     mine_kill_publishes_event
     mine_kill_on_boat_publishes_event
     mine_kill_own_mine_names_self
+    mine_kill_explosion_size
     mine_blast_range
     awards_basic_winners
     awards_tiebreak
@@ -5669,6 +5752,7 @@ set(_unit_test_names
     round_stats_derive_equivalence
     highlights_cluster_wipe
     highlights_wipe_team_bonus
+    highlights_wipe_team_at_death
     highlights_objective_steal
     highlights_award_anchor
     highlights_selection
@@ -5676,6 +5760,8 @@ set(_unit_test_names
     highlights_empty
     territory_shift_basic
     territory_shift_bounded
+    round_stats_team_at
+    territory_shift_follows_team
     highlights_turning_point
     territory_recent_damage
     highlights_front_collapse
@@ -5843,6 +5929,27 @@ set(_unit_test_names
     brain_crash_log_writes_file
     brain_crash_log_falls_back_to_luaptr
     brain_push_rules_written_on_change
+    brain_bounds_tail_bad_steps
+    brain_bounds_tail_bad_neutral
+    brain_bounds_think_errors
+    brain_bounds_wrapper_called_from_lua
+    brain_bounds_kill_outside_think
+    brain_bounds_host_globals_raw
+    brain_bounds_on_init_metatable
+    brain_crash_log_outside_think
+    brain_bounds_deserialize_open
+    brain_bounds_next_step_bad_start
+    brain_bounds_shells_at_bad_tile
+    brain_bounds_push_replaced_info
+    brain_bounds_stamps_bad_tables
+    brain_bounds_threat_range
+    brain_crash_log_ignores_brain_globals
+    brain_sandbox_hostile_native_preloads
+    brain_sandbox_hostile_bytecode_init
+    brain_sandbox_hostile_loaders_removed
+    brain_sandbox_hostile_astar_log_removed
+    brain_sandbox_hostile_file_jail
+    brain_sandbox_hostile_off_map_terrain
     brain_msgh_budget_kill_no_traceback
     brain_msgh_real_error_keeps_traceback
     brain_inbox_push_peek_fifo
@@ -5877,6 +5984,9 @@ set(_unit_test_names
     pf_offchain_lowest_g_not_root
     pf_offchain_chain_rank_not_root
     pf_offchain_dead_end_keeps_root
+    pf_edge_sync_blocks_new_corner
+    pf_edge_sync_prices_new_wall
+    pf_edge_sync_matches_full_rebuild
     bench_decoy_step_first
     shield_outgoing_pill_blocks
     shield_pill_cover_walls
@@ -6025,6 +6135,16 @@ set(_unit_test_names
     lv_event_list_replay
     lv_event_list_pinned
     wbn_browser_sort
+    nav_outline_first_enter_shows
+    nav_outline_first_space_shows
+    nav_outline_first_arrow_shows
+    nav_outline_code_focus_enter_acts
+    nav_outline_quiet_focus_hidden
+    nav_outline_ctrl_enter_not_claimed
+    nav_outline_alt_arrow_not_claimed
+    nav_outline_first_home_end_shows
+    nav_outline_first_page_keys_shows
+    nav_outline_destroyed_context_forgets_focus
     browser_version_parse
     version_protocol_bytes
     clip_gif_len_sync
@@ -6034,6 +6154,28 @@ set(_unit_test_names
     clip_gif_gallery_scan
     clip_gif_text_fill
     clip_gif_preview_cap
+    clip_gif_current_game
+    clip_gif_delete
+    clip_gif_frame_count
+    clip_gif_centre_crop
+    clip_gif_names
+    clip_gif_frame_box
+    clip_gif_frame_drag
+    clip_gif_crop_from_frame
+    clip_gif_blit_view
+    clip_gif_mode_state
+    clip_gif_preview_play
+    clip_gif_choose_crop
+    clip_gif_default_frame
+    clip_gif_meta_begin
+    clip_gif_span_place
+    clip_gif_zoom_axis
+    clip_gif_span_drag
+    clip_gif_zoom_grow
+    clip_gif_window_place
+    clip_gif_span_move
+    clip_gif_grip_box
+    clip_gif_frame_scale
     lv_snapshot_index_lookup
     lv_snapshot_index_ten_days
     lv_load_walk_fixtures
@@ -6082,10 +6224,46 @@ set(_unit_test_names
     alliance_request_refused_in_lobby
     alliance_request_cleared_at_round_start
     alliance_request_client_drops_departed_requester
+    team_sides_accept_merges_groups
+    team_sides_clear_moves_no_owner
+    team_sides_pill_fires_at_ex_ally
+    team_sides_base_refuels_ally_only
+    team_sides_allies_share_base_win
+    team_sides_client_takes_slot_in_game
+    team_sides_fold_at_return_to_lobby
+    team_sides_surrender_after_defection
+    team_sides_ping_after_leave
+    team_sides_track_identity_after_defection
+    team_sides_midgame_joiner_team
+    team_sides_set_team_keeps_player_alliance
+    team_sides_accept_moves_whole_team
+    team_sides_accept_from_no_team
+    team_sides_accept_same_side_says_nothing
+    team_sides_leave_takes_free_team
+    team_sides_leave_with_no_free_team
+    team_sides_free_team_rules
+    team_sides_team_chat_follows_sides
+    team_sides_panels_follow_team
+    team_sides_infection_puts_leaver_back
+    team_sides_rejoin_is_a_joiner
+    team_sides_joiner_slot_before_join
+    team_sides_lobby_joiner_keeps_rule
+    team_sides_lobby_drops_empty_teams
+    team_sides_soccer_puts_leaver_back
+    team_sides_round_log_teams
+    team_sides_held_seat_allied_in_round
+    team_sides_free_team_keeps_setup
+    team_sides_free_team_keeps_lobby_side
+    team_sides_accept_rebuilds_table
+    team_sides_leave_rebuilds_table
+    team_sides_bot_added_in_round_is_allied
+    team_sides_table_write_is_caught
     round_start_owners_kept_with_lobby_team
     round_start_owners_kept_after_manual_alliance
     treegrow_never_plants_on_deep_sea
     treegrow_reset_clears_stale_target
+    treegrow_skips_square_man_is_building_on
+    treegrow_still_grows_when_man_not_building_there
     pill_repair_tops_up_from_arrival_armour
     pill_repair_short_load_spends_what_it_has
     pill_repair_full_load_covers_a_dead_pill
@@ -6208,12 +6386,11 @@ set(_unit_test_names
     mod_lobby_starts_mac_bolo_keeps_opposite_sides
     mac_bolo_settings_defaults_play_old_rules
     mac_bolo_settings_each_part_off
-    mac_bolo_settings_numbers
-    mac_bolo_tank_hit_mines_part_with_mines_mod
     mac_bolo_first_start_lobby_off_uses_mac_pick
     mac_bolo_spawn_starts_off_engine_picks
     mac_bolo_setting_changed_after_attach
     mac_bolo_setting_changed_between_rounds
+    mac_bolo_spawn_pick_keeps_enemies_off
     choose_start_lobby_arg_hand_picked
     choose_start_lobby_arg_team_side
     choose_start_lobby_arg_nil_without_reservation
@@ -6249,6 +6426,7 @@ set(_unit_test_names
     tank_knockback_timing_drive
     tank_knockback_replaces_mines
     tank_knockback_rules_respawn
+    tank_mine_sweep_follows_heading
     tank_knockback_mac_off_ignores_bonus
     tank_status_wire_bits
     tank_status_wire_start_find_round_trip
@@ -6310,6 +6488,7 @@ set(_unit_test_names
     view_cycle_pick_policy
     view_cycle_pick_direction
     view_target_codec
+    control_event_names
     view_target_apply
     view_cycle_bases
     view_cycle_base_direction
@@ -6328,6 +6507,7 @@ set(_unit_test_names
     pill_pos_current_duplicate_square
     pill_pos_current_snapshot_apply
     pill_pos_current_server_unchanged
+    brain_pills_skip_moved_square
     pill_pos_current_moved_state
     pill_pos_current_carry_cycle
     viewport_calc_square_pure
@@ -6351,6 +6531,7 @@ set(_unit_test_names
     fog_style_setting
     fog_road_edges
     fog_road_edge_masks
+    fullscreen_key_action
     overview_hud_layout
     newswire_slide
     sight
@@ -6441,14 +6622,18 @@ set(_unit_test_names
     sim_rules_pill_massage_follows
     sim_rules_pill_aim_mac
     sim_rules_tank_collision_mac
+    sim_rules_mac_halfway_heading
     sim_rules_tank_deep_sea_safe
     lgm_build_square_terrain_speed
+    pill_aim_lead_follows_shell_start_add
     pill_shell_cap_off_is_no_limit
-    pill_shell_cap_retargets_next_nearest
-    pill_shell_cap_holds_then_fires_when_freed
+    pill_shell_cap_does_not_retarget
+    pill_shell_cap_loses_shot_and_reloads
     pill_shell_cap_out_of_range_clears_just_seen
     pill_shell_cap_counts_same_update_shots
     pill_shell_cap_ignores_tank_shells
+    pill_aim_budget_past_a_byte_ends
+    pill_aim_budget_one_aims_at_tank
     sim_rules_tank_explosion_follows
     sim_rules_water_loss_follows
     sim_rules_pairs
@@ -6491,6 +6676,14 @@ set(_unit_test_names
     ping_kick_clears_strikes_on_disconnect
     tkexp_lgm_pairing
     tank_blast_at_shell_place
+    early_blast_place
+    early_blast_claim_explosion
+    early_blast_server_end
+    early_blast_sound
+    early_blast_sound_type_place
+    early_blast_tank_in_forest
+    early_blast_boat_grass_silent
+    early_blast_timeout
     tank_blast_kill_at_shell_place
     tank_blast_zero_rewind_unchanged
     tank_blast_hit_decision_unchanged
@@ -6503,6 +6696,13 @@ set(_unit_test_names
     tank_hit_mines_rule_on_sets_off
     tank_hit_mines_rule_off_spares
     tank_hit_mines_rule_off_ground
+    man_dead_pill_speed_road
+    man_dead_pill_speed_terrain_rule
+    man_dead_pill_speed_follows_road_rule
+    man_dead_pill_walk_ticks
+    man_dead_pill_walk_across_water
+    man_dead_pill_lifted_waits_for_tank
+    man_dead_pill_brain_walk
     teleport_erases_tank_rewind_record
     teleport_shell_hits_new_place
     teleport_rewind_refills
@@ -6557,6 +6757,7 @@ set(_unit_test_names
     loopback_bot_pool_survives_bulk_rebase
     loopback_brain_docs_survives_bulk_rebase
     loopback_map_upload
+    loopback_map_change_busy_lifts
     loopback_map_upload_list_after_rejoin
     upload_begin_golden
     script_upload_begin_refusals
@@ -6764,6 +6965,13 @@ set(_unit_test_names
     mapchooser_scenario_filter
     bg_map_pick_skips_tutorials
     tutorial_maps_shipped_path
+    tutorial_maps_popup_pauses
+    tutorial_maps_script_has_popup
+    scenario_host_popup_nil_outside_tutorials
+    scenario_host_popup_in_tutorial
+    scenario_validate_popup_tutorial_only
+    scenario_host_shipped_tutorial_rooted
+    scenario_host_popup_unsafe_unreachable
     bot_pool_builtin_defaults
     bot_pool_install_and_clamp
     bot_pool_install_dedup_and_drop
@@ -6791,6 +6999,12 @@ set(_unit_test_names
     md5_streaming_matches_oneshot
     net_impair
     lobby_time_minutes_valid
+    lobby_time_limit_reaches_round
+    lobby_time_limit_removed_reaches_round
+    lobby_time_limit_empty_reset
+    lobby_hidden_mines_client_follows
+    lobby_hidden_mines_in_place_start
+    lobby_hidden_mines_empty_reset
     control_overflow_defers_disconnect
     join_collision_verified_rejects_will_auth
     join_collision_verified_flag_irrelevant
@@ -6842,14 +7056,26 @@ set(_unit_test_names
     bot_pool_wire_chunk_transport
     bot_pool_catalog_id
     voice_core_roundtrip
+    voice_core_reset_matches_fresh
+    voice_core_fade_apply
     voice_device_resolve
     voice_peak
     voice_segment_roundtrip
     voice_segment_rejects_malformed
     voice_jitter_ordering_and_plc
     voice_jitter_undecodable_run
+    voice_jitter_fade_in_on_prime
+    voice_jitter_fade_out_before_marker
+    voice_jitter_fade_out_on_give_up
+    voice_jitter_decoder_reset_on_unprime
     voice_jitter_under_loss
     voice_flood_cap_enforced
+    voice_map_change_talker_kept
+    voice_map_change_during_redownload
+    voice_map_change_listener_kept
+    voice_map_change_accept_lost
+    voice_joiner_hears_before_map
+    voice_return_to_lobby_kept
     voice_talker_select_ranks_recent
     voice_talker_select_bounds
     active_sim_armed_on_lobby_tick
@@ -6974,6 +7200,8 @@ set(_unit_test_names
     tank_drop_pills_no_room
     lgm_drop_pill_spiral
     lgm_drop_pill_no_room
+    util_spiral_north
+    util_spiral_north_west
     scenario_lgm_dispatch
     scenario_lgm_recall
     scenario_lgm_kill
@@ -7046,6 +7274,8 @@ set(_unit_test_names
     survival_lobby_round
     survival_lobby_round_full
     survival_lobby_round_ds_order
+    survival_lobby_round_late_joiner
+    survival_lobby_round_leaver_back
     loopback_unfield_tank
     loopback_fine_tank_position
     loopback_shell_drawn_cull
@@ -7584,6 +7814,7 @@ set(_unit_test_names
     scenario_identity_blob
     scenario_identity_list_wire
     scenario_identity_details_fetch
+    scenario_identity_details_extra
     scenario_identity_shipped
     script_fetch_req_golden
     script_fetch_found_lua
@@ -7684,6 +7915,7 @@ set(_unit_test_names
     scenario_compose_commit_map_fixed_operator_mod
     scenario_compose_map_kind_cached
     scenario_compose_fallback_strict
+    scenario_compose_mods_after_scenario_type
     scenario_compose_needs_bots_any_mod
     scenario_compose_needs_bots_scenario_and_mod
     scenario_compose_on_tick_bottom_first
@@ -7696,12 +7928,15 @@ set(_unit_test_names
     scenario_announce_remaining
     scenario_announce_position
     scenario_text_fit
+    scenario_text_layout
     scenario_text_tablet_band
-    scenario_text_pointer_on_handle
     scenario_text_window_shown
     scenario_text_printed_recently
-    scenario_text_edge_shown
     scenario_text_save_place
+    scenario_float_frame_shown
+    scenario_float_pointer_on_handle
+    scenario_panel_default_place
+    scenario_text_beside_panel_place
     scenario_status_line
     scn_status_codec_and_client
     scn_announce_position_codec
@@ -7798,6 +8033,9 @@ set(_unit_test_names
     lv_event_overlay_no_sign
     lv_event_overlay_live_rebuild
     lv_panel_set_live
+    lv_chat_view_fade
+    lv_chat_view_visible
+    lv_chat_view_parts
     lv_event_kinds_filter
     lv_event_kinds_prefs
     lv_event_marker
@@ -7834,6 +8072,7 @@ set(_unit_test_names
     lv_controls_bottom_row
     lv_controls_wheel_step
     lv_controls_fine_drag
+    lv_play_toggle
     lv_zoom_percent
     lv_fullscreen_key
     lv_event_scan_returns_to_start
@@ -8137,9 +8376,6 @@ if(WB_FUZZ)
         HAVE_SCREEN_C=1
         WINBOLO_VERSION="${WINBOLO_VERSION}"
         WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
-        WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
-        WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
-        WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
         BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
         BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
         BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION})
@@ -8183,9 +8419,6 @@ if(WB_FUZZ)
         HAVE_SCREEN_C=1
         WINBOLO_VERSION="${WINBOLO_VERSION}"
         WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
-        WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
-        WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
-        WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
         BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
         BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
         BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION})
@@ -8253,9 +8486,6 @@ if(WB_FUZZ)
         HAVE_SCREEN_C=1
         WINBOLO_VERSION="${WINBOLO_VERSION}"
         WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
-        WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
-        WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
-        WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
         BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
         BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
         BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION})
@@ -8368,9 +8598,6 @@ if(WB_FUZZ)
         HAVE_SCREEN_C=1
         WINBOLO_VERSION="${WINBOLO_VERSION}"
         WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
-        WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
-        WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
-        WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
         BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
         BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
         BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION})
@@ -8410,9 +8637,6 @@ if(WB_FUZZ)
         HAVE_SCREEN_C=1
         WINBOLO_VERSION="${WINBOLO_VERSION}"
         WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
-        WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
-        WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
-        WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
         BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
         BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
         BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION})
@@ -8451,9 +8675,6 @@ if(WB_FUZZ)
         HAVE_SCREEN_C=1
         WINBOLO_VERSION="${WINBOLO_VERSION}"
         WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
-        WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
-        WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
-        WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
         BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
         BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
         BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION})

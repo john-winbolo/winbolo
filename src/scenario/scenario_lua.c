@@ -5982,9 +5982,11 @@ static const ScnLuaRow kScnLuaRows[] = {
       SCN_OP_PARAMS(status), SCN_OP_ACTS },
     { "popup", scnLuaPopup,
       "popup(text[, target]) — a message box the player closes, drawn the "
-      "way the tutorial's are; it pauses a local game while it is up. Key "
-      "tokens such as {ACCEL} or {QUICK_TREE} show as the player's own keys. "
-      "Up to 511 bytes; a popup is not replayed to a player who joins later.",
+      "way the tutorial's are. Only a built-in tutorial's script has it; in "
+      "every other scenario or mod game.popup is nil. It pauses the game "
+      "only in a built-in tutorial played alone. Key tokens such as {ACCEL} "
+      "or {QUICK_TREE} show as the player's own keys. Up to 511 bytes; a "
+      "popup is not replayed to a player who joins later.",
       SCN_OP_PARAMS(popup), SCN_OP_ACTS },
     { "marker", scnLuaMarker,
       "marker(id, x, y[, colour[, target]]) — put mark id on a map square; "

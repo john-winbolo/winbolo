@@ -256,6 +256,14 @@ void simRulesClassic(SimRules *out) {
      * no constant of its own. */
     out->tank_hit_sets_off_mines = 0;
 
+    /* ---- Dead pillbox builder speed ---- */
+    /* 0: a builder on the square of a dead pillbox walks at man_speed_road,
+     * whatever terrain the pillbox stands on, as in Mac Bolo, where the
+     * square reads as a pillbox and a pillbox square walks as fast as a
+     * road. 1 is the WinBolo 2.1 way: he walks at the speed of the terrain
+     * under the pillbox. This rule has no constant of its own. */
+    out->man_dead_pill_terrain_speed = 0;
+
 }
 
 /* ---- Against the classic table -------------------------------------------
@@ -643,7 +651,9 @@ static void simRulesWhyFloat(char *why, size_t whyLen, const char *field,
     /* Deep sea */                                                          \
     X(tank_deep_sea_safe,        INT,    0,      1)                          \
     /* Tank hit mines */                                                    \
-    X(tank_hit_sets_off_mines,   INT,    0,      1)
+    X(tank_hit_sets_off_mines,   INT,    0,      1)                          \
+    /* Dead pillbox builder speed */                                        \
+    X(man_dead_pill_terrain_speed, INT,  0,      1)
 
 /* The rules a single other rule also caps, as the pairs below hold them.
  * Only a direct field against other_field test is here: where a ceiling is
@@ -881,6 +891,23 @@ static SimRulesFault simRulesCheckRows(const SimRules *rules, bool carriedOnly,
               "shell_life %ld times gunsight_max %ld halved, less "
               "shell_start_add %ld, plus 1, is above 255",
               (long) rules->shell_life, (long) rules->gunsight_max,
+              (long) rules->shell_start_add)
+
+    /* A pillbox's shell goes through the same shellLifeTicks with
+     * pill_fire_length as its length, and into the same BYTE. Past 255 the
+     * budget wraps to a few ticks and the shell lands a square or so out.
+     * The sum is written out here rather than calling shellLifeTicks, since
+     * the log viewer builds this file without the sim's shells.c, but it is
+     * the same float product truncated the same way, so the two agree at the
+     * edge. Pill shells are made only on the server and pill_fire_length is
+     * not carried, so the client's pass does not ask this one. */
+    RULE_PAIR(PAIR_ASKED3(shell_life, pill_fire_length, shell_start_add),
+              1 + (int64_t) (int) (rules->shell_life *
+                                   rules->pill_fire_length) -
+                      (int64_t) rules->shell_start_add <= 255,
+              "shell_life %ld times pill_fire_length %g, less "
+              "shell_start_add %ld, plus 1, is above 255",
+              (long) rules->shell_life, (double) rules->pill_fire_length,
               (long) rules->shell_start_add)
 
     return SIM_RULES_OK;

@@ -12,6 +12,7 @@
 #include "imgui_main_menu.h"
 #include "imgui_dock.h"
 #include "imgui_item_info.h"
+#include "imgui_clip_gif.h"
 #include "imgui.h"
 
 #include <cstdio>
@@ -146,6 +147,7 @@ static int marks_process_input(ImGuiIO& io) {
         return 1;
     }
     if (io.KeyShift && !io.WantCaptureMouse && !s_is_mouse_down &&
+        !lv_clip_gif_frame_has_mouse() &&
         ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
         int game_x, game_y;
         if (!screen_to_game_coords(io.MousePos.x, io.MousePos.y, &game_x, &game_y)) {
@@ -244,6 +246,8 @@ void lv_imgui_game_viewport_hover(void) {
      * mouse, and not while the map is dragged. */
     if (s_lv == nullptr || s_lv->isLoaded == 0 || s_lv->gameView) return;
     if (io.WantCaptureMouse || s_is_dragging || s_marking || !ImGui::IsMousePosValid()) return;
+    /* Nor over the crop frame of recording mode, which has the mouse. */
+    if (lv_clip_gif_frame_has_mouse()) return;
     if (!screen_to_game_coords(io.MousePos.x, io.MousePos.y, &game_x, &game_y)) return;
 
     name[0] = '\0';
@@ -260,6 +264,10 @@ void lv_imgui_game_viewport_hover(void) {
         lv_imgui_item_info_pill_tooltip(number, (owner != NEUTRAL) ? name : nullptr, colour,
                                         armour);
     }
+}
+
+bool lv_imgui_game_viewport_mouse_held(void) {
+    return s_is_mouse_down;
 }
 
 int lv_imgui_game_viewport_process_input(void) {
@@ -279,8 +287,10 @@ int lv_imgui_game_viewport_process_input(void) {
         input_processed = 1;
     }
 
-    /* Check if ImGui wants to capture input - if so, don't process for game */
-    if (io.WantCaptureMouse) {
+    /* Check if ImGui wants to capture input - if so, don't process for game.
+     * The crop frame of recording mode is the same: a press on it moves or
+     * sizes the frame. A press that the map already has stays the map's. */
+    if (io.WantCaptureMouse || (!s_is_mouse_down && lv_clip_gif_frame_has_mouse())) {
         /* ImGui UI is using the mouse - reset drag state */
         if (s_is_mouse_down && !ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
             s_is_mouse_down = false;

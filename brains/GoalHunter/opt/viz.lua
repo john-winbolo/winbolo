@@ -647,6 +647,11 @@ M.COLLECT_EXEMPT = {
 }
 local _collect_exempt = M.COLLECT_EXEMPT
 
+-- "_BT_VIZ_<ID>" global name per viz id, built once. refresh() runs every
+-- think over every id, and building the name each time (upper + concat) was
+-- a new string per id per think for the same result.
+local _gname = {}
+
 function M.refresh()
   -- Collection-mode override (set per-bot by BrainTest's V-window radio):
   --   "off" → this bot emits NOTHING (so a non-viewed tank isn't collected)
@@ -655,15 +660,22 @@ function M.refresh()
   --   nil/other → normal per-layer toggle behavior.
   local collect = _G._BT_VIZ_COLLECT
   local suppress_all = _G._BT_VIZ_SUPPRESS_ALL
+  -- Headless host: the recorder drops every RECORD_SKIP id before it writes
+  -- the frame and nothing shows it live, so keep those ids off.
+  local rec_skip = M._headless and M.RECORD_SKIP or nil
   for id in pairs(M.IDS) do
-    if collect == "off" then
+    if rec_skip and rec_skip[id] then
+      _on[id] = false
+    elseif collect == "off" then
       _on[id] = false
     elseif collect == "all" and not _collect_exempt[id] then
       _on[id] = true
     elseif suppress_all and id ~= "hud_resources" then
       _on[id] = false
     else
-      local g = _G["_BT_VIZ_" .. id:upper()]
+      local gn = _gname[id]
+      if not gn then gn = "_BT_VIZ_" .. id:upper(); _gname[id] = gn end
+      local g = _G[gn]
       if g ~= nil then
         _on[id] = g
       else
@@ -689,6 +701,7 @@ function M.is_on(viz_id)
   if cached ~= nil then return cached end
   -- Cold path: cache not populated yet (first tick / non-BrainTest run).
   assert_id(viz_id)
+  if M._headless and M.RECORD_SKIP[viz_id] then return false end
   local collect = _G._BT_VIZ_COLLECT
   if collect == "off" then return false end
   if collect == "all" and not _collect_exempt[viz_id] then return true end
@@ -723,9 +736,15 @@ end
 -- registry is wired (WinBolo client / headless winbolods). So we detect the
 -- headless case by the return value, not by the binding's presence, and
 -- self-assign indices then.
+-- M._headless is set on both self-assign paths: no host shows overlays live
+-- (winbolods, the Bot Host, the game client), so label() can skip its text.
+-- M.detail_live goes false with it: only BrainTest reads the D-inspector
+-- detail entries, and they are never recorded.
 function M.register_all()
   if not braintest_viz_register then
     self_assign_ids()   -- binding truly absent
+    M._headless = true
+    M.detail_live = false
     return
   end
   local host_assigned = false
@@ -744,7 +763,11 @@ function M.register_all()
   end
   -- Binding present but no host registry (returned -1 for everything):
   -- headless winbolods → self-assign so overlays carry a real viz_idx.
-  if not host_assigned then self_assign_ids() end
+  if not host_assigned then
+    self_assign_ids()
+    M._headless = true
+    M.detail_live = false
+  end
 end
 
 -- idx -> viz_id legend (JSON object {"0":"id0",...}) for the brain recorder.
@@ -816,6 +839,11 @@ end
 -- overlay text size used elsewhere in the brain.
 local LABEL_SIZE = 0.25
 local function label(viz_id, x, y)
+  -- Headless host: nothing draws the label live, and the recorder drops
+  -- every label_overlays command (M.RECORD_SKIP) before it writes the
+  -- frame, so the text would be built only to be thrown away. Labels were
+  -- about half of all overlay commands a debug bot sent each think.
+  if M._headless then return end
   if viz_id == "label_overlays" then return end
   if not overlay_text then return end
   -- Don't emit the label when the parent viz is off — otherwise the
@@ -931,7 +959,13 @@ end
 --
 -- All overlay_detail_* bindings are NULL-safe so brains running outside
 -- BrainTest skip the work transparently.
+--
+-- M.detail_live is false on a headless host (see register_all). Only the
+-- BrainTest host reads detail entries and the recorder never writes them,
+-- so call sites test viz.detail_live before they build detail text.
 -- =========================================================================
+
+M.detail_live = true
 
 function M.detail_clear()
   -- DEPRECATED. The host (BrainTest) clears the viz_detail registry
@@ -945,33 +979,33 @@ end
 --- Register a clickable rect spanning (x1,y1)-(x2,y2) in tile coords.
 --- detail_id must be unique per-primitive within a tick.
 function M.detail_rect(detail_id, x1, y1, x2, y2, label)
-  if not overlay_detail then return end
+  if not overlay_detail or not M.detail_live then return end
   return overlay_detail(detail_id, "rect", x1, y1, x2, y2, label or "")
 end
 
 --- Register a clickable circle centered at (cx, cy) with given radius.
 function M.detail_circle(detail_id, cx, cy, radius, label)
-  if not overlay_detail then return end
+  if not overlay_detail or not M.detail_live then return end
   return overlay_detail(detail_id, "circle", cx, cy, radius, 0, label or "")
 end
 
 --- Register a clickable text anchor at (x, y).
 function M.detail_text_anchor(detail_id, x, y, label)
-  if not overlay_detail then return end
+  if not overlay_detail or not M.detail_live then return end
   return overlay_detail(detail_id, "text", x, y, 0, 0, label or "")
 end
 
 --- Append a body line to the entry for detail_id. Body lines are
 --- shown in a read-only multiline text field so the user can copy.
 function M.detail_text(detail_id, line)
-  if not overlay_detail_text then return end
+  if not overlay_detail_text or not M.detail_live then return end
   return overlay_detail_text(detail_id, line)
 end
 
 --- Convenience: register + multiple body lines in one call.
 --- usage: M.detail("id", "rect", {x1,y1,x2,y2}, "label", {"line1","line2"})
 function M.detail(detail_id, kind, geometry, label, body_lines)
-  if not overlay_detail then return end
+  if not overlay_detail or not M.detail_live then return end
   local x1, y1, x2, y2 = 0, 0, 0, 0
   if geometry then
     x1 = geometry[1] or 0
