@@ -191,8 +191,12 @@ void addPlayerInternal(ServerSim *sim, BYTE playerNum, const char *playerName,
         }
     }
 
-    /* Attempt to restore ownership of pills/bases from a previous session */
+    /* Attempt to restore ownership of pills/bases from a previous session.
+     * The team is read first, because the request clears the record;
+     * serverSimPlaceJoiner and serverSimRestoreRejoinTeam use it. */
+    sim->rejoinTeam[playerNum] = 0;
     if (wantRejoin && sim->state == serverStateRunning && playerName != NULL) {
+        sim->rejoinTeam[playerNum] = playersRejoinGetTeam(playerName);
         playersRejoinRequest(&sim->sim, (char *)playerName, playerNum, &sim->sim.pb);
     }
 
@@ -243,6 +247,36 @@ void setClientTypeFlagsInternal(ServerSim *sim, BYTE playerNum,
     playersSetClientFlags(&sim->sim.plyrs, playerNum, clientFlags);
 }
 
+/* A connected seat other than playerNum that is on the team the rejoiner
+   was on when leaving, human or bot, or NEUTRAL when there is none: the
+   team is gone, or no team was kept. */
+static BYTE rejoinTeammate(const ServerSim *sim, BYTE playerNum) {
+    BYTE team = sim->rejoinTeam[playerNum];
+    BYTE i;
+    if (team == 0 || team >= MAX_TANKS) return NEUTRAL;
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (i == playerNum || !sim->playerConnected[i]) continue;
+        if (sim->lobbyPlayers[i].teamNumber == team) return i;
+    }
+    return NEUTRAL;
+}
+
+/* Whether the rules let a rejoiner back onto their old team: the same
+   check a player's own alliance accept makes (server_command_dispatch.c):
+   the script's can_ally is asked with the new member first, as the accept
+   asks it. */
+static bool rejoinMayAlly(ServerSim *sim, BYTE playerNum, BYTE mate) {
+    bool allow;
+    if (sim->scenarioPolicy == NULL || sim->scenarioPolicy->canAlly == NULL) {
+        return TRUE;
+    }
+    serverSimScenarioPolicyEnter(sim);
+    allow = sim->scenarioPolicy->canAlly(sim->scenarioPolicy->ctx, playerNum,
+                                         mate);
+    serverSimScenarioPolicyLeave(sim);
+    return allow;
+}
+
 void serverSimPlaceJoiner(ServerSim *sim, BYTE playerNum) {
     if (sim == NULL || playerNum >= MAX_TANKS) return;
     if (!sim->playerConnected[playerNum]) return;
@@ -250,14 +284,52 @@ void serverSimPlaceJoiner(ServerSim *sim, BYTE playerNum) {
     /* The seat is connected already, so serverSimFreeTeam counts the team
        addPlayerInternal gave it as held. Take that team off first. */
     sim->lobbyPlayers[playerNum].teamNumber = 0;
-    sim->lobbyPlayers[playerNum].teamNumber = serverSimFreeTeam(sim);
+    /* A rejoiner whose old team still has a player goes back onto it, by
+       serverSimRestoreRejoinTeam once their join is out. Until then they
+       are on no team, so no new team is set up only to be left empty. */
+    if (rejoinTeammate(sim, playerNum) == NEUTRAL) {
+        sim->rejoinTeam[playerNum] = 0;
+        sim->lobbyPlayers[playerNum].teamNumber = serverSimFreeTeam(sim);
+    }
     serverSimPublishLobbySlot(sim, playerNum);
+}
+
+void serverSimRestoreRejoinTeam(ServerSim *sim, BYTE playerNum) {
+    BYTE mate;
+    if (sim == NULL || playerNum >= MAX_TANKS) return;
+    /* Only a seat serverSimPlaceJoiner left waiting for its old team, and
+       still on no team: a script that put the seat on a team in
+       on_player_join has the last word. */
+    if (sim->rejoinTeam[playerNum] == 0 || !sim->playerConnected[playerNum] ||
+        sim->state != serverStateRunning ||
+        sim->lobbyPlayers[playerNum].teamNumber != 0) {
+        sim->rejoinTeam[playerNum] = 0;
+        return;
+    }
+    mate = rejoinTeammate(sim, playerNum);
+    sim->rejoinTeam[playerNum] = 0;
+    if (mate != NEUTRAL && !rejoinMayAlly(sim, playerNum, mate)) {
+        mate = NEUTRAL;
+    }
+    if (mate == NEUTRAL) {
+        /* The team lost its last player in the meantime, or the rules
+           refuse the alliance: a side of their own, as any other joiner
+           gets. */
+        sim->lobbyPlayers[playerNum].teamNumber = serverSimFreeTeam(sim);
+        serverSimPublishLobbySlot(sim, playerNum);
+        return;
+    }
+    /* The way back onto the team is the alliance accept a player's own
+       request takes: it moves the seat onto the team, rewrites the
+       alliance table, tells every client and writes the round log. */
+    serverSimAcceptAlliance(sim, mate, playerNum);
 }
 
 void serverSimAddPlayer(ServerSim *sim, BYTE playerNum, const char *playerName, bool wantRejoin) {
     addPlayerInternal(sim, playerNum, playerName, NULL, wantRejoin);
     serverSimPlaceJoiner(sim, playerNum);
     fillAndPublishPlayerJoin(sim, playerNum);
+    serverSimRestoreRejoinTeam(sim, playerNum);
 }
 
 void serverSimSetPlayerCountry(ServerSim *sim, BYTE playerNum, const char *cc) {
@@ -544,7 +616,9 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
         }
     }
 
-    /* Record ownership for rejoin before migration changes it */
+    /* Record ownership and team for rejoin before migration changes it. A
+     * person who leaves a running round is always recorded, so one who owns
+     * no pill or base still gets their team back. Bots never rejoin. */
     {
         char pName[PLAYER_NAME_LEN];
         PlayerBitMap pillBits = 0, baseBits = 0;
@@ -563,8 +637,15 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
                 baseBits |= (1u << (i - 1));
             }
         }
-        if (pName[0] != '\0' && (pillBits != 0 || baseBits != 0)) {
-            playersRejoinAddPlayer(pName, pillBits, baseBits);
+        {
+            BYTE team = 0;
+            if (!wasBot && sim->state == serverStateRunning) {
+                team = sim->lobbyPlayers[playerNum].teamNumber;
+            }
+            if (pName[0] != '\0' &&
+                (pillBits != 0 || baseBits != 0 || team != 0)) {
+                playersRejoinAddPlayer(pName, pillBits, baseBits, team);
+            }
         }
     }
 

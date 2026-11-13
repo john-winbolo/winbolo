@@ -1183,6 +1183,9 @@ void serverHandleJoinRequest(const uint8_t *buf, int len,
         setClientTypeFlagsInternal(sim, (BYTE)slot, clientType, flags);
         serverSimPlaceJoiner(sim, (BYTE)slot);
         fillAndPublishPlayerJoin(sim, (BYTE)slot);
+        /* After the join is out, so clients know the seat before the
+         * alliance that puts a rejoiner back on their old team. */
+        serverSimRestoreRejoinTeam(sim, (BYTE)slot);
         /* Before the subscriber registers below, so the replay this client
          * gets already names the slot holding the host role. */
         serverSimPromoteHostOnJoin(sim, (BYTE)slot);
