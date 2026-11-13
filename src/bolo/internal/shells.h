@@ -370,6 +370,18 @@ bool shellsCalcCollision(struct GameSim *sim, tank *tk, WORLD *xValue, WORLD *yV
 BYTE shellsCheckRoad(struct GameSim *sim, BYTE mapX, BYTE mapY, TURNTYPE dir);
 
 /*********************************************************
+*NAME:          shellsRoadShotAway
+*PURPOSE:
+*  True when a shell from a boat, moving at dir, that hits
+*  the road at (mapX, mapY) shoots it away to river: the
+*  square past the road in that direction is not land. This
+*  is the test shellsCheckRoad makes, with no sound and no
+*  change, so the client can tell which sound the server
+*  plays (the early own shell blast, client_sim.c).
+*********************************************************/
+bool shellsRoadShotAway(struct GameSim *sim, BYTE mapX, BYTE mapY, TURNTYPE dir);
+
+/*********************************************************
 *NAME:          shellsNetMake
 *AUTHOR:        John Morrison
 *CREATION DATE: 6/3/99

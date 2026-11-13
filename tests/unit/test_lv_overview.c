@@ -251,7 +251,8 @@ int run_lv_overview_row_layout(void) {
 }
 
 /* The Neutral row is in the table only while a pillbox or a base has no
-   owner, and the table's height follows. */
+   owner, and the table's height follows. It is the first row, above the
+   teams, in the table and in the share bars (lvOverviewPartRow). */
 int run_lv_overview_neutral_row(void) {
     LvOverview o;
     lvOverviewInit(&o);
@@ -263,7 +264,15 @@ int run_lv_overview_neutral_row(void) {
     lvOverviewCount(&o, true, false, -1);
     UT_ASSERT_MSG(lvOverviewHasNeutral(&o), "both neutral");
     UT_ASSERT_MSG(lvOverviewTableRows(o.rowCount, lvOverviewHasNeutral(&o)) == 4,
-                  "two teams, Neutral and the totals");
+                  "Neutral, two teams and the totals");
+
+    /* The order: Neutral first, then the teams in team order. */
+    UT_ASSERT_MSG(lvOverviewPartRow(&o, 0) == LV_OVERVIEW_PART_NEUTRAL, "Neutral is not first");
+    UT_ASSERT_MSG(lvOverviewPartRow(&o, 1) == 0 && o.rows[0].team == 0, "first team second");
+    UT_ASSERT_MSG(lvOverviewPartRow(&o, 2) == 1 && o.rows[1].team == 1, "second team third");
+    UT_ASSERT_MSG(lvOverviewPartRow(&o, 3) == LV_OVERVIEW_PART_NONE, "a place past the teams");
+    UT_ASSERT_MSG(lvOverviewPartRow(&o, -1) == LV_OVERVIEW_PART_NONE, "a place before Neutral");
+    UT_ASSERT_MSG(lvOverviewPartRow(NULL, 0) == LV_OVERVIEW_PART_NONE, "no table");
 
     /* Only a base is neutral: the row stays. */
     o.neutralPills = 0;
@@ -288,6 +297,9 @@ int run_lv_overview_neutral_row(void) {
     lvOverviewInit(&o);
     UT_ASSERT_MSG(!lvOverviewHasNeutral(&o), "empty table");
     UT_ASSERT_MSG(lvOverviewTableRows(0, false) == 1, "the totals alone");
+    /* With no team, Neutral is still the first place, and the only one. */
+    UT_ASSERT_MSG(lvOverviewPartRow(&o, 0) == LV_OVERVIEW_PART_NEUTRAL, "empty: Neutral first");
+    UT_ASSERT_MSG(lvOverviewPartRow(&o, 1) == LV_OVERVIEW_PART_NONE, "empty: no team place");
     UT_ASSERT_MSG(lvOverviewTableRows(-3, true) == 2, "no teams below 0");
     return 0;
 }

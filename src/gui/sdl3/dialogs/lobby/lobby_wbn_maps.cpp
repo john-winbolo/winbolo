@@ -90,6 +90,14 @@ void lobbyWbnMapsOnSelect(MapChooserState *state, void *ctx) {
  * per frame while the WBN tab is visible. */
 static void lobbySpWbnConsume(ClientSim *cs, SDL_Renderer *renderer) {
     if (!cs) return;
+    /* A download that lands while a map change of this client's is still
+       under way waits for it, untouched in the source, rather than be sent
+       into a transport that refuses it (a re-join) or past an upload still
+       in flight, either of which dropped the pick. That state ends by itself
+       (clientSimNetLobbyMapChangeBusy), so the wait does too. */
+    if (!clientSimIsSinglePlayer(cs) && clientSimNetLobbyMapChangeBusy(cs)) {
+        return;
+    }
     WbnMapDownloadResult res;
     if (!wbnMapSourcePollDownload(&res)) return;
     if (!res.ok) {
@@ -143,17 +151,9 @@ static void lobbySpWbnConsume(ClientSim *cs, SDL_Renderer *renderer) {
 
     /* MP host: chunked upload state machine on the transport.
      * SP host: the wrapper's local-transport branch installs the
-     * bytes synchronously onto spServerSim (no chunked transfer). */
-    if (!clientSimIsSinglePlayer(cs)) {
-        /* Either kind: a script the Mods chooser is sending holds the one
-           upload the transport runs at a time just as a map does. */
-        uint8_t upStatus = clientSimGetLobbyMapUploadStatus(cs);
-        if (upStatus == 1 || upStatus == 2) {
-            WB_LOG_INFO(WB_LOG_CAT_GUI,
-                "[WBN-MP] another upload is in flight; ignoring pick");
-            return;
-        }
-    }
+     * bytes synchronously onto spServerSim (no chunked transfer).
+     * An upload of either kind still in flight was waited out above,
+     * where it used to drop this pick. */
     if (res.bytes.size() > LOBBY_MAP_UPLOAD_MAX_BYTES) {
         clientSimSetLobbyWbnPreviewStatus(cs, 3);
         clientSimSetLobbyWbnPreviewErrMsg(cs,

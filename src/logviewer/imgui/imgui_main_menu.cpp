@@ -12,6 +12,7 @@
 #include "imgui_scenario_panel.h"
 #include "imgui_dock.h"
 #include "imgui_dialogs.h"
+#include "imgui_clip_gif.h"
 #include "imgui_event_overlay.h"
 #include "imgui.h"
 #include "platform_config.h"
@@ -70,8 +71,11 @@ static void open_wbn_browser_modal(void) {
 
     ImGuiContext *saved_ctx = ImGui::GetCurrentContext();
 
-    int saved_w = 0, saved_h = 0;
+    /* The browser resizes and centres a window too small for it, so the
+     * size and the place both go back afterwards. */
+    int saved_w = 0, saved_h = 0, saved_x = 0, saved_y = 0;
     SDL_GetWindowSize(s_lv->window, &saved_w, &saved_h);
+    SDL_GetWindowPosition(s_lv->window, &saved_x, &saved_y);
     char saved_title[256];
     const char *cur_title = SDL_GetWindowTitle(s_lv->window);
     SDL_strlcpy(saved_title, cur_title ? cur_title : "", sizeof(saved_title));
@@ -80,6 +84,7 @@ static void open_wbn_browser_modal(void) {
 
     ImGui::SetCurrentContext(saved_ctx);
     SDL_SetWindowSize(s_lv->window, saved_w, saved_h);
+    SDL_SetWindowPosition(s_lv->window, saved_x, saved_y);
     SDL_SetWindowTitle(s_lv->window, saved_title);
     httpCreate();   /* dialog destroyed it on the way out */
 
@@ -101,6 +106,16 @@ static void open_wbn_browser_modal(void) {
     }
 }
 
+/* The web viewer has no Comments panel: it reaches WinBolo.net through
+   http.c, which the browser build does not have. Its Windows menu item and
+   its key are left out there, so nothing turns on a panel that never draws
+   and then has a slot kept for it in a sidebar. */
+#ifdef __EMSCRIPTEN__
+#define LV_MENU_HAS_COMMENTS 0
+#else
+#define LV_MENU_HAS_COMMENTS 1
+#endif
+
 /* Window visibility state */
 bool lv_g_show_controls_window = true;
 bool lv_g_show_game_info_window = true;
@@ -113,6 +128,7 @@ bool lv_g_show_scenario_panel_window = true;
 bool lv_g_show_hud_window = true;
 bool lv_g_show_overview_window = true;
 bool lv_g_show_tank_window = true;
+bool lv_g_show_chat_window = true;
 bool lv_g_reset_window_positions = false;
 /* Off until asked for: the outlines sit over the map a recording is watched
    for. */
@@ -177,6 +193,9 @@ void lv_imgui_main_menu_init(struct LogViewerState *lv) {
     lv_platform_config_get_string("LOGVIEWER", "Window.Tank.Visible", "Yes", val, sizeof(val));
     lv_g_show_tank_window = (val[0] == 'Y' || val[0] == 'y');
 
+    lv_platform_config_get_string("LOGVIEWER", "Window.Chat.Visible", "Yes", val, sizeof(val));
+    lv_g_show_chat_window = (val[0] == 'Y' || val[0] == 'y');
+
     /* The panel's side in whole pixels. A value that is not a whole number
        keeps the default; the panel raises one under its smallest side and
        keeps one past the screen inside it. */
@@ -216,6 +235,9 @@ static bool pref_unset(const char *key) {
 
 void lv_imgui_main_menu_standalone_defaults(void) {
     if (pref_unset("Window.Comments.Visible")) lv_g_show_comments_window = true;
+#if !LV_MENU_HAS_COMMENTS
+    lv_g_show_comments_window = false;
+#endif
     if (pref_unset("Window.ItemInformation.Visible")) lv_g_show_item_info_window = false;
     if (pref_unset("Tank Bars")) lv_drawSetTankBars(1);
     if (pref_unset("Tank Builder Status")) lv_drawSetBuilderStatus(1);
@@ -238,6 +260,7 @@ void lv_imgui_main_menu_save(void) {
     lv_platform_config_set_string("LOGVIEWER", "Window.HUD.Visible", lv_g_show_hud_window ? "Yes" : "No");
     lv_platform_config_set_string("LOGVIEWER", "Window.Overview.Visible", lv_g_show_overview_window ? "Yes" : "No");
     lv_platform_config_set_string("LOGVIEWER", "Window.Tank.Visible", lv_g_show_tank_window ? "Yes" : "No");
+    lv_platform_config_set_string("LOGVIEWER", "Window.Chat.Visible", lv_g_show_chat_window ? "Yes" : "No");
     {
         char side[16];
         snprintf(side, sizeof(side), "%d", lv_imgui_scenario_panel_side());
@@ -377,6 +400,9 @@ void lv_imgui_toggle_dns_lookups(void) {
 static void handle_keyboard_shortcuts(int *clicked) {
     /* Skip shortcuts when ImGui wants the keyboard (e.g., text input focused) */
     if (ImGui::GetIO().WantCaptureKeyboard) return;
+    /* None while a GIF is made: the view and the time are the GIF's until it
+     * ends. Esc in its progress window cancels it. */
+    if (lv_clip_gif_active()) return;
 
     ImGuiIO& io = ImGui::GetIO();
 
@@ -394,8 +420,17 @@ static void handle_keyboard_shortcuts(int *clicked) {
 
     /* Not with Super (Cmd on macOS) held: a Ctrl+Cmd key is a menu bar item
      * there (Ctrl+Cmd+F is Full Screen, Cmd+6/7/8 the sidebars), and the
-     * menu bar has acted on it already. */
+     * menu bar has acted on it already.
+     *
+     * On macOS ImGui swaps the two (io.ConfigMacOSXBehaviors, on by default
+     * there): io.KeyCtrl is the Cmd key and io.KeySuper is the Control key.
+     * Read them the other way round, or Cmd+8 would toggle a panel here and
+     * in the native menu bar, twice in all, and Control+8 would do nothing. */
+#ifdef __APPLE__
+    bool ctrl = io.KeySuper && !io.KeyCtrl;
+#else
     bool ctrl = io.KeyCtrl && !io.KeySuper;
+#endif
     if (!ctrl) return;
 
     /* A live game watched from the game (spectatorRun). Open, Stop and the
@@ -432,6 +467,9 @@ static void handle_keyboard_shortcuts(int *clicked) {
     if (ImGui::IsKeyPressed(ImGuiKey_R, false)) {
         if (s_lv->isLoaded) { lv_windowRewind(); *clicked = 1; }
     }
+    if (!live && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_G, false)) {
+        if (lv_clip_gif_can_toggle_mode()) { lv_clip_gif_toggle_mode(); *clicked = 1; }
+    }
 
     /* Options */
     if (ImGui::IsKeyPressed(ImGuiKey_T, false)) {
@@ -457,7 +495,7 @@ static void handle_keyboard_shortcuts(int *clicked) {
         lv_g_show_item_info_window = !lv_g_show_item_info_window;
         *clicked = 1;
     }
-    if (!live && ImGui::IsKeyPressed(ImGuiKey_5, false)) {
+    if (!live && LV_MENU_HAS_COMMENTS && ImGui::IsKeyPressed(ImGuiKey_5, false)) {
         lv_g_show_comments_window = !lv_g_show_comments_window;
         *clicked = 1;
     }
@@ -471,6 +509,15 @@ static void handle_keyboard_shortcuts(int *clicked) {
     }
     if (ImGui::IsKeyPressed(ImGuiKey_8, false)) {
         lv_g_show_tank_window = !lv_g_show_tank_window;
+        *clicked = 1;
+    }
+    if (ImGui::IsKeyPressed(ImGuiKey_9, false)) {
+        lv_g_show_chat_window = !lv_g_show_chat_window;
+        *clicked = 1;
+    }
+    if (lv_clip_gif_available() && !lv_clip_gif_active() &&
+        ImGui::IsKeyPressed(ImGuiKey_0, false)) {
+        lv_clip_gif_toggle_gallery();
         *clicked = 1;
     }
 }
@@ -569,6 +616,26 @@ int lv_imgui_main_menu_bar(void) {
             if (ImGui::MenuItem(langGetText(STR_LV_REWIND), "Ctrl+R", false, s_lv->isLoaded != 0)) {
                 lv_windowRewind();
                 clicked = 1;
+            }
+            /* Recording mode (imgui_clip_gif.h): the GIF window, the GIF on
+             * the timeline and the crop frame on the map. The same as the
+             * movie camera on the Controls panel; checked while the GIF
+             * window is open. */
+            if (!live && lv_clip_gif_available()) {
+                ImGui::Separator();
+                if (ImGui::MenuItem(langGetText(STR_LV_RECORD_MODE), "Ctrl+G",
+                                    lv_clip_gif_tools_shown(),
+                                    lv_clip_gif_can_toggle_mode())) {
+                    lv_clip_gif_toggle_mode();
+                    clicked = 1;
+                }
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                    ImGui::BeginTooltip();
+                    ImGui::PushTextWrapPos(ImGui::GetFontSize() * 28.0f);
+                    ImGui::TextUnformatted(langGetText(STR_LV_RECORD_MODE_TIP));
+                    ImGui::PopTextWrapPos();
+                    ImGui::EndTooltip();
+                }
             }
             ImGui::EndMenu();
         }
@@ -774,7 +841,7 @@ int lv_imgui_main_menu_bar(void) {
                 lv_g_show_item_info_window = !lv_g_show_item_info_window;
                 clicked = 1;
             }
-            if (!live &&
+            if (!live && LV_MENU_HAS_COMMENTS &&
                 ImGui::MenuItem(langGetText(STR_LV_WIN_COMMENTS), "Ctrl+5", lv_g_show_comments_window)) {
                 lv_g_show_comments_window = !lv_g_show_comments_window;
                 clicked = 1;
@@ -789,6 +856,18 @@ int lv_imgui_main_menu_bar(void) {
             }
             if (ImGui::MenuItem(langGetText(STR_LV_WIN_TANK), "Ctrl+8", lv_g_show_tank_window)) {
                 lv_g_show_tank_window = !lv_g_show_tank_window;
+                clicked = 1;
+            }
+            if (ImGui::MenuItem(langGetText(STR_LV_WIN_CHAT), "Ctrl+9", lv_g_show_chat_window)) {
+                lv_g_show_chat_window = !lv_g_show_chat_window;
+                clicked = 1;
+            }
+            /* The GIFs made here and in the game (imgui_clip_gif.h). */
+            if (lv_clip_gif_available() &&
+                ImGui::MenuItem(langGetText(STR_LV_WIN_CLIPS), "Ctrl+0",
+                                lv_clip_gif_gallery_is_open(),
+                                !lv_clip_gif_active())) {
+                lv_clip_gif_toggle_gallery();
                 clicked = 1;
             }
             if (ImGui::MenuItem(langGetText(STR_SCNPANEL_SETTINGS_TITLE), NULL, lv_g_show_scenario_panel_window)) {

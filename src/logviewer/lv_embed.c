@@ -95,9 +95,11 @@ void lv_updateSpeed(BYTE spd, int updateSlider) {
     case 9: ts =  1; break;
     /* Slower than real time. These sit after the fast values so a speed
      * saved by an older viewer still means what it did. */
-    case LV_SPEED_HALF:    ts =  40; break;
-    case LV_SPEED_QUARTER: ts =  80; break;
-    case LV_SPEED_TENTH:   ts = 200; break;
+    /* 20 / 0.75 is 26.7 ms; the timer counts whole ms, so 0.74x. */
+    case LV_SPEED_THREE_QUARTER: ts =  27; break;
+    case LV_SPEED_HALF:          ts =  40; break;
+    case LV_SPEED_QUARTER:       ts =  80; break;
+    case LV_SPEED_TENTH:         ts = 200; break;
     default:
         ts = 20;
         spd = 1;
@@ -700,17 +702,19 @@ bool lvEmbedTankLabel(int index, void **outTexture, int *outX, int *outY,
     return true;
 }
 
-/* True puts the names back into the texture, for a host that reads the
- * texture's pixels (the GIF export); false, the default, leaves them to
- * lvEmbedTankLabel. */
-void lvEmbedSetTankLabelsInTexture(bool inTexture) {
-    if (!s_embedActive || g_lv == NULL) {
+/* The names drawn over an image of the texture on the host's current render
+ * target (the GIF export's frame): src is the part of the texture the image
+ * holds and dst where it went, each x, y, w, h in pixels of its texture.
+ * Rasterized at dst's scale over src's, in the game's look. */
+void lvEmbedDrawTankLabels(const float src[4], const float dst[4]) {
+    SDL_FRect s, d;
+
+    if (!s_embedActive || g_lv == NULL || src == NULL || dst == NULL) {
         return;
     }
-    lv_clientMutexWaitFor();
-    lv_drawSetTankLabelsInTarget(inTexture ? TRUE : FALSE);
-    lv_clientMutexRelease();
-    g_lv->wantScreenUpdate = TRUE;
+    s.x = src[0]; s.y = src[1]; s.w = src[2]; s.h = src[3];
+    d.x = dst[0]; d.y = dst[1]; d.w = dst[2]; d.h = dst[3];
+    lv_drawTankLabelsOver(LV_TANK_LABELS_EXPORT, &s, &d);
 }
 
 void lvEmbedPlay(void) {

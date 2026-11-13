@@ -317,6 +317,7 @@ python3 tests/aim_test.py
 python3 tests/seek_trees_test.py
 python3 tests/lgm_wallshot_test.py
 python3 tests/boat_diagonal_test.py
+python3 tests/brain_sandbox_test.py
 ```
 
 Each has a matching `tests/generate_*_map.py` that builds its arena, and a

@@ -239,6 +239,23 @@ void lv_messageTagPlayers(int actor, int other);
 void lv_messageTagPing(int pingKind);
 
 /*********************************************************
+*NAME:          lv_messageTagChat
+*PURPOSE:
+*  Says that the next lv_messageAdd line is a chat line, and
+*  gives its parts, so the host's Chat panel can show the
+*  sender apart from the words. Call it just before the line
+*  is added, as lv_messageTagPlayers; a line added with no
+*  call before it is not a chat line. The parts are copied.
+*
+*ARGUMENTS:
+*  from - Who sent it (a player's or a spectator's name)
+*  note - Who it went to ("(team)", "(to Bob)"), or NULL
+*         for a line to everyone
+*  text - The words typed
+*********************************************************/
+void lv_messageTagChat(const char *from, const char *note, const char *text);
+
+/*********************************************************
 *NAME:          lv_messageAddItem
 *AUTHOR:        John Morrison
 *CREATION DATE:  3/1/99

@@ -1945,7 +1945,7 @@ int run_highlights_cluster_wipe(void) {
 
     HighlightWindow out[HIGHLIGHTS_MAX];
     int n = -1;
-    computeHighlights(tl, 3, NULL, NULL, NULL, 0, NULL, 0, out, &n, HIGHLIGHTS_MAX);
+    computeHighlights(tl, 3, NULL, NULL, NULL, 0, NULL, 0, NULL, 0, out, &n, HIGHLIGHTS_MAX);
 
     UT_ASSERT_MSG(n == 1, "one wipe window, got %d", n);
     UT_ASSERT_MSG(out[0].type == HL_CLUSTER_WIPE, "type wipe, got %u", out[0].type);
@@ -1958,7 +1958,7 @@ int run_highlights_cluster_wipe(void) {
     spread[1] = mkEvent(400, 40, 40, NOTABLE_KILL, 0, 4, 0, LAST_DEATH_BY_SHELL, 0);
     spread[2] = mkEvent(800, 60, 60, NOTABLE_KILL, 1, 5, 0, LAST_DEATH_BY_SHELL, 0);
     n = -1;
-    computeHighlights(spread, 3, NULL, NULL, NULL, 0, NULL, 0, out, &n,
+    computeHighlights(spread, 3, NULL, NULL, NULL, 0, NULL, 0, NULL, 0, out, &n,
                       HIGHLIGHTS_MAX);
     UT_ASSERT_MSG(n == 0, "scattered deaths form no wipe, got %d", n);
 
@@ -1981,9 +1981,9 @@ int run_highlights_wipe_team_bonus(void) {
 
     HighlightWindow shared[HIGHLIGHTS_MAX], mixed[HIGHLIGHTS_MAX];
     int ns = -1, nm = -1;
-    computeHighlights(tl, 3, NULL, teamSame, NULL, 0, NULL, 0, shared, &ns,
+    computeHighlights(tl, 3, NULL, teamSame, NULL, 0, NULL, 0, NULL, 0, shared, &ns,
                       HIGHLIGHTS_MAX);
-    computeHighlights(tl, 3, NULL, teamMixed, NULL, 0, NULL, 0, mixed, &nm,
+    computeHighlights(tl, 3, NULL, teamMixed, NULL, 0, NULL, 0, NULL, 0, mixed, &nm,
                       HIGHLIGHTS_MAX);
 
     UT_ASSERT_MSG(ns == 1 && nm == 1, "one wipe each, got %d and %d", ns, nm);
@@ -2008,7 +2008,7 @@ int run_highlights_objective_steal(void) {
 
     HighlightWindow out[HIGHLIGHTS_MAX];
     int n = -1;
-    computeHighlights(tl, 3, NULL, NULL, NULL, 0, NULL, 0, out, &n, HIGHLIGHTS_MAX);
+    computeHighlights(tl, 3, NULL, NULL, NULL, 0, NULL, 0, NULL, 0, out, &n, HIGHLIGHTS_MAX);
 
     UT_ASSERT_MSG(n == 2, "two steals, neutral capture excluded, got %d", n);
     for (int i = 0; i < n; i++)
@@ -2046,7 +2046,7 @@ int run_highlights_award_anchor(void) {
 
     HighlightWindow out[HIGHLIGHTS_MAX];
     int n = -1;
-    computeHighlights(tl, 3, NULL, NULL, aw, 2, NULL, 0, out, &n, HIGHLIGHTS_MAX);
+    computeHighlights(tl, 3, NULL, NULL, NULL, 0, aw, 2, NULL, 0, out, &n, HIGHLIGHTS_MAX);
 
     UT_ASSERT_MSG(n == 1, "only the nemesis award anchors, got %d", n);
     UT_ASSERT_MSG(out[0].type == HL_AWARD, "type award, got %u", out[0].type);
@@ -2078,7 +2078,7 @@ int run_highlights_selection(void) {
 
     HighlightWindow out[HIGHLIGHTS_MAX];
     int n = -1;
-    computeHighlights(tl, 5, NULL, NULL, aw, 1, NULL, 0, out, &n, HIGHLIGHTS_MAX);
+    computeHighlights(tl, 5, NULL, NULL, NULL, 0, aw, 1, NULL, 0, out, &n, HIGHLIGHTS_MAX);
 
     /* The wipe (tick 100-200) wins its span; the nemesis kill at tick 150 falls
      * inside it and is dropped; the far-off steal survives. */
@@ -2091,14 +2091,14 @@ int run_highlights_selection(void) {
     UT_ASSERT_MSG(out[0].startTick <= out[1].startTick, "chronological output");
 
     int capped = -1;
-    computeHighlights(tl, 5, NULL, NULL, aw, 1, NULL, 0, out, &capped, 1);
+    computeHighlights(tl, 5, NULL, NULL, NULL, 0, aw, 1, NULL, 0, out, &capped, 1);
     UT_ASSERT_MSG(capped == 1, "maxOut caps the reel to one, got %d", capped);
     UT_ASSERT_MSG(out[0].type == HL_CLUSTER_WIPE, "kept window is the strongest");
 
     HighlightWindow a[HIGHLIGHTS_MAX], b[HIGHLIGHTS_MAX];
     int na = -1, nb = -1;
-    computeHighlights(tl, 5, NULL, NULL, aw, 1, NULL, 0, a, &na, HIGHLIGHTS_MAX);
-    computeHighlights(tl, 5, NULL, NULL, aw, 1, NULL, 0, b, &nb, HIGHLIGHTS_MAX);
+    computeHighlights(tl, 5, NULL, NULL, NULL, 0, aw, 1, NULL, 0, a, &na, HIGHLIGHTS_MAX);
+    computeHighlights(tl, 5, NULL, NULL, NULL, 0, aw, 1, NULL, 0, b, &nb, HIGHLIGHTS_MAX);
     UT_ASSERT_MSG(na == nb && na == 2, "same count across runs, got %d and %d", na, nb);
     UT_ASSERT_MSG(memcmp(a, b, sizeof(HighlightWindow) * na) == 0,
                   "identical output across runs");
@@ -2120,7 +2120,7 @@ int run_highlights_lead_in(void) {
 
     HighlightWindow out[HIGHLIGHTS_MAX];
     int n = -1;
-    computeHighlights(tl, 3, NULL, NULL, aw, 1, NULL, 0, out, &n, HIGHLIGHTS_MAX);
+    computeHighlights(tl, 3, NULL, NULL, NULL, 0, aw, 1, NULL, 0, out, &n, HIGHLIGHTS_MAX);
 
     const HighlightWindow *w = NULL;
     for (int i = 0; i < n; i++) if (out[i].type == HL_AWARD) w = &out[i];
@@ -2135,7 +2135,7 @@ int run_highlights_lead_in(void) {
     farTl[0] = mkEvent(470, 40, 40, NOTABLE_PICKUP, 0, NEUTRAL, 0, 0, 0);
     farTl[1] = mkEvent(500, 10, 10, NOTABLE_KILL, 0, 1, 0, LAST_DEATH_BY_SHELL, 0);
     n = -1;
-    computeHighlights(farTl, 2, NULL, NULL, aw, 1, NULL, 0, out, &n, HIGHLIGHTS_MAX);
+    computeHighlights(farTl, 2, NULL, NULL, NULL, 0, aw, 1, NULL, 0, out, &n, HIGHLIGHTS_MAX);
     w = NULL;
     for (int i = 0; i < n; i++) if (out[i].type == HL_AWARD) w = &out[i];
     UT_ASSERT_MSG(w != NULL, "nemesis award present in radius case");
@@ -2149,14 +2149,14 @@ int run_highlights_lead_in(void) {
 int run_highlights_empty(void) {
     HighlightWindow out[HIGHLIGHTS_MAX];
     int n = -1;
-    computeHighlights(NULL, 0, NULL, NULL, NULL, 0, NULL, 0, out, &n,
+    computeHighlights(NULL, 0, NULL, NULL, NULL, 0, NULL, 0, NULL, 0, out, &n,
                       HIGHLIGHTS_MAX);
     UT_ASSERT_MSG(n == 0, "null timeline yields no highlights, got %d", n);
 
     NotableEvent tl[1];
     tl[0] = mkEvent(100, 5, 5, NOTABLE_KILL, 0, 1, 0, LAST_DEATH_BY_SHELL, 0);
     n = -1;
-    computeHighlights(tl, 0, NULL, NULL, NULL, 0, NULL, 0, out, &n,
+    computeHighlights(tl, 0, NULL, NULL, NULL, 0, NULL, 0, NULL, 0, out, &n,
                       HIGHLIGHTS_MAX);
     UT_ASSERT_MSG(n == 0, "zero count yields no highlights, got %d", n);
 
@@ -2366,7 +2366,7 @@ int run_highlights_turning_point(void) {
     shifts[3].tick = 4000; shifts[3].mapX = 90; shifts[3].mapY = 90;
     shifts[3].gainTeam = 2; shifts[3].loseTeam = 1; shifts[3].cellsFlipped = 150;
 
-    computeHighlights(tl, 3, NULL, team, NULL, 0, shifts, 4, out, &n,
+    computeHighlights(tl, 3, NULL, team, NULL, 0, NULL, 0, shifts, 4, out, &n,
                       HIGHLIGHTS_MAX);
 
     for (int i = 0; i < n; i++) {
@@ -2393,7 +2393,7 @@ int run_highlights_turning_point(void) {
     /* Same timeline with no territory series: the wipe is back and there is no
      * turning point at all. */
     n = -1;
-    computeHighlights(tl, 3, NULL, team, NULL, 0, NULL, 0, out, &n,
+    computeHighlights(tl, 3, NULL, team, NULL, 0, NULL, 0, NULL, 0, out, &n,
                       HIGHLIGHTS_MAX);
     UT_ASSERT_MSG(n == 1, "one window without the shifts, got %d", n);
     UT_ASSERT_MSG(out[0].type == HL_CLUSTER_WIPE, "the wipe, got type %u",
@@ -2474,7 +2474,7 @@ int run_highlights_front_collapse(void) {
     shifts[3].gainTeam = 1; shifts[3].loseTeam = 2; shifts[3].cellsFlipped = 100;
     shifts[3].recentDamage = 150;
 
-    computeHighlights(tl, 1, NULL, team, NULL, 0, shifts, 4, out, &n,
+    computeHighlights(tl, 1, NULL, team, NULL, 0, NULL, 0, shifts, 4, out, &n,
                       HIGHLIGHTS_MAX);
 
     /* The two are told apart by type, not by where they land. */
@@ -2504,7 +2504,7 @@ int run_highlights_front_collapse(void) {
     n = -1;
     turns = 0;
     collapses = 0;
-    computeHighlights(tl, 1, NULL, team, NULL, 0, shifts, 4, out, &n,
+    computeHighlights(tl, 1, NULL, team, NULL, 0, NULL, 0, shifts, 4, out, &n,
                       HIGHLIGHTS_MAX);
     for (int i = 0; i < n; i++) {
         if (out[i].type == HL_TURNING_POINT)     turns++;
@@ -2535,7 +2535,7 @@ int run_highlights_award_anchor_density(void) {
 
     HighlightWindow out[HIGHLIGHTS_MAX];
     int n = -1;
-    computeHighlights(tl, 4, NULL, NULL, aw, 1, NULL, 0, out, &n, HIGHLIGHTS_MAX);
+    computeHighlights(tl, 4, NULL, NULL, NULL, 0, aw, 1, NULL, 0, out, &n, HIGHLIGHTS_MAX);
 
     UT_ASSERT_MSG(n == 1, "one award window, got %d", n);
     UT_ASSERT_MSG(out[0].type == HL_AWARD && out[0].awardId == AWARD_MOST_KILLS,
@@ -2571,7 +2571,7 @@ int run_highlights_time_spread(void) {
     /* maxOut 4 -> per-bucket cap of 2. Pure greedy would fill all four with the
      * highest-scoring late steals; the bucket cap holds the final bucket to two
      * and lets a mid-round steal in. */
-    computeHighlights(tl, 7, NULL, NULL, NULL, 0, NULL, 0, out, &n, 4);
+    computeHighlights(tl, 7, NULL, NULL, NULL, 0, NULL, 0, NULL, 0, out, &n, 4);
 
     UT_ASSERT_MSG(n == 4, "four picks, got %d", n);
 
@@ -2604,7 +2604,7 @@ int run_highlights_multi_lgm(void) {
     tl[1] = mkEvent(150, 12, 11, NOTABLE_LGM_LOST, 2, 5, 0, 0, 0);
     tl[2] = mkEvent(300, 60, 60, NOTABLE_LGM_LOST, 2, 6, 0, 0, 0);
 
-    computeHighlights(tl, 3, NULL, NULL, NULL, 0, NULL, 0, out, &n, HIGHLIGHTS_MAX);
+    computeHighlights(tl, 3, NULL, NULL, NULL, 0, NULL, 0, NULL, 0, out, &n, HIGHLIGHTS_MAX);
 
     for (int i = 0; i < n; i++)
         if (out[i].type == HL_MULTI_LGM) { sweeps++; sweep = &out[i]; }
@@ -2625,7 +2625,7 @@ int run_highlights_multi_lgm(void) {
 
     lone[0] = mkEvent(100, 10, 10, NOTABLE_LGM_LOST, 2, 5, 0, 0, 0);
     n = -1;
-    computeHighlights(lone, 1, NULL, NULL, NULL, 0, NULL, 0, out, &n,
+    computeHighlights(lone, 1, NULL, NULL, NULL, 0, NULL, 0, NULL, 0, out, &n,
                       HIGHLIGHTS_MAX);
     UT_ASSERT_MSG(n == 0, "one man alone is no sweep, got %d", n);
 
@@ -2645,7 +2645,7 @@ int run_highlights_fumble(void) {
     tl[0] = mkEvent(100, 10, 10, NOTABLE_KILL, 3, 7, 0, LAST_DEATH_BY_SHELL, 4);
     tl[1] = mkEvent(2000, 60, 60, NOTABLE_KILL, 3, 8, 0, LAST_DEATH_BY_SHELL, 2);
 
-    computeHighlights(tl, 2, NULL, NULL, NULL, 0, NULL, 0, out, &n, HIGHLIGHTS_MAX);
+    computeHighlights(tl, 2, NULL, NULL, NULL, 0, NULL, 0, NULL, 0, out, &n, HIGHLIGHTS_MAX);
 
     UT_ASSERT_MSG(n == 1, "only the big dump is a fumble, got %d", n);
     UT_ASSERT_MSG(out[0].type == HL_FUMBLE, "type fumble, got %u", out[0].type);
@@ -2658,7 +2658,7 @@ int run_highlights_fumble(void) {
     /* A drowning carrying pills is a rare death, never a fumble. */
     drown[0] = mkEvent(500, 20, 20, NOTABLE_KILL, 7, 7, 0, LAST_DEATH_BY_DEEPSEA, 5);
     n = -1;
-    computeHighlights(drown, 1, NULL, NULL, NULL, 0, NULL, 0, out, &n,
+    computeHighlights(drown, 1, NULL, NULL, NULL, 0, NULL, 0, NULL, 0, out, &n,
                       HIGHLIGHTS_MAX);
     UT_ASSERT_MSG(n == 1, "one window for the drowning, got %d", n);
     UT_ASSERT_MSG(out[0].type == HL_RARE_DEATH,
@@ -2689,7 +2689,7 @@ int run_highlights_rare_death(void) {
     tl[3] = mkEvent(6000, 90, 90, NOTABLE_PICKUP, 7, NEUTRAL, 0,
                     LAST_DEATH_BY_DEEPSEA, 0);
 
-    computeHighlights(tl, 4, NULL, NULL, NULL, 0, NULL, 0, out, &n, HIGHLIGHTS_MAX);
+    computeHighlights(tl, 4, NULL, NULL, NULL, 0, NULL, 0, NULL, 0, out, &n, HIGHLIGHTS_MAX);
 
     for (int i = 0; i < n; i++)
         if (out[i].type == HL_RARE_DEATH) { drowns++; drowned = &out[i]; }
@@ -2705,9 +2705,9 @@ int run_highlights_rare_death(void) {
     /* Same drowning with a full load: same signal, a higher score. */
     laden[0] = mkEvent(100, 10, 10, NOTABLE_KILL, 4, 4, 0, LAST_DEATH_BY_DEEPSEA, 3);
     empty[0] = mkEvent(100, 10, 10, NOTABLE_KILL, 4, 4, 0, LAST_DEATH_BY_DEEPSEA, 0);
-    computeHighlights(laden, 1, NULL, NULL, NULL, 0, NULL, 0, ladenOut, &nl,
+    computeHighlights(laden, 1, NULL, NULL, NULL, 0, NULL, 0, NULL, 0, ladenOut, &nl,
                       HIGHLIGHTS_MAX);
-    computeHighlights(empty, 1, NULL, NULL, NULL, 0, NULL, 0, emptyOut, &ne,
+    computeHighlights(empty, 1, NULL, NULL, NULL, 0, NULL, 0, NULL, 0, emptyOut, &ne,
                       HIGHLIGHTS_MAX);
     UT_ASSERT_MSG(nl == 1 && ne == 1, "one drowning each, got %d and %d", nl, ne);
     UT_ASSERT_MSG(ladenOut[0].type == HL_RARE_DEATH && emptyOut[0].type == HL_RARE_DEATH,
@@ -2738,7 +2738,7 @@ int run_highlights_award_dedup(void) {
     aw[0].awardId = AWARD_BIGGEST_FUMBLE; aw[0].winnerSlot = 6;
     aw[0].subjectSlot = NEUTRAL; aw[0].winnerIsBot = 0; aw[0].value = 8;
 
-    computeHighlights(tl, 1, NULL, NULL, aw, 1, NULL, 0, out, &n, HIGHLIGHTS_MAX);
+    computeHighlights(tl, 1, NULL, NULL, NULL, 0, aw, 1, NULL, 0, out, &n, HIGHLIGHTS_MAX);
 
     UT_ASSERT_MSG(n == 1, "one window for the moment, not two, got %d", n);
     UT_ASSERT_MSG(out[0].type == HL_AWARD, "the award clip survives, got type %u",
@@ -2748,7 +2748,7 @@ int run_highlights_award_dedup(void) {
 
     /* Without that award the same death is a fumble in its own right. */
     n = -1;
-    computeHighlights(tl, 1, NULL, NULL, NULL, 0, NULL, 0, out, &n, HIGHLIGHTS_MAX);
+    computeHighlights(tl, 1, NULL, NULL, NULL, 0, NULL, 0, NULL, 0, out, &n, HIGHLIGHTS_MAX);
     UT_ASSERT_MSG(n == 1, "one fumble window, got %d", n);
     UT_ASSERT_MSG(out[0].type == HL_FUMBLE, "type fumble, got %u", out[0].type);
     UT_ASSERT_MSG(out[0].value == 8, "eight pills dropped, got %u", out[0].value);
@@ -2774,7 +2774,7 @@ int run_highlights_pickup_spree(void) {
     tl[1] = mkEvent(300, 12, 11, NOTABLE_PICKUP, 4, NEUTRAL, 0, 0, 0);
     tl[2] = mkEvent(600, 14, 13, NOTABLE_PICKUP, 4, NEUTRAL, 0, 0, 0);
 
-    computeHighlights(tl, 3, NULL, NULL, NULL, 0, NULL, 0, out, &n, HIGHLIGHTS_MAX);
+    computeHighlights(tl, 3, NULL, NULL, NULL, 0, NULL, 0, NULL, 0, out, &n, HIGHLIGHTS_MAX);
 
     for (int i = 0; i < n; i++)
         if (out[i].type == HL_PICKUP_SPREE) { sprees++; spree = &out[i]; }
@@ -2800,7 +2800,7 @@ int run_highlights_pickup_spree(void) {
     late[1] = mkEvent(1500, 10, 10, NOTABLE_PICKUP, 4, NEUTRAL, 0, 0, 0);
     late[2] = mkEvent(3000, 10, 10, NOTABLE_PICKUP, 4, NEUTRAL, 0, 0, 0);
     n = -1;
-    computeHighlights(late, 3, NULL, NULL, NULL, 0, NULL, 0, out, &n,
+    computeHighlights(late, 3, NULL, NULL, NULL, 0, NULL, 0, NULL, 0, out, &n,
                       HIGHLIGHTS_MAX);
     UT_ASSERT_MSG(n == 0, "grabs spread past the tick window are no spree, got %d", n);
 
@@ -2809,7 +2809,7 @@ int run_highlights_pickup_spree(void) {
     scattered[1] = mkEvent(300, 30, 10, NOTABLE_PICKUP, 4, NEUTRAL, 0, 0, 0);
     scattered[2] = mkEvent(600, 50, 10, NOTABLE_PICKUP, 4, NEUTRAL, 0, 0, 0);
     n = -1;
-    computeHighlights(scattered, 3, NULL, NULL, NULL, 0, NULL, 0, out, &n,
+    computeHighlights(scattered, 3, NULL, NULL, NULL, 0, NULL, 0, NULL, 0, out, &n,
                       HIGHLIGHTS_MAX);
     UT_ASSERT_MSG(n == 0, "grabs past the tile radius are no spree, got %d", n);
 
@@ -2819,7 +2819,7 @@ int run_highlights_pickup_spree(void) {
     few[1] = mkEvent(200, 11, 10, NOTABLE_PICKUP, 4, NEUTRAL, 0, 0, 0);
     few[2] = mkEvent(300, 12, 10, NOTABLE_PICKUP, 5, NEUTRAL, 0, 0, 0);
     n = -1;
-    computeHighlights(few, 3, NULL, NULL, NULL, 0, NULL, 0, out, &n,
+    computeHighlights(few, 3, NULL, NULL, NULL, 0, NULL, 0, NULL, 0, out, &n,
                       HIGHLIGHTS_MAX);
     UT_ASSERT_MSG(n == 0, "two grabs and a stranger's are no spree, got %d", n);
 
@@ -2849,7 +2849,7 @@ int run_highlights_action_density(void) {
                                       NOTABLE_PILL_CAPTURE, 1, 2,
                                       ATTR_CAP_NEUTRAL, 0, 0);
 
-    computeHighlights(busy, 18, NULL, NULL, NULL, 0, NULL, 0, out, &n,
+    computeHighlights(busy, 18, NULL, NULL, NULL, 0, NULL, 0, NULL, 0, out, &n,
                       HIGHLIGHTS_MAX);
 
     for (int i = 0; i < n; i++)
@@ -2886,9 +2886,177 @@ int run_highlights_action_density(void) {
         quiet[k] = mkEvent(1000 + (uint32_t)k * 50, 10, (uint8_t)(10 + k),
                            NOTABLE_PILL_CAPTURE, 1, 2, ATTR_CAP_NEUTRAL, 0, 0);
     n = -1;
-    computeHighlights(quiet, 5, NULL, NULL, NULL, 0, NULL, 0, out, &n,
+    computeHighlights(quiet, 5, NULL, NULL, NULL, 0, NULL, 0, NULL, 0, out, &n,
                       HIGHLIGHTS_MAX);
     UT_ASSERT_MSG(n == 0, "a quiet round yields no density window, got %d", n);
 
+    return 0;
+}
+
+/* ── Team changes in the round log (#424) ─────────────────────────────── */
+
+/* Append one team record; returns the new offset. */
+static size_t putTeam(uint8_t *buf, size_t off, uint32_t tick, uint8_t slot,
+                      uint8_t team) {
+    AttrTeamRecord r;
+    memset(&r, 0, sizeof r);
+    r.type = ATTR_REC_TEAM;
+    r.tick = tick;
+    r.slot = slot;
+    r.team = team;
+    memcpy(buf + off, &r, sizeof r);
+    return off + sizeof r;
+}
+
+/* A seat's team before, at and after a change; a seat that joined late is
+   found on its first team before it joined; a seat with no change reads the
+   header. A stream with no team records (v2) gives no changes, and every
+   seat reads the header. A team record counts for nobody in the stats. */
+int run_round_stats_team_at(void) {
+    uint8_t buf[256];
+    size_t len = 0;
+    TeamChange ch[TEAM_CHANGES_MAX];
+    PlayerRoundStats stats[MAX_TANKS];
+    NotableEvent tl[NOTABLE_EVENTS_MAX];
+    int tlCount = 0;
+    int n;
+
+    len = putTeam(buf, len, 0, 0, 1);
+    len = putTeam(buf, len, 0, 1, 2);
+    len = putCapture(buf, len, 200, ATTR_CAP_TGT_BASE, 0, 0, NEUTRAL, 60, 60);
+    len = putTeam(buf, len, 500, 0, 2);
+    len = putTeam(buf, len, 700, 3, 4);   /* seat 3 joins at tick 700 */
+
+    n = roundStatsCollectTeamChanges(buf, len, ch, TEAM_CHANGES_MAX);
+    UT_ASSERT_MSG(n == 4, "four team records, got %d", n);
+    UT_ASSERT(ch[2].tick == 500 && ch[2].slot == 0 && ch[2].team == 2);
+    UT_ASSERT_MSG(roundStatsCollectTeamChanges(buf, len, ch, 2) == 2,
+                  "the cap holds");
+    n = roundStatsCollectTeamChanges(buf, len, ch, TEAM_CHANGES_MAX);
+
+    /* The header holds the last team, 2, for seat 0. */
+    UT_ASSERT(roundStatsTeamAt(ch, n, 2, 0, 0) == 1);
+    UT_ASSERT(roundStatsTeamAt(ch, n, 2, 0, 499) == 1);
+    UT_ASSERT(roundStatsTeamAt(ch, n, 2, 0, 500) == 2);
+    UT_ASSERT(roundStatsTeamAt(ch, n, 2, 0, 9000) == 2);
+    UT_ASSERT(roundStatsTeamAt(ch, n, 9, 1, 600) == 2);
+    UT_ASSERT_MSG(roundStatsTeamAt(ch, n, 4, 3, 100) == 4,
+                  "a late joiner reads its first team before it joined");
+    UT_ASSERT(roundStatsTeamAt(ch, n, 4, 3, 800) == 4);
+    UT_ASSERT_MSG(roundStatsTeamAt(ch, n, 7, 5, 100) == 7,
+                  "a seat with no change reads the header");
+    UT_ASSERT(roundStatsTeamAt(NULL, 0, 7, 0, 100) == 7);
+
+    /* v2: no team records, so the header answers. */
+    {
+        uint8_t v2[64];
+        size_t v2len = putCapture(v2, 0, 200, ATTR_CAP_TGT_BASE, 0, 0,
+                                  NEUTRAL, 60, 60);
+        n = roundStatsCollectTeamChanges(v2, v2len, ch, TEAM_CHANGES_MAX);
+        UT_ASSERT_MSG(n == 0, "a v2 stream has no team changes, got %d", n);
+        UT_ASSERT(roundStatsTeamAt(ch, n, 3, 0, 200) == 3);
+    }
+
+    /* The team records change no counter and add nothing to the timeline. */
+    memset(stats, 0, sizeof stats);
+    {
+        size_t off = 0;
+        while (off < len) {
+            size_t sz = roundStatsRecordSize(buf[off]);
+            UT_ASSERT(sz != 0);
+            roundStatsApplyRecord(stats, tl, &tlCount, NOTABLE_EVENTS_MAX,
+                                  buf + off);
+            off += sz;
+        }
+    }
+    UT_ASSERT_MSG(tlCount == 1, "only the capture is notable, got %d", tlCount);
+    UT_ASSERT(stats[0].baseCaptures == 1);
+    return 0;
+}
+
+/* A seat that captures for team 1, defects and captures for team 2. The
+   header holds its last team, 2. Each change of hands is judged by the teams
+   at the time:
+   - tick 1500: seat 2 (team 2) takes base 0 off seat 0, then on team 1, so
+     ground goes from team 1 to team 2. Read from the header alone, this is a
+     handover inside team 2 and no shift.
+   - tick 2000: seat 0 moves to team 2. Base 1 is not held yet; no shift.
+   - tick 4000: seat 1 (team 1) takes base 1 off seat 0, now on team 2.
+   - tick 6000: seat 1 moves to team 2 with base 2, which it holds. The
+     ground moves with it, and no shift is emitted for the move.
+   - tick 7000: seat 0 takes base 2 off seat 1, both on team 2: a handover
+     inside one team, so no shift. */
+int run_territory_shift_follows_team(void) {
+    AttrSlotIdentity slots[MAX_TANKS];
+    uint8_t buf[512];
+    size_t len = 0;
+    TerritoryShift shifts[TERRITORY_SHIFTS_MAX];
+    int n = -1;
+
+    memset(slots, 0, sizeof slots);
+    slots[0].team = 2;
+    slots[1].team = 2;
+    slots[2].team = 2;
+    for (int s = 3; s < MAX_TANKS; s++) slots[s].team = 5;
+
+    len = putTeam(buf, len, 0, 0, 1);
+    len = putTeam(buf, len, 0, 1, 1);
+    len = putTeam(buf, len, 0, 2, 2);
+    len = putCapture(buf, len, 1000, ATTR_CAP_TGT_BASE, 0, 0, NEUTRAL, 60, 60);
+    len = putCapture(buf, len, 1500, ATTR_CAP_TGT_BASE, 0, 2, 0, 60, 60);
+    len = putTeam(buf, len, 2000, 0, 2);
+    len = putCapture(buf, len, 3000, ATTR_CAP_TGT_BASE, 1, 0, NEUTRAL, 150, 150);
+    len = putCapture(buf, len, 4000, ATTR_CAP_TGT_BASE, 1, 1, 0, 150, 150);
+    len = putCapture(buf, len, 5000, ATTR_CAP_TGT_BASE, 2, 1, NEUTRAL, 30, 200);
+    len = putTeam(buf, len, 6000, 1, 2);
+    len = putCapture(buf, len, 7000, ATTR_CAP_TGT_BASE, 2, 0, 1, 30, 200);
+
+    computeTerritoryShifts(buf, len, slots, MAX_TANKS, shifts, &n,
+                           TERRITORY_SHIFTS_MAX);
+
+    UT_ASSERT_MSG(n == 2, "two real changes of hands, got %d", n);
+    UT_ASSERT_MSG(shifts[0].tick == 1500 && shifts[0].loseTeam == 1 &&
+                  shifts[0].gainTeam == 2,
+                  "first shift: tick %u, %u -> %u", shifts[0].tick,
+                  shifts[0].loseTeam, shifts[0].gainTeam);
+    UT_ASSERT_MSG(shifts[1].tick == 4000 && shifts[1].loseTeam == 2 &&
+                  shifts[1].gainTeam == 1,
+                  "second shift: tick %u, %u -> %u", shifts[1].tick,
+                  shifts[1].loseTeam, shifts[1].gainTeam);
+    return 0;
+}
+
+/* A wipe is judged by the victims' teams when they died. Seats 3, 4 and 5
+   die together, all on team 1 then. Seat 5 moves to team 2 later, and the
+   header holds that last team. With the changes the dead share a team; with
+   the header alone they do not. */
+int run_highlights_wipe_team_at_death(void) {
+    NotableEvent tl[3];
+    uint8_t header[MAX_TANKS];
+    TeamChange ch[4];
+    HighlightWindow atDeath[HIGHLIGHTS_MAX], atEnd[HIGHLIGHTS_MAX];
+    int na = -1, ne = -1;
+
+    tl[0] = mkEvent(100, 20, 20, NOTABLE_KILL, 0, 3, 0, LAST_DEATH_BY_SHELL, 0);
+    tl[1] = mkEvent(110, 20, 20, NOTABLE_KILL, 0, 4, 0, LAST_DEATH_BY_SHELL, 0);
+    tl[2] = mkEvent(120, 20, 20, NOTABLE_KILL, 0, 5, 0, LAST_DEATH_BY_SHELL, 0);
+
+    memset(header, 0, sizeof header);
+    header[3] = header[4] = 1;
+    header[5] = 2;
+    ch[0].tick = 0;    ch[0].slot = 3; ch[0].team = 1;
+    ch[1].tick = 0;    ch[1].slot = 4; ch[1].team = 1;
+    ch[2].tick = 0;    ch[2].slot = 5; ch[2].team = 1;
+    ch[3].tick = 5000; ch[3].slot = 5; ch[3].team = 2;
+
+    computeHighlights(tl, 3, NULL, header, ch, 4, NULL, 0, NULL, 0, atDeath,
+                      &na, HIGHLIGHTS_MAX);
+    computeHighlights(tl, 3, NULL, header, NULL, 0, NULL, 0, NULL, 0, atEnd,
+                      &ne, HIGHLIGHTS_MAX);
+
+    UT_ASSERT_MSG(na == 1 && ne == 1, "one wipe each, got %d and %d", na, ne);
+    UT_ASSERT_MSG(atDeath[0].score > atEnd[0].score,
+                  "the dead shared team 1 when they died: %u vs %u",
+                  atDeath[0].score, atEnd[0].score);
     return 0;
 }

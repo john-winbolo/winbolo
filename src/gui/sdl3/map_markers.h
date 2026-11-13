@@ -72,6 +72,25 @@ void mapMarkerTank(SDL_Renderer *r, float cx, float cy, float radius,
                    int facing16, SDL_FColor fill);
 
 /*********************************************************
+*NAME:          mapMarkerTankReach
+*PURPOSE:
+*  How far from its centre a tank marker of this radius
+*  reaches, outline included, whichever way it faces. The
+*  triangle is taller than its radius and the stroke sits
+*  half outside its edge, so the marker covers more than
+*  the radius says: a caller that repaints only what a
+*  marker covered marks a square this far each way from
+*  the centre.
+*
+*ARGUMENTS:
+*  radius - the radius the marker is drawn with
+*
+*RETURNS:
+*  the distance in pixels, 0 for a radius that draws nothing
+*********************************************************/
+float mapMarkerTankReach(float radius);
+
+/*********************************************************
 *NAME:          mapMarkerPill
 *PURPOSE:
 *  A pillbox, as a disc. Every health state draws alike: at

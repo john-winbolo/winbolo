@@ -312,6 +312,7 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     SDL_strlcpy(sim->teams[2].name, "Team 2", LOBBY_TEAM_NAME_LEN);
 
     sim->openHost            = FALSE;
+    sim->scriptUploadPolicy  = SCRIPT_UPLOAD_OFF;
     sim->allowNewPlayers     = TRUE;   /* lobby starts open */
     sim->autoLockOnGameStart = FALSE;
     sim->savedAllowNewPlayers = TRUE;
@@ -818,9 +819,16 @@ void serverSimBuildRoundStatsSummary(ServerSim *sim, RoundStatsSummary *out) {
     computeTerritoryShifts(sim->trackBuf, sim->trackLen, sim->trackIdentity,
                            MAX_TANKS, shifts, &shiftCount, TERRITORY_SHIFTS_MAX);
 
+    /* The round's changes of team, so each highlight judges a seat by the
+     * team it was on at the time and not the team it ended on. */
+    TeamChange teamChanges[TEAM_CHANGES_MAX];
+    int teamChangeCount = roundStatsCollectTeamChanges(
+        sim->trackBuf, sim->trackLen, teamChanges, TEAM_CHANGES_MAX);
+
     int hlCount = 0;
     computeHighlights(sim->notableEvents, sim->notableEventCount,
-                      sim->roundStats, team, out->awards, (int)out->awardCount,
+                      sim->roundStats, team, teamChanges, teamChangeCount,
+                      out->awards, (int)out->awardCount,
                       shifts, shiftCount, out->highlights, &hlCount,
                       ROUND_STATS_HIGHLIGHTS_WIRE_MAX);
     out->highlightCount = (uint8_t)hlCount;

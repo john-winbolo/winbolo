@@ -643,3 +643,56 @@ int run_pill_pos_current_carry_cycle(void) {
     clientSimDestroy(cs);
     return 0;
 }
+
+/* 8. A brain is told about a pill only where this client knows it to be. A pill
+ *    whose square is moved is left out of the brain's list, inside the rect or
+ *    allied, because the square it holds is the one the pill left. A confirmed
+ *    pill and a remembered one are still listed, and so is an allied pill
+ *    outside the rect whose square is known. */
+int run_brain_pills_skip_moved_square(void) {
+    ClientSim *cs = clientSimAlloc();
+    UT_ASSERT_MSG(cs != NULL, "clientSimAlloc returned NULL");
+    UT_ASSERT_MSG(clientSimCreate(cs) == TRUE, "clientSimCreate failed");
+
+    GameSim *gs = clientSimGetGameSim(cs);
+    UT_ASSERT_MSG(gs != NULL && gs->pb != NULL, "the client holds no pill list");
+    ObjectInfo *objects = clientSimGetBrainObjects(cs);
+    unsigned short *numObjects = clientSimGetBrainsNumObjects(cs);
+    UT_ASSERT(objects != NULL && numObjects != NULL);
+
+    /* 0: confirmed, in the rect. 1: moved, in the rect. 2: remembered, in the
+     * rect. 3: ours and moved, outside the rect. 4: ours and confirmed,
+     * outside the rect. */
+    pc_make_pills(gs->pb, 5);
+    gs->viewPlayer = 0;
+    pillsSetPosState(&gs->pb, 1, PILL_SQUARE_MOVED);
+    pillsSetPosState(&gs->pb, 2, PILL_SQUARE_REMEMBERED);
+    (*gs->pb).item[3].owner = 0;
+    pillsSetPosState(&gs->pb, 3, PILL_SQUARE_MOVED);
+    (*gs->pb).item[4].owner = 0;
+
+    bool seen[5] = { false, false, false, false, false };
+    unsigned short i;
+
+    /* Pills 0-2 sit at x 20, 30 and 40; pills 3 and 4 at x 50 and 60. */
+    *numObjects = 0;
+    pillsGetBrainPillsInRect(cs, gs, &gs->pb, 15, 45, 35, 45);
+    for (i = 0; i < *numObjects; i++) {
+        if (objects[i].object == PILLS_BRAIN_OBJECT_TYPE && objects[i].idnum < 5) {
+            seen[objects[i].idnum] = true;
+        }
+    }
+
+    UT_ASSERT_MSG(seen[0], "a confirmed pill in the rect should be listed");
+    UT_ASSERT_MSG(!seen[1], "a moved pill must not be listed at the square it "
+                  "left");
+    UT_ASSERT_MSG(seen[2], "a remembered pill in the rect should be listed");
+    UT_ASSERT_MSG(!seen[3], "a moved allied pill must not be listed either");
+    UT_ASSERT_MSG(seen[4], "an allied pill with a known square should be "
+                  "listed from outside the rect");
+    UT_ASSERT_MSG(*numObjects == 3, "the brain was given %u pills, wanted 3",
+                  (unsigned)*numObjects);
+
+    clientSimDestroy(cs);
+    return 0;
+}

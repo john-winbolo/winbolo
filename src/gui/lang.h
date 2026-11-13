@@ -2612,8 +2612,7 @@
  * states them: the line under the file name in the details dialog and the
  * tooltip on a chooser row's name. {string1} is the author, already cleaned
  * of control characters, and {string2} the time as "2026-10-03 20:47 UTC";
- * either is UNKNOWN where the manifest does not state it. A row from a
- * server too old to send the two shows neither line. */
+ * either is UNKNOWN where the manifest does not state it. */
 #define STR_DLGLOBBY_SCENARIO_BY_UPDATED    2771
 #define STR_DLGLOBBY_SCENARIO_UNKNOWN       2772
 /* The note under the round column's heading, which says what the order of
@@ -3096,7 +3095,8 @@
  * shell push pair came after all of those and took the next free numbers,
  * at the end of the file, and tank_deep_sea_safe took the next free one
  * after those. tank_hit_sets_off_mines took the next free one at the end of
- * the file after that. The
+ * the file after that, and man_dead_pill_terrain_speed took the next free one
+ * at the end of the file after that. The
  * order of the block is SIM_RULE_LIST's throughout, which is the order that
  * matters, and a hole in the numbers costs nothing: langTable is searched by
  * id rather than indexed by it. */
@@ -3256,6 +3256,7 @@
 #define STR_RULE_DESC_tank_collision_mac         2712
 #define STR_RULE_DESC_tank_deep_sea_safe         2760
 #define STR_RULE_DESC_tank_hit_sets_off_mines    3042
+#define STR_RULE_DESC_man_dead_pill_terrain_speed 3428
 
 /* Rule range wording */
 
@@ -3553,7 +3554,6 @@
 #define STR_CLIPGIF_GALLERY_TITLE                2943
 #define STR_CLIPGIF_GALLERY_EMPTY                2944
 #define STR_CLIPGIF_COPY                         2945
-#define STR_CLIPGIF_SAVE                         2946
 #define STR_CLIPGIF_COPIED                       2947
 #define STR_CLIPGIF_COPY_FAILED                  2948
 #define STR_CLIPGIF_OPEN_FAILED                  2949
@@ -3563,7 +3563,6 @@
 #define STR_CLIPGIF_LENGTH_TIP                   2953
 #define STR_CLIPGIF_LOADING                      2954
 #define STR_CLIPGIF_TOO_LARGE                    2955
-#define STR_CLIPGIF_FILTER_NAME                  2956
 
 /* Map Maker random maps: the generator type, the Size control, the
  * presets named after classic Bolo map makers, and their controls */
@@ -3659,6 +3658,41 @@
 
 /* The replay's recording mode button, which shows the GIF controls */
 #define STR_REEL_RECORD_MODE_TIP                 3150
+
+/* The Log Viewer's Chat panel: title, empty line, team and private notes */
+#define STR_LV_WIN_CHAT                          3100
+#define STR_LV_CHAT_NONE                         3101
+#define STR_LV_CHAT_TEAM                         3102
+#define STR_LV_CHAT_TO                           3103
+#define STR_LV_CHAT_SPECTATOR                    3104
+
+/* The GIF gallery's game groups, path link and delete */
+#define STR_CLIPGIF_THIS_GAME                    3426
+#define STR_CLIPGIF_EARLIER_GAMES                3427
+#define STR_CLIPGIF_SHOW_IN_FOLDER_TIP           3153
+#define STR_CLIPGIF_SHOW_FAILED                  3154
+#define STR_CLIPGIF_DELETE                       3155
+#define STR_CLIPGIF_DELETE_CONFIRM               3156
+#define STR_CLIPGIF_DELETE_FAILED                3157
+
+/* The Log Viewer's GIFs and its Clips window */
+#define STR_LV_WIN_CLIPS                         3163
+#define STR_LV_CLIPS_EMPTY                       3164
+
+/* Recording mode, in the game's replay and the Log Viewer */
+#define STR_LV_RECORD_MODE                       3361
+#define STR_LV_RECORD_MODE_TIP                   3362
+#define STR_CLIPGIF_PREVIEW                      3419
+#define STR_CLIPGIF_PREVIEW_STOP                 3420
+#define STR_CLIPGIF_SAVE                         3421
+#define STR_CLIPGIF_CANCEL                       3422
+#define STR_CLIPGIF_ZOOM_TIP                     3423
+#define STR_CLIPGIF_WINDOW_TITLE                 3424
+#define STR_CLIPGIF_MOVE_TIP                     3425
+
+/* The Log Viewer's -size option when its text is not a size or cannot be met */
+#define STR_LV_SIZE_ARG_BAD                      3151
+#define STR_LV_SIZE_NOT_MET                      3152
 
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler

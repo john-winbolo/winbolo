@@ -886,11 +886,17 @@ static inline ServerVoiceMode infoPacketReadVoiceMode(BYTE flags) {
                                                 bound 1,
                                                 keepsWinCondition 1,
                                                 source 1,
-                                                workshopId 8 BE }
+                                                workshopId 8 BE,
+                                                authorLen 1, author A,
+                                                updatedLen 1, updated U }
                                               source is SCN_DIR_SOURCE_*
                                               (0 server, 1 upload,
                                               2 Workshop); workshopId is 0
-                                              for none. An entry cut short
+                                              for none. The last four
+                                              fields are one
+                                              scenario_identity.h blob, two
+                                              zero lengths for a script that
+                                              states neither. An entry cut short
                                               is a malformed chunk.
                                               Entries are packed until the next
                                               will not fit in UDP_MAX_PAYLOAD;
