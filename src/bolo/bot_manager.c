@@ -1717,6 +1717,14 @@ static void runBotThinkJob(int botIndex, void *userData) {
     if (sim->botMgr.preThinkHook) sim->botMgr.preThinkHook(-1);
 }
 
+void botRunnerCollectGarbage(BotContext *bot) {
+    /* The Bot Host calls this after each think and pool capture
+     * (bothost_main.c hostThinkJob). It does nothing on this branch: #664
+     * (bot-improvements-for-2.2.1a) fills it with the Lua collection from
+     * brain_gc.c and calls it from runBotThinkJob too. */
+    (void)bot;
+}
+
 void botManagerTick(ServerSim *sim, aiType ai) {
     int activeCount = 0;
 
