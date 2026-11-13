@@ -94,6 +94,18 @@ BrainRecWalkStatus brainRecWalkPreamble(BrainRecReader *r,
  * repeatedly after brainRecWalkPreamble until it returns EOF. */
 BrainRecWalkStatus brainRecWalkFrame(BrainRecReader *r, BrainRecFrameInfo *out);
 
+/* Read a whole brainrec.btr file and report the tick of its first and last
+ * frame and how many frames it has. The last frame's tick is only known at
+ * the end of the gzip stream, so this reads all of it: about 5 s for a
+ * 450 MB file. Callers that can, read brainrec_ticks.txt first (see
+ * brain_record_ticks.h). A file cut off mid-frame (a killed server) reports
+ * the frames before the cut. cancelled (may be NULL) is asked as the read
+ * goes; when it returns true the walk stops and this returns false.
+ * Returns false on a bad header, no frames, or cancel. */
+bool brainRecWalkFileTicks(const char *btrPath, uint32_t *firstTick,
+                           uint32_t *lastTick, uint64_t *frames,
+                           bool (*cancelled)(void *ctx), void *cancelCtx);
+
 #ifdef __cplusplus
 }
 #endif

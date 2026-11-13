@@ -96,6 +96,8 @@
 #include "brain_overlay.h"
 #include "brain_record.h"
 #include "braintest_loadbrowser.h"
+#include "braintest_session_ticks.h"
+#include "braintest_tank_dead.h"
 #include <zlib.h>
 #include <time.h>
 #include "braintest_viz_registry.h"
@@ -1270,19 +1272,30 @@ static LoadSessionEntry g_sessionList[LOADBROWSER_MAX_SESSIONS];
 static int  g_sessionCount    = 0;
 static bool g_showLoadBrowser = false;
 
-/* Parse a "YYYYMMDD_HHMMSS" session dir name to a Unix epoch (local), or -1. */
-static int btParseDirTime(const char *name) {
-    int Y, M, D, h, m, s;
-    if (sscanf(name, "%4d%2d%2d_%2d%2d%2d", &Y, &M, &D, &h, &m, &s) != 6) return -1;
-    struct tm tmv; memset(&tmv, 0, sizeof tmv);
-    tmv.tm_year = Y - 1900; tmv.tm_mon = M - 1; tmv.tm_mday = D;
-    tmv.tm_hour = h; tmv.tm_min = m; tmv.tm_sec = s; tmv.tm_isdst = -1;
-    time_t t = mktime(&tmv);
-    return (t == (time_t)-1) ? -1 : (int)t;
+/* Fill an entry's game length and game clock range from its tick range. */
+static void sessionApplyTicks(LoadSessionEntry *e) {
+    uint32_t first = 0, last = 0;
+    SessionTicksState st = sessionTicksLookup(e->dir, e->btrPath, e->btrBytes,
+                                              e->btrMtime, &first, &last);
+    e->lengthPending = (st == SESSION_TICKS_PENDING);
+    if (st != SESSION_TICKS_HAVE) return;
+    sessionTicksSeconds(first, last, &e->startSec, &e->endSec, &e->durationSec);
+}
+
+/* Rows whose tick range the background walk was still reading: look again.
+ * Cheap (a table search per pending row), so it runs every frame the
+ * browser is open. */
+static void sessionPollPendingTicks(void) {
+    for (int i = 0; i < g_sessionCount; i++) {
+        if (g_sessionList[i].lengthPending) sessionApplyTicks(&g_sessionList[i]);
+    }
 }
 
 /* Scan debug_sessions/ for recordings. Loadable = has a version-matching
- * brainrec.btr. Length is wall-clock: btr mtime minus the dir-name timestamp. */
+ * brainrec.btr. Length is GAME time, from the first and last recorded tick
+ * (braintest_session_ticks.h). The old wall-clock length (.btr mtime minus
+ * the dir-name timestamp) was wrong for an -asap server, and for every
+ * brainrec_split part, whose names all keep the game's start time. */
 /* Peek cache: the O dialog rescans on every press, and each entry's peek
  * gz-decompresses a first frame. With a couple of hundred sessions that was
  * seconds of main-thread stall per press. Keyed on dir name + brainrec
@@ -1322,7 +1335,20 @@ static void peekCacheStore(const char *name, uint64_t size, int64_t mtime,
     c->bots = bots; c->loadable = loadable;
 }
 
+/* Session list order: natural name order, so a split game lists part1,
+ * part2, ... part10 by number rather than as text (part10 before part1). */
+static int sessionNameCmp(const void *a, const void *b) {
+    return loadBrowserNaturalCmp(((const LoadSessionEntry *)a)->name,
+                                 ((const LoadSessionEntry *)b)->name);
+}
+
 static void scanSessions(void) {
+    static bool ticksReady = false;
+    if (!ticksReady) {
+        /* Next to debug_sessions/, not in it: a session dir is the recorder's. */
+        sessionTicksInit("braintest_session_ticks.cache");
+        ticksReady = true;
+    }
     g_sessionCount = 0;
     int n = 0;
     char **entries = SDL_GlobDirectory("debug_sessions", "*", 0, &n);
@@ -1338,6 +1364,8 @@ static void scanSessions(void) {
         SDL_strlcpy(e->dir,  dir,         sizeof e->dir);
         SDL_strlcpy(e->name, entries[i],  sizeof e->name);
         e->durationSec = -1;
+        e->startSec    = -1;
+        e->endSec      = -1;
 
         char btr[340];
         SDL_snprintf(btr, sizeof btr, "%s/%s", dir, BRAINREC_FILENAME);
@@ -1358,12 +1386,10 @@ static void scanSessions(void) {
             }
             if (ok) {
                 e->loadable = true;
-                int start = btParseDirTime(entries[i]);
-                if (start >= 0) {
-                    long long endsec = (long long)(bi.modify_time / 1000000000LL);
-                    int dur = (int)(endsec - start);
-                    if (dur >= 0 && dur < 24 * 3600) e->durationSec = dur;
-                }
+                SDL_strlcpy(e->btrPath, btr, sizeof e->btrPath);
+                e->btrBytes = (int64_t)bi.size;
+                e->btrMtime = (int64_t)bi.modify_time;
+                sessionApplyTicks(e);
             } else {
                 SDL_strlcpy(e->note, "incompatible / corrupt", sizeof e->note);
             }
@@ -1372,6 +1398,8 @@ static void scanSessions(void) {
         if (e->loadable) g_sessionCount++;
     }
     SDL_free(entries);
+    SDL_qsort(g_sessionList, (size_t)g_sessionCount, sizeof g_sessionList[0],
+              sessionNameCmp);
 }
 
 /* Spawn a fresh BrainTest replaying `dir` and quit this one. */
@@ -1617,7 +1645,7 @@ static void renderTankIds(BrainTestApp *app, int screenW, int screenH) {
         for (int i = 0; i < pf_->tankCount; i++) {
             const TankSnapshot *ts = &pf_->tanks[i];
             if (ts->playerNum & TANK_SNAPSHOT_HIDDEN_FLAG) continue; /* stub */
-            if (ts->tankStatus & (TANK_STATUS_DEAD | TANK_STATUS_DESTROYED)) continue;
+            if (braintestTankStatusIsDead(ts->tankStatus)) continue;
             int pn = ts->playerNum & TANK_SNAPSHOT_PLAYER_MASK;
             float tx = ts->worldX / 256.0f;
             float ty = ts->worldY / 256.0f - 0.5f;
@@ -1632,6 +1660,9 @@ static void renderTankIds(BrainTestApp *app, int screenW, int screenH) {
         for (int pn = 0; pn < MAX_TANKS; pn++) {
             WORLD wx = 0, wy = 0;
             if (!serverSimGetTankState(app->sim, (BYTE)pn, &wx, &wy)) continue;
+            /* No label on a dead tank: the map does not draw it either. */
+            TankRenderInfo info;
+            if (!serverSimGetTankRender(app->sim, (BYTE)pn, &info) || !info.alive) continue;
             float tx = wx / 256.0f;
             float ty = wy / 256.0f - 0.5f;
             float sx, sy;
@@ -5398,6 +5429,15 @@ static void appRender(BrainTestApp *app) {
                 TankSnapshot *ts = &pf_->tanks[i];
                 BYTE pn = ts->playerNum;
                 if (pn >= MAX_TANKS) continue;
+                /* A dead tank stays out of the sim, the same as a stub,
+                 * so the map does not draw it. Its recorded angle keeps
+                 * changing for the whole respawn wait, and the renderer
+                 * reads only deathWait, which the recording holds for
+                 * slot 0 alone: the other dead tanks were drawn turning
+                 * on the spot. The respawn frame clears the status bits
+                 * and carries the new place, so the tank comes back
+                 * there with no frame at the old place. */
+                if (braintestTankStatusIsDead(ts->tankStatus)) continue;
                 struct tankObj *t = &tempTanks[pn];
                 t->x         = ts->worldX;
                 t->y         = ts->worldY;
@@ -5850,6 +5890,7 @@ static void appRender(BrainTestApp *app) {
     vizDetailWindowRender((int)app->followBot);
     {
         bool rescan = false;
+        if (g_showLoadBrowser) sessionPollPendingTicks();
         int sel = loadBrowserRender(&g_showLoadBrowser, g_sessionList, g_sessionCount,
                                     optLoadSession, &rescan);
         /* A rename moved dirs on disk, so every g_sessionList name (and every
@@ -7537,6 +7578,7 @@ int main(int argc, char *argv[]) {
     clientMutexDestroy();
     threadsDestroy();
     botWorkerPoolDestroy();
+    sessionTicksShutdown();   /* stop a Load Session length read in progress */
     SDL_Quit();
 
     return 0;

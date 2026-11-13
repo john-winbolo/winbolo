@@ -59,6 +59,7 @@
 
 #include "brain_record_walk.h"
 #include "pool_render_host.h"
+#include "brain_record_ticks.h"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -1099,6 +1100,9 @@ int main(int argc, char **argv) {
         for (int order = 0; order < 2 && ok; order++) {
             for (int e = 0; e < n && ok; e++) {
                 if (strcmp(entries[e], "brainrec.btr") == 0) continue;
+                /* The source's tick note describes the whole file; each part
+                 * gets its own below, after its verify walk. */
+                if (strcmp(entries[e], BRAINREC_TICKS_FILENAME) == 0) continue;
                 TickKind kind = classifyCompanion(entries[e]);
                 bool isPrint2 = (kind == TICK_PRINT2);
                 if (order == 0 && !isPrint2) continue;
@@ -1210,6 +1214,12 @@ int main(int argc, char **argv) {
                firstKf ? "yes" : "no", match ? "OK" : "MISMATCH");
         if (!match) ok = false;
         verifiedTotal += frames;
+        /* The tick note lets BrainTest show this part's game length without
+         * reading the whole part again. Only a session part has a dir. */
+        if (match && sessionMode && !brainRecTicksWrite(partDir[p], first, last, frames)) {
+            fprintf(stderr, "  part %d/%d: could not write %s\n", p + 1, parts,
+                    BRAINREC_TICKS_FILENAME);
+        }
     }
     printf("  total %llu frames across %d parts vs %llu in the source  [%s]\n",
            (unsigned long long)verifiedTotal, parts, (unsigned long long)total,
