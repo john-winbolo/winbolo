@@ -111,6 +111,14 @@ typedef struct {
   /* pill_max_armour: the armour a pillbox draws as intact against. 1 to 255,
      never 0, since the pill picture divides by it. */
   int  pillMaxArmour;
+  /* tank_hit_radius: the circle a shell must reach to hit a tank, and
+     pill_range, which limits the distance the builder test reads. Both in
+     world units, for the hit areas (lv_hitbox.h). */
+  int  tankHitRadius;
+  int  pillRange;
+  /* The tank's hit zone, LV_HITBOX_TANK_* (lv_hitbox.h): the circle, the
+     square of games before it, or none when the file cannot tell. */
+  int  tankHitZone;
 } LvRules;
 
 /* Speed values. 1 is real time and 2 to 9 are faster, up to as fast as the
@@ -361,6 +369,19 @@ void lv_decoderDestroy(LogViewerState *lv);
 /* State accessors used by screen.c and other modules */
 void lv_screenSetState(LogViewerState *lv);
 LogViewerState *lv_screenGetState(void);
+
+/* Whether pill `pill` (0 based) lost its last armour on the frame now shown:
+   a recorded health event took it from above 0 to 0 on this frame. That is a
+   hit on the pill, so the builder hit box draws its square as solid for this
+   frame (lgmBlastCatches: the shot that kills a pill is a hit on its square). */
+bool lv_screenPillHitNow(BYTE pill);
+
+/* Whether a recorded map change on the frame now shown is a shell's hit on
+   square (x, y): a wall to rubble, a forest to grass, a boat to river, or a
+   boat's shell on the shore or a bridge. Such a hit is a hit on the square,
+   so the builder hit box draws the square as solid for this frame
+   (lgmBlastCatches, squareHit). */
+bool lv_screenSquareHitNow(BYTE x, BYTE y);
 
 /* Accessor functions for sounddist.c (replaces extern globals) */
 BYTE lv_screenGetXOffset(void);

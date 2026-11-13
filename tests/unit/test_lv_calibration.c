@@ -41,6 +41,7 @@
 #include "backend.h"
 #include "lv_players.h"      /* lv_playersGetDrawnTankDetails */
 #include "logviewer.h"
+#include "lv_hitbox.h"       /* LV_HITBOX_TANK_* */
 #include "lv_log.h"
 #include "blocks.h"
 #include "lv_bolo_map.h"
@@ -68,7 +69,8 @@ static void putZeros(LogBuf *b, size_t n) {
 
 /* File header, as lv_logLoad reads it: magic, version, map name, seven
  * settings bytes, ip4 + port, create time, WBN key. */
-static void putHeaderNamed(LogBuf *b, const char *mapName) {
+static void putHeaderVersion(LogBuf *b, const char *mapName, uint8_t major, uint8_t minor,
+                             uint8_t revision) {
   uint8_t nameLen = (uint8_t)strlen(mapName);
 
   put(b, "WBOLOMOV", 8);
@@ -80,10 +82,14 @@ static void putHeaderNamed(LogBuf *b, const char *mapName) {
   putU8(b, 0);            /* ai */
   putU8(b, 0);            /* password */
   putU8(b, MAX_TANKS);    /* max players */
-  putU8(b, 2); putU8(b, 0); putU8(b, 2);   /* game version */
+  putU8(b, major); putU8(b, minor); putU8(b, revision);   /* game version */
   putZeros(b, 4 + 2);     /* ip + port */
   putZeros(b, 4);         /* create time (v2: no XOR seed) */
   putZeros(b, 32);        /* WBN key */
+}
+
+static void putHeaderNamed(LogBuf *b, const char *mapName) {
+  putHeaderVersion(b, mapName, 2, 0, 2);
 }
 
 static void putHeader(LogBuf *b) { putHeaderNamed(b, "Test"); }
@@ -2143,5 +2149,53 @@ int run_lv_overrun_read(void) {
   UT_ASSERT_MSG(!now.recorded && !now.has, "a file with no record has one");
   lv_decoderDestroy(lv);
   remove(path);
+  return 0;
+}
+
+/*
+ * The tank's hit zone comes from the recording's version (lv_rulesRefresh):
+ * a game of 1.91 or earlier used the square, a later one the circle, and a
+ * header with no version gives no zone, so no tank outline is drawn.
+ */
+int run_lv_hitbox_zone_from_version(void) {
+  static const struct {
+    uint8_t major, minor, revision;
+    int want;
+  } cases[] = {
+      {1, 9, 1, LV_HITBOX_TANK_SQUARE},   /* 1.91, the last square game */
+      {1, 1, 9, LV_HITBOX_TANK_SQUARE},   /* 1.19 */
+      {1, 9, 2, LV_HITBOX_TANK_CIRCLE},   /* 1.92, the first circle game */
+      {2, 0, 2, LV_HITBOX_TANK_CIRCLE},   /* 2.02 */
+      {2, 2, 1, LV_HITBOX_TANK_CIRCLE},   /* 2.2.1 */
+      {0, 0, 0, LV_HITBOX_TANK_NONE},     /* no version */
+  };
+  const char *path = "lv_hitbox_zone.wbv";
+  size_t c;
+
+  for (c = 0; c < sizeof(cases) / sizeof(cases[0]); c++) {
+    LogBuf b;
+    LogViewerState *lv;
+    int want = cases[c].want;
+#ifdef BOLO_LEGACY_SQUARE_COLLISION
+    if (want == LV_HITBOX_TANK_CIRCLE) want = LV_HITBOX_TANK_SQUARE;
+#endif
+    b.len = 0;
+    putHeaderVersion(&b, "Test", cases[c].major, cases[c].minor, cases[c].revision);
+    putSnapshot(&b, true);
+    putNoEvents(&b, 10);
+    putU8(&b, LOG_QUIT);
+    lv = loadSynthetic(&b, path);
+    UT_ASSERT_MSG(lv != NULL, "synthetic log %u.%u.%u failed to build/load",
+                  cases[c].major, cases[c].minor, cases[c].revision);
+    UT_ASSERT_MSG(lv->rules.tankHitZone == want, "version %u.%u.%u gave zone %d, want %d",
+                  cases[c].major, cases[c].minor, cases[c].revision, lv->rules.tankHitZone,
+                  want);
+    lv_decoderDestroy(lv);
+    remove(path);
+  }
+  /* Rule records are only in games after the circle: with them, even a
+     file with no version is a circle game. */
+  UT_ASSERT(lvHitboxTankZoneFor(0, 0, 0, true) != LV_HITBOX_TANK_NONE);
+  UT_ASSERT(lvHitboxTankZoneFor(1, 9, 1, false) == LV_HITBOX_TANK_SQUARE);
   return 0;
 }

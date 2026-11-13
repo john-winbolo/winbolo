@@ -2445,6 +2445,25 @@ int run_lgm_kill_seen_out_already_dead(void);
 int run_lgm_kill_seen_out_tank_hit_blast(void);
 int run_lgm_kill_seen_out_dead_tank(void);
 
+/* A blast on a pillbox's square against a builder (test_lgm_blast_dead_pill.c):
+ * a dead pill's square is open ground, so the blast kills within half a
+ * square across its edge and not in its far corner; a live pill's square is
+ * still solid. Shell hits on a wall, a forest, a boat, the shore or a bridge
+ * are hits on the square. */
+int run_lgm_blast_dead_pill_edge(void);
+int run_lgm_blast_dead_pill_far_corner(void);
+int run_lgm_blast_live_pill_unchanged(void);
+int run_lgm_blast_pill_kill_shot(void);
+int run_lgm_blast_wall_rubble_shot(void);
+int run_lgm_blast_forest_shot(void);
+int run_lgm_blast_boat_shot(void);
+int run_lgm_blast_shore_shot(void);
+int run_lgm_blast_bridge_shot(void);
+int run_lgm_blast_road_open_ground(void);
+int run_lgm_blast_mined_bridge_shot(void);
+int run_lgm_blast_shell_runs_out_dead_pill(void);
+int run_lgm_blast_shell_hits_tank_dead_pill(void);
+
 /* A -braindebug server records each round into its own session dir
  * (test_braindbg_round_dir.c): the dir it named is cleared at game over, so
  * round 2 does not record over round 1. */
@@ -4716,6 +4735,18 @@ int run_lv_tank_status_sums(void);
 /* The bars the log viewer draws over each tank (test_lv_tank_bars.c): their
  * size and place for a size of map square, the filled part, the colours. */
 int run_lv_tank_bars_sums(void);
+/* The hit areas the log viewer draws round each tank and each builder
+ * (test_lv_hitbox.c): the engine's tank circle and builder catch test. */
+int run_lv_hitbox_sums(void);
+int run_lv_hitbox_lgm_fit(void);
+int run_lv_hitbox_lgm_pick(void);
+int run_lv_hitbox_outline(void);
+/* The tank's hit zone from a recording's version (test_lv_calibration.c). */
+int run_lv_hitbox_zone_from_version(void);
+/* The hit rules the engine and the log viewer share (test_hit_rules.c):
+ * the same answers as the engine's sums before they moved to hit_rules.h. */
+int run_hit_rules_builder_matches_engine(void);
+int run_hit_rules_tank_matches_engine(void);
 /* A click on a tank on the log viewer's map (test_lv_tank_pick.c): which
  * tank a point is on, and where the mark round the selected one goes. */
 int run_lv_tank_pick_sums(void);

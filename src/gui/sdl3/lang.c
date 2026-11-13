@@ -1120,6 +1120,8 @@ static const LangEntry langTable[] = {
     {2868, "Numbers: {string1}"},
     {2869, "{player} captured Neutral Pillbox {number}"},
     {2870, "{player} just stole pillbox {number} from {other}"},
+    {3470, "Toggle Hit Boxes"},
+    {3471, "Over each tank on the map, the circle a shell must reach to hit it. Over each builder out of his tank, the area an explosion must be in to kill him"},
 
     /* Log viewer dialogs */
     {1128, "Assign colours to each player team:"},

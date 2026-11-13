@@ -4689,6 +4689,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_lgm_quit_pill.c
     tests/unit/test_lgm_start_offset.c
     tests/unit/test_lgm_absent_on_shooter_screen.c
+    tests/unit/test_lgm_blast_dead_pill.c
     tests/unit/test_braindbg_round_dir.c
     tests/unit/test_jitter_buffer_grow.c
     tests/unit/test_shell_projection.c
@@ -5241,6 +5242,11 @@ set(WINBOLO_UNITTESTS_SOURCES
     # The bars the viewer draws over each tank: where they go, how full
     # they are and their colours (lv_tank_bars.h, header only).
     tests/unit/test_lv_tank_bars.c
+    # The hit areas the viewer draws round each tank and each builder: the
+    # engine's own rules (lv_hitbox.h and hit_rules.h, header only).
+    tests/unit/test_lv_hitbox.c
+    # The hit rules the engine and the log viewer share (hit_rules.h).
+    tests/unit/test_hit_rules.c
     # A click on a tank on the viewer's map: which tank a point is on and
     # the mark round the selected one (lv_tank_pick.h, header only).
     tests/unit/test_lv_tank_pick.c
@@ -6579,6 +6585,19 @@ set(_unit_test_names
     lgm_kill_seen_out_already_dead
     lgm_kill_seen_out_tank_hit_blast
     lgm_kill_seen_out_dead_tank
+    lgm_blast_dead_pill_edge
+    lgm_blast_dead_pill_far_corner
+    lgm_blast_live_pill_unchanged
+    lgm_blast_pill_kill_shot
+    lgm_blast_wall_rubble_shot
+    lgm_blast_forest_shot
+    lgm_blast_boat_shot
+    lgm_blast_shore_shot
+    lgm_blast_bridge_shot
+    lgm_blast_road_open_ground
+    lgm_blast_mined_bridge_shot
+    lgm_blast_shell_runs_out_dead_pill
+    lgm_blast_shell_hits_tank_dead_pill
     lgm_start_offset
     braindbg_second_round_new_dir
     lgm_draw_own_matches_wire
@@ -7984,6 +8003,13 @@ set(_unit_test_names
     lv_overview_neutral_row
     lv_tank_status_sums
     lv_tank_bars_sums
+    lv_hitbox_sums
+    lv_hitbox_lgm_fit
+    lv_hitbox_lgm_pick
+    lv_hitbox_outline
+    lv_hitbox_zone_from_version
+    hit_rules_builder_matches_engine
+    hit_rules_tank_matches_engine
     lv_tank_pick_sums
     lv_marks_fade
     lv_window_size_parse

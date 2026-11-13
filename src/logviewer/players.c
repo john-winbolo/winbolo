@@ -41,6 +41,7 @@
 #include "lv_bolo_map.h"
 #include "lv_messages.h"
 #include "lv_lag.h"
+#include "lv_hitbox.h"      /* lvHitboxLgmFitRange */
 #include "../gui/lang.h"
 
 
@@ -224,10 +225,13 @@ I*NAME:          lv_playersCreate
 *ARGUMENTS:
 *
 *********************************************************/
+static void lgmFitClear(void);
+
 void lv_playersCreate() {
   BYTE count; /* Looping variable */
 
   myPlayerNum = NEUTRAL; /* Not set yet */
+  lgmFitClear();         /* a new log has new builders */
   selectedTank = -1;
   lv_playersClearPerspective(); /* a new log has new players */
   for (count = 0;count<MAX_TANKS;count++) {
@@ -488,6 +492,120 @@ void lv_playersUpdateLgm(BYTE playerNum, BYTE lgmMX, BYTE lgmMY, BYTE lgmPX, BYT
       plrs.item[playerNum].lgmLastMapY = lgmMY;
     }
   }
+}
+
+/* Each builder's last recorded places, for the hit box's closer guess at his
+ * place (lv_playersLgmPlace). Newest first. A run is started again when the
+ * playhead goes back (a seek), when an entry is more than
+ * LGM_FIT_GAP_MS after the last one he was named in (he was in his tank, or
+ * a seek on), and when he is on his parachute. */
+#define LGM_FIT_GAP_MS 100u
+typedef struct {
+  int      count;
+  uint32_t ms[LV_HITBOX_LGM_FIT_MAX];
+  int      ax[LV_HITBOX_LGM_FIT_MAX];   /* mx * 16 + px */
+  int      ay[LV_HITBOX_LGM_FIT_MAX];
+  /* The last guess made: cx, cy for the entry cacheAt, whose time was
+     cacheMs. The map is drawn again and again between entries, and the lag
+     view draws an older entry each time, so the guess is kept until a note
+     changes the entries. */
+  bool     cached;
+  int      cacheAt;
+  uint32_t cacheMs;
+  double   cx, cy;
+} LgmFitTrack;
+static LgmFitTrack lgmFit[MAX_TANKS];
+
+static void lgmFitClear(void) {
+  memset(lgmFit, 0, sizeof(lgmFit));
+}
+
+void lv_playersLgmNoteTime(BYTE playerNum, uint32_t ms) {
+  LgmFitTrack *t;
+  int ax, ay;
+
+  if (playerNum >= MAX_TANKS || plrs.item[playerNum].inUse == FALSE) {
+    return;
+  }
+  t = &lgmFit[playerNum];
+  t->cached = FALSE;
+  if (plrs.item[playerNum].lgmIsOut == FALSE || plrs.item[playerNum].lgmIsDead == TRUE ||
+      (plrs.item[playerNum].lgmMapX == 0 && plrs.item[playerNum].lgmMapY == 0)) {
+    t->count = 0;
+    return;
+  }
+  ax = plrs.item[playerNum].lgmMapX * 16 + plrs.item[playerNum].lgmPixelX;
+  ay = plrs.item[playerNum].lgmMapY * 16 + plrs.item[playerNum].lgmPixelY;
+  if (t->count > 0) {
+    if (ms == t->ms[0]) {
+      /* The same entry again: it takes the new place. */
+      t->ax[0] = ax;
+      t->ay[0] = ay;
+      return;
+    }
+    if (ms < t->ms[0] || ms - t->ms[0] > LGM_FIT_GAP_MS) {
+      t->count = 0;
+    }
+  }
+  if (t->count > 0) {
+    int keep = t->count < LV_HITBOX_LGM_FIT_MAX ? t->count : LV_HITBOX_LGM_FIT_MAX - 1;
+    memmove(&t->ms[1], &t->ms[0], (size_t)keep * sizeof(t->ms[0]));
+    memmove(&t->ax[1], &t->ax[0], (size_t)keep * sizeof(t->ax[0]));
+    memmove(&t->ay[1], &t->ay[0], (size_t)keep * sizeof(t->ay[0]));
+    t->count = keep + 1;
+  } else {
+    t->count = 1;
+  }
+  t->ms[0] = ms;
+  t->ax[0] = ax;
+  t->ay[0] = ay;
+}
+
+bool lv_playersLgmPlace(BYTE playerNum, BYTE mx, BYTE my, BYTE px, BYTE py,
+                        double *wx, double *wy) {
+  LgmFitTrack *t;
+  int ax = mx * 16 + px;
+  int ay = my * 16 + py;
+  int at, n, i;
+  int back[LV_HITBOX_LGM_FIT_MAX], pix[LV_HITBOX_LGM_FIT_MAX];
+  double lo, hi;
+
+  if (playerNum >= MAX_TANKS) {
+    return FALSE;
+  }
+  t = &lgmFit[playerNum];
+  /* The entry the drawing is of: the present (the newest note), or for the
+     lag view the newest note at or before its frame's time. The time picks
+     it, not the pixel, so a builder in one pixel for two entries, or back
+     in a pixel he walked through before, is fitted at the right entry. */
+  at = lvHitboxLgmPickEntry(t->ms, t->ax, t->ay, t->count,
+                            lagFrame != NULL ? lagFrame->ms : UINT32_MAX, ax, ay);
+  if (at < 0) {
+    return FALSE;
+  }
+  if (t->cached && t->cacheAt == at && t->cacheMs == t->ms[at]) {
+    *wx = t->cx;
+    *wy = t->cy;
+    return TRUE;
+  }
+  n = t->count - at;
+  for (i = 0; i < n; i++) {
+    back[i] = (int)((t->ms[at] - t->ms[at + i]) / 20u);
+    pix[i] = t->ax[at + i];
+  }
+  lvHitboxLgmFitRange(back, pix, n, &lo, &hi);
+  *wx = (lo + hi) * 0.5 + LV_HITBOX_LGM_OFFSET_X;
+  for (i = 0; i < n; i++) {
+    pix[i] = t->ay[at + i];
+  }
+  lvHitboxLgmFitRange(back, pix, n, &lo, &hi);
+  *wy = (lo + hi) * 0.5 + LV_HITBOX_LGM_OFFSET_Y;
+  t->cached = TRUE;
+  t->cacheAt = at;
+  t->cacheMs = t->ms[at];
+  t->cx = *wx;
+  t->cy = *wy;
+  return TRUE;
 }
 
 void lv_playersLgmZero() {
@@ -852,7 +970,7 @@ void lv_playersMakeScreenLgm(screenLgm *value, BYTE leftPos, BYTE rightPos, BYTE
         wx += l->px << TANK_SHIFT_RIGHT2;
         wy = l->my << TANK_SHIFT_MAPSIZE;
         wy += l->py << TANK_SHIFT_RIGHT2;
-        lv_screenLgmAddItem(value, (BYTE) (l->mx - leftPos), (BYTE) (l->my - top), l->px, l->py, l->frame, (BYTE) wx, (BYTE) wy);
+        lv_screenLgmAddItem(value, (BYTE) (l->mx - leftPos), (BYTE) (l->my - top), l->px, l->py, l->frame, (BYTE) wx, (BYTE) wy, count);
       }
     }
     return;
@@ -871,7 +989,7 @@ void lv_playersMakeScreenLgm(screenLgm *value, BYTE leftPos, BYTE rightPos, BYTE
         wy = plrs.item[count].lgmMapY << TANK_SHIFT_MAPSIZE;
         wy += plrs.item[count].lgmPixelY << TANK_SHIFT_RIGHT2;
         
-        lv_screenLgmAddItem(value,(BYTE) (plrs.item[count].lgmMapX - leftPos), (BYTE) (plrs.item[count].lgmMapY - top), plrs.item[count].lgmPixelX, plrs.item[count].lgmPixelY, plrs.item[count].lgmFrame, (BYTE) wx, (BYTE) wy); 
+        lv_screenLgmAddItem(value,(BYTE) (plrs.item[count].lgmMapX - leftPos), (BYTE) (plrs.item[count].lgmMapY - top), plrs.item[count].lgmPixelX, plrs.item[count].lgmPixelY, plrs.item[count].lgmFrame, (BYTE) wx, (BYTE) wy, count);
       }
     }
   }
