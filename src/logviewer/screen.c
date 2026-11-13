@@ -986,8 +986,17 @@ static void lv_rulesRefresh(void) {
       lv_screenRuleValueAt(SIM_RULE_tank_hit_radius, t), 1, 255);
   g_lv->rules.pillRange      = lv_rulesClampInt(
       lv_screenRuleValueAt(SIM_RULE_pill_range, t), 0, 65535);
-  g_lv->rules.lgmBlastShape  = lv_rulesClampInt(
-      lv_screenRuleValueAt(SIM_RULE_lgm_blast_shape, t), 0, 2);
+  /* The engine plays any lgm_blast_shape other than 1 or 2 as 0, the
+     circle of 128 (hitRulesBuilderOpenGroundShape), so a value outside 0 to
+     2 reads as 0 here. A server holds the rule to 0 to 2, so only a
+     hand-made file can have one. */
+  {
+    double shape = lv_screenRuleValueAt(SIM_RULE_lgm_blast_shape, t);
+    g_lv->rules.lgmBlastShape = (shape >= (double)LGM_BLAST_SHAPE_HALF_SQUARE &&
+                                 shape <= (double)LGM_BLAST_SHAPE_MAC_AREA)
+                                    ? (int)shape
+                                    : LGM_BLAST_SHAPE_HALF_SQUARE;
+  }
   /* The tank's hit zone: the circle, or the square of games from before it
      (1.91 and earlier), from the header's version and whether the file has
      rule records. */
