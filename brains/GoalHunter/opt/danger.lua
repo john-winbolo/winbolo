@@ -706,6 +706,11 @@ local function blast_catches(world, lx, ly, ex, ey, kill2, pill_hit)
        and bit.rshift(math.floor(ly), 8) == emy
   end
   local dx, dy = ex - lx, ey - ly
+  -- The lgm_blast_shape rule's area when this brain has the helper
+  -- (U.lgm_open_blast_catches); else the 128 WU circle.
+  if U.lgm_open_blast_catches then
+    return U.lgm_open_blast_catches(dx, dy)
+  end
   return dx * dx + dy * dy <= kill2
 end
 

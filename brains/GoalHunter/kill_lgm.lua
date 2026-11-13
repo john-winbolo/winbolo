@@ -872,7 +872,15 @@ function M.predict_dest_hold(tank_wx, tank_wy, lgm, h, pill)
                                            pill.cx, pill.cy, s_x,
                                            pill.mx, pill.my)
     local bdx, bdy = man_wx - blast_wx, man_wy - blast_wy
-    if bdx * bdx + bdy * bdy <= 128 * 128 then
+    -- The lgm_blast_shape rule's area when this brain has the helper
+    -- (U.lgm_open_blast_catches); else the 128 WU circle.
+    local caught
+    if U.lgm_open_blast_catches then
+      caught = U.lgm_open_blast_catches(bdx, bdy)
+    else
+      caught = bdx * bdx + bdy * bdy <= 128 * 128
+    end
+    if caught then
       verdict = "fire"
     else
       verdict = "early"
