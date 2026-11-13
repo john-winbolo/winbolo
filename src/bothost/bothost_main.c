@@ -2605,6 +2605,15 @@ static HostTickStats tickStats;
 #define BOT_HOST_TICK_STATS_TICKS 3000   /* one line a minute */
 static int    jobIndices[BOT_HOST_MAX_SLOTS];
 
+/* The per-bot budget for `bots` bots, by the formula --budget-legacy
+ * picks. */
+static double hostTargetMs(int runners, int bots) {
+    if (optBudgetLegacy) {
+        return botRunnerTargetMs(serialMsEwma, runners, bots);
+    }
+    return botRunnerTargetMsReserve(serialMsEwma, 0.0, runners, bots);
+}
+
 static void hostThinkJob(int index, void *userData) {
     HostSeat *hs = &seats[index];
     GameSim *gs = clientSimGetGameSim(hs->cs);
@@ -2755,12 +2764,7 @@ static void hostTick(void) {
 
     runners = botWorkerPoolGetSize() + 1;
     if (optThreads > runners) runners = optThreads;
-    if (optBudgetLegacy) {
-        lastTargetMs = botRunnerTargetMs(serialMsEwma, runners, active);
-    } else {
-        lastTargetMs = botRunnerTargetMsReserve(serialMsEwma, 0.0, runners,
-                                                active);
-    }
+    lastTargetMs = hostTargetMs(runners, active);
     {
         /* The budget a new bot would get: one more than the bots this host
          * runs now. The brain picks its tier from this budget; the budget
@@ -2768,11 +2772,7 @@ static void hostTick(void) {
         uint64_t tickMs = SDL_GetTicks();
         if (hostCpuBudgetMilli == BOT_HOST_CPU_MILLI_UNKNOWN ||
             tickMs - hostCpuBudgetAtMs >= BOT_HOST_BUDGET_EVERY_MS) {
-            double newBotMs =
-                optBudgetLegacy
-                    ? botRunnerTargetMs(serialMsEwma, runners, poolUsed() + 1)
-                    : botRunnerTargetMsReserve(serialMsEwma, 0.0, runners,
-                                               poolUsed() + 1);
+            double newBotMs = hostTargetMs(runners, poolUsed() + 1);
             hostCpuBudgetMilli = botHostCpuMilliBudget(
                 newBotMs, (double)BOT_HOST_TICK_MS,
                 SDL_GetNumLogicalCPUCores());
