@@ -460,18 +460,54 @@ bool pillsDropCanLand(GameSim *sim, int mx, int my) {
 }
 
 /*********************************************************
+*NAME:          pillsDropTankOn
+*PURPOSE:
+*  Whether a live tank other than the dropper's is on a
+*  square. The second pass of the drop search leaves such
+*  a square alone: turning a boat to river under a tank
+*  would leave that tank marked as on a boat.
+*
+*ARGUMENTS:
+*  sim     - The game
+*  dropper - Player whose tank is dropping, or NEUTRAL
+*  x       - X map square
+*  y       - Y map square
+*********************************************************/
+static bool pillsDropTankOn(GameSim *sim, BYTE dropper, BYTE x, BYTE y) {
+  BYTE i;
+  WORLD wx;
+  WORLD wy;
+
+  for (i = 0; i < MAX_TANKS; i++) {
+    if (i == dropper || sim->tanks[i] == NULL ||
+        tankIsDestroyed(&sim->tanks[i])) {
+      continue;
+    }
+    tankGetWorld(&sim->tanks[i], &wx, &wy);
+    if ((BYTE) (wx >> TANK_SHIFT_MAPSIZE) == x &&
+        (BYTE) (wy >> TANK_SHIFT_MAPSIZE) == y) {
+      return TRUE;
+    }
+  }
+  return FALSE;
+}
+
+/*********************************************************
 *NAME:          pillsDropSpiralStart
 *PURPOSE:
 *  Starts a drop search with its cursor on the centre.
 *
 *ARGUMENTS:
-*  s  - The search
-*  cx - X map square to search round
-*  cy - Y map square to search round
+*  s       - The search
+*  cx      - X map square to search round
+*  cy      - Y map square to search round
+*  dropper - The player whose tank drops the pills, or
+*            NEUTRAL
 *********************************************************/
-void pillsDropSpiralStart(pillsDropSpiral *s, BYTE cx, BYTE cy) {
+void pillsDropSpiralStart(pillsDropSpiral *s, BYTE cx, BYTE cy, BYTE dropper) {
   utilSpiralStart(&s->cursor, cx, cy, UTIL_SPIRAL_NORTH);
   s->pass = 0;
+  s->dropper = dropper;
   /* The farthest the minable area reaches from the centre along
      either axis. Every ring beyond it is off the area entirely. */
   s->maxRing = cx - (MAP_MINE_EDGE_LEFT + 1);
@@ -496,12 +532,13 @@ void pillsDropSpiralStart(pillsDropSpiral *s, BYTE cx, BYTE cy) {
 *  If the spiral walks past the minable area without
 *  finding one, the search starts again from the centre
 *  in a second pass. The second pass takes the first
-*  square in the minable area with no pill and no base on
-*  it. A building or half-building there turns to rubble
-*  and a boat turns to river, so the pill can land.
-*  Answers FALSE only if every square in the minable
-*  area has a pill or a base on it, which a map of at
-*  most 16 pills and 16 bases never has.
+*  square in the minable area with no pill, no base and
+*  no live tank other than the dropper's on it. A
+*  building or half-building there turns to rubble and a
+*  boat turns to river, so the pill can land. Answers
+*  FALSE only if every square in the minable area has a
+*  pill, a base or a tank on it, which a map of at most
+*  16 pills, 16 bases and 16 tanks never has.
 *
 *ARGUMENTS:
 *  sim - The game
@@ -528,7 +565,8 @@ bool pillsDropSpiralFind(GameSim *sim, pillsDropSpiral *s, BYTE *mx, BYTE *my) {
       x = (BYTE) s->cursor.x;
       y = (BYTE) s->cursor.y;
       if (pillsExistPos(&sim->pb, x, y) == FALSE &&
-          basesExistPos(&sim->bs, x, y) == FALSE) {
+          basesExistPos(&sim->bs, x, y) == FALSE &&
+          pillsDropTankOn(sim, s->dropper, x, y) == FALSE) {
         /* Clear the square so pillsDropCanLand accepts it. */
         pos = mapGetPos(&sim->mp, x, y);
         if (pos == BUILDING || pos == HALFBUILDING) {

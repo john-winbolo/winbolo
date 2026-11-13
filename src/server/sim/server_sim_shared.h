@@ -390,4 +390,11 @@ void serverSimSetActive(ServerSim *sim);
  * travelling with its caller. */
 void simMapChangeCallback(BYTE x, BYTE y, BYTE terrain);
 
+/* Records a terrain change into the active sim's pendingMapEvents, for a
+ * change made while a running round is between ticks. serverSimTick moves
+ * them into mapEvents at the top of the next running frame, after it clears
+ * that buffer. serverSimRemovePlayer installs it around the drops a leaving
+ * player makes. */
+void simMapChangePendingCallback(BYTE x, BYTE y, BYTE terrain);
+
 #endif
