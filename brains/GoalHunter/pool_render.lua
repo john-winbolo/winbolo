@@ -2779,7 +2779,14 @@ M.refuel_low_stock_chip = refuel_low_stock_chip
 --
 -- goals.capture_pool_raw builds one table per bot per tick:
 --   { v = 1, S = <brain tables>, K = <computed values>, C = <constants> }
--- and the brain returns it as   RAW_TAG .. string.buffer.encode(cap).
+-- and the brain returns it as   RAW_TAG .. brain_value_encode(cap).
+--
+-- brain_value_encode is a C function the game gives every brain
+-- (src/bolo/brain_value_pack.c). It takes one value of plain data (tables,
+-- strings, numbers, booleans) and gives back a string; it errors on a
+-- function, a cycle or nesting too deep. The view side (BrainTest,
+-- brainrec_split, pool_render_host.c) gets the matching brain_value_decode.
+-- A brain does not get LuaJIT's string.buffer: the sandbox keeps it out.
 --
 -- The recording pipeline carries the block as a NUL-terminated C string, so
 -- the C side (poolRenderDupBrainString in pool_render_host.c) escapes the
@@ -2787,26 +2794,25 @@ M.refuel_low_stock_chip = refuel_low_stock_chip
 -- brain. The escape is in C because a Lua gsub over the block cost about
 -- 1 ms per bot per tick, thirty times the encode. unpack() undoes it. A
 -- block that starts with "{" is the old JSON form; a block that starts with
--- RAW_TAG is this one.
+-- RAW_TAG is this one. OLD_RAW_TAG blocks were packed with string.buffer,
+-- which the game no longer has; unpack() refuses them with a clear error.
 --
--- string.buffer is LuaJIT's. Without it (PUC Lua on the WASM build) the brain
--- keeps sending JSON (goals.get_pool_breakdown_raw falls back).
+-- Without brain_value_encode (a plain Lua, such as a standalone test run) the
+-- brain keeps sending JSON (goals.get_pool_breakdown_raw falls back).
 -- =========================================================================
-M.RAW_TAG = "WBPR1:"
+M.RAW_TAG     = "WBPR2:"
+M.OLD_RAW_TAG = "WBPR1:"
 
-local sbuf
-do
-  local ok, b = pcall(require, "string.buffer")
-  sbuf = ok and b or nil
-end
-M.HAVE_RAW = (sbuf ~= nil)
+local pack_encode = rawget(_G, "brain_value_encode")
+local pack_decode = rawget(_G, "brain_value_decode")
+M.HAVE_RAW = (pack_encode ~= nil)
 
 local ESC   = { ["\0"] = "\1\2", ["\1"] = "\1\3" }
 local UNESC = { ["\2"] = "\0",   ["\3"] = "\1" }
 
 -- The block the brain returns: not escaped (the C side escapes it).
 function M.pack(cap)
-  return M.RAW_TAG .. sbuf.encode(cap)
+  return M.RAW_TAG .. pack_encode(cap)
 end
 
 -- The escape the C side applies, for a test that has a block from pack()
@@ -2816,23 +2822,22 @@ function M.escape(blob)
 end
 
 function M.is_raw(blob)
-  return type(blob) == "string" and blob:sub(1, #M.RAW_TAG) == M.RAW_TAG
+  if type(blob) ~= "string" then return false end
+  local tag = blob:sub(1, #M.RAW_TAG)
+  return tag == M.RAW_TAG or tag == M.OLD_RAW_TAG
 end
 
 -- unpack(blob): the capture table from a RECORDED (escaped) block.
 function M.unpack(blob)
-  if not sbuf then error("pool_render: string.buffer is not available", 0) end
+  if blob:sub(1, #M.OLD_RAW_TAG) == M.OLD_RAW_TAG then
+    error("pool_render: a WBPR1 block (packed with string.buffer) cannot be read by this build", 0)
+  end
+  if not pack_decode then error("pool_render: brain_value_decode is not available", 0) end
   local body = blob:sub(#M.RAW_TAG + 1):gsub("\1([\2\3])", UNESC)
-  return sbuf.decode(body)
+  return pack_decode(body)
 end
 
--- A decoded copy of a capture, for the brain's own JSON path: the render
--- writes into the tables it is given, so it must never get the live ones.
-function M.round_trip(cap)
-  return sbuf.decode(sbuf.encode(cap))
-end
-
--- Deep copy, for a Lua without string.buffer: the render writes into the
+-- Deep copy, for the brain's own JSON path: the render writes into the
 -- tables it is given, so it must never get the live ones.
 function M.copy(t, seen)
   if type(t) ~= "table" then return t end

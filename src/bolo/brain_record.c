@@ -135,7 +135,7 @@ void brainRecordSetHostedInfoFn(BrainRecordHostedFn fn) { g_hostedFn = fn; }
  * JSON asks for the finished panel JSON, built in the brain on the tick, as
  * every recording did before. A brain with no get_pool_breakdown_raw gives
  * its JSON either way, and BrainTest reads both forms (a raw block starts
- * with "WBPR1:", a JSON block with '{'). */
+ * with "WBPR2:", a JSON block with '{'). */
 static int g_poolFormat = BRAINREC_POOL_FORMAT_RAW;
 
 void brainRecordSetPoolFormat(int format) {

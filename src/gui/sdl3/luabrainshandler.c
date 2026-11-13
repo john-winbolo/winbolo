@@ -108,6 +108,7 @@
 #include "luabrainshandler.h"
 #include "brain_capacity.h"
 #include "brain_sandbox.h"
+#include "brain_value_pack.h"
 
 
 /* ------------------------------------------------------------------ */
@@ -602,6 +603,10 @@ static bool brain_instance_create(LuaBrainInstance *inst, const char *path,
   lua_setglobal(L, "print");
 
   brainCoreRegisterConstants(L);
+  /* brain_value_encode(value) -> string: packs plain data for the raw pool
+   * capture (brains/GoalHunter/pool_render.lua). The brain gets this one
+   * function, not LuaJIT's string.buffer, which the sandbox keeps out. */
+  brainValueRegisterEncode(L);
 
   /* Signal to the brain whether it's running under BrainTest (debug) or
    * a release host (WinBolo / WinBoloDS).  Brains use this to skip debug

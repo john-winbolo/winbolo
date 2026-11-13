@@ -617,6 +617,8 @@ int run_brain_sandbox_hostile_astar_log_removed(void);
 int run_brain_sandbox_hostile_file_jail(void);
 int run_brain_sandbox_hostile_off_map_terrain(void);
 int run_brain_sandbox_jit_limits(void);
+int run_brain_sandbox_hostile_pack_encode(void);
+int run_brain_sandbox_hostile_pack_decode(void);
 int run_brain_msgh_budget_kill_no_traceback(void);
 int run_brain_msgh_real_error_keeps_traceback(void);
 int run_brain_inbox_push_peek_fifo(void);

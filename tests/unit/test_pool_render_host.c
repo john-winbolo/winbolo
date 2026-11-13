@@ -7,6 +7,9 @@
  * The fixtures in tests/fixtures/pool_render/ come from real games: the
  * equality run recorded the raw block and the old JSON of the same bot on
  * the same tick (the old JSON was built by the original breakdown code). The
+ * raw blocks were first packed with string.buffer ("WBPR1:"); they were
+ * converted to the brain_value_pack form ("WBPR2:") with the same capture tables.
+ * The
  * render runs in pool_render_host's plain lua_State, the way BrainTest and
  * brainrec_split use it, with brains/GoalHunter as the brain directory.
  * Run from the repository root.
@@ -102,6 +105,15 @@ int run_pool_render_json_and_bad_blocks(void) {
     got = poolRenderToJson(PR_BRAIN_DIR, POOL_RENDER_RAW_TAG "not a buffer", err, sizeof err);
     UT_ASSERT(got != NULL);
     UT_ASSERT_MSG(err[0] != '\0', "a broken block rendered without an error");
+    UT_ASSERT_MSG(strstr(got, "Pool render error") != NULL, "no error panel: %s", got);
+    free(got);
+
+    /* A block of the first raw form (string.buffer, which the game no
+     * longer has) gives an error panel that says so. */
+    UT_ASSERT(poolRenderIsRaw(POOL_RENDER_RAW_TAG_V1 "\x07\x02"));
+    got = poolRenderToJson(PR_BRAIN_DIR, POOL_RENDER_RAW_TAG_V1 "\x07\x02", err, sizeof err);
+    UT_ASSERT(got != NULL);
+    UT_ASSERT_MSG(strstr(err, "WBPR1") != NULL, "no WBPR1 error: '%s'", err);
     UT_ASSERT_MSG(strstr(got, "Pool render error") != NULL, "no error panel: %s", got);
     free(got);
 
