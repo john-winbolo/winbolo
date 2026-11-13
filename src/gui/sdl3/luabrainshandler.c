@@ -175,7 +175,7 @@ void luaBrainsGetDebugParts(int *print2_on, int *pool_on, int *viz_on,
 
 /* A second folder the sandboxed brains may open files in, besides their own
  * directory: the Bot Host's recordings folder, where their print2 logs go.
- * Empty: none. The sandbox keeps it (brain_sandbox.c). */
+ * Empty: none. Kept in brain_sandbox.c with the rest of the sandbox. */
 void luaBrainsSetExtraWriteRoot(const char *dir) {
     brainSandboxSetExtraRoot(dir);
 }
@@ -486,7 +486,10 @@ static int l_brain_log_print(lua_State *L) {
 
 
 /* The brain Lua sandbox is in src/bolo/brain_sandbox.c (brainSandboxApply,
- * brainSandboxLoadInitFile), where the unit tests can reach it. */
+ * brainSandboxRestrictJit, brainSandboxLoadInitFile), where the unit tests
+ * can reach it. Its path buffers are sized by its own constant. */
+BOLO_STATIC_ASSERT(LUA_BRAINS_PATH_MAX == BRAIN_SANDBOX_PATH_MAX,
+                   brain_path_max_matches_sandbox);
 
 
 /* What a caller asks of one brain VM beyond the defaults. */
@@ -909,6 +912,11 @@ static bool brain_instance_create(LuaBrainInstance *inst, const char *path,
    * Fewer, larger areas make that path rare on every platform. */
   (void)luaL_dostring(L,
     "if jit and jit.opt then jit.opt.start('sizemcode=256','maxmcode=4096') end\n");
+
+  /* Sandboxed: hide jit.opt and the rest now the host is done with them. */
+  if (!unsafe) {
+    brainSandboxRestrictJit(L);
+  }
 #endif
 
   /* Load and execute the brain script.

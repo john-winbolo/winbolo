@@ -40,6 +40,11 @@
  *      wire, and the --cpu-reserve percent.
  *  12. bot_host_slot_owner_only: only the player at a player's computer
  *      may change that row's slots.
+ *  13. bot_host_dyn_pct_off: with the overrun check off (pct 0) a place
+ *      with dynamic slots still probes: its limit goes up, overruns do not
+ *      stop that or ask for an overrun move, and the under-reserve rule
+ *      and the row's fit work. With dynamic slots off too (KEEL) the probe
+ *      does nothing, as before.
  */
 
 #include <stdint.h>
@@ -670,6 +675,93 @@ int run_bot_host_dyn_keel(void) {
                               true) == 4);
     UT_ASSERT(botHostMaxOffer(botHostSlotsMaxDefault(0, 4, 12, true), 4,
                               false) == 4);
+    free(st);
+    return 0;
+}
+
+/* Probes secs seconds of d. Returns how many probes asked for an overrun
+ * move. */
+static int dynRunOver(BotHostOverrunState *st, const BotHostOverrunCfg *cfg,
+                      const DynSecond *d, int secs) {
+    int s, overs = 0;
+    for (s = 0; s < secs; s++) {
+        BotHostOverrunProbe p;
+        int bots = d->full ? st->limit : st->limit - 1;
+        if (bots < 0) bots = 0;
+        memset(&p, 0, sizeof(p));
+        p.thinks = (uint32_t)(50 * bots);
+        p.overruns = p.thinks * (uint32_t)d->permille / 1000u;
+        p.bots = bots;
+        p.slots = 8;
+        p.botCpu = (uint8_t)(bots * d->cost > 100 ? 100 : bots * d->cost);
+        p.freePct = (uint8_t)d->freePct;
+        p.lagMs = d->lagMs;
+        p.running = d->running;
+        if (botHostOverrunProbe(st, cfg, &p, NULL) == BOT_HOST_OVR_OVER) {
+            overs++;
+        }
+    }
+    return overs;
+}
+
+int run_bot_host_dyn_pct_off(void) {
+    BotHostOverrunState *st = (BotHostOverrunState *)calloc(1, sizeof(*st));
+    BotHostOverrunCfg cfg;
+    DynSecond d;
+    int k;
+
+    UT_ASSERT(st != NULL);
+    /* Check off, dynamic slots on: up by 2 after a full window, as with
+     * the check on. */
+    dynSetUp(st, &cfg);
+    cfg.pct = 0.0;
+    UT_ASSERT(dynRun(st, &cfg, &dynGood, 29) == 0 && st->limit == 2);
+    UT_ASSERT(dynRun(st, &cfg, &dynGood, 1) == 1 && st->limit == 4);
+    /* Overruns do not stop a raise, ask for no move, and make no reading
+     * bad. */
+    dynSetUp(st, &cfg);
+    cfg.pct = 0.0;
+    d = dynGood; d.permille = 500;
+    UT_ASSERT(dynRunOver(st, &cfg, &d, 29) == 0 && st->limit == 2);
+    UT_ASSERT(dynRun(st, &cfg, &d, 1) == 1 && st->limit == 4);
+    for (k = 0; k < st->readingCount; k++) UT_ASSERT(!st->reading[k].bad);
+    printf("  check off: 2, 4 at 30 s, overruns or not
+");
+
+    /* Under the reserve for a full window: under, and the row's fit is
+     * known: (20 + 10 - 25) / 5 = 1. */
+    dynSetUp(st, &cfg);
+    cfg.pct = 0.0;
+    d = dynGood; d.freePct = 20;
+    (void)dynRun(st, &cfg, &d, 29);
+    UT_ASSERT(!botHostOverrunUnderReserve(st, &cfg, 2));
+    (void)dynRun(st, &cfg, &d, 1);
+    UT_ASSERT(botHostOverrunUnderReserve(st, &cfg, 2));
+    UT_ASSERT(botHostOverrunFits(st, &cfg, 2) == 1);
+    UT_ASSERT(st->limit == 2);
+
+    /* A place with no start (fixed slots) and the check off: no live
+     * limit and no probes. */
+    dynSetUp(st, &cfg);
+    cfg.pct = 0.0;
+    botHostOverrunSetStart(st, -1, 8, 25.0, true);
+    UT_ASSERT(!botHostOverrunDynamic(st, &cfg));
+    (void)dynRun(st, &cfg, &dynGood, 60);
+    UT_ASSERT(st->limit == -1 && st->probeCount == 0);
+    UT_ASSERT(st->readingCount == 0);
+
+    /* KEEL: dynamic slots off and the check off: the probe does nothing,
+     * as before dynamic slots. */
+    dynSetUp(st, &cfg);
+    cfg.pct = 0.0;
+    cfg.dynamic = false;
+    UT_ASSERT(botHostOverrunNewGame(st, &cfg) == 0);
+    (void)dynRun(st, &cfg, &dynGood, 120);
+    UT_ASSERT(st->limit == -1 && botHostOverrunLimit(st, 8) == 8);
+    UT_ASSERT(st->probeCount == 0 && st->readingCount == 0);
+    UT_ASSERT(botHostOverrunFits(st, &cfg, 2) == -1);
+    printf("  fixed slots or KEEL with the check off: no probe, no limit
+");
     free(st);
     return 0;
 }

@@ -283,7 +283,7 @@ int            gameFrontHostingUploadMaxStorage = 8;
 /* Persist upload dir. Empty until gameFrontGetPrefs seeds the default
  * (<prefs path>uploads) or the user picks one. */
 char           gameFrontHostingUploadDir[FILENAME_MAX] = "";
-int            gameFrontHostingScriptUploadPolicy     = SCRIPT_UPLOAD_ALLOW;
+int            gameFrontHostingScriptUploadPolicy     = SCRIPT_UPLOAD_OFF;
 bool           gameFrontHostingShareScripts           = TRUE;
 int            gameFrontHostingScriptUploadMaxFiles   = 32;
 int            gameFrontHostingScriptUploadMaxStorage = 64;
@@ -4541,7 +4541,7 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   gameFrontHostingAllowSpec = YESNO_TO_TRUEFALSE(buff[0]);
   prefsGetString("HOSTING", "Run Map Scripts", "Yes", buff, FILENAME_MAX);
   gameFrontHostingScripts = YESNO_TO_TRUEFALSE(buff[0]);
-  prefsGetString("HOSTING", "Script Upload Policy", "Allow", buff, FILENAME_MAX);
+  prefsGetString("HOSTING", "Script Upload Policy", "Off", buff, FILENAME_MAX);
   gameFrontHostingScriptUploadPolicy = scriptUploadPolicyResolve(buff);
   prefsGetString("HOSTING", "Share Scripts", "Yes", buff, FILENAME_MAX);
   gameFrontHostingShareScripts = YESNO_TO_TRUEFALSE(buff[0]);

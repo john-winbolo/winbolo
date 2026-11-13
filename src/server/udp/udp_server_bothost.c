@@ -3972,7 +3972,8 @@ static void botHostTrailEnsure(void) {
  * the free CPU batch may give them now (-bothost-free-batch, and no bot
  * given within the step time, so the free CPU numbers show the last one),
  * else 0. ratePct[i] gets its rate, below 0 when not known. Only while the
- * game runs, with the overrun check on. */
+ * game runs, with the overrun check on or dynamic slots on (with the
+ * check off, only the under-reserve move of a dynamic place). */
 static void botHostPlaceMarkBad(BotHostPlaceHost *hosts, const char **why,
                                 int *shortBy, double *ratePct) {
     const BotHostOverrunCfg *cfg = botHostOvrConfig();
@@ -3983,7 +3984,7 @@ static void botHostPlaceMarkBad(BotHostPlaceHost *hosts, const char **why,
         shortBy[i] = 0;
         ratePct[i] = -1.0;
     }
-    if (!(cfg->pct > 0.0)) return;
+    if (!(cfg->pct > 0.0) && !cfg->dynamic) return;
     botHostOvrEnsure();
     for (i = 0; i <= MAX_BOT_HOSTS; i++) {
         double pct = 0.0, wait;
@@ -3995,7 +3996,7 @@ static void botHostPlaceMarkBad(BotHostPlaceHost *hosts, const char **why,
         rateBad = false;
         if (botHostOverrunRate(&botHostOvr[i], cfg, &pct)) {
             ratePct[i] = pct;
-            rateBad = pct >= cfg->pct;
+            rateBad = cfg->pct > 0.0 && pct >= cfg->pct;
         }
         botHostOvrSetFallback(i);
         lack = botHostOverrunFreeShort(&botHostOvr[i], cfg, hosts[i].bots,
@@ -4004,7 +4005,9 @@ static void botHostPlaceMarkBad(BotHostPlaceHost *hosts, const char **why,
             why[i] = "overrun rate";
         } else if (lack > 0) {
             why[i] = "low free CPU";
-        } else if (botHostOverrunUnderReserve(&botHostOvr[i], cfg,
+        } else if ((cfg->pct > 0.0 ||
+                    botHostOverrunDynamic(&botHostOvr[i], cfg)) &&
+                   botHostOverrunUnderReserve(&botHostOvr[i], cfg,
                                               hosts[i].bots)) {
             /* A place under its reserve gives bots to a place with room,
              * one each step time; with no room they stay and keep running
@@ -4321,7 +4324,8 @@ static bool botHostOvrProbeAll(ServerSim *sim, const BotHostPlaceHost *raw,
             r.limit = botHostRecordByte(botHostOvr[i].limit);
             r.thinks = botHostRecordU16(in.thinks);
             r.overruns = botHostRecordU16(in.overruns);
-            r.flags = (in.thinks > 0 && rep->ratePct > cfg->pct)
+            r.flags = (cfg->pct > 0.0 && in.thinks > 0 &&
+                       rep->ratePct > cfg->pct)
                           ? (uint8_t)BOTHOST_RECORD_PROBE_BAD : (uint8_t)0;
             r.badProbes = (uint8_t)BOTHOST_RECORD_NONE;
             r.probes = botHostRecordByte(rep->probes);
@@ -4561,7 +4565,8 @@ void transportUdpServerSetBotHostOverrun(const BotHostOverrunFlags *f) {
         cfg->freeHistorySecs = cfg->freeSampleSecs * BOT_HOST_FREE_MAX_READINGS;
     }
     if (!(cfg->pct > 0.0)) {
-        fprintf(stderr, "[bothost] overruns: the check is off\n");
+        fprintf(stderr, "[bothost] overruns: the check is off (dynamic "
+                        "slots still probe each place)\n");
         return;
     }
     {
@@ -5154,7 +5159,10 @@ static void botHostPlaceStep(ServerSim *sim, ServerState st) {
                         BOT_HOST_OVR_PROBE_TICKS)) {
         botHostPlace.probed = true;
         botHostPlace.lastProbeTick = udpServer.tickCount;
-        if (botHostOvrConfig()->pct > 0.0 &&
+        /* The probes run with the overrun check on, and with dynamic slots
+         * on: the dynamic raise, the under-reserve move and the lobby
+         * row's fit need them even with -bothost-overrun-pct 0. */
+        if ((botHostOvrConfig()->pct > 0.0 || botHostOvrConfig()->dynamic) &&
             botHostOvrProbeAll(sim, raw, hosts, running)) {
             botHostPlace.lastMoveTick = udpServer.tickCount;
             return;
@@ -5276,7 +5284,7 @@ static void botHostPlaceStep(ServerSim *sim, ServerState st) {
         const BotHostOverrunCfg *cfg = botHostOvrConfig();
         char place[64];
         botHostOvrPlaceText(from, place, sizeof(place));
-        if (badRate[from] >= cfg->pct) {
+        if (cfg->pct > 0.0 && badRate[from] >= cfg->pct) {
             /* Its next rate is measured from the thinks since this bot
              * left, so a short wait judges on a short window. */
             if (botHostOverrunScaled(cfg)) {

@@ -38,6 +38,9 @@
 /*     but traceback and getinfo are removed outright.                 */
 /*   - brainSandboxLoadInitFile loads the init file as source text     */
 /*     only, never bytecode.                                           */
+/*   - brainSandboxRestrictJit, run once the host has made its own     */
+/*     jit.opt calls, leaves a brain jit.on / off / status and the     */
+/*     version fields. The trace compiler keeps running.               */
 /* The shipped GoalHunter brain needs no changes: its loadfile() of    */
 /* los_stamp_cache.lua and its io.open() cache paths all resolve under  */
 /* the brain directory, and everything it actually removes is dev-only */
@@ -141,9 +144,9 @@ bool brainSandboxResolveInRoot(const char *root, const char *path,
 #endif
 }
 
-/* A second folder the jailed calls may open files in, besides the brain's
- * own directory: the Bot Host's recordings folder, where its brains' print2
- * logs go. Empty: none. Set by the host before it creates brain VMs. */
+/* A second folder the sandboxed brains may open files in, besides their own
+ * directory: the Bot Host's recordings folder, where their print2 logs go.
+ * Empty: none. Set by brainSandboxSetExtraRoot. */
 static char s_extra_root[BRAIN_SANDBOX_PATH_MAX];
 
 void brainSandboxSetExtraRoot(const char *dir) {
@@ -151,9 +154,9 @@ void brainSandboxSetExtraRoot(const char *dir) {
 }
 
 /* brainSandboxResolveInRoot against the brain root, then against the extra
- * root, if one is set. */
-static bool sandbox_resolve(const char *root, const char *path,
-                            char *out, size_t outlen) {
+ * root, if one is set. The jailed functions below use this. */
+static bool brain_resolve_in_roots(const char *root, const char *path,
+                                   char *out, size_t outlen) {
   if (brainSandboxResolveInRoot(root, path, out, outlen)) return true;
   if (s_extra_root[0] == '\0') return false;
   return brainSandboxResolveInRoot(s_extra_root, path, out, outlen);
@@ -168,7 +171,7 @@ static int l_jailed_io_open(lua_State *L) {
   char resolved[BRAIN_SANDBOX_PATH_MAX * 2];
   int  base;
 
-  if (!sandbox_resolve(root, fname, resolved, sizeof(resolved))) {
+  if (!brain_resolve_in_roots(root, fname, resolved, sizeof(resolved))) {
     lua_pushnil(L);
     lua_pushfstring(L, "io.open: '%s' is outside the brain directory", fname);
     return 2;
@@ -190,7 +193,7 @@ static int l_jailed_loadfile(lua_State *L) {
   size_t len = 0;
   char  *src;
 
-  if (!sandbox_resolve(root, fname, resolved, sizeof(resolved))) {
+  if (!brain_resolve_in_roots(root, fname, resolved, sizeof(resolved))) {
     lua_pushnil(L);
     lua_pushfstring(L, "loadfile: '%s' is outside the brain directory", fname);
     return 2;
@@ -217,7 +220,7 @@ static int l_jailed_os_remove(lua_State *L) {
   const char *root  = lua_tostring(L, lua_upvalueindex(1));
   char resolved[BRAIN_SANDBOX_PATH_MAX * 2];
 
-  if (!sandbox_resolve(root, fname, resolved, sizeof(resolved))) {
+  if (!brain_resolve_in_roots(root, fname, resolved, sizeof(resolved))) {
     lua_pushnil(L);
     lua_pushfstring(L, "os.remove: '%s' is outside the brain directory", fname);
     return 2;
@@ -242,7 +245,7 @@ static int l_jailed_path_arg1(lua_State *L) {
   char resolved[BRAIN_SANDBOX_PATH_MAX * 2];
   int  n, i;
 
-  if (p == NULL || !sandbox_resolve(root, p, resolved, sizeof(resolved))) {
+  if (p == NULL || !brain_resolve_in_roots(root, p, resolved, sizeof(resolved))) {
     lua_pushnil(L);
     lua_pushfstring(L, "blocked: path '%s' is outside the brain directory",
                     p ? p : "(nil)");
@@ -408,9 +411,10 @@ void brainSandboxApply(lua_State *L, const char *root) {
   lua_pop(L, 1);
 
   /* jit.attach hooks the trace compiler's events with brain callbacks that
-   * get raw trace and machine-code data. jit.on / off / flush / status / opt
-   * stay: GoalHunter calls jit.off, and the host calls jit.opt.start after
-   * this. Nothing to do on PUC-Lua, which has no jit table. */
+   * get raw trace and machine-code data. The rest of the table stays for
+   * now: the host calls jit.opt.start after this, and then
+   * brainSandboxRestrictJit cuts the table down. Nothing to do on PUC-Lua,
+   * which has no jit table. */
   lua_getglobal(L, "jit");
   if (lua_istable(L, -1)) {
     lua_pushnil(L);
@@ -477,6 +481,46 @@ void brainSandboxApply(lua_State *L, const char *root) {
    * from under another bot's thread. cpathfinder.lua checks it exists. */
   lua_pushnil(L);
   lua_setglobal(L, "cpf_astar_log_enable");
+}
+
+void brainSandboxRestrictJit(lua_State *L) {
+  static const char *const keep[] = { "on", "off", "status", "version",
+                                      "version_num", "os", "arch", NULL };
+  /* Submodules a require() would still hand out from package.loaded. The
+   * build compiles ffi and jit.profile out (BOLO_LUAJIT_LOCKDOWN_XCFLAGS);
+   * jit.opt is always there. */
+  static const char *const drop_loaded[] = { "jit.opt", "jit.util",
+                                             "jit.profile", NULL };
+  int i;
+
+  lua_getglobal(L, "jit");
+  if (!lua_istable(L, -1)) {
+    lua_pop(L, 1);
+    return;
+  }
+  lua_newtable(L);
+  for (i = 0; keep[i]; i++) {
+    lua_getfield(L, -2, keep[i]);
+    lua_setfield(L, -2, keep[i]);
+  }
+  lua_pushvalue(L, -1);
+  lua_setglobal(L, "jit");
+
+  /* require("jit") reads package.loaded, so point that at the same table. */
+  lua_getglobal(L, "package");
+  if (lua_istable(L, -1)) {
+    lua_getfield(L, -1, "loaded");
+    if (lua_istable(L, -1)) {
+      lua_pushvalue(L, -3);
+      lua_setfield(L, -2, "jit");
+      for (i = 0; drop_loaded[i]; i++) {
+        lua_pushnil(L);
+        lua_setfield(L, -2, drop_loaded[i]);
+      }
+    }
+    lua_pop(L, 1);
+  }
+  lua_pop(L, 3); /* package, new jit, old jit */
 }
 
 int brainSandboxLoadInitFile(lua_State *L, const char *path, bool sandboxed) {

@@ -37,9 +37,9 @@
 bool brainSandboxResolveInRoot(const char *root, const char *path,
                                char *out, size_t outlen);
 
-/* A second folder the jailed file calls accept besides the brain's own
- * directory (the Bot Host's recordings folder), or NULL or "" for none.
- * Applies to every brain VM; set it before creating them. */
+/* Set a second folder the jailed file functions accept besides the brain's
+ * own directory (the Bot Host's recordings folder). NULL or "" clears it.
+ * brainSandboxResolveInRoot itself checks one root only. */
 void brainSandboxSetExtraRoot(const char *dir);
 
 /* Lock down the standard libraries and the path-taking C bindings of a
@@ -47,6 +47,14 @@ void brainSandboxSetExtraRoot(const char *dir);
  * place file access is allowed. Call after the C bindings are registered
  * and before any brain code runs. */
 void brainSandboxApply(lua_State *L, const char *root);
+
+/* Replace the jit table with one holding only what a brain may use: on and
+ * off (GoalHunter turns the compiler off for one file), status and the
+ * version fields (`if jit then` is how a brain tells it runs on LuaJIT).
+ * jit.opt, jit.flush and the rest tune or inspect the VM and stay with the
+ * host; require("jit.opt") stops working too. Call after brainSandboxApply
+ * and after the host's own jit.opt calls. Does nothing on PUC-Lua. */
+void brainSandboxRestrictJit(lua_State *L);
 
 /* Load a brain's init file as a chunk onto the stack, through SDL first
  * (Android assets) and then stdio. When sandboxed is true the chunk must

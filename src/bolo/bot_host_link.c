@@ -1119,7 +1119,7 @@ static BotHostOverrunAction ovrDynamicRaise(BotHostOverrunState *st,
             thinks += st->probeThinks[i];
             overruns += st->probeOverruns[i];
         }
-        if (thinks > 0 &&
+        if (cfg->pct > 0.0 && thinks > 0 &&
             (double)overruns * 100.0 / (double)thinks > cfg->pct) {
             rep->why = "overruns in the window";
         } else if (!rep->freeKnown) {
@@ -1170,11 +1170,16 @@ BotHostOverrunAction botHostOverrunProbe(BotHostOverrunState *st,
     if (rep == NULL) rep = &local;
     ovrReportInit(rep);
     if (st == NULL || cfg == NULL || in == NULL) return BOT_HOST_OVR_NONE;
-    if (!(cfg->pct > 0.0)) {
-        /* No overrun check: a live limit stays where it is. */
-        if (!botHostOverrunDynamic(st, cfg)) st->limit = -1;
+    if (!(cfg->pct > 0.0) && !botHostOverrunDynamic(st, cfg)) {
+        /* No overrun check and no dynamic slots: no lowered limit. */
+        st->limit = -1;
         return BOT_HOST_OVR_NONE;
     }
+    /* With the overrun check off (pct 0) a place with dynamic slots still
+     * takes its probes and free CPU readings, for the dynamic raise, the
+     * under-reserve move and the lobby row's fit. Only the overrun parts
+     * (a bad reading, the overrun move, overruns blocking a raise) are
+     * off. */
     window = ovrWindow(cfg);
     if (st->sinceChange < OVR_LONG_AGO) st->sinceChange++;
     if (st->sinceRefuse < OVR_LONG_AGO) st->sinceRefuse++;
@@ -1215,7 +1220,7 @@ BotHostOverrunAction botHostOverrunProbe(BotHostOverrunState *st,
         r->bots = (uint8_t)ovrClamp(in->bots, 0, 255);
         r->botCpu = in->botCpu;
         r->ran = st->accThinks > 0;
-        r->bad = st->accThinks > 0 &&
+        r->bad = cfg->pct > 0.0 && st->accThinks > 0 &&
                  (double)st->accOverruns * 100.0 / (double)st->accThinks >
                  cfg->pct;
         st->readingNext = (st->readingNext + 1) % cap;
@@ -1242,7 +1247,7 @@ BotHostOverrunAction botHostOverrunProbe(BotHostOverrunState *st,
     rep->limitBefore = st->limit;
     rep->newLimit = st->limit;
 
-    over = rep->windowKnown && rep->windowPct > cfg->pct;
+    over = cfg->pct > 0.0 && rep->windowKnown && rep->windowPct > cfg->pct;
     spaced = st->sinceChange >= cfg->stepSecs;
 
     if (over) {
