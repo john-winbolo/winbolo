@@ -41,6 +41,7 @@ add_library(bolo_static STATIC
     bot_host_machine.c
     brain_pathfinder.c
     brain_pathfinder_serial.c
+    brain_sandbox.c
     brain_worldsim.c
     braincore.c
     building.c

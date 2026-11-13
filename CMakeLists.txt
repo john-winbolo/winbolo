@@ -370,10 +370,11 @@ if(WINBOLO_LUAJIT)
     #    supported path. XCFLAGS=-fPIC so the static lib links into winbolo_gym.
     if(MSVC)
         set(_lj_lib "${_lj_src}/src/lua51.lib")
-        set(_lj_msvc_env "")
+        string(JOIN " " _lj_msvc_cl ${BOLO_LUAJIT_LOCKDOWN_XCFLAGS})
         if(WINBOLO_LUAJIT_DETERMINISTIC)
-            set(_lj_msvc_env "CL=/DLUAJIT_SECURITY_PRNG=0")
+            string(APPEND _lj_msvc_cl " /DLUAJIT_SECURITY_PRNG=0")
         endif()
+        set(_lj_msvc_env "CL=${_lj_msvc_cl}")
         ExternalProject_Add(luajit_ext
             SOURCE_DIR        "${_lj_src}"
             BUILD_IN_SOURCE   TRUE
@@ -387,15 +388,23 @@ if(WINBOLO_LUAJIT)
             # (minilua, buildvm) as bare names too, and those fail the same way
             # -- so unset the variable for the whole build step instead.
             # cl.exe appends the CL environment variable to every compile, so
-            # the determinism define reaches all of msvcbuild.bat's compiles
-            # (the bat never sets CL itself) without patching LuaJIT source.
-            BUILD_COMMAND     ${CMAKE_COMMAND} -E env
+            # the lockdown and determinism defines reach all of msvcbuild.bat's
+            # compiles (the bat never sets CL itself) without patching LuaJIT
+            # source. The one thing CL cannot reach is the `-D FFI` the bat
+            # hands DynASM, which the first command takes out (see the patch
+            # header).
+            BUILD_COMMAND     ${CMAKE_COMMAND} -E chdir "${_lj_src}"
+                              ${CMAKE_COMMAND} -P
+                              "${CMAKE_SOURCE_DIR}/cmake/patches/luajit_msvc_no_ffi.cmake"
+            COMMAND           ${CMAKE_COMMAND} -E env
                               --unset=NoDefaultCurrentDirectoryInExePath
                               ${_lj_msvc_env}
                               ${CMAKE_COMMAND} -E chdir "${_lj_src}/src"
                               cmd /c .\\msvcbuild.bat static
             INSTALL_COMMAND   ""
             BUILD_BYPRODUCTS  "${_lj_lib}")
+        # msvcbuild.bat compiles every file on each run, so no clean is needed.
+        bolo_luajit_rebuild_on_change(luajit_ext "${_lj_msvc_env}")
     elseif(CMAKE_SYSTEM_NAME STREQUAL "iOS")
         # iOS runs LuaJIT's interpreter alone: an App Store app may not write
         # code and then run it, so LUAJIT_DISABLE_JIT leaves the trace
@@ -475,7 +484,7 @@ if(WINBOLO_LUAJIT)
             ARCHES       ${_lj_archs}
             LIB_VAR      _lj_lib)
     else()
-        set(_lj_xcflags "-fPIC")
+        string(JOIN " " _lj_xcflags -fPIC ${BOLO_LUAJIT_LOCKDOWN_XCFLAGS})
         if(WINBOLO_LUAJIT_DETERMINISTIC)
             string(APPEND _lj_xcflags " -DLUAJIT_SECURITY_PRNG=0")
         endif()
@@ -518,6 +527,7 @@ if(WINBOLO_LUAJIT)
                 COMMAND           lipo -create ${_lj_slices} -output "${_lj_lib}"
                 INSTALL_COMMAND   ""
                 BUILD_BYPRODUCTS  "${_lj_lib}")
+            bolo_luajit_rebuild_on_change(luajit_ext "${_lj_xcflags}")
 
             # The build step above runs once and is then held off by its stamp,
             # and everything it produces lives in the shared _deps source tree
@@ -541,13 +551,17 @@ if(WINBOLO_LUAJIT)
                           -P "${CMAKE_SOURCE_DIR}/cmake/luajit_fat_check.cmake")
         else()
             set(_lj_lib "${_lj_src}/src/libluajit.a")
+            # The clean makes a rerun after a change of flags rebuild every
+            # object; make alone would keep the ones it already has.
             ExternalProject_Add(luajit_ext
                 SOURCE_DIR        "${_lj_src}"
                 BUILD_IN_SOURCE   TRUE
                 CONFIGURE_COMMAND ""
-                BUILD_COMMAND     ${_lj_make}
+                BUILD_COMMAND     make -C "${_lj_src}" clean
+                COMMAND           ${_lj_make}
                 INSTALL_COMMAND   ""
                 BUILD_BYPRODUCTS  "${_lj_lib}")
+            bolo_luajit_rebuild_on_change(luajit_ext "${_lj_xcflags}")
         endif()
     endif()
 
@@ -4832,6 +4846,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_wbn_map.c
     tests/unit/test_wbn_map_fetch_policy.c
     tests/unit/test_brain_crash_log.c
+    tests/unit/test_brain_binding_bounds.c
+    tests/unit/test_brain_sandbox_hostile.c
     tests/unit/test_brain_push_rules.c
     tests/unit/test_brain_inbox.c
     tests/unit/test_brain_list_scan.c
@@ -6257,6 +6273,27 @@ set(_unit_test_names
     brain_crash_log_writes_file
     brain_crash_log_falls_back_to_luaptr
     brain_push_rules_written_on_change
+    brain_bounds_tail_bad_steps
+    brain_bounds_tail_bad_neutral
+    brain_bounds_think_errors
+    brain_bounds_wrapper_called_from_lua
+    brain_bounds_kill_outside_think
+    brain_bounds_host_globals_raw
+    brain_bounds_on_init_metatable
+    brain_crash_log_outside_think
+    brain_bounds_deserialize_open
+    brain_bounds_next_step_bad_start
+    brain_bounds_shells_at_bad_tile
+    brain_bounds_push_replaced_info
+    brain_bounds_stamps_bad_tables
+    brain_bounds_threat_range
+    brain_crash_log_ignores_brain_globals
+    brain_sandbox_hostile_native_preloads
+    brain_sandbox_hostile_bytecode_init
+    brain_sandbox_hostile_loaders_removed
+    brain_sandbox_hostile_astar_log_removed
+    brain_sandbox_hostile_file_jail
+    brain_sandbox_hostile_off_map_terrain
     brain_msgh_budget_kill_no_traceback
     brain_msgh_real_error_keeps_traceback
     brain_inbox_push_peek_fifo
@@ -8385,6 +8422,7 @@ set(_unit_test_names
     scenario_compose_commit_map_fixed_operator_mod
     scenario_compose_map_kind_cached
     scenario_compose_fallback_strict
+    scenario_compose_mods_after_scenario_type
     scenario_compose_needs_bots_any_mod
     scenario_compose_needs_bots_scenario_and_mod
     scenario_compose_on_tick_bottom_first

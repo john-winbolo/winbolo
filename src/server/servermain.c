@@ -937,8 +937,9 @@ void printArgs() {
   fprintf(stderr, "-scriptuploads <P> - Player script handling: \"off\" refuses script uploads\n");
   fprintf(stderr, "                and does not run a script carried by a map a client\n");
   fprintf(stderr, "                uploaded (those maps play plainly, and each script turned\n");
-  fprintf(stderr, "                down is named), \"allow\" keeps them for the session\n");
-  fprintf(stderr, "                (default), \"persist\" keeps them for good.\n");
+  fprintf(stderr, "                down is named) (default), \"allow\" keeps them for the\n");
+  fprintf(stderr, "                session, \"persist\" keeps them for good. Scripts run on\n");
+  fprintf(stderr, "                this computer, so only turn this on for players you trust.\n");
   fprintf(stderr, "-scriptuploaddir <Dir> - Directory persisted scripts are written to.\n");
   fprintf(stderr, "                (default <map root>/Uploads/Scripts).\n");
   fprintf(stderr, "-scriptuploadmaxfiles <N> - Max stored script files in persist mode\n");

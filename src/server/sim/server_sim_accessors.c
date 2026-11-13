@@ -1105,7 +1105,7 @@ void serverSimSetScriptUploadPolicy(ServerSim *sim, ScriptUploadPolicy p) {
 }
 
 ScriptUploadPolicy serverSimGetScriptUploadPolicy(const ServerSim *sim) {
-    return sim ? sim->scriptUploadPolicy : SCRIPT_UPLOAD_ALLOW;
+    return sim ? sim->scriptUploadPolicy : SCRIPT_UPLOAD_OFF;
 }
 
 void serverSimSetScriptSharing(ServerSim *sim, bool on) {
@@ -1192,21 +1192,21 @@ int serverSimEmptyScriptSessionDir(ServerSim *sim) {
 
 ScriptUploadPolicy scriptUploadPolicyResolve(const char *word) {
     if (word == NULL || word[0] == '\0') {
-        return SCRIPT_UPLOAD_ALLOW;
+        return SCRIPT_UPLOAD_OFF;
     }
     if (SDL_strcasecmp(word, "off") == 0)     return SCRIPT_UPLOAD_OFF;
     if (SDL_strcasecmp(word, "allow") == 0)   return SCRIPT_UPLOAD_ALLOW;
     if (SDL_strcasecmp(word, "persist") == 0) return SCRIPT_UPLOAD_PERSIST;
-    fprintf(stderr, "Warning: unknown script upload policy '%s', using allow\n",
+    fprintf(stderr, "Warning: unknown script upload policy '%s', using off\n",
             word);
-    return SCRIPT_UPLOAD_ALLOW;
+    return SCRIPT_UPLOAD_OFF;
 }
 
 const char *scriptUploadPolicyWord(ScriptUploadPolicy p) {
     switch (p) {
-        case SCRIPT_UPLOAD_OFF:     return "Off";
+        case SCRIPT_UPLOAD_ALLOW:   return "Allow";
         case SCRIPT_UPLOAD_PERSIST: return "Persist";
-        default:                    return "Allow";
+        default:                    return "Off";
     }
 }
 

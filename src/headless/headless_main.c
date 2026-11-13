@@ -153,7 +153,7 @@ static bool optStdin = FALSE;
 static bool optNoScenarios = false;
 /* The --scriptuploads word as typed, and the policy it resolves to. */
 static char optScriptUploads[16] = "";
-static ScriptUploadPolicy optScriptUploadPolicy = SCRIPT_UPLOAD_ALLOW;
+static ScriptUploadPolicy optScriptUploadPolicy = SCRIPT_UPLOAD_OFF;
 /* Run every scenario script with the full Lua library and no limits. */
 static bool optUnsafeScripts = false;
 /* This computer's own Bot Host (bothost_embed.h): off, a fixed slot count,
@@ -2165,8 +2165,8 @@ static void printUsage(const char *prog) {
     "                    does not run a script carried by a map a client\n"
     "                    uploaded (those maps play plainly, whether the script\n"
     "                    is packed into the file or sits beside it; every other\n"
-    "                    map is unaffected), allow keeps them for the session\n"
-    "                    (default), persist keeps them for good\n"
+    "                    map is unaffected) (default), allow keeps them for\n"
+    "                    the session, persist keeps them for good\n"
     "  --no-bothost      Do not run the server's bots on this computer\n"
     "  --bothost-slots N Offer the server N bot slots (default: the brain's\n"
     "                    own capacity answer for this computer)\n"
