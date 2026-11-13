@@ -1047,6 +1047,7 @@ int run_bot_host_dyn_raise_rule(void);
 int run_bot_host_dyn_under_reserve(void);
 int run_bot_host_dyn_carry(void);
 int run_bot_host_dyn_keel(void);
+int run_bot_host_dyn_pct_off(void);
 int run_bot_host_dyn_determinism(void);
 int run_bot_host_limits_codec(void);
 int run_bot_host_slot_owner_only(void);

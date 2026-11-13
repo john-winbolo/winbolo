@@ -6474,6 +6474,7 @@ set(_unit_test_names
     bot_host_dyn_under_reserve
     bot_host_dyn_carry
     bot_host_dyn_keel
+    bot_host_dyn_pct_off
     bot_host_dyn_determinism
     bot_host_limits_codec
     bot_host_slot_owner_only

@@ -735,6 +735,7 @@ static const UnitTestEntry s_tests[] = {
     { "bot_host_dyn_under_reserve", run_bot_host_dyn_under_reserve },
     { "bot_host_dyn_carry", run_bot_host_dyn_carry },
     { "bot_host_dyn_keel", run_bot_host_dyn_keel },
+    { "bot_host_dyn_pct_off", run_bot_host_dyn_pct_off },
     { "bot_host_dyn_determinism", run_bot_host_dyn_determinism },
     { "bot_host_limits_codec", run_bot_host_limits_codec },
     { "bot_host_slot_owner_only", run_bot_host_slot_owner_only },
