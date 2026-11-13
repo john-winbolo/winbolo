@@ -924,6 +924,12 @@ struct ServerSim {
      * is released (server_sim_players.c). */
     PlayerBitMap pingMuteMask[MAX_TANKS];
 
+    /* The team a rejoining player was on when leaving, read from the rejoin
+     * record when the player joins again (addPlayerInternal) and used once,
+     * by serverSimPlaceJoiner and serverSimRestoreRejoinTeam, to put the
+     * player back on it. 0 when the join is not a rejoin or no team was kept. */
+    BYTE         rejoinTeam[MAX_TANKS];
+
     /* Bot configuration — cached from CLI args for lobby bot creation */
     char         botBrainPath[260];       /* Brain path for lobby bot creation */
     aiType       botAiType;               /* AI advantage level for bots */
