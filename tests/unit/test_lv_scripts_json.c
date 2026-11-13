@@ -26,6 +26,11 @@
  *   lv_scripts_json_close_clears — a rule the member set is read at the
  *       playhead while the recording is open, and reads classic again once it
  *       is closed.
+ *   lv_scripts_json_blast_shape_by_version — a recording with no
+ *       lgm_blast_shape reads the shape its version played: 2 (the circle of
+ *       144) for one this build wrote, 0 (the circle of 128) for the
+ *       committed v2 fixture from before 2.2.2, and this build's classic
+ *       value once the file is closed.
  *
  * The members of the last four are written by hand below and added to a
  * plain recording with minizip's append mode; none is produced by the
@@ -446,5 +451,79 @@ int run_lv_scripts_json_close_clears(void) {
     UT_ASSERT_MSG(closed == simRulesClassicValue(rule),
                   "tank_death_ticks read %g after the close (want the classic "
                   "%g)", closed, simRulesClassicValue(rule));
+    return 0;
+}
+
+/* A recording's version decides the builder kill area when it has no
+ * lgm_blast_shape: the shape is read at the playhead while the file is open
+ * and once it is closed. */
+static bool lvsjShapeOf(uint8_t *data, size_t len, double *open, double *closed,
+                        unsigned *major, unsigned *minor, unsigned *revision) {
+    LogViewerState *lv;
+    bool            loaded;
+    int             rule = simRulesRuleIndex("lgm_blast_shape");
+
+    lv = lv_decoderCreate(false);
+    if (lv == NULL) return false;
+    loaded    = lv_screenLoadMapFromMemory(data, len) == TRUE;
+    *major    = lv->versionMajor;
+    *minor    = lv->versionMinor;
+    *revision = lv->versionRevision;
+    *open     = lv_screenRuleValueAt(rule, 0);
+    lv_screenCloseLog();
+    *closed   = lv_screenRuleValueAt(rule, 0);
+    lv_decoderDestroy(lv);
+    return loaded;
+}
+
+int run_lv_scripts_json_blast_shape_by_version(void) {
+    const char   *dir = getenv("WB_WBV_FIXTURE_DIR");
+    char          path[512];
+    ReplayHarness h;
+    uint8_t      *data;
+    size_t        len = 0;
+    double        open, closed;
+    unsigned      major, minor, revision;
+    bool          loaded;
+    int           rule = simRulesRuleIndex("lgm_blast_shape");
+
+    UT_ASSERT_MSG(rule >= 0, "lgm_blast_shape has no index");
+    UT_ASSERT_MSG(simRulesClassicValue(rule) == 2.0,
+                  "the classic lgm_blast_shape is %g, not 2",
+                  simRulesClassicValue(rule));
+
+    /* A plain round this build wrote: its header holds this version. */
+    if (!lvsjPlainRound(&h, "lvScriptsBlastNew")) {
+        replayHarnessStop(&h);
+        UT_FAIL("could not record the plain round");
+    }
+    data = lvsjReadFile(h.path, &len);
+    replayHarnessStop(&h);
+    UT_ASSERT_MSG(data != NULL, "could not read the recording back");
+    loaded = lvsjShapeOf(data, len, &open, &closed, &major, &minor, &revision);
+    free(data);
+    UT_ASSERT_MSG(loaded, "the new recording did not open");
+    UT_ASSERT_MSG(open == 2.0, "a %u.%u.%u recording read lgm_blast_shape %g "
+                  "(want 2)", major, minor, revision, open);
+    UT_ASSERT_MSG(closed == 2.0, "lgm_blast_shape read %g after the close "
+                  "(want the classic 2)", closed);
+
+    /* The committed v2 fixture, written before 2.2.2. */
+    if (dir == NULL || dir[0] == '\0') dir = WB_WBV_FIXTURE_DIR;
+    snprintf(path, sizeof(path), "%s/spectator_v2.wbv", dir);
+    data = lvsjReadFile(path, &len);
+    UT_ASSERT_MSG(data != NULL, "could not read %s", path);
+    loaded = lvsjShapeOf(data, len, &open, &closed, &major, &minor, &revision);
+    free(data);
+    UT_ASSERT_MSG(loaded, "the v2 fixture did not open: %s", path);
+    UT_ASSERT_MSG(major != 0 || minor != 0 || revision != 0,
+                  "the v2 fixture has no version in its header");
+    UT_ASSERT_MSG(simRulesLgmBlastShapeForVersion(major, minor, revision) == 0,
+                  "the v2 fixture says %u.%u.%u, not a version before 2.2.2",
+                  major, minor, revision);
+    UT_ASSERT_MSG(open == 0.0, "the %u.%u.%u fixture read lgm_blast_shape %g "
+                  "(want 0, the circle of 128)", major, minor, revision, open);
+    UT_ASSERT_MSG(closed == 2.0, "lgm_blast_shape read %g after the close "
+                  "(want the classic 2)", closed);
     return 0;
 }

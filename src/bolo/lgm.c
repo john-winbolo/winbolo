@@ -57,7 +57,7 @@
 #include "tank.h"
 #include "types.h"
 #include "util.h"
-#include "hit_rules.h"       /* hitRulesBuilderCaught */
+#include "hit_rules.h"       /* hitRulesBuilderCaughtShape */
 #include "../winbolonet/winbolonet_core.h"
 
 

@@ -919,6 +919,26 @@ static void lv_ruleChangesClear(void) {
   g_lv->ruleChangesTruncated = FALSE;
 }
 
+/* The value of a rule the recording never set. A recording holds only the
+ * rules a script set or changed, so a rule it does not hold played the
+ * classic value of the build that wrote it. lgm_blast_shape is the one rule
+ * whose classic value changed: builds before 2.2.2 played 0 (the circle of
+ * 128) and later ones 2 (the circle of 144), so for a loaded recording it
+ * comes from the version in the header (simRulesLgmBlastShapeForVersion). A
+ * version of 0.0.0 says nothing (a spectator seed before its version is
+ * filled in), and with no recording open the answer is this build's. */
+static double lv_screenRuleUnsetValue(int index) {
+  if (index == SIM_RULE_lgm_blast_shape && g_lv != NULL &&
+      g_lv->logLoaded == TRUE &&
+      (g_lv->versionMajor != 0 || g_lv->versionMinor != 0 ||
+       g_lv->versionRevision != 0)) {
+    return (double) simRulesLgmBlastShapeForVersion(g_lv->versionMajor,
+                                                    g_lv->versionMinor,
+                                                    g_lv->versionRevision);
+  }
+  return simRulesClassicValue(index);
+}
+
 double lv_screenRuleValueAt(int index, uint32_t ms) {
   const LvRuleChange *c;
   bool                found  = FALSE;
@@ -948,7 +968,7 @@ double lv_screenRuleValueAt(int index, uint32_t ms) {
       return g_lv->scripts.rules[i].value;
     }
   }
-  return simRulesClassicValue(index);
+  return lv_screenRuleUnsetValue(index);
 }
 
 /* The table of the times each builder was away, further down. */
