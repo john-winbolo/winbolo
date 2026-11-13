@@ -101,9 +101,9 @@
 #include "brain_capacity.h"
 #include "bot_host_cpu.h"   /* BotHostCpuMeter */
 #include "bot_host_guard.h" /* the init token list, the salt limit */
+#include "bothost_optout.h"   /* botHostMaxOffer, botHostSlotsMaxDefault */
 #ifdef WINBOLO_BOTHOST_EMBED
 #include "bothost_embed.h"
-#include "bothost_optout.h"   /* BotHostRun */
 #endif
 
 /* ------------------------------------------------------------------ */
@@ -2721,7 +2721,8 @@ static bool seatsService(void) {
     return built;
 }
 
-static void hostTick(void) {
+/* startLate is how late the loop started this tick (ms). */
+static void hostTick(uint32_t startLate) {
     int i, active = 0, runners;
     bool anyFirst = false;
     bool built;
@@ -2932,6 +2933,7 @@ static void hostTick(void) {
         if (total > ts->maxTotal) ts->maxTotal = total;
         if (brain > ts->maxBrain) ts->maxBrain = brain;
         if (after > ts->maxAfter) ts->maxAfter = after;
+        if (startLate > ts->startLateMax) ts->startLateMax = startLate;
         if (ts->ticks >= BOT_HOST_TICK_STATS_TICKS) {
             double n = (double)ts->ticks;
             fprintf(stderr, "[bothost] ticks %u: %u over %d ms, longest "
@@ -3273,10 +3275,7 @@ int main(int argc, char *argv[]) {
         }
         t = nowMs();
         if ((int32_t)(t - nextTick) >= 0) {
-            if (t - nextTick > tickStats.startLateMax) {
-                tickStats.startLateMax = t - nextTick;
-            }
-            hostTick();
+            hostTick(t - nextTick);
             nextTick += BOT_HOST_TICK_MS;
             /* After a long stall, start counting again from now. */
             if ((int32_t)(t - nextTick) > 10 * BOT_HOST_TICK_MS) {
@@ -3389,7 +3388,7 @@ static int SDLCALL embedThreadFn(void *arg) {
         }
         t = nowMs();
         if ((int32_t)(t - nextTick) >= 0) {
-            hostTick();
+            hostTick(t - nextTick);
             nextTick += BOT_HOST_TICK_MS;
             if ((int32_t)(t - nextTick) > 10 * BOT_HOST_TICK_MS) {
                 nextTick = t + BOT_HOST_TICK_MS;
