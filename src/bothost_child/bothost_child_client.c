@@ -493,7 +493,7 @@ BotHostChildStart botHostChildClientStart(const BotHostChildParams *p,
                                           const BotHostChildLimits *lim,
                                           int max, bool sandbox) {
     char exe[1024], log[1024], err[256], why[512];
-    char argBuf[4096], hex[128], line[160];
+    char argBuf[4096], line[160], maxLine[32];
     const char *argv[BOT_HOST_CHILD_MAX_ARGS];
     BotHostChildSandbox sb;
 
@@ -562,11 +562,10 @@ BotHostChildStart botHostChildClientStart(const BotHostChildParams *p,
     childMax = max;
     /* Until its first line: it runs, with no slots yet. */
     childStatus.running = true;
-    botHostChildTicketHex(ticket, ticketLen, hex, sizeof(hex));
-    SDL_snprintf(line, sizeof(line), "ticket %s", hex);
+    botHostChildFormatFirstLines(ticket, ticketLen, max, line, sizeof(line),
+                                 maxLine, sizeof(maxLine));
     childWrite(line);
-    SDL_snprintf(line, sizeof(line), "max %d", max);
-    childWrite(line);
+    childWrite(maxLine);
 #ifdef _WIN32
     const char *cpuNote = "";
 #else

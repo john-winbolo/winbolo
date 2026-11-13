@@ -968,6 +968,7 @@ int run_bothost_child_fail_rule(void);
 int run_bothost_child_copy_wanted(void);
 int run_bothost_child_env_keep(void);
 int run_bothost_ds_child_where(void);
+int run_bothost_ds_child_first_lines(void);
 int run_bot_host_lockstep(void);
 int run_bothost_child_seccomp(void);
 int run_bothost_child_stdin_full(void);

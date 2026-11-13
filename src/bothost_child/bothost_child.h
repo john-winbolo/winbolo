@@ -218,6 +218,14 @@ void botHostChildTicketHex(const uint8_t *ticket, size_t len, char *out,
                            size_t outSize);
 bool botHostChildTicketParse(const char *hex, uint8_t *ticket, size_t len);
 
+/* The game's first two lines to a child after its machine lines:
+ * "ticket <hex>" and "max <n>" (Max slots, BOT_HOST_MAX_AUTO for the
+ * brain's answer). */
+void botHostChildFormatFirstLines(const uint8_t *ticket, size_t ticketLen,
+                                  int max, char *ticketLine,
+                                  size_t ticketLineSize, char *maxLine,
+                                  size_t maxLineSize);
+
 /* The lines that give a sandboxed child this computer's machine id and
  * the salts it answered: "machineid <hex>", then "salts <hex>..." with up
  * to BOT_HOST_CHILD_SALTS_PER_LINE salts each. Returns the line count, or
@@ -470,6 +478,11 @@ typedef struct {
  * they run in the server's process. */
 BotHostDsWhere botHostDsChildWhere(const BotHostDsChildIn *in,
                                    const char **why);
+/* The Max slots the server gives its own child: BOT_HOST_MAX_AUTO, the
+ * brain's answer. The server's -botcapacity reaches the child as its
+ * slots argument. Max 0 would offer the server 0 slots, and the server
+ * would keep every bot in its own process. */
+int botHostDsChildMax(void);
 
 /* Starts the child for one join; sandbox: in the file sandbox. */
 BotHostChildStart botHostChildClientStart(const BotHostChildParams *p,

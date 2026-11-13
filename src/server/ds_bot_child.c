@@ -130,8 +130,8 @@ static BotHostChildStart dsStartChild(void) {
     p.brainTier = dsCfg.brainTier;
     lim.memMb = BOT_HOST_CHILD_DEFAULT_MEM_MB;
     lim.cpuPct = BOT_HOST_CHILD_DEFAULT_CPU_PCT;
-    how = botHostChildClientStart(&p, secret, sizeof(secret), &lim, false,
-                                  true);
+    how = botHostChildClientStart(&p, secret, sizeof(secret), &lim,
+                                  botHostDsChildMax(), true);
     SDL_memset(secret, 0, sizeof(secret));
     return how;
 }

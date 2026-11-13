@@ -47,6 +47,9 @@
  *  17. bothost_child_stdin_full: a child that does not read its stdin
  *      fills the pipe; the game's write then fails at once and does not
  *      wait, and the child still runs.
+ *  18. bothost_ds_child_first_lines: the dedicated server's first lines
+ *      to its own child are "ticket <hex>" and "max -1" (the brain's
+ *      answer), never "max 0", which would offer the server 0 slots.
  * Tests 7 to 10 need the sandbox: where this computer has none (Linux with
  * no Landlock, other systems) they pass with a note. WINBOLO_TEST_TMP names
  * the folder for their files (default: TEMP, or /tmp).
@@ -58,6 +61,7 @@
 #include <SDL3/SDL.h>
 
 #include "../../src/bothost_child/bothost_child.h"
+#include "../../src/bothost/bothost_optout.h"
 #include "machine_id.h"
 #include "platform_net.h"
 #include "test_harness.h"
@@ -1245,6 +1249,46 @@ int run_bothost_ds_child_where(void) {
             UT_ASSERT(strcmp(argv[i], "--brain-tier") != 0);
         }
     }
+    return 0;
+}
+
+/* The dedicated server's first lines to its own child (ds_bot_child.c
+ * passes botHostDsChildMax to botHostChildClientStart, which writes these
+ * two lines with botHostChildFormatFirstLines). Max 0 would make the
+ * child offer the server 0 slots, and the server would keep every bot in
+ * its own process. */
+int run_bothost_ds_child_first_lines(void) {
+    uint8_t ticket[16], back[16];
+    char ticketLine[160], maxLine[32];
+    size_t i;
+
+    UT_ASSERT(botHostDsChildMax() == BOT_HOST_MAX_AUTO);
+    UT_ASSERT(botHostDsChildMax() != 0);
+
+    for (i = 0; i < sizeof(ticket); i++) ticket[i] = (uint8_t)(i * 17 + 1);
+    botHostChildFormatFirstLines(ticket, sizeof(ticket), botHostDsChildMax(),
+                                 ticketLine, sizeof(ticketLine), maxLine,
+                                 sizeof(maxLine));
+    UT_ASSERT(strcmp(ticketLine,
+                     "ticket 0112233445566778899aabbccddeef00") == 0);
+    UT_ASSERT(strcmp(maxLine, "max -1") == 0);
+
+    /* The child reads them back as it does in bothost_child_main.c. */
+    UT_ASSERT(strncmp(ticketLine, "ticket ", 7) == 0);
+    UT_ASSERT(botHostChildTicketParse(ticketLine + 7, back, sizeof(back)));
+    UT_ASSERT(memcmp(ticket, back, sizeof(ticket)) == 0);
+    UT_ASSERT(strncmp(maxLine, "max ", 4) == 0);
+    UT_ASSERT(atoi(maxLine + 4) == BOT_HOST_MAX_AUTO);
+
+    /* A player's Max slots goes through the same lines. */
+    botHostChildFormatFirstLines(ticket, sizeof(ticket), 0, ticketLine,
+                                 sizeof(ticketLine), maxLine,
+                                 sizeof(maxLine));
+    UT_ASSERT(strcmp(maxLine, "max 0") == 0);
+    botHostChildFormatFirstLines(ticket, sizeof(ticket), 16, ticketLine,
+                                 sizeof(ticketLine), maxLine,
+                                 sizeof(maxLine));
+    UT_ASSERT(strcmp(maxLine, "max 16") == 0);
     return 0;
 }
 

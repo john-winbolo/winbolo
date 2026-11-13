@@ -28,6 +28,7 @@
 #endif
 
 #include "bothost_child.h"
+#include "../bothost/bothost_optout.h" /* BOT_HOST_MAX_AUTO */
 #include "machine_id.h"
 
 /* ---- Arguments ------------------------------------------------------- */
@@ -253,6 +254,16 @@ static int hexValue(char c) {
     if (c >= 'a' && c <= 'f') return c - 'a' + 10;
     if (c >= 'A' && c <= 'F') return c - 'A' + 10;
     return -1;
+}
+
+void botHostChildFormatFirstLines(const uint8_t *ticket, size_t ticketLen,
+                                  int max, char *ticketLine,
+                                  size_t ticketLineSize, char *maxLine,
+                                  size_t maxLineSize) {
+    char hex[128];
+    botHostChildTicketHex(ticket, ticketLen, hex, sizeof(hex));
+    snprintf(ticketLine, ticketLineSize, "ticket %s", hex);
+    snprintf(maxLine, maxLineSize, "max %d", max);
 }
 
 bool botHostChildTicketParse(const char *hex, uint8_t *ticket, size_t len) {
@@ -669,6 +680,10 @@ bool botHostChildEnvKeep(const char *entry) {
     if (n > 3 && SDL_strncasecmp(entry, "LC_", 3) == 0) return true;
     if (n > 8 && SDL_strncasecmp(entry, "WINBOLO_", 8) == 0) return true;
     return false;
+}
+
+int botHostDsChildMax(void) {
+    return BOT_HOST_MAX_AUTO;
 }
 
 BotHostDsWhere botHostDsChildWhere(const BotHostDsChildIn *in,

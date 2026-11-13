@@ -657,6 +657,7 @@ static const UnitTestEntry s_tests[] = {
     { "bothost_child_copy_wanted", run_bothost_child_copy_wanted },
     { "bothost_child_env_keep", run_bothost_child_env_keep },
     { "bothost_ds_child_where", run_bothost_ds_child_where },
+    { "bothost_ds_child_first_lines", run_bothost_ds_child_first_lines },
     { "bot_host_lockstep", run_bot_host_lockstep },
     { "bothost_child_seccomp", run_bothost_child_seccomp },
     { "bothost_child_stdin_full", run_bothost_child_stdin_full },
