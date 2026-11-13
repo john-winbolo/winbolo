@@ -67,11 +67,19 @@ local PILL_OK_SUB = { plan_position = true, approach = true }
 
 -- Shared push/start eligibility (goal-shape only — the mine push adds its
 -- own DEMINE_ENABLE + shells gates; the repair job needs neither).
-local function eligible(state, info)
+-- for_repair: the terrain-repair job's own question. C.BUILDER_FREE_COMBAT_GOALS
+-- (2026-11-04) lets that job start during attack_tank, which only denied it
+-- to keep the builder in for the fight; the mine push keeps the full list.
+local function eligible(state, info, for_repair)
   if state.command_goal then return false end
   if info.inboat then return false end
   local g = state.goal
-  if not g or DENY_KINDS[g.kind] then return false end
+  if not g then return false end
+  if DENY_KINDS[g.kind]
+     and not (for_repair and C.BUILDER_FREE_COMBAT_GOALS
+              and g.kind == "attack_tank") then
+    return false
+  end
   if g.kind == "attack_pill" and not PILL_OK_SUB[g.substate or ""] then
     return false
   end
@@ -244,8 +252,11 @@ local function find_repair_target(state, world, info)
   -- The LGM must be able to walk there (bless the dest — the target tile
   -- itself is the unwalkable thing we're fixing) and the walk must be safe.
   local reach = cpf_lgm_travel_ticks_map(tmx, tmy, best_mx, best_my, best_mx, best_my, 2000, 150) ~= -1
-  local safe  = reach and require("danger").lgm_path_safe_enhanced(info, best_mx, best_my,
-                                                     C.LGM_DANGER_LOW, now, world)
+  -- BUILDER_SEND_CERTAIN_DEATH_ONLY: the danger sample is a fire check, so it
+  -- is off; builder.decide's trepair send asks danger.lgm_certain_death.
+  local safe  = reach and (C.BUILDER_SEND_CERTAIN_DEATH_ONLY
+                           or require("danger").lgm_path_safe_enhanced(info, best_mx, best_my,
+                                                     C.LGM_DANGER_LOW, now, world))
   if not (reach and safe) then
     state._trepair_cooldown = state._trepair_cooldown or {}
     state._trepair_cooldown[best_my * 256 + best_mx] = now + 300
@@ -314,12 +325,13 @@ function M.update(state, world, info)
   end
 
   -- ── No interrupt active: consider a mine push / repair job start ────
-  if not eligible(state, info) then return end
+  local mine_ok = eligible(state, info)
+  if not (mine_ok or eligible(state, info, true)) then return end
   if (now - (state._demine_scan_tick or -1e9)) < (C.DEMINE_SCAN_PERIOD or 5) then
     return
   end
   state._demine_scan_tick = now
-  if C.DEMINE_ENABLE ~= false
+  if mine_ok and C.DEMINE_ENABLE ~= false
      and (info.shells or 0) >= (C.DEMINE_MIN_SHELLS or 3) then
     local mx, my, cost = find_target(state, world, info)
     if mx then

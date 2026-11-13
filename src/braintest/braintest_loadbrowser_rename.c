@@ -69,6 +69,47 @@ static bool lbStartsWith(const char *s, const char *lit) {
 
 static bool lbIsDigit(char c) { return c >= '0' && c <= '9'; }
 
+static char lbFold(char c) {
+#ifdef _WIN32
+    if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');
+#endif
+    return c;
+}
+
+int loadBrowserNaturalCmp(const char *a, const char *b) {
+    if (!a || !b) return (a ? 1 : 0) - (b ? 1 : 0);
+    const char *pa = a, *pb = b;
+    while (*pa && *pb) {
+        if (lbIsDigit(*pa) && lbIsDigit(*pb)) {
+            /* Compare the two digit runs by value: skip leading zeros, then
+             * the longer run is the bigger number, else the first digit that
+             * differs decides. */
+            const char *sa = pa, *sb = pb;
+            while (*sa == '0') sa++;
+            while (*sb == '0') sb++;
+            const char *ea = sa, *eb = sb;
+            while (lbIsDigit(*ea)) ea++;
+            while (lbIsDigit(*eb)) eb++;
+            if (ea - sa != eb - sb) return (ea - sa < eb - sb) ? -1 : 1;
+            for (; sa < ea; sa++, sb++) {
+                if (*sa != *sb) return (*sa < *sb) ? -1 : 1;
+            }
+            pa = ea;
+            pb = eb;
+            continue;
+        }
+        const char ca = lbFold(*pa), cb = lbFold(*pb);
+        if (ca != cb) return ((unsigned char)ca < (unsigned char)cb) ? -1 : 1;
+        pa++;
+        pb++;
+    }
+    if (*pa || *pb) return *pa ? 1 : -1;
+    /* Equal by value ("part01" vs "part1", or a case difference): plain text
+     * order, so no two different names compare equal. */
+    const int c = strcmp(a, b);
+    return (c > 0) - (c < 0);
+}
+
 /* Strip a trailing "_part<X>of<N>" off `name` into stem + X + N. Returns false
  * (leaving the outputs alone) when there is no part suffix. Only a suffix that
  * runs to the end of the name counts, so a label containing "part" is safe. */
@@ -120,7 +161,7 @@ bool loadBrowserSplitName(const char *name, char *ts, size_t tsSz, int *block,
     }
 
     /* The timestamp shape is pinned (8 digits, '_', 6 digits) the same way
-     * btParseDirTime() pins it, so a numeric LABEL can never be mistaken for
+     * the recorder writes it, so a numeric LABEL can never be mistaken for
      * the block number. A short stem stops the loops at its NUL. */
     for (i = 0; i < 8; i++)  if (!lbIsDigit(stem[i])) return false;
     if (stem[8] != '_') return false;

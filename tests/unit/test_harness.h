@@ -608,6 +608,8 @@ int run_brain_sandbox_hostile_loaders_removed(void);
 int run_brain_sandbox_hostile_astar_log_removed(void);
 int run_brain_sandbox_hostile_file_jail(void);
 int run_brain_sandbox_hostile_off_map_terrain(void);
+int run_brain_sandbox_hostile_pack_encode(void);
+int run_brain_sandbox_hostile_pack_decode(void);
 int run_brain_msgh_budget_kill_no_traceback(void);
 int run_brain_msgh_real_error_keeps_traceback(void);
 int run_brain_inbox_push_peek_fifo(void);
@@ -653,6 +655,28 @@ int run_bolo_rand_golden_sequence(void);
 int run_pf_dijkstra_no_solid_corner_cut(void);
 int run_pf_astar_no_solid_corner_cut(void);
 int run_pf_costto_no_solid_corner_cut(void);
+/* A tank on foot on a land -> boat -> sea route steps toward the boat, not
+ * along the sea part (test_pf_foot_boat_route.c, 20261103_095144_1 bot0). */
+int run_pf_foot_next_step_goes_to_boat(void);
+/* Same file: a slate rooted in a boat with the tank now on foot (stale root)
+ * keeps the old pick, the route's next square (seed 330 bot1 t=184). */
+int run_pf_foot_stale_boat_root_keeps_route(void);
+/* The Dijkstra slate root pays the turn cost from the tank heading when
+ * "start_heading" is on; off, every cost matches the old slate
+ * (test_pf_start_heading.c, player 2 brain ticks 2147-2328). */
+int run_pf_start_heading_first_step_goes_ahead(void);
+int run_pf_start_heading_off_keeps_old_costs(void);
+/* Route keep (test_pf_route_keep.c): the saved route priced again matches
+ * the slate cost, and the keep check gives g_new, g_keep and its skip codes
+ * (player 2 brain ticks 1524-2266). */
+int run_pf_route_keep_reprice_matches_slate(void);
+int run_pf_route_keep_check_values(void);
+/* Off-chain next step (test_pf_offchain_root.c): the fallback pick does not
+ * turn back to a stale slate root unless the root is the cheapest way
+ * (player 2 brain ticks 1663-2147). */
+int run_pf_offchain_lowest_g_not_root(void);
+int run_pf_offchain_chain_rank_not_root(void);
+int run_pf_offchain_dead_end_keeps_root(void);
 /* The Dijkstra edge cost grid follows squares that change on the brain's map
  * after it was built (test_pf_edge_cost_sync.c). Regression for
  * 20261103_165532_1 player 2 ticks 6555-6762: a diagonal between a half wall
@@ -663,6 +687,16 @@ int run_pf_edge_sync_matches_full_rebuild(void);
 /* Bench, a no-op unless WB_BENCH=1 (test_bench_decoy_step.c): the per-think
  * cost of decoy_getaway's blocker step on the decoy square. */
 int run_bench_decoy_step_first(void);
+/* GoalHunter shield scan: a pill of any owner on our own outgoing shell path
+ * blocks the aim (test_shield_outgoing_pill.c). */
+int run_shield_outgoing_pill_blocks(void);
+/* GoalHunter shield scan: a friendly pill is worth floor(health / 5) walls
+ * of cover (knob PILL_COVER_BY_HEALTH, test_shield_pill_cover.c). */
+int run_shield_pill_cover_walls(void);
+/* GoalHunter clear-aim test: gh_attack.c and attack.lua keep the same aims
+ * with the minimum clear lane (knob BLOCKER_MIN_LANE_BRAD,
+ * test_gh_attack_lane_parity.c). */
+int run_gh_attack_lane_parity(void);
 int run_pf_tail_reaches_radius_and_stops(void);
 int run_pf_tail_blocked_by_wall_and_sea(void);
 int run_pf_tail_neutral_zone_slows(void);
@@ -681,6 +715,7 @@ int run_loadbrowser_rename_splits_names(void);
 int run_loadbrowser_rename_family_plan(void);
 int run_loadbrowser_rename_rejections(void);
 int run_loadbrowser_rename_applies(void);
+int run_session_name_natural_sort(void);
 
 int run_net_impair(void);
 
@@ -1110,6 +1145,21 @@ int run_entity_record_seek_lands_on_the_right_liveness(void);
  * number, and the -brain-debug recording carries the same masks per frame. */
 int run_brain_removed_items_info_masks(void);
 int run_brain_removed_items_recording_masks(void);
+int run_pool_render_raw_matches_old_json(void);
+int run_pool_render_json_and_bad_blocks(void);
+
+/* The game length BrainTest's Load Session list shows (test_session_ticks.c):
+ * the recorder's brainrec_ticks.txt note, the full-walk fallback and the
+ * cache file. real_dirs checks real recordings named in
+ * WINBOLO_SESSION_TICKS_DIRS and passes when that is unset. */
+int run_session_ticks_recorder_note(void);
+int run_session_ticks_real_dirs(void);
+
+/* BrainTest does not draw a dead tank (test_braintest_tank_dead.c): the
+ * playback rule on a recorded tankStatus, and serverSimGetTankRender's
+ * alive flag for a tank in its respawn wait or destroyed. */
+int run_braintest_tank_status_dead(void);
+int run_braintest_tank_render_dead(void);
 
 /* The entity-sync control event (test_entity_sync.c). CTRL_ENTITY_SYNC
  * carries three 16-bit masks, one per item list, saying which indices hold
@@ -1462,6 +1512,23 @@ int run_replay_v1_pill_health_nibble(void);
  * the frames are raw snapshot structs and the structs changed size. The check
  * every reader shares has to refuse it rather than walk it. */
 int run_brainrec_version_rejects_old(void);
+/* The recorded Dijkstra box in brainrec v8 (test_brainrec_dij.c): only
+ * changed nodes are written, unreached nodes and unused boat nodes never,
+ * a new search resets the slate, a keyframe seek equals a full replay, and
+ * a v7 file without the block still loads. The danger box in the same
+ * block writes changed cells only, and a 0 only to clear a cell. */
+int run_brainrec_dij_changed_only(void);
+int run_brainrec_dij_boat_layer(void);
+int run_brainrec_dij_reset_on_new_start(void);
+int run_brainrec_dij_keyframe_equals_replay(void);
+int run_brainrec_dij_old_file_loads(void);
+int run_brainrec_dij_danger_box(void);
+int run_brainrec_dij_src_heading(void);
+
+/* A session keeps its own map (test_brainrec_session_map.c): the map saved
+ * beside brainrec.btr reads back whole and loads with every base where the
+ * recorded terrain has it, also for a map that is off centre. */
+int run_brainrec_session_map_roundtrip(void);
 
 /* Viewer-side decode of per-tank stocks (test_lv_tank_stocks.c): hand-built
  * snapshot bodies and forward records through lv_specSeedLoad /
@@ -3737,6 +3804,13 @@ int run_lobby_template_no_mode_leaves_config(void);
 int run_lobby_template_seat_new_seat_base(void);
 int run_lobby_template_add_bot_takes_template(void);
 
+/* Lobby bots on a held team (test_lobby_held_team_bots.c): Add Bot and a
+ * move onto a fielded = false team make a held seat; off it, an ordinary
+ * bot; a scenario with every team fielded is unchanged. */
+int run_lobby_held_add_bot_seats_held(void);
+int run_lobby_held_move_on_and_off(void);
+int run_lobby_held_all_fielded_unchanged(void);
+
 /* A lobby map change (test_lobby_map_keeps_bots.c): the bots, their names,
  * teams and difficulties, and the host's script list all surviving a change
  * of map made through the lobby's own command. */
@@ -4181,6 +4255,13 @@ int run_scenario_lua_announce_position(void);
 int run_scenario_lua_popup(void);
 int run_scenario_lua_wall_shots(void);
 int run_scenario_lua_acting_rows_refuse_a_check(void);
+
+/* Lua collection after the think (test_brain_gc.c). */
+int run_brain_gc_auto_leaves_collector(void);
+int run_brain_gc_slack_steps_in_free_time(void);
+int run_brain_gc_slack_no_free_time_no_steps(void);
+int run_brain_gc_slack_heap_limits(void);
+int run_brain_gc_slack_step_time(void);
 
 /* The state a scenario runs in (test_scenario_sandbox.c): the names the
  * whitelist takes and the ones it keeps, the precompiled chunk the loader
@@ -4995,6 +5076,7 @@ int run_scenario_hint_records(void);
 int run_bot_init_table_two_bots_keep_own(void);
 int run_bot_init_table_empty_when_none(void);
 int run_bot_init_arg_text_to_table(void);
+int run_bot_init_cfg_tokens_all_count(void);
 
 /* New data for a bot already playing (test_scenario_bot_init.c): the op
  * lands a tick later and replaces the table whole, every refusal in the

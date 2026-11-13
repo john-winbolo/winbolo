@@ -69,7 +69,13 @@ const char *scnTableGet(const ScnTable *t, const char *key);
  *
  * This is the mapping the -bot-init [arg] suffix goes through, so
  * "[ammoless;deprive=100]" reaches the brain as
- * BRAIN_INIT.ammoless == "1" and BRAIN_INIT.deprive == "100". */
+ * BRAIN_INIT.ammoless == "1" and BRAIN_INIT.deprive == "100".
+ *
+ * A repeated key keeps the last value, except "cfg": each
+ * cfg=NAME=VALUE token is its own pair, in the order written, so
+ * "[cfg=A=1;cfg=B=2]" keeps both. brainCoreSetInitTable joins them
+ * into BRAIN_INIT.cfg == "A=1;cfg=B=2", which a brain that flattens
+ * the table to "cfg=..." text reads as both tokens in order. */
 bool scnTableFromArgText(const char *text, ScnTable *out);
 
 /* Writes the table back out in scnTableFromArgText's form

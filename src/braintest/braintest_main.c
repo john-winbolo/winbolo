@@ -85,6 +85,7 @@
 #include "server_sim_lifecycle.h"
 #include "bot_worker_pool.h"
 #include "bot_manager.h"
+#include "pool_render_host.h"
 #include "game_sim.h"
 #include "../server/server_lifecycle.h"
 #include "../server/threads.h"
@@ -93,8 +94,11 @@
 #include "../gui/sdl3/luabrainshandler.h"
 #include "braincore.h"
 #include "brain_overlay.h"
+#include "brain_record_dij.h"
 #include "brain_record.h"
 #include "braintest_loadbrowser.h"
+#include "braintest_session_ticks.h"
+#include "braintest_tank_dead.h"
 #include <zlib.h>
 #include <time.h>
 #include "braintest_viz_registry.h"
@@ -158,6 +162,10 @@ static int g_recordingMaxFrames = 3000;
  * kept) and stops playback from snapping to the live sim at the end — there is
  * no live game to resume, just a frozen replay shell. */
 static bool g_loadedSession = false;
+/* Recorded Dijkstra box of a loaded session (brainrec v8): one block per
+ * recording frame index, decoded on demand for the scrubbed frame. Empty in
+ * a live run and for a v6 / v7 session, which then keep the old behaviour. */
+static BrainRecDijStore g_dijStore;
 
 /* Playback / live-replay speed presets, ms-per-tick. Lower = faster. */
 static const int SPEED_PRESETS[] = {
@@ -793,6 +801,10 @@ static bool btPeekSession(const char *path, char mapNameOut[64], int *numBotsOut
         }
         gzseek(g, MAX_TANKS * 4, SEEK_CUR);   /* v5 per-player alliance words */
         if (hdr.version >= 7u) gzseek(g, 8, SEEK_CUR);   /* v7 on-map masks */
+        if (hdr.version >= 8u) {                          /* v8 Dijkstra box */
+            uint32_t dl = bt_gz_u32(g);
+            if (dl) gzseek(g, (z_off_t)dl, SEEK_CUR);
+        }
         if (!deepScan) break;
         fm = bt_gz_u32(g);
     }
@@ -1052,6 +1064,9 @@ static int btLoadSession(BrainTestApp *app, const char *path) {
         }
     }
     long poolPjCount = 0;   /* pool JSON blobs present in the .btr */
+    brainRecDijStoreFree(&g_dijStore);
+    uint8_t *dijScratch = NULL;
+    uint32_t dijScratchCap = 0;
 
     RecordingBuffer *rb = &app->recording;
     int loaded = 0;
@@ -1202,11 +1217,36 @@ static int btLoadSession(BrainTestApp *app, const char *path) {
             f->pillsOnMap = 0xFFFFFFFFu;
             f->basesOnMap = 0xFFFFFFFFu;
         }
+        /* Recorded Dijkstra box (v8). Kept as bytes per frame index; the
+         * scrubbed frame is rebuilt from the last keyframe on demand. */
+        if (hdr.version >= 8u) {
+            uint32_t dl = bt_gz_u32(g);
+            if (dl) {
+                if (dl > dijScratchCap) {
+                    uint8_t *nb = (uint8_t *)realloc(dijScratch, dl);
+                    if (nb) { dijScratch = nb; dijScratchCap = dl; }
+                }
+                if (dl <= dijScratchCap && gzread(g, dijScratch, dl) == (int)dl) {
+                    brainRecDijStoreSet(&g_dijStore, rb->count, dijScratch, dl);
+                } else if (dl > dijScratchCap) {
+                    gzseek(g, (z_off_t)dl, SEEK_CUR);
+                }
+            }
+        }
 
         rb->count++;
         loaded++;
     }
     gzclose(g);
+    free(dijScratch);
+    if (brainRecDijStoreHasData(&g_dijStore)) {
+        fprintf(stderr, "Load session: recorded Dijkstra box (%dx%d) in %d of %d frames, "
+                        "%zu bytes\n", BRAINREC_DIJ_BOX, BRAINREC_DIJ_BOX,
+                g_dijStore.framesWithData, loaded, g_dijStore.len);
+    } else {
+        fprintf(stderr, "Load session: no recorded Dijkstra box (brainrec v%u)\n",
+                (unsigned)hdr.version);
+    }
 
     if (poolPjCount > 0)
         fprintf(stderr, "Load session: pool data — %ld blobs from .btr\n", poolPjCount);
@@ -1269,19 +1309,30 @@ static LoadSessionEntry g_sessionList[LOADBROWSER_MAX_SESSIONS];
 static int  g_sessionCount    = 0;
 static bool g_showLoadBrowser = false;
 
-/* Parse a "YYYYMMDD_HHMMSS" session dir name to a Unix epoch (local), or -1. */
-static int btParseDirTime(const char *name) {
-    int Y, M, D, h, m, s;
-    if (sscanf(name, "%4d%2d%2d_%2d%2d%2d", &Y, &M, &D, &h, &m, &s) != 6) return -1;
-    struct tm tmv; memset(&tmv, 0, sizeof tmv);
-    tmv.tm_year = Y - 1900; tmv.tm_mon = M - 1; tmv.tm_mday = D;
-    tmv.tm_hour = h; tmv.tm_min = m; tmv.tm_sec = s; tmv.tm_isdst = -1;
-    time_t t = mktime(&tmv);
-    return (t == (time_t)-1) ? -1 : (int)t;
+/* Fill an entry's game length and game clock range from its tick range. */
+static void sessionApplyTicks(LoadSessionEntry *e) {
+    uint32_t first = 0, last = 0;
+    SessionTicksState st = sessionTicksLookup(e->dir, e->btrPath, e->btrBytes,
+                                              e->btrMtime, &first, &last);
+    e->lengthPending = (st == SESSION_TICKS_PENDING);
+    if (st != SESSION_TICKS_HAVE) return;
+    sessionTicksSeconds(first, last, &e->startSec, &e->endSec, &e->durationSec);
+}
+
+/* Rows whose tick range the background walk was still reading: look again.
+ * Cheap (a table search per pending row), so it runs every frame the
+ * browser is open. */
+static void sessionPollPendingTicks(void) {
+    for (int i = 0; i < g_sessionCount; i++) {
+        if (g_sessionList[i].lengthPending) sessionApplyTicks(&g_sessionList[i]);
+    }
 }
 
 /* Scan debug_sessions/ for recordings. Loadable = has a version-matching
- * brainrec.btr. Length is wall-clock: btr mtime minus the dir-name timestamp. */
+ * brainrec.btr. Length is GAME time, from the first and last recorded tick
+ * (braintest_session_ticks.h). The old wall-clock length (.btr mtime minus
+ * the dir-name timestamp) was wrong for an -asap server, and for every
+ * brainrec_split part, whose names all keep the game's start time. */
 /* Peek cache: the O dialog rescans on every press, and each entry's peek
  * gz-decompresses a first frame. With a couple of hundred sessions that was
  * seconds of main-thread stall per press. Keyed on dir name + brainrec
@@ -1321,7 +1372,20 @@ static void peekCacheStore(const char *name, uint64_t size, int64_t mtime,
     c->bots = bots; c->loadable = loadable;
 }
 
+/* Session list order: natural name order, so a split game lists part1,
+ * part2, ... part10 by number rather than as text (part10 before part1). */
+static int sessionNameCmp(const void *a, const void *b) {
+    return loadBrowserNaturalCmp(((const LoadSessionEntry *)a)->name,
+                                 ((const LoadSessionEntry *)b)->name);
+}
+
 static void scanSessions(void) {
+    static bool ticksReady = false;
+    if (!ticksReady) {
+        /* Next to debug_sessions/, not in it: a session dir is the recorder's. */
+        sessionTicksInit("braintest_session_ticks.cache");
+        ticksReady = true;
+    }
     g_sessionCount = 0;
     int n = 0;
     char **entries = SDL_GlobDirectory("debug_sessions", "*", 0, &n);
@@ -1337,6 +1401,8 @@ static void scanSessions(void) {
         SDL_strlcpy(e->dir,  dir,         sizeof e->dir);
         SDL_strlcpy(e->name, entries[i],  sizeof e->name);
         e->durationSec = -1;
+        e->startSec    = -1;
+        e->endSec      = -1;
 
         char btr[340];
         SDL_snprintf(btr, sizeof btr, "%s/%s", dir, BRAINREC_FILENAME);
@@ -1357,12 +1423,10 @@ static void scanSessions(void) {
             }
             if (ok) {
                 e->loadable = true;
-                int start = btParseDirTime(entries[i]);
-                if (start >= 0) {
-                    long long endsec = (long long)(bi.modify_time / 1000000000LL);
-                    int dur = (int)(endsec - start);
-                    if (dur >= 0 && dur < 24 * 3600) e->durationSec = dur;
-                }
+                SDL_strlcpy(e->btrPath, btr, sizeof e->btrPath);
+                e->btrBytes = (int64_t)bi.size;
+                e->btrMtime = (int64_t)bi.modify_time;
+                sessionApplyTicks(e);
             } else {
                 SDL_strlcpy(e->note, "incompatible / corrupt", sizeof e->note);
             }
@@ -1371,6 +1435,8 @@ static void scanSessions(void) {
         if (e->loadable) g_sessionCount++;
     }
     SDL_free(entries);
+    SDL_qsort(g_sessionList, (size_t)g_sessionCount, sizeof g_sessionList[0],
+              sessionNameCmp);
 }
 
 /* Spawn a fresh BrainTest replaying `dir` and quit this one. */
@@ -1616,7 +1682,7 @@ static void renderTankIds(BrainTestApp *app, int screenW, int screenH) {
         for (int i = 0; i < pf_->tankCount; i++) {
             const TankSnapshot *ts = &pf_->tanks[i];
             if (ts->playerNum & TANK_SNAPSHOT_HIDDEN_FLAG) continue; /* stub */
-            if (ts->tankStatus & (TANK_STATUS_DEAD | TANK_STATUS_DESTROYED)) continue;
+            if (braintestTankStatusIsDead(ts->tankStatus)) continue;
             int pn = ts->playerNum & TANK_SNAPSHOT_PLAYER_MASK;
             float tx = ts->worldX / 256.0f;
             float ty = ts->worldY / 256.0f - 0.5f;
@@ -1631,6 +1697,9 @@ static void renderTankIds(BrainTestApp *app, int screenW, int screenH) {
         for (int pn = 0; pn < MAX_TANKS; pn++) {
             WORLD wx = 0, wy = 0;
             if (!serverSimGetTankState(app->sim, (BYTE)pn, &wx, &wy)) continue;
+            /* No label on a dead tank: the map does not draw it either. */
+            TankRenderInfo info;
+            if (!serverSimGetTankRender(app->sim, (BYTE)pn, &info) || !info.alive) continue;
             float tx = wx / 256.0f;
             float ty = wy / 256.0f - 0.5f;
             float sx, sy;
@@ -1891,6 +1960,186 @@ static void startCostToHeatmap(BrainTestApp *app, bool lowDanger) {
     app->costToThread = SDL_CreateThread(costToThreadFunc, "CostTo", ctx);
 }
 
+/* -- Recorded Dijkstra box (loaded brainrec v8 session) --------------
+ * In playback of a session that carries it, the key-7 heatmap and the
+ * click panel read the followed bot's recorded slates at the scrubbed
+ * frame instead of the live pathfinder. A session without it (v6 / v7,
+ * or a live run's own timeline) keeps the old behaviour. */
+
+/* The followed bot's recorded box at the scrubbed frame, or NULL when not
+ * in playback of a session that has one. */
+static const BrainRecDijBotBox *btRecordedDijBot(BrainTestApp *app) {
+    if (!app->playbackMode || !brainRecDijStoreHasData(&g_dijStore)) return NULL;
+    if (app->playbackFrame < 0 || app->playbackFrame >= app->recording.count) return NULL;
+    if (app->followBot >= BRAINREC_DIJ_MAX_BOTS) return NULL;
+    const BrainRecDijState *st = brainRecDijStoreAt(&g_dijStore, app->playbackFrame);
+    return st ? &st->bots[app->followBot] : NULL;
+}
+
+#define BT_REC_DIJ_PATH_MAX (2 * BRAINREC_DIJ_CELLS + 2)
+
+/* The recorded answer for the clicked tile. */
+typedef struct {
+    bool  recorded;   /* the session has a recorded box (playback) */
+    int   slate;      /* -1 = the bot has no recorded slate this frame */
+    int   kind;
+    bool  inBox;      /* the click is inside the recorded box */
+    float cost;       /* cheaper of land / boat, or >= BRAINREC_DIJ_INF_LIMIT */
+    int   layer;      /* 0 land, 1 boat */
+    int   pathLen;
+    int   path_x[BT_REC_DIJ_PATH_MAX];
+    int   path_y[BT_REC_DIJ_PATH_MAX];
+    BrainRecDijTraceEnd pathEnd;
+} BtRecDijClick;
+
+/* Fill *out for the current click. The slate is the one the heatmap shows
+ * (Shift+7), or the lowest active one when that one has nothing. Returns
+ * out->recorded. */
+static bool btRecordedDijClick(BrainTestApp *app, BtRecDijClick *out) {
+    memset(out, 0, sizeof *out);
+    out->slate = -1;
+    out->cost  = BRAINREC_DIJ_COST_INF;
+    const BrainRecDijBotBox *b = btRecordedDijBot(app);
+    if (!b) return false;
+    out->recorded = true;
+    int sl = -1;
+    int view = app->dijViewSlate;
+    if (view >= 0 && view < BRAINREC_DIJ_SLATES && b->slates[view].active) sl = view;
+    for (int i = 0; sl < 0 && i < BRAINREC_DIJ_SLATES; i++) {
+        if (b->slates[i].active) sl = i;
+    }
+    if (sl < 0) return true;
+    out->slate = sl;
+    out->kind  = (int)b->slates[sl].meta.kind;
+    out->inBox = brainRecDijCellIndex(b, app->clickMX, app->clickMY) >= 0;
+    if (!out->inBox) return true;
+    out->cost = brainRecDijCostAt(b, sl, app->clickMX, app->clickMY, &out->layer);
+    out->pathLen = brainRecDijTrace(b, sl, app->clickMX, app->clickMY,
+                                    out->path_x, out->path_y, BT_REC_DIJ_PATH_MAX,
+                                    &out->pathEnd);
+    return true;
+}
+
+/* Recorded danger box (key 2 in playback of a v8 session). The playback
+ * patch writes the followed bot's recorded box into its danger_grid and
+ * zeroes the rest, so the key-2 texture and the key-9 numbers show only
+ * the box. Returns true when it wrote the grid. */
+static bool btPatchRecordedDanger(BrainTestApp *app, uint16_t *dangerGrid) {
+    const BrainRecDijBotBox *b = btRecordedDijBot(app);
+    if (!b || !dangerGrid) return false;
+    memset(dangerGrid, 0, 65536 * sizeof(uint16_t));
+    if (!b->boxValid) return true;
+    for (int j = 0; j < BRAINREC_DIJ_BOX; j++) {
+        int y = b->cy - BRAINREC_DIJ_HALF + j;
+        if (y < 0 || y > 255) continue;
+        for (int i = 0; i < BRAINREC_DIJ_BOX; i++) {
+            int x = b->cx - BRAINREC_DIJ_HALF + i;
+            if (x < 0 || x > 255) continue;
+            dangerGrid[y * 256 + x] = b->danger[j * BRAINREC_DIJ_BOX + i];
+        }
+    }
+    return true;
+}
+
+/* Label and outline for the recorded danger box (key 2, playback of a v8
+ * session). Nothing outside the box was recorded. */
+static void renderRecordedDangerBox(BrainTestApp *app, int screenW, int screenH) {
+    if (!vizFlag(app->regIdxDanger)) return;
+    const BrainRecDijBotBox *b = btRecordedDijBot(app);
+    if (!b) return;
+    char label[160];
+    SDL_snprintf(label, sizeof(label),
+        "[2] recorded danger box %dx%d%s (outside the box: not recorded)",
+        BRAINREC_DIJ_BOX, BRAINREC_DIJ_BOX,
+        !b->present ? " - not recorded for this player"
+                    : (b->boxValid ? "" : " - no tank: no box"));
+    SDL_SetRenderDrawColor(app->renderer, 255, 140, 0, 255);
+    SDL_RenderDebugText(app->renderer, 4.0f, 156.0f, label);
+    if (!b->boxValid) return;
+
+    int   tp, startX, startY, endX, endY;
+    float moX, moY;
+    mapTileWindow(app, screenW, screenH, &tp, &moX, &moY,
+                  &startX, &startY, &endX, &endY);
+    (void)startX; (void)startY; (void)endX; (void)endY;
+    int x0 = b->cx - BRAINREC_DIJ_HALF, y0 = b->cy - BRAINREC_DIJ_HALF;
+    SDL_SetRenderDrawBlendMode(app->renderer, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColor(app->renderer, 255, 140, 0, 220);
+    SDL_FRect box = { moX + x0 * tp, moY + y0 * tp,
+                      (float)(BRAINREC_DIJ_BOX * tp), (float)(BRAINREC_DIJ_BOX * tp) };
+    SDL_RenderRect(app->renderer, &box);
+}
+
+/* Recorded Dijkstra heatmap (key 7 in playback of a v8 session): the
+ * followed bot's recorded box for the viewed slate (Shift+7 cycles), with
+ * the box outlined. Nothing outside the box was recorded. */
+static void renderRecordedDijkstraHeatmap(BrainTestApp *app, int screenW, int screenH) {
+    const BrainRecDijBotBox *b = btRecordedDijBot(app);
+    int viewSlate = app->dijViewSlate;
+    const BrainRecDijSlateBox *sl = (b && viewSlate >= 0 && viewSlate < BRAINREC_DIJ_SLATES)
+                                    ? &b->slates[viewSlate] : NULL;
+    {
+        char dijLabel[200];
+        if (!sl || !sl->active) {
+            SDL_snprintf(dijLabel, sizeof(dijLabel),
+                "[7] recorded dijkstra slate=%d: not recorded this frame", viewSlate);
+        } else {
+            uint32_t curTick = app->recording.frames[app->playbackFrame].tick / 2;
+            int life = (sl->meta.started_tick > 0) ? (int)(curTick - sl->meta.started_tick) : 0;
+            SDL_snprintf(dijLabel, sizeof(dijLabel),
+                "[7] recorded dijkstra slate=%d kind=%d src=(%d,%d)%s life=%d %s box=%dx%d%s",
+                viewSlate, (int)sl->meta.kind, sl->meta.src_x, sl->meta.src_y,
+                sl->meta.in_boat ? " boat" : "", life,
+                sl->meta.done ? "DONE" : "(running)",
+                BRAINREC_DIJ_BOX, BRAINREC_DIJ_BOX,
+                b->boxValid ? "" : " (no tank: no box)");
+        }
+        SDL_SetRenderDrawColor(app->renderer, 0, 255, 255, 255);
+        SDL_RenderDebugText(app->renderer, 4.0f, 144.0f, dijLabel);
+    }
+    if (!sl || !sl->active || !b->boxValid) return;
+
+    int   tp, startX, startY, endX, endY;
+    float moX, moY;
+    mapTileWindow(app, screenW, screenH, &tp, &moX, &moY,
+                  &startX, &startY, &endX, &endY);
+    (void)startX; (void)startY; (void)endX; (void)endY;
+    int zf = app->zoomFactor;
+    int x0 = b->cx - BRAINREC_DIJ_HALF, y0 = b->cy - BRAINREC_DIJ_HALF;
+
+    SDL_SetRenderDrawBlendMode(app->renderer, SDL_BLENDMODE_BLEND);
+    for (int y = y0; y < y0 + BRAINREC_DIJ_BOX; y++) {
+        for (int x = x0; x < x0 + BRAINREC_DIJ_BOX; x++) {
+            float c = brainRecDijCostAt(b, viewSlate, x, y, NULL);
+            if (c >= BRAINREC_DIJ_INF_LIMIT) continue;   /* not reached / not recorded */
+
+            float t = c / 500.0f;
+            if (t > 1.0f) t = 1.0f;
+            int r = (int)(t * 255);
+            int g = (int)((1.0f - t) * 255);
+            SDL_SetRenderDrawColor(app->renderer, r, g, 60, 90);
+            SDL_FRect rect = { moX + x * tp, moY + y * tp,
+                               (float)tp, (float)tp };
+            SDL_RenderFillRect(app->renderer, &rect);
+
+            if (zf >= 2) {
+                char numBuf[16];
+                SDL_snprintf(numBuf, sizeof(numBuf), "%.0f", c);
+                int tw = (int)strlen(numBuf) * 8;
+                int th = 8;
+                float tx = rect.x + (tp - tw) * 0.5f;
+                float ty = rect.y + (tp - th) * 0.5f;
+                SDL_SetRenderDrawColor(app->renderer, 255, 255, 255, 200);
+                SDL_RenderDebugText(app->renderer, tx, ty, numBuf);
+            }
+        }
+    }
+    SDL_SetRenderDrawColor(app->renderer, 0, 255, 255, 200);
+    SDL_FRect box = { moX + x0 * tp, moY + y0 * tp,
+                      (float)(BRAINREC_DIJ_BOX * tp), (float)(BRAINREC_DIJ_BOX * tp) };
+    SDL_RenderRect(app->renderer, &box);
+}
+
 /* Live Dijkstra heatmap (key 7): per-tile cost-to-every-tile from
  * the followed bot's incremental Dijkstra. Pure O(1) array lookups
  * per tile via brainPathfinderDijkstraCostAt — no thread, no copy.
@@ -1898,6 +2147,10 @@ static void startCostToHeatmap(BrainTestApp *app, bool lowDanger) {
  * cheaper. Shift+7 cycles which slate (0..3) is being viewed. */
 static void renderDijkstraHeatmap(BrainTestApp *app, int screenW, int screenH) {
     if (!vizFlag(app->regIdxDijkstra)) return;
+    if (app->playbackMode && brainRecDijStoreHasData(&g_dijStore)) {
+        renderRecordedDijkstraHeatmap(app, screenW, screenH);
+        return;
+    }
     BrainPathfinder *botPf = serverSimGetBotBrainPathfinder(app->sim, app->followBot);
     if (!botPf) return;
 
@@ -2280,6 +2533,95 @@ static void slugifyPanelName(const char *in, char *out, size_t outLen) {
     out[j] = '\0';
 }
 
+/* The brain directory whose pool_render.lua builds the pool panel from a raw
+ * recorded pool block (see pool_render_host.h). Set at startup from the
+ * loaded brain; empty = not found yet (poolRenderDirFor looks again). */
+static char g_poolRenderDir[1024] = "";
+
+static bool dirHasPoolRender(const char *dir) {
+    char tryPath[1100];
+    SDL_snprintf(tryPath, sizeof(tryPath), "%s/pool_render.lua", dir);
+    SDL_IOStream *io = SDL_IOFromFile(tryPath, "r");
+    if (io) { SDL_CloseIO(io); return true; }
+    return false;
+}
+
+/* Picks the directory for pool_render.lua: the loaded brain's own directory
+ * first (brainScript is its init.lua path), then the usual GoalHunter
+ * places, so a recording made by GoalHunter still renders when BrainTest
+ * runs another brain. */
+static void poolRenderPickDir(const char *brainScript) {
+    g_poolRenderDir[0] = '\0';
+    if (brainScript && brainScript[0]) {
+        char dir[1024];
+        SDL_snprintf(dir, sizeof(dir), "%s", brainScript);
+        char *slash = NULL;
+        for (char *q = dir; *q; q++) if (*q == '/' || *q == '\\') slash = q;
+        if (slash) *slash = '\0'; else SDL_snprintf(dir, sizeof(dir), ".");
+        if (dirHasPoolRender(dir)) {
+            SDL_snprintf(g_poolRenderDir, sizeof(g_poolRenderDir), "%s", dir);
+            return;
+        }
+    }
+    const char *dirs[] = { "brains/GoalHunter", "Brains/GoalHunter",
+                           "../brains/GoalHunter", "data/Brains/GoalHunter" };
+    for (int i = 0; i < 4; i++) {
+        if (dirHasPoolRender(dirs[i])) {
+            SDL_snprintf(g_poolRenderDir, sizeof(g_poolRenderDir), "%s", dirs[i]);
+            return;
+        }
+    }
+}
+
+/* A recorded pool block as panel JSON. Old recordings hold the JSON itself
+ * (copied as is). New ones hold the brain's raw capture, which is rendered
+ * here, at view time, in a plain Lua state (pool_render_host.c). The last
+ * render per panel is kept, so a paused frame does not render again. */
+static char *panelRecordedJson(int panel_idx, const char *rec) {
+    if (!poolRenderIsRaw(rec)) {
+        size_t n = strlen(rec);
+        char *copy = (char *)malloc(n + 1);
+        if (copy) memcpy(copy, rec, n + 1);
+        return copy;
+    }
+    static char *lastRec[PANEL_REG_MAX];
+    static char *lastJson[PANEL_REG_MAX];
+    if (panel_idx >= 0 && panel_idx < PANEL_REG_MAX
+        && lastRec[panel_idx] && lastJson[panel_idx]
+        && strcmp(lastRec[panel_idx], rec) == 0) {
+        size_t n = strlen(lastJson[panel_idx]);
+        char *copy = (char *)malloc(n + 1);
+        if (copy) memcpy(copy, lastJson[panel_idx], n + 1);
+        return copy;
+    }
+    if (!g_poolRenderDir[0]) poolRenderPickDir(NULL);
+    char err[512];
+    char *json = poolRenderToJson(g_poolRenderDir[0] ? g_poolRenderDir
+                                                     : "brains/GoalHunter",
+                                  rec, err, sizeof(err));
+    if (err[0]) {
+        static bool warned = false;
+        if (!warned) { fprintf(stderr, "BrainTest: %s\n", err); warned = true; }
+    }
+    if (json && panel_idx >= 0 && panel_idx < PANEL_REG_MAX) {
+        size_t rn = strlen(rec), jn = strlen(json);
+        char *r = (char *)malloc(rn + 1);
+        char *j = (char *)malloc(jn + 1);
+        if (r && j) {
+            memcpy(r, rec, rn + 1);
+            memcpy(j, json, jn + 1);
+            free(lastRec[panel_idx]);
+            free(lastJson[panel_idx]);
+            lastRec[panel_idx] = r;
+            lastJson[panel_idx] = j;
+        } else {
+            free(r);
+            free(j);
+        }
+    }
+    return json;
+}
+
 static char *panelPollCallback(int panel_idx) {
     const PanelRegistryEntry *e = panelRegistryGet(panel_idx);
     if (!e || !e->lua_expr[0]) return NULL;
@@ -2303,12 +2645,7 @@ static char *panelPollCallback(int panel_idx) {
             rec = g_panelPollRecording->frames[g_panelPollFrame - back]
                   .recordedPanels[panel_idx];
         }
-        if (rec) {
-            size_t n = strlen(rec);
-            char *copy = (char *)malloc(n + 1);
-            if (copy) memcpy(copy, rec, n + 1);
-            return copy;
-        }
+        if (rec) return panelRecordedJson(panel_idx, rec);
         /* No recorded data for this frame. We USED to fall through and
          * poll the live brain, which silently showed today's state as
          * if it were historical — actively misleading. Return a clear
@@ -3077,8 +3414,12 @@ static void renderOverlay(BrainTestApp *app, int screenW, int screenH) {
     updateCachedPath(app);
 
     bool hasGridOverlay = vizFlag(app->regIdxInfluence) || vizFlag(app->regIdxDanger) || vizFlag(app->regIdxFrontLine);
+    /* Recorded Dijkstra path to the click (playback of a v8 session). */
+    static BtRecDijClick recClick;
+    bool recPath = app->clickActive && btRecordedDijClick(app, &recClick)
+                   && recClick.pathLen >= 2;
     bool hasPathOverlay = (vizFlag(app->regIdxPath) && app->cachedPathLen > 0) ||
-                          (app->clickActive && app->clickPathLen > 0);
+                          (app->clickActive && app->clickPathLen > 0) || recPath;
 
     if (!hasGridOverlay && !hasPathOverlay) return;
 
@@ -3119,6 +3460,15 @@ static void renderOverlay(BrainTestApp *app, int screenW, int screenH) {
         renderPathLines(app, screenW, screenH,
                         app->clickPath_x, app->clickPath_y, app->clickPathLen,
                         255, 100, 255, 220);
+    }
+    if (recPath) {
+        /* Orange: the bot's recorded Dijkstra path, from the click back
+         * toward the slate source, stopping at the recorded box edge. */
+        renderPathLines(app, screenW, screenH,
+                        recClick.path_x, recClick.path_y, recClick.pathLen,
+                        255, 170, 0, 240);
+    }
+    if (app->clickActive && (app->clickPathLen > 0 || recPath)) {
         /* Click destination marker — small cross */
         float cx, cy;
         mapToScreen(app, app->clickMX, app->clickMY, screenW, screenH, &cx, &cy);
@@ -3595,8 +3945,15 @@ static void recordingCapture(BrainTestApp *app) {
     for (int pi = 0; pi < totalN && pi < PANEL_REG_MAX; pi++) {
         const PanelRegistryEntry *e = panelRegistryGet(pi);
         if (!e || !e->lua_expr[0]) continue;
+        /* The pool panel records the brain's cheap raw capture (rendered at
+         * view time, see panelRecordedJson); a brain without one gives its
+         * JSON. Other panels record their own expression. */
+        const char *expr = e->lua_expr;
+        if (strstr(expr, "get_pool_breakdown_json"))
+            expr = "return (brain.get_pool_breakdown_raw"
+                   " or brain.get_pool_breakdown_json)()";
         f->recordedPanels[pi] =
-            serverSimBotEvalLuaString(app->sim, e->bot_owner, e->lua_expr);
+            serverSimBotEvalLuaString(app->sim, e->bot_owner, expr);
     }
 
     /* ── Shot-sim POI poll snapshots ── eval every POI owned by the
@@ -4311,10 +4668,48 @@ static void renderHUD(BrainTestApp *app, int screenW, int screenH) {
      * computeClickPath already uses the playback tank position when
      * scrubbing, so A* / est track history correctly. */
     if (app->clickActive) {
-        char l1[160], l2[160];
+        char l1[200], l2[160], l3[160], l4[96];
         const char *dijStr;
-        char dijBuf[32];
+        char dijBuf[96];
+        l3[0] = '\0';
+        l4[0] = '\0';
+        /* The recorded danger at the clicked tile (playback, v8 session). */
         if (app->playbackMode) {
+            const BrainRecDijBotBox *db = btRecordedDijBot(app);
+            uint16_t dv = 0;
+            if (db && brainRecDijDangerAt(db, app->clickMX, app->clickMY, &dv)) {
+                SDL_snprintf(l4, sizeof(l4), "recorded danger: %u", (unsigned)dv);
+            } else if (db) {
+                SDL_snprintf(l4, sizeof(l4), "recorded danger: not recorded (outside box)");
+            }
+        }
+        static BtRecDijClick rc;
+        if (app->playbackMode && btRecordedDijClick(app, &rc)) {
+            /* The bot's recorded slate at the scrubbed frame. */
+            if (rc.slate < 0) {
+                dijStr = "no slate recorded";
+            } else if (!rc.inBox) {
+                SDL_snprintf(dijBuf, sizeof(dijBuf),
+                             "not recorded (outside box) (slate %d kind %d)",
+                             rc.slate, rc.kind);
+                dijStr = dijBuf;
+            } else if (rc.cost >= BRAINREC_DIJ_INF_LIMIT) {
+                SDL_snprintf(dijBuf, sizeof(dijBuf), "unreached (slate %d kind %d)",
+                             rc.slate, rc.kind);
+                dijStr = dijBuf;
+            } else {
+                SDL_snprintf(dijBuf, sizeof(dijBuf), "%.0f%s (slate %d kind %d, recorded)",
+                             (double)rc.cost, rc.layer ? " boat" : "", rc.slate, rc.kind);
+                dijStr = dijBuf;
+                const char *why =
+                    rc.pathEnd == BRAINREC_DIJ_TRACE_SOURCE   ? "reaches the slate source" :
+                    rc.pathEnd == BRAINREC_DIJ_TRACE_LEFT_BOX ? "path leaves recorded box" :
+                    rc.pathEnd == BRAINREC_DIJ_TRACE_MISSING  ? "stops: next node not recorded" :
+                                                                "stops: too long";
+                SDL_snprintf(l3, sizeof(l3), "recorded dij path (orange): %d tiles, %s",
+                             rc.pathLen, why);
+            }
+        } else if (app->playbackMode) {
             dijStr = "N/A (playback)";
         } else {
             /* Read the same slate the "7" overlay shows (cycled via
@@ -4348,18 +4743,26 @@ static void renderHUD(BrainTestApp *app, int screenW, int screenH) {
             SDL_snprintf(astarBuf, sizeof(astarBuf), "%.0f", (double)app->clickCost);
             astarStr = astarBuf;
         }
+        /* In playback the A* runs on the live pathfinder grids, not the
+         * recorded ones: say so, so it is not taken for the bot's path. */
         SDL_snprintf(l1, sizeof(l1),
-            "Click (%d,%d)  A*=%s  est=%.0f  dij=%s",
+            "Click (%d,%d)  %s=%s  est=%.0f  dij=%s",
             app->clickMX, app->clickMY,
+            app->playbackMode ? "A* (live map)" : "A*",
             astarStr, (double)app->clickEstCost, dijStr);
         SDL_snprintf(l2, sizeof(l2),
             "(A* / est use the followed tank's%s position)",
             app->playbackMode ? " playback" : " live");
         float cs = 1.5f;
+        int   nLines = 2 + (l3[0] ? 1 : 0) + (l4[0] ? 1 : 0);
         float cw1 = (float)strlen(l1) * 8.0f * cs + 8.0f;
         float cw2 = (float)strlen(l2) * 8.0f * cs + 8.0f;
+        float cw3 = (float)strlen(l3) * 8.0f * cs + 8.0f;
+        float cw4 = (float)strlen(l4) * 8.0f * cs + 8.0f;
         float cw  = cw1 > cw2 ? cw1 : cw2;
-        float ch  = (8.0f * cs + 2.0f) * 2 + 6.0f;
+        if (cw3 > cw) cw = cw3;
+        if (cw4 > cw) cw = cw4;
+        float ch  = (8.0f * cs + 2.0f) * nLines + 6.0f;
         float cx  = (float)screenW - cw - 4.0f;
         /* +80 px up so the playback slider doesn't cover the panel. */
         float cy  = (float)screenH - ch - 4.0f - CONTROL_BAR_HEIGHT - 80.0f;
@@ -4369,6 +4772,15 @@ static void renderHUD(BrainTestApp *app, int screenW, int screenH) {
         drawHudLine(app->renderer, cx + 4.0f, cy + 3.0f, cs, 255, 100, 255, l1);
         drawHudLine(app->renderer, cx + 4.0f, cy + 3.0f + 8.0f * cs + 2.0f,
                     cs, 180, 180, 100, l2);
+        if (l3[0]) {
+            drawHudLine(app->renderer, cx + 4.0f, cy + 3.0f + (8.0f * cs + 2.0f) * 2,
+                        cs, 255, 170, 0, l3);
+        }
+        if (l4[0]) {
+            drawHudLine(app->renderer, cx + 4.0f,
+                        cy + 3.0f + (8.0f * cs + 2.0f) * (l3[0] ? 3 : 2),
+                        cs, 255, 140, 0, l4);
+        }
     }
 
     /* ── Hover coords (just above the control bar): tile (sub-tile
@@ -5225,6 +5637,9 @@ static void appRender(BrainTestApp *app) {
                 memcpy(savedInflu,  pbPf->influence_grid, gridSz * sizeof(int16_t));
                 memcpy(savedOverl,  pbPf->overlay_grid,   gridSz * sizeof(uint16_t));
                 memcpy(pbPf->danger_grid,    app->recording.playbackDanger,    gridSz * sizeof(uint16_t));
+                /* A v8 session: show the bot's recorded danger box, and
+                 * nothing outside it. */
+                btPatchRecordedDanger(app, pbPf->danger_grid);
                 memcpy(pbPf->influence_grid, app->recording.playbackInfluence, gridSz * sizeof(int16_t));
                 memcpy(pbPf->overlay_grid,   app->recording.playbackOverlay,   gridSz * sizeof(uint16_t));
                 /* brainMap is externally-owned memory the pathfinder
@@ -5306,6 +5721,15 @@ static void appRender(BrainTestApp *app) {
                 TankSnapshot *ts = &pf_->tanks[i];
                 BYTE pn = ts->playerNum;
                 if (pn >= MAX_TANKS) continue;
+                /* A dead tank stays out of the sim, the same as a stub,
+                 * so the map does not draw it. Its recorded angle keeps
+                 * changing for the whole respawn wait, and the renderer
+                 * reads only deathWait, which the recording holds for
+                 * slot 0 alone: the other dead tanks were drawn turning
+                 * on the spot. The respawn frame clears the status bits
+                 * and carries the new place, so the tank comes back
+                 * there with no frame at the old place. */
+                if (braintestTankStatusIsDead(ts->tankStatus)) continue;
                 struct tankObj *t = &tempTanks[pn];
                 t->x         = ts->worldX;
                 t->y         = ts->worldY;
@@ -5466,6 +5890,9 @@ static void appRender(BrainTestApp *app) {
 
         /* Numeric cell values (companion to 1/2 grid overlays). */
         renderCellValues(app, screenW, screenH);
+
+        /* Recorded danger box outline + label (playback, v8 session). */
+        renderRecordedDangerBox(app, screenW, screenH);
 
         /* Fog-of-war (drawn between BrainTest pathfinder overlays
          * and the brain's own overlays so the brain's stuff isn't
@@ -5758,6 +6185,7 @@ static void appRender(BrainTestApp *app) {
     vizDetailWindowRender((int)app->followBot);
     {
         bool rescan = false;
+        if (g_showLoadBrowser) sessionPollPendingTicks();
         int sel = loadBrowserRender(&g_showLoadBrowser, g_sessionList, g_sessionCount,
                                     optLoadSession, &rescan);
         /* A rename moved dirs on disk, so every g_sessionList name (and every
@@ -6082,11 +6510,17 @@ int main(int argc, char *argv[]) {
      * line up with what we'll patch in during playback). The map name maps to
      * data/maps/<name>.map unless the user passed an explicit -map. */
     char loadSessionBtr[1200] = "";
+    char loadSessionMapName[64] = "";
+    const bool optMapExplicit = (optMap[0] != '\0');   /* -map given */
     if (optLoadSession[0]) {
         SDL_snprintf(loadSessionBtr, sizeof(loadSessionBtr), "%s/%s",
                      optLoadSession, BRAINREC_FILENAME);
         char mapName[64] = ""; int recBots = 1;
         if (btPeekSession(loadSessionBtr, mapName, &recBots, true)) {
+            SDL_strlcpy(loadSessionMapName, mapName, sizeof(loadSessionMapName));
+            /* The session's own map (BRAINREC_MAP_FILENAME) is tried first,
+             * below; this file is the fallback for a recording made before
+             * the recorder saved one. */
             if (!optMap[0] && mapName[0])
                 SDL_snprintf(optMap, sizeof(optMap), "data/maps/%s.map", mapName);
             if (recBots > 0) optNumPlayers = recBots;
@@ -6102,12 +6536,37 @@ int main(int argc, char *argv[]) {
     /* Load map */
     SDL_PumpEvents();
     bool mapLoaded = false;
-    if (optMap[0]) {
+    /* A recording's bases have no positions in its frames, so they come from
+     * the map loaded here. The map the session saved beside its .btr is the
+     * one it was played on, and loads without mapRead's recentre, so it
+     * lines up with the recorded terrain. An explicit -map still wins. */
+    if (loadSessionBtr[0] && !optMapExplicit) {
+        BYTE *smap = (BYTE *)malloc(MAP_COMPRESSED_MAX_SIZE);
+        int slen = smap ? brainRecReadSessionMap(optLoadSession, smap, MAP_COMPRESSED_MAX_SIZE) : 0;
+        if (slen > 0) {
+            app.sim = serverSimCreateCompressed(smap, slen,
+                                                loadSessionMapName[0] ? loadSessionMapName : "Session map",
+                                                optGame, false, 0, -1);
+            mapLoaded = (app.sim != NULL);
+            fprintf(stderr, "Load session: %s map from %s/%s\n",
+                    mapLoaded ? "loaded the" : "could not read the",
+                    optLoadSession, BRAINREC_MAP_FILENAME);
+        }
+        free(smap);
+    }
+    if (!mapLoaded && optMap[0]) {
         app.sim = serverSimCreate(optMap, optGame, false, 0, -1);
         mapLoaded = (app.sim != NULL);
         if (!mapLoaded) {
             fprintf(stderr, "Failed to load map '%s'\n", optMap);
         }
+    }
+    if (!mapLoaded && loadSessionBtr[0]) {
+        fprintf(stderr, "Load session: no map for '%s' (no %s in the session "
+                        "and no %s). Using Everard Island: the bases are "
+                        "Everard's and will not match the recorded terrain.\n",
+                loadSessionMapName, BRAINREC_MAP_FILENAME,
+                optMap[0] ? optMap : "data/maps file");
     }
     if (!mapLoaded) {
         BYTE emap[6000] = E_MAP;
@@ -6258,6 +6717,7 @@ int main(int argc, char *argv[]) {
 
     if (findBrainScript(optBrain, brainPath, sizeof(brainPath))) {
         fprintf(stderr, "  Brain script: %s\n", brainPath);
+        poolRenderPickDir(brainPath);
         /* Extract brain dir basename ("brains/GoalHunter" or
          * "brains/GoalHunter/init.lua" -> "GoalHunter") so the
          * panel-register callback can namespace types with it. */
@@ -7413,6 +7873,7 @@ int main(int argc, char *argv[]) {
     clientMutexDestroy();
     threadsDestroy();
     botWorkerPoolDestroy();
+    sessionTicksShutdown();   /* stop a Load Session length read in progress */
     SDL_Quit();
 
     return 0;

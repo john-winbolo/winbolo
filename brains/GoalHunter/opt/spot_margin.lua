@@ -13,8 +13,9 @@ local bit = require('bitcompat')
 -- THE RULE
 --   A shot line runs from the tank's origin point O to an aim point A on the
 --   target pill. L = |OA|. For every blocker tile near the line (a built wall
---   or half-wall, a live deployed pill of any owner, a base of any owner — the
---   same set the scan's shell test blocks on):
+--   or half-wall, a live deployed pill of any owner, a base that stops the
+--   shell (U.base_stops_tank_shell) — the same set the scan's shell test
+--   blocks on):
 --     off  = distance from the line SEGMENT to the blocker's tile SQUARE
 --            (its edges, not its centre)
 --     d    = distance from A, measured along the line, to the line point
@@ -141,7 +142,11 @@ function M.pending_pill_at(world, x, y)
   return pp ~= nil and pp[y * 256 + x] ~= nil
 end
 
--- Blocker kind at tile (x,y): "wall", "base", "pill", "pill_pending" or false.
+-- Blocker kind at tile (x,y): "wall", "base", "base_boat", "pill",
+-- "pill_pending" or false. "base" stops every shell from our tank;
+-- "base_boat" stops only a shell fired from a boat (U.base_stops_tank_shell:
+-- from land we shoot over our own, allied and neutral bases), so line_margin
+-- counts it only when the origin is a boat shot.
 -- Reads terrain through U.ttype_peek (a pure read): U.ttype is a change
 -- DETECTOR and priming new tiles from here would move threat recomputes.
 local function world_blocker(world, x, y)
@@ -150,7 +155,10 @@ local function world_blocker(world, x, y)
   if tt == C.T_BUILDING or tt == C.T_HALFBUILD then return "wall" end
   local key = y * 256 + x
   local be = world and world.base_at and world.base_at[key]
-  if be and be.base then return "base" end
+  if be and be.base then
+    if U.base_stops_tank_shell(world, be.base, false) then return "base" end
+    return "base_boat"
+  end
   local plist = world and world.pill_at and world.pill_at[key]
   if plist then
     local pills = world.pills
@@ -199,6 +207,7 @@ function M.line_margin(ctx, ofx, ofy, afx, afy, margin)
   if not margin or margin <= 0 then return true end
   local pmx, pmy = ctx.pmx, ctx.pmy
   local omx, omy = floor(ofx), floor(ofy)
+  local from_boat = nil   -- asked only when a "base_boat" tile is near the line
   local x0 = floor((ofx < afx and ofx or afx) - margin) - 1
   local x1 = floor((ofx > afx and ofx or afx) + margin)
   local y0 = floor((ofy < afy and ofy or afy) - margin) - 1
@@ -215,6 +224,10 @@ function M.line_margin(ctx, ofx, ofy, afx, afy, margin)
     for bx = x0, x1 do
       if not (bx == pmx and by == pmy) and not (bx == omx and by == omy) then
         local kind = blocker_at(ctx, bx, by)
+        if kind == "base_boat" then
+          if from_boat == nil then from_boat = U.tank_shell_on_boat(ctx.world, omx, omy) end
+          if not from_boat then kind = false end
+        end
         if kind then
           local off, d, L = M.seg_square_dist(afx, afy, ofx, ofy, bx, by)
           local need = (L > 0) and (margin * d / L) or 0
@@ -241,12 +254,57 @@ end
 -- attack.lua (attack.lua aliases it) so squad.lua's arbiter can share it.
 -- `wallset` (optional, packed my*256+mx) adds a commander's broadcast shield
 -- walls as blockers; nil = exactly the old behaviour.
+--
+-- The walk over the shell's squares is line_trees (below), shared with
+-- M.angle_line_trees, which fires at a gun angle instead of an aim point.
+local line_trees
 function M.aim_line_trees(ox, oy, omx, omy, pmx, pmy, world, i, wallset)
   local off = shield.AIM_OFFSETS_TILE_FIRE[i]
   local awx = bit.lshift(pmx, 8) + math.floor(off[1] * 256)
   local awy = bit.lshift(pmy, 8) + math.floor(off[2] * 256)
   local tiles = cpf.simulate_shot(ox, oy, awx, awy, cpf.SHOT_TANK, 0)
   if not tiles then return nil end
+  local trees = line_trees(tiles, omx, omy, pmx, pmy, world, wallset)
+  if trees then return trees, awx, awy end
+  return nil
+end
+
+-- Same shell test as M.aim_line_trees, but it also tells WHY a line fails
+-- (C.CHARGE_LEEWAY, attack.lua charge_leeway). Returns (class, trees, awx, awy):
+--   "clear"   the shell reaches the pill; trees as aim_line_trees
+--   "blocked" a wall, base, pill or pending pill stops it before the pill
+--   "short"   the shell dies before the pill with nothing in its way
+-- "short" is found by running the same blocker walk on the shell's squares
+-- with the pill square added at the end: if that walk passes, nothing on the
+-- shell's real path stopped it, so it only ran out of range.
+function M.aim_line_class(ox, oy, omx, omy, pmx, pmy, world, i, wallset)
+  local off = shield.AIM_OFFSETS_TILE_FIRE[i]
+  local awx = bit.lshift(pmx, 8) + math.floor(off[1] * 256)
+  local awy = bit.lshift(pmy, 8) + math.floor(off[2] * 256)
+  local tiles = cpf.simulate_shot(ox, oy, awx, awy, cpf.SHOT_TANK, 0)
+  if not tiles then return "short", nil, awx, awy end
+  local trees = line_trees(tiles, omx, omy, pmx, pmy, world, wallset)
+  if trees then return "clear", trees, awx, awy end
+  local ext = {}
+  for ti = 1, #tiles do ext[ti] = tiles[ti] end
+  ext[#ext + 1] = { mx = pmx, my = pmy }
+  if line_trees(ext, omx, omy, pmx, pmy, world, wallset) then
+    return "short", nil, awx, awy
+  end
+  return "blocked", nil, awx, awy
+end
+
+-- Same test for a shell fired at gun angle a (brad, float) from (ox,oy) world
+-- units. Returns the tree count, or nil when the line is blocked or never
+-- reaches the pill. Used by the clear-lane width check
+-- (C.BLOCKER_MIN_LANE_BRAD, attack.lua M.aim_lane_wide).
+function M.angle_line_trees(ox, oy, omx, omy, pmx, pmy, world, a, wallset)
+  local tiles = cpf.simulate_shot_angle(ox, oy, a, cpf.SHOT_TANK, 0)
+  if not tiles then return nil end
+  return line_trees(tiles, omx, omy, pmx, pmy, world, wallset)
+end
+
+line_trees = function(tiles, omx, omy, pmx, pmy, world, wallset)
   local pill_at = world and world.pill_at
   local base_at = world and world.base_at
   local pills   = world and world.pills
@@ -270,7 +328,10 @@ function M.aim_line_trees(ox, oy, omx, omy, pmx, pmy, world, i, wallset)
       local key = t.my * 256 + t.mx
       if wallset and wallset[key] then blocked = true; break end
       local be = base_at and base_at[key]
-      if be and be.base then blocked = true; break end
+      if be and be.base
+         and U.base_stops_tank_shell(world, be.base, U.tank_shell_on_boat(world, omx, omy)) then
+        blocked = true; break
+      end
       if pending and pending[key] then blocked = true; break end
       local plist = pill_at and pill_at[key]
       if plist then
@@ -288,7 +349,7 @@ function M.aim_line_trees(ox, oy, omx, omy, pmx, pmy, world, i, wallset)
       end
     end
   end
-  if reached and not blocked then return trees, awx, awy end
+  if reached and not blocked then return trees end
   return nil
 end
 

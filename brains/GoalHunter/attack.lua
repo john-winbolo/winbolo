@@ -12,6 +12,7 @@ local log    = require("logger")
 local threat = require("threat")
 local danger = require("danger")
 local shot_tracker = require("shot_tracker")
+local QR = require("quick_repair")   -- C.QUICK_REPAIR_ON_TAKE: shell landing ticks
 local shield = require("attack_shield")
 local viz    = require("viz")
 local squad      = require("squad")
@@ -941,7 +942,11 @@ end
 -- target pill tile. Returns (shots_needed, reason_str) where
 -- shots_needed is the extra shots to clear the path (0 = clear path),
 -- or (math.huge, reason) if an impassable obstacle (other pillbox) blocks.
-local function shot_path_obstacle_count(info, goal, world, aim_wx, aim_wy, from_wx, from_wy)
+--
+-- Optional quiet (8th arg): no SHOT_REACH_DBG line when the shell misses the
+-- pill. The finetune lane sampler (M.finetune_lane_target) tests many angles
+-- that miss on purpose.
+local function shot_path_obstacle_count(info, goal, world, aim_wx, aim_wy, from_wx, from_wy, quiet)
   local pmx, pmy = goal.mx, goal.my
   -- Fire the tank's LIVE float gun angle (info.tank_angle, straight from the
   -- engine's MY_TANK->angle) — bit-exact with the shot the engine will actually
@@ -1028,13 +1033,48 @@ local function shot_path_obstacle_count(info, goal, world, aim_wx, aim_wy, from_
       end
     end
   end
-  if not reached_pill then
+  if not reached_pill and not quiet then
     local lastt = tiles[#tiles]
     print2(string.format("SHOT_REACH_DBG reached=false pill=(%d,%d) angle=%.1f tank=(%d,%d) ntiles=%d last=(%s,%s)",
       pmx, pmy, info.tank_angle or -1, bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8),
       #tiles, lastt and tostring(lastt.mx) or "?", lastt and tostring(lastt.my) or "?"))
   end
   return shots, nil, reached_pill
+end
+
+-- CLEAR_TURN_TAP_PROGRESS: the clear lane around the gun from where the tank
+-- stands now. An angle is clear when its shell (same sim and gun range as the
+-- finetune on_pill test) crosses the pill square and shot_path_obstacle_count
+-- finds no live pill before it. The lane is sampled once per tank position on
+-- a grid around the gun angle (aim_lane.lua) and kept in goal._ft_lane; a new
+-- sample is taken when the tank moves, the pill changes or the gun leaves the
+-- middle half of the window. Returns (nearest clear angle, abs error in brad)
+-- or nil when no sampled angle is clear.
+function M.finetune_lane_target(info, goal, world, angle_f)
+  local AL = require("aim_lane")
+  local lane = goal._ft_lane
+  if not lane or lane.x ~= info.tankx or lane.y ~= info.tanky
+     or lane.pmx ~= goal.mx or lane.pmy ~= goal.my
+     or math.abs(AL.adiff(lane.base, angle_f)) > lane.n * lane.step / 2 then
+    local pmx, pmy = goal.mx, goal.my
+    local probe = setmetatable({}, { __index = info })
+    lane = AL.scan(function(a)
+      local path = cpf.simulate_shot_angle(info.tankx, info.tanky, a,
+                                           cpf.SHOT_TANK, info.gunrange or 14)
+      local on = false
+      if path then
+        for _, t in ipairs(path) do
+          if t.mx == pmx and t.my == pmy then on = true; break end
+        end
+      end
+      if not on then return false end
+      probe.tank_angle = a
+      return shot_path_obstacle_count(probe, goal, world, nil, nil, nil, nil, true) ~= math.huge
+    end, angle_f)
+    lane.x, lane.y, lane.pmx, lane.pmy = info.tankx, info.tanky, pmx, pmy
+    goal._ft_lane = lane
+  end
+  return AL.nearest(lane, angle_f)
 end
 
 -- Ban the approach angle we are CURRENTLY using on this pill (the 5° bucket of
@@ -1112,7 +1152,7 @@ end
 -- (cpf.simulate_shot — same physics as the engine, the authoritative "what tiles
 -- does this shell actually cover" answer) rather than a naive grid line. The shot
 -- is clear iff the simulated trajectory REACHES the pill tile; if it stops short
--- on a wall, a hostile base, or another pillbox, the shell hits that instead — a
+-- on a wall, a base that stops it, or another pillbox, the shell hits that instead — a
 -- take from such a standoff would just shell the obstacle (e.g. an enemy base
 -- between us and the pill). Endpoints excluded. Shared by score_standoff AND
 -- pick_standoff's fallback so EVERY chosen standoff is verified to have a real
@@ -1129,10 +1169,10 @@ local function standoff_clear_shot(world, cx, cy, pill)
       return true  -- shell trajectory reaches the target pill → clear shot
     end
     if not (t.mx == cx and t.my == cy) then  -- skip our own (origin) tile
-      -- A base of ANY owner (hostile/friendly/neutral) is solid and stops the
-      -- shell before it reaches the pill.
-      local bentry = world.base_at and world.base_at[t.my * 256 + t.mx]
-      if bentry and bentry.base then return false end
+      -- A base stops the shell before it reaches the pill only under the
+      -- engine rule (U.base_stops_tank_shell): from land, our own, allied
+      -- and neutral bases do not.
+      if U.base_tile_stops_tank_shell(world, t.mx, t.my, cx, cy) then return false end
       -- A wall stops the shell.
       local tt = U.ttype(t.mx, t.my)
       if tt == C.T_BUILDING or tt == C.T_HALFBUILD then return false end
@@ -2676,7 +2716,8 @@ end
 -- back as one of three things:
 --   CLEAR       shell reaches the pill tile with nothing in between
 --   TREES_ONLY  only forest in the way — we can shoot the trees down first
---   BLOCKED     a live deployed pill of ANY owner, a base of any owner, or a
+--   BLOCKED     a live deployed pill of ANY owner, a base that stops the shell
+--               (U.base_stops_tank_shell), or a
 --               built wall / half-wall stops the shell, or it never gets there
 -- A wall counts as BLOCKED even though we could shell it down: the planner has
 -- a whole circle of angles to choose from, so there is no reason to take a line
@@ -2694,6 +2735,21 @@ end
 --
 -- Returns aim_idx, aim_wx, aim_wy (world units), aim_trees — or nil when every
 -- aim point is blocked, and the caller must drop the spot.
+
+-- C.BLOCKER_MIN_LANE_BRAD: is the clear lane from (ox,oy) to the aim point
+-- (awx,awy) (all world units) at least min_brad wide on both sides of the aim
+-- angle? A gun angle is clear when spot_margin's shell test
+-- (SM.angle_line_trees: the same blockers as aim_line_trees) reaches the pill.
+-- Samples every 1/16 brad out to min_brad each side (aim_lane.wide_enough).
+-- Returns (ok, left, right, aim_angle).
+function M.aim_lane_wide(ox, oy, pmx, pmy, world, awx, awy, min_brad)
+  local omx, omy = bit.rshift(ox, 8), bit.rshift(oy, 8)
+  local a0 = U.aim_at_f(ox / 256.0, oy / 256.0, awx / 256.0, awy / 256.0) % 256
+  local ok, left, right = require("aim_lane").wide_enough(function(a)
+    return SM.angle_line_trees(ox, oy, omx, omy, pmx, pmy, world, a) ~= nil
+  end, a0, min_brad)
+  return ok, left, right, a0
+end
 
 -- One aim point, one shell simulation. Returns the forest-tile count on the
 -- line (0 = perfectly clear) plus the aim point in world units, or nil when the
@@ -2717,16 +2773,28 @@ local aim_line_trees = SM.aim_line_trees
 -- comes back clear, even if another point has fewer trees. Callers pass the aim
 -- the take is already committed to, so a line that is still fine does not get
 -- swapped out from under a gun that is halfway through turning onto it.
-local function clear_aim_from_world(ox, oy, pmx, pmy, world, prefer_idx)
+--
+-- min_lane (optional, brad): also require the clear lane around the aim to be
+-- at least this wide on both sides (C.BLOCKER_MIN_LANE_BRAD, M.aim_lane_wide).
+-- An aim with a narrower lane counts as blocked. nil or 0 = the old test.
+local function clear_aim_from_world(ox, oy, pmx, pmy, world, prefer_idx, min_lane)
   local omx, omy = bit.rshift(ox, 8), bit.rshift(oy, 8)
+  local function line(i)
+    local trees, awx, awy = aim_line_trees(ox, oy, omx, omy, pmx, pmy, world, i)
+    if trees and min_lane and min_lane > 0
+       and not M.aim_lane_wide(ox, oy, pmx, pmy, world, awx, awy, min_lane) then
+      return nil
+    end
+    return trees, awx, awy
+  end
   if prefer_idx and shield.AIM_OFFSETS_TILE_FIRE[prefer_idx] then
-    local trees, awx, awy = aim_line_trees(ox, oy, omx, omy, pmx, pmy, world, prefer_idx)
+    local trees, awx, awy = line(prefer_idx)
     if trees then return prefer_idx, awx, awy, trees end
   end
   local best_i, best_trees, best_wx, best_wy = nil, nil, nil, nil
   for i = 1, 5 do
     if i ~= prefer_idx then
-      local trees, awx, awy = aim_line_trees(ox, oy, omx, omy, pmx, pmy, world, i)
+      local trees, awx, awy = line(i)
       if trees then
         if i == 1 and trees == 0 then
           return 1, awx, awy, 0            -- clear centre: one simulation, done
@@ -2742,10 +2810,14 @@ local function clear_aim_from_world(ox, oy, pmx, pmy, world, prefer_idx)
   return best_i, best_wx, best_wy, best_trees
 end
 
+M._clear_aim_from_world = clear_aim_from_world   -- unit tests
+
+-- The spot sweep in plan_position. C.BLOCKER_MIN_LANE_BRAD > 0 also asks for
+-- a clear lane that wide around the aim (0 = the old test).
 local function spot_clear_aim(sfx, sfy, pmx, pmy, world)
   return clear_aim_from_world(math.floor(sfx * 256 + 0.5),
                               math.floor(sfy * 256 + 0.5),
-                              pmx, pmy, world)
+                              pmx, pmy, world, nil, C.BLOCKER_MIN_LANE_BRAD or 0)
 end
 
 -- ── Blocked-line ladder ──────────────────────────────────────────────────
@@ -2816,6 +2888,112 @@ local function try_reaim(state, goal, world, ox, oy, pmx, pmy, now, tag, obstacl
   return "ok"
 end
 
+-- C.CHARGE_LEEWAY (2026-11-03): where the charge will stop. The charge
+-- steering (steering.lua, non-PPT stop decision) brakes when the predicted
+-- brake-now stop (cpf.predict_stop) comes within the engage distance of the
+-- pill: the charge spot's distance, or CHARGE_SUICIDE_STANDOFF for an ammo
+-- starved tank. So:
+--   * the brake-now stop is already inside that distance: it stops there
+--     ("brake");
+--   * else it stops where its travel line first comes to that distance
+--     ("ring"). The engine moves a tank in 16 directions only (dir16), so
+--     the travel line is dir16 of the facing, not the facing itself;
+--   * the travel line never comes that close: the brake-now stop ("brake").
+-- Returns (wx, wy, how) in world units.
+function M.charge_stop_point(state, goal, info, pmx, pmy)
+  local tmx, tmy = bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8)
+  local tcap = (C.TERRAIN_SPEED and C.TERRAIN_SPEED[U.ttype(tmx, tmy)]) or 16
+  local ang_f = info.tank_angle or info.direction or 0
+  local psx, psy = cpf.predict_stop(info.tankx, info.tanky, ang_f,
+                                    (info.speed or 0) / 4, tcap)
+  if not psx then return info.tankx, info.tanky, "here" end
+  local pwx, pwy = U.m2w(pmx), U.m2w(pmy)
+  local sfx = goal.standoff_fx or (pmx + 0.5)
+  local sfy = goal.standoff_fy or (pmy + 0.5)
+  local R
+  if state and state.ammo_deprived == true then
+    R = (C.CHARGE_SUICIDE_STANDOFF or 1.5) * 256
+  else
+    R = U.wdist(math.floor(sfx * 256 + 0.5), math.floor(sfy * 256 + 0.5), pwx, pwy)
+  end
+  if U.wdist(psx, psy, pwx, pwy) <= R then return psx, psy, "brake" end
+  local a = M._dir16(ang_f) * C.TWO_PI / 256   -- dir16 is defined further down
+  local ux, uy = math.sin(a), -math.cos(a)
+  local wx, wy = info.tankx - pwx, info.tanky - pwy
+  local b = wx * ux + wy * uy
+  local disc = b * b - (wx * wx + wy * wy - R * R)
+  if disc >= 0 then
+    local d = -b - math.sqrt(disc)
+    if d >= 0 then
+      return math.floor(info.tankx + d * ux + 0.5),
+             math.floor(info.tanky + d * uy + 0.5), "ring"
+    end
+  end
+  return psx, psy, "brake"
+end
+
+-- C.CHARGE_LEEWAY: the charge's step 1, in place of try_reaim. Andrew's rule:
+-- the take is fine as long as ONE aim on the pill (centre or a corner) hits it
+-- clear from where the tank will be. The 5 aims are tested from the stop
+-- point (M.charge_stop_point) while the tank moves, else from where it
+-- stands. Each aim is "clear", "blocked" (wall, base or pill in the way) or
+-- "short" (the shell dies before the pill with nothing in the way); from the
+-- live position a moving tank's lines often fall short, and that is no
+-- reason to give the spot up. Same rate limit and site key as try_reaim.
+-- Returns:
+--   "ok"      an aim is clear (written onto the goal) -- keep charging
+--   "wait"    tested too recently -- keep charging
+--   "go_on"   no aim clear yet, but not at the spot -- keep charging
+--   "blocked" at the spot and no aim clear -- caller bans and replans
+local function charge_leeway(state, goal, world, info, pmx, pmy, now, at_spot, obstacle)
+  local key  = "_reaim_tick_CHARGE"
+  local last = goal[key]
+  if last and (now - last) < (C.BLOCKED_AIM_RETRY_TICKS or 10) then return "wait" end
+  goal[key] = now
+  local moving = (info.speed or 0) > 1
+  local ox, oy, how = info.tankx, info.tanky, "stopped"
+  if moving then ox, oy, how = M.charge_stop_point(state, goal, info, pmx, pmy) end
+  local omx, omy = bit.rshift(ox, 8), bit.rshift(oy, 8)
+  local cur = goal.aim_idx
+  local cls, trs, wxs, wys = {}, {}, {}, {}
+  local pick = nil
+  for i = 1, 5 do
+    cls[i], trs[i], wxs[i], wys[i] = SM.aim_line_class(ox, oy, omx, omy, pmx, pmy, world, i)
+    if cls[i] == "clear" and (pick == nil or trs[i] < trs[pick]) then pick = i end
+  end
+  if cur and cls[cur] == "clear" then pick = cur end
+  local decision
+  if pick then
+    decision = (pick == cur) and "keep" or "switch"
+    if pick ~= cur then
+      set_goal_aim(goal, pmx, pmy, pick, wxs[pick], wys[pick])
+      local w = goal._shield_scan and goal._shield_scan.best
+      if w and w.aims and w.aims[pick] then w.best_aim_idx = pick end
+    end
+  elseif at_spot then
+    decision = "ban"
+  else
+    decision = "go_on"
+  end
+  if BRAIN_DEBUG_MODE then
+    local parts = {}
+    for i = 1, 5 do
+      parts[i] = string.format("%s=%s%s", shield.AIM_NAMES[i] or tostring(i), cls[i],
+        trs[i] and ("/" .. trs[i]) or "")
+    end
+    print2(string.format("CHARGE_LEEWAY t=%d pill=(%d,%d) tank=(%.3f,%.3f) spd=%d stop=(%.3f,%.3f) how=%s at_spot=%s obstacle=%s aims=[%s] from=%s chosen=%s decision=%s",
+      now, pmx, pmy, info.tankx / 256.0, info.tanky / 256.0, info.speed or 0,
+      ox / 256.0, oy / 256.0, how, tostring(at_spot), tostring(obstacle),
+      table.concat(parts, " "),
+      cur and (shield.AIM_NAMES[cur] or tostring(cur)) or "planned",
+      pick and (shield.AIM_NAMES[pick] or tostring(pick)) or "none", decision))
+  end
+  if pick then return "ok" end
+  if at_spot then return "blocked" end
+  return "go_on"
+end
+M._charge_leeway = charge_leeway   -- unit tests
+
 -- Step 2. Count this SPOT as tried, ban the approach angle (the blocker is a
 -- pill — it will not move, so replanning onto the same line just loops) and
 -- reset to plan_position for a fresh spot. _sanity_pill_replans is the one
@@ -2870,6 +3048,15 @@ local function reset_to_plan_position(state, goal)
   goal._reaim_tick_SHOOT_PILL   = nil
   goal._reaim_tick_BLITZ_GO     = nil
   goal._reaim_tick_SANITY       = nil
+  -- The next plan_position tick is a fresh entry: its cleanup clears the old
+  -- spot (standoff_*, approach_*, _chosen_deg, aim_*, through_walls, ...).
+  -- A caller that runs while that cleanup flag is still set (the shield scan
+  -- lane check inside plan_position, or a replan on the first tick after
+  -- plan_position) otherwise keeps the old standoff. The angle ban drops the
+  -- sweep cache, so the new sweep takes some ticks, and the 3-tick move to
+  -- approach saw the old standoff and drove to the banned spot with no
+  -- shield scan (bot2 t=5123..5127).
+  goal._plan_position_cleared   = nil
 end
 
 -- THE HUMAN WALKS ONTO OUR SPOT (C.HUMAN_DECOY_AWARE).  While a human-decoy
@@ -3065,6 +3252,8 @@ local function blocked_line_replan(state, goal, pmx, pmy, now)
   reset_to_plan_position(state, goal)
   return false, bucket, tries
 end
+M._reset_to_plan_position = reset_to_plan_position   -- unit tests
+M._blocked_line_replan    = blocked_line_replan      -- unit tests
 
 -- Blitz GO gate origin, world units (C.BLITZ_GO_GATE_FROM_STANDOFF, fix C,
 -- 2026-09-24). A blitz SOLDIER waits at its SETUP point, 2.25 tiles behind its
@@ -3551,12 +3740,15 @@ function M.evaluate_pill_difficulty(pill, world, detailed, scan_step, phase, sta
     -- what selects the C parity evaluator -- GoalHunter 1.5 / 1.6 link the
     -- same C object and still pass a bare pill_at, which keeps them on the
     -- frozen legacy evaluator.
+    U.mark_base_shell_pass(world)   -- C reads base._shell_pass_land
     gh_attack.sync_pill_at(world, pmx, pmy)
     local phase_not_opening = (phase and phase ~= "opening") and true or false
     local self_contrib = threat.pill_contrib and threat.pill_contrib[pmy * 256 + pmx] or nil
+    -- C.BLOCKER_MIN_LANE_BRAD is read here on every call (not at
+    -- init_stamps), so a cfg= override reaches the C clear-aim test too.
     local c_score, c_mx, c_my, c_deg = gh_attack.evaluate_pill_difficulty(
       pmx, pmy, step_deg, phase_not_opening,
-      tmx or -1, tmy or -1, self_contrib)
+      tmx or -1, tmy or -1, self_contrib, C.BLOCKER_MIN_LANE_BRAD or 0)
     if BRAIN_DEBUG_MODE then
       -- Parity self-check (diagnostic only; never changes what is returned).
       -- Whole block is stripped from opt/, so production pays nothing even
@@ -4383,12 +4575,17 @@ end
 -- and goal._on_target_misses (shots that died without landing on the pill).
 -- For each newly-detected miss, bump goal._bullets_needed by one so the
 -- charge/engage swerve trigger waits for a replacement shot.
-local function update_shot_accounting(goal, world)
+-- C.QUICK_REPAIR_ON_TAKE (2026-11-04): also records goal._on_target_land, the
+-- landing tick (brain ticks) of each counted in-flight shell, for
+-- quick_repair.kill_tick's T_kill. `now` stamps the list (_on_target_land_tick).
+local function update_shot_accounting(goal, world, now)
   if not goal._attack_start_tick then
     goal._on_target_fired  = 0
     goal._on_target_misses = 0
+    goal._on_target_land   = nil
     return
   end
+  local land = C.QUICK_REPAIR_ON_TAKE and {} or nil
   local pmx, pmy = goal.mx, goal.my
   local pwx = (pmx + 0.5) * 256
   local pwy = (pmy + 0.5) * 256
@@ -4453,6 +4650,10 @@ local function update_shot_accounting(goal, world)
         on_target_fired = on_target_fired + 1
         if s.status == "in_flight" then
           on_target_in_flight = on_target_in_flight + 1
+          if land then
+            local lt = QR.shot_land_tick(s, pmx, pmy, now)
+            if lt then land[#land + 1] = lt end
+          end
         elseif s.status == "dead" then
           local ddx = s.dead_fx - pwx
           local ddy = s.dead_fy - pwy
@@ -4473,6 +4674,126 @@ local function update_shot_accounting(goal, world)
   goal._on_target_fired     = on_target_fired
   goal._on_target_in_flight = on_target_in_flight
   goal._on_target_misses    = misses
+  goal._on_target_land      = land
+  goal._on_target_land_tick = now
+end
+
+-- C.BLITZ_SETUP_16DIR (2026-11-03): the engine moves a tank in 16 directions
+-- only (tank.c: ang = utilGet16Dir(angle), then utilCalcDistance(ang)). The
+-- charge turns the tank to face the aim point and drives forward, so the
+-- tank travels along utilGet16Dir(facing), not along the line to the aim.
+-- A setup point on the radial line (spot -> away from the pill) then puts
+-- the charge on a line that misses the spot: debug session 20261103_192602
+-- part 2, player 2, t=9570-9636, facing 248 moved north only and the tank
+-- ended 0.5 tile right of the spot.
+--
+-- dir16 is utilGet16Dir (util.c) for a float angle in brads: an angle in
+-- (c-8, c+8] gives c. (The Mac movement rule rounds a half sector up
+-- instead; the brain cannot see that rule, so the default rule is used.)
+local function dir16(a)
+  a = a % 256
+  if a <= 8 or a > 248 then return 0 end
+  return math.ceil((a - 8) / 16) * 16
+end
+M._dir16 = dir16
+
+-- Facing noise at the edge of a 16-direction sector, in brads. On the line
+-- F - t*u(D) the bearing to the aim moves from near D (at the setup) to the
+-- spot bearing (at the spot), so it moves TOWARD the sector edge and the
+-- tank's facing lags behind it on the D side: the charge only turns when
+-- |corr| > 1 (steering.lua attack_pill_steer fine taps), so it never leads
+-- the aim by more than the size of one fine turn step. The knob
+-- C.BLITZ_SETUP_16DIR_EDGE_BRAD (0.5) covers that step and float noise. The
+-- recorded case sits 0.89 brad from the edge.
+
+-- The setup point on the 16-direction travel line that ends on the spot the
+-- charge stops at. Returns new_fx, new_fy, rec; new_fx is nil on a fallback
+-- (rec.reason says why). rec carries the values the log line prints.
+--
+--   final spot F: the charge's first tick pulls the standoff to the
+--     ATTACK_PILL_STANDOFF_CHARGE ring along the same bearing (steering.lua,
+--     goal._charge_pulled). BLITZ_ENGAGE_SYNC only copies that pulled
+--     standoff into the broadcast spot, so this pull is the only move. We
+--     predict it here and leave the pull where it is.
+--   D: dir16 of the bearing F -> planned aim. A point P = F - t*u(D) has a
+--     bearing to the aim between D and that bearing (the sum of two vectors
+--     lies between them), so for every t > 0 the facing from P rounds to D
+--     too, and the charge travels along D all the way to F. The only risk is
+--     facing noise at a sector edge (C.BLITZ_SETUP_16DIR_EDGE_BRAD): then fall back.
+--   t: the setup stays on the same ring as today (setup_dist from the pill
+--     centre), so the point only moves around the ring and never nearer the
+--     pill. Here t is about 2.65 (the 2.25 offset plus the 0.4 pull).
+--   checks: the same rules the current setup line gets in score_standoff
+--     (standable land tile; no building, half-building, pillbox or hostile
+--     base on the drive line to the spot), and threat.at no higher than at
+--     the current setup point. A failed check keeps the current point.
+function M.blitz_setup_16dir(world, goal, pcx, pcy, setup_dist, old_fx, old_fy)
+  local rec = { old_fx = old_fx, old_fy = old_fy }
+  local edge = C.BLITZ_SETUP_16DIR_EDGE_BRAD or 0.5
+  local sfx, sfy = goal.standoff_fx, goal.standoff_fy
+  if not (sfx and sfy) then rec.reason = "no_spot"; return nil, nil, rec end
+  local fx, fy = sfx, sfy
+  if not goal._charge_pulled then
+    local dx, dy = sfx - pcx, sfy - pcy
+    local d = math.sqrt(dx * dx + dy * dy)
+    if d > 0.001 then
+      local R2 = C.ATTACK_PILL_STANDOFF_CHARGE or 7.0
+      fx, fy = pcx + dx / d * R2, pcy + dy / d * R2
+    end
+  end
+  rec.spot_fx, rec.spot_fy = fx, fy
+  local ax = goal.aim_wx and goal.aim_wx / 256.0 or goal.aim_mx or pcx
+  local ay = goal.aim_wy and goal.aim_wy / 256.0 or goal.aim_my or pcy
+  rec.aim_fx, rec.aim_fy = ax, ay
+  local brg = U.aim_at_f(fx, fy, ax, ay) % 256
+  local D = dir16(brg)
+  rec.bearing, rec.D = brg, D
+  if 8 - math.abs(U.adiff(D, brg)) < edge then
+    rec.reason = "near_boundary"; return nil, nil, rec
+  end
+  local rad = D * C.TWO_PI / 256
+  local ux, uy = math.sin(rad), -math.cos(rad)   -- engine: 0 = north, 64 = east
+  -- P = F - t*u on the ring |P - pc| = setup_dist, t > 0.
+  local wx, wy = fx - pcx, fy - pcy
+  local wu = wx * ux + wy * uy
+  local disc = wu * wu - (wx * wx + wy * wy) + setup_dist * setup_dist
+  if disc < 0 then rec.reason = "no_ring"; return nil, nil, rec end
+  local t = wu + math.sqrt(disc)
+  if t <= 0.01 then rec.reason = "no_ring"; return nil, nil, rec end
+  local nfx, nfy = fx - t * ux, fy - t * uy
+  rec.new_fx, rec.new_fy, rec.L = nfx, nfy, t
+  -- The facing from the new point must round to D as well (true by the
+  -- geometry above; checked so a rounding case falls back, not drives off).
+  local sbrg = U.aim_at_f(nfx, nfy, ax, ay) % 256
+  rec.setup_bearing = sbrg
+  if dir16(sbrg) ~= D or 8 - math.abs(U.adiff(D, sbrg)) < edge then
+    rec.reason = "setup_dir_mismatch"; return nil, nil, rec
+  end
+  local nmx, nmy = math.floor(nfx), math.floor(nfy)
+  if not U.in_map(nmx, nmy) then rec.reason = "off_map"; return nil, nil, rec end
+  local tt = U.ttype(nmx, nmy)
+  if U.is_water(tt) or (C.TERRAIN_COST_LAND[tt] or 9999) >= 9999 then
+    rec.reason = "not_passable"; return nil, nil, rec
+  end
+  local smx, smy = math.floor(fx), math.floor(fy)
+  local blocked = false
+  U.line_walk(nfx, nfy, fx, fy, function(lx, ly)
+    if lx == smx and ly == smy then return end  -- the spot tile itself is fine
+    local wt = U.ttype(lx, ly)
+    if wt == C.T_BUILDING or wt == C.T_HALFBUILD or wt == C.T_PILLBOX then
+      blocked = true; return true
+    end
+    local be = world and world.base_at and world.base_at[ly * 256 + lx]
+    if be and be.base and be.base.owner == "hostile" then
+      blocked = true; return true
+    end
+  end)
+  if blocked then rec.reason = "drive_blocked"; return nil, nil, rec end
+  local th_new = threat.at(nmx, nmy)
+  local th_old = threat.at(math.floor(old_fx), math.floor(old_fy))
+  rec.th_new, rec.th_old = th_new, th_old
+  if th_new > th_old then rec.reason = "more_danger"; return nil, nil, rec end
+  return nfx, nfy, rec
 end
 
 -- Commit a soldier's blitz take from the NEGOTIATED engage spot. The squad
@@ -4530,6 +4851,20 @@ local function blitz_commit_negotiated(goal, state, world, info, pmx, pmy)
     local setup_dist = (C.ATTACK_PILL_STANDOFF or 7.4) + (C.ATTACK_APPROACH_OFFSET or 2.25)
     goal.approach_fx = (pmx + 0.5) + ux * setup_dist
     goal.approach_fy = (pmy + 0.5) + uy * setup_dist
+    -- C.BLITZ_SETUP_16DIR: move the setup onto the 16-direction travel line
+    -- that ends on the spot the charge stops at (M.blitz_setup_16dir).
+    if C.BLITZ_SETUP_16DIR then
+      local nfx, nfy, r = M.blitz_setup_16dir(world, goal, pmx + 0.5, pmy + 0.5,
+        setup_dist, goal.approach_fx, goal.approach_fy)
+      local function f2(v) return v and string.format("%.2f", v) or "-" end
+      print2(string.format("BLITZ_SETUP_16DIR t=%d pill=#%s spot=(%s,%s) aim=(%s,%s) bearing=%s D=%s old=(%s,%s) new=(%s,%s) L=%s setup_bearing=%s threat=%s/%s fallback=%s",
+        state.tick or 0, tostring(goal.target_id), f2(r.spot_fx), f2(r.spot_fy),
+        f2(r.aim_fx), f2(r.aim_fy), f2(r.bearing), tostring(r.D),
+        f2(r.old_fx), f2(r.old_fy), f2(r.new_fx), f2(r.new_fy), f2(r.L),
+        f2(r.setup_bearing), tostring(r.th_new), tostring(r.th_old),
+        r.reason or "none"))
+      if nfx then goal.approach_fx, goal.approach_fy = nfx, nfy end
+    end
     goal.approach_mx = U.mclamp(math.floor(goal.approach_fx))
     goal.approach_my = U.mclamp(math.floor(goal.approach_fy))
   else
@@ -4542,6 +4877,7 @@ local function blitz_commit_negotiated(goal, state, world, info, pmx, pmy)
   goal.substate = "approach"
   return true
 end
+M._blitz_commit_negotiated = blitz_commit_negotiated  -- for tests
 
 -- Parallel blitz-soldier standoff OFFER (pre-commit, runs while the soldier is
 -- on its normal goal). For a soldier negotiating with a commander (squad layer
@@ -4567,11 +4903,13 @@ local _AIM_OFFS = { {128,128}, {1,1}, {254,1}, {1,254}, {254,254} }
 
 -- First aim point whose shell path from spot float (sfx,sfy) REACHES pill
 -- (pmx,pmy) crossing no tile in `wallset` (packed my*256+mx — a commander's
--- broadcast bwl shield walls) and no world wall / base / live pill. Returns the
+-- broadcast bwl shield walls) and no world wall / live pill / base that stops
+-- the shell (U.base_stops_tank_shell). Returns the
 -- aim point as float tile coords (aim_fx, aim_fy), or nil if every aim is blocked.
 local function blitz_clear_aim(sfx, sfy, pmx, pmy, wallset, world)
   local ox = math.floor(sfx * 256 + 0.5)
   local oy = math.floor(sfy * 256 + 0.5)
+  local omx, omy = bit.rshift(ox, 8), bit.rshift(oy, 8)  -- spot tile: boat or land shot
   for _, a in ipairs(_AIM_OFFS) do
     local tiles = cpf.simulate_shot(ox, oy, bit.bor((bit.lshift(pmx, 8)), a[1]), bit.bor((bit.lshift(pmy, 8)), a[2]), cpf.SHOT_TANK, 0)
     if tiles then
@@ -4581,8 +4919,7 @@ local function blitz_clear_aim(sfx, sfy, pmx, pmy, wallset, world)
         if wallset and wallset[t.my * 256 + t.mx] then blocked = true; break end
         local tt = U.ttype(t.mx, t.my)
         if tt == C.T_BUILDING or tt == C.T_HALFBUILD then blocked = true; break end
-        local be = world and world.base_at and world.base_at[t.my * 256 + t.mx]
-        if be and be.base then blocked = true; break end
+        if U.base_tile_stops_tank_shell(world, t.mx, t.my, omx, omy) then blocked = true; break end
         if SM.pending_pill_at(world, t.mx, t.my) then blocked = true; break end
         local plist = world and world.pill_at and world.pill_at[t.my * 256 + t.mx]
         if plist then for _, e in ipairs(plist) do local pp = e.id and world.pills[e.id]; if pp and not pp.in_tank and (pp.health or 0) > 0 and pp.mx == t.mx and pp.my == t.my then blocked = true; break end end end
@@ -5105,7 +5442,7 @@ local function update_attack_substate_body(goal, state, world, info)
 
   state._attack_substate_name = goal.substate
   -- Tally on-target shots and bump bullets_needed for any misses.
-  update_shot_accounting(goal, world)
+  update_shot_accounting(goal, world, state.tick)
 
   -- HUD: kill attempt indicator (top-left)
   if BRAIN_DEBUG_MODE and goal._kill_attempt ~= nil and viz.is_on("hud_kill_attempt") then
@@ -5239,7 +5576,10 @@ local function update_attack_substate_body(goal, state, world, info)
       local placed = false
       for _, wp in ipairs(goal._wall_build_list or {}) do
         local tt = U.ttype(wp.mx, wp.my)
-        if tt == C.T_BUILDING or tt == C.T_HALFBUILD or tt == C.T_PILLBOX then
+        -- A friendly pill worth a wall or more is a blocker too (the terrain
+        -- map does not show pills).
+        if tt == C.T_BUILDING or tt == C.T_HALFBUILD or tt == C.T_PILLBOX
+           or require("pill_cover").square_walls(world, wp.mx, wp.my) > 0 then
           placed = true; break
         end
       end
@@ -6494,6 +6834,34 @@ local function update_attack_substate_body(goal, state, world, info)
         goal.aim_wx  = bit.lshift(pmx, 8) + math.floor(off[1] * 256)
         goal.aim_wy  = bit.lshift(pmy, 8) + math.floor(off[2] * 256)
         goal.aim_idx = w.best_aim_idx or 1
+        -- C.BLOCKER_MIN_LANE_BRAD: the winner's aim needs a clear lane at least
+        -- this wide on both sides, from its firing spot. A narrower lane makes
+        -- the finetune chase a gap smaller than one tap (bot3 t=7281). Ban this
+        -- angle and plan again, the same way a pill on the line does; after
+        -- SANITY_PILL_REPLANS_MAX spots the take is given up.
+        local _mlb = C.BLOCKER_MIN_LANE_BRAD or 0
+        if _mlb > 0 then
+          local _ox = math.floor(w.cx * 256 + 0.5)
+          local _oy = math.floor(w.cy * 256 + 0.5)
+          local _ok, _l, _r, _a0 = M.aim_lane_wide(_ox, _oy, pmx, pmy, world,
+                                                   goal.aim_wx, goal.aim_wy, _mlb)
+          print2(string.format("SHIELD_LANE t=%d pill=(%d,%d) spot=(%.2f,%.2f) aim=%s angle=%.3f left=%.4f right=%.4f need=%.2f -> %s",
+            now, pmx, pmy, w.cx, w.cy, shield.AIM_NAMES[goal.aim_idx] or tostring(goal.aim_idx),
+            _a0, _l, _r, _mlb, _ok and "ok" or "narrow, replan"))
+          if not _ok then
+            local abandon, bucket, tries = blocked_line_replan(state, goal, pmx, pmy, now)
+            if bucket then
+              print2(string.format("SHIELD_LANE_BAN t=%d pill=(%d,%d) angles=%d..%d replans=%d",
+                now, pmx, pmy, (bucket - 5) % 360, (bucket + 5) % 360, tries))
+            end
+            if abandon then
+              print2(string.format("SHIELD_LANE_ABANDON t=%d pill=(%d,%d) after %d replans; off the pool until t=%d",
+                now, pmx, pmy, tries, now + (C.PP_BLACKLIST_TICKS or 500)))
+              clear_attack_goal(state, "shield scan lane narrower than BLOCKER_MIN_LANE_BRAD on every tried angle")
+            end
+            return
+          end
+        end
         end  -- if w (winner not on a banned angle)
       end
     end
@@ -7760,7 +8128,10 @@ local function update_attack_substate_body(goal, state, world, info)
         if goal._wall_build_list then
           for _, _p in ipairs(goal._wall_build_list) do
             local _tt = U.ttype(_p.mx, _p.my)
-            if _tt == C.T_BUILDING or _tt == C.T_HALFBUILD or _tt == C.T_PILLBOX then
+            -- A friendly pill worth a wall or more is a blocker too (the
+            -- terrain map does not show pills).
+            if _tt == C.T_BUILDING or _tt == C.T_HALFBUILD or _tt == C.T_PILLBOX
+               or require("pill_cover").square_walls(world, _p.mx, _p.my) > 0 then
               _have_blocker = true; break
             end
           end
@@ -7810,17 +8181,24 @@ local function update_attack_substate_body(goal, state, world, info)
       -- Snapshot initial tile types per slot so we can tell pre-existing cover
       -- from blockers we actually placed (used by the early-success gate — one
       -- newly-built blocker is enough — and the "0 BUILT" diagnostic banner).
+      -- A friendly pill worth at least one wall (pill_cover.lua) on a slot is
+      -- cover too: the terrain map does not show pills, so look for it.
       do
+        local PC = require("pill_cover")
         local initial_tt = {}
+        local initial_pw = {}
         local preexisting = 0
         for i, p in ipairs(sorted) do
           local tt0 = U.ttype(p.mx, p.my)
           initial_tt[i] = tt0
-          if tt0 == C.T_BUILDING or tt0 == C.T_HALFBUILD or tt0 == C.T_PILLBOX then
+          initial_pw[i] = PC.square_walls(world, p.mx, p.my)
+          if tt0 == C.T_BUILDING or tt0 == C.T_HALFBUILD or tt0 == C.T_PILLBOX
+             or initial_pw[i] > 0 then
             preexisting = preexisting + 1
           end
         end
         goal._wall_build_initial_tt   = initial_tt
+        goal._wall_build_initial_pw   = initial_pw
         goal._wall_build_preexisting  = preexisting
       end
       -- Reset the LGM-progress trackers too, otherwise they retain
@@ -7846,14 +8224,26 @@ local function update_attack_substate_body(goal, state, world, info)
     -- Skip walls that are already built (could be by us, ally, or just
     -- pre-existing terrain we re-checked). Counts as progress so the
     -- give-up timer resets.
+    local PC = require("pill_cover")
     while idx <= #list do
       local target = list[idx]
       local tt = U.ttype(target.mx, target.my)
-      -- T_PILLBOX too: a slot that got a pillbox dropped on it (by us
-      -- using one of the carried pills as a blocker) is just as valid
-      -- a shield as a wall — even better since the pillbox actively
-      -- shoots back. Advance past it.
-      if tt == C.T_BUILDING or tt == C.T_HALFBUILD or tt == C.T_PILLBOX then
+      -- A pill on the slot too (pill_cover.slot_done): a slot that got a
+      -- pillbox dropped on it (by us using one of the carried pills as a
+      -- blocker) is just as valid a shield as a wall — even better since
+      -- the pillbox actively shoots back. The terrain map does not show
+      -- pills, so the old T_PILLBOX test never matched and the loop waited
+      -- for a wall on the pill (player 0, ticks 15858-17090: pill #4 on
+      -- (140,127), "0 built" after 250 ticks, replan). Any pill counts here,
+      -- whatever its owner or health: no wall can go on it. Its cover is
+      -- counted below (5 * floor(health / 5) shots for a friendly pill).
+      if PC.slot_done(world, target.mx, target.my, tt) then
+        if tt ~= C.T_BUILDING and tt ~= C.T_HALFBUILD and tt ~= C.T_PILLBOX then
+          local sp = PC.pill_on_square(world, target.mx, target.my)
+          print2(string.format("BUILD_WALLS_PILL_SLOT t=%d idx=%d/%d slot=(%d,%d) owner=%s hp=%s walls=%d -> next slot",
+            now, idx, #list, target.mx, target.my, tostring(sp and sp.owner),
+            tostring(sp and sp.health), PC.pill_walls(sp)))
+        end
         idx = idx + 1
         goal._wall_build_last_progress = now
         goal._wall_idx_started = nil  -- reset per-wall sub-timer
@@ -8001,13 +8391,17 @@ local function update_attack_substate_body(goal, state, world, info)
     -- wall or a dropped pillbox on a slot that wasn't cover when we started —
     -- end the build phase successfully instead of grinding through the rest of
     -- the queue. (Counts only T_BUILDING/T_PILLBOX, not a still-rising halfwall.)
+    -- A friendly pill worth at least one wall on a slot counts as a blocker
+    -- (pill_cover.slot_blocker).
     local newly_built = 0
     do
       local initial_tt = goal._wall_build_initial_tt or {}
+      local initial_pw = goal._wall_build_initial_pw or {}
       for i, p in ipairs(list) do
         local tt1 = U.ttype(p.mx, p.my)
-        local now_block = (tt1 == C.T_BUILDING or tt1 == C.T_PILLBOX)
+        local now_block = PC.slot_blocker(world, p.mx, p.my, tt1)
         local was_block = (initial_tt[i] == C.T_BUILDING or initial_tt[i] == C.T_HALFBUILD or initial_tt[i] == C.T_PILLBOX)
+                          or (initial_pw[i] or 0) > 0
         if now_block and not was_block then newly_built = newly_built + 1 end
       end
     end
@@ -8029,28 +8423,21 @@ local function update_attack_substate_body(goal, state, world, info)
       print2(string.format("BUILD_WALLS_EARLY_DONE t=%d newly_built=%d >= %d (one blocker is enough; ready=%d+1 >= min=%d, or inwait=%d) [%s] idx=%d/%d", now, newly_built, C.PPT_BLOCKERS_ENOUGH or 1, _bready or 0, squad.blitz_min(), _binwait or 0, squad.blitz_size_label(), idx, #list))
     end
 
-    -- Cover-sufficient: a friendly pill blocker is worth 3 walls (PILLS_MAX_HEALTH
-    -- 15 vs WALL_HP_FULL 5 shots-to-break), matching the shield scorer. Sum the
-    -- current cover among the slots in shots and stop the build the moment it
-    -- reaches PPT_COVER_TARGET_SHOTS — so one dropped/pre-existing pill ends it
-    -- immediately, while a walls-only shield still builds out to three walls.
+    -- Cover-sufficient: a friendly pill on a slot is worth floor(health / 5)
+    -- walls of SHIELD_WALL_COVER_SHOTS (5) shots each (pill_cover.slot_cover_shots), so a
+    -- 15-health pill is 15 shots, a 10-health pill 10 and a 4-health pill 0.
+    -- Sum the current cover among the slots in shots and stop the build the
+    -- moment it reaches PPT_COVER_TARGET_SHOTS — so one full-health
+    -- dropped/pre-existing pill ends it immediately, a 10-health pill needs one
+    -- wall more, while a walls-only shield still builds out to three walls.
     -- Independent of the blitz gate (real cover is real cover, solo or not).
     local cover_shots = 0
     for _, p in ipairs(list) do
-      local tt1 = U.ttype(p.mx, p.my)
-      if tt1 == C.T_PILLBOX then
-        local fp = M.find_pill_at(world, p.mx, p.my)
-        if fp and (fp.owner == "friendly" or fp.owner == "allied")
-           and (fp.health or 0) > 0 then
-          cover_shots = cover_shots + (C.PILLS_MAX_HEALTH or 15)
-        end
-      elseif tt1 == C.T_BUILDING or tt1 == C.T_HALFBUILD then
-        cover_shots = cover_shots + (C.WALL_HP_FULL or 5)
-      end
+      cover_shots = cover_shots + PC.slot_cover_shots(world, p.mx, p.my, U.ttype(p.mx, p.my))
     end
     local cover_enough = cover_shots >= (C.PPT_COVER_TARGET_SHOTS or 15)
     if cover_enough and idx <= #list and not stalled then
-      print2(string.format("BUILD_WALLS_COVER_DONE t=%d cover=%d >= %d shots (pill=15/wall=5) idx=%d/%d", now, cover_shots, C.PPT_COVER_TARGET_SHOTS or 15, idx, #list))
+      print2(string.format("BUILD_WALLS_COVER_DONE t=%d cover=%d >= %d shots (pill=5*floor(hp/5)/wall=5) idx=%d/%d", now, cover_shots, C.PPT_COVER_TARGET_SHOTS or 15, idx, #list))
     end
 
     -- Last-wall early end: we're on the FINAL blocker of a multi-wall shield
@@ -8102,11 +8489,14 @@ local function update_attack_substate_body(goal, state, world, info)
         local initial_tt    = goal._wall_build_initial_tt or {}
         local preexisting_n = goal._wall_build_preexisting or 0
         local built_n, unbuilt_n = 0, 0
+        local initial_pw = goal._wall_build_initial_pw or {}
         for i, p in ipairs(list) do
           local tt0 = initial_tt[i]
           local tt1 = U.ttype_peek(p.mx, p.my)
           local final_is_wall = (tt1 == C.T_BUILDING or tt1 == C.T_HALFBUILD or tt1 == C.T_PILLBOX)
+                                or PC.square_walls(world, p.mx, p.my) > 0
           local initial_was_wall = (tt0 == C.T_BUILDING or tt0 == C.T_HALFBUILD or tt0 == C.T_PILLBOX)
+                                   or (initial_pw[i] or 0) > 0
           if final_is_wall and not initial_was_wall then
             built_n = built_n + 1
           elseif not final_is_wall then
@@ -8334,10 +8724,17 @@ local function update_attack_substate_body(goal, state, world, info)
             at_spot = (tdx * tdx + tdy * tdy) <= (qdx * qdx + qdy * qdy)
           end
         end
-        if at_spot then
+        if at_spot or C.CHARGE_LEEWAY then
           -- Step 1: try the pill's other aim points from where we are standing.
-          local ladder = try_reaim(state, goal, world, info.tankx, info.tanky,
-                                   pmx, pmy, now, "CHARGE", obstacle_reason)
+          -- C.CHARGE_LEEWAY: from where the tank will stop, while it is still
+          -- moving, and before it reaches the spot too (charge_leeway).
+          local ladder
+          if C.CHARGE_LEEWAY then
+            ladder = charge_leeway(state, goal, world, info, pmx, pmy, now, at_spot, obstacle_reason)
+          else
+            ladder = try_reaim(state, goal, world, info.tankx, info.tanky,
+                               pmx, pmy, now, "CHARGE", obstacle_reason)
+          end
           if ladder == "blocked" then
             -- Step 2: nothing on this pill is shootable from this spot. Ban the
             -- angle and go find another spot; only give the take up once
@@ -8878,6 +9275,29 @@ local function update_attack_substate_body(goal, state, world, info)
     if on_pill and not goal._finetune_reached_tap then
       goal._finetune_reached_tap = goal._finetune_taps or 0
     end
+    -- Turn-in limit. Knob off: every tick since the shot first reached the
+    -- pill counts. Knob on (C.CLEAR_TURN_TAP_PROGRESS): a tick that brings the
+    -- gun closer to the nearest clear angle than ever before in this finetune
+    -- does not count, with a hard cap of 2 x CLEAR_TURN_IN_TAPS ticks. Steering
+    -- then turns toward that clear angle (goal._finetune_lane_dir), not the
+    -- pill centre, so a tap that jumps past a narrow lane turns back to it.
+    local _ti_extra = (on_pill and goal._finetune_reached_tap)
+                      and ((goal._finetune_taps or 0) - goal._finetune_reached_tap) or 0
+    local _ti_give_up = on_pill and goal._finetune_reached_tap
+                        and _ti_extra >= CLEAR_TURN_IN_TAPS
+    goal._finetune_lane_dir = nil
+    if C.CLEAR_TURN_TAP_PROGRESS and on_pill and not _fine_clear
+       and goal._finetune_reached_tap then
+      local lane_dir, lane_err = M.finetune_lane_target(info, goal, world, angle_f)
+      goal._finetune_lane_dir = lane_dir
+      local _ti_raw
+      _ti_extra, _ti_raw, _ti_give_up = require("aim_lane").turn_in_step(
+        goal, goal._finetune_taps or 0, lane_err, CLEAR_TURN_IN_TAPS)
+      print2(string.format("FINETUNE_LANE t=%d pill=(%d,%d) angle=%.3f lane=%s err=%s counted=%d raw=%d cap=%d give_up=%s",
+        now, pmx, pmy, angle_f, lane_dir and string.format("%.3f", lane_dir) or "none",
+        lane_err and string.format("%.3f", lane_err) or "none",
+        _ti_extra, _ti_raw, 2 * CLEAR_TURN_IN_TAPS, tostring(_ti_give_up)))
+    end
 
     if on_pill and _fine_clear then
       -- Lock the verified angle as the new aim point so shoot_pill's
@@ -8909,12 +9329,11 @@ local function update_attack_substate_body(goal, state, world, info)
       print(string.format(TAG ..
         " ATTACK: finetune verified (angle %.2f, %d taps) — opening fire",
         angle_f, goal._finetune_taps or 0))
-    elseif on_pill and goal._finetune_reached_tap
-       and ((goal._finetune_taps or 0) - goal._finetune_reached_tap) >= CLEAR_TURN_IN_TAPS then
+    elseif _ti_give_up then
       -- Reached the pill but the blocker is still on the lane after a few more
       -- brad of turn-in — the lane is pinched (e.g. friendly pill + own walls
       -- straddle it). Give up here rather than firing a blocked shot.
-      local extra = (goal._finetune_taps or 0) - goal._finetune_reached_tap
+      local extra = _ti_extra
       print(string.format(TAG ..
         " ATTACK: reached pill but blocker won't clear after +%d turn-in taps (angle %.2f, pill@(%d,%d)) — aborting",
         extra, angle_f, pmx, pmy))

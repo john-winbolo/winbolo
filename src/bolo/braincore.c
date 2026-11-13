@@ -153,7 +153,22 @@ void brainCoreSetInitTable(lua_State *L, const ScnTable *init) {
   lua_createtable(L, 0, n);
   for (i = 0; i < n; i++) {
     if (init->kv[i].key[0] == '\0') continue;
-    lua_pushstring(L, init->kv[i].value);
+    /* A key the table holds more than once (the -bot-init text keeps each
+     * cfg=NAME=VALUE token as its own pair) becomes one field that reads
+     * back as the original tokens: "A=1;cfg=B=2". A brain that flattens
+     * BRAIN_INIT to "key=value" text and splits it on ';' then sees
+     * cfg=A=1;cfg=B=2, every token, in the order written. */
+    lua_getfield(L, -1, init->kv[i].key);
+    if (lua_isstring(L, -1)) {
+      lua_pushliteral(L, ";");
+      lua_pushstring(L, init->kv[i].key);
+      lua_pushliteral(L, "=");
+      lua_pushstring(L, init->kv[i].value);
+      lua_concat(L, 5);
+    } else {
+      lua_pop(L, 1);
+      lua_pushstring(L, init->kv[i].value);
+    }
     lua_setfield(L, -2, init->kv[i].key);
   }
   brainCoreSetGlobalRaw(L, "BRAIN_INIT");
@@ -2052,9 +2067,11 @@ static int l_cpf_dijkstra_from(lua_State *L) {
 }
 
 /* cpf_dijkstra_start(slate, tick, sx, sy, in_boat, shells, trees, mines, armour,
- *                    max_cost, exact, danger_scale, kind[, allow_boat])
+ *                    max_cost, exact, danger_scale, kind[, allow_boat[, heading]])
  * allow_boat defaults to 1 (boat transitions enabled). Pass 0 to restrict
- * the search to land nodes only (no T_BOAT pickup, no water expansion). */
+ * the search to land nodes only (no T_BOAT pickup, no water expansion).
+ * heading: the tank's Bolo direction 0..255 at the root. Used only while
+ * the "start_heading" config key is on; nil or absent = no heading. */
 static int l_cpf_dijkstra_start(lua_State *L) {
   CPF_GET(L);
   int slate = (int)luaL_checkinteger(L, 1);
@@ -2081,6 +2098,10 @@ static int l_cpf_dijkstra_start(lua_State *L) {
   brainPathfinderDijkstraStart(pf, slate, tick, sx, sy, in_boat,
                                 shells, trees, mines, armour,
                                 max_cost, exact, danger_scale, kind, allow_boat);
+  if (!lua_isnoneornil(L, 15)) {
+    brainPathfinderDijkstraSetSourceHeading(pf, slate,
+                                            (int)luaL_checkinteger(L, 15));
+  }
   return 0;
 }
 
@@ -2240,6 +2261,67 @@ static int l_cpf_sea_veto(lua_State *L) {
   return 7;
 }
 
+/* cpf_dijkstra_answer() → slate, started_tick, version, fresh, mode or nil
+ *
+ * Which slate gave the last cpf_dijkstra_next_step answer (route keep,
+ * GoalHunter PF_REROUTE_KEEP_MARGIN). nil when that call gave no step.
+ * fresh: true when the most recently started slate of the kind answered.
+ * mode: 1 chain step, 2 veer, 3 chain-rank pick off the chain, 4 lowest-g
+ * neighbour off the chain. */
+static int l_cpf_dijkstra_answer(lua_State *L) {
+  CPF_GET(L);
+  if (!pf->ns_valid) {
+    lua_pushnil(L);
+    return 1;
+  }
+  lua_pushinteger(L, pf->ns_slate);
+  lua_pushinteger(L, (lua_Integer)pf->ns_started);
+  lua_pushinteger(L, (lua_Integer)pf->ns_version);
+  lua_pushboolean(L, pf->ns_fresh);
+  lua_pushinteger(L, pf->ns_mode);
+  return 5;
+}
+
+/* cpf_dijkstra_route_save() → length of the saved route (0 = none)
+ * Saves the chain of the last cpf_dijkstra_next_step answer. */
+static int l_cpf_dijkstra_route_save(lua_State *L) {
+  CPF_GET(L);
+  lua_pushinteger(L, brainPathfinderDijkstraRouteSave(pf));
+  return 1;
+}
+
+/* cpf_dijkstra_route_reprice(x, y) → cost of the saved route from (x,y) to
+ * its destination with the current grids (about 1e30 when (x,y) is not on
+ * it). */
+static int l_cpf_dijkstra_route_reprice(lua_State *L) {
+  CPF_GET(L);
+  int x = (int)luaL_checkinteger(L, 1);
+  int y = (int)luaL_checkinteger(L, 2);
+  lua_pushnumber(L, (double)brainPathfinderDijkstraRouteReprice(pf, x, y));
+  return 1;
+}
+
+/* cpf_dijkstra_keep_check(tx, ty, ox, oy, dx, dy) → rc, g_new, g_keep
+ * rc 0: g_new and g_keep are set. rc 1..5: a reason not to keep the old
+ * step (see brainPathfinderDijkstraKeepCheck); g_new and g_keep are 0. */
+static int l_cpf_dijkstra_keep_check(lua_State *L) {
+  CPF_GET(L);
+  int tx = (int)luaL_checkinteger(L, 1);
+  int ty = (int)luaL_checkinteger(L, 2);
+  int ox = (int)luaL_checkinteger(L, 3);
+  int oy = (int)luaL_checkinteger(L, 4);
+  int dx = (int)luaL_checkinteger(L, 5);
+  int dy = (int)luaL_checkinteger(L, 6);
+  float g_new = 0.0f, g_keep = 0.0f;
+  int rc = brainPathfinderDijkstraKeepCheck(pf, tx, ty, ox, oy, dx, dy,
+                                            &g_new, &g_keep);
+  if (rc != 0) { g_new = 0.0f; g_keep = 0.0f; }
+  lua_pushinteger(L, rc);
+  lua_pushnumber(L, (double)g_new);
+  lua_pushnumber(L, (double)g_keep);
+  return 3;
+}
+
 /* cpf_dijkstra_trace_path(kind, dx, dy) → flat array {x1,y1,x2,y2,...} or nil */
 static int l_cpf_dijkstra_trace_path(lua_State *L) {
   CPF_GET(L);
@@ -2261,20 +2343,28 @@ static int l_cpf_dijkstra_trace_path(lua_State *L) {
   return 1;
 }
 
-/* cpf_dijkstra_trace_path_by_kind(kind, dx, dy) → flat array {x1,y1,...} or nil.
+/* cpf_dijkstra_trace_path_by_kind(kind, dx, dy [, max_steps]) → flat array
+ * {x1,y1,...} or nil.
  * Multi-slate: walks slates of given kind in recency order, picks the
  * first where (dx,dy) is reachable, traces from THAT slate. Use when
  * the cost was found via lookup_by_kind's older-slate fallback — the
  * single-slate trace_path picks "best" which may be a newer slate that
- * hasn't reached (dx,dy) yet, returning nil. */
+ * hasn't reached (dx,dy) yet, returning nil.
+ * max_steps (optional, default 64, at most 2048): the path is cut to its
+ * first max_steps tiles from the source. The focused spike route risk
+ * (focus_vote.lua) asks for the whole path to the stand place. */
+#define CPF_TRACE_MAX_STEPS 2048
 static int l_cpf_dijkstra_trace_path_by_kind(lua_State *L) {
   CPF_GET(L);
   int kind = (int)luaL_checkinteger(L, 1);
   int dx   = (int)luaL_checkinteger(L, 2);
   int dy   = (int)luaL_checkinteger(L, 3);
-  int path_x[64], path_y[64];
+  int max_steps = (int)luaL_optinteger(L, 4, 64);
+  if (max_steps < 1) max_steps = 1;
+  if (max_steps > CPF_TRACE_MAX_STEPS) max_steps = CPF_TRACE_MAX_STEPS;
+  int path_x[CPF_TRACE_MAX_STEPS], path_y[CPF_TRACE_MAX_STEPS];
   int n = brainPathfinderDijkstraTracePathByKind(pf, kind, dx, dy,
-                                                  path_x, path_y, 64);
+                                                  path_x, path_y, max_steps);
   if (n <= 0) { lua_pushnil(L); return 1; }
   lua_createtable(L, n * 2, 0);
   for (int i = 0; i < n; i++) {
@@ -2649,6 +2739,54 @@ static int l_cpf_lgm_walk_path(lua_State *L) {
   return 1;
 }
 
+/* cpf_lgm_walk_path_wu(sx, sy, dmx, dmy, blessX, blessY, maxTicks,
+ *                      stuckTicks, out) -> n
+ *
+ * cpf_lgm_walk_path with the start in WORLD units (sx, sy) instead of a map
+ * square. The engine starts the builder on the tank's own position moved
+ * towards his target (lgm.c lgmApplyStartOffset), which can be most of a
+ * square away from the centre the map form starts on. Same walk, same flat
+ * pair list in `out`. */
+static int l_cpf_lgm_walk_path_wu(lua_State *L) {
+  CPF_GET(L);
+  WORLD sx = (WORLD)luaL_checkinteger(L, 1);
+  WORLD sy = (WORLD)luaL_checkinteger(L, 2);
+  BYTE dmx = (BYTE)luaL_checkinteger(L, 3);
+  BYTE dmy = (BYTE)luaL_checkinteger(L, 4);
+  BYTE blessX = (BYTE)luaL_checkinteger(L, 5);
+  BYTE blessY = (BYTE)luaL_checkinteger(L, 6);
+  int maxTicks = (int)luaL_checkinteger(L, 7);
+  int stuckTicks = (int)luaL_checkinteger(L, 8);
+  WORLD px[BRAIN_LGM_WALK_PATH_MAX];
+  WORLD py[BRAIN_LGM_WALK_PATH_MAX];
+  int n, i;
+  luaL_checktype(L, 9, LUA_TTABLE);
+  if (maxTicks < 0) maxTicks = 0;
+  if (maxTicks > BRAIN_LGM_WALK_PATH_MAX) maxTicks = BRAIN_LGM_WALK_PATH_MAX;
+  n = brainPathfinderLgmWalkPath(pf, sx, sy, dmx, dmy, blessX, blessY,
+                                  maxTicks, stuckTicks, px, py, maxTicks);
+  for (i = 0; i < n; i++) {
+    lua_pushinteger(L, px[i]); lua_rawseti(L, 9, i * 2 + 1);
+    lua_pushinteger(L, py[i]); lua_rawseti(L, 9, i * 2 + 2);
+  }
+  lua_pushinteger(L, n);
+  return 1;
+}
+
+/* cpf_lgm_man_speed(mx, my) -> speed
+ *
+ * The builder's walk speed on square (mx, my) as the LGM walk sim sees it
+ * (terrain speed, 0 on a square stamped LGM-impassable). 0 = he cannot walk
+ * there. Lets the brain ask the same "can he step there" question the
+ * engine's start offset asks. */
+static int l_cpf_lgm_man_speed(lua_State *L) {
+  CPF_GET(L);
+  BYTE mx = (BYTE)luaL_checkinteger(L, 1);
+  BYTE my = (BYTE)luaL_checkinteger(L, 2);
+  lua_pushinteger(L, brainPathfinderLgmManSpeed(pf, mx, my));
+  return 1;
+}
+
 /* cpf_set_man_speed(type, speed) -- the man's walk speed on terrain `type`
  * (0..15), or on his blessed tile when `type` is -1, for the LGM walk sim
  * (cpf_lgm_travel_ticks*, cpf_lgm_walk_path). The pathfinder starts on the
@@ -2891,6 +3029,10 @@ void brainCoreRegisterPathfinder(lua_State *L, BrainPathfinder **pfPtr) {
     { "cpf_dijkstra_lookup_by_kind", l_cpf_dijkstra_lookup_by_kind },
     { "cpf_dijkstra_lookup_subtract_by_kind", l_cpf_dijkstra_lookup_subtract_by_kind },
     { "cpf_dijkstra_next_step",     l_cpf_dijkstra_next_step },
+    { "cpf_dijkstra_answer",        l_cpf_dijkstra_answer },
+    { "cpf_dijkstra_route_save",    l_cpf_dijkstra_route_save },
+    { "cpf_dijkstra_route_reprice", l_cpf_dijkstra_route_reprice },
+    { "cpf_dijkstra_keep_check",    l_cpf_dijkstra_keep_check },
     { "cpf_sea_veto",               l_cpf_sea_veto },
     { "cpf_dijkstra_trace_path",    l_cpf_dijkstra_trace_path },
     { "cpf_dijkstra_trace_path_by_kind", l_cpf_dijkstra_trace_path_by_kind },
@@ -2908,6 +3050,8 @@ void brainCoreRegisterPathfinder(lua_State *L, BrainPathfinder **pfPtr) {
     { "cpf_lgm_travel_ticks",      l_cpf_lgm_travel_ticks },
     { "cpf_lgm_travel_ticks_map",  l_cpf_lgm_travel_ticks_map },
     { "cpf_lgm_walk_path",         l_cpf_lgm_walk_path },
+    { "cpf_lgm_walk_path_wu",      l_cpf_lgm_walk_path_wu },
+    { "cpf_lgm_man_speed",         l_cpf_lgm_man_speed },
     { "cpf_set_lgm_blocked",       l_cpf_set_lgm_blocked },
     { "cpf_set_man_speed",         l_cpf_set_man_speed },
     { "cpf_estimate_tank_travel_ticks", l_cpf_estimate_tank_travel_ticks },

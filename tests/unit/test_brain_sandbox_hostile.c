@@ -29,6 +29,17 @@
  * run_brain_sandbox_hostile_off_map_terrain
  *      gh_threat's terrain read outside the map's memory is deep sea; a
  *      read one step off a side edge reads the next row as before
+ * run_brain_sandbox_hostile_pack_encode
+ *      a brain still cannot require string.buffer and has no
+ *      brain_value_decode; brain_value_encode takes one value and gives back
+ *      one string, never runs a metamethod, and refuses functions, threads,
+ *      userdata, table keys, cycles, nesting too deep and output too large
+ * run_brain_sandbox_hostile_pack_decode
+ *      the view side's brain_value_decode gives back what was packed, and
+ *      refuses a non-string, every cut-short block, unknown bytes, counts
+ *      and lengths past the end, bad keys, nesting too deep and bytes left
+ *      over; random byte changes give an error or plain data, never a
+ *      crash, a function or userdata
  */
 
 #include <stdio.h>
@@ -46,6 +57,7 @@
 #include "braincore.h"
 #include "brain_pathfinder.h"
 #include "brain_sandbox.h"
+#include "brain_value_pack.h"
 #include "gh_threat.h"
 #include "gh_attack.h"
 #include "gh_shield_stamp.h"
@@ -74,6 +86,7 @@ static bool bshVmOpen(BshVm *vm, const char *root, bool sandbox) {
     *(void **)lua_getextraspace(vm->L) = NULL;
     luaL_openlibs(vm->L);
     brainCoreRegisterConstants(vm->L);
+    brainValueRegisterEncode(vm->L);   /* as luabrainshandler.c does */
     vm->world = bshMap;
     brainCoreRegisterGetTerrain(vm->L, &vm->world);
     vm->pf = brainPathfinderCreate();
@@ -377,5 +390,158 @@ int run_brain_sandbox_hostile_off_map_terrain(void) {
     UT_ASSERT_MSG(naThreatRawTT(vm.L, -1, 5) == 5,
                   "the in-array read one step off the side changed");
     bshVmClose(&vm);
+    return 0;
+}
+
+int run_brain_sandbox_hostile_pack_encode(void) {
+    char root[FILENAME_MAX];
+    BshVm vm;
+
+    UT_ASSERT(bshBrainDir(root, sizeof(root)));
+    UT_ASSERT(bshVmOpen(&vm, root, true));
+    BSH_RUN_OK(vm.L,
+        "assert(not pcall(require, 'string.buffer'), 'require(\"string.buffer\") loaded')\n"
+        "assert(package.loaded['string.buffer'] == nil, 'string.buffer is in package.loaded')\n"
+        "assert(rawget(_G, 'brain_value_decode') == nil, 'a brain has brain_value_decode')\n"
+        "local enc = brain_value_encode\n"
+        "assert(type(enc) == 'function', 'no brain_value_encode')\n"
+        /* One value in, one string out: no buffer object, no pointer. */
+        "local shared = { 1, 2 }\n"
+        "local cap = { v = 1, S = { 'a', 'b', x = 1.5, [false] = true }, K = { shared, shared },\n"
+        "              C = { [7] = -3, [2.5] = 'h', big = 2^60, neg0 = -0.0, nan = 0/0 } }\n"
+        "local n = select('#', enc(cap))\n"
+        "assert(n == 1, 'brain_value_encode gave back ' .. n .. ' values')\n"
+        "local s = enc(cap)\n"
+        "assert(type(s) == 'string' and #s > 0, 'brain_value_encode did not give a string')\n"
+        "assert(enc(cap) == enc(cap), 'two packs of one table differ')\n"
+        "for _, v in ipairs({ 0, -1, 1e300, 'text', true, false }) do\n"
+        "  assert(type(enc(v)) == 'string', 'a plain value did not pack')\n"
+        "end\n"
+        "assert(type(enc(nil)) == 'string', 'nil did not pack')\n"
+        "assert(not pcall(enc), 'no argument packed')\n"
+        "assert(not pcall(enc, cap, {}), 'an options table was taken')\n"
+        "assert(not pcall(enc, cap, 'x'), 'a second argument was taken')\n"
+        /* A metatable is not followed: no metamethod runs. */
+        "local ran = false\n"
+        "local mt = { __index = function() ran = true end, __len = function() ran = true; return 5 end,\n"
+        "             __pairs = function() ran = true; return next end, __newindex = function() ran = true end }\n"
+        "assert(type(enc(setmetatable({ 1, a = 2 }, mt))) == 'string', 'a table with a metatable did not pack')\n"
+        "assert(not ran, 'brain_value_encode ran a metamethod')\n"
+        /* Values that are not plain data. */
+        "local function refuses(v, what)\n"
+        "  local ok, err = pcall(enc, v)\n"
+        "  assert(not ok, what .. ' packed')\n"
+        "  assert(type(err) == 'string' and err:find('brain_value_encode', 1, true), what .. ': ' .. tostring(err))\n"
+        "end\n"
+        "refuses(print, 'a function')\n"
+        "refuses({ f = function() end }, 'a function in a table')\n"
+        "refuses({ [print] = 1 }, 'a function key')\n"
+        "refuses({ [{}] = 1 }, 'a table key')\n"
+        "refuses(coroutine.create(function() end), 'a thread')\n"
+        "if io.stderr then refuses({ io.stderr }, 'userdata') end\n"
+        "local c = {}; c.self = c\n"
+        "refuses(c, 'a table that holds itself')\n"
+        "local a, b = {}, {}; a.b = b; b.a = a\n"
+        "refuses(a, 'two tables that hold each other')\n"
+        "local arr = {}; arr[1] = arr\n"
+        "refuses(arr, 'an array that holds itself')\n"
+        "local deep = {}; local d = deep\n"
+        "for i = 1, 70 do d.n = {}; d = d.n end\n"
+        "refuses(deep, 'tables nested 70 deep')\n"
+        "local ok60 = {}; d = ok60\n"
+        "for i = 1, 60 do d.n = {}; d = d.n end\n"
+        "assert(type(enc(ok60)) == 'string', 'tables nested 60 deep did not pack')\n"
+        "refuses(string.rep('x', 17 * 1024 * 1024), 'a string over the size limit')\n"
+        /* A table held twice at each level packs twice at each level: the
+         * size limit stops it, not the memory. */
+        "local t = { string.rep('y', 1024) }\n"
+        "for i = 1, 40 do t = { t, t } end\n"
+        "refuses(t, 'a shared table that packs past the size limit')\n");
+    bshVmClose(&vm);
+    return 0;
+}
+
+int run_brain_sandbox_hostile_pack_decode(void) {
+    /* The view side's VM: plain libraries plus brain_value_decode, as
+     * pool_render_host.c opens it, and the encoder to build the input. */
+    lua_State *L = luaL_newstate();
+    UT_ASSERT(L != NULL);
+    luaL_openlibs(L);
+    brainValueRegisterEncode(L);
+    brainValueRegisterDecode(L);
+    BSH_RUN_OK(L,
+        "local enc, dec = brain_value_encode, brain_value_decode\n"
+        "local function same(a, b)\n"
+        "  if type(a) ~= type(b) then return false end\n"
+        "  if type(a) ~= 'table' then return a == b or (a ~= a and b ~= b) end\n"
+        "  for k, v in pairs(a) do if not same(v, b[k]) then return false end end\n"
+        "  for k in pairs(b) do if a[k] == nil then return false end end\n"
+        "  return true\n"
+        "end\n"
+        "local cap = { v = 1, S = { 'a', 'b\\0c', x = 1.5, [false] = true, [3] = 'c', [10] = 'gap' },\n"
+        "              K = { threat = { [256 * 4 + 9] = 0.25 }, low = false },\n"
+        "              C = { [-7] = -3, [2.5] = 'h', big = 2^60, neg = -123456789, tiny = 1e-300,\n"
+        "                    inf = 1/0, ninf = -1/0, nan = 0/0 } }\n"
+        "local got = dec(enc(cap))\n"
+        "assert(same(cap, got), 'the round trip changed the value')\n"
+        "assert(getmetatable(got) == nil, 'a decoded table has a metatable')\n"
+        "assert(1/dec(enc(-0.0)) < 0, '-0 lost its sign')\n"
+        "assert(dec(enc(nil)) == nil and select('#', dec(enc(nil))) == 1, 'nil did not round trip')\n"
+        "for _, v in ipairs({ 0, -1, 2^53, -2^53, 2^53 + 2, 0.1, 'x', true, false }) do\n"
+        "  assert(dec(enc(v)) == v, 'a plain value did not round trip')\n"
+        "end\n"
+        /* Malformed input: an error each time, never a crash. */
+        "local function refuses(s, what)\n"
+        "  local ok, err = pcall(dec, s)\n"
+        "  assert(not ok, what .. ' decoded')\n"
+        "  assert(type(err) == 'string' and err:find('brain_value_decode', 1, true), what .. ': ' .. tostring(err))\n"
+        "end\n"
+        "local B = string.char\n"
+        "local function nest(n) return string.rep(B(7, 1, 0, 0, 0), n) .. B(7, 0, 0, 0, 0, 8) .. string.rep(B(8), n) end\n"
+        "assert(not pcall(dec, 5), 'a number decoded')\n"
+        "assert(not pcall(dec, {}), 'a table decoded')\n"
+        "assert(not pcall(dec), 'no argument decoded')\n"
+        "assert(not pcall(dec, enc(1), 'x'), 'a second argument was taken')\n"
+        "refuses('', 'an empty block')\n"
+        "refuses(B(0), 'type byte 0')\n"
+        "refuses(B(9), 'type byte 9')\n"
+        "refuses(B(255), 'type byte 255')\n"
+        "refuses(B(2, 2), 'bytes left over')\n"
+        "refuses(B(4) .. string.rep(B(255), 11), 'a number that never ends')\n"
+        "refuses(B(4) .. string.rep(B(255), 9) .. B(127), 'a number over 64 bits')\n"
+        "refuses(B(5, 0, 0, 0), 'a cut-short double')\n"
+        "refuses(B(6, 128, 128, 128, 128, 16) .. 'abc', 'a string length past the end')\n"
+        "refuses(B(7, 255, 255, 255, 255, 8), 'a table count past the end')\n"
+        "refuses(B(7, 0, 0, 0, 0), 'a table with no end mark')\n"
+        "refuses(B(7, 1, 0, 0, 0, 1, 8), 'a nil array item')\n"
+        "refuses(B(7, 0, 0, 0, 0, 1, 2, 8), 'a nil key')\n"
+        "refuses(B(7, 0, 0, 0, 0, 2, 1, 8), 'a nil value')\n"
+        "refuses(B(7, 0, 0, 0, 0, 5, 0, 0, 0, 0, 0, 0, 248, 127, 2, 8), 'a NaN key')\n"
+        "refuses(B(7, 0, 0, 0, 0, 7, 0, 0, 0, 0, 8, 2, 8), 'a table key')\n"
+        "refuses(nest(70), 'tables nested 70 deep')\n"
+        "assert(type(dec(nest(60))) == 'table', 'tables nested 60 deep did not decode')\n"
+        "local good = enc(cap)\n"
+        "for i = 0, #good - 1 do refuses(good:sub(1, i), 'a block cut to ' .. i .. ' bytes') end\n"
+        /* Random byte changes: an error or plain data, nothing else. */
+        "local function plain(v, depth)\n"
+        "  local t = type(v)\n"
+        "  if t == 'table' then\n"
+        "    assert(depth < 70 and getmetatable(v) == nil, 'a decoded table is not plain')\n"
+        "    for k, x in pairs(v) do plain(k, depth + 1); plain(x, depth + 1) end\n"
+        "  else\n"
+        "    assert(t == 'nil' or t == 'boolean' or t == 'number' or t == 'string', 'decoded a ' .. t)\n"
+        "  end\n"
+        "end\n"
+        "local unpk = table.unpack or unpack\n"
+        "math.randomseed(653)\n"
+        "local errs = 0\n"
+        "for n = 1, 3000 do\n"
+        "  local bytes = { good:byte(1, -1) }\n"
+        "  for m = 1, math.random(1, 4) do bytes[math.random(1, #bytes)] = math.random(0, 255) end\n"
+        "  local ok, v = pcall(dec, B(unpk(bytes)))\n"
+        "  if ok then plain(v, 0) else errs = errs + 1 end\n"
+        "end\n"
+        "assert(errs > 0, 'no changed block was refused')\n");
+    lua_close(L);
     return 0;
 }

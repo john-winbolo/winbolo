@@ -612,7 +612,7 @@ function M.update(state, world, info)
   -- byte, which is also true of NEUTRAL(2): every round a neutral pillbox
   -- fired counted as our own team's friendly fire, and any friendly pill
   -- within one tile of that round's flight path went unrepairable for
-  -- REPAIR_FRIENDLY_FIRE_REJECT_TICKS (400) -- refreshed by the next round,
+  -- REPAIR_FRIENDLY_FIRE_REJECT_TICKS (then 400; 50 since 2026-11-01) -- refreshed by the next round,
   -- so in practice forever while a neutral pill was shooting past it. The two
   -- other shell scans in this file already read the enum correctly
   -- (`ob.info == SHELL_FRIENDLY`, SHELL_FRIENDLY = 0); this one now matches.
@@ -720,6 +720,24 @@ function M.update(state, world, info)
           _ent.dest_wy     = h.dest_wy
           _ent.dest_locked = h.dest_locked
           _ent.lock_status = h.lock_status
+          -- LGM_DEST_AIM: straight-line walk into a dead hostile pill?  The
+          -- lock rides h (read by predict_aim below) and the entry (overlay).
+          -- Knob off: never run, h.dest_pill stays nil, old aim exactly.
+          if C.LGM_DEST_AIM then
+            local dp, ray, why = kill_lgm.find_dest_pill(h, _ent, world.pills, enemy_tanks, now)
+            h.dest_pill = dp
+            _ent.dest_pill, _ent.dest_ray, _ent.dest_why = dp, ray, why
+            -- LGM_DEST_PASS_THROUGH: the pill he just walked through (not his job).
+            _ent.dest_passed = h.dest_passed
+            local passed_now = h.dest_pass_tick == now and h.dest_pass_id or nil
+            local log_key = dp and ("lock#" .. tostring(dp.id)) or why
+            if h.dest_log_key ~= log_key or passed_now then
+              h.dest_log_key = log_key
+            end
+            -- LGM_DEST_HOLD_FIRE: his tank's last known position, for the
+            -- walk off the pill tile after the build (predict_dest_hold).
+            if C.LGM_DEST_HOLD_FIRE then kill_lgm.note_owner_pos(h, _ent, enemy_tanks) end
+          end
         end
         local aim_wx, aim_wy, sl, ft, d_wu, tier = kill_lgm.predict_aim(
           info.tankx, info.tanky, _ent, h)
@@ -731,6 +749,12 @@ function M.update(state, world, info)
         _ent.flight_ticks     = ft
         _ent.predicted_dist_wu = d_wu
         _ent.predict_tier     = tier
+        -- LGM_DEST_HOLD_FIRE: the fire gates hold the trigger on this flag.
+        -- Only predict_aim's hold branch sets tier dest_pill_hold, so the
+        -- flag is false with the knob (or LGM_DEST_AIM) off.
+        _ent.dest_hold   = (tier == "dest_pill_hold")
+        _ent.dest_timing = h and h.dest_timing or nil
+        _ent.dest_intercept = h and h.dest_intercept or nil   -- LGM_DEST_INTERCEPT
         n_lgm = n_lgm + 1
         enemy_lgms[n_lgm] = _ent
       end
@@ -1162,7 +1186,9 @@ function M.update(state, world, info)
     for id, b in pairs(world.bases) do
       if b.mx == bmx and b.my == bmy then
         b.obs_shells = info.base.shells or 0
-        b.obs_armour = info.base.armour or 0
+        -- info.base.armour is raw / 5; obs_armour holds RAW armour (util.lua
+        -- base_armour_steps), the same unit EVENT_BASE_STOCK writes.
+        b.obs_armour = U.base_armour_raw_from_info(info.base.armour or 0, b.obs_armour)
         b.obs_tick   = now
         break
       end

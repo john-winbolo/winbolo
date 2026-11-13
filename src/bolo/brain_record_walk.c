@@ -13,7 +13,9 @@
  *********************************************************/
 #include "brain_record_walk.h"
 
+#include <stdlib.h>
 #include <string.h>
+#include <zlib.h>
 
 #include "brain_record.h"  /* BrainRecHeader / BrainRecCandidate / magics */
 #include "input_packet.h"  /* TankSnapshot / ShellSnapshot / BaseSnapshot / PillSnapshot */
@@ -126,9 +128,13 @@ BrainRecWalkStatus brainRecWalkFrame(BrainRecReader *r, BrainRecFrameInfo *out) 
             if (tl && !r->skip(r->ctx, tl)) return BRAINREC_WALK_BAD;
         }
 
-        uint32_t pl = 0;
-        if (!rdU32(r, &pl)) return BRAINREC_WALK_BAD;
-        if (pl && !r->skip(r->ctx, pl)) return BRAINREC_WALK_BAD;
+        if (r->poolBlock) {
+            if (!r->poolBlock(r->ctx)) return BRAINREC_WALK_BAD;
+        } else {
+            uint32_t pl = 0;
+            if (!rdU32(r, &pl)) return BRAINREC_WALK_BAD;
+            if (pl && !r->skip(r->ctx, pl)) return BRAINREC_WALK_BAD;
+        }
     }
 
     /* v5 tail: one alliance bitmap per player slot, written every frame. */
@@ -142,6 +148,92 @@ BrainRecWalkStatus brainRecWalkFrame(BrainRecReader *r, BrainRecFrameInfo *out) 
         if (!rdU32(r, &info.pillsOnMap) || !rdU32(r, &info.basesOnMap)) return BRAINREC_WALK_BAD;
     }
 
+    /* v8 tail: the recorded Dijkstra box, length-prefixed. Its keyframes
+     * fall on the map keyframes, so mapKeyframe stays the split-safe flag. */
+    if (r->version == 0 || r->version >= 8u) {
+        uint32_t dl = 0;
+        if (!rdU32(r, &dl)) return BRAINREC_WALK_BAD;
+        if (dl && !r->skip(r->ctx, dl)) return BRAINREC_WALK_BAD;
+    }
+
     if (out) *out = info;
     return BRAINREC_WALK_OK;
+}
+
+/* ---- Whole-file tick range ----------------------------------------------- */
+
+#define WALK_TICKS_BUF (256 * 1024)
+
+typedef struct {
+    gzFile         g;
+    unsigned char *buf;
+    bool         (*cancelled)(void *ctx);
+    void          *cancelCtx;
+    bool           stop;
+} WalkTicksSrc;
+
+static bool walkTicksStop(WalkTicksSrc *s) {
+    if (!s->stop && s->cancelled && s->cancelled(s->cancelCtx)) s->stop = true;
+    return s->stop;
+}
+
+static size_t walkTicksRead(void *ctx, void *dst, size_t len) {
+    WalkTicksSrc *s = (WalkTicksSrc *)ctx;
+    if (walkTicksStop(s)) return 0;
+    int got = gzread(s->g, dst, (unsigned)len);
+    return got > 0 ? (size_t)got : 0;
+}
+
+/* Skip by reading into the buffer: the bytes are inflated either way, and
+ * this keeps the cancel check between chunks of a large block. */
+static bool walkTicksSkip(void *ctx, size_t len) {
+    WalkTicksSrc *s = (WalkTicksSrc *)ctx;
+    while (len > 0) {
+        if (walkTicksStop(s)) return false;
+        unsigned chunk = (unsigned)(len < WALK_TICKS_BUF ? len : WALK_TICKS_BUF);
+        if (gzread(s->g, s->buf, chunk) != (int)chunk) return false;
+        len -= chunk;
+    }
+    return true;
+}
+
+bool brainRecWalkFileTicks(const char *btrPath, uint32_t *firstTick,
+                           uint32_t *lastTick, uint64_t *frames,
+                           bool (*cancelled)(void *ctx), void *cancelCtx) {
+    WalkTicksSrc src;
+    BrainRecReader r;
+    BrainRecFrameInfo fi;
+    uint32_t first = 0, last = 0;
+    uint64_t n = 0;
+
+    memset(&src, 0, sizeof src);
+    src.cancelled = cancelled;
+    src.cancelCtx = cancelCtx;
+    src.g = gzopen(btrPath, "rb");
+    if (!src.g) return false;
+    gzbuffer(src.g, WALK_TICKS_BUF);
+    src.buf = (unsigned char *)malloc(WALK_TICKS_BUF);
+    if (!src.buf) { gzclose(src.g); return false; }
+
+    memset(&r, 0, sizeof r);
+    r.ctx  = &src;
+    r.read = walkTicksRead;
+    r.skip = walkTicksSkip;
+    if (brainRecWalkPreamble(&r, NULL, NULL) == BRAINREC_WALK_OK) {
+        /* EOF ends a whole file; BAD after some frames is a file cut off
+         * mid-frame, and the frames before the cut still count. */
+        while (brainRecWalkFrame(&r, &fi) == BRAINREC_WALK_OK) {
+            if (n == 0) first = fi.tick;
+            last = fi.tick;
+            n++;
+        }
+    }
+    bool stopped = src.stop;
+    free(src.buf);
+    gzclose(src.g);
+    if (stopped || n == 0) return false;
+    if (firstTick) *firstTick = first;
+    if (lastTick)  *lastTick  = last;
+    if (frames)    *frames    = n;
+    return true;
 }

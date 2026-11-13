@@ -24,7 +24,7 @@ local M = {}
 
 local buffer = {}   -- array of {source, line, msg}
 local tick = 0
-local tick_start = 0  -- os.clock() at set_tick
+local tick_start = 0  -- clock() at set_tick
 
 -- Per-bot identity for per-file routing. Each Lua state runs one bot,
 -- so this module-level local is naturally per-bot. Set via M.set_bot()
@@ -40,9 +40,14 @@ local file = nil
 local last_successful_flush_tick = -1
 local consecutive_failures        = 0
 
--- High-res timer (os.clock is CPU time in seconds), used for the
--- per-line [x.xxms] within-tick stamp.
-local clock = os.clock
+-- High-res wall clock in seconds, used for the per-line [x.xxms] within-tick
+-- stamp and for TICK_COST / NEAR_BUDGET. clock_us (braincore.c) is the wall
+-- clock the rest of the brain's timings use. It used to be os.clock, which is
+-- CPU time: on Linux that is the CPU time of the whole process (every brain
+-- thread), so Bot Host bots showed ~1.7x their real think time. os.clock is
+-- only the fallback for a host with no clock_us.
+local _clock_us = clock_us
+local clock = _clock_us and function() return _clock_us() * 1e-6 end or os.clock
 
 -- C threaded log writer (global injected by C; same one optimize.lua uses).
 -- nil when unavailable → synchronous file fallback below.

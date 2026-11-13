@@ -26,6 +26,7 @@ local cpf = require("cpathfinder")
 local viz = require("viz")
 local print2   = require("print2")
 local opt      = require("optimize")
+local PC       = require("pill_cover")
 local clock_us = clock_us or function() return 0 end
 
 local M = {}
@@ -211,9 +212,9 @@ local function score_aim(spot_wx, spot_wy, origin_mx, origin_my,
             end
           end
         end
-        -- A base of ANY owner is solid and blocks the shot (same rule shot_path_clear uses).
-        local bentry = world.base_at and world.base_at[tmy * 256 + tmx]
-        if bentry and bentry.base then
+        -- A base blocks the shot only under the engine rule
+        -- (U.base_stops_tank_shell, the same rule shot_path_clear uses).
+        if U.base_tile_stops_tank_shell(world, tmx, tmy, origin_mx, origin_my) then
           outgoing_blocked_by_wall = true
         end
       end
@@ -242,9 +243,9 @@ local function score_aim(spot_wx, spot_wy, origin_mx, origin_my,
               end
             end
           end
-          -- A base of ANY owner is solid and blocks the shot (matches shot_path_clear).
-          local bentry = world.base_at and world.base_at[t.my * 256 + t.mx]
-          if bentry and bentry.base then
+          -- A base blocks the shot only under the engine rule
+          -- (U.base_stops_tank_shell, matches shot_path_clear).
+          if U.base_tile_stops_tank_shell(world, t.mx, t.my, origin_mx, origin_my) then
             outgoing_blocked_by_wall = true
           end
         end
@@ -321,22 +322,45 @@ local function score_aim(spot_wx, spot_wy, origin_mx, origin_my,
           dbgadd(tmx, tmy, "skip", string.format("behind standoff (pdist=%.2f >= pill->standoff %.2f)", pdist, pill_to_standoff_d))
         else
           local kind = nil
-          local plist = world.pill_at and world.pill_at[idx]
-          if plist then
-            for _, e in ipairs(plist) do
-              if e.pill and e.pill.owner == "friendly" then
+          -- Knob PILL_COVER_BY_HEALTH: a pill on the square is a blocker only
+          -- when it is friendly and worth a wall or more (pill_cover.lua,
+          -- floor(health / 5)). Any other pill (enemy, neutral, dead, or a
+          -- friendly pill under 5 health) is not a blocker, and no wall can
+          -- go on it, so the square is skipped.
+          local pill_skip = nil
+          if C.PILL_COVER_BY_HEALTH then
+            local sp = PC.pill_on_square(world, tmx, tmy)
+            if sp then
+              local pw = PC.pill_walls(sp)
+              if pw >= 1 then
                 kind = "friendly_pill"
-                break
+              else
+                pill_skip = string.format("pill worth 0 walls (owner=%s hp=%s)",
+                  tostring(sp.owner), tostring(sp.health))
+              end
+            end
+          else
+            local plist = world.pill_at and world.pill_at[idx]
+            if plist then
+              for _, e in ipairs(plist) do
+                if e.pill and e.pill.owner == "friendly" then
+                  kind = "friendly_pill"
+                  break
+                end
               end
             end
           end
-          if not kind then
+          if pill_skip then
+            dbgadd(tmx, tmy, "skip", pill_skip)
+          elseif not kind then
             local tt = U.ttype(tmx, tmy)
             if tt == C.T_BUILDING then kind = "wall_full"
             elseif tt == C.T_HALFBUILD then kind = "wall_half"
             end
           end
-          if kind then
+          if pill_skip then
+            -- skipped above
+          elseif kind then
             actual_blockers[#actual_blockers + 1] =
               { mx = tmx, my = tmy, kind = kind }
             dbgadd(tmx, tmy, "ACTUAL", kind)
@@ -473,15 +497,24 @@ local function score_candidate(cand, pill, world, pill_wx, pill_wy, no_builder, 
     local aim_score = 0
     if not blocked then
       -- Weight cover by shots-to-break (mirrors the C scorer): a friendly pill
-      -- blocker is worth PILLS_MAX_HEALTH (15) vs a wall's WALL_HP_FULL (5), so
+      -- blocker is worth PILLS_MAX_HEALTH (15) vs a wall's SHIELD_WALL_COVER_SHOTS (5), so
       -- one pill on the path covers as much as a three-wall shield.
-      local pill_n = 0
+      -- Knob PILL_COVER_BY_HEALTH: a friendly pill is worth floor(health / 5)
+      -- walls instead (pill_cover.lua), so pill_walls sums those.
+      local pill_n, pill_walls = 0, 0
       for _, b in ipairs(actual_blockers) do
-        local plist = world.pill_at and world.pill_at[b.my * 256 + b.mx]
-        if plist then
-          for _, e in ipairs(plist) do
-            if e.pill and e.pill.owner == "friendly" and (e.pill.health or 0) > 0 then
-              pill_n = pill_n + 1; break
+        if C.PILL_COVER_BY_HEALTH then
+          if b.kind == "friendly_pill" then
+            pill_n = pill_n + 1
+            pill_walls = pill_walls + PC.square_walls(world, b.mx, b.my)
+          end
+        else
+          local plist = world.pill_at and world.pill_at[b.my * 256 + b.mx]
+          if plist then
+            for _, e in ipairs(plist) do
+              if e.pill and e.pill.owner == "friendly" and (e.pill.health or 0) > 0 then
+                pill_n = pill_n + 1; break
+              end
             end
           end
         end
@@ -489,13 +522,15 @@ local function score_candidate(cand, pill, world, pill_wx, pill_wy, no_builder, 
       -- Cover satisfices at PPT_COVER_TARGET_SHOTS — one friendly pill (15) is a
       -- full shield, so extra blockers add nothing and built_bonus/fewer-builds
       -- break the tie toward the minimal subset (mirrors the C scorer).
-      local WALL_W, PILL_W = C.WALL_HP_FULL or 5, C.PILLS_MAX_HEALTH or 15
+      local WALL_W, PILL_W = C.SHIELD_WALL_COVER_SHOTS or 5, C.PILLS_MAX_HEALTH or 15
       -- Of the buildable (potential) slots, assume up to num_pill_blockers become
       -- dropped pillboxes worth pill_we walls each; the rest are plain walls.
       local _we = pill_we or 3.0
       local _npb = num_pill_blockers or 0
       local pot_pill = (potential_n < _npb) and potential_n or _npb
-      local cover = PILL_W * pill_n + WALL_W * (actual_n - pill_n)
+      local pill_cover_shots = C.PILL_COVER_BY_HEALTH and (WALL_W * pill_walls)
+                               or (PILL_W * pill_n)
+      local cover = pill_cover_shots + WALL_W * (actual_n - pill_n)
                     + WALL_W * (potential_n - pot_pill) + (WALL_W * _we) * pot_pill
       local target = C.PPT_COVER_TARGET_SHOTS or 15
       if cover > target then cover = target end
@@ -675,15 +710,31 @@ function M.scan(pill, world, standoff_mx, standoff_my, standoff_deg,
       min_chain = math.min(min_chain + 1, 3)
     end
 
+    -- Only LIVE pills go in: a shell passes over a dead pill (pillsHitSlot
+    -- needs armour > 0), so a dead pill neither blocks our own shot nor
+    -- shields us. scan_c blocks an aim on any pill in this table that sits
+    -- on our outgoing path.
     local pill_table = {}
+    -- Knob PILL_COVER_BY_HEALTH (scan_c args 25/26): the health of each
+    -- pill_table entry, in the same order, and the squares of dead pills
+    -- (no shell stops on them, but no wall can go there). Off: nil, nil, and
+    -- scan_c scores exactly as before.
+    local by_hp = C.PILL_COVER_BY_HEALTH
+    local pill_hp_table = by_hp and {} or nil
+    local dead_pill_sq  = by_hp and {} or nil
     if world.pill_at then
       for _, plist in pairs(world.pill_at) do
         for _, e in ipairs(plist) do
-          if e.pill then
+          if e.pill and (e.pill.health or 0) > 0 then
             local p = e.pill
             pill_table[#pill_table+1] = p.mx
             pill_table[#pill_table+1] = p.my
             pill_table[#pill_table+1] = (p.owner == "friendly") and 1 or 0
+            if by_hp then pill_hp_table[#pill_hp_table+1] = p.health end
+          elseif by_hp and e.pill and not e.pill.in_tank then
+            local p = e.pill
+            dead_pill_sq[#dead_pill_sq+1] = p.mx
+            dead_pill_sq[#dead_pill_sq+1] = p.my
           end
         end
       end
@@ -698,7 +749,8 @@ function M.scan(pill, world, standoff_mx, standoff_my, standoff_deg,
       n_fav, fs1, fb1, fs2, fb2, min_chain, max_bonus,
       NUM, SDG,
       num_pill_blockers, PILL_WE,
-      C.SHIELD_ADJ_FRIENDLY_PENALTY or 3)   -- arg 24: C mirror of the adjacency penalty
+      C.SHIELD_ADJ_FRIENDLY_PENALTY or 3,   -- arg 24: C mirror of the adjacency penalty
+      pill_hp_table, dead_pill_sq)          -- args 25/26: PILL_COVER_BY_HEALTH (nil = off)
 
     if r then
       local standoff_cand = { cx = sx, cy = sy,

@@ -56,9 +56,21 @@ local threat = require("threat")
 local PP     = require("pill_portfolio")
 local ally_state = require("ally_state")
 local print2 = require("print2")
+local PR     = require("pool_render")   -- the row / panel text
 local viz    = require("viz")
+local spike  = require("spike")   -- spike care (C.SPIKE_REPAIR_PRIORITY)
+local RS     = require("repair_standoff")  -- C.REPAIR_STANDOFF_ENABLED
+local QR     = require("quick_repair")     -- C.QUICK_REPAIR_ON_TAKE
 
 local M = {}
+
+-- 2026-11-03 REPAIR_STANDOFF: pick (or keep) the repair_pill standoff square.
+-- init.lua calls this once per tick before steering; steering and the feeder
+-- read the record through M.RS.active.
+M.RS = RS
+function M.standoff_update(state, world, info, now)
+  return RS.update(state, world, info, now)
+end
 
 -- Deterministic type ordering for tie-breaks (and the claim wire format).
 local TYPE_RANK = { rebuild = 1, topup = 2, farm = 3 }
@@ -74,7 +86,7 @@ local WEDGE_NAME = { "N", "E", "S", "W" }
 -- repair_leash: how far a REBUILD/TOPUP target may sit from the tank.
 --
 -- Two leashes now, and every reader has to ask for the right one: repair rows
--- reach BUILDER_POOL_REPAIR_LEASH (11 tiles, Manhattan) under the linear
+-- reach BUILDER_POOL_REPAIR_LEASH (11 tiles, measured by M.leash_dist) under the linear
 -- formula, the farm row keeps BUILDER_POOL_LEASH (8). Gated on
 -- BUILDER_POOL_REPAIR_LINEAR so `preset=keel` puts BOTH back to 8 with one
 -- entry. Exported because goals.lua's REPAIR_SPLIT prints the number it hands
@@ -86,6 +98,25 @@ function M.repair_leash()
     return C.BUILDER_POOL_REPAIR_LEASH or 11
   end
   return C.BUILDER_POOL_LEASH or 8
+end
+
+-- -------------------------------------------------------------------------
+-- leash_dist: the distance every builder leash test measures, tank tile to
+-- target tile. The engine's builder walks a straight line, so with
+-- BUILDER_LEASH_EUCLID (default true) this is the straight-line distance:
+-- Manhattan said a pill on the diagonal was up to 41% further than the walk
+-- really is, and a dead pill at Euclid 8 / Manhattan 12 sat out_of_leash
+-- while the man could have reached it. false = the old Manhattan measure.
+-- The leash values (8, 11, 15) are unchanged.
+-- -------------------------------------------------------------------------
+function M.leash_dist(ax, ay, bx, by)
+  return U.leash_dist(ax, ay, bx, by)   -- the one builder walk measure (util.lua)
+end
+
+-- A leash distance for a log or panel line: one decimal when it is not a
+-- whole number (Euclid), the old integer text when it is (Manhattan).
+function M.fmt_ld(d)
+  return U.fmt_ld(d)
 end
 
 -- -------------------------------------------------------------------------
@@ -444,13 +475,21 @@ function M.claim_advert(state, now)
   if not job then return "-" end
   local left = (job.claim_eta_tick or now) - now
   if left < 0 then left = 0 elseif left > 65535 then left = 65535 end
-  return string.format("%02X%02X%02X%04X%04X",
+  local s = string.format("%02X%02X%02X%04X%04X",
     bit.band(TYPE_RANK[job.type] or 0, 0xFF),
     bit.band(job.mx or 0, 0xFF), bit.band(job.my or 0, 0xFF),
     tick16(job.claim_tick), left)
+  -- C.BUILDER_REPAIR_CLAIM_SHARE: a repair claim also says WHEN our builder
+  -- reaches the pill (AAAA, arrival tick low 16 bits). Off, or a farm job:
+  -- the old 14 chars, byte for byte.
+  if C.BUILDER_REPAIR_CLAIM_SHARE and job.type ~= "farm" then
+    s = s .. string.format("%04X", tick16(job.arrive_tick or job.claim_eta_tick or now))
+  end
+  return s
 end
 
--- Parse one ally's bpj advert. Returns mx, my, type_rank, claim_tick16, eta.
+-- Parse one ally's bpj advert. Returns mx, my, type_rank, claim_tick16, eta,
+-- and arrive_tick16 (nil when the advert carries no arrival).
 local function parse_claim(s)
   if not s or s == "-" or #s < 14 then return nil end
   local tt = tonumber(string.sub(s, 1, 2), 16)
@@ -459,7 +498,18 @@ local function parse_claim(s)
   local ct = tonumber(string.sub(s, 7, 10), 16)
   local et = tonumber(string.sub(s, 11, 14), 16)
   if not (tt and mx and my and ct and et) then return nil end
-  return mx, my, tt, ct, et
+  local at = (#s >= 18) and tonumber(string.sub(s, 15, 18), 16) or nil
+  return mx, my, tt, ct, et, at
+end
+M.parse_claim = parse_claim
+
+-- The old claim-tick rule for one ally claim: earlier claim wins; same tick
+-- breaks to the LOWER player number.
+local function claim_tick_wins(pn, cct, info, our_tick)
+  if cct == tick16(our_tick) then
+    return pn < (info.player_number or 0)
+  end
+  return claim_earlier(cct, our_tick)
 end
 
 -- Is an ALLY claiming this tile, and does their claim beat ours?
@@ -473,14 +523,7 @@ function M.ally_claim_on(state, info, mx, my, now, our_tick)
       local h = slot.info
       local cmx, cmy, _ctt, cct, cet = parse_claim(h and h.bpj)
       if cmx and cmx == mx and cmy == my then
-        -- Earlier claim wins; same tick breaks to the LOWER player number.
-        local theirs_wins
-        if cct == tick16(our_tick) then
-          theirs_wins = pn < (info.player_number or 0)
-        else
-          theirs_wins = claim_earlier(cct, our_tick)
-        end
-        if theirs_wins then
+        if claim_tick_wins(pn, cct, info, our_tick) then
           local age = now - (slot.last_tick or now)
           local eta = cet - age
           if eta < 0 then eta = 0 end
@@ -492,6 +535,130 @@ function M.ally_claim_on(state, info, mx, my, now, our_tick)
     end
   end
   return best
+end
+
+-- -------------------------------------------------------------------------
+-- Repair claims by ARRIVAL (C.BUILDER_REPAIR_CLAIM_SHARE).
+--
+-- The rule: an ally has sent (or is sending) its builder to repair this pill.
+-- We do not send ours when the ally's builder reaches the pill at the same
+-- tick or earlier than ours would. We may send ours when it would get there
+-- strictly earlier.
+--
+-- Our arrival: now + row.out_ticks, the pool's own outbound walk (the C walk
+-- sim from the tank). The ally's arrival: the AAAA tick on its bpj, which is
+-- the same number on its side -- dispatch tick + out_ticks, then now + the
+-- remaining walk while its builder walks out, frozen at the tick he first
+-- stands on the pill. Ticks are the shared engine tick, as the claim tick
+-- already is; both go over the wire as low 16 bits and are compared with the
+-- same half-range guard.
+--
+-- Expiry: a claim whose arrival tick is more than BUILDER_POOL_JOB_MAX_TICKS
+-- in the past is ignored. The claimant's own job record is dropped at
+-- dispatch + JOB_MAX_TICKS at the latest, and arrival is never before
+-- dispatch, so by then the claim cannot be live. The slot age
+-- (BUILDER_POOL_CLAIM_MAX_AGE) still applies on top, as for every claim.
+--
+-- An ally whose advert has no AAAA (KEEL, or an older brain) is judged by the
+-- old claim-tick rule, so a mixed team still never doubles up.
+--
+-- Returns nil when we may send, else { pn, eta, ctick, arrive, ours, by }.
+-- -------------------------------------------------------------------------
+local function signed16(d)
+  d = bit.band(d, 0xFFFF)
+  if d >= 32768 then d = d - 65536 end
+  return d
+end
+
+-- Log one yield/go verdict per (pill, ally, ally claim), not per tick.
+local function log_claim_verdict(state, now, row, pn, cct, verdict, ally_abs, ours)
+  if BRAIN_DEBUG_MODE then
+    state._rc_verdict = state._rc_verdict or {}
+    local k = string.format("%d:%d:%d:%d", row.mx, row.my, pn, cct)
+    if state._rc_verdict[k] ~= verdict then
+      state._rc_verdict[k] = verdict
+      if verdict == "yield" then
+        print2(string.format(
+          "REPAIR_CLAIM_YIELD t=%d pill=(%d,%d) ours=%d ally=%d allyplayer=%d"
+          .. " job=%s%s -- player %d's builder gets there first or at the"
+          .. " same tick; ours stays home",
+          now, row.mx, row.my, ours, ally_abs, pn, tostring(row.type),
+          row.quick and " quick=1" or "", pn))
+      elseif verdict == "go" then
+        print2(string.format(
+          "REPAIR_CLAIM_GO t=%d pill=(%d,%d) ours=%d ally=%d allyplayer=%d"
+          .. " job=%s%s -- ours gets there %d ticks earlier, so the claim"
+          .. " does not hold ours back",
+          now, row.mx, row.my, ours, ally_abs, pn, tostring(row.type),
+          row.quick and " quick=1" or "", ally_abs - ours))
+      else
+        print2(string.format(
+          "REPAIR_CLAIM_EXPIRED t=%d pill=(%d,%d) ally=%d allyplayer=%d"
+          .. " -- more than %d ticks after its arrival tick; ignored",
+          now, row.mx, row.my, ally_abs, pn, C.BUILDER_POOL_JOB_MAX_TICKS or 900))
+      end
+    end
+  end
+end
+
+function M.ally_repair_claim(state, info, row, now)
+  local best = nil
+  local ours = row.out_ticks and (now + row.out_ticks) or nil
+  local max_after = C.BUILDER_POOL_JOB_MAX_TICKS or 900
+  for pn, slot in ally_state.iter_active(now, C.BUILDER_POOL_CLAIM_MAX_AGE or 1750) do
+    if pn ~= info.player_number then
+      local h = slot.info
+      local cmx, cmy, _ctt, cct, cet, cat = parse_claim(h and h.bpj)
+      if cmx and cmx == row.mx and cmy == row.my then
+        local age = now - (slot.last_tick or now)
+        local eta = cet - age
+        if eta < 0 then eta = 0 end
+        local yield, ally_abs, by = false, nil, "claim_tick"
+        if cat and ours then
+          by = "arrive"
+          ally_abs = now + signed16(cat - now)
+          if now - ally_abs > max_after then
+            log_claim_verdict(state, now, row, pn, cct, "expired", ally_abs, ours)
+          elseif ally_abs <= ours then
+            yield = true
+            log_claim_verdict(state, now, row, pn, cct, "yield", ally_abs, ours)
+          else
+            log_claim_verdict(state, now, row, pn, cct, "go", ally_abs, ours)
+          end
+        else
+          yield = claim_tick_wins(pn, cct, info, now)
+        end
+        if yield and (not best or pn < best.pn) then
+          best = { pn = pn, eta = eta, ctick = cct, arrive = ally_abs,
+                   ours = ours, by = by }
+        end
+      end
+    end
+  end
+  return best
+end
+
+-- REPAIR_CLAIM_RX: one line when an ally's repair claim first shows up (a new
+-- claim tick or tile from that player). Read-only; debug logging only.
+function M.log_claims_rx(state, info, now)
+  if BRAIN_DEBUG_MODE then
+    if not C.BUILDER_REPAIR_CLAIM_SHARE then return end
+    state._rc_rx = state._rc_rx or {}
+    for pn, slot in ally_state.iter_active(now, C.BUILDER_POOL_CLAIM_MAX_AGE or 1750) do
+      if pn ~= info.player_number then
+        local h = slot.info
+        local cmx, cmy, ctt, cct, cet, cat = parse_claim(h and h.bpj)
+        local k = cmx and cat and string.format("%d:%d:%d", cmx, cmy, cct) or nil
+        if k and state._rc_rx[pn] ~= k then
+          print2(string.format(
+            "REPAIR_CLAIM_RX t=%d pill=(%d,%d) arrive=%d player=%d type=%d"
+            .. " claim=t%d eta=%dt",
+            now, cmx, cmy, now + signed16(cat - now), pn, ctt, cct, cet))
+        end
+        state._rc_rx[pn] = k
+      end
+    end
+  end
 end
 
 -- -------------------------------------------------------------------------
@@ -686,7 +853,11 @@ function M.eligibility(state, world, info, now)
     else
       local cls = sub and (C.BUILDER_POOL_SUBSTATE_CLASS or {})[sub] or nil
       d.class = cls
-      if cls == "fire" then
+      if cls == "fire" and C.BUILDER_SEND_CERTAIN_DEATH_ONLY then
+        -- Shells flying either way is not a refusal: the winner asks
+        -- danger.lgm_certain_death before it goes.
+        d.fire_exchange_waived = sub
+      elseif cls == "fire" then
         d.mode_ok, d.mode_reason = false, string.format("fire_exchange:%s", sub)
       elseif cls ~= "travel" then
         -- No substate at all: a defender parked and watching is the plan's
@@ -726,9 +897,22 @@ function M.eligibility(state, world, info, now)
   local quiet = C.BUILDER_POOL_UNDER_FIRE_TICKS or 100
   d.fire_ok, d.fire_reason = true, nil
   if age ~= nil and age < quiet then
-    d.fire_ok, d.fire_reason = false, string.format("under_fire(%dt)", age)
+    if C.BUILDER_SEND_CERTAIN_DEATH_ONLY then
+      -- The fire clock is not a refusal: the winner asks
+      -- danger.lgm_certain_death before it goes.
+      d.under_fire_waived = age
+    else
+      d.fire_ok, d.fire_reason = false, string.format("under_fire(%dt)", age)
+    end
   end
 
+  -- 3. Spike pair (spike.lua, C.FOCUS_SPIKE_PAIR): the first spike landed
+  --    and the second trip is due, so the man waits for it. False with the
+  --    pair rule off.
+  if spike.second_pending(state) then
+    d.spike_wait = true
+    return false, "spike_pair_second", d
+  end
   if not d.mode_ok then return false, d.mode_reason, d end
   if not d.fire_ok then return false, d.fire_reason, d end
   return true, nil, d
@@ -757,7 +941,7 @@ end
 -- rows: the panel should show that we can SEE the job and say why the man is
 -- not going (the tank goal repair_pill is what relocates for those).
 -- -------------------------------------------------------------------------
-local function pill_blocked(state, p)
+local function pill_blocked(state, p, skip_take)
   if state.blocked then
     local bk = U.mkey(p.mx, p.my)
     if state.blocked[bk] and (state.tick or 0) < state.blocked[bk] then return "blocked" end
@@ -773,10 +957,11 @@ local function pill_blocked(state, p)
   -- p15 died to return fire at t=21471, and four trees would have made it a
   -- live friendly pill again -- restoring the shield the take is relying on
   -- AND denying the corpse to the enemy driver who took it 190 ticks later.
-  if p._in_use and (p.health or 0) > 0 then return "take_blocker" end
+  -- skip_take: the quick repair (C.QUICK_REPAIR_ON_TAKE) inside its window.
+  if p._in_use and (p.health or 0) > 0 and not skip_take then return "take_blocker" end
   if p._friendly_shot_tick
      and ((state.tick or 0) - p._friendly_shot_tick)
-         < (C.REPAIR_FRIENDLY_FIRE_REJECT_TICKS or 400) then
+         < (C.REPAIR_FRIENDLY_FIRE_REJECT_TICKS or 50) then
     return "friendly_fire"
   end
   local g = state.goal
@@ -804,13 +989,20 @@ function M.discover(state, world, info)
     -- for every one of them. The bpj claim is what keeps that from happening.
     if (p.owner == "friendly" or p.owner == "allied")
        and not p.in_tank and not p.carrier then
-      local d = U.mdist(tmx, tmy, p.mx, p.my)
-      if d <= rleash * 2 then
+      local d = M.leash_dist(tmx, tmy, p.mx, p.my)
+      -- Spike care (spike.lua): a spike pill tops up from
+      -- SPIKE_REPAIR_MIN_MISSING hp and reaches SPIKE_REPAIR_LEASH tiles.
+      -- nil with C.SPIKE_REPAIR_PRIORITY off: the rows are the old ones.
+      local spk = spike.care_at(state, p.mx, p.my, state.tick or 0)
+      local pleash = spk and math.max(rleash, C.SPIKE_REPAIR_LEASH) or rleash
+      local tmin = spk and C.SPIKE_REPAIR_MIN_MISSING
+                   or (C.BUILDER_POOL_TOPUP_MIN_MISSING or 4)
+      if d <= pleash * 2 then
         local hp = p.health or 0
         local kind, need
         if hp <= 0 then
           kind, need = "rebuild", C.BUILDER_POOL_TREES_REBUILD or 4
-        elseif (maxhp - hp) >= (C.BUILDER_POOL_TOPUP_MIN_MISSING or 4) then
+        elseif (maxhp - hp) >= tmin then
           kind, need = "topup", math.max(C.BUILDER_POOL_TREES_TOPUP or 1,
                         math.ceil((maxhp - hp) / (C.PILL_REPAIR_AMOUNT or 4)))
         end
@@ -820,9 +1012,12 @@ function M.discover(state, world, info)
             type = kind, id = pid, mx = p.mx, my = p.my,
             dist = d, hp = hp, missing = maxhp - hp, own = p.owner,
             trees_need = need,
-            leash = rleash,                   -- the reach THIS row was measured against
+            leash = pleash,                   -- the reach THIS row was measured against
             hard = blk,                       -- discovery-level refusal, shown as REJECT
-            out_of_leash = (d > rleash) or nil,
+            out_of_leash = (d > pleash) or nil,
+            spike = spk and true or nil,      -- spike care: + SPIKE_REPAIR_BONUS
+            spike_t = spk and spk.t or nil,
+            spike_src = spk and spk.src or nil,
           }
         end
       end
@@ -1016,6 +1211,31 @@ local function apply_goal_weight(state, row)
   end
 end
 
+-- Spike care bonus: + SPIKE_REPAIR_BONUS on a spike pill's rebuild/topup
+-- row, after the goal weight (row.spike_pre = the score before it). Not on a
+-- forced row (its own flat bonus follows) or the no-route sentinel.
+local function apply_spike(state, row, now)
+  row.spike_pre, row.spike_bonus = nil, nil
+  if not row.spike or row.type == "farm" or row.forced or not row.trip then return end
+  row.spike_pre = row.score
+  row.spike_bonus = C.SPIKE_REPAIR_BONUS
+  row.score = row.score + row.spike_bonus
+  -- One line per (tile, type, hp), not one per tick.
+  state._spk_log = state._spk_log or {}
+  local k = row.my * 256 + row.mx
+  local lk = string.format("%s:%d", row.type, row.hp or 0)
+  if state._spk_log[k] ~= lk then
+    state._spk_log[k] = lk
+    print2(string.format(
+      "SPIKE_CARE t=%d bonus %s p#%s@(%d,%d) hp=%d/%d bp_score{%.0f} = pre_spike{%.0f} + spike_care{%.0f} src=%s landed t=%s care left %dt topup_min=%d leash=%d",
+      now, row.type, tostring(row.id), row.mx, row.my, row.hp or 0,
+      C.PILLS_MAX_HEALTH or 15, row.score, row.spike_pre, row.spike_bonus,
+      tostring(row.spike_src), tostring(row.spike_t),
+      C.SPIKE_CARE_TICKS - (now - (row.spike_t or now)),
+      C.SPIKE_REPAIR_MIN_MISSING, row.leash or 0))
+  end
+end
+
 function M.score_row(state, world, info, now, row, ctx)
   local FMAX = C.BUILDER_POOL_FRONT_MAX_TILES or 12
   -- front_dist is still MEASURED for every row: BP_DISPATCH prints it and the
@@ -1049,6 +1269,7 @@ function M.score_row(state, world, info, now, row, ctx)
       row.c_trip, row.c_danger, row.score = 0, 0, -1e9
     end
     apply_goal_weight(state, row)
+    apply_spike(state, row, now)
     return M.gate_row(state, world, info, now, row, ctx)
   end
 
@@ -1091,6 +1312,7 @@ function M.score_row(state, world, info, now, row, ctx)
   end
 
   apply_goal_weight(state, row)
+  apply_spike(state, row, now)
   return M.gate_row(state, world, info, now, row, ctx)
 end
 
@@ -1107,7 +1329,7 @@ function M.gate_row(state, world, info, now, row, ctx)
   -- ── per-candidate eligibility, in cost order (cheap tests first) ──────
   local reject = row.hard and ("discovery:" .. row.hard) or nil
   if not reject and row.out_of_leash then
-    reject = string.format("out_of_leash (%d > %d)", row.dist,
+    reject = string.format("out_of_leash (%.1f > %d)", row.dist,
                            row.leash or C.BUILDER_POOL_LEASH or 8)
   end
   if not reject and not trip then reject = "unreachable" end
@@ -1123,10 +1345,27 @@ function M.gate_row(state, world, info, now, row, ctx)
     end
   end
   if not reject then
-    local ac = M.ally_claim_on(state, info, row.mx, row.my, now, now)
-    if ac then
-      row.ally = ac
-      reject = string.format("ally_repairing (p%d eta %dt)", ac.pn, ac.eta)
+    if C.BUILDER_REPAIR_CLAIM_SHARE and row.type ~= "farm" then
+      -- Repair rows (normal, seeded, forced and quick alike) by ARRIVAL.
+      local ac = M.ally_repair_claim(state, info, row, now)
+      if ac then
+        row.ally = ac
+        if ac.by == "arrive" then
+          reject = string.format("ally_repairing (p%d arrives t%d <= ours t%d)",
+                                 ac.pn, ac.arrive, ac.ours)
+        else
+          reject = string.format("ally_repairing (p%d eta %dt)", ac.pn, ac.eta)
+        end
+        -- The ticks in the reason move as the builders walk; keep BP_DENY to
+        -- one line per ally.
+        row.reject_key = string.format("ally_repairing:p%d", ac.pn)
+      end
+    else
+      local ac = M.ally_claim_on(state, info, row.mx, row.my, now, now)
+      if ac then
+        row.ally = ac
+        reject = string.format("ally_repairing (p%d eta %dt)", ac.pn, ac.eta)
+      end
     end
   end
   -- An ally is coming to SCOOP this corpse (not to repair it). Rebuild only --
@@ -1149,6 +1388,17 @@ function M.gate_row(state, world, info, now, row, ctx)
   -- for "no wood" should not read "mode_owned" -- fixing the mode would not
   -- make it go).
   if not reject and not ctx.ok then reject = ctx.reason end
+  -- C.BUILDER_NO_IDLE_FARM_UNDER_FIRE: a farm row is an idle harvest, so it
+  -- waits out the fire once the tank holds the minimum. ctx.not_idle is the
+  -- ping-forced harvest, which is step 1 of a repair the human ordered.
+  if not reject and row.type == "farm" and not ctx.not_idle then
+    local fage, fmin = danger.idle_farm_blocked(state, info, now)
+    if fage then
+      reject = string.format("idle_farm_under_fire(%dt, trees %d >= %d)",
+                             fage, info.trees or 0, fmin)
+      row.reject_key = "idle_farm_under_fire"
+    end
+  end
   if not reject and ctx.reserve_eta then
     local need_t = (trip or 0) + (C.BUILDER_POOL_RESERVE_MARGIN or 40)
     if need_t > ctx.reserve_eta then
@@ -1167,6 +1417,9 @@ function M.gate_row(state, world, info, now, row, ctx)
   -- preset=keel.
   local skip_path = row.linear and true or false
   row.path_gate = not skip_path
+  -- BUILDER_SEND_CERTAIN_DEATH_ONLY: the danger sample is a fire check, so
+  -- it is off; the winner asks danger.lgm_certain_death instead.
+  if C.BUILDER_SEND_CERTAIN_DEATH_ONLY then skip_path = true end
   if not reject and not skip_path then
     if not danger.lgm_path_safe_enhanced(info, row.mx, row.my,
            C.BUILDER_POOL_PATH_DANGER or C.LGM_DANGER_MED, now, world) then
@@ -1196,75 +1449,10 @@ function M.gate_row(state, world, info, now, row, ctx)
   return row
 end
 
--- -------------------------------------------------------------------------
--- score_terms: the one-line term breakdown, hand-checkable on its own.
---
--- THE RULE this obeys (the author's, standing): every factor in the formula
--- appears in the string, so the final number can be recomputed from the line
--- alone without opening constants.lua. Two shapes, one per formula:
---
---   linear  score 362 = hp_w(30) x missing(15) = 450 - trip_w(0.25) x trip(352t) = 88
---   legacy  val 184 - trip 95 - danger 0
---
--- ...plus, on the ONE row per tick that is the tank goal's own pill and only
--- when BUILDER_POOL_GOAL_PILL_BONUS is not 1, a third link on the end of the
--- chain: `= bp_raw{373} x goal_w{1.20}`, whose product is the bp_score{} at
--- the head. Absent on every other row, and on every row under preset=keel.
---
--- Used by BP_DISPATCH, BP_DENY's neighbours and the panel row, so all three
--- print the SAME arithmetic.
--- -------------------------------------------------------------------------
--- The trip's three legs as chips, appended to BOTH formulas so the printed
--- trip{} is never a number the reader has to take on trust: out{} + build{} +
--- back{} adds up to it, pred{} says where the return leg was walked TO, and on
--- a farm row wedge{} says which quarter of the leash square offered the tile.
---
--- Appended at the END, after tripcost{}, on purpose: tests/repair_priority_test
--- .py anchors LINEAR_RE at the start of this string, so anything inserted
--- ahead of tripcost{} breaks it. No "||" is ever produced here (the chip
--- parser splits the display half off at the first one) and no chip value
--- reaches 32 characters, which is the popup's limit.
-local function leg_chips(row)
-  local pred
-  if row.pred_mx then
-    pred = string.format("pred{%d,%d}", row.pred_mx, row.pred_my)
-  else
-    pred = "pred{same}"
-  end
-  local wedge = row.wedge and string.format(" wedge{%s}", row.wedge) or ""
-  return string.format(
-    " [legs out{%s} + build{%s} + back{%s} %s predsrc{%s}%s]",
-    tostring(row.out_ticks or "-"),
-    tostring(row.build_ticks or (C.LGM_BUILD_TIME or 20)),
-    tostring(row.back_ticks or "-"), pred,
-    tostring(row.pred_src or "-"), wedge)
-end
-
--- The goal-pill bonus, as the last link of the chain: the arithmetic above it
--- produces bp_raw{}, and bp_raw x goal_w is the bp_score{} at the head of the
--- line. Printed ONLY when the factor is not 1 -- a chip that always says x1 is
--- noise on every row of every game, and its absence means exactly "this row is
--- not the goal's pill" (or BUILDER_POOL_GOAL_PILL_BONUS is 1.0, e.g.
--- preset=keel), which is why the docs say so.
-local function goal_chips(row)
-  local w = row.goal_w or 1.0
-  if w == 1.0 then return "" end
-  return string.format(" = bp_raw{%.0f} x goal_w{%.2f}", row.raw_score or 0, w)
-end
-
--- The PING_DEFEND_REPAIR force, as the last link of the chain: the arithmetic
--- above it produces bp_raw{}, and bp_raw + ping_force is the bp_score{} at the
--- head of the line. forced{} names the step (repair / harvest). Absent on
--- every row that is not forced, and on every row with the knob off.
-local function force_chips(row)
-  if not row.forced then return "" end
-  if not row.force_bonus then
-    return string.format(" forced{%s}", row.forced)
-  end
-  return string.format(" = bp_raw{%.0f} + ping_force{%.0f} forced{%s}",
-                       row.raw_score or 0, row.force_bonus, row.forced)
-end
-
+-- score_terms (the one-line term breakdown, hand-checkable on its own) and
+-- its leg / goal / force chips live in pool_render.lua, with the rest of the
+-- pool panel text, so BP_DISPATCH, BP_DENY and the panel row print the SAME
+-- arithmetic.
 -- Adds PING_DEFEND_REPAIR_BONUS to a forced row's finished score. Never on
 -- the no-route sentinel (-1e9 is an ordering device, not a score).
 function M.apply_force_bonus(row)
@@ -1277,293 +1465,14 @@ function M.apply_force_bonus(row)
   end
 end
 
-function M.score_terms(row)
-  -- Every chip is word{value}: BrainTest's pool-grid detail popup parses
-  -- exactly that shape (pool_grid.cpp) into its term table, so the same
-  -- string is the hand-checkable log line AND the popup's term list.
-  local score_str = row.trip and string.format("%.0f", row.score or 0)
-                    or "n/a: no route"
-  if row.linear then
-    return string.format(
-      "bp_score{%s} = hp_w{%d} x missing{%d} = value{%.0f}"
-      .. " - trip_w{%.2f} x trip{%st} = tripcost{%.0f}%s%s%s",
-      score_str, row.v_hp_w or (C.BUILDER_POOL_REPAIR_HP_W or 30),
-      row.missing or 0, row.value or 0,
-      C.BUILDER_POOL_REPAIR_TRIP_W or 0.25, tostring(row.trip or "-"),
-      row.c_trip or 0, goal_chips(row), force_chips(row), leg_chips(row))
-  end
-  local urg_name = (row.type == "farm") and "urg" or "topup_hp"
-  return string.format(
-    "bp_score{%s} = bp_base{%.0f} + %s{%.0f} + front{%.0f} = value{%.0f}"
-    .. " - trip_w{%.2f} x trip{%st} = tripcost{%.0f}"
-    .. " - danger_w{%.2f} x bp_danger{%.0f} = dangercost{%.0f}%s%s%s",
-    score_str, row.v_base or 0, urg_name, row.v_hp or 0, row.v_front or 0,
-    row.value or 0,
-    C.BUILDER_POOL_TRIP_W or 0.5, tostring(row.trip or "-"), row.c_trip or 0,
-    C.BUILDER_POOL_DANGER_W or 1.5, row.danger or 0, row.c_danger or 0,
-    goal_chips(row), force_chips(row), leg_chips(row))
-end
+M.score_terms = PR.bp_score_terms
+-- The spike care chip (pre_spike{} + spike_care{}), also in pool_render.lua.
+M.spike_chips = PR.bp_spike_chips
 
--- -------------------------------------------------------------------------
--- The pool-grid detail string for one scored row: the short chip line before
--- "||" and, after it, one "name:computation" segment per chip (joined by
--- "|"), which the popup shows next to the chip's value and meaning.
---
--- COLD PATH.  This used to run inside score_row, so a ~35-argument
--- string.format (plus the label and score_str formats feeding it) executed for
--- every candidate on every tick even in production, where the only consumer --
--- M.panel_section, below, driving BrainTest's pool grid -- never asked for it.
--- It is built on demand instead; every chip is read straight back off the row,
--- so the text is byte-for-byte what score_row used to store.
--- -------------------------------------------------------------------------
-function M.row_formula(row)
-  local FMAX     = C.BUILDER_POOL_FRONT_MAX_TILES or 12
-  local fd       = row.front_dist or 0
-  local trip     = row.trip
-  local out_ticks = row.out_ticks
-  local dgr      = row.danger or 0
-  local reject   = row.reject
-  local MIN      = C.BUILDER_POOL_MIN_SCORE or 20
-  local label = (row.type == "farm")
-    and string.format("farm@(%d,%d)", row.mx, row.my)
-    or string.format("%s p#%d@(%d,%d) %s hp=%d/%d", row.type, row.id,
-                     row.mx, row.my, row.own or "?",
-                     row.hp or 0, C.PILLS_MAX_HEALTH or 15)
-  -- A row with no walkable route has no score to print: the sentinel that
-  -- sorts it last (-1e9) is an ordering device, not an arithmetic result, and
-  -- printing it as one ("= -1000000000") invites the reader to check a sum
-  -- that does not exist. Say what actually happened instead.
-  local score_str = trip and string.format("%.0f", row.score)
-                    or "n/a (no walkable route for the man)"
-  -- The goal-pill bonus, if this row has one: the tail of the arithmetic
-  -- chain, so the bp_score segment ends in the number that is actually on the
-  -- row rather than in the pre-bonus one.
-  local gw = row.goal_w or 1.0
-  local chain = score_str
-  if gw ~= 1.0 then
-    chain = string.format("bp_raw(%.0f) x goal_w(%.2f) = %s",
-                          row.raw_score or 0, gw, score_str)
-  elseif row.force_bonus then
-    chain = string.format("bp_raw(%.0f) + ping_force(%.0f) = %s",
-                          row.raw_score or 0, row.force_bonus, score_str)
-  end
-  local short = string.format("%s %s%s", label, M.score_terms(row),
-                              reject and (" REJECT " .. reject) or "")
-  local trip_seg = string.format(
-    "trip:out(%s) + build(%s) + back(%s) = %s brain ticks for the man"
-    .. " to walk out, build and walk back",
-    tostring(out_ticks or "-"),
-    tostring(row.build_ticks or (C.LGM_BUILD_TIME or 20)),
-    tostring(row.back_ticks or "-"), tostring(trip or "-"))
-  -- The legs, one segment per chip. Written once and spliced into both
-  -- formulas' segment lists, so a repair row and a farm row explain the walk
-  -- with the same words.
-  local out_seg = string.format(
-    "out:cpf_lgm_travel_ticks_map(tank -> (%d,%d), that tile BLESSED so a pill"
-    .. "/base on it does not self-block) = %s brain ticks. The straight-line"
-    .. " engine walk sim (brain_pathfinder.c lgmTravelTicksCore), not a path"
-    .. "finder -- a wall in the way reads STUCK and the row goes unreachable."
-    .. " A target 1 tile away or less skips the sim and is charged"
-    .. " BUILDER_POOL_GRASS_TICKS_PER_TILE(%d).",
-    row.mx, row.my, tostring(out_ticks or "-"),
-    C.BUILDER_POOL_GRASS_TICKS_PER_TILE or 16)
-  local build_seg = string.format(
-    "build:LGM_BUILD_TIME(%d) = brain ticks the man stands on the tile"
-    .. " building / repairing / chopping (lgm.h:84)",
-    C.LGM_BUILD_TIME or 20)
-  local back_seg, pred_seg, predsrc_seg
-  if not C.BUILDER_POOL_RETURN_PREDICT then
-    back_seg = string.format(
-      "back:BUILDER_POOL_RETURN_PREDICT is OFF, so the return leg is the"
-      .. " outbound leg mirrored -- out(%s) again, i.e. the tank is assumed to"
-      .. " wait on the spot.", tostring(out_ticks or "-"))
-    pred_seg = "pred:no prediction (BUILDER_POOL_RETURN_PREDICT off) -- the"
-      .. " walk home is measured back to the tank's CURRENT tile."
-  elseif row.pred_mx then
-    back_seg = string.format(
-      "back:cpf_lgm_travel_ticks_map((%d,%d) -> the PREDICTED tank tile"
-      .. " (%d,%d), the job tile BLESSED because he starts standing on it)"
-      .. " = %s brain ticks.",
-      row.mx, row.my, row.pred_mx, row.pred_my, tostring(row.back_ticks or "-"))
-    pred_seg = string.format(
-      "pred:tank(%d,%d) walked %s brain ticks forward along its OWN ROUTE"
-      .. " (state.pf.path_chain, waypoint %s of %s, reached at t=%s) at the"
-      .. " engine's per-terrain speed caps (C.MAP_SPEED, bolo_map.h"
-      .. " MAP_SPEED_T*; 256 WU a tile, 362 diagonally) -> tile (%d,%d)."
-      .. " Horizon = min(out + build, BUILDER_POOL_RETURN_PREDICT_MAX_TICKS(%d)).",
-      bit.rshift((row.f_tankx or 0), 8), bit.rshift((row.f_tanky or 0), 8),
-      tostring(row.pred_horizon or "-"), tostring(row.pred_route_i or "-"),
-      tostring(row.pred_route_n or "-"),
-      row.pred_route_t and string.format("%.0f", row.pred_route_t) or "-",
-      row.pred_mx, row.pred_my,
-      C.BUILDER_POOL_RETURN_PREDICT_MAX_TICKS or 400)
-  else
-    back_seg = string.format(
-      "back:the prediction FELL BACK to the tank's current tile (%s), so the"
-      .. " return leg is the outbound leg mirrored -- out(%s).",
-      tostring(row.pred_why or "-"), tostring(out_ticks or "-"))
-    pred_seg = string.format(
-      "pred:same tile as the tank -- fallback reason '%s'. no_route / "
-      .. "route_stale / route_ended / route_no_progress = the tank has no"
-      .. " committed route to walk (idle, or the chain belongs to a goal it has"
-      .. " left); horizon_too_short = it has one but cannot clear its own tile"
-      .. " inside out+build; off_map / unwalkable = the predicted tile is"
-      .. " water, a building or a live pill; back_unreachable = the walk sim"
-      .. " could not get the man from the job to it. Horizon was %s ticks.",
-      tostring(row.pred_why or "-"), tostring(row.pred_horizon or "-"))
-  end
-  predsrc_seg = string.format(
-    "predsrc:where pred{} came from. route = walked along state.pf.path_chain,"
-    .. " the route the navigator computed and steering is already driving"
-    .. " (nothing is re-searched here). same = a fallback landed on the tank's"
-    .. " own tile, which makes back == out, the pre-2026-09-06 number."
-    .. " off = BUILDER_POOL_RETURN_PREDICT is disabled. This row: %s.",
-    tostring(row.pred_src or "-"))
-  local wedge_seg = row.wedge and string.format(
-    "wedge:the 90-degree quarter of the BUILDER_POOL_LEASH(%d) square this"
-    .. " forest was the nearest in -- N/E/S/W, boundaries on the 45-degree"
-    .. " diagonals (abs(dx) > abs(dy) is E/W, otherwise N/S; the diagonal"
-    .. " itself goes to the vertical wedge). One row per wedge, so a nearer forest the"
-    .. " man cannot straight-line to loses to a clear one elsewhere."
-    .. " 'all' = BUILDER_POOL_FARM_SECTORS is 1 (one row, nearest anywhere).",
-    C.BUILDER_POOL_LEASH or 8) or nil
-  local tail = string.format(
-    " %s trees need %d, have %d, reserved %d. leash %d, dist %d, front_dist %d.%s",
-    row.forced
-      and "FORCED (PING_DEFEND_REPAIR): MIN_SCORE, leash, tree reserve,"
-          .. " reserve_eta and mode_owned are waived; the safety gates still apply."
-      or string.format("Fires only if score >= BUILDER_POOL_MIN_SCORE(%d) and no"
-                       .. " gate rejects.", MIN),
-    row.trees_need or 0, row.f_trees or 0, row.f_reserve or 0,
-    row.leash or C.BUILDER_POOL_LEASH or 8, row.dist or -1, fd,
-    reject and (" REJECTED: " .. reject) or " ACCEPTED.")
-  local segs
-  -- The linear repair row (BUILDER_POOL_REPAIR_LINEAR). Two terms and no
-  -- others, so the string is two terms and no others -- printing a front /
-  -- danger chip that scores nothing would invite the reader to check a sum
-  -- that is not the sum the code computed.
-  if row.linear then
-    local hp_w = row.v_hp_w or (C.BUILDER_POOL_REPAIR_HP_W or 30)
-    local tw   = C.BUILDER_POOL_REPAIR_TRIP_W or 0.25
-    segs = {
-      string.format("bp_score:value(%.0f) - tripcost(%.0f) = %s. NO danger term"
-        .. " (threat.at(%.0f) here is printed on the panel, not charged) and"
-        .. " NO path-safety gate on repair rows.%s",
-        row.value or 0, row.c_trip or 0, chain, dgr, tail),
-      string.format("hp_w:BUILDER_POOL_REPAIR_HP_W(%d) = points per missing hp", hp_w),
-      string.format("missing:PILLS_MAX_HEALTH(%d) - hp(%d) = %d",
-        C.PILLS_MAX_HEALTH or 15, row.hp or 0, row.missing or 0),
-      string.format("value:hp_w(%d) x missing(%d) = %.0f",
-        hp_w, row.missing or 0, row.value or 0),
-      trip_seg,
-      out_seg, build_seg, back_seg, pred_seg, predsrc_seg,
-      string.format("trip_w:BUILDER_POOL_REPAIR_TRIP_W(%.2f) = points per round-trip tick", tw),
-      string.format("tripcost:trip_w(%.2f) x trip(%s) = %.0f",
-        tw, tostring(trip or "-"), row.c_trip or 0),
-    }
-  else
-    local tw = C.BUILDER_POOL_TRIP_W or 0.5
-    local dw = C.BUILDER_POOL_DANGER_W or 1.5
-    local urg_seg
-    if row.type == "topup" then
-      urg_seg = string.format("topup_hp:BUILDER_POOL_TOPUP_PER_HP(%d) x missing(%d) = %.0f",
-        C.BUILDER_POOL_TOPUP_PER_HP or 6, row.missing or 0, row.v_hp or 0)
-    elseif row.type == "farm" then
-      urg_seg = string.format(
-        "urg:BUILDER_POOL_FARM_URGENCY(%d) x max(0, FARM_LOW_TREES(%d) - trees(%d)) = %.0f",
-        C.BUILDER_POOL_FARM_URGENCY or 12, C.BUILDER_POOL_FARM_LOW_TREES or 12,
-        row.f_trees or 0, row.v_hp or 0)
-    else
-      urg_seg = "topup_hp:no per-hp term on a rebuild row = 0"
-    end
-    local front_seg = (row.type == "farm")
-      and "front:no front clock on farm rows (a forest cannot be stolen) = 0"
-      or string.format(
-        "front:BUILDER_POOL_FRONT_URGENCY(%d) x max(0, FRONT_MAX(%d) - front_dist(%d)) / FRONT_MAX(%d) = %.0f",
-        C.BUILDER_POOL_FRONT_URGENCY or 120, FMAX, fd, FMAX, row.v_front or 0)
-    segs = {
-      string.format("bp_score:value(%.0f) - tripcost(%.0f) - dangercost(%.0f) = %s.%s",
-        row.value or 0, row.c_trip or 0, row.c_danger or 0, chain, tail),
-      string.format("bp_base:BUILDER_POOL_VALUE_%s(%.0f) = fixed value of this job type",
-        string.upper(row.type), row.v_base or 0),
-      urg_seg,
-      front_seg,
-      string.format("value:base(%.0f) + %s(%.0f) + front(%.0f) = %.0f",
-        row.v_base or 0, (row.type == "farm") and "urg" or "topup_hp",
-        row.v_hp or 0, row.v_front or 0, row.value or 0),
-      trip_seg,
-      out_seg, build_seg, back_seg, pred_seg, predsrc_seg,
-      string.format("trip_w:BUILDER_POOL_TRIP_W(%.2f) = points per round-trip tick", tw),
-      string.format("tripcost:trip_w(%.2f) x trip(%s) = %.0f",
-        tw, tostring(trip or "-"), row.c_trip or 0),
-      string.format("bp_danger:threat.at(%d,%d) = %.0f (hostile pills/tanks with the tile in range)",
-        row.mx, row.my, dgr),
-      string.format("danger_w:BUILDER_POOL_DANGER_W(%.2f) = points per danger unit", dw),
-      string.format("dangercost:danger_w(%.2f) x danger(%.0f) = %.0f",
-        dw, dgr, row.c_danger or 0),
-    }
-  end
-  -- The bonus's own two segments, on both formulas, only when it applied.
-  if gw ~= 1.0 then
-    segs[#segs + 1] = string.format(
-      "bp_raw:the score BEFORE the goal-pill bonus -- value(%.0f) minus the"
-      .. " costs above = %.0f. bp_raw x goal_w is the bp_score at the head of"
-      .. " the line.", row.value or 0, row.raw_score or 0)
-    if row.goal_src == "ping" then
-      segs[#segs + 1] = string.format(
-        "goal_w:BUILDER_POOL_PING_PILL_BONUS(%.2f) -- a human (p%s) bot-command"
-        .. " pinged this row's pill (#%s) and this bot took the order, so its whole score is multiplied by"
-        .. " it until t=%s, the pill is dead or fully repaired, or another of"
-        .. " our pills is pinged: %.0f x %.2f = %s. It replaces the goal-pill"
-        .. " bonus (the larger one is used, never both).",
-        gw, tostring(row.ping_by or "?"), tostring(row.id or "?"),
-        tostring(row.ping_until or "?"),
-        row.raw_score or 0, gw, score_str)
-    else
-      segs[#segs + 1] = string.format(
-        "goal_w:BUILDER_POOL_GOAL_PILL_BONUS(%.2f) -- this row's pill (#%s) IS"
-        .. " the tank goal's own target (%s target_id=%s), so its whole score is"
-        .. " multiplied by it: %.0f x %.2f = %s. The chip is absent on every"
-        .. " other row, and on every row when the bonus is 1.0 (preset=keel).",
-        gw, tostring(row.id or "?"),
-        tostring(row.goal_kind or "goal"), tostring(row.id or "?"),
-        row.raw_score or 0, gw, score_str)
-    end
-  end
-  -- The PING_DEFEND_REPAIR force's own segments, one per chip it prints.
-  if row.forced then
-    if row.force_bonus then
-      segs[#segs + 1] = string.format(
-        "bp_raw:the score BEFORE the ping force -- value(%.0f) minus the costs"
-        .. " above = %.0f. bp_raw + ping_force is the bp_score at the head of"
-        .. " the line.", row.value or 0, row.raw_score or 0)
-      segs[#segs + 1] = string.format(
-        "ping_force:PING_DEFEND_REPAIR_BONUS(%.0f) added to the score: %.0f +"
-        .. " %.0f = %s. It only lifts the row to the top of the panel; the"
-        .. " sort puts a forced row first whatever the numbers.",
-        row.force_bonus, row.raw_score or 0, row.force_bonus, score_str)
-    end
-    segs[#segs + 1] = string.format(
-      "forced:%s -- this bot holds a human (p%s) bot-command PING defend order"
-      .. " on our pill #%s (hp %s/%d), and the tank is %.1f tiles from it"
-      .. " (straight line) <= PING_DEFEND_REPAIR_RANGE(%d). %s The row ignores"
-      .. " the ping / goal-pill weight. It ends when the order ends, the pill is"
-      .. " full, dead or lost, or the tank is beyond the range.",
-      tostring(row.forced), tostring(row.force_by or "?"),
-      tostring(row.force_tid or "?"), tostring(row.force_hp or "?"),
-      C.PILLS_MAX_HEALTH or 15, row.force_dist or 0,
-      C.PING_DEFEND_REPAIR_RANGE or 10,
-      (row.forced == "harvest")
-        and "We carry no trees, so step 1 is this harvest: of the farm rows"
-            .. " that pass their own gates (path safety kept), the one with"
-            .. " the shortest walk out (out{}) is forced; the repair follows"
-            .. " when the man is home with wood."
-        or "Needs 1 tree (engine lgm_cost_pill_repair); the man takes a full"
-           .. " load and the engine spends only what the damage needs.")
-  end
-  if wedge_seg then segs[#segs + 1] = wedge_seg end
-  return short .. "||" .. table.concat(segs, "|")
-end
+-- The pool-grid detail string for one scored row (the short chip line, "||",
+-- then one "name:computation" segment per chip). Built on the panel's cold
+-- path from the row alone; the text lives in pool_render.lua.
+M.row_formula = PR.bp_row_formula
 
 -- Deterministic ordering: best score, then type rank (rebuild before topup
 -- before farm), then tile key. No pairs() order ever reaches this sort.
@@ -1591,6 +1500,9 @@ local function order_rows(rows)
     -- it (the repair and, with no wood, the harvest); the scores order them.
     local fa, fb = a.forced and 1 or 0, b.forced and 1 or 0
     if fa ~= fb then return fa > fb end
+    -- A QUICK row (C.QUICK_REPAIR_ON_TAKE) is next: its window is now.
+    local qa, qb = a.quick and 1 or 0, b.quick and 1 or 0
+    if qa ~= qb then return qa > qb end
     if seed_first then
       local sa, sb = a.seeded and 1 or 0, b.seeded and 1 or 0
       if sa ~= sb then return sa > sb end
@@ -1652,6 +1564,8 @@ function M.update_job(state, world, info, now)
   local man_my = bit.rshift(info.man_y or info.tanky, 8)
   if info.man_status == C.LGM_MOVING then
     if man_mx == job.mx and man_my == job.my then
+      -- The arrival tick freezes on the first tick he stands on the pill.
+      if not job.reached then job.arrive_tick = now end
       job.reached = true
       job.phase = "working"
     else
@@ -1679,6 +1593,8 @@ function M.update_job(state, world, info, now)
     if left == nil or left < 0 then left = 0 end
     job.eta = left
     job.claim_eta_tick = now + left
+    -- Outbound, the remaining walk IS the arrival estimate (the bpj AAAA).
+    if not job.reached then job.arrive_tick = now + left end
   end
 
   local age = now - (job.dispatch_tick or now)
@@ -1727,6 +1643,23 @@ function M.update_job(state, world, info, now)
       now, job.type, job.mx, job.my,
       dead and (outcome .. "+lgm_dead") or outcome,
       age, dead and "dead" or "home", detail, lgm_chip))
+  end
+  -- QUICK_REPAIR_DONE / QUICK_REPAIR_ABORT: how a quick repair ended.
+  if job.quick then
+    print2(string.format(
+      "%s t=%d pill=(%d,%d) outcome=%s took=%dt lgm=%s",
+      outcome == "ok" and "QUICK_REPAIR_DONE" or "QUICK_REPAIR_ABORT",
+      now, job.mx, job.my, outcome, age, dead and "dead" or "home"))
+  end
+  -- REPAIR_CLAIM_CLEAR: the repair claim leaves with the job (bpj goes back
+  -- to "-" on the next /info extra send).
+  if BRAIN_DEBUG_MODE then
+    if C.BUILDER_REPAIR_CLAIM_SHARE and job.type ~= "farm" then
+      print2(string.format(
+        "REPAIR_CLAIM_CLEAR t=%d pill=(%d,%d) arrive=%s player=%s why=%s",
+        now, job.mx, job.my, tostring(job.arrive_tick or "-"),
+        tostring(info.player_number), dead and (outcome .. "+builder_dead") or outcome))
+    end
   end
   state._bp_last = { type = job.type, mx = job.mx, my = job.my,
                      outcome = outcome, lgm_dead = dead or nil, tick = now }
@@ -1803,7 +1736,7 @@ function M.repair_feeder(state, world, info, now)
 
   local tmx = bit.rshift(info.tankx, 8)
   local tmy = bit.rshift(info.tanky, 8)
-  local dist = U.mdist(tmx, tmy, px, py)
+  local dist = M.leash_dist(tmx, tmy, px, py)
   local DANGER_LOW     = C.REPAIR_DISPATCH_DANGER_LOW or 50
   local DANGER_HIGH    = C.REPAIR_DISPATCH_DANGER_HIGH or 150
   local DIST_BASE      = C.REPAIR_DISPATCH_DIST_BASE or 5
@@ -1834,6 +1767,15 @@ function M.repair_feeder(state, world, info, now)
   -- the ordinary side-quest path would still be denying mode_owned.
   local effective_max = math.max(blend_max, M.repair_leash())
   local in_range = dist <= effective_max
+  -- 2026-11-03 REPAIR_STANDOFF: a repair_pill goal with a standoff square
+  -- (repair_standoff.lua) sends the builder from that square and from no
+  -- other: the dispatch cap is REPAIR_DISPATCH_DIST_DANGEROUS, and the tank
+  -- has to be on the square. No standoff (mode push or clear): as before.
+  local _so = (src == "repair_pill") and RS.active(state, g) or nil
+  if _so then
+    effective_max = DIST_DANGEROUS
+    in_range = (tmx == _so.mx and tmy == _so.my) and dist <= effective_max
+  end
   local has_trees = (info.trees or 0) > 0
 
   local _tgt_pill
@@ -1850,7 +1792,9 @@ function M.repair_feeder(state, world, info, now)
     end
   end
   local under_fire_hold, _uf_age = false, nil
-  if C.REPAIR_HOLD_UNDER_FIRE_ENABLED then
+  -- BUILDER_SEND_CERTAIN_DEATH_ONLY: shells landing on the pill are not a
+  -- refusal; the pool's winner asks danger.lgm_certain_death.
+  if C.REPAIR_HOLD_UNDER_FIRE_ENABLED and not C.BUILDER_SEND_CERTAIN_DEATH_ONLY then
     local lh = _tgt_pill and _tgt_pill.last_hit_tick
     if lh and lh > 0 then
       _uf_age = (state.tick or 0) - lh
@@ -1880,8 +1824,8 @@ function M.repair_feeder(state, world, info, now)
     local tank_fx, tank_fy = info.tankx / 256.0, info.tanky / 256.0
     viz.line("repair_pill_viz", tank_fx, tank_fy, px + 0.5, py + 0.5, r, gg, bb, 120)
     viz.text("repair_pill_viz", tank_fx + 0.6, tank_fy - 1.2,
-             string.format("Repair d=%d/%.1f tr=%d dgr=%d lgm=%d%s",
-                           dist, effective_max, info.trees or 0,
+             string.format("Repair d=%s/%.1f tr=%d dgr=%d lgm=%d%s",
+                           M.fmt_ld(dist), effective_max, info.trees or 0,
                            math.floor(danger_at_tank or 0),
                            math.floor(ticks or 0),
                            under_fire_hold
@@ -1889,12 +1833,13 @@ function M.repair_feeder(state, world, info, now)
                              or (enemy_hold and " HOLD(enemy near)" or "")),
              "topleft", r, gg, bb, 240)
     print2(string.format(
-      "REPAIR_DISPATCH_CHECK t=%d pill=(%d,%d) tank=(%d,%d) dist=%d eff_max=%.1f trees=%d danger=%d lgm_ticks=%d"
+      "REPAIR_DISPATCH_CHECK t=%d pill=(%d,%d) tank=(%d,%d) dist=%s eff_max=%.1f trees=%d danger=%d lgm_ticks=%d"
       .. " hold=%s (enemy_near=%s under_fire=%s hit_age=%s) goal=%s can=%s",
-      state.tick or 0, px, py, tmx, tmy, dist, effective_max, info.trees or 0,
+      state.tick or 0, px, py, tmx, tmy, M.fmt_ld(dist), effective_max, info.trees or 0,
       math.floor(danger_at_tank or 0), math.floor(ticks or 0), tostring(_hold),
       tostring(enemy_hold), tostring(under_fire_hold),
-      _uf_age and tostring(_uf_age) or "-", g.kind or "?", tostring(can_dispatch)))
+      _uf_age and tostring(_uf_age) or "-", g.kind or "?", tostring(can_dispatch))
+      .. (_so and string.format(" standoff=(%d,%d)", _so.mx, _so.my) or ""))
   end
 
   if can_dispatch then
@@ -2031,7 +1976,11 @@ function M.builder_can_repair(state, world, info, p)
   local tmx = bit.rshift(info.tankx, 8)
   local tmy = bit.rshift(info.tanky, 8)
   local leash = M.repair_leash()
-  if U.mdist(tmx, tmy, p.mx, p.my) > leash then return nil end
+  -- Spike care: the same reach as the pool's spike rows (discover).
+  if spike.care_at(state, p.mx, p.my, state.tick or 0) then
+    leash = math.max(leash, C.SPIKE_REPAIR_LEASH)
+  end
+  if M.leash_dist(tmx, tmy, p.mx, p.my) > leash then return nil end
   local maxhp = C.PILLS_MAX_HEALTH or 15
   local hp = p.health or 0
   local need = (hp <= 0) and (C.BUILDER_POOL_TREES_REBUILD or 4)
@@ -2085,7 +2034,15 @@ function M.update(state, world, info, now)
   end
 
   state._bp_seed = nil
+  M.log_claims_rx(state, info, now)   -- REPAIR_CLAIM_RX (debug log only)
   M.repair_feeder(state, world, info, now)
+  -- C.QUICK_REPAIR_ON_TAKE: the take blocker's repair window (quick_repair.lua).
+  -- Only a "send" makes a quick row; every other answer leaves the pool as it
+  -- was, with the blocker refused (take_blocker) like before.
+  local quick = QR.evaluate(state, world, info, now)
+  if quick and quick.result ~= "send" then quick = nil end
+  local quick_pill = quick and world.pills and world.pills[quick.id] or nil
+  if quick and not quick_pill then quick = nil end
 
   local b = state.builder
   local goal = state.goal or {}
@@ -2192,6 +2149,16 @@ function M.update(state, world, info, now)
                      reserve = 0,
                      reserve_eta = nil }
 
+  -- The QUICK row's context (C.QUICK_REPAIR_ON_TAKE). quick_repair.evaluate
+  -- already answered the man, the wood, the window and certain death, so the
+  -- row waives the mode check (the take owns the builder), the fire clock, the
+  -- tree reserve, the goal's reserve_eta and MIN_SCORE. It keeps the spike
+  -- pair wait and every per-row reject in gate_row: `have >= need` wood,
+  -- unreachable, the ally claim and ally capture.
+  local quick_ctx = quick and { ok = not d.spike_wait, reason = "spike_pair_second",
+                                reserve = 0, reserve_eta = nil,
+                                waive_min = true, not_idle = true } or nil
+
   -- The FORCED row's context (PING_DEFEND_REPAIR). Like the seed's, it keeps
   -- the man-safety half of the eligibility stack -- the tank's under-fire
   -- clock AND a fire_exchange substate (shells flying either way) -- and drops
@@ -2205,12 +2172,13 @@ function M.update(state, world, info, now)
       fok, freason = false, d.mode_reason
     end
     force_ctx = { ok = fok, reason = freason, reserve = 0,
-                  reserve_eta = nil, waive_min = true }
+                  reserve_eta = nil, waive_min = true, not_idle = true }
   end
 
   local rows = M.discover(state, world, info)
   local seed_seen = false
   local force_seen = false
+  local quick_seen = false
   for _, row in ipairs(rows) do
     local rctx = ctx
     if force and row.type ~= "farm" and row.id == force.tid then
@@ -2220,6 +2188,16 @@ function M.update(state, world, info, now)
       force_seen = true
       if seed and row.mx == seed.mx and row.my == seed.my then seed_seen = true end
       rctx = force_ctx
+    elseif quick and row.type ~= "farm" and row.mx == quick.mx
+           and row.my == quick.my then
+      -- The take blocker inside its repair window: the take_blocker refusal
+      -- and the leash are waived for this row on this tick. pill_blocked's
+      -- other reasons (blocked, repos, friendly_fire, our_target) still hold.
+      row.quick = true
+      row.hard = pill_blocked(state, quick_pill, true)
+      row.out_of_leash = nil
+      quick_seen = true
+      rctx = quick_ctx
     elseif seed and row.mx == seed.mx and row.my == seed.my then
       row.seeded = seed.src
       row.out_of_leash = nil
@@ -2247,6 +2225,22 @@ function M.update(state, world, info, now)
     M.apply_force_bonus(row)
     rows[#rows + 1] = row
     if seed and seed.mx == force.mx and seed.my == force.my then seed_seen = true end
+  end
+  if quick and not quick_seen then
+    -- Discovery does not offer a blocker missing less than
+    -- BUILDER_POOL_TOPUP_MIN_MISSING; the quick repair wants any damage.
+    local maxhp = C.PILLS_MAX_HEALTH or 15
+    local row = {
+      type = (quick.hp <= 0) and "rebuild" or "topup",
+      id = quick.id or -1, mx = quick.mx, my = quick.my,
+      dist = U.mdist(bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8),
+                     quick.mx, quick.my),
+      hp = quick.hp, missing = maxhp - quick.hp, own = "friendly",
+      trees_need = quick.trees_need, quick = true,
+      hard = pill_blocked(state, quick_pill, true),
+    }
+    M.score_row(state, world, info, now, row, quick_ctx)
+    rows[#rows + 1] = row
   end
   if seed and not seed_seen then
     -- The feeder named a tile ordinary discovery does not offer. The common
@@ -2338,7 +2332,20 @@ function M.update(state, world, info, now)
   if can_send then
     for _, row in ipairs(rows) do
       if not row.reject then
-        local hit = danger.lgm_shell_gate(world, info, row.mx, row.my)
+        -- BUILDER_SEND_CERTAIN_DEATH_ONLY: the improved prediction, run
+        -- whatever BUILDER_POOL_SHELL_GATE says. Off: lgm_shell_gate.
+        -- A quick row always asks the certain-death prediction (its rule).
+        local cd = C.BUILDER_SEND_CERTAIN_DEATH_ONLY or row.quick
+        local hit
+        if cd then
+          hit = danger.lgm_certain_death(world, info, row.mx, row.my)
+          if hit then
+            danger.log_certain_death(now, "pool:" .. tostring(row.type),
+                                     row.mx, row.my, hit)
+          end
+        else
+          hit = danger.lgm_shell_gate(world, info, row.mx, row.my)
+        end
         if hit then
           row.shell_hit = hit
           -- Every factor the refusal turned on is on the line: WHOSE shell,
@@ -2501,10 +2508,12 @@ function M.rung(state, world, info, now)
     phase = "outbound", claim_tick = now, dispatch_tick = now,
     eta = row.out_ticks, trip = row.trip,
     claim_eta_tick = now + (row.out_ticks or 0),
+    arrive_tick = now + (row.out_ticks or 0),
     trees_at_dispatch = info.trees or 0,
     hp_at_dispatch = row.hp or 0,
     seeded = row.seeded,
     forced = row.forced,
+    quick = row.quick,
   }
   if row.forced then
     print2(string.format(
@@ -2518,6 +2527,16 @@ function M.rung(state, world, info, now)
   end
   bp.job = state._bp_job
   bp.dispatch = nil
+  -- REPAIR_CLAIM_TX: the repair claim allies will read on our next bpj.
+  if BRAIN_DEBUG_MODE then
+    if C.BUILDER_REPAIR_CLAIM_SHARE and row.type ~= "farm" then
+      print2(string.format(
+        "REPAIR_CLAIM_TX t=%d pill=(%d,%d) arrive=%d player=%s job=%s%s bpj=%s",
+        now, row.mx, row.my, state._bp_job.arrive_tick,
+        tostring(info.player_number), row.type, row.quick and " quick=1" or "",
+        M.claim_advert(state, now)))
+    end
+  end
   local seed = state._bp_seed
   state._bp_seed = nil
   -- Feeder bookkeeping. A seeded repair is still a repair as far as the rest
@@ -2561,7 +2580,16 @@ function M.rung(state, world, info, now)
     -- BUILDER_POOL_SEEDED_COMPETES is for. `seeded_by=` is already up beside
     -- target= when the winner IS the seeded row, so it is not repeated here.
     seed_tail(bp.rows or {}, row, false)
-      .. (row.forced and (" forced=" .. row.forced) or "")))
+      .. (row.forced and (" forced=" .. row.forced) or "")
+      .. (row.quick and " quick=1" or "")))
+  -- QUICK_REPAIR_SEND: one searchable line when the quick repair of a take
+  -- blocker (C.QUICK_REPAIR_ON_TAKE) actually sends the builder.
+  if row.quick then
+    print2(string.format(
+      "QUICK_REPAIR_SEND t=%d pill=(%d,%d) hp=%d job=%s out=%s trees=%d-%d goal=%s",
+      now, row.mx, row.my, row.hp or 0, row.type, tostring(row.out_ticks or "-"),
+      info.trees or 0, row.trees_need or 0, (state.goal and state.goal.kind) or "?"))
+  end
   -- BP_PRED: the ROUTE the return leg was priced against, tile by tile, on the
   -- one tick it actually decided something. The trip on the dispatch line is
   -- only hand-checkable if the reader can see the path pred{} was read off --
@@ -2581,116 +2609,9 @@ function M.rung(state, world, info, now)
   return { x = row.mx, y = row.my, action = action }
 end
 
--- -------------------------------------------------------------------------
--- Panel section (pool_grid JSON, section BUILDER_POOL_PANEL_IDX).
---
--- NOT a new pool: 1..10 keep the 2x5 grid and 11..14 keep their strips, so old
--- recordings load unchanged. Three header lines then one row per candidate:
---
---   BUILDER  owner=attack_pill/wall_shield  (man out, eta 60)
---     eligibility: mode=idle-ish - under_fire=no(38t) - reserve_eta=110 - trees 14(res 8)
---     active: rebuild p15 (outbound, eta 44t)
---
--- Rows use the shared renderer (cost + formula short||long), so the long form
--- is hand-checkable exactly like every other pool row. cost is -score, because
--- the renderer sorts and colours ASCENDING (cheapest = best) and the pool
--- scores DESCENDING.
--- -------------------------------------------------------------------------
-function M.panel_section(state)
-  local bp = state._builder_pool
-  if not bp then return nil end
-  local hdr = {}
-  local job = bp.job
-  -- Name the actual obstacle rather than "unavailable": "the man is walking a
-  -- job", "he is dead", "we are afloat" and "he is out on a wall shield" are
-  -- four different situations and only one of them is the pool's doing.
-  local why_no_man = ""
-  if not bp.can_send then
-    if job then
-      why_no_man = string.format("  (man out on %s @(%d,%d), %s)",
-                                 job.type, job.mx, job.my, job.phase or "?")
-    elseif bp.man_status == C.LGM_DEAD then     why_no_man = "  (man dead)"
-    elseif bp.man_status == C.LGM_MOVING then   why_no_man = "  (man out, not on a pool job)"
-    elseif bp.inboat then                       why_no_man = "  (afloat)"
-    else                                        why_no_man = "  (man unavailable)" end
-  end
-  hdr[#hdr + 1] = string.format("owner=%s/%s%s%s",
-    bp.owner_kind, bp.owner_mode,
-    bp.owner_sub and ("/" .. bp.owner_sub) or "", why_no_man)
-  hdr[#hdr + 1] = string.format(
-    "eligibility: %s | under_fire=%s | reserve_eta=%s | trees %d (res %d = base %d + pills %d + goal %d + sea %d)",
-    bp.ok and "OK" or ("DENY " .. tostring(bp.reason)),
-    (bp.detail and bp.detail.fire_age)
-      and string.format("%dt ago (%s)", bp.detail.fire_age,
-                        tostring(bp.detail.fire_why)) or "never",
-    -- WAIVED is printed beside the number, never instead of it: the panel has
-    -- to show both what the goal asked for and that the pool did not charge
-    -- the other rows for it (BUILDER_POOL_SEEDED_COMPETES).
-    string.format("%s (%s)%s", tostring(bp.reserve_eta or "-"),
-                  tostring(bp.reserve_why or "none"),
-                  bp.reserve_waived
-                    and (" WAIVED: " .. bp.reserve_waived) or ""),
-    bp.trees, bp.reserve, bp.r_base, bp.r_pills, bp.r_goal, bp.r_sea)
-  if job then
-    hdr[#hdr + 1] = string.format("active: %s @(%d,%d) %s eta=%st claim=t%d%s",
-      job.type, job.mx, job.my, job.phase or "?",
-      tostring(job.eta or "-"), job.claim_tick or 0,
-      job.seeded and (" seeded_by=" .. tostring(job.seeded)) or "")
-  else
-    local last = state._bp_last
-    hdr[#hdr + 1] = last
-      and string.format("active: none (last %s @(%d,%d) %s at t%d%s)",
-                        last.type, last.mx, last.my, last.outcome, last.tick,
-                        last.lgm_dead and ", LGM killed" or "")
-      or "active: none"
-  end
-  -- The PING_DEFEND_REPAIR force, when a ping defend order is held (the
-  -- panel's fourth and last header line; pool_grid.cpp keeps four).
-  local f = bp.force
-  if f then
-    hdr[#hdr + 1] = string.format(
-      "PING REPAIR FORCED: pill #%d @(%d,%d) hp %d/%d from p%s, tank %.1f <= %d"
-      .. " tiles, step=%s%s",
-      f.tid, f.mx, f.my, f.hp, C.PILLS_MAX_HEALTH or 15, tostring(f.sender),
-      f.dist, f.range, f.step,
-      bp.force_wait and (", waiting: " .. bp.force_wait) or "")
-  elseif bp.force_why and bp.force_why ~= "no_ping_defend_order"
-         and bp.force_why ~= "knob_off" then
-    hdr[#hdr + 1] = string.format(
-      "ping repair: not forced (%s%s)", bp.force_why,
-      bp.force_dist and string.format(", tank %.1f tiles, range %d",
-                                      bp.force_dist,
-                                      C.PING_DEFEND_REPAIR_RANGE or 10) or "")
-  end
-
-  local rows = {}
-  local cap = C.BUILDER_POOL_PANEL_ROWS or 8
-  for i = 1, math.min(#bp.rows, cap) do
-    local r = bp.rows[i]
-    rows[#rows + 1] = {
-      id = (r.id and r.id >= 0) and r.id or (r.my * 256 + r.mx),
-      mx = r.mx, my = r.my,
-      -- Renderer convention: lower is better. The pool's score is
-      -- higher-is-better, so the row cost is its negation; a rejected row
-      -- shows INF like every other rejected row in the grid.
-      cost = r.reject and 1e30 or -(r.score or 0),
-      -- Built here, on the panel's cold path, rather than stored on the row by
-      -- score_row (see M.row_formula).
-      formula = M.row_formula(r),
-      stale = 0,
-      reject = r.reject and (r.reject:match("^[a-z_]+") or r.reject) or nil,
-      reject_remaining = 0,
-    }
-  end
-  return {
-    idx = C.BUILDER_POOL_PANEL_IDX or 15,
-    name = "BUILDER",
-    weight = 1.0,
-    winner_id = (bp.job and bp.job.pill_id) or -1,
-    hdr = hdr,
-    rows = rows,
-  }
-end
+-- Panel section (pool_grid JSON, section BUILDER_POOL_PANEL_IDX): built by
+-- pool_render.bp_panel_section from the capture of state._builder_pool.
+M.panel_section = PR.bp_panel_section
 
 -- -------------------------------------------------------------------------
 -- Map overlay for the SHELL GATE refusal — the picture of the arithmetic in

@@ -760,7 +760,7 @@ static void serverLifecycleRotateRound(ServerSim *sim) {
  * (just add 15 min per suffix to read the wall-clock of each). A new game
  * resets the base timestamp and block counter. */
 #define BRAINDBG_BLOCK_MS         (15u * 60u * 1000u)            /* 15-minute blocks */
-#define BRAINDBG_DISK_FLOOR_BYTES (50ULL * 1024 * 1024 * 1024)  /* stop recording below 50 GB free */
+#define BRAINDBG_DISK_FLOOR_BYTES (30ULL * 1024 * 1024 * 1024)  /* stop recording below 30 GB free */
 #define BRAINDBG_DISK_CHECK_MS    5000u                         /* throttle the free-space syscall */
 
 static bool   s_braindbgSessionOpen     = false;  /* a block is currently open */
@@ -987,7 +987,7 @@ void serverInstanceTick(ServerSim *sim) {
       /* First running tick of this game → open recording block 1, unless the
        * disk is already below the floor. */
       if (serverLifecycleFreeDiskBytes() < BRAINDBG_DISK_FLOOR_BYTES) {
-        fprintf(stderr, "brain_record: LOW DISK (<50 GB free) — recording NOT started\n");
+        fprintf(stderr, "brain_record: LOW DISK (<30 GB free) — recording NOT started\n");
         brainRecordSetEnabled(false);
       } else {
         serverLifecycleStartBrainDebugSession(sim);
@@ -1000,7 +1000,7 @@ void serverInstanceTick(ServerSim *sim) {
       if (nowMs - s_braindbgLastDiskCheckMs >= BRAINDBG_DISK_CHECK_MS) {
         s_braindbgLastDiskCheckMs = nowMs;
         if (serverLifecycleFreeDiskBytes() < BRAINDBG_DISK_FLOOR_BYTES) {
-          fprintf(stderr, "brain_record: LOW DISK (<50 GB free) — stopping recording\n");
+          fprintf(stderr, "brain_record: LOW DISK (<30 GB free) — stopping recording\n");
           lifecycleCloseBraindbgBlock();
           brainRecordSetEnabled(false);
           for (int i = 0; i < MAX_TANKS; i++) {

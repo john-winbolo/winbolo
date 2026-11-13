@@ -229,6 +229,16 @@ M.EXPAND_DEBUG_MAP     = false -- debug only: TAIL_MAP print2 (ASCII 64x64 aroun
 -- (today's behaviour: fillable, placement can land there); false = "beyond"
 -- (not a fillable role; the placement scan pays the beyond-front penalty).
 M.FRONT_ZERO_IS_FRONT  = true
+-- Front needs a target (2026-11-04). A placement spot counts as "front" only
+-- when a known enemy base, enemy pill or neutral pill (this bot's own world
+-- model; pills in a tank do not count) is within PLACE_FRONT_TARGET_RANGE
+-- tiles (Euclidean, tile centre to tile centre, inclusive). A front spot with
+-- no target in range gets the next class classify() gives: aggro, back, or
+-- "beyond" for influence 0 (pill_portfolio.lua place_classify). Placement
+-- scan and heatmap only; existing pills keep classify(). false = every front
+-- spot keeps front credit, as before. PRESETS.keel = false.
+M.PLACE_FRONT_NEED_TARGET  = true
+M.PLACE_FRONT_TARGET_RANGE = M.PILL_FIRE_RANGE   -- 8 tiles: pill fire range
 
 -- Pill anger decay: engine takes ~3000 ticks (speed 6->100, +1 every 32 ticks)
 M.PILL_ANGER_DECAY = 3000
@@ -236,8 +246,20 @@ M.PILL_ANGER_DECAY = 3000
 M.PILL_ANGER_BUMP  = 0.3333
 
 -- Wall shielding: how much protection walls give against pill fire
-M.WALL_HP_FULL     = 5    -- shots to destroy a full wall (T_BUILDING)
-M.WALL_HP_HALF     = 2    -- shots to destroy a half wall (T_HALFBUILD)
+-- WALL_HP_FULL / WALL_HP_HALF follow the live building_life rule
+-- (info.rules, 1..255, classic 4): live_physics.lua group WALL rewrites them
+-- when the rules arrive. src/bolo/building.c buildingAddItem: a full wall
+-- falls on hit building_life + 1; a half wall has 1..building_life hits
+-- left, and the brain cannot see the exact count, so it counts the middle,
+-- rounded down: floor((building_life + 1) / 2). The values below are the
+-- classic (building_life 4) numbers.
+M.WALL_HP_FULL     = 5    -- shots to destroy a full wall (T_BUILDING): building_life + 1
+M.WALL_HP_HALF     = 2    -- shots to destroy a half wall (T_HALFBUILD): floor((building_life + 1) / 2)
+-- Shield cover in the shield scorers (attack_shield.lua, pill_cover.lua) is
+-- counted in units of this many shots per wall. It stays 5 so the Lua
+-- scorers match the C scorer (gh_shield_stamp.c WALL_SHOTS 5.0), which
+-- does not read building_life.
+M.SHIELD_WALL_COVER_SHOTS = 5
 M.WALL_SHIELD_TIME = 200  -- ticks of wall cover = full shielding (~4 seconds)
 
 -- River cost tuning ??? high base cost to discourage routing through water.
@@ -274,6 +296,7 @@ M.LIVE_PHYSICS_SPEED  = true  -- terrain speed caps / route costs (Lua and the C
 M.LIVE_PHYSICS_TURN   = true  -- turn-time sizing (swerve turn, blitz ready timeout) and turn-radius speed caps
 M.LIVE_PHYSICS_ACCEL  = true  -- brake / look-ahead distances and brake profiles follow our accel + brake rates
 M.LIVE_PHYSICS_SHELL  = true  -- shell speed, gunsight max
+M.LIVE_PHYSICS_WALL   = true  -- wall shots (WALL_HP_FULL / HALF, the getaway wall life, the C pathfinder's wall shells and cost) follow building_life
 M.LIVE_PHYSICS_BLAST  = true  -- the builder blast model follows the lgm_blast_shape and pill_range rules (LGM_BLAST_SHAPE, LGM_BLAST_PILL_RANGE_WU)
 -- Top-speed caps in info.speed units (engine speed x4): 64 = road top speed,
 -- 48 = the navigation cruise cap. Live rules scale them with the road speed
@@ -451,7 +474,9 @@ M.ALLY_PILL_TAKE_PRIORITY_TICKS = 100
 -- queries, so a cluster of (re)spawns can't make us re-dump our whole known
 -- world every tick. The dump itself drains a few objects per idle message slot.
 M.KW_RESYNC_COOLDOWN = 150
-M.REFUEL_MIN_STOCK = 5    -- skip bases with less than this in observed stock (not worth the trip)
+M.REFUEL_MIN_STOCK = 5    -- skip bases with less than this in observed stock (not worth the trip).
+                          -- Shells are raw; armour is counted in steps of five raw armour, the
+                          -- info.base.armour number (util.lua base_armour_steps), so 5 = 25 raw.
 -- Dynamic refuel targets (state.shell_target / state.armour_target).
 -- Must stay above SHELLS_LOW (20) or offense pools (eval_attack_pill /
 -- attack_tank) refuse to fire and the bot leaves base unable to fight.
@@ -468,8 +493,8 @@ M.REFUEL_OBS_STALE = 500  -- ignore observed stock older than this many ticks (b
 -- trip; both short at once compounds to x1.21. Fresh observations only (within
 -- REFUEL_OBS_STALE) -- an unseen or stale base pays nothing here, the staleness
 -- terms own that. Compared the way the reject compares (see
--- refuel_low_stock_mult in goals.lua for the obs_armour units caveat).
-M.REFUEL_LOW_ARMOUR_MULT = 1.10  -- need armour and obs_armour < REFUEL_MIN_STOCK
+-- refuel_low_stock_mult in goals.lua for the obs_armour units note).
+M.REFUEL_LOW_ARMOUR_MULT = 1.10  -- need armour and obs_armour / 5 < REFUEL_MIN_STOCK
 M.REFUEL_LOW_SHELLS_MULT = 1.10  -- need shells and obs_shells < REFUEL_MIN_STOCK
 M.REFUEL_DEPLETED_COOLDOWN = 500  -- when a COMMITTED refuel goal is abandoned because its base went depleted, block that base tile for this many ticks (~10s at 50Hz) so finalize can't re-pick it the moment the depleted observation ages out (prevents the drive-there / observe-depleted / leave flip-flop). Re-arms on each abandon.
 -- When true, suppress goal-replan while traveling to or topping up at a
@@ -494,7 +519,10 @@ M.BASE_MIN_ARMOUR_CAPTURE = 0  -- engine reports 1 for all hostile bases (fog of
 M.TURN_COST_PER_45  = 2
 
 -- Wall-shooting pathfinding
-M.WALL_SHOOT_COST   = 30   -- A* cost to path through a wall (5 shots + rubble traverse)
+-- A* cost to path through a wall at the classic WALL_HP_FULL 5 shots (with
+-- the rubble traverse). The C pathfinder gets it scaled by WALL_HP_FULL / 5
+-- (live_physics.wall_shoot_cost, sent from steering.lua M.steer).
+M.WALL_SHOOT_COST   = 30
 M.SHELL_RESERVE     = 0    -- let tank use all shells to break walls
 
 -- Road-building pathfinding
@@ -605,6 +633,25 @@ M.STALE_SKIP_TICKS       = 500   -- skip object entirely if unseen this long (~1
 -- that range: close enough for shells to hit, far enough that pill shots are
 -- harder to land.  Standoff ring is placed at 7 tiles (shell range) not 6.
 M.ATTACK_PILL_STANDOFF = 7.4  -- desired engagement distance from pill (max shell range)
+-- attack_pill event re-price (goals.note_reprice_events). An enemy tank that
+-- dies within (PILLBOX_RANGE_WU / 256) + ATK_REPRICE_TANK_PAD tiles (Euclidean)
+-- of a live hostile/neutral pill makes that pill's pool-6 price be made again
+-- at once (the intercept term read the tank). The tank's place is its last
+-- tile in this player's perc.enemy_tanks, if seen in the last
+-- ATK_REPRICE_TANK_SEEN_TICKS ticks.
+-- ATK_REPRICE_EVENTS is the master: false = no event re-price (init.lua
+-- does not call note_reprice_events), the old behaviour. PRESETS.keel = false.
+M.ATK_REPRICE_EVENTS          = true
+M.ATK_REPRICE_TANK_PAD        = 2
+M.ATK_REPRICE_TANK_SEEN_TICKS = 50
+-- repair_pill give-way (init.lua, REPAIR_GIVE_WAY): when the tank cannot get
+-- to the pill (its pool-5 row is INF for a reason other than the builder_can
+-- split), the goal drops and the pill tile is kept out of pool 5 for this
+-- many ticks (4 s), so the next replan does not choose it again at once.
+-- REPAIR_GIVE_WAY is the master: false = the committed repair_pill goal never
+-- gives way for these reasons, the old behaviour. PRESETS.keel = false.
+M.REPAIR_GIVE_WAY             = true
+M.REPAIR_GIVE_WAY_BLOCK_TICKS = 200
 M.ATTACK_PILL_STANDOFF_CHARGE = 7.0  -- non-PPT charge pulls the engage spot in to here on the first charge tick (PPT keeps its shielded standoff)
 M.ATTACK_PILL_RANGE    = 9.5  -- max distance to start shooting
 M.ATTACK_PILL_MIN_ARMOUR = 1  -- minimum armour to attempt pill take
@@ -792,8 +839,47 @@ M.SHIELD_ADJ_FRIENDLY_PENALTY = 3  -- shield-slot score: per would-be blocker sl
 M.SANITY_PILL_REPLANS_MAX = 3      -- attack_pill: consecutive shot-path sanity replans caused by a FRIENDLY pill in the line before the take is abandoned (each one also bans the angle; this is the backstop). SHARED counter across every blocked-line site (standoff sanity, blitz GO gate, charge, shoot_pill) so "spots tried" is one number for the whole take, not one per site.
 M.CHARGE_SHOT_CHECK_AT_SPOT_TILES = 1.0  -- charge: how close (tiles) the tank must be to its standoff before the impassable-obstacle shot-path check is allowed to fire at all. While still driving in, the live gun line swings across whatever happens to be beside the target and clears itself on arrival — checking early binned whole takes (loss_b6 bot3 t=9483: a pill at (130,131) crossed the line to pill (129,130) 8 tiles out). Being closer to the pill than the standoff is also counts as "at spot".
 M.BLOCKED_AIM_RETRY_TICKS = 10     -- blocked-line ladder: minimum ticks between two 5-aim-point clear-line searches at the SAME site on one goal. The search costs five shell simulations, and after a successful re-aim the gun needs a few ticks to swing onto the new corner, during which the live line is still blocked — so we hold rather than re-search (or abort) every tick.
-M.PPT_COVER_TARGET_SHOTS = 15  -- build phase ends once shield cover reaches this many shots-to-break (friendly pill = PILLS_MAX_HEALTH 15, wall = WALL_HP_FULL 5). 15 = one pill OR three walls. Independent of the blitz gate.
-M.PPT_PILL_WALL_EQUIV = 3.0    -- a dropped/standing friendly pillbox blocker is worth this many WALLS of shield cover (PILLS_MAX_HEALTH 15 / WALL_HP_FULL 5 = 3). The C combo scorer (gh_shield_stamp) weights a pill-filled slot accordingly, so one carried pill stands in for a 3-wall shield.
+-- Turn-in progress, 2026-11-03. In finetune the gun gets CLEAR_TURN_IN_TAPS
+-- (6) ticks after the shot first reaches the pill to also clear a pill on the
+-- line. In the recorded game (bot3, ATTACK_CLEARED t=7281 "turn-in clear
+-- failed: +6/6 taps") the clear lane was narrower than one tap step, so every
+-- tick counted and the take ended.
+-- true => a tick that brings the gun closer to the nearest clear angle than
+-- before does not count against the 6; the raw count has a hard cap of 12
+-- (2 x 6). Steering turns toward the nearest clear angle instead of the pill
+-- centre, so a tap that jumps past a narrow lane turns back to it. No new
+-- value. Log line: FINETUNE_LANE. KEEL false.
+M.CLEAR_TURN_TAP_PROGRESS = true
+-- Minimum clear lane, 2026-11-03. The planner accepted a firing spot whose
+-- aim had a clear lane of about 0.09 brad (a 4 world-unit gap at 7.2 tiles,
+-- bot3 t=6765), smaller than one finetune tap.
+-- > 0 => when the planner picks a firing spot and aim (the spot sweep in
+-- plan_position and the shield scan winner), the shell must also reach the
+-- pill clear of pills (and walls, bases, pending pills, as the aim test
+-- already asks) at every gun angle within this many brad on both sides of
+-- the aim. The sweep drops an aim that fails; a shield scan winner that
+-- fails bans its angle and plans again (the pill-on-the-line replan, so the
+-- take ends after SANITY_PILL_REPLANS_MAX spots). The C goal-pick sweep
+-- (gh_attack.c, the attack.lua C fast path) uses the same rule, so the goal
+-- pick and plan_position agree on the spot. 0 = off.
+-- 0.125 brad is one smallest finetune tap: the lane must reach at least one
+-- tap on each side of the aim, so a gun that ends one tap away from the aim
+-- is still in the lane. Recorded cases: t=6765, a lane of 0.09 brad in total,
+-- must fail; t=5123, 0.1875 brad left and 0.5 brad right, must pass.
+-- Log lines: SHIELD_LANE, SHIELD_LANE_BAN, SHIELD_LANE_ABANDON. KEEL 0.
+M.BLOCKER_MIN_LANE_BRAD = 0.125
+-- Pill cover by health, 2026-11-03. The shield planner counted every friendly
+-- pill on a square as PPT_PILL_WALL_EQUIV (3) walls of cover, whatever its
+-- health, and a pill of any other owner on a square as a square to build on.
+-- true => a friendly (own or allied) pill is worth floor(health / 5) walls
+-- (pill_cover.lua; the C scan uses the same rule, naShieldPillCoverWalls):
+-- 15 -> 3, 10-14 -> 2, 5-9 -> 1, 1-4 -> 0. A pill worth 0 walls (and any
+-- enemy, neutral or dead pill) is not an existing blocker, and its square is
+-- not a square to build on. Dropped pills the plan has yet to place are
+-- unchanged (PPT_PILL_WALL_EQUIV each). No new value. KEEL false.
+M.PILL_COVER_BY_HEALTH = true
+M.PPT_COVER_TARGET_SHOTS = 15  -- build phase ends once shield cover reaches this many shots-to-break (friendly pill = PILLS_MAX_HEALTH 15, wall = SHIELD_WALL_COVER_SHOTS 5). 15 = one pill OR three walls. Independent of the blitz gate.
+M.PPT_PILL_WALL_EQUIV = 3.0    -- a dropped/standing friendly pillbox blocker is worth this many WALLS of shield cover (PILLS_MAX_HEALTH 15 / SHIELD_WALL_COVER_SHOTS 5 = 3). The C combo scorer (gh_shield_stamp) weights a pill-filled slot accordingly, so one carried pill stands in for a 3-wall shield.
 M.PPT_PILL_BLOCKERS_MAX = 2    -- cap on how many carried pillboxes the shield planner assumes it can drop onto buildable slots (matches builder.lua's PILLBOX_BLOCKERS_MAX). num_pill_blockers passed to the scorer = min(carried_pills, this).
 -- BLOCKER_ORTHOGONAL_ONLY: a shield blocker (a wall or a dropped pillbox) only
 -- on one of the four squares orthogonally next to the target pill, never a
@@ -1180,6 +1266,33 @@ M.BLITZ_SPOT_EXACT_ORIGIN       = true
 -- standoff float point (where the charge fires from), not from where it waits,
 -- 2.25 tiles further out. false = the live tank position. KEEL false.
 M.BLITZ_GO_GATE_FROM_STANDOFF   = true
+-- Blitz soldier setup on the 16-direction line, 2026-11-03. true => the
+-- soldier's setup (wait) point sits on the 16-direction travel line that ends
+-- on the spot its charge stops at (the 7.0-ring pulled spot), on the same
+-- setup ring as before. The engine moves a tank in 16 directions only, so
+-- the old radial setup could end the charge up to half a tile off the spot.
+-- Falls back to the radial point near a sector edge or when the new point
+-- fails the passable / drive-line / threat checks (attack.lua
+-- M.blitz_setup_16dir). Log line BLITZ_SETUP_16DIR. false = the radial
+-- setup point, as before. KEEL false.
+M.BLITZ_SETUP_16DIR             = true
+-- Edge margin for BLITZ_SETUP_16DIR, in brads (1 brad = 1/256 turn, 1.41
+-- degrees). When the bearing from the charge spot to the aim is less than
+-- this far from the edge between two of the 16 travel directions, the
+-- facing could round to the other direction, so the soldier keeps the
+-- radial setup point (log fallback=near_boundary). 0 = never fall back,
+-- 8 = always fall back. Only read when BLITZ_SETUP_16DIR is true. KEEL 0.5
+-- (unused there: KEEL has BLITZ_SETUP_16DIR false).
+M.BLITZ_SETUP_16DIR_EDGE_BRAD   = 0.5
+-- Charge leeway, 2026-11-03. true => when the charge's live gun line is
+-- blocked, the 5 aims (centre + 4 corners) are tested from the point where
+-- the tank will stop (moving: the predicted stop on its travel line; stopped:
+-- where it stands). A line that falls short from the live position does not
+-- count as blocked. If any aim reaches the pill clear from that point, the
+-- charge switches its aim there and keeps going; the angle is banned and a
+-- new spot planned only when no aim is clear from it. Log line CHARGE_LEEWAY.
+-- false = the old test from the live position (try_reaim). KEEL false.
+M.CHARGE_LEEWAY                 = true
 -- Blitz spot pending pills, 2026-09-25. true => a tile where a pill WILL stand
 -- soon blocks a blitz shot line like a live pill: our man is out on a pill
 -- build/repair trip, our place_pill_strategic target while we carry a pill, or
@@ -1216,6 +1329,16 @@ M.REFUEL_COST_MULT = 1.0  -- whole-cost multiplier on the "refuel" GOAL_GROUP (r
 M.REFUEL_MIN_COST          = 25    -- routine-refuel cost floor: an on-base top-off otherwise collapses to ~4 and outbids free-pill grabs (20260703_210207 t=5747). Bypassed at ARMOUR_CRITICAL ??? survival refuel may enter the reserved <20 band.
                                    -- (with squared urgency: floor cost at
                                    -- bscore ?? 0.37; e.g. bscore=60 ??? ~22)
+-- 2026-11-04 (Andrew): not-low refuel markup. When armour > ARMOUR_LOW AND
+-- shells > SHELLS_LOW (neither is low, the same test refuel_need uses), the
+-- urgency term is 1.0 and a well-stocked tank sees refuel at about 63, cheap
+-- enough to win too often. Multiply the refuel cost by this. Applied after the
+-- urgency multiply and after the REFUEL_MIN_COST floor in BOTH refuel cost
+-- paths (eval_refuel and the pool-1 finalize path), and the LGM-wait cap in
+-- goal_selection is scaled by the same factor, so the markup is in the final
+-- number. The goal desc shows it as " x5.00 notlow(arm=40,sh=35)".
+-- 1.0 = off (PRESETS.keel).
+M.REFUEL_NOT_LOW_MULT      = 5.0
 M.PILL_HEALTH_WEIGHT       = 5     -- cost per HP of hostile pill (full 15HP pill = +75)
 -- ?????? Repair fix master toggle ??????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????
 -- false ??? repair_pill reverts to the 1.90-beta1 behavior: alive-damaged pills
@@ -1227,6 +1350,17 @@ M.PILL_HEALTH_WEIGHT       = 5     -- cost per HP of hostile pill (full 15HP pil
 M.REPAIR_FIX_ENABLED       = true  -- repair fix ON (dead-pill rebuild + guards); tested OK
 M.REPAIR_BASE_COST         = 30    -- flat floor so a close/damaged repair doesn't trivially out-rank other goals
 M.REPAIR_DAMAGE_BONUS      = 3     -- cost reduction per missing HP on friendly pill
+-- Low-damage markup on the repair_pill goal cost (live pills only; see
+-- goals.repair_lowdmg_mult). mult(dmg) = 1 + (MAX-1) * r^(dmg-1) for
+-- 1 <= dmg <= REPAIR_LOW_DMG_MAX, r = ((AT5-1)/(MAX-1))^(1/(LOW_MAX-1)),
+-- else x1. With MAX 4.0, AT5 1.10, LOW_MAX 5:
+--   dmg 1 x4.00 | 2 x2.28 | 3 x1.55 | 4 x1.23 | 5 x1.10 | 6+ x1.00
+-- Applied after base + path - dmg*BONUS + stale, with the contest and spike
+-- multipliers, before the phase weight. Dead pills (rebuild) and the builder
+-- pool's own repair rows are not changed. MAX <= 1 = off (PRESETS.keel 1.0).
+M.REPAIR_LOW_DMG_MULT_MAX  = 4.0   -- markup at dmg 1
+M.REPAIR_LOW_DMG_MULT_AT5  = 1.10  -- markup at dmg REPAIR_LOW_DMG_MAX
+M.REPAIR_LOW_DMG_MAX       = 5     -- last dmg with a markup; above it x1
 M.REPAIR_CONTESTED_MULT    = 3.0   -- repair cost ??N when an enemy tank is closer to the pill than us (contested ??? likely futile)
 -- Repair contest terms (2026-09-02 rework). REPAIR_CONTESTED_MULT above is kept
 -- as the value and as the name anything older may still read; the live pool-5
@@ -1286,7 +1420,7 @@ M.REPAIR_DEAD_ADV_RELIEF_PER_TANK = 0.25 -- each net friendly tank cuts snipe ri
 M.REPAIR_DEAD_ADV_FLOOR          = 0.1   -- min snipe multiplier (never fully free)
 M.REPAIR_DEAD_LGM_MAX_TICKS      = 2000  -- LGM-travel sim budget (matches other callers)
 M.REPAIR_DEAD_LGM_STUCK_TICKS    = 150
-M.REPAIR_FRIENDLY_FIRE_REJECT_TICKS = 400  -- 8 s @ 50 Hz: after a friendly shot (own or ally) lands on a friendly pill, refuse to repair it ??? the team is shooting it down to reposition (perception sets pill._friendly_shot_tick)
+M.REPAIR_FRIENDLY_FIRE_REJECT_TICKS = 50   -- keel 400 (2026-11-01; 8 s). Knob, cfg=REPAIR_FRIENDLY_FIRE_REJECT_TICKS=N. 1 s @ 50 Hz: after a friendly shot (own or ally) lands on a friendly pill, refuse to repair it -- the team is shooting it down to reposition (perception sets pill._friendly_shot_tick)
 M.ATTACK_PILL_BASE_COST    = 30    -- flat cost added to every attack_pill (like ATTACK_BASE_EXTRA_COST for bases) so a pill take isn't free vs other goals
 M.ATTACK_BASE_EXTRA_COST   = 80    -- flat cost added to hostile base attacks
 M.ATTACK_BASE_THREAT_WEIGHT = 3    -- multiplier for threat at base location (penalise bases behind enemy pills/tanks)
@@ -1492,6 +1626,22 @@ M.TURN_CAP_UTURN_PIVOT = false    -- committed u-turn: turn-cap floor 6 -> 0 (pi
 --    half-turn sweep crosses no deep sea within a tile; a tie (both clear or
 --    both fouled) keeps today's shorter-angle choice.
 M.UTURN_SIDE_AVOID_SEA = false    -- u-turn side prefers the sweep with no deep sea under the nose
+-- Turn cap from the next route square, 2026-11-03. The heading-error turn cap
+-- in steer_core only works when the GOAL is within 4 tiles. Far from the goal
+-- a tank with a large heading error to its next route square kept speed 48,
+-- its turn radius was larger than the square's distance, and it drove circles
+-- round the square (recorded game, player 2, brain ticks 1524-2266: about 7
+-- squares of progress in 740 ticks, goal 6-12 tiles away).
+-- true => the same turn cap (base_cap x ramp, floor 6) also applies when the
+-- next route square is inside the tank's turning circle: distance to the
+-- square < 2 x R x sin(heading error), with sin taken as 1 at 90 degrees or
+-- more (a square behind the tank and nearer than one turn diameter), and
+-- R = turn radius = (speed / 4) / (turn rate x 2 pi / 256), turn rate =
+-- 2 brads per think x the live turn rule of the terrain under the tank x our
+-- turn modifier. Small heading wobble far from the goal stays outside the
+-- circle, so it does not slow the tank. No new value.
+-- Log line: TURN_CAP_NEXT_SQUARE. KEEL false.
+M.STEER_TURN_CAP_NEXT_SQUARE = true
 
 -- 5. STICKY CLIFF BRAKE (2026-09-06 drowning analysis, fix (c)).
 --    Both guards above are decided FRESH every tick off a heading ray. While
@@ -1701,6 +1851,35 @@ M.PF_FLIP_FRESH_ASTAR           = true
 -- tile and no new hold starts until the tank moves. Before it the hold had no
 -- cap. KEEL 60 (unused there: PF_FLIP_FRESH_ASTAR is false).
 M.PF_FLIP_FRESH_ASTAR_TICKS     = 60
+-- Slate root heading, 2026-11-03. The Dijkstra slate root has no arrival
+-- direction, so its first steps paid no turn cost: a full reverse at speed
+-- was as cheap as going straight on, and with two routes of near equal cost
+-- the slate could pick the step behind the tank. Steering then made a U-turn
+-- at speed 48 that became a wide loop (recorded game, player 2, brain ticks
+-- 2147-2328, about 230 ticks lost). true => each slate is started with the
+-- tank heading and the root's first steps pay the same turn cost (turn_cost
+-- per 45 degrees) as every other step. No new cost value. Plumbed to the C
+-- pathfinder in cpathfinder.lua's M.configure as "start_heading". KEEL false.
+M.PF_START_HEADING              = true
+-- Route keep, 2026-11-03. The slates are rooted at the tank, and each new
+-- slate can pick a different first step from a route of near equal cost, so
+-- the tank turned from one to the other and drove in circles in a forest
+-- (debug session 20261103_165532_1_v3_anchor_helm_s205, player 2, brain
+-- ticks 1524-2266). When a new slate wants another first step, the old route
+-- is priced again with the current costs (C side,
+-- brainPathfinderDijkstraKeepCheck) and the tank keeps its old step when
+--   g_keep <= g_new + max(PF_REROUTE_KEEP_MARGIN, PF_REROUTE_KEEP_FRAC * g_new)
+-- g_new = new route cost to the destination; g_keep = new slate cost to the
+-- old step + the old route from there. 12 is more than a full reverse on a
+-- diagonal step (11.3), so a pure geometry change does not turn the tank; an
+-- angry pill adds 50-200 per step, so a real threat still does. Logic in
+-- cpathfinder.lua M.route_keep (log tag PF_KEEP). Both 0 = off, the old
+-- behaviour exactly. KEEL 0 and 0.
+M.PF_REROUTE_KEEP_MARGIN        = 12
+M.PF_REROUTE_KEEP_FRAC          = 0.06
+-- Most slate restarts in a row that may keep the same old step; at the next
+-- one the tank takes the new step. Unused while the two knobs above are 0.
+M.PF_REROUTE_KEEP_MAX_RESTARTS  = 3
 M.DIJKSTRA_USE_FOR_GOALS        = true  -- replace cost_to in step_eval_queue with dijkstra
                                         -- lookup_by_kind. Pill pools use kind=1 (low-danger
                                         -- slate), other pools use kind=0 (normal-danger slate).
@@ -1718,7 +1897,420 @@ M.DIJKSTRA_PILL_DANGER_SCALE    = 0.1   -- danger weighting for the "pill take" 
 M.STRATEGIC_PLACE_ENABLED       = true
 M.STRATEGIC_PLACE_SEARCH_RADIUS = 12    -- tiles around the tank to search for a placement spot. Widened from 8: the spot-quality floor (STRATEGIC_PLACE_MIN_SCORE) holds placement whenever no GOOD spot is within range, so a too-tight radius made a slightly-forward tank carry pills forever (its 8-tile bubble was all front/enemy ground). 12 reaches the good back/guardian spots near our bases without lowering standards. CPU is (2R+1)^2 but bounded by the capacity clamp (place_r) on constrained ticks; far spots also cost more travel (path_cost), so they still only win when worth it.
 M.STRATEGIC_PLACE_AGGRO_SEARCH_RADIUS = 14  -- wider scan when filling the AGGRO role: aggro tiles sit beyond the front (negative influence), deeper than the default radius reaches from the tank's (rear) position. Lets a good forward aggro tile up to 14 tiles out be found + placed.
-M.STRATEGIC_PLACE_FRONT_WEIGHT  = 3.0   -- bonus per tile of proximity to front line
+-- ── Focused spike placement (2026-11-01, Andrew) ──
+-- FOCUS_SPIKE_ENABLED is the master switch. Off = the placement scan is
+-- exactly the old one. On, ONLY for a tile whose category is "aggro"
+-- (PP.classify): goals.lua eval_place_pill_strategic and its heatmap mirror
+--   * also score every tile within PILL_FIRE_RANGE (a 17x17 square) of each
+--     hostile base this bot has seen (world.bases), when the scan can place
+--     an aggro pill at all. Tiles already in the tank square are skipped;
+--   * ebase: + ENEMY_BASE_BONUS per hostile base within PILL_FIRE_RANGE
+--     (Manhattan, the same test as the coverage terms);
+--   * depth: + DEPTH_WEIGHT per point of enemy influence (-influence),
+--     capped at DEPTH_CAP;
+--   * no beyond-front penalty (inf) and no own-base proximity (prx);
+--   * tank distance (dst) costs TANK_DIST_WEIGHT per tile, not 0.5;
+--   * the centre bias (ctr) uses the hostile base with the most other hostile
+--     bases within 2 x PILL_FIRE_RANGE (ties: lower tile id), not the normal
+--     centre. Same CENTER_BIAS_CAP / _WEIGHT.
+-- builder.lua then sends the builder from up to PLACE_DISPATCH_MAX_DIST with
+-- no dispatch trigger, and init.lua drops the goal once the builder is out,
+-- so the tank does not keep driving in. Off while PILL_PLACE_TURTLE is on.
+-- PRESETS.keel = false.
+M.FOCUS_SPIKE_ENABLED                   = true
+M.FOCUS_SPIKE_PLACE_ENEMY_BASE_BONUS  = 60    -- per hostile base the aggro tile covers
+M.FOCUS_SPIKE_PLACE_DEPTH_WEIGHT      = 2     -- per point of enemy influence under the tile
+M.FOCUS_SPIKE_PLACE_DEPTH_CAP         = 80    -- most the depth term can add
+M.FOCUS_SPIKE_PLACE_TANK_DIST_WEIGHT  = 0.1   -- per tile from the tank (normal tiles: 0.5)
+-- ── Focused spike rules (2026-11-01 late, Andrew: "run with this") ──
+-- spike.lua owns these. All are read ONLY while FOCUS_SPIKE_ENABLED is on,
+-- except the SPIKE_REPAIR_* / SPIKE_CARE_* group (see below). A rule that
+-- fails sends the pill to the normal (old) aggro placement, never alone.
+--  * Base lead (FOCUS_SPIKE_BASE_RULE): bases this bot's world model holds as
+--    ours ("friendly") and theirs ("hostile"); deep only when
+--    ours >= theirs x BASE_RATIO and ours - theirs >= BASE_LEAD.
+--  * Pills (FOCUS_SPIKE_PILL_RULE): team pills (our deployed live pills +
+--    this tank's carried + pills allies advertise as carried) >= MIN_PILLS,
+--    and the front role at its NORMAL portfolio target (PP.normal_targets).
+--  * Pair (FOCUS_SPIKE_PAIR): "off" = one focused spike per pill (the first
+--    version of this rule). "solo" = deep only with a second pill ready:
+--    this tank carries >= 2 pills and wood for both (2 x PILL_PLACE_TREE_COST).
+--    The tank holds at its dispatch tile while the builder makes both trips;
+--    the second trip goes first (SPIKE_PAIR_SECOND_COST, builder pool waits).
+--    The second tile: aggro, within SPIKE_PAIR_COVER_DIST (euclid) of the
+--    first with clear line of sight, within PLACE_DISPATCH_MAX_DIST of the
+--    tank, not forest; ebase gives no credit for a hostile base the first
+--    already covers. It must land within SPIKE_PAIR_WINDOW ticks of the
+--    first. A miss: the first gets spike care at once and the area (within
+--    SPIKE_FAIL_COOLDOWN_RADIUS of the first) gets no focused spike for
+--    SPIKE_FAIL_COOLDOWN ticks. "team" (an ally carrying a pill joins by
+--    advert) is NOT built yet: it acts as "solo".
+M.FOCUS_SPIKE_BASE_RULE       = true
+-- Neutral as enemy (FOCUS_SPIKE_NEUTRAL_AS_ENEMY, 2026-11-01, Andrew: "let's
+-- do all our stuff from now on with FOCUS_SPIKE_NEUTRAL_AS_ENEMY but I'm glad
+-- it's a knob we can tweak later"). On: the base lead rule's "theirs" is
+-- hostile + neutral + every base whose owner this bot does not know (on the
+-- map but not seen yet, or a record with no owner). Off: hostile only.
+-- PRESETS.keel = false (no effect there: the focused spike is off).
+M.FOCUS_SPIKE_NEUTRAL_AS_ENEMY = true
+M.FOCUS_SPIKE_BASE_RATIO      = 1.5
+M.FOCUS_SPIKE_BASE_LEAD       = 3
+M.FOCUS_SPIKE_PILL_RULE       = true
+M.FOCUS_SPIKE_MIN_PILLS       = 8
+M.FOCUS_SPIKE_PAIR            = "solo"   -- "off" | "solo" | "team" (team = solo for now)
+M.SPIKE_PAIR_WINDOW          = 300      -- ticks from the first landing to the second landing
+M.SPIKE_PAIR_COVER_DIST      = 8        -- tiles (euclid) between the two spikes, with LOS
+M.SPIKE_PAIR_SECOND_COST     = 1        -- pool cost of the second trip (wins the tank pool)
+M.SPIKE_FAIL_COOLDOWN        = 1500     -- ticks with no focused spike near a failed pair
+M.SPIKE_FAIL_COOLDOWN_RADIUS = 16       -- tiles (Manhattan) around the first spike
+M.SPIKE_SYNC_TICKS           = 50       -- reserved for "team" (not built)
+M.SPIKE_JOIN_TIMEOUT         = 750      -- reserved for "team" (not built)
+-- Win shares (FOCUS_SPIKE_WIN_SHARES, 2026-11-01 night, Andrew: "up the
+-- proportion of aggressive pills in those 'we could win if we spiked'
+-- situations"). While the base lead rule and the pill rule both pass (a rule
+-- whose knob is off counts as a pass, as in spike.check), the portfolio
+-- targets (PP.targets) become WIN_BACK / WIN_FRONT / WIN_AGGRO / WIN_UTIL,
+-- label source "win". When they stop passing, the normal shares come back
+-- (the defaults, or the "portfolio=" token's shares). The pill rule always
+-- reads the NORMAL front target, so the switch cannot turn itself off.
+-- Log line: FOCUS_SPIKE_WIN_SHARES. Read only while FOCUS_SPIKE_ENABLED is
+-- on, so PRESETS.keel needs no entry.
+M.FOCUS_SPIKE_WIN_SHARES      = true
+M.FOCUS_SPIKE_WIN_BACK        = 0.10
+M.FOCUS_SPIKE_WIN_FRONT       = 0.40
+M.FOCUS_SPIKE_WIN_AGGRO       = 0.35
+M.FOCUS_SPIKE_WIN_UTIL        = 0.15
+-- Utility to aggro (FOCUS_SPIKE_UTIL_TO_AGGRO, 2026-11-01, Andrew: "When 'I
+-- can deep spike!' kicks in, yes, utility should be 0. Let's use those pills
+-- to attack."). At the same moment as the win shares (the base lead and pill
+-- rules pass), the live utility share becomes 0 and its share goes to aggro:
+-- with win shares on 10/40/50/0, with win shares off (normal 20/45/20/15)
+-- 20/45/35/0. A role with share 0 gets no leftover slot (PP targets_for), so
+-- the utility reserve is 0: no PLACE_HOLD_UTIL hold and no last-pill 1.5x
+-- cost. When the rules fail again, the utility share comes back. The pill
+-- rule reads the NORMAL targets, so the switch cannot turn itself off.
+-- Log line: FOCUS_SPIKE_UTIL_TO_AGGRO. PRESETS.keel = false.
+M.FOCUS_SPIKE_UTIL_TO_AGGRO   = true
+-- ── Focused spike deny plan and team vote (2026-11-01, Andrew: "the true
+-- 'focused' spikes ... requires a passing vote of majority (not all)") ──
+-- FOCUS_SPIKE_RULE: "deny" = focus_vote.lua: with no passed vote, play is
+-- KEEL (no deep placement, normal shares, no spike care). "count" = the base
+-- lead and pill rules above, per bot (the first builds, kept for benches).
+-- The deny plan, from each bot's own world model, about once per PLAN_INTERVAL:
+--  * clusters: single-link groups of bases within CLUSTER_GAP tiles (euclid);
+--  * target bases: every base not ours (hostile, neutral, unknown); a base
+--    with no known position counts in the total but cannot be covered;
+--  * cover tiles per cluster: greedy, every target base within
+--    PILL_FIRE_RANGE (euclid, inclusive) of our pills (our live pills count);
+--    placeable, not forest, out of range of every known live hostile pill.
+--    A cluster with a base that cannot be covered is skipped;
+--  * defense per cluster (armour = last seen hp / 15):
+--      pills:  armour per known hostile pill within PILL_FIRE_RANGE +
+--              DEFENSE_PILL_MARGIN of a target base or cover tile;
+--      tanks:  DEFENSE_TANK_WEIGHT per enemy tank seen within
+--              DEFENSE_TANK_RANGE in the last DEFENSE_TANK_MEMORY ticks;
+--      route:  armour x DEFENSE_ROUTE_WEIGHT per hostile pill that sees a
+--              tile of the lowest-cost route from our nearest base or pill
+--              (exposed tiles cost ROUTE_EXPOSED_COST more; a tank in a 2x2
+--              forest block 3+ tiles away on either axis is hidden, the
+--              engine rule); each pill counted once;
+--      detour: DEFENSE_DETOUR_WEIGHT per 10 tiles the route is longer than
+--              the straight line.
+--    Label: shallow (no route tile in hostile pill range), deep (exposed),
+--    hidden ("deep, hidden route": in range but hidden by forest).
+--    defense >= DEFENSE_MAX: skipped (no route at all counts as DEFENSE_MAX);
+--  * rank = target bases / (tiles + DEFENSE_WEIGHT x defense); with
+--    UNDEFENDED_FIRST, clusters with defense < UNDEFENDED_MAX come first;
+--    shallow before deep when ranks are within 10%; then nearer our bases;
+--  * spare K = team pills - the NORMAL front target; whole clusters, best
+--    first, while K and MAX_TILES allow;
+--  * pass: planned / total target bases >= DENY_FRAC (and tiles to place).
+-- The vote (copy of the reposition vote): a bot whose plan passes and whose
+-- placement goal won its pool opens it; ballots: yes + pledge (carried
+-- pills, ETA) or no + reason (not_target, tile_covered, home_attacked,
+-- better, cooldown, defended); silence = yes; VOTE_WINDOW_TICKS, early when
+-- every bot answered. Pass: YES > half the team bots (proposer included,
+-- humans do not vote) and pledges >= tiles. Go: tile -> player, nearest ETA
+-- first; each assigned bot places at APPROVED_COST. Active APPROVAL_TTL ticks
+-- or until every tile is placed; placed tiles keep spike care
+-- (SPIKE_CARE_TICKS). Abort: lost_pill, tile_covered, home_attacked
+-- (ABORT_HOME_ATTACKED), route_blocked (route defense >= DEFENSE_MAX). Fail or
+-- abort: team cooldown VOTE_FAIL_COOLDOWN (not for a fail by "better" only).
+-- While active the win shares and utility to aggro switch on (their knobs).
+-- PRESETS.keel: FOCUS_SPIKE_ENABLED = false, so none of this runs.
+-- "cluster" (2026-11-01, Andrew: "evaluate each cluster and see if we can
+-- completely take out refueling in that cluster by spiking"): the same vote,
+-- but each plan is ONE cluster, judged on its own. It passes only when the
+-- spare pills K can put EVERY target base of that cluster within
+-- PILL_FIRE_RANGE of our pills (no DENY_FRAC). Risk per cluster (only what
+-- this bot saw; each factor adds; only the total is compared with
+-- DEFENSE_MAX, so no factor alone disqualifies):
+--   spot:   SPOT_WEIGHT x armour per known hostile pill that can fire at the
+--           SAFEST place our tank can stand to send the builder: any
+--           tank-passable tile within PLACE_DISPATCH_MAX_DIST (U.leash_dist) of
+--           the spike spot from which the builder walk reaches it (forest
+--           hiding counts as safe). Pills never shoot builders (pillsUpdate
+--           targets tanks only), so a spot in a hostile pill's range is
+--           allowed. The cover greedy breaks ties by this.
+--   route:  as "deny", on the route to the stand places;
+--   detour: as "deny";
+--   tanks:  as "deny" (a factor, never a skip alone);
+--   spare credit: minus SPARE_CREDIT per spare pill beyond the need (K -
+--           need at plan time), at most SPARE_CREDIT_MAX.
+-- Hostile pills near the bases that cannot fire at the stand places or the
+-- route do not count. Each pill counts once (spot before route). A bot
+-- pledges its pills only with armour >= PLEDGE_MIN_ARMOR, else it votes yes
+-- with pledge 0. Short pledges fail the vote (why=pledges). During a plan a
+-- covered spike spot is re-picked for the same bases; when no spot covers
+-- them all the plan aborts (why=incomplete). "deny" and "count" stay as the
+-- old options.
+M.FOCUS_SPIKE_RULE                 = "deny"   -- "deny" | "cluster" | "count"
+M.FOCUS_SPIKE_SPOT_WEIGHT          = 2.0
+M.FOCUS_SPIKE_SPARE_CREDIT         = 0.5
+M.FOCUS_SPIKE_SPARE_CREDIT_MAX     = 1.0
+M.FOCUS_SPIKE_PLEDGE_MIN_ARMOR     = 20       -- of 40
+-- Stand places tried with the builder walk sim before a spot counts as out
+-- of reach (focus_vote.best_stand).
+M.FOCUS_SPIKE_STAND_REACH_CHECKS   = 8
+-- Ticks a plan spot's stand place is kept (focus_vote.plan_stand) while the
+-- known hostile pills do not change.
+M.FOCUS_SPIKE_STAND_CACHE_TICKS    = 250
+-- Single-link gap between bases of one cluster (euclid, inclusive). 9 =
+-- the shooting distance of a pill (2026-11-01, Andrew: "16 tiles is too big.
+-- We need that to be shooting distance of a pill, 9 tiles"). Read only while
+-- FOCUS_SPIKE_ENABLED is on (PRESETS.keel: off).
+M.FOCUS_SPIKE_CLUSTER_GAP          = 9
+M.FOCUS_SPIKE_DENY_FRAC            = 0.5
+M.FOCUS_SPIKE_PLAN_INTERVAL        = 50       -- ticks between plans
+-- FOCUS_PLAN_OFFSET_MODE (2026-11-06): which tick of each
+-- FOCUS_SPIKE_PLAN_INTERVAL a bot makes its spike plan on.
+--   "first": the first tick the plan code runs, then every INTERVAL ticks
+--            after the last plan. Bots that join together all plan on the
+--            same tick (8-9 ms early in the game, most of the budget kills).
+--   "slot":  game time, by player slot: the plan tick is one tick after the
+--            slot's REPLAN_OFFSET_MODE="slot" replan tick, so no two slots
+--            plan on the same tick and no plan lands on any slot's replan tick.
+-- A plan tick that the bot misses (no think on that tick) runs on the next tick.
+-- Plans made for a vote ballot (focus_vote.ballot) do not change.
+-- KEEL "first" (today's behaviour).
+M.FOCUS_PLAN_OFFSET_MODE           = "slot"
+M.FOCUS_SPIKE_MAX_TILES            = 12       -- fits the 124-byte message
+M.FOCUS_SPIKE_VOTE_WINDOW_TICKS    = 25
+M.FOCUS_SPIKE_APPROVED_COST        = 80
+-- FOCUS_SPIKE_PLAN_FLAT (2026-11-02): the pool row of a plan tile keeps
+-- FOCUS_SPIKE_APPROVED_COST after the phase weight and gets no influence
+-- x2 (goals.focus_plan_flat). A spike spot is always in enemy ground, so
+-- the x2 always applied: in run10 the row won 7 of 687 pool passes and no
+-- spike pill was placed. Not while armour <= ARMOUR_LOW or shells <=
+-- SHELLS_LOW (refuel and flee win). Switch and commitment penalties still
+-- apply. KEEL false (old pricing); keel_focus, _loose, _bench true.
+M.FOCUS_SPIKE_PLAN_FLAT            = false
+M.FOCUS_SPIKE_APPROVAL_TTL         = 1500
+M.FOCUS_SPIKE_VOTE_FAIL_COOLDOWN   = 1500
+M.FOCUS_SPIKE_HOME_ATTACK_RANGE    = 8
+M.FOCUS_SPIKE_ABORT_HOME_ATTACKED  = true
+-- How an active plan tests "home attacked" for the abort: "base_lost" (a
+-- base that was ours at the go is lost) or "tank_near" (the ballot test: an
+-- enemy tank within FOCUS_SPIKE_HOME_ATTACK_RANGE of one of our bases).
+M.FOCUS_SPIKE_HOME_ABORT_RULE      = "base_lost"
+-- FOCUS_SPIKE_HOME_ABORT_NEAR (2026-11-02, with "base_lost"): 0 = every lost
+-- base ends the plan (the old rule). > 0 = only a lost base within this many
+-- tiles of the bot's tank ends it; a farther loss is dropped and the plan
+-- goes on. Why: in the bench, 19 of 26 home_attacked ends lost a base 13-41
+-- tiles from both plan bots, and the base stayed lost 2 minutes later in 19
+-- of 26, so the abort did not win it back. KEEL 0. Focus presets 0 too:
+-- 16 gave the same losses (4 of 12) and +1 focus base in bench n6.
+M.FOCUS_SPIKE_HOME_ABORT_NEAR      = 0
+-- FOCUS_SPIKE_SOLO_CARRIER (2026-11-02): with FOCUS_SPIKE_ALL_AGGRO, only the
+-- team bot that carries the most pills (tie: lower player number) picks
+-- spike spots; the other plan bots hold no spot and keep their normal goals
+-- (defend, recapture, refuel). false = every carrier picks (the old rule).
+-- KEEL false. Focus presets false too: true gave 5 losses (4 before) and
+-- 55 focus bases at the end (61 before) in bench n8.
+M.FOCUS_SPIKE_SOLO_CARRIER         = false
+-- When a bot on an active plan learns a hostile pill in fire range of a plan
+-- tile: "abort" ends the plan; "repick" finds one new tile for the bases that
+-- tile was to cover (same bot), or drops those bases, and aborts only when the
+-- bases left fall below FOCUS_SPIKE_DENY_FRAC of all target bases.
+M.FOCUS_SPIKE_TILE_COVERED_RULE    = "abort"
+M.FOCUS_SPIKE_BETTER_MARGIN        = 0.1      -- "better": my planned fraction beats theirs by this
+M.FOCUS_SPIKE_STDERR_LOG           = false    -- plain print() lines for the bench
+-- Bench event file: with FOCUS_SPIKE_STDERR_LOG on and this set to a file
+-- name, each bench line is also appended to <brain dir>/fs_events/<name>.
+-- A release WinBoloDS drops brain print() output (wb_log debug level is
+-- compiled out), so the bench reads this file. "" = off. The fs_events
+-- folder must exist (the brain does not create folders).
+M.FOCUS_SPIKE_EVENT_FILE           = ""
+M.FOCUS_SPIKE_DEFENSE_PILL_MARGIN  = 2
+M.FOCUS_SPIKE_DEFENSE_TANK_RANGE   = 12
+M.FOCUS_SPIKE_DEFENSE_TANK_MEMORY  = 600
+M.FOCUS_SPIKE_DEFENSE_TANK_WEIGHT  = 0.5
+M.FOCUS_SPIKE_DEFENSE_ROUTE_WEIGHT = 2.0
+M.FOCUS_SPIKE_DEFENSE_DETOUR_WEIGHT = 0.5
+M.FOCUS_SPIKE_DEFENSE_WEIGHT       = 1.0
+M.FOCUS_SPIKE_DEFENSE_MAX          = 3.0
+M.FOCUS_SPIKE_UNDEFENDED_FIRST     = true
+M.FOCUS_SPIKE_UNDEFENDED_MAX       = 0.5
+M.FOCUS_SPIKE_ROUTE_EXPOSED_COST   = 50       -- extra route cost of a tile a hostile pill sees
+M.FOCUS_SPIKE_ROUTE_PAD            = 12       -- route search box padding (tiles)
+M.FOCUS_SPIKE_ROUTE_CACHE_TICKS    = 1500
+-- Spike care (SPIKE_REPAIR_PRIORITY). Read OUTSIDE the deep path (builder
+-- pool, the tank repair_pill pool, the spkd advert), so PRESETS.keel = false.
+-- A spike pill is one this bot placed by the deep rule (seen to land), or
+-- one an ally advertises (spkd=XXYYCCCC: tile + tick low 16 bits). For
+-- SPIKE_CARE_TICKS after it lands, and while its tile still classifies as
+-- aggro: builder pool rebuild/topup rows on it get + SPIKE_REPAIR_BONUS
+-- (chip spike_care{} on the BP line), top up from SPIKE_REPAIR_MIN_MISSING hp
+-- missing (normal BUILDER_POOL_TOPUP_MIN_MISSING), and reach
+-- SPIKE_REPAIR_LEASH tiles (normal repair leash 11); the tank repair_pill row
+-- on it costs x (1 - SPIKE_REPAIR_TANK_DISCOUNT).
+-- Bonus 200: the farm row tops out near 159 and a routine 4-hp top-up is
+-- 120 - trip, so a 1-hp spike top-up (30 - trip + 200) still outranks both.
+M.SPIKE_REPAIR_PRIORITY      = true
+M.SPIKE_CARE_TICKS           = 3000
+M.SPIKE_REPAIR_BONUS         = 200
+M.SPIKE_REPAIR_MIN_MISSING   = 1
+M.SPIKE_REPAIR_LEASH         = 15
+M.SPIKE_REPAIR_TANK_DISCOUNT = 0.5
+-- Care by range (2026-11-01, Andrew: "just make any pill that's in range of
+-- an enemy base have that discount"). On: spike care (SPIKE_REPAIR_BONUS on
+-- builder repair rows, the wider SPIKE_REPAIR_LEASH, the tank repair discount
+-- and the FOCUS_SPIKE_DEFEND_DISCOUNT on defend_pill) goes to ANY live pill of
+-- ours with a hostile base within PILL_FIRE_RANGE (euclid, inclusive), as this
+-- bot knows the bases. It does not depend on the pill class. The care starts
+-- when the pill comes in range (care src "range") and keeps the normal time
+-- limits (SPIKE_CARE_TICKS; FOCUS_SPIKE_DEFEND_TICKS for the defend discount).
+-- Every care tag (also a plan tag) goes when no hostile base is in range, for
+-- example after we take the base. false = off (the default and PRESETS.keel):
+-- care needs the aggro class, as before. keel_focus, _loose and _bench on.
+M.FOCUS_SPIKE_CARE_BY_RANGE  = false
+-- Spike defend discount (2026-11-01, Andrew: "a 30% discount on defend_pill
+-- for say 120 seconds"). A pill placed on a spot of a passed focused spike
+-- plan (care src "plan": every bot of the team tags it when it sees it land)
+-- gets its defend_pill cost x (1 - FOCUS_SPIKE_DEFEND_DISCOUNT) for
+-- FOCUS_SPIKE_DEFEND_TICKS after it lands (6000 = 120 s at 50 ticks/s). It
+-- applies before the well-defended clamp, so a held pill is still raised to
+-- DEFEND_WELL_DEFENDED_COST (chip spike_defend{x0.70} on the defend_pill row).
+-- 0 = off (the default and PRESETS.keel); keel_focus, _loose, _bench 0.30.
+M.FOCUS_SPIKE_DEFEND_DISCOUNT = 0
+M.FOCUS_SPIKE_DEFEND_TICKS    = 6000
+-- Neutral pills in the cluster plan (2026-11-01, Andrew: "if there are
+-- neutrals in range of the cluster, we can score that lower, since those
+-- would interfere with the enemy refuelling there, too"). A neutral pill has
+-- no allies, so pillsUpdate fires at every team's tanks. On:
+--  * cover: a target base within PILL_FIRE_RANGE of a known live neutral
+--    pill counts as covered, as our own pills do (a cluster covered that way
+--    needs 0 spike pills and is not proposed);
+--  * risk: neutral pills count like hostile pills in the stand place and
+--    route exposure (armour / 15 x weight, forest hiding counts).
+-- Only what this bot saw (last seen armour > 0). Plan line: ncov=<base ids>.
+-- false = off (the default and PRESETS.keel); keel_focus, _loose, _bench on.
+M.FOCUS_SPIKE_NEUTRAL_PILL_COVER = false
+-- Adaptive spike spot (2026-11-01, Andrew: "a focus spike is just that a
+-- focus, not even a specific slot. There should be a scoring that gets
+-- updated over time of best spot. It could change if ex. wall so built where
+-- first spot was chosen." and "If it can get close to spike its safer. Long
+-- lgm run out is risky. But risks should be taken sometimes."). On: a passed
+-- vote gives each pledged bot target BASES (claims, go verb fsk), not fixed
+-- spike spots. Every FOCUS_SPIKE_RESCORE_TICKS each claiming bot scores the
+-- spike spots within PILL_FIRE_RANGE of its claimed bases that are not yet
+-- covered, from where its tank is now:
+--   score = FOCUS_SPIKE_BASE_PAYOFF x claimed bases newly covered
+--           - (stand risk + route risk + travel cost + builder run cost)
+--   stand risk  = FOCUS_SPIKE_SPOT_WEIGHT x armour/15 per known hostile pill
+--                 that sees the stand place;
+--   route risk  = FOCUS_SPIKE_DEFENSE_ROUTE_WEIGHT x armour/15 per other
+--                 hostile pill that sees the tank's map path to the stand;
+--   travel cost = floor(tank -> stand distance / 10) x DEFENSE_DETOUR_WEIGHT;
+--   builder run = FOCUS_SPIKE_LGM_RUN_COST per tile, stand -> spot (euclid).
+-- The stand place: see FOCUS_SPIKE_STAND_RADIUS (KEEL: the tank-passable
+-- tile within PLACE_DISPATCH_MAX_DIST, U.leash_dist, with the lowest stand
+-- risk + builder run cost). The payoff: see FOCUS_SPIKE_CLOSE_PAYOFF and
+-- FOCUS_SPIKE_MULTI_BOOST. A spot is left
+-- out when it is not placeable now, or when its danger (stand risk + route
+-- risk) is over FOCUS_SPIKE_DEFENSE_MAX. A hostile or neutral pill near the
+-- spot does not rule it out (bug fix, 2026-11-01): a pill never shoots a
+-- builder or a pill, so only the tank risk counts. The travel and builder run costs are not danger:
+-- they never rule a spot out by themselves.
+-- The bot changes its spot only for a score better by FOCUS_SPIKE_SWITCH_MARGIN
+-- (20% of the current score, at least 0.20). A claimed base no spot can cover
+-- is released (claim verb fsc) for another bot to take.
+-- false = off (the default and PRESETS.keel); keel_focus, _loose, _bench on.
+M.FOCUS_SPIKE_ADAPTIVE_SPOT   = false
+-- FOCUS_SPIKE_RESCORE_TICKS: the brain ticks from the start of one rescore
+-- pass to the start of the next. KEEL 50 (1 s); keel_focus, _loose, _bench
+-- 100 (2 s).
+M.FOCUS_SPIKE_RESCORE_TICKS   = 50     -- brain ticks (1 s)
+-- FOCUS_SPIKE_RESCORE_SLICES: the thinks one levelling rescore pass
+-- (FOCUS_SPIKE_ALL_AGGRO) is cut into, for a lower CPU peak per think. Each
+-- think scores the next 1/N of the spots (the stand search and the route
+-- risk). The spot of the bot stays until the pass is finished; the pick,
+-- change and drop rules apply only then. The inputs (tank tile, boat
+-- state, m, S, every c(b)) are fixed at the start of the pass; a change of
+-- them mid-pass waits for the next pass. The builder out of the tank or no
+-- pill carried throws the pass away. The answer is the same as one full
+-- pass while the world does not change.
+-- The first pick of a plan waits N thinks. The claim mode is always one
+-- pass. KEEL 1 (the full pass in one think); keel_focus, _loose, _bench 5.
+M.FOCUS_SPIKE_RESCORE_SLICES  = 1
+M.FOCUS_SPIKE_BASE_PAYOFF     = 1.0
+M.FOCUS_SPIKE_LGM_RUN_COST    = 0.1    -- per tile, stand place -> spike spot
+M.FOCUS_SPIKE_SWITCH_MARGIN   = 0.20
+-- Spike spots fully scored per rescore (the rest are cut by payoff, then by
+-- distance from the tank), and builder reach checks per rescore.
+M.FOCUS_SPIKE_RESCORE_MAX_SPOTS = 40
+M.FOCUS_SPIKE_RESCORE_REACH_CHECKS = 4
+-- Wide stand search (2026-11-01, Andrew approved): the tiles a stand place of
+-- a spike spot may be on, Manhattan from the spot (at most
+-- PLACE_DISPATCH_MAX_DIST). 1 = KEEL: the old search (the lowest stand risk +
+-- builder run, nearest ring first, no travel and no route in the pick). > 1:
+--  step A ranks every tank-passable tile within the radius that the tank's
+--  Dijkstra map reaches by stand risk + builder run + travel (ties: the
+--  shorter map distance, then the lower tile key);
+--  step B traces the route risk (M.path_risk along the map path) only for
+--  the best 3 of step A. The stand place is the one of the 3 with the lowest
+--  stand + route + travel + run whose danger is allowed.
+-- With a radius > 1 every spike spot found is scored (no
+-- FOCUS_SPIKE_RESCORE_MAX_SPOTS cut).
+M.FOCUS_SPIKE_STAND_RADIUS    = 1
+-- Closer = more payoff (2026-11-01, Andrew approved): on, the payoff for each
+-- base of S a spot covers is FOCUS_SPIKE_BASE_PAYOFF x (R + 1 - d) / R, d =
+-- euclid spot -> base, R = PILL_FIRE_RANGE (8: (9 - d) / 8; 1.00 at d = 1,
+-- 0.625 at d = 4, 0.125 at d = 8). false = KEEL: BASE_PAYOFF per base.
+M.FOCUS_SPIKE_CLOSE_PAYOFF    = false
+-- Multi-base boost (2026-11-01, Andrew approved): when 2 or more bases of S
+-- are within FOCUS_SPIKE_MULTI_RADIUS (euclid, inclusive) of the spot, the
+-- payoff is multiplied by FOCUS_SPIKE_MULTI_BOOST. Example (close payoff on):
+-- 4 tiles from two bases = (0.625 + 0.625) x 1.5 = 1.875. 1.0 = KEEL.
+M.FOCUS_SPIKE_MULTI_RADIUS    = 5
+M.FOCUS_SPIKE_MULTI_BOOST     = 1.0
+-- Ticks a released base waits for a taker before the plan ends incomplete.
+M.FOCUS_SPIKE_RELEASE_WAIT    = 100
+-- All aggressive pills in a spike (2026-11-01, Andrew: "we need to push for
+-- using ALL the aggressive pills in a spike", and "of a cluster, count the min
+-- times a base is covered, then find all the bases covered by that many, and
+-- then favor a point that will cover those bases or as many as they can").
+-- Needs FOCUS_SPIKE_ADAPTIVE_SPOT. On, while a plan is active:
+--  * Reservation: every pill a team bot carries (also one it picks up during
+--    the plan) is for the spike. No other goal or build path places it: only
+--    a spike spot of the plan, or a repair of a pill that stands already.
+--  * Levelling: for each target base b of the plan, c(b) = our live pills
+--    within PILL_FIRE_RANGE (euclid, inclusive; with
+--    FOCUS_SPIKE_NEUTRAL_PILL_COVER also the live neutral pills) + the spike
+--    spots placed by the plan + the spike spots that teammates picked and did
+--    not build yet (go verb fss). m = min c(b); S = the bases with c(b) = m.
+--    The payoff of a spot = FOCUS_SPIKE_BASE_PAYOFF per base of S it covers;
+--    the rest of the score is as above. No base claims.
+--  * End: why=all_laid when no team bot carries a pill and no picked spot is
+--    left (at least one plan spike pill placed), why=ttl at
+--    FOCUS_SPIKE_APPROVAL_TTL. With no pill placed, or when no bot has a
+--    picked spot for FOCUS_SPIKE_RELEASE_WAIT while pills are left: abort
+--    incomplete.
+-- The pill roles are not written: the normal pill evaluation classifies the
+-- spike pills. false = off (the default and PRESETS.keel); keel_focus, _loose
+-- and _bench on.
+M.FOCUS_SPIKE_ALL_AGGRO       = false
+M.STRATEGIC_PLACE_FRONT_WEIGHT  = 3.0  -- bonus per tile of proximity to front line
 M.STRATEGIC_PLACE_BASE_WEIGHT   = 2.0   -- bonus per tile of proximity to nearest friendly base
 M.STRATEGIC_PLACE_THREAT_WEIGHT = 1.5   -- penalty per unit of threat.at(pos)
 M.STRATEGIC_PLACE_PILL_SPACING  = 5     -- target minimum tile gap from existing friendly pills
@@ -1770,6 +2362,16 @@ M.STRATEGIC_PLACE_ENEMY_PILL_SWEET_MAX     = 11   -- sweet spot max distance
 M.STRATEGIC_PLACE_ENEMY_PILL_SWEET_BONUS   = 40   -- bonus for crossfire support position
 M.STRATEGIC_PLACE_ENEMY_PILL_FAR_RANGE     = 15   -- outer limit for small bonus
 M.STRATEGIC_PLACE_ENEMY_PILL_FAR_BONUS     = 10   -- small bonus for general proximity
+-- PLACE_ENEMY_REACH (2026-11-02): the placement scan's rch term. rch = this
+-- weight x (known hostile pills + known hostile bases) a pill on the spot
+-- could shoot: Euclidean tile distance <= PILLBOX_RANGE_WU / 256 (8 tiles
+-- under classic rules; the live pill_range when LIVE_PHYSICS_PILL_RANGE_WU
+-- is on), the same test as the engine's utilIsItemInRange. Hostile = owner
+-- "hostile" in this bot's own world model (not ours, not allied); neutral
+-- pills, dead pills (health 0) and carried pills do not count. On a focused
+-- spike tile ebase already pays for hostile bases, so rch counts pills only
+-- there. 0 = no rch term (the old scoring). KEEL 0.
+M.PLACE_ENEMY_REACH = 0
 
 -- Pill war reinforcement
 M.STRATEGIC_PLACE_WAR_ZONE_BONUS          = 60   -- bonus for tiles near an active pill war
@@ -2010,6 +2612,27 @@ M.KILL_PICKUP_HANDOFF = true   -- defer the pickup to the blitz member with the
 -- bodies; this backstops the reachable-but-slow case. ~10 s. A body you just
 -- killed is normally a few tiles away, so a real grab finishes well inside it.
 M.KILL_PICKUP_MAX_TICKS = 500
+-- Lethal exit, 2026-11-03. The claim overrides refuel / flee / survival, and
+-- before this it ended only on the TTL, the cap, the pill gone / taken /
+-- ours again, or an INF route. A recorded game (player 2, brain ticks
+-- 6564-6750) drove into a live pill one square past the body until it died.
+-- true => Override 3b drops the claim when capture_pill's own direct-route
+-- probe (capture_route_probe) holds a fresh verdict that the wsim of the
+-- drive to the body KILLS us (the "refused: LETHAL" log line), and normal
+-- goal selection decides. Freshness uses the probe's own rules (CAPTURE_ROUTE_
+-- TTL, tank moved CAPTURE_ROUTE_MOVE_TILES, threat rebuild). No new value.
+-- Log line: KILL_PICKUP_EXIT lethal. KEEL false.
+M.KILL_PICKUP_LETHAL_EXIT = true
+-- Lethal replan, 2026-11-03. The lethal exit above acts only when a replan
+-- runs Override 3b, and nothing started one: in the recorded game the probe
+-- said LETHAL at brain tick 6725 (armour 10), the next timer replan came too
+-- late, and the tank died at 6750 still on the claim.
+-- true => when capture_route_probe's verdict for the claimed body is LETHAL
+-- (same pill id as state.kill_pickup, goal is the kill grab, verdict still
+-- current), raise the force-replan flag (reason "KILL PICKUP LETHAL") once per
+-- verdict, so the replan runs on the same think. No new value.
+-- Log line: KILL_PICKUP_LETHAL_REPLAN. KEEL false.
+M.KILL_PICKUP_LETHAL_REPLAN = true
 -- Pair pickup (2026-09-25). When the blitz that killed the pill had at least
 -- this many tanks, the TWO best claimers keep their claims (rank 1 and rank 2
 -- under the handoff rule: lower kc, tie -> lower player number); rank 3+ stand
@@ -2295,6 +2918,171 @@ M.KILL_LGM_NAV_INSET   = 3   -- tiles: nav target sits this far INSIDE the engag
 -- Both read at use time (kill_lgm.predict_aim, init.lua fire gate).
 M.KILL_LGM_LEAD_SCALE = 1.00  -- keel 0.77 (both tiers: linear v*T and dest_lock sim steps)
 M.KILL_LGM_FIRE_WU    = 128   -- keel 64 (burst must land this close to the predicted man)
+-- ── LGM destination aim (2026-09-25) ──────────────────────────────────────
+-- An enemy builder walks a straight line from where his tank stood to the
+-- CENTRE of the tile he was sent to (lgm.c lgmNewPrimaryRequest sets destX/Y
+-- to tile*256+128; lgmMoveAway re-aims at it every tick). A common job is a
+-- repair of his own team's DEAD pill. When his recent positions lie on one
+-- clean line and that line, projected forward, passes a dead hostile pill,
+-- kill_lgm.predict_aim takes the PILL CENTRE as his destination instead of
+-- the map-edge point the 3-window dest_lock uses: the lead sim stops at the
+-- pill (he stands there for LGM_BUILD_TIME, 20 game ticks), and any predicted
+-- impact inside the pill tile snaps to the tile centre. A dead pill does not
+-- stop a shell (pillsIsPillHit needs armour > 0), so the shell must END its
+-- life in that tile. With C.BLAST_DEAD_PILL_OPEN the dead pill's tile is open
+-- ground for the builder death test (lgm.c lgmBlastCatches): the blast kills
+-- a man within 128 wu of it, and the hold-fire timing tests that distance.
+-- Without it (KEEL) the tile counts as SOLID, so the blast kills only a man
+-- on that same tile. The centre is the point with the most margin. When the man is
+-- not walking a clean line (just out of the tank, stopped, turning, sliding
+-- along a wall, turned back, heading to his own tank) nothing is locked and
+-- the old predictor runs unchanged.
+-- HARD ONLY: M.MODE_LEVELS turns all five switches (AIM, LIVE_PILLS,
+-- HOLD_FIRE, INTERCEPT, PASS_THROUGH) off in every medium and easy bundle, so Easy/Medium keep the old
+-- aim and fire gate. No difficulty token = C.DIFFICULTY "hard" = on.
+M.LGM_DEST_AIM            = true  -- master switch (keel false = old aim exactly)
+M.LGM_DEST_WINDOW_TICKS   = 20    -- brain ticks of position history the heading fit uses
+M.LGM_DEST_MIN_SAMPLES    = 6     -- fewer samples than this in the window = no heading (fallback)
+M.LGM_DEST_COLLINEAR_WU   = 24    -- max distance (wu) of any sample from the oldest->newest chord (man pos is 16-wu quantized)
+M.LGM_DEST_BACKSTEP_WU    = 16    -- a sample may fall this far BEHIND the previous one along the chord (turned back = fallback)
+M.LGM_DEST_MIN_SPEED      = 3     -- wu/tick over the window AND over the last 4 ticks; slower = stopped / stuck (fallback)
+M.LGM_DEST_MIN_SPEED_FRAC = 0.8   -- measured speed / terrain speed below this = sliding along a wall (fallback); 0 = off
+M.LGM_DEST_RAY_TILES      = 16    -- how far ahead of the man the ray looks for a dead pill
+M.LGM_DEST_PERP_WU        = 96    -- a pill centre within this distance (wu) of the ray counts as on it ...
+M.LGM_DEST_PERP_DEG       = 3     -- ... widened to along*tan(this) further out (heading noise grows with range)
+-- 2026-09-25 (Andrew's review): he also walks to a LIVE hostile pill below
+-- full armour to repair it (lgm.c refuses a walk to a full pill). A live pill
+-- STOPS the shell: it goes off at the tile centre on the first tick it is in
+-- the tile (shellsCalcCollision -> pillsIsPillHit). A live pill's tile is
+-- solid for the builder death test, so only a man on the tile dies. Note: our
+-- shell damages that pill, and a live pill in range shoots back; the pill-
+-- danger logic is unchanged.
+M.LGM_DEST_LIVE_PILLS     = true  -- live hostile pill with 0 < health < PILLS_MAX_HEALTH is a candidate too
+-- Hold fire while a destination pill is locked until the predicted blast goes
+-- off while he stands on the pill tile (entered it, not yet LGM_BUILD_TIME 20
+-- ticks past his arrival). The gun keeps aiming at the pill centre so it is
+-- ready. "Otherwise we just make the LGM mad." (Andrew). No lock = old fire.
+M.LGM_DEST_HOLD_FIRE      = true
+-- 2026-09-25 (Andrew): with the hold on, first try to kill him on his walk IN,
+-- before he steps onto the pill tile (a dead man repairs nothing). The lead
+-- sim stops him at the pill centre, so the lead point never goes through the
+-- pill. Walk-in shot when the lead point is off the pill tile, in shell reach
+-- (14 x 128 wu) and no LIVE pill stops the shell before it; else the hold-fire
+-- pill window as before. Needs LGM_DEST_HOLD_FIRE (without it the lead tier
+-- already fires on the walk in).
+M.LGM_DEST_INTERCEPT      = true
+-- 2026-09-25 (Andrew): wrong guess. He walks on more than 16 wu (the engine's
+-- arrive tolerance) past the locked pill's centre without stopping: that pill
+-- is not his job. Never lock it again while he keeps this heading; look further
+-- along the line for the next pill (then intercept / window again), none =
+-- plain lead. Forgotten when his heading is lost (stop, turn, walk home).
+M.LGM_DEST_PASS_THROUGH   = true
+
+-- ── LGM-kill improvements: ONE MASTER SWITCH (2026-09-13, Andrew) ─────────
+-- (Ported onto main 2026-11-13.)  The master for the whole 2026-09-13
+-- LGM-kill package.  OFF, the brain is exactly what it was before the
+-- package: the shared fire check is KILL_LGM_FIRE_WU (above), the capture
+-- shot uses CAPTURE_LGM_HUNT_FIRE_WU (or 100 when that is -1), capture-hunt
+-- candidates are admitted by the old along-the-ray test (7 tiles ahead,
+-- 128 wu off the ray), min-perp ranking, a held range key from 2 steps out,
+-- and no aim refinement.  ON, all of it changes together -- see
+-- LGM_KILL_FIRE_WU, CAPTURE_LGM_HUNT_TRACK_TILES,
+-- CAPTURE_LGM_HUNT_PICK_NEAREST_PILL, CAPTURE_SIGHT_HOLD_MIN_STEPS,
+-- LGM_KILL_AIM_WU and LGM_KILL_AIM_TILES, which hold the VALUES but are only
+-- read while this is true.
+--
+-- kill_lgm.tuning() is the one place that reads it; every check takes the
+-- table that returns and tests one field.
+--
+-- DIFFICULTY: the package is HARD ONLY.  MODE_LEVELS sets it false in the
+-- easy and medium bundles of default (turtle copies those bundles); hard has
+-- no entry, so hard gets it.
+-- KEEL: false.
+M.LGM_KILL_IMPROVED    = true
+
+-- ── The ONE LGM-kill fire check (2026-09-13, Andrew) ──────────────────────
+-- Every LGM-kill shot in the brain asks the same question: is the predicted
+-- shell impact close enough to the man's predicted position to be worth a
+-- shell?  This is that distance, in world units, while LGM_KILL_IMPROVED is
+-- on.  The shared kill_lgm evaluator, the capture-pill hunt shot (unless
+-- CAPTURE_LGM_HUNT_FIRE_WU overrides it), the armour-trigger hunt shot and
+-- the overlays all read it.  With the package off, the shared evaluator
+-- uses KILL_LGM_FIRE_WU instead, as before.
+--
+-- What the ENGINE does (src/bolo/lgm.c lgmDeathCheck): a man standing on OPEN
+-- GROUND dies when a shell explodes within MAP_SQUARE_MIDDLE = 128 wu of him
+-- (half a tile).  A man standing on a SOLID square (a live pill, a base, a
+-- building) dies ONLY when the shell lands in his EXACT tile -- no splash at
+-- all.  The exact-tile test is separate in the code and is NOT changed by this
+-- knob; it matches the engine and must stay.
+--
+-- The default equals the real open-ground blast: 128 wu.  2026-11-13 Andrew
+-- set it to 128 (it was 256) because a shot whose predicted impact is more
+-- than 128 wu from the predicted builder does not kill him.  KEEL: 64.
+-- 2026-11-13: 144, the classic builder kill circle from #668
+-- (lgm_blast_shape 2).
+M.LGM_KILL_FIRE_WU     = 144  -- wu: take the shot inside the engine's blast reach (the classic builder kill circle of 144, #668)
+
+-- ── Aim target: a QUARTER tile (2026-09-13, Andrew) ───────────────────────
+-- LGM_KILL_FIRE_WU says when the shot is worth taking.  This says when the AIM
+-- is finished.  Aim error = the distance from the predicted impact point (at
+-- the length the shot will actually fly at) to the man's predicted point.
+-- Above this the capture hunt keeps closing the error every tick; the shot
+-- still goes the moment the error is inside the fire check, so "shoot inside
+-- the blast reach, aim for a quarter tile" -- each shell is fired while the
+-- next one is being aimed better.
+--
+-- Why the aim needed help at all.  Nothing ever "held" the aim once a shot was
+-- allowed; these are floors the old code could not get under:
+--   * the gunsight steps in 128 wu units along the ray, so the along-the-ray
+--     residual alone is up to 64 wu at the best possible rounding;
+--   * steering's turn deadband is 2 brads for every goal, and at the 6-7 tile
+--     range this shot is taken at (~1700 wu) 2 brads is about 80 wu SIDEWAYS --
+--     on its own wider than the quarter tile we are asking for.
+-- The refinement search (init.lua STEP 4b) picks the turn and sight step that
+-- minimise the error, with a deadband derived from THIS knob and the range
+-- (asin(AIM_WU / dist), floored at 1 brad) instead of the flat 2.
+--
+-- H1 arena, same seed (2026-09-13): aim error at the shot, median 143 -> 100
+-- wu, captures 15 both.  Read only while LGM_KILL_IMPROVED is true.
+-- KEEL: 64 (moot: keel turns the master off, so no refinement runs).
+M.LGM_KILL_AIM_WU      = 64   -- wu: keep refining until the impact is this close
+
+-- ── How CLOSE the man must be before the aim refinement runs at all ───────
+-- (2026-09-13, Andrew.)  The straight-line distance from the tank to the
+-- man's PREDICTED point, in tiles.  Beyond it the hunt steers exactly as it
+-- did before the aim work -- the sight follows the man, the turn is only the
+-- nudge -- and STEP 4b does nothing.  Inside it the refinement drives the aim
+-- down to LGM_KILL_AIM_WU.
+--
+-- Why the limit exists.  The refinement asks for a much sharper turn than the
+-- nudge does, and at 7-10 tiles out that turn goes on a lead point that is
+-- still seconds away: the approach line to the corpse bends, the tank arrives
+-- late or off the pill, and the hunt itself gets shorter.  Measured in H1 --
+-- with no limit the run held HALF the hunting ticks it held with the
+-- refinement off (499 against 1163), for the same captures.  With 5 tiles:
+-- 26 shots / 1168 hunting ticks / 10 builder deaths seen; 3 tiles never
+-- engaged.  Close in, the same sharp turn is exactly what puts the shell on
+-- him.
+--
+-- 0 = no limit (refine at any range).
+-- Read only while LGM_KILL_IMPROVED is true.
+-- KEEL: 5 (moot: keel turns the master off, so no refinement runs).
+M.LGM_KILL_AIM_TILES   = 5    -- tiles: refine only this close to the man
+
+-- The refinement search's THROTTLE axis (2026-09-13, Andrew).  Off by design:
+-- a speed step moves the tank about 2 wu in a tick against an along-the-ray
+-- residual of up to 64 wu, while the capture-hunt's whole promise is that it
+-- never brakes for the builder (the throttle stays navigation's).  true opens
+-- the axis for a bench.  Read only while LGM_KILL_IMPROVED is true.
+-- KEEL: false.
+M.LGM_KILL_AIM_THROTTLE = false
+
+-- The engine's real kill radius (lgm.c MAP_SQUARE_MIDDLE).  Not a tuning
+-- value -- it is what the engine does -- but it lives here so the debug
+-- overlay can draw "what would actually kill" next to "what we shoot at".
+-- (2026-09-13.)  KEEL: 128 (the engine is the same in keel).
+M.LGM_ENGINE_KILL_WU   = 128
 
 -- ── Capture-pill LGM hunt (2026-09-08) ────────────────────────────────────
 -- A hostile LGM standing on or beside the dead pill we are driving to grab is
@@ -2381,7 +3169,7 @@ M.CAPTURE_LGM_HUNT_RADIUS_CAP_BY_DIST = false
 -- brads toward the man, and only so far as the resulting ray still crosses the
 -- pill tile, so the drive-over capture is never sacrificed for the shot.  The
 -- shot itself is opportunistic: drive the gunsight onto the man and fire when
--- the predicted impact lands within a tile of him (or in his exact tile if he
+-- the predicted impact lands inside the fire check (or in his exact tile if he
 -- stands on a solid square -- see below).
 --
 -- SWEEP_FOCUS_RADIUS: within this Euclidean distance (tiles) of the swept pill
@@ -2396,18 +3184,63 @@ M.CAPTURE_LGM_HUNT_SWEEP_FOCUS_RADIUS = 2.5
 -- can never re-introduce the 2062 pin because it can't pull the heading off the
 -- pill line.  KEEL: 0 (no nudge -- the old tol-turn-blend runs unchanged).
 M.CAPTURE_LGM_HUNT_SWEEP_NUDGE_BRADS = 10
--- FIRE_WU: open-ground impact tolerance (wu) for the capture-target shot -- fire
--- when the predicted shell impact lands within this of the man's predicted
--- position.  The engine's real LGM splash kill radius is 128 wu (a full tile,
--- lgm.c), so 100 leaves a margin.  BUT a man standing on a SOLID square (a live
--- pill, a base, or a building -- a dead pill is open ground, see
--- BLAST_DEAD_PILL_OPEN) is killed by lgm.c's death check ONLY when the
--- shell lands in his EXACT tile (lgmDeathCheckAtPosition: solid square =>
--- same-square-only, no splash); for those the shot requires impact-tile ==
--- man-tile instead of this radius.  The SHARED kill_lgm evaluator's ½-tile
--- (64 wu) gate is UNCHANGED -- only the capture-target man gets this wider gate.
--- KEEL: 64 (equals the shared gate, so the wider shot can never fire beyond it).
-M.CAPTURE_LGM_HUNT_FIRE_WU       = 100
+-- FIRE_WU: PER-FEATURE OVERRIDE of the shared LGM-kill fire check for the
+-- capture-target shot only (2026-09-13, Andrew).  -1 (the default) means
+-- "use M.LGM_KILL_FIRE_WU", so the capture shot and the shared kill_lgm
+-- evaluator open at exactly the same distance and there is only one number
+-- to tune; any value >= 0 overrides it for this shot alone.  (It cannot
+-- simply be nil: the cfg=/preset= override path refuses a name that is not
+-- already in this table, and preset=keel must still be able to set it.)
+-- With LGM_KILL_IMPROVED off (easy and medium), -1 means 100 wu, the value
+-- this knob held before the package, so those levels play as they did.
+-- As with the shared check, a man on a SOLID square (a live pill, a base or a
+-- building; a dead pill is open ground, see BLAST_DEAD_PILL_OPEN) is killed by
+-- lgm.c ONLY when the shell lands in his EXACT tile (lgmDeathCheckAtPosition:
+-- solid square => same-square-only, no splash), so that shot uses the
+-- exact-tile test instead of this radius.
+-- KEEL: 64 (the old shared ½-tile check, pinned so keel is unchanged).
+M.CAPTURE_LGM_HUNT_FIRE_WU       = -1
+-- TRACK_TILES: how far from the TANK a hostile LGM can stand and still be the
+-- man the hunt tracks, in tiles, measured STRAIGHT (Euclidean tank -> his
+-- predicted point).  He must also be inside CAPTURE_LGM_HUNT_RADIUS of the
+-- target pill, as before.  (2026-09-13, Andrew.)
+--
+-- What this replaces (read only while LGM_KILL_IMPROVED): the old admission was
+-- ALONG THE CURRENT HEADING -- 0 < along <= 7 tiles -- plus a 128 wu limit on
+-- his distance from the shell ray.  While the nose was still swinging onto him
+-- he failed both, so the hunt dropped back to resting the sight on the pill and
+-- the gunsight yo-yoed (14 -> 8 -> 14) between two different targets, one for
+-- the nose and one for the sight.  A straight radius does not care which way
+-- the nose points, so the man stays the target across the whole turn and the
+-- sight closes on him once instead of twice.  The FIRE decision is untouched:
+-- the shot still needs the predicted impact inside the fire check (or his
+-- exact tile on a solid square) and him inside KILL_LGM_SHOOT_RANGE.
+-- KEEL: 7 (the old 7-tile reach; note keel also turns the package off, which
+-- restores the along-the-ray SHAPE as well as this distance).
+M.CAPTURE_LGM_HUNT_TRACK_TILES   = 10
+-- PICK_NEAREST_PILL: when more than one hostile LGM qualifies, which one the
+-- hunt tracks (2026-09-13, Andrew).  true = the one whose predicted point is
+-- CLOSEST TO THE TARGET PILL (tie-break: the smaller distance from the shell
+-- ray); false = the old pick, smallest distance from the ray, tie-break
+-- nearest along it.
+--
+-- Switching target mid-aim is fine here, and is the point: the pill is the
+-- thing we are trying to take, so the man standing nearest to it is the one
+-- about to rebuild it out from under us.  A man passing by predicts away from
+-- the pill; a man walking in to repair predicts onto it.  KEEL: false.
+M.CAPTURE_LGM_HUNT_PICK_NEAREST_PILL = true
+-- HOLD_MIN_STEPS: the gunsight gap (in sightLen units) at which the capture
+-- sight driver HOLDS the range key instead of TAPPING it once (2026-09-13,
+-- Andrew).  A held key steps the engine EVERY engine tick; the brain thinks
+-- every SECOND tick, and the engine applies a packet 2-3 ticks after we send
+-- it, so a hold keeps stepping for a few ticks after the sight has arrived.
+-- Recorded overshoot (session 20260913_001400_1_survival, bot 12, ticks
+-- 4585-4592): 14, 12, 10, 8, 8, 10, 12, 14 -- the sight sailed past the
+-- target and came back.
+-- 2 = today's behaviour (hold whenever more than one unit is left).
+-- Read only while LGM_KILL_IMPROVED is true.
+-- KEEL: 2.  Left at 2 on purpose: raising it is a separate decision.
+M.CAPTURE_SIGHT_HOLD_MIN_STEPS   = 2
 -- BLAST_DEAD_PILL_OPEN (2026-11-06): the engine's builder blast test
 -- (lgm.c lgmBlastCatches) counts a DEAD pill's square as open ground: a blast
 -- there kills a man within 128 wu, on that square or across its edge, and
@@ -2510,7 +3343,7 @@ M.CAPTURE_LGM_PRIORITY_LOG_TICKS = 50 -- brain ticks between CAPTURE_LGM_PRIO
 M.TANK_COMBAT_LOS_EXTRA_RANGE       = 3    -- tiles beyond ENGAGE_RANGE that qualify for LOS fast-engage
 M.TANK_COMBAT_LOS_BASE_COST         = 5    -- very cheap base cost when enemy is in-range with clear LOS
 M.TANK_COMBAT_LOS_COST_PER_TILE     = 3    -- added cost per tile of separation in LOS engage
-M.TANK_COMBAT_WALL_PENALTY_PER_HP   = 20   -- cost penalty per wall HP above 1 block (WALL_HP_FULL=5)
+M.TANK_COMBAT_WALL_PENALTY_PER_HP   = 20   -- cost penalty per wall HP above 1 block (WALL_HP_FULL, 5 at building_life 4)
                                             -- 0-1 block: no penalty; 2 blocks: +100; 5 blocks: +400
 M.TANK_COMBAT_LOW_SHELLS_THRESHOLD  = 20   -- shells below this trigger a cost penalty
 
@@ -2548,6 +3381,19 @@ M.BASE_KILLER_PILL_PENALTY      = 2.0   -- multiply attack_pill cost (deprioriti
 -- selection.)
 M.SPIKE_PILL_DISCOUNT           = 0.7   -- combat-cost multiplier at FULL decisiveness (lerps toward 1.0 as cover grows: cover 2 ??? 0.85, 4 ??? 0.925)
 M.SPIKE_OTHER_PENALTY_MULT      = 1.2   -- whole-cost multiplier on every NON-spiking attack_pill candidate at full decisiveness (lerps toward 1.0: cover 2 ??? 1.10, 4 ??? 1.05)
+-- SPIKE_PEN_SKIP_MAX_SHOTS (2026-11-03): no spike cross-penalty on a pill
+-- that is nearly dead. When this player's own world model says the attack
+-- target pill dies in at most this many of our shells, its
+-- SPIKE_OTHER_PENALTY_MULT is x1.0: finishing it is a few shots, not a
+-- wander away from the spike. Shots = ceil(known armour / armour one shell
+-- takes). The engine takes rules.pill_shell_damage per shell (classic
+-- PILLBOX_SHELL_DAMAGE = 1, src/bolo/internal/pillbox.h:56; applied in
+-- pillsDamagePos, src/bolo/pillbox.c:928-938, scaled there by the host's
+-- pill damage percent, which the brain cannot read). The brain reads the
+-- rule from info.rules.pill_shell_damage (1 when not sent). So under
+-- classic rules shots = armour, and 5 means armour 5 or less.
+-- 0 = off (every non-spiking pill pays the penalty, as before). KEEL 0.
+M.SPIKE_PEN_SKIP_MAX_SHOTS      = 5
 -- Breadth scaling: each base a spike denies BEYOND the first strengthens the
 -- discount pull by this fraction (decisive 3-base spike: effect x1.7 ???
 -- 1-0.3*1.7 = 0.49 ??? floored at SPIKE_DISCOUNT_FLOOR). Applied on top of
@@ -2967,6 +3813,27 @@ M.REPAIR_DISPATCH_DIST_BASE      = 5    -- tiles, calm
 M.REPAIR_DISPATCH_DIST_DANGEROUS = 12   -- tiles, at DANGER_HIGH
 M.REPAIR_DISPATCH_DANGER_LOW     = 50   -- threat_at_tank where the widening starts
 M.REPAIR_DISPATCH_DANGER_HIGH    = 150  -- ...and where it is fully widened
+
+-- REPAIR STANDOFF (2026-11-03). With a repair_pill goal the tank drives to a
+-- STANDOFF square, not to the pill, and sends the builder from there
+-- (repair_standoff.lua has the full rule). A square is safe from a hostile or
+-- neutral pill when it is at least pill range (PILLBOX_RANGE_WU / 256, 8
+-- tiles) + REPAIR_STANDOFF_MARGIN_TILES from that pill, or (with
+-- REPAIR_STANDOFF_WALL_COVER) when the pill is not heated
+-- (anger <= REPAIR_STANDOFF_HEATED_ANGER) and a wall stops every shell line
+-- from it to the tank body. The standoff is the safe square nearest the pill
+-- within REPAIR_DISPATCH_DIST_DANGEROUS whose builder walk is within
+-- REPAIR_STANDOFF_MAX_WALK_TICKS and whose tank route enters no unsafe
+-- square. None: the tank pushes in as before. Seen in debug session
+-- 20261103_192602 part 2, player 2: the tank parked one square from the pill
+-- inside the range of two neutral pills, their misses kept the under-fire
+-- hold on and the repair never went out. Log line: REPAIR_STANDOFF.
+-- KEEL false (the tank drove to the pill square).
+M.REPAIR_STANDOFF_ENABLED        = true
+M.REPAIR_STANDOFF_MARGIN_TILES   = 1.0   -- tiles past pill range
+M.REPAIR_STANDOFF_MAX_WALK_TICKS = 400   -- builder walk sim, standoff -> pill
+M.REPAIR_STANDOFF_WALL_COVER     = true  -- a wall-covered square is safe
+M.REPAIR_STANDOFF_HEATED_ANGER   = 0.34  -- above this anger, walls do not count
 
 -- Strategy / game phase detection
 M.OPENING_MIN_TICKS       = 500    -- ~10 seconds minimum opening phase
@@ -4073,7 +4940,9 @@ M.CAPTURE_CLUSTER_GUARD_MAX   = 4.0  -- cap: three or more guards is already a n
 -- The REAL armour reaches a bot through EVENT_BASE_STOCK.  The server culls that
 -- event to neutral/allied bases for HUMANS but sends every one of them to BOTS
 -- (server_sim.c ~3667: `if (evType == EVENT_BASE_STOCK && !recipientIsBot)`), and
--- world.lua stores it as bases[id].obs_armour with bases[id].obs_tick.  So
+-- world.lua stores it as bases[id].obs_armour with bases[id].obs_tick (RAW
+-- armour, 0..90; every writer stores this unit, see util.lua
+-- base_armour_steps).  So
 -- obs_armour/obs_tick is the ONLY armour source for a hostile base.  It is
 -- emitted on CHANGE only, which means:
 --   * while anyone is shelling the base it refreshes every hit (age ~0),
@@ -4206,6 +5075,16 @@ M.BUILDER_POOL_ENABLED = true   -- master switch; false = behaviour at the HARBO
 -- side-quest and becomes a reason to move the tank (that is the out-of-leash
 -- repair_pill goal, below).
 M.BUILDER_POOL_LEASH = 8
+-- BUILDER_LEASH_EUCLID (2026-11-02, Andrew's order): every builder leash test
+-- (the pool's farm/repair/spike-care reach and its 2 x leash collection,
+-- builder_can_repair, the repair dispatch feeder) and every
+-- PLACE_DISPATCH_MAX_DIST test (the long send in builder.lua, spike.second_ok,
+-- the goals.lua focus hold, the focus_vote stand place search) measures
+-- STRAIGHT-LINE distance (U.leash_dist), because the engine's builder walks a
+-- straight line. Manhattan overstated a diagonal walk by up to 41%. The
+-- values (8, 11, 15, and PLACE_DISPATCH_MAX_DIST 15) are unchanged. KEEL is true as well -- the change is for all
+-- bots; the knob is only a rollback. false = the old Manhattan measure.
+M.BUILDER_LEASH_EUCLID = true
 M.BUILDER_POOL_GRASS_TICKS_PER_TILE = 16   -- = REPAIR_DEAD_GRASS_TICKS_PER_TILE
                                            -- (MAP_MANSPEED_TGRASS); only used for
                                            -- the fallback ETA when the walk sim
@@ -4374,7 +5253,8 @@ M.BUILDER_POOL_REPAIR_LINEAR = true   -- false = the pre-2026-09-05 formula
                                       -- TRIP_W x trip - DANGER_W x threat)
 M.BUILDER_POOL_REPAIR_HP_W   = 30     -- score per point of missing armour
 M.BUILDER_POOL_REPAIR_TRIP_W = 0.25   -- score per tick of simulated round trip
--- Repair reach. 11 tiles (MANHATTAN, same measure as BUILDER_POOL_LEASH), for
+-- Repair reach. 11 tiles (same measure as BUILDER_POOL_LEASH: straight line
+-- under BUILDER_LEASH_EUCLID, Manhattan without), for
 -- rebuild and topup rows only -- the farm row keeps the 8-tile leash, because
 -- opportunistic wood was never worth a longer walk. The walk-sim budget covers
 -- it with room to spare: the slowest ground the LGM can cross is swamp/crater/
@@ -4622,6 +5502,130 @@ M.BUILDER_POOL_IDLE_MODES = {
   infrastructure = true,
   repair_nearby  = true,
 }
+-- Free builder on a land pill pickup, 2026-11-04. capture_pill used to give
+-- the builder mode "gather", but a land pickup never sets need_trees, so the
+-- gather step never ran and "gather" is not an idle mode above: the pool
+-- answered mode_owned (gather) to every job (rebuild a dead pill, top up,
+-- farm) for the whole drive. Recorded: print2_bot2.log t=10577 of
+-- 20261103_230822_1_v5_anchor_helm_s205_part2of23, "owner=capture_pill/gather
+-- elig=no: mode_owned (gather) cands=4 ok=0 trees=12/res=8".
+-- true => a land capture_pill (no goal.sea) gives the builder mode
+-- "opportunistic", the same as capture_base, so the pool may send the builder
+-- on its jobs during the drive. The pool's own checks (under fire, fire
+-- exchange, leash, tree reserve, claims) are unchanged, and the sea pickup
+-- (goal.sea) keeps its own modes. Log effect: BUILDER_POOL lines read
+-- owner=capture_pill/opportunistic instead of elig=no: mode_owned (gather).
+-- false = "gather" as before. KEEL false.
+M.CAPTURE_PILL_BUILDER_FREE = true
+
+-- ── Builder sends: refuse only certain death (2026-11-04) ─────────────────
+-- Andrew: "go through the code, meticulously, to all the places the LGM can
+-- be sent out. I want the LGM blocked if it will get killed 100% for sure,
+-- and I want it able to go out otherwise, even under heavy fire."
+-- true => every place that sends the builder out (builder.decide's sites and
+-- the builder pool's winner) refuses a send ONLY when danger.lgm_certain_death
+-- says a shell already in the air will kill him on that exact errand. Every
+-- refusal that was about shells, the under-fire clock, a fire_exchange
+-- substate, an angry pill or a danger-field sample along the walk
+-- (lgm_path_safe_enhanced, threat_at_tank, the place_pill man_path tile check,
+-- the repair under-fire hold, the trepair "unsafe LGM walk") is skipped.
+-- Refusals that are not about fire stay. The prediction is lgm_shell_gate's
+-- model, with more of the engine in it: a shell also ends on another visible
+-- tank (never its shooter's), on a base the brain can prove stops it, and on
+-- expiry one tick after its last move; a tank's shell is tested against where
+-- the builder was at each rewind 1 .. BUILDER_CERTAIN_DEATH_REWIND_MAX ticks
+-- earlier (the engine's rewind; any one that kills counts), and a builder
+-- back in the tank cannot die. No future shots are predicted.
+-- Log effect: each refusal prints one line
+--   BUILDER_CERTAIN_DEATH t=<tick> site=<site> dest=(x,y) shell from <src>
+--   at +<n>t, <ending>
+-- and the pool's BP_DENY reason reads "shell_will_hit (...)" as before.
+-- Pool rows no longer read under_fire(...), fire_exchange:<sub> or
+-- path_unsafe, and BUILDER_HOLD_UNDER_FIRE no longer prints.
+-- false = the old checks, and the pool's shell check is lgm_shell_gate.
+-- KEEL false.
+M.BUILDER_SEND_CERTAIN_DEATH_ONLY = true
+-- The rewinds the certain-death check tries for a tank's shell: r = 1 .. this.
+-- The engine rewinds a human's shell by his measured view age (up to
+-- LAG_COMP_MAX_TICKS 14), minus SHELL_LGM_REWIND_LESS 1 against builders; the
+-- brain cannot see his lag, so the shell counts as a kill when it kills the
+-- builder at ANY r. A safety margin: a larger value gives more refusals, not
+-- fewer. 13: a 260 ms ping gives view age (260 + 20) / 20 = 14, minus 1
+-- against builders = 13. 1 = a bot's exact rewind (the old check).
+-- A pill's shell is always r = 0. Log effect: BUILDER_CERTAIN_DEATH and the
+-- quick repair's death text show the r that kills (rewind=3 of 1..13). KEEL 1.
+M.BUILDER_CERTAIN_DEATH_REWIND_MAX = 13
+-- Andrew, same order: "That said, let's avoid just idle tree harvesting when
+-- under fire once we have a minimum level of trees in tank (no need to risk
+-- it). This should be behind another feature flag type thing"
+-- true => while danger.tank_fire_age is under BUILDER_POOL_UNDER_FIRE_TICKS,
+-- and the tank holds BUILDER_NO_IDLE_FARM_MIN_TREES trees or more, the idle
+-- harvests do not go: the pool's farm rows (reject
+-- "idle_farm_under_fire(<age>t, trees <n> >= <min>)") and decide()'s
+-- on-path farm (Priority 4; prints IDLE_FARM_UNDER_FIRE once per change).
+-- Harvests a build needs now still go: the gather mode while trees are
+-- under its need_trees (a pill take's walls, a sea plan's boat), the forest
+-- under a wall-shield slot, a forest placement spot, and a ping-forced
+-- harvest. Building jobs still go.
+-- false = no such block. KEEL false.
+M.BUILDER_NO_IDLE_FARM_UNDER_FIRE = true
+-- The minimum: the same number the on-path farm's enemy-near brake already
+-- calls "critically low" (FARM_ENEMY_MIN_TREES). Below it the farm still goes.
+M.BUILDER_NO_IDLE_FARM_MIN_TREES = M.FARM_ENEMY_MIN_TREES
+-- Andrew, 2026-11-04: "attack_tank, attack_base, capture_pill should have no
+-- such restrictions" (the builder mode "suppressed", which keeps the builder
+-- in the tank).
+-- true => attack_tank and attack_base give builder mode "opportunistic"
+-- instead of "suppressed", so decide() does not stop at its suppressed bail
+-- and the pool does not answer mode_owned for them. A sea capture_pill in a
+-- substate that is not one of its builder jobs (seek_trees, lay_mine,
+-- build_boat) is "opportunistic" too; those three keep their modes. A land
+-- capture_pill is CAPTURE_PILL_BUILDER_FREE's. A terrain-repair job may also
+-- start during attack_tank. Shell safety is the certain-death prediction
+-- (BUILDER_SEND_CERTAIN_DEATH_ONLY).
+-- Log effect: BUILDER_POOL lines read owner=attack_tank/opportunistic, not
+-- elig=no: fire_exchange:<sub> or mode_owned (suppressed/...).
+-- false = "suppressed" as before. KEEL false.
+M.BUILDER_FREE_COMBAT_GOALS = true
+
+-- ── Quick repair of a take blocker (2026-11-04) ───────────────────────────
+-- Andrew approved: during an attack_pill take, send the builder to repair a
+-- friendly take-blocker pill (damaged or dead) as soon as the repair can no
+-- longer get in the way: after the target pill dies and after every hostile
+-- shell in the air that will hit the blocker has landed. quick_repair.lua has
+-- the whole rule; in short, every tick:
+--   T_kill   = landing tick of the shell that takes the target to 0 (our
+--              in-flight shells, sorted by landing); with
+--              QUICK_REPAIR_PREDICT_SHOTS and the take in its firing run, the
+--              shells still needed are fired one reload apart and fly the
+--              current distance; otherwise unknown (no send).
+--   T_safe   = max(T_kill, landing tick of each non-friendly shell in the air
+--              that reaches the blocker tile).
+--   T_repair = now + 1 + walk ticks (the armour comes back on arrival; the
+--              build dwell comes after, lgm.c lgmMoveAway).
+--   send when T_repair >= T_safe + QUICK_REPAIR_MARGIN_TICKS, the builder is
+--   in the tank, the wood is there and danger.lgm_certain_death is false.
+-- The send goes through the builder pool as a "quick" row: the take_blocker
+-- refusal, the leash, the mode check, the tree reserve and MIN_SCORE are
+-- waived for that one row on that tick only; wood, reach, the ally claim and
+-- the certain-death check stay. No other repair path changes.
+-- Log effect: QUICK_REPAIR t=.. pill=(x,y) hp=.. target=(x,y) T_kill=..
+-- src=inflight|predict T_safe=.. walk=.. dwell=0 -> send|wait:<why>, once per
+-- change; BP_DISPATCH for the row carries quick=1.
+-- false = the blocker is never repaired during the take, as before. KEEL false.
+M.QUICK_REPAIR_ON_TAKE = true
+-- true => when our in-flight shells do not cover the target's armour, T_kill
+-- is predicted from the shots not yet fired (see above). false = T_kill is
+-- known only once the killing shell is in the air. KEEL false.
+M.QUICK_REPAIR_PREDICT_SHOTS = true
+-- Brain ticks the repair must land after T_safe (Andrew approved 2).
+M.QUICK_REPAIR_MARGIN_TICKS = 2
+-- The take substates in which the tank is shooting the target pill: the
+-- firing run that QUICK_REPAIR_PREDICT_SHOTS needs.
+M.QUICK_REPAIR_FIRE_SUBSTATES = {
+  charge = true, engage = true, ws_engage = true, shoot_pill = true,
+  kill_hardline = true, finish = true,
+}
 
 -- ── Claims (multi-bot arbitration) ───────────────────────────────────────
 -- Five allies must not all repair the same pill. The claim rides the existing
@@ -4633,6 +5637,18 @@ M.BUILDER_POOL_IDLE_MODES = {
 -- the claim covers the outcome, not just the trip.
 M.BUILDER_POOL_CLAIM_MAX_AGE = M.SQUAD_ALLY_MAX_AGE or 1750  -- claim expiry (heartbeat gap)
 M.BUILDER_POOL_CLAIM_TYPES = { rebuild = 1, topup = 2, farm = 3 }
+-- 2026-11-04 REPAIR CLAIM BY ARRIVAL. true => a repair claim (rebuild/topup)
+-- also carries the tick our builder reaches the pill: 4 more hex chars on bpj,
+-- `bpj=TTXXYYCCCCEEEEAAAA`, AAAA = arrival tick low 16 bits. An ally then
+-- decides by arrival, not by claim tick: it does not send its own builder to
+-- that pill when the claimant arrives at the same tick or earlier, and it may
+-- send when its own builder would arrive strictly earlier. A claim is
+-- ignored once BUILDER_POOL_JOB_MAX_TICKS have gone by after its arrival tick
+-- (the claimant's own job record is gone by then). Farm claims and an ally
+-- that sends no arrival keep the claim-tick rule.
+-- Log effect: REPAIR_CLAIM_TX / _RX / _YIELD / _GO / _CLEAR lines.
+-- false = the old 14-char bpj and the claim-tick rule only. KEEL false.
+M.BUILDER_REPAIR_CLAIM_SHARE = true
 
 -- ── Ally CAPTURE guard (2026-09-05) ──────────────────────────────────────
 -- The bpj claim above says "my man is fixing that pill". It says nothing about
@@ -4731,6 +5747,24 @@ M.BUILDER_POOL_PANEL_ROWS = 12   -- cap on side-quest rows rendered (always-show
 -- accident rather than on purpose.
 M.GC_PAUSE   = 200
 M.GC_STEPMUL = 400
+
+-- GC_MODE -- who decides when the collector runs (LuaJIT hosts only).
+--   "auto"  -- the stock collector: LuaJIT collects while the brain
+--              allocates, so the work lands inside the think. MEASURED
+--              (Nov 2026, 5 bots, DH-Oil Rig): 57-70% of over-budget thinks
+--              finished a GC cycle inside the think, and a cycle end adds
+--              ~3 ms (4.7-5.8 ms on plan/replan ticks). KEEL value.
+--   "slack" -- the host stops the automatic collector for this bot and runs
+--              small collector steps AFTER each think, in the time left
+--              before the bot's think deadline less a 2 ms margin
+--              (src/bolo/brain_gc.c). A heavy tick with no time left runs no
+--              collection. If the heap grows past 1.5x its size after the
+--              last full cycle (+4 MB), steps run anyway, at most 1 ms per
+--              think; past 2x (+8 MB) the cycle is finished at once.
+-- Brain.open hands this to the host as the global BRAIN_GC_MODE. The host
+-- reads it once, after the first think. GC_PAUSE / GC_STEPMUL still apply in
+-- both modes (GC_STEPMUL sets how much work one step does).
+M.GC_MODE = "slack"
 
 -- ══════════════════════════════════════════════════════════════════════════
 -- LOADED, BUILDER-LESS — the state, and what the brain does about it
@@ -5374,12 +6408,13 @@ M.DECOY_GETAWAY_SHIELDED_CHAIN = true  -- keel false
 -- that pill, so the pill keeps shooting the bot, not the human.  A square
 -- that fails is not used.  false = humans are not looked at.
 M.DECOY_GETAWAY_STAY_CLOSEST = true    -- keel false
--- The engine rules the shots left are worked out from.  The brain cannot
--- read them, so these are the engine defaults: building_life
+-- The engine rules the shots left are worked out from: building_life
 -- (BUILDING_LIFE, src/bolo/internal/building.h) and pill_shell_damage
 -- (PILLBOX_SHELL_DAMAGE, src/bolo/internal/pillbox.h).  A full wall stops
 -- WALL_LIFE + 1 shells; a damaged wall's life left is hidden, so it counts
--- 1; a pill stops ceil(armour / PILL_SHELL_DAMAGE).
+-- 1; a pill stops ceil(armour / PILL_SHELL_DAMAGE).  WALL_LIFE is the
+-- classic 4 here; live_physics.lua (group WALL) sets it to the live
+-- info.rules.building_life when the rules arrive.
 M.DECOY_GETAWAY_WALL_LIFE     = 4     -- keel 4
 M.DECOY_GETAWAY_PILL_SHELL_DAMAGE = 1 -- keel 1
 -- 2026-09-24 (Andrew): the diagonal step.  When the next chain square is
@@ -5768,9 +6803,14 @@ M.ORDER_HINT_ESCORT_TILES = 3
 -- not match the constant it replaces.
 M.PRESETS = {
   keel = {
+    -- 2026-11-06: Lua collection after the think, in free time (GC_MODE
+    -- comment); "auto" = the stock collector inside the think, as before.
+    GC_MODE = "auto",
     -- 2026-10-10: man-only aim handicap (the Tutorial's Station 7 bot);
     -- 0 / 100 aim straight at the man as before.
     LGM_MISS_WU = 0, LGM_HIT_PCT = 100,
+    -- 2026-11-04: not-low refuel markup; 1.0 is no markup.
+    REFUEL_NOT_LOW_MULT = 1.0,
     -- 2026-10-01: flat capture_base cost for game modes; 0 is no such term.
     CAPTURE_BASE_EXTRA_COST = 0,
     -- 2026-10-01: a base this many tiles away skips that cost; 0 is no waiver.
@@ -5829,7 +6869,19 @@ M.PRESETS = {
     CAPTURE_LGM_HUNT_RADIUS_CAP_BY_DIST = true,  -- 2026-09-08: pinned (feature is keel-off)
     CAPTURE_LGM_HUNT_SWEEP_FOCUS_RADIUS = 2.5,  -- moot, feature keel-off
     CAPTURE_LGM_HUNT_SWEEP_NUDGE_BRADS = 0,     -- no heading nudge (no-op value)
-    CAPTURE_LGM_HUNT_FIRE_WU      = 64,         -- capture fire gate = the shared ½-tile gate (no wider shot)
+    --   2026-09-13: the LGM-kill package (hard only).  KEEL: master off, so
+    --   none of the values below it is read; they are pinned to the old play
+    --   anyway.
+    LGM_KILL_IMPROVED             = false,      -- master OFF: the whole 2026-09-13 LGM-kill package is out
+    LGM_KILL_FIRE_WU              = 64,         -- the old shared ½-tile LGM-kill fire check (engine kills at 128)
+    CAPTURE_LGM_HUNT_FIRE_WU      = 64,         -- capture fire check = the shared ½-tile check (no wider shot)
+    CAPTURE_LGM_HUNT_TRACK_TILES  = 7,          -- the old 7-tile reach (shape is restored by the master being off)
+    CAPTURE_LGM_HUNT_PICK_NEAREST_PILL = false, -- old pick: smallest distance from the shell ray
+    CAPTURE_SIGHT_HOLD_MIN_STEPS  = 2,          -- hold the range key from 2 units out (today's behaviour)
+    LGM_KILL_AIM_WU               = 64,         -- moot: no aim refinement with the master off
+    LGM_KILL_AIM_TILES            = 5,          -- moot: no aim refinement with the master off
+    LGM_KILL_AIM_THROTTLE         = false,      -- refinement never touches the throttle
+    LGM_ENGINE_KILL_WU            = 128,        -- engine fact (lgm.c MAP_SQUARE_MIDDLE), overlay only
     BLAST_DEAD_PILL_OPEN          = false,      -- 2026-11-06: a dead pill's square is solid for the builder blast, as the old engine had it
     SHELL_STOPS_ON_FOREST_BOAT    = false,      -- 2026-11-07: the brain's shells fly on over a forest or a boat, as the old brain had it
     BLAST_TERRAIN_SQUARE_HIT      = false,      -- 2026-11-07: a shell's stop on a forest or a boat is open ground (128 wu from its middle)
@@ -5866,6 +6918,50 @@ M.PRESETS = {
     -- 2026-09-29: defensive turtle placement (one pill cluster at home).
     -- KEEL spreads its pills by the normal placement scan.
     PILL_PLACE_TURTLE             = false,
+    -- 2026-11-01: focused spike placement (enemy-base tiles, ebase/depth terms,
+    -- long builder send). KEEL scores aggro tiles like any other tile.
+    FOCUS_SPIKE_ENABLED         = false,
+    -- 2026-11-06: spike plan on the first tick the plan code runs (no slot phase).
+    FOCUS_PLAN_OFFSET_MODE      = "first",
+    -- 2026-11-01: spike defend discount off (defend_pill costs as before).
+    FOCUS_SPIKE_DEFEND_DISCOUNT = 0,
+    -- 2026-11-01: neutral pills are not counted in the spike cluster plan.
+    FOCUS_SPIKE_NEUTRAL_PILL_COVER = false,
+    -- 2026-11-01: fixed spike spots from the vote (no adaptive spot).
+    FOCUS_SPIKE_ADAPTIVE_SPOT      = false,
+    -- 2026-11-01: no pill reservation and no levelling (no adaptive spot).
+    FOCUS_SPIKE_ALL_AGGRO          = false,
+    -- 2026-11-01: stand place next to the spot (no wide stand search), flat
+    -- payoff per base, no multi-base boost.
+    FOCUS_SPIKE_STAND_RADIUS       = 1,
+    FOCUS_SPIKE_CLOSE_PAYOFF       = false,
+    FOCUS_SPIKE_MULTI_RADIUS       = 5,
+    FOCUS_SPIKE_MULTI_BOOST        = 1.0,
+    FOCUS_SPIKE_RESCORE_TICKS      = 50,
+    FOCUS_SPIKE_RESCORE_SLICES     = 1,
+    FOCUS_SPIKE_PLAN_FLAT          = false,
+    FOCUS_SPIKE_HOME_ABORT_NEAR    = 0,
+    FOCUS_SPIKE_SOLO_CARRIER       = false,
+    -- 2026-11-02: no rch term in the placement scan (enemy reach weight).
+    PLACE_ENEMY_REACH              = 0,
+    -- 2026-11-04: every front placement spot keeps front credit, with or
+    -- without an enemy base, enemy pill or neutral pill in range.
+    PLACE_FRONT_NEED_TARGET        = false,
+    -- 2026-11-03: every non-spiking pill pays the spike cross-penalty,
+    -- however few shots it needs.
+    SPIKE_PEN_SKIP_MAX_SHOTS       = 0,
+    BUILDER_LEASH_EUCLID           = true,
+    -- 2026-11-01: spike care needs the aggro class (no care by range).
+    FOCUS_SPIKE_CARE_BY_RANGE      = false,
+    -- 2026-11-01: utility to aggro while the focused spike rules pass. KEEL
+    -- keeps its utility share.
+    FOCUS_SPIKE_UTIL_TO_AGGRO      = false,
+    -- 2026-11-01: neutral and unknown bases count as theirs in the deep
+    -- spike base lead rule. KEEL has no focused spike.
+    FOCUS_SPIKE_NEUTRAL_AS_ENEMY   = false,
+    -- 2026-11-01: spike care (builder pool bonus, wider repair reach, tank
+    -- repair discount, spkd advert). KEEL repairs spike pills like any pill.
+    SPIKE_REPAIR_PRIORITY         = false,
     -- 2026-09-06: the MAIN defend_pill evaluator is now ALARM MODE (see the
     -- DEFEND_ALARM_* block above): defend_pill is REJECTED unless a hostile
     -- tank is visible within 11 tiles of the pill RIGHT NOW, something enemy
@@ -5906,6 +7002,38 @@ M.PRESETS = {
     -- 2), and our own cost is rounded like kc before the handoff compare. KEEL
     -- kept one grabber and compared the unrounded cost. 0 = off.
     KILL_PICKUP_PAIR_MIN_SQUAD    = 0,
+    -- 2026-11-03: the fresh-kill claim ends when capture_pill's direct-route
+    -- probe says the grab is LETHAL. KEEL kept the claim through it.
+    KILL_PICKUP_LETHAL_EXIT       = false,
+    -- 2026-11-03: a LETHAL verdict on the claimed body forces a replan at
+    -- once. KEEL waited for the next replan.
+    KILL_PICKUP_LETHAL_REPLAN     = false,
+    -- 2026-11-03: the turn cap also applies when the next route square is
+    -- inside the turning circle. KEEL capped only within 4 tiles of the goal.
+    STEER_TURN_CAP_NEXT_SQUARE    = false,
+    -- 2026-11-03: a finetune turn-in tick that brings the gun closer to the
+    -- clear lane does not count against CLEAR_TURN_IN_TAPS (hard cap 2x), and
+    -- steering turns toward the lane. KEEL counted every tick and turned
+    -- toward the pill centre.
+    CLEAR_TURN_TAP_PROGRESS       = false,
+    -- 2026-11-03: the planner asks for a clear lane of +/-0.5 brad around the
+    -- aim of a firing spot. KEEL took any aim whose own line was clear.
+    BLOCKER_MIN_LANE_BRAD         = 0,
+    -- 2026-11-03: the shield planner weights a friendly pill by
+    -- floor(health / 5) walls. KEEL counted every friendly pill as
+    -- PPT_PILL_WALL_EQUIV walls.
+    PILL_COVER_BY_HEALTH          = false,
+    -- 2026-11-03: a repair_pill tank drives to a standoff square out of
+    -- hostile and neutral pill range (or behind a wall) and sends the builder
+    -- from there. KEEL drove to the pill square.
+    REPAIR_STANDOFF_ENABLED       = false,
+    -- 2026-11-03: the blitz soldier's setup point sits on the 16-direction
+    -- travel line that ends on its charge spot. KEEL used the radial point.
+    BLITZ_SETUP_16DIR             = false,
+    BLITZ_SETUP_16DIR_EDGE_BRAD   = 0.5,
+    -- 2026-11-03: the charge tests its aims from its stop point and keeps
+    -- going when one is clear. KEEL tested from the live tank and replanned.
+    CHARGE_LEEWAY                 = false,
     -- 2026-09-25: under blitz-only, the commander goes GO only with
     -- blitz_min tanks PARKED; at timeout it extends the wait. KEEL went GO at
     -- READY_TIMEOUT with whoever was committed (or abandoned if short).
@@ -5959,6 +7087,12 @@ M.PRESETS = {
     -- 2026-09-26: cap on that hold. Unused with the guard off; same value as
     -- the default.
     PF_FLIP_FRESH_ASTAR_TICKS     = 60,
+    -- 2026-11-03: the Dijkstra slate root pays the turn cost from the tank
+    -- heading. KEEL gave the root's first steps no turn cost.
+    PF_START_HEADING              = false,
+    -- 2026-11-03: the route keep is off. KEEL took every new first step.
+    PF_REROUTE_KEEP_MARGIN        = 0,
+    PF_REROUTE_KEEP_FRAC          = 0,
     -- 2026-09-05 (evening): BLITZ_CONTESTED_ALL_SUICIDERS had an entry here and
     -- no longer needs one -- the bench sent it back and its DEFAULT is now
     -- false, which is already the KEEL value. A knob whose default equals its
@@ -6339,6 +7473,38 @@ M.PRESETS = {
     --   a gun a few brads off the aim line cannot shoot our own pill.  KEEL
     --   checked the aim line only.
     TANK_COMBAT_FIRE_CHECK_HEADING = false,
+    --   2026-11-01: a friendly shell near our pill blocks its repair for 1 s
+    --   (50 ticks).  KEEL blocked it for 8 s, so allied shots at an enemy pill
+    --   on the next tile could keep our pill unrepaired until it died.
+    REPAIR_FRIENDLY_FIRE_REJECT_TICKS = 400,
+    --   2026-11-04: a land capture_pill frees the builder for pool jobs.
+    --   KEEL kept the builder in "gather" (mode_owned) for the whole drive.
+    CAPTURE_PILL_BUILDER_FREE     = false,
+    --   2026-11-04: the builder is refused a send only on certain death.
+    --   KEEL refused on the under-fire clock, fire_exchange substates, angry
+    --   pills, path danger samples, and (pool) lgm_shell_gate.
+    BUILDER_SEND_CERTAIN_DEATH_ONLY = false,
+    --   2026-11-04: a tank's shell is a kill when it kills the builder at
+    --   any rewind 1..13. KEEL tested rewind 1 only.
+    BUILDER_CERTAIN_DEATH_REWIND_MAX = 1,
+    --   2026-11-04: no idle tree harvest while under fire with enough trees.
+    --   KEEL harvested whenever the other checks allowed.
+    BUILDER_NO_IDLE_FARM_UNDER_FIRE = false,
+    --   2026-11-04: attack_tank, attack_base and a sea capture_pill between
+    --   its builder jobs free the builder. KEEL kept him in ("suppressed").
+    BUILDER_FREE_COMBAT_GOALS     = false,
+    --   2026-11-04: quick repair of a take blocker inside the safe window.
+    --   KEEL never repaired a live blocker during the take.
+    QUICK_REPAIR_ON_TAKE          = false,
+    --   2026-11-04: T_kill also from shots not yet fired (firing run only).
+    --   KEEL had no such prediction.
+    QUICK_REPAIR_PREDICT_SHOTS    = false,
+    --   2026-11-04: low-damage markup on the repair_pill cost. KEEL priced
+    --   a 1-HP top-up like any other repair (x1).
+    REPAIR_LOW_DMG_MULT_MAX       = 1.0,
+    --   2026-11-04: repair claims carry the builder's arrival tick and allies
+    --   yield by arrival. KEEL sent the 14-char bpj and used the claim tick.
+    BUILDER_REPAIR_CLAIM_SHARE    = false,
     --   2026-11-06: capacity tier after a budget kill.  KEEL cut 3 tiers on
     --   every kill and avoided that tier for 200 ticks.  STREAK_N 1 makes
     --   every kill cut, so the window value is not read.
@@ -6348,6 +7514,33 @@ M.PRESETS = {
     --   2026-11-06: replan phase from the bot's player slot.  KEEL used the
     --   math.random draw (the same value on every bot under LuaJIT).
     REPLAN_OFFSET_MODE            = "random",
+    -- 2026-09-25: the kill_lgm lead predictor now takes a dead hostile pill on
+    -- the enemy builder's straight-line heading as his destination (lead sim
+    -- stops at the pill, impact inside the pill tile snaps to its centre).
+    -- KEEL leads him toward the map edge (3-window dest_lock) or linearly.
+    -- The tuning knobs below are unread while the master is false and are
+    -- pinned only so a later tweak to one of their DEFAULTS cannot leak into
+    -- the baseline.
+    LGM_DEST_AIM                  = false,
+    LGM_DEST_WINDOW_TICKS         = 20,
+    LGM_DEST_MIN_SAMPLES          = 6,
+    LGM_DEST_COLLINEAR_WU         = 24,
+    LGM_DEST_BACKSTEP_WU          = 16,
+    LGM_DEST_MIN_SPEED            = 3,
+    LGM_DEST_MIN_SPEED_FRAC       = 0.8,
+    LGM_DEST_RAY_TILES            = 16,
+    LGM_DEST_PERP_WU              = 96,
+    LGM_DEST_PERP_DEG             = 3,
+    LGM_DEST_LIVE_PILLS           = false,
+    LGM_DEST_HOLD_FIRE            = false,
+    -- 2026-09-25: walk-in intercept before the pill window, and dropping a
+    -- pill he walked through (look further along his line). KEEL: neither.
+    LGM_DEST_INTERCEPT            = false,
+    LGM_DEST_PASS_THROUGH         = false,
+    -- 2026-11-03: attack_pill event re-price and repair_pill give-way.
+    -- KEEL: neither.
+    ATK_REPRICE_EVENTS            = false,
+    REPAIR_GIVE_WAY               = false,
   },
   -- nolgm_off: RUDDER as it stood BEFORE the loaded, builder-less work
   -- (2026-09-08) -- every knob that work added, at its pre-change value, and
@@ -6433,6 +7626,93 @@ M.PRESETS = {
   },
 }
 
+-- Focused spike bench presets (2026-11-01 night). The -bot-init [..] text
+-- reaches the brain as a key table, so one bot gets ONE preset= and ONE
+-- cfg= (a second one with the same key replaces the first). These two carry
+-- keel in full, so a variant is one preset plus at most one cfg=:
+--   keel_focus      keel + REPAIR_FRIENDLY_FIRE_REJECT_TICKS 50 + every deep
+--                   spike rule, spike care, the win shares and utility to
+--                   aggro on.
+--   keel_focus_raw  keel + REPAIR_FRIENDLY_FIRE_REJECT_TICKS 50 + deep
+--                   placement with no rule, no pair, no care, no win shares,
+--                   no utility to aggro.
+--   keel_focus_loose  keel_focus with easier base and pill rules: team
+--                   pills >= 6 (not 8), base lead >= 2 (not 3), ratio 1.25
+--                   (not 1.5). The front-at-target part is the same.
+--   keel_focus, keel_focus_loose and keel_focus_bench use FOCUS_SPIKE_RULE
+--   "cluster" (the per-cluster vote, 2026-11-01).
+-- They apply only when named, so play does not change.
+do
+  local function keel_plus(extra)
+    local t = {}
+    for k, v in pairs(M.PRESETS.keel) do t[k] = v end
+    t.REPAIR_FRIENDLY_FIRE_REJECT_TICKS = 50
+    for k, v in pairs(extra) do t[k] = v end
+    return t
+  end
+  M.PRESETS.keel_focus = keel_plus({
+    FOCUS_SPIKE_RULE = "cluster",
+    FOCUS_SPIKE_ENABLED = true, FOCUS_SPIKE_BASE_RULE = true,
+    FOCUS_SPIKE_PILL_RULE = true, FOCUS_SPIKE_PAIR = "solo",
+    SPIKE_REPAIR_PRIORITY = true, FOCUS_SPIKE_WIN_SHARES = true,
+    FOCUS_SPIKE_UTIL_TO_AGGRO = true, FOCUS_SPIKE_NEUTRAL_AS_ENEMY = true,
+    -- 2 minutes: a focused spike trip is long (cross to the cluster, maybe by
+    -- a hidden route). The default 1500 (30 s) came from the reposition vote.
+    FOCUS_SPIKE_APPROVAL_TTL = 6000,
+    FOCUS_SPIKE_TILE_COVERED_RULE = "repick",
+    FOCUS_SPIKE_DEFEND_DISCOUNT = 0.30, FOCUS_SPIKE_DEFEND_TICKS = 6000,
+    FOCUS_SPIKE_NEUTRAL_PILL_COVER = true,
+    FOCUS_SPIKE_ADAPTIVE_SPOT = true,
+    FOCUS_SPIKE_ALL_AGGRO = true,
+    FOCUS_SPIKE_CARE_BY_RANGE = true,
+    FOCUS_SPIKE_STAND_RADIUS = 15, FOCUS_SPIKE_CLOSE_PAYOFF = true,
+    FOCUS_SPIKE_MULTI_BOOST = 1.5,
+    FOCUS_SPIKE_RESCORE_TICKS = 100, FOCUS_SPIKE_RESCORE_SLICES = 5,
+    FOCUS_SPIKE_PLAN_FLAT = true,
+    FOCUS_SPIKE_HOME_ABORT_NEAR = 0,   -- 16 tested Nov 2: no gain (bench n6)
+    FOCUS_SPIKE_SOLO_CARRIER = false,  -- true tested Nov 2: worse (bench n8)
+  })
+  M.PRESETS.keel_focus_raw = keel_plus({
+    FOCUS_SPIKE_RULE = "count",
+    FOCUS_SPIKE_ENABLED = true, FOCUS_SPIKE_BASE_RULE = false,
+    FOCUS_SPIKE_PILL_RULE = false, FOCUS_SPIKE_PAIR = "off",
+    SPIKE_REPAIR_PRIORITY = false, FOCUS_SPIKE_WIN_SHARES = false,
+    FOCUS_SPIKE_UTIL_TO_AGGRO = false, FOCUS_SPIKE_NEUTRAL_AS_ENEMY = false,
+  })
+  M.PRESETS.keel_focus_loose = keel_plus({
+    FOCUS_SPIKE_RULE = "cluster",
+    FOCUS_SPIKE_ENABLED = true, FOCUS_SPIKE_BASE_RULE = true,
+    FOCUS_SPIKE_PILL_RULE = true, FOCUS_SPIKE_PAIR = "solo",
+    SPIKE_REPAIR_PRIORITY = true, FOCUS_SPIKE_WIN_SHARES = true,
+    FOCUS_SPIKE_UTIL_TO_AGGRO = true, FOCUS_SPIKE_NEUTRAL_AS_ENEMY = true,
+    FOCUS_SPIKE_MIN_PILLS = 6, FOCUS_SPIKE_BASE_LEAD = 2, FOCUS_SPIKE_BASE_RATIO = 1.25,
+    FOCUS_SPIKE_APPROVAL_TTL = 6000,
+    FOCUS_SPIKE_TILE_COVERED_RULE = "repick",
+    FOCUS_SPIKE_DEFEND_DISCOUNT = 0.30, FOCUS_SPIKE_DEFEND_TICKS = 6000,
+    FOCUS_SPIKE_NEUTRAL_PILL_COVER = true,
+    FOCUS_SPIKE_ADAPTIVE_SPOT = true,
+    FOCUS_SPIKE_ALL_AGGRO = true,
+    FOCUS_SPIKE_CARE_BY_RANGE = true,
+    FOCUS_SPIKE_STAND_RADIUS = 15, FOCUS_SPIKE_CLOSE_PAYOFF = true,
+    FOCUS_SPIKE_MULTI_BOOST = 1.5,
+    FOCUS_SPIKE_RESCORE_TICKS = 100, FOCUS_SPIKE_RESCORE_SLICES = 5,
+    FOCUS_SPIKE_PLAN_FLAT = true,
+    FOCUS_SPIKE_HOME_ABORT_NEAR = 0,   -- 16 tested Nov 2: no gain (bench n6)
+    FOCUS_SPIKE_SOLO_CARRIER = false,  -- true tested Nov 2: worse (bench n8)
+  })
+  -- Bench: plain KEEL plus the deny vote (no REPAIR_FRIENDLY_FIRE_REJECT_TICKS
+  -- change), so a game plays exactly as preset=keel until the first vote, and
+  -- the plain stderr lines on.
+  local kb = {}
+  for k, v in pairs(M.PRESETS.keel) do kb[k] = v end
+  for k, v in pairs(M.PRESETS.keel_focus) do
+    if k:sub(1, 12) == "FOCUS_SPIKE_" or k == "SPIKE_REPAIR_PRIORITY" then kb[k] = v end
+  end
+  kb.FOCUS_SPIKE_RULE = "cluster"
+  kb.FOCUS_SPIKE_STDERR_LOG = true
+  M.PRESETS.keel_focus_bench = kb
+end
+
 -- ── SIDE SETTINGS (2026-09-29, Andrew; Virus) ─────────────────────────
 -- What the init words `survivor` and `horde` write into C (init.lua
 -- _apply_cfg_tokens). Each word also sets state.side, and the never-refuel
@@ -6514,6 +7794,7 @@ M.MODE_LEVELS = {
   default = {
     hard = {},                    -- empty = today's constants (no-op)
     medium = {
+      LGM_KILL_IMPROVED = false,    -- 2026-09-13: the LGM-kill package is HARD ONLY
       SQUAD_MAX_SIZE = 1,
       HARD_TAKE_MIN_HP = 13, BLITZ_SWERVE_ONLY_WHEN_HIT = false, SQUAD_HELP_RANGE = 18,
       -- press when ahead (Stage 3 Pass A)
@@ -6540,11 +7821,16 @@ M.MODE_LEVELS = {
       REPAIR_UNDER_FIRE_MULT = 8.0, REPAIR_QUIET_TICKS = 150, REPAIR_DEAD_ADV_RELIEF_PER_TANK = 0.10,
       -- fuelled
       ARMOUR_LOW = 18, SHELLS_LOW = 22, ARMOUR_COMBAT = 33, SHELLS_COMBAT = 33,
+      -- LGM destination aim is Hard only (Andrew, 2026-09-25): the old lead
+      -- predictor and the old fire gate, exactly as before the feature.
+      LGM_DEST_AIM = false, LGM_DEST_LIVE_PILLS = false, LGM_DEST_HOLD_FIRE = false,
+      LGM_DEST_INTERCEPT = false, LGM_DEST_PASS_THROUGH = false,
     },
     easy = {
       -- Blitz: solo, never gangs up (BLITZ_ENABLED=false is the Stage 3 Pass A
       -- "solo" switch -- NOT SQUAD_MAX_SIZE=1, which never reaches quorum)
       BLITZ_ENABLED = false,
+      LGM_KILL_IMPROVED = false,    -- 2026-09-13: the LGM-kill package is HARD ONLY
       SQUAD_MAX_SIZE = 1, HARD_TAKE_MIN_HP = 15,
       BLITZ_SWERVE_ONLY_WHEN_HIT = false,
       -- Skill: bad at moving targets; pills/bases stay accurate
@@ -6586,6 +7872,10 @@ M.MODE_LEVELS = {
       CROSSFIRE_MULTIPLIER_ENABLED = true,
       -- Refuel: predictable, fuelled
       ARMOUR_LOW = 22, SHELLS_LOW = 24, ARMOUR_COMBAT = 36, SHELLS_COMBAT = 36,
+      -- LGM destination aim is Hard only (Andrew, 2026-09-25): the old lead
+      -- predictor and the old fire gate, exactly as before the feature.
+      LGM_DEST_AIM = false, LGM_DEST_LIVE_PILLS = false, LGM_DEST_HOLD_FIRE = false,
+      LGM_DEST_INTERCEPT = false, LGM_DEST_PASS_THROUGH = false,
     },
   },
 }

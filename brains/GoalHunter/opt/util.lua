@@ -256,6 +256,34 @@ function M.edist(mx1, my1, mx2, my2)
   return math.sqrt(dx * dx + dy * dy)
 end
 
+-- Builder walk limits: the builder leashes (builder_pool) and
+-- PLACE_DISPATCH_MAX_DIST (the long send). The engine's builder walks a
+-- straight line, so with C.BUILDER_LEASH_EUCLID (default true) every one of
+-- them measures straight-line distance. false = the old Manhattan measure.
+function M.leash_dist(mx1, my1, mx2, my2)
+  if C.BUILDER_LEASH_EUCLID then return M.edist(mx1, my1, mx2, my2) end
+  return M.mdist(mx1, my1, mx2, my2)
+end
+
+-- A builder walk distance for a log or panel line: one decimal when it is
+-- not a whole number (straight line), the old integer text when it is.
+function M.fmt_ld(d)
+  if d == nil then return "-" end
+  if d == math.floor(d) then return string.format("%d", d) end
+  return string.format("%.1f", d)
+end
+
+-- Half width of row dy of the tiles within builder reach r of a centre
+-- (|dx| <= this): the circle with BUILDER_LEASH_EUCLID, else the diamond.
+function M.leash_row_w(r, dy)
+  if C.BUILDER_LEASH_EUCLID then
+    local q = r * r - dy * dy
+    if q < 0 then return -1 end
+    return math.floor(math.sqrt(q) + 1e-9)
+  end
+  return r - math.abs(dy)
+end
+
 -- Chebyshev: diagonal neighbours are distance 1. "Beside" in the sense the
 -- pill-spacing rule means -- the 8 tiles touching a pill are all distance 1.
 function M.cdist(mx1, my1, mx2, my2)
@@ -520,11 +548,137 @@ function M.nav_turn_speed(corr, speed, max_speed, min_speed)
 end
 
 -- =========================================================================
+-- Shells and bases: does a base on the shell line stop the shell?
+--
+-- The engine rule (src/bolo/shells.c, the base check in the shell update, and
+-- src/bolo/bases.c basesCanHit):
+--   * a shell fired by a tank ON A BOAT stops at ANY base;
+--   * otherwise it stops at a base only when basesCanHit is true: the base
+--     owner is not allied to the shooter, the base is not neutral, and the
+--     base armour is above rules.base_hit_armour;
+--   * a pill shell has owner NEUTRAL (pillbox.c), so basesCanHit is always
+--     false and no base ever stops it.
+-- So a tank on land shoots over its own bases, allied bases, neutral bases and
+-- hostile bases at or below base_hit_armour. Every shell-line check in this
+-- brain asks THESE functions, so the copies cannot disagree again.
+--
+-- What the player can see: the base owner ("friendly" = ours or an ally's,
+-- "neutral", "hostile") and, for a hostile base, only 1 or 0 in base.health
+-- (bases.c basesGetBrainBaseInRect: 1 = armour above base_capture_armour,
+-- 0 = at or below it). The real armour of a hostile base is not known, so a
+-- hostile base blocks unless that bit PROVES armour <= base_hit_armour, which
+-- is only when health is 0 and base_hit_armour >= base_capture_armour.
+-- An owner the brain does not know also blocks (the old answer).
+-- =========================================================================
+local CLASSIC_BASE_HIT_ARMOUR     = 4   -- sim_rules.c: BASE_MIN_CAN_HIT
+local CLASSIC_BASE_CAPTURE_ARMOUR = 9
+M.CLASSIC_BASE_HIT_ARMOUR     = CLASSIC_BASE_HIT_ARMOUR
+M.CLASSIC_BASE_CAPTURE_ARMOUR = CLASSIC_BASE_CAPTURE_ARMOUR
+
+--- Save this think's shell rules on the world: base_hit_armour and
+--- base_capture_armour from info.rules (classic 4 / 9 when the host does
+--- not send them), and whether our tank is on a boat (info.inboat).
+--- Brain.think calls it once per think; every helper below reads it, and
+--- falls back to classic rules on land when it was never called (tests).
+function M.note_shell_rules(world, info)
+  if not world then return end
+  local sr = world._shell_rules
+  if not sr then sr = {}; world._shell_rules = sr end
+  local r = info and info.rules
+  local hit = r and r.base_hit_armour
+  if type(hit) ~= "number" then hit = CLASSIC_BASE_HIT_ARMOUR end
+  local cap = r and r.base_capture_armour
+  if type(cap) ~= "number" or cap <= 0 then cap = CLASSIC_BASE_CAPTURE_ARMOUR end
+  sr.hit    = hit
+  sr.cap    = cap
+  sr.inboat = (info and info.inboat) and true or false
+end
+
+--- Is a tank shell fired from tile (omx, omy) a shot from a boat?
+--- Deep sea or a boat tile: yes (a tank there is on a boat). River: only
+--- when our tank is on a boat now (it keeps the boat on the river). Any
+--- land tile: no (a tank leaves its boat when it drives onto land).
+function M.tank_shell_on_boat(world, omx, omy)
+  if omx == nil or omy == nil then
+    local sr = world and world._shell_rules
+    return (sr and sr.inboat) or false
+  end
+  local tt = M.ttype_peek(omx, omy)
+  if tt == C.T_DEEPSEA or tt == C.T_BOAT then return true end
+  if tt == C.T_RIVER then
+    local sr = world and world._shell_rules
+    return (sr and sr.inboat) or false
+  end
+  return false
+end
+
+--- Does `base` (a world.bases entry) stop a shell from OUR tank?
+--- on_boat: the shot is fired from a boat (see tank_shell_on_boat).
+function M.base_stops_tank_shell(world, base, on_boat)
+  if not base then return false end
+  if on_boat then return true end
+  local owner = base.owner
+  if owner == "friendly" or owner == "allied" or owner == "neutral" then
+    return false
+  end
+  if owner ~= "hostile" then return true end
+  local sr = world and world._shell_rules
+  local hit = (sr and sr.hit) or CLASSIC_BASE_HIT_ARMOUR
+  local cap = (sr and sr.cap) or CLASSIC_BASE_CAPTURE_ARMOUR
+  if (base.health or 1) <= 0 and hit >= cap then return false end
+  return true
+end
+
+--- Does the base on tile (mx, my), if any, stop a shell our tank fires from
+--- tile (omx, omy)? False when no base stands on (mx, my).
+function M.base_tile_stops_tank_shell(world, mx, my, omx, omy)
+  local ba = world and world.base_at
+  local e = ba and ba[my * 256 + mx]
+  local b = e and e.base
+  if not b then return false end
+  return M.base_stops_tank_shell(world, b, M.tank_shell_on_boat(world, omx, omy))
+end
+
+--- A pill shell: no base ever stops it (owner NEUTRAL, see above).
+function M.base_stops_pill_shell()
+  return false
+end
+
+--- Mark each base for the C attack sweep (gh_attack.c aim_line_trees):
+--- base._shell_pass_land = true when a shell from our tank ON LAND flies over
+--- it. The C reads this flag and applies the boat rule itself, so the rule
+--- above stays the only copy. A base without the flag blocks (the old answer).
+function M.mark_base_shell_pass(world)
+  local ba = world and world.base_at
+  if not ba then return end
+  for _, e in pairs(ba) do
+    local b = e.base
+    if b then b._shell_pass_land = not M.base_stops_tank_shell(world, b, false) end
+  end
+end
+
+-- =========================================================================
 -- is_placeable — can a pillbox be placed at (mx, my)?
 -- Checks terrain type and ensures no existing pill or base occupies it.
 -- =========================================================================
 function M.is_placeable(mx, my, world)
   local tt = M.ttype(mx, my)
+  if not (tt == C.T_GRASS or tt == C.T_ROAD or tt == C.T_RUBBLE
+          or tt == C.T_SWAMP or tt == C.T_CRATER or tt == C.T_FOREST) then
+    return false
+  end
+  local k = my * C.MAP_W + mx
+  if world.pill_at[k] then return false end
+  if world.base_at[k] then return false end
+  return true
+end
+
+-- is_placeable_peek: the same answer, but the terrain read goes through
+-- ttype_peek, so it does not record the tile in the terrain change list.
+-- For read-only planners (focus_vote.lua): a plan that reads tiles the bot
+-- would not read otherwise must not change which terrain changes it sees.
+function M.is_placeable_peek(mx, my, world)
+  local tt = M.ttype_peek(mx, my)
   if not (tt == C.T_GRASS or tt == C.T_ROAD or tt == C.T_RUBBLE
           or tt == C.T_SWAMP or tt == C.T_CRATER or tt == C.T_FOREST) then
     return false
@@ -739,13 +893,45 @@ end
 --                 / x REFUEL_LOW_SHELLS_MULT for each resource we need that
 --                 a fresh observation (now - obs_tick < REFUEL_OBS_STALE)
 --                 has below REFUEL_MIN_STOCK.  See refuel_low_stock_mult in
---                 goals.lua for why, and for the obs_armour units note.
+--                 goals.lua for why.
+--
+-- UNITS.  b.obs_armour is RAW engine base armour (0..90), see
+-- base_armour_steps below.  REFUEL_MIN_STOCK counts armour in steps of five
+-- (the info.base.armour number), so these rules compare
+-- base_armour_steps(b.obs_armour) against it.  Shells are raw on every path
+-- and are compared as they are.
 -- =========================================================================
+
+-- BASE ARMOUR UNITS.  world.bases[id].obs_armour always holds RAW engine
+-- base armour, 0..90 (bases.h BASE_FULL_ARMOUR), which is the number
+-- EVENT_BASE_STOCK carries.  One tank refuel moves the same raw amount from
+-- the base to the tank (bases.c basesRefueling), and the attack_base markup and
+-- steal (goals.lua base_armour_obs) count shells against it.
+-- info.base.armour is that number divided by five and rounded down (bases.c
+-- basesGetBrainBaseItem: armour / 5, so a full 90 reads 18).
+local BASE_ARMOUR_STEP = 5
+
+-- Raw base armour -> the info.base.armour number (steps of five).
+function M.base_armour_steps(raw)
+  return math.floor((raw or 0) / BASE_ARMOUR_STEP)
+end
+
+-- The raw armour to store for an info.base.armour reading.  When the raw
+-- number already stored (from EVENT_BASE_STOCK) rounds down to this same
+-- reading, it is the exact value and is kept.  Else the reading times five,
+-- the lowest raw armour that gives this reading.
+function M.base_armour_raw_from_info(steps, prev_raw)
+  steps = steps or 0
+  if prev_raw and M.base_armour_steps(prev_raw) == steps then
+    return prev_raw
+  end
+  return steps * BASE_ARMOUR_STEP
+end
 
 -- Rule 1.  True when the base is seen holding 0 of everything we need.
 function M.refuel_base_empty(b, need_a, need_s)
   if not b.obs_tick then return false end
-  local has_a = (b.obs_armour or 0) > 0
+  local has_a = M.base_armour_steps(b.obs_armour) > 0
   local has_s = (b.obs_shells or 0) > 0
   return not ((need_a and has_a) or (need_s and has_s))
 end
@@ -756,19 +942,22 @@ function M.refuel_base_low_stock(b, need_a, need_s, now)
   if not (b.obs_tick and now > 0 and (now - b.obs_tick) < C.REFUEL_OBS_STALE) then
     return false
   end
-  if need_a and (b.obs_armour or 0) >= C.REFUEL_MIN_STOCK then return false end
+  if need_a and M.base_armour_steps(b.obs_armour) >= C.REFUEL_MIN_STOCK then return false end
   if need_s and (b.obs_shells or 0) >= C.REFUEL_MIN_STOCK then return false end
   return true
 end
 
 -- Rule 3.  Returns mult, detail.  detail carries the chip inputs for the
 -- panels: fresh, low_arm, low_sh, need_arm, need_sh (need_* are set only
--- on a fresh observation), obs_sh, obs_arm, age.
+-- on a fresh observation), obs_sh, obs_arm (armour in steps of five, the
+-- number compared against REFUEL_MIN_STOCK), obs_arm_raw, age.
 function M.refuel_base_low_mult(b, need_a, need_s, now)
   local d = {
     fresh = false, low_arm = false, low_sh = false,
     need_arm = false, need_sh = false,
-    obs_sh = b.obs_shells, obs_arm = b.obs_armour,
+    obs_sh = b.obs_shells,
+    obs_arm = b.obs_armour and M.base_armour_steps(b.obs_armour) or nil,
+    obs_arm_raw = b.obs_armour,
     age = b.obs_tick and (now - b.obs_tick) or nil,
   }
   if not d.age or d.age >= (C.REFUEL_OBS_STALE or 500) then
@@ -778,7 +967,7 @@ function M.refuel_base_low_mult(b, need_a, need_s, now)
   d.need_arm = need_a and true or false
   d.need_sh  = need_s and true or false
   local mult = 1.0
-  if d.need_arm and (b.obs_armour or 0) < C.REFUEL_MIN_STOCK then
+  if d.need_arm and M.base_armour_steps(b.obs_armour) < C.REFUEL_MIN_STOCK then
     d.low_arm = true
     mult = mult * (C.REFUEL_LOW_ARMOUR_MULT or 1.0)
   end

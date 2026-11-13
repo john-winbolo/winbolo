@@ -122,13 +122,15 @@ static int build_sort_order(void) {
 enum {
     VCAT_HUD = 0, VCAT_CHARGE, VCAT_PILLTAKE, VCAT_SQUAD, VCAT_NAV,
     VCAT_LGM, VCAT_TANKCBT, VCAT_THREAT, VCAT_CIRCLES, VCAT_PLACEMENT,
-    VCAT_ALLY, VCAT_SHELLS, VCAT_REPOSITION, VCAT_DECOY, VCAT_MISC, VCAT_COUNT
+    VCAT_ALLY, VCAT_SHELLS, VCAT_REPOSITION, VCAT_DECOY, VCAT_FOCUS, VCAT_QUICKREPAIR,
+    VCAT_MISC, VCAT_COUNT
 };
 
 static const char *kVizCatLabel[VCAT_COUNT] = {
     "Core HUD", "Charge", "Pill take", "Squad/Blitz", "Nav",
     "LGM", "Tank combat", "Threat", "Circles", "Placement",
-    "Ally/Comms", "Shells/Hitbox", "Reposition", "Decoy", "Misc",
+    "Ally/Comms", "Shells/Hitbox", "Reposition", "Decoy", "Focused spike",
+    "Quick repair", "Misc",
 };
 
 struct VizMeta { const char *id; unsigned char cat; bool hud; };
@@ -194,6 +196,7 @@ static const VizMeta kVizMeta[] = {
     {"lgm_registry_hud", VCAT_LGM, true},    {"lgm_registry_map", VCAT_LGM, false},
     {"kill_lgm_engage", VCAT_LGM, false},    {"kill_lgm_predict", VCAT_LGM, false},
     {"kill_lgm_sim_path", VCAT_LGM, false},
+    {"kill_lgm_dest_pill", VCAT_LGM, false}, {"kill_lgm_dest_target", VCAT_LGM, false},
     {"builder_pool_shell_gate", VCAT_LGM, false},
     /* Tank combat */
     {"tank_hitbox", VCAT_TANKCBT, false},    {"tank_aim_marker", VCAT_TANKCBT, false},
@@ -222,10 +225,17 @@ static const VizMeta kVizMeta[] = {
     {"ally_state_overlay", VCAT_ALLY, true}, {"chat_log_overlay", VCAT_ALLY, true},
     {"hud_refuel_ally_check", VCAT_ALLY, true}, {"ally_claimed_marker", VCAT_ALLY, false},
     {"ally_avoid_overlay", VCAT_ALLY, false},
+    /* Focused spike (focus_viz.lua) */
+    {"focused_spike_clusters", VCAT_FOCUS, false}, {"focused_spike_plan", VCAT_FOCUS, false},
+    {"focused_spike_votes", VCAT_FOCUS, true},     {"focused_spike_active", VCAT_FOCUS, false},
     /* Decoy hold getaway (decoy_getaway.lua) */
     {"decoy_chain", VCAT_DECOY, false},      {"decoy_scan_cells", VCAT_DECOY, false},
     {"decoy_score_terms", VCAT_DECOY, false},{"decoy_pill_lines", VCAT_DECOY, false},
     {"decoy_blocker_count", VCAT_DECOY, false}, {"decoy_status", VCAT_DECOY, false},
+    /* Quick repair of a take blocker (quick_repair.lua) */
+    {"quick_repair_blocker", VCAT_QUICKREPAIR, false},
+    {"quick_repair_kill", VCAT_QUICKREPAIR, false},
+    {"quick_repair_walk", VCAT_QUICKREPAIR, false},
     /* Misc / meta / test */
     {"label_overlays", VCAT_MISC, false},    {"label_hud_overlays", VCAT_MISC, true},
     {"test_lgm_target", VCAT_MISC, false},   {"test_victim_marker", VCAT_MISC, false},

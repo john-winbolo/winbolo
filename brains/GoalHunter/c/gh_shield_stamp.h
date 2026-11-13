@@ -2,6 +2,7 @@
 #define GH_SHIELD_STAMP_H
 
 #include <lua.h>
+#include <stdint.h>
 
 /*
  * gh_shield_stamp — precomputed shield-scan shot-path lookup table.
@@ -21,5 +22,53 @@
  */
 
 void naShieldStampRegister(lua_State *L);
+
+/*
+ * True when our own outgoing shell path hits a pill before the target pill.
+ *   pill_map  17x17 map centred on the target pill, index (dx+8)*17 + (dy+8):
+ *             0 = no pill, 1 = enemy or neutral pill, 2 = own or allied pill
+ *   dx, dy    the path squares relative to the target pill, in flight order
+ *   n         number of squares
+ * The walk stops at the target square (0,0). A pill of any owner blocks.
+ * Used by the scan's score_one_aim; public for the unit test.
+ */
+int naShieldOutgoingPillBlocks(const uint8_t *pill_map,
+                               const int8_t *dx, const int8_t *dy, int n);
+
+/*
+ * Shield cover from a friendly pill, by health (knob PILL_COVER_BY_HEALTH).
+ * Same rule as brains/GoalHunter/pill_cover.lua walls_for_health:
+ *   walls = floor(health / 5)    15 -> 3, 10-14 -> 2, 5-9 -> 1, 1-4 -> 0
+ * (a wall takes 5 shots to break). health <= 0 gives 0.
+ */
+int naShieldPillCoverWalls(int health);
+
+/* pill_walls value for a square with no pill on it. */
+#define NA_SHIELD_NO_PILL 0xFF
+
+/*
+ * How the scan treats a return-fire square (dx,dy) that may hold a pill.
+ *   pill_map    as for naShieldOutgoingPillBlocks
+ *   pill_walls  NULL: the old rule (knob off). Else a 17x17 map, same index:
+ *               NA_SHIELD_NO_PILL = no pill, else the walls of cover the
+ *               pill there gives (0 for an enemy, neutral or dead pill, or a
+ *               friendly pill under 5 health)
+ * Returns 0 = no pill here (classify the square by its terrain),
+ *         1 = an existing blocker (a friendly pill worth 1 wall or more),
+ *         2 = skip the square (a pill worth 0 walls: not a blocker, and no
+ *             wall can be built there).
+ * Knob off: a friendly pill (pill_map 2) is 1, every other square is 0.
+ */
+int naShieldPillSlotClass(const uint8_t *pill_map, const uint8_t *pill_walls,
+                          int dx, int dy);
+
+/*
+ * The friendly pills among a blocker subset's existing (is_act != 0) squares.
+ * Sets *n_pill to how many squares hold a friendly pill (pill_map 2) and
+ * returns the sum of their pill_walls (0 when pill_walls is NULL).
+ */
+int naShieldActualPillWalls(const uint8_t *pill_map, const uint8_t *pill_walls,
+                            const int8_t *dx, const int8_t *dy,
+                            const int *is_act, int n, int *n_pill);
 
 #endif /* GH_SHIELD_STAMP_H */

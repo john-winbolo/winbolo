@@ -37,13 +37,39 @@ extern "C" {
  * version whenever the frame layout below changes; the loader checks it. */
 #define BRAINREC_MAGIC        "WBNREC1"
 #define BRAINREC_MAGIC_LEN    8
-#define BRAINREC_VERSION      7u     /* v7: + on-map masks for pills and bases */
-/* The oldest version a reader still loads. v7 only appended a tail to each
- * frame, so a v6 file reads the same up to the tail and has no masks: every
- * pill and base in it is on the map. */
+#define BRAINREC_VERSION      8u     /* v8: + recorded Dijkstra and danger box per bot */
+/* The oldest version a reader still loads. v7 and v8 only appended a tail to
+ * each frame, so a v6 file reads the same up to the tail and has no masks:
+ * every pill and base in it is on the map. A v6 or v7 file has no Dijkstra
+ * block: nothing is recorded for its slates. */
 #define BRAINREC_VERSION_MIN_READ 6u
 #define BRAINREC_FRAME_MAGIC  0xB07EC0DEu
 #define BRAINREC_FILENAME     "brainrec.btr"
+
+/* The session's map, saved beside brainrec.btr when the recording opens:
+ * the bytes mapSaveCompressedMap makes (bases | pills | starts structs, then
+ * the terrain), the same blob a client receives on join.
+ *
+ * The .btr cannot do without it. Its frames carry each base's owner and
+ * stocks but not where the base is, so a reader takes base positions from
+ * the map it loads. The header only names that map, and a generated map
+ * (Map Maker, Natural, ...) has no file under that name: BrainTest then fell
+ * back to Everard Island and drew Everard's bases on the recorded terrain,
+ * most of them in the sea. Loading this blob gives the recorded map, and in
+ * the sim's own frame: mapLoadCompressedMap does not recentre the way
+ * mapRead does, so the bases stay where the recorded terrain has them.
+ *
+ * brainrec_split copies it whole into every part, as it does any file with
+ * no tick stamps. */
+#define BRAINREC_MAP_FILENAME "brainrec_map.bin"
+
+/* Write `len` bytes of compressed map to <dir>/BRAINREC_MAP_FILENAME.
+ * Returns false if the file cannot be written in full. */
+bool brainRecWriteSessionMap(const char *dir, const uint8_t *data, int len);
+
+/* Read <dir>/BRAINREC_MAP_FILENAME into `out` (capacity `cap`). Returns the
+ * byte count, or 0 when the file is missing, empty or larger than `cap`. */
+int brainRecReadSessionMap(const char *dir, uint8_t *out, int cap);
 
 /* Packed overlay command (replaces the raw 160-byte OverlayCmd on disk). Each
  * frame's per-bot overlay block is: uint32 count, then `count` of these:
@@ -68,6 +94,11 @@ extern "C" {
  * Terrain bytes carry mines (values in [MINE_START,MINE_END]) and boats too,
  * so this one track replays terrain + mines + boats. */
 #define BRAINREC_MAP_KEYFRAME_INTERVAL 500
+
+/* v8 frame tail, after the on-map masks: uint32 dijLen, then dijLen bytes of
+ * the recorded Dijkstra box and danger box (layout in brain_record_dij.h). The block is a
+ * keyframe on the same frames as the map track, so a frame that starts a
+ * brainrec_split part rebuilds both. */
 
 /* File header, written once at the top of the file. */
 typedef struct {
@@ -102,8 +133,8 @@ static inline bool brainRecVersionMatches(const BrainRecHeader *hdr) {
 
 /* Whether a reader built now can load a file of this header's version: this
  * version, or an older one whose frames only lack a tail added since (v6 has
- * no on-map masks). A v5 file and anything newer than this build are
- * refused. */
+ * no on-map masks, v6 and v7 no Dijkstra block). A v5 file and anything newer
+ * than this build are refused. */
 static inline bool brainRecVersionReadable(const BrainRecHeader *hdr) {
     return hdr != NULL && hdr->version >= BRAINREC_VERSION_MIN_READ &&
            hdr->version <= BRAINREC_VERSION;
@@ -135,6 +166,20 @@ bool brainRecordIsEnabled(void);
  * per frame — the winbolods -braindebug default; ~1/botCount the cost,
  * no spike ticks), 2 = full per-bot per-tick capture. */
 void brainRecordSetParts(bool viz, int poolMode);
+
+/* Pool block format (winbolods -bd-pool-format). RAW = the brain's cheap
+ * raw capture (brain.get_pool_breakdown_raw), rendered to JSON later by
+ * pool_render.lua; JSON = the finished panel JSON built on the tick.
+ * brainRecordPoolExpr() is the Lua expression for the current format. */
+#define BRAINREC_POOL_FORMAT_RAW  0
+#define BRAINREC_POOL_FORMAT_JSON 1
+void brainRecordSetPoolFormat(int format);
+int brainRecordGetPoolFormat(void);
+const char *brainRecordPoolExpr(void);
+
+/* Adds one bot's pool build time to braindbg_perf.log's pool_eval column.
+ * Safe from the bot workers: each bot has its own counter. */
+void brainRecordAddPoolEvalMs(BYTE slot, double ms);
 
 /* Pool-JSON prefetch protocol (parallelizes the capture): a bot's worker
  * thread asks CaptureWanted right after its think and, when true, builds
