@@ -44,6 +44,7 @@
 #include "server_sim.h"
 #include "pillbox.h"
 #include "bolo_map.h"
+#include "building.h"
 #include "game_sim.h"
 #include "client_sim.h"
 #include "client_sim_internal.h"
@@ -470,6 +471,7 @@ bool pillsDropCanLand(GameSim *sim, int mx, int my) {
 *********************************************************/
 void pillsDropSpiralStart(pillsDropSpiral *s, BYTE cx, BYTE cy) {
   utilSpiralStart(&s->cursor, cx, cy, UTIL_SPIRAL_NORTH);
+  s->pass = 0;
   /* The farthest the minable area reaches from the centre along
      either axis. Every ring beyond it is off the area entirely. */
   s->maxRing = cx - (MAP_MINE_EDGE_LEFT + 1);
@@ -489,8 +491,17 @@ void pillsDropSpiralStart(pillsDropSpiral *s, BYTE cx, BYTE cy) {
 *PURPOSE:
 *  Moves the cursor on to the first square from where it
 *  is, that one included, that a pillbox may land on, and
-*  answers it. Answers FALSE once the spiral has walked
-*  past the minable area without finding one.
+*  answers it.
+*
+*  If the spiral walks past the minable area without
+*  finding one, the search starts again from the centre
+*  in a second pass. The second pass takes the first
+*  square in the minable area with no pill and no base on
+*  it. A building or half-building there turns to rubble
+*  and a boat turns to river, so the pill can land.
+*  Answers FALSE only if every square in the minable
+*  area has a pill or a base on it, which a map of at
+*  most 16 pills and 16 bases never has.
 *
 *ARGUMENTS:
 *  sim - The game
@@ -499,13 +510,46 @@ void pillsDropSpiralStart(pillsDropSpiral *s, BYTE cx, BYTE cy) {
 *  my  - Receives the Y map square
 *********************************************************/
 bool pillsDropSpiralFind(GameSim *sim, pillsDropSpiral *s, BYTE *mx, BYTE *my) {
+  BYTE x;
+  BYTE y;
+  BYTE pos;
+
   while (utilSpiralRing(&s->cursor) <= s->maxRing) {
-    if (pillsDropCanLand(sim, s->cursor.x, s->cursor.y)) {
-      *mx = (BYTE) s->cursor.x;
-      *my = (BYTE) s->cursor.y;
-      return TRUE;
+    if (s->pass == 0) {
+      if (pillsDropCanLand(sim, s->cursor.x, s->cursor.y)) {
+        *mx = (BYTE) s->cursor.x;
+        *my = (BYTE) s->cursor.y;
+        return TRUE;
+      }
+    } else if (s->cursor.x > MAP_MINE_EDGE_LEFT &&
+               s->cursor.x < MAP_MINE_EDGE_RIGHT &&
+               s->cursor.y > MAP_MINE_EDGE_TOP &&
+               s->cursor.y < MAP_MINE_EDGE_BOTTOM) {
+      x = (BYTE) s->cursor.x;
+      y = (BYTE) s->cursor.y;
+      if (pillsExistPos(&sim->pb, x, y) == FALSE &&
+          basesExistPos(&sim->bs, x, y) == FALSE) {
+        /* Clear the square so pillsDropCanLand accepts it. */
+        pos = mapGetPos(&sim->mp, x, y);
+        if (pos == BUILDING || pos == HALFBUILDING) {
+          buildingRemovePos(&sim->blds, x, y);
+          mapSetPos(sim, &sim->mp, x, y, RUBBLE, TRUE, FALSE);
+        } else if (pos == BOAT) {
+          mapSetPos(sim, &sim->mp, x, y, RIVER, TRUE, FALSE);
+        }
+        *mx = x;
+        *my = y;
+        return TRUE;
+      }
     }
     utilSpiralStep(&s->cursor);
+    if (s->pass == 0 && utilSpiralRing(&s->cursor) > s->maxRing) {
+      /* No square will hold a pill as it is. Start again from the centre
+         and clear one. */
+      s->pass = 1;
+      utilSpiralStart(&s->cursor, s->cursor.cx, s->cursor.cy,
+                      UTIL_SPIRAL_NORTH);
+    }
   }
   return FALSE;
 }

@@ -1085,10 +1085,13 @@ void pillsFillToRules(struct GameSim *sim, pillboxes *value);
 /* The search for somewhere to put down a pillbox that was being carried:
    Mac Bolo's gen_scatter spiral, a utilSpiralCursor that starts each ring
    on the square straight north of the centre (UTIL_SPIRAL_NORTH). The walk
-   ends after the last ring that touches the minable area. */
+   ends after the last ring that touches the minable area. If no square will
+   hold a pill, the walk starts again in a second pass that clears a square
+   (see pillsDropSpiralFind). */
 typedef struct {
   utilSpiralCursor cursor;
   int maxRing;  /* Last ring holding any minable square */
+  int pass;     /* 0 for the first pass, 1 for the second */
 } pillsDropSpiral;
 
 /*********************************************************
@@ -1125,8 +1128,15 @@ void pillsDropSpiralStart(pillsDropSpiral *s, BYTE cx, BYTE cy);
 *  answers it. Put the pill down there before asking for
 *  the next square: the cursor stays put, so one search
 *  serves several pills the way Mac Bolo's single cursor
-*  does. Answers FALSE once the spiral has walked past
-*  the minable area without finding one.
+*  does.
+*
+*  If no square in the minable area will hold a pill,
+*  the search starts again from the centre. This second
+*  pass takes the first square in the minable area with
+*  no pill and no base, and turns a building or
+*  half-building there to rubble and a boat to river.
+*  Answers FALSE only if that pass also finds nothing,
+*  which needs a minable area full of pills and bases.
 *
 *ARGUMENTS:
 *  sim - The game
