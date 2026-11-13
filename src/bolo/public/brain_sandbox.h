@@ -48,6 +48,20 @@ void brainSandboxSetExtraRoot(const char *dir);
  * and before any brain code runs. */
 void brainSandboxApply(lua_State *L, const char *root);
 
+/* The trace compiler limits the host sets on every brain VM, as the
+ * arguments of one jit.opt.start call. sizemcode is the size of each
+ * machine-code area in KB, maxmcode the total in KB and maxtrace the
+ * number of traces. LuaJIT's defaults are 1000 traces and 4096 KB; a
+ * GoalHunter bot fills them about every 40 ticks, and each time LuaJIT
+ * throws every trace away and compiles the hot code again. */
+#define BRAIN_SANDBOX_JIT_OPT_ARGS   "'sizemcode=256','maxtrace=4000','maxmcode=16384'"
+
+/* Run jit.opt.start(BRAIN_SANDBOX_JIT_OPT_ARGS) on a brain VM. Every host
+ * calls this one function, so the limits are the same everywhere. Call
+ * after brainSandboxApply and before brainSandboxRestrictJit, which takes
+ * jit.opt away. Does nothing on PUC-Lua, or when jit.opt is missing. */
+void brainSandboxTuneJit(lua_State *L);
+
 /* Replace the jit table with one holding only what a brain may use: on and
  * off (GoalHunter turns the compiler off for one file), status and the
  * version fields (`if jit then` is how a brain tells it runs on LuaJIT).
