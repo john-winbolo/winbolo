@@ -339,7 +339,6 @@ STR_LONG=Długie
 STR_MENU_NO_OWN_LABEL=Nie etykietuj własnego czołgu
 STR_MENU_PILLBOX_LABELS=Etykiety bunkrów
 STR_MENU_BASE_LABELS=Etykiety baz zaopatrzenia
-STR_MENU_HIDE_MAIN=Ukryj widok główny
 STR_MENU_DEVICE=Urządzenie:
 STR_MENU_DESKTOP=Pulpit
 STR_MENU_WINBOLO=WinBolo

@@ -370,7 +370,6 @@
 #define STR_MENU_NO_OWN_LABEL               560
 #define STR_MENU_PILLBOX_LABELS             561
 #define STR_MENU_BASE_LABELS                562
-#define STR_MENU_HIDE_MAIN                  563
 #define STR_MENU_DEVICE                     564
 #define STR_MENU_DESKTOP                    565
 #define STR_MENU_WINBOLO                    566
@@ -3812,6 +3811,11 @@
  * name: the player's number, or, when that is not known, a plain name */
 #define STR_DLGLOBBY_BOTHOST_PLAYER_NAME         3925
 #define STR_DLGLOBBY_BOTHOST_NO_NAME             3926
+/* The Frame Rate choice in Settings > Display and the Edit menu (#312) */
+#define STR_FRAMELIMIT_VSYNC                     3165
+#define STR_FRAMELIMIT_CAP                       3166
+#define STR_FRAMELIMIT_UNLIMITED                 3167
+#define STR_FRAMELIMIT_TIP                       3168
 
 /* The Log Viewer's Chat panel: title, empty line, team and private notes */
 #define STR_LV_WIN_CHAT                          3100

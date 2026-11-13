@@ -339,7 +339,6 @@ STR_LONG=Подробно
 STR_MENU_NO_OWN_LABEL=Не подписывать свой танк
 STR_MENU_PILLBOX_LABELS=Подписи бункеров
 STR_MENU_BASE_LABELS=Подписи баз снабжения
-STR_MENU_HIDE_MAIN=Скрыть основной вид
 STR_MENU_DEVICE=Устройство:
 STR_MENU_DESKTOP=Рабочий стол
 STR_MENU_WINBOLO=WinBolo

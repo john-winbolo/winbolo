@@ -339,7 +339,6 @@ STR_LONG=Lunga
 STR_MENU_NO_OWN_LABEL=Non etichettare il proprio tank
 STR_MENU_PILLBOX_LABELS=Etichette bunker
 STR_MENU_BASE_LABELS=Etichette basi di rifornimento
-STR_MENU_HIDE_MAIN=Nascondi vista principale
 STR_MENU_DEVICE=Dispositivo:
 STR_MENU_DESKTOP=Desktop
 STR_MENU_WINBOLO=WinBolo
