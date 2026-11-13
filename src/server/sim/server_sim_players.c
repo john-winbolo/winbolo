@@ -542,6 +542,22 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
      * base on the map. Left armed, a player who leaves goes on speeding the
      * bases up for everyone still playing. */
     basesRemoveTimer(&sim->sim, (int)playerNum);
+    /* The drops below can change terrain: on a map with no free square the
+     * search clears one for a pill (pillsDropSpiralFind). A quit, kick or
+     * timeout reaches here during packet receive, between ticks, where no
+     * map-change callback is installed, so the change would reach the
+     * server's map and the recording but no client, and no client's shadow
+     * map either, so no resync would put it right. Between ticks of a running
+     * round the change is kept for the next frame (simMapChangePendingCallback);
+     * an event put in mapEvents now would be cleared before it is sent. A bot
+     * removed from inside a tick already has the tick's callback, which is
+     * kept. Both the callback and the active sim go back to what they were. */
+    MapChangeCallback prevMapCb = mapGetChangeCallback();
+    ServerSim *prevActive = serverSimGetActive();
+    serverSimSetActive(sim);
+    if (prevMapCb == NULL && sim->state == serverStateRunning) {
+        mapSetChangeCallback(simMapChangePendingCallback);
+    }
     if (sim->sim.tanks[playerNum] != NULL) {
         tankDestroy(&sim->sim, &sim->sim.tanks[playerNum]);
         sim->sim.tanks[playerNum] = NULL;
@@ -558,6 +574,8 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
         lgmDestroy(&sim->sim.lgmen[playerNum]);
         sim->sim.lgmen[playerNum] = NULL;
     }
+    mapSetChangeCallback(prevMapCb);
+    serverSimSetActive(prevActive);
     sim->inputQueueHead[playerNum] = 0;
     sim->inputQueueTail[playerNum] = 0;
     sim->lastProcessedInput[playerNum] = 0;

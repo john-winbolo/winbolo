@@ -7827,6 +7827,9 @@ set(_unit_test_names
     tank_drop_pills_map_edge
     tank_drop_pills_hostile_map
     tank_drop_pills_no_room
+    tank_drop_pills_quit_no_room
+    tank_drop_pills_quit_map_event
+    tank_drop_pills_no_room_other_tank
     lgm_drop_pill_spiral
     lgm_drop_pill_no_room
     util_spiral_north
