@@ -324,7 +324,11 @@ typedef enum {
     X(tank_hit_sets_off_mines, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_FLAG)      \
     /* Whether a builder on a dead pillbox's square walks at the speed of    \
        the terrain under it. Last for the same reason. */                    \
-    X(man_dead_pill_terrain_speed, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_FLAG)
+    X(man_dead_pill_terrain_speed, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_FLAG)    \
+    /* The shape of open ground an explosion catches a builder in: 0 the     \
+       half-square circle, 1 the Mac Bolo box, 2 the Mac Bolo equivalent     \
+       area circle. Last for the same reason. */                             \
+    X(lgm_blast_shape, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_CONSTANT_BY_DESIGN)
 
 /* One member per rule, in the struct's own field order. SIM_RULE_COUNT is
  * one past the last, and an index at or above it names no rule. A rule's
@@ -380,6 +384,21 @@ SimRuleValueKind simRulesRuleValueKind(int rule);
  * table simRulesClassic has just filled, so it follows those defaults
  * wherever they are written down and there is no second list of them. */
 double simRulesClassicValue(int rule);
+
+/* The first version whose classic lgm_blast_shape is 2, the circle of 144.
+ * Builds before it played 0, the old WinBolo circle of 128, as classic. */
+#define SIM_RULES_LGM_BLAST_144_MAJOR    2
+#define SIM_RULES_LGM_BLAST_144_MINOR    2
+#define SIM_RULES_LGM_BLAST_144_REVISION 2
+
+/* The lgm_blast_shape a game made by this version played when nothing set
+ * the rule: 0 (the circle of 128) for a version older than
+ * SIM_RULES_LGM_BLAST_144_*, else 2 (the circle of 144). A recording holds
+ * only the rules a script set or changed, and its header holds the version
+ * that wrote it, so this gives the shape of a recording with no
+ * lgm_blast_shape in it. */
+int simRulesLgmBlastShapeForVersion(unsigned major, unsigned minor,
+                                    unsigned revision);
 
 /* The range a value for this rule is accepted in. lo is always stated. hi
  * is the fixed ceiling and is read only when hasHi; a row with a floor and

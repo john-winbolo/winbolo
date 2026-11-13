@@ -274,6 +274,7 @@ M.LIVE_PHYSICS_SPEED  = true  -- terrain speed caps / route costs (Lua and the C
 M.LIVE_PHYSICS_TURN   = true  -- turn-time sizing (swerve turn, blitz ready timeout) and turn-radius speed caps
 M.LIVE_PHYSICS_ACCEL  = true  -- brake / look-ahead distances and brake profiles follow our accel + brake rates
 M.LIVE_PHYSICS_SHELL  = true  -- shell speed, gunsight max
+M.LIVE_PHYSICS_BLAST  = true  -- the builder blast model follows the lgm_blast_shape and pill_range rules (LGM_BLAST_SHAPE, LGM_BLAST_PILL_RANGE_WU)
 -- Top-speed caps in info.speed units (engine speed x4): 64 = road top speed,
 -- 48 = the navigation cruise cap. Live rules scale them with the road speed
 -- rule and our speed modifier.
@@ -4476,7 +4477,29 @@ M.LGM_SHELL_PREDICT_TICKS = 63
 -- kills the man when the explosion is within MAP_SQUARE_MIDDLE of him (on a
 -- tile that is not solid). global.h MAP_SQUARE_MIDDLE = 128. Not a tunable --
 -- changing it makes the gate disagree with the engine.
+-- This is the radius of the classic lgm_blast_shape (0, "Half-square
+-- circle"); U.lgm_open_blast_catches picks the shape the game plays with.
 M.LGM_SHELL_KILL_RADIUS_WU = 128
+-- The other two lgm_blast_shape values (src/bolo/internal/lgm.h): 1, the
+-- "Mac Bolo box", is |dx| < LGM_BLAST_MAC_BOX_HALF_WU and |dy| < that;
+-- 2, the "Mac Bolo equivalent area circle", has the radius
+-- LGM_BLAST_MAC_AREA_RADIUS_WU (256 / sqrt(pi), about 144.4, the box's
+-- area). Engine facts, not tunables.
+M.LGM_BLAST_MAC_BOX_HALF_WU = 128
+M.LGM_BLAST_MAC_AREA_RADIUS_WU = 144
+-- 2026-11-07: the builder blast shape every builder blast model uses (the
+-- shell gate, the kill-builder aim and the blast check before a shot,
+-- through U.lgm_open_blast_catches): 0 the half-square circle, 1 the Mac
+-- Bolo box, 2 the Mac Bolo equivalent area circle. live_physics.lua group
+-- BLAST (LIVE_PHYSICS_BLAST) sets it from the lgm_blast_shape rule each
+-- think. Under the classic rule (0), or with LIVE_PHYSICS or
+-- LIVE_PHYSICS_BLAST off, it stays 0, the old model.
+M.LGM_BLAST_SHAPE = 0
+-- 2026-11-07: the engine stops every shape at the pill_range rule (lgm.h
+-- lgmBlastOpenGroundCatches): a builder further than this from the
+-- explosion is safe. Classic 2048, far past every shape, so it changes
+-- nothing. live_physics.lua group BLAST sets it from pill_range each think.
+M.LGM_BLAST_PILL_RANGE_WU = 2048
 -- The engine's shell-vs-tank hit zone, in world units: tank.h:102
 -- TANK_HIT_RADIUS = 112 ("one-tile mid-radius (128) - 16 wu"), tested as a
 -- CIRCLE by tankIsTankHitAtPosition. The shell gate uses it for one thing --

@@ -35,6 +35,7 @@
 /* Includes */
 #include "global.h"
 #include "types.h"
+#include "hit_rules.h"        /* LGM_BLAST_SHAPE_*, hitRulesBuilderOpenGroundShape */
 
 struct GameSim;
 
@@ -121,6 +122,29 @@ struct GameSim;
 #define LGM_BRAIN_FREE 0
 #define LGM_BRAIN_PARTIAL 1
 #define LGM_BRAIN_TOTAL 2
+
+/* The lgm_blast_shape rule and its LGM_BLAST_SHAPE_* values are in
+ * hit_rules.h, which the Log Viewer shares. */
+
+/*********************************************************
+*NAME:          lgmBlastOpenGroundCatches
+*PURPOSE:
+*  Whether an explosion on open ground (not a building, a
+*  half building, a pillbox or a base) catches a builder
+*  dx, dy world units from it, by the lgm_blast_shape
+*  rule: hitRulesBuilderOpenGroundShape (hit_rules.h).
+*
+*ARGUMENTS:
+*  shape     - The lgm_blast_shape rule
+*  pillRange - The pill_range rule
+*  dx        - Explosion X less the builder's X
+*  dy        - Explosion Y less the builder's Y
+*********************************************************/
+static inline bool lgmBlastOpenGroundCatches(int32_t shape, int32_t pillRange,
+                                             long dx, long dy) {
+  return hitRulesBuilderOpenGroundShape((int) shape, (int) pillRange, (double) dx,
+                                        (double) dy);
+}
 
 typedef struct lgmObj *lgm;
 

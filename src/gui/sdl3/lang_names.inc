@@ -1539,6 +1539,8 @@ static const LangNameEntry kLangNameTable[] = {
     { "STR_LV_GAME_STARTED", STR_LV_GAME_STARTED },
     { "STR_LV_HAS_JOINED", STR_LV_HAS_JOINED },
     { "STR_LV_HIDE_LOBBY", STR_LV_HIDE_LOBBY },
+    { "STR_LV_HIT_BOXES", STR_LV_HIT_BOXES },
+    { "STR_LV_HIT_BOXES_TIP", STR_LV_HIT_BOXES_TIP },
     { "STR_LV_HUD_ALL_TEAMS", STR_LV_HUD_ALL_TEAMS },
     { "STR_LV_HUD_DEAD", STR_LV_HUD_DEAD },
     { "STR_LV_HUD_NAME_TEAM", STR_LV_HUD_NAME_TEAM },
@@ -1654,6 +1656,11 @@ static const LangNameEntry kLangNameTable[] = {
     { "STR_LV_SAVE_NAME_VS", STR_LV_SAVE_NAME_VS },
     { "STR_LV_SCN_ANNOUNCE", STR_LV_SCN_ANNOUNCE },
     { "STR_LV_SCN_ANNOUNCE_TO", STR_LV_SCN_ANNOUNCE_TO },
+    { "STR_LV_SCREEN_TRUE_EXPL", STR_LV_SCREEN_TRUE_EXPL },
+    { "STR_LV_SCREEN_TRUE_EXPL_OFF_TIP", STR_LV_SCREEN_TRUE_EXPL_OFF_TIP },
+    { "STR_LV_SCREEN_TRUE_EXPL_TIP", STR_LV_SCREEN_TRUE_EXPL_TIP },
+    { "STR_LV_SCREEN_TRUE_SHELLS", STR_LV_SCREEN_TRUE_SHELLS },
+    { "STR_LV_SCREEN_TRUE_SHELLS_TIP", STR_LV_SCREEN_TRUE_SHELLS_TIP },
     { "STR_LV_SECONDS", STR_LV_SECONDS },
     { "STR_LV_SELECT_TEAM", STR_LV_SELECT_TEAM },
     { "STR_LV_SHELLS_FMT", STR_LV_SHELLS_FMT },
@@ -2431,6 +2438,7 @@ static const LangNameEntry kLangNameTable[] = {
     { "STR_RULE_DESC_gunsight_min", STR_RULE_DESC_gunsight_min },
     { "STR_RULE_DESC_just_fired_ticks", STR_RULE_DESC_just_fired_ticks },
     { "STR_RULE_DESC_lgm_arrive_tolerance", STR_RULE_DESC_lgm_arrive_tolerance },
+    { "STR_RULE_DESC_lgm_blast_shape", STR_RULE_DESC_lgm_blast_shape },
     { "STR_RULE_DESC_lgm_boat_leave_offset", STR_RULE_DESC_lgm_boat_leave_offset },
     { "STR_RULE_DESC_lgm_boat_return_offset", STR_RULE_DESC_lgm_boat_return_offset },
     { "STR_RULE_DESC_lgm_build_ticks", STR_RULE_DESC_lgm_build_ticks },
@@ -2698,4 +2706,4 @@ static const LangNameEntry kLangNameTable[] = {
     { "STR_YES", STR_YES },
 };
 
-#define K_LANG_NAME_TABLE_SIZE  2685
+#define K_LANG_NAME_TABLE_SIZE  2693

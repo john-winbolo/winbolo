@@ -5003,6 +5003,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # man_dead_pill_terrain_speed: the builder's speed on the square of a
     # dead pillbox.
     tests/unit/test_man_dead_pill_speed.c
+    # lgm_blast_shape: the open-ground area round an explosion that kills a
+    # builder.
+    tests/unit/test_lgm_blast_shape.c
     tests/unit/test_teleport_clears_rewind.c
     tests/unit/test_shell_rewind_rules.c
     tests/unit/test_input_gate.c
@@ -5153,6 +5156,11 @@ set(WINBOLO_UNITTESTS_SOURCES
     # clip-time fit resolves base cells from the log's own snapshots
     # (test_lv_calibration.c).
     tests/unit/test_lv_calibration.c
+    # The lag view's shell owner matcher against the game's shell code
+    # (test_lv_shell_owner.c).
+    tests/unit/test_lv_shell_owner.c
+    # The lag view's early blast toggle (test_lv_early_blast.c).
+    tests/unit/test_lv_early_blast.c
     # Log viewer snapshot index: time lookups and a ten-day log's worth of
     # entries (test_lv_snapshot_index.c).
     tests/unit/test_lv_snapshot_index.c
@@ -5241,6 +5249,11 @@ set(WINBOLO_UNITTESTS_SOURCES
     # The bars the viewer draws over each tank: where they go, how full
     # they are and their colours (lv_tank_bars.h, header only).
     tests/unit/test_lv_tank_bars.c
+    # The hit areas the viewer draws round each tank and each builder: the
+    # engine's own rules (lv_hitbox.h and hit_rules.h, header only).
+    tests/unit/test_lv_hitbox.c
+    # The hit rules the engine and the log viewer share (hit_rules.h).
+    tests/unit/test_hit_rules.c
     # A click on a tank on the viewer's map: which tank a point is on and
     # the mark round the selected one (lv_tank_pick.h, header only).
     tests/unit/test_lv_tank_pick.c
@@ -6058,8 +6071,27 @@ set(_unit_test_names
     lv_player_lag_read
     lv_lag_track
     lv_lag_ring
+    lv_lag_view_toggle
     lv_lag_feature_default_off
     lv_lag_view_draw
+    lv_lag_view_own_shells
+    lv_lag_view_lost_owner
+    lv_shell_owner_recording
+    lv_shell_owner_rules
+    lv_shell_owner_real_flight
+    lv_shell_owner_start
+    lv_shell_owner_link
+    lv_shell_owner_one_line
+    lv_shell_owner_ids
+    lv_early_blast_rules
+    lv_early_blast_ended
+    lv_early_blast_frames
+    lv_early_blast_match
+    lv_early_blast_hide
+    lv_early_blast_needs_own_shells
+    lv_early_blast_same_place
+    lv_early_blast_many_players
+    lv_early_blast_watch_miss
     lv_lag_view_rename
     lv_overrun_read
     log_roundtrip_ping
@@ -6681,6 +6713,14 @@ set(_unit_test_names
     man_dead_pill_walk_across_water
     man_dead_pill_lifted_waits_for_tank
     man_dead_pill_brain_walk
+    lgm_blast_shape_half_square
+    lgm_blast_shape_mac_box
+    lgm_blast_shape_mac_area
+    lgm_blast_shape_solid_square
+    lgm_blast_shape_classic_matches_old
+    lgm_blast_shape_pill_range
+    lgm_blast_shape_classic_144
+    lgm_blast_shape_for_version
     teleport_erases_tank_rewind_record
     teleport_shell_hits_new_place
     teleport_rewind_refills
@@ -7939,6 +7979,7 @@ set(_unit_test_names
     lv_scripts_json_hostile_values
     lv_scripts_json_over_cap
     lv_scripts_json_close_clears
+    lv_scripts_json_blast_shape_by_version
     lv_rule_changes_collected
     lv_rule_changes_seek
     lv_rule_changes_plain_round
@@ -7984,6 +8025,13 @@ set(_unit_test_names
     lv_overview_neutral_row
     lv_tank_status_sums
     lv_tank_bars_sums
+    lv_hitbox_sums
+    lv_hitbox_lgm_fit
+    lv_hitbox_lgm_pick
+    lv_hitbox_outline
+    lv_hitbox_zone_from_version
+    hit_rules_builder_matches_engine
+    hit_rules_tank_matches_engine
     lv_tank_pick_sums
     lv_marks_fade
     lv_window_size_parse
@@ -8147,6 +8195,42 @@ set(_unit_test_names
 # wbv_summary_capture is omitted for the same reason: it (re)writes the
 # committed tests/fixtures/wbv/*.summary files that wbv_fixture_summaries
 # compares against, via `WinBoloUnitTests --test wbv_summary_capture`.
+
+# unit_test_names_match: every test registered in tests/unit/test_main.c
+# must be in _unit_test_names, so CTest runs it. Left out on purpose: the
+# fixture writers above (test_main.c s_fixtureWriters) and the netdebug_*
+# tests, which the WB_NETDEBUG block further down registers. A test that is
+# missing stops the configure with its name. The match ends at the comma
+# after the name, so a registration wrapped onto two lines is read too.
+set(_unit_test_on_demand
+    wire_corpus_capture
+    spectator_seed_capture
+    wbv_v2_capture
+    wbv_summary_capture
+)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+             "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/test_main.c")
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/test_main.c"
+     _unit_test_main_lines
+     REGEX "^[ \t]*{[ \t]*\"[^\"]+\"[ \t]*,")
+set(_unit_test_missing "")
+foreach(_line IN LISTS _unit_test_main_lines)
+    string(REGEX REPLACE "^[ \t]*{[ \t]*\"([^\"]+)\".*$" "\\1"
+           _unit_test_main_name "${_line}")
+    if(NOT _unit_test_main_name IN_LIST _unit_test_names
+       AND NOT _unit_test_main_name IN_LIST _unit_test_on_demand
+       AND NOT _unit_test_main_name MATCHES "^netdebug_")
+        list(APPEND _unit_test_missing ${_unit_test_main_name})
+    endif()
+endforeach()
+if(_unit_test_missing)
+    list(JOIN _unit_test_missing ", " _unit_test_missing_text)
+    message(FATAL_ERROR
+            "unit_test_names_match: tests/unit/test_main.c registers tests "
+            "that are not in _unit_test_names: ${_unit_test_missing_text}. "
+            "Add each one to _unit_test_names in CMakeLists.txt.")
+endif()
+
 foreach(_name IN LISTS _unit_test_names)
     add_test(NAME unit.${_name}
              COMMAND $<TARGET_FILE:WinBoloUnitTests> --test ${_name})

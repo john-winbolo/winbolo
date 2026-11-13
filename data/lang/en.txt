@@ -1255,6 +1255,11 @@ STR_LV_LAG_OFF=Turn off
 STR_LV_LAG_HUD_TIP={string1}, {number} ms round trip
 STR_LV_LAG_MENU=See What the Selected Player Saw
 STR_LV_LAG_MENU_TIP=Draw the round as the selected tank's player saw it on their own screen. The recording must hold lag records
+STR_LV_SCREEN_TRUE_SHELLS=Toggle Screen-True Own Shells
+STR_LV_SCREEN_TRUE_SHELLS_TIP=On: the selected player's own shells are drawn at the present, as their own screen drew them at once. Off: they are drawn at the old time, as every other shell is
+STR_LV_SCREEN_TRUE_EXPL=Toggle Screen-True Local Explosions
+STR_LV_SCREEN_TRUE_EXPL_TIP=On: the selected player's own shells explode at once where they end, and the server's later explosion of each is hidden. Off: each one explodes when the server's explosion comes
+STR_LV_SCREEN_TRUE_EXPL_OFF_TIP=Turn on Toggle Screen-True Own Shells first
 STR_LV_LAG_LINE_BOT=Lag: a bot, screen {number} ms behind
 STR_LV_TIMING_HEADER=Server timing
 STR_LV_TIMING_AT=Recorded at {string1} of the round
@@ -1307,6 +1312,10 @@ STR_LV_PILL_NUMBERS_TIP=The number of each pillbox beside it on the map, the num
 STR_LV_PILL_NUMBERS_LIST=Numbers: {string1}
 STR_LV_MSG_PILL_CAPTURED={player} captured Neutral Pillbox {number}
 STR_LV_MSG_PILL_STOLEN={player} just stole pillbox {number} from {other}
+
+# Log viewer: the hit area round each tank and builder on the map (Options)
+STR_LV_HIT_BOXES=Toggle Hit Boxes
+STR_LV_HIT_BOXES_TIP=Over each tank on the map, the circle a shell must reach to hit it. Over each builder out of his tank, the area an explosion must be in to kill him
 
 # Log viewer dialogs
 STR_LV_ASSIGN_COLOURS_HINT=Assign colours to each player team:
@@ -2744,6 +2753,7 @@ STR_RULE_DESC_tank_collision_mac=Whether tanks use Mac Bolo's direction-dependen
 STR_RULE_DESC_tank_deep_sea_safe=Whether a tank with no boat can drive over deep sea without drowning. Off is the classic game: deep sea drowns a tank with no boat. A tank that is out on deep sea with no boat when this goes back off drowns on the next tick.
 STR_RULE_DESC_tank_hit_sets_off_mines=Whether a shell that hits a tank sets off a mine on the square it bursts on. Off is the default: the hit leaves the mines on that square alone. On, as in WinBolo 2.1, the hit sets off a mine there, so a shot at a tank can set off the mines it has just laid under or behind it. A shell that hits a pillbox, a base or the ground, or that runs out, sets off a mine either way.
 STR_RULE_DESC_man_dead_pill_terrain_speed=Whether a builder on the square of a dead pillbox walks at the speed of the terrain under it. Off is the default, as in Mac Bolo: the square of a dead pillbox is as fast as a road, whatever the pillbox stands on, and a builder can walk onto it even on water. On, as in WinBolo 2.1, he walks at the speed of the terrain under the pillbox, so a dead pillbox on swamp, crater, rubble or forest is slow to reach, and one on water stops him unless it is the square he is going to.
+STR_RULE_DESC_lgm_blast_shape=The area of open ground round an explosion that kills a builder. 0, "Half-square circle", is the WinBolo rule: a circle of radius 128, half a square, edge included. 1, "Mac Bolo box", is the Mac Bolo rule: a box that reaches under 128 from the explosion on each axis, so it reaches further on a diagonal. 2, "Mac Bolo equivalent area circle", is the default: a circle of radius 144, about the same area as the box. An explosion on a building, a half building, a pillbox or a base still kills only a builder on that square. Every shape also stops at pill_range: a builder further than pill_range from the explosion is safe.
 
 # Rule range wording
 STR_RULE_RANGE_BETWEEN={string1} to {string2}

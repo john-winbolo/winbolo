@@ -132,8 +132,9 @@ void lv_screenLgmDestroy(screenLgm *value) {
 *  frame      - Frame identifer of the tank
 *  wx         - X world offset inside the map square (wx >> 4 == px)
 *  wy         - Y world offset inside the map square (wy >> 4 == py)
+*  slot       - The player whose builder it is
 *********************************************************/
-void lv_screenLgmAddItem(screenLgm *value, BYTE mx, BYTE my, BYTE px, BYTE py, BYTE frame, BYTE wx, BYTE wy) {
+void lv_screenLgmAddItem(screenLgm *value, BYTE mx, BYTE my, BYTE px, BYTE py, BYTE frame, BYTE wx, BYTE wy, BYTE slot) {
   screenLgm q;
 
   New(q);
@@ -144,6 +145,7 @@ void lv_screenLgmAddItem(screenLgm *value, BYTE mx, BYTE my, BYTE px, BYTE py, B
   q->wx = wx;
   q->wy = wy;
   q->frame = frame;
+  q->slot = slot;
   q->next = (*value);
   (*value) = q;
 }
@@ -219,4 +221,13 @@ void lv_screenLgmGetSubPixel(screenLgm *value, BYTE itemNum, BYTE *wx, BYTE *wy)
   }
 }
 
+BYTE lv_screenLgmGetSlot(screenLgm *value, BYTE itemNum) {
+  BYTE count = 1;
+  screenLgm q = *value;
 
+  while (count < itemNum && NonEmpty(q)) {
+    count++;
+    q = ScreenLgmsTail(q);
+  }
+  return (q != NULL && count == itemNum) ? q->slot : NEUTRAL;
+}

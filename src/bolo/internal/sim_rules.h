@@ -263,6 +263,14 @@ typedef struct SimRules {
                                             square walks at the speed of the
                                             terrain under it, not road */
 
+    /* ---- Builder blast shape ---- appended to preserve rule indices */
+    int32_t lgm_blast_shape;         /* the open-ground area an explosion
+                                        catches a builder in: 0 the
+                                        half-square circle, 1 the Mac Bolo
+                                        box, 2 the Mac Bolo equivalent area
+                                        circle, the classic value
+                                        (LGM_BLAST_SHAPE_*) */
+
 } SimRules;
 
 /*********************************************************

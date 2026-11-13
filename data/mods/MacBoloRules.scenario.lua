@@ -62,6 +62,15 @@
 -- sets 2, which is 1.41 to 2.24, 2.09 on average. The rule is a whole
 -- number, so 2 is the nearest it comes to Mac Bolo.
 --
+-- Builder blast. A shell or mine that goes off on open ground kills a
+-- builder near it. WinBolo counts "near" as a circle of radius 144 world
+-- units, edge included (it was 128, half a square, before the
+-- lgm_blast_shape rule). Mac Bolo counts it as a box: under
+-- 128 from the explosion on each axis, so it reaches further on a
+-- diagonal, about 180 at the corners. This part sets lgm_blast_shape to 1,
+-- the box. An explosion on a building, a half building, a pillbox or a
+-- base still kills only a builder on that square, as before.
+--
 -- Starts. The engine tells on_choose_start which start the lobby put the
 -- seat on: the start its player picked by hand, else one on the team's
 -- side, else the engine's own spread of the field. That start is the
@@ -111,6 +120,7 @@
 --   superboom           superboom threshold
 --                       (big_explosion_threshold, 60).
 --   parachute           parachute speed (lgm_helicopter_speed, 2).
+--   builder_blast       builder blast box (lgm_blast_shape, 1).
 --   spawn_starts        the Mac Bolo start pick for spawns.
 --   first_start_lobby   "Override first start to what was chosen in lobby".
 --                       On (the default): a tank the lobby has a start
@@ -139,12 +149,12 @@ scenario = {
   description = "Plays the Mac Bolo shell pushback, pillbox shell cap, " ..
                 "tank clearance, pillbox massage, angry pillbox fire " ..
                 "rate, pillbox shell range, base defence circle, " ..
-                "superboom threshold, parachute speed and spawn " ..
-                "starts. " ..
+                "superboom threshold, parachute speed, builder blast " ..
+                "box and spawn starts. " ..
                 "Each part can be turned off in the lobby.",
   api = 1,
   author = "WinBolo",
-  updated = "2026-11-05T18:00Z",
+  updated = "2026-11-07T12:00Z",
   kind = "mod",
   bound = false,
 
@@ -189,6 +199,10 @@ scenario = {
     { id = "parachute", label = "Mac Bolo parachute speed",
       type = "bool", default = true },
 
+    -- Builder blast: the Mac Bolo box round an explosion on open ground.
+    { id = "builder_blast", label = "Mac Bolo builder blast box",
+      type = "bool", default = true },
+
     -- Starts: the two-pass Mac Bolo pick for spawns.
     { id = "spawn_starts", label = "Mac Bolo spawn starts", type = "bool",
       default = true },
@@ -222,6 +236,7 @@ local PILL_SHELL_RANGE  = game.setting("pill_shell_range")
 local BASE_DEFENCE      = game.setting("base_defence")
 local SUPERBOOM         = game.setting("superboom")
 local PARACHUTE         = game.setting("parachute")
+local BUILDER_BLAST     = game.setting("builder_blast")
 local SPAWN_STARTS      = game.setting("spawn_starts")
 local FIRST_START_LOBBY = game.setting("first_start_lobby")
 
@@ -283,6 +298,12 @@ end
 if PARACHUTE then
   -- A parachuting builder flies 2 world units a tick, not 3.
   rules.lgm_helicopter_speed = 2
+end
+
+if BUILDER_BLAST then
+  -- 1 is the Mac Bolo box, 2 the classic circle of radius 144 and 0 the
+  -- old WinBolo circle of radius 128.
+  rules.lgm_blast_shape = 1
 end
 
 scenario.rules = rules

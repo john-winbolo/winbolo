@@ -57,6 +57,7 @@
 #include "tank.h"
 #include "types.h"
 #include "util.h"
+#include "hit_rules.h"       /* hitRulesBuilderCaughtShape */
 #include "../winbolonet/winbolonet_core.h"
 
 
@@ -632,11 +633,14 @@ BYTE lgmRequestRefusal(GameSim *sim, lgm *lgman, tank *tnk, BYTE mapX, BYTE mapY
  *
  * Where the danger is now: a hit bursts 80 to 111 from the centre of a still
  * tank on the shooter's side, and the builder dies within MAP_SQUARE_MIDDLE
- * of the burst. So a hit can kill him only while he is 48 or less out: his
- * first 2 ticks out on grass and his first 4 on forest, when the tank is
- * still or drives at the shooter. A tank that drives away from the shooter
- * on a road, a boat or a base keeps pace with him, and the danger lasts as
- * long as it does. */
+ * of the burst (lgm_blast_shape 0, the old WinBolo circle; the figures
+ * above are for it). So a hit can kill him only while he is 48 or less out:
+ * his first 2 ticks out on grass and his first 4 on forest, when the tank
+ * is still or drives at the shooter. With the classic lgm_blast_shape, the
+ * circle of 144, he dies within 144 of the burst, so the danger lasts while
+ * he is 64 or less out: his first 3 ticks on grass and his first 6 on
+ * forest. A tank that drives away from the shooter on a road, a boat or a
+ * base keeps pace with him, and the danger lasts as long as it does. */
 #define LGM_START_OFFSET 16
 
 /*********************************************************
@@ -1664,9 +1668,10 @@ void lgmGetScreenCoords(lgm *lgman, BYTE leftPos, BYTE topPos, BYTE *mx, BYTE *m
 *  tnk       - Pointer to the tank
 *********************************************************/
 /* Whether an explosion at (wx, wy) catches a man at (lgmWorldX, lgmWorldY):
-   within half a square of it on open ground, or on the very square when the
-   explosion is on a wall, a pillbox or a base. The one test every builder
-   death is decided by. */
+   in the lgm_blast_shape rule's area round it on open ground (within 144
+   in the classic table, lgmBlastOpenGroundCatches), or on the very
+   square when the explosion is on a wall, a pillbox or a base. The one test
+   every builder death is decided by. */
 static bool lgmBlastCatches(GameSim *sim, WORLD lgmWorldX, WORLD lgmWorldY, WORLD wx, WORLD wy) {
   map *mp = &sim->mp;
   pillboxes *pb = &sim->pb;
@@ -1674,13 +1679,10 @@ static bool lgmBlastCatches(GameSim *sim, WORLD lgmWorldX, WORLD lgmWorldY, WORL
   BYTE checkMapX;                   /* LGM X Map co-ordinate (from check position) */
   BYTE checkMapY;                   /* LGM Y Map co-ordinate (from check position) */
   bool solid;                       /* Is the map square the lgm on solid or not */
-  bool dead;                        /* Are we dead */
-  double distance;
   BYTE pos;
   BYTE mx, my;
   WORLD conv;
 
-  dead = FALSE;
   /* Map coords from check position — used for hit detection */
   conv = lgmWorldX;
   conv >>= 8;
@@ -1689,18 +1691,20 @@ static bool lgmBlastCatches(GameSim *sim, WORLD lgmWorldX, WORLD lgmWorldY, WORL
   mx = (BYTE) (wx >> 8);
   my = (BYTE) (wy >> 8);
 
-  utilIsItemInRange(lgmWorldX, lgmWorldY, wx, wy, (WORLD) sim->rules.pill_range, &distance);
   pos = mapGetPos(mp, mx, my);
   solid = FALSE;
   if (pos == BUILDING || pos == HALFBUILDING || pillsExistPos(pb, mx, my) == TRUE || basesExistPos(bs, mx, my) == TRUE) {
     solid = TRUE;
   }
-  if (solid == FALSE && distance <= MAP_SQUARE_MIDDLE) {
-    dead = TRUE;
-  } else if (solid == TRUE && checkMapX == mx && checkMapY == my) {
-    dead = TRUE;
-  }
-  return dead;
+  /* The rule (hit_rules.h), the one the Log Viewer draws its hit boxes
+     from: on a solid square only his own square, on open ground the
+     lgm_blast_shape rule's area round the explosion (a circle of radius
+     144, within pill_range, in the classic table). */
+  return hitRulesBuilderCaughtShape(sim->rules.lgm_blast_shape, solid,
+                                    checkMapX == mx && checkMapY == my,
+                                    (double) ((long) wx - (long) lgmWorldX),
+                                    (double) ((long) wy - (long) lgmWorldY),
+                                    sim->rules.pill_range);
 }
 
 void lgmDeathCheckAtPosition(GameSim *sim, lgm *lgman, WORLD lgmWorldX, WORLD lgmWorldY, WORLD wx, WORLD wy, BYTE owner, BYTE attacker, BYTE cause, BYTE pill, tank *tnk) {

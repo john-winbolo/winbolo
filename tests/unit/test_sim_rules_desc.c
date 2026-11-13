@@ -53,7 +53,7 @@ static const langid srdDescIds[] = {
 #undef SRD_ID_ROW
 
 /* The stretches of ids the descriptions were given, either end of each
- * included. They are seven rather than one because the first eleven rules'
+ * included. They are eight rather than one because the first eleven rules'
  * numbers were taken by the fog style strings and moved to the end of the
  * file, because the rules the table gained later were numbered on from
  * there, because the pillmassage pair start again past the map editor's
@@ -61,8 +61,9 @@ static const langid srdDescIds[] = {
  * pill_base_defend_shape and then the Mac Bolo shell push pair took the next
  * free numbers after everything else, tank_deep_sea_safe took the next
  * free one after those, tank_hit_sets_off_mines took the next free one at
- * the end of the file after that, and man_dead_pill_terrain_speed took the
- * next free one at the end of the file after that. See the block comment
+ * the end of the file after that, man_dead_pill_terrain_speed took the
+ * next free one at the end of the file after that, and lgm_blast_shape took
+ * 3478, past the ids other open branches use. See the block comment
  * in lang.h. */
 #define SRD_FIRST_ID  2345u
 #define SRD_LAST_ID   2425u
@@ -78,6 +79,8 @@ static const langid srdDescIds[] = {
 #define SRD_LAST_ID6  3042u
 #define SRD_FIRST_ID7 3428u
 #define SRD_LAST_ID7  3428u
+#define SRD_FIRST_ID8 3478u
+#define SRD_LAST_ID8  3478u
 
 /* ── 1. A description id per rule ──────────────────────────────────────── */
 
@@ -107,15 +110,18 @@ int run_sim_rules_desc_table(void) {
                           (srdDescIds[i] >= SRD_FIRST_ID6 &&
                            srdDescIds[i] <= SRD_LAST_ID6) ||
                           (srdDescIds[i] >= SRD_FIRST_ID7 &&
-                           srdDescIds[i] <= SRD_LAST_ID7),
+                           srdDescIds[i] <= SRD_LAST_ID7) ||
+                          (srdDescIds[i] >= SRD_FIRST_ID8 &&
+                           srdDescIds[i] <= SRD_LAST_ID8),
                       "%s has id %u, outside the %u..%u, %u..%u, %u..%u, "
-                      "%u..%u, %u..%u, %u..%u and %u..%u the descriptions "
-                      "were given",
+                      "%u..%u, %u..%u, %u..%u, %u..%u and %u..%u the "
+                      "descriptions were given",
                       name, srdDescIds[i], SRD_FIRST_ID, SRD_LAST_ID,
                       SRD_FIRST_ID2, SRD_LAST_ID2, SRD_FIRST_ID3,
                       SRD_LAST_ID3, SRD_FIRST_ID4, SRD_LAST_ID4,
                       SRD_FIRST_ID5, SRD_LAST_ID5, SRD_FIRST_ID6,
-                      SRD_LAST_ID6, SRD_FIRST_ID7, SRD_LAST_ID7);
+                      SRD_LAST_ID6, SRD_FIRST_ID7, SRD_LAST_ID7,
+                      SRD_FIRST_ID8, SRD_LAST_ID8);
         UT_ASSERT_MSG(desc != NULL, "%s answered a NULL description", name);
         UT_ASSERT_MSG(desc[0] != '\0', "%s answered an empty description",
                       name);

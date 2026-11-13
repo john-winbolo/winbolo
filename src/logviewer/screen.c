@@ -71,12 +71,16 @@
 #include "cJSON.h"               /* scripts.json, read into g_lv->scripts */
 #include "../common/wb_log.h"      /* the warnings a full index or list gives */
 #include "sim_rules_names.h"     /* simRulesRuleIndex — a rule's name to its index */
+#include "lv_hitbox.h"          /* lvHitboxTankZoneFor */
 #include "lv_builder_status.h"   /* the times each builder was away */
 #include "lv_ping_view.h"        /* the pings of the log, kept by time */
 #include "lv_save_name.h"        /* the players of the whole log, the lobby's map */
 #include "lv_first_view.h"       /* the box round everything that is not deep sea */
 #include "lv_pill_numbers.h"     /* the number of each pillbox on the map */
 #include "lv_lag.h"              /* each player's lag and the lag view's history */
+#include "lv_shell_owner.h"      /* which player fired each shell, for the lag view */
+#include "lv_early_blast.h"      /* own shells explode at once, for the lag view */
+#include "shell_lgm_rewind.h"     /* the builders' shorter rewind */
 
 /* The middle of the visible map from the start of the view (defined with
  * lv_screenSetViewInset). */
@@ -213,6 +217,215 @@ static void lv_lagRecordRead(uint32_t ms, const BYTE *b) {
   }
 }
 
+/* What the shell owner matcher did since the viewer started, for the
+   recording check in the unit tests. */
+static LvShellOwnerStats s_lagOwnerStats;
+
+void lv_screenLagShellOwnerStats(LvShellOwnerStats *out) {
+  if (out != NULL) {
+    *out = s_lagOwnerStats;
+  }
+}
+
+/* A shell or tank place in world units, as the matcher takes it. */
+static int32_t lv_lagWorld(BYTE m, BYTE p) {
+  return (int32_t) m * 256 + (int32_t) p * 16;
+}
+
+/* "Toggle Screen-True Own Shells" (lv_shell_owner.h). On by default: the
+   lag view draws the chosen player's own shells from the present frame. */
+static bool s_screenTrueShells = TRUE;
+
+void lv_screenSetScreenTrueShells(int enabled) {
+  s_screenTrueShells = enabled ? TRUE : FALSE;
+}
+
+int lv_screenGetScreenTrueShells(void) { return s_screenTrueShells ? 1 : 0; }
+
+/* "Toggle Screen-True Local Explosions" (lv_early_blast.h). Off by
+   default, and drawn only while "Toggle Screen-True Own Shells" is on too
+   (lv_earlyBlastOn). It is used from lv_lagFindShellOwners and
+   lv_screenUpdate. */
+static bool              s_screenTrueExpl = FALSE;
+/* Every player's early blasts, so the list is right at once when the view
+   moves to another player. */
+static LvEarlyBlastList  s_earlyBlastList;
+/* The list keeps each early blast for as long as the oldest frame the lag
+   view can draw needs it, for up to LV_EARLY_BLAST_TANKS players. */
+BOLO_STATIC_ASSERT(LV_LAG_HISTORY_MS <= LV_EARLY_BLAST_HISTORY_MS,
+                   lv_early_blast_keeps_lag_history);
+BOLO_STATIC_ASSERT(MAX_TANKS <= LV_EARLY_BLAST_TANKS, lv_early_blast_every_tank);
+
+void lv_screenSetScreenTrueExplosions(int enabled) {
+  s_screenTrueExpl = enabled ? TRUE : FALSE;
+}
+
+int lv_screenGetScreenTrueExplosions(void) { return s_screenTrueExpl ? 1 : 0; }
+
+void lv_screenEarlyBlastStats(LvEarlyBlastStats *out) {
+  if (out != NULL) {
+    *out = s_earlyBlastList.stats;
+  }
+}
+
+/* Note the own shells that ended at the newest frame f, and find the
+   server explosion of each one that is still looked for. prev and cur are
+   the shells of the entry before and of f, as the owner matcher had them;
+   nPrev is 0 when there is no entry before. A frame that starts the ring
+   again (a seek) drops every early blast held. */
+static void lv_lagEarlyBlastTick(const LvLagFrame *f, const LvShellPt *prev,
+                                 const int8_t *prevOwner, int nPrev,
+                                 const LvShellPt *cur, int nCur) {
+  LvBlastPt expl[LV_LAG_SHELLS_MAX];
+  int nExpl = 0, i, missed;
+  uint32_t missMs = 0;
+
+  if (s_lagRing.count <= 1) {
+    lv_earlyBlastListClear(&s_earlyBlastList);
+  }
+  for (i = 0; i < f->shellCount; i++) {
+    if (lv_earlyBlastIsExplFrame(f->shells[i].frame)) {
+      expl[nExpl].wx = lv_lagWorld(f->shells[i].mx, f->shells[i].px);
+      expl[nExpl].wy = lv_lagWorld(f->shells[i].my, f->shells[i].py);
+      expl[nExpl].frame = f->shells[i].frame;
+      nExpl++;
+    }
+  }
+  /* Every player's, but only the viewed player's misses are printed, and
+     only while the view draws early blasts. */
+  missed = lv_earlyBlastListTick(&s_earlyBlastList, f->ms, prev, prevOwner, nPrev, cur, nCur,
+                                 expl, nExpl, s_lagViewSlot, &missMs);
+  if (missed > 0 && s_lagViewSlot >= 0 && lv_earlyBlastOn(s_screenTrueShells, s_screenTrueExpl)) {
+    fprintf(stderr,
+            "logviewer: early blast: no server explosion for player %d's shell at %u ms "
+            "(%u of %u owned shells of all players with none)\n",
+            s_lagViewSlot, (unsigned) missMs, (unsigned) s_earlyBlastList.stats.missed,
+            (unsigned) s_earlyBlastList.stats.ended);
+  }
+}
+
+/* An explosion place as the map's shell list takes it. */
+static BYTE lv_lagMapOf(int32_t w) {
+  return (BYTE) ((w < 0 ? 0 : w) >> 8);
+}
+
+static BYTE lv_lagPixelOf(int32_t w) {
+  return (BYTE) (((w < 0 ? 0 : w) & 255) >> 4);
+}
+
+/* lv_shellOwnerLink sets curOwners only up to LV_SHELL_OWNER_MAX_SHELLS,
+   and the copy back below reads all nCur of them. */
+BOLO_STATIC_ASSERT(LV_LAG_SHELLS_MAX <= LV_SHELL_OWNER_MAX_SHELLS,
+                   lv_lag_shells_fit_owner_link);
+
+/* The id the next new shell is given (LvLagShell.id). */
+static uint16_t s_lagShellIdNext;
+
+/* Make what lv_shellOwnerLinkIds found about the shells before (ev) true
+   in every frame of the history but the newest, which has it already. A
+   shell is drawn from the present frame when its owner is the viewed
+   player and from the old frame otherwise, so its owner must be the same
+   in every frame: a shell whose owner is lost now has none in the old
+   frames too, and two shells that went on as one share one id. */
+static void lv_lagApplyShellIdEvents(const LvShellOwnerIdEvents *ev) {
+  int n, i, k;
+  if (ev->nMerge == 0 && ev->nLost == 0) {
+    return;
+  }
+  for (n = 1; n < s_lagRing.count; n++) {
+    LvLagFrame *g = &s_lagRing.frames[(s_lagRing.newest - n + LV_LAG_FRAMES) % LV_LAG_FRAMES];
+    for (i = 0; i < g->shellCount; i++) {
+      LvLagShell *sh = &g->shells[i];
+      for (k = 0; k < ev->nMerge; k++) {
+        if (sh->id == ev->mergeFrom[k]) {
+          sh->id = ev->mergeTo[k];
+        }
+      }
+      for (k = 0; k < ev->nLost; k++) {
+        if (sh->id == ev->lost[k]) {
+          sh->owner = LV_SHELL_OWNER_NONE;
+        }
+      }
+    }
+  }
+}
+
+/* Give the shells of the newest frame f their owners and ids
+   (lv_shell_owner.h), from the frame of the entry before it, and note
+   which tanks fired. With "Toggle Screen-True Own Shells" on, the lag view
+   draws the chosen player's own shells at the present, as the player's own
+   client drew them, and every other shell at the old time.
+
+   This runs at every entry while the lag display preference is on, also
+   with no view chosen: a shell's owner comes from its first record, so a
+   shell in flight when the view is turned on must have been followed from
+   its start. The matcher tests each shell only against the shells before
+   with its own direction, which keeps that cheap. */
+static void lv_lagFindShellOwners(LvLagFrame *f) {
+  const LvLagFrame *prev = NULL;
+  static LvShellOwnerIdEvents ev;
+  LvShellPt prevPts[LV_LAG_SHELLS_MAX];
+  int8_t prevOwners[LV_LAG_SHELLS_MAX];
+  uint16_t prevIds[LV_LAG_SHELLS_MAX];
+  LvShellPt curPts[LV_LAG_SHELLS_MAX];
+  int8_t curOwners[LV_LAG_SHELLS_MAX];
+  uint16_t curIds[LV_LAG_SHELLS_MAX];
+  int curIdx[LV_LAG_SHELLS_MAX];
+  LvGunTank guns[LV_SHELL_OWNER_MAX_TANKS];
+  int nPrev = 0, nCur = 0, i;
+
+  if (s_lagRing.count >= 2) {
+    prev = &s_lagRing.frames[(s_lagRing.newest - 1 + LV_LAG_FRAMES) % LV_LAG_FRAMES];
+    if (prev->ms + LV_LAG_ENTRY_MS != f->ms) {
+      prev = NULL;
+    }
+  }
+  memset(guns, 0, sizeof(guns));
+  for (i = 0; i < LV_LAG_SLOTS && i < MAX_TANKS && i < LV_SHELL_OWNER_MAX_TANKS; i++) {
+    LvLagTank *t = &f->tank[i];
+    t->shells = g_lv->tankInv[i].shells;
+    if (prev != NULL) {
+      t->fired = (t->shells < prev->tank[i].shells);
+      /* The drop and the shell's first record are in the same entry; the
+         entry before is let in too, in case they are not. */
+      guns[i].on = t->on;
+      guns[i].wx = lv_lagWorld(t->mx, t->px);
+      guns[i].wy = lv_lagWorld(t->my, t->py);
+      guns[i].dir = (uint8_t) (t->frame & 15);
+      guns[i].fired = t->fired || prev->tank[i].fired;
+    }
+  }
+  for (i = 0; i < f->shellCount; i++) {
+    if (lv_shellOwnerIsShellFrame(f->shells[i].frame)) {
+      curPts[nCur].wx = lv_lagWorld(f->shells[i].mx, f->shells[i].px);
+      curPts[nCur].wy = lv_lagWorld(f->shells[i].my, f->shells[i].py);
+      curPts[nCur].dir = (uint8_t) (f->shells[i].frame - 9);
+      curIdx[nCur++] = i;
+    }
+  }
+  if (prev != NULL) {
+    for (i = 0; i < prev->shellCount; i++) {
+      if (lv_shellOwnerIsShellFrame(prev->shells[i].frame)) {
+        prevPts[nPrev].wx = lv_lagWorld(prev->shells[i].mx, prev->shells[i].px);
+        prevPts[nPrev].wy = lv_lagWorld(prev->shells[i].my, prev->shells[i].py);
+        prevPts[nPrev].dir = (uint8_t) (prev->shells[i].frame - 9);
+        prevIds[nPrev] = prev->shells[i].id;
+        prevOwners[nPrev++] = prev->shells[i].owner;
+      }
+    }
+  }
+  lv_shellOwnerLinkIds(prevPts, prevOwners, prevIds, nPrev, prev != NULL, curPts, nCur, guns,
+                       (prev != NULL) ? LV_SHELL_OWNER_MAX_TANKS : 0,
+                       lv_screenHasTankStock() != 0, curOwners, curIds, &s_lagShellIdNext,
+                       &ev, &s_lagOwnerStats);
+  for (i = 0; i < nCur; i++) {
+    f->shells[curIdx[i]].owner = curOwners[i];
+    f->shells[curIdx[i]].id = curIds[i];
+  }
+  lv_lagApplyShellIdEvents(&ev);
+  lv_lagEarlyBlastTick(f, prevPts, prevOwners, nPrev, curPts, nCur);
+}
+
 /* Note where the map draws everything at this entry, as the history's
    newest frame. */
 static void lv_lagCaptureTick(void) {
@@ -227,7 +440,9 @@ static void lv_lagCaptureTick(void) {
     sh->px = q->px;
     sh->py = q->py;
     sh->frame = q->frame;
+    sh->owner = LV_SHELL_OWNER_NONE;
   }
+  lv_lagFindShellOwners(f);
 }
 
 /* TRUE while the chosen player is still the one in the slot. */
@@ -257,13 +472,20 @@ static bool lv_lagViewPlayerHere(void) {
 
 /* The frame the lag view draws at the playhead, or NULL to draw the present:
    the view is off, its player has no record yet, or the history holds no
-   frame that old. */
-static const LvLagFrame *lv_lagViewFrame(uint32_t *behindMs) {
+   frame that old. lgmFrame, when not NULL, takes the frame the builders are
+   drawn from: the server tests builders one entry less far back than tanks
+   (shellLgmRewind), so that is a newer frame. It is NULL when the tanks'
+   frame is. */
+static const LvLagFrame *lv_lagViewFrame(uint32_t *behindMs, const LvLagFrame **lgmFrame) {
   const LvLagRecord *rec;
   uint32_t behind;
+  const LvLagFrame *f;
 
   if (behindMs != NULL) {
     *behindMs = 0;
+  }
+  if (lgmFrame != NULL) {
+    *lgmFrame = NULL;
   }
   if (g_lv == NULL || !s_lagFeature || !lv_lagViewPlayerHere()) {
     return NULL;
@@ -283,7 +505,16 @@ static const LvLagFrame *lv_lagViewFrame(uint32_t *behindMs) {
       behind > g_lv->timeRunning) {
     return NULL;
   }
-  return lv_lagRingFind(&s_lagRing, g_lv->timeRunning - behind);
+  f = lv_lagRingFind(&s_lagRing, g_lv->timeRunning - behind);
+  if (f != NULL && lgmFrame != NULL) {
+    /* Newer than f, so the ring has it whenever it has f. */
+    uint32_t lgmBehind = (uint32_t) shellLgmRewind(rec->rewind) * LV_LAG_ENTRY_MS;
+    *lgmFrame = lv_lagRingFind(&s_lagRing, g_lv->timeRunning - lgmBehind);
+    if (*lgmFrame == NULL) {
+      *lgmFrame = f;
+    }
+  }
+  return f;
 }
 
 bool lv_screenLagRecorded(void) {
@@ -395,7 +626,7 @@ bool lv_screenLagViewStatus(char *name, size_t nameSize, int *behindMs, bool *dr
   if (lv_screenLagViewSlot() < 0) {
     return FALSE;
   }
-  f = lv_lagViewFrame(&behind);
+  f = lv_lagViewFrame(&behind, NULL);
   if (name != NULL && nameSize > 0) {
     /* The name the player has now, so a rename shows at once. */
     name[0] = '\0';
@@ -660,6 +891,26 @@ static void lv_ruleChangesClear(void) {
   g_lv->ruleChangesTruncated = FALSE;
 }
 
+/* The value of a rule the recording never set. A recording holds only the
+ * rules a script set or changed, so a rule it does not hold played the
+ * classic value of the build that wrote it. lgm_blast_shape is the one rule
+ * whose classic value changed: builds before 2.2.2 played 0 (the circle of
+ * 128) and later ones 2 (the circle of 144), so for a loaded recording it
+ * comes from the version in the header (simRulesLgmBlastShapeForVersion). A
+ * version of 0.0.0 says nothing (a spectator seed before its version is
+ * filled in), and with no recording open the answer is this build's. */
+static double lv_screenRuleUnsetValue(int index) {
+  if (index == SIM_RULE_lgm_blast_shape && g_lv != NULL &&
+      g_lv->logLoaded == TRUE &&
+      (g_lv->versionMajor != 0 || g_lv->versionMinor != 0 ||
+       g_lv->versionRevision != 0)) {
+    return (double) simRulesLgmBlastShapeForVersion(g_lv->versionMajor,
+                                                    g_lv->versionMinor,
+                                                    g_lv->versionRevision);
+  }
+  return simRulesClassicValue(index);
+}
+
 double lv_screenRuleValueAt(int index, uint32_t ms) {
   const LvRuleChange *c;
   bool                found  = FALSE;
@@ -689,7 +940,7 @@ double lv_screenRuleValueAt(int index, uint32_t ms) {
       return g_lv->scripts.rules[i].value;
     }
   }
-  return simRulesClassicValue(index);
+  return lv_screenRuleUnsetValue(index);
 }
 
 /* The table of the times each builder was away, further down. */
@@ -730,6 +981,28 @@ static void lv_rulesRefresh(void) {
       lv_screenRuleValueAt(SIM_RULE_base_full_armour, t), 0, 255);
   g_lv->rules.pillMaxArmour  = lv_rulesClampInt(
       lv_screenRuleValueAt(SIM_RULE_pill_max_armour, t), 1, 255);
+  /* The ranges sim_rules.c holds them to. */
+  g_lv->rules.tankHitRadius  = lv_rulesClampInt(
+      lv_screenRuleValueAt(SIM_RULE_tank_hit_radius, t), 1, 255);
+  g_lv->rules.pillRange      = lv_rulesClampInt(
+      lv_screenRuleValueAt(SIM_RULE_pill_range, t), 0, 65535);
+  /* The engine plays any lgm_blast_shape other than 1 or 2 as 0, the
+     circle of 128 (hitRulesBuilderOpenGroundShape), so a value outside 0 to
+     2 reads as 0 here. A server holds the rule to 0 to 2, so only a
+     hand-made file can have one. */
+  {
+    double shape = lv_screenRuleValueAt(SIM_RULE_lgm_blast_shape, t);
+    g_lv->rules.lgmBlastShape = (shape >= (double)LGM_BLAST_SHAPE_HALF_SQUARE &&
+                                 shape <= (double)LGM_BLAST_SHAPE_MAC_AREA)
+                                    ? (int)shape
+                                    : LGM_BLAST_SHAPE_HALF_SQUARE;
+  }
+  /* The tank's hit zone: the circle, or the square of games from before it
+     (1.91 and earlier), from the header's version and whether the file has
+     rule records. */
+  g_lv->rules.tankHitZone    = lvHitboxTankZoneFor(
+      g_lv->versionMajor, g_lv->versionMinor, g_lv->versionRevision,
+      g_lv->ruleChangeCount > 0);
 }
 
 int lv_screenGetRuleChanges(const LvRuleChange **out) {
@@ -1264,6 +1537,7 @@ void lv_screenUpdate(updateType value) {
   screenBullets sb;
   screenLgm sl;
   const LvLagFrame *lagFrame; /* the lag view's frame; NULL draws the present */
+  const LvLagFrame *lagLgmFrame; /* the frame its builders are drawn from */
   shells lagShells = NULL;
 
 
@@ -1276,16 +1550,85 @@ void lv_screenUpdate(updateType value) {
   }
 
   lv_screenUpdateView(value);
-  lagFrame = lv_lagViewFrame(NULL);
+  lagFrame = lv_lagViewFrame(NULL, &lagLgmFrame);
   if (lagFrame != NULL) {
     /* The lag view: the other tanks, the builders and the shells where the
-       chosen player's screen showed them. */
+       chosen player's screen showed them. The player's own client drew
+       its own shells at once, from its own tank, so with "Toggle
+       Screen-True Own Shells" on those come from the present frame
+       (lv_lagViewFrame has checked the newest frame is the playhead's).
+       With it off they stay at the old time too. A shell with no clear
+       owner stays at the old time. The builders are one entry newer than
+       the tanks (shellLgmRewind), as the server tests them. */
+    const LvLagFrame *now = &s_lagRing.frames[s_lagRing.newest];
+    const bool ownAtPresent = s_screenTrueShells;
+    /* Toggle Screen-True Local Explosions (lv_early_blast.h): the early blasts. */
+    const bool earlyBlast = lv_earlyBlastOn(s_screenTrueShells, s_screenTrueExpl);
     int i;
     lv_playersSetLagFrame(lagFrame, s_lagViewSlot);
+    lv_playersSetLagLgmFrame(lagLgmFrame);
     lagShells = lv_shellsCreate();
+    /* A frame's shells are in the reverse of the game's draw order (the
+       viewer's shell list is built front first), and lagShells draws in
+       the order items go in. So the kept shells go in from the end of the
+       frame, and the newest explosion is drawn on top, as in the game. */
+    bool keep[LV_LAG_SHELLS_MAX];
+    /* Toggle Screen-True Local Explosions (lv_early_blast.h): each early
+       blast of the chosen player hides its server explosion, one record
+       per frame. */
+    LvBlastPt explPts[LV_LAG_SHELLS_MAX];
+    int explIdx[LV_LAG_SHELLS_MAX];
+    bool hidden[LV_LAG_SHELLS_MAX];
+    int nExpl = 0;
     for (i = 0; i < lagFrame->shellCount; i++) {
       const LvLagShell *sh = &lagFrame->shells[i];
-      lv_shellsAddItem(&lagShells, sh->mx, sh->my, sh->px, sh->py, sh->frame);
+      /* The chosen player's own shells come from the present frame. A
+         shell has one owner in every frame (lv_lagApplyShellIdEvents), so
+         each one is drawn from one of the two. */
+      keep[i] = (!ownAtPresent || (int) sh->owner != s_lagViewSlot);
+      if (keep[i] && earlyBlast && lv_earlyBlastIsExplFrame(sh->frame)) {
+        explPts[nExpl].wx = lv_lagWorld(sh->mx, sh->px);
+        explPts[nExpl].wy = lv_lagWorld(sh->my, sh->py);
+        explPts[nExpl].frame = sh->frame;
+        explIdx[nExpl++] = i;
+      }
+    }
+    if (nExpl > 0) {
+      int k;
+      lv_earlyBlastHideRecords(&s_earlyBlastList, s_lagViewSlot, lagFrame->ms, explPts, nExpl,
+                               hidden);
+      for (k = 0; k < nExpl; k++) {
+        if (hidden[k]) {
+          keep[explIdx[k]] = FALSE;
+        }
+      }
+    }
+    for (i = lagFrame->shellCount - 1; i >= 0; i--) {
+      const LvLagShell *sh = &lagFrame->shells[i];
+      if (keep[i]) {
+        lv_shellsAddItem(&lagShells, sh->mx, sh->my, sh->px, sh->py, sh->frame);
+      }
+    }
+    for (i = now->shellCount - 1; i >= 0 && ownAtPresent; i--) {
+      const LvLagShell *sh = &now->shells[i];
+      if ((int) sh->owner == s_lagViewSlot) {
+        lv_shellsAddItem(&lagShells, sh->mx, sh->my, sh->px, sh->py, sh->frame);
+      }
+    }
+    if (earlyBlast) {
+      /* The early blasts, at the present where the own shells ended. */
+      for (i = 0; i < LV_EARLY_BLAST_MAX; i++) {
+        const LvEarlyBlast *b = &s_earlyBlastList.b[i];
+        BYTE frame;
+        if ((int) b->owner != s_lagViewSlot) {
+          continue;
+        }
+        frame = lv_earlyBlastFrameAt(b, now->ms);
+        if (frame != 0) {
+          lv_shellsAddItem(&lagShells, lv_lagMapOf(b->wx), lv_lagMapOf(b->wy),
+                           lv_lagPixelOf(b->wx), lv_lagPixelOf(b->wy), frame);
+        }
+      }
     }
   }
   {
@@ -2922,6 +3265,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
       lv_utilGetNibbles(opt1, &onBoat, &frame);
       lv_utilGetNibbles(opt4, &px, &py);
       lv_playersUpdateLgm(onBoat, opt2, opt3, px, py, frame);
+      lv_playersLgmNoteTime(onBoat, g_lv->timeRunning);
       break;
     case log_MessageAll:
       logReadBytes(&opt1, 1);
@@ -5961,6 +6305,9 @@ LogViewerState *lv_decoderCreate(bool fromMainMenu) {
   lv->rules.baseFullMines  = 90;
   lv->rules.baseFullArmour = 90;
   lv->rules.pillMaxArmour  = 15;
+  lv->rules.tankHitRadius  = 112;   /* TANK_HIT_RADIUS */
+  lv->rules.pillRange      = 2048;  /* PILLBOX_RANGE */
+  lv->rules.lgmBlastShape  = LGM_BLAST_SHAPE_CLASSIC;
 
   lv->fromMainMenu = fromMainMenu;
   lv->screenSizeX = MAIN_SCREEN_SIZE_X + 15; /* default 30 */
