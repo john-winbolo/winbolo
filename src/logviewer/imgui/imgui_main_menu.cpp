@@ -219,6 +219,9 @@ void lv_imgui_main_menu_init(struct LogViewerState *lv) {
     /* On until turned off: a number is small and hides nothing. */
     lv_platform_config_get_string("LOGVIEWER", "Pillbox Numbers", "Yes", val, sizeof(val));
     lv_drawSetPillNumbers((val[0] == 'N' || val[0] == 'n') ? 0 : 1);
+    /* Off until asked for: the lines sit over the map. */
+    lv_platform_config_get_string("LOGVIEWER", "Hit Boxes", "No", val, sizeof(val));
+    lv_drawSetHitBoxes((val[0] == 'Y' || val[0] == 'y') ? 1 : 0);
     /* On until turned off. */
     lv_platform_config_get_string("LOGVIEWER", "Animate Jumps", "Yes", val, sizeof(val));
     s_jump_anim = !(val[0] == 'N' || val[0] == 'n');
@@ -281,6 +284,8 @@ void lv_imgui_main_menu_save(void) {
                                   lv_drawGetBuilderStatus() ? "Yes" : "No");
     lv_platform_config_set_string("LOGVIEWER", "Pillbox Numbers",
                                   lv_drawGetPillNumbers() ? "Yes" : "No");
+    lv_platform_config_set_string("LOGVIEWER", "Hit Boxes",
+                                  lv_drawGetHitBoxes() ? "Yes" : "No");
     lv_platform_config_set_string("LOGVIEWER", "Animate Jumps", s_jump_anim ? "Yes" : "No");
     lv_platform_config_set_string("LOGVIEWER", LV_LAG_PREF_KEY,
                                   lv_screenGetLagFeature() ? "Yes" : "No");
@@ -808,6 +813,17 @@ int lv_imgui_main_menu_bar(void) {
             }
             if (ImGui::IsItemHovered()) {
                 ImGui::SetTooltip("%s", langGetText(STR_LV_PILL_NUMBERS_TIP));
+            }
+            if (ImGui::MenuItem(langGetText(STR_LV_HIT_BOXES), NULL,
+                                lv_drawGetHitBoxes() != 0)) {
+                /* Drawn over the map each time it is put on the screen, as
+                 * the bars are. */
+                lv_drawSetHitBoxes(lv_drawGetHitBoxes() ? 0 : 1);
+                lv_windowNeedRedraw();
+                clicked = 1;
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("%s", langGetText(STR_LV_HIT_BOXES_TIP));
             }
             if (lv_screenGetLagFeature()) {
                 /* The lag view for the selected tank's player: ticked while

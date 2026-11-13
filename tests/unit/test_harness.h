@@ -4719,6 +4719,18 @@ int run_lv_tank_status_sums(void);
 /* The bars the log viewer draws over each tank (test_lv_tank_bars.c): their
  * size and place for a size of map square, the filled part, the colours. */
 int run_lv_tank_bars_sums(void);
+/* The hit areas the log viewer draws round each tank and each builder
+ * (test_lv_hitbox.c): the engine's tank circle and builder catch test. */
+int run_lv_hitbox_sums(void);
+int run_lv_hitbox_lgm_fit(void);
+int run_lv_hitbox_lgm_pick(void);
+int run_lv_hitbox_outline(void);
+/* The tank's hit zone from a recording's version (test_lv_calibration.c). */
+int run_lv_hitbox_zone_from_version(void);
+/* The hit rules the engine and the log viewer share (test_hit_rules.c):
+ * the same answers as the engine's sums before they moved to hit_rules.h. */
+int run_hit_rules_builder_matches_engine(void);
+int run_hit_rules_tank_matches_engine(void);
 /* A click on a tank on the log viewer's map (test_lv_tank_pick.c): which
  * tank a point is on, and where the mark round the selected one goes. */
 int run_lv_tank_pick_sums(void);
