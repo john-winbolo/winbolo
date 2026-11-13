@@ -1014,14 +1014,14 @@ static void overviewViewDrawEntities(OverviewView *v,
     ctx.zoomFactor = 1;
     ctx.sheetScale = ss;
     ctx.scale      = zoomScale;
-    /* The full screen map draws from the host's sheet and has no padded copy
-       of its own, so its sprites still sample the packed layout. Its camera
-       is continuous, which is the condition the leak needs, so this is the
-       next one to hand an atlas — it wants the builder plumbed through
-       overviewViewRenderOffscreen and through the copy sdl3imgui.cpp builds
-       for the pop-out. */
-    ctx.spritesTex = NULL;
-    ctx.sprites    = NULL;
+    /* The host's padded copy of the moving sprites. The camera is
+       continuous, so a tank sits at a fractional position and a filtered
+       sample off the packed sheet would blend in the sprite next door — the
+       pillbox's bottom row above a tank on a boat. Both NULL when the host
+       has none, and the sprites draw from the sheet as before. precise is
+       read only by mapViewRenderCentered, which this view does not call. */
+    ctx.spritesTex = sprites;
+    ctx.sprites    = atlas;
     ctx.precise    = NULL;
 
     SDL_memset(&ov, 0, sizeof(ov));

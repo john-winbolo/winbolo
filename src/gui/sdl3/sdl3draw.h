@@ -58,6 +58,7 @@ extern "C" {
  * side can work from the same rectangles. */
 #include "overview_hud_layout.h"
 #include "gfx_settings.h"    /* GfxTextureFilter */
+#include "sprite_atlas.h"    /* SpriteAtlas */
 
 /* Portable RECT when not compiling on Windows */
 #ifndef _WIN32
@@ -84,6 +85,11 @@ int sdl3DrawGetZoomFactor(void);
 SDL_Window *sdl3DrawGetWindow(void);
 SDL_Renderer *sdl3DrawGetRenderer(void);
 SDL_Texture *sdl3DrawGetTilesTexture(void);
+/* The main renderer's padded copy of the moving sprites, built off the
+   sheet sdl3DrawGetTilesTexture returns (sprite_atlas.h says why). Writes
+   its index to *atlas when atlas is not NULL. Both NULL when there is none,
+   and a caller then draws its sprites from the sheet. */
+SDL_Texture *sdl3DrawGetSpritesTexture(const SpriteAtlas **atlas);
 
 /* In-window Map Overview mode: the overview fills the game window and the
    classic 15x15 view and chrome are not drawn. */

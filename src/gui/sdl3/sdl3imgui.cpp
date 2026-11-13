@@ -3017,11 +3017,15 @@ static void mapOverviewPanelRenderOffscreen(ClientSim *cs) {
     clientMutexWaitFor();
     clientSimFillOverviewSnapshot(cs, s_overviewSnapshot);
     clientMutexRelease();
+    /* The main renderer's padded sprite copy goes with its sheet, as it
+       does for the full screen map. */
+    const SpriteAtlas *ovAtlas = nullptr;
+    SDL_Texture *ovSprites = sdl3DrawGetSpritesTexture(&ovAtlas);
     SDL_Texture *prevTarget = SDL_GetRenderTarget(s_renderer);
     overviewViewRenderOffscreen(s_overviewView, s_renderer,
                                 sdl3DrawGetTilesTexture(),
-                                sdl3DrawGetSheetScale(), NULL, NULL,
-                                ovCross,
+                                sdl3DrawGetSheetScale(),
+                                ovSprites, ovAtlas, ovCross,
                                 s_mapOverviewPanelW, s_mapOverviewPanelH,
                                 s_overviewSnapshot, false);
     SDL_SetRenderTarget(s_renderer, prevTarget);
