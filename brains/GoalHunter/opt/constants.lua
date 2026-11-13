@@ -2971,6 +2971,112 @@ M.LGM_DEST_INTERCEPT      = true
 -- plain lead. Forgotten when his heading is lost (stop, turn, walk home).
 M.LGM_DEST_PASS_THROUGH   = true
 
+-- ── LGM-kill improvements: ONE MASTER SWITCH (2026-09-13, Andrew) ─────────
+-- (Ported onto main 2026-11-13.)  The master for the whole 2026-09-13
+-- LGM-kill package.  OFF, the brain is exactly what it was before the
+-- package: the shared fire check is KILL_LGM_FIRE_WU (above), the capture
+-- shot uses CAPTURE_LGM_HUNT_FIRE_WU (or 100 when that is -1), capture-hunt
+-- candidates are admitted by the old along-the-ray test (7 tiles ahead,
+-- 128 wu off the ray), min-perp ranking, a held range key from 2 steps out,
+-- and no aim refinement.  ON, all of it changes together -- see
+-- LGM_KILL_FIRE_WU, CAPTURE_LGM_HUNT_TRACK_TILES,
+-- CAPTURE_LGM_HUNT_PICK_NEAREST_PILL, CAPTURE_SIGHT_HOLD_MIN_STEPS,
+-- LGM_KILL_AIM_WU and LGM_KILL_AIM_TILES, which hold the VALUES but are only
+-- read while this is true.
+--
+-- kill_lgm.tuning() is the one place that reads it; every check takes the
+-- table that returns and tests one field.
+--
+-- DIFFICULTY: the package is HARD ONLY.  MODE_LEVELS sets it false in the
+-- easy and medium bundles of default (turtle copies those bundles); hard has
+-- no entry, so hard gets it.
+-- KEEL: false.
+M.LGM_KILL_IMPROVED    = true
+
+-- ── The ONE LGM-kill fire check (2026-09-13, Andrew) ──────────────────────
+-- Every LGM-kill shot in the brain asks the same question: is the predicted
+-- shell impact close enough to the man's predicted position to be worth a
+-- shell?  This is that distance, in world units, while LGM_KILL_IMPROVED is
+-- on.  The shared kill_lgm evaluator, the capture-pill hunt shot (unless
+-- CAPTURE_LGM_HUNT_FIRE_WU overrides it), the armour-trigger hunt shot and
+-- the overlays all read it.  With the package off, the shared evaluator
+-- uses KILL_LGM_FIRE_WU instead, as before.
+--
+-- What the ENGINE does (src/bolo/lgm.c lgmDeathCheck): a man standing on OPEN
+-- GROUND dies when a shell explodes within MAP_SQUARE_MIDDLE = 128 wu of him
+-- (half a tile).  A man standing on a SOLID square (a live pill, a base, a
+-- building) dies ONLY when the shell lands in his EXACT tile -- no splash at
+-- all.  The exact-tile test is separate in the code and is NOT changed by this
+-- knob; it matches the engine and must stay.
+--
+-- Why the default is WIDER than the engine's 128: the check compares
+-- PREDICTED points, not real ones.  A shot allowed at up to one full tile of
+-- predicted offset still lands inside the killing half-tile whenever the
+-- prediction was half right, and a reload is cheap -- refusing the shot
+-- costs more than a miss does.  KEEL: 64.
+M.LGM_KILL_FIRE_WU     = 256  -- wu: take the shot inside one full tile
+
+-- ── Aim target: a QUARTER tile (2026-09-13, Andrew) ───────────────────────
+-- LGM_KILL_FIRE_WU says when the shot is worth taking.  This says when the AIM
+-- is finished.  Aim error = the distance from the predicted impact point (at
+-- the length the shot will actually fly at) to the man's predicted point.
+-- Above this the capture hunt keeps closing the error every tick; the shot
+-- still goes the moment the error is inside the fire check, so "shoot at a
+-- tile, aim for a quarter tile" -- each shell is fired while the next one is
+-- being aimed better.
+--
+-- Why the aim needed help at all.  Nothing ever "held" the aim once a shot was
+-- allowed; these are floors the old code could not get under:
+--   * the gunsight steps in 128 wu units along the ray, so the along-the-ray
+--     residual alone is up to 64 wu at the best possible rounding;
+--   * steering's turn deadband is 2 brads for every goal, and at the 6-7 tile
+--     range this shot is taken at (~1700 wu) 2 brads is about 80 wu SIDEWAYS --
+--     on its own wider than the quarter tile we are asking for.
+-- The refinement search (init.lua STEP 4b) picks the turn and sight step that
+-- minimise the error, with a deadband derived from THIS knob and the range
+-- (asin(AIM_WU / dist), floored at 1 brad) instead of the flat 2.
+--
+-- H1 arena, same seed (2026-09-13): aim error at the shot, median 143 -> 100
+-- wu, captures 15 both.  Read only while LGM_KILL_IMPROVED is true.
+-- KEEL: 64 (moot: keel turns the master off, so no refinement runs).
+M.LGM_KILL_AIM_WU      = 64   -- wu: keep refining until the impact is this close
+
+-- ── How CLOSE the man must be before the aim refinement runs at all ───────
+-- (2026-09-13, Andrew.)  The straight-line distance from the tank to the
+-- man's PREDICTED point, in tiles.  Beyond it the hunt steers exactly as it
+-- did before the aim work -- the sight follows the man, the turn is only the
+-- nudge -- and STEP 4b does nothing.  Inside it the refinement drives the aim
+-- down to LGM_KILL_AIM_WU.
+--
+-- Why the limit exists.  The refinement asks for a much sharper turn than the
+-- nudge does, and at 7-10 tiles out that turn goes on a lead point that is
+-- still seconds away: the approach line to the corpse bends, the tank arrives
+-- late or off the pill, and the hunt itself gets shorter.  Measured in H1 --
+-- with no limit the run held HALF the hunting ticks it held with the
+-- refinement off (499 against 1163), for the same captures.  With 5 tiles:
+-- 26 shots / 1168 hunting ticks / 10 builder deaths seen; 3 tiles never
+-- engaged.  Close in, the same sharp turn is exactly what puts the shell on
+-- him.
+--
+-- 0 = no limit (refine at any range).
+-- Read only while LGM_KILL_IMPROVED is true.
+-- KEEL: 5 (moot: keel turns the master off, so no refinement runs).
+M.LGM_KILL_AIM_TILES   = 5    -- tiles: refine only this close to the man
+
+-- The refinement search's THROTTLE axis (2026-09-13, Andrew).  Off by design:
+-- a speed step moves the tank about 2 wu in a tick against an along-the-ray
+-- residual of up to 64 wu, while the capture-hunt's whole promise is that it
+-- never brakes for the builder (the throttle stays navigation's).  true opens
+-- the axis for a bench.  Read only while LGM_KILL_IMPROVED is true.
+-- KEEL: false.
+M.LGM_KILL_AIM_THROTTLE = false
+
+-- The engine's real kill radius (lgm.c MAP_SQUARE_MIDDLE).  Not a tuning
+-- value -- it is what the engine does -- but it lives here so the debug
+-- overlay can draw "what would actually kill" next to "what we shoot at".
+-- (2026-09-13.)  KEEL: 128 (the engine is the same in keel).
+M.LGM_ENGINE_KILL_WU   = 128
+
 -- ── Capture-pill LGM hunt (2026-09-08) ────────────────────────────────────
 -- A hostile LGM standing on or beside the dead pill we are driving to grab is
 -- a builder rebuilding the corpse out from under us: the moment his repair
@@ -3071,17 +3177,62 @@ M.CAPTURE_LGM_HUNT_SWEEP_FOCUS_RADIUS = 2.5
 -- can never re-introduce the 2062 pin because it can't pull the heading off the
 -- pill line.  KEEL: 0 (no nudge -- the old tol-turn-blend runs unchanged).
 M.CAPTURE_LGM_HUNT_SWEEP_NUDGE_BRADS = 10
--- FIRE_WU: open-ground impact tolerance (wu) for the capture-target shot -- fire
--- when the predicted shell impact lands within this of the man's predicted
--- position.  The engine's real LGM splash kill radius is 128 wu (a full tile,
--- lgm.c), so 100 leaves a margin.  BUT a man standing on a SOLID square (a live
--- pill, a base, or a building) is killed by lgm.c's death check ONLY when the
--- shell lands in his EXACT tile (lgmDeathCheckAtPosition: solid square =>
--- same-square-only, no splash); for those the shot requires impact-tile ==
--- man-tile instead of this radius.  The SHARED kill_lgm evaluator's ½-tile
--- (64 wu) gate is UNCHANGED -- only the capture-target man gets this wider gate.
--- KEEL: 64 (equals the shared gate, so the wider shot can never fire beyond it).
-M.CAPTURE_LGM_HUNT_FIRE_WU       = 100
+-- FIRE_WU: PER-FEATURE OVERRIDE of the shared LGM-kill fire check for the
+-- capture-target shot only (2026-09-13, Andrew).  -1 (the default) means
+-- "use M.LGM_KILL_FIRE_WU", so the capture shot and the shared kill_lgm
+-- evaluator open at exactly the same distance and there is only one number
+-- to tune; any value >= 0 overrides it for this shot alone.  (It cannot
+-- simply be nil: the cfg=/preset= override path refuses a name that is not
+-- already in this table, and preset=keel must still be able to set it.)
+-- With LGM_KILL_IMPROVED off (easy and medium), -1 means 100 wu, the value
+-- this knob held before the package, so those levels play as they did.
+-- As with the shared check, a man on a SOLID square is killed by lgm.c ONLY
+-- when the shell lands in his EXACT tile (lgmDeathCheckAtPosition: solid
+-- square => same-square-only, no splash), so that shot uses the exact-tile
+-- test instead of this radius.
+-- KEEL: 64 (the old shared ½-tile check, pinned so keel is unchanged).
+M.CAPTURE_LGM_HUNT_FIRE_WU       = -1
+-- TRACK_TILES: how far from the TANK a hostile LGM can stand and still be the
+-- man the hunt tracks, in tiles, measured STRAIGHT (Euclidean tank -> his
+-- predicted point).  He must also be inside CAPTURE_LGM_HUNT_RADIUS of the
+-- target pill, as before.  (2026-09-13, Andrew.)
+--
+-- What this replaces (read only while LGM_KILL_IMPROVED): the old admission was
+-- ALONG THE CURRENT HEADING -- 0 < along <= 7 tiles -- plus a 128 wu limit on
+-- his distance from the shell ray.  While the nose was still swinging onto him
+-- he failed both, so the hunt dropped back to resting the sight on the pill and
+-- the gunsight yo-yoed (14 -> 8 -> 14) between two different targets, one for
+-- the nose and one for the sight.  A straight radius does not care which way
+-- the nose points, so the man stays the target across the whole turn and the
+-- sight closes on him once instead of twice.  The FIRE decision is untouched:
+-- the shot still needs the predicted impact inside the fire check (or his
+-- exact tile on a solid square) and him inside KILL_LGM_SHOOT_RANGE.
+-- KEEL: 7 (the old 7-tile reach; note keel also turns the package off, which
+-- restores the along-the-ray SHAPE as well as this distance).
+M.CAPTURE_LGM_HUNT_TRACK_TILES   = 10
+-- PICK_NEAREST_PILL: when more than one hostile LGM qualifies, which one the
+-- hunt tracks (2026-09-13, Andrew).  true = the one whose predicted point is
+-- CLOSEST TO THE TARGET PILL (tie-break: the smaller distance from the shell
+-- ray); false = the old pick, smallest distance from the ray, tie-break
+-- nearest along it.
+--
+-- Switching target mid-aim is fine here, and is the point: the pill is the
+-- thing we are trying to take, so the man standing nearest to it is the one
+-- about to rebuild it out from under us.  A man passing by predicts away from
+-- the pill; a man walking in to repair predicts onto it.  KEEL: false.
+M.CAPTURE_LGM_HUNT_PICK_NEAREST_PILL = true
+-- HOLD_MIN_STEPS: the gunsight gap (in sightLen units) at which the capture
+-- sight driver HOLDS the range key instead of TAPPING it once (2026-09-13,
+-- Andrew).  A held key steps the engine EVERY engine tick; the brain thinks
+-- every SECOND tick, and the engine applies a packet 2-3 ticks after we send
+-- it, so a hold keeps stepping for a few ticks after the sight has arrived.
+-- Recorded overshoot (session 20260913_001400_1_survival, bot 12, ticks
+-- 4585-4592): 14, 12, 10, 8, 8, 10, 12, 14 -- the sight sailed past the
+-- target and came back.
+-- 2 = today's behaviour (hold whenever more than one unit is left).
+-- Read only while LGM_KILL_IMPROVED is true.
+-- KEEL: 2.  Left at 2 on purpose: raising it is a separate decision.
+M.CAPTURE_SIGHT_HOLD_MIN_STEPS   = 2
 -- REFIRE_MAX_MISSES: keep firing at the same man every reload-available tick,
 -- but give up after this many consecutive misses (a shot whose flight completed
 -- with the man still alive).  Counter resets on a kill or a target change, and
@@ -6656,7 +6807,19 @@ M.PRESETS = {
     CAPTURE_LGM_HUNT_RADIUS_CAP_BY_DIST = true,  -- 2026-09-08: pinned (feature is keel-off)
     CAPTURE_LGM_HUNT_SWEEP_FOCUS_RADIUS = 2.5,  -- moot, feature keel-off
     CAPTURE_LGM_HUNT_SWEEP_NUDGE_BRADS = 0,     -- no heading nudge (no-op value)
-    CAPTURE_LGM_HUNT_FIRE_WU      = 64,         -- capture fire gate = the shared ½-tile gate (no wider shot)
+    --   2026-09-13: the LGM-kill package (hard only).  KEEL: master off, so
+    --   none of the values below it is read; they are pinned to the old play
+    --   anyway.
+    LGM_KILL_IMPROVED             = false,      -- master OFF: the whole 2026-09-13 LGM-kill package is out
+    LGM_KILL_FIRE_WU              = 64,         -- the old shared ½-tile LGM-kill fire check (engine kills at 128)
+    CAPTURE_LGM_HUNT_FIRE_WU      = 64,         -- capture fire check = the shared ½-tile check (no wider shot)
+    CAPTURE_LGM_HUNT_TRACK_TILES  = 7,          -- the old 7-tile reach (shape is restored by the master being off)
+    CAPTURE_LGM_HUNT_PICK_NEAREST_PILL = false, -- old pick: smallest distance from the shell ray
+    CAPTURE_SIGHT_HOLD_MIN_STEPS  = 2,          -- hold the range key from 2 units out (today's behaviour)
+    LGM_KILL_AIM_WU               = 64,         -- moot: no aim refinement with the master off
+    LGM_KILL_AIM_TILES            = 5,          -- moot: no aim refinement with the master off
+    LGM_KILL_AIM_THROTTLE         = false,      -- refinement never touches the throttle
+    LGM_ENGINE_KILL_WU            = 128,        -- engine fact (lgm.c MAP_SQUARE_MIDDLE), overlay only
     CAPTURE_LGM_HUNT_REFIRE_MAX_MISSES = 0,     -- no capture-target refire (off)
     -- 2026-09-08: a hostile LGM within CAPTURE_LGM_PRIORITY_RADIUS tiles
     -- (Chebyshev) of the pill the capture flow is driving at now gets his
@@ -7562,6 +7725,7 @@ M.MODE_LEVELS = {
   default = {
     hard = {},                    -- empty = today's constants (no-op)
     medium = {
+      LGM_KILL_IMPROVED = false,    -- 2026-09-13: the LGM-kill package is HARD ONLY
       SQUAD_MAX_SIZE = 1,
       HARD_TAKE_MIN_HP = 13, BLITZ_SWERVE_ONLY_WHEN_HIT = false, SQUAD_HELP_RANGE = 18,
       -- press when ahead (Stage 3 Pass A)
@@ -7597,6 +7761,7 @@ M.MODE_LEVELS = {
       -- Blitz: solo, never gangs up (BLITZ_ENABLED=false is the Stage 3 Pass A
       -- "solo" switch -- NOT SQUAD_MAX_SIZE=1, which never reaches quorum)
       BLITZ_ENABLED = false,
+      LGM_KILL_IMPROVED = false,    -- 2026-09-13: the LGM-kill package is HARD ONLY
       SQUAD_MAX_SIZE = 1, HARD_TAKE_MIN_HP = 15,
       BLITZ_SWERVE_ONLY_WHEN_HIT = false,
       -- Skill: bad at moving targets; pills/bases stay accurate
