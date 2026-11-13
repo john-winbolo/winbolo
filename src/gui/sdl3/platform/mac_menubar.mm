@@ -17,7 +17,6 @@
 
 /* Declared in sdl3imgui.cpp. Avoid pulling that header in here so this
  * compilation unit stays narrow. */
-extern "C" void windowSetQuitting(void);
 extern "C" void sdl3ImguiShowAbout(void);
 extern "C" void sdl3ImguiShowSettings(void);
 
@@ -303,9 +302,21 @@ static NSImage *macMenubarTintedUiIcon(NSString *basename, NSColor *tint) {
 @end
 
 @implementation WBMenuBridge
+/* Posted as SDL_EVENT_QUIT rather than calling windowSetQuitting directly.
+ * This menu bar is installed when a game starts and is never taken down, so
+ * after the first game it is also what the lobby, the welcome screen and
+ * every pre-game dialog see. Those run their own event loops and know
+ * nothing of the game's quit flag: they end on the quit event, through
+ * dialogHandleQuitEvent, the same one SDL's default menu posts before the
+ * first game. The in-game loop turns the event into windowSetQuitting
+ * itself, so a quit during a game is unchanged. The Log Viewer's bar does
+ * the same (lv_push_sdl_quit). */
 - (void)onQuit:(id)sender {
     (void)sender;
-    windowSetQuitting();
+    SDL_Event ev;
+    SDL_zero(ev);
+    ev.type = SDL_EVENT_QUIT;
+    SDL_PushEvent(&ev);
 }
 - (void)onAbout:(id)sender {
     (void)sender;

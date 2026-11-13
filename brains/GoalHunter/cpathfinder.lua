@@ -731,13 +731,17 @@ function M.lgm_walk_path(smx, smy, dmx, dmy, bless_mx, bless_my,
 end
 
 --- Mark the tiles the LGM cannot walk onto so the LGM travel sim treats them
---- as walls. The bot's brain map (pf->map) is PURE TERRAIN — it carries no pill
---- or base overlay — so the sim can't see live pills (engine manspeed 0) or
---- enemy bases (basesCantDrive) on its own. The brain stamps both here each
---- tick. `tiles` is an array of { mx, my } pairs; the overlay is cleared and
---- rebuilt each call. Call once per tick before any lgm_travel_ticks_map check.
-function M.set_lgm_blocked(tiles)
-  return cpf_set_lgm_blocked(tiles or {})
+--- as walls, and the tiles he walks at road speed whatever the terrain. The
+--- bot's brain map (pf->map) is PURE TERRAIN — it carries no pill or base
+--- overlay — so the sim can't see live pills (engine manspeed 0), enemy bases
+--- (basesCantDrive) or dead pills (engine manspeed = road, whatever is under
+--- the pill: man_dead_pill_terrain_speed 0) on its own. The brain stamps all
+--- three here each tick. `tiles` and `road_tiles` are arrays of { mx, my }
+--- pairs; the overlay is cleared and rebuilt each call, and a wall wins over a
+--- road mark on the same tile. Call once per tick before any
+--- lgm_travel_ticks_map check.
+function M.set_lgm_blocked(tiles, road_tiles)
+  return cpf_set_lgm_blocked(tiles or {}, road_tiles or {})
 end
 
 --- Estimate tank travel time in game ticks along a straight line.

@@ -341,7 +341,7 @@ int run_lv_dock_clear_prefs(void) {
     }
     /* Every panel with a length. */
     for (i = 0; i < LV_DOCK_CLEAR_PANELS; i++) len[i] = 50 + i * 37;
-    UT_ASSERT_MSG(lvDockClearLensFormat(len, text, sizeof(text)) > 0, "all nine fit");
+    UT_ASSERT_MSG(lvDockClearLensFormat(len, text, sizeof(text)) > 0, "all ten fit");
     UT_ASSERT_MSG(lvDockClearLensParse(text, lenBack) == 1, "read back");
     for (i = 0; i < LV_DOCK_CLEAR_PANELS; i++) {
         UT_ASSERT_MSG(lenBack[i] == len[i], "every panel as written");
@@ -410,10 +410,11 @@ int run_lv_dock_default_layout(void) {
 
     /* The right sidebar from the top, Events taking the slack. */
     stack = lvDockDefaultStackOf(LV_DOCK_RIGHT);
-    UT_ASSERT_MSG(stack.count == 6, "six panels on the right");
+    UT_ASSERT_MSG(stack.count == 7, "seven panels on the right");
     UT_ASSERT_MSG(strcmp(stack.slot[0].id, "###gameinfo") == 0 && strcmp(stack.slot[1].id, "###lvscnpanel") == 0 &&
                   strcmp(stack.slot[2].id, "###overview") == 0 && strcmp(stack.slot[3].id, "###iteminfo") == 0 &&
-                  strcmp(stack.slot[4].id, "###events") == 0 && strcmp(stack.slot[5].id, "###comments") == 0,
+                  strcmp(stack.slot[4].id, "###events") == 0 && strcmp(stack.slot[5].id, "###chat") == 0 &&
+                  strcmp(stack.slot[6].id, "###comments") == 0,
                   "the order on the right");
     UT_ASSERT_MSG(stack.slot[4].anchor, "Events takes the slack");
     stack = lvDockDefaultStackOf(LV_DOCK_LEFT);

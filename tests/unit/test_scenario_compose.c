@@ -217,6 +217,9 @@
                                     * scenarioHostScriptCount: the
                                     * composite and how many scripts
                                     * went into it */
+#include "tutorial_scripts.h"      /* TUTORIAL_MAPS_SCRIPT_POPUPS and
+                                    * tutorialMapsScriptHasPopup: which
+                                    * scripts keep the popup row */
 #include "everard_map.h"
 #include "threads.h"
 #include "test_harness.h"
@@ -2553,11 +2556,19 @@ int run_scenario_compose_pairs_game_complete(void) {
     size_t      fields;
 
     /* What scenarioLuaInstall puts on game: a closure per row, a number per
-       constant, TERRAIN, and one table per word table. */
+       constant, TERRAIN, and one table per word table. The host then takes
+       the popup row back off every script that is not a shipped tutorial's
+       own map script (scnEnvDropPopup), and neither of these two is one:
+       the base is a map script in a test folder, and a mod never gets the
+       row while TUTORIAL_MAPS_SCRIPT_POPUPS is 0. */
     (void)scenarioLuaRows(&rows);
     (void)scenarioLuaConsts(&consts);
     (void)scenarioLuaWordTables(&words);
     fields = rows + consts + 1 + words;
+    if (!tutorialMapsScriptHasPopup(TUTORIAL_MAPS_SCRIPT_POPUPS != 0, true,
+                                    false)) {
+        fields--;
+    }
 
     UT_ASSERT(scMakeDir("pairs_game"));
     UT_ASSERT(scWrite("countmod.lua", kScCountMod));
@@ -3866,6 +3877,42 @@ int run_scenario_compose_fallback_strict(void) {
                   "a scripted lobby with no scenario fell to %d, wanted "
                   "strict (%d)",
                   (int)serverSimGetGameType(sim), (int)gameStrictTournament);
+
+    scDestroy(sim);
+    return 0;
+}
+
+/* A scenario map picked with mods on, then a plain map with the mods still
+   on. The scenario put the lobby on the scripted type; the mods alone that
+   take its place leave the type the host's, so the lobby's own type comes
+   back then, not only once the last mod goes. It used to stay scripted, and
+   the lobby showed a "Scenario" row named after the mod. */
+int run_scenario_compose_mods_after_scenario_type(void) {
+    ServerSim *sim;
+
+    sim = scSim();
+    UT_ASSERT(sim != NULL);
+    serverSimSetGameType(sim, gameTournament);
+    serverSimSetScenarioIdentity(sim, lobbyScenarioMap, "Soccer", "soccer.lua",
+                                 NULL, false, false, false, false, false);
+    serverSimScenarioApplyLobbyRules(sim);
+    UT_ASSERT(serverSimGetGameType(sim) == gameScripted);
+
+    serverSimSetScenarioIdentity(sim, lobbyScenarioMod, "Mac Bolo",
+                                 "macbolo.lua", NULL, false, true, false,
+                                 false, false);
+    serverSimScenarioApplyLobbyRules(sim);
+    UT_ASSERT_MSG(serverSimGetGameType(sim) == gameTournament,
+                  "mods alone after a scenario left type %d, wanted the "
+                  "lobby's own tournament (%d)",
+                  (int)serverSimGetGameType(sim), (int)gameTournament);
+    UT_ASSERT_MSG(!serverSimGetRanked(sim),
+                  "ranked came back on while mods are still attached");
+
+    serverSimSetScenarioIdentity(sim, lobbyScenarioNone, NULL, NULL, NULL,
+                                 false, false, false, false, false);
+    serverSimScenarioApplyLobbyRules(sim);
+    UT_ASSERT(serverSimGetGameType(sim) == gameTournament);
 
     scDestroy(sim);
     return 0;

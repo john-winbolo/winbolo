@@ -34,6 +34,15 @@
  *  Decay seconds are outside the match. No preset uses the
  *  Decay policy, so the seconds are whatever the host last
  *  typed, and a preset leaves them where they are.
+ *
+ *  So is classic mode. All it does is write the other seven
+ *  and refuse edits to them while it is on; what a player sees
+ *  is the seven. A lobby that holds Classic's seven with the
+ *  flag off - set one at a time, or by a server started that
+ *  way - plays exactly as Classic does and reads as Classic.
+ *  The five rows differ in the seven alone, so leaving the
+ *  flag out never makes two of them match. Picking Classic
+ *  still turns the flag on: the table keeps it.
  *********************************************************/
 
 #ifndef VISIBILITY_PRESETS_H
@@ -84,8 +93,8 @@ bool visibilityPresetSettings(VisibilityPreset preset,
                               VisibilitySettings *out);
 
 /* The first preset whose values are exactly v, or visibilityPresetCustom
- * when none of them is. Decay seconds take no part: see the header note.
- * A NULL v reads as Custom. */
+ * when none of them is. Decay seconds and classic mode take no part: see
+ * the header note. A NULL v reads as Custom. */
 VisibilityPreset visibilityPresetMatch(const VisibilitySettings *v);
 
 /* Whether two sets are the same edit-for-edit, decay seconds included.

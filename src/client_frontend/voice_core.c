@@ -102,6 +102,15 @@ int voiceEncoderEncode(VoiceEncoder *enc, const int16_t *pcm,
     return (int)written;
 }
 
+void voiceEncoderReset(VoiceEncoder *enc) {
+    if (enc == NULL || enc->enc == NULL) {
+        return;
+    }
+    /* Clears the coding state only; bitrate, VBR, complexity and the rest
+     * of what voiceEncoderCreate set are kept. */
+    opus_encoder_ctl(enc->enc, OPUS_RESET_STATE);
+}
+
 VoiceDecoder *voiceDecoderCreate(void) {
     VoiceDecoder *v;
     int err = OPUS_OK;
@@ -152,6 +161,35 @@ int voiceDecoderDecode(VoiceDecoder *dec, const uint8_t *data, int len,
     return decoded;
 }
 
+void voiceDecoderReset(VoiceDecoder *dec) {
+    if (dec == NULL || dec->dec == NULL) {
+        return;
+    }
+    opus_decoder_ctl(dec->dec, OPUS_RESET_STATE);
+}
+
+/* The gain is worked out per sample from the index rather than stepped by a
+ * running increment, so the last sample lands on `to` exactly instead of
+ * wherever the accumulated rounding leaves it - a fade to silence has to end
+ * on zero. */
+void voiceFadeApply(int16_t *pcm, int count, float from, float to) {
+    float gain;
+    int i;
+
+    if (pcm == NULL || count <= 0) {
+        return;
+    }
+    if (count == 1) {
+        pcm[0] = (int16_t)((float)pcm[0] * to);
+        return;
+    }
+
+    for (i = 0; i < count; i++) {
+        gain = from + (to - from) * (float)i / (float)(count - 1);
+        pcm[i] = (int16_t)((float)pcm[i] * gain);
+    }
+}
+
 /* One buffered frame.  The payload cap is the encoder's own output ceiling
  * rather than the wire segment size: the framing header lives in
  * src/bolo/internal and this file is compiled into the GUI targets, which
@@ -175,6 +213,8 @@ struct VoiceSpeaker {
     uint32_t        waitingSince;   /* clock reading the wait began at */
     int             consecutivePlc; /* concealed frames since the last
                                      * real one                        */
+    bool            fadeInPending;  /* the next frame produced is the
+                                     * first of an utterance           */
     VoiceSpeakerStats stats;        /* cumulative; survives un-priming */
 };
 
@@ -185,7 +225,12 @@ static bool voiceSeqAfter(uint8_t a, uint8_t b) {
 }
 
 /* Drop everything buffered and stop playing.  The next frames to arrive
- * re-prime the buffer and set a fresh nextSeq from what they carry. */
+ * re-prime the buffer and set a fresh nextSeq from what they carry.
+ *
+ * The decoder is reset with it.  The sender resets its encoder at the start
+ * of each utterance, so the next packet expects a decoder with no history;
+ * one still holding the end of this utterance, or the concealment that
+ * followed it, decodes the first syllable against the wrong state. */
 static void voiceSpeakerUnprime(VoiceSpeaker *sp) {
     int i;
 
@@ -196,6 +241,38 @@ static void voiceSpeakerUnprime(VoiceSpeaker *sp) {
     sp->primed = false;
     sp->waiting = false;
     sp->consecutivePlc = 0;
+    sp->fadeInPending = false;
+    voiceDecoderReset(sp->dec);
+}
+
+/* Whether the frame with this sequence number is held and marks the end of
+ * the utterance. */
+static bool voiceSpeakerHoldsEnd(const VoiceSpeaker *sp, uint8_t seq) {
+    int i;
+
+    for (i = 0; i < VOICE_JITTER_SLOTS; i++) {
+        if (sp->slots[i].present && sp->slots[i].seq == seq) {
+            return (sp->slots[i].flags & VOICE_FLAG_END_OF_UTTERANCE) != 0;
+        }
+    }
+    return false;
+}
+
+/* Bring the end of a frame down to silence.  Used where playback is about to
+ * stop: the device runs dry after this frame, and a last sample left high
+ * would drop straight to nothing, which is heard as a click. */
+static void voiceSpeakerFadeTail(int16_t *pcm) {
+    voiceFadeApply(pcm + VOICE_FRAME_SAMPLES - VOICE_FADE_SAMPLES,
+                   VOICE_FADE_SAMPLES, 1.0f, 0.0f);
+}
+
+/* The first frame after priming starts from silence, decoded or concealed,
+ * and the ramp brings it in rather than letting it start mid-waveform. */
+static void voiceSpeakerFadeHead(VoiceSpeaker *sp, int16_t *pcm) {
+    if (sp->fadeInPending) {
+        voiceFadeApply(pcm, VOICE_FADE_SAMPLES, 0.0f, 1.0f);
+        sp->fadeInPending = false;
+    }
 }
 
 /* Synthesise a replacement for a frame that is missing or unusable. */
@@ -311,6 +388,7 @@ void voiceSpeakerPush(VoiceSpeaker *sp, uint8_t seq, uint8_t flags,
         sp->primed = true;
         sp->nextSeq = sp->slots[lowest].seq;
         sp->consecutivePlc = 0;
+        sp->fadeInPending = true;
     }
 
     /* An eviction means the receiver has fallen about VOICE_JITTER_SLOTS
@@ -378,9 +456,13 @@ bool voiceSpeakerPop(VoiceSpeaker *sp, int16_t *pcm, uint32_t nowMs) {
          * talker has gone away, so stop rather than conceal forever. */
         sp->waiting = false;
         voiceSpeakerConceal(sp, pcm);
+        voiceSpeakerFadeHead(sp, pcm);
         sp->nextSeq++;
         sp->consecutivePlc++;
         if (sp->consecutivePlc >= VOICE_JITTER_MAX_PLC) {
+            /* Concealment has mostly decayed by now, but not necessarily to
+             * zero, and nothing plays after this frame. */
+            voiceSpeakerFadeTail(pcm);
             voiceSpeakerUnprime(sp);
         }
         return true;
@@ -396,6 +478,7 @@ bool voiceSpeakerPop(VoiceSpeaker *sp, int16_t *pcm, uint32_t nowMs) {
     } else {
         voiceSpeakerConceal(sp, pcm);
     }
+    voiceSpeakerFadeHead(sp, pcm);
 
     /* The slot is spent either way: a payload that would not decode is no
      * more use on the next pop than it was on this one. */
@@ -403,6 +486,15 @@ bool voiceSpeakerPop(VoiceSpeaker *sp, int16_t *pcm, uint32_t nowMs) {
     sp->slots[found].present = false;
     sp->count--;
     sp->nextSeq++;
+
+    /* The sender's end-of-utterance marker is encoded silence, so the step
+     * the listener would hear is between this frame and that one.  Fading
+     * the marker itself would do nothing; this frame is the one to bring
+     * down.  The marker can only be acted on here if it has already
+     * arrived - one still in flight leaves this frame as it is. */
+    if (voiceSpeakerHoldsEnd(sp, sp->nextSeq)) {
+        voiceSpeakerFadeTail(pcm);
+    }
 
     if (decoded) {
         sp->consecutivePlc = 0;
@@ -412,6 +504,7 @@ bool voiceSpeakerPop(VoiceSpeaker *sp, int16_t *pcm, uint32_t nowMs) {
          * speaker conceals forever. */
         sp->consecutivePlc++;
         if (sp->consecutivePlc >= VOICE_JITTER_MAX_PLC) {
+            voiceSpeakerFadeTail(pcm);
             voiceSpeakerUnprime(sp);
         }
     }

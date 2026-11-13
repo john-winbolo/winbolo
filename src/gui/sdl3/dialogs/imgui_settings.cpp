@@ -2087,7 +2087,7 @@ extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
                 langGetText(STR_DLGSETTINGS_HOSTING_SCRIPTUPLOAD_SESSION),
                 langGetText(STR_DLGSETTINGS_HOSTING_SCRIPTUPLOAD_KEEP)
             };
-            int scriptIdx = 1;  /* default Allow */
+            int scriptIdx = 0;  /* default Off */
             for (int i = 0; i < 3; ++i) {
                 if (kScriptPolicyByIndex[i] == gameFrontHostingScriptUploadPolicy) {
                     scriptIdx = i;

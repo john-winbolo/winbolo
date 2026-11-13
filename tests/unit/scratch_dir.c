@@ -37,7 +37,10 @@
  * would delete the files of a run already in flight, which is the very bug
  * this exists to fix. A crash therefore leaks one small pid directory —
  * that is the deliberate trade, and `rm -rf <build dir>/test-scratch` is
- * the cure if they ever pile up.
+ * the cure if they ever pile up. The one leaked directory a process does
+ * remove is the one under its own pid, before its first use: that pid is
+ * not any live process's, and a leftover there is files a test would
+ * otherwise find in its own directory.
  */
 
 #include "test_harness.h"
@@ -123,6 +126,19 @@ bool utScratchPath(char *out, size_t outSz, const char *leaf) {
         test = "none";
     }
 
+    if (!s_atexitArmed) {
+        /* A <pid> directory already there belongs to a dead process: no
+         * live one has our pid. It is what a crashed run leaks, and Windows
+         * reuses pids soon enough that a later run used to find another
+         * run's files in its own test directories and fail on them. */
+        char procDir[1024];
+        SDL_snprintf(procDir, sizeof(procDir), "%s/%lu",
+                     WB_TEST_SCRATCH_DIR, UT_SCRATCH_PID());
+        utScratchRemoveTree(procDir);
+        atexit(utScratchAtExit);
+        s_atexitArmed = true;
+    }
+
     if (s_dir[0] == '\0' || strcmp(s_dirTest, test) != 0) {
         /* One call for the whole path: SDL_CreateDirectory makes any missing
          * parents (SDL 3.2+) and succeeds when the directory is already
@@ -134,11 +150,6 @@ bool utScratchPath(char *out, size_t outSz, const char *leaf) {
             return false;
         }
         SDL_strlcpy(s_dirTest, test, sizeof(s_dirTest));
-    }
-
-    if (!s_atexitArmed) {
-        atexit(utScratchAtExit);
-        s_atexitArmed = true;
     }
 
     if (leaf == NULL || leaf[0] == '\0') {

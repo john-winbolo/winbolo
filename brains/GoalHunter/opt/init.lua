@@ -1047,8 +1047,22 @@ function Brain.open(info)
   -- Bit-for-bit unchanged at tick_seed 0, i.e. for every bot created at game
   -- start; only a bot created mid-game (a Survival wave, a scenario spawn_bot)
   -- moves, and it moves back to what it did before the seeding.
-  state.replan_offset     = (math.random(0, C.GOAL_REPLAN_INTERVAL - 1)
-                             - state.tick_seed) % C.GOAL_REPLAN_INTERVAL
+  --
+  -- REPLAN_OFFSET_MODE (2026-11-06). "random" (KEEL) is the draw above. On
+  -- LuaJIT with no seed set, every brain starts math.random from the same
+  -- state, so every bot draws the same offset and all bots replan on the
+  -- same tick; that replan tick is where most budget kills land. "slot" puts
+  -- the replan on game time at slot * INTERVAL / 16 (rounded), so bots in
+  -- different player slots never replan on the same tick. The draw is made
+  -- in both modes, so every later math.random value is the same as before.
+  local replan_draw = math.random(0, C.GOAL_REPLAN_INTERVAL - 1)
+  if C.REPLAN_OFFSET_MODE == "slot" then
+    local slot = info.player_number or 0
+    state.replan_offset = math.floor(slot * C.GOAL_REPLAN_INTERVAL / 16 + 0.5)
+                          % C.GOAL_REPLAN_INTERVAL
+  else
+    state.replan_offset = (replan_draw - state.tick_seed) % C.GOAL_REPLAN_INTERVAL
+  end
   state.goal_set_tick     = state.tick  -- tick when current goal was chosen (for commitment hysteresis). Seeded to birth, not 0: `now - goal_set_tick` is "how long we've held this goal", so a raw 0 would read as "held it forever" on a mid-game bot's first tick and skip the commitment window entirely.
   state.goal_cooldowns    = {}   -- abandoned goals: { [key] = expiry_tick }
   state.goal_history      = {}   -- circular buffer of last N picked goals (oscillation detection)
@@ -1940,9 +1954,12 @@ function Brain.think(info)
   --      long this bot's thinks cost at tier T given current world load.
   --      This corroborates raises: we only raise if next-tier history
   --      shows it actually fits in budget.
-  --   2. If wasKilled: drop CAPACITY_KILLED_CUT tiers and mark the prior
-  --      tier as "burned" for CAPACITY_KILLED_AVOID ticks so the raise
-  --      path doesn't immediately retry it.
+  --   2. If wasKilled and this is at least the CAPACITY_KILL_STREAK_N-th
+  --      kill inside CAPACITY_KILL_STREAK_WINDOW ticks: drop
+  --      CAPACITY_KILLED_CUT tiers and mark the prior tier as "burned" for
+  --      CAPACITY_KILLED_AVOID ticks so the raise path doesn't immediately
+  --      retry it. A kill below the streak count keeps the tier for this
+  --      tick (no cut, no raise); its inflated cost is still in the EWMAs.
   --   3. Otherwise classify smoothed ratio = think_ms / target_ms:
   --        > 1.50 → drop 2 tiers
   --        > 1.20 → drop 1 tier
@@ -1988,10 +2005,37 @@ function Brain.think(info)
                                  + ratio * C.CAPACITY_EWMA_ALPHA
     end
 
-    local cur = prev_tier
+    -- Kill streak: a kill cuts tiers only when it is at least the
+    -- CAPACITY_KILL_STREAK_N-th kill inside the last
+    -- CAPACITY_KILL_STREAK_WINDOW ticks (this one counted). N <= 1 (KEEL)
+    -- cuts on every kill and keeps no list.
+    local kill_cut = false
     if killed then
+      local need = C.CAPACITY_KILL_STREAK_N or 1
+      if need <= 1 then
+        kill_cut = true
+      else
+        local kt = state._capacity_kill_ticks
+        if not kt then kt = {}; state._capacity_kill_ticks = kt end
+        local win = C.CAPACITY_KILL_STREAK_WINDOW or 100
+        local now_t = state.tick
+        local n = 0
+        for i = 1, #kt do
+          if now_t - kt[i] < win then n = n + 1; kt[n] = kt[i] end
+        end
+        for i = #kt, n + 1, -1 do kt[i] = nil end
+        n = n + 1
+        kt[n] = now_t
+        kill_cut = n >= need
+      end
+    end
+
+    local cur = prev_tier
+    if kill_cut then
       cur = math.max(1, prev_tier - C.CAPACITY_KILLED_CUT)
       state._tier_killed[prev_tier] = state.tick
+    elseif killed then
+      -- A kill below the streak count: hold the tier this tick.
     elseif tgt_ms > 0 and last_ms > 0 then
       local sm = state._capacity_ratio_ewma
       if sm > C.CAPACITY_DROP_BIG_RATIO and cur > 1 then

@@ -78,6 +78,7 @@
 #include "players.h"
 #include "shells.h"
 #include "tank.h"
+#include "threads.h"               /* the accept runs under the sim mutex */
 #include "tankexp.h"
 #include "everard_map.h"
 #include "scenario_host.h"
@@ -1156,7 +1157,9 @@ int run_scenario_kill_credit(void) {
     sffPlace(sim, SFF_SELF, lx, ly);
     sffPlace(sim, SFF_NEAR, (BYTE)(lx + SFF_AT_NEAR), ly);
     sffPlace(sim, SFF_FAR, (BYTE)(lx + SFF_AT_FAR), ly);
-    playersAcceptAlliance(gs, &gs->plyrs, NEUTRAL, SFF_NEAR, SFF_FAR, TRUE);
+    threadsWaitForMutex();
+    serverSimAcceptAlliance(sim, SFF_NEAR, SFF_FAR);
+    threadsReleaseMutex();
     UT_ASSERT_MSG(playersIsAllie(&gs->plyrs, SFF_NEAR, SFF_FAR) &&
                       !playersIsAllie(&gs->plyrs, SFF_SELF, SFF_NEAR),
                   "setup: the target and its friend are not allied");

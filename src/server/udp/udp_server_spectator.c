@@ -30,7 +30,7 @@
                                             * PACKET_HEADER_SIZE, UDP_MAX_PAYLOAD,
                                             * SDL_assert */
 #include "transport_udp_server_internal.h" /* udpServer, SpectatorConn, srvSendTo,
-                                            * mpDiagCtrlName, udpClientDeliverControl,
+                                            * udpClientDeliverControl,
                                             * serverSendJoinReject, serverNextConnId,
                                             * packConnId, MAP_DOWNLOAD_FRAMES_PER_TICK */
 #include "transport_udp.h"   /* MAX_SPECTATORS, SubscriberHandle,
@@ -286,12 +286,12 @@ static void serverSpectatorDeliverControl(void *ctx, const ControlEvent *evt) {
         size_t bodyLen = 0;
         if (enc == NULL) {
             mpDiagLog("[srv] spec deliver SKIP idx=%d type=%s reason=no-encoder",
-                      idx, mpDiagCtrlName((int)evt->type));
+                      idx, controlEventDiagName(evt->type));
             return;
         }
         if (enc(evt, NULL, msg + 3, sizeof(msg) - 3, &bodyLen) != ENCODE_OK) {
             mpDiagLog("[srv] spec deliver SKIP idx=%d type=%s reason=encode",
-                      idx, mpDiagCtrlName((int)evt->type));
+                      idx, controlEventDiagName(evt->type));
             return;
         }
         msg[0] = (uint8_t)evt->type;
@@ -306,11 +306,11 @@ static void serverSpectatorDeliverControl(void *ctx, const ControlEvent *evt) {
                         "spectator control channel overflow for slot %d, dropping event",
                         idx);
             mpDiagLog("[srv] spec OVERFLOW idx=%d type=%s -> drop",
-                      idx, mpDiagCtrlName((int)evt->type));
+                      idx, controlEventDiagName(evt->type));
             return;
         }
         mpDiagLog("[srv] spec CTRL->ch2 idx=%d type=%s bodyLen=%u",
-                  idx, mpDiagCtrlName((int)evt->type), (unsigned)bodyLen);
+                  idx, controlEventDiagName(evt->type), (unsigned)bodyLen);
     }
 }
 
