@@ -4024,6 +4024,13 @@ int run_lobby_template_no_mode_leaves_config(void);
 int run_lobby_template_seat_new_seat_base(void);
 int run_lobby_template_add_bot_takes_template(void);
 
+/* Lobby bots on a held team (test_lobby_held_team_bots.c): Add Bot and a
+ * move onto a fielded = false team make a held seat; off it, an ordinary
+ * bot; a scenario with every team fielded is unchanged. */
+int run_lobby_held_add_bot_seats_held(void);
+int run_lobby_held_move_on_and_off(void);
+int run_lobby_held_all_fielded_unchanged(void);
+
 /* A lobby map change (test_lobby_map_keeps_bots.c): the bots, their names,
  * teams and difficulties, and the host's script list all surviving a change
  * of map made through the lobby's own command. */
