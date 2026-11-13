@@ -972,6 +972,8 @@ static int overviewViewPickItemLabels(const OverviewSnapshot *snap,
  * what is drawn — only where, through the same pass the classic view uses. */
 static void overviewViewDrawEntities(OverviewView *v,
                                      SDL_Renderer *r, SDL_Texture *tiles, int ss,
+                                     SDL_Texture *sprites,
+                                     const SpriteAtlas *atlas,
                                      SDL_Texture *crosshair,
                                      const OverviewCamera *cam,
                                      int viewW, int viewH,
@@ -1012,14 +1014,14 @@ static void overviewViewDrawEntities(OverviewView *v,
     ctx.zoomFactor = 1;
     ctx.sheetScale = ss;
     ctx.scale      = zoomScale;
-    /* The full screen map draws from the host's sheet and has no padded copy
-       of its own, so its sprites still sample the packed layout. Its camera
-       is continuous, which is the condition the leak needs, so this is the
-       next one to hand an atlas — it wants the builder plumbed through
-       overviewViewRenderOffscreen and through the copy sdl3imgui.cpp builds
-       for the pop-out. */
-    ctx.spritesTex = NULL;
-    ctx.sprites    = NULL;
+    /* The host's padded copy of the moving sprites. The camera is
+       continuous, so a tank sits at a fractional position and a filtered
+       sample off the packed sheet would blend in the sprite next door — the
+       pillbox's bottom row above a tank on a boat. Both NULL when the host
+       has none, and the sprites draw from the sheet as before. precise is
+       read only by mapViewRenderCentered, which this view does not call. */
+    ctx.spritesTex = sprites;
+    ctx.sprites    = atlas;
     ctx.precise    = NULL;
 
     SDL_memset(&ov, 0, sizeof(ov));
@@ -1130,6 +1132,8 @@ extern "C" void overviewViewSetHudInsets(OverviewView *v, float left, float top,
 
 extern "C" void overviewViewRenderOffscreen(OverviewView *v, SDL_Renderer *r,
                                             SDL_Texture *tiles, int sheetScale,
+                                            SDL_Texture *sprites,
+                                            const SpriteAtlas *atlas,
                                             SDL_Texture *crosshair,
                                             int w, int h,
                                             const OverviewSnapshot *snap,
@@ -1221,6 +1225,12 @@ extern "C" void overviewViewRenderOffscreen(OverviewView *v, SDL_Renderer *r,
          * to that filter too. */
         SDL_SetTextureScaleMode(
             tiles, sdl3DrawScaleModeForFilter(gfxGetTextureFilter()));
+        /* The sprite atlas is bound by the same passes and clobbered by the
+           same ImGui draws, so it needs the same answer. */
+        if (sprites != NULL) {
+            SDL_SetTextureScaleMode(
+                sprites, sdl3DrawScaleModeForFilter(gfxGetTextureFilter()));
+        }
 
         /* How long since the last frame, taken whether or not a scroll is
          * running: a scroll started after the view sat idle would otherwise
@@ -1385,8 +1395,8 @@ extern "C" void overviewViewRenderOffscreen(OverviewView *v, SDL_Renderer *r,
         /* Sprites on top of the fog: a tank only stands on a live square, and
          * the build cursor and the gunsight are the player's own marks, so
          * neither wants dimming. */
-        overviewViewDrawEntities(v, r, tiles, sheetScale, crosshair, &v->cam,
-                                 w, h, snap, simple);
+        overviewViewDrawEntities(v, r, tiles, sheetScale, sprites, atlas,
+                                 crosshair, &v->cam, w, h, snap, simple);
     }
 
     /* Only where this view has replaced the classic one: beside the pop-out

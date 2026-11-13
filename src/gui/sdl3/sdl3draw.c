@@ -1102,6 +1102,11 @@ SDL_Texture *sdl3DrawGetTilesTexture(void) {
   return gTilesTex;
 }
 
+SDL_Texture *sdl3DrawGetSpritesTexture(const SpriteAtlas **atlas) {
+  if (atlas) *atlas = gSpriteAtlas;
+  return gSpritesTex;
+}
+
 /* The single place the mode is turned on and off, so the pointer the view may
    have switched to the game crosshair is handed back on every way out — the
    menu toggle, the end of a game and teardown all come through here. */
@@ -2803,6 +2808,7 @@ void sdl3DrawFlushOverviewInWindow(void) {
   OverviewHudLayout hud = gOverviewPrepHud;
 
   overviewViewRenderOffscreen(gOverviewView, gRenderer, gTilesTex, gSheetScale,
+                              gSpritesTex, gSpriteAtlas,
                               gCrosshairTex, w, h, gOverviewSnapshot, true);
 
   if (drawHud) {
