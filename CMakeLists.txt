@@ -4673,6 +4673,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_lgm_quit_pill.c
     tests/unit/test_lgm_start_offset.c
     tests/unit/test_lgm_absent_on_shooter_screen.c
+    tests/unit/test_lgm_blast_dead_pill.c
     tests/unit/test_braindbg_round_dir.c
     tests/unit/test_jitter_buffer_grow.c
     tests/unit/test_shell_projection.c
@@ -6547,6 +6548,19 @@ set(_unit_test_names
     lgm_kill_seen_out_already_dead
     lgm_kill_seen_out_tank_hit_blast
     lgm_kill_seen_out_dead_tank
+    lgm_blast_dead_pill_edge
+    lgm_blast_dead_pill_far_corner
+    lgm_blast_live_pill_unchanged
+    lgm_blast_pill_kill_shot
+    lgm_blast_wall_rubble_shot
+    lgm_blast_forest_shot
+    lgm_blast_boat_shot
+    lgm_blast_shore_shot
+    lgm_blast_bridge_shot
+    lgm_blast_road_open_ground
+    lgm_blast_mined_bridge_shot
+    lgm_blast_shell_runs_out_dead_pill
+    lgm_blast_shell_hits_tank_dead_pill
     lgm_start_offset
     braindbg_second_round_new_dir
     lgm_draw_own_matches_wire

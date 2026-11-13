@@ -2424,6 +2424,25 @@ int run_lgm_kill_seen_out_already_dead(void);
 int run_lgm_kill_seen_out_tank_hit_blast(void);
 int run_lgm_kill_seen_out_dead_tank(void);
 
+/* A blast on a pillbox's square against a builder (test_lgm_blast_dead_pill.c):
+ * a dead pill's square is open ground, so the blast kills within half a
+ * square across its edge and not in its far corner; a live pill's square is
+ * still solid. Shell hits on a wall, a forest, a boat, the shore or a bridge
+ * are hits on the square. */
+int run_lgm_blast_dead_pill_edge(void);
+int run_lgm_blast_dead_pill_far_corner(void);
+int run_lgm_blast_live_pill_unchanged(void);
+int run_lgm_blast_pill_kill_shot(void);
+int run_lgm_blast_wall_rubble_shot(void);
+int run_lgm_blast_forest_shot(void);
+int run_lgm_blast_boat_shot(void);
+int run_lgm_blast_shore_shot(void);
+int run_lgm_blast_bridge_shot(void);
+int run_lgm_blast_road_open_ground(void);
+int run_lgm_blast_mined_bridge_shot(void);
+int run_lgm_blast_shell_runs_out_dead_pill(void);
+int run_lgm_blast_shell_hits_tank_dead_pill(void);
+
 /* A -braindebug server records each round into its own session dir
  * (test_braindbg_round_dir.c): the dir it named is cleared at game over, so
  * round 2 does not record over round 1. */

@@ -380,8 +380,19 @@ void shellsAddItem(GameSim *sim, shells *value, WORLD x, WORLD y, TURNTYPE angle
  *     that old yet (the start of a round, a player who has just joined): the
  *     shooter's screen is not known, so he is tested where he is now against
  *     (nowX, nowY). Both are the present. In his tank he is not out and
- *     lives. */
-static void shellsBlastTestBuilder(GameSim *sim, shells shell, lgm *lgman, tank *tnk, WORLD nowX, WORLD nowY, WORLD seenX, WORLD seenY) {
+ *     lives.
+ *
+ * squareHit is TRUE when the shell hit a pillbox, a wall, a forest, a boat,
+ * the shore a boat's shell stops on or a bridge. The blast is
+ * then a hit on that square, and the builder test uses the square rule: a
+ * builder anywhere on that square dies and one off it does not. This holds
+ * for the shot that kills the pill too, although that shot has already
+ * taken the pill's armour to 0 when the builder is tested, and for the shot
+ * that turns a wall to rubble, although the square is already rubble then.
+ * A blast on a dead pill's square that did not hit the pill (the shell ran
+ * out there, or hit a tank there) is FALSE and uses the open-ground rule
+ * (lgmBlastCatches). */
+static void shellsBlastTestBuilder(GameSim *sim, shells shell, lgm *lgman, tank *tnk, WORLD nowX, WORLD nowY, WORLD seenX, WORLD seenY, bool squareHit) {
 	BYTE lgmOwner = (*lgman)->playerNum;
 	uint8_t rewindTicks;
 	WORLD lgmHitX = 0, lgmHitY = 0;
@@ -416,14 +427,16 @@ static void shellsBlastTestBuilder(GameSim *sim, shells shell, lgm *lgman, tank 
 		                     seenX, seenY,
 		                     shell->owner, shell->owner,
 		                     DMG_SRC_SHELL, shell->pill,
-		                     tnk);
+		                     tnk, squareHit);
 	} else {
 		/* No rewind, or no record as old as the shooter's screen: where he
 		 * is now, against the blast where it is now. */
-		lgmDeathCheck(sim, lgman,
-		              nowX, nowY,
-		              shell->owner, shell->owner,
-		              DMG_SRC_SHELL, shell->pill, tnk);
+		lgmDeathCheckAtPosition(sim, lgman,
+		                        (*lgman)->x, (*lgman)->y,
+		                        nowX, nowY,
+		                        shell->owner, shell->owner,
+		                        DMG_SRC_SHELL, shell->pill, tnk,
+		                        squareHit);
 	}
 }
 
@@ -540,7 +553,13 @@ void shellsUpdate(GameSim *sim, tank *tk, BYTE numTanks, lgm **lgms, starts *sts
 			 * only. The same point as newX, newY. */
 			WORLD seenX = newX;
 			WORLD seenY = newY;
-			if ((shellsCalcCollision(sim, tk, &newX, &newY, position, numTanks, &shellOutcome, &seenX, &seenY)) == TRUE)
+			/* TRUE when the shell's hit is a hit on its square: a
+			 * pillbox, a wall, a forest, a boat, the shore a boat's shell
+			 * stops on or a bridge (shellsCalcCollision outSquareHit), the
+			 * shot that kills the pill or turns the wall to rubble
+			 * included. The builder test then uses the square rule. */
+			bool squareHit = FALSE;
+			if ((shellsCalcCollision(sim, tk, &newX, &newY, position, numTanks, &shellOutcome, &seenX, &seenY, &squareHit)) == TRUE)
 			{
 				/* Get X and Y map co-ords. */
 				conv = newX;
@@ -595,13 +614,14 @@ void shellsUpdate(GameSim *sim, tank *tk, BYTE numTanks, lgm **lgms, starts *sts
 				while (count < numTanks) {
 					/* lgms[count] is the ADDRESS of an lgmen[] slot, so it is never
 					 * NULL — what can go away is the slot's CONTENTS, when a player is
-					 * removed after the caller snapshotted this array. lgmDeathCheck
-					 * guards *lgman itself, but shellsBlastTestBuilder reads
-					 * playerNum first and lgmDeathCheckAtPosition has no guard at all. */
+					 * removed after the caller snapshotted this array. This check is
+					 * the only guard: shellsBlastTestBuilder reads playerNum first,
+					 * and its no-rewind path calls lgmDeathCheckAtPosition, which
+					 * has no guard of its own. */
 					if (lgms && lgms[count] != NULL && *lgms[count] != NULL) {
 						shellsBlastTestBuilder(sim, position, lgms[count],
 						                       &tk[count], newX, newY,
-						                       seenX, seenY);
+						                       seenX, seenY, squareHit);
 					}
 					count++;
 				}
@@ -652,13 +672,14 @@ void shellsUpdate(GameSim *sim, tank *tk, BYTE numTanks, lgm **lgms, starts *sts
 			while (count < numTanks) {
 				/* lgms[count] is the ADDRESS of an lgmen[] slot, so it is never
 				 * NULL — what can go away is the slot's CONTENTS, when a player is
-				 * removed after the caller snapshotted this array. lgmDeathCheck
-				 * guards *lgman itself, but shellsBlastTestBuilder reads
-				 * playerNum first and lgmDeathCheckAtPosition has no guard at all. */
+				 * removed after the caller snapshotted this array. This check is
+				 * the only guard: shellsBlastTestBuilder reads playerNum first,
+				 * and its no-rewind path calls lgmDeathCheckAtPosition, which
+				 * has no guard of its own. */
 				if (lgms && lgms[count] != NULL && *lgms[count] != NULL) {
 					shellsBlastTestBuilder(sim, position, lgms[count],
 					                       &tk[count], position->x, position->y,
-					                       position->x, position->y);
+					                       position->x, position->y, FALSE);
 				}
 				count++;
 			}
@@ -810,8 +831,13 @@ static bool shellsMayHit(GameSim *sim, shells shell, BYTE kind, BYTE index) {
 *             (shellsBlastTestBuilder). The same as xValue.
 *             May be NULL
 *  outSeenY - Y, as outSeenX
+*  outSquareHit - TRUE when the shell hit a pillbox, a
+*             wall, a forest, a boat, the shore a boat's shell
+*             stops on or a bridge, the shot that kills the
+*             pill or turns the wall to rubble included; FALSE
+*             otherwise. For the builder test. May be NULL
 *********************************************************/
-bool shellsCalcCollision(GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, shells shell, BYTE numTanks, uint8_t *outOutcome, WORLD *outSeenX, WORLD *outSeenY) {
+bool shellsCalcCollision(GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, shells shell, BYTE numTanks, uint8_t *outOutcome, WORLD *outSeenX, WORLD *outSeenY, bool *outSquareHit) {
 	map *mp = &sim->mp;
 	pillboxes *pb = &sim->pb;
 	bases *bs = &sim->bs;
@@ -840,6 +866,9 @@ bool shellsCalcCollision(GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, s
 	if (outOutcome != NULL) {
 		*outOutcome = SHELL_OUTCOME_IMPACT;
 	}
+	if (outSquareHit != NULL) {
+		*outSquareHit = FALSE;
+	}
 	/* Convert the position to Map co-ords */
 	conv = *xValue;
 	conv >>= TANK_SHIFT_MAPSIZE;
@@ -854,6 +883,12 @@ bool shellsCalcCollision(GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, s
 	pillHit = pillsHitSlot(pb, mapX, mapY);
 	if (pillHit != DMG_NO_PILL && shellsMayHit(sim, shell, HIT_KIND_PILL, pillHit) == TRUE) {
 		returnValue = TRUE;
+		/* A hit on the pill is a hit on its square for the builder test,
+		 * even when this shot kills it: the damage below can take its armour
+		 * to 0 before that test runs (shellsBlastTestBuilder). */
+		if (outSquareHit != NULL) {
+			*outSquareHit = TRUE;
+		}
 		*xValue = mapX;
 		*xValue <<= TANK_SHIFT_MAPSIZE;
 		*xValue += MAP_SQUARE_MIDDLE;
@@ -1014,6 +1049,15 @@ bool shellsCalcCollision(GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, s
 		if ((mapIsPassable(mp, mapX, mapY, onBoat)) == FALSE && baseExist == FALSE)
 		{
 			returnValue = TRUE;
+			/* A shell stopped by the terrain on a square is a hit on that
+			 * square for the builder test, as in Mac Bolo (shells.go
+			 * shell_hit): the square rule, whatever the hit leaves there.
+			 * That is a wall (the shot that turns it to rubble included),
+			 * a forest, a boat, and the shore a boat's shell stops on. Only
+			 * a road that is not a bridge clears it again, below. */
+			if (outSquareHit != NULL) {
+				*outSquareHit = TRUE;
+			}
 			*xValue = mapX;
 			*xValue <<= TANK_SHIFT_MAPSIZE;
 			*xValue += MAP_SQUARE_MIDDLE;
@@ -1057,6 +1101,8 @@ bool shellsCalcCollision(GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, s
 					sim->callbacks.soundDist(sim->callbacks.ctx, shotBuildingNear, mapX, mapY);
 					break;
 				case GRASS:
+					/* Grass, swamp, rubble and road stop only a boat's shell
+					 * (mapIsPassable). */
 					if (isMine == TRUE) {
 						mapSetPos(sim, mp, mapX, mapY, GRASS+MINE_SUBTRACT, FALSE, FALSE);
 					} else {
@@ -1093,11 +1139,26 @@ bool shellsCalcCollision(GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, s
 					}
 					break;
 				case ROAD:
+				{
+					/* A bridge (water past the road on the shell's line, so
+					 * the shot takes it away: shellsRoadShotAway) is a hit on
+					 * its square, a mined one too: Mac Bolo shoots a mined
+					 * bridge away as it does any other (shells.go move_shell
+					 * masks the mine bit off before its bridge test). Here
+					 * the mine goes off and the road stays, but the hit is
+					 * still on the square. Any other road keeps the
+					 * open-ground rule: in Mac Bolo the shell falls there
+					 * with no hit. */
+					bool shotAway = shellsRoadShotAway(sim, mapX, mapY, angle);
+					if (shotAway == FALSE && outSquareHit != NULL) {
+						*outSquareHit = FALSE;
+					}
 					if (isMine == TRUE) {
 						mapSetPos(sim, mp, mapX, mapY, ROAD+MINE_SUBTRACT, FALSE, FALSE);
 					} else {
-						mapSetPos(sim, mp, mapX, mapY, (shellsCheckRoad(sim, mapX, mapY, angle)), FALSE, FALSE);
+						mapSetPos(sim, mp, mapX, mapY, (shellsCheckRoad(sim, mapX, mapY, shotAway)), FALSE, FALSE);
 					}
+				}
 			}
 		}
 	}
@@ -1125,21 +1186,21 @@ bool shellsCalcCollision(GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, s
 *PURPOSE:
 *  A shell has been fired from a boat and has hit a road.
 *  This function returns whether the road should be kept
-*  as road or destroyed and replaced as river
+*  as road or destroyed and replaced as river, and plays
+*  the sound when it goes
 *  
 *ARGUMENTS:
-*  mp    - Pointer to the Map Data structure
-*  pb    - Pointer to the pillbox structure
-*  bs    - Pointer to the bases structure
-*  mapX  - X position of the hit
-*  mapY  - Y position of the hit
-*  angle - The angle the shell is travelling
+*  sim      - The game sim
+*  mapX     - X position of the hit
+*  mapY     - Y position of the hit
+*  shotAway - shellsRoadShotAway's answer for this hit,
+*             worked out once by the caller
 *********************************************************/
-BYTE shellsCheckRoad(GameSim *sim, BYTE mapX, BYTE mapY, TURNTYPE dir) {
+BYTE shellsCheckRoad(GameSim *sim, BYTE mapX, BYTE mapY, bool shotAway) {
   BYTE returnValue; /* Value to return */
 
   returnValue = ROAD;
-  if (shellsRoadShotAway(sim, mapX, mapY, dir) == TRUE) {
+  if (shotAway == TRUE) {
     returnValue = RIVER;
   }
 
@@ -1154,11 +1215,12 @@ BYTE shellsCheckRoad(GameSim *sim, BYTE mapX, BYTE mapY, TURNTYPE dir) {
 /*********************************************************
 *NAME:          shellsRoadShotAway
 *PURPOSE:
-*  The test shellsCheckRoad makes, with no sound and no
-*  change: true when the square past the road in the
-*  shell's direction is not land, so the road goes to
-*  river. The client asks it to choose the early own shell
-*  blast's sound (client_sim.c).
+*  True when the square past the road in the shell's
+*  direction is not land, so the road goes to river. No
+*  sound and no change. shellsCalcCollision works it out
+*  once per road hit and hands it to shellsCheckRoad and
+*  the builder test. The client asks it to choose the
+*  early own shell blast's sound (client_sim.c).
 *********************************************************/
 bool shellsRoadShotAway(GameSim *sim, BYTE mapX, BYTE mapY, TURNTYPE dir) {
   map *mp = &sim->mp;
