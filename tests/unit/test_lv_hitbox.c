@@ -552,6 +552,11 @@ int run_lv_hitbox_outline(void) {
         lvHitboxBuilderOutlineShape(128.0, 128.0, 0, 1, 150, &o);
         UT_ASSERT_MSG(outlineHasPoint(&o, 256.0, 128.0 - sqrt(150.0 * 150.0 - 128.0 * 128.0)),
                       "the box side does not stop where the pill_range circle meets it");
+        /* The box's bottom side, y = 60 + 128 = 188, cuts the building's
+           edge x = 256: the run along that edge stops at the corner. */
+        lvHitboxBuilderOutlineShape(200.0, 60.0, SQ(2, 1) | SQ(1, 0), 1, 2048, &o);
+        UT_ASSERT_MSG(outlineHasPoint(&o, 256.0, 188.0),
+                      "the edge x = 256 does not stop at the box's bottom side");
     }
     return 0;
 }

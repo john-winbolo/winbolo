@@ -580,7 +580,7 @@ static inline void lvHitboxBuilderOutlineShape(double bx, double by, unsigned so
             if (k < 2) {
                 x = (double)(k * LV_HITBOX_WU_PER_SQUARE);
             } else if (box) {
-                x = (upright ? bx : by) + ((k == 2) ? -half : half);
+                x = (upright ? by : bx) + ((k == 2) ? -half : half);
             } else {
                 break;
             }
