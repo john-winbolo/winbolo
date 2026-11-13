@@ -2183,6 +2183,7 @@ static void lvHostRenderFrame(const char *overlay) {
         lvms.tankBars         = lv_drawGetTankBars() ? true : false;
         lvms.builderStatus    = lv_drawGetBuilderStatus() ? true : false;
         lvms.pillNumbers      = lv_drawGetPillNumbers() ? true : false;
+        lvms.hitBoxes         = lv_drawGetHitBoxes() ? true : false;
         lvms.dockEnabled      = lv_imgui_dock_get_enabled() ? true : false;
         lvms.dockLeft         = lv_imgui_dock_get_side_enabled(LV_DOCK_LEFT) ? true : false;
         lvms.dockTop          = lv_imgui_dock_get_side_enabled(LV_DOCK_TOP) ? true : false;
@@ -2845,9 +2846,14 @@ bool spectatorRun(SDL_Window *window, SDL_Renderer *renderer, void *cs,
                                         /* allowSeek */ TRUE)) {
                 continue;
             }
-            /* End / L jumps back to the live head and resumes following it. */
+            /* End / L jumps back to the live head and resumes following it.
+             * Not with Ctrl or Cmd held: Ctrl+L (Cmd+L on macOS) is the
+             * Options menu's "See What the Selected Player Saw", which
+             * the menu bar's key handler takes. */
             if (sdlEvent.type == SDL_EVENT_KEY_DOWN &&
-                (sdlEvent.key.key == SDLK_END || sdlEvent.key.key == SDLK_L)) {
+                (sdlEvent.key.key == SDLK_END ||
+                 (sdlEvent.key.key == SDLK_L &&
+                  (sdlEvent.key.mod & (SDL_KMOD_CTRL | SDL_KMOD_GUI)) == 0))) {
                 lv_screenSpecJumpToLive();
                 continue;
             }

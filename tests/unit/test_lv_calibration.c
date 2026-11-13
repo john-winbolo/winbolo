@@ -41,9 +41,11 @@
 #include "backend.h"
 #include "lv_players.h"      /* lv_playersGetDrawnTankDetails */
 #include "logviewer.h"
+#include "lv_hitbox.h"       /* LV_HITBOX_TANK_* */
 #include "lv_log.h"
 #include "blocks.h"
 #include "lv_bolo_map.h"
+#include "lv_presentation.h" /* lv_screenServerTickAt */
 #include "test_harness.h"
 #include "zip.h"
 
@@ -68,7 +70,8 @@ static void putZeros(LogBuf *b, size_t n) {
 
 /* File header, as lv_logLoad reads it: magic, version, map name, seven
  * settings bytes, ip4 + port, create time, WBN key. */
-static void putHeaderNamed(LogBuf *b, const char *mapName) {
+static void putHeaderVersion(LogBuf *b, const char *mapName, uint8_t major, uint8_t minor,
+                             uint8_t revision) {
   uint8_t nameLen = (uint8_t)strlen(mapName);
 
   put(b, "WBOLOMOV", 8);
@@ -80,10 +83,14 @@ static void putHeaderNamed(LogBuf *b, const char *mapName) {
   putU8(b, 0);            /* ai */
   putU8(b, 0);            /* password */
   putU8(b, MAX_TANKS);    /* max players */
-  putU8(b, 2); putU8(b, 0); putU8(b, 2);   /* game version */
+  putU8(b, major); putU8(b, minor); putU8(b, revision);   /* game version */
   putZeros(b, 4 + 2);     /* ip + port */
   putZeros(b, 4);         /* create time (v2: no XOR seed) */
   putZeros(b, 32);        /* WBN key */
+}
+
+static void putHeaderNamed(LogBuf *b, const char *mapName) {
+  putHeaderVersion(b, mapName, 2, 0, 2);
 }
 
 static void putHeader(LogBuf *b) { putHeaderNamed(b, "Test"); }
@@ -1551,6 +1558,36 @@ int run_lv_lag_ring(void) {
 }
 
 /*
+ * One click on "See What the Selected Player Saw", or one press of Ctrl+L:
+ * on for the selected tank's player when that player has a record, off when
+ * it is on, and no change when the item is disabled.
+ */
+int run_lv_lag_view_toggle(void) {
+  /* Off, tank 3 selected with a record: on for 3. Pressed again: off. */
+  UT_ASSERT(lv_lagViewToggle(true, true, true, 3, -1, true) == 3);
+  UT_ASSERT(lv_lagViewToggle(true, true, true, 3, 3, true) == -1);
+  /* On for 3, and 3 has no record now: it can still be turned off. */
+  UT_ASSERT(lv_lagViewToggle(true, true, true, 3, 3, false) == -1);
+  /* Off, and the selected player has no record: no change. */
+  UT_ASSERT(lv_lagViewToggle(true, true, true, 3, -1, false) == LV_LAG_TOGGLE_NONE);
+  /* Off, and no tank selected: no change, whatever the record says. */
+  UT_ASSERT(lv_lagViewToggle(true, true, true, -1, -1, true) == LV_LAG_TOGGLE_NONE);
+  /* On for 5, tank 3 selected: the view moves to 3. */
+  UT_ASSERT(lv_lagViewToggle(true, true, true, 3, 5, true) == 3);
+  /* On for 5, tank 3 selected with no record yet: off, as the view cannot be
+     on for a player with no record. */
+  UT_ASSERT(lv_lagViewToggle(true, true, true, 3, 5, false) == -1);
+  /* On for 5, no tank selected: off. */
+  UT_ASSERT(lv_lagViewToggle(true, true, true, -1, 5, false) == -1);
+  /* The preference off, no recording open, or no lag records: no change. */
+  UT_ASSERT(lv_lagViewToggle(false, true, true, 3, -1, true) == LV_LAG_TOGGLE_NONE);
+  UT_ASSERT(lv_lagViewToggle(true, false, true, 3, -1, true) == LV_LAG_TOGGLE_NONE);
+  UT_ASSERT(lv_lagViewToggle(true, true, false, 3, -1, true) == LV_LAG_TOGGLE_NONE);
+  UT_ASSERT(lv_lagViewToggle(true, true, false, 3, 3, true) == LV_LAG_TOGGLE_NONE);
+  return 0;
+}
+
+/*
  * The lag display is off until the "Player Lag View" preference turns it on.
  * With it off the records are still read, but the panels are told there are
  * none and the lag view does not turn on for any player. Turned on, the
@@ -1681,6 +1718,19 @@ static void putLagDrawLocation(LogBuf *b, int slot, int k) {
   putU8(b, 0);
 }
 
+/* One log_LgmLocation event for slot's builder, in a LOG_EVENT frame opened
+ * by the caller: the slot and frame nibbles, mx, my, then the pixel nibbles.
+ * The builder is at his tank's entry-k place, one row lower. */
+static void putLagDrawLgm(LogBuf *b, int slot, int k) {
+  unsigned place = lagDrawPlace(slot, k);
+  putU8(b, log_LgmLocation);
+  putU8(b, 0); putU8(b, 4);
+  putU8(b, (uint8_t)(slot << 4));             /* slot, frame LGM0 */
+  putU8(b, (uint8_t)(place / 16));
+  putU8(b, LAG_DRAW_ROW + 1);
+  putU8(b, (uint8_t)((place % 16) << 4));
+}
+
 /* What the stub's draw hook saw on its last call. */
 typedef struct {
   bool     called;
@@ -1689,6 +1739,8 @@ typedef struct {
   int      items;         /* tanks in the draw list */
   int      itemMx[2];     /* each slot's column in the draw list, -1 for none */
   int      itemPx[2];
+  int      lgmItems;      /* builders in the draw list */
+  int      lgmMx, lgmPx;  /* the first one's column and pixel */
 } LagDrawSeen;
 static LagDrawSeen s_lagDrawSeen;
 
@@ -1698,7 +1750,7 @@ extern void (*g_testLvDrawMainScreenHook)(screenTanks *tks, screenBullets *sBull
 static void lagDrawHook(screenTanks *tks, screenBullets *sBullet, screenLgm *lgms) {
   BYTE n, i;
   int s;
-  (void)sBullet; (void)lgms;
+  (void)sBullet;
 
   memset(&s_lagDrawSeen, 0, sizeof(s_lagDrawSeen));
   s_lagDrawSeen.called = true;
@@ -1723,6 +1775,15 @@ static void lagDrawHook(screenTanks *tks, screenBullets *sBullet, screenLgm *lgm
       s_lagDrawSeen.itemMx[slot] = mx;
       s_lagDrawSeen.itemPx[slot] = px;
     }
+  }
+  s_lagDrawSeen.lgmItems = lv_screenLgmGetNumEntries(lgms);
+  s_lagDrawSeen.lgmMx = -1;
+  s_lagDrawSeen.lgmPx = -1;
+  if (s_lagDrawSeen.lgmItems > 0) {
+    BYTE mx, my, px, py, frame;
+    lv_screenLgmGetItem(lgms, 1, &mx, &my, &px, &py, &frame);
+    s_lagDrawSeen.lgmMx = mx;
+    s_lagDrawSeen.lgmPx = px;
   }
 }
 
@@ -1775,8 +1836,11 @@ static void lagDrawOnce(void) {
  *   entry 40  (800 ms)    A's lag record: 150 ms round trip, rewind 5
  *                         (5 x 20 = 100 ms)
  *
+ * B's builder is out every entry, a row below B's tank at the same column.
+ *
  * At entry 80, with the view on for A: B is drawn at its entry-75 place,
- * A at its entry-80 place. A seek back to entry 42 (840 ms) without the
+ * A at its entry-80 place, and B's builder at his entry-76 place, one entry
+ * newer, as the server tests builders. A seek back to entry 42 (840 ms) without the
  * early start would restore the entry-39 snapshot, which leaves frames only
  * for entries 40 to 42 and none for entry 37. The early start decodes from
  * the opening snapshot instead, so B is drawn at its entry-37 place.
@@ -1801,9 +1865,10 @@ int run_lv_lag_view_draw(void) {
       continue;
     }
     putU8(&b, LOG_EVENT);
-    putU8(&b, (uint8_t)(k == 40 ? 3 : 2));
+    putU8(&b, (uint8_t)(k == 40 ? 4 : 3));
     putLagDrawLocation(&b, 0, k);
     putLagDrawLocation(&b, 1, k);
+    putLagDrawLgm(&b, 1, k);
     if (k == 40) {
       putU8(&b, log_PlayerLag);
       putU8(&b, 0); putU8(&b, 4);
@@ -1855,6 +1920,16 @@ int run_lv_lag_view_draw(void) {
   UT_ASSERT_MSG(s_lagDrawSeen.itemMx[1] == 19 && s_lagDrawSeen.itemPx[1] == 3,
                 "B's draw list place %d/%d, want 19/3", s_lagDrawSeen.itemMx[1],
                 s_lagDrawSeen.itemPx[1]);
+  /* B's builder one entry newer than his tank, as the server tests builders
+     (shellLgmRewind): entry 76, 1120 + 76 = 1196, column 74 pixel 12, so
+     column 19 on screen. */
+  UT_ASSERT_MSG(s_lagDrawSeen.lgmItems == 1, "%d builders in the draw list, want 1",
+                s_lagDrawSeen.lgmItems);
+  UT_ASSERT_MSG(s_lagDrawSeen.lgmMx == (int)(lagDrawPlace(1, 76) / 16) - 55 &&
+                    s_lagDrawSeen.lgmPx == (int)(lagDrawPlace(1, 76) % 16),
+                "B's builder drawn at %d/%d, want %d/%d (entry 76)", s_lagDrawSeen.lgmMx,
+                s_lagDrawSeen.lgmPx, (int)(lagDrawPlace(1, 76) / 16) - 55,
+                (int)(lagDrawPlace(1, 76) % 16));
 
   /* Seek back to entry 42: the frames are there at once. */
   lv_screenSeekToTimeMs(lagDrawMs(42));
@@ -1894,6 +1969,427 @@ int run_lv_lag_view_draw(void) {
   lv_decoderDestroy(lv);
   lv_screenSetHideLobby(savedHide);
   remove(path);
+  return 0;
+}
+
+/* ---- the lag view's own shells ------------------------------------------- */
+
+/* The shells the stub's draw hook saw on its last call, as map places. */
+typedef struct {
+  int n;
+  int mx[16], my[16], px[16], py[16];
+} LagShellSeen;
+static LagShellSeen s_lagShellSeen;
+static BYTE s_lagShellLeft, s_lagShellTop;
+
+static void lagShellHook(screenTanks *tks, screenBullets *sBullet, screenLgm *lgms) {
+  int i, n = lv_screenBulletsGetNumEntries(sBullet);
+  (void)tks; (void)lgms;
+  memset(&s_lagShellSeen, 0, sizeof(s_lagShellSeen));
+  for (i = 1; i <= n && s_lagShellSeen.n < 16; i++) {
+    BYTE mx, my, px, py, frame;
+    int at = s_lagShellSeen.n++;
+    lv_screenBulletsGetItem(sBullet, i, &mx, &my, &px, &py, &frame);
+    s_lagShellSeen.mx[at] = mx + s_lagShellLeft;
+    s_lagShellSeen.my[at] = my + s_lagShellTop;
+    s_lagShellSeen.px[at] = px;
+    s_lagShellSeen.py[at] = py;
+  }
+}
+
+static void lagShellDraw(BYTE left, BYTE top) {
+  s_lagShellLeft = left;
+  s_lagShellTop = top;
+  lv_screenSetOffset(left, top);
+  g_testLvDrawMainScreenHook = lagShellHook;
+  lv_screenUpdate(redraw);
+  g_testLvDrawMainScreenHook = NULL;
+}
+
+/* Whether the hook saw a shell at world place (wx, wy), cut to the record. */
+static bool lagShellSeenAt(int32_t wx, int32_t wy) {
+  int i;
+  for (i = 0; i < s_lagShellSeen.n; i++) {
+    if (s_lagShellSeen.mx[i] == wx / 256 && s_lagShellSeen.px[i] == (wx % 256) / 16 &&
+        s_lagShellSeen.my[i] == wy / 256 && s_lagShellSeen.py[i] == (wy % 256) / 16) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/* A's shell (fired north from A's entry-60 place) and a pillbox's shell
+   (north from column 80, row 70) at entry k, in world units. */
+#define LAG_SHELL_FIRST 60
+#define LAG_SHELL_LAST 75
+static int32_t lagShellAx(void) { return (int32_t)lagDrawPlace(0, LAG_SHELL_FIRST) * 16; }
+static int32_t lagShellAy(int k) {
+  return LAG_DRAW_ROW * 256 - 6 * 32 - 32 * (k - LAG_SHELL_FIRST);
+}
+static int32_t lagShellPx(void) { return 80 * 256; }
+static int32_t lagShellPy(int k) { return 70 * 256 - 32 * (k - LAG_SHELL_FIRST); }
+
+static void putLagShell(LogBuf *b, int32_t wx, int32_t wy) {
+  putU8(b, log_Shell);
+  putU8(b, 0); putU8(b, 4);
+  putU8(b, (uint8_t)(wx / 256));
+  putU8(b, (uint8_t)(wy / 256));
+  putU8(b, (uint8_t)((((wx % 256) / 16) << 4) | ((wy % 256) / 16)));
+  putU8(b, 9);   /* north: utilGetDir 0, plus 9 */
+}
+
+/*
+ * The lag view draws the chosen player's own shells at the present, as
+ * that player's own client drew them, and every other shell at the old
+ * time. The log's shell record has no owner: the viewer finds it from the
+ * tank's gun place and the drop in the tank's shell stock.
+ *
+ *   entry 40          A's lag record, rewind 5 (100 ms)
+ *   entry 60          A's stock goes from 40 to 39, and two shells start:
+ *                     one six steps north of A (A faces north), and one
+ *                     in the open with no tank behind it (a pillbox's)
+ *   entries 60..75    both move one step (32 world units) north each entry
+ *
+ * At entry 70 with the view on for A: A's shell at its entry-70 place, the
+ * other at its entry-65 place. With the view off, both at entry 70.
+ */
+int run_lv_lag_view_own_shells(void) {
+  const char *path = "lv_lag_view_own_shells.wbv";
+  static const uint8_t rec[4] = {0, 0x00, 0x96, 5};   /* A: 150 ms, rewind 5 */
+  LogBuf b;
+  LogViewerState *lv;
+  int savedHide = lv_screenGetHideLobby();
+  LvShellOwnerStats st;
+  uint32_t ownedBefore, noneBefore;
+  int k;
+
+  b.len = 0;
+  putHeader(&b);
+  putLagDrawSnapshot(&b, 0);
+  for (k = 1; k <= 99; k++) {
+    bool shells = (k >= LAG_SHELL_FIRST && k <= LAG_SHELL_LAST);
+    int events = 2 + (k == 40 ? 1 : 0) + (shells ? 2 : 0) + (k == LAG_SHELL_FIRST ? 1 : 0);
+    if (k == 39) {
+      putLagDrawSnapshot(&b, k);
+      continue;
+    }
+    putU8(&b, LOG_EVENT);
+    putU8(&b, (uint8_t)events);
+    putLagDrawLocation(&b, 0, k);
+    putLagDrawLocation(&b, 1, k);
+    if (k == 40) {
+      putU8(&b, log_PlayerLag);
+      putU8(&b, 0); putU8(&b, 4);
+      put(&b, rec, sizeof(rec));
+    }
+    if (k == LAG_SHELL_FIRST) {
+      putU8(&b, log_TankSetStock);
+      putU8(&b, 0); putU8(&b, 5);
+      putU8(&b, 0); putU8(&b, 39); putU8(&b, 0); putU8(&b, 40); putU8(&b, 0);
+    }
+    if (shells) {
+      putLagShell(&b, lagShellAx(), lagShellAy(k));
+      putLagShell(&b, lagShellPx(), lagShellPy(k));
+    }
+  }
+  putU8(&b, LOG_QUIT);
+
+  lv_screenSetHideLobby(0);
+  lv_screenSetLagFeature(1);
+  lv = loadSynthetic(&b, path);
+  UT_ASSERT_MSG(lv != NULL, "synthetic own shell log failed to build/load");
+  UT_ASSERT_MSG(lv_screenHasTankStock(), "the load did not see the tank stocks");
+
+  lv_screenLagShellOwnerStats(&st);
+  ownedBefore = st.startOwned;
+  noneBefore = st.startNoTank;
+  if (lagDrawPlayTo(lv, 70) != 0) return 1;
+  lv_screenLagShellOwnerStats(&st);
+  UT_ASSERT_MSG(st.startOwned - ownedBefore == 1, "%u new shells given an owner, want 1",
+                (unsigned)(st.startOwned - ownedBefore));
+  UT_ASSERT_MSG(st.startNoTank - noneBefore == 1, "%u new shells with no tank, want 1",
+                (unsigned)(st.startNoTank - noneBefore));
+
+  /* The view off: both at the present. */
+  lagShellDraw(55, 50);
+  UT_ASSERT_MSG(s_lagShellSeen.n == 2, "%d shells drawn with the view off, want 2",
+                s_lagShellSeen.n);
+  UT_ASSERT(lagShellSeenAt(lagShellAx(), lagShellAy(70)));
+  UT_ASSERT(lagShellSeenAt(lagShellPx(), lagShellPy(70)));
+
+  /* The view on for A: A's own shell at the present, the other 5 entries
+     back. */
+  lv_screenLagViewSet(0);
+  UT_ASSERT_MSG(lv_screenLagViewSlot() == 0, "the view did not turn on for A");
+  lagShellDraw(55, 50);
+  UT_ASSERT_MSG(s_lagShellSeen.n == 2, "%d shells drawn with the view on, want 2",
+                s_lagShellSeen.n);
+  UT_ASSERT_MSG(lagShellSeenAt(lagShellAx(), lagShellAy(70)),
+                "A's own shell is not at its entry-70 place");
+  UT_ASSERT_MSG(!lagShellSeenAt(lagShellAx(), lagShellAy(65)),
+                "A's own shell is drawn at the old time");
+  UT_ASSERT_MSG(lagShellSeenAt(lagShellPx(), lagShellPy(65)),
+                "the pillbox's shell is not at its entry-65 place");
+
+  /* A's shell has ended (entry 78) and the old time still has it (73):
+     it is not drawn, as A's own screen no longer had it. */
+  if (lagDrawPlayTo(lv, 78) != 0) return 1;
+  lagShellDraw(55, 50);
+  UT_ASSERT_MSG(s_lagShellSeen.n == 1, "%d shells drawn at entry 78, want 1",
+                s_lagShellSeen.n);
+  UT_ASSERT(lagShellSeenAt(lagShellPx(), lagShellPy(73)));
+
+  lv_screenLagViewSet(-1);
+  lv_screenSetLagFeature(0);
+  lv_decoderDestroy(lv);
+  lv_screenSetHideLobby(savedHide);
+  remove(path);
+  return 0;
+}
+
+/*
+ * A shell whose owner is lost in flight is drawn once, from the old frame,
+ * in every entry. A's shell flies north next to a pillbox's shell one pixel
+ * east of it, and the two go on as one record:
+ *
+ *   entry 40          A's lag record, rewind 5 (100 ms)
+ *   entry 59          the pillbox's shell starts, one pixel east of A's line
+ *   entry 60          A fires: A's shell starts six steps north of A
+ *   entries 60..65    both move one step north each entry, side by side
+ *   entries 66..75    one shell record only, on the pillbox shell's line
+ *
+ * At entry 66 the one shell continues both, whose owners differ, so it has
+ * no owner, and A's shell loses A as owner in the entries before too. At
+ * entry 70 the view for A draws the old frame (entry 65) with both shells,
+ * and nothing from the present frame. Before the fix, A's shell was skipped
+ * in the old frame (A's own) and the present one was not A's: it was drawn
+ * in neither.
+ */
+static int32_t lagLostPx(void) { return lagShellAx() + 16; }
+
+int run_lv_lag_view_lost_owner(void) {
+  const char *path = "lv_lag_view_lost_owner.wbv";
+  static const uint8_t rec[4] = {0, 0x00, 0x96, 5};   /* A: 150 ms, rewind 5 */
+  LogBuf b;
+  LogViewerState *lv;
+  int savedHide = lv_screenGetHideLobby();
+  LvShellOwnerStats st;
+  uint32_t lostBefore, ownedBefore;
+  int k;
+
+  b.len = 0;
+  putHeader(&b);
+  putLagDrawSnapshot(&b, 0);
+  for (k = 1; k <= 99; k++) {
+    bool aShell = (k >= LAG_SHELL_FIRST && k <= 65);
+    bool pShell = (k >= LAG_SHELL_FIRST - 1 && k <= LAG_SHELL_LAST);
+    int events = 2 + (k == 40 ? 1 : 0) + (aShell ? 1 : 0) + (pShell ? 1 : 0) +
+                 (k == LAG_SHELL_FIRST ? 1 : 0);
+    if (k == 39) {
+      putLagDrawSnapshot(&b, k);
+      continue;
+    }
+    putU8(&b, LOG_EVENT);
+    putU8(&b, (uint8_t)events);
+    putLagDrawLocation(&b, 0, k);
+    putLagDrawLocation(&b, 1, k);
+    if (k == 40) {
+      putU8(&b, log_PlayerLag);
+      putU8(&b, 0); putU8(&b, 4);
+      put(&b, rec, sizeof(rec));
+    }
+    if (k == LAG_SHELL_FIRST) {
+      putU8(&b, log_TankSetStock);
+      putU8(&b, 0); putU8(&b, 5);
+      putU8(&b, 0); putU8(&b, 39); putU8(&b, 0); putU8(&b, 40); putU8(&b, 0);
+    }
+    if (aShell) {
+      putLagShell(&b, lagShellAx(), lagShellAy(k));
+    }
+    if (pShell) {
+      putLagShell(&b, lagLostPx(), lagShellAy(k));
+    }
+  }
+  putU8(&b, LOG_QUIT);
+
+  lv_screenSetHideLobby(0);
+  lv_screenSetLagFeature(1);
+  lv = loadSynthetic(&b, path);
+  UT_ASSERT_MSG(lv != NULL, "synthetic lost owner log failed to build/load");
+
+  lv_screenLagShellOwnerStats(&st);
+  lostBefore = st.continuedLost;
+  ownedBefore = st.startOwned;
+  if (lagDrawPlayTo(lv, 64) != 0) return 1;
+  lv_screenLagShellOwnerStats(&st);
+  UT_ASSERT_MSG(st.startOwned - ownedBefore == 1, "%u new shells given an owner, want 1",
+                (unsigned)(st.startOwned - ownedBefore));
+
+  /* Entry 64, before the two go on as one: A's shell at the present, the
+     pillbox's at the old time (entry 59). */
+  lv_screenLagViewSet(0);
+  UT_ASSERT_MSG(lv_screenLagViewSlot() == 0, "the view did not turn on for A");
+  lagShellDraw(55, 50);
+  UT_ASSERT_MSG(s_lagShellSeen.n == 2, "%d shells drawn at entry 64, want 2",
+                s_lagShellSeen.n);
+  UT_ASSERT(lagShellSeenAt(lagShellAx(), lagShellAy(64)));
+  UT_ASSERT(lagShellSeenAt(lagLostPx(), lagShellAy(59)));
+
+  if (lagDrawPlayTo(lv, 70) != 0) return 1;
+  lv_screenLagShellOwnerStats(&st);
+  UT_ASSERT_MSG(st.continuedLost - lostBefore == 1, "%u shells lost their owner, want 1",
+                (unsigned)(st.continuedLost - lostBefore));
+  lagShellDraw(55, 50);
+  UT_ASSERT_MSG(s_lagShellSeen.n == 2, "%d shells drawn at entry 70, want 2",
+                s_lagShellSeen.n);
+  UT_ASSERT_MSG(lagShellSeenAt(lagShellAx(), lagShellAy(65)),
+                "A's shell is not drawn at its entry-65 place");
+  UT_ASSERT_MSG(lagShellSeenAt(lagLostPx(), lagShellAy(65)),
+                "the pillbox's shell is not drawn at its entry-65 place");
+  UT_ASSERT_MSG(!lagShellSeenAt(lagLostPx(), lagShellAy(70)),
+                "the shell with no owner is drawn at the present");
+
+  lv_screenLagViewSet(-1);
+  lv_screenSetLagFeature(0);
+  lv_decoderDestroy(lv);
+  lv_screenSetHideLobby(savedHide);
+  remove(path);
+  return 0;
+}
+
+/*
+ * The shell owner matcher on a real recording, on ask only: set
+ * WB_LV_OWNER_WBV to a .wbv, WB_LV_OWNER_TICK to a server tick and
+ * WB_LV_OWNER_NAME to part of a player's name (WB_LV_OWNER_SPAN, ticks each
+ * side, is 15 when not set). It prints the matcher's counts for the window
+ * and for the whole log, and at each step of the window the present shells
+ * and where the lag view for that player draws them. With no file set it
+ * passes at once.
+ */
+int run_lv_shell_owner_recording(void) {
+  const char *path = getenv("WB_LV_OWNER_WBV");
+  const char *tickText = getenv("WB_LV_OWNER_TICK");
+  const char *nameText = getenv("WB_LV_OWNER_NAME");
+  const char *spanText = getenv("WB_LV_OWNER_SPAN");
+  uint32_t tick, span, fromTick, toTick;
+  LogViewerState *lv;
+  LvShellOwnerStats atStart, atEnd, whole, w;
+  int savedHide = lv_screenGetHideLobby();
+  int slot = -1;
+  bool inWindow = false, done = false;
+  static char pathBuf[1024];
+  BYTE lastStock[MAX_TANKS];
+  uint32_t drops = 0;
+
+  memset(&atStart, 0, sizeof(atStart));
+  memset(&atEnd, 0, sizeof(atEnd));
+  if (path == NULL || path[0] == '\0') {
+    printf("  (WB_LV_OWNER_WBV not set: nothing to check)\n");
+    return 0;
+  }
+  tick = (tickText != NULL) ? (uint32_t)strtoul(tickText, NULL, 10) : 0;
+  span = (spanText != NULL) ? (uint32_t)strtoul(spanText, NULL, 10) : 15;
+  fromTick = tick > span ? tick - span : 0;
+  toTick = tick + span;
+  snprintf(pathBuf, sizeof(pathBuf), "%s", path);
+
+  lv_screenSetHideLobby(0);
+  lv_screenSetLagFeature(1);
+  lv = lv_decoderCreate(false);
+  UT_ASSERT(lv != NULL);
+  lv_screenSetSizeX(30);
+  lv_screenSetSizeY(30);
+  UT_ASSERT_MSG(lv_screenLoadMap(pathBuf, 4) == TRUE, "%s did not load", path);
+  lv->fastForwarding = TRUE;
+  lv_screenLagShellOwnerStats(&whole);
+  memset(lastStock, 0, sizeof(lastStock));
+
+  while (lv->isPlaying == TRUE) {
+    uint32_t now;
+    int s;
+    lv_screenLogTick();
+    /* Each drop in a tank's shell stock is one fire. */
+    for (s = 0; s < MAX_TANKS; s++) {
+      if (lv->tankInv[s].shells < lastStock[s] && lv_playersIsInUse((BYTE)s)) {
+        drops++;
+      }
+      lastStock[s] = lv->tankInv[s].shells;
+    }
+    now = lv_screenHasServerTick() ? lv_screenServerTickAt(lv->timeRunning)
+                                   : lv->timeRunning / 20u;
+    if (!done && !inWindow && now >= fromTick && now <= toTick) {
+      inWindow = true;
+      lv_screenLagShellOwnerStats(&atStart);
+    }
+    if (inWindow && (now > toTick || now < fromTick)) {
+      inWindow = false;
+      done = true;
+      lv_screenLagShellOwnerStats(&atEnd);
+    }
+    if (inWindow) {
+      BYTE mx = 0, my = 0, px = 0, py = 0, frame = 0;
+      bool onBoat = FALSE;
+      shells q;
+      int i, behind = 0;
+      bool drawn = false;
+      if (slot < 0 && nameText != NULL) {
+        int s;
+        for (s = 0; s < MAX_TANKS; s++) {
+          char nm[64];
+          nm[0] = '\0';
+          if (!lv_playersIsInUse((BYTE)s)) continue;
+          lv_screenGetPlayerName(nm, (BYTE)s, sizeof(nm));
+          if (strstr(nm, nameText) != NULL) { slot = s; break; }
+        }
+        printf("  player \"%s\" is slot %d\n", nameText, slot);
+      }
+      printf("  tick %u ms %u\n", (unsigned)now, (unsigned)lv->timeRunning);
+      for (q = lv->shs; q != NULL; q = q->next) {
+        printf("    present shell %u/%u.%u/%u frame %u\n", q->mx, q->px, q->my, q->py,
+               q->frame);
+      }
+      if (slot >= 0) {
+        BYTE left, top;
+        lv_screenLagViewSet(slot);
+        lv_playersGetTankDetails((BYTE)slot, &mx, &my, &px, &py, &frame, &onBoat);
+        printf("    slot %d tank %u/%u.%u/%u dir %u stock %u\n", slot, mx, px, my, py,
+               frame, lv->tankInv[slot].shells);
+        left = (BYTE)(mx > 15 ? mx - 15 : 0);
+        top = (BYTE)(my > 15 ? my - 15 : 0);
+        (void)lv_screenLagViewStatus(NULL, 0, &behind, &drawn);
+        lagShellDraw(left, top);
+        printf("    view on: behind %d ms, old frame %s, %d shells drawn\n", behind,
+               drawn ? "yes" : "no", s_lagShellSeen.n);
+        for (i = 0; i < s_lagShellSeen.n; i++) {
+          printf("      drawn %d/%d.%d/%d\n", s_lagShellSeen.mx[i], s_lagShellSeen.px[i],
+                 s_lagShellSeen.my[i], s_lagShellSeen.py[i]);
+        }
+        lv_screenLagViewSet(-1);
+      }
+    }
+  }
+  if (inWindow) {
+    lv_screenLagShellOwnerStats(&atEnd);
+  }
+  lv_screenLagShellOwnerStats(&w);
+#define LAG_OWNER_PRINT(label, a, b2)                                                      \
+  printf("  %s: started %u owned %u no-tank %u two-tanks %u shared-tank %u "              \
+         "continued %u kept %u lost %u not-tracked %u\n",                                  \
+         label, (unsigned)(a.started - b2.started), (unsigned)(a.startOwned - b2.startOwned), \
+         (unsigned)(a.startNoTank - b2.startNoTank),                                       \
+         (unsigned)(a.startTwoTanks - b2.startTwoTanks),                                   \
+         (unsigned)(a.startSharedTank - b2.startSharedTank),                               \
+         (unsigned)(a.continued - b2.continued),                                           \
+         (unsigned)(a.continuedShared - b2.continuedShared),                               \
+         (unsigned)(a.continuedLost - b2.continuedLost),                                   \
+         (unsigned)(a.notTracked - b2.notTracked))
+  LAG_OWNER_PRINT("window", atEnd, atStart);
+  LAG_OWNER_PRINT("whole log", w, whole);
+  printf("  whole log: %u drops in a tank's shell stock (fires)\n", (unsigned)drops);
+#undef LAG_OWNER_PRINT
+  lv_screenSetLagFeature(0);
+  lv_decoderDestroy(lv);
+  lv_screenSetHideLobby(savedHide);
   return 0;
 }
 
@@ -2143,5 +2639,53 @@ int run_lv_overrun_read(void) {
   UT_ASSERT_MSG(!now.recorded && !now.has, "a file with no record has one");
   lv_decoderDestroy(lv);
   remove(path);
+  return 0;
+}
+
+/*
+ * The tank's hit zone comes from the recording's version (lv_rulesRefresh):
+ * a game of 1.91 or earlier used the square, a later one the circle, and a
+ * header with no version gives no zone, so no tank outline is drawn.
+ */
+int run_lv_hitbox_zone_from_version(void) {
+  static const struct {
+    uint8_t major, minor, revision;
+    int want;
+  } cases[] = {
+      {1, 9, 1, LV_HITBOX_TANK_SQUARE},   /* 1.91, the last square game */
+      {1, 1, 9, LV_HITBOX_TANK_SQUARE},   /* 1.19 */
+      {1, 9, 2, LV_HITBOX_TANK_CIRCLE},   /* 1.92, the first circle game */
+      {2, 0, 2, LV_HITBOX_TANK_CIRCLE},   /* 2.02 */
+      {2, 2, 1, LV_HITBOX_TANK_CIRCLE},   /* 2.2.1 */
+      {0, 0, 0, LV_HITBOX_TANK_NONE},     /* no version */
+  };
+  const char *path = "lv_hitbox_zone.wbv";
+  size_t c;
+
+  for (c = 0; c < sizeof(cases) / sizeof(cases[0]); c++) {
+    LogBuf b;
+    LogViewerState *lv;
+    int want = cases[c].want;
+#ifdef BOLO_LEGACY_SQUARE_COLLISION
+    if (want == LV_HITBOX_TANK_CIRCLE) want = LV_HITBOX_TANK_SQUARE;
+#endif
+    b.len = 0;
+    putHeaderVersion(&b, "Test", cases[c].major, cases[c].minor, cases[c].revision);
+    putSnapshot(&b, true);
+    putNoEvents(&b, 10);
+    putU8(&b, LOG_QUIT);
+    lv = loadSynthetic(&b, path);
+    UT_ASSERT_MSG(lv != NULL, "synthetic log %u.%u.%u failed to build/load",
+                  cases[c].major, cases[c].minor, cases[c].revision);
+    UT_ASSERT_MSG(lv->rules.tankHitZone == want, "version %u.%u.%u gave zone %d, want %d",
+                  cases[c].major, cases[c].minor, cases[c].revision, lv->rules.tankHitZone,
+                  want);
+    lv_decoderDestroy(lv);
+    remove(path);
+  }
+  /* Rule records are only in games after the circle: with them, even a
+     file with no version is a circle game. */
+  UT_ASSERT(lvHitboxTankZoneFor(0, 0, 0, true) != LV_HITBOX_TANK_NONE);
+  UT_ASSERT(lvHitboxTankZoneFor(1, 9, 1, false) == LV_HITBOX_TANK_SQUARE);
   return 0;
 }

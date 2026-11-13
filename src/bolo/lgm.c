@@ -57,6 +57,7 @@
 #include "tank.h"
 #include "types.h"
 #include "util.h"
+#include "hit_rules.h"       /* hitRulesBuilderCaught */
 #include "../winbolonet/winbolonet_core.h"
 
 
@@ -1705,7 +1706,6 @@ static bool lgmBlastCatches(GameSim *sim, WORLD lgmWorldX, WORLD lgmWorldY, WORL
   BYTE mx, my;
   WORLD conv;
 
-  dead = FALSE;
   /* Map coords from check position — used for hit detection */
   conv = lgmWorldX;
   conv >>= 8;
