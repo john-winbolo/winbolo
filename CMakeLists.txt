@@ -3314,7 +3314,7 @@ endif()
 # for the log viewer's embedded reel (lv_embed.c): the decoder and the
 # renderer are the reel's own, the same set the lobby recap and the web
 # client link (IOS_LOGVIEWER_SOURCES above), so there is no second renderer.
-# SDL runs on its offscreen video driver with a software renderer.
+# SDL runs on its dummy video driver with a software renderer.
 # EXCLUDE_FROM_ALL: built on demand, never part of a normal build.
 #   MSBuild build/WbvRender.vcxproj, then build/WbvRender.exe (docs/TOOLS.md)
 # ---------------------------------------------------------------------------
@@ -3392,9 +3392,6 @@ add_executable(WbvRender EXCLUDE_FROM_ALL
 target_compile_definitions(WbvRender PRIVATE
     WINBOLO_VERSION="${WINBOLO_VERSION}"
     WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
-    WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
-    WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
-    WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
     BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
     BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
     BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}

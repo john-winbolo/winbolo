@@ -55,7 +55,7 @@
  *
  *   The drawing is the log viewer's own: this is a host for the
  *   embedded reel (lv_embed.c), the same one the lobby's recap and its
- *   GIF export use. SDL runs on its "offscreen" video driver and the
+ *   GIF export use. SDL runs on its "dummy" video driver and the
  *   reel draws with a software renderer into memory, so no window ever
  *   opens. The sprite and tile files load from the data folder beside
  *   the program, as the viewer's do.
@@ -67,6 +67,9 @@
 #include <errno.h>
 #include <signal.h>
 #include <sys/stat.h>
+#ifndef S_ISDIR
+#define S_ISDIR(m) (((m) & S_IFMT) == S_IFDIR)
+#endif
 #ifdef _WIN32
 #include <direct.h>
 #include <fcntl.h>
@@ -85,7 +88,10 @@
 #include <SDL3/SDL.h>
 #include <SDL3_ttf/SDL_ttf.h>
 
-#include "../third_party/stb/stb_image_write.h"
+#include "third_party/stb/stb_image_write.h"
+
+/* The longest frame file path, with its terminating zero. */
+#define WBV_RENDER_PATH_MAX 1024
 
 static void printUsage(void) {
     fprintf(stderr,
@@ -138,7 +144,7 @@ static uint8_t *readFile(const char *path, size_t *outLen) {
 static bool makeDir(const char *path) {
     struct stat st;
     if (stat(path, &st) == 0) {
-        return (st.st_mode & S_IFDIR) != 0;
+        return S_ISDIR(st.st_mode);
     }
 #ifdef _WIN32
     return _mkdir(path) == 0;
@@ -223,35 +229,59 @@ static void setFixedView(int x, int y) {
     lv_windowNeedRedraw();
 }
 
-/* Copies the visible slice of the reel's texture into rgb (w * scale by
- * h * scale, three bytes a pixel). */
-static bool readFrame(SDL_Renderer *renderer, int scale, uint8_t *rgb,
-                      int outW, int outH) {
+/* Draws the visible slice of the reel's texture into frame (a render target
+ * of outW by outH) with nearest-pixel scaling, puts the tank names over it as
+ * the GIF export does, and copies the result into rgb (three bytes a
+ * pixel). */
+static bool readFrame(SDL_Renderer *renderer, SDL_Texture *frame, int scale,
+                      uint8_t *rgb, int outW, int outH) {
     void *tex = NULL;
     int texW = 0, texH = 0, srcX = 0, srcY = 0, srcW = 0, srcH = 0;
-    SDL_Rect rect;
+    SDL_FRect src, dst;
+    float s[4], d[4];
     SDL_Surface *raw, *conv;
-    int x, y, row;
+    int y;
+    bool ok;
 
     if (!lvEmbedFrameTexture(&tex, &texW, &texH, &srcX, &srcY, &srcW, &srcH) ||
         tex == NULL) {
         return false;
     }
-    rect.x = srcX;
-    rect.y = srcY;
-    rect.w = outW / scale;
-    rect.h = outH / scale;
-    if (rect.x + rect.w > texW) rect.x = texW - rect.w;
-    if (rect.y + rect.h > texH) rect.y = texH - rect.h;
-    if (rect.x < 0 || rect.y < 0) {
+    src.w = (float)(outW / scale);
+    src.h = (float)(outH / scale);
+    if (srcX + (int)src.w > texW) srcX = texW - (int)src.w;
+    if (srcY + (int)src.h > texH) srcY = texH - (int)src.h;
+    if (srcX < 0 || srcY < 0) {
         return false;
     }
-    if (!SDL_SetRenderTarget(renderer, (SDL_Texture *)tex)) {
+    src.x = (float)srcX;
+    src.y = (float)srcY;
+    dst.x = 0.0f;
+    dst.y = 0.0f;
+    dst.w = (float)outW;
+    dst.h = (float)outH;
+
+    if (!SDL_SetRenderTarget(renderer, frame)) {
         return false;
     }
-    raw = SDL_RenderReadPixels(renderer, &rect);
+    SDL_SetTextureScaleMode((SDL_Texture *)tex, SDL_SCALEMODE_NEAREST);
+    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+    SDL_RenderClear(renderer);
+    ok = SDL_RenderTexture(renderer, (SDL_Texture *)tex, &src, &dst);
+    if (ok) {
+        s[0] = src.x; s[1] = src.y; s[2] = src.w; s[3] = src.h;
+        d[0] = dst.x; d[1] = dst.y; d[2] = dst.w; d[3] = dst.h;
+        lvEmbedDrawTankLabels(s, d);
+        raw = SDL_RenderReadPixels(renderer, NULL);
+    } else {
+        raw = NULL;
+    }
     SDL_SetRenderTarget(renderer, NULL);
     if (raw == NULL) {
+        return false;
+    }
+    if (raw->w != outW || raw->h != outH) {
+        SDL_DestroySurface(raw);
         return false;
     }
     conv = SDL_ConvertSurface(raw, SDL_PIXELFORMAT_RGB24);
@@ -259,25 +289,10 @@ static bool readFrame(SDL_Renderer *renderer, int scale, uint8_t *rgb,
     if (conv == NULL) {
         return false;
     }
-    for (y = 0; y < rect.h; y++) {
-        const uint8_t *src = (const uint8_t *)conv->pixels + (size_t)y * (size_t)conv->pitch;
-        uint8_t *dst = rgb + (size_t)(y * scale) * (size_t)outW * 3u;
-        if (scale == 1) {
-            memcpy(dst, src, (size_t)rect.w * 3u);
-            continue;
-        }
-        for (x = 0; x < rect.w; x++) {
-            int k;
-            for (k = 0; k < scale; k++) {
-                uint8_t *d = dst + ((size_t)x * (size_t)scale + (size_t)k) * 3u;
-                d[0] = src[x * 3 + 0];
-                d[1] = src[x * 3 + 1];
-                d[2] = src[x * 3 + 2];
-            }
-        }
-        for (row = 1; row < scale; row++) {
-            memcpy(dst + (size_t)row * (size_t)outW * 3u, dst, (size_t)outW * 3u);
-        }
+    for (y = 0; y < outH; y++) {
+        memcpy(rgb + (size_t)y * (size_t)outW * 3u,
+               (const uint8_t *)conv->pixels + (size_t)y * (size_t)conv->pitch,
+               (size_t)outW * 3u);
     }
     SDL_DestroySurface(conv);
     return true;
@@ -291,6 +306,7 @@ int main(int argc, char **argv) {
     SDL_Window *window = NULL;
     SDL_Surface *canvas = NULL;
     SDL_Renderer *renderer = NULL;
+    SDL_Texture *frameTex = NULL;
     const char *driver;
     int viewPxW, viewPxH, outW, outH;
     uint8_t *rgb = NULL;
@@ -308,17 +324,17 @@ int main(int argc, char **argv) {
         return err[0] != '\0' ? 2 : 0;
     }
 
-    /* The offscreen driver, or nothing: this program must never open a
+    /* The dummy driver, or nothing: this program must never open a
      * window, so a build of SDL without it is a failure, not a reason to
      * fall back to a real one. */
-    SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "offscreen");
+    SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "dummy");
     if (!SDL_Init(SDL_INIT_VIDEO)) {
         fprintf(stderr, "WbvRender: SDL_Init failed: %s\n", SDL_GetError());
         return 1;
     }
     driver = SDL_GetCurrentVideoDriver();
-    if (driver == NULL || strcmp(driver, "offscreen") != 0) {
-        fprintf(stderr, "WbvRender: the offscreen video driver is not available "
+    if (driver == NULL || strcmp(driver, "dummy") != 0) {
+        fprintf(stderr, "WbvRender: the dummy video driver is not available "
                         "(got %s)\n", driver != NULL ? driver : "none");
         SDL_Quit();
         return 1;
@@ -334,12 +350,12 @@ int main(int argc, char **argv) {
     outW = viewPxW * args.scale;
     outH = viewPxH * args.scale;
 
-    /* The reel wants a window to borrow. On the offscreen driver it is only
+    /* The reel wants a window to borrow. On the dummy driver it is only
      * a record in memory. */
     window = SDL_CreateWindow("WbvRender", viewPxW, viewPxH, SDL_WINDOW_HIDDEN);
     canvas = SDL_CreateSurface(viewPxW, viewPxH, SDL_PIXELFORMAT_ARGB8888);
     if (window == NULL || canvas == NULL) {
-        fprintf(stderr, "WbvRender: could not make the offscreen window: %s\n",
+        fprintf(stderr, "WbvRender: could not make the dummy window: %s\n",
                 SDL_GetError());
         goto done;
     }
@@ -367,7 +383,6 @@ int main(int argc, char **argv) {
         goto done;
     }
     lvEmbedPause();
-    lvEmbedSetTankLabelsInTexture(true);
     zoomIndex = zoomStep1x();
     if (zoomIndex < 0) {
         fprintf(stderr, "WbvRender: the log viewer has no 1x zoom step\n");
@@ -424,9 +439,31 @@ int main(int argc, char **argv) {
          * with SIGPIPE. */
         signal(SIGPIPE, SIG_IGN);
 #endif
-    } else if (!makeDir(args.outDir)) {
-        fprintf(stderr, "WbvRender: could not make the folder %s: %s\n",
-                args.outDir, strerror(errno));
+    } else {
+        /* The longest name is the last frame's; refuse a folder too long for
+         * it here rather than cut every name short. */
+        char probe[WBV_RENDER_PATH_MAX];
+        int len = snprintf(probe, sizeof(probe), "%s/frame_%06u.png",
+                           args.outDir, frames - 1u);
+        if (len < 0 || (size_t)len >= sizeof(probe)) {
+            fprintf(stderr, "WbvRender: the -out folder name is too long "
+                            "(the frame paths must be under %d bytes)\n",
+                    WBV_RENDER_PATH_MAX);
+            goto done;
+        }
+        if (!makeDir(args.outDir)) {
+            fprintf(stderr, "WbvRender: could not make the folder %s: %s\n",
+                    args.outDir, strerror(errno));
+            goto done;
+        }
+    }
+
+    /* Each frame is drawn here at the output size, then read back. */
+    frameTex = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888,
+                                 SDL_TEXTUREACCESS_TARGET, outW, outH);
+    if (frameTex == NULL) {
+        fprintf(stderr, "WbvRender: could not make the frame texture: %s\n",
+                SDL_GetError());
         goto done;
     }
 
@@ -459,7 +496,7 @@ int main(int argc, char **argv) {
             }
         }
         lv_windowNeedRedraw();
-        if (!readFrame(renderer, args.scale, rgb, outW, outH)) {
+        if (!readFrame(renderer, frameTex, args.scale, rgb, outW, outH)) {
             fprintf(stderr, "WbvRender: could not read frame %u: %s\n", frame,
                     SDL_GetError());
             goto done;
@@ -471,7 +508,7 @@ int main(int argc, char **argv) {
                 break;
             }
         } else {
-            char path[1024];
+            char path[WBV_RENDER_PATH_MAX];
             snprintf(path, sizeof(path), "%s/frame_%06u.png", args.outDir, frame);
             if (!stbi_write_png(path, outW, outH, 3, rgb, outW * 3)) {
                 fprintf(stderr, "WbvRender: could not write %s\n", path);
@@ -497,6 +534,7 @@ int main(int argc, char **argv) {
 
 done:
     free(rgb);
+    if (frameTex != NULL) SDL_DestroyTexture(frameTex);
     lvEmbedEnd();
     if (renderer != NULL) SDL_DestroyRenderer(renderer);
     if (canvas != NULL) SDL_DestroySurface(canvas);

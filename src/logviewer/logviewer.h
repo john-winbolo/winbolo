@@ -351,6 +351,9 @@ void lvEmbedSetSelfName(const char *name);
  * instead, for a host that has no screen and must never open a window
  * (WbvRender). Set it before lvEmbedBegin. */
 void lvEmbedSetErrorsToStderr(bool on);
+/* Makes the camera follow the named player's tank. False when no player has
+ * that name or the player has no tank now. */
+bool lvEmbedFocusPlayerByName(const char *name);
 
 /* Modal host for the live delayed spectator feed. Borrows the caller's
  * window/renderer and drives the decoder from records drained off the bolo-world
