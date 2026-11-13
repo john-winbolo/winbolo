@@ -820,6 +820,11 @@ extern PunchQueueEntry punchQueue[PUNCH_QUEUE_SIZE];
 extern NetImpair srvImpairIn;
 extern NetImpair srvImpairOut;
 
+/* True when a datagram to or from addr goes through the impairment layer
+ * ni. Always true unless the spec has lanonly=1; then only loopback and
+ * private IPv4 peers are impaired, and never a -bothosts address. */
+bool srvImpairPeer(const NetImpair *ni, const struct sockaddr_in *addr);
+
 /* Recv-thread lifecycle. The thread, its SPSC ring and the drop counter are
  * private to src/server/udp/udp_server_recv.c, which owns them; the transport's
  * create and destroy entry points start and stop the thread through these

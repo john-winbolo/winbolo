@@ -1187,6 +1187,9 @@ void printArgs() {
   fprintf(stderr, "                spec is comma-separated keys, e.g.\n");
   fprintf(stderr, "                -netimpair delay=75,jitter=30,loss=2,burst=2\n");
   fprintf(stderr, "                (delay/jitter in ms, loss in %%, burst = drops per loss event).\n");
+  fprintf(stderr, "                lanonly=1 impairs only loopback and private-LAN peers\n");
+  fprintf(stderr, "                (127/8, 10/8, 172.16/12, 192.168/16) and never a -bothosts\n");
+  fprintf(stderr, "                address; internet peers pass with no delay or loss.\n");
   fprintf(stderr, "                Combine with -seed for a reproducible impaired run.\n");
 #endif
   fprintf(stderr, "-quiet        - No screen input or output (silent mode)\n");
