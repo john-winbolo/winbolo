@@ -76,7 +76,7 @@ undocumented T2 exception.
 `src/tools/wbv_render.c` — reads a round log (`.wbv`) and writes video frames,
 as PNG files or as raw `rgb24` on stdout, so ffmpeg can make a clip of a game,
 for example a before-and-after pair of a change. It never opens a window: SDL
-runs on its `offscreen` video driver and the log viewer's embedded reel draws
+runs on its `dummy` video driver and the log viewer's embedded reel draws
 with a software renderer into memory. The drawing is the viewer's own (the
 same code the lobby recap and its GIF export use), so the frames look like the
 Log Viewer at 1x, tank names included.
@@ -100,7 +100,7 @@ Or with no files between them (WbvRender prints the frame size on stderr):
 | `-out <dir>` / `-out -` | PNG frames `frame_000000.png`, ... in `<dir>`, or raw `rgb24` frames on stdout |
 | `-from <sec>`, `-to <sec>` | The part of the game to draw, from the start of the game (`75`, `75.5` or `1:15.5`); the default is all of it |
 | `-fps <n>` | Frames per second of replay time, 1 to 200 (default 50, one frame a tick) |
-| `-view x y w h` | A fixed view: the top-left map square and the size in squares. The view must stay on the map: `x + w` and `y + h` are 255 or less |
+| `-view x y w h` | A fixed view: the top-left map square and the size in squares. The view must stay on the map: `x + w` and `y + h` are 255 or less, so the last row and column, square 255, are never shown |
 | `-follow <player>` | Follow a player, by name or by player number; the players are listed on stderr. A name or a number of a player who joins later works from the frame they have a tank. With neither `-view` nor `-follow`, the view follows the lowest-numbered player who has a tank |
 | `-size w h` | The view size in squares when there is no `-view` (default 40 by 30, 640x480 pixels) |
 | `-self <name>` | Draw the round from this player's side: allies green, enemies red |
