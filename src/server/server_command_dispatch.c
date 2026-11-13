@@ -1021,8 +1021,8 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
            team picked for it by anything but the request follows the same
            rule. A no-op on every other team and with no template. */
         serverSimScenarioBotMovedTeam(sim, slot, 0);
-        if (!serverSimIsBot(sim, slot) ||
-            !serverSimGetLobbyPlayer(sim, slot)->fielded) {
+        if (!serverSimIsBot(sim, slot)) return CMD_REJECT_INVALID;
+        if (!serverSimGetLobbyPlayer(sim, slot)->fielded) {
             lobbyAutoUnreadyOnChange(sim);
             return CMD_OK;
         }
