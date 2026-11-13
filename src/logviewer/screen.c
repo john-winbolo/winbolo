@@ -6307,7 +6307,7 @@ LogViewerState *lv_decoderCreate(bool fromMainMenu) {
   lv->rules.pillMaxArmour  = 15;
   lv->rules.tankHitRadius  = 112;   /* TANK_HIT_RADIUS */
   lv->rules.pillRange      = 2048;  /* PILLBOX_RANGE */
-  lv->rules.lgmBlastShape  = 2;     /* LGM_BLAST_SHAPE_CLASSIC */
+  lv->rules.lgmBlastShape  = LGM_BLAST_SHAPE_CLASSIC;
 
   lv->fromMainMenu = fromMainMenu;
   lv->screenSizeX = MAIN_SCREEN_SIZE_X + 15; /* default 30 */
