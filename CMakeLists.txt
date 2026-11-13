@@ -1091,11 +1091,18 @@ add_custom_command(
 add_custom_target(winbolo_brain_shipped_table
     DEPENDS "${WINBOLO_BRAIN_SHIPPED_DIR}/brain_shipped_table.stamp")
 
-# tgt compiles bothost_embed.c with WINBOLO_BOTHOST_OFFICIAL_ONLY: it
-# includes the table, so the table is written before tgt compiles.
+# tgt compiles bothost_embed.c in an official-only build: the game and
+# WinBoloHeadless, and WinBoloBotHost for the Bot Host child that the game
+# starts with --official-only. bothost_embed.c then includes the table
+# (WINBOLO_BRAIN_SHIPPED_TABLE), so the table is written before tgt
+# compiles. The define is set on bothost_embed.c only.
 function(winbolo_use_brain_shipped_table tgt)
     add_dependencies(${tgt} winbolo_brain_shipped_table)
     target_include_directories(${tgt} PRIVATE "${WINBOLO_BRAIN_SHIPPED_DIR}")
+    set_source_files_properties(src/bothost/bothost_embed.c
+        DIRECTORY ${CMAKE_SOURCE_DIR}
+        TARGET_DIRECTORY ${tgt}
+        PROPERTIES COMPILE_DEFINITIONS WINBOLO_BRAIN_SHIPPED_TABLE=1)
 endfunction()
 
 # Fetches libplum and sets HAVE_LIBPLUM. A macro so the fetched variables and
@@ -2254,6 +2261,10 @@ set(CLIENT_SOURCES
     src/bothost/bothost_embed.c src/bothost/bothost_embed_service.c
     src/bothost/bothost_optout.c
     src/bothost/bothost_rec.c
+    # The built-in Bot Host as a child process (bothost_child.h).
+    src/bothost_child/bothost_child.c src/bothost_child/bothost_child_client.c
+    src/bothost_child/bothost_child_win.c src/bothost_child/bothost_child_posix.c
+    src/bothost_child/bothost_child_relay.c
     src/gui/ui_mode.c
     src/gui/visibility_presets.c
     src/gui/scn_panel_prefs.c
@@ -2900,6 +2911,11 @@ set(SERVER_SOURCES
     src/gui/sdl3/luabrainshandler.c
     src/headless/cmd_stdin.c
     src/third_party/tweetnacl/tweetnacl.c
+    # The server's bots in a sandboxed child Bot Host (ds_bot_child.h).
+    src/server/ds_bot_child.c
+    src/bothost_child/bothost_child.c src/bothost_child/bothost_child_client.c
+    src/bothost_child/bothost_child_win.c src/bothost_child/bothost_child_posix.c
+    src/bothost_child/bothost_child_relay.c
 )
 
 
@@ -2926,7 +2942,13 @@ bolo_apply_include_rules(WinBoloDS runtime_only)
 bolo_grant_internal_source_access(WinBoloDS
     src/bolo/transport_udp_client.c
     src/server/servermain.c
-    src/server/server_frontend_stubs.c)
+    src/server/server_frontend_stubs.c
+    src/server/ds_bot_child.c)
+if(WINBOLO_BOTHOST_ALLOW_FULL_MAP)
+    # The child's hello says the same (botHostChildBuildFullMap).
+    target_compile_definitions(WinBoloDS PRIVATE
+        WINBOLO_BOTHOST_ALLOW_FULL_MAP=1)
+endif()
 
 if(WIN32)
     target_sources(WinBoloDS PRIVATE
@@ -3324,6 +3346,10 @@ set(HEADLESS_SOURCES
     src/bothost/bothost_embed.c src/bothost/bothost_embed_service.c
     src/bothost/bothost_optout.c
     src/bothost/bothost_rec.c
+    # The built-in Bot Host as a child process (bothost_child.h).
+    src/bothost_child/bothost_child.c src/bothost_child/bothost_child_client.c
+    src/bothost_child/bothost_child_win.c src/bothost_child/bothost_child_posix.c
+    src/bothost_child/bothost_child_relay.c
     src/third_party/tweetnacl/tweetnacl.c
 )
 
@@ -3454,6 +3480,11 @@ set(BOTHOST_SOURCES
     src/bothost/bothost_main.c src/headless/headless_frontend.c
     src/bothost/bothost_optout.c
     src/bothost/bothost_rec.c
+    # --embed-child: the game's built-in Bot Host as a child process. It
+    # runs the embed copy of bothost_main.c, as the game does
+    # (bothost_child.h).
+    src/bothost/bothost_embed.c
+    src/bothost_child/bothost_child.c src/bothost_child/bothost_child_main.c
     src/third_party/tweetnacl/tweetnacl.c
 )
 file(GLOB BOTHOST_BSD_SOURCES src/bsd/*.c)
@@ -3466,6 +3497,9 @@ endif()
 
 add_executable(WinBoloBotHost ${BOTHOST_SOURCES})
 target_sources(WinBoloBotHost PRIVATE src/steam/steam_wrapper_stub.c)
+if(WINBOLO_BOTHOST_OFFICIAL_ONLY)
+    winbolo_use_brain_shipped_table(WinBoloBotHost)
+endif()
 if(WINBOLO_BOTHOST_ALLOW_FULL_MAP)
     target_compile_definitions(WinBoloBotHost PRIVATE
         WINBOLO_BOTHOST_ALLOW_FULL_MAP=1)
@@ -3494,6 +3528,7 @@ bolo_apply_include_rules(WinBoloBotHost runtime_only)
 bolo_grant_internal_source_access(WinBoloBotHost
     src/bolo/transport_udp_client.c
     src/bothost/bothost_main.c
+    src/bothost/bothost_embed.c
     src/bothost/bothost_rec.c)
 
 if(WIN32)
@@ -3516,7 +3551,7 @@ target_link_libraries(WinBoloBotHost PRIVATE
     winbolonet_server
     winbolonet_client)
 target_link_libraries(WinBoloBotHost PRIVATE
-    SDL3::SDL3 minizip lua_static CURL::libcurl cjson utf8proc)
+    SDL3::SDL3 minizip lua_static CURL::libcurl cjson utf8proc cpu_speed_test)
 
 target_sources(WinBoloBotHost PRIVATE src/common/sentry_integration.c)
 if(HAVE_SENTRY)
@@ -3816,6 +3851,32 @@ option(WINBOLO_HIDE_CLIENT_BOT_HOST_MSG
 # System Info still shows each bot's host.
 option(WINBOLO_HIDE_LOBBY_BOT_HOSTS
     "Hide the Bot Hosts list in the lobby (System Info keeps it)" OFF)
+
+# The game's built-in Bot Host runs WinBoloBotHost as a child process
+# (src/bothost_child). The game looks for it next to its own program: in
+# the build folder on Windows and Linux, and in WinBolo.app/Contents/MacOS
+# on macOS, for every build (not only with WINBOLO_BUNDLE_DEV_TOOLS).
+# Web, Android and iOS have no built-in Bot Host (bothost_embed_stub.c), so
+# none of this applies there.
+if(TARGET WinBoloBotHost AND TARGET WinBolo)
+    add_dependencies(WinBolo WinBoloBotHost)
+endif()
+if(TARGET WinBoloBotHost AND TARGET WinBoloHeadless)
+    add_dependencies(WinBoloHeadless WinBoloBotHost)
+endif()
+# WinBoloDS runs its own bots in a WinBoloBotHost child next to it
+# (src/server/ds_bot_child.h).
+if(TARGET WinBoloBotHost AND TARGET WinBoloDS)
+    add_dependencies(WinBoloDS WinBoloBotHost)
+endif()
+if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS" AND TARGET WinBolo
+   AND TARGET WinBoloBotHost)
+    add_custom_command(TARGET WinBolo POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:WinBoloBotHost>" "$<TARGET_FILE_DIR:WinBolo>"
+        COMMENT "Bundling WinBoloBotHost into WinBolo.app/Contents/MacOS"
+    )
+endif()
 
 option(WINBOLO_BUNDLE_DEV_TOOLS
     "Bundle WinBoloDS, BrainTest, and WinBoloHeadless inside WinBolo.app (macOS)" ON)
@@ -4918,6 +4979,13 @@ set(WINBOLO_UNITTESTS_SOURCES
     # limits on the wire, the owner-only change).
     tests/unit/test_bot_host_optout.c
     src/bothost/bothost_optout.c
+    # The built-in Bot Host as a child process: arguments, the line codec,
+    # the restart counter, on Windows the job's limits, and the file
+    # sandbox, the relay and the machine id lines.
+    tests/unit/test_bothost_child.c
+    src/bothost_child/bothost_child.c
+    src/bothost_child/bothost_child_win.c src/bothost_child/bothost_child_posix.c
+    src/bothost_child/bothost_child_relay.c
     tests/unit/test_subscriber_arm_orphans.c
     tests/unit/test_identity_survives_reset.c
     tests/unit/test_wbn_session_rotation.c
@@ -5756,6 +5824,10 @@ if(WB_NETDEBUG)
 endif()
 
 add_executable(WinBoloUnitTests ${WINBOLO_UNITTESTS_SOURCES})
+# The bothost_child_* tests start WinBoloBotHost from the tests' folder.
+if(TARGET WinBoloBotHost)
+    add_dependencies(WinBoloUnitTests WinBoloBotHost)
+endif()
 target_sources(WinBoloUnitTests PRIVATE src/steam/steam_wrapper_stub.c
     src/bolo/lobby_bot_pools_json.c
     tests/unit/test_bot_name_pools.c
@@ -6389,6 +6461,26 @@ set(_unit_test_names
     bot_host_refused_takes_no_file
     brain_capacity_memory_limit
     bot_host_reset_limit
+    bothost_child_args
+    bothost_child_quote
+    bothost_child_codec
+    bothost_child_restart
+    bothost_child_job_limits
+    bothost_child_relay_codec
+    bothost_child_sandbox_files
+    bothost_child_sandbox_net
+    bothost_child_relay
+    bothost_child_machine_id
+    bothost_child_no_unsafe
+    bothost_child_copy_tree
+    bothost_child_fail_rule
+    bothost_child_copy_wanted
+    bothost_child_env_keep
+    bothost_ds_child_where
+    bothost_ds_child_first_lines
+    bot_host_lockstep
+    bothost_child_seccomp
+    bothost_child_stdin_full
     bot_host_brain_name_opt
     bot_host_link_announce_codec
     bot_host_link_addr_list

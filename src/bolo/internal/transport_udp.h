@@ -95,6 +95,12 @@ typedef struct {
  * connected and only from the player's address. */
 #define JOIN_BOT_HOST_PLAYER_MARK   0x50
 #define JOIN_BOT_HOST_PLAYER_LEN    (1 + 1 + 16)
+/* The dedicated server's own Bot Host child (ds_bot_child.h) joins the same
+ * way with this mark, a player number it does not use and the 16-byte
+ * secret the server gave it on its stdin in place of the ticket. The server
+ * takes it only from its own computer's loopback address and only with the
+ * secret of the child it started. */
+#define JOIN_BOT_HOST_DS_CHILD_MARK 0x51
 /* Most bot connections one Bot Host may offer. */
 #define BOT_HOST_MAX_SLOTS          MAX_TANKS
 /* Most Bot Host control connections one server holds at once. */
@@ -505,6 +511,8 @@ const BYTE *transportUdpClientGetMapData(Transport *t, int *outLen);
  * by comparing against an earlier sample — the invalidation itself is a
  * transient that a polling observer can step over. */
 uint32_t transportUdpClientGetMapInvalidateCount(Transport *t);
+/* The serverTick of the newest snapshot taken (0: none yet). */
+uint32_t transportUdpClientGetNewestSnapshotTick(Transport *t);
 
 /* Returns map-download progress as 0..100. Returns 100 when nothing is
  * in flight (no buffer allocated yet, or zero-sized total — neither
@@ -594,6 +602,12 @@ typedef struct UdpServerClient {
     uint32_t lastPongSentMs;     /* SDL_GetTicks() when last PONG was sent */
     char countryCode[3];         /* ISO 3166-1 alpha-2 from GeoIP lookup */
     uint16_t inputsThisTick;     /* Inputs applied this tick cycle (for rate limiting) */
+    /* The newest input tick that came (any input in a packet, applied or
+     * not), and how many times it rose: the lockstep wait for the server's
+     * own Bot Host child (transportUdpServerLockstepWait) waits for a rise. */
+    uint32_t inputNewestTick;
+    bool     inputNewestHave;
+    uint32_t inputNewCount;
     bool wantRejoin;             /* Client requested rejoin (restore pills/bases) */
     uint8_t pingWarnStrikes;     /* consecutive pings >= warn threshold */
     uint8_t pingKickStrikes;     /* consecutive pings >= kick threshold */
@@ -683,6 +697,10 @@ void transportUdpServerSend(struct ServerSim *sim);
 
 /* Drain the recv thread's packet queue (use when recv thread is active). */
 void transportUdpServerDrainRecvQueue(struct ServerSim *sim);
+/* The packets that wait (the socket, or the recv thread's queue), with no
+ * new tick: the tick count, the cooldowns and the per-tick input count stay
+ * as they are. For a wait inside a tick (transportUdpServerLockstepWait). */
+void transportUdpServerRecvPacketsOnly(struct ServerSim *sim);
 
 /* Enable runtime network impairment on both the inbound (client->server)
  * and outbound (server->client) datagram paths from an impairment spec
@@ -863,6 +881,28 @@ bool transportUdpServerSetBotHostList(struct ServerSim *sim, const char *arg);
  * sent a ticket, and the Bot Host inside that player's client joins with it
  * in place of a key. Turns Bot Host connections on as a key does. */
 void transportUdpServerSetPlayerBotHosts(struct ServerSim *sim, bool on);
+/* The server's own Bot Host child (src/server/ds_bot_child.c). Begin
+ * makes a new secret of BOT_HOST_TICKET_LEN bytes (the child joins with
+ * it, JOIN_BOT_HOST_DS_CHILD_MARK) and turns Bot Host connections on. False when no secret can be made.
+ * End forgets the secret and drops the child: its bots come back
+ * in-process. Connected: the child is joined now. */
+bool transportUdpServerDsChildBegin(struct ServerSim *sim,
+                                    uint8_t *secretOut);
+void transportUdpServerDsChildEnd(struct ServerSim *sim, const char *why);
+bool transportUdpServerDsChildConnected(void);
+/* Lockstep with the child (bot_host_lockstep.h). After the snapshot send,
+ * Arm keeps the input count of each seat the child runs. Before the next
+ * sim tick, Wait takes packets until each of these seats sent a new move,
+ * or until the wait time (-bothost-child-wait-ms; 0: no wait). A move
+ * that comes later takes the late-input rule of every player (the jitter
+ * buffer and the stall-advance). Wait returns the ms it waited. */
+#define TRANSPORT_UDP_LOCKSTEP_WAIT_MS_DEFAULT 15
+void transportUdpServerSetLockstepWaitMs(int ms);
+int transportUdpServerGetLockstepWaitMs(void);
+void transportUdpServerLockstepArm(struct ServerSim *sim);
+double transportUdpServerLockstepWait(struct ServerSim *sim);
+void transportUdpServerLockstepStats(uint32_t *armed, uint32_t *met,
+                                     uint32_t *late, double *waitMs);
 /* Placement: a host of smallSlots slots or fewer counts bias slots fewer,
  * so it fills a little later (-bothost-small-slots, -bothost-small-bias).
  * A negative value keeps that default (BOT_HOST_SMALL_SLOTS_DEFAULT,

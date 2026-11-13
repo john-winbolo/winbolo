@@ -39,6 +39,7 @@ add_library(bolo_static STATIC
     machine_cpu_free.c
     machine_id.c
     bot_host_machine.c
+    bot_host_lockstep.c
     brain_pathfinder.c
     brain_pathfinder_serial.c
     brain_sandbox.c

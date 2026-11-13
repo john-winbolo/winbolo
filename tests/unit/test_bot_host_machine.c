@@ -41,6 +41,7 @@
 #include <string.h>
 
 #include "bot_host_machine.h"
+#include "bot_host_lockstep.h"
 #include "machine_id.h"
 #include "test_harness.h"
 
@@ -376,5 +377,146 @@ int run_bot_host_machine_join_wait(void) {
     in[2].present = false;
     botHostMachineStep(in, 3, server, true, out, known);
     UT_ASSERT(!known[2]);
+    return 0;
+}
+
+/* The server's wait for its own child's moves (bot_host_lockstep.h): only
+ * the child's seats are waited for; a new input of each meets the wait; a
+ * missing one waits until the timeout, then the tick goes on (LATE); no
+ * seat, or a wait of 0, never waits. */
+/* Arm twice with a new input of each "on" seat between: after this,
+ * each "on" seat is a waited seat (the new-seat rule is met). */
+static void lockstepWarm(BotHostLockstep *ls, const bool *on, uint32_t *cnt,
+                         int n) {
+    int i;
+    botHostLockstepReset(ls);
+    botHostLockstepArm(ls, on, cnt, n);
+    for (i = 0; i < n && i < BOT_HOST_LOCKSTEP_SEATS; i++) {
+        if (on[i]) cnt[i]++;
+    }
+    botHostLockstepArm(ls, on, cnt, n);
+}
+
+int run_bot_host_lockstep(void) {
+    BotHostLockstep ls;
+    bool on[BOT_HOST_LOCKSTEP_SEATS];
+    uint32_t cnt[BOT_HOST_LOCKSTEP_SEATS];
+    int i;
+
+    memset(on, 0, sizeof(on));
+    memset(cnt, 0, sizeof(cnt));
+    on[1] = on[3] = on[4] = true;
+    cnt[1] = 10;
+    cnt[3] = 0xFFFFFFFEu;   /* the count may wrap */
+    cnt[4] = 7;
+    cnt[2] = 5;             /* not the child's: never waited for */
+
+    /* A new seat is not waited for until its first new input. */
+    botHostLockstepReset(&ls);
+    botHostLockstepArm(&ls, on, cnt, BOT_HOST_LOCKSTEP_SEATS);
+    UT_ASSERT(ls.wanted == 0);
+    UT_ASSERT(botHostLockstepStep(0, 0, 0.0, 15) == BOT_HOST_LOCKSTEP_NONE);
+    cnt[1]++; cnt[3]++; cnt[4]++;   /* cnt[3] is now 0xFFFFFFFF */
+    botHostLockstepArm(&ls, on, cnt, BOT_HOST_LOCKSTEP_SEATS);
+    UT_ASSERT(ls.wanted == 3);
+    UT_ASSERT(!ls.want[2]);
+    UT_ASSERT(botHostLockstepMissing(&ls, cnt, BOT_HOST_LOCKSTEP_SEATS) == 3);
+    UT_ASSERT(botHostLockstepStep(3, 3, 0.0, 15) == BOT_HOST_LOCKSTEP_WAIT);
+
+    cnt[2]++;               /* another seat's move does not count */
+    cnt[1]++;
+    UT_ASSERT(botHostLockstepMissing(&ls, cnt, BOT_HOST_LOCKSTEP_SEATS) == 2);
+    cnt[3]++;               /* wraps to 0: still a new move */
+    UT_ASSERT(botHostLockstepMissing(&ls, cnt, BOT_HOST_LOCKSTEP_SEATS) == 1);
+    UT_ASSERT(botHostLockstepStep(1, 3, 14.9, 15) == BOT_HOST_LOCKSTEP_WAIT);
+    UT_ASSERT(botHostLockstepStep(1, 3, 15.0, 15) == BOT_HOST_LOCKSTEP_LATE);
+    UT_ASSERT(botHostLockstepStep(1, 3, 40.0, 15) == BOT_HOST_LOCKSTEP_LATE);
+    cnt[4] += 2;            /* two moves count as one seat met */
+    UT_ASSERT(botHostLockstepMissing(&ls, cnt, BOT_HOST_LOCKSTEP_SEATS) == 0);
+    UT_ASSERT(botHostLockstepStep(0, 3, 0.1, 15) == BOT_HOST_LOCKSTEP_MET);
+    /* Met wins over the timeout. */
+    UT_ASSERT(botHostLockstepStep(0, 3, 99.0, 15) == BOT_HOST_LOCKSTEP_MET);
+
+    /* Next arm: seat 4's two moves count, so it stays waited for. */
+    cnt[1]++; cnt[3]++;
+    botHostLockstepArm(&ls, on, cnt, BOT_HOST_LOCKSTEP_SEATS);
+    UT_ASSERT(ls.wanted == 3);
+    /* The idle rule: seat 4 sends nothing more. One arm with no new
+     * input: still waited for (one late tick is not idle). */
+    cnt[1]++; cnt[3]++;
+    botHostLockstepArm(&ls, on, cnt, BOT_HOST_LOCKSTEP_SEATS);
+    UT_ASSERT(ls.wanted == 3);
+    UT_ASSERT(ls.want[4]);
+    /* Two arms with no new input: not waited for. */
+    cnt[1]++; cnt[3]++;
+    botHostLockstepArm(&ls, on, cnt, BOT_HOST_LOCKSTEP_SEATS);
+    UT_ASSERT(ls.wanted == 2);
+    UT_ASSERT(!ls.want[4]);
+    UT_ASSERT(botHostLockstepMissing(&ls, cnt, BOT_HOST_LOCKSTEP_SEATS) == 2);
+    /* More idle arms: still not waited for. */
+    cnt[1]++; cnt[3]++;
+    botHostLockstepArm(&ls, on, cnt, BOT_HOST_LOCKSTEP_SEATS);
+    UT_ASSERT(!ls.want[4]);
+    /* Its next new input makes it a waited seat at the next arm. */
+    cnt[1]++; cnt[3]++; cnt[4]++;
+    botHostLockstepArm(&ls, on, cnt, BOT_HOST_LOCKSTEP_SEATS);
+    UT_ASSERT(ls.wanted == 3);
+    UT_ASSERT(ls.want[4]);
+
+    /* A seat that leaves the child and comes back is a new seat. */
+    on[3] = false;
+    cnt[1]++; cnt[3]++; cnt[4]++;
+    botHostLockstepArm(&ls, on, cnt, BOT_HOST_LOCKSTEP_SEATS);
+    UT_ASSERT(ls.wanted == 2);
+    UT_ASSERT(!ls.want[3]);
+    on[3] = true;
+    cnt[1]++; cnt[3]++; cnt[4]++;
+    botHostLockstepArm(&ls, on, cnt, BOT_HOST_LOCKSTEP_SEATS);
+    UT_ASSERT(!ls.want[3]);
+    cnt[1]++; cnt[3]++; cnt[4]++;
+    botHostLockstepArm(&ls, on, cnt, BOT_HOST_LOCKSTEP_SEATS);
+    UT_ASSERT(ls.want[3]);
+    UT_ASSERT(ls.wanted == 3);
+
+    /* No seat, or no wait: never waits. */
+    memset(on, 0, sizeof(on));
+    botHostLockstepArm(&ls, on, cnt, BOT_HOST_LOCKSTEP_SEATS);
+    UT_ASSERT(ls.wanted == 0);
+    UT_ASSERT(botHostLockstepStep(0, 0, 0.0, 15) == BOT_HOST_LOCKSTEP_NONE);
+    UT_ASSERT(botHostLockstepStep(2, 2, 0.0, 0) == BOT_HOST_LOCKSTEP_NONE);
+    UT_ASSERT(botHostLockstepStep(2, 2, 0.0, -1) == BOT_HOST_LOCKSTEP_NONE);
+
+    /* A short table: seats past it are not waited for. */
+    for (i = 0; i < BOT_HOST_LOCKSTEP_SEATS; i++) on[i] = true;
+    lockstepWarm(&ls, on, cnt, 4);
+    UT_ASSERT(ls.wanted == 4);
+    UT_ASSERT(botHostLockstepMissing(&ls, cnt, 2) == 2);
+    /* More seats than the table holds: only the table's are armed. */
+    lockstepWarm(&ls, on, cnt, BOT_HOST_LOCKSTEP_SEATS + 5);
+    UT_ASSERT(ls.wanted == BOT_HOST_LOCKSTEP_SEATS);
+    /* NULL is safe, and clears the history. */
+    botHostLockstepArm(&ls, NULL, cnt, 4);
+    UT_ASSERT(ls.wanted == 0);
+    UT_ASSERT(!ls.seen[0]);
+    UT_ASSERT(botHostLockstepMissing(NULL, cnt, 4) == 0);
+    botHostLockstepArm(NULL, on, cnt, 4);
+    botHostLockstepReset(NULL);
+
+    /* The pending timeout needs both the ticks and the wall time. */
+    UT_ASSERT(!botHostPendingExpired(100, 100, 5000, 5000));
+    /* -asap: 501 ticks in 2 s is not a timeout. */
+    UT_ASSERT(!botHostPendingExpired(601, 100, 7000, 5000));
+    /* A slow server: 10.001 s with 400 ticks is not a timeout. */
+    UT_ASSERT(!botHostPendingExpired(500, 100, 15001, 5000));
+    /* Exactly at the limits: not yet. */
+    UT_ASSERT(!botHostPendingExpired(600, 100, 15000, 5000));
+    UT_ASSERT(!botHostPendingExpired(601, 100, 15000, 5000));
+    UT_ASSERT(!botHostPendingExpired(600, 100, 15001, 5000));
+    /* Both past: a timeout. */
+    UT_ASSERT(botHostPendingExpired(601, 100, 15001, 5000));
+    UT_ASSERT(botHostPendingExpired(100000, 100, 900000, 5000));
+    /* The tick count wraps. */
+    UT_ASSERT(botHostPendingExpired(400, 0xFFFFFF00u, 15001, 5000));
+    UT_ASSERT(!botHostPendingExpired(10, 0xFFFFFF00u, 15001, 5000));
     return 0;
 }

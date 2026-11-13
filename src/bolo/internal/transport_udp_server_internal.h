@@ -278,6 +278,11 @@ typedef struct {
     bool     playerHost;
     uint8_t  ownerSlot;
     uint64_t ownerConnId;
+    /* The dedicated server's own Bot Host child (ds_bot_child.h): it
+     * joined from loopback with the server's secret. Its lag is 0, it is
+     * never refused by the same-computer rule, the server's own slots go
+     * to it, and the server waits for its bots' moves each tick. */
+    bool     localChild;
     uint32_t lastReceivedTick;
     uint32_t outSequence;
     uint16_t pingMs;
@@ -432,6 +437,7 @@ typedef struct {
     uint8_t  token[JOIN_BOT_SLOT_TOKEN_LEN];
     uint16_t gen;                /* rises with every assign for the seat */
     uint32_t sinceTick;          /* tickCount the state was entered */
+    uint64_t sinceMs;            /* SDL_GetTicks() when PENDING began */
     uint32_t lastPollTick;       /* tickCount of the last settings check */
     /* The settings the host was last sent, compared by the settings check. */
     char     brain[BOT_HOST_BRAIN_NAME_LEN];
@@ -704,6 +710,11 @@ typedef struct UdpServerState {
     bool        botHostOpen;
     /* -noplayerbothosts: the players are sent no ticket. */
     bool        noPlayerBotHosts;
+    /* The server's own Bot Host child (ds_bot_child.h) is wanted, and the
+     * secret it joins with (dsChildHaveSecret: one is set). */
+    bool        dsChildWanted;
+    bool        dsChildHaveSecret;
+    uint8_t     dsChildSecret[BOT_HOST_TICKET_LEN];
     /* Each player's ticket, made for its connection (playerTicketConnId),
      * and the tickCount and game start count it last went out at. */
     uint8_t     playerTicket[MAX_TANKS][BOT_HOST_TICKET_LEN];
