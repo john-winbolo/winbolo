@@ -398,7 +398,8 @@ int run_brain_sandbox_hostile_off_map_terrain(void) {
 static const char *const bshJitWork =
     "local probe = ...\n"
     "local flushes = 0\n"
-    "probe.attach(function(what) if what == 'flush' then flushes = flushes + 1 end end, 'trace')\n"
+    "local function onTrace(what) if what == 'flush' then flushes = flushes + 1 end end\n"
+    "probe.attach(onTrace, 'trace')\n"
     "local keep = {}\n"
     "for k = 1, 2000 do\n"
     "  local parts = { 'local x, y = 0, 1 for i = 1, 200 do ' }\n"
@@ -410,7 +411,7 @@ static const char *const bshJitWork =
     "  f()\n"
     "  keep[k] = f\n"
     "end\n"
-    "probe.attach(nil)\n"
+    "probe.attach(onTrace)\n"
     "local traces, bytes = 0, 0\n"
     "for tr = 1, 4000 do\n"
     "  if probe.util.traceinfo(tr) then\n"
