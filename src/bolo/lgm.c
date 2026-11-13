@@ -1771,10 +1771,12 @@ void lgmDropCarriedPill(GameSim *sim, lgm *lgman) {
   lgmMapY = (BYTE) ((unsigned int) ((*lgman)->y) >> 8);
 
   /* The same search a dead tank's pills are put down with, round the
-     square he is on, as Mac Bolo's qman_drop_pill does. A map with nowhere
-     at all to put it leaves the pill marked carried for the rest of the
-     round, rather than searching for ever. */
-  pillsDropSpiralStart(&spiral, lgmMapX, lgmMapY);
+     square he is on, as Mac Bolo's qman_drop_pill does. On a map where no
+     square will hold a pill, the search clears one (see
+     pillsDropSpiralFind). */
+  /* NEUTRAL: his own tank, if he still has one, is alive and may be on a
+     boat, so the search leaves its square alone like any other tank's. */
+  pillsDropSpiralStart(&spiral, lgmMapX, lgmMapY, NEUTRAL);
   if (sim->isServer == TRUE &&
       pillsDropSpiralFind(sim, &spiral, &item.x, &item.y)) {
     item.armour = 0;

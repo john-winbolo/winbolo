@@ -753,6 +753,16 @@ struct ServerSim {
     GameEvent    mapEvents[MAX_MAP_EVENTS];
     uint16_t     mapEventCount;
 
+    /* Map changes made while a running round is between ticks: a player who
+     * quits, is kicked or times out is removed during packet receive, and the
+     * pills his tank drops can clear a square (pillsDropSpiralFind). Those
+     * changes cannot go in mapEvents, because serverSimTick clears it at the
+     * top of the next frame, before anything sends it. They wait here and
+     * serverSimTick copies them in right after that clear, so clients and
+     * the shadow maps get them with the next frame. */
+    GameEvent    pendingMapEvents[MAX_MAP_EVENTS];
+    uint16_t     pendingMapEventCount;
+
     /* What each connected client's copy of the terrain looks like: every
      * tile the server has actually sent it. Identical to the real map for a
      * slot that is handed every map event, and behind it by whatever a culled
