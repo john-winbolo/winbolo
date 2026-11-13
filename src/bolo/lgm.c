@@ -633,12 +633,14 @@ BYTE lgmRequestRefusal(GameSim *sim, lgm *lgman, tank *tnk, BYTE mapX, BYTE mapY
  *
  * Where the danger is now: a hit bursts 80 to 111 from the centre of a still
  * tank on the shooter's side, and the builder dies within MAP_SQUARE_MIDDLE
- * of the burst (the classic lgm_blast_shape; these figures are for it).
- * So a hit can kill him only while he is 48 or less out: his first 2 ticks
- * out on grass and his first 4 on forest, when the tank is still or drives
- * at the shooter. A tank that drives away from the shooter on a road, a
- * boat or a base keeps pace with him, and the danger lasts as long as it
- * does. */
+ * of the burst (lgm_blast_shape 0, the old WinBolo circle; the figures
+ * above are for it). So a hit can kill him only while he is 48 or less out:
+ * his first 2 ticks out on grass and his first 4 on forest, when the tank
+ * is still or drives at the shooter. With the classic lgm_blast_shape, the
+ * circle of 144, he dies within 144 of the burst, so the danger lasts while
+ * he is 64 or less out: his first 3 ticks on grass and his first 6 on
+ * forest. A tank that drives away from the shooter on a road, a boat or a
+ * base keeps pace with him, and the danger lasts as long as it does. */
 #define LGM_START_OFFSET 16
 
 /*********************************************************
@@ -1675,8 +1677,8 @@ void lgmGetScreenCoords(lgm *lgman, BYTE leftPos, BYTE topPos, BYTE *mx, BYTE *m
 *              rule applies
 *********************************************************/
 /* Whether an explosion at (wx, wy) catches a man at (lgmWorldX, lgmWorldY):
-   in the lgm_blast_shape rule's area round it on open ground (within half a
-   square in the classic table, hitRulesBuilderCaughtShape), or on the very
+   in the lgm_blast_shape rule's area round it on open ground (within 144
+   in the classic table, hitRulesBuilderCaughtShape), or on the very
    square when the explosion is on a wall, a live pillbox or a base, or is a
    shell's hit on the pillbox, the wall or the terrain on its square
    (squareHit). The one test every builder death is decided by.
@@ -1720,8 +1722,8 @@ static bool lgmBlastCatches(GameSim *sim, WORLD lgmWorldX, WORLD lgmWorldY, WORL
   }
   /* The rule (hit_rules.h), the one the Log Viewer draws its hit boxes
      from: on a solid square only his own square, on open ground the
-     lgm_blast_shape rule's area round the explosion (a circle of half a
-     square, within pill_range, in the classic table). */
+     lgm_blast_shape rule's area round the explosion (a circle of radius
+     144, within pill_range, in the classic table). */
   return hitRulesBuilderCaughtShape(sim->rules.lgm_blast_shape, solid,
                                     checkMapX == mx && checkMapY == my,
                                     (double) ((long) wx - (long) lgmWorldX),

@@ -94,6 +94,10 @@ static void srFillCounted(ControlEvent *evt) {
     evt->u.simRules.turn_boat       = 2.5f;
     evt->u.simRules.turn_deep_sea   = 0.0f;
     evt->u.simRules.turn_refuel_base = 16.0f;
+    /* lgm_blast_shape's zero is a real value (the old WinBolo circle) and is
+       sent, so a table meant to leave the third tail off says classic. */
+    evt->u.simRules.lgm_blast_shape =
+        CTRL_SIM_RULES_LGM_BLAST_SHAPE_CLASSIC;
 }
 
 int run_sim_rules_codec_roundtrip(void) {
@@ -168,6 +172,8 @@ int run_sim_rules_codec_roundtrip(void) {
                       "the decoder accepted a truncated base body");
         UT_ASSERT(shortOut.u.simRules.building_life ==
                   CTRL_SIM_RULES_BUILDING_LIFE_CLASSIC);
+        UT_ASSERT(shortOut.u.simRules.lgm_blast_shape ==
+                  CTRL_SIM_RULES_LGM_BLAST_SHAPE_CLASSIC);
         UT_ASSERT(!dec(buf, CTRL_SIM_RULES_EXT3_BODY_LEN + 1, &shortOut));
         UT_ASSERT_MSG(!dec(buf, 0, &shortOut),
                       "the decoder accepted an empty body");
@@ -274,25 +280,26 @@ int run_sim_rules_codec_roundtrip(void) {
     }
 
     /* The third tail. An lgm_blast_shape that is not classic (classic is
-       zero) rides after building_life, which comes along at whatever it
-       holds; cut short of it, the body reads the classic shape; and a
-       classic shape sends nothing extra. */
+       CTRL_SIM_RULES_LGM_BLAST_SHAPE_CLASSIC, 2) rides after building_life,
+       which comes along at whatever it holds; cut short of it, the body
+       reads the classic shape; a classic shape sends nothing extra; and a
+       zero, the old WinBolo circle, is sent and read back as zero. */
     {
         ControlEvent shape, shapeOut;
         size_t       shapeLen = 0;
 
         srFillCounted(&shape);
         shape.u.simRules.building_life   = CTRL_SIM_RULES_BUILDING_LIFE_CLASSIC;
-        shape.u.simRules.lgm_blast_shape = 2;
+        shape.u.simRules.lgm_blast_shape = 0;
         UT_ASSERT(enc(&shape, NULL, buf, sizeof(buf), &shapeLen) == ENCODE_OK);
         UT_ASSERT_MSG(shapeLen == CTRL_SIM_RULES_EXT3_BODY_LEN,
-                      "an lgm_blast_shape of 2 wrote %u bytes, expected %u",
+                      "an lgm_blast_shape of 0 wrote %u bytes, expected %u",
                       (unsigned)shapeLen,
                       (unsigned)CTRL_SIM_RULES_EXT3_BODY_LEN);
         memset(&shapeOut, 0xAB, sizeof(shapeOut));
         UT_ASSERT(dec(buf, shapeLen, &shapeOut));
-        UT_ASSERT_MSG(shapeOut.u.simRules.lgm_blast_shape == 2,
-                      "lgm_blast_shape decoded as %ld, expected 2",
+        UT_ASSERT_MSG(shapeOut.u.simRules.lgm_blast_shape == 0,
+                      "lgm_blast_shape decoded as %ld, expected 0",
                       (long)shapeOut.u.simRules.lgm_blast_shape);
         UT_ASSERT(shapeOut.u.simRules.building_life ==
                   CTRL_SIM_RULES_BUILDING_LIFE_CLASSIC);
@@ -300,9 +307,17 @@ int run_sim_rules_codec_roundtrip(void) {
         UT_ASSERT(shapeOut.u.simRules.shell_speed ==
                   shape.u.simRules.shell_speed);
 
-        /* Cut short of the third tail: the classic shape. */
+        /* Cut short of the third tail: the classic shape, not zero. */
         UT_ASSERT(dec(buf, CTRL_SIM_RULES_EXT2_BODY_LEN, &shapeOut));
-        UT_ASSERT(shapeOut.u.simRules.lgm_blast_shape == 0);
+        UT_ASSERT_MSG(shapeOut.u.simRules.lgm_blast_shape ==
+                          CTRL_SIM_RULES_LGM_BLAST_SHAPE_CLASSIC,
+                      "a body without the shape byte read %ld, expected the "
+                      "classic %d",
+                      (long)shapeOut.u.simRules.lgm_blast_shape,
+                      CTRL_SIM_RULES_LGM_BLAST_SHAPE_CLASSIC);
+        UT_ASSERT(dec(buf, CTRL_SIM_RULES_BASE_BODY_LEN, &shapeOut));
+        UT_ASSERT(shapeOut.u.simRules.lgm_blast_shape ==
+                  CTRL_SIM_RULES_LGM_BLAST_SHAPE_CLASSIC);
 
         /* With building_life set too, both come through. */
         shape.u.simRules.building_life   = 255;
@@ -315,7 +330,8 @@ int run_sim_rules_codec_roundtrip(void) {
         UT_ASSERT(shapeOut.u.simRules.building_life == 255);
 
         /* A classic shape: building_life alone decides the length. */
-        shape.u.simRules.lgm_blast_shape = 0;
+        shape.u.simRules.lgm_blast_shape =
+            CTRL_SIM_RULES_LGM_BLAST_SHAPE_CLASSIC;
         UT_ASSERT(enc(&shape, NULL, buf, sizeof(buf), &shapeLen) == ENCODE_OK);
         UT_ASSERT_MSG(shapeLen == CTRL_SIM_RULES_EXT2_BODY_LEN,
                       "a classic lgm_blast_shape wrote %u bytes, expected %u",
@@ -484,6 +500,9 @@ int run_sim_rules_codec_golden(void) {
     in.u.simRules.turn_boat          = 7.0f;
     in.u.simRules.turn_deep_sea      = 1.5f;
     in.u.simRules.turn_refuel_base   = 2.5f;
+    /* The tail rules at classic, so the golden is the base body alone. */
+    in.u.simRules.building_life      = CTRL_SIM_RULES_BUILDING_LIFE_CLASSIC;
+    in.u.simRules.lgm_blast_shape    = CTRL_SIM_RULES_LGM_BLAST_SHAPE_CLASSIC;
 
     UT_ASSERT_MSG(enc(&in, NULL, buf, sizeof(buf), &outLen) == ENCODE_OK,
                   "the encoder refused the golden table");
