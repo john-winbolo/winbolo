@@ -3073,7 +3073,9 @@ M.LGM_KILL_IMPROVED    = true
 -- The default equals the real open-ground blast: 128 wu.  2026-11-13 Andrew
 -- set it to 128 (it was 256) because a shot whose predicted impact is more
 -- than 128 wu from the predicted builder does not kill him.  KEEL: 64.
-M.LGM_KILL_FIRE_WU     = 128  -- wu: take the shot inside the engine's blast reach
+-- 2026-11-13 combined only: 144, the classic builder kill circle from
+-- #668 (lgm_blast_shape 2). #664 alone keeps 128; see the note on #668.
+M.LGM_KILL_FIRE_WU     = 144  -- wu: take the shot inside the engine's blast reach (the classic builder kill circle of 144, #668)
 
 -- ── Aim target: a QUARTER tile (2026-09-13, Andrew) ───────────────────────
 -- LGM_KILL_FIRE_WU says when the shot is worth taking.  This says when the AIM
