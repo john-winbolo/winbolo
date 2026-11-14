@@ -462,8 +462,16 @@ static void handle_keyboard_shortcuts(int *clicked) {
 
     ImGuiIO& io = ImGui::GetIO();
 
-    /* Zoom shortcuts: +/= to zoom in, - to zoom out (no modifier required) */
+    /* Zoom shortcuts: +/= to zoom in, - to zoom out, with no modifier or
+     * with Ctrl (Ctrl and plus / Ctrl and minus is the zoom key most programs
+     * use). Not with Alt. On macOS Cmd+plus / Cmd+minus are the native menu
+     * bar's Zoom In / Zoom Out (mac_menubar.mm), which has acted already, so
+     * here the key counts only without Cmd (io.KeyCtrl is Cmd there). */
+#ifdef __APPLE__
     if (!io.KeyCtrl && !io.KeyAlt) {
+#else
+    if (!io.KeyAlt) {
+#endif
         if (ImGui::IsKeyPressed(ImGuiKey_Equal, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadAdd, false)) {
             zoom_at_center(lv_drawGetZoomStepIndex() + 1);
             *clicked = 1;
