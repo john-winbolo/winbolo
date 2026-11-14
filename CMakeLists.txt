@@ -7344,6 +7344,7 @@ set(_unit_test_names
     channel_mux_control_backlog_full_refuses
     channel_mux_game_channel_still_refuses_at_window
     channel_mux_control_reset_clears_backlog
+    channel_mux_bulk_wide
     spectator_ring
     spectator_ring_nolog
     spectator_ring_nolog_tick_anchors
