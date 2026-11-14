@@ -841,10 +841,34 @@ function Brain.open(info)
   -- without this drain they carry into the next tick, make its record bigger,
   -- and the bot is budget-killed every tick from then on. Each leg is pcall'd
   -- so a logger fault can't lose the print2 flush (and vice versa).
+  -- Third leg: a kill inside a module's first require leaves
+  -- package.loaded[name] holding the "loading" sentinel, and every later
+  -- require of that name fails with "loop or previous error loading module".
+  -- Clear such entries so the next think can load the module again. The
+  -- sentinel is a tagged value that LuaJIT 2.1 reports as a number (a light
+  -- userdata in PUC 5.1). A loaded module is a table, a function or true, so
+  -- only entries of other types are cleared.
   _G.brain_flush_killed = function(site)
     pcall(print2.flush_killed, site)
     if log.flush_killed then pcall(log.flush_killed, site) end
+    local loaded = package and package.loaded
+    if loaded then
+      for name, v in pairs(loaded) do
+        local t = type(v)
+        if t ~= "table" and t ~= "function" and t ~= "boolean" then
+          loaded[name] = nil
+        end
+      end
+    end
   end
+  -- Load here the modules that think() would otherwise require lazily on
+  -- first use. open has no time budget; think does, and a budget kill in the
+  -- middle of a first require breaks that module for the rest of the game
+  -- (see brain_flush_killed above). After this, the requires inside think
+  -- are only package.loaded lookups.
+  require("aim_lane")
+  require("bpc_bt")
+  if BRAIN_DEBUG_MODE then require("focus_viz") end
   opt("BEGIN Brain.open player=", info.player_number)
   print2("=== BRAIN STARTUP === player=", info.player_number,
          " name=", tostring(info.player_name),
