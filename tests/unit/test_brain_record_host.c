@@ -12,7 +12,10 @@
  * bases, pills or map changes, so the only thing in them is the per-bot
  * entries. Each local body carries a thinkMs the test picks, and each host
  * record carries its own input sequence as its thinkMs, so the merged file
- * says which record filled which frame.
+ * says which record filled which frame. Tests that only count markers and
+ * frames use tbrRecordSession instead: the server's own recorder writes
+ * that .btr, so it follows the frame layout of the version this build
+ * writes.
  */
 #include <stdint.h>
 #include <stdio.h>
@@ -26,6 +29,8 @@
 #include "brain_record_host.h"
 #include "brain_record_walk.h"
 #include "client_sim.h"
+#include "server_sim.h"
+#include "server_sim_internal.h" /* lobbyPlayers, lastProcessedInput */
 #include "control_event.h"
 #include "transport_control_codec.h"
 #include "bulk_transfer.h"
@@ -1160,6 +1165,71 @@ int run_brainrec_host_merge_verdict(void) {
     return 0;
 }
 
+/* The recorder's hosted-bot hook for tbrRecordSession: slot 1 runs on
+ * "testhost", placed by assign gen 5. */
+static bool tbrHostedSlot1(BYTE slot, uint16_t *placeGen, char *hostName) {
+    if (slot != 1) return false;
+    *placeGen = 5;
+    SDL_strlcpy(hostName, "testhost", 32);
+    return true;
+}
+
+/* A session folder whose brainrec.btr comes from the server's own
+ * recorder (brainRecordTick), so it has the frame layout of the version
+ * this build writes. 6 frames; slot 1 is a hosted bot (gen 5) and the
+ * server took its inputs 20, 22, ... 30, one per frame. */
+static bool tbrRecordSession(const char *dir) {
+    ServerSim *sim = ut_make_running_sim("Human");
+    int n;
+    if (sim == NULL) return false;
+    if (!SDL_CreateDirectory(dir)) {
+        serverSimDestroy(sim);
+        return false;
+    }
+    serverSimAddPlayer(sim, 1, "Hosted", false);
+    sim->lobbyPlayers[1].isBot = true;
+    brainRecordSetHostedInfoFn(tbrHostedSlot1);
+    brainRecordSetSessionDir(dir);
+    brainRecordSetEnabled(true);
+    for (n = 0; n < 6; n++) {
+        serverSimTick(sim);
+        sim->lastProcessedInput[1] = 20u + 2u * (uint32_t)n;
+        brainRecordTick(sim);
+    }
+    brainRecordEndGame();
+    brainRecordSetEnabled(false);
+    brainRecordSetSessionDir(NULL);
+    brainRecordSetHostedInfoFn(NULL);
+    serverSimDestroy(sim);
+    return true;
+}
+
+/* Frames in path, by the shared walker; -1 if it cannot be read. */
+static int tbrCountFrames(const char *path) {
+    BrainRecIn *g = brainRecInOpen(path);
+    BrainRecReader r;
+    BrainRecFrameInfo fi;
+    BrainRecWalkStatus ws;
+    int n = 0;
+    if (g == NULL) return -1;
+    brainRecWalkReaderFromIn(&r, g);
+    if (brainRecWalkPreamble(&r, NULL, NULL) != BRAINREC_WALK_OK) {
+        brainRecInClose(g);
+        return -1;
+    }
+    for (;;) {
+        ws = brainRecWalkFrame(&r, &fi);
+        if (ws == BRAINREC_WALK_EOF) break;
+        if (ws != BRAINREC_WALK_OK) {
+            n = -1;
+            break;
+        }
+        n++;
+    }
+    brainRecInClose(g);
+    return n;
+}
+
 /* The Lenovo case (session 20261114_001428): a host sends a block the
  * server merged before (it never got that ACK). The second merge finds no
  * entry left for its files: NO_FILL. Sending it again would give the same
@@ -1172,7 +1242,7 @@ int run_brainrec_host_merge_again_acks_merged(void) {
 
     UT_ASSERT(utScratchPath(sess, sizeof(sess), "againsess"));
     UT_ASSERT(utScratchPath(host, sizeof(host), "againhost"));
-    UT_ASSERT(tbrSession(sess));
+    UT_ASSERT(tbrRecordSession(sess));
 
     /* First upload: it fills every entry. */
     UT_ASSERT(SDL_CreateDirectory(host));
@@ -1233,13 +1303,12 @@ int run_brainrec_host_merge_replace_waits(void) {
     BrainRecMergeStats st;
     TbrHold hold;
     SDL_Thread *t;
-    TbrOut o;
     bool ok;
-    int i;
+    int frames;
 
     UT_ASSERT(utScratchPath(sess, sizeof(sess), "holdsess"));
     UT_ASSERT(utScratchPath(host, sizeof(host), "holdhost"));
-    UT_ASSERT(tbrSession(sess));
+    UT_ASSERT(tbrRecordSession(sess));
     UT_ASSERT(SDL_CreateDirectory(host));
     snprintf(p, sizeof(p), "%s/bot1_g5.hbr", host);
     UT_ASSERT(tbrHostFile(p, 1, 5, 20, 30));
@@ -1254,9 +1323,11 @@ int run_brainrec_host_merge_replace_waits(void) {
     SDL_WaitThread(t, NULL);
     UT_ASSERT(ok);
     UT_ASSERT(brainRecMergeVerdict(ok, &st) == BOT_HOST_REC_FAIL_NONE);
-    UT_ASSERT(tbrRead(btr, &o));
-    UT_ASSERT(o.frames == 6);
-    for (i = 0; i < 6; i++) UT_ASSERT(!o.hosted[i][0]);
+    UT_ASSERT_MSG(st.markers == 6 && st.filled == 6 && st.missing == 0,
+                  "markers %u filled %u missing %u", (unsigned)st.markers,
+                  (unsigned)st.filled, (unsigned)st.missing);
+    frames = tbrCountFrames(btr);
+    UT_ASSERT_MSG(frames == 6, "the merged file has %d frames", frames);
     /* No copy is left beside it. */
     snprintf(p, sizeof(p), "%s.merge.tmp", btr);
     UT_ASSERT(!tbrExists(p));
