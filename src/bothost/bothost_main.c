@@ -721,7 +721,7 @@ static void ctlSendQuit(HostServer *sv) {
 
 /* The wide bulk send rings, one for each server place, made the first time
  * a server asks for an upload into a wide ring and kept for the program's
- * life: about 1.3 MB each. */
+ * life: about 2.1 MB each. */
 static void *s_wideSend[BOT_HOST_MAX_SERVERS];
 
 /* Move the bulk send side to the wide ring the server offered, once the

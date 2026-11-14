@@ -430,6 +430,7 @@ STR_DLGLOBBY_BOTHOST_LATE=too slow, not used this game
 STR_DLGLOBBY_BOTHOST_REC_UPLOAD_FMT=uploading recordings {number}%, {number2} of {number3} bots
 STR_DLGLOBBY_BOTHOST_REC_LOWDISK=not recording: low disk
 STR_DLGLOBBY_BOTHOST_REC_MERGING=merging recordings
+STR_DLGLOBBY_BOTHOST_REC_UPLOAD_ETA_FMT=uploading recordings {number}%, {number2} of {number3} bots, {string1} left
 
 # The Bot Host inside this client: the lobby line under the Bot Host rows
 # ({number} = bots it runs now, {number2} = bots it can run), and the

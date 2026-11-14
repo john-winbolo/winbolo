@@ -476,6 +476,9 @@
 #define STR_DLGLOBBY_BOTHOST_REC_UPLOAD_FMT 3435
 #define STR_DLGLOBBY_BOTHOST_REC_LOWDISK    3436
 #define STR_DLGLOBBY_BOTHOST_REC_MERGING    3437
+/* As STR_DLGLOBBY_BOTHOST_REC_UPLOAD_FMT, with the time left ({string1},
+ * H:MM, or "--:--" until it is known) */
+#define STR_DLGLOBBY_BOTHOST_REC_UPLOAD_ETA_FMT 3942
 /* The Bot Host inside this client: the lobby line under the Bot Host rows
  * ({number} = bots it runs now, {number2} = bots it can run), and the
  * newswire line when the count changes ({number} = bots it runs now) */

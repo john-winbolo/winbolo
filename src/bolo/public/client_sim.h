@@ -38,6 +38,7 @@
 #include "wire_limits.h"  /* For PACKET_MAX_PLAYER_NAME */
 #include "alliance_enums.h" /* For pillAlliance, baseAlliance */
 #include "screentank.h"     /* For tankAlliance */
+#include "bot_host_rec_eta.h" /* For BotHostRecRate */
 #include "screenlgm.h"      /* For screenLgm  — clientSimPrepareOverviewEntities */
 #include "screenbullet.h"   /* For screenBullets — clientSimPrepareOverviewEntities */
 #include "brain.h"  /* For BuildInfo, ObjectInfo */
@@ -197,6 +198,14 @@ typedef struct {
     uint8_t limitCeiling;
     uint8_t limitReserve;
     uint8_t limitFits;
+    /* CTRL_BOT_HOST_REC_BYTES while the row uploads its recordings:
+     * recBytesHave once the server sends one (an older server or host
+     * never does), recRate the samples for the time left. Cleared when
+     * the upload ends. */
+    bool     recBytesHave;
+    uint32_t recSentKiB;
+    uint32_t recTotalKiB;
+    BotHostRecRate recRate;
     char    name[CLIENT_BOT_HOST_NAME_LEN];
 } ClientBotHostRow;
 

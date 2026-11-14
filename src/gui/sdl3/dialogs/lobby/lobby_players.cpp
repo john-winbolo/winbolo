@@ -799,8 +799,17 @@ static void renderBotHostGroup(ClientSim *cs, int myPlayerNum) {
             ua.number = r->recPercent;
             ua.number2 = r->recBotsDone;
             ua.number3 = r->recBots;
+            /* The time left, H:MM ("--:--" until the rate is known), when
+             * the server sends the bytes; an older one does not. */
+            if (r->recBytesHave) {
+                botHostRecRateEta(&r->recRate, (uint32_t)SDL_GetTicks(),
+                                  ua.string1, sizeof(ua.string1));
+            }
             SDL_strlcpy(args.string2,
-                        langGetTextFmt(STR_DLGLOBBY_BOTHOST_REC_UPLOAD_FMT, &ua),
+                        langGetTextFmt(r->recBytesHave
+                                           ? STR_DLGLOBBY_BOTHOST_REC_UPLOAD_ETA_FMT
+                                           : STR_DLGLOBBY_BOTHOST_REC_UPLOAD_FMT,
+                                       &ua),
                         sizeof(args.string2));
         } else if (r->recState == BOT_HOST_REC_STATE_MERGING) {
             SDL_strlcpy(args.string2,

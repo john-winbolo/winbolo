@@ -394,6 +394,8 @@ typedef struct {
     uint8_t  recPercent;
     uint8_t  recBotsDone;     /* UPLOADING: bots whose files are sent */
     uint8_t  recBots;         /* UPLOADING: bots with files to send */
+    uint32_t recSentKiB;      /* UPLOADING: KiB sent (0 from an older host) */
+    uint32_t recTotalKiB;     /* UPLOADING: KiB to send */
     bool     recLowDiskLogged;
     bool     recMergeWant;    /* a finished upload waits for the merge */
     BulkReceiver recRecv;

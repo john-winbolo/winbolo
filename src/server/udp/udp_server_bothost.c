@@ -1843,6 +1843,27 @@ static void botHostFillLag(int h, uint16_t lag, ControlEvent *evt) {
     evt->u.botHostLag.lagMs = lag;
 }
 
+/* The upload bytes last sent to the lobby, one per Bot Host row, and when. */
+static bool     botHostRecBytesSentHave[MAX_BOT_HOSTS];
+static uint32_t botHostRecBytesSent[MAX_BOT_HOSTS];
+static uint32_t botHostRecBytesSentTick[MAX_BOT_HOSTS];
+
+/* Row h's CTRL_BOT_HOST_REC_BYTES, or false when the host is not uploading
+ * or did not say its bytes (an older host). */
+static bool botHostFillRecBytes(int h, ControlEvent *evt) {
+    const BotHostConn *hc = &udpServer.botHosts[h];
+    if (!hc->connected || hc->recState != BOT_HOST_REC_STATE_UPLOADING ||
+        hc->recTotalKiB == 0) {
+        return false;
+    }
+    memset(evt, 0, sizeof(*evt));
+    evt->type = CTRL_BOT_HOST_REC_BYTES;
+    evt->u.botHostRecBytes.idx = (uint8_t)h;
+    evt->u.botHostRecBytes.sentKiB = hc->recSentKiB;
+    evt->u.botHostRecBytes.totalKiB = hc->recTotalKiB;
+    return true;
+}
+
 /* The per-bot values last sent to the lobby, one per row. */
 static bool     botHostCpuBotSentHave[MAX_BOT_HOSTS + 1];
 static uint32_t botHostCpuBotSent[MAX_BOT_HOSTS + 1];
@@ -2043,6 +2064,23 @@ static void botHostBroadcastRows(void) {
                 serverBroadcastLobbyControl(&le);
             }
         }
+        if (h < MAX_BOT_HOSTS) {
+            /* The upload's bytes, for the lobby's time left: when they
+             * change, at most once a second. */
+            ControlEvent be;
+            if (!evt.u.botHostStatus.connected ||
+                !botHostFillRecBytes(h, &be)) {
+                botHostRecBytesSentHave[h] = false;
+            } else if (!botHostRecBytesSentHave[h] ||
+                       (be.u.botHostRecBytes.sentKiB != botHostRecBytesSent[h] &&
+                        udpServer.tickCount - botHostRecBytesSentTick[h] >=
+                            BOT_HOST_LAG_SEND_TICKS)) {
+                botHostRecBytesSentHave[h] = true;
+                botHostRecBytesSent[h] = be.u.botHostRecBytes.sentKiB;
+                botHostRecBytesSentTick[h] = udpServer.tickCount;
+                serverBroadcastLobbyControl(&be);
+            }
+        }
     }
 }
 
@@ -2117,6 +2155,10 @@ void serverEnumBotHostRows(void (*deliver)(void *, const ControlEvent *),
             ControlEvent le;
             botHostFillRowLimits(h, &le);
             deliver(deliverCtx, &le);
+        }
+        {
+            ControlEvent be;
+            if (botHostFillRecBytes(h, &be)) deliver(deliverCtx, &be);
         }
     }
     {
@@ -3490,6 +3532,7 @@ void serverBotHostsReset(void) {
     memset(botHostCpuLogged, 0, sizeof(botHostCpuLogged));
     memset(botHostCpuBotSentHave, 0, sizeof(botHostCpuBotSentHave));
     memset(botHostLagSentHave, 0, sizeof(botHostLagSentHave));
+    memset(botHostRecBytesSentHave, 0, sizeof(botHostRecBytesSentHave));
     memset(botHostRowSlotsSentHave, 0, sizeof(botHostRowSlotsSentHave));
     memset(botHostRowLimitsSentHave, 0, sizeof(botHostRowLimitsSentHave));
     memset(botHostMachine, 0, sizeof(botHostMachine));

@@ -6452,6 +6452,8 @@ set(_unit_test_names
     bot_host_cpu_budget
     bot_host_cpu_bot_client_row
     bot_host_lag_codec
+    bot_host_rec_bytes_codec
+    bot_host_rec_eta
     bot_timing_codec
     bot_timing_client_copy
     bot_host_machine_addr

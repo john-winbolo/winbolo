@@ -26,6 +26,8 @@
 static int  s_tbhDone;            /* DONE events seen */
 static char s_tbhDoneBlock[BOT_HOST_REC_BLOCK_LEN];
 static int  s_tbhCleared;         /* CLEARED events seen */
+static int  s_tbhUpStates;        /* STATE UPLOADING events seen */
+static bool s_tbhUpBytesBad;      /* one had no total, or sent above it */
 
 static void tbhSendEvent(int srv, const ControlEvent *evt) {
     (void)srv;
@@ -36,6 +38,13 @@ static void tbhSendEvent(int srv, const ControlEvent *evt) {
                     sizeof(s_tbhDoneBlock));
     } else if (evt->u.botHostRec.op == BOT_HOST_REC_OP_CLEARED) {
         s_tbhCleared++;
+    } else if (evt->u.botHostRec.op == BOT_HOST_REC_OP_STATE &&
+               evt->u.botHostRec.state == BOT_HOST_REC_STATE_UPLOADING) {
+        s_tbhUpStates++;
+        if (evt->u.botHostRec.b == 0 ||
+            evt->u.botHostRec.a > evt->u.botHostRec.b) {
+            s_tbhUpBytesBad = true;
+        }
     }
 }
 
@@ -62,6 +71,8 @@ static void tbhStart(const char *cache, double minFreeGb) {
     s_tbhDone = 0;
     s_tbhDoneBlock[0] = '\0';
     s_tbhCleared = 0;
+    s_tbhUpStates = 0;
+    s_tbhUpBytesBad = false;
     hostRecInit(cache, "testhost", minFreeGb, &io);
     hostRecServerUp(0, "127.0.0.1:27680");
 }
@@ -153,6 +164,10 @@ int run_bothost_rec_upload_keeps_files(void) {
     tbhPump(5000, 1, 400);
     UT_ASSERT_MSG(s_tbhDone == 1, "DONE count %d", s_tbhDone);
     UT_ASSERT(strcmp(s_tbhDoneBlock, TBH_A) == 0);
+    /* Its STATE said the KiB sent and to send, for the lobby's time left. */
+    UT_ASSERT_MSG(s_tbhUpStates > 0 && !s_tbhUpBytesBad,
+                  "%d UPLOADING states, bad bytes %d", s_tbhUpStates,
+                  (int)s_tbhUpBytesBad);
     tbhEvent(BOT_HOST_REC_OP_ACK, BOT_HOST_REC_ACK_MERGED,
              BOT_HOST_REC_FAIL_NONE, TBH_A);
     /* A copy, not a move: the files stay, marked uploaded. */

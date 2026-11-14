@@ -121,6 +121,7 @@ typedef struct {
     uint8_t  lastState;
     uint8_t  lastPct;
     uint8_t  lastBotsDone;
+    uint32_t lastSentKiB;
     uint32_t lastStateMs;
     bool     stateSent;
 } RecSrv;
@@ -1021,10 +1022,15 @@ void hostRecOnEvent(int srv, const ControlEvent *evt) {
 static void srvReportState(int srv, uint32_t now) {
     RecSrv *sv = &s_srv[srv];
     uint8_t st, pct = 0;
+    uint32_t sentKiB = 0, totalKiB = 0;
     if (sv->active) {
         st = BOT_HOST_REC_STATE_UPLOADING;
         pct = sv->total > 0 ? (uint8_t)(sv->sent * 100u / sv->total) : 100u;
         if (pct > 100) pct = 100;
+        /* The bytes, for the lobby's time left. */
+        totalKiB = (uint32_t)((sv->total + 1023u) / 1024u);
+        sentKiB = (uint32_t)(sv->sent / 1024u);
+        if (sentKiB > totalKiB) sentKiB = totalKiB;
     } else if (sv->open && sv->lowDisk) {
         st = BOT_HOST_REC_STATE_LOWDISK;
     } else if (sv->open) {
@@ -1033,15 +1039,18 @@ static void srvReportState(int srv, uint32_t now) {
         st = BOT_HOST_REC_STATE_NONE;
     }
     if (sv->stateSent && st == sv->lastState && pct == sv->lastPct &&
-        (uint8_t)sv->botsDone == sv->lastBotsDone) {
+        (uint8_t)sv->botsDone == sv->lastBotsDone &&
+        sentKiB == sv->lastSentKiB) {
         return;
     }
     if (sv->stateSent && st == sv->lastState && now - sv->lastStateMs < REC_STATE_MS) {
         return;
     }
     recSendEvt(srv, BOT_HOST_REC_OP_STATE, 0, st, pct, (uint8_t)sv->botsDone,
-               (uint8_t)sv->bots, 0, 0, sv->active ? sv->upBlock : sv->block);
+               (uint8_t)sv->bots, sentKiB, totalKiB,
+               sv->active ? sv->upBlock : sv->block);
     sv->stateSent = true;
+    sv->lastSentKiB = sentKiB;
     sv->lastState = st;
     sv->lastPct = pct;
     sv->lastBotsDone = (uint8_t)sv->botsDone;

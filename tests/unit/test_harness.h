@@ -1022,6 +1022,8 @@ int run_bot_host_cpu_bot_codec(void);
 int run_bot_host_cpu_budget(void);
 int run_bot_host_cpu_bot_client_row(void);
 int run_bot_host_lag_codec(void);
+int run_bot_host_rec_bytes_codec(void);
+int run_bot_host_rec_eta(void);
 int run_bot_timing_codec(void);
 int run_bot_timing_client_copy(void);
 /* Bot Hosts on one computer, the game bot limit and the row slot override

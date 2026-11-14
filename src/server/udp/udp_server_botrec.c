@@ -342,6 +342,14 @@ void serverBotRecOnControl(int h, const ControlEvent *evt) {
             hc->recPercent = evt->u.botHostRec.percent;
             hc->recBots = evt->u.botHostRec.botsTotal;
             hc->recBotsDone = evt->u.botHostRec.botsDone;
+            if (st == BOT_HOST_REC_STATE_UPLOADING &&
+                evt->u.botHostRec.a <= evt->u.botHostRec.b) {
+                hc->recSentKiB = evt->u.botHostRec.a;
+                hc->recTotalKiB = evt->u.botHostRec.b;
+            } else {
+                hc->recSentKiB = 0;
+                hc->recTotalKiB = 0;
+            }
             return;
         }
         case BOT_HOST_REC_OP_DONE:

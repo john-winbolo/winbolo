@@ -4275,6 +4275,43 @@ static bool decodeBotHostRowLimitsBody(const uint8_t *buf, size_t len,
     return true;
 }
 
+/* CTRL_BOT_HOST_REC_BYTES body: [idx 1][sentKiB 4][totalKiB 4]. Later
+ * bytes skipped. A row that is not a Bot Host row, or more sent than there
+ * is to send, is refused. */
+#define BOT_HOST_REC_BYTES_LEN 9
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeBotHostRecBytesBody(const ControlEvent *evt,
+                                              const struct UdpServerClient *recipient,
+                                              uint8_t *buf, size_t bufCap,
+                                              size_t *outLen) {
+    (void)recipient;
+    if (bufCap < BOT_HOST_REC_BYTES_LEN) return ENCODE_OVERFLOW;
+    buf[0] = evt->u.botHostRecBytes.idx;
+    packU32(buf + 1, evt->u.botHostRecBytes.sentKiB);
+    packU32(buf + 5, evt->u.botHostRecBytes.totalKiB);
+    *outLen = BOT_HOST_REC_BYTES_LEN;
+    return ENCODE_OK;
+}
+
+static bool decodeBotHostRecBytesBody(const uint8_t *buf, size_t len,
+                                      ControlEvent *outEvt) {
+    uint32_t sent, total;
+    if (buf == NULL || outEvt == NULL || len < BOT_HOST_REC_BYTES_LEN) {
+        return false;
+    }
+    if (buf[0] >= BOT_HOST_STATUS_ROWS - 1) return false;   /* not the server row */
+    sent = unpackU32(buf + 1);
+    total = unpackU32(buf + 5);
+    if (sent > total) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_BOT_HOST_REC_BYTES;
+    outEvt->u.botHostRecBytes.idx = buf[0];
+    outEvt->u.botHostRecBytes.sentKiB = sent;
+    outEvt->u.botHostRecBytes.totalKiB = total;
+    return true;
+}
+
 /* CTRL_BOT_HOST_PACK_REQ body: [gen 4][brain 1][fileCount 2]
  * [fromInstall 2][fromCache 2][bits (fileCount + 7) / 8]. A fileCount of 0
  * or above 8 * BOT_HOST_PACK_BITMAP_BYTES, or a body too short for its
@@ -5092,6 +5129,7 @@ static const ControlEncodeBodyFn s_bodyEncoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_BOT_HOST_HELD]           = encodeBotHostHeldBody,
     [CTRL_BOT_HOST_LIMITS]         = encodeBotHostLimitsBody,
     [CTRL_BOT_HOST_ROW_LIMITS]     = encodeBotHostRowLimitsBody,
+    [CTRL_BOT_HOST_REC_BYTES]      = encodeBotHostRecBytesBody,
 };
 
 static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
@@ -5177,6 +5215,7 @@ static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_BOT_HOST_HELD]           = decodeBotHostHeldBody,
     [CTRL_BOT_HOST_LIMITS]         = decodeBotHostLimitsBody,
     [CTRL_BOT_HOST_ROW_LIMITS]     = decodeBotHostRowLimitsBody,
+    [CTRL_BOT_HOST_REC_BYTES]      = decodeBotHostRecBytesBody,
 };
 
 ControlEncodeFn transportControlCodecEncoder(ControlEventType type) {
@@ -5326,6 +5365,7 @@ const char *controlEventTypeName(ControlEventType type) {
     case CTRL_BOT_HOST_HELD:          return "CTRL_BOT_HOST_HELD";
     case CTRL_BOT_HOST_LIMITS:        return "CTRL_BOT_HOST_LIMITS";
     case CTRL_BOT_HOST_ROW_LIMITS:    return "CTRL_BOT_HOST_ROW_LIMITS";
+    case CTRL_BOT_HOST_REC_BYTES:     return "CTRL_BOT_HOST_REC_BYTES";
     case CTRL_EVENT_TYPE_COUNT:
         break;
     }
