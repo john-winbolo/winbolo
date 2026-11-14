@@ -43,7 +43,12 @@
 #define REC_RING           32
 #define REC_PIECE          (64u * 1024u)
 #define REC_DISK_CHECK_MS  5000u
-#define REC_ACK_WAIT_MS    120000u
+/* The server merges one upload at a time, and one merge of a long game
+ * (a brainrec.btr of 400 MB and more) takes minutes, so an ACK can come
+ * long after DONE. A host that gave up after 2 minutes sent the whole
+ * block again. The server always answers a whole upload (a broken one
+ * too, after 30 s); a lost connection resets the wait anyway. */
+#define REC_ACK_WAIT_MS    (20u * 60u * 1000u)
 #define REC_RETRY_MS       10000u
 #define REC_STATE_MS       250u
 #define REC_MAX_FAILS      3
@@ -877,6 +882,13 @@ static void srvAck(int srv, const ControlEvent *evt) {
         uint64_t bytes = sv->total;
         fprintf(stderr, "[bothost] %s %s block %s\n", sv->key,
                 res == BOT_HOST_REC_ACK_MERGED ? "merged" : "kept", block);
+        if (res == BOT_HOST_REC_ACK_MERGED &&
+            evt->u.botHostRec.percent == BOT_HOST_REC_FAIL_NO_FILL) {
+            fprintf(stderr, "[bothost] note: %u host files of block %s "
+                            "filled no entry on %s (often: merged before); "
+                            "the server keeps them as they came\n",
+                    (unsigned)evt->u.botHostRec.botsTotal, block, sv->key);
+        }
         upReset(sv);
         upMarkUploaded(sv, block, bytes);
         sv->fails = 0;

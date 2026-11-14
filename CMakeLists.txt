@@ -6809,6 +6809,9 @@ set(_unit_test_names
     brainrec_host_merge_missing_block
     brainrec_host_merge_dir_keeps_raw
     brainrec_host_merge_verdict
+    brainrec_host_merge_again_acks_merged
+    brainrec_host_merge_replace_waits
+    brainrec_host_ack_target_rejoined
     bothost_rec_upload_keeps_files
     bothost_rec_lowdisk_keeps_files
     bothost_rec_pool_raw_flag
@@ -7625,6 +7628,7 @@ set(_unit_test_names
     channel_mux_control_backlog_full_refuses
     channel_mux_game_channel_still_refuses_at_window
     channel_mux_control_reset_clears_backlog
+    channel_mux_bulk_wide
     spectator_ring
     spectator_ring_nolog
     spectator_ring_nolog_tick_anchors

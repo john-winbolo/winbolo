@@ -25,9 +25,11 @@
  *      host's connection number, as two hosts can have one name)
  *      and merges
  *      them into the block (brainRecMergeDir) on a thread, one
- *      merge at a time, then ACKs. MERGED only when every
- *      host file was read and filled entries; else FAILED with
- *      the reason, and the host sends the block again later.
+ *      merge at a time, then ACKs (to the host's new connection
+ *      if it joined again meanwhile). MERGED when every host
+ *      file was read and the merge was written (a file that
+ *      filled no entry is noted, not sent again); else FAILED
+ *      with the reason, and the host sends the block again later.
  *      The host keeps its copy either way, marked uploaded on
  *      MERGED. The uploaded files are kept as they came in
  *      debug_sessions/<block>/bothost_raw/. The pieces of a
@@ -98,6 +100,10 @@ typedef struct {
     SDL_AtomicInt done;
     int          h;
     uint64_t     connId;
+    /* The host's kind and address, to find it again if it joins again
+     * during the merge (recAckTarget). */
+    bool         playerHost;
+    uint32_t     addr;
     char         hostName[JOIN_BOT_HOST_NAME_LEN];
     char         block[BOT_HOST_REC_BLOCK_LEN];
     char         sessionDir[FILENAME_MAX];
@@ -157,9 +163,7 @@ static void recSendAck(int h, uint8_t reason, uint32_t skipped,
     memset(&evt, 0, sizeof(evt));
     evt.type = CTRL_BOT_HOST_REC;
     evt.u.botHostRec.op = BOT_HOST_REC_OP_ACK;
-    evt.u.botHostRec.state = reason == BOT_HOST_REC_FAIL_NONE
-                                 ? BOT_HOST_REC_ACK_MERGED
-                                 : BOT_HOST_REC_ACK_FAILED;
+    evt.u.botHostRec.state = brainRecMergeAckState(reason);
     evt.u.botHostRec.percent = reason;
     evt.u.botHostRec.botsDone = (uint8_t)(skipped > 255u ? 255u : skipped);
     evt.u.botHostRec.botsTotal = (uint8_t)(unused > 255u ? 255u : unused);
@@ -616,6 +620,8 @@ static void recMergeStart(int h) {
     memset(&s_job, 0, sizeof(s_job));
     s_job.h = h;
     s_job.connId = hc->connId;
+    s_job.playerHost = hc->playerHost;
+    s_job.addr = hc->addr.sin_addr.s_addr;
     recHostSafe(hc, safe, sizeof(safe));
     SDL_strlcpy(s_job.hostName, safe, sizeof(s_job.hostName));
     SDL_strlcpy(s_job.block, hc->recBlock, sizeof(s_job.block));
@@ -652,19 +658,51 @@ static void recMergeStart(int h) {
     recResetUpload(hc);
 }
 
+/* The host a merge's ACK goes to: the connection that sent the upload,
+ * or, when that host went and joined again while the merge ran, its new
+ * connection: the same name, kind and address. Without this the ACK was
+ * lost, the host never marked the block uploaded and sent it all again.
+ * A new connection that is sending this block again now gets no ACK (its
+ * own upload gets one). -1: none. hostSafe: recHostSafe's name. */
+int serverBotRecAckTarget(int was, uint64_t connId, bool playerHost,
+                          uint32_t addr, const char *hostSafe,
+                          const char *block) {
+    int h;
+    if (was >= 0 && was < MAX_BOT_HOSTS &&
+        udpServer.botHosts[was].connected &&
+        udpServer.botHosts[was].connId == connId) {
+        return was;
+    }
+    for (h = 0; h < MAX_BOT_HOSTS; h++) {
+        const BotHostConn *hc = &udpServer.botHosts[h];
+        char safe[JOIN_BOT_HOST_NAME_LEN];
+        if (!hc->connected || hc->playerHost != playerHost) continue;
+        if ((uint32_t)hc->addr.sin_addr.s_addr != addr) continue;
+        recHostSafe(hc, safe, sizeof(safe));
+        if (strcmp(safe, hostSafe) != 0) continue;
+        if (strcmp(hc->recBlock, block) == 0 || hc->recMergeWant ||
+            hc->recState == BOT_HOST_REC_STATE_UPLOADING) {
+            return -1;
+        }
+        return h;
+    }
+    return -1;
+}
+
 static void recMergeFinish(void) {
     int h = s_job.h;
-    BotHostConn *hc = &udpServer.botHosts[h];
     uint8_t reason;
+    uint8_t ack;
     SDL_WaitThread(s_job.thread, NULL);
     s_job.thread = NULL;
     reason = brainRecMergeVerdict(s_job.ok, &s_job.st);
+    ack = brainRecMergeAckState(reason);
     {
         char line[1400];
         snprintf(line, sizeof(line), "[bothost] merge of Bot Host \"%s\" into "
                  "%s %s: %u host files used (%u filled no entry), %u "
                  "skipped, %u frames, %u hosted entries (%u filled, %u a few "
-                 "thinks old, %u with no host data); answer: %s",
+                 "thinks old, %u with no host data); answer: %s%s",
                  s_job.hostName, s_job.sessionDir,
                  s_job.ok ? "done" : "done in part",
                  (unsigned)s_job.st.hostFiles,
@@ -674,13 +712,27 @@ static void recMergeFinish(void) {
                  (unsigned)s_job.st.filled, (unsigned)s_job.st.stale,
                  (unsigned)s_job.st.missing,
                  reason == BOT_HOST_REC_FAIL_NONE
-                     ? "merged" : brainRecMergeFailText(reason));
+                     ? "merged" : brainRecMergeFailText(reason),
+                 reason != BOT_HOST_REC_FAIL_NONE &&
+                         ack == BOT_HOST_REC_ACK_MERGED
+                     ? " (sent as merged: the files are kept in bothost_raw/, "
+                       "and sending them again fills nothing more)"
+                     : "");
         recMergeNote(s_job.sessionDir, line);
     }
     /* The uploaded files stay in the session's bothost_raw/ either way.
      * MERGED marks the block uploaded on the host; FAILED has it send the
      * block again. The host keeps its copy in both cases. */
-    if (hc->connected && hc->connId == s_job.connId) {
+    h = serverBotRecAckTarget(s_job.h, s_job.connId, s_job.playerHost,
+                              s_job.addr, s_job.hostName, s_job.block);
+    if (h >= 0) {
+        if (h != s_job.h) {
+            char line[600];
+            snprintf(line, sizeof(line), "[bothost] Bot Host \"%s\" joined "
+                     "again during the merge; the answer goes to its new "
+                     "connection", s_job.hostName);
+            recMergeNote(s_job.sessionDir, line);
+        }
         recSendAck(h, reason, s_job.st.hostFilesSkipped,
                    s_job.st.hostFilesUnused, s_job.block);
     }

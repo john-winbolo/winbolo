@@ -64,13 +64,32 @@ static bool moveFile(const char *from, const char *to) {
     return true;
 }
 
-/* Replace dst with src: dst goes to dst.bak first, so a failure keeps it. */
+/* A rename that waits for a short hold on the file. On Windows a file
+ * another program has open (BrainTest's load browser reads each new
+ * brainrec.btr; a virus scanner reads each new large file) cannot be
+ * renamed until that program closes it, which is often a second or two.
+ * Tries for up to BRAINREC_RENAME_TRIES * BRAINREC_RENAME_WAIT_MS. */
+#define BRAINREC_RENAME_TRIES   40
+#define BRAINREC_RENAME_WAIT_MS 250u
+static bool renameWait(const char *from, const char *to) {
+    int i;
+    for (i = 0; i < BRAINREC_RENAME_TRIES; i++) {
+        if (SDL_RenamePath(from, to)) return true;
+        /* Nothing to rename: no wait helps. */
+        if (!pathExists(from)) return false;
+        if (i + 1 < BRAINREC_RENAME_TRIES) SDL_Delay(BRAINREC_RENAME_WAIT_MS);
+    }
+    return false;
+}
+
+/* Replace dst with src: dst goes to dst.bak first, so a failure keeps it.
+ * On a failure, SDL_GetError() says why. */
 static bool replaceFile(const char *src, const char *dst) {
     char bak[1100];
     snprintf(bak, sizeof bak, "%s.bak", dst);
     if (pathExists(bak)) (void)SDL_RemovePath(bak);
-    if (pathExists(dst) && !SDL_RenamePath(dst, bak)) return false;
-    if (!SDL_RenamePath(src, dst)) {
+    if (pathExists(dst) && !renameWait(dst, bak)) return false;
+    if (!renameWait(src, dst)) {
         if (pathExists(bak)) (void)SDL_RenamePath(bak, dst);
         return false;
     }
@@ -732,6 +751,19 @@ uint8_t brainRecMergeVerdict(bool ok, const BrainRecMergeStats *st) {
     return BOT_HOST_REC_FAIL_NONE;
 }
 
+uint8_t brainRecMergeAckState(uint8_t reason) {
+    /* NO_FILL: every host file was read and the merged file was written,
+     * but a file found no entry to fill. The same files against the same
+     * brainrec.btr give the same answer each time (the usual case: the
+     * block was merged before, and the host sends it again because it did
+     * not get that ACK), so sending them again never helps. The files are
+     * kept in bothost_raw/, so the host marks the block uploaded. */
+    if (reason == BOT_HOST_REC_FAIL_NONE || reason == BOT_HOST_REC_FAIL_NO_FILL) {
+        return BOT_HOST_REC_ACK_MERGED;
+    }
+    return BOT_HOST_REC_ACK_FAILED;
+}
+
 const char *brainRecMergeFailText(uint8_t reason) {
     switch (reason) {
         case BOT_HOST_REC_FAIL_NONE:       return "merged";
@@ -894,9 +926,16 @@ static bool mergeDirLocked(const char *sessionDir, const char *hostDir,
             char tmp[1200], err[512];
             snprintf(tmp, sizeof tmp, "%s.merge.tmp", btr);
             err[0] = '\0';
-            if (brainRecMergeFiles(btr, (const char *const *)hbr, nh, tmp, st,
-                                   err, sizeof err) &&
-                replaceFile(tmp, btr)) {
+            bool built = brainRecMergeFiles(btr, (const char *const *)hbr, nh,
+                                            tmp, st, err, sizeof err);
+            if (built && !replaceFile(tmp, btr)) {
+                /* Say why, and leave no half-gigabyte copy behind. */
+                snprintf(err, sizeof err, "replace failed: %s",
+                         SDL_GetError());
+                (void)SDL_RemovePath(tmp);
+                built = false;
+            }
+            if (built) {
                 merged = true;
                 logLine(log, logCtx, "brain_record_merge: %s: %u host files "
                         "(%u skipped), %u frames, %u hosted entries (%u "
@@ -909,7 +948,7 @@ static bool mergeDirLocked(const char *sessionDir, const char *hostDir,
             } else {
                 logLine(log, logCtx, "brain_record_merge: %s not merged (%s); "
                         "the host files are kept in %s/", btr,
-                        err[0] ? err : "replace failed", BRAINREC_HOST_RAW_DIR);
+                        err[0] ? err : "merge failed", BRAINREC_HOST_RAW_DIR);
                 allOk = false;
             }
         } else {
