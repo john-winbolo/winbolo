@@ -1352,4 +1352,457 @@ function M.scores(info, world, state)
   return v, i, vt, it
 end
 
+-- =========================================================================
+-- M.fire_block(state, world, info, keys, taps, now) -> keys, taps
+--
+-- The last check before the keys go out. If we press fire now, will the
+-- shell for sure kill our own builder, or a builder we know is an ally's,
+-- within C.FIRE_BLOCK_WINDOW_SECONDS? If so, take the fire bit off both the
+-- held keys and the taps. Movement keys stay as they are.
+--
+-- "For sure" means: the map stays as it is now, the builder walks at his
+-- usual speed and is not stopped, and the shell flies through the map as it
+-- is now. Only what this player can see is used.
+--
+-- Our shell, as the engine fires it (tank.c tankUpdate, shells.c
+-- shellsAddItem):
+--   * angle: the tank's float angle (info.tank_angle);
+--   * start: tank + shell_start_add (5) x utilCalcDistance(angle,
+--     shell_speed), whole numbers;
+--   * steps: utilCalcDistanceHP (x256, rounded) with a carried fraction
+--     (shellAdvance1Tick);
+--   * moves: shellLifeTicks = 1 + (int)(shell_life * gunrange / 2) - 5;
+--   * each world tick it moves, then shellsCalcCollision tests, in order:
+--     (1) a live pill (armour > 0, not in a tank) on its square: blast at
+--     the square's centre; (2) any tank but ours within tank_hit_radius
+--     (112, strictly less): blast where the shell is; (3) a base that
+--     stops it (util.base_stops_tank_shell): blast at the centre; (4) not
+--     on a base, terrain that is not passable (mapIsPassable: building,
+--     half building, forest, boat; on a boat also grass, road, rubble,
+--     swamp): blast at the centre;
+--   * with no hit, it blasts where it stands one tick after its last move.
+-- The builder kill test is lgm.c lgmBlastCatches (blast_catches above):
+-- on a solid blast square (building, half building, pill, base) only a
+-- builder on that square dies; else a builder within 128 WU dies. A
+-- builder in his tank is safe.
+--
+-- Where each builder is on each tick:
+--   * ours: we know where we sent him (state._lgm_dispatch). He walks there
+--     (cpf_lgm_walk_path_wu, the engine's walk), stays rules.lgm_build_ticks
+--     ticks, then walks back to the tank's square and is safe in the tank.
+--     Once he has been at the spot, or he walks away from it, he is on the
+--     way back. With no known spot he walks back. A build order sent this
+--     tick (he is still in the tank) starts at lgm.c's start offset.
+--   * an ally's builder we can see (OBJECT_BUILDMAN, not hostile): the
+--     ally's own lgmd advert gives his spot; he walks there, stays, then
+--     walks back to the ally's tank if we can see it (else he stays). With
+--     no advert he keeps the motion we saw over the last few ticks. With no
+--     motion seen he stands where he is.
+-- Which place is tested: a bot's shell is rewound one tick against every
+-- builder (shells.c SHELL_LGM_REWIND_LESS and shellsBlastTestBuilder: a
+-- bot's rewind is always 1), so the engine tests the builder where he was
+-- one tick before the blast. We test that tick, and
+-- C.FIRE_BLOCK_TIMING_SLACK_TICKS ticks to each side for the input delay.
+-- A tick before now uses the place we saw him at on that tick.
+-- State lives in state._fire_block (think() has no free upvalue).
+-- =========================================================================
+
+-- lgm.h LGM_MIN_GOAL / LGM_MAX_GOAL: the builder is at his spot when he is
+-- this close on both axes. An engine fact.
+local LGM_GOAL_BOX = 16
+-- The engine's own numbers when info.rules does not carry them.
+local FB_SHELL_START_ADD = 5
+local FB_BASE_SPEED = 32
+local FB_BASE_LIFE = 8
+-- How many seen positions a builder keeps (for his motion, and for the
+-- ticks before now that the rewind tests).
+local FB_HIST = 5
+
+-- Builder place per tick: TL[2t+1], TL[2t+2] for t = 0 .. n, or false
+-- when he is in the tank at t. Reused, one builder at a time.
+local TL = {}
+local WB = {}
+
+local function fb_round(x)
+  if x >= 0 then return math.floor(x + 0.5) end
+  return -math.floor(-x + 0.5)
+end
+
+-- utilCalcDistance / utilCalcDistanceHP for a float bradian angle.
+local function fb_dist(angle, speed, scale)
+  local a = angle - 64
+  if a < 0 then a = a + 256 end
+  local rad = a * (2 * math.pi / 256)
+  return fb_round(speed * math.cos(rad) * scale),
+         fb_round(speed * math.sin(rad) * scale)
+end
+
+local function fb_in_box(x, y, cx, cy, slack)
+  local b = LGM_GOAL_BOX + (slack or 0)
+  local dx, dy = x - cx, y - cy
+  return dx >= -b and dx <= b and dy >= -b and dy <= b
+end
+
+-- Fill TL from tick `t0` with a walk from (sx, sy) to square (mx, my).
+-- Returns the next free tick, the last place and whether he got there.
+local function fb_walk(t0, last, sx, sy, mx, my)
+  local need = last - t0 + 1
+  if need <= 0 then return t0, sx, sy, false end
+  if type(cpf_lgm_walk_path_wu) ~= "function" then return t0, sx, sy, false end
+  local n = cpf_lgm_walk_path_wu(math.floor(sx), math.floor(sy), mx, my, mx, my,
+                                 need, C.BUILDER_POOL_LGM_STUCK_TICKS or 150, WB) or 0
+  local x, y = sx, sy
+  local t = t0
+  for i = 1, n do
+    if t > last then break end
+    x, y = WB[i * 2 - 1], WB[i * 2]
+    TL[t * 2 + 1], TL[t * 2 + 2] = x, y
+    t = t + 1
+  end
+  local there = fb_in_box(x, y, mx * 256 + 128, my * 256 + 128)
+  return t, x, y, there
+end
+
+-- Fill TL[t0 .. last] with one place (x, y), or false for "in the tank".
+local function fb_hold(t0, last, x, y)
+  for t = t0, last do
+    if x then TL[t * 2 + 1], TL[t * 2 + 2] = x, y
+    else TL[t * 2 + 1], TL[t * 2 + 2] = false, false end
+  end
+  return last + 1
+end
+
+-- The errand from now: phase "go" (to the spot), "dwell" (at the spot,
+-- `dwell` ticks left) or "back" (to home). home_mx nil = no home known
+-- (he stays where the walk ends). Returns a short text of the model.
+local function fb_timeline(last, x, y, phase, dmx, dmy, dwell, home_mx, home_my)
+  TL[1], TL[2] = x, y
+  local t = 1
+  if phase == "go" then
+    local there
+    t, x, y, there = fb_walk(t, last, x, y, dmx, dmy)
+    if not there then
+      -- Stuck, or the window ends first: he stays where the walk ends.
+      fb_hold(t, last, x, y)
+      return "go"
+    end
+    phase = "dwell"
+  end
+  if phase == "dwell" then
+    t = fb_hold(t, math.min(last, t + math.max(0, dwell) - 1), x, y)
+    phase = "back"
+  end
+  if t > last then return "dwell" end
+  if home_mx == nil then
+    fb_hold(t, last, x, y)
+    return "back_nohome"
+  end
+  local home
+  t, x, y, home = fb_walk(t, last, x, y, home_mx, home_my)
+  if home then fb_hold(t, last, false, false)
+  else fb_hold(t, last, x, y) end
+  return "back"
+end
+
+-- Linear motion from the seen positions (an ally builder with no advert).
+local function fb_timeline_motion(last, x, y, vx, vy)
+  for t = 0, last do
+    TL[t * 2 + 1], TL[t * 2 + 2] = x + vx * t, y + vy * t
+  end
+end
+
+-- Our shell fired now. Returns blast tick (world ticks from now), x, y,
+-- pill_hit (the square rule for sure), how; or nil (off the map).
+local FB_TANKS = {}
+local function fb_shell(world, info)
+  local rules = info.rules or {}
+  local speed = rules.shell_speed or FB_BASE_SPEED
+  local life = rules.shell_life or FB_BASE_LIFE
+  local angle = info.tank_angle or info.direction or 0
+  local len = (info.gunrange or 14) / 2
+  local moves = 1 + math.floor(life * len) - FB_SHELL_START_ADD
+  if moves < 0 then moves = 0 end
+  local ax, ay = fb_dist(angle, speed, 1)
+  local hx, hy = fb_dist(angle, speed, 256)
+  local x = info.tankx + FB_SHELL_START_ADD * ax
+  local y = info.tanky + FB_SHELL_START_ADD * ay
+  local accx, accy = 0, 0
+  local on_boat = info.inboat and true or false
+  local hit_r = rules.tank_hit_radius or C.TANK_HIT_RADIUS_WU or 112
+  local hit2 = hit_r * hit_r
+  local nt = 0
+  for _, ob in ipairs(info.objects or {}) do
+    if ob.type == OBJECT_TANK and ob.x and ob.y and ob.idnum ~= info.player_number then
+      FB_TANKS[nt * 2 + 1], FB_TANKS[nt * 2 + 2] = ob.x, ob.y
+      nt = nt + 1
+    end
+  end
+  for k = 1, moves do
+    -- shellAdvance1Tick: whole steps off a x256 carry (arithmetic shift).
+    accx = accx + hx
+    accy = accy + hy
+    local mvx = math.floor(accx / 256)
+    local mvy = math.floor(accy / 256)
+    accx = accx - mvx * 256
+    accy = accy - mvy * 256
+    x = x + mvx
+    y = y + mvy
+    if x < 0 or x > 0xFFFF or y < 0 or y > 0xFFFF then return nil end
+    local smx, smy = bit.rshift(x, 8), bit.rshift(y, 8)
+    local cx, cy = smx * 256 + 128, smy * 256 + 128
+    local key = smy * 256 + smx
+    -- (1) a live pill.
+    local lst = world and world.pill_at and world.pill_at[key]
+    if lst then
+      for i = 1, #lst do
+        local p = lst[i].pill
+        if p and (p.health or 0) > 0 and not p.in_tank then
+          return k, cx, cy, true, "pill"
+        end
+      end
+    end
+    -- (2) a tank but ours.
+    for i = 0, nt - 1 do
+      local dx, dy = x - FB_TANKS[i * 2 + 1], y - FB_TANKS[i * 2 + 2]
+      if dx * dx + dy * dy < hit2 then return k, x, y, false, "tank" end
+    end
+    -- (3) a base; (4) terrain.
+    local be = world and world.base_at and world.base_at[key]
+    if be then
+      local b = be.base
+      if b and not b._ally_only and U.base_stops_tank_shell(world, b, on_boat) then
+        return k, cx, cy, true, "base"
+      end
+    else
+      local tt = U.ttype(smx, smy)
+      if tt == C.T_BUILDING or tt == C.T_HALFBUILD then
+        return k, cx, cy, true, "wall"
+      end
+      if tt == C.T_FOREST or tt == C.T_BOAT then
+        return k, cx, cy, false, "terrain"
+      end
+      if on_boat and (tt == C.T_GRASS or tt == C.T_ROAD
+                      or tt == C.T_RUBBLE or tt == C.T_SWAMP) then
+        return k, cx, cy, false, "land"
+      end
+    end
+  end
+  return moves + 1, x, y, false, "expiry"
+end
+
+-- Track one builder's errand across ticks: has he been at his spot, and is
+-- he walking away from it. `tr` is his record in state._fire_block.
+local function fb_track(tr, key, x, y, dcx, dcy, now, box_slack)
+  if tr.key ~= key then
+    tr.key = key
+    tr.arrive = nil
+    tr.back = false
+    tr.lastd = nil
+  end
+  if dcx then
+    local d = math.abs(x - dcx) + math.abs(y - dcy)
+    if fb_in_box(x, y, dcx, dcy, box_slack) then
+      if not tr.arrive then tr.arrive = now end
+    elseif tr.arrive then
+      tr.back = true           -- he was there and has left
+    elseif tr.lastd and d > tr.lastd + 8 then
+      tr.back = true           -- he turned away before he got there
+    end
+    tr.lastd = d
+  end
+end
+
+-- Keep the place we saw a builder at this tick (newest first). A gap of
+-- more than 2 ticks starts the list again.
+local function fb_hist_push(tr, x, y, now)
+  local h = tr.hist
+  if tr.hist_tick == now then return end
+  if tr.hist_tick and now - tr.hist_tick > 2 then
+    for i = #h, 1, -1 do h[i] = nil end
+  end
+  table.insert(h, 1, { x = x, y = y, t = now })
+  if #h > FB_HIST then h[#h] = nil end
+  tr.hist_tick = now
+end
+
+-- Does a blast at (ex, ey) on tick T kill the builder in TL? The engine
+-- tests him one tick before the blast (the bot's rewind), so T - 1 is the
+-- centre of the ticks tested. A tick before now (t < 0) is the place in
+-- hist (seen positions, newest first) from that tick, if we have one.
+local function fb_catches(world, T, last, ex, ey, kill2, pill_hit, hist, now)
+  local S = math.max(0, math.floor(C.FIRE_BLOCK_TIMING_SLACK_TICKS or 1))
+  for t = T - 1 - S, T - 1 + S do
+    local lx, ly = nil, nil
+    if t >= 0 and t <= last then
+      lx, ly = TL[t * 2 + 1], TL[t * 2 + 2]
+    elseif t < 0 and hist then
+      for i = 1, #hist do
+        if hist[i].t == now + t then lx, ly = hist[i].x, hist[i].y; break end
+      end
+    end
+    if lx and blast_catches(world, lx, ly, ex, ey, kill2, pill_hit) then
+      return t, lx, ly
+    end
+  end
+  return nil
+end
+
+local metrics_mod = nil
+
+function M.fire_block(state, world, info, keys, taps, now)
+  if not C.FIRE_BLOCK_FRIENDLY_BUILDER then return keys, taps end
+  local fb = state._fire_block
+  if not fb then
+    fb = { own = {}, ally = {} }
+    state._fire_block = fb
+  end
+  local rules = info.rules or {}
+  local dwell_full = rules.lgm_build_ticks or C.LGM_BUILD_TIME or 20
+  local own_status = info.man_status
+  local disp = state._lgm_dispatch
+
+  -- Track our builder every tick.
+  local own = fb.own
+  own.hist = own.hist or {}
+  if own_status == C.LGM_MOVING and info.man_x and info.man_y then
+    fb_hist_push(own, info.man_x, info.man_y, now)
+    if disp then
+      fb_track(own, disp.tick, info.man_x, info.man_y,
+               disp.x * 256 + 128, disp.y * 256 + 128, now, 0)
+      own.seen_out = disp.tick
+    else
+      fb_track(own, -1, info.man_x, info.man_y, nil, nil, now, 0)
+    end
+  else
+    -- In the tank: the engine finds no builder to test on these ticks.
+    for i = #own.hist, 1, -1 do own.hist[i] = nil end
+    own.hist_tick = nil
+  end
+
+  -- Track the ally builders we can see every tick.
+  local seen = fb.seen or {}
+  fb.seen = seen
+  for k in pairs(seen) do seen[k] = nil end
+  for _, ob in ipairs(info.objects or {}) do
+    if ob.type == OBJECT_BUILDMAN and ob.idnum ~= info.player_number
+       and bit.band(ob.info or 0, OBJECT_HOSTILE) == 0 then
+      local pn = ob.idnum
+      local tr = fb.ally[pn]
+      if not tr then tr = { hist = {} }; fb.ally[pn] = tr end
+      seen[pn] = ob
+      fb_hist_push(tr, ob.x, ob.y, now)
+      local slot = ally_state.get and ally_state.get(pn)
+      local ld = slot and slot.info and slot.info.lgmd
+      local dmx, dmy
+      if ld and ld ~= "-" and #ld >= 8 then
+        dmx = tonumber(string.sub(ld, 1, 2), 16)
+        dmy = tonumber(string.sub(ld, 3, 4), 16)
+      end
+      tr.dmx, tr.dmy = dmx, dmy
+      if dmx then
+        -- 16 WU slack: the snapshot gives his place to 16 WU.
+        fb_track(tr, dmy * 256 + dmx, ob.x, ob.y, dmx * 256 + 128, dmy * 256 + 128, now, 16)
+      else
+        fb_track(tr, -1, ob.x, ob.y, nil, nil, now, 0)
+      end
+    end
+  end
+
+  if bit.band(keys or 0, KEY_SHOOT) == 0 and bit.band(taps or 0, KEY_SHOOT) == 0 then
+    return keys, taps
+  end
+
+  -- Is any builder of ours or an ally's out?
+  local own_new = own_status == C.LGM_INTANK and disp
+                  and (now - (disp.tick or now)) <= 2 and own.seen_out ~= disp.tick
+  local own_out = (own_status == C.LGM_MOVING and info.man_x) or own_new
+  if not own_out and next(seen) == nil then return keys, taps end
+
+  local T, ex, ey, pill_hit, how = fb_shell(world, info)
+  if not T then return keys, taps end
+  local win = math.floor((C.FIRE_BLOCK_WINDOW_SECONDS or 2.0) * 50 + 0.5)
+  if T > win then return keys, taps end
+  local S = math.max(0, math.floor(C.FIRE_BLOCK_TIMING_SLACK_TICKS or 1))
+  local last = math.max(0, math.min(win, T - 1 + S))
+  local kill = C.LGM_SHELL_KILL_RADIUS_WU or 128
+  local kill2 = kill * kill
+  local tmx, tmy = bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8)
+
+  local who, model, bt, bx, by = nil, nil, nil, nil, nil
+  if own_out then
+    if own_new then
+      local sx, sy = M.lgm_start_pos(info, disp.x, disp.y)
+      model = fb_timeline(last, sx, sy, "go", disp.x, disp.y, dwell_full, tmx, tmy)
+    elseif disp and not own.back and own.key == disp.tick then
+      if own.arrive then
+        model = fb_timeline(last, info.man_x, info.man_y, "dwell", disp.x, disp.y,
+                            dwell_full - (now - own.arrive), tmx, tmy)
+      else
+        model = fb_timeline(last, info.man_x, info.man_y, "go", disp.x, disp.y,
+                            dwell_full, tmx, tmy)
+      end
+    else
+      model = fb_timeline(last, info.man_x, info.man_y, "back", nil, nil, 0, tmx, tmy)
+    end
+    bt, bx, by = fb_catches(world, T, last, ex, ey, kill2, pill_hit,
+                            not own_new and own.hist or nil, now)
+    if bt then who = "ours" end
+  end
+  if not who then
+    for pn, ob in pairs(seen) do
+      local tr = fb.ally[pn]
+      local hmx, hmy = nil, nil
+      for _, o2 in ipairs(info.objects or {}) do
+        if o2.type == OBJECT_TANK and o2.idnum == pn and o2.x then
+          hmx, hmy = bit.rshift(o2.x, 8), bit.rshift(o2.y, 8)
+          break
+        end
+      end
+      if tr.dmx and not tr.back then
+        if tr.arrive then
+          model = fb_timeline(last, ob.x, ob.y, "dwell", tr.dmx, tr.dmy,
+                              dwell_full - (now - tr.arrive), hmx, hmy)
+        else
+          model = fb_timeline(last, ob.x, ob.y, "go", tr.dmx, tr.dmy,
+                              dwell_full, hmx, hmy)
+        end
+        model = "lgmd_" .. model
+      elseif tr.dmx and tr.back and hmx then
+        model = "lgmd_" .. fb_timeline(last, ob.x, ob.y, "back", nil, nil, 0, hmx, hmy)
+      else
+        local h = tr.hist
+        local o = h[#h]
+        local vx, vy = 0, 0
+        if o and h[1] and h[1].t > o.t then
+          vx = (h[1].x - o.x) / (h[1].t - o.t)
+          vy = (h[1].y - o.y) / (h[1].t - o.t)
+        end
+        fb_timeline_motion(last, ob.x, ob.y, vx, vy)
+        model = (vx ~= 0 or vy ~= 0) and "motion" or "still"
+      end
+      bt, bx, by = fb_catches(world, T, last, ex, ey, kill2, pill_hit, tr.hist, now)
+      if bt then who = "ally player " .. tostring(pn); break end
+    end
+  end
+  if not who then return keys, taps end
+
+  keys = bit.band(keys or 0, bit.bnot(KEY_SHOOT))
+  taps = bit.band(taps or 0, bit.bnot(KEY_SHOOT))
+  if not metrics_mod then metrics_mod = require("metrics") end
+  metrics_mod.inc("fire_block_friendly_builder")
+  fb.blocks = (fb.blocks or 0) + 1
+  fb.last_block = now
+  if BRAIN_DEBUG_MODE then
+    local g = state.goal
+    local dx, dy = bx - ex, by - ey
+    print2(string.format(
+      "FIRE_BLOCK t=%d goal=%s target=%s blast=(%.0f,%.0f) sq=(%d,%d) at +%dt how=%s builder=%s model=%s at %+dt pos=(%.0f,%.0f) dist=%.0f reach=%s blocks=%d",
+      now, tostring(g and g.kind), tostring(g and (g._heat_pid or g.target_id or g.pill_id or g.mx)),
+      ex, ey, bit.rshift(math.floor(ex), 8), bit.rshift(math.floor(ey), 8), T, tostring(how),
+      who, tostring(model), bt, bx, by, math.sqrt(dx * dx + dy * dy),
+      pill_hit and "same_square" or tostring(kill), fb.blocks))
+  end
+  return keys, taps
+end
+
 return M
