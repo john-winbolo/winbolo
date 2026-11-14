@@ -5344,7 +5344,7 @@ function M.update(state, world, info, now)
           -- 2026-10-15 (Andrew): "if it's blocked, just say you're there and
           -- move on to the next goal".  A blocked square counts as arrived,
           -- and the order is over on this think: no hold, no park beside it,
-          -- and goal selection takes over at once.  On pilltag_fort_last_shot
+          -- and goal selection takes over at once.  On pilltag_fort_guard_kills_own_pillbox_to_keep_it
           -- (seed 42) a go-there onto the guard's own dead prize pill held
           -- beside it, then picked take_cover, and the pill was never picked
           -- up; with the order gone capture_pill picks it up.
