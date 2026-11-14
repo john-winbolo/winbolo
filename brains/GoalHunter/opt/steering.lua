@@ -3771,6 +3771,22 @@ function M.next_square_reach(speed, abs_corr, rate)
   return 2 * R * s, R
 end
 
+-- C.STEER_CAPTURE_TURN_CIRCLE_CAP: the highest speed (info.speed units, engine
+-- speed x 4) at which a point `dist` wu away and abs_corr brads off the nose
+-- is still on or outside the turning circle, so the tank can reach it without
+-- circling. It is next_square_reach solved for speed: dist = 2 R s, with R =
+-- (speed / 4) / (rate x 2 pi / 256) and s = sin(error), taken as 1 at 64 brads
+-- or more. A point straight ahead (s = 0) gives no cap (256).
+function M.turn_circle_speed(abs_corr, dist, rate)
+  if not dist or not rate or rate <= 0 then return 256 end
+  local s = 1
+  if abs_corr < 64 then s = math.sin(abs_corr * C.TWO_PI / 256) end
+  if s <= 0 then return 256 end
+  local speed = 4 * (rate * C.TWO_PI / 256) * dist / (2 * s)
+  if speed >= 256 then return 256 end
+  return math.floor(speed)
+end
+
 -- C.STEER_TURN_CAP_NEXT_SQUARE: true when the next route square (sq_dist wu
 -- away, abs_corr brads off the nose) is inside the turning circle at the
 -- current speed, so the tank cannot reach it without slowing. steer_core
@@ -5167,6 +5183,10 @@ local function steer_core(state, world, info, goal)
     }
     local sub = goal.substate
     local precise_landing = sub and PRECISE_SUBSTATES[sub]
+    -- Navigation's own heading error, before the lookahead below can swap
+    -- `correction` for the next goal's.  The turn keys above already steer by
+    -- it; C.STEER_CAPTURE_TURN_CIRCLE_CAP reads it for its speed cap.
+    local nav_corr = correction
     local lookahead_active = false
     if state.next_goal and eff_dist < brake_dist and not info.inboat
        and not precise_landing then
@@ -5326,6 +5346,29 @@ local function steer_core(state, world, info, goal)
       if uturn_pivot then turn_floor = 0 end
       turn_capped    = math.max(turn_floor, math.floor(turn_factor * turn_base_cap))
       turn_max_speed = turn_capped
+    end
+    -- C.STEER_CAPTURE_TURN_CIRCLE_CAP (keel false, 2026-11-14): on the last
+    -- step of capture_pill, the pill's own square is the steering target and
+    -- the tank must drive over it.  The cap above is the plow one (twice the
+    -- cruise cap), and under the goal lookahead it reads the NEXT goal's
+    -- heading error and distance, so it was often off.  A tank already moving
+    -- when it came near a dead pill kept speed 44-48, its turning circle was
+    -- wider than the pill's distance, and it drove circles round the pill
+    -- (pilltag_guard_quickly_takes_prize_a_hunter_kills: player 0 one square
+    -- off, heading error 62-69 brads the whole time, while player 1 drove
+    -- straight onto it).  With this on, the speed is also capped at the
+    -- highest speed whose turning circle still reaches the square
+    -- (M.turn_circle_speed: the turning-circle test of
+    -- C.STEER_TURN_CAP_NEXT_SQUARE solved for speed), from navigation's own
+    -- heading error (the one the turn keys steer by).  Engine turn physics
+    -- only, no new value.  capture_pill only: on capture_base the same brake
+    -- kept the tank longer under a guard pill's fire (base_steal_B: 4 deaths).
+    if C.STEER_CAPTURE_TURN_CIRCLE_CAP and plow_through
+       and goal.kind == "capture_pill" and goal.mx
+       and state._steer_lx == goal.mx and state._steer_ly == goal.my then
+      local circle_cap = M.turn_circle_speed(math.abs(nav_corr), target_dist,
+        M.turn_rate_brads(info, U.ttype_peek(tmx, tmy)))
+      if circle_cap < turn_max_speed then turn_max_speed = circle_cap end
     end
 
     -- Plow-mode debug viz: two live lines below the tank (state + decision).
