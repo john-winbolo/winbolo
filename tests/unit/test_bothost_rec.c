@@ -117,14 +117,15 @@ static bool tbhBlock(const char *root, const char *block) {
     return tbhFile(p, "===TICK 1===\nhello\n");
 }
 
-/* The block's host file and its print2 log (plain or gzipped) are there. */
+/* The block's host file and its print2 log (plain or compressed) are there. */
 static bool tbhBlockKept(const char *root, const char *block) {
-    char p[1200], q[1200];
+    char p[1200], q[1200], r[1200];
     snprintf(p, sizeof(p), "%s/%s/bot0_g1.hbr", root, block);
     if (!tbhExists(p)) return false;
     snprintf(p, sizeof(p), "%s/%s/print2_bot0.log", root, block);
     snprintf(q, sizeof(q), "%s/%s/print2_bot0.log.gz", root, block);
-    return tbhExists(p) || tbhExists(q);
+    snprintf(r, sizeof(r), "%s/%s/print2_bot0.log.zst", root, block);
+    return tbhExists(p) || tbhExists(q) || tbhExists(r);
 }
 
 static bool tbhMarked(const char *root, const char *block) {

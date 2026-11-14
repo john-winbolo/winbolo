@@ -688,7 +688,7 @@ static SDL_EnumerationResult SDLCALL upListEntry(void *userdata,
 }
 
 /* ---- Log compression ------------------------------------------------------ */
-/* A finished block's logs (print2_bot*.log) are gzipped before they are
+/* A finished block's logs (print2_bot*.log) are compressed (print2 to .zst) before they are
  * sent, by the same rule the server uses for its own blocks. The work runs
  * on a thread, so the bots of the other servers keep their think rate. */
 static SDL_Thread   *s_logzThread = NULL;
@@ -710,12 +710,12 @@ static void logzJoin(void) {
     s_logzThread = NULL;
     SDL_strlcpy(s_logzDoneDir, s_logzDir, sizeof(s_logzDoneDir));
     if (s_logzCount > 0) {
-        fprintf(stderr, "[bothost] gzipped %d log file(s) in %s\n",
+        fprintf(stderr, "[bothost] compressed %d log file(s) in %s\n",
                 s_logzCount, s_logzDir);
     }
 }
 
-/* True when the logs of dir are gzipped (or that was tried). False while
+/* True when the logs of dir are compressed (or that was tried). False while
  * the thread works; ask again later. */
 static bool upLogsReady(const char *dir) {
     if (s_logzThread != NULL) {
@@ -738,7 +738,7 @@ static bool upLogsReady(const char *dir) {
 }
 
 /* Start sending the next finished block; false when none is left. A block
- * whose logs are being gzipped counts as started: the call comes again. */
+ * whose logs are being compressed counts as started: the call comes again. */
 static bool upStart(int srv) {
     RecSrv *sv = &s_srv[srv];
     PickCtx pc;

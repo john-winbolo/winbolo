@@ -103,7 +103,7 @@ typedef struct {
     char         sessionDir[FILENAME_MAX];
     char         stage[600];
     bool         ok;
-    bool         gzipLogs;   /* the thread gzips the plain logs after */
+    bool         gzipLogs;   /* the thread compresses the plain logs after */
     BrainRecMergeStats st;
 } RecMergeJob;
 static RecMergeJob s_job;
@@ -597,7 +597,7 @@ static int SDLCALL recMergeThread(void *data) {
     RecMergeJob *j = (RecMergeJob *)data;
     j->ok = brainRecMergeDir(j->sessionDir, j->stage, j->hostName, &j->st,
                              recMergeLog, j->sessionDir);
-    /* The gzip of the merged logs runs here too, so the tick thread never
+    /* The compression of the merged logs runs here too, so the tick thread never
      * waits for it. brainRecordCompressLogsNow takes the folder's lock. */
     if (j->gzipLogs) {
         brainRecordCompressLogsNow(j->sessionDir);
@@ -624,8 +624,8 @@ static void recMergeStart(int h) {
      * open file cannot be replaced by its merged copy. Close them; the
      * writer opens them again at its next line. */
     brainCoreReleaseLogFiles();
-    /* The merge's output follows the .gz rule: a folder the recorder still
-     * compresses later is left to it; any other gets its plain logs gzipped
+    /* The merge's output follows the compression rule: a folder the recorder still
+     * compresses later is left to it; any other gets its plain logs compressed
      * on the merge thread. Asked here, on the tick thread, as the recorder's
      * own state is the tick thread's. */
     s_job.gzipLogs = !brainRecordLogCompressPending(s_job.sessionDir);
@@ -857,8 +857,8 @@ bool transportUdpServerBrainMerge(const char *sessionDir, const char *hostDir,
     }
     /* This runs on the console's thread. s_open, s_block and the
      * recorder's state belong to the tick thread, so read them under the
-     * server mutex. The merge and the gzip only work on files (the folder
-     * lock keeps them apart from the recorder's own gzip), so they run
+     * server mutex. The merge and the compression only work on files (the folder
+     * lock keeps them apart from the recorder's own compression), so they run
      * without the mutex and the game goes on. */
     threadsWaitForMutex();
     busy = s_open && strcmp(recBase(sessionDir), s_block) == 0;
@@ -870,9 +870,9 @@ bool transportUdpServerBrainMerge(const char *sessionDir, const char *hostDir,
     }
     ok = brainRecMergeDir(sessionDir, hostDir, recBase(hostDir), &st,
                           recMergeLog, NULL);
-    /* The .gz rule, as for an upload. The console's thread waits for the
-     * merge anyway, so the gzip runs here too, in line, and the recorder's
-     * table of gzip threads is not changed from this thread. */
+    /* The compression rule, as for an upload. The console's thread waits for the
+     * merge anyway, so the compression runs here too, in line, and the recorder's
+     * table of compression threads is not changed from this thread. */
     threadsWaitForMutex();
     pending = brainRecordLogCompressPending(sessionDir);
     if (!pending) brainCoreReleaseLogFiles();

@@ -282,12 +282,14 @@ static bool copyFileWhole(const char *src, const char *dst, unsigned char *buf, 
  * has to hold the file. A line longer than the window comes out in pieces;
  * only the first piece reports isLineStart.
  *
- * The server gzip-compresses a block's brain logs when the block ends, so a
- * log can be <name>, <name>.gz, or both (the .gz holds the earlier lines).
- * lineScanOpen reads <name>.gz and then <name>, whichever exist. gzread
- * reads a plain file as it is. */
+ * The server compresses a block's brain logs when the block ends, so a log
+ * can be <name>, a compressed <name>.zst or <name>.gz (print2 logs are
+ * zstd; older builds and .jsonl logs are gzip), or a compressed copy and a
+ * plain one (the compressed copy holds the earlier lines). lineScanOpen
+ * reads the compressed copies and then <name>, whichever exist.
+ * brainRecInOpen detects the form, and reads a plain file as it is. */
 typedef struct {
-    gzFile         src[2];
+    BrainRecIn    *src[3];
     int            nSrc, cur;
     unsigned char *buf;
     size_t         len, pos;
@@ -301,44 +303,53 @@ static bool pathIsFile(const char *path) {
     return SDL_GetPathInfo(path, &pi) && pi.type == SDL_PATHTYPE_FILE;
 }
 
-/* True when <path>.gz exists. */
-static bool logHasGzPart(const char *path) {
-    char gz[SPLIT_PATH_MAX];
-    SDL_snprintf(gz, sizeof gz, "%s.gz", path);
-    return pathIsFile(gz);
+/* The compressed form of <path>'s earlier lines: zstd when <path>.zst
+ * exists, else gzip when <path>.gz exists, else plain. The parts of a
+ * sliced log are written in this form. */
+static BrainLogFormat logCompressedForm(const char *path) {
+    char other[SPLIT_PATH_MAX];
+    SDL_snprintf(other, sizeof other, "%s%s", path, BRAINLOG_ZSTD_EXT);
+    if (pathIsFile(other)) return BRAINLOG_ZSTD;
+    SDL_snprintf(other, sizeof other, "%s%s", path, BRAINLOG_GZIP_EXT);
+    if (pathIsFile(other)) return BRAINLOG_GZIP;
+    return BRAINLOG_PLAIN;
+}
+
+static const char *logFormExt(BrainLogFormat f) {
+    return f == BRAINLOG_ZSTD ? BRAINLOG_ZSTD_EXT
+         : f == BRAINLOG_GZIP ? BRAINLOG_GZIP_EXT : "";
+}
+
+static void lineScanClose(LineScan *s) {
+    for (int k = 0; k < s->nSrc; k++) brainRecInClose(s->src[k]);
+    s->nSrc = 0;
 }
 
 static bool lineScanOpen(LineScan *s, const char *path, unsigned char *buf) {
     memset(s, 0, sizeof *s);
     s->buf = buf;
     s->atLineStart = true;
-    char gz[SPLIT_PATH_MAX];
-    SDL_snprintf(gz, sizeof gz, "%s.gz", path);
-    const char *names[2] = { gz, path };
-    for (int i = 0; i < 2; i++) {
+    char zst[SPLIT_PATH_MAX], gz[SPLIT_PATH_MAX];
+    SDL_snprintf(zst, sizeof zst, "%s%s", path, BRAINLOG_ZSTD_EXT);
+    SDL_snprintf(gz, sizeof gz, "%s%s", path, BRAINLOG_GZIP_EXT);
+    const char *names[3] = { zst, gz, path };
+    for (int i = 0; i < 3; i++) {
         if (!pathIsFile(names[i])) continue;
-        gzFile g = gzopen(names[i], "rb");
-        if (!g) {
-            for (int k = 0; k < s->nSrc; k++) gzclose(s->src[k]);
-            s->nSrc = 0;
+        BrainRecIn *in = brainRecInOpen(names[i]);
+        if (!in) {
+            lineScanClose(s);
             return false;
         }
-        gzbuffer(g, 1u << 18);
-        s->src[s->nSrc++] = g;
+        s->src[s->nSrc++] = in;
     }
     return s->nSrc > 0;
 }
 
-static void lineScanClose(LineScan *s) {
-    for (int k = 0; k < s->nSrc; k++) gzclose(s->src[k]);
-    s->nSrc = 0;
-}
-
 static size_t lineScanRead(LineScan *s, unsigned char *dst, size_t want) {
     while (s->cur < s->nSrc) {
-        int got = gzread(s->src[s->cur], dst, (unsigned)want);
-        if (got > 0) return (size_t)got;
-        if (got < 0) s->readError = true;
+        size_t got = brainRecInRead(s->src[s->cur], dst, want);
+        if (got > 0) return got;
+        if (brainRecInError(s->src[s->cur])) s->readError = true;
         s->cur++;
     }
     return 0;
@@ -612,21 +623,18 @@ typedef struct {
  * Engine-tick logs (killbot, perf) compare their tick straight against
  * partStartEngine; brain logs compare (run, tick) against the cut points,
  * because their tick counter restarts. */
-/* Open a part's log for writing: gzip when gz, else plain ("T" makes zlib
- * write the bytes as they are). */
-static gzFile openPartLog(const char *path, bool gz) {
-    gzFile g = gzopen(path, gz ? "wb6" : "wbT");
-    if (g) gzbuffer(g, 1u << 18);
-    return g;
+/* Open a part's log for writing in the given form. */
+static BrainLogOut *openPartLog(const char *path, BrainLogFormat fmt) {
+    return brainLogOutOpen(path, fmt, 0);
 }
 
 static bool sliceTextFile(const char *inPath, TickKind kind, int nParts,
                           const long long *partStartEngine, const BotCuts *cuts,
-                          char outPaths[SPLIT_MAX_PARTS][SPLIT_PATH_MAX], bool gzOut,
+                          char outPaths[SPLIT_MAX_PARTS][SPLIT_PATH_MAX], BrainLogFormat outFmt,
                           unsigned char *buf, SliceReport *rep) {
     LineScan s;
     if (!lineScanOpen(&s, inPath, buf)) return false;
-    gzFile out = openPartLog(outPaths[0], gzOut);
+    BrainLogOut *out = openPartLog(outPaths[0], outFmt);
     if (!out) { lineScanClose(&s); return false; }
 
     memset(rep, 0, sizeof *rep);
@@ -653,9 +661,9 @@ static bool sliceTextFile(const char *inPath, TickKind kind, int nParts,
                         past = (t >= partStartEngine[cur + 1]);
                     }
                     if (!past) break;
-                    if (gzclose(out) != Z_OK) ok = false;
+                    if (!brainLogOutClose(out)) ok = false;
                     cur++;
-                    out = openPartLog(outPaths[cur], gzOut);
+                    out = openPartLog(outPaths[cur], outFmt);
                     if (!out) { ok = false; break; }
                 }
                 if (!ok) break;
@@ -665,19 +673,19 @@ static bool sliceTextFile(const char *inPath, TickKind kind, int nParts,
             }
             rep->partLines[cur]++;
         }
-        if (clen > 0 && gzwrite(out, chunk, (unsigned)clen) != (int)clen) { ok = false; break; }
+        if (clen > 0 && !brainLogOutWrite(out, chunk, clen)) { ok = false; break; }
     }
 
     if (s.readError) ok = false;
     lineScanClose(&s);
-    if (out && gzclose(out) != Z_OK) ok = false;
+    if (out && !brainLogOutClose(out)) ok = false;
 
     /* Parts the log never reached still need an (empty) file, so a part
      * directory never looks like it is missing a bot's log. */
     for (int p = cur + 1; p < nParts && ok; p++) {
-        gzFile f = openPartLog(outPaths[p], gzOut);
+        BrainLogOut *f = openPartLog(outPaths[p], outFmt);
         if (!f) { ok = false; break; }
-        if (gzclose(f) != Z_OK) ok = false;
+        if (!brainLogOutClose(f)) ok = false;
     }
     return ok;
 }
@@ -1144,19 +1152,25 @@ int BRAINREC_SPLIT_ENTRY(int argc, char **argv) {
             for (int e = 0; e < n && ok; e++) {
                 if (strcmp(entries[e], "brainrec.btr") == 0) continue;
 
-                /* A finished block's brain logs are <name>.gz (see
-                 * brainRecordCompressLogsAsync), maybe with a plain <name>
-                 * beside it. A tick-stamped log is sliced once under its
-                 * plain name and reads both; its parts are gzip when a .gz
-                 * part was there. */
+                /* A finished block's brain logs are <name>.zst or <name>.gz
+                 * (see brainRecordCompressLogsAsync), maybe with a plain
+                 * <name> beside it. A tick-stamped log is sliced once under
+                 * its plain name and reads every form; its parts take the
+                 * compressed form that was there. */
                 char name[SPLIT_PATH_MAX];
                 SDL_strlcpy(name, entries[e], sizeof name);
-                bool isGzEntry = hasSuffix(name, ".gz");
-                if (isGzEntry) name[strlen(name) - 3] = '\0';
+                bool isPackedEntry = false;   /* a .zst or .gz name */
+                if (hasSuffix(name, BRAINLOG_ZSTD_EXT)) {
+                    name[strlen(name) - strlen(BRAINLOG_ZSTD_EXT)] = '\0';
+                    isPackedEntry = true;
+                } else if (hasSuffix(name, BRAINLOG_GZIP_EXT)) {
+                    name[strlen(name) - strlen(BRAINLOG_GZIP_EXT)] = '\0';
+                    isPackedEntry = true;
+                }
                 TickKind kind = classifyCompanion(name);
                 if (kind == TICK_NONE) {
                     SDL_strlcpy(name, entries[e], sizeof name);   /* copy as it is */
-                    isGzEntry = false;
+                    isPackedEntry = false;
                 }
                 bool isPrint2 = (kind == TICK_PRINT2);
                 if (order == 0 && !isPrint2) continue;
@@ -1164,23 +1178,28 @@ int BRAINREC_SPLIT_ENTRY(int argc, char **argv) {
 
                 char src[SPLIT_PATH_MAX];
                 SDL_snprintf(src, sizeof src, "%s/%s", inputPath, name);
-                if (isGzEntry) {
-                    if (pathIsFile(src)) continue;   /* the plain entry reads both */
+                if (isPackedEntry) {
+                    if (pathIsFile(src)) continue;   /* the plain entry reads all */
+                    /* With both .zst and .gz, slice once: at the .zst entry. */
+                    if (logCompressedForm(src) == BRAINLOG_ZSTD &&
+                        !hasSuffix(entries[e], BRAINLOG_ZSTD_EXT)) continue;
                 } else if (!pathIsFile(src)) {
                     continue;                        /* subdirectory — skip */
                 }
-                bool gzOut = kind != TICK_NONE && logHasGzPart(src);
+                BrainLogFormat outFmt = kind != TICK_NONE ? logCompressedForm(src)
+                                                          : BRAINLOG_PLAIN;
 
                 char dsts[SPLIT_MAX_PARTS][SPLIT_PATH_MAX];
                 for (int p = 0; p < parts; p++) {
                     SDL_snprintf(dsts[p], sizeof dsts[p], "%s/%s%s", partDir[p], name,
-                                 gzOut ? ".gz" : "");
-                    /* Remove the other form a previous run left, so a reader
+                                 logFormExt(outFmt));
+                    /* Remove the other forms a previous run left, so a reader
                      * never joins an old copy to the new one. */
-                    if (kind != TICK_NONE) {
+                    for (int f = BRAINLOG_PLAIN; kind != TICK_NONE && f <= BRAINLOG_ZSTD; f++) {
+                        if (f == (int)outFmt) continue;
                         char other[SPLIT_PATH_MAX];
-                        if (gzOut) SDL_snprintf(other, sizeof other, "%s/%s", partDir[p], name);
-                        else       SDL_snprintf(other, sizeof other, "%s/%s.gz", partDir[p], name);
+                        SDL_snprintf(other, sizeof other, "%s/%s%s", partDir[p], name,
+                                     logFormExt((BrainLogFormat)f));
                         if (pathIsFile(other)) {
                             if (SDL_RemovePath(other)) {
                                 printf("  removed %s (left by an earlier run)\n",
@@ -1245,7 +1264,7 @@ int BRAINREC_SPLIT_ENTRY(int argc, char **argv) {
                 }
 
                 SliceReport rep;
-                if (!sliceTextFile(src, kind, parts, startEngine, cuts, dsts, gzOut, textBuf, &rep)) {
+                if (!sliceTextFile(src, kind, parts, startEngine, cuts, dsts, outFmt, textBuf, &rep)) {
                     fprintf(stderr, "brainrec_split: slice failed for %s\n", entries[e]);
                     ok = false;
                     break;

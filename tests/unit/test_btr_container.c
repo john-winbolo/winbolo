@@ -518,18 +518,22 @@ int run_btr_block_logs_compress(void) {
     }
     UT_ASSERT_MSG(brainRecordCompressLogsNow(dir) == 3, "not three logs compressed");
     for (i = 0; i < 3; i++) {
+        /* print2 logs go to .zst, the .jsonl logs to .gz. */
+        const bool zst = i == 0;
         char back[256];
-        gzFile g;
-        int n;
+        size_t n;
+        BrainRecIn *in;
         SDL_PathInfo pi;
         snprintf(p, sizeof p, "%s/%s", dir, names[i]);
-        snprintf(gz, sizeof gz, "%s/%s.gz", dir, names[i]);
+        snprintf(gz, sizeof gz, "%s/%s%s", dir, names[i], zst ? ".zst" : ".gz");
         UT_ASSERT_MSG(!SDL_GetPathInfo(p, &pi), "%s is still there", names[i]);
-        g = gzopen(gz, "rb");
-        UT_ASSERT_MSG(g != NULL, "no %s.gz", names[i]);
-        n = gzread(g, back, sizeof back - 1);
-        gzclose(g);
-        UT_ASSERT(n == (int)strlen(text) && memcmp(back, text, (size_t)n) == 0);
+        in = brainRecInOpen(gz);
+        UT_ASSERT_MSG(in != NULL, "no %s", gz);
+        UT_ASSERT(brainRecInFormat(in) == (zst ? BRAINREC_FMT_ZSTD : BRAINREC_FMT_GZIP));
+        n = brainRecInRead(in, back, sizeof back - 1);
+        UT_ASSERT(!brainRecInError(in));
+        brainRecInClose(in);
+        UT_ASSERT(n == strlen(text) && memcmp(back, text, n) == 0);
     }
     snprintf(p, sizeof p, "%s/%s", dir, keep);
     {
