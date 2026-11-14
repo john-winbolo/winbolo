@@ -22,10 +22,23 @@ add_library(bolo_static STATIC
     bot_manager.c
     bot_mem_report.c
     bot_worker_pool.c
+    brain_capacity.c
+    brain_capacity_lua.c
     brain_data.c
     brain_list.c
     brain_overlay.c
     brain_record.c
+    brain_record_body.c
+    brain_record_io.c
+    brain_record_merge.c
+    brain_record_walk.c
+    brain_sync.c
+    brain_pack.c
+    bot_host_link.c
+    bot_host_guard.c
+    machine_cpu_free.c
+    machine_id.c
+    bot_host_machine.c
     brain_pathfinder.c
     brain_pathfinder_serial.c
     brain_sandbox.c
@@ -162,6 +175,7 @@ target_link_libraries(bolo_static PUBLIC
     SDL3::SDL3
     lua_static
     zlibstatic
+    libzstd_static
     minizip
     utf8proc
 )

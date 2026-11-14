@@ -153,3 +153,11 @@ PingBand pingBandClassify(uint16_t pingMs) {
     }
     return PING_BAND_POOR;
 }
+
+PingColorRole pingColorRole(uint16_t pingMs) {
+    switch (pingBandClassify(pingMs)) {
+        case PING_BAND_GOOD: return PING_COLOR_ONLINE;
+        case PING_BAND_FAIR: return PING_COLOR_HIGH_PING;
+        default:             return PING_COLOR_DISCONNECTED;
+    }
+}

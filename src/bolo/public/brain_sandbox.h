@@ -37,6 +37,11 @@
 bool brainSandboxResolveInRoot(const char *root, const char *path,
                                char *out, size_t outlen);
 
+/* Set a second folder the jailed file functions accept besides the brain's
+ * own directory (the Bot Host's recordings folder). NULL or "" clears it.
+ * brainSandboxResolveInRoot itself checks one root only. */
+void brainSandboxSetExtraRoot(const char *dir);
+
 /* Lock down the standard libraries and the path-taking C bindings of a
  * freshly opened brain VM. root is the brain's own directory, the only
  * place file access is allowed. Call after the C bindings are registered

@@ -231,6 +231,10 @@ int run_lobby_add_bot_rejects_non_host_sender(void);
 int run_lobby_bot_count_counts_only_connected_bots(void);
 int run_lobby_maxbots_cap_boundary(void);
 int run_lobby_add_bot_rejects_when_at_maxbots(void);
+int run_lobby_add_bot_rejects_at_host_capacity(void);
+int run_server_bot_slots_codec(void);
+int run_server_bot_slots_setting(void);
+int run_server_bot_slots_locked(void);
 int run_transfer_host_promotes_target(void);
 int run_transfer_host_rejects_non_host_sender(void);
 int run_transfer_host_openhost_does_not_grant(void);
@@ -698,6 +702,7 @@ int run_channel_mux_control_backlog_delivers_in_order(void);
 int run_channel_mux_control_backlog_full_refuses(void);
 int run_channel_mux_game_channel_still_refuses_at_window(void);
 int run_channel_mux_control_reset_clears_backlog(void);
+int run_channel_mux_bulk_wide(void);
 
 /* Spectator delayed-stream ring (test_spectator_ring.c): segmentation,
  * keyframe-at-segment-start, mid-interval seek + replay, segment isolation,
@@ -903,6 +908,152 @@ int run_bot_ping_queue_becomes_cmd_ping_from_bot_slot(void);
 int run_bot_ping_rate_limit_drops_extras(void);
 int run_bot_ping_ignores_bad_slot(void);
 int run_bot_ping_ignores_a_slot_that_is_not_a_bot(void);
+
+/* Bot Host wire messages and remote seats (test_bot_host.c). */
+int run_bot_host_assign_codec(void);
+int run_bot_host_unassign_codec(void);
+int run_bot_host_table_codec(void);
+int run_bot_host_team_msg_codec(void);
+int run_bot_host_commands_codec(void);
+int run_bot_host_team_msg_fanout(void);
+int run_bot_host_ping_gap(void);
+int run_bot_host_remote_seat_stays_bot(void);
+/* A Bot Host seat's info names its host as the lobby rows do. */
+int run_bot_host_info_host_name(void);
+int run_bot_host_target_ms(void);
+int run_bot_host_sync_codec(void);
+
+/* Bot Host brain sync (test_brain_sync.c). */
+int run_brain_sync_path_check(void);
+int run_brain_sync_manifest_codec(void);
+int run_brain_sync_cache_plan(void);
+int run_brain_sync_chunk(void);
+int run_brain_sync_shipped_match(void);
+int run_brain_sync_shipped_edited(void);
+int run_brain_sync_shipped_missing(void);
+int run_brain_sync_crlf_hash(void);
+int run_brain_sync_crlf_table_agrees(void);
+/* Packed brain sync and session folders (test_brain_pack.c). */
+int run_brain_pack_manifest_v2(void);
+int run_brain_pack_all_equal(void);
+int run_brain_pack_one_changed(void);
+int run_brain_pack_bad_hash(void);
+int run_brain_pack_old_peer(void);
+int run_brain_pack_session(void);
+/* The guards on the Bot Host inside a client (test_bot_host_security.c). */
+int run_bot_host_official_no_files(void);
+int run_bot_host_token_allow_list(void);
+int run_bot_host_unculled_not_player(void);
+int run_bot_host_rec_upload_asked(void);
+int run_bot_host_salt_limit(void);
+int run_brain_capacity_throwing_index(void);
+int run_bot_host_refused_takes_no_file(void);
+int run_brain_capacity_memory_limit(void);
+int run_bot_host_reset_limit(void);
+int run_bot_host_brain_name_opt(void);
+
+/* Bot Host link: announce, query, invite, lists (test_bot_host_link.c). */
+int run_bot_host_link_announce_codec(void);
+int run_bot_host_link_addr_list(void);
+int run_bot_host_link_allow(void);
+int run_bot_host_slots_codec(void);
+int run_bot_host_place_spread(void);
+int run_bot_host_place_lag(void);
+int run_bot_host_place_server_cap(void);
+/* Keep bots where they run well (test_bot_host_keep.c). */
+int run_bot_host_place_keep_server_first(void);
+int run_bot_host_place_keep_lopsided(void);
+int run_bot_host_place_keep_bad_source(void);
+int run_bot_host_place_keep_no_return(void);
+int run_bot_host_place_keep_oil_rig(void);
+int run_bot_host_place_keep_scaled_wait(void);
+int run_bot_host_place_keep_step_min_old(void);
+int run_bot_host_place_keep_free_batch(void);
+int run_bot_host_place_keep_batch_no_target(void);
+int run_bot_host_place_keep_batch_off(void);
+int run_bot_host_place_keep_batch_server_room(void);
+int run_bot_host_place_keep_batch_no_reading(void);
+int run_bot_host_place_keep_batch_slot_limit(void);
+int run_bot_host_place_keep_batch_cpu_limit(void);
+int run_bot_host_enforce_fall_back_holds(void);
+int run_bot_host_enforce_host_resumes(void);
+int run_bot_host_enforce_leave_resumes(void);
+int run_bot_host_enforce_off_keeps_fall_back(void);
+/* A Bot Host that joins a game in progress (test_bot_host_midgame.c). */
+int run_bot_host_place_keep_lag_join(void);
+int run_bot_host_sysinfo_empty_hosts(void);
+/* The overrun check of the bot placement, the free CPU percent and the
+ * log_BotHostData payload (test_bot_host_overrun.c). */
+int run_bot_host_overrun_window_rate(void);
+int run_bot_host_overrun_step_spacing(void);
+int run_bot_host_overrun_steady_moves_one(void);
+int run_bot_host_overrun_all_same_no_move(void);
+int run_bot_host_overrun_target_not_below(void);
+int run_bot_host_overrun_gain_per_move(void);
+int run_bot_host_overrun_stay_times(void);
+int run_bot_host_overrun_emergency(void);
+int run_bot_host_overrun_target_order(void);
+int run_bot_host_overrun_forced_no_m(void);
+int run_bot_host_overrun_nomove_blocks(void);
+int run_bot_host_overrun_server_fallback(void);
+int run_bot_host_overrun_raise_clean_evidence(void);
+int run_bot_host_overrun_no_raise_clean_too_free(void);
+int run_bot_host_overrun_no_raise_bad_reading(void);
+int run_bot_host_overrun_no_raise_no_free_data(void);
+int run_bot_host_overrun_new_game_reset(void);
+int run_bot_host_overrun_may_take(void);
+int run_bot_host_cpu_free_codec(void);
+int run_machine_cpu_proc_stat_steal(void);
+int run_bothost_record_roundtrip(void);
+/* -bothost-nomove (test_bot_host_overrun.c; the record in
+ * test_log_roundtrip.c). */
+int run_bot_host_nomove_no_move_running(void);
+int run_bot_host_nomove_fallback(void);
+int run_bot_host_nomove_lobby_places(void);
+int run_bot_host_nomove_would_move_record(void);
+/* The lobby's CPU estimate per Bot Host row (test_bot_host_cpu.c). */
+int run_bot_host_cpu_percent(void);
+int run_bot_host_cpu_meter(void);
+int run_bot_host_cpu_codec(void);
+int run_bot_host_cpu_client_row(void);
+int run_bot_host_cpu_bot_format(void);
+int run_bot_host_cpu_bot_meter(void);
+int run_bot_host_cpu_bot_codec(void);
+int run_bot_host_cpu_budget(void);
+int run_bot_host_cpu_bot_client_row(void);
+int run_bot_host_lag_codec(void);
+int run_bot_host_rec_bytes_codec(void);
+int run_bot_host_rec_eta(void);
+int run_bot_timing_codec(void);
+int run_bot_timing_client_copy(void);
+/* Bot Hosts on one computer, the game bot limit and the row slot override
+ * (test_bot_host_machine.c). */
+int run_bot_host_machine_addr(void);
+int run_machine_id_token(void);
+int run_machine_id_salt_repeat(void);
+int run_bot_host_machine_server_group(void);
+int run_bot_host_machine_client_group(void);
+int run_bot_host_machine_leader_leaves(void);
+int run_bot_host_game_bot_limit(void);
+int run_bot_host_slots_override(void);
+int run_bot_host_slots_arg_parse(void);
+int run_bot_host_machine_codec(void);
+int run_bot_host_machine_join_wait(void);
+int run_bot_host_same_server_codec(void);
+int run_bot_host_same_server_stop(void);
+/* A Bot Host's slots: Max slots and the dynamic slots
+ * (test_bot_host_optout.c). */
+int run_bot_host_optout_slots_codec(void);
+int run_bot_host_optout_give_back(void);
+int run_bot_host_max_saved(void);
+int run_bot_host_dyn_raise_rule(void);
+int run_bot_host_dyn_under_reserve(void);
+int run_bot_host_dyn_carry(void);
+int run_bot_host_dyn_keel(void);
+int run_bot_host_dyn_pct_off(void);
+int run_bot_host_dyn_determinism(void);
+int run_bot_host_limits_codec(void);
+int run_bot_host_slot_owner_only(void);
 
 /* Internal brain-message routing (test_brain_internal_msg_routing.c) —
  * pins botManagerDeliverInternalMessage: bot brains sending with
@@ -1110,6 +1261,24 @@ int run_entity_record_seek_lands_on_the_right_liveness(void);
  * number, and the -brain-debug recording carries the same masks per frame. */
 int run_brain_removed_items_info_masks(void);
 int run_brain_removed_items_recording_masks(void);
+
+/* The brainrec.btr container (test_btr_container.c): a zstd recording reads
+ * back through the frame walker and the BrainTest walk, and so does a gzip
+ * copy of it; skip across blocks; a cut file reads its prefix; a finished
+ * block's brain logs compress to .gz. */
+int run_btr_zstd_recording_reads_back(void);
+int run_btr_zstd_skip_across_blocks(void);
+/* A skip past 2 GiB in an old gzip .btr. */
+int run_btr_gzip_skip_past_2gib(void);
+int run_btr_zstd_cut_file_reads_its_prefix(void);
+int run_btr_block_logs_compress(void);
+/* Record frames of a running sim into dir with the -brain-debug recorder. */
+bool utBtrRecordSession(const char *dir, int frames, uint32_t *firstTick,
+                        uint32_t *lastTick);
+
+/* brainrec_split cuts the brain logs at the right brain tick
+ * (test_brainrec_split.c). */
+int run_brainrec_split_cuts_brain_logs_by_engine_tick(void);
 
 /* The entity-sync control event (test_entity_sync.c). CTRL_ENTITY_SYNC
  * carries three 16-bit masks, one per item list, saying which indices hold
@@ -1375,6 +1544,16 @@ int run_log_roundtrip_player_lag_recorded(void);
 /* log_OverrunStats: the record through the writer and back, and a recorded
  * round's records at 0:30, 1:00 and the round end. */
 int run_log_roundtrip_overrun_stats(void);
+/* log_OverrunStats version 2: each bot's host and the host table; a
+ * version 1 record reads with every host not known; the host table's
+ * places. */
+int run_overrun_record_hosts(void);
+int run_overrun_record_v1_hosts(void);
+int run_overrun_record_host_place(void);
+int run_overrun_record_sections(void);
+/* log_BotHostData through the round log, and nothing with the option off. */
+int run_log_roundtrip_bothost_data(void);
+int run_bothost_record_off_writes_nothing(void);
 int run_log_roundtrip_overrun_stats_recorded(void);
 /* The same with two thinking bots: each record has each bot's thinks. */
 int run_log_roundtrip_overrun_stats_bots(void);
@@ -1391,6 +1570,8 @@ int run_lv_lag_view_draw(void);
 int run_lv_lag_view_rename(void);
 /* The viewer reads log_OverrunStats records and gives the one at the playhead. */
 int run_lv_overrun_read(void);
+/* The viewer reads log_BotHostData records into its bot host track at load, every number of each probe, reading and decision, and adds none twice on playback. */
+int run_lv_bothost_read(void);
 /* log_Ping's six payload bytes: sender, kind, and two big-endian u16 WORLD
  * coordinates, byte for byte through the writer and back. */
 int run_log_roundtrip_ping(void);
@@ -1437,6 +1618,30 @@ int run_replay_v1_pill_health_nibble(void);
  * the frames are raw snapshot structs and the structs changed size. The check
  * every reader shares has to refuse it rather than walk it. */
 int run_brainrec_version_rejects_old(void);
+/* Bot Host brain recordings (test_brain_record_host.c). */
+int run_brainrec_host_merge_by_tick(void);
+int run_brainrec_host_merge_mid_block_move(void);
+int run_brainrec_host_merge_other_version_rebuilt_brain(void);
+int run_brainrec_host_merge_missing_block(void);
+int run_brainrec_host_merge_dir_keeps_raw(void);
+int run_brainrec_host_merge_verdict(void);
+int run_brainrec_host_merge_again_acks_merged(void);
+int run_brainrec_host_merge_replace_waits(void);
+int run_brainrec_host_ack_target_rejoined(void);
+/* The Bot Host's recorder keeps its blocks (test_bothost_rec.c). */
+int run_bothost_rec_upload_keeps_files(void);
+int run_bothost_rec_lowdisk_keeps_files(void);
+int run_bothost_rec_pool_raw_flag(void);
+int run_brainrec_host_path_checks(void);
+int run_brainrec_dir_lock_orders_merge_and_gzip(void);
+int run_brainrec_host_make_absolute(void);
+int run_brainrec_host_print2_gz(void);
+int run_brainrec_print2_zst_round_trip(void);
+int run_brainrec_host_rec_codec(void);
+int run_brainrec_host_legend_unclosed(void);
+int run_brainrec_host_upload_no_session(void);
+int run_brainrec_host_merge_dir_other_names(void);
+int run_brainrec_host_upload_file_cap(void);
 
 /* Viewer-side decode of per-tank stocks (test_lv_tank_stocks.c): hand-built
  * snapshot bodies and forward records through lv_specSeedLoad /
@@ -2471,6 +2676,7 @@ int run_screen_bullets_build(void);
  * primitives — window-minimum tracking as samples slide out, EWMA constant
  * convergence, and a monotonic overshoot-free step response. */
 int run_ping_smoother(void);
+int run_lobby_ping_color(void);
 
 /* Client timing estimator (test_client_timing.c): min-over-window clock
  * offset / pipeline depth / RTT and inter-arrival jitter over synthetic clean
@@ -2858,6 +3064,8 @@ int run_pill_shadow_withheld_crc_matches(void);
  * resync while the client is behind: the blob is its copy, not the live map. */
 int run_loopback_map_cull(void);
 int run_loopback_map_cull_resync(void);
+int run_loopback_map_unculled_drop_heals(void);
+int run_console_bot_set(void);
 
 /* Sound culling over the loopback transport (test_sound_delivery_wire.c): for a
  * recipient whose only viewport rect is its own tank screen, both delivery
@@ -3655,6 +3863,7 @@ int run_lobby_template_reset_reseats(void);
 int run_lobby_template_preview_is_inert(void);
 int run_lobby_template_plain_map_clears(void);
 int run_lobby_template_map_commit_drops_prior_bots(void);
+int run_lobby_bot_default_team_on_add(void);
 int run_lobby_template_caps_humans_only(void);
 int run_lobby_template_cap_seats_human_above_bots(void);
 int run_lobby_template_cap_refuses_extra_human(void);
@@ -3716,6 +3925,7 @@ int run_unfielded_seat_unfield_is_quiet(void);
 int run_unfielded_seat_unfield_keeps_sync(void);
 int run_unfielded_seat_spawn_keeps_alliances(void);
 int run_unfielded_seat_on_the_wire(void);
+int run_unfielded_seat_server_row_lists_held(void);
 
 /* What a wave costs (test_scenario_wave_cost.c): the brain, the ClientSim and
  * the control subscription behind a held seat, built across the countdown
@@ -4358,6 +4568,22 @@ int run_scenario_dir_list_cached_sees_edit(void);
 int run_scenario_dir_merges_shipped_mods(void);
 int run_scenario_dir_entry_roundtrip(void);
 int run_scenario_dir_chunk_not_in_flight(void);
+
+/* The CPU speed test, its stored result and the brain capacity answer
+ * (test_cpu_speed.c). */
+int run_cpu_speed_test_short(void);
+int run_cpu_speed_test_cancel(void);
+int run_cpu_speed_store_roundtrip(void);
+int run_cpu_speed_background(void);
+int run_cpu_speed_background_cancel(void);
+int run_brain_capacity_default_clamp(void);
+int run_brain_capacity_cache(void);
+int run_brain_capacity_c_brain(void);
+int run_brain_capacity_name_from_path(void);
+int run_brain_capacity_lua_fallback(void);
+int run_brain_capacity_add_state(void);
+int run_brain_capacity_parse_override(void);
+int run_host_bot_capacity(void);
 
 /* A script's details (test_scenario_callbacks.c): the manifest's callbacks
  * block kept, cut and warned about at load, the rules and callbacks packed

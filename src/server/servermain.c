@@ -55,6 +55,7 @@
 #include "mapgen.h"
 #include "log.h"
 #include "transport_udp.h"
+#include "bot_host_machine.h"   /* botHostDynamicForRun, the flags */
 #include "transport_udp_server_internal.h"  /* infoReplyServerDescRoom */
 #include "net_impair.h"   /* WB_ENABLE_NETIMPAIR master switch */
 #include "bot_manager.h"
@@ -78,6 +79,12 @@
 #include "../scenario_io/scenario_package.h"
 #include "../scenario/scenario_validate.h"
 #include "cJSON.h"
+#include "cpu_speed_test.h"
+#include "cpu_speed_store.h"
+#include "cpu_speed_capacity.h"
+#include "server_bot_capacity.h" /* the host bot capacity - -botcapacity */
+#include "brain_capacity.h"
+#include "brain_list_internal.h" /* brainListScan - -cputest's brain answers */
 
 /* Constants previously from backend.h */
 #define GAME_TICK_LENGTH 10
@@ -306,6 +313,93 @@ static void consoleOpMemReport(bool deep) {
   serverMemReportRequest(deep);
 }
 
+/* bot <n> difficulty|brain <value>: the same changes the lobby's bot popup
+   makes. A brain change is applied now (an in-process bot reloads at once,
+   a Bot Host seat's host is told); a difficulty change reaches the brain at
+   the next round start, as it does from the lobby. */
+static bool consoleOpBotSet(int player, const char *what, const char *value,
+                            char *msg, size_t msgLen) {
+  bool ok = false;
+  threadsWaitForMutex();
+  if (player < 0 || player >= MAX_TANKS ||
+      !serverSimIsBot(serverSim, (BYTE)player)) {
+    snprintf(msg, msgLen, "Player %d is not a bot", player);
+  } else if (strcmp(what, "difficulty") == 0) {
+    uint8_t level;
+    const LobbyBotConfig *bc = serverSimGetBotConfig(serverSim, (BYTE)player);
+    if (!botDifficultyFromName(value, &level) || bc == NULL) {
+      snprintf(msg, msgLen, "Unknown difficulty '%s'", value);
+    } else {
+      serverSimSetBotConfig(serverSim, (BYTE)player, bc->mode, level,
+                            bc->personality, NULL);
+      snprintf(msg, msgLen, "Bot %d difficulty is now %s", player,
+               botDifficultyName(level));
+      ok = true;
+    }
+  } else if (strcmp(what, "brain") == 0) {
+    char *end = NULL;
+    long idx = strtol(value, &end, 10);
+    const char *path = (end != value && idx >= 0 && idx < 255)
+        ? serverSimGetBrainPathForIdx(serverSim, (uint8_t)idx) : NULL;
+    if (path == NULL) {
+      snprintf(msg, msgLen, "No brain at index '%s'", value);
+    } else {
+      serverSimSwitchBotBrain(serverSim, (BYTE)player, (uint8_t)idx);
+      snprintf(msg, msgLen, "Bot %d brain is now %s", player, path);
+      ok = true;
+    }
+  } else {
+    snprintf(msg, msgLen, "Unknown bot setting '%s'", what);
+  }
+  threadsReleaseMutex();
+  return ok;
+}
+
+/* One argument of a console line: a word, or a "quoted" run. Returns the
+   rest of the line after it, or NULL when there is no argument. */
+static const char *consoleNextArg(const char *p, char *out, size_t outSz) {
+  size_t n = 0;
+  char end = ' ';
+  while (*p == ' ' || *p == '\t') p++;
+  if (*p == '\0' || *p == '\n' || *p == '\r') return NULL;
+  if (*p == '"') {
+    end = '"';
+    p++;
+  }
+  while (*p != '\0' && *p != '\n' && *p != '\r' && *p != end &&
+         (end == '"' || *p != '\t')) {
+    if (n + 1 < outSz) out[n++] = *p;
+    p++;
+  }
+  out[n] = '\0';
+  if (*p == '"') p++;
+  return p;
+}
+
+/* cleardebug / brainmerge <session dir> <host dir>. cleardebug runs under
+   the mutex (it reads the Bot Host table and tells the hosts). A merge
+   takes the mutex only for its short reads of the recorder's state; the
+   merge and the gzip run without it, so the game goes on. */
+static bool consoleOpDebugCmd(const char *line, char *msg, size_t msgLen) {
+  bool ok;
+  if (SDL_strncasecmp(line, "cleardebug", 10) == 0) {
+    threadsWaitForMutex();
+    ok = transportUdpServerClearDebug(msg, msgLen);
+    threadsReleaseMutex();
+    return ok;
+  }
+  {
+    char sessionDir[FILENAME_MAX];
+    char hostDir[FILENAME_MAX];
+    const char *p = line + 10;   /* after "brainmerge" */
+    sessionDir[0] = '\0';
+    hostDir[0] = '\0';
+    p = consoleNextArg(p, sessionDir, sizeof(sessionDir));
+    if (p != NULL) (void)consoleNextArg(p, hostDir, sizeof(hostDir));
+    return transportUdpServerBrainMerge(sessionDir, hostDir, msg, msgLen);
+  }
+}
+
 /* Positional, and the struct's own comment says why the newest entry goes
    last rather than beside a relative. */
 static const ServerConsoleOps serverConsoleOps = {
@@ -318,7 +412,9 @@ static const ServerConsoleOps serverConsoleOps = {
   consoleOpKick,
   consoleOpSetHost,
   consoleOpReloadScenario,
-  consoleOpMemReport
+  consoleOpMemReport,
+  consoleOpBotSet,
+  consoleOpDebugCmd
 };
 
 
@@ -546,6 +642,7 @@ static bool serverTickStep(void *ctx) {
   }
   serverInstanceTick(serverSim);
   serverMemReportPoll(serverSim);
+  serverBotCapacityPoll(serverSim);
   return true;
 }
 
@@ -608,6 +705,7 @@ static int SDLCALL serverAsapLoop(void *unused) {
     }
     serverInstanceTick(serverSim);
     serverMemReportPoll(serverSim);
+    serverBotCapacityPoll(serverSim);
     ticks++;
     SDL_UnlockMutex(g_serverTickLock);
     /* The command loops (processKeys / processCmdStdin) and the shutdown
@@ -733,6 +831,11 @@ void printArgs() {
   fprintf(stderr, "                message, and each warning (a missing author or updated\n");
   fprintf(stderr, "                time, say) as file: warning: key: message. Exits 0 when\n");
   fprintf(stderr, "                the script is playable, warnings or not, 1 when not.\n");
+  fprintf(stderr, "-cputest      - Run the 2 s CPU speed test (a fixed workload on one\n");
+  fprintf(stderr, "                thread, then on every logical core), print one line to\n");
+  fprintf(stderr, "                read and one line of JSON, and exit without starting a\n");
+  fprintf(stderr, "                server. Exits 0 when every check value matched, 1 when\n");
+  fprintf(stderr, "                not.\n");
   fprintf(stderr, "-pack <File>  - Write the scenario script beside a map into the map file\n");
   fprintf(stderr, "                itself and exit without starting a server. The manifest\n");
   fprintf(stderr, "                comes from the script's own scenario table, and a\n");
@@ -851,6 +954,14 @@ void printArgs() {
   fprintf(stderr, "-maxbots <N>  - Maximum number of AI bots that can be in the lobby\n");
   fprintf(stderr, "                (default: 0 = no limit). Caps lobby \"Add Bot\" requests\n");
   fprintf(stderr, "                and clamps -bots.\n");
+  fprintf(stderr, "-botcapacity <N> - The most bots this server runs in its own process\n");
+  fprintf(stderr, "                (0-16; 0 = none). Skips the CPU speed test. Without it\n");
+  fprintf(stderr, "                the server runs the 2 s test the first time its lobby\n");
+  fprintf(stderr, "                opens (once for each version; the result is stored, and\n");
+  fprintf(stderr, "                WINBOLO_CPU_SPEED_FILE names the file) and asks the bot\n");
+  fprintf(stderr, "                brain. Caps lobby \"Add Bot\" requests; -bots and\n");
+  fprintf(stderr, "                scenario bots are not capped. It locks the lobby's\n");
+  fprintf(stderr, "                Server bot slots at N: no player may change it.\n");
   fprintf(stderr, "-brain <path> - Path to the Lua brain script for bots (default: the\n");
   fprintf(stderr, "                first of Brains/GoalHunter/init.lua,\n");
   fprintf(stderr, "                brains/GoalHunter/init.lua,\n");
@@ -913,6 +1024,73 @@ void printArgs() {
   fprintf(stderr, "                -tracker <host> uses <host> with default port %d\n", DEFAULT_TRACKER_PORT);
   fprintf(stderr, "                -tracker <host:port> uses the specified host and port\n");
   fprintf(stderr, "-notracker    - do not notify any Internet tracker\n");
+  fprintf(stderr, "-bothostkey <key> - let WinBoloBotHost programs that give this key\n");
+  fprintf(stderr, "                run this server's bots on other machines (up to 64 characters)\n");
+  fprintf(stderr, "-bothosts <ip[:port],...> - the WinBoloBotHost programs this server may use\n");
+  fprintf(stderr, "                (or @file, or a file name: one entry per line, # comments).\n");
+  fprintf(stderr, "                The port is the host's --listen port (default %d). The server\n", BOT_HOST_DEFAULT_LISTEN_PORT);
+  fprintf(stderr, "                asks them for free slots at start, after each game and when a\n");
+  fprintf(stderr, "                player joins an empty lobby. With -bothostkey too, a listed host\n");
+  fprintf(stderr, "                must also give the key; without it the list alone is the proof.\n");
+  fprintf(stderr, "-noplayerbothosts - do not let each player's client run this server's bots\n");
+  fprintf(stderr, "                (on by default: a joining player's client offers the bots its\n");
+  fprintf(stderr, "                computer can run, and gives them back when the player leaves).\n");
+  fprintf(stderr, "-bothost-small-slots <n> - a Bot Host with n slots or fewer fills a little later (default 2)\n");
+  fprintf(stderr, "-bothost-small-bias <f> - how many slots fewer such a host counts, 0 to 1 (default 0.25)\n");
+  fprintf(stderr, "-bothost-lag-ref-ms <ms> - lag counted in bot placement: a host scores 1 + lag / ms times more, 0 = lag not counted (default 100)\n");
+  fprintf(stderr, "-bothost-lag-max-ms <ms> - a host with more lag gets no new bots while one with less has room, 0 = no ceiling (default 300)\n");
+  fprintf(stderr, "-bothost-spread-even - the old even spread: bots also move between hosts that run them well, to even out\n");
+  fprintf(stderr, "                their counts and lag. Without it a bot stays where it runs well: on the server while it\n");
+  fprintf(stderr, "                has slots and its overruns and free CPU are good, and only the rest go to Bot Hosts.\n");
+  fprintf(stderr, "-bothost-overrun-pct <f> - the target rate: a host whose bots' overruns are over f%% of their thinks in the window gives one bot to a better host, and its limit drops to its bots - 1 for the game; 0 = the check is off (default 0.5)\n");
+  fprintf(stderr, "-bothost-overrun-emergency-pct <f> - at f%% or more, a bot may move to any host below the target rate or at half the source rate, with no stay time; 0 = no emergency rule (default 5)\n");
+  fprintf(stderr, "-bothost-overrun-gain <f> - a bot with m moves needs a target at most f^(m+1) x the source rate (default 0.5)\n");
+  fprintf(stderr, "-bothost-overrun-stay-secs <s> - after its first move a bot stays s seconds before the next (default 30)\n");
+  fprintf(stderr, "-bothost-overrun-stay-factor <f> - each further move multiplies that stay time by f (default 2)\n");
+  fprintf(stderr, "-bothost-overrun-window-secs <s> - the rate is the overruns over the thinks of the last s seconds (default 30)\n");
+  fprintf(stderr, "-bothost-overrun-step-secs <s> - at most one move or raise per host in this time; a host over the target rate waits s / (rate / target) between moves (default 30)\n");
+  fprintf(stderr, "-bothost-overrun-step-min-secs <s> - the shortest wait between two moves off one host; s at or above the step time gives the fixed step time (default 5)\n");
+  fprintf(stderr, "-bothost-free-batch <0|1> - 1: a host whose free CPU is short by n bots gives up to n bots in one step; 0: one bot a step (default 1)\n");
+  fprintf(stderr, "-bothost-free-sample-secs <s> - how often the free CPU of each host machine is read (default 5)\n");
+  fprintf(stderr, "-bothost-free-history-secs <s> - how much free CPU history is kept for a raise (default 300)\n");
+  fprintf(stderr, "-bothost-dynamic-slots <0|1> - 1: each place (the server, each Bot Host) has a live bot limit between its\n");
+  fprintf(stderr, "                start and its ceiling; it goes up while the place has free CPU, low lag and no overruns,\n");
+  fprintf(stderr, "                and down by the overrun rules. 0: fixed slots. Off in a determinism run (-seed with\n");
+  fprintf(stderr, "                -brain-lua-seed and -brain-no-budget-kill) (default 1)\n");
+  fprintf(stderr, "-botcapacity-max <N> - the server's ceiling for its own bots with dynamic slots (default -botcapacity\n");
+  fprintf(stderr, "                when given, else logical CPUs - 1)\n");
+  fprintf(stderr, "-bothost-client-start <N> - the bots a player's computer starts a game with; 0 = its Max slots (default 2)\n");
+  fprintf(stderr, "-bothost-raise-reserve-pct <p> - the server and each Bot Host program try to keep p%% CPU free: no raise\n");
+  fprintf(stderr, "                and no new bot that would take the free CPU under it; under it, one bot each step time\n");
+  fprintf(stderr, "                goes to a place with room. A Bot Host's --cpu-reserve is used for that host. With no\n");
+  fprintf(stderr, "                room the bots stay and may push the CPU past it (default 25)\n");
+  fprintf(stderr, "-bothost-client-reserve-pct <p> - the same for a player's computer (default 25)\n");
+  fprintf(stderr, "-bothost-reserve-recent-secs <s> - a place is under its reserve only when the free CPU average of\n");
+  fprintf(stderr, "                its full window and of its last s seconds are both under it, so a short dip that\n");
+  fprintf(stderr, "                has ended moves no bot; 0 = only the full window (default 10)\n");
+  fprintf(stderr, "-bothost-raise-lag-max-ms <ms> - no raise for a host with more lag; 0 = no lag check (default 200)\n");
+  fprintf(stderr, "-bothost-raise-step <N> - the most bots one raise adds (default 2)\n");
+  fprintf(stderr, "-bothost-raise-after-cut-secs <s> - no raise within s seconds of a step down (default 120)\n");
+  fprintf(stderr, "-bothost-carry-limit <0|1> - 1: a place's limit carries into the next game; 0: each game starts at\n");
+  fprintf(stderr, "                the start (default 1)\n");
+  fprintf(stderr, "-bothost-keel - the KEEL values of all the dynamic slot flags above (fixed slots, no reserve); a flag\n");
+  fprintf(stderr, "                given as well still counts\n");
+  fprintf(stderr, "-record-bothost-data - write the bot placement probes, free CPU readings and decisions into the round log (.wbv)\n");
+  fprintf(stderr, "-bothost-enforce-server-limit <0|1> - 1: the server runs no more bots than its own slots; a bot with\n");
+  fprintf(stderr, "                no slot there or on a good Bot Host is held (it keeps its tank and its stats, its tank\n");
+  fprintf(stderr, "                stands still) until a place has one. 0: a bot back from a Bot Host runs on the server\n");
+  fprintf(stderr, "                past its slots, as before (default 1)\n");
+  fprintf(stderr, "-bothost-code <official|custom> - official: no brain file goes to a Bot Host; a bot runs on a\n");
+  fprintf(stderr, "                host only when the host's own install holds its brain, file for file. custom: hosts\n");
+  fprintf(stderr, "                download this server's brain files (a player's built-in host built to run only\n");
+  fprintf(stderr, "                official brains still takes none) (default official)\n");
+  fprintf(stderr, "-bothost-nomove - no bot moves between the server and the Bot Hosts while a game runs: each bot is placed\n");
+  fprintf(stderr, "                once and stays there (a fall-back to the server still happens). For brain-debug games.\n");
+  fprintf(stderr, "-bothost-slots <name>=<n> - give Bot Host <name> (its listed name, or the player's name for a\n");
+  fprintf(stderr, "                player's own host) at most n bots (0-16). It can only lower the slots the host offers,\n");
+  fprintf(stderr, "                and it locks that host's lobby slot box. Give each host once; several flags are allowed.\n");
+  fprintf(stderr, "                The game bot limit (lobby Add Bot) is the server's bot slots plus each Bot Host's;\n");
+  fprintf(stderr, "                a host on the same computer as the server or another counted host counts 0.\n");
   fprintf(stderr, "-upnp         - request automatic UPnP/NAT-PMP port mapping\n");
   fprintf(stderr, "-no-natpunch  - disable hole-punch keepalive (on by default with tracker)\n");
   fprintf(stderr, "-wbnhost      - WinBolo.net host to connect to (overrides preferences file).\n");
@@ -1742,6 +1920,75 @@ static int packMapAndReport(char *mapPath) {
   return 0;
 }
 
+/* After the CPU speed test: each brain this server can run, with its
+   capacity answer (how many bots of it this machine can run at full
+   strength), one line each on stdout. The default answer comes first, for a
+   brain that gives none. */
+static void cpuSpeedPrintBrainCapacities(void) {
+  static BrainList list;
+  static char paths[BRAIN_LIST_MAX][BRAIN_LIST_PATH_LEN];
+  BrainMachineInfo machine;
+  int i;
+
+  brainCapacityGetMachine(&machine);
+  printf("Brain capacity: default (a brain with no capacity function) %d "
+         "bots\n", brainCapacityDefault(&machine));
+  brainListScan(&list, paths);
+  for (i = 0; i < list.count; i++) {
+    int cap = luaBrainQueryCapacity(paths[i], list.entries[i].name);
+    if (cap == BRAIN_CAPACITY_UNKNOWN) {
+      printf("Brain capacity: %s did not load\n", list.entries[i].name);
+    } else {
+      printf("Brain capacity: %s %d bots\n", list.entries[i].name, cap);
+    }
+  }
+  if (list.count == 0) {
+    printf("Brain capacity: no brains found\n");
+  }
+  fflush(stdout);
+}
+
+/* The CPU speed test, for -cputest: the line to read and the JSON line go to
+   stdout. Returns what the process exits with: 0 when every CRC matched, 1
+   when one did not or the test could not run. */
+static int cpuSpeedTestAndReport(void) {
+  CpuSpeedResult result;
+  char line[1024];
+  bool ran;
+
+#ifdef USING_SDL
+  /* The test makes its threads through SDL. Nothing here needs a subsystem. */
+  if (!SDL_Init(0)) {
+    fprintf(stderr, "Error starting SDL - %s\n", SDL_GetError());
+    return 1;
+  }
+#endif
+  ran = cpuSpeedTestRun(NULL, &result);
+  cpuSpeedFormatLine(&result, line, sizeof(line));
+  printf("%s\n", line);
+  cpuSpeedFormatJson(&result, line, sizeof(line));
+  printf("%s\n", line);
+  fflush(stdout);
+  if (ran == false) {
+    fprintf(stderr, "The CPU speed test could not run to the end\n");
+  }
+  if (ran && result.crcOk) {
+    char path[1024];
+    if (cpuSpeedStoreSave(WINBOLO_VERSION, CPU_SPEED_CONTEXT_CPUTEST,
+                          &result) &&
+        cpuSpeedStorePath(path, sizeof(path))) {
+      fprintf(stderr, "Stored in %s\n", path);
+    } else {
+      fprintf(stderr, "The result could not be stored\n");
+    }
+    brainCapacitySetMachineFromTest(result.cpuName, result.logicalCores,
+                                    result.physicalCores, result.speed1t,
+                                    result.speedAll);
+    cpuSpeedPrintBrainCapacities();
+  }
+  return (ran && result.crcOk) ? 0 : 1;
+}
+
 int main(int argc, char **argv) {
   bolo_srand((uint64_t)time(NULL) ^ (uint64_t)getpid());
   {
@@ -1768,6 +2015,18 @@ int main(int argc, char **argv) {
             "or time limits. Only run a server this way with content you "
             "trust.\n");
   }
+
+  /* -cputest runs the CPU speed test and exits. Like -validate and -pack it
+     is answered ahead of everything a server start needs. */
+  if (argExist(argc, argv, "cputest") == TRUE) {
+    return cpuSpeedTestAndReport();
+  }
+
+  /* A result an earlier -cputest (or an earlier lobby) stored for this
+     version gives Brain.capacity its speed_1t and speed_all. With none
+     stored they stay 0 until the server's own lobby test finishes
+     (server_bot_capacity.c). */
+  (void)cpuSpeedApplyStoredToBrains(WINBOLO_VERSION);
 
   /* -validate <map> checks a map's scenario script and exits, and -pack <map>
      writes that script into the map file and exits. Both are answered here,
@@ -1813,6 +2072,7 @@ int main(int argc, char **argv) {
   char debugFileName[2048];
   int maxPlayers;
   int maxBots;
+  int botCapacityOverride = -1; /* -botcapacity N, or -1 for none */
   int maxSpectators = 16;
   int specDelay = 90;
   char key[WINBOLONET_KEY_LEN]; /* WBN Key */
@@ -1893,6 +2153,26 @@ int main(int argc, char **argv) {
     maxBots = atoi((char *) argv[findArg(argc, argv, "maxbots")]);
     if (maxBots < 0 || maxBots > MAX_TANKS) {
       maxBots = 0;
+    }
+  }
+
+  /* -botcapacity N: the host bot capacity by hand, and no CPU speed test. */
+  if (argExist(argc, argv, "botcapacity") == TRUE) {
+    int capArg = findArg(argc, argv, "botcapacity");
+    bool capClamped = false;
+    botCapacityOverride = BRAIN_CAPACITY_UNKNOWN;
+    if (capArg != ARG_NOT_FOUND) {
+      botCapacityOverride =
+          brainCapacityParseOverride((char *) argv[capArg], &capClamped);
+    }
+    if (botCapacityOverride == BRAIN_CAPACITY_UNKNOWN) {
+      fprintf(stderr, "Error: -botcapacity needs a whole number from 0 to %d\n",
+              BRAIN_CAPACITY_MAX);
+      return 1;
+    }
+    if (capClamped) {
+      fprintf(stderr, "Note: -botcapacity is at most %d; using %d\n",
+              BRAIN_CAPACITY_MAX, BRAIN_CAPACITY_MAX);
     }
   }
 
@@ -3060,6 +3340,197 @@ int main(int argc, char **argv) {
 #endif
       return 0;
     }
+    /* Bot Hosts: other machines that run this server's bot brains (with a
+     * key or a list), and the players' own computers (unless
+     * -noplayerbothosts). */
+    {
+      int argNum = findArg(argc, argv, "bothostkey");
+      if (argNum != ARG_NOT_FOUND) {
+        if (!transportUdpServerSetBotHostKey(serverSim, argv[argNum])) {
+          fprintf(stderr, "Bot Host key not used\n");
+        }
+      }
+      argNum = findArg(argc, argv, "bothosts");
+      if (argNum != ARG_NOT_FOUND) {
+        if (!transportUdpServerSetBotHostList(serverSim, argv[argNum])) {
+          fprintf(stderr, "Bot Host list not used\n");
+        }
+      }
+      transportUdpServerSetPlayerBotHosts(
+          serverSim, !argExist(argc, argv, "noplayerbothosts"));
+      {
+        int smallSlots = -1; /* -1: the default */
+        double bias = -1.0;
+        int smallArg = findArg(argc, argv, "bothost-small-slots");
+        int biasArg = findArg(argc, argv, "bothost-small-bias");
+        if (smallArg != ARG_NOT_FOUND && smallArg < argc) {
+          smallSlots = atoi(argv[smallArg]);
+        }
+        if (biasArg != ARG_NOT_FOUND && biasArg < argc) {
+          bias = atof(argv[biasArg]);
+        }
+        if (smallArg != ARG_NOT_FOUND || biasArg != ARG_NOT_FOUND) {
+          transportUdpServerSetBotHostPlacement(smallSlots, bias);
+        }
+      }
+      {
+        int refMs = -1, maxMs = -1; /* -1: the default */
+        int refArg = findArg(argc, argv, "bothost-lag-ref-ms");
+        int maxArg = findArg(argc, argv, "bothost-lag-max-ms");
+        if (refArg != ARG_NOT_FOUND && refArg < argc) {
+          refMs = atoi(argv[refArg]);
+        }
+        if (maxArg != ARG_NOT_FOUND && maxArg < argc) {
+          maxMs = atoi(argv[maxArg]);
+        }
+        if (refArg != ARG_NOT_FOUND || maxArg != ARG_NOT_FOUND) {
+          transportUdpServerSetBotHostLag(refMs, maxMs);
+        }
+      }
+      {
+        /* The overrun move of the placement; -1: the default. */
+        BotHostOverrunFlags f;
+        static const char *const dnames[4] = {
+            "bothost-overrun-pct", "bothost-overrun-emergency-pct",
+            "bothost-overrun-gain", "bothost-overrun-stay-factor"};
+        static const char *const inames[7] = {
+            "bothost-overrun-stay-secs", "bothost-overrun-window-secs",
+            "bothost-overrun-step-secs", "bothost-free-sample-secs",
+            "bothost-free-history-secs", "bothost-overrun-step-min-secs",
+            "bothost-free-batch"};
+        double *dvals[4];
+        int *ivals[7];
+        bool any = false;
+        int k, a;
+        f.pct = f.emergencyPct = f.gain = f.stayFactor = -1.0;
+        f.staySecs = f.windowSecs = f.stepSecs = -1;
+        f.freeSampleSecs = f.freeHistorySecs = -1;
+        f.stepMinSecs = f.freeBatch = -1;
+        dvals[0] = &f.pct;
+        dvals[1] = &f.emergencyPct;
+        dvals[2] = &f.gain;
+        dvals[3] = &f.stayFactor;
+        ivals[0] = &f.staySecs;
+        ivals[1] = &f.windowSecs;
+        ivals[2] = &f.stepSecs;
+        ivals[3] = &f.freeSampleSecs;
+        ivals[4] = &f.freeHistorySecs;
+        ivals[5] = &f.stepMinSecs;
+        ivals[6] = &f.freeBatch;
+        for (k = 0; k < 4; k++) {
+          a = findArg(argc, argv, dnames[k]);
+          if (a != ARG_NOT_FOUND && a < argc) {
+            *dvals[k] = atof(argv[a]);
+            any = true;
+          }
+        }
+        for (k = 0; k < 7; k++) {
+          a = findArg(argc, argv, inames[k]);
+          if (a != ARG_NOT_FOUND && a < argc) {
+            *ivals[k] = atoi(argv[a]);
+            any = true;
+          }
+        }
+        if (any) transportUdpServerSetBotHostOverrun(&f);
+      }
+      {
+        /* Dynamic bot slots; -1: the default. -bothost-keel gives the
+         * KEEL value of each (today's fixed slots), and a flag given as
+         * well still counts. */
+        BotHostDynamicFlags d;
+        static const char *const names[10] = {
+            "bothost-dynamic-slots", "botcapacity-max",
+            "bothost-client-start", "bothost-raise-reserve-pct",
+            "bothost-client-reserve-pct", "bothost-raise-lag-max-ms",
+            "bothost-raise-step", "bothost-raise-after-cut-secs",
+            "bothost-carry-limit", "bothost-reserve-recent-secs"};
+        int *vals[10];
+        int k, a;
+        botHostDynamicFlagsInit(&d);
+        if (argExist(argc, argv, "bothost-keel") == TRUE) {
+          botHostDynamicFlagsKeel(&d);
+        }
+        /* -botcapacity is the server's ceiling too, unless
+         * -botcapacity-max is given. */
+        if (botCapacityOverride >= 0 && d.serverMax < 0) {
+          d.serverMax = botCapacityOverride;
+        }
+        vals[0] = &d.dynamic;
+        vals[1] = &d.serverMax;
+        vals[2] = &d.clientStart;
+        vals[3] = &d.raiseReservePct;
+        vals[4] = &d.clientReservePct;
+        vals[5] = &d.raiseLagMaxMs;
+        vals[6] = &d.raiseStep;
+        vals[7] = &d.raiseAfterCutSecs;
+        vals[8] = &d.carryLimit;
+        vals[9] = &d.reserveRecentSecs;
+        for (k = 0; k < 10; k++) {
+          a = findArg(argc, argv, names[k]);
+          if (a != ARG_NOT_FOUND && a < argc) *vals[k] = atoi(argv[a]);
+        }
+        /* A determinism run (-seed with -brain-lua-seed and
+         * -brain-no-budget-kill) gives one canonical game: its slots must
+         * not follow the machine's free CPU. */
+        {
+          int run = botHostDynamicForRun(
+              d.dynamic, argExist(argc, argv, "seed") == TRUE,
+              argExist(argc, argv, "brain-lua-seed") == TRUE,
+              argExist(argc, argv, "brain-no-budget-kill") == TRUE);
+          if (run == 0 && d.dynamic != 0) {
+            fprintf(stderr, "[bothost] dynamic slots are off in a "
+                            "determinism run\n");
+          }
+          d.dynamic = run;
+        }
+        transportUdpServerSetBotHostDynamic(&d);
+      }
+      transportUdpServerSetBotHostRecord(
+          argExist(argc, argv, "record-bothost-data"));
+      transportUdpServerSetBotHostNoMove(
+          argExist(argc, argv, "bothost-nomove"));
+      transportUdpServerSetBotHostSpreadEven(
+          argExist(argc, argv, "bothost-spread-even"));
+      {
+        /* -bothost-code official|custom, official by default. */
+        int a = findArg(argc, argv, "bothost-code");
+        bool custom = false;
+        if (a != ARG_NOT_FOUND && a < argc) {
+          if (SDL_strcasecmp(argv[a], "custom") == 0) {
+            custom = true;
+          } else if (SDL_strcasecmp(argv[a], "official") != 0) {
+            fprintf(stderr, "-bothost-code: \"%s\" is not official or "
+                            "custom; official is used\n", argv[a]);
+          }
+        }
+        transportUdpServerSetBotHostCode(custom);
+      }
+      {
+        /* -bothost-enforce-server-limit <0|1>, 1 by default. */
+        int a = findArg(argc, argv, "bothost-enforce-server-limit");
+        transportUdpServerSetBotHostEnforceServerLimit(
+            a == ARG_NOT_FOUND || a >= argc || atoi(argv[a]) != 0);
+      }
+      {
+        /* -bothost-slots name=N, once per host; several allowed. */
+        int k;
+        for (k = 1; k < argc; k++) {
+          char err[160];
+          if (!argIsFlag(argv[k], "bothost-slots")) continue;
+          if (k + 1 >= argc) {
+            fprintf(stderr, "-bothost-slots: no name=N after it; ignored\n");
+            break;
+          }
+          if (!transportUdpServerAddBotHostSlots(argv[k + 1], err,
+                                                 sizeof(err))) {
+            fprintf(stderr, "-bothost-slots: %s; ignored\n", err);
+          } else {
+            fprintf(stderr, "-bothost-slots: %s\n", argv[k + 1]);
+          }
+          k++;
+        }
+      }
+    }
     /* Say what the finder will show, after the sanitising, so an operator
      * sees a name that came out shorter or cleaner than typed. */
     if (serverSimGetServerName(serverSim)[0] != '\0') {
@@ -3542,10 +4013,14 @@ int main(int argc, char **argv) {
          * the mode= / difficulty= tokens it appends to the staged arg. */
         serverSimSetBotConfig(serverSim, (BYTE)i, botMode, botDifficulty,
                               0 /* personality: normal */, NULL);
-        /* No team in the add: -allybots and -teams place these bots through
+        /* The add gives each bot the join rule's team, so a bot with no
+         * -teams or -allybots team (or one past the -teams total) is on a
+         * team from the start, whether it runs here or waits for a Bot Host
+         * slot. -allybots and -teams then place their bots through
          * serverSimSetTeamBatch below, once the whole set is in. */
         if (!botManagerAddBot(serverSim, (BYTE)i, botInit[i].path, botNames[i], ai, game,
-                              hiddenMines, 0, &botInit[i].init)) {
+                              hiddenMines, SERVER_SIM_BOT_TEAM_DEFAULT,
+                              &botInit[i].init)) {
           fprintf(stderr, "Warning: failed to add bot %d\n", i);
         } else if (allyTeam > 0) {
           /* Shared non-zero team for every bot — server_sim's start-of-round
@@ -3561,7 +4036,8 @@ int main(int argc, char **argv) {
       } else if (numTeamSizes > 0) {
         /* Explicit per-team sizes: contiguous blocks. First teamSizes[0] bots
          * -> team 1, next teamSizes[1] -> team 2, etc. Bots past the listed
-         * total stay on team 0 (FFA); botTeam[] holds 0 for them. */
+         * total keep the join rule's team from the add; botTeam[] holds 0
+         * for them. */
         for (i = 0; i < numBots; i++) {
           if (botTeam[i] > 0) {
             serverSimSetTeamBatch(serverSim, (BYTE)i, (BYTE)botTeam[i]);
@@ -3585,10 +4061,12 @@ int main(int argc, char **argv) {
         fprintf(stderr, "Added %d bot(s) with brain '%s' (allied on team %d)\n",
                 numBots, brainPath, allyTeam);
       } else {
-        fprintf(stderr, "Added %d bot(s) with brain '%s'\n", numBots, brainPath);
+        serverSimReapplyTeamAlliances(serverSim);
+        fprintf(stderr, "Added %d bot(s) with brain '%s' (teams by the join rule)\n",
+                numBots, brainPath);
       }
-      /* Each bot reserved a lobby start as it was added, on team 0 and so
-       * with no side; -allybots and -teams then moved it with the batch
+      /* Each bot reserved a lobby start as it was added, on its join-rule
+       * team; -allybots and -teams then moved it with the batch
        * setter, which leaves that reservation where it was. Pick again for
        * the teams the bots are on now, or a team with a side starts a bot
        * on the other team's. Only a lobby server has reservations: a
@@ -3611,6 +4089,10 @@ int main(int argc, char **argv) {
     return 0;
   }
   serverMessageConsoleMessage(serverSim,"Type \"help\" for help, \"quit\" to exit.");
+  /* The host bot capacity: -botcapacity, or the stored or new CPU speed test
+     result, stepped from the tick. Needs the thread mutex, so after
+     threadsCreate. */
+  serverBotCapacityInit(serverSim, botCapacityOverride);
   /* Created before the timer starts so serverGameTimer always sees a valid
    * lock; serverQuiesceGameTimer drains the timer through it on shutdown. */
   g_serverTickLock = SDL_CreateMutex();
@@ -3639,6 +4121,7 @@ int main(int argc, char **argv) {
         fprintf(stderr, "Error: failed to open -cmd-stdin file '%s'\n",
                 (char *)argv[cmdArg]);
         serverQuiesceGameTimer();
+        serverBotCapacityShutdown();
         botWorkerPoolDestroy();
         threadsDestroy();
         serverInstanceShutdown(serverSim);
@@ -3663,6 +4146,7 @@ int main(int argc, char **argv) {
    * anything they touch is freed. Then tear the worker pool down before the
    * lua_States it dispatches into are closed (defence in depth). */
   serverQuiesceGameTimer();
+  serverBotCapacityShutdown();
 
   /* -finaljson: dump the final global game state once the game ended by
    * reaching a terminal game-over (what -ticks produces). Gated on the

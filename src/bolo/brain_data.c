@@ -876,7 +876,13 @@ void brainDataExtractInfo(ClientSim *csPtr, BrainInfo *value) {
     utilPtoCString((char *) value->sendmessage, msg);
     if (*(value->messagedest) == 0) {
       struct ServerSim *bound = clientSimGetBoundServerSim(csPtr);
-      if (bound == NULL) {
+      const ClientSimBrainRelay *relay = clientSimGetBrainRelay(csPtr);
+      if (bound == NULL && relay != NULL && relay->internalMsg != NULL) {
+        /* A bot on a Bot Host. The host queues it the way the bot manager
+         * does and sends it to the server, which fans it out to the
+         * sender's allied bots. */
+        relay->internalMsg(relay->ctx, clientSimGetMyPlayerNum(csPtr), msg);
+      } else if (bound == NULL) {
         /* No bound ServerSim → this is a local/human-menu brain, NOT a hosted
          * bot. The internal message can't fan out to teammates; it only lands on
          * the AI message channel. On a dedicated server this WARN means bot comms
@@ -920,9 +926,13 @@ void brainDataExtractInfo(ClientSim *csPtr, BrainInfo *value) {
    * its request is dropped. */
   if (value->ping_pending != 0) {
     struct ServerSim *bound = clientSimGetBoundServerSim(csPtr);
+    const ClientSimBrainRelay *relay = clientSimGetBrainRelay(csPtr);
     if (bound != NULL) {
       botManagerQueuePing(bound, clientSimGetMyPlayerNum(csPtr),
                           value->ping_kind, value->ping_x, value->ping_y);
+    } else if (relay != NULL && relay->ping != NULL) {
+      relay->ping(relay->ctx, clientSimGetMyPlayerNum(csPtr),
+                  value->ping_kind, value->ping_x, value->ping_y);
     }
     value->ping_pending = 0;
   }

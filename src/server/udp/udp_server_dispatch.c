@@ -144,6 +144,7 @@ static void handleChannel(ServerSim *sim, uint8_t *buf, int len,
      * rides this tick).  Body is one frame directly after the header. */
     int clientIdx = serverFindClient(fromAddr);
     if (clientIdx < 0) {
+        if (serverBotHostHandleChannel(buf, len, fromAddr)) return;
         /* Spectator acks ride the same standalone-frame path; consume
          * them into the spectator's own mux.  No bulk-receive drain —
          * a spectator never uploads. */
@@ -234,6 +235,36 @@ static void handleCommandTick(ServerSim *sim, uint8_t *buf, int len,
         pos += entryLen;
         if (cmd.cmdSeq <= client->inboundCmdSeq) continue;
         if (cmd.cmdSeq != client->inboundCmdSeq + 1) continue;
+        if (client->botSlot) {
+            client->inboundCmdSeq = cmd.cmdSeq;
+            /* A Bot Host bot sends what an in-process bot queues: chat, a
+             * smart ping, its team messages and its think stats. */
+            switch (cmd.type) {
+            case CMD_CHAT:
+                (void)serverSimApplyCommand(sim, clientIdx, &cmd);
+                break;
+            case CMD_PING:
+                if (serverBotSlotPingAllowed(sim, clientIdx)) {
+                    (void)serverSimApplyCommand(sim, clientIdx, &cmd);
+                }
+                break;
+            case CMD_BOT_TEAM_MSG:
+                cmd.u.botTeamMsg.text[sizeof(cmd.u.botTeamMsg.text) - 1] = '\0';
+                serverBotSlotTeamMsg(sim, clientIdx, cmd.u.botTeamMsg.text);
+                break;
+            case CMD_BOT_STATS:
+                serverBotSlotStats(sim, clientIdx, &cmd.u.botStats);
+                break;
+            default:
+                break;
+            }
+            continue;
+        }
+        /* Only a Bot Host bot connection sends these. */
+        if (cmd.type == CMD_BOT_TEAM_MSG || cmd.type == CMD_BOT_STATS) {
+            client->inboundCmdSeq = cmd.cmdSeq;
+            continue;
+        }
         (void)serverSimApplyCommand(sim, clientIdx, &cmd);
         client->inboundCmdSeq = cmd.cmdSeq;
     }
@@ -251,6 +282,10 @@ static void handleQuit(ServerSim *sim, uint8_t *buf, int len,
         inet_ntoa(fromAddr->sin_addr),
         (unsigned)ntohs(fromAddr->sin_port),
         clientIdx);
+    if (clientIdx >= 0 && udpServer.clients[clientIdx].botSlot) {
+        serverBotSlotLost(sim, clientIdx, "quit");
+        return;
+    }
     if (clientIdx >= 0) {
         serverCleanupMapDownload(clientIdx);
         serverDisconnectClient(sim, clientIdx, TRUE);
@@ -1786,7 +1821,54 @@ void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
     }
 
     pktType = getPacketType(buf, len);
+
+    /* A Bot Host control connection sends its join, pings, channel frames
+     * and its quit, and nothing else. */
+    if (serverFindBotHost(fromAddr) >= 0) {
+        switch (pktType) {
+        case PACKET_JOIN_REQUEST:
+            serverHandleJoinRequest(buf, len, fromAddr, sim);
+            break;
+        case PACKET_PING:
+            (void)serverBotHostHandlePing(buf, len, fromAddr);
+            break;
+        case PACKET_CHANNEL:
+            (void)serverBotHostHandleChannel(buf, len, fromAddr);
+            break;
+        case PACKET_QUIT:
+            (void)serverBotHostHandleQuit(sim, fromAddr);
+            break;
+        default:
+            break;
+        }
+        return;
+    }
+
+    /* A Bot Host bot connection plays a bot: what a bot has no use for
+     * (the lobby, uploads, logs, WBN) is dropped. */
+    {
+        int bIdx = serverFindClient(fromAddr);
+        if (bIdx >= 0 && udpServer.clients[bIdx].botSlot) {
+            switch (pktType) {
+            case PACKET_JOIN_REQUEST:
+            case PACKET_INPUT:
+            case PACKET_PING:
+            case PACKET_CHANNEL:
+            case PACKET_COMMAND_TICK:
+            case PACKET_QUIT:
+            case PACKET_MAP_DL_READY:
+            case PACKET_MAP_RESYNC_REQUEST:
+                break;
+            default:
+                return;
+            }
+        }
+    }
+
     switch (pktType) {
+        case PACKET_BOT_HOST_ANNOUNCE:
+            serverBotHostHandleAnnounce(sim, buf, len, fromAddr);
+            break;
         case PACKET_JOIN_REQUEST:
             serverHandleJoinRequest(buf, len, fromAddr, sim);
             break;

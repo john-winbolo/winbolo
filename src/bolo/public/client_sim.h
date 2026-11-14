@@ -38,11 +38,13 @@
 #include "wire_limits.h"  /* For PACKET_MAX_PLAYER_NAME */
 #include "alliance_enums.h" /* For pillAlliance, baseAlliance */
 #include "screentank.h"     /* For tankAlliance */
+#include "bot_host_rec_eta.h" /* For BotHostRecRate */
 #include "screenlgm.h"      /* For screenLgm  — clientSimPrepareOverviewEntities */
 #include "screenbullet.h"   /* For screenBullets — clientSimPrepareOverviewEntities */
 #include "brain.h"  /* For BuildInfo, ObjectInfo */
 #include "brain_list.h"   /* BrainList — value type used by clientSimGetLobbyBrainList */
 #include "round_stats.h"  /* RoundStatsSummary — clientSimGetLastRoundStats return */
+#include "overrun_record.h" /* OverrunRecord — clientSimGetBotTiming */
 #include "upload_policy.h" /* UploadPolicy, ScriptUploadPolicy — upload-policy getters */
 #include "view_policy.h"   /* ViewPolicy / ViewCategory — clientSimGetViewPolicy */
 #include "ping_display.h" /* PingBand — clientSimGetPlayerPingBand return */
@@ -104,6 +106,108 @@ typedef struct {
     uint8_t clientType;       /* ClientType enum */
     uint8_t clientFlags;      /* PLAYER_FLAG_* bits */
 } ClientSpectatorSlot;
+
+/* Client-side mirror of one row of the server's Bot Host list
+ * (CTRL_BOT_HOST_STATUS). A Bot Host runs bot brains for the server on
+ * another machine; it is not a player and has no roster slot. state is a
+ * BOT_HOST_SYNC_* value (control_event.h). */
+/* One row per Bot Host (MAX_BOT_HOSTS), then the server's own row: the
+ * bots it runs itself, against its own capacity. */
+#define CLIENT_BOT_HOST_ROWS     9
+#define CLIENT_BOT_HOST_SERVER_ROW (CLIENT_BOT_HOST_ROWS - 1)
+/* A Bot Host's brain sync state, as CTRL_BOT_HOST_STATUS carries it.
+ *   WAITING - connected, the manifest not yet answered.
+ *   SYNCING - downloading brain files; the lobby holds Ready.
+ *   READY   - holds the server's brain files; it can take bots.
+ *   LATE    - still downloading after the sync time limit; the lobby no
+ *             longer waits for it, and it takes no bots this game. */
+enum {
+    BOT_HOST_SYNC_WAITING = 0,
+    BOT_HOST_SYNC_SYNCING = 1,
+    BOT_HOST_SYNC_READY   = 2,
+    BOT_HOST_SYNC_LATE    = 3
+};
+/* A Bot Host's brain recording state (-brain-debug servers only).
+ *   NONE      - not recording, nothing to send.
+ *   RECORDING - recording its bots.
+ *   LOWDISK   - not recording: its disk is low.
+ *   UPLOADING - sending its recordings to the server.
+ *   MERGING   - sent; the server merges them. */
+enum {
+    BOT_HOST_REC_STATE_NONE      = 0,
+    BOT_HOST_REC_STATE_RECORDING = 1,
+    BOT_HOST_REC_STATE_LOWDISK   = 2,
+    BOT_HOST_REC_STATE_UPLOADING = 3,
+    BOT_HOST_REC_STATE_MERGING   = 4
+};
+#define CLIENT_BOT_HOST_NAME_LEN 32
+typedef struct {
+    bool    connected;
+    uint8_t state;
+    uint8_t percent;   /* brain sync progress, 0..100 */
+    uint8_t used;      /* bot seats it runs */
+    uint8_t slots;     /* bot seats it offers */
+    uint16_t seats;    /* its bots: bit n for player n */
+    /* The server's row only (CTRL_BOT_HOST_HELD): the lobby bot seats with
+     * no bot running yet, bit n for player n. Listed with the row's bots by
+     * name, and not in used or seats. 0 from an older server. */
+    uint16_t held;
+    uint8_t recState;  /* BOT_HOST_REC_STATE_* */
+    uint8_t recPercent; /* recording upload progress, 0..100 */
+    uint8_t recBotsDone; /* bots whose recordings are sent */
+    uint8_t recBots;     /* bots with recordings to send */
+    /* How much of its machine's CPU the row's bots use, as the machine
+     * estimates it (CTRL_BOT_HOST_CPU, bot_host_cpu.h): 0..100,
+     * BOT_HOST_CPU_UNDER_ONE, or BOT_HOST_CPU_UNKNOWN until the server
+     * sends one (an older server never does). */
+    uint8_t cpu;
+    /* The part of its machine's CPU one of the row's bots uses, in
+     * thousandths of a percent (CTRL_BOT_HOST_CPU_BOT): cpuBotHave once the
+     * server sends one (an older server or host never does, and the row
+     * then shows cpu), cpuBot BOT_HOST_CPU_MILLI_UNKNOWN while there is no
+     * estimate yet, cpuBotOwner the player whose own computer the host is
+     * or BOT_HOST_CPU_OWNER_NONE. */
+    bool     cpuBotHave;
+    uint8_t  cpuBotOwner;
+    uint32_t cpuBot;
+    /* Where cpuBot comes from (BOT_HOST_CPU_SRC_*): the full budget shows
+     * as "At most", the others as "Estimated". */
+    uint8_t  cpuBotSrc;
+    /* The lag the server measures to the host (CTRL_BOT_HOST_LAG), in ms:
+     * the row's ping. BOT_HOST_LAG_UNKNOWN until the server sends one (an
+     * older server never does). */
+    uint16_t lagMs;
+    /* CTRL_BOT_HOST_ROW_SLOTS: rowSlotsHave once the server sends one (an
+     * older server never does). machineKind is a BOT_HOST_MACHINE_* of
+     * bot_host_machine.h and machineOther the row of the host it shares a
+     * computer with (0xFF: none); machineZero: that gives it 0 slots.
+     * slotOverride: the row's override, 0..16 or 0xFF for none;
+     * slotLocked: -bothost-slots set it. */
+    bool    rowSlotsHave;
+    uint8_t machineKind;
+    uint8_t machineOther;
+    bool    machineZero;
+    uint8_t slotOverride;
+    bool    slotLocked;
+    /* CTRL_BOT_HOST_ROW_LIMITS: rowLimitsHave once the server sends one
+     * (an older server never does). limitCeiling: the row's Max slots;
+     * limitReserve: the free CPU percent it tries to keep; limitFits: the
+     * slots its CPU estimate says fit while it keeps that free, 0xFF
+     * before the first reading. */
+    bool    rowLimitsHave;
+    uint8_t limitCeiling;
+    uint8_t limitReserve;
+    uint8_t limitFits;
+    /* CTRL_BOT_HOST_REC_BYTES while the row uploads its recordings:
+     * recBytesHave once the server sends one (an older server or host
+     * never does), recRate the samples for the time left. Cleared when
+     * the upload ends. */
+    bool     recBytesHave;
+    uint32_t recSentKiB;
+    uint32_t recTotalKiB;
+    BotHostRecRate recRate;
+    char    name[CLIENT_BOT_HOST_NAME_LEN];
+} ClientBotHostRow;
 
 /* Live per-slot scoreboard counters, accumulated on the client from the
  * reliable game-event stream (clientSimApplyGameEvents). Field names
@@ -709,6 +813,38 @@ const ClientPlayerStats *clientSimGetPlayerStats(const ClientSim *cs,
 /* Spectator roster slot mirror; out-of-range idx returns NULL. */
 const ClientSpectatorSlot *clientSimGetSpectatorSlot(const ClientSim *cs, uint8_t idx);
 
+/* Bot Host list row mirror; out-of-range idx returns NULL. */
+const ClientBotHostRow *clientSimGetBotHostRow(const ClientSim *cs, uint8_t idx);
+
+/* The connected Bot Host rows (not the server's own row) that run no bot
+ * now, in row order: up to cap row numbers into idx. Returns how many.
+ * System Info lists the hosts by their bots (CTRL_BOT_TIMING), so it shows
+ * these below that list; without them a host that joins a game in progress
+ * is not seen there until it gets a bot. */
+int clientSimBotHostRowsNoBots(const ClientSim *cs, uint8_t *idx, int cap);
+
+/* The bots' think timing from the server's last CTRL_BOT_TIMING (sent once
+ * a second while the game has bots), read into out. False when none came
+ * (an older server, or a game with no bots yet). */
+bool clientSimGetBotTiming(const ClientSim *cs, OverrunRecord *out);
+
+/* The ticket of the last CTRL_BOT_HOST_TICKET: the server lets this
+ * player's computer run bots for it. False when none came on this
+ * connection. ticket takes BOT_HOST_TICKET_LEN bytes and brain
+ * BOT_HOST_BRAIN_NAME_LEN; either may be NULL. *gen rises with each ticket. */
+bool clientSimGetBotHostTicket(const ClientSim *cs, uint8_t *player,
+                               uint8_t *ticket, char *brain, uint32_t *gen);
+
+/* A bot connection of the Bot Host inside the program: it never reaches the
+ * front end (screen, sound, dialogs), as it runs on the host's thread. */
+void clientSimSetNoFrontEnd(ClientSim *cs, bool v);
+bool clientSimGetNoFrontEnd(const ClientSim *cs);
+
+/* True while a connected Bot Host is still downloading the server's brain
+ * files and the lobby waits for it. *percent, when not NULL, is the lowest
+ * progress among those hosts. */
+bool clientSimBotHostSyncing(const ClientSim *cs, int *percent);
+
 /* ── What a scenario is presenting ─────────────────────────────────
  * The four CTRL_SCN_* events store here and the render pass reads.
  * Everything below is dropped on the return to lobby. */
@@ -1289,6 +1425,22 @@ bool        clientSimGetAlliesInTrees(const ClientSim *cs);
  * back false until the first event arrives, and false plays every sound
  * centred, which is the classic behaviour. */
 bool        clientSimGetPositionalSound(const ClientSim *cs);
+/* The lobby's Server bot slots (CTRL_SERVER_BOT_SLOTS): value is the
+ * number in use and recommended the CPU test's, each 0..16, -1 for none
+ * (no cap) or -2 while the test runs; locked when -botcapacity set it.
+ * False, and *out untouched, until a server sends one (an older server
+ * never does). */
+typedef struct {
+    int  value;
+    int  recommended;
+    bool locked;
+} ClientServerBotSlots;
+bool        clientSimGetServerBotSlots(const ClientSim *cs,
+                                       ClientServerBotSlots *out);
+/* The server's host bot capacity from the lobby settings: how many bots it
+ * runs in its own process at full strength, 0..16; -1 for no cap (also
+ * before any settings arrive); -2 while its CPU speed test runs. */
+int         clientSimGetLobbyHostBotCapacity(const ClientSim *cs);
 
 /* What the server last asked the map overview for in the lobby-settings
  * event: which block of squares it keeps live around the player's own tank
@@ -1858,6 +2010,8 @@ const ClientScnMarker *overviewSnapshotScnMarkers(const OverviewSnapshot *s);
 
 void         clientSimShowMessages(ClientSim *cs, BYTE msgType, bool isShown);
 void         clientSimNetStatusMessage(ClientSim *cs, char *messageStr);
+/* A newswire line from this program itself (top line "WinBolo"). */
+void         clientSimNewswireText(ClientSim *cs, const char *text);
 
 /* Submits a build request for the local LGM through InputPacket,
  * gated on tank armour and net status. */

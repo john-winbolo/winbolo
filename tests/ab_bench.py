@@ -76,6 +76,10 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+# session_log_io.py sits beside this file; find it from any folder and
+# under python -I, which leaves the script's folder off sys.path.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from session_log_io import log_exists, read_log_text
 
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -186,7 +190,13 @@ def game_cmd(mapfile, seed, port, ticks, snap, final, a_arg, b_arg, per_side,
            "-teams", f"{per_side},{per_side}",
            "-port", str(port), "-seed", str(seed), "-ticks", str(ticks),
            "-brain-no-budget-kill", "-brain-lua-seed", "42",
-           "-finaljson", str(final), "-quiet", "-asap"]
+           "-finaljson", str(final), "-quiet", "-asap",
+           # Room for every bot in the server's own process. A DS with Bot
+           # Host support gives itself slots from the machine's CPU count
+           # (3 on a 4-core box) and holds any bot past them, so on a small
+           # machine one side played a bot short. A DS without -botcapacity
+           # ignores the flag.
+           "-botcapacity", str(n)]
     if snap:
         cmd += ["-snapjson", str(snap), "-snapinterval", str(SNAP_INTERVAL)]
     if debug:
@@ -615,11 +625,11 @@ def verify_tokens(mapfile, a_arg, b_arg, per_side, seed):
         for name, players, arg in (("A", A, a_arg), ("B", B, b_arg)):
             bot = players[0]
             p = sess / f"print2_bot{bot}.log"
-            if not p.exists():
+            if not log_exists(p):
                 print(f"  FAIL: no print2_bot{bot}.log for side {name}")
                 rc = 1
                 continue
-            text = p.read_text(encoding="utf-8", errors="replace")
+            text = read_log_text(p, errors="replace")
             lines = sorted(set(re.findall(r"\[(?:cfg|preset)\][^\n\"]*", text)))
             print(f"  side {name} (bot{bot}, init {arg!r}):")
             if not lines:

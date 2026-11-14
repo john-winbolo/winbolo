@@ -1341,6 +1341,115 @@ void lobbyRenderGameSettingsPanel(ClientSim *cs,
     lobbyRenderGameSettingsBody(cs, myPlayerNum, s);
 }
 
+/* The Server bot slots row: how many bots the server runs in its own
+ * process. Values above the CPU test's recommendation show greyer, in the
+ * list and on the closed box, with a mouse-over warning. Read-only for a
+ * player who may not change the other Server Settings, and for everyone
+ * when -botcapacity set it. No row from a server that does not send the
+ * value. */
+int lobbyBotSlotsCombo(const char *id, int value, const char *preview,
+                       int recommended, bool editable, const char *tip,
+                       bool tipFirst, const char *overTip) {
+    const ImGuiStyle &st = ImGui::GetStyle();
+    const bool haveRec = recommended >= 0;
+    const bool over = haveRec && value > recommended;
+    const float comboW = ImMax(ImGui::CalcTextSize("00").x,
+                               ImGui::CalcTextSize(preview).x)
+                       + st.FramePadding.x * 2.0f + ImGui::GetFrameHeight();
+    int picked = -1;
+    if (!editable) ImGui::BeginDisabled();
+    if (over) {
+        ImGui::PushStyleColor(ImGuiCol_Text,
+                              ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+    }
+    ImGui::SetNextItemWidth(comboW);
+    bool open = ImGui::BeginCombo(id, preview);
+    if (over) ImGui::PopStyleColor();
+    if (!open && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+        if (tip != NULL && tipFirst) {
+            ImGui::SetTooltip("%s", tip);
+        } else if (over && overTip != NULL) {
+            ImGui::SetTooltip("%s", overTip);
+        } else if (tip != NULL) {
+            ImGui::SetTooltip("%s", tip);
+        }
+    }
+    if (open) {
+        for (int v = 0; v <= MAX_TANKS; v++) {
+            const bool grey = haveRec && v > recommended;
+            char item[8];
+            SDL_snprintf(item, sizeof(item), "%d", v);
+            if (grey) {
+                ImGui::PushStyleColor(ImGuiCol_Text,
+                                      ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+            }
+            if (ImGui::Selectable(item, v == value) && v != value) picked = v;
+            if (grey) {
+                ImGui::PopStyleColor();
+                if (overTip != NULL && ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("%s", overTip);
+                }
+            }
+            if (v == value) ImGui::SetItemDefaultFocus();
+        }
+        ImGui::EndCombo();
+    }
+    if (!editable) ImGui::EndDisabled();
+    return picked;
+}
+
+static void lobbyRenderServerBotSlotsRow(ClientSim *cs, bool mayEdit) {
+    ClientServerBotSlots sb;
+    if (!clientSimGetServerBotSlots(cs, &sb)) return;
+    const ImGuiStyle &st = ImGui::GetStyle();
+    const bool haveRec = sb.recommended >= 0;
+    const bool editable = mayEdit && !sb.locked;
+    char preview[64];
+    if (sb.value >= 0) {
+        SDL_snprintf(preview, sizeof(preview), "%d", sb.value);
+    } else if (sb.value == -2) {
+        SDL_strlcpy(preview, langGetText(STR_DLGLOBBY_SERVER_BOT_SLOTS_MEASURING),
+                    sizeof(preview));
+    } else {
+        SDL_strlcpy(preview, langGetText(STR_DLGLOBBY_SERVER_BOT_SLOTS_NONE),
+                    sizeof(preview));
+    }
+    MessageArgs ma = {};
+    ma.number = sb.recommended;
+    char overTip[256];
+    SDL_strlcpy(overTip, langGetTextFmt(STR_DLGLOBBY_SERVER_BOT_SLOTS_OVER, &ma),
+                sizeof(overTip));
+
+    char tip[256] = "";
+    if (sb.locked) {
+        SDL_strlcpy(tip, langGetText(STR_DLGLOBBY_SERVER_BOT_SLOTS_LOCKED),
+                    sizeof(tip));
+    } else if (haveRec) {
+        SDL_strlcpy(tip, langGetTextFmt(STR_DLGLOBBY_SERVER_BOT_SLOTS_TIP, &ma),
+                    sizeof(tip));
+    }
+
+    const char *label = langGetText(STR_DLGLOBBY_SERVER_BOT_SLOTS);
+    float comboW = ImMax(ImGui::CalcTextSize("00").x,
+                         ImGui::CalcTextSize(preview).x)
+                 + st.FramePadding.x * 2.0f + ImGui::GetFrameHeight();
+    /* Measured before the label is drawn: the box goes beside it when
+     * both fit, else under it. */
+    const bool oneLine = ImGui::CalcTextSize(label).x + st.ItemSpacing.x +
+                         comboW <= ImGui::GetContentRegionAvail().x;
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted(label);
+    if (oneLine) ImGui::SameLine();
+    int v = lobbyBotSlotsCombo("##serverbotslots", sb.value, preview,
+                               sb.recommended, editable,
+                               tip[0] != '\0' ? tip : NULL, sb.locked,
+                               overTip);
+    if (v >= 0) {
+        uint8_t b = (uint8_t)v;
+        lobbySendSetting(cs, LST_SERVER_BOT_SLOTS, &b, 1);
+    }
+}
+
 /* The password box. Named because the Server Settings column has to be
    measured before it is drawn and the two have to agree. */
 static const float kLobbyPasswordBoxW = 180.0f;
@@ -2045,6 +2154,12 @@ void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
                     }
                 }
             }
+        }
+
+        /* How many bots the server runs itself. A dedicated server's
+         * value, so only over UDP. */
+        if (clientSimIsUdpTransport(cs)) {
+            lobbyRenderServerBotSlotsRow(cs, effectiveHost);
         }
 
         /* Which scenario is loaded, and the way in to change it. The line

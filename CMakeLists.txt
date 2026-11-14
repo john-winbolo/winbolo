@@ -162,6 +162,18 @@ FetchContent_Declare(
     SYSTEM
     EXCLUDE_FROM_ALL
 )
+# zstd compresses brain-debug recordings (.btr). Static only, no programs,
+# no tests, no legacy formats, no worker threads (the recorder compresses on
+# the caller's thread; MT would also need pthreads on Emscripten).
+FetchContent_Declare(
+    zstd
+    GIT_REPOSITORY https://github.com/facebook/zstd.git
+    GIT_TAG        v1.5.7
+    GIT_SHALLOW    TRUE
+    SOURCE_SUBDIR  build/cmake
+    SYSTEM
+    EXCLUDE_FROM_ALL
+)
 FetchContent_Declare(
     libmaxminddb
     GIT_REPOSITORY https://github.com/maxmind/libmaxminddb.git
@@ -626,6 +638,22 @@ else()
     FetchContent_MakeAvailable(sdl3_ttf imgui zlib)
 endif()
 
+# zstd (static).  Same BUILD_SHARED_LIBS save/restore as above so the
+# shared library is never configured.
+set(_saved_build_shared_libs_zstd "${BUILD_SHARED_LIBS}")
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(ZSTD_BUILD_STATIC ON CACHE BOOL "" FORCE)
+set(ZSTD_BUILD_SHARED OFF CACHE BOOL "" FORCE)
+set(ZSTD_BUILD_PROGRAMS OFF CACHE BOOL "" FORCE)
+set(ZSTD_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(ZSTD_BUILD_CONTRIB OFF CACHE BOOL "" FORCE)
+set(ZSTD_LEGACY_SUPPORT OFF CACHE BOOL "" FORCE)
+set(ZSTD_MULTITHREAD_SUPPORT OFF CACHE BOOL "" FORCE)
+set(ZSTD_PROGRAMS_LINK_SHARED OFF CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(zstd)
+set(BUILD_SHARED_LIBS "${_saved_build_shared_libs_zstd}" CACHE BOOL "" FORCE)
+target_include_directories(libzstd_static SYSTEM INTERFACE "$<BUILD_INTERFACE:${zstd_SOURCE_DIR}/lib>")
+
 # MinGW debug builds: HarfBuzz's single-file amalgamation overflows COFF debug
 # section limits. Use -Wa,-mbig-obj so the assembler emits PE-COFF bigobj format.
 if(MINGW AND TARGET harfbuzz)
@@ -755,6 +783,47 @@ target_compile_definitions(utf8proc PUBLIC UTF8PROC_STATIC=1)
 set_target_properties(utf8proc PROPERTIES POSITION_INDEPENDENT_CODE ON)
 if(MSVC)
     target_compile_options(utf8proc PRIVATE /wd4244 /wd4267)
+endif()
+
+# CoreMark — EEMBC's CPU benchmark (vendored, Apache 2.0, upstream files
+# unmodified; see src/third_party/coremark/WINBOLO_CHANGES.txt). WinBolo's own
+# port in winbolo/ replaces CoreMark's port directories. It takes the same
+# Release flags as the rest of the build (the compile options above), which
+# the speed test's scores depend on. core_main.c is built for its iterate();
+# its main is renamed so it does not clash with the program's own.
+add_library(coremark STATIC
+    src/third_party/coremark/core_list_join.c
+    src/third_party/coremark/core_main.c
+    src/third_party/coremark/core_matrix.c
+    src/third_party/coremark/core_state.c
+    src/third_party/coremark/core_util.c
+    src/third_party/coremark/winbolo/core_portme.c)
+target_include_directories(coremark SYSTEM PUBLIC
+    src/third_party/coremark
+    src/third_party/coremark/winbolo)
+set_source_files_properties(src/third_party/coremark/core_main.c
+    PROPERTIES COMPILE_DEFINITIONS "main=coremark_main")
+set_target_properties(coremark PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_link_libraries(coremark PRIVATE SDL3::SDL3)
+if(MSVC)
+    target_compile_options(coremark PRIVATE /wd4244 /wd4267 /wd4204 /wd4206)
+else()
+    target_compile_options(coremark PRIVATE -w)
+endif()
+
+# The CPU speed test (-cputest) built on CoreMark, and the CPU facts that go
+# with it (name, logical and physical cores).
+# The stored result (cpu_speed.json, read with cJSON) and the background
+# run live here too.
+add_library(cpu_speed_test STATIC
+    src/cpu_speed/cpu_speed_test.c
+    src/cpu_speed/cpu_speed_store.c)
+target_include_directories(cpu_speed_test PUBLIC src/cpu_speed)
+target_include_directories(cpu_speed_test PRIVATE ${cjson_SOURCE_DIR})
+set_target_properties(cpu_speed_test PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_link_libraries(cpu_speed_test PUBLIC coremark PRIVATE SDL3::SDL3 cjson)
+if(WIN32)
+    target_link_libraries(cpu_speed_test PRIVATE advapi32)
 endif()
 
 # ImGui backends library for SDL3 + SDL Renderer
@@ -954,6 +1023,80 @@ endif()
 # libplum — automatic UPnP / NAT-PMP / PCP port mapping for hosted servers.
 # When OFF, src/bolo/nat_portmap.c compiles to no-op stubs.
 option(BOLO_PORTMAP "Enable UPnP/NAT-PMP automatic port mapping" ON)
+
+# The Bot Host inside each client (bothost_embed.h) runs only the stock
+# brains installed with the game. ON: it never takes brain code from a
+# server. It runs a server's bot only when the server's brain is the same,
+# file for file, as this install, and only with the init tokens on the
+# list in bot_host_guard.h. OFF: a server may send its own brain code, and
+# the player is asked on each join before any of it runs. The standalone
+# WinBoloBotHost is not changed by this option.
+option(WINBOLO_BOTHOST_OFFICIAL_ONLY
+    "Client Bot Host runs only the brains installed with the game" ON)
+
+# ON (the default): a Bot Host tells the server it takes bots that see the
+# whole map (an AI level other than aiYes), and a player's built-in host
+# runs them. The player's computer then receives the whole map for those
+# bots, so a modified client could read it. OFF: the old rule; a bot that
+# sees the whole map never runs on a player's computer. The server places
+# such a bot on a player's host only when the host said yes, so a host
+# built before this option (or with it OFF) never gets one.
+option(WINBOLO_BOTHOST_ALLOW_FULL_MAP
+    "Bot Hosts (also a player's built-in host) take bots that see the whole map" ON)
+
+# The brains this build ships: every folder under brains/ with an init.lua
+# or an opt/init.lua (cmake/brain_folders.cmake). No list names them, so a
+# brain folder that a merge adds ships with the next build: the copy steps
+# (winbolo_copy_brains) and the table below find it on their own. The
+# CONFIGURE_DEPENDS glob makes a new or removed brain file configure again.
+include(cmake/brain_folders.cmake)
+file(GLOB_RECURSE WINBOLO_SHIPPED_BRAIN_FILES CONFIGURE_DEPENDS
+    "${CMAKE_SOURCE_DIR}/brains/*/*")
+list(FILTER WINBOLO_SHIPPED_BRAIN_FILES EXCLUDE REGEX "\\.md$")
+
+# Copy every shipped brain folder into dest (a Brains/ folder) after tgt is
+# built, without the *.md notes.
+function(winbolo_copy_brains tgt dest)
+    add_custom_command(TARGET ${tgt} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${dest}"
+        COMMAND ${CMAKE_COMMAND}
+            -DSOURCE_DIR=${CMAKE_SOURCE_DIR}/brains
+            -DDEST_DIR=${dest}
+            -DALL_BRAINS=ON
+            -P ${CMAKE_SOURCE_DIR}/cmake/copy_brains.cmake
+        COMMENT "Copying the brains for ${tgt} into its Brains/ directory (excludes *.md)"
+        VERBATIM)
+endfunction()
+
+# The table of the brain files this build ships, with the SHA-256 of each,
+# for a client built with WINBOLO_BOTHOST_OFFICIAL_ONLY: its Bot Host runs
+# a brain only when the files in its Brains folder are these
+# (brainSyncShippedCheck). Written again at build time when a brain file
+# changes; the header changes only when a hash or a file name does.
+set(WINBOLO_BRAIN_SHIPPED_DIR "${CMAKE_BINARY_DIR}/generated/brain_shipped")
+add_custom_command(
+    OUTPUT "${WINBOLO_BRAIN_SHIPPED_DIR}/brain_shipped_table.stamp"
+    BYPRODUCTS "${WINBOLO_BRAIN_SHIPPED_DIR}/brain_shipped_table.h"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${WINBOLO_BRAIN_SHIPPED_DIR}"
+    COMMAND ${CMAKE_COMMAND}
+        -DBRAINS_DIR=${CMAKE_SOURCE_DIR}/brains
+        -DOUT=${WINBOLO_BRAIN_SHIPPED_DIR}/brain_shipped_table.h
+        -DSTAMP=${WINBOLO_BRAIN_SHIPPED_DIR}/brain_shipped_table.stamp
+        -P ${CMAKE_SOURCE_DIR}/cmake/brain_shipped_table.cmake
+    DEPENDS ${WINBOLO_SHIPPED_BRAIN_FILES}
+        ${CMAKE_SOURCE_DIR}/cmake/brain_shipped_table.cmake
+        ${CMAKE_SOURCE_DIR}/cmake/brain_folders.cmake
+    COMMENT "Hashing the shipped brain files into brain_shipped_table.h"
+    VERBATIM)
+add_custom_target(winbolo_brain_shipped_table
+    DEPENDS "${WINBOLO_BRAIN_SHIPPED_DIR}/brain_shipped_table.stamp")
+
+# tgt compiles bothost_embed.c with WINBOLO_BOTHOST_OFFICIAL_ONLY: it
+# includes the table, so the table is written before tgt compiles.
+function(winbolo_use_brain_shipped_table tgt)
+    add_dependencies(${tgt} winbolo_brain_shipped_table)
+    target_include_directories(${tgt} PRIVATE "${WINBOLO_BRAIN_SHIPPED_DIR}")
+endfunction()
 
 # Fetches libplum and sets HAVE_LIBPLUM. A macro so the fetched variables and
 # HAVE_LIBPLUM land in the caller's scope. Called from both branches below
@@ -1222,6 +1365,9 @@ add_executable(WinBoloIOS MACOSX_BUNDLE
     src/gui/sdl3/cursor.c
     src/gui/ios/imgui_ios.cpp
     src/gui/sdl3/gamefront.c
+    # The lobby and gamefront.c call the Bot Host inside the client; iOS
+    # runs no bots, so it takes the stubs (bothost_embed.h).
+    src/bothost/bothost_embed_stub.c
     src/client_frontend/client_frontend_connect.c
     src/client_frontend/client_frontend_tick.c
     src/client_frontend/client_frontend_common.c
@@ -1512,7 +1658,7 @@ target_sources(WinBoloIOS PRIVATE src/gui/ios/ios_netpath.m)
 set_source_files_properties(src/gui/ios/ios_netpath.m
     PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
 target_link_libraries(WinBoloIOS PRIVATE SDL3::SDL3 SDL3_ttf::SDL3_ttf imgui_backends lua_static
-    nanosvg stb_image utf8proc zlibstatic minizip cjson
+    nanosvg stb_image utf8proc zlibstatic libzstd_static minizip cjson
     "-framework CoreText" "-framework CoreFoundation" "-framework CoreGraphics"
     "-framework AVFoundation"
     "-framework GameController"
@@ -2104,6 +2250,10 @@ bolo_apply_include_rules(winbolonet_client runtime_only)
 set(CLIENT_SOURCES
     src/bolo/transport_udp_client.c
     src/bolo/nat_portmap.c
+    # The Bot Host inside the client: bothost_main.c built a second time.
+    src/bothost/bothost_embed.c src/bothost/bothost_embed_service.c
+    src/bothost/bothost_optout.c
+    src/bothost/bothost_rec.c
     src/gui/ui_mode.c
     src/gui/visibility_presets.c
     src/gui/scn_panel_prefs.c
@@ -2271,6 +2421,7 @@ set(LOGVIEWER_LIB_SOURCES
     src/logviewer/imgui/imgui_overview.cpp
     src/logviewer/imgui/imgui_tank.cpp
     src/logviewer/imgui/imgui_chat.cpp
+    src/logviewer/imgui/imgui_bothosts.cpp
     src/logviewer/imgui/imgui_lv_icons.cpp
     src/logviewer/imgui/imgui_game_view.cpp
     src/logviewer/imgui/imgui_comments.cpp
@@ -2365,10 +2516,30 @@ bolo_apply_include_rules(WinBolo gui)
 # at which point the grant deletes.
 bolo_grant_internal_source_access(WinBolo
     src/bolo/transport_udp_client.c
+    src/bothost/bothost_embed.c
+    src/bothost/bothost_rec.c
     src/gui/sdl3/bg_game.c
     src/mapeditor/mapeditor.c
     src/mapeditor/mapeditor_export.c
     src/mapeditor/mapeditor_validate.c)
+target_include_directories(WinBolo PRIVATE src/bothost)
+if(WINBOLO_BOTHOST_OFFICIAL_ONLY)
+    target_compile_definitions(WinBolo PRIVATE
+        WINBOLO_BOTHOST_OFFICIAL_ONLY=1)
+    winbolo_use_brain_shipped_table(WinBolo)
+endif()
+if(WINBOLO_BOTHOST_ALLOW_FULL_MAP)
+    target_compile_definitions(WinBolo PRIVATE
+        WINBOLO_BOTHOST_ALLOW_FULL_MAP=1)
+endif()
+if(WINBOLO_HIDE_CLIENT_BOT_HOST_MSG)
+    target_compile_definitions(WinBolo PRIVATE
+        WINBOLO_HIDE_CLIENT_BOT_HOST_MSG=1)
+endif()
+if(WINBOLO_HIDE_LOBBY_BOT_HOSTS)
+    target_compile_definitions(WinBolo PRIVATE
+        WINBOLO_HIDE_LOBBY_BOT_HOSTS=1)
+endif()
 
 if(WIN32)
     target_sources(WinBolo PRIVATE
@@ -2406,6 +2577,13 @@ endif()
 target_link_libraries(WinBolo PRIVATE
     SDL3::SDL3 SDL3_ttf::SDL3_ttf imgui_backends minizip lua_static CURL::libcurl
     nanosvg stb_image utf8proc cjson)
+
+# The CPU speed test runs in the background when a game lobby first opens
+# for each new version, and its stored result gives Brain.capacity its
+# machine facts. WINBOLO_CPU_SPEED_TEST turns that code on in the lobby
+# sources, which the Android, web and iOS targets also build without it.
+target_link_libraries(WinBolo PRIVATE cpu_speed_test)
+target_compile_definitions(WinBolo PRIVATE WINBOLO_CPU_SPEED_TEST=1)
 
 # Voice capture/playback (src/gui/sdl3/voice.c + src/client_frontend/voice_core.c).
 # WINBOLO_VOICE gates the settings-dialog controls, which also compile into
@@ -2595,14 +2773,7 @@ add_custom_command(TARGET WinBolo POST_BUILD
     COMMENT "Copying About-box markdown docs and the licence to data/"
 )
 
-add_custom_command(TARGET WinBolo POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E make_directory "${WINBOLO_DATA_DIR}/Brains/GoalHunter"
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_DIR=${CMAKE_SOURCE_DIR}/brains/GoalHunter
-        -DDEST_DIR=${WINBOLO_DATA_DIR}/Brains/GoalHunter
-        -P ${CMAKE_SOURCE_DIR}/cmake/copy_brains.cmake
-    COMMENT "Copying brain scripts (GoalHunter) to output Brains/ directory (excludes *.md)"
-)
+winbolo_copy_brains(WinBolo "${WINBOLO_DATA_DIR}/Brains")
 
 # Steam Input action manifest + per-controller binding files — Steam reads
 # them from <install dir>/controller_config/ at runtime. Copy the whole
@@ -2723,6 +2894,8 @@ set(SERVER_SOURCES
     # The -mod flags and -setting off the command line. Public headers
     # only, so it takes no grant below; the unit tests compile it too.
     src/server/server_args.c
+    # The host bot capacity: -botcapacity, or the lobby CPU speed test.
+    src/server/server_bot_capacity.c
     src/server/server_frontend_stubs.c
     src/gui/sdl3/luabrainshandler.c
     src/headless/cmd_stdin.c
@@ -2788,7 +2961,7 @@ target_link_libraries(WinBoloDS PRIVATE
     winbolonet_core
     winbolonet_server
     winbolonet_client)
-target_link_libraries(WinBoloDS PRIVATE minizip SDL3::SDL3 CURL::libcurl lua_static cjson utf8proc)
+target_link_libraries(WinBoloDS PRIVATE minizip SDL3::SDL3 CURL::libcurl lua_static cjson utf8proc cpu_speed_test)
 
 # libplum NAT port mapping (optional). nat_portmap.c stays per-target
 # so its #ifdef BOLO_PORTMAP block compiles against this binary's view.
@@ -2871,13 +3044,7 @@ if(HAVE_SENTRY AND TARGET crashpad_handler)
     )
 endif()
 # Copy Lua brain scripts to output Brains/ directory (server)
-add_custom_command(TARGET WinBoloDS POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:WinBoloDS>/Brains"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_SOURCE_DIR}/brains/GoalHunter"
-        "$<TARGET_FILE_DIR:WinBoloDS>/Brains/GoalHunter"
-    COMMENT "Copying brain scripts to WinBoloDS output Brains/ directory"
-)
+winbolo_copy_brains(WinBoloDS "$<TARGET_FILE_DIR:WinBoloDS>/Brains")
 
 # ---------------------------------------------------------------------------
 # LogViewer (cross-platform: Windows, Linux, macOS)
@@ -2933,6 +3100,7 @@ set(LOGVIEWER_IMGUI_SOURCES
     src/logviewer/imgui/imgui_overview.cpp
     src/logviewer/imgui/imgui_tank.cpp
     src/logviewer/imgui/imgui_chat.cpp
+    src/logviewer/imgui/imgui_bothosts.cpp
     src/logviewer/imgui/imgui_lv_icons.cpp
     src/logviewer/imgui/imgui_game_view.cpp
     src/logviewer/imgui/imgui_comments.cpp
@@ -3152,6 +3320,10 @@ set(HEADLESS_SOURCES
     src/gui/sdl3/dns_lookups.c
     src/headless/headless_main.c src/headless/headless_frontend.c
     src/headless/cmd_stdin.c
+    # The Bot Host inside the client: bothost_main.c built a second time.
+    src/bothost/bothost_embed.c src/bothost/bothost_embed_service.c
+    src/bothost/bothost_optout.c
+    src/bothost/bothost_rec.c
     src/third_party/tweetnacl/tweetnacl.c
 )
 
@@ -3189,7 +3361,23 @@ target_include_directories(WinBoloHeadless PRIVATE
 )
 bolo_apply_include_rules(WinBoloHeadless runtime_only)
 bolo_grant_internal_source_access(WinBoloHeadless
-    src/bolo/transport_udp_client.c)
+    src/bolo/transport_udp_client.c
+    src/bothost/bothost_embed.c
+    src/bothost/bothost_rec.c)
+target_include_directories(WinBoloHeadless PRIVATE src/bothost)
+if(WINBOLO_BOTHOST_OFFICIAL_ONLY)
+    target_compile_definitions(WinBoloHeadless PRIVATE
+        WINBOLO_BOTHOST_OFFICIAL_ONLY=1)
+    winbolo_use_brain_shipped_table(WinBoloHeadless)
+endif()
+if(WINBOLO_BOTHOST_ALLOW_FULL_MAP)
+    target_compile_definitions(WinBoloHeadless PRIVATE
+        WINBOLO_BOTHOST_ALLOW_FULL_MAP=1)
+endif()
+if(WINBOLO_HIDE_CLIENT_BOT_HOST_MSG)
+    target_compile_definitions(WinBoloHeadless PRIVATE
+        WINBOLO_HIDE_CLIENT_BOT_HOST_MSG=1)
+endif()
 
 if(WIN32)
     target_link_libraries(WinBoloHeadless PRIVATE ws2_32 winmm user32)
@@ -3213,7 +3401,7 @@ target_link_libraries(WinBoloHeadless PRIVATE
     winbolonet_server
     winbolonet_client)
 target_link_libraries(WinBoloHeadless PRIVATE
-    SDL3::SDL3 minizip lua_static CURL::libcurl cjson utf8proc)
+    SDL3::SDL3 minizip lua_static CURL::libcurl cjson utf8proc cpu_speed_test)
 
 # Sentry crash reporting (always compile — stubs when HAVE_SENTRY is off)
 target_sources(WinBoloHeadless PRIVATE src/common/sentry_integration.c)
@@ -3238,13 +3426,7 @@ add_custom_command(TARGET WinBoloHeadless POST_BUILD
     COMMENT "Copying SDL3 shared library to WinBoloHeadless output directory"
 )
 winbolo_stage_onnxruntime(WinBoloHeadless)
-add_custom_command(TARGET WinBoloHeadless POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:WinBoloHeadless>/Brains"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_SOURCE_DIR}/brains/GoalHunter"
-        "$<TARGET_FILE_DIR:WinBoloHeadless>/Brains/GoalHunter"
-    COMMENT "Copying brain scripts to WinBoloHeadless output directory"
-)
+winbolo_copy_brains(WinBoloHeadless "$<TARGET_FILE_DIR:WinBoloHeadless>/Brains")
 add_custom_command(TARGET WinBoloHeadless POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${CMAKE_SOURCE_DIR}/data/lang" "$<TARGET_FILE_DIR:WinBoloHeadless>/data/lang"
@@ -3256,6 +3438,111 @@ if(HAVE_SENTRY AND TARGET crashpad_handler)
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "$<TARGET_FILE:crashpad_handler>" "$<TARGET_FILE_DIR:WinBoloHeadless>"
         COMMENT "Copying crashpad_handler to WinBoloHeadless output directory"
+    )
+endif()
+
+# ---------------------------------------------------------------------------
+# WinBoloBotHost (runs a WinBoloDS server's bot brains on another machine)
+# ---------------------------------------------------------------------------
+
+set(BOTHOST_SOURCES
+    src/bolo/transport_udp_client.c
+    src/bolo/nat_portmap.c
+    src/gui/sdl3/clientmutex.c src/gui/sdl3/luabrainshandler.c
+    src/gui/sdl3/lang.c
+    src/gui/sdl3/dns_lookups.c
+    src/bothost/bothost_main.c src/headless/headless_frontend.c
+    src/bothost/bothost_optout.c
+    src/bothost/bothost_rec.c
+    src/third_party/tweetnacl/tweetnacl.c
+)
+file(GLOB BOTHOST_BSD_SOURCES src/bsd/*.c)
+list(APPEND BOTHOST_SOURCES ${BOTHOST_BSD_SOURCES})
+file(GLOB BOTHOST_COMMON_SOURCES src/common/*.c)
+list(APPEND BOTHOST_SOURCES ${BOTHOST_COMMON_SOURCES})
+if(NOT WIN32)
+    list(FILTER BOTHOST_SOURCES EXCLUDE REGEX ".*common/util\\.c$")
+endif()
+
+add_executable(WinBoloBotHost ${BOTHOST_SOURCES})
+target_sources(WinBoloBotHost PRIVATE src/steam/steam_wrapper_stub.c)
+if(WINBOLO_BOTHOST_ALLOW_FULL_MAP)
+    target_compile_definitions(WinBoloBotHost PRIVATE
+        WINBOLO_BOTHOST_ALLOW_FULL_MAP=1)
+endif()
+target_compile_definitions(WinBoloBotHost PRIVATE
+    HAVE_SCREEN_C=1
+    WINBOLO_VERSION="${WINBOLO_VERSION}"
+    WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
+    BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
+    BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
+    BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
+)
+target_include_directories(WinBoloBotHost PRIVATE
+    src/gui/sdl3
+    src/gui
+    src/server
+    src/headless
+    src/bothost
+    src/mapeditor
+    ${cjson_SOURCE_DIR}
+    src/third_party/tweetnacl
+)
+bolo_apply_include_rules(WinBoloBotHost runtime_only)
+# The host drives bot ClientSims with the server's bot runner, so its main
+# file reads bot and transport internals, as transport_udp_client.c does.
+bolo_grant_internal_source_access(WinBoloBotHost
+    src/bolo/transport_udp_client.c
+    src/bothost/bothost_main.c
+    src/bothost/bothost_rec.c)
+
+if(WIN32)
+    target_link_libraries(WinBoloBotHost PRIVATE ws2_32 winmm user32)
+    target_compile_options(WinBoloBotHost PRIVATE -fcommon)
+else()
+    target_link_libraries(WinBoloBotHost PRIVATE ${MATH_LIB} pthread)
+    target_compile_options(WinBoloBotHost PRIVATE -fcommon)
+endif()
+if(TARGET maxminddb)
+    target_link_libraries(WinBoloBotHost PRIVATE maxminddb)
+    target_compile_definitions(WinBoloBotHost PRIVATE HAVE_MAXMINDDB=1)
+endif()
+target_link_libraries(WinBoloBotHost PRIVATE
+    bolo_static
+    scenario_static
+    ${SERVER_LINK_GROUP}
+    bot_brains_static
+    winbolonet_core
+    winbolonet_server
+    winbolonet_client)
+target_link_libraries(WinBoloBotHost PRIVATE
+    SDL3::SDL3 minizip lua_static CURL::libcurl cjson utf8proc)
+
+target_sources(WinBoloBotHost PRIVATE src/common/sentry_integration.c)
+if(HAVE_SENTRY)
+    target_compile_definitions(WinBoloBotHost PRIVATE HAVE_SENTRY=1)
+    if(SENTRY_DSN)
+        target_compile_definitions(WinBoloBotHost PRIVATE SENTRY_DSN="${SENTRY_DSN}")
+    endif()
+    target_link_libraries(WinBoloBotHost PRIVATE sentry::sentry)
+endif()
+
+add_custom_command(TARGET WinBoloBotHost POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:SDL3::SDL3>" "$<TARGET_FILE_DIR:WinBoloBotHost>"
+    COMMENT "Copying SDL3 shared library to WinBoloBotHost output directory"
+)
+winbolo_stage_onnxruntime(WinBoloBotHost)
+winbolo_copy_brains(WinBoloBotHost "$<TARGET_FILE_DIR:WinBoloBotHost>/Brains")
+add_custom_command(TARGET WinBoloBotHost POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_SOURCE_DIR}/data/lang" "$<TARGET_FILE_DIR:WinBoloBotHost>/data/lang"
+    COMMENT "Copying lang files to WinBoloBotHost output directory"
+)
+if(HAVE_SENTRY AND TARGET crashpad_handler)
+    add_custom_command(TARGET WinBoloBotHost POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:crashpad_handler>" "$<TARGET_FILE_DIR:WinBoloBotHost>"
+        COMMENT "Copying crashpad_handler to WinBoloBotHost output directory"
     )
 endif()
 
@@ -3381,16 +3668,18 @@ endif()
 # BrainTest can load one at a time. A long full-pool recording is gigabytes
 # on disk, and btLoadSession materialises every frame, so loading a whole
 # game can cost more RAM than the machine has; halving the frames halves it.
-# Links brain_record_walk.c (the shared brainrec.btr frame walker) rather
+# Links brain_record_walk.c (the shared brainrec.btr frame walker) and
+# brain_record_io.c (the .btr container) rather
 # than bolo_static, so the tool doesn't drag in the sim, Lua or SDL's
 # runtime — SDL3 is here for its filesystem calls and for the headers the
 # format structs live behind.
 # ---------------------------------------------------------------------------
 add_executable(brainrec_split
     src/tools/brainrec_split.c
-    src/bolo/brain_record_walk.c)
+    src/bolo/brain_record_walk.c
+    src/bolo/brain_record_io.c)
 bolo_apply_include_rules(brainrec_split runtime_only)
-target_link_libraries(brainrec_split PRIVATE SDL3::SDL3 zlibstatic)
+target_link_libraries(brainrec_split PRIVATE SDL3::SDL3 zlibstatic libzstd_static)
 if(WIN32)
     target_link_libraries(brainrec_split PRIVATE psapi)
 endif()
@@ -3517,6 +3806,17 @@ add_custom_command(TARGET BrainTest POST_BUILD
 # runtime, which is all these terminal-launched tools need to notarize and run.
 # This makes a WinBolo-only build also build the tools; turn it off with
 # -DWINBOLO_BUNDLE_DEV_TOOLS=OFF for faster WinBolo iteration.
+# The lobby line and newswire message that say how many of the server's bots
+# this computer runs (the Bot Host inside each client, bothost_embed.h).
+# ON hides both; the host itself still runs.
+option(WINBOLO_HIDE_CLIENT_BOT_HOST_MSG
+    "Hide the lobby line and newswire message of the client's own Bot Host" OFF)
+# The whole Bot Hosts list in the lobby: every host's row, its slot box and
+# this computer's "runs bots" line. ON hides it; the opt-out box stays, and
+# System Info still shows each bot's host.
+option(WINBOLO_HIDE_LOBBY_BOT_HOSTS
+    "Hide the Bot Hosts list in the lobby (System Info keeps it)" OFF)
+
 option(WINBOLO_BUNDLE_DEV_TOOLS
     "Bundle WinBoloDS, BrainTest, and WinBoloHeadless inside WinBolo.app (macOS)" ON)
 if(APPLE AND WINBOLO_BUNDLE_DEV_TOOLS)
@@ -3760,7 +4060,7 @@ endif()
 # MinGW: statically link the GCC/C++ runtime so the executables don't need
 # libgcc_s_seh-1.dll, libstdc++-6.dll, or libwinpthread-1.dll at runtime.
 if(MINGW)
-    foreach(_tgt WinBolo WinBoloDS LogViewer WinBoloHeadless BrainTest MapEditor)
+    foreach(_tgt WinBolo WinBoloDS LogViewer WinBoloHeadless WinBoloBotHost BrainTest MapEditor)
         if(TARGET ${_tgt})
             target_link_options(${_tgt} PRIVATE -static)
         endif()
@@ -3771,6 +4071,7 @@ set_flat_output(LogViewer        "${CMAKE_BINARY_DIR}")
 set_flat_output(WinBolo          "${CMAKE_BINARY_DIR}")
 set_flat_output(WinBoloDS        "${CMAKE_BINARY_DIR}")
 set_flat_output(WinBoloHeadless  "${CMAKE_BINARY_DIR}")
+set_flat_output(WinBoloBotHost   "${CMAKE_BINARY_DIR}")
 set_flat_output(BrainTest        "${CMAKE_BINARY_DIR}")
 set_flat_output(MapEditor        "${CMAKE_BINARY_DIR}")
 set_flat_output(winbolo_gym      "${CMAKE_BINARY_DIR}")
@@ -3870,10 +4171,11 @@ add_custom_target(dist
     ${DIST_ORT_NOTICES_CMD}
 
     # Brain scripts (excludes *.md plan/roadmap notes via copy_brains.cmake)
-    COMMAND ${CMAKE_COMMAND} -E make_directory "${DIST_DIR}/Brains/GoalHunter"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${DIST_DIR}/Brains"
     COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_DIR=${CMAKE_SOURCE_DIR}/brains/GoalHunter
-        -DDEST_DIR=${DIST_DIR}/Brains/GoalHunter
+        -DSOURCE_DIR=${CMAKE_SOURCE_DIR}/brains
+        -DDEST_DIR=${DIST_DIR}/Brains
+        -DALL_BRAINS=ON
         -P ${CMAKE_SOURCE_DIR}/cmake/copy_brains.cmake
 
     # Strip debug info from the staged Linux binaries (no-op on Win/macOS)
@@ -3956,6 +4258,16 @@ add_test(NAME warmup.ds        COMMAND $<TARGET_FILE:WinBoloDS> -nocrashreportin
 add_test(NAME warmup.unittests COMMAND $<TARGET_FILE:WinBoloUnitTests> --list)
 set_tests_properties(warmup.headless warmup.ds warmup.unittests
                      PROPERTIES FIXTURES_SETUP warm_binaries TIMEOUT 60)
+
+# The brains a build ships are found with no list to edit: a brain folder
+# added to brains/ is in the table of shipped files and in the copy step on
+# the next run (cmake/brain_folders.cmake). A CMake script, no binary.
+add_test(NAME brain_shipped_table_glob
+         COMMAND ${CMAKE_COMMAND}
+             -DSOURCE_DIR=${CMAKE_SOURCE_DIR}
+             -DWORK_DIR=${CMAKE_BINARY_DIR}/brain_shipped_table_test
+             -P ${CMAKE_SOURCE_DIR}/tests/cmake/brain_shipped_table_test.cmake)
+set_tests_properties(brain_shipped_table_glob PROPERTIES TIMEOUT 60)
 
 # Per-scenario CTest entries. Scenario names must stay in sync with the
 # dispatch_scenario case in tests/baseline/run.sh. --fast scenarios have
@@ -4184,6 +4496,11 @@ set(WINBOLO_UNITTESTS_SOURCES
     # against committed golden bytes and decoded back.
     tests/unit/test_scenario_dir.c
     tests/unit/test_scenario_callbacks.c
+    # The 2 s CPU speed test (a short run), its stored result, the
+    # background run and its cancel, and the brain capacity answer: the
+    # default, the clamp, the kept answers, a C brain, Brain.capacity through
+    # a real Lua state, and the lobby's Add Bot rule.
+    tests/unit/test_cpu_speed.c
     # Who wrote a script and when it last changed: both manifest readers,
     # the list trailer and the V3 details reply, and the shipped scripts.
     tests/unit/test_scenario_identity.c
@@ -4572,6 +4889,35 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_bot_chat_routing.c
     tests/unit/test_bot_ping.c
     tests/unit/test_brain_internal_msg_routing.c
+    tests/unit/test_bot_host.c
+    # Bot Host brain sync: the manifest codec, the cache path checks and the
+    # cache plan (held, copied from another version, to download).
+    tests/unit/test_brain_sync.c
+    tests/unit/test_brain_pack.c
+    # The guards on the Bot Host inside a client: no brain code in official
+    # mode, the init token list, unculled bots, asked uploads, salts and the
+    # limited capacity question.
+    tests/unit/test_bot_host_security.c
+    # Bot Host link: the announce codec, the address lists and the allow
+    # list a server and a Bot Host use to find each other.
+    tests/unit/test_bot_host_link.c
+    tests/unit/test_bot_host_keep.c
+    # A Bot Host that joins a game in progress: the lag rule of the keep
+    # placement and System Info's hosts with no bot.
+    tests/unit/test_bot_host_midgame.c
+    # The overrun check of the bot placement, the free CPU percent and the
+    # log_BotHostData payload.
+    tests/unit/test_bot_host_overrun.c
+    # The lobby's CPU estimate per Bot Host row: the percent, the meter,
+    # CTRL_BOT_HOST_CPU and the client's row.
+    tests/unit/test_bot_host_cpu.c
+    tests/unit/test_bot_host_machine.c
+    # A Bot Host's slots: Max slots (0 runs no bot on this computer) and its
+    # saved value, the 0-slot report, the server giving the bots back, and
+    # the dynamic slots (the raise rule, the reserve, carry, KEEL, the
+    # limits on the wire, the owner-only change).
+    tests/unit/test_bot_host_optout.c
+    src/bothost/bothost_optout.c
     tests/unit/test_subscriber_arm_orphans.c
     tests/unit/test_identity_survives_reset.c
     tests/unit/test_wbn_session_rotation.c
@@ -4594,7 +4940,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_entity_sync.c
     tests/unit/test_entity_record.c
     tests/unit/test_brain_removed_items.c
-    src/bolo/brain_record_walk.c
+    tests/unit/test_btr_container.c
+    tests/unit/test_brainrec_split.c
     tests/unit/test_starts_pick_incremental.c
     tests/unit/test_starts_assign_batch.c
     tests/unit/test_starts_open_ideal.c
@@ -4734,6 +5081,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_replay_version_compat.c
     # The brain recorder's own version check.
     tests/unit/test_brainrec_version.c
+    tests/unit/test_brain_record_host.c
     # Loopback transport tests: real UDP client + server over localhost,
     # sharing the loopback_harness fixture.
     tests/unit/loopback_harness.c
@@ -5422,7 +5770,10 @@ target_sources(WinBoloUnitTests PRIVATE src/steam/steam_wrapper_stub.c
     src/bolo/voice_segment.c
     tests/unit/test_voice_segment.c
     src/bolo/voice_talker_select.c
-    tests/unit/test_voice_talker_select.c)
+    tests/unit/test_voice_talker_select.c
+    # The Bot Host's recorder, for its upload and keep rules.
+    src/bothost/bothost_rec.c
+    tests/unit/test_bothost_rec.c)
 target_compile_definitions(WinBoloUnitTests PRIVATE
     HAVE_SCREEN_C=1
     WINBOLO_VERSION="${WINBOLO_VERSION}"
@@ -5518,6 +5869,8 @@ target_include_directories(WinBoloUnitTests PRIVATE
     # mapeditor_scenario_*.c TUs compiled above; no other mapeditor source
     # is linked here.
     src/mapeditor
+    # bothost_rec.h for test_bothost_rec.c (bothost_rec.c compiled above).
+    src/bothost
     ${CMAKE_SOURCE_DIR}/tests/unit
     ${cjson_SOURCE_DIR}
 )
@@ -5525,7 +5878,7 @@ bolo_apply_include_rules(WinBoloUnitTests unittests)
 
 target_link_libraries(WinBoloUnitTests PRIVATE
     bolo_static scenario_static ${SERVER_TEST_LINK_GROUP} bot_brains_static
-    SDL3::SDL3 minizip lua_static cjson utf8proc
+    SDL3::SDL3 minizip lua_static cjson utf8proc cpu_speed_test
     # tileloader.c reads SVG through nanosvg and PNG through stb_image.
     nanosvg stb_image
     # mdns is header-only; linked for its include dir so test_mdns_discovery.c
@@ -5538,7 +5891,8 @@ target_link_libraries(WinBoloUnitTests PRIVATE
     imgui_backends)
 
 if(WIN32)
-    target_link_libraries(WinBoloUnitTests PRIVATE ws2_32 winmm user32)
+    # psapi: test_brainrec_split.c compiles the brainrec_split tool.
+    target_link_libraries(WinBoloUnitTests PRIVATE ws2_32 winmm user32 psapi)
     target_compile_options(WinBoloUnitTests PRIVATE -fcommon)
     # 8 MB stack, matching the Linux default.
     #
@@ -6000,6 +6354,132 @@ set(_unit_test_names
     bot_ping_ignores_bad_slot
     bot_ping_ignores_a_slot_that_is_not_a_bot
     internal_msg_reaches_allied_bot
+    bot_host_assign_codec
+    bot_host_unassign_codec
+    bot_host_table_codec
+    bot_host_team_msg_codec
+    bot_host_commands_codec
+    bot_host_team_msg_fanout
+    bot_host_ping_gap
+    bot_host_remote_seat_stays_bot
+    bot_host_info_host_name
+    bot_host_target_ms
+    bot_host_sync_codec
+    brain_sync_path_check
+    brain_sync_manifest_codec
+    brain_sync_cache_plan
+    brain_sync_chunk
+    brain_sync_shipped_match
+    brain_sync_shipped_edited
+    brain_sync_shipped_missing
+    brain_sync_crlf_hash
+    brain_sync_crlf_table_agrees
+    brain_pack_manifest_v2
+    brain_pack_all_equal
+    brain_pack_one_changed
+    brain_pack_bad_hash
+    brain_pack_old_peer
+    brain_pack_session
+    bot_host_official_no_files
+    bot_host_token_allow_list
+    bot_host_unculled_not_player
+    bot_host_rec_upload_asked
+    bot_host_salt_limit
+    brain_capacity_throwing_index
+    bot_host_refused_takes_no_file
+    brain_capacity_memory_limit
+    bot_host_reset_limit
+    bot_host_brain_name_opt
+    bot_host_link_announce_codec
+    bot_host_link_addr_list
+    bot_host_link_allow
+    bot_host_slots_codec
+    bot_host_place_spread
+    bot_host_place_lag
+    bot_host_place_server_cap
+    bot_host_place_keep_server_first
+    bot_host_place_keep_lopsided
+    bot_host_place_keep_bad_source
+    bot_host_place_keep_no_return
+    bot_host_place_keep_oil_rig
+    bot_host_place_keep_lag_join
+    bot_host_sysinfo_empty_hosts
+    bot_host_place_keep_scaled_wait
+    bot_host_place_keep_step_min_old
+    bot_host_place_keep_free_batch
+    bot_host_place_keep_batch_no_target
+    bot_host_place_keep_batch_off
+    bot_host_place_keep_batch_server_room
+    bot_host_place_keep_batch_no_reading
+    bot_host_place_keep_batch_slot_limit
+    bot_host_place_keep_batch_cpu_limit
+    bot_host_enforce_fall_back_holds
+    bot_host_enforce_host_resumes
+    bot_host_enforce_leave_resumes
+    bot_host_enforce_off_keeps_fall_back
+    bot_host_overrun_window_rate
+    bot_host_overrun_step_spacing
+    bot_host_overrun_steady_moves_one
+    bot_host_overrun_all_same_no_move
+    bot_host_overrun_target_not_below
+    bot_host_overrun_gain_per_move
+    bot_host_overrun_stay_times
+    bot_host_overrun_emergency
+    bot_host_overrun_target_order
+    bot_host_overrun_forced_no_m
+    bot_host_overrun_nomove_blocks
+    bot_host_overrun_server_fallback
+    bot_host_overrun_raise_clean_evidence
+    bot_host_overrun_no_raise_clean_too_free
+    bot_host_overrun_no_raise_bad_reading
+    bot_host_overrun_no_raise_no_free_data
+    bot_host_overrun_new_game_reset
+    bot_host_overrun_may_take
+    bot_host_cpu_free_codec
+    machine_cpu_proc_stat_steal
+    bothost_record_roundtrip
+    bot_host_nomove_no_move_running
+    bot_host_nomove_fallback
+    bot_host_nomove_lobby_places
+    bot_host_nomove_would_move_record
+    bot_host_cpu_percent
+    bot_host_cpu_meter
+    bot_host_cpu_codec
+    bot_host_cpu_client_row
+    bot_host_cpu_bot_format
+    bot_host_cpu_bot_meter
+    bot_host_cpu_bot_codec
+    bot_host_cpu_budget
+    bot_host_cpu_bot_client_row
+    bot_host_lag_codec
+    bot_host_rec_bytes_codec
+    bot_host_rec_eta
+    bot_timing_codec
+    bot_timing_client_copy
+    bot_host_machine_addr
+    machine_id_token
+    machine_id_salt_repeat
+    bot_host_machine_server_group
+    bot_host_machine_client_group
+    bot_host_machine_leader_leaves
+    bot_host_game_bot_limit
+    bot_host_slots_override
+    bot_host_slots_arg_parse
+    bot_host_machine_codec
+    bot_host_machine_join_wait
+    bot_host_same_server_codec
+    bot_host_same_server_stop
+    bot_host_optout_slots_codec
+    bot_host_optout_give_back
+    bot_host_max_saved
+    bot_host_dyn_raise_rule
+    bot_host_dyn_under_reserve
+    bot_host_dyn_carry
+    bot_host_dyn_keel
+    bot_host_dyn_pct_off
+    bot_host_dyn_determinism
+    bot_host_limits_codec
+    bot_host_slot_owner_only
     internal_msg_skips_sender_self
     internal_msg_skips_non_allied_bot
     internal_msg_skips_inactive_bot_slot
@@ -6049,6 +6529,12 @@ set(_unit_test_names
     log_roundtrip_player_lag
     log_roundtrip_player_lag_recorded
     log_roundtrip_overrun_stats
+    overrun_record_hosts
+    overrun_record_v1_hosts
+    overrun_record_host_place
+    overrun_record_sections
+    log_roundtrip_bothost_data
+    bothost_record_off_writes_nothing
     log_roundtrip_overrun_stats_recorded
     log_roundtrip_overrun_stats_bots
     log_roundtrip_overrun_stats_every_30s
@@ -6062,6 +6548,7 @@ set(_unit_test_names
     lv_lag_view_draw
     lv_lag_view_rename
     lv_overrun_read
+    lv_bothost_read
     log_roundtrip_ping
     log_roundtrip_snapshot_tank_stocks
     log_roundtrip_tank_stock_record
@@ -6073,6 +6560,28 @@ set(_unit_test_names
     replay_v2_pill_health_nibble
     replay_v1_pill_health_nibble
     brainrec_version_rejects_old
+    brainrec_host_merge_by_tick
+    brainrec_host_merge_mid_block_move
+    brainrec_host_merge_other_version_rebuilt_brain
+    brainrec_host_merge_missing_block
+    brainrec_host_merge_dir_keeps_raw
+    brainrec_host_merge_verdict
+    brainrec_host_merge_again_acks_merged
+    brainrec_host_merge_replace_waits
+    brainrec_host_ack_target_rejoined
+    bothost_rec_upload_keeps_files
+    bothost_rec_lowdisk_keeps_files
+    bothost_rec_pool_raw_flag
+    brainrec_host_path_checks
+    brainrec_dir_lock_orders_merge_and_gzip
+    brainrec_host_make_absolute
+    brainrec_host_print2_gz
+    brainrec_print2_zst_round_trip
+    brainrec_host_rec_codec
+    brainrec_host_legend_unclosed
+    brainrec_host_upload_no_session
+    brainrec_host_merge_dir_other_names
+    brainrec_host_upload_file_cap
     lv_tank_stocks_from_snapshot
     lv_team_colours_from_snapshot
     lv_team_colours_events
@@ -6278,6 +6787,12 @@ set(_unit_test_names
     entity_record_seek_lands_on_the_right_liveness
     brain_removed_items_info_masks
     brain_removed_items_recording_masks
+    btr_zstd_recording_reads_back
+    btr_zstd_skip_across_blocks
+    btr_gzip_skip_past_2gib
+    btr_zstd_cut_file_reads_its_prefix
+    btr_block_logs_compress
+    brainrec_split_cuts_brain_logs_by_engine_tick
     starts_pick_cluster_nearest_teammate
     starts_pick_farthest_when_solo
     starts_pick_none_when_all_taken
@@ -6356,6 +6871,7 @@ set(_unit_test_names
     lobby_default_sides_same_side_pick_kept
     lobby_ds_bot_team_naming_pools
     lobby_ds_bot_start_teams
+    lobby_bot_default_team_on_add
     starts_side_end_to_end_four_v_twelve
     starts_side_region_sweep
     starts_side_unsided_kept_off_chosen_side
@@ -6642,6 +7158,7 @@ set(_unit_test_names
     sim_rules_desc_range_phrase
     screen_bullets_build
     ping_smoother
+    lobby_ping_color
     client_timing
     interp_render
     interp_respawn_no_death_flash
@@ -6810,6 +7327,8 @@ set(_unit_test_names
     pill_shadow_withheld_crc_matches
     loopback_map_cull
     loopback_map_cull_resync
+    loopback_map_unculled_drop_heals
+    console_bot_set
     sound_delivery_wire_cull
     sound_tier_playback
     view_ally_loopback
@@ -6828,6 +7347,7 @@ set(_unit_test_names
     channel_mux_control_backlog_full_refuses
     channel_mux_game_channel_still_refuses_at_window
     channel_mux_control_reset_clears_backlog
+    channel_mux_bulk_wide
     spectator_ring
     spectator_ring_nolog
     spectator_ring_nolog_tick_anchors
@@ -7028,6 +7548,10 @@ set(_unit_test_names
     vote_surrender_blocked_without_lobby
     vote_back_to_lobby_blocked_without_lobby
     lobby_add_bot_rejects_when_at_maxbots
+    lobby_add_bot_rejects_at_host_capacity
+    server_bot_slots_codec
+    server_bot_slots_setting
+    server_bot_slots_locked
     lobby_bot_count_counts_only_connected_bots
     lobby_maxbots_cap_boundary
     empty_return_to_lobby_removes_bots_and_unlocks
@@ -7342,6 +7866,7 @@ set(_unit_test_names
     unfielded_seat_unfield_keeps_sync
     unfielded_seat_spawn_keeps_alliances
     unfielded_seat_on_the_wire
+    unfielded_seat_server_row_lists_held
     scenario_wave_cost_refield_resumes
     scenario_wave_cost_seats_swap_counts
     scenario_wave_cost_other_brain_rebuilds
@@ -7770,6 +8295,19 @@ set(_unit_test_names
     scenario_dir_merges_shipped_mods
     scenario_dir_entry_roundtrip
     scenario_dir_chunk_not_in_flight
+    cpu_speed_test_short
+    cpu_speed_test_cancel
+    cpu_speed_store_roundtrip
+    cpu_speed_background
+    cpu_speed_background_cancel
+    brain_capacity_default_clamp
+    brain_capacity_cache
+    brain_capacity_c_brain
+    brain_capacity_name_from_path
+    brain_capacity_lua_fallback
+    brain_capacity_add_state
+    brain_capacity_parse_override
+    host_bot_capacity
     scenario_callbacks_manifest
     scenario_callbacks_over_cap
     scenario_callbacks_json

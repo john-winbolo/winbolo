@@ -17,6 +17,10 @@
  *  portable encoding is attempted. Versioned via BRAINREC_VERSION;
  *  a reader accepts the versions brainRecVersionReadable names and
  *  refuses the rest.
+ *
+ *  The byte stream is stored in the container brain_record_io.h
+ *  describes (zstd for new files, gzip for old ones); open, write and
+ *  read it only through those functions.
  *********************************************************/
 #ifndef BRAIN_RECORD_H
 #define BRAIN_RECORD_H
@@ -135,6 +139,15 @@ bool brainRecordIsEnabled(void);
  * per frame — the winbolods -braindebug default; ~1/botCount the cost,
  * no spike ticks), 2 = full per-bot per-tick capture. */
 void brainRecordSetParts(bool viz, int poolMode);
+void brainRecordGetParts(bool *viz, int *poolMode);
+
+/* Bot Host seats. fn answers true for a bot whose brain runs on a Bot
+ * Host, with the gen of the assign that placed it there and the host's
+ * name (32 bytes). The recorder then writes the hosted marker for it
+ * (brain_record_host.h) in place of an empty entry. NULL: no hosted bots. */
+typedef bool (*BrainRecordHostedFn)(BYTE slot, uint16_t *placeGen,
+                                    char *hostName);
+void brainRecordSetHostedInfoFn(BrainRecordHostedFn fn);
 
 /* Pool-JSON prefetch protocol (parallelizes the capture): a bot's worker
  * thread asks CaptureWanted right after its think and, when true, builds
@@ -176,6 +189,56 @@ void brainRecordEndGame(void);
 
 /* Flush + close the output file. Call at server shutdown. */
 void brainRecordShutdown(void);
+
+/* === Block log compression ==============================================
+ * The brains' text logs in a finished -brain-debug block directory
+ * (print2_bot*.log, player*.jsonl, brain_p*.jsonl) are gzip-compressed in
+ * place: each file becomes <name>.gz and the plain file is removed. The
+ * block that is open stays plain, so a hard kill never leaves a log cut
+ * inside a gzip stream. Readers accept <name>, <name>.gz, or both (then the
+ * .gz holds the earlier lines and the plain file the later ones).
+ *
+ * A file is written to <name>.gz.tmp, renamed to <name>.gz, and only then
+ * is the plain file removed. If the remove fails (a writer still has the
+ * file open), the .gz is removed again and the plain file stays. A file
+ * that already has a .gz is left alone. */
+
+/* Start compressing dir's logs on a background thread. First closes the
+ * brain log writer's open files (brainCoreReleaseLogFiles), so call it
+ * after the bots write to a different directory. */
+void brainRecordCompressLogsAsync(const char *dir);
+
+/* Remember dir to compress later: at game over the bots can still write to
+ * the block until the next block opens. A dir already remembered is started
+ * first. */
+void brainRecordDeferLogCompress(const char *dir);
+
+/* Start the remembered dir, if any (brainRecordCompressLogsAsync). */
+void brainRecordRunDeferredLogCompress(void);
+
+/* Start the remembered dir and wait for every compression to end. Call at
+ * shutdown after the bots are destroyed. */
+void brainRecordFinishLogCompress(void);
+
+/* Compress one directory now, on this thread. Returns the number of files
+ * compressed. For tests and tools. Waits while the directory is locked
+ * (brainRecordDirLock). */
+int brainRecordCompressLogsNow(const char *dir);
+
+/* One block folder at a time: the log compression and the Bot Host merge
+ * both lock the folder they work on, so they never act on the same folder
+ * at once. A folder is named by its last path part, so "debug_sessions/X"
+ * and "D:/run/debug_sessions/X" are the same lock. Lock waits while another
+ * thread holds the folder; it returns false only when it cannot work (no
+ * name, no mutex, too many folders locked). Thread-safe. */
+bool brainRecordDirLock(const char *dir);
+void brainRecordDirUnlock(const char *dir);
+
+/* True when the logs of dir are still to be compressed by the recorder: it
+ * is the open block, the block waiting for the next one to open, or a
+ * compression of it is running. Main thread only. A merge into a folder
+ * that is not pending compresses the merge's plain logs itself. */
+bool brainRecordLogCompressPending(const char *dir);
 
 #ifdef __cplusplus
 }

@@ -307,3 +307,35 @@ int run_ping_smoother(void) {
 
   return 0;
 }
+
+/* lobbyPingColor (lobby_ping_color.h) picks its colour by pingColorRole.
+ * The player list's old rule was: good band online, fair band high ping,
+ * anything else (poor, or no measurement) disconnected. Same answer at
+ * each edge. */
+static PingColorRole oldLobbyRule(uint16_t ms) {
+    switch (pingBandClassify(ms)) {
+        case PING_BAND_GOOD: return PING_COLOR_ONLINE;
+        case PING_BAND_FAIR: return PING_COLOR_HIGH_PING;
+        default:             return PING_COLOR_DISCONNECTED;
+    }
+}
+
+int run_lobby_ping_color(void) {
+    static const uint16_t edges[] = {
+        0, 1, 2, PING_BAND_GOOD_MAX_MS - 1, PING_BAND_GOOD_MAX_MS,
+        PING_BAND_GOOD_MAX_MS + 1, PING_BAND_FAIR_MAX_MS - 1,
+        PING_BAND_FAIR_MAX_MS, PING_BAND_FAIR_MAX_MS + 1, 999, 65534, 65535
+    };
+    size_t i;
+    for (i = 0; i < sizeof(edges) / sizeof(edges[0]); i++) {
+        UT_ASSERT_MSG(pingColorRole(edges[i]) == oldLobbyRule(edges[i]),
+                      "ping %u", (unsigned)edges[i]);
+    }
+    UT_ASSERT(pingColorRole(1) == PING_COLOR_ONLINE);
+    UT_ASSERT(pingColorRole(49) == PING_COLOR_ONLINE);
+    UT_ASSERT(pingColorRole(50) == PING_COLOR_HIGH_PING);
+    UT_ASSERT(pingColorRole(149) == PING_COLOR_HIGH_PING);
+    UT_ASSERT(pingColorRole(150) == PING_COLOR_DISCONNECTED);
+    UT_ASSERT(pingColorRole(0) == PING_COLOR_DISCONNECTED);
+    return 0;
+}

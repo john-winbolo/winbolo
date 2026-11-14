@@ -523,6 +523,22 @@ struct ServerSim {
                                     * when the seat's player leaves. */
     BYTE     maxPlayers;           /* cap on join slots; 0 falls back to MAX_TANKS */
     BYTE     maxBots;              /* cap on AI bots in the lobby; 0 = no cap */
+    int      hostBotCapacity;      /* how many bots this server runs in its
+                                    * own process at full strength (the CPU
+                                    * speed test, or -botcapacity): 0..16,
+                                    * SERVER_HOST_BOT_CAPACITY_NONE for no
+                                    * cap, _MEASURING while the test runs.
+                                    * Only the dedicated server sets it.
+                                    * The recommended value for the
+                                    * lobby's Server bot slots. */
+    int      serverBotSlots;       /* the lobby's Server bot slots: 0..16,
+                                    * or -1 to follow hostBotCapacity */
+    bool     serverBotSlotsLocked; /* -botcapacity set it: no change */
+    int      gameBotLimit;         /* the game bot limit (the server's bot
+                                    * slots plus each Bot Host's), when
+                                    * gameBotLimitSet; else the limit is
+                                    * the server's own */
+    bool     gameBotLimitSet;
     BYTE     maxSpectators;        /* 0 = spectating disabled */
     uint32_t specDelayTicks;       /* spectator view delay in ticks (50 ticks/s) */
     bool     worldPreLoaded;       /* TRUE while the world is fresh from

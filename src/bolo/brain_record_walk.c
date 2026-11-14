@@ -15,6 +15,7 @@
 
 #include <string.h>
 
+#include "brain_record_io.h"
 #include "brain_record.h"  /* BrainRecHeader / BrainRecCandidate / magics */
 #include "input_packet.h"  /* TankSnapshot / ShellSnapshot / BaseSnapshot / PillSnapshot */
 
@@ -144,4 +145,19 @@ BrainRecWalkStatus brainRecWalkFrame(BrainRecReader *r, BrainRecFrameInfo *out) 
 
     if (out) *out = info;
     return BRAINREC_WALK_OK;
+}
+
+static size_t walkInRead(void *ctx, void *dst, size_t len) {
+    return brainRecInRead((BrainRecIn *)ctx, dst, len);
+}
+
+static bool walkInSkip(void *ctx, size_t len) {
+    return brainRecInSkip((BrainRecIn *)ctx, (uint64_t)len);
+}
+
+void brainRecWalkReaderFromIn(BrainRecReader *r, struct BrainRecIn *in) {
+    memset(r, 0, sizeof *r);
+    r->ctx  = in;
+    r->read = walkInRead;
+    r->skip = walkInSkip;
 }

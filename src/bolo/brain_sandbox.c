@@ -144,6 +144,24 @@ bool brainSandboxResolveInRoot(const char *root, const char *path,
 #endif
 }
 
+/* A second folder the sandboxed brains may open files in, besides their own
+ * directory: the Bot Host's recordings folder, where their print2 logs go.
+ * Empty: none. Set by brainSandboxSetExtraRoot. */
+static char s_extra_root[BRAIN_SANDBOX_PATH_MAX];
+
+void brainSandboxSetExtraRoot(const char *dir) {
+  SDL_strlcpy(s_extra_root, dir ? dir : "", sizeof(s_extra_root));
+}
+
+/* brainSandboxResolveInRoot against the brain root, then against the extra
+ * root, if one is set. The jailed functions below use this. */
+static bool brain_resolve_in_roots(const char *root, const char *path,
+                                   char *out, size_t outlen) {
+  if (brainSandboxResolveInRoot(root, path, out, outlen)) return true;
+  if (s_extra_root[0] == '\0') return false;
+  return brainSandboxResolveInRoot(s_extra_root, path, out, outlen);
+}
+
 /* Jailed io.open(filename [, mode]): path-check, then delegate to the real
  * io.open (upvalue 1) with the resolved path. upvalue 2 is the brain root. */
 static int l_jailed_io_open(lua_State *L) {
@@ -153,7 +171,7 @@ static int l_jailed_io_open(lua_State *L) {
   char resolved[BRAIN_SANDBOX_PATH_MAX * 2];
   int  base;
 
-  if (!brainSandboxResolveInRoot(root, fname, resolved, sizeof(resolved))) {
+  if (!brain_resolve_in_roots(root, fname, resolved, sizeof(resolved))) {
     lua_pushnil(L);
     lua_pushfstring(L, "io.open: '%s' is outside the brain directory", fname);
     return 2;
@@ -175,7 +193,7 @@ static int l_jailed_loadfile(lua_State *L) {
   size_t len = 0;
   char  *src;
 
-  if (!brainSandboxResolveInRoot(root, fname, resolved, sizeof(resolved))) {
+  if (!brain_resolve_in_roots(root, fname, resolved, sizeof(resolved))) {
     lua_pushnil(L);
     lua_pushfstring(L, "loadfile: '%s' is outside the brain directory", fname);
     return 2;
@@ -202,7 +220,7 @@ static int l_jailed_os_remove(lua_State *L) {
   const char *root  = lua_tostring(L, lua_upvalueindex(1));
   char resolved[BRAIN_SANDBOX_PATH_MAX * 2];
 
-  if (!brainSandboxResolveInRoot(root, fname, resolved, sizeof(resolved))) {
+  if (!brain_resolve_in_roots(root, fname, resolved, sizeof(resolved))) {
     lua_pushnil(L);
     lua_pushfstring(L, "os.remove: '%s' is outside the brain directory", fname);
     return 2;
@@ -227,7 +245,7 @@ static int l_jailed_path_arg1(lua_State *L) {
   char resolved[BRAIN_SANDBOX_PATH_MAX * 2];
   int  n, i;
 
-  if (p == NULL || !brainSandboxResolveInRoot(root, p, resolved, sizeof(resolved))) {
+  if (p == NULL || !brain_resolve_in_roots(root, p, resolved, sizeof(resolved))) {
     lua_pushnil(L);
     lua_pushfstring(L, "blocked: path '%s' is outside the brain directory",
                     p ? p : "(nil)");
