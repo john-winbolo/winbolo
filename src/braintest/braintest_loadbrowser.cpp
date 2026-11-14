@@ -192,7 +192,7 @@ int loadBrowserRender(bool *open, const LoadSessionEntry *list, int count,
     int chosen = -1;
     bool renamed = false;
 
-    ImGui::SetNextWindowSize(ImVec2(660, 440), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(1000, 440), ImGuiCond_FirstUseEver);
     if (ImGui::Begin("Load Session", open)) {
         ImGui::TextUnformatted(
             "Replay a winbolods recording. Loading ABANDONS the current game "
@@ -248,14 +248,22 @@ int loadBrowserRender(bool *open, const LoadSessionEntry *list, int count,
             ImGui::TextDisabled("No debug_sessions/ recordings found.");
         } else if (shown <= 0) {
             ImGui::TextDisabled("No session matches \"%s\".", s_filter);
-        } else if (ImGui::BeginTable("sessions", 6,
+        } else if (ImGui::BeginTable("sessions", 7,
                        ImGuiTableFlags_RowBg | ImGuiTableFlags_Borders |
-                       ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingStretchProp)) {
-            ImGui::TableSetupScrollFreeze(0, 1);
-            ImGui::TableSetupColumn("Session",  ImGuiTableColumnFlags_WidthStretch, 2.0f);
-            ImGui::TableSetupColumn("Map",      ImGuiTableColumnFlags_WidthStretch, 1.5f);
+                       ImGuiTableFlags_ScrollY | ImGuiTableFlags_ScrollX |
+                       ImGuiTableFlags_Resizable |
+                       ImGuiTableFlags_SizingFixedFit)) {
+            /* Every column can be dragged wider or narrower. The Session
+             * column starts wide enough for a long split-part name such as
+             * "20261103_132136_1_v2_anchor_helm_s205_part23of23"; when the
+             * columns add up to more than the window, ScrollX scrolls the
+             * table sideways instead of squeezing the names. */
+            ImGui::TableSetupScrollFreeze(1, 1);
+            ImGui::TableSetupColumn("Session",  ImGuiTableColumnFlags_WidthFixed,  380.0f);
+            ImGui::TableSetupColumn("Map",      ImGuiTableColumnFlags_WidthFixed,  160.0f);
             ImGui::TableSetupColumn("Players",  ImGuiTableColumnFlags_WidthFixed,   60.0f);
-            ImGui::TableSetupColumn("Length",   ImGuiTableColumnFlags_WidthFixed,   64.0f);
+            ImGui::TableSetupColumn("Length",   ImGuiTableColumnFlags_WidthFixed,   52.0f);
+            ImGui::TableSetupColumn("Game clock", ImGuiTableColumnFlags_WidthFixed, 90.0f);
             ImGui::TableSetupColumn("Size",     ImGuiTableColumnFlags_WidthFixed,   72.0f);
             ImGui::TableSetupColumn("",         ImGuiTableColumnFlags_WidthFixed,  140.0f);
             ImGui::TableHeadersRow();
@@ -298,7 +306,7 @@ int loadBrowserRender(bool *open, const LoadSessionEntry *list, int count,
                 if (!e->loadable) {
                     ImGui::TableNextColumn();
                     ImGui::TextDisabled("%s", e->note[0] ? e->note : "not loadable");
-                    for (int c = 0; c < 3; c++) { ImGui::TableNextColumn(); ImGui::TextDisabled("-"); }
+                    for (int c = 0; c < 4; c++) { ImGui::TableNextColumn(); ImGui::TextDisabled("-"); }
                     ImGui::TableNextColumn(); /* no Load button */
                     continue;
                 }
@@ -306,7 +314,18 @@ int loadBrowserRender(bool *open, const LoadSessionEntry *list, int count,
                 ImGui::TableNextColumn(); ImGui::TextUnformatted(e->map[0] ? e->map : "?");
                 ImGui::TableNextColumn(); ImGui::Text("%d", e->bots);
                 ImGui::TableNextColumn();
+                /* Game time from the recorded ticks. "..." while the
+                 * background read of an older recording is still going. */
                 if (e->durationSec >= 0) ImGui::Text("%d:%02d", e->durationSec / 60, e->durationSec % 60);
+                else if (e->lengthPending) ImGui::TextDisabled("...");
+                else                     ImGui::TextUnformatted("?");
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Game time from the first to the last recorded tick");
+                ImGui::TableNextColumn();
+                if (e->startSec >= 0)
+                    ImGui::Text("%d:%02d-%d:%02d", e->startSec / 60, e->startSec % 60,
+                                e->endSec / 60, e->endSec % 60);
+                else if (e->lengthPending) ImGui::TextDisabled("...");
                 else                     ImGui::TextUnformatted("?");
                 ImGui::TableNextColumn(); ImGui::Text("%.0f MB", e->sizeMB);
 

@@ -1,11 +1,13 @@
 # The scenario arenas
 
-A hundred and eighty-one small maps, each with a scenario script beside it.
+A hundred and eighty-two small maps, each with a scenario script beside it.
 Most are built to make one bot decision happen on purpose and then say whether
 the bot made it. Thirty-nine check a shipped script instead: the twenty-four
 `pilltag_*` arenas, the seven `rule_roulette_*` arenas, the four `virus_*`
 arenas and the four `survival_pushout*` arenas, which play Survival's own map
-and script. `deep_sea_safe_rule` checks one gameplay rule. The twenty-three `tutorial_*`
+and script. `deep_sea_safe_rule` checks one gameplay rule.
+`bases_only_no_pills` checks the Bases Only script in `tests/mods/`, which is
+for bot tests only and does not ship. The twenty-three `tutorial_*`
 arenas check the shipped Tutorial map's script: the checkpoint respawn,
 re-arming and the RESET pens, the Station 2 goals, the popups and the white
 lines that follow them, the Station 5A demo take, its watch spot and its

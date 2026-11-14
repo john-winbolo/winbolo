@@ -2050,56 +2050,26 @@ void serverSimScenarioClearSeats(ServerSim *sim) {
     }
 }
 
-/* Seat one of a team's bots. An unfielded team gets the seat and no bot; a
- * fielded one gets both. Answers false when there was nowhere to put it,
- * which stops the team's loop rather than spinning on a full roster. */
-static bool scenarioSeatOne(ServerSim *sim, const ScnLobbyTeam *team,
-                            BrainModesCache *modesCache) {
-    char name[PLAYER_NAME_LEN];
-    int  slot;
+/* The mode and the difficulty the template named, in the seat's config
+ * before anything is built with it. A held seat takes them here too: it
+ * loads no brain yet, but the spawn that fields it later reads the pair off
+ * this config, and the lobby row shows it from the moment the seat appears.
+ * Written before the seat exists, which is the order the seating has always
+ * used. */
+static void scenarioSeatConfig(ServerSim *sim, BYTE slot,
+                               const ScnLobbyTeam *team,
+                               BrainModesCache *modesCache) {
+    const char *cfgBrain = (team->brain[0] != '\0')
+                         ? team->brain : serverSimGetBotBrainPath(sim);
+    const BrainModes *cfgModes = serverSimBrainModesCached(modesCache, cfgBrain);
+    scenarioSeedBotConfigBase(sim, slot, team->id, cfgModes);
+    scenarioApplyBotConfigKeysFromModes(
+        sim, slot, cfgModes, cfgBrain, team->mode, team->difficulty);
+}
 
-    /* The seat rule the lobby's Add Bot and both spawn handlers already
-       share, so a bot seats above the human cap here exactly as it does
-       there and there is no second rule to drift from it. */
-    slot = serverSimFindFreeSlot(sim, true);
-    if (slot < 0) return false;
-    if (scenarioBotName("", (BYTE)slot, name, sizeof(name)) != SCN_OP_OK) {
-        return false;
-    }
-
-    /* The mode and the difficulty the template named, in the seat's config
-       before anything is built with it. A held seat takes them here too: it
-       loads no brain yet, but the spawn that fields it later reads the pair
-       off this config, and the lobby row shows it from the moment the seat
-       appears. */
-    {
-        const char *cfgBrain = (team->brain[0] != '\0')
-                             ? team->brain : serverSimGetBotBrainPath(sim);
-        const BrainModes *cfgModes = serverSimBrainModesCached(modesCache, cfgBrain);
-        scenarioSeedBotConfigBase(sim, (BYTE)slot, team->id, cfgModes);
-        scenarioApplyBotConfigKeysFromModes(
-            sim, (BYTE)slot, cfgModes, cfgBrain, team->mode, team->difficulty);
-    }
-
-    if (!team->fielded) {
-        if (!serverSimAddUnfieldedSeat(sim, (BYTE)slot, name, team->id)) {
-            return false;
-        }
-    } else {
-        const char *brain = (team->brain[0] != '\0')
-                          ? team->brain : serverSimGetBotBrainPath(sim);
-        if (brain == NULL || brain[0] == '\0') return false;
-        /* A team that plays from the start is built with its own table, the
-           same one a held seat's spawn is handed below. */
-        if (!serverSimCreateBot(sim, (BYTE)slot, brain, name,
-                                serverSimGetBotAiType(sim),
-                                gameTypeGet(&sim->sim.game),
-                                sim->sim.hiddenMines, team->id,
-                                &team->init)) {
-            return false;
-        }
-        sim->lobbyPlayers[slot].keepSeat = true;
-    }
+/* What a seat keeps of the team it was seated for, once the seat exists. */
+static void scenarioSeatRecord(ServerSim *sim, BYTE slot,
+                               const ScnLobbyTeam *team) {
     /* Recorded whether the seat holds a bot yet or not: an unfielded seat is
        fielded later by a spawn that names no brain and carries no init table
        of its own, and this is where that spawn finds the two its team was
@@ -2114,7 +2084,7 @@ static bool scenarioSeatOne(ServerSim *sim, const ScnLobbyTeam *team,
        the template named a mode, because a seat NOBODY publishes for leaves
        every client showing the zero its table was created with — which is
        Easy, whatever the server actually holds. */
-    serverSimQueueBotConfigPublish(sim, (BYTE)slot);
+    serverSimQueueBotConfigPublish(sim, slot);
     if (team->id > 0 && team->id < MAX_TANKS && !sim->teams[team->id].in_use) {
         sim->teams[team->id].in_use = 1;
         if (sim->teams[team->id].name[0] == '\0') {
@@ -2122,6 +2092,171 @@ static bool scenarioSeatOne(ServerSim *sim, const ScnLobbyTeam *team,
                          "Team %d", (int)team->id);
         }
     }
+}
+
+/* Hold a free seat for one of an unfielded team's bots: the seat the
+ * template seeds, with the brain, the init table, the mode and the
+ * difficulty the team was written with. The one place such a seat is made
+ * from a team, so the template's seating and a host's Add Bot onto the team
+ * cannot come out different. */
+static bool scenarioSeatHeld(ServerSim *sim, BYTE slot, const char *name,
+                             const ScnLobbyTeam *team,
+                             BrainModesCache *modesCache) {
+    if (slot >= MAX_TANKS || sim->playerConnected[slot]) return false;
+    scenarioSeatConfig(sim, slot, team, modesCache);
+    if (!serverSimAddUnfieldedSeat(sim, slot, name, team->id)) {
+        return false;
+    }
+    /* The transport's name table is what the duplicate-name checks and the
+       round recording read for a bot seat, so every held seat writes it
+       here, as an ordinary bot's add does. */
+    transportUdpServerSetBotName(slot, name);
+    scenarioSeatRecord(sim, slot, team);
+    return true;
+}
+
+/* The template's entry for a team the scenario holds seats for without
+ * fielding them, or NULL: no template, no such team, or a team that plays
+ * from the start. */
+static const ScnLobbyTeam *scenarioHeldTeam(const ServerSim *sim, BYTE team) {
+    uint8_t t;
+    if (sim == NULL || !sim->scenarioLobbyValid) return NULL;
+    if (team == 0 || team >= MAX_TANKS) return NULL;
+    for (t = 0; t < sim->scenarioLobby.numTeams; t++) {
+        const ScnLobbyTeam *lt = &sim->scenarioLobby.teams[t];
+        if (lt->id == team) {
+            return lt->fielded ? NULL : lt;
+        }
+    }
+    return NULL;
+}
+
+bool serverSimScenarioTeamIsHeld(const ServerSim *sim, BYTE team) {
+    return scenarioHeldTeam(sim, team) != NULL;
+}
+
+bool serverSimScenarioTemplateHasTeam(const ServerSim *sim, BYTE team) {
+    uint8_t t;
+    if (sim == NULL || !sim->scenarioLobbyValid) return false;
+    if (team == 0 || team >= MAX_TANKS) return false;
+    for (t = 0; t < sim->scenarioLobby.numTeams; t++) {
+        if (sim->scenarioLobby.teams[t].id == team) return true;
+    }
+    return false;
+}
+
+bool serverSimScenarioAddHeldSeat(ServerSim *sim, BYTE slot,
+                                  const char *name, BYTE team) {
+    BrainModesCache modesCache;
+    char seatName[PLAYER_NAME_LEN];
+    const ScnLobbyTeam *lt = scenarioHeldTeam(sim, team);
+    if (lt == NULL || slot >= MAX_TANKS) return false;
+    if (name != NULL && name[0] != '\0') {
+        SDL_strlcpy(seatName, name, sizeof(seatName));
+    } else if (scenarioBotName("", slot, seatName, sizeof(seatName)) !=
+               SCN_OP_OK) {
+        return false;
+    }
+    modesCache.count = 0;
+    return scenarioSeatHeld(sim, slot, seatName, lt, &modesCache);
+}
+
+/* A lobby bot whose team has just changed is made the kind of seat the team
+ * asks for. Onto a team the scenario holds seats for, it becomes one of
+ * those seats; off such a team onto any other, it becomes an ordinary bot on
+ * the field. Both are a remove and a fresh seat under the same name, which
+ * is what the template's own reseating does. A human, a seat that is already
+ * the right kind and a lobby with no template are left alone. */
+void serverSimScenarioBotMovedTeam(ServerSim *sim, BYTE slot, BYTE oldTeam) {
+    char name[PLAYER_NAME_LEN];
+    BYTE team;
+    bool held;
+    const ScnLobbyTeam *lt;
+
+    if (sim == NULL || slot >= MAX_TANKS) return;
+    if (!sim->scenarioLobbyValid) return;
+    if (!sim->playerConnected[slot] || !serverSimIsBot(sim, slot)) return;
+    team = sim->lobbyPlayers[slot].teamNumber;
+    if (team == oldTeam) return;
+    held = sim->lobbyPlayers[slot].keepSeat && !sim->lobbyPlayers[slot].fielded;
+    lt = scenarioHeldTeam(sim, team);
+    if (lt == NULL && !held) return;
+
+    name[0] = '\0';
+    playersGetPlayerName(&sim->sim.plyrs, slot, name, sizeof(name), TRUE);
+    if (name[0] == '\0') {
+        SDL_snprintf(name, sizeof(name), "Bot %d", (int)slot + 1);
+    }
+
+    serverSimRemoveBot(sim, slot);
+    if (lt != NULL) {
+        BrainModesCache modesCache;
+        modesCache.count = 0;
+        if (!scenarioSeatHeld(sim, slot, name, lt, &modesCache)) {
+            WB_LOG_WARN(WB_LOG_CAT_SIM,
+                        "scenario: bot moved onto held team %d lost its seat",
+                        (int)team);
+        }
+        return;
+    }
+    /* Off a held team: an ordinary bot, built as the lobby's Add Bot builds
+       one — the server's brain, no init table, the team written after. */
+    if (!botManagerAddBot(sim, slot, serverSimGetBotBrainPath(sim), name,
+                          serverSimGetBotAiType(sim),
+                          gameTypeGet(&sim->sim.game),
+                          sim->sim.hiddenMines, 0, NULL)) {
+        WB_LOG_WARN(WB_LOG_CAT_SIM,
+                    "scenario: held seat moved onto team %d did not load a brain",
+                    (int)team);
+        return;
+    }
+    transportUdpServerSetBotName(slot, name);
+    if (team > 0 && team < MAX_TANKS) {
+        serverSimSetTeam(sim, slot, team);
+    }
+    serverSimApplyNewBotDefaults(sim, slot, (int)team,
+                                 serverSimGetBotBrainPath(sim), TRUE);
+    serverSimPublishLobbySlot(sim, slot);
+    serverSimPublishLobbyBotBrain(sim, slot);
+}
+
+/* Seat one of a team's bots. An unfielded team gets the seat and no bot; a
+ * fielded one gets both. Answers false when there was nowhere to put it,
+ * which stops the team's loop rather than spinning on a full roster. */
+static bool scenarioSeatOne(ServerSim *sim, const ScnLobbyTeam *team,
+                            BrainModesCache *modesCache) {
+    char name[PLAYER_NAME_LEN];
+    const char *brain;
+    int  slot;
+
+    /* The seat rule the lobby's Add Bot and both spawn handlers already
+       share, so a bot seats above the human cap here exactly as it does
+       there and there is no second rule to drift from it. */
+    slot = serverSimFindFreeSlot(sim, true);
+    if (slot < 0) return false;
+    if (scenarioBotName("", (BYTE)slot, name, sizeof(name)) != SCN_OP_OK) {
+        return false;
+    }
+
+    if (!team->fielded) {
+        /* The same constructor a host's Add Bot onto this team reaches. */
+        return scenarioSeatHeld(sim, (BYTE)slot, name, team, modesCache);
+    }
+
+    scenarioSeatConfig(sim, (BYTE)slot, team, modesCache);
+    brain = (team->brain[0] != '\0') ? team->brain : serverSimGetBotBrainPath(sim);
+    if (brain == NULL || brain[0] == '\0') return false;
+    /* A team that plays from the start is built with its own table, the
+       same one a held seat's spawn is handed. */
+    if (!serverSimCreateBot(sim, (BYTE)slot, brain, name,
+                            serverSimGetBotAiType(sim),
+                            gameTypeGet(&sim->sim.game),
+                            sim->sim.hiddenMines, team->id,
+                            &team->init)) {
+        return false;
+    }
+    sim->lobbyPlayers[slot].keepSeat = true;
+    scenarioSeatRecord(sim, (BYTE)slot, team);
     return true;
 }
 

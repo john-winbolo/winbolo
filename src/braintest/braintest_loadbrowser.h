@@ -18,6 +18,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -31,7 +32,13 @@ typedef struct {
     char   name[LOADBROWSER_MAX_NAME];  /* basename, for display */
     char   map[64];         /* recorded map name */
     int    bots;            /* recorded player/bot count */
-    int    durationSec;     /* wall-clock game length, -1 if unknown */
+    int    durationSec;     /* game length (last - first recorded tick), -1 if unknown */
+    int    startSec;        /* game clock at the first recorded tick, -1 if unknown */
+    int    endSec;          /* game clock at the last recorded tick, -1 if unknown */
+    bool   lengthPending;   /* the tick range is still being read in the background */
+    char   btrPath[340];    /* the brainrec.btr, and its size + mtime: the */
+    int64_t btrBytes;       /*   key of the tick-range lookup */
+    int64_t btrMtime;
     double sizeMB;          /* brainrec.btr size */
     bool   loadable;        /* valid, version-matching brainrec.btr present */
     char   note[64];        /* reason shown when not loadable */
@@ -81,6 +88,14 @@ int loadBrowserFindSegment(const LoadSessionEntry *list, int count,
  * (case-insensitive on Windows, exact elsewhere), for whole names rather
  * than paths. NULL is never equal to anything. */
 bool loadBrowserNameEq(const char *a, const char *b);
+
+/* Natural order for session names, for the Load Session list: a run of
+ * digits compares by its number value, so "x_part2of23" comes before
+ * "x_part10of23" (plain text order would put part10 first). Letters compare
+ * with the same case fold as loadBrowserNameEq. Names that are still equal
+ * fall back to plain strcmp, so the order is total. qsort-style result:
+ * <0, 0 or >0. NULL sorts before any name. */
+int loadBrowserNaturalCmp(const char *a, const char *b);
 
 /* Decompose a session BASENAME into its four pieces:
  *

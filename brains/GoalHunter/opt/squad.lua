@@ -848,6 +848,7 @@ local _ARB_AIM_Y = { 128, 1, 1, 254, 254 }
 local function blitz_spot_shot_blocked(world, sfx, sfy, pmx, pmy, now, pn, quiet)
   local ox = math.floor(sfx * 256 + 0.5)
   local oy = math.floor(sfy * 256 + 0.5)
+  local omx, omy = bit.rshift(ox, 8), bit.rshift(oy, 8)  -- spot tile: boat or land shot
   local margin = C.BLITZ_SPOT_LOS_MARGIN or 0
   if margin > 0 then
     local idx = SM.clear_aim_margin(ox, oy, pmx, pmy, world, margin,
@@ -865,8 +866,7 @@ local function blitz_spot_shot_blocked(world, sfx, sfy, pmx, pmy, now, pn, quiet
         if t.mx == pmx and t.my == pmy then reached = true; break end
         local tt = U.ttype(t.mx, t.my)
         if tt == C.T_BUILDING or tt == C.T_HALFBUILD then blocked = true; break end
-        local be = world and world.base_at and world.base_at[t.my * 256 + t.mx]
-        if be and be.base then blocked = true; break end
+        if U.base_tile_stops_tank_shell(world, t.mx, t.my, omx, omy) then blocked = true; break end
         if SM.pending_pill_at(world, t.mx, t.my) then blocked = true; break end
         local plist = world and world.pill_at and world.pill_at[t.my * 256 + t.mx]
         if plist then for _, e in ipairs(plist) do local pp = e.id and world.pills[e.id]; if pp and not pp.in_tank and (pp.health or 0) > 0 and pp.mx == t.mx and pp.my == t.my then blocked = true; break end end end

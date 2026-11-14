@@ -291,6 +291,25 @@ function M.process_message(sender, text, tick, state)
     end
   end
 
+  -- ── Focused spike vote verbs (fso/fsy/fsn/fsr/fsg/fsa/fsu/fsk/fsc/fsp/fss) ──
+  -- One-shot, queued on state._fs_rx in arrival order; focus_vote.lua parses
+  -- and acts on them in its next update (C.FOCUS_SPIKE_RULE "deny").
+  -- Bug fix: fsk (go with claims), fsc (claim change) and fsp (placed) were
+  -- not in the class, so no teammate got them. test_focus_adaptive.lua
+  -- checks that every verb focus_vote.lua sends is accepted here. fss: the
+  -- picked spike spot (FOCUS_SPIKE_ALL_AGGRO).
+  if text:sub(1, 8) == "/info fs" and text:match("^/info fs[oynrgaukcps] ") then
+    if state then
+      state._fs_rx = state._fs_rx or {}
+      -- Capped: a bot with the vote off never drains the list.
+      if #state._fs_rx < 32 then
+        state._fs_rx[#state._fs_rx + 1] = { from = sender, text = text, tick = tick }
+      end
+    end
+    print2(string.format("FOCUS_SPIKE_RX from p%s %s t=%d", tostring(sender), text, tick))
+    return
+  end
+
   -- ── Bot-command ORDER verbs (obd bid / obc claim / obr release) ─────────
   -- Their own verbs, like the reposition vote's: order traffic is bursty and
   -- the /info state slate is already near the 124-byte batch budget. The

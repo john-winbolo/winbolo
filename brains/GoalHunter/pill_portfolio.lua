@@ -52,6 +52,71 @@ function M.set_targets(back, front, aggro, util, source)
   M.TARGET_AGGRO = aggro
   M.TARGET_UTIL  = util
   M.targets_source = source or "init_arg"
+  -- Any setter other than the win switch below sets the NORMAL shares too
+  -- (and ends a win share or utility-to-aggro period: the new shares are in
+  -- force now).
+  if M.targets_source ~= "win" then
+    M.normal = { back = back, front = front, aggro = aggro, util = util,
+                 source = M.targets_source }
+    M.win_on = false
+    M.u2a_on = false
+  end
+end
+
+-- The normal shares: the defaults, or the "portfolio=" token's shares. The
+-- live M.TARGET_* fields equal these except while the win shares are on.
+M.normal = { back = M.TARGET_BACK, front = M.TARGET_FRONT, aggro = M.TARGET_AGGRO,
+             util = M.TARGET_UTIL, source = M.targets_source }
+M.win_on = false
+M.u2a_on = false
+
+-- Put the live M.TARGET_* fields together from the two focused spike switches:
+--   win shares (M.win_on): the FOCUS_SPIKE_WIN_* shares, else the normal ones;
+--   utility to aggro (M.u2a_on): the utility share moves into aggro, utility 0.
+-- Source label: "win", the normal source, or either one + "+u2a".
+local function apply_live()
+  local b, f, a, u, src
+  if M.win_on then
+    b, f = C.FOCUS_SPIKE_WIN_BACK, C.FOCUS_SPIKE_WIN_FRONT
+    a, u = C.FOCUS_SPIKE_WIN_AGGRO, C.FOCUS_SPIKE_WIN_UTIL
+    src = "win"
+  else
+    local n = M.normal
+    b, f, a, u, src = n.back, n.front, n.aggro, n.util, n.source
+  end
+  if M.u2a_on then
+    -- Rounded to 1e-6 so 0.35 + 0.15 is exactly the double 0.5 (a sum one
+    -- bit short of an integer share would lose a pill in math.floor).
+    a = math.floor((a + u) * 1e6 + 0.5) / 1e6
+    u = 0
+    src = src .. "+u2a"
+  end
+  M.TARGET_BACK, M.TARGET_FRONT, M.TARGET_AGGRO, M.TARGET_UTIL = b, f, a, u
+  M.targets_source = src
+end
+
+-- Win shares (spike.lua, C.FOCUS_SPIKE_WIN_SHARES): while the focused spike base
+-- lead and pill rules pass, the live targets are FOCUS_SPIKE_WIN_BACK /
+-- _FRONT / _AGGRO / _UTIL (source "win"). on = false puts the normal shares
+-- back. Answers true when the live shares changed.
+function M.set_win(on)
+  on = on and true or false
+  if on == M.win_on then return false end
+  M.win_on = on
+  apply_live()
+  return true
+end
+
+-- Utility to aggro (spike.lua, C.FOCUS_SPIKE_UTIL_TO_AGGRO): while the deep
+-- spike rules pass, the utility share is 0 and its share goes to aggro, on
+-- top of the win shares or the normal shares. on = false puts the utility
+-- share back. Answers true when the live shares changed.
+function M.set_u2a(on)
+  on = on and true or false
+  if on == M.u2a_on then return false end
+  M.u2a_on = on
+  apply_live()
+  return true
 end
 
 -- One canonical "tgt b/f/a/u (source)" string for EVERY place that displays the
@@ -93,6 +158,26 @@ function M.near_front(mx, my, r)
   return false
 end
 
+-- The classify() steps after the front test: "aggro" (own tile in enemy
+-- influence, OR surrounded by it: >= AGGRO_NEG_NEIGHBORS of the 8 adjacent
+-- tiles negative, which catches a positive tile boxed in by enemy), "back"
+-- (positive influence, not surrounded), or nil (influence 0: unclaimed).
+local function after_front(mx, my, inf)
+  if inf < 0 then return "aggro" end
+  local neg = 0
+  for dy = -1, 1 do
+    for dx = -1, 1 do
+      if not (dx == 0 and dy == 0)
+         and (cpf.influence_at(mx + dx, my + dy) or 0) < 0 then
+        neg = neg + 1
+      end
+    end
+  end
+  if neg >= (C.AGGRO_NEG_NEIGHBORS or 5) then return "aggro" end
+  if inf > 0 then return "back" end
+  return nil
+end
+
 -- Precise classification of a pill/tile (front-line aware). Returns
 -- (category, influence). `in_use` flags a pill reserved for a pill take.
 -- `placing` = classifying a CANDIDATE TILE for a new placement (strategic
@@ -106,27 +191,75 @@ function M.classify(mx, my, in_use, placing)
   -- front: on/near the front line (radius by purpose — see above).
   local r = placing and (C.FRONT_NEAR_RADIUS_PLACE or 0) or FRONT_NEAR_RADIUS
   if M.near_front(mx, my, r) then return "front", inf end
-  -- aggro: own tile in enemy influence, OR surrounded by it (>= AGGRO_NEG_NEIGHBORS
-  -- of the 8 adjacent tiles negative — catches a positive tile boxed in by enemy).
-  if inf < 0 then return "aggro", inf end
-  local neg = 0
-  for dy = -1, 1 do
-    for dx = -1, 1 do
-      if not (dx == 0 and dy == 0)
-         and (cpf.influence_at(mx + dx, my + dy) or 0) < 0 then
-        neg = neg + 1
-      end
-    end
-  end
-  if neg >= (C.AGGRO_NEG_NEIGHBORS or 5) then return "aggro", inf end
-  -- back: positive influence AND outside the front range AND not surrounded.
-  if inf > 0 then return "back", inf end
+  local cat = after_front(mx, my, inf)
+  if cat then return cat, inf end
   -- inf == 0, away from the line, not surrounded: unclaimed ground.
   -- FRONT_ZERO_IS_FRONT (constants.lua): true = treat as front (fillable);
   -- false = "beyond" -- not a portfolio role, so the placement scan's
   -- STRICT_NEED gate skips it and its sc3 term pays the beyond-front penalty.
   if C.FRONT_ZERO_IS_FRONT ~= false then return "front", inf end
   return "beyond", inf
+end
+
+-- Front needs a target (C.PLACE_FRONT_NEED_TARGET, 2026-11-04). A placement
+-- spot counts as "front" only when at least one known enemy base, enemy pill
+-- or neutral pill is within C.PLACE_FRONT_TARGET_RANGE tiles (Euclidean, tile
+-- centre to tile centre, inclusive). Before this, a spot on the front band
+-- (or on unclaimed ground) was "front" even with nothing in range, so the
+-- bot put front pills where they could shoot nothing.
+--
+-- M.front_targets(world): the target list, built ONCE per placement scan
+-- from this bot's own world model: world.pills with owner "hostile" or
+-- "neutral", world.bases with owner "hostile", each with a known position
+-- (mx, my) and, for pills, not in a tank. Entries are { mx, my, kind, id }.
+-- Returns nil when the knob is off: M.place_classify is then classify().
+function M.front_targets(world)
+  if not C.PLACE_FRONT_NEED_TARGET then return nil end
+  local t = {}
+  if world and world.pills then
+    for id, p in pairs(world.pills) do
+      if (p.owner == "hostile" or p.owner == "neutral")
+         and not p.in_tank and p.mx and p.my then
+        t[#t + 1] = { p.mx, p.my, "pill", id }
+      end
+    end
+  end
+  if world and world.bases then
+    for id, b in pairs(world.bases) do
+      if b.owner == "hostile" and b.mx and b.my then
+        t[#t + 1] = { b.mx, b.my, "base", id }
+      end
+    end
+  end
+  return t
+end
+
+-- Classify a placement CANDIDATE tile (classify(mx, my, false, true)) with
+-- the target test above. tgts = M.front_targets(world); nil = the knob is
+-- off, and the answer is exactly classify()'s. A "front" tile with no target
+-- in range loses front credit and gets the class the classify() steps after
+-- the front test give it: "aggro" (enemy influence or surrounded), "back"
+-- (positive influence), or "beyond" (influence 0: the class classify() gives
+-- unclaimed ground when FRONT_ZERO_IS_FRONT is false, so it fills no role).
+-- Returns (category, influence, lost, nearest, dist): lost = true when the
+-- tile lost front credit; nearest = the nearest target entry (nil when the
+-- list is empty) and dist its distance in tiles. The last three are for the
+-- PLACE_FRONT_NOTARGET log.
+function M.place_classify(mx, my, tgts)
+  local cat, inf = M.classify(mx, my, false, true)
+  if cat ~= "front" or not tgts then return cat, inf end
+  local r  = C.PLACE_FRONT_TARGET_RANGE or C.PILL_FIRE_RANGE or 8
+  local r2 = r * r
+  local best_d2, best = math.huge, nil
+  for i = 1, #tgts do
+    local e = tgts[i]
+    local dx, dy = e[1] - mx, e[2] - my
+    local d2 = dx * dx + dy * dy
+    if d2 <= r2 then return cat, inf end
+    if d2 < best_d2 then best_d2 = d2; best = e end
+  end
+  local nc = after_front(mx, my, inf) or "beyond"
+  return nc, inf, true, best, best and math.sqrt(best_d2) or nil
 end
 
 -- Cached role for an EXISTING pill, re-evaluated every PILL_ROLE_REEVAL_TICKS
@@ -140,7 +273,10 @@ end
 -- can't trigger a move the rest of the team (who reclassified more recently)
 -- disagrees with. Roles are per-bot and never shared, so the only defence
 -- against acting on a stale role is to refresh it at the decision point.
-function M.role_of(pill, tick, force_fresh)
+-- peek: give the role this call would give, but do not write the cache.
+-- A caller that only reads (spike.update_win, every tick) must not move
+-- the re-evaluation times the placement code sees.
+function M.role_of(pill, tick, force_fresh, peek)
   if not pill then return "front" end
   -- A pill carried IN A TANK is always utility (a mobile reserve).
   if pill.in_tank then return "utility" end
@@ -152,6 +288,7 @@ function M.role_of(pill, tick, force_fresh)
   local stale = force_fresh or (not pill.role) or (not pill.role_tick)
     or (tick - pill.role_tick) >= (C.PILL_ROLE_REEVAL_TICKS or 3000)
   if stale then
+    if peek then return (M.classify(pill.mx, pill.my, false)) end
     pill.role      = (M.classify(pill.mx, pill.my, false))
     pill.role_tick = tick
   end
@@ -160,8 +297,8 @@ end
 
 -- Current friendly-pill counts per category, using the cached 60s role.
 -- In-tank pills (own = "friendly", ally = "allied") always count as utility;
--- deployed friendly pills count by their cached role.
-function M.counts(world, tick)
+-- deployed friendly pills count by their cached role. peek: see role_of.
+function M.counts(world, tick, peek)
   local c = { back = 0, front = 0, aggro = 0, utility = 0 }
   if world and world.pills then
     for _, p in pairs(world.pills) do
@@ -170,7 +307,7 @@ function M.counts(world, tick)
           c.utility = c.utility + 1
         end
       elseif p.owner == "friendly" and (p.health or 0) > 0 then
-        local cat = M.role_of(p, tick)
+        local cat = M.role_of(p, tick, false, peek)
         c[cat] = (c[cat] or 0) + 1
       end
     end
@@ -189,23 +326,40 @@ M.FILL_PRIORITY = { "utility", "front", "aggro", "back" }
 -- slots are handed out in M.FILL_PRIORITY order — so for small totals util/
 -- front/aggro fill before any back pill. (No forced >=1 back anymore: back is
 -- the lowest priority; the base-guardian bonus handles must-cover bases.)
-function M.targets(total)
+-- A role whose share is exactly 0 gets no leftover slot (utility-to-aggro sets
+-- utility to 0: no pill is held back for it). Shares above 0 are unchanged.
+local function targets_for(total, back, front, aggro, util)
   if total <= 0 then return { back = 0, front = 0, aggro = 0, utility = 0 } end
   local t = {
-    utility = math.floor(total * M.TARGET_UTIL),
-    front   = math.floor(total * M.TARGET_FRONT),
-    aggro   = math.floor(total * M.TARGET_AGGRO),
-    back    = math.floor(total * M.TARGET_BACK),
+    utility = math.floor(total * util),
+    front   = math.floor(total * front),
+    aggro   = math.floor(total * aggro),
+    back    = math.floor(total * back),
   }
   local assigned = t.utility + t.front + t.aggro + t.back
+  local share = { utility = util, front = front, aggro = aggro, back = back }
+  local skip_zero = (util > 0 or front > 0 or aggro > 0 or back > 0)
   local i = 0
   while assigned < total do
     local cat = M.FILL_PRIORITY[(i % #M.FILL_PRIORITY) + 1]
-    t[cat] = t[cat] + 1
-    assigned = assigned + 1
+    if not (skip_zero and share[cat] == 0) then
+      t[cat] = t[cat] + 1
+      assigned = assigned + 1
+    end
     i = i + 1
   end
   return { back = t.back, front = t.front, aggro = t.aggro, utility = t.utility }
+end
+
+function M.targets(total)
+  return targets_for(total, M.TARGET_BACK, M.TARGET_FRONT, M.TARGET_AGGRO, M.TARGET_UTIL)
+end
+
+-- Target counts from the NORMAL shares (M.normal), whatever is live. The deep
+-- spike pill rule reads these, so the win shares cannot switch themselves off.
+function M.normal_targets(total)
+  local n = M.normal
+  return targets_for(total, n.back, n.front, n.aggro, n.util)
 end
 
 -- ── Visualizers (R1 / brainstorm batch) ───────────────────────────────────
