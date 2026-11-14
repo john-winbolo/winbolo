@@ -1653,6 +1653,21 @@ M.UTURN_SIDE_AVOID_SEA = false    -- u-turn side prefers the sweep with no deep 
 -- circle, so it does not slow the tank. No new value.
 -- Log line: TURN_CAP_NEXT_SQUARE. KEEL false.
 M.STEER_TURN_CAP_NEXT_SQUARE = true
+-- Turn-circle cap on capture_pill's last step, 2026-11-14 (bot bug fix). On
+-- the last step of capture_pill, the tank must drive over the pill's square.
+-- The plow turn cap is loose (twice the cruise cap), and under the goal
+-- lookahead it read the NEXT goal's heading error, so a tank already moving
+-- when it came near a dead pill kept speed 44-48, its turning circle was wider
+-- than the pill's distance, and it drove circles round the pill
+-- (pilltag_guard_quickly_takes_prize_a_hunter_kills: player 0 one square off;
+-- player 1 drove straight onto the pill and took it). true => on that step the
+-- speed is also capped at the highest speed whose turning circle still reaches
+-- the square: the turning-circle test above (distance < 2 x R x sin(heading
+-- error)) solved for speed, from the heading error the turn keys steer by.
+-- Engine turn physics only, no new value. capture_pill only: on capture_base
+-- the same brake kept the tank longer under a guard pill's fire (base_steal_B:
+-- 4 deaths). KEEL false.
+M.STEER_CAPTURE_TURN_CIRCLE_CAP = true
 
 -- 5. STICKY CLIFF BRAKE (2026-09-06 drowning analysis, fix (c)).
 --    Both guards above are decided FRESH every tick off a heading ray. While
@@ -7036,6 +7051,10 @@ M.PRESETS = {
     -- 2026-11-03: the turn cap also applies when the next route square is
     -- inside the turning circle. KEEL capped only within 4 tiles of the goal.
     STEER_TURN_CAP_NEXT_SQUARE    = false,
+    -- 2026-11-14: on capture_pill's last step the speed is also capped so
+    -- the turning circle still reaches the square. KEEL kept plow speed and
+    -- could drive circles round a dead pill one square away.
+    STEER_CAPTURE_TURN_CIRCLE_CAP = false,
     -- 2026-11-03: a finetune turn-in tick that brings the gun closer to the
     -- clear lane does not count against CLEAR_TURN_IN_TAPS (hard cap 2x), and
     -- steering turns toward the lane. KEEL counted every tick and turned
@@ -7804,6 +7823,7 @@ M.PRESETS.mast = {
   REPLAN_OFFSET_MODE                = "random",
   SPIKE_PEN_SKIP_MAX_SHOTS          = 0,
   SPIKE_REPAIR_PRIORITY             = false,
+  STEER_CAPTURE_TURN_CIRCLE_CAP     = false,
   STEER_TURN_CAP_NEXT_SQUARE        = false,
 }
 
