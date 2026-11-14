@@ -190,7 +190,13 @@ def game_cmd(mapfile, seed, port, ticks, snap, final, a_arg, b_arg, per_side,
            "-teams", f"{per_side},{per_side}",
            "-port", str(port), "-seed", str(seed), "-ticks", str(ticks),
            "-brain-no-budget-kill", "-brain-lua-seed", "42",
-           "-finaljson", str(final), "-quiet", "-asap"]
+           "-finaljson", str(final), "-quiet", "-asap",
+           # Room for every bot in the server's own process. A DS with Bot
+           # Host support gives itself slots from the machine's CPU count
+           # (3 on a 4-core box) and holds any bot past them, so on a small
+           # machine one side played a bot short. A DS without -botcapacity
+           # ignores the flag.
+           "-botcapacity", str(n)]
     if snap:
         cmd += ["-snapjson", str(snap), "-snapinterval", str(SNAP_INTERVAL)]
     if debug:
