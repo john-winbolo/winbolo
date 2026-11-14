@@ -550,6 +550,7 @@ static const UnitTestEntry s_tests[] = {
       run_channel_mux_game_channel_still_refuses_at_window                                  },
     { "channel_mux_control_reset_clears_backlog",
       run_channel_mux_control_reset_clears_backlog                                          },
+    { "channel_mux_bulk_wide",                   run_channel_mux_bulk_wide                   },
     { "spectator_ring",                          run_spectator_ring                          },
     { "spectator_ring_nolog",                    run_spectator_ring_nolog                    },
     { "spectator_ring_nolog_tick_anchors",       run_spectator_ring_nolog_tick_anchors       },

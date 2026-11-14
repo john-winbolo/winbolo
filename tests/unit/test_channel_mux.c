@@ -20,6 +20,7 @@
  * survives the wrap at 0xFFFFFFFF).
  */
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -3006,5 +3007,209 @@ int run_channel_mux_control_reset_clears_backlog(void) {
                   "the message delivered after the reset carried index %u, "
                   "not the one sent after it (%u)", (unsigned)r.badIdx,
                   (unsigned)fresh);
+    return 0;
+}
+
+
+/* ---- the wide bulk ring (channelBulkUseWideSend / channelBulkUseWideRecv) ---- */
+
+#define WIDE_STREAM_LEN   (3u * 1024u * 1024u)
+#define WIDE_FRAMES_TICK  48
+
+/* Send WIDE_STREAM_LEN bytes a -> b on CHANNEL_BULK, WIDE_FRAMES_TICK frames
+ * a tick at most, under dropPct loss each way. Returns the ticks it took, or
+ * -1 when the bytes did not come through whole and in order. */
+static int wideStreamRun(ChannelMux *a, ChannelMux *b, int dropPct,
+                         uint8_t *src, uint8_t *dst) {
+    Pipe *ab = (Pipe *)calloc(1, sizeof(*ab));
+    Pipe *ba = (Pipe *)calloc(1, sizeof(*ba));
+    uint8_t frame[MAXFRAME];
+    uint8_t out[CHANNEL_MAX_SEG];
+    uint32_t queued = 0, got = 0;
+    int tick = 0, result = -1;
+    if (ab == NULL || ba == NULL) goto done;
+    while (got < WIDE_STREAM_LEN && tick < 200000) {
+        int f;
+        uint16_t olen;
+        channelTick(a, (uint32_t)tick, LINK_RTT_MS);
+        channelTick(b, (uint32_t)tick, LINK_RTT_MS);
+        if (queued < WIDE_STREAM_LEN) {
+            uint32_t room = CHANNEL_STREAM_BUF - a->streamCount;
+            uint32_t n = WIDE_STREAM_LEN - queued;
+            if (n > room) n = room;
+            if (n > 0 && channelStreamSend(a, CHANNEL_BULK, src + queued, n)) {
+                queued += n;
+            }
+        }
+        for (f = 0; f < WIDE_FRAMES_TICK; f++) {
+            int la = channelBuildFrame(a, frame, FRAME_BUDGET);
+            if (la <= 2) break;
+            pipeEnqueue(ab, frame, la, tick,
+                        (int)bolo_rand_below(100) < dropPct, 0, 2);
+        }
+        {
+            int lb = channelBuildFrame(b, frame, FRAME_BUDGET);
+            pipeEnqueue(ba, frame, lb, tick,
+                        (int)bolo_rand_below(100) < dropPct, 0, 2);
+        }
+        pipeDeliver(ab, b, tick);
+        pipeDeliver(ba, a, tick);
+        while (channelReceive(b, CHANNEL_BULK, out, &olen)) {
+            if (got + olen > WIDE_STREAM_LEN) goto done;
+            memcpy(dst + got, out, olen);
+            got += olen;
+        }
+        tick++;
+    }
+    if (got == WIDE_STREAM_LEN && memcmp(src, dst, WIDE_STREAM_LEN) == 0) {
+        result = tick;
+    }
+done:
+    free(ab);
+    free(ba);
+    return result;
+}
+
+int run_channel_mux_bulk_wide(void) {
+    ChannelMux *a = (ChannelMux *)malloc(sizeof(*a));
+    ChannelMux *b = (ChannelMux *)malloc(sizeof(*b));
+    size_t sendBytes = channelBulkWideSendBytes(CHANNEL_BULK_WIDE_WINDOW,
+                                                CHANNEL_BULK_WIDE_SEG);
+    size_t recvBytes = channelBulkWideRecvBytes(CHANNEL_BULK_WIDE_WINDOW,
+                                                CHANNEL_BULK_WIDE_SEG);
+    void *sendRing = malloc(sendBytes);
+    void *recvRing = malloc(recvBytes);
+    uint8_t *src = (uint8_t *)malloc(WIDE_STREAM_LEN);
+    uint8_t *dst = (uint8_t *)malloc(WIDE_STREAM_LEN);
+    uint8_t frame[MAXFRAME];
+    int narrowTicks, wideTicks, lossTicks;
+    uint32_t i;
+    const char *fail = NULL;
+
+    if (!a || !b || !sendRing || !recvRing || !src || !dst) {
+        fail = "allocation failed";
+        goto done;
+    }
+    bolo_srand(0x51DE51DEULL);
+    for (i = 0; i < WIDE_STREAM_LEN; i++) src[i] = (uint8_t)bolo_rand();
+
+    /* Bad sizes are refused and change nothing. */
+    channelMuxInit(a);
+    if (channelBulkUseWideSend(a, sendRing, CHANNEL_BULK_WIDE_WINDOW,
+                               CHANNEL_MAX_SEG + 1) ||
+        channelBulkUseWideRecv(a, recvRing, CHANNEL_BULK_WINDOW - 1,
+                               CHANNEL_BULK_WIDE_SEG) ||
+        channelBulkSendWindow(a) != CHANNEL_BULK_WINDOW ||
+        channelBulkRecvWindow(a) != CHANNEL_BULK_WINDOW) {
+        fail = "a bad wide ring size was taken";
+        goto done;
+    }
+
+    /* The send ring cannot change while a segment is unacked. */
+    if (!channelStreamSend(a, CHANNEL_BULK, src, 1000)) {
+        fail = "stream send refused";
+        goto done;
+    }
+    channelTick(a, 0, LINK_RTT_MS);
+    (void)channelBuildFrame(a, frame, FRAME_BUDGET);
+    if (channelBulkSendIdle(a) ||
+        channelBulkUseWideSend(a, sendRing, CHANNEL_BULK_WIDE_WINDOW,
+                               CHANNEL_BULK_WIDE_SEG)) {
+        fail = "the send ring changed with segments unacked";
+        goto done;
+    }
+
+    /* The receive ring cannot change while a segment waits in it: segment 0
+     * is lost, segment 1 arrives and waits for it. */
+    channelMuxInit(b);
+    {
+        uint8_t big[MAXFRAME];
+        ChannelMux *c = (ChannelMux *)malloc(sizeof(*c));
+        int lc;
+        if (c == NULL) { fail = "allocation failed"; goto done; }
+        channelMuxInit(c);
+        (void)channelStreamSend(c, CHANNEL_BULK, src, CHANNEL_BULK_SEG);
+        channelTick(c, 0, LINK_RTT_MS);
+        (void)channelBuildFrame(c, big, FRAME_BUDGET);   /* seq 0: lost */
+        (void)channelStreamSend(c, CHANNEL_BULK, src, CHANNEL_BULK_SEG);
+        lc = channelBuildFrame(c, big, FRAME_BUDGET);    /* seq 1 */
+        channelRecvFrame(b, big, lc);
+        free(c);
+        if (channelBulkUseWideRecv(b, recvRing, CHANNEL_BULK_WIDE_WINDOW,
+                                   CHANNEL_BULK_WIDE_SEG)) {
+            fail = "the receive ring changed with a segment waiting in it";
+            goto done;
+        }
+    }
+
+    /* The built-in rings, as a yardstick. */
+    channelMuxInit(a);
+    channelMuxInit(b);
+    narrowTicks = wideStreamRun(a, b, 0, src, dst);
+    if (narrowTicks < 0) {
+        fail = "the built-in rings did not move the stream whole";
+        goto done;
+    }
+
+    /* A wide receive ring takes a built-in sender's segments. */
+    channelMuxInit(a);
+    channelMuxInit(b);
+    if (!channelBulkUseWideRecv(b, recvRing, CHANNEL_BULK_WIDE_WINDOW,
+                                CHANNEL_BULK_WIDE_SEG)) {
+        fail = "a wide receive ring was refused";
+        goto done;
+    }
+    if (wideStreamRun(a, b, 0, src, dst) < 0) {
+        fail = "a built-in sender into a wide receive ring lost bytes";
+        goto done;
+    }
+
+    /* Wide both ways: whole, and much faster. */
+    channelMuxInit(a);
+    channelMuxInit(b);
+    if (!channelBulkUseWideSend(a, sendRing, CHANNEL_BULK_WIDE_WINDOW,
+                                CHANNEL_BULK_WIDE_SEG) ||
+        !channelBulkUseWideRecv(b, recvRing, CHANNEL_BULK_WIDE_WINDOW,
+                                CHANNEL_BULK_WIDE_SEG)) {
+        fail = "a wide ring was refused";
+        goto done;
+    }
+    wideTicks = wideStreamRun(a, b, 0, src, dst);
+    if (wideTicks < 0) {
+        fail = "the wide rings did not move the stream whole";
+        goto done;
+    }
+    if (wideTicks * 4 > narrowTicks) {
+        UT_FAIL("the wide rings took %d ticks, the built-in ones %d: not 4 "
+                "times faster", wideTicks, narrowTicks);
+    }
+
+    /* Wide both ways under 5% loss each way: still whole and in order. */
+    channelMuxInit(a);
+    channelMuxInit(b);
+    (void)channelBulkUseWideSend(a, sendRing, CHANNEL_BULK_WIDE_WINDOW,
+                                 CHANNEL_BULK_WIDE_SEG);
+    (void)channelBulkUseWideRecv(b, recvRing, CHANNEL_BULK_WIDE_WINDOW,
+                                 CHANNEL_BULK_WIDE_SEG);
+    lossTicks = wideStreamRun(a, b, 5, src, dst);
+    if (lossTicks < 0) {
+        fail = "the wide rings lost or reordered bytes under 5% loss";
+        goto done;
+    }
+    if (lossTicks > narrowTicks) {
+        UT_FAIL("the wide rings under 5%% loss took %d ticks, more than the "
+                "built-in ones with no loss (%d)", lossTicks, narrowTicks);
+    }
+    printf("  3 MiB stream: built-in rings %d ticks, wide %d, wide with 5%% "
+           "loss %d\n", narrowTicks, wideTicks, lossTicks);
+
+done:
+    free(a);
+    free(b);
+    free(sendRing);
+    free(recvRing);
+    free(src);
+    free(dst);
+    if (fail != NULL) UT_FAIL("%s", fail);
     return 0;
 }

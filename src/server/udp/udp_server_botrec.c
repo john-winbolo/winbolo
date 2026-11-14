@@ -220,13 +220,12 @@ void transportUdpServerRecClose(void) {
     if (!s_open) return;
     s_open = false;
     s_seq++;
-    /* The block is finished: the hosts may send it now, slowly while a game
-     * runs; the lobby asks again at full speed. */
+    /* The block is finished: the hosts send it now, at full speed, also
+     * while a game runs. */
     for (h = 0; h < MAX_BOT_HOSTS; h++) {
         BotHostConn *hc = &udpServer.botHosts[h];
         if (!hc->connected) continue;
         hc->recUploadOwed = true;
-        hc->recUploadPaced = true;
     }
 }
 
@@ -243,17 +242,13 @@ void serverBotRecOnLobby(void) {
         BotHostConn *hc = &udpServer.botHosts[h];
         if (!hc->connected) continue;
         hc->recUploadOwed = true;
-        hc->recUploadPaced = false;
     }
 }
 
 void serverBotRecOnGameStart(void) {
-    int h;
-    if (s_seq == 0) return;   /* this server never recorded */
-    for (h = 0; h < MAX_BOT_HOSTS; h++) {
-        if (!udpServer.botHosts[h].connected) continue;
-        recSend(h, BOT_HOST_REC_OP_HOLD, 0, 0, 0, NULL);
-    }
+    /* Nothing: an upload goes on at full speed while a game runs. An older
+     * server sent BOT_HOST_REC_OP_HOLD here, which made an older host slow
+     * its upload down. */
 }
 
 void serverBotRecHostConnected(int h, bool inLobby) {
@@ -265,7 +260,7 @@ void serverBotRecHostConnected(int h, bool inLobby) {
     /* A host may hold blocks from before (the server or the host was
      * stopped): it sends them now, when this server has sessions. */
     hc->recUploadOwed = recHasSessions();
-    hc->recUploadPaced = !inLobby;
+    (void)inLobby;
 }
 
 void serverBotRecHostGone(int h) {
@@ -732,8 +727,11 @@ void serverBotRecService(ServerSim *sim, bool inLobby) {
         }
         if (hc->recUploadOwed) {
             hc->recUploadOwed = false;
-            recSend(h, BOT_HOST_REC_OP_UPLOAD,
-                    hc->recUploadPaced ? BOT_HOST_REC_F_PACED : 0, 0, 0, NULL);
+            /* Never BOT_HOST_REC_F_PACED now. a: this server's wide bulk
+             * ring, which a newer host sends into; an older host leaves a
+             * alone and keeps the built-in ring. */
+            recSend(h, BOT_HOST_REC_OP_UPLOAD, 0, 0,
+                    serverBotHostBulkWide(h), NULL);
         }
         if (hc->recDoneOwed && hc->recNoSession) {
             /* Nothing of it was written. */

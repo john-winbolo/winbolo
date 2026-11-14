@@ -702,6 +702,7 @@ int run_channel_mux_control_backlog_delivers_in_order(void);
 int run_channel_mux_control_backlog_full_refuses(void);
 int run_channel_mux_game_channel_still_refuses_at_window(void);
 int run_channel_mux_control_reset_clears_backlog(void);
+int run_channel_mux_bulk_wide(void);
 
 /* Spectator delayed-stream ring (test_spectator_ring.c): segmentation,
  * keyframe-at-segment-start, mid-interval seek + replay, segment isolation,

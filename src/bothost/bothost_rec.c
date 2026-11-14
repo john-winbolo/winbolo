@@ -45,7 +45,6 @@
 #define REC_DISK_CHECK_MS  5000u
 #define REC_ACK_WAIT_MS    120000u
 #define REC_RETRY_MS       10000u
-#define REC_PACED_MS       200u
 #define REC_STATE_MS       250u
 #define REC_MAX_FAILS      3
 /* Written into a block folder the server merged: it is not sent again.
@@ -98,7 +97,6 @@ typedef struct {
 
     /* Uploads. */
     bool       want;
-    bool       paced;
     uint32_t   retryAtMs;
     bool       active;
     char       upBlock[BOT_HOST_REC_BLOCK_LEN];
@@ -979,7 +977,6 @@ void hostRecServerUp(int srv, const char *label) {
     sv->open = false;
     sv->lowDisk = false;
     sv->want = false;
-    sv->paced = true;
     sv->fails = 0;
     sv->skipCount = 0;
     sv->stateSent = false;
@@ -1006,12 +1003,14 @@ void hostRecOnEvent(int srv, const ControlEvent *evt) {
         case BOT_HOST_REC_OP_OPEN:  srvOpen(srv, evt); break;
         case BOT_HOST_REC_OP_CLOSE: srvClose(srv); break;
         case BOT_HOST_REC_OP_UPLOAD:
+            /* An older server's BOT_HOST_REC_F_PACED is not obeyed: the
+             * upload goes at full speed. */
             sv->want = true;
-            sv->paced = (evt->u.botHostRec.flags & BOT_HOST_REC_F_PACED) != 0;
             sv->retryAtMs = 0;
+            if (s_io.bulkWide != NULL) s_io.bulkWide(srv, evt->u.botHostRec.a);
             break;
         case BOT_HOST_REC_OP_HOLD:
-            sv->paced = true;
+            /* An older server's "slow down while a game runs": ignored. */
             break;
         case BOT_HOST_REC_OP_CLEAR: srvClear(srv); break;
         case BOT_HOST_REC_OP_ACK:   srvAck(srv, evt); break;
@@ -1086,19 +1085,25 @@ void hostRecService(uint32_t nowMs) {
                 upReset(sv);
                 sv->retryAtMs = nowMs + REC_RETRY_MS;
             }
-        } else if (sv->active) {
-            if (!sv->paced) {
-                /* As fast as the bulk channel takes it. */
-                int n;
-                for (n = 0; n < 4 && sv->active && !sv->waitAck; n++) {
-                    if (s_io.bulkIdle != NULL && !s_io.bulkIdle(srv)) break;
-                    upPiece(srv);
-                }
-            } else if (nowMs - sv->lastPieceMs >= REC_PACED_MS) {
-                if (s_io.bulkIdle == NULL || s_io.bulkIdle(srv)) upPiece(srv);
-            }
         }
         srvReportState(srv, nowMs);
+    }
+    hostRecPumpUploads();
+}
+
+void hostRecPumpUploads(void) {
+    int srv;
+    if (!s_init) return;
+    for (srv = 0; srv < REC_MAX_SERVERS; srv++) {
+        RecSrv *sv = &s_srv[srv];
+        int n;
+        if (!sv->up || !sv->active) continue;
+        /* As fast as the bulk channel takes it: a piece goes when the bulk
+         * sender has handed the last one to the channel. */
+        for (n = 0; n < 4 && sv->active && !sv->waitAck; n++) {
+            if (s_io.bulkIdle != NULL && !s_io.bulkIdle(srv)) break;
+            upPiece(srv);
+        }
     }
 }
 

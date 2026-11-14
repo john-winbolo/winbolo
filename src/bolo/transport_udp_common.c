@@ -336,6 +336,16 @@ SOCKET createUdpSocket(bool exclusive) {
 #else
     (void)exclusive;
 #endif
+    {
+        /* 4 MB socket buffers: a Bot Host's recording upload has about
+         * 1.3 MB in flight, and the default buffer (64 KB on Windows) drops
+         * a burst of it. Only a request: the system may give less. */
+        int bufBytes = 4 * 1024 * 1024;
+        setsockopt(sock, SOL_SOCKET, SO_RCVBUF, (const char *)&bufBytes,
+                   sizeof(bufBytes));
+        setsockopt(sock, SOL_SOCKET, SO_SNDBUF, (const char *)&bufBytes,
+                   sizeof(bufBytes));
+    }
     ioctlsocket(sock, FIONBIO, &nonBlock);
     return sock;
 }

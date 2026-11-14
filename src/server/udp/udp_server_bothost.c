@@ -2545,6 +2545,8 @@ void serverBotHostPlayerGone(ServerSim *sim, int slot, const char *why) {
     udpServer.playerTicketConnId[slot] = 0;
 }
 
+static void botHostAttachWideRecv(int h);
+
 void serverSendBotHostAccept(int h, ServerSim *sim) {
     BotHostConn *hc = &udpServer.botHosts[h];
     uint8_t buf[PACKET_HEADER_SIZE + 9 + 8];
@@ -2656,6 +2658,7 @@ void serverAcceptBotHost(ServerSim *sim, const struct sockaddr_in *fromAddr,
             hc->lastReceivedTick = udpServer.tickCount;
             hc->outSequence = 1;
             channelMuxInit(&hc->channelMux);
+            botHostAttachWideRecv(freeIdx);
             bulkSenderInit(&hc->bulk);
         }
         fprintf(stderr, "[bothost] player %u \"%s\" Bot Host connected from "
@@ -2739,6 +2742,7 @@ void serverAcceptBotHost(ServerSim *sim, const struct sockaddr_in *fromAddr,
         hc->lastReceivedTick = udpServer.tickCount;
         hc->outSequence = 1;
         channelMuxInit(&hc->channelMux);
+        botHostAttachWideRecv(freeIdx);
         bulkSenderInit(&hc->bulk);
     }
     fprintf(stderr, "[bothost] Bot Host \"%s\" connected from %s with %u "
@@ -3563,6 +3567,33 @@ static void botSeatSeedMines(ServerSim *sim, int s) {
         seat->mineSeedColumn++;
     }
     if (seat->mineSeedColumn >= MINES_ARRAY_SIZE) seat->mineSeedDone = true;
+}
+
+/* The wide bulk receive rings (channel_mux.h), one for each host place,
+ * made the first time a host connects there and kept for the program's
+ * life: about 1.3 MB each. A host's recording upload comes on CHANNEL_BULK,
+ * and the built-in ring (24 KB) caps it near 1 MB/s. */
+static void *s_wideRecv[MAX_BOT_HOSTS];
+
+static void botHostAttachWideRecv(int h) {
+    BotHostConn *hc;
+    if (h < 0 || h >= MAX_BOT_HOSTS) return;
+    hc = &udpServer.botHosts[h];
+    if (s_wideRecv[h] == NULL) {
+        s_wideRecv[h] = malloc(channelBulkWideRecvBytes(CHANNEL_BULK_WIDE_WINDOW,
+                                                        CHANNEL_BULK_WIDE_SEG));
+        if (s_wideRecv[h] == NULL) return;   /* the built-in ring stays */
+    }
+    (void)channelBulkUseWideRecv(&hc->channelMux, s_wideRecv[h],
+                                 CHANNEL_BULK_WIDE_WINDOW, CHANNEL_BULK_WIDE_SEG);
+}
+
+uint32_t serverBotHostBulkWide(int h) {
+    const ChannelState *c;
+    if (h < 0 || h >= MAX_BOT_HOSTS) return 0;
+    c = &udpServer.botHosts[h].channelMux.ch[CHANNEL_BULK];
+    if (c->recvWindow <= CHANNEL_BULK_WINDOW) return 0;
+    return (c->recvSegSize << 20) | (c->recvWindow & 0xFFFFFu);
 }
 
 static void botHostPump(int h) {
