@@ -557,7 +557,7 @@ local function stuck_recovery(state, info, goal)
   -- STUCK_MOVE_WU in one think (full speed is about 16).  So after
   -- STUCK_LOOKAHEAD_COLLAPSE_TICKS on one path step the collapse turned the
   -- tank back to its own square even while it drove onto the step.
-  -- pilltag_fort_last_shot seed 555: the guard, at rest one square west of
+  -- pilltag_fort_guard_kills_own_pillbox_to_keep_it seed 555: the guard, at rest one square west of
   -- his dead pill, drove at it, was turned away 27 thinks later still on his
   -- square, and circled until the hunter took the pill.  The collapse clock
   -- (acc_since) restarts each time the tank is STUCK_MOVE_WU closer than at
