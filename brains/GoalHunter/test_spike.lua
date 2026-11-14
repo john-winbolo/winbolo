@@ -839,18 +839,32 @@ print("PRESETS.keel")
 check("default: FOCUS_SPIKE_WIN_SHARES = true", WIN_DEFAULT == true)
 do
   local sp, raw = C.PRESETS.keel_focus, C.PRESETS.keel_focus_raw
-  local nk, same = 0, true
+  -- Keel knobs that both focus presets may set to their own value.
+  local OWN = {
+    FOCUS_SPIKE_ENABLED = true, SPIKE_REPAIR_PRIORITY = true,
+    FOCUS_SPIKE_UTIL_TO_AGGRO = true, FOCUS_SPIKE_NEUTRAL_AS_ENEMY = true,
+    REPAIR_FRIENDLY_FIRE_REJECT_TICKS = true, FOCUS_SPIKE_DEFEND_DISCOUNT = true,
+    FOCUS_SPIKE_NEUTRAL_PILL_COVER = true, FOCUS_SPIKE_ADAPTIVE_SPOT = true,
+  }
+  -- keel_focus only: the eight spot and plan knobs it sets on purpose
+  -- (constants.lua keel_focus). keel_focus_raw keeps the keel value of each.
+  local FOCUS_OWN = {
+    FOCUS_SPIKE_ALL_AGGRO = true, FOCUS_SPIKE_CARE_BY_RANGE = true,
+    FOCUS_SPIKE_CLOSE_PAYOFF = true, FOCUS_SPIKE_PLAN_FLAT = true,
+    FOCUS_SPIKE_MULTI_BOOST = true, FOCUS_SPIKE_STAND_RADIUS = true,
+    FOCUS_SPIKE_RESCORE_TICKS = true, FOCUS_SPIKE_RESCORE_SLICES = true,
+  }
+  local nk, diff = 0, {}
   for k, v in pairs(C.PRESETS.keel) do
     nk = nk + 1
-    if k ~= "FOCUS_SPIKE_ENABLED" and k ~= "SPIKE_REPAIR_PRIORITY"
-       and k ~= "FOCUS_SPIKE_UTIL_TO_AGGRO" and k ~= "FOCUS_SPIKE_NEUTRAL_AS_ENEMY"
-       and k ~= "REPAIR_FRIENDLY_FIRE_REJECT_TICKS" and k ~= "FOCUS_SPIKE_DEFEND_DISCOUNT"
-       and k ~= "FOCUS_SPIKE_NEUTRAL_PILL_COVER" and k ~= "FOCUS_SPIKE_ADAPTIVE_SPOT"
-       and (sp[k] ~= v or raw[k] ~= v) then
-      same = false
+    if not OWN[k] then
+      if sp[k] ~= v and not FOCUS_OWN[k] then diff[#diff + 1] = "keel_focus." .. k end
+      if raw[k] ~= v then diff[#diff + 1] = "keel_focus_raw." .. k end
     end
   end
-  check("keel_focus / _raw carry every other keel value", nk > 10 and same, nk)
+  table.sort(diff)
+  check("keel_focus / _raw carry every other keel value", nk > 10 and #diff == 0,
+        nk .. " " .. table.concat(diff, " "))
   check("keel_focus / _raw: friendly fire 50", sp.REPAIR_FRIENDLY_FIRE_REJECT_TICKS == 50
         and raw.REPAIR_FRIENDLY_FIRE_REJECT_TICKS == 50)
   check("preset keel_focus: every rule on", sp.FOCUS_SPIKE_ENABLED == true

@@ -7669,6 +7669,72 @@ do
   M.PRESETS.keel_focus_bench = kb
 end
 
+-- ── PRESETS.mast (2026-11-14) ─────────────────────────────────────────────
+-- MAST = tag 2.2.1 (commit f76366c34), the last real release. With
+-- `preset=mast` this one brain plays like the release 2.2.1 bot, so a bench
+-- can test one knob against MAST with no old brain:
+--   0-1=<brain>[preset=mast],2-3=<brain>[preset=mast cfg=KNOB=VALUE]
+-- An entry is here only where the value differs from today's default:
+--   * a knob that is in 2.2.1's constants.lua: its 2.2.1 default;
+--   * a knob added after 2.2.1: the value that gives the 2.2.1 behaviour
+--     (the old behaviour, or off).
+-- A sub-value that is read only while its master switch is on is not here
+-- when the master is off here (the FOCUS_SPIKE_* values under
+-- FOCUS_SPIKE_ENABLED, and LGM_KILL_FIRE_WU, CAPTURE_LGM_HUNT_TRACK_TILES and
+-- CAPTURE_LGM_HUNT_PICK_NEAREST_PILL under LGM_KILL_IMPROVED). So
+-- `preset=mast cfg=<master>=true` tests the feature with today's values.
+-- RULE: every new behaviour knob adds its MAST value (the 2.2.1 behaviour)
+-- here, in the same commit that adds the knob. test_preset_mast.lua checks
+-- the 2.2.1 defaults.
+M.PRESETS.mast = {
+  -- In 2.2.1: the 2.2.1 default.
+  CAPACITY_KILLED_AVOID             = 200,
+  CAPACITY_KILLED_CUT               = 3,
+  CAPTURE_LGM_HUNT_FIRE_WU          = 100,
+  REPAIR_FRIENDLY_FIRE_REJECT_TICKS = 400,
+  -- Added after 2.2.1: the 2.2.1 behaviour.
+  ATK_REPRICE_EVENTS                = false,
+  BLITZ_SETUP_16DIR                 = false,
+  BLOCKER_MIN_LANE_BRAD             = 0,
+  BUILDER_CERTAIN_DEATH_REWIND_MAX  = 1,
+  BUILDER_FREE_COMBAT_GOALS         = false,
+  BUILDER_LEASH_EUCLID              = false,  -- Manhattan leash, as in 2.2.1
+  BUILDER_NO_IDLE_FARM_UNDER_FIRE   = false,
+  BUILDER_REPAIR_CLAIM_SHARE        = false,
+  BUILDER_SEND_CERTAIN_DEATH_ONLY   = false,
+  CAPACITY_KILL_STREAK_N            = 1,      -- every kill cuts tiers
+  CAPTURE_PILL_BUILDER_FREE         = false,
+  CHARGE_LEEWAY                     = false,
+  CLEAR_TURN_TAP_PROGRESS           = false,
+  FIRE_BLOCK_FRIENDLY_BUILDER       = false,
+  FOCUS_SPIKE_ENABLED               = false,
+  GC_MODE                           = "auto",
+  KILL_PICKUP_LETHAL_EXIT           = false,
+  KILL_PICKUP_LETHAL_REPLAN         = false,
+  LGM_DEST_AIM                      = false,
+  LGM_DEST_HOLD_FIRE                = false,
+  LGM_DEST_INTERCEPT                = false,
+  LGM_DEST_LIVE_PILLS               = false,
+  LGM_DEST_PASS_THROUGH             = false,
+  LGM_KILL_IMPROVED                 = false,
+  LIVE_PHYSICS_WALL                 = false,  -- 2.2.1 had no WALL group
+  PF_REROUTE_KEEP_FRAC              = 0,
+  PF_REROUTE_KEEP_MARGIN            = 0,
+  PF_START_HEADING                  = false,
+  PILL_COVER_BY_HEALTH              = false,
+  PLACE_FRONT_NEED_TARGET           = false,
+  QUICK_REPAIR_ON_TAKE              = false,
+  QUICK_REPAIR_PREDICT_SHOTS        = false,
+  REFUEL_NOT_LOW_MULT               = 1.0,
+  REPAIR_GIVE_WAY                   = false,
+  REPAIR_LOW_DMG_MULT_MAX           = 1.0,
+  REPAIR_STANDOFF_ENABLED           = false,
+  REPLAN_OFFSET_MODE                = "random",
+  SPIKE_PEN_SKIP_MAX_SHOTS          = 0,
+  SPIKE_REPAIR_PRIORITY             = false,
+  STEER_TURN_CAP_NEXT_SQUARE        = false,
+}
+
 -- ── SIDE SETTINGS (2026-09-29, Andrew; Virus) ─────────────────────────
 -- What the init words `survivor` and `horde` write into C (init.lua
 -- _apply_cfg_tokens). Each word also sets state.side, and the never-refuel
