@@ -114,15 +114,19 @@
 #define BOT_HOST_REC_F_LOWDISK   0x10u
 /* ACK results, in state. The host keeps its files in every case; only
  * CLEAR deletes them. */
-#define BOT_HOST_REC_ACK_MERGED  1  /* every host file was read and filled
-                                     * entries: the host marks the block
-                                     * uploaded */
+#define BOT_HOST_REC_ACK_MERGED  1  /* every host file was read and the
+                                     * merge was written: the host marks the
+                                     * block uploaded. percent may still
+                                     * carry BOT_HOST_REC_FAIL_NO_FILL (a
+                                     * file filled no entry, often a block
+                                     * merged before), botsTotal the count */
 #define BOT_HOST_REC_ACK_SAVED   2  /* older servers: kept beside the session;
                                      * the host marks the block uploaded */
 #define BOT_HOST_REC_ACK_FAILED  3  /* not merged: the host keeps the block
                                      * not uploaded and sends it again */
-/* ACK FAILED: the reason in percent, the host files that could not be read
- * in botsDone, the host files that filled no entry in botsTotal. */
+/* ACK (FAILED, and MERGED with NO_FILL): the reason in percent, the host
+ * files that could not be read in botsDone, the host files that filled no
+ * entry in botsTotal. */
 #define BOT_HOST_REC_FAIL_NONE       0
 #define BOT_HOST_REC_FAIL_BROKEN     1  /* the upload came in broken */
 #define BOT_HOST_REC_FAIL_NO_SESSION 2  /* no such finished session folder */

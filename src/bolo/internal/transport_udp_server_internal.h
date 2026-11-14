@@ -971,6 +971,10 @@ void serverBotRecRow(int h, uint8_t *state, uint8_t *percent,
                      uint8_t *botsDone, uint8_t *bots);
 /* True while host h sends or waits for a merge: it is not released. */
 bool serverBotRecBusy(int h);
+/* The connection a finished merge answers (udp_server_botrec.c). */
+int  serverBotRecAckTarget(int was, uint64_t connId, bool playerHost,
+                           uint32_t addr, const char *hostSafe,
+                           const char *block);
 /* One recording piece (BULK_KIND_REC_CHUNK) from host h. The bulk sink
  * calls it; the unit tests call it straight. */
 void serverBotRecPiece(int h, const BulkStreamHeader *hd,

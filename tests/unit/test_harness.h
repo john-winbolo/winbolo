@@ -1625,6 +1625,9 @@ int run_brainrec_host_merge_other_version_rebuilt_brain(void);
 int run_brainrec_host_merge_missing_block(void);
 int run_brainrec_host_merge_dir_keeps_raw(void);
 int run_brainrec_host_merge_verdict(void);
+int run_brainrec_host_merge_again_acks_merged(void);
+int run_brainrec_host_merge_replace_waits(void);
+int run_brainrec_host_ack_target_rejoined(void);
 /* The Bot Host's recorder keeps its blocks (test_bothost_rec.c). */
 int run_bothost_rec_upload_keeps_files(void);
 int run_bothost_rec_lowdisk_keeps_files(void);

@@ -1160,6 +1160,168 @@ int run_brainrec_host_merge_verdict(void) {
     return 0;
 }
 
+/* The Lenovo case (session 20261114_001428): a host sends a block the
+ * server merged before (it never got that ACK). The second merge finds no
+ * entry left for its files: NO_FILL. Sending it again would give the same
+ * answer each time, so the ACK is MERGED and the host stops. Every other
+ * failure is still FAILED. */
+int run_brainrec_host_merge_again_acks_merged(void) {
+    char sess[1024], host[1024], p[1200];
+    BrainRecMergeStats st;
+    uint8_t r;
+
+    UT_ASSERT(utScratchPath(sess, sizeof(sess), "againsess"));
+    UT_ASSERT(utScratchPath(host, sizeof(host), "againhost"));
+    UT_ASSERT(tbrSession(sess));
+
+    /* First upload: it fills every entry. */
+    UT_ASSERT(SDL_CreateDirectory(host));
+    snprintf(p, sizeof(p), "%s/bot1_g5.hbr", host);
+    UT_ASSERT(tbrHostFile(p, 1, 5, 20, 30));
+    UT_ASSERT(brainRecMergeDir(sess, host, "h", &st, NULL, NULL));
+    UT_ASSERT_MSG(st.markers == 6 && st.filled + st.stale == 6,
+                  "markers %u filled %u stale %u", (unsigned)st.markers,
+                  (unsigned)st.filled, (unsigned)st.stale);
+    r = brainRecMergeVerdict(true, &st);
+    UT_ASSERT(r == BOT_HOST_REC_FAIL_NONE);
+    UT_ASSERT(brainRecMergeAckState(r) == BOT_HOST_REC_ACK_MERGED);
+
+    /* The same file again: nothing is left to fill. */
+    UT_ASSERT(SDL_CreateDirectory(host));
+    snprintf(p, sizeof(p), "%s/bot1_g5.hbr", host);
+    UT_ASSERT(tbrHostFile(p, 1, 5, 20, 30));
+    UT_ASSERT(brainRecMergeDir(sess, host, "h", &st, NULL, NULL));
+    UT_ASSERT_MSG(st.markers == 0 && st.filled == 0 && st.hostFiles == 1 &&
+                  st.hostFilesUnused == 1, "markers %u filled %u files %u "
+                  "unused %u", (unsigned)st.markers, (unsigned)st.filled,
+                  (unsigned)st.hostFiles, (unsigned)st.hostFilesUnused);
+    r = brainRecMergeVerdict(true, &st);
+    UT_ASSERT_MSG(r == BOT_HOST_REC_FAIL_NO_FILL, "reason %u", (unsigned)r);
+    UT_ASSERT(brainRecMergeAckState(r) == BOT_HOST_REC_ACK_MERGED);
+    /* Kept as it came. */
+    snprintf(p, sizeof(p), "%s/%s/h_bot1_g5.hbr", sess, BRAINREC_HOST_RAW_DIR);
+    UT_ASSERT(tbrExists(p));
+
+    /* Every other reason makes the host send again. */
+    for (r = BOT_HOST_REC_FAIL_BROKEN; r < BOT_HOST_REC_FAIL_NO_FILL; r++) {
+        UT_ASSERT_MSG(brainRecMergeAckState(r) == BOT_HOST_REC_ACK_FAILED,
+                      "reason %u", (unsigned)r);
+    }
+    UT_ASSERT(brainRecMergeAckState(99) == BOT_HOST_REC_ACK_FAILED);
+    return 0;
+}
+
+typedef struct {
+    FILE *f;
+    Uint32 holdMs;
+} TbrHold;
+
+static int SDLCALL tbrHoldThread(void *data) {
+    TbrHold *h = (TbrHold *)data;
+    SDL_Delay(h->holdMs);
+    fclose(h->f);
+    return 0;
+}
+
+/* Another program holds brainrec.btr open for a moment when the merge
+ * replaces it (BrainTest's load browser, a virus scanner). On Windows
+ * the rename fails while the file is open; the merge waits and tries
+ * again instead of "replace failed" (andrew-bsmt's first merge in session
+ * 20261114_001428). */
+int run_brainrec_host_merge_replace_waits(void) {
+    char sess[1024], host[1024], p[1200], btr[1200];
+    BrainRecMergeStats st;
+    TbrHold hold;
+    SDL_Thread *t;
+    TbrOut o;
+    bool ok;
+    int i;
+
+    UT_ASSERT(utScratchPath(sess, sizeof(sess), "holdsess"));
+    UT_ASSERT(utScratchPath(host, sizeof(host), "holdhost"));
+    UT_ASSERT(tbrSession(sess));
+    UT_ASSERT(SDL_CreateDirectory(host));
+    snprintf(p, sizeof(p), "%s/bot1_g5.hbr", host);
+    UT_ASSERT(tbrHostFile(p, 1, 5, 20, 30));
+
+    snprintf(btr, sizeof(btr), "%s/%s", sess, BRAINREC_FILENAME);
+    hold.f = fopen(btr, "rb");
+    UT_ASSERT(hold.f != NULL);
+    hold.holdMs = 1500u;
+    t = SDL_CreateThread(tbrHoldThread, "tbr_hold", &hold);
+    UT_ASSERT(t != NULL);
+    ok = brainRecMergeDir(sess, host, "h", &st, NULL, NULL);
+    SDL_WaitThread(t, NULL);
+    UT_ASSERT(ok);
+    UT_ASSERT(brainRecMergeVerdict(ok, &st) == BOT_HOST_REC_FAIL_NONE);
+    UT_ASSERT(tbrRead(btr, &o));
+    UT_ASSERT(o.frames == 6);
+    for (i = 0; i < 6; i++) UT_ASSERT(!o.hosted[i][0]);
+    /* No copy is left beside it. */
+    snprintf(p, sizeof(p), "%s.merge.tmp", btr);
+    UT_ASSERT(!tbrExists(p));
+    snprintf(p, sizeof(p), "%s.bak", btr);
+    UT_ASSERT(!tbrExists(p));
+    return 0;
+}
+
+/* A host that joins again while its upload is merged gets the ACK on its
+ * new connection (the Lenovo's upload folder went from _2 to _3, and its
+ * MERGED answer was lost). Only the same name, kind and address count, and
+ * a new connection that sends the block again now waits for its own. */
+int run_brainrec_host_ack_target_rejoined(void) {
+    static BotHostConn saved[3];
+    static const char *block = "ut652_ack_block";
+    BotHostConn *a = &udpServer.botHosts[0];
+    BotHostConn *b = &udpServer.botHosts[1];
+    BotHostConn *c = &udpServer.botHosts[2];
+    const uint32_t ip = 0x2400A8C0u;   /* 192.168.0.36, as stored */
+    int same, rejoined, otherIp, otherName, sending, gone;
+
+    saved[0] = *a; saved[1] = *b; saved[2] = *c;
+    memset(a, 0, sizeof(*a));
+    memset(b, 0, sizeof(*b));
+    memset(c, 0, sizeof(*c));
+    SDL_strlcpy(a->name, "andrew-lenovo", sizeof(a->name));
+    a->connected = true;
+    a->connId = 11;
+    a->addr.sin_addr.s_addr = ip;
+
+    /* Still the same connection. */
+    same = serverBotRecAckTarget(0, 11, false, ip, "andrew-lenovo", block);
+
+    /* It went and joined again on slot 1. */
+    a->connected = false;
+    *b = *a;
+    b->connected = true;
+    b->connId = 12;
+    /* Another host of another name on slot 2 is never chosen. */
+    SDL_strlcpy(c->name, "andrew-bsmt", sizeof(c->name));
+    c->connected = true;
+    c->connId = 13;
+    c->addr.sin_addr.s_addr = ip;
+    rejoined = serverBotRecAckTarget(0, 11, false, ip, "andrew-lenovo", block);
+    otherName = serverBotRecAckTarget(0, 11, false, ip, "andrew-laptop", block);
+    otherIp = serverBotRecAckTarget(0, 11, false, ip + 1u, "andrew-lenovo",
+                                    block);
+    /* The new connection sends the block again now: no ACK for it. */
+    b->recState = BOT_HOST_REC_STATE_UPLOADING;
+    sending = serverBotRecAckTarget(0, 11, false, ip, "andrew-lenovo", block);
+    b->recState = 0;
+    /* Gone and not back. */
+    b->connected = false;
+    gone = serverBotRecAckTarget(0, 11, false, ip, "andrew-lenovo", block);
+
+    *a = saved[0]; *b = saved[1]; *c = saved[2];
+    UT_ASSERT_MSG(same == 0, "same %d", same);
+    UT_ASSERT_MSG(rejoined == 1, "rejoined %d", rejoined);
+    UT_ASSERT_MSG(otherName == -1, "other name %d", otherName);
+    UT_ASSERT_MSG(otherIp == -1, "other ip %d", otherIp);
+    UT_ASSERT_MSG(sending == -1, "sending %d", sending);
+    UT_ASSERT_MSG(gone == -1, "gone %d", gone);
+    return 0;
+}
+
 /* A slot legend from an uploaded file that is not a closed object (no '}')
  * leaves the global legend as it was; a good one still goes in. */
 int run_brainrec_host_legend_unclosed(void) {

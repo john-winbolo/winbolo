@@ -171,6 +171,11 @@ typedef struct {
  * merge worked, every host file was read and each one filled entries;
  * else the BOT_HOST_REC_FAIL_* reason. ok: what brainRecMergeDir gave. */
 uint8_t brainRecMergeVerdict(bool ok, const BrainRecMergeStats *st);
+/* The ACK state a verdict sends: BOT_HOST_REC_ACK_MERGED (the host marks
+ * the block uploaded) or BOT_HOST_REC_ACK_FAILED (it sends it again
+ * later). NO_FILL is MERGED: sending the same files again fills nothing
+ * more, and they are kept in bothost_raw/. */
+uint8_t brainRecMergeAckState(uint8_t reason);
 /* A short English text for a BOT_HOST_REC_FAIL_* reason. */
 const char *brainRecMergeFailText(uint8_t reason);
 

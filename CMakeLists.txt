@@ -6566,6 +6566,9 @@ set(_unit_test_names
     brainrec_host_merge_missing_block
     brainrec_host_merge_dir_keeps_raw
     brainrec_host_merge_verdict
+    brainrec_host_merge_again_acks_merged
+    brainrec_host_merge_replace_waits
+    brainrec_host_ack_target_rejoined
     bothost_rec_upload_keeps_files
     bothost_rec_lowdisk_keeps_files
     bothost_rec_pool_raw_flag
