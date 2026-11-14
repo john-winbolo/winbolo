@@ -1843,6 +1843,27 @@ static void botHostFillLag(int h, uint16_t lag, ControlEvent *evt) {
     evt->u.botHostLag.lagMs = lag;
 }
 
+/* The upload bytes last sent to the lobby, one per Bot Host row, and when. */
+static bool     botHostRecBytesSentHave[MAX_BOT_HOSTS];
+static uint32_t botHostRecBytesSent[MAX_BOT_HOSTS];
+static uint32_t botHostRecBytesSentTick[MAX_BOT_HOSTS];
+
+/* Row h's CTRL_BOT_HOST_REC_BYTES, or false when the host is not uploading
+ * or did not say its bytes (an older host). */
+static bool botHostFillRecBytes(int h, ControlEvent *evt) {
+    const BotHostConn *hc = &udpServer.botHosts[h];
+    if (!hc->connected || hc->recState != BOT_HOST_REC_STATE_UPLOADING ||
+        hc->recTotalKiB == 0) {
+        return false;
+    }
+    memset(evt, 0, sizeof(*evt));
+    evt->type = CTRL_BOT_HOST_REC_BYTES;
+    evt->u.botHostRecBytes.idx = (uint8_t)h;
+    evt->u.botHostRecBytes.sentKiB = hc->recSentKiB;
+    evt->u.botHostRecBytes.totalKiB = hc->recTotalKiB;
+    return true;
+}
+
 /* The per-bot values last sent to the lobby, one per row. */
 static bool     botHostCpuBotSentHave[MAX_BOT_HOSTS + 1];
 static uint32_t botHostCpuBotSent[MAX_BOT_HOSTS + 1];
@@ -2043,6 +2064,23 @@ static void botHostBroadcastRows(void) {
                 serverBroadcastLobbyControl(&le);
             }
         }
+        if (h < MAX_BOT_HOSTS) {
+            /* The upload's bytes, for the lobby's time left: when they
+             * change, at most once a second. */
+            ControlEvent be;
+            if (!evt.u.botHostStatus.connected ||
+                !botHostFillRecBytes(h, &be)) {
+                botHostRecBytesSentHave[h] = false;
+            } else if (!botHostRecBytesSentHave[h] ||
+                       (be.u.botHostRecBytes.sentKiB != botHostRecBytesSent[h] &&
+                        udpServer.tickCount - botHostRecBytesSentTick[h] >=
+                            BOT_HOST_LAG_SEND_TICKS)) {
+                botHostRecBytesSentHave[h] = true;
+                botHostRecBytesSent[h] = be.u.botHostRecBytes.sentKiB;
+                botHostRecBytesSentTick[h] = udpServer.tickCount;
+                serverBroadcastLobbyControl(&be);
+            }
+        }
     }
 }
 
@@ -2117,6 +2155,10 @@ void serverEnumBotHostRows(void (*deliver)(void *, const ControlEvent *),
             ControlEvent le;
             botHostFillRowLimits(h, &le);
             deliver(deliverCtx, &le);
+        }
+        {
+            ControlEvent be;
+            if (botHostFillRecBytes(h, &be)) deliver(deliverCtx, &be);
         }
     }
     {
@@ -2545,6 +2587,8 @@ void serverBotHostPlayerGone(ServerSim *sim, int slot, const char *why) {
     udpServer.playerTicketConnId[slot] = 0;
 }
 
+static void botHostAttachWideRecv(int h);
+
 void serverSendBotHostAccept(int h, ServerSim *sim) {
     BotHostConn *hc = &udpServer.botHosts[h];
     uint8_t buf[PACKET_HEADER_SIZE + 9 + 8];
@@ -2656,6 +2700,7 @@ void serverAcceptBotHost(ServerSim *sim, const struct sockaddr_in *fromAddr,
             hc->lastReceivedTick = udpServer.tickCount;
             hc->outSequence = 1;
             channelMuxInit(&hc->channelMux);
+            botHostAttachWideRecv(freeIdx);
             bulkSenderInit(&hc->bulk);
         }
         fprintf(stderr, "[bothost] player %u \"%s\" Bot Host connected from "
@@ -2739,6 +2784,7 @@ void serverAcceptBotHost(ServerSim *sim, const struct sockaddr_in *fromAddr,
         hc->lastReceivedTick = udpServer.tickCount;
         hc->outSequence = 1;
         channelMuxInit(&hc->channelMux);
+        botHostAttachWideRecv(freeIdx);
         bulkSenderInit(&hc->bulk);
     }
     fprintf(stderr, "[bothost] Bot Host \"%s\" connected from %s with %u "
@@ -3486,6 +3532,7 @@ void serverBotHostsReset(void) {
     memset(botHostCpuLogged, 0, sizeof(botHostCpuLogged));
     memset(botHostCpuBotSentHave, 0, sizeof(botHostCpuBotSentHave));
     memset(botHostLagSentHave, 0, sizeof(botHostLagSentHave));
+    memset(botHostRecBytesSentHave, 0, sizeof(botHostRecBytesSentHave));
     memset(botHostRowSlotsSentHave, 0, sizeof(botHostRowSlotsSentHave));
     memset(botHostRowLimitsSentHave, 0, sizeof(botHostRowLimitsSentHave));
     memset(botHostMachine, 0, sizeof(botHostMachine));
@@ -3563,6 +3610,33 @@ static void botSeatSeedMines(ServerSim *sim, int s) {
         seat->mineSeedColumn++;
     }
     if (seat->mineSeedColumn >= MINES_ARRAY_SIZE) seat->mineSeedDone = true;
+}
+
+/* The wide bulk receive rings (channel_mux.h), one for each host place,
+ * made the first time a host connects there and kept for the program's
+ * life: about 1.3 MB each. A host's recording upload comes on CHANNEL_BULK,
+ * and the built-in ring (24 KB) caps it near 1 MB/s. */
+static void *s_wideRecv[MAX_BOT_HOSTS];
+
+static void botHostAttachWideRecv(int h) {
+    BotHostConn *hc;
+    if (h < 0 || h >= MAX_BOT_HOSTS) return;
+    hc = &udpServer.botHosts[h];
+    if (s_wideRecv[h] == NULL) {
+        s_wideRecv[h] = malloc(channelBulkWideRecvBytes(CHANNEL_BULK_WIDE_WINDOW,
+                                                        CHANNEL_BULK_WIDE_SEG));
+        if (s_wideRecv[h] == NULL) return;   /* the built-in ring stays */
+    }
+    (void)channelBulkUseWideRecv(&hc->channelMux, s_wideRecv[h],
+                                 CHANNEL_BULK_WIDE_WINDOW, CHANNEL_BULK_WIDE_SEG);
+}
+
+uint32_t serverBotHostBulkWide(int h) {
+    const ChannelState *c;
+    if (h < 0 || h >= MAX_BOT_HOSTS) return 0;
+    c = &udpServer.botHosts[h].channelMux.ch[CHANNEL_BULK];
+    if (c->recvWindow <= CHANNEL_BULK_WINDOW) return 0;
+    return (c->recvSegSize << 20) | (c->recvWindow & 0xFFFFFu);
 }
 
 static void botHostPump(int h) {

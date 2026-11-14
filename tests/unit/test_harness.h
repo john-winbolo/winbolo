@@ -742,6 +742,7 @@ int run_channel_mux_control_backlog_delivers_in_order(void);
 int run_channel_mux_control_backlog_full_refuses(void);
 int run_channel_mux_game_channel_still_refuses_at_window(void);
 int run_channel_mux_control_reset_clears_backlog(void);
+int run_channel_mux_bulk_wide(void);
 
 /* Spectator delayed-stream ring (test_spectator_ring.c): segmentation,
  * keyframe-at-segment-start, mid-interval seek + replay, segment isolation,
@@ -1061,6 +1062,8 @@ int run_bot_host_cpu_bot_codec(void);
 int run_bot_host_cpu_budget(void);
 int run_bot_host_cpu_bot_client_row(void);
 int run_bot_host_lag_codec(void);
+int run_bot_host_rec_bytes_codec(void);
+int run_bot_host_rec_eta(void);
 int run_bot_timing_codec(void);
 int run_bot_timing_client_copy(void);
 /* Bot Hosts on one computer, the game bot limit and the row slot override
@@ -1738,6 +1741,7 @@ int run_brainrec_host_path_checks(void);
 int run_brainrec_dir_lock_orders_merge_and_gzip(void);
 int run_brainrec_host_make_absolute(void);
 int run_brainrec_host_print2_gz(void);
+int run_brainrec_print2_zst_round_trip(void);
 int run_brainrec_host_rec_codec(void);
 int run_brainrec_host_legend_unclosed(void);
 int run_brainrec_host_upload_no_session(void);

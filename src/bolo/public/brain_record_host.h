@@ -201,9 +201,10 @@ char *brainRecLegendAddSlot(const char *legend, int slot,
 /* Merge print2 logs: both files are runs of "===TICK n===" blocks (any
  * lines before the first block are kept at the top). The blocks of both
  * are written to outPath in tick order, a's first on equal ticks. Each
- * input may be plain or gzip; gzOut makes outPath gzip. */
+ * input may be plain, gzip or zstd (brainRecInOpen detects it); outFmt
+ * is the form of outPath. */
 bool brainRecMergePrint2(const char *a, const char *b, const char *outPath,
-                         bool gzOut);
+                         BrainLogFormat outFmt);
 
 /* Merge one host's uploaded folder into a session folder:
  *   - its .hbr files into the session's brainrec.btr (checked, then

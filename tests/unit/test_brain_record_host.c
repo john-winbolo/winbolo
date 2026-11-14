@@ -600,15 +600,116 @@ static bool tbrWriteText(const char *path, const char *text, bool gz) {
     }
 }
 
+/* The same reader the merge uses: plain, gzip or zstd. */
 static bool tbrReadText(const char *path, char *out, size_t sz) {
-    gzFile g = gzopen(path, "rb");
-    int n;
-    if (g == NULL) return false;
-    n = gzread(g, out, (unsigned)(sz - 1));
-    gzclose(g);
-    if (n < 0) return false;
+    BrainRecIn *in = brainRecInOpen(path);
+    size_t n;
+    bool err;
+    if (in == NULL) return false;
+    n = brainRecInRead(in, out, sz - 1);
+    err = brainRecInError(in);
+    brainRecInClose(in);
+    if (err) return false;
     out[n] = '\0';
     return true;
+}
+
+static bool tbrWriteZst(const char *path, const char *text) {
+    BrainLogOut *o = brainLogOutOpen(path, BRAINLOG_ZSTD, strlen(text));
+    bool ok;
+    if (o == NULL) return false;
+    ok = brainLogOutWrite(o, text, strlen(text));
+    return brainLogOutClose(o) && ok;
+}
+
+static BrainRecFormat tbrFormatOf(const char *path) {
+    unsigned char head[4] = {0};
+    size_t n;
+    FILE *f = fopen(path, "rb");
+    if (f == NULL) return BRAINREC_FMT_NONE;
+    n = fread(head, 1, sizeof head, f);
+    fclose(f);
+    return brainRecDetectFormat(head, n);
+}
+
+/* ================================================================
+ * The print2 log store: a zstd log reads back, through the merge's
+ * reader, to the same text, in a long log too. A host's .log.zst that
+ * clashes with the server's .log.zst is merged by tick and stays zstd.
+ * ================================================================ */
+int run_brainrec_print2_zst_round_trip(void) {
+    char sess[1024], host[1024], a[1100], b[1100], c[1100], text[512];
+    SDL_PathInfo pi;
+
+    UT_ASSERT(utScratchPath(sess, sizeof(sess), "zsess"));
+    UT_ASSERT(utScratchPath(host, sizeof(host), "zhost"));
+    UT_ASSERT(SDL_CreateDirectory(sess));
+    UT_ASSERT(SDL_CreateDirectory(host));
+    UT_ASSERT(brainLogFormatOfName("x.log.zst") == BRAINLOG_ZSTD);
+    UT_ASSERT(brainLogFormatOfName("x.log.gz") == BRAINLOG_GZIP);
+    UT_ASSERT(brainLogFormatOfName("x.log") == BRAINLOG_PLAIN);
+
+    /* A long log (2 MB, lines over 64 KB apart) reads back byte for byte. */
+    {
+        size_t cap = 2u << 20, len = 0, got;
+        char *big = (char *)malloc(cap), *back = (char *)malloc(cap + 16);
+        BrainLogOut *o;
+        BrainRecIn *in;
+        int t = 0;
+        UT_ASSERT(big != NULL && back != NULL);
+        while (len + 64 < cap) {
+            len += (size_t)snprintf(big + len, cap - len,
+                                    "===TICK %d===\nline %d %d\n", t, t * 7, t % 13);
+            t++;
+        }
+        snprintf(c, sizeof(c), "%s/big.log.zst", sess);
+        o = brainLogOutOpen(c, BRAINLOG_ZSTD, len);
+        UT_ASSERT(o != NULL);
+        UT_ASSERT(brainLogOutWrite(o, big, len / 3));
+        UT_ASSERT(brainLogOutWrite(o, big + len / 3, len - len / 3));
+        UT_ASSERT(brainLogOutClose(o));
+        UT_ASSERT(tbrFormatOf(c) == BRAINREC_FMT_ZSTD);
+        UT_ASSERT(SDL_GetPathInfo(c, &pi) && pi.size > 0 && (size_t)pi.size < len / 10);
+        in = brainRecInOpen(c);
+        UT_ASSERT(in != NULL);
+        got = brainRecInRead(in, back, cap + 16);
+        UT_ASSERT(!brainRecInError(in) && !brainRecInTruncated(in));
+        brainRecInClose(in);
+        UT_ASSERT_MSG(got == len, "read %u of %u", (unsigned)got, (unsigned)len);
+        UT_ASSERT(memcmp(big, back, len) == 0);
+        free(big);
+        free(back);
+        (void)SDL_RemovePath(c);
+    }
+
+    /* The clash: both zstd; merged by tick, kept zstd, raw copy kept. */
+    snprintf(a, sizeof(a), "%s/print2_bot1.log.zst", sess);
+    snprintf(b, sizeof(b), "%s/print2_bot1.log.zst", host);
+    UT_ASSERT(tbrWriteZst(a, "head s\n===TICK 10===\ns10\n===TICK 30===\ns30\n"));
+    UT_ASSERT(tbrWriteZst(b, "===TICK 20===\nh20\n===TICK 40===\nh40\n"));
+    /* A host .zst clashing with the server's older .gz form. */
+    snprintf(c, sizeof(c), "%s/print2_bot2.log.gz", sess);
+    UT_ASSERT(tbrWriteText(c, "===TICK 1===\ns1\n", true));
+    snprintf(c, sizeof(c), "%s/print2_bot2.log.zst", host);
+    UT_ASSERT(tbrWriteZst(c, "===TICK 2===\nh2\n"));
+
+    UT_ASSERT(brainRecMergeDir(sess, host, "h", NULL, NULL, NULL));
+
+    UT_ASSERT(tbrFormatOf(a) == BRAINREC_FMT_ZSTD);
+    UT_ASSERT(tbrReadText(a, text, sizeof(text)));
+    UT_ASSERT(strcmp(text, "head s\n===TICK 10===\ns10\n===TICK 20===\nh20\n"
+                           "===TICK 30===\ns30\n===TICK 40===\nh40\n") == 0);
+    snprintf(b, sizeof(b), "%s/%s/h_print2_bot1.log.zst", sess, BRAINREC_HOST_RAW_DIR);
+    UT_ASSERT(tbrReadText(b, text, sizeof(text)));
+    UT_ASSERT(strcmp(text, "===TICK 20===\nh20\n===TICK 40===\nh40\n") == 0);
+    /* The .gz server file takes the .zst host log in, and stays gzip. */
+    snprintf(c, sizeof(c), "%s/print2_bot2.log.gz", sess);
+    UT_ASSERT(tbrReadText(c, text, sizeof(text)));
+    UT_ASSERT(strcmp(text, "===TICK 1===\ns1\n===TICK 2===\nh2\n") == 0);
+    snprintf(c, sizeof(c), "%s/print2_bot2.log.zst", sess);
+    UT_ASSERT(!SDL_GetPathInfo(c, &pi));
+    UT_ASSERT(!SDL_GetPathInfo(host, &pi));
+    return 0;
 }
 
 int run_brainrec_host_print2_gz(void) {
@@ -683,7 +784,7 @@ int run_brainrec_dir_lock_orders_merge_and_gzip(void) {
     UT_ASSERT(SDL_CreateDirectory(sess));
     UT_ASSERT(SDL_CreateDirectory(other));
     snprintf(plain, sizeof(plain), "%s/print2_bot0.log", sess);
-    snprintf(gz, sizeof(gz), "%s/print2_bot0.log.gz", sess);
+    snprintf(gz, sizeof(gz), "%s/print2_bot0.log.zst", sess);
     (void)SDL_RemovePath(gz);
     UT_ASSERT(tbrWriteText(plain, "===TICK 1===\nx\n", false));
 
@@ -703,7 +804,7 @@ int run_brainrec_dir_lock_orders_merge_and_gzip(void) {
     UT_ASSERT(th != NULL);
     for (i = 0; i < 200 && SDL_GetAtomicInt(&g.started) == 0; i++) SDL_Delay(5);
     SDL_Delay(300);
-    /* The compression waits: the plain log is still there, no .gz. */
+    /* The compression waits: the plain log is still there, no .zst. */
     UT_ASSERT(g.count == -1);
     UT_ASSERT(tbrExists(plain));
     UT_ASSERT(!tbrExists(gz));

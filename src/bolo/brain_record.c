@@ -879,17 +879,34 @@ static bool logNameMatches(const char *name) {
     return false;
 }
 
-/* Compress one file to <path>.gz and remove the plain file. */
+/* True for a print2_bot*.log name: those go to zstd, the rest to gzip. */
+static bool logIsPrint2(const char *path) {
+    const char *base = strrchr(path, '/');
+    base = base ? base + 1 : path;
+    return strncmp(base, "print2_bot", 10) == 0;
+}
+
+/* Compress one file and remove the plain file: a print2 log to
+ * <path>.zst (brain_record_io.h: zstd with the long window, because print2
+ * repeats lines over the whole game), a .jsonl to <path>.gz. */
 static bool compressOneLog(const char *path) {
-    char gz[1024], tmp[1024];
-    if (snprintf(gz, sizeof gz, "%s.gz", path) >= (int)sizeof gz) return false;
-    if (snprintf(tmp, sizeof tmp, "%s.gz.tmp", path) >= (int)sizeof tmp) return false;
+    const bool zst = logIsPrint2(path);
+    const char *ext = zst ? BRAINLOG_ZSTD_EXT : BRAINLOG_GZIP_EXT;
+    char outName[1024], tmp[1024], other[1024];
+    if (snprintf(outName, sizeof outName, "%s%s", path, ext) >= (int)sizeof outName) return false;
+    if (snprintf(tmp, sizeof tmp, "%s%s.tmp", path, ext) >= (int)sizeof tmp) return false;
     SDL_PathInfo pi;
-    if (SDL_GetPathInfo(gz, &pi)) return false;   /* done before; leave both */
+    if (SDL_GetPathInfo(outName, &pi)) return false;   /* done before; leave both */
+    /* An older build's <path>.gz of a print2 log: leave both too. */
+    if (zst && snprintf(other, sizeof other, "%s%s", path, BRAINLOG_GZIP_EXT) < (int)sizeof other &&
+        SDL_GetPathInfo(other, &pi))
+        return false;
+    if (!SDL_GetPathInfo(path, &pi)) return false;
 
     FILE *in = fopen(path, "rb");
     if (!in) return false;
-    gzFile out = gzopen(tmp, "wb6");
+    BrainLogOut *out = brainLogOutOpen(tmp, zst ? BRAINLOG_ZSTD : BRAINLOG_GZIP,
+                                       (uint64_t)pi.size);
     if (!out) { fclose(in); return false; }
     bool ok = true;
     static const size_t CHUNK = 1u << 20;
@@ -898,19 +915,19 @@ static bool compressOneLog(const char *path) {
     while (ok) {
         size_t got = fread(buf, 1, CHUNK, in);
         if (got == 0) break;
-        if (gzwrite(out, buf, (unsigned)got) != (int)got) ok = false;
+        if (!brainLogOutWrite(out, buf, got)) ok = false;
     }
     if (ferror(in)) ok = false;
     free(buf);
     fclose(in);
-    if (gzclose(out) != Z_OK) ok = false;
-    if (!ok || !SDL_RenamePath(tmp, gz)) {
+    if (!brainLogOutClose(out)) ok = false;
+    if (!ok || !SDL_RenamePath(tmp, outName)) {
         SDL_RemovePath(tmp);
         return false;
     }
     if (!SDL_RemovePath(path)) {
         /* Something still has the plain file open: keep it, drop the copy. */
-        SDL_RemovePath(gz);
+        SDL_RemovePath(outName);
         return false;
     }
     return true;

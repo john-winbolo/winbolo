@@ -6667,6 +6667,8 @@ set(_unit_test_names
     bot_host_cpu_budget
     bot_host_cpu_bot_client_row
     bot_host_lag_codec
+    bot_host_rec_bytes_codec
+    bot_host_rec_eta
     bot_timing_codec
     bot_timing_client_copy
     bot_host_machine_addr
@@ -6814,6 +6816,7 @@ set(_unit_test_names
     brainrec_dir_lock_orders_merge_and_gzip
     brainrec_host_make_absolute
     brainrec_host_print2_gz
+    brainrec_print2_zst_round_trip
     brainrec_host_rec_codec
     brainrec_host_legend_unclosed
     brainrec_host_upload_no_session

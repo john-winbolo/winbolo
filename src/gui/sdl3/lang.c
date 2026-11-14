@@ -2306,6 +2306,7 @@ static const LangEntry langTable[] = {
     {3435, "uploading recordings {number}%, {number2} of {number3} bots"},
     {3436, "not recording: low disk"},
     {3437, "merging recordings"},
+    {3942, "uploading recordings {number}%, {number2} of {number3} bots, {string1} left"},
     {3600, "This computer runs {number} of the server's bots (room for {number2})"},
     {3601, "This computer now runs {number} of the server's bots for this game"},
     {3602, "Server"},

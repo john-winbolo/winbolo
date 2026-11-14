@@ -103,7 +103,7 @@ typedef struct {
     char         sessionDir[FILENAME_MAX];
     char         stage[600];
     bool         ok;
-    bool         gzipLogs;   /* the thread gzips the plain logs after */
+    bool         gzipLogs;   /* the thread compresses the plain logs after */
     BrainRecMergeStats st;
 } RecMergeJob;
 static RecMergeJob s_job;
@@ -220,13 +220,12 @@ void transportUdpServerRecClose(void) {
     if (!s_open) return;
     s_open = false;
     s_seq++;
-    /* The block is finished: the hosts may send it now, slowly while a game
-     * runs; the lobby asks again at full speed. */
+    /* The block is finished: the hosts send it now, at full speed, also
+     * while a game runs. */
     for (h = 0; h < MAX_BOT_HOSTS; h++) {
         BotHostConn *hc = &udpServer.botHosts[h];
         if (!hc->connected) continue;
         hc->recUploadOwed = true;
-        hc->recUploadPaced = true;
     }
 }
 
@@ -243,17 +242,13 @@ void serverBotRecOnLobby(void) {
         BotHostConn *hc = &udpServer.botHosts[h];
         if (!hc->connected) continue;
         hc->recUploadOwed = true;
-        hc->recUploadPaced = false;
     }
 }
 
 void serverBotRecOnGameStart(void) {
-    int h;
-    if (s_seq == 0) return;   /* this server never recorded */
-    for (h = 0; h < MAX_BOT_HOSTS; h++) {
-        if (!udpServer.botHosts[h].connected) continue;
-        recSend(h, BOT_HOST_REC_OP_HOLD, 0, 0, 0, NULL);
-    }
+    /* Nothing: an upload goes on at full speed while a game runs. An older
+     * server sent BOT_HOST_REC_OP_HOLD here, which made an older host slow
+     * its upload down. */
 }
 
 void serverBotRecHostConnected(int h, bool inLobby) {
@@ -265,7 +260,7 @@ void serverBotRecHostConnected(int h, bool inLobby) {
     /* A host may hold blocks from before (the server or the host was
      * stopped): it sends them now, when this server has sessions. */
     hc->recUploadOwed = recHasSessions();
-    hc->recUploadPaced = !inLobby;
+    (void)inLobby;
 }
 
 void serverBotRecHostGone(int h) {
@@ -347,6 +342,14 @@ void serverBotRecOnControl(int h, const ControlEvent *evt) {
             hc->recPercent = evt->u.botHostRec.percent;
             hc->recBots = evt->u.botHostRec.botsTotal;
             hc->recBotsDone = evt->u.botHostRec.botsDone;
+            if (st == BOT_HOST_REC_STATE_UPLOADING &&
+                evt->u.botHostRec.a <= evt->u.botHostRec.b) {
+                hc->recSentKiB = evt->u.botHostRec.a;
+                hc->recTotalKiB = evt->u.botHostRec.b;
+            } else {
+                hc->recSentKiB = 0;
+                hc->recTotalKiB = 0;
+            }
             return;
         }
         case BOT_HOST_REC_OP_DONE:
@@ -597,7 +600,7 @@ static int SDLCALL recMergeThread(void *data) {
     RecMergeJob *j = (RecMergeJob *)data;
     j->ok = brainRecMergeDir(j->sessionDir, j->stage, j->hostName, &j->st,
                              recMergeLog, j->sessionDir);
-    /* The gzip of the merged logs runs here too, so the tick thread never
+    /* The compression of the merged logs runs here too, so the tick thread never
      * waits for it. brainRecordCompressLogsNow takes the folder's lock. */
     if (j->gzipLogs) {
         brainRecordCompressLogsNow(j->sessionDir);
@@ -624,8 +627,8 @@ static void recMergeStart(int h) {
      * open file cannot be replaced by its merged copy. Close them; the
      * writer opens them again at its next line. */
     brainCoreReleaseLogFiles();
-    /* The merge's output follows the .gz rule: a folder the recorder still
-     * compresses later is left to it; any other gets its plain logs gzipped
+    /* The merge's output follows the compression rule: a folder the recorder still
+     * compresses later is left to it; any other gets its plain logs compressed
      * on the merge thread. Asked here, on the tick thread, as the recorder's
      * own state is the tick thread's. */
     s_job.gzipLogs = !brainRecordLogCompressPending(s_job.sessionDir);
@@ -731,8 +734,11 @@ void serverBotRecService(ServerSim *sim, bool inLobby) {
         }
         if (hc->recUploadOwed) {
             hc->recUploadOwed = false;
-            recSend(h, BOT_HOST_REC_OP_UPLOAD,
-                    hc->recUploadPaced ? BOT_HOST_REC_F_PACED : 0, 0, 0, NULL);
+            /* Never BOT_HOST_REC_F_PACED now. a: this server's wide bulk
+             * ring, which a newer host sends into; an older host leaves a
+             * alone and keeps the built-in ring. */
+            recSend(h, BOT_HOST_REC_OP_UPLOAD, 0, 0,
+                    serverBotHostBulkWide(h), NULL);
         }
         if (hc->recDoneOwed && hc->recNoSession) {
             /* Nothing of it was written. */
@@ -856,8 +862,8 @@ bool transportUdpServerBrainMerge(const char *sessionDir, const char *hostDir,
     }
     /* This runs on the console's thread. s_open, s_block and the
      * recorder's state belong to the tick thread, so read them under the
-     * server mutex. The merge and the gzip only work on files (the folder
-     * lock keeps them apart from the recorder's own gzip), so they run
+     * server mutex. The merge and the compression only work on files (the folder
+     * lock keeps them apart from the recorder's own compression), so they run
      * without the mutex and the game goes on. */
     threadsWaitForMutex();
     busy = s_open && strcmp(recBase(sessionDir), s_block) == 0;
@@ -869,9 +875,9 @@ bool transportUdpServerBrainMerge(const char *sessionDir, const char *hostDir,
     }
     ok = brainRecMergeDir(sessionDir, hostDir, recBase(hostDir), &st,
                           recMergeLog, NULL);
-    /* The .gz rule, as for an upload. The console's thread waits for the
-     * merge anyway, so the gzip runs here too, in line, and the recorder's
-     * table of gzip threads is not changed from this thread. */
+    /* The compression rule, as for an upload. The console's thread waits for the
+     * merge anyway, so the compression runs here too, in line, and the recorder's
+     * table of compression threads is not changed from this thread. */
     threadsWaitForMutex();
     pending = brainRecordLogCompressPending(sessionDir);
     if (!pending) brainCoreReleaseLogFiles();

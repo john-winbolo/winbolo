@@ -45,7 +45,6 @@
 #define REC_DISK_CHECK_MS  5000u
 #define REC_ACK_WAIT_MS    120000u
 #define REC_RETRY_MS       10000u
-#define REC_PACED_MS       200u
 #define REC_STATE_MS       250u
 #define REC_MAX_FAILS      3
 /* Written into a block folder the server merged: it is not sent again.
@@ -98,7 +97,6 @@ typedef struct {
 
     /* Uploads. */
     bool       want;
-    bool       paced;
     uint32_t   retryAtMs;
     bool       active;
     char       upBlock[BOT_HOST_REC_BLOCK_LEN];
@@ -123,6 +121,7 @@ typedef struct {
     uint8_t  lastState;
     uint8_t  lastPct;
     uint8_t  lastBotsDone;
+    uint32_t lastSentKiB;
     uint32_t lastStateMs;
     bool     stateSent;
 } RecSrv;
@@ -688,7 +687,7 @@ static SDL_EnumerationResult SDLCALL upListEntry(void *userdata,
 }
 
 /* ---- Log compression ------------------------------------------------------ */
-/* A finished block's logs (print2_bot*.log) are gzipped before they are
+/* A finished block's logs (print2_bot*.log) are compressed (print2 to .zst) before they are
  * sent, by the same rule the server uses for its own blocks. The work runs
  * on a thread, so the bots of the other servers keep their think rate. */
 static SDL_Thread   *s_logzThread = NULL;
@@ -710,12 +709,12 @@ static void logzJoin(void) {
     s_logzThread = NULL;
     SDL_strlcpy(s_logzDoneDir, s_logzDir, sizeof(s_logzDoneDir));
     if (s_logzCount > 0) {
-        fprintf(stderr, "[bothost] gzipped %d log file(s) in %s\n",
+        fprintf(stderr, "[bothost] compressed %d log file(s) in %s\n",
                 s_logzCount, s_logzDir);
     }
 }
 
-/* True when the logs of dir are gzipped (or that was tried). False while
+/* True when the logs of dir are compressed (or that was tried). False while
  * the thread works; ask again later. */
 static bool upLogsReady(const char *dir) {
     if (s_logzThread != NULL) {
@@ -738,7 +737,7 @@ static bool upLogsReady(const char *dir) {
 }
 
 /* Start sending the next finished block; false when none is left. A block
- * whose logs are being gzipped counts as started: the call comes again. */
+ * whose logs are being compressed counts as started: the call comes again. */
 static bool upStart(int srv) {
     RecSrv *sv = &s_srv[srv];
     PickCtx pc;
@@ -979,7 +978,6 @@ void hostRecServerUp(int srv, const char *label) {
     sv->open = false;
     sv->lowDisk = false;
     sv->want = false;
-    sv->paced = true;
     sv->fails = 0;
     sv->skipCount = 0;
     sv->stateSent = false;
@@ -1006,12 +1004,14 @@ void hostRecOnEvent(int srv, const ControlEvent *evt) {
         case BOT_HOST_REC_OP_OPEN:  srvOpen(srv, evt); break;
         case BOT_HOST_REC_OP_CLOSE: srvClose(srv); break;
         case BOT_HOST_REC_OP_UPLOAD:
+            /* An older server's BOT_HOST_REC_F_PACED is not obeyed: the
+             * upload goes at full speed. */
             sv->want = true;
-            sv->paced = (evt->u.botHostRec.flags & BOT_HOST_REC_F_PACED) != 0;
             sv->retryAtMs = 0;
+            if (s_io.bulkWide != NULL) s_io.bulkWide(srv, evt->u.botHostRec.a);
             break;
         case BOT_HOST_REC_OP_HOLD:
-            sv->paced = true;
+            /* An older server's "slow down while a game runs": ignored. */
             break;
         case BOT_HOST_REC_OP_CLEAR: srvClear(srv); break;
         case BOT_HOST_REC_OP_ACK:   srvAck(srv, evt); break;
@@ -1022,10 +1022,15 @@ void hostRecOnEvent(int srv, const ControlEvent *evt) {
 static void srvReportState(int srv, uint32_t now) {
     RecSrv *sv = &s_srv[srv];
     uint8_t st, pct = 0;
+    uint32_t sentKiB = 0, totalKiB = 0;
     if (sv->active) {
         st = BOT_HOST_REC_STATE_UPLOADING;
         pct = sv->total > 0 ? (uint8_t)(sv->sent * 100u / sv->total) : 100u;
         if (pct > 100) pct = 100;
+        /* The bytes, for the lobby's time left. */
+        totalKiB = (uint32_t)((sv->total + 1023u) / 1024u);
+        sentKiB = (uint32_t)(sv->sent / 1024u);
+        if (sentKiB > totalKiB) sentKiB = totalKiB;
     } else if (sv->open && sv->lowDisk) {
         st = BOT_HOST_REC_STATE_LOWDISK;
     } else if (sv->open) {
@@ -1034,15 +1039,18 @@ static void srvReportState(int srv, uint32_t now) {
         st = BOT_HOST_REC_STATE_NONE;
     }
     if (sv->stateSent && st == sv->lastState && pct == sv->lastPct &&
-        (uint8_t)sv->botsDone == sv->lastBotsDone) {
+        (uint8_t)sv->botsDone == sv->lastBotsDone &&
+        sentKiB == sv->lastSentKiB) {
         return;
     }
     if (sv->stateSent && st == sv->lastState && now - sv->lastStateMs < REC_STATE_MS) {
         return;
     }
     recSendEvt(srv, BOT_HOST_REC_OP_STATE, 0, st, pct, (uint8_t)sv->botsDone,
-               (uint8_t)sv->bots, 0, 0, sv->active ? sv->upBlock : sv->block);
+               (uint8_t)sv->bots, sentKiB, totalKiB,
+               sv->active ? sv->upBlock : sv->block);
     sv->stateSent = true;
+    sv->lastSentKiB = sentKiB;
     sv->lastState = st;
     sv->lastPct = pct;
     sv->lastBotsDone = (uint8_t)sv->botsDone;
@@ -1086,19 +1094,25 @@ void hostRecService(uint32_t nowMs) {
                 upReset(sv);
                 sv->retryAtMs = nowMs + REC_RETRY_MS;
             }
-        } else if (sv->active) {
-            if (!sv->paced) {
-                /* As fast as the bulk channel takes it. */
-                int n;
-                for (n = 0; n < 4 && sv->active && !sv->waitAck; n++) {
-                    if (s_io.bulkIdle != NULL && !s_io.bulkIdle(srv)) break;
-                    upPiece(srv);
-                }
-            } else if (nowMs - sv->lastPieceMs >= REC_PACED_MS) {
-                if (s_io.bulkIdle == NULL || s_io.bulkIdle(srv)) upPiece(srv);
-            }
         }
         srvReportState(srv, nowMs);
+    }
+    hostRecPumpUploads();
+}
+
+void hostRecPumpUploads(void) {
+    int srv;
+    if (!s_init) return;
+    for (srv = 0; srv < REC_MAX_SERVERS; srv++) {
+        RecSrv *sv = &s_srv[srv];
+        int n;
+        if (!sv->up || !sv->active) continue;
+        /* As fast as the bulk channel takes it: a piece goes when the bulk
+         * sender has handed the last one to the channel. */
+        for (n = 0; n < 4 && sv->active && !sv->waitAck; n++) {
+            if (s_io.bulkIdle != NULL && !s_io.bulkIdle(srv)) break;
+            upPiece(srv);
+        }
     }
 }
 

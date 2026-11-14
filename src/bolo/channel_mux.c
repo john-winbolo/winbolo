@@ -154,6 +154,88 @@ void channelMuxInit(ChannelMux *m) {
     voice->recvPresent = m->voiceRecvPresent;
     voice->recvLen = m->voiceRecvLen;
     voice->recvData = &m->voiceRecvData[0][0];
+
+    for (int ch = 0; ch < CHANNEL_COUNT; ch++) {
+        m->ch[ch].recvWindow = m->ch[ch].window;
+        m->ch[ch].recvSegSize = m->ch[ch].segSize;
+    }
+}
+
+size_t channelBulkWideSendBytes(uint32_t window, uint32_t segSize) {
+    return (size_t)window * sizeof(uint16_t) + (size_t)window * segSize;
+}
+
+size_t channelBulkWideRecvBytes(uint32_t window, uint32_t segSize) {
+    /* present first is fine for alignment: it is followed by the u16 lens
+     * at an even offset (window rounded up to a multiple of 2). */
+    size_t presentBytes = ((size_t)window * sizeof(bool) + 1u) & ~(size_t)1u;
+    return presentBytes + (size_t)window * sizeof(uint16_t) +
+           (size_t)window * segSize;
+}
+
+static bool channelBulkWideSizeOk(uint32_t window, uint32_t segSize) {
+    return segSize > 0 && segSize <= CHANNEL_MAX_SEG &&
+           window >= CHANNEL_BULK_WINDOW && window <= (1u << 20);
+}
+
+bool channelBulkUseWideSend(ChannelMux *m, void *storage, uint32_t window,
+                            uint32_t segSize) {
+    ChannelState *c;
+    if (m == NULL || storage == NULL || !channelBulkWideSizeOk(window, segSize)) {
+        return false;
+    }
+    c = &m->ch[CHANNEL_BULK];
+    if (c->ackedSeq != c->nextSeq) {
+        return false; /* live entries would move to other slots */
+    }
+    memset(storage, 0, channelBulkWideSendBytes(window, segSize));
+    c->sendLen = (uint16_t *)storage;
+    c->sendData = (uint8_t *)storage + (size_t)window * sizeof(uint16_t);
+    c->window = window;
+    c->segSize = segSize;
+    c->txNext = c->nextSeq;
+    c->rangeResend = true;
+    c->retxNext = c->retxEnd = c->nextSeq;
+    return true;
+}
+
+bool channelBulkUseWideRecv(ChannelMux *m, void *storage, uint32_t window,
+                            uint32_t segSize) {
+    ChannelState *c;
+    uint32_t s;
+    size_t presentBytes;
+    if (m == NULL || storage == NULL || !channelBulkWideSizeOk(window, segSize)) {
+        return false;
+    }
+    c = &m->ch[CHANNEL_BULK];
+    for (s = 0; s < c->recvWindow; s++) {
+        if (c->recvPresent[s]) {
+            return false; /* a buffered segment would be lost */
+        }
+    }
+    memset(storage, 0, channelBulkWideRecvBytes(window, segSize));
+    presentBytes = ((size_t)window * sizeof(bool) + 1u) & ~(size_t)1u;
+    c->recvPresent = (bool *)storage;
+    c->recvLen = (uint16_t *)((uint8_t *)storage + presentBytes);
+    c->recvData = (uint8_t *)storage + presentBytes +
+                  (size_t)window * sizeof(uint16_t);
+    c->recvWindow = window;
+    c->recvSegSize = segSize;
+    return true;
+}
+
+uint32_t channelBulkSendWindow(const ChannelMux *m) {
+    return m != NULL ? m->ch[CHANNEL_BULK].window : 0;
+}
+
+uint32_t channelBulkRecvWindow(const ChannelMux *m) {
+    return m != NULL ? m->ch[CHANNEL_BULK].recvWindow : 0;
+}
+
+bool channelBulkSendIdle(const ChannelMux *m) {
+    if (m == NULL) return true;
+    return m->streamCount == 0 &&
+           m->ch[CHANNEL_BULK].ackedSeq == m->ch[CHANNEL_BULK].nextSeq;
 }
 
 void channelTick(ChannelMux *m, uint32_t tick, uint32_t rttMs) {
@@ -454,7 +536,45 @@ int channelBuildFrame(ChannelMux *m, uint8_t *buf, int budget) {
          * resend storm during steady transmission. */
         bool rtoExpired = tailNonEmpty && c->everSent &&
                           (m->curTick - c->lastTxTick) >= rto;
-        if (rtoExpired) {
+        bool emitted = false;
+        if (c->rangeResend) {
+            /* A wide ring: a timeout resends the first segments of the
+             * tail, not all of it (CHANNEL_BULK_WIDE_RESEND). */
+            if (rtoExpired) {
+                c->retxNext = c->ackedSeq;
+                c->retxEnd = channelMin32(c->ackedSeq + CHANNEL_BULK_WIDE_RESEND,
+                                          c->txNext);
+                if (c->retxEnd <= c->retxNext) {
+                    c->retxEnd = channelMin32(c->ackedSeq + 1u, c->nextSeq);
+                }
+            }
+            if (c->retxNext < c->ackedSeq) {
+                c->retxNext = c->ackedSeq;
+            }
+            while (c->retxNext < c->retxEnd && c->retxNext < c->nextSeq) {
+                uint32_t idx = c->retxNext % c->window;
+                uint16_t slen = c->sendLen[idx];
+                if (segCount == 255 ||
+                    pos + CHANNEL_SEG_HEADER_SIZE + slen > budget) {
+                    break;
+                }
+                buf[pos] = (uint8_t)ch;
+                packU32(buf + pos + 1, c->retxNext);
+                packU16(buf + pos + 5, slen);
+                pos += CHANNEL_SEG_HEADER_SIZE;
+                if (slen > 0) {
+                    memcpy(buf + pos, c->sendData + idx * c->segSize, slen);
+                }
+                pos += slen;
+                segCount++;
+                emitted = true;
+                c->retxNext++;
+            }
+            if (emitted || rtoExpired) {
+                c->lastTxTick = m->curTick;
+                c->everSent = true;
+            }
+        } else if (rtoExpired) {
             c->txNext = c->ackedSeq;
         }
         if (c->txNext < c->ackedSeq) {
@@ -464,7 +584,6 @@ int channelBuildFrame(ChannelMux *m, uint8_t *buf, int budget) {
             continue; /* caught up on transmission — nothing to send */
         }
 
-        bool emitted = false;
         uint32_t seq = c->txNext;
         for (; seq < c->nextSeq; seq++) {
             uint32_t idx = seq % c->window;
@@ -572,10 +691,10 @@ static void channelApplySegment(ChannelMux *m, uint8_t ch, uint32_t seq,
     if (seq < c->expectedSeq) {
         return; /* already delivered — dedup */
     }
-    if (seq >= c->expectedSeq + c->window) {
+    if (seq >= c->expectedSeq + c->recvWindow) {
         return; /* beyond the reorder window — drop, sender will resend */
     }
-    uint32_t idx = seq % c->window;
+    uint32_t idx = seq % c->recvWindow;
     if (c->recvPresent[idx]) {
         return; /* already buffered — dedup */
     }
@@ -585,7 +704,7 @@ static void channelApplySegment(ChannelMux *m, uint8_t ch, uint32_t seq,
     }
     c->recvLen[idx] = slen;
     if (slen > 0) {
-        memcpy(c->recvData + idx * c->segSize, payload, slen);
+        memcpy(c->recvData + idx * c->recvSegSize, payload, slen);
     }
 }
 
@@ -621,7 +740,17 @@ int channelRecvFrame(ChannelMux *m, const uint8_t *buf, int len) {
              * resends the unacked tail a full RTO before the timeout would. */
             if (!c->bestEffort && c->ackedSeq < c->nextSeq &&
                 highestSeen > c->ackedSeq && !c->nakIssued) {
-                c->txNext = c->ackedSeq;   /* resend the unacked tail next frame */
+                if (c->rangeResend) {
+                    /* A wide ring: resend from the gap up to what the peer
+                     * holds past it, at most CHANNEL_BULK_WIDE_RESEND. */
+                    uint32_t end = channelMin32(highestSeen, c->txNext);
+                    end = channelMin32(end, c->ackedSeq + CHANNEL_BULK_WIDE_RESEND);
+                    if (end <= c->ackedSeq) end = c->ackedSeq + 1u;
+                    c->retxNext = c->ackedSeq;
+                    c->retxEnd = channelMin32(end, c->nextSeq);
+                } else {
+                    c->txNext = c->ackedSeq;   /* resend the unacked tail next frame */
+                }
                 c->nakIssued = true;       /* one fast-retransmit per stall point */
             }
         }
@@ -643,7 +772,7 @@ int channelRecvFrame(ChannelMux *m, const uint8_t *buf, int len) {
         if (pos + (int)slen > len) {
             return -1; /* payload runs past the buffer */
         }
-        if (ch < CHANNEL_COUNT && slen <= m->ch[ch].segSize) {
+        if (ch < CHANNEL_COUNT && slen <= m->ch[ch].recvSegSize) {
             channelApplySegment(m, ch, seq, buf + pos, slen);
         }
         pos += slen;
@@ -656,13 +785,13 @@ bool channelReceive(ChannelMux *m, uint8_t ch, uint8_t *out, uint16_t *outLen) {
         return false;
     }
     ChannelState *c = &m->ch[ch];
-    uint32_t idx = c->expectedSeq % c->window;
+    uint32_t idx = c->expectedSeq % c->recvWindow;
     if (!c->recvPresent[idx]) {
         return false; /* gap not yet filled — nothing to deliver in order */
     }
     *outLen = c->recvLen[idx];
     if (c->recvLen[idx] > 0) {
-        memcpy(out, c->recvData + idx * c->segSize, c->recvLen[idx]);
+        memcpy(out, c->recvData + idx * c->recvSegSize, c->recvLen[idx]);
     }
     c->recvPresent[idx] = false;
     c->expectedSeq++;
@@ -715,6 +844,7 @@ uint32_t channelResetSend(ChannelMux *m, uint8_t ch) {
     }
     c->ackedSeq = c->nextSeq;
     c->txNext = c->nextSeq;
+    c->retxNext = c->retxEnd = c->nextSeq;
     c->nakIssued = false; /* no outstanding stall after a send reset */
     /* The stream channel also carries un-segmentized bytes in the shared
      * staging buffer; collapsing the window without dropping them would let a
@@ -747,12 +877,12 @@ void channelResetExpected(ChannelMux *m, uint8_t ch, uint32_t newExpected) {
      * clear at the window bounds the loop and never touches a slot holding a
      * still-deliverable seq >= newExpected. */
     uint32_t clearEnd = newExpected;
-    if (clearEnd > c->expectedSeq + c->window) {
-        clearEnd = c->expectedSeq + c->window;
+    if (clearEnd > c->expectedSeq + c->recvWindow) {
+        clearEnd = c->expectedSeq + c->recvWindow;
     }
     uint32_t seq;
     for (seq = c->expectedSeq; seq < clearEnd; seq++) {
-        c->recvPresent[seq % c->window] = false;
+        c->recvPresent[seq % c->recvWindow] = false;
     }
     c->expectedSeq = newExpected;
     if (c->recvHighestSeq < c->expectedSeq) {
