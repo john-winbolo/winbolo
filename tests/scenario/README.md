@@ -1,6 +1,6 @@
 # The scenario arenas
 
-A hundred and eighty-two small maps, each with a scenario script beside it.
+A hundred and ninety-five small maps, each with a scenario script beside it.
 Most are built to make one bot decision happen on purpose and then say whether
 the bot made it. Thirty-nine check a shipped script instead: the twenty-four
 `pilltag_*` arenas, the seven `rule_roulette_*` arenas, the four `virus_*`

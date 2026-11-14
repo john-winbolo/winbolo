@@ -5430,6 +5430,20 @@ M.LGM_BLAST_PILL_RANGE_WU = 2048
 -- deciding that a round aimed at us ends on our hull -- so it is a mirror of
 -- an engine constant, not a tunable.
 M.TANK_HIT_RADIUS_WU = 112
+-- 2026-11-14: the last check before the keys go out (danger.fire_block).
+-- If the shell we would fire now will for sure kill our own builder, or an
+-- ally's builder we can see, within FIRE_BLOCK_WINDOW_SECONDS, the fire bit
+-- is taken off (held keys and taps). Movement keys stay. "For sure": the
+-- map as it is now, the builder walks at his usual speed and is not
+-- stopped. KEEL fired anyway (it shot its own builder while he repaired
+-- the pill it was heating).
+M.FIRE_BLOCK_FRIENDLY_BUILDER = true
+-- How far ahead the check looks, in seconds of game time (50 ticks each).
+M.FIRE_BLOCK_WINDOW_SECONDS = 2.0
+-- The engine tests a builder where he was one tick before the blast (a
+-- bot's shell is rewound one tick). His place is tested on that tick and
+-- this many ticks to each side of it, for the input delay.
+M.FIRE_BLOCK_TIMING_SLACK_TICKS = 1
 M.BUILDER_POOL_TREES_REBUILD = 4  -- = REPAIR_DEAD_MIN_TREES / LGM_COST_PILLREPAIR x 4
 M.BUILDER_POOL_TREES_TOPUP   = 1  -- one tree = PILL_REPAIR_AMOUNT(4) armour
 M.BUILDER_POOL_TREES_FARM    = 0  -- a farm trip SPENDS nothing, it brings wood home
@@ -7495,6 +7509,9 @@ M.PRESETS = {
     --   KEEL refused on the under-fire clock, fire_exchange substates, angry
     --   pills, path danger samples, and (pool) lgm_shell_gate.
     BUILDER_SEND_CERTAIN_DEATH_ONLY = false,
+    --   2026-11-14: fire is held when our shell would for sure kill our
+    --   own or an ally's builder. KEEL fired anyway.
+    FIRE_BLOCK_FRIENDLY_BUILDER = false,
     --   2026-11-04: a tank's shell is a kill when it kills the builder at
     --   any rewind 1..13. KEEL tested rewind 1 only.
     BUILDER_CERTAIN_DEATH_REWIND_MAX = 1,

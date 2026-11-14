@@ -9355,6 +9355,18 @@ function Brain.think(info)
     -- block pattern.)
   end
 
+  -- The last changes to the keys, before the log flush so their lines are
+  -- kept. ORD.decoy_keys takes the throttle off a DECOY hold standing on its
+  -- square, after everything that could have put it back (the kill_lgm
+  -- crosshair search picks KEY_FASTER as one of its moves). It never sets
+  -- KEY_SHOOT.
+  keys, taps = ORD.decoy_keys(state, info, keys, taps)
+  -- danger.fire_block: the one check every fire press goes through. If the
+  -- shell we would fire now will for sure kill our own builder or a seen
+  -- ally's builder (C.FIRE_BLOCK_FRIENDLY_BUILDER), the fire bit comes off
+  -- the held keys and the taps. Nothing after this line touches the keys.
+  keys, taps = danger.fire_block(state, world, info, keys, taps, now)
+
   -- Audit hook: log EVERY real outbound message (at most one per tick). Grep
   -- "MSG_TX" across a session to audit actual /info bus traffic — cadence and
   -- content of state-slate, bes/bd, bco/bcc/bcq, replies, etc. (dest 0 = the
@@ -9392,10 +9404,6 @@ function Brain.think(info)
   -- writes ping_kind / ping_x / ping_y into this table; the engine turns it
   -- into a CMD_PING from this bot's own player slot. It is written as a call
   -- around the table so think needs no extra local and no extra upvalue.
-  -- ORD.decoy_keys takes the throttle off a DECOY hold standing on its
-  -- square, after everything that could have put it back (the kill_lgm
-  -- crosshair search picks KEY_FASTER as one of its moves).
-  keys, taps = ORD.decoy_keys(state, info, keys, taps)
   return ORD.out_ping(state, {
     holdkeys    = keys,
     tapkeys     = taps,
