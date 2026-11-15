@@ -810,19 +810,51 @@ static void renderTabletBackground(void) {
     }
   }
 
-  /* --- Right gutter: top buttons row --- */
+  /* --- Right gutter: one black panel, top to bottom --- */
+  /* Everything in the right gutter sits in one recessed panel, as the
+     desktop's panels fill its screen, so no gray shows between the controls.
+     It starts where the game view's frame ends, so the two bevels side by
+     side read as one bar between the view and the panel, and ends at the
+     right safe edge. Grooves across it part the top buttons, the stock bars
+     and build buttons, the scroll stick's zone and the fire controls. Not in
+     full screen, where the controls lie over the map and only the bars and
+     the build buttons keep a frame. */
   if (!s_fullScreen) {
-    float rowX = c.playersBtnX - 3.0f * ps;
-    float rowY = c.topBtnY - 3.0f * ps;
-    float rowW = (c.cogBtnX + c.topBtnSize) - c.playersBtnX + 6.0f * ps;
-    float rowH = c.topBtnSize + 6.0f * ps;
-    drawInsetRect(dl, rowX - border, rowY - border,
-      rowW + border * 2, rowH + border * 2,
-      border, colLight, colDark, colBlack);
+    float gutterLeft = (float)(c.viewportX + c.viewportW);
+    float rightEdge  = (float)c.screenW - c.safeRight;
+    float pad = (rightEdge - gutterLeft) * 0.03f;   /* tabletLayoutConfigure's */
+    if (pad < 4.0f) pad = 4.0f;
+    float x0 = gutterLeft + 5.0f * ps;              /* past the view's frame */
+    float x1 = rightEdge;
+    drawInsetRect(dl, x0, 0.0f, x1 - x0, (float)c.screenH,
+                  border, colLight, colDark, colBlack);
+
+    /* A groove: a dark line over a light one, centred on y. */
+    auto groove = [&](float y) {
+      dl->AddRectFilled(ImVec2(x0 + border, y - border),
+                        ImVec2(x1 - border, y), colDark);
+      dl->AddRectFilled(ImVec2(x0 + border, y),
+                        ImVec2(x1 - border, y + border), colLight);
+    };
+    /* Under the top buttons, half way to the bars and the build buttons. */
+    groove(c.topBtnY + c.topBtnSize + pad);
+    /* Over the scroll stick's zone, half way up to the build buttons. */
+    float zoneTop = c.scrollJoyY - pad;
+    if (c.scrollJoyH > 10.0f) groove(zoneTop);
+    /* Over the fire controls: above whichever of the gunsight row, the talk
+       button and the view buttons' column reaches highest. */
+    float ctlTop = c.gsDecCenterY - c.gsDecRadius;
+    if (c.talkRadius > 0.0f && c.talkCenterY - c.talkRadius < ctlTop) {
+      ctlTop = c.talkCenterY - c.talkRadius;
+    }
+    if (c.tankViewCenterY - c.tankViewRadius < ctlTop) {
+      ctlTop = c.tankViewCenterY - c.tankViewRadius;
+    }
+    if (ctlTop - pad > zoneTop + border * 4.0f) groove(ctlTop - pad);
   }
 
-  /* --- Right gutter: resource bars area --- */
-  {
+  /* --- Right gutter: resource bars area (full screen only) --- */
+  if (s_fullScreen) {
     float pad = 3.0f * ps;
     drawInsetRect(dl,
       c.tankBarsX - pad - border, c.tankBarsY - pad - border,
@@ -836,8 +868,8 @@ static void renderTabletBackground(void) {
       border, statusLight, statusDark, statusFill);
   }
 
-  /* --- Right gutter: build bar area --- */
-  {
+  /* --- Right gutter: build bar area (full screen only) --- */
+  if (s_fullScreen) {
     float iconSize = c.buildIconSize;
     float btnPadX = 8.0f;
     float btnPadY = 8.0f;
@@ -862,35 +894,6 @@ static void renderTabletBackground(void) {
       gridW + winPadX * 2 + (pad + border) * 2,
       gridH + winPadY * 2 + (pad + border) * 2,
       border, buildLight, buildDark, buildFill);
-  }
-
-  /* --- Right gutter: fire/mine button area --- */
-  if (!s_fullScreen) {
-    float pad = 3.0f * ps;
-    /* Encompass fire, mine, pill view, and tank view buttons */
-    float leftEdge = c.pillViewCenterX - c.pillViewRadius;
-    float topEdge = c.tankViewCenterY - c.tankViewRadius;
-    float rightEdge = c.fireCenterX + c.fireRadius;
-    float bottomEdge = c.fireCenterY + c.fireRadius;
-    drawInsetRect(dl,
-      leftEdge - pad - border, topEdge - pad - border,
-      (rightEdge - leftEdge) + (pad + border) * 2,
-      (bottomEdge - topEdge) + (pad + border) * 2,
-      border, colLight, colDark, colBlack);
-  }
-
-  /* --- Right gutter: gunsight +/- buttons --- */
-  if (!s_fullScreen) {
-    float pad = 3.0f * ps;
-    float leftEdge = c.gsDecCenterX - c.gsDecRadius;
-    float topEdge = c.gsDecCenterY - c.gsDecRadius;
-    float rightEdge = c.gsIncCenterX + c.gsIncRadius;
-    float bottomEdge = c.gsIncCenterY + c.gsIncRadius;
-    drawInsetRect(dl,
-      leftEdge - pad - border, topEdge - pad - border,
-      (rightEdge - leftEdge) + (pad + border) * 2,
-      (bottomEdge - topEdge) + (pad + border) * 2,
-      border, colLight, colDark, colBlack);
   }
 
   /* --- Bottom: messages overlay area --- */
