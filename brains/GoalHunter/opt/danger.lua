@@ -1687,7 +1687,17 @@ function M.fire_block(state, world, info, keys, taps, now)
   local tmx, tmy = bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8)
 
   local who, model, bt, bx, by = nil, nil, nil, nil, nil
-  if own_out then
+  -- LGM_WALLED_KILL: our own builder stands on a wall square
+  -- (goals.lgm_walled_kind "on_wall", set only while he is out walking).
+  -- He can never move again, the only shot that frees him is a shot on his
+  -- own square, and that shot kills him (lgm.c lgmBlastCatches). A dead
+  -- builder parachutes back, so that shot is not held. A builder in a ring
+  -- of walls ("prison") keeps the normal check: a shot on a ring wall does
+  -- not kill a builder beside it, he walks out through the hole. This is
+  -- for OUR builder only; an ally's builder is still checked below.
+  local own_walled = (C.LGM_WALLED_KILL and state.lgm_walled == "on_wall"
+                      and own_status == C.LGM_MOVING) and true or false
+  if own_out and not own_walled then
     if own_new then
       local sx, sy = M.lgm_start_pos(info, disp.x, disp.y)
       model = fb_timeline(last, sx, sy, "go", disp.x, disp.y, dwell_full, tmx, tmy)
