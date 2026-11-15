@@ -209,7 +209,7 @@ bot capacity.
   `Bot capacity: 3 bots of GoalHunter (CPU speed test, stored result)`,
   `... measured now`, or `Bot capacity: override 3 (-botcapacity)`.
 - A lobby Add Bot request past the number is refused with
-  `CMD_REJECT_BOT_LIMIT`, as `-maxbots` does. While the test runs, every
+  `CMD_REJECT_BOT_LIMIT`. While the test runs, every
   Add Bot request is refused. `-bots N` at start-up, scenario bots and
   sidecar bots are not capped. The console has no add-bot command.
 - The number goes to clients as the last byte of the fixed part of the

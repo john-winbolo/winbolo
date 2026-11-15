@@ -229,8 +229,6 @@ int run_lobby_add_bot_rejects_ai_none(void);
 int run_lobby_add_bot_rejects_not_in_lobby(void);
 int run_lobby_add_bot_rejects_non_host_sender(void);
 int run_lobby_bot_count_counts_only_connected_bots(void);
-int run_lobby_maxbots_cap_boundary(void);
-int run_lobby_add_bot_rejects_when_at_maxbots(void);
 int run_lobby_add_bot_rejects_at_host_capacity(void);
 int run_server_bot_slots_codec(void);
 int run_server_bot_slots_setting(void);
