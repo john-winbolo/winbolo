@@ -16121,6 +16121,67 @@ function M.fight_cost_mult(info, goal, cost)
   return m
 end
 
+-- LGM_WALLED_KILL (2026-11-14): is our own builder walled in, so that no
+-- walk can ever bring him home? Answers "on_wall", "prison" or nil, from
+-- our own map only (we always see our own builder).
+--   "on_wall": he stands on a wall square. bolo_map.c mapGetManSpeed gives
+--     BUILDING and HALFBUILDING speed 0, and lgm.c lgmReturn steps him by
+--     the speed of the square he is on, so he never moves again. The one
+--     exception is his blessed square (the square of his own errand, which
+--     walks at man_speed_refuel_base until he leaves it), so a builder on
+--     the square he was sent to is not walled.
+--   "prison": every square he can walk to (4-way, the way his per-axis
+--     step moves him) is shut in by walls only, and the tank is not inside.
+--     Any other square that stops him (water, a pillbox, the map edge) means
+--     it is not a wall ring, and the answer is nil: the stranded rescue deals
+--     with those, because the tank can cross or fetch him there.
+-- The flood stops at the first square that proves "not walled", so on open
+-- ground it ends at once. A ring is closed, so it always ends.
+function M.lgm_walled_kind(state, info, tmx, tmy)
+  local mx = bit.rshift(info.man_x or 0, 8)
+  local my = bit.rshift(info.man_y or 0, 8)
+  if mx == 0 and my == 0 then return nil end
+  local disp = state._lgm_dispatch
+  local function blessed(x, y)
+    return disp ~= nil and disp.x == x and disp.y == y
+  end
+  local function is_wall(tt)
+    return tt == C.T_BUILDING or tt == C.T_HALFBUILD
+  end
+  local tt0 = U.ttype(mx, my)
+  if is_wall(tt0) then
+    if blessed(mx, my) then return nil end
+    return "on_wall"
+  end
+  if mx == tmx and my == tmy then return nil end
+  local seen = { [my * 256 + mx] = true }
+  local qx, qy = { mx }, { my }
+  local head = 1
+  while head <= #qx do
+    local x, y = qx[head], qy[head]
+    head = head + 1
+    for d = 1, 4 do
+      local nx = x + ((d == 1) and 1 or (d == 2) and -1 or 0)
+      local ny = y + ((d == 3) and 1 or (d == 4) and -1 or 0)
+      if not U.in_map(nx, ny) then return nil end
+      local k = ny * 256 + nx
+      if not seen[k] then
+        seen[k] = true
+        if nx == tmx and ny == tmy then return nil end
+        local tt = U.ttype(nx, ny)
+        local walk = (C.MAN_SPEED[tt] or 0) > 0 or blessed(nx, ny)
+        if walk then
+          qx[#qx + 1] = nx
+          qy[#qy + 1] = ny
+        elseif not is_wall(tt) then
+          return nil
+        end
+      end
+    end
+  end
+  return "prison"
+end
+
 local function goal_selection(state, world, info, quiet)
   local _tgs0 = clock_us()  -- used by gs_diag slow-tick check (BRAIN_PROFILE)
   local _tgs_t = 0
@@ -16148,6 +16209,7 @@ local function goal_selection(state, world, info, quiet)
     state.lgm_stranded = nil
     state.lgm_stranded_check_tick = nil
     state.lgm_chase = nil
+    state.lgm_walled = nil
   end
 
   -- Helper: are we on a friendly base that can actually resupply us?
@@ -16336,6 +16398,26 @@ local function goal_selection(state, world, info, quiet)
         }
       end
 
+      -- LGM_WALLED_KILL (2026-11-14): a builder who is walled in (on a wall
+      -- square, or in a ring of walls) can never walk home, so waiting for
+      -- him is a freeze. The check runs on every pass, also through the
+      -- build-dispatch carve-out above: that carve-out is for a pathfind
+      -- that may be wrong for a few ticks, and a wall ring is a fact of the
+      -- map. Walled implies stranded. The rescue below then wins at once
+      -- (no fire gate: we accept the risk) and drives at him. In a ring it
+      -- shoots a ring wall on its route; he walks out through the hole. On
+      -- a wall square the only way out is a shot on his own square, which
+      -- kills him; danger.fire_block lets that shot through, because a dead
+      -- builder parachutes back to the tank (lgm.c lgmKill /
+      -- lgmParchutingIn) and a builder on a wall never moves again.
+      if C.LGM_WALLED_KILL then
+        local walled = M.lgm_walled_kind(state, info, tmx, tmy)
+        if walled ~= state.lgm_walled and BRAIN_DEBUG_MODE then
+        end
+        state.lgm_walled = walled
+        if walled then state.lgm_stranded = true end
+      end
+
       if state.lgm_stranded and (lgm_mx > 0 or lgm_my > 0) then
         -- Don't drive off to fetch the LGM while a hostile tank or
         -- pill is actively shooting at us. _shot_by_tank (took tank
@@ -16367,6 +16449,7 @@ local function goal_selection(state, world, info, quiet)
           fire_hot = (state.perc and state.perc.under_fire) or false
         end
         local fire_suppress = (fire_hot or state._shot_by_tank) or false
+        if state.lgm_walled then fire_suppress = false end
         if state._lgm_stranded_factors then
           state._lgm_stranded_factors.fire_suppress = fire_suppress
           state._lgm_stranded_factors.fire_age = fire_age
@@ -16392,8 +16475,11 @@ local function goal_selection(state, world, info, quiet)
             kind = "rescue_lgm", mx = lgm_mx, my = lgm_my,
             wx = info.man_x, wy = info.man_y,
           }
-          desc = string.format("rescue_lgm@(%d,%d) wpos=(%d,%d) [stranded]",
-                               lgm_mx, lgm_my, info.man_x, info.man_y)
+          if state.lgm_walled then result.walled = state.lgm_walled end
+          desc = string.format("rescue_lgm@(%d,%d) wpos=(%d,%d) [%s]",
+                               lgm_mx, lgm_my, info.man_x, info.man_y,
+                               state.lgm_walled and ("walled " .. state.lgm_walled)
+                               or "stranded")
           log.reason("goal", {
             pick = "rescue_lgm", why = "LGM stranded (cannot reach tank)",
             mx = lgm_mx, my = lgm_my, wx = info.man_x, wy = info.man_y,

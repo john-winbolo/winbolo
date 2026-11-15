@@ -5455,6 +5455,17 @@ M.TANK_HIT_RADIUS_WU = 112
 -- stopped. KEEL fired anyway (it shot its own builder while he repaired
 -- the pill it was heating).
 M.FIRE_BLOCK_FRIENDLY_BUILDER = true
+-- 2026-11-14 (Andrew): our own builder walled in -- standing on a wall
+-- square, or shut in a ring of walls -- can never walk home, and the bot sat
+-- waiting for him. With this on, the brain finds that from its own map
+-- (goals.lgm_walled_kind), the rescue override takes the goal at once (no
+-- fire gate, no build-dispatch carve-out) and drives at him through the
+-- walls. In a ring it shoots a ring wall and he walks out. On a wall square
+-- the only freeing shot hits his own square and kills him, and
+-- danger.fire_block lets that shot through: a dead builder parachutes back
+-- to the tank. Only our OWN builder on a wall; an ally's builder is still
+-- protected. KEEL and MAST: off (the bot waited).
+M.LGM_WALLED_KILL = true
 -- How far ahead the check looks, in seconds of game time (50 ticks each).
 M.FIRE_BLOCK_WINDOW_SECONDS = 2.0
 -- The engine tests a builder where he was one tick before the blast (a
@@ -7533,6 +7544,9 @@ M.PRESETS = {
     --   2026-11-14: fire is held when our shell would for sure kill our
     --   own or an ally's builder. KEEL fired anyway.
     FIRE_BLOCK_FRIENDLY_BUILDER = false,
+    --   2026-11-14: a walled-in builder is rescued at once; one on a wall
+    --   square is shot free (killed). KEEL waited for him.
+    LGM_WALLED_KILL = false,
     --   2026-11-04: a tank's shell is a kill when it kills the builder at
     --   any rewind 1..13. KEEL tested rewind 1 only.
     BUILDER_CERTAIN_DEATH_REWIND_MAX = 1,
@@ -7810,6 +7824,7 @@ M.PRESETS.mast = {
   LGM_DEST_LIVE_PILLS               = false,
   LGM_DEST_PASS_THROUGH             = false,
   LGM_KILL_IMPROVED                 = false,
+  LGM_WALLED_KILL                   = false,
   LIVE_PHYSICS_WALL                 = false,  -- 2.2.1 had no WALL group
   PF_REROUTE_KEEP_FRAC              = 0,
   PF_REROUTE_KEEP_MARGIN            = 0,
