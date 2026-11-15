@@ -2224,7 +2224,7 @@
 #define STR_KICK_MAP_DESYNC                 1495
 
 /* Reject toast — server refused an Add Bot because the lobby is already
- * at the operator-configured -maxbots cap. */
+ * at the game bot limit. */
 #define STR_DLGLOBBY_REJECT_BOT_LIMIT       1496
 
 /* WinBolo.net 1v1 ladder position shown in the status block.

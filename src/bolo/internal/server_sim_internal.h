@@ -526,7 +526,6 @@ struct ServerSim {
                                     * in the same process calls. Cleared
                                     * when the seat's player leaves. */
     BYTE     maxPlayers;           /* cap on join slots; 0 falls back to MAX_TANKS */
-    BYTE     maxBots;              /* cap on AI bots in the lobby; 0 = no cap */
     int      hostBotCapacity;      /* how many bots this server runs in its
                                     * own process at full strength (the CPU
                                     * speed test, or -botcapacity): 0..16,

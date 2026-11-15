@@ -23,9 +23,9 @@
 #include "client_command.h"        /* CMD_LOBBY_ADD_BOT, CmdResult */
 #include "everard_map.h"
 #include "server_sim.h"
-#include "server_sim_internal.h"   /* sim->playerConnected, lobbyPlayers,
-                                    * maxBots — seeded directly so the cap
-                                    * tests don't need the real bot manager */
+#include "server_sim_internal.h"   /* sim->playerConnected, lobbyPlayers —
+                                    * seeded directly so the cap tests
+                                    * don't need the real bot manager */
 #include "server_sim_lifecycle.h"  /* serverSimSetBotBrainPath/AiType,
                                     * serverSimSetLobbyEnabled */
 #include "threads.h"
@@ -125,7 +125,7 @@ static void seed_lobby_bots(ServerSim *sim, BYTE first, BYTE count) {
     }
 }
 
-/* serverSimGetLobbyBotCount feeds the -maxbots comparison, so it must
+/* serverSimGetLobbyBotCount feeds the game bot limit, so it must
  * count only connected bot slots — not the human host, not empty slots. */
 int run_lobby_bot_count_counts_only_connected_bots(void) {
     ServerSim *sim = make_addbot_ready_sim();   /* human host in slot 0 */
@@ -139,45 +139,8 @@ int run_lobby_bot_count_counts_only_connected_bots(void) {
     return 0;
 }
 
-/* The exact predicate the dispatcher gates on: count >= maxBots. Tests
- * the boundary without depending on bot creation (which the unit build
- * stubs out), so it fails if the cap logic regresses. */
-int run_lobby_maxbots_cap_boundary(void) {
-    ServerSim *sim = make_addbot_ready_sim();
-    UT_ASSERT(sim != NULL);
-    sim->maxBots = 2;
-    UT_ASSERT_MSG(serverSimGetMaxBots(sim) == 2, "maxBots accessor");
-
-    seed_lobby_bots(sim, 1, 1);                 /* one bot, under the cap */
-    UT_ASSERT_MSG(serverSimGetLobbyBotCount(sim) < serverSimGetMaxBots(sim),
-                  "1 bot is below the cap of 2 → add allowed");
-
-    seed_lobby_bots(sim, 2, 1);                 /* second bot, at the cap */
-    UT_ASSERT_MSG(serverSimGetLobbyBotCount(sim) >= serverSimGetMaxBots(sim),
-                  "2 bots reaches the cap of 2 → add rejected");
-    serverSimDestroy(sim);
-    return 0;
-}
-
-/* End-to-end through serverSimApplyCommand: with the cap reached, a host
- * add-bot is rejected. (maxBots == 0 means no cap, so the existing
- * rejection tests above run with the cap disabled.) */
-int run_lobby_add_bot_rejects_when_at_maxbots(void) {
-    ServerSim *sim = make_addbot_ready_sim();
-    UT_ASSERT(sim != NULL);
-    sim->maxBots = 2;
-    seed_lobby_bots(sim, 1, 2);                 /* slots 1,2 fill the cap */
-    UT_ASSERT_MSG(serverSimGetLobbyBotCount(sim) == 2,
-                  "precondition: at the cap before the add attempt");
-    UT_ASSERT_MSG(apply_add_bot(sim, 0) == CMD_REJECT_BOT_LIMIT,
-                  "add-bot at the -maxbots cap must return CMD_REJECT_BOT_LIMIT");
-    serverSimDestroy(sim);
-    return 0;
-}
-
 /* The host bot capacity (the server's CPU speed test, or -botcapacity)
- * caps lobby adds as -maxbots does, and holds every add while the test
- * runs. -maxbots stays off here, so the refusal is the capacity's own. */
+ * caps lobby adds, and holds every add while the test runs. */
 int run_lobby_add_bot_rejects_at_host_capacity(void) {
     ServerSim *sim = make_addbot_ready_sim();
     UT_ASSERT(sim != NULL);

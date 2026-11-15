@@ -923,14 +923,7 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
             fprintf(stderr, "ADD_BOT reject NOT_HOST: senderSlot=%d\n", (int)senderSlot);
             return CMD_REJECT_NOT_HOST;
         }
-        /* Enforce the operator-configured -maxbots cap (0 = no cap). */
-        BYTE maxBots = serverSimGetMaxBots(sim);
-        if (maxBots > 0 && serverSimGetLobbyBotCount(sim) >= maxBots) {
-            fprintf(stderr, "ADD_BOT reject BOT_LIMIT: count=%d max=%d\n",
-                    (int)serverSimGetLobbyBotCount(sim), (int)maxBots);
-            return CMD_REJECT_BOT_LIMIT;
-        }
-        /* And the game bot limit: the bots this server runs in its own
+        /* The game bot limit: the bots this server runs in its own
          * process (the CPU speed test, -botcapacity or the lobby's Server
          * bot slots) plus the slots of each Bot Host that runs bots. It
          * holds every add while the test runs and no host has a slot. The

@@ -2397,8 +2397,6 @@ bool          serverSimIsLobbyEnabled(const ServerSim *sim);
 bool          serverSimIsAcceptingJoins(const ServerSim *sim);
 /* Cap on join slots; 0 in the struct field falls back to MAX_TANKS. */
 BYTE          serverSimGetMaxPlayers(const ServerSim *sim);
-/* Cap on AI bots addable in the lobby; 0 = no cap. */
-BYTE          serverSimGetMaxBots(const ServerSim *sim);
 /* How many bots this server can run in its own process at full strength:
  * the dedicated server's CPU speed test and its bot brain's capacity answer,
  * or -botcapacity. 0..16 (BRAIN_CAPACITY_MIN..MAX); NONE when nothing set a
@@ -2453,7 +2451,7 @@ uint32_t      serverSimGetSpecDelayTicks(const ServerSim *sim);
  * serverInstanceCreateSpectatorRing if a non-default delay must be retained. */
 void          serverSimSetSpecDelayTicks(ServerSim *sim, uint32_t ticks);
 /* Number of connected slots flagged as lobby bots — the value the
- * -maxbots cap is compared against. */
+ * game bot limit is compared against. */
 BYTE          serverSimGetLobbyBotCount(const ServerSim *sim);
 bool          serverSimHasPassword(const ServerSim *sim);
 bool          serverSimIsRandomMapEnabled(const ServerSim *sim);

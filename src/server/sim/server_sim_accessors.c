@@ -1361,11 +1361,6 @@ BYTE serverSimGetMaxPlayers(const ServerSim *sim) {
     return (sim->maxPlayers > 0) ? sim->maxPlayers : (BYTE)MAX_TANKS;
 }
 
-BYTE serverSimGetMaxBots(const ServerSim *sim) {
-    if (sim == NULL) return 0;
-    return sim->maxBots;
-}
-
 int serverSimGetHostBotCapacity(const ServerSim *sim) {
     if (sim == NULL) return SERVER_HOST_BOT_CAPACITY_NONE;
     if (sim->serverBotSlots >= 0) return sim->serverBotSlots;
