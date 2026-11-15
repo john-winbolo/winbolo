@@ -100,6 +100,35 @@ check("3x3 room in walls = prison", kind(120, 120, 126, 126) == "prison",
 check("tank in the same room = nil", kind(120, 120, 121, 121) == nil,
       kind(120, 120, 121, 121))
 
+print("search box (C.LGM_WALLED_BOX_RADIUS)")
+check("box radius = 2 (5x5)", C.LGM_WALLED_BOX_RADIUS == 2, C.LGM_WALLED_BOX_RADIUS)
+-- A room whose floor reaches the box edge (2 squares out) still counts:
+-- a 5x5 floor (118..122) inside a 7x7 ring of walls (117..123).
+local function room(x0, y0, x1, y1)
+  clear()
+  for y = y0 - 1, y1 + 1 do
+    for x = x0 - 1, x1 + 1 do
+      if x < x0 or x > x1 or y < y0 or y > y1 then set(x, y, C.T_BUILDING) end
+    end
+  end
+end
+room(118, 118, 122, 122)
+check("5x5 floor, walls just past the box edge = prison",
+      kind(120, 120, 126, 126) == "prison", kind(120, 120, 126, 126))
+-- One square more: the floor reaches 3 squares out, past the box edge.
+room(118, 118, 123, 122)
+check("floor one square past the box edge = nil",
+      kind(120, 120, 126, 126) == nil, kind(120, 120, 126, 126))
+-- 4x4 floor (118..121): counts when he stands on a middle square.
+room(118, 118, 121, 121)
+check("4x4 floor, builder on a middle square = prison",
+      kind(119, 119, 126, 126) == "prison", kind(119, 119, 126, 126))
+-- A big area shut in by far walls (a 21x21 walled field) is open ground
+-- for the builder: not walled.
+room(110, 110, 130, 130)
+check("big walled field = nil", kind(120, 120, 140, 140) == nil,
+      kind(120, 120, 140, 140))
+
 print("open ground")
 clear()
 check("open grass = nil", kind(120, 120, 126, 126) == nil, kind(120, 120, 126, 126))

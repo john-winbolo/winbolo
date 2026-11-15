@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
-Generate the two walled-builder ROOST arenas (knob LGM_WALLED_KILL):
+Generate the three walled-builder ROOST arenas (knob LGM_WALLED_KILL):
 
   tests/scenario/maps/lgm_in_wall_prison_bot_breaks_ring_builder_gets_home.map
   tests/scenario/maps/lgm_inside_wall_bot_shoots_wall_and_kills_builder.map
+  tests/scenario/maps/lgm_in_thick_wall_prison_bot_breaks_all_rings.map
 
-Both maps are the same open grass field (110..142 square), a forest strip
+All maps are the same open grass field (110..142 square), a forest strip
 west of the spawn for tree errands, one pill four armour down (a top-up
 errand for the builder) and one base in the far corner. The spawn is a
 one-square deep-sea pond (starts.c wants a deep-sea start); the scenario
@@ -31,6 +32,7 @@ BASE = (140, 140, 0xFF, 90, 40, 40)
 MAPS = {
     "lgm_in_wall_prison_bot_breaks_ring_builder_gets_home": (121, 123),
     "lgm_inside_wall_bot_shoots_wall_and_kills_builder": (126, 122),
+    "lgm_in_thick_wall_prison_bot_breaks_all_rings": (114, 114),
 }
 
 

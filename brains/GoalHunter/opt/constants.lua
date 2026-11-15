@@ -5397,6 +5397,14 @@ M.FIRE_BLOCK_FRIENDLY_BUILDER = true
 -- to the tank. Only our OWN builder on a wall; an ally's builder is still
 -- protected. KEEL and MAST: off (the bot waited).
 M.LGM_WALLED_KILL = true
+-- How far the "prison" check looks from the builder, in map squares, each
+-- way. 2 = a 5x5 box centred on him: the walkable floor he is shut in may
+-- reach 2 squares from him, and a walkable square farther out means "not
+-- walled". So a 3x3 floor always counts, a 4x4 floor counts when he stands
+-- on one of its middle four squares, and a ring of walls round one square
+-- (the usual prison) always counts. Approved by Andrew on 2026-11-14:
+-- "even to like 4x4 would be plenty".
+M.LGM_WALLED_BOX_RADIUS = 2
 -- How far ahead the check looks, in seconds of game time (50 ticks each).
 M.FIRE_BLOCK_WINDOW_SECONDS = 2.0
 -- The engine tests a builder where he was one tick before the blast (a
