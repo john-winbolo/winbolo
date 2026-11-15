@@ -317,7 +317,6 @@ void sdl3RenderCachedText(void) {
   SDL_assert(sdl3DrawOnRenderThread());
   if (!gRenderer) return;
   int zf = gZoomFactor;
-  SDL_Color white = {200, 200, 200, 255};
 
   if (gFontMsg) {
     /* Clip to the newswire rectangle so text doesn't bleed outside the border */
@@ -339,29 +338,39 @@ void sdl3RenderCachedText(void) {
     SDL_SetRenderClipRect(gRenderer, NULL);
   }
 
-  if (gFontKD) {
-    char buf[16];
-    snprintf(buf, sizeof(buf), "%d", gCachedKills  > 99 ? 99 : gCachedKills);
-    sdl3UpdateTextCache(gFontKD, buf, white,
-                        &gTexKills, gTexKillsStr, sizeof(gTexKillsStr),
-                        &gTexKillsW, &gTexKillsH);
-    if (gTexKills) {
-      SDL_FRect d = { (float)(zf * STATUS_KILLS_LEFT),
-                      (float)(zf * STATUS_KILLS_TOP),
-                      (float)gTexKillsW, (float)gTexKillsH };
-      SDL_RenderTexture(gRenderer, gTexKills, NULL, &d);
-    }
+  sdl3DrawKillsDeathsAt((float)(zf * STATUS_KILLS_LEFT),
+                        (float)(zf * STATUS_KILLS_TOP),
+                        (float)(zf * STATUS_DEATHS_LEFT),
+                        (float)(zf * STATUS_DEATHS_TOP));
+}
 
-    snprintf(buf, sizeof(buf), "%d", gCachedDeaths > 99 ? 99 : gCachedDeaths);
-    sdl3UpdateTextCache(gFontKD, buf, white,
-                        &gTexDeaths, gTexDeathsStr, sizeof(gTexDeathsStr),
-                        &gTexDeathsW, &gTexDeathsH);
-    if (gTexDeaths) {
-      SDL_FRect d = { (float)(zf * STATUS_DEATHS_LEFT),
-                      (float)(zf * STATUS_DEATHS_TOP),
-                      (float)gTexDeathsW, (float)gTexDeathsH };
-      SDL_RenderTexture(gRenderer, gTexDeaths, NULL, &d);
-    }
+/* The cached kills and deaths numbers, each with its top left at the given
+   point of the current render target. The classic screen puts them at the
+   background art's two boxes; the touch layout has a panel of its own for
+   them (sdl3draw.c). */
+void sdl3DrawKillsDeathsAt(float killsX, float killsY,
+                           float deathsX, float deathsY) {
+  SDL_assert(sdl3DrawOnRenderThread());
+  if (!gRenderer || !gFontKD) return;
+  SDL_Color white = {200, 200, 200, 255};
+  char buf[16];
+
+  snprintf(buf, sizeof(buf), "%d", gCachedKills  > 99 ? 99 : gCachedKills);
+  sdl3UpdateTextCache(gFontKD, buf, white,
+                      &gTexKills, gTexKillsStr, sizeof(gTexKillsStr),
+                      &gTexKillsW, &gTexKillsH);
+  if (gTexKills) {
+    SDL_FRect d = { killsX, killsY, (float)gTexKillsW, (float)gTexKillsH };
+    SDL_RenderTexture(gRenderer, gTexKills, NULL, &d);
+  }
+
+  snprintf(buf, sizeof(buf), "%d", gCachedDeaths > 99 ? 99 : gCachedDeaths);
+  sdl3UpdateTextCache(gFontKD, buf, white,
+                      &gTexDeaths, gTexDeathsStr, sizeof(gTexDeathsStr),
+                      &gTexDeathsW, &gTexDeathsH);
+  if (gTexDeaths) {
+    SDL_FRect d = { deathsX, deathsY, (float)gTexDeathsW, (float)gTexDeathsH };
+    SDL_RenderTexture(gRenderer, gTexDeaths, NULL, &d);
   }
 }
 

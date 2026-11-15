@@ -582,6 +582,78 @@ static void tabletViewportUpdate(void) {
   gTabletVpZoom = zoom;
 }
 
+/* The gap, in the layout's units, above the touch layout's status column and
+   between its panels. */
+#define TABLET_STATUS_GAP 4.0f
+
+/* The kills and deaths icons in the background art, and the row the touch
+   layout's panel draws them in: both 9x9, the numbers' 13 px font is 15 rows
+   high and starts 2 rows above its icon, as on the classic screen. The panel
+   is as wide as a status grid (90), so the columns below are out of 90. */
+#define TABLET_KD_ICON_SRC_X     447
+#define TABLET_KD_KILLS_SRC_Y     87
+#define TABLET_KD_DEATHS_SRC_Y   102
+#define TABLET_KD_ICON_SIZE        9
+#define TABLET_KD_ROW_H           15
+#define TABLET_KD_ICON_DROP        2
+#define TABLET_KD_KILLS_ICON_X    10
+#define TABLET_KD_KILLS_NUM_X     25
+#define TABLET_KD_DEATHS_ICON_X   51
+#define TABLET_KD_DEATHS_NUM_X    66
+
+/* Where the touch layout's left column goes: the top left of the tanks grid,
+   with the pills and bases grids below it a grid and a gap apart, and the
+   kills and deaths panel under those, down to a gap above the screen's bottom
+   edge. The column is centred between the left safe inset and the frame round
+   the game view, so the gray either side of it is one even border; it never
+   starts left of where it used to, a gap in from the safe inset. kd's width
+   is zero when the screen has no room below the bases grid for the numbers'
+   row. Every draw site and the frames in sdl3imgui_tablet.cpp read this, so
+   they cannot disagree. False with no view laid out. */
+static void sdl3GetSafeAreaInsets(float *outLeft, float *outTop,
+                                  float *outRight, float *outBottom);
+bool sdl3DrawGetTabletStatusColumn(float *outX, float *outY, SDL_FRect *outKd) {
+  if (outX) *outX = 0.0f;
+  if (outY) *outY = 0.0f;
+  if (outKd) SDL_zerop(outKd);
+  if (!gRenderer || gTabletVpZoom <= 0) return false;
+
+  int scrW = 0, scrH = 0;
+  SDL_RendererLogicalPresentation logMode;
+  SDL_GetRenderLogicalPresentation(gRenderer, &scrW, &scrH, &logMode);
+  if (scrW <= 0 || scrH <= 0) {
+    SDL_GetCurrentRenderOutputSize(gRenderer, &scrW, &scrH);
+  }
+  float safeL = 0, safeT = 0;
+  sdl3GetSafeAreaInsets(&safeL, &safeT, NULL, NULL);
+
+  /* The view's frame is drawn 3 units of padding and a 2 unit bevel outside
+     the view, both at the 480-high reference (sdl3DrawMainScreen). */
+  float ps = (float)scrH / 480.0f;
+  if (ps < 0.7f) ps = 0.7f;
+  float frameLeft = (float)gTabletVpX - 5.0f * ps;
+
+  float gridW = (float)(gTabletVpZoom * STATUS_TANKS_WIDTH);
+  float gridH = (float)(gTabletVpZoom * STATUS_TANKS_HEIGHT);
+  float x = SDL_floorf(safeL + (frameLeft - safeL - gridW) * 0.5f);
+  if (x < safeL + TABLET_STATUS_GAP) x = safeL + TABLET_STATUS_GAP;
+  float y = safeT + TABLET_STATUS_GAP;
+
+  if (outX) *outX = x;
+  if (outY) *outY = y;
+  if (outKd) {
+    float top = y + 3.0f * (gridH + TABLET_STATUS_GAP);
+    float h   = (float)scrH - TABLET_STATUS_GAP - top;
+    if (h >= (float)(gTabletVpZoom * (TABLET_KD_ROW_H + 4))) {
+      outKd->x = x;
+      outKd->y = top;
+      outKd->w = gridW;
+      outKd->h = h;
+    }
+  }
+  return true;
+}
+
 /* Drag scroll pixel offset — applied on top of engine edgeX/edgeY
    for smooth sub-tile scrolling from touch dragging. */
 static int          gDragOffsetX = 0;
@@ -872,10 +944,9 @@ void sdl3DrawReloadTiles(void) {
 }
 
 /* Drops the cached background (for a skin change) so the next frame reads it
- * again.  Destroys and clears only: the three draw sites call
- * sdl3LoadBackground() themselves and each is behind !tabletMode, so leaving
- * the load to them keeps tablet mode from building a texture it never draws,
- * and makes no assumption about which thread the caller is on or where in the
+ * again.  Destroys and clears only: the draw sites call sdl3LoadBackground()
+ * themselves (the touch layout only for its kills and deaths icons), so
+ * leaving the load to them makes no assumption about which thread the caller is on or where in the
  * frame it calls from. */
 void sdl3DrawReloadBackground(void) {
   if (gBackgroundTex) {
@@ -937,6 +1008,48 @@ static bool sdl3LoadBackground(void) {
   }
   SDL_SetTextureScaleMode(gBackgroundTex, SDL_SCALEMODE_NEAREST);
   return TRUE;
+}
+
+/* The touch layout's kills and deaths panel, under the bases grid: black, the
+   kills icon and number in its left half and the deaths pair in its right.
+   The icons are the classic screen's, cut from the background art, so a skin
+   that redraws them is followed here too; this is the one thing the touch
+   layout loads the background for. The row is centred in the part of the
+   panel above the bottom safe inset (the home indicator), or in the whole
+   panel when that part is too short for it. The frame round the panel is
+   drawn with the grids' frames (renderTabletBackground). */
+static void tabletKillsDeathsDraw(void) {
+  SDL_FRect kd;
+  if (!sdl3DrawGetTabletStatusColumn(NULL, NULL, &kd) || kd.w <= 0.0f) return;
+
+  float zf   = (float)gTabletVpZoom;
+  float rowH = zf * (float)TABLET_KD_ROW_H;
+  float safeB = 0;
+  sdl3GetSafeAreaInsets(NULL, NULL, NULL, &safeB);
+  float clearH = kd.h + TABLET_STATUS_GAP - safeB;
+  if (clearH < rowH) clearH = kd.h;
+  float rowY = SDL_floorf(kd.y + (clearH - rowH) * 0.5f);
+
+  SDL_SetRenderDrawBlendMode(gRenderer, SDL_BLENDMODE_NONE);
+  SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
+  SDL_RenderFillRect(gRenderer, &kd);
+
+  if (sdl3LoadBackground()) {
+    float iconY = rowY + zf * (float)TABLET_KD_ICON_DROP;
+    float size  = zf * (float)TABLET_KD_ICON_SIZE;
+    SDL_FRect killsSrc  = { TABLET_KD_ICON_SRC_X, TABLET_KD_KILLS_SRC_Y,
+                            TABLET_KD_ICON_SIZE, TABLET_KD_ICON_SIZE };
+    SDL_FRect deathsSrc = { TABLET_KD_ICON_SRC_X, TABLET_KD_DEATHS_SRC_Y,
+                            TABLET_KD_ICON_SIZE, TABLET_KD_ICON_SIZE };
+    SDL_FRect killsDst  = { kd.x + zf * (float)TABLET_KD_KILLS_ICON_X, iconY,
+                            size, size };
+    SDL_FRect deathsDst = { kd.x + zf * (float)TABLET_KD_DEATHS_ICON_X, iconY,
+                            size, size };
+    SDL_RenderTexture(gRenderer, gBackgroundTex, &killsSrc, &killsDst);
+    SDL_RenderTexture(gRenderer, gBackgroundTex, &deathsSrc, &deathsDst);
+  }
+  sdl3DrawKillsDeathsAt(kd.x + zf * (float)TABLET_KD_KILLS_NUM_X, rowY,
+                        kd.x + zf * (float)TABLET_KD_DEATHS_NUM_X, rowY);
 }
 
 /*********************************************************
@@ -2482,12 +2595,12 @@ static bool tabletGridsRender(ClientSim *cs) {
 
   /* Where the classic frame puts them: 4 units in from the safe area, tanks
      at the top, then pills, then bases. */
-  float safeL = 0, safeT = 0;
-  sdl3GetSafeAreaInsets(&safeL, &safeT, NULL, NULL);
+  float colX = 0, colY = 0;
+  sdl3DrawGetTabletStatusColumn(&colX, &colY, NULL);
   for (int i = 0; i < 3; i++) {
     SDL_FRect src = { 0.0f, (float)(i * (gridH + gap)),
                       (float)gridW, (float)gridH };
-    SDL_FRect dst = { safeL + 4.0f, safeT + 4.0f + (float)(i * (gridH + gap)),
+    SDL_FRect dst = { colX, colY + (float)(i * (gridH + gap)),
                       (float)gridW, (float)gridH };
     gOverviewPrepGridSrc[i] = src;
     gOverviewPrepGridDst[i] = dst;
@@ -3616,18 +3729,17 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
     int leftGutter = tabletOriginX;
     if (leftGutter >= 100) {
       int zf = gZoomFactor; /* currently set to effectiveZoom */
-      float safeL = 0, safeT = 0;
-      sdl3GetSafeAreaInsets(&safeL, &safeT, NULL, NULL);
-      float gutterX = safeL + 4.0f;
-      float gutterY = safeT + 4.0f;
+      float gutterX = 0, gutterY = 0;
+      sdl3DrawGetTabletStatusColumn(&gutterX, &gutterY, NULL);
       float gridH = (float)(zf * STATUS_TANKS_HEIGHT);
-      float gridGap = 4.0f;
+      float gridGap = TABLET_STATUS_GAP;
       sdl3DrawSetStatusPanelOrigins(
         gutterX, gutterY,                         /* tanks */
         gutterX, gutterY + gridH + gridGap,        /* pills */
         gutterX, gutterY + 2*(gridH + gridGap));   /* bases */
       sdl3DrawTabletStatusGrids(cs);
       sdl3DrawSetStatusPanelOrigins(-1,-1,-1,-1,-1,-1); /* reset */
+      tabletKillsDeathsDraw();
     }
     /* Over the game view, under the map when the map is up: the map's
        frame half puts it back over the map (sdl3DrawFlushOverviewInWindow). */
@@ -3805,17 +3917,16 @@ void sdl3DrawRedrawAll(ClientSim *cs, buildSelect value, RECT *rcWindow,
     /* Tablet: render status grids in gutter if space allows */
     if (gTabletVpX >= 100) {
       int zf = gZoomFactor;
-      float safeL = 0, safeT = 0;
-      sdl3GetSafeAreaInsets(&safeL, &safeT, NULL, NULL);
-      float gutterX = safeL + 4.0f;
-      float gutterY = safeT + 4.0f;
+      float gutterX = 0, gutterY = 0;
+      sdl3DrawGetTabletStatusColumn(&gutterX, &gutterY, NULL);
       float gridH = (float)(zf * STATUS_TANKS_HEIGHT);
-      float gridGap = 4.0f;
+      float gridGap = TABLET_STATUS_GAP;
       sdl3DrawSetStatusPanelOrigins(gutterX, gutterY,
                                     gutterX, gutterY + gridH + gridGap,
                                     gutterX, gutterY + 2*(gridH + gridGap));
       sdl3DrawTabletStatusGrids(cs);
       sdl3DrawSetStatusPanelOrigins(-1,-1,-1,-1,-1,-1);
+      tabletKillsDeathsDraw();
     }
   } else {
     sdl3DrawSetBasesStatusClear();
@@ -3973,17 +4084,16 @@ static void sdl3DrawDownloadScreenContent(ClientSim *cs, bool justBlack) {
   if (tabletMode) {
     if (gTabletVpX >= 100) {
       int gridZf = gZoomFactor;
-      float safeL = 0, safeT = 0;
-      sdl3GetSafeAreaInsets(&safeL, &safeT, NULL, NULL);
-      float gutterX = safeL + 4.0f;
-      float gutterY = safeT + 4.0f;
+      float gutterX = 0, gutterY = 0;
+      sdl3DrawGetTabletStatusColumn(&gutterX, &gutterY, NULL);
       float gridH = (float)(gridZf * STATUS_TANKS_HEIGHT);
-      float gridGap = 4.0f;
+      float gridGap = TABLET_STATUS_GAP;
       sdl3DrawSetStatusPanelOrigins(gutterX, gutterY,
                                     gutterX, gutterY + gridH + gridGap,
                                     gutterX, gutterY + 2*(gridH + gridGap));
       sdl3DrawTabletStatusGrids(cs);
       sdl3DrawSetStatusPanelOrigins(-1,-1,-1,-1,-1,-1);
+      tabletKillsDeathsDraw();
     }
   } else {
     sdl3DrawSetBasesStatusClear();

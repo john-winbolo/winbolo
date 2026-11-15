@@ -198,6 +198,11 @@ bool sdl3DrawStatusGetShowMicIcons(void);
  * caches into the current render target. */
 void sdl3RenderCachedText(void);
 
+/* The cached kills and deaths numbers alone, each with its top left at the
+ * given point of the current render target. */
+void sdl3DrawKillsDeathsAt(float killsX, float killsY,
+                           float deathsX, float deathsY);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

@@ -479,12 +479,26 @@ void tabletLayoutConfigure(TabletLayoutConfig *cfg, int screenW, int screenH,
   /* --- Status grids (left gutter) --- */
   /* The grids themselves are drawn by SDL in sdl3DrawMainScreen, at the
      status panels' own size for the effective zoom (STATUS_TANKS_WIDTH x
-     STATUS_TANKS_HEIGHT times the zoom), 4 units in from the safe area with
-     4 units between them. The frames drawn here must sit on exactly those
-     rectangles, so the geometry is the same as sdl3draw.c's, not a scaled
-     design-space size. */
+     STATUS_TANKS_HEIGHT times the zoom), centred between the safe area and
+     the game view's frame with 4 units between them, and the kills and
+     deaths panel under them. The frames drawn here must sit on exactly those
+     rectangles, so the column's place is read from sdl3draw.c, which draws
+     them, not worked out again here. */
   cfg->tanksGridX = cfg->safeLeft + 4.0f;
   cfg->tanksGridY = cfg->safeTop + 4.0f;
+  cfg->kdPanelX = cfg->kdPanelY = cfg->kdPanelW = cfg->kdPanelH = 0.0f;
+  {
+    float colX = 0.0f, colY = 0.0f;
+    SDL_FRect kd;
+    if (sdl3DrawGetTabletStatusColumn(&colX, &colY, &kd)) {
+      cfg->tanksGridX = colX;
+      cfg->tanksGridY = colY;
+      cfg->kdPanelX = kd.x;
+      cfg->kdPanelY = kd.y;
+      cfg->kdPanelW = kd.w;
+      cfg->kdPanelH = kd.h;
+    }
+  }
   cfg->statusGridScale = 1.0f;
   float gridH = (float)(STATUS_TANKS_HEIGHT * effectiveZoom);
   float gridGap = 4.0f;
@@ -785,6 +799,15 @@ static void renderTabletBackground(void) {
       c.basesGridX - border, c.basesGridY - border,
       gridW + border * 2, gridH + border * 2,
       border, statusLight, statusDark, colNone);
+
+    /* The kills and deaths panel, drawn by SDL with the grids. Not in full
+       screen, where the grids lie over the map and the panel is not drawn. */
+    if (!s_fullScreen && c.kdPanelW > 0.0f) {
+      drawInsetRect(dl,
+        c.kdPanelX - border, c.kdPanelY - border,
+        c.kdPanelW + border * 2, c.kdPanelH + border * 2,
+        border, statusLight, statusDark, colNone);
+    }
   }
 
   /* --- Right gutter: top buttons row --- */

@@ -505,6 +505,12 @@ bool sdl3DrawGetItemViewLabel(ClientSim *cs, char *out, size_t outLen);
 *********************************************************/
 void sdl3DrawGetTabletViewport(int *x, int *y, int *w, int *h, int *zoom);
 
+/* The touch layout's left column, in the layout's units: the top left of the
+   tanks grid (the pills and bases grids follow below it) and the kills and
+   deaths panel under the three, whose width is zero when there is no room
+   for it. False with no view laid out. */
+bool sdl3DrawGetTabletStatusColumn(float *outX, float *outY, SDL_FRect *outKd);
+
 /*********************************************************
 *NAME:          sdl3DrawSetDragOffset / GetDragOffset
 *PURPOSE:
