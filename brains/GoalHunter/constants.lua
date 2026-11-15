@@ -1664,9 +1664,11 @@ M.STEER_TURN_CAP_NEXT_SQUARE = true
 -- speed is also capped at the highest speed whose turning circle still reaches
 -- the square: the turning-circle test above (distance < 2 x R x sin(heading
 -- error)) solved for speed, from the heading error the turn keys steer by.
--- Engine turn physics only, no new value. capture_pill only: on capture_base
--- the same brake kept the tank longer under a guard pill's fire (base_steal_B:
--- 4 deaths). KEEL false.
+-- Engine turn physics only, no new value. The cap is set 4 below that speed:
+-- the plow brake only brakes above cap + 4 and info.speed moves in steps of 4,
+-- so at the bare circle speed the tank settled up to 4 over it and its circle
+-- was about 41 wu too wide. capture_pill only (not capture_base). KEEL and
+-- MAST false.
 M.STEER_CAPTURE_TURN_CIRCLE_CAP = true
 
 -- 5. STICKY CLIFF BRAKE (2026-09-06 drowning analysis, fix (c)).

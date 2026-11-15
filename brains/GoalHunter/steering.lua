@@ -5934,13 +5934,21 @@ local function steer_core(state, world, info, goal)
     -- (M.turn_circle_speed: the turning-circle test of
     -- C.STEER_TURN_CAP_NEXT_SQUARE solved for speed), from navigation's own
     -- heading error (the one the turn keys steer by).  Engine turn physics
-    -- only, no new value.  capture_pill only: on capture_base the same brake
-    -- kept the tank longer under a guard pill's fire (base_steal_B: 4 deaths).
+    -- only, no new value.  capture_pill only (not capture_base).
+    -- The cap is set 4 below the circle speed.  The plow brake below only
+    -- brakes when info.speed > turn_max_speed + 4, and info.speed moves in
+    -- steps of 4 (brain_data.c: engine speed x 4).  So with the cap at the
+    -- circle speed the tank settled up to 4 above it, and its circle was about
+    -- 41 wu wider than the formula.  4 = that brake band (one speed step).
     if C.STEER_CAPTURE_TURN_CIRCLE_CAP and plow_through
        and goal.kind == "capture_pill" and goal.mx
        and state._steer_lx == goal.mx and state._steer_ly == goal.my then
+      local PLOW_BRAKE_BAND = 4  -- the "+ 4" in the plow brake tests below
       local circle_cap = M.turn_circle_speed(math.abs(nav_corr), target_dist,
         M.turn_rate_brads(info, U.ttype_peek(tmx, tmy)))
+      if circle_cap < 256 then
+        circle_cap = math.max(0, circle_cap - PLOW_BRAKE_BAND)
+      end
       if circle_cap < turn_max_speed then turn_max_speed = circle_cap end
     end
 
