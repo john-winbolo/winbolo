@@ -2482,6 +2482,7 @@ function Brain.think(info)
     state.lgm_stranded_check_tick = nil
     state._lgm_stranded_factors = nil
     state.lgm_walled = nil
+    state.lgm_walled_reload = nil
   end
 
   -- ── "KILL ME" bookkeeping (per tick, one table on `state`) ─────────────

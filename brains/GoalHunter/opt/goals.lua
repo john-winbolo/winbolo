@@ -16136,7 +16136,9 @@ end
 --     it is not a wall ring, and the answer is nil: the stranded rescue deals
 --     with those, because the tank can cross or fetch him there.
 -- The flood stops at the first square that proves "not walled", so on open
--- ground it ends at once. A ring is closed, so it always ends.
+-- ground it ends at once. It visits only squares within
+-- C.LGM_WALLED_BOX_RADIUS of the builder (at most 5x5 = 25 squares), so a
+-- big walled area is "not walled" and the check stays cheap.
 function M.lgm_walled_kind(state, info, tmx, tmy)
   local mx = bit.rshift(info.man_x or 0, 8)
   local my = bit.rshift(info.man_y or 0, 8)
@@ -16154,6 +16156,7 @@ function M.lgm_walled_kind(state, info, tmx, tmy)
     return "on_wall"
   end
   if mx == tmx and my == tmy then return nil end
+  local box = C.LGM_WALLED_BOX_RADIUS or 2
   local seen = { [my * 256 + mx] = true }
   local qx, qy = { mx }, { my }
   local head = 1
@@ -16171,6 +16174,11 @@ function M.lgm_walled_kind(state, info, tmx, tmy)
         local tt = U.ttype(nx, ny)
         local walk = (C.MAN_SPEED[tt] or 0) > 0 or blessed(nx, ny)
         if walk then
+          -- A walkable square outside the box: the space is bigger than
+          -- any prison we look for, so it is not walled.
+          if math.abs(nx - mx) > box or math.abs(ny - my) > box then
+            return nil
+          end
           qx[#qx + 1] = nx
           qy[#qy + 1] = ny
         elseif not is_wall(tt) then
@@ -16210,6 +16218,7 @@ local function goal_selection(state, world, info, quiet)
     state.lgm_stranded_check_tick = nil
     state.lgm_chase = nil
     state.lgm_walled = nil
+    state.lgm_walled_reload = nil
   end
 
   -- Helper: are we on a friendly base that can actually resupply us?
@@ -16416,9 +16425,36 @@ local function goal_selection(state, world, info, quiet)
         end
         state.lgm_walled = walled
         if walled then state.lgm_stranded = true end
+        -- Too few shells to knock down one full wall (C.WALL_HP_FULL
+        -- shots): the wall cannot fall, and the C path search treats a
+        -- wall as solid below that count (wall_shoot_shells), so driving
+        -- at him only parks the tank against the wall for ever. Hand the
+        -- goal to the normal pools (a low tank's refuel_at_base wins
+        -- there), and take the rescue back once the refuel is over (enough
+        -- shells again and the goal is no longer refuel_at_base). The
+        -- walls already shot stay rubble on the map, so the next rescue
+        -- starts from where this one stopped. A builder on a wall square
+        -- dies to the first shell that hits the wall, so there one shell
+        -- is enough.
+        local shells = info.shells or 0
+        local need = (walled == "on_wall") and 1 or (C.WALL_HP_FULL or 5)
+        if not walled then
+          state.lgm_walled_reload = nil
+        elseif shells < need then
+          state.lgm_walled_reload = true
+        elseif state.lgm_walled_reload
+               and not (state.goal and state.goal.kind == "refuel_at_base") then
+          state.lgm_walled_reload = nil
+        end
       end
 
-      if state.lgm_stranded and (lgm_mx > 0 or lgm_my > 0) then
+      if state.lgm_walled_reload then
+        log.reason("goal", {
+          pick = "rescue_lgm-reload",
+          why = "builder walled in, too few shells for a wall: refuel first",
+          mx = lgm_mx, my = lgm_my, shells = info.shells,
+        })
+      elseif state.lgm_stranded and (lgm_mx > 0 or lgm_my > 0) then
         -- Don't drive off to fetch the LGM while a hostile tank or
         -- pill is actively shooting at us. _shot_by_tank (took tank
         -- damage with no predicted shell — point-blank etc.) is the

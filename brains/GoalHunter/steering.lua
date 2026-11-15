@@ -6021,7 +6021,12 @@ local function steer_core(state, world, info, goal)
     -- the LGM catch up while we sit on it. (Saw a capture_pill crawl at the
     -- pace cap for 300+ ticks two tiles from a free pill because the builder
     -- was out on an unrelated road job.)
+    -- LGM_WALLED_KILL: a walled-in builder (goals.lgm_walled_kind) cannot
+    -- follow the tank at all, so pacing for him only makes the trip for
+    -- shells crawl.
+    local lgm_walled = (C.LGM_WALLED_KILL and state.lgm_walled) and true or false
     if lgm_out and not lgm_is_farming and goal.kind ~= "escape_water"
+       and not lgm_walled
        and goal.kind ~= "rescue_lgm"
        and goal.kind ~= "capture_pill" and goal.kind ~= "capture_base" then
       -- Estimate LGM speed: use the terrain at the LGM's position

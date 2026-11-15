@@ -31,6 +31,8 @@ local PILL  = { 126, 122 }
 local SPAWN = { 126, 130 }
 local FILL_TICK = 120
 local p0 = 0
+local PILL_CLEAR = 1
+local TRACE_EVERY = 1000
 local MIN_D = 2
 
 local function build_walls(g, mx, my)
@@ -73,7 +75,8 @@ local function try_wall(g, tk, bd)
   local bmx, bmy = bd.wx >> 8, bd.wy >> 8
   local d = math.max(math.abs(bmx - tk.mx), math.abs(bmy - tk.my))
   if d < MIN_D then return end
-  if math.abs(bmx - PILL[1]) <= 1 and math.abs(bmy - PILL[2]) <= 1 then
+  if math.abs(bmx - PILL[1]) <= PILL_CLEAR
+     and math.abs(bmy - PILL[2]) <= PILL_CLEAR then
     return
   end
   build_walls(g, bmx, bmy)
@@ -109,10 +112,11 @@ function on_tick(g, tick)
                         tick, tostring(died_at)))
   end
   if tick >= next_trace then
-    next_trace = tick + 1000
-    g.log(string.format("LGM_WALLED trace t=%d builder=%s (%s,%s) tank (%d,%d)",
-                        tick, bd.state, tostring(bd.mx), tostring(bd.my),
-                        tk.mx, tk.my))
+    next_trace = tick + TRACE_EVERY
+    g.log(string.format(
+      "LGM_WALLED trace t=%d builder=%s (%s,%s) tank (%d,%d) shells=%s",
+      tick, bd.state, tostring(bd.mx), tostring(bd.my), tk.mx, tk.my,
+      tostring(tk.shells)))
   end
 end
 
