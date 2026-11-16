@@ -2578,6 +2578,90 @@ void sdl3DrawHudPanelAlphas(int transparency, float *pieceAlpha,
   if (backingAlpha) *backingAlpha = (float)hudBackingAlpha(transparency) / 255.0f;
 }
 
+/* The touch layout's chrome: the gray field, black beyond the safe insets
+   and the frame round the game view with black inside it, for the view (or
+   a caption) to be drawn over. The view must be laid out first
+   (tabletViewportUpdate). The game frame and the download and returning to
+   lobby screens all start with it. */
+static void tabletChromeDraw(void) {
+  /* Tablet chrome: beveled gray background matching desktop background.bmp style.
+     Draw via SDL so it appears behind the game tiles (which draw next).
+     Panel borders in the gutters are drawn later by renderTabletBackground()
+     in sdl3imgui_tablet.cpp via ImGui's BackgroundDrawList. */
+  int scrW, scrH;
+  {
+    SDL_RendererLogicalPresentation logMode;
+    SDL_GetRenderLogicalPresentation(gRenderer, &scrW, &scrH, &logMode);
+    if (scrW <= 0 || scrH <= 0)
+      SDL_GetCurrentRenderOutputSize(gRenderer, &scrW, &scrH);
+  }
+  /* The frame round the view: one bevel wide and tight against the view,
+     as the background art's is. */
+  float border = (float)sdl3DrawGetTabletBevel();
+  float vpPad = 0.0f;
+
+  /* Fill entire screen with chrome gray */
+  SDL_SetRenderDrawColor(gRenderer, 107, 107, 107, 255);
+  SDL_FRect fullScr = { 0, 0, (float)scrW, (float)scrH };
+  SDL_RenderFillRect(gRenderer, &fullScr);
+
+  /* Black beyond the left and right safe insets, the cutout's side and
+     the margin on the other, as the lobby draws them. The insets are in
+     window points; this is drawn in the logical units. */
+  if (gWindow) {
+    int winW = 0, winH = 0;
+    SDL_GetWindowSize(gWindow, &winW, &winH);
+    if (winW > 0) {
+      const SafeInsets safe = safeInsetsGet(gWindow);
+      const float toLog = (float)scrW / (float)winW;
+      /* The status column and the controls are laid out inside
+         sdl3GetSafeAreaInsets, which on iOS is the system's safe area and
+         is wider on the side away from the cutout than the lobby's margin
+         there. Black runs in to whichever is further, so no gray strip is
+         left between the black and the panels. */
+      float blackL = safe.left * toLog, blackR = safe.right * toLog;
+      float layL = 0, layR = 0;
+      sdl3GetSafeAreaInsets(&layL, NULL, &layR, NULL);
+      if (layL > blackL) blackL = layL;
+      if (layR > blackR) blackR = layR;
+      SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
+      if (blackL > 0.0f) {
+        SDL_FRect l = { 0, 0, blackL, (float)scrH };
+        SDL_RenderFillRect(gRenderer, &l);
+      }
+      if (blackR > 0.0f) {
+        SDL_FRect r = { (float)scrW - blackR, 0, blackR, (float)scrH };
+        SDL_RenderFillRect(gRenderer, &r);
+      }
+    }
+  }
+
+  /* Inset bevel around the game viewport */
+  float gamePixW = (float)(MAIN_SCREEN_SIZE_X * TILE_SIZE_X * gTabletVpZoom);
+  float gamePixH = (float)(MAIN_SCREEN_SIZE_Y * TILE_SIZE_Y * gTabletVpZoom);
+  float bx = (float)gTabletVpX - vpPad - border;
+  float by = (float)gTabletVpY - vpPad - border;
+  float bw = gamePixW + (vpPad + border) * 2;
+  float bh = gamePixH + (vpPad + border) * 2;
+  /* Dark edge on top and left, in the background art's two bevel grays */
+  SDL_SetRenderDrawColor(gRenderer, 49, 49, 49, 255);
+  SDL_FRect topE  = { bx, by, bw, border };
+  SDL_FRect leftE = { bx, by + border, border, bh - border };
+  SDL_RenderFillRect(gRenderer, &topE);
+  SDL_RenderFillRect(gRenderer, &leftE);
+  /* Light edge on bottom and right */
+  SDL_SetRenderDrawColor(gRenderer, 165, 165, 165, 255);
+  SDL_FRect botE   = { bx, by + bh - border, bw, border };
+  SDL_FRect rightE = { bx + bw - border, by, border, bh - border };
+  SDL_RenderFillRect(gRenderer, &botE);
+  SDL_RenderFillRect(gRenderer, &rightE);
+  /* Black fill inside bevel (game tiles draw over this) */
+  SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
+  SDL_FRect inner = { bx + border, by + border,
+                      bw - border * 2, bh - border * 2 };
+  SDL_RenderFillRect(gRenderer, &inner);
+}
+
 /* The touch layout's tanks, pills and bases grids for its full screen map,
    drawn by the same calls as the classic frame's left gutter but into a
    texture of their own, stacked with the classic frame's gap between them, so
@@ -3311,82 +3395,7 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
                          (float)(gZoomFactor * SDL3_SCREEN_H) };
     SDL_RenderTexture(gRenderer, gBackgroundTex, NULL, &bgDest);
   } else if (tabletMode) {
-    /* Tablet chrome: beveled gray background matching desktop background.bmp style.
-       Draw via SDL so it appears behind the game tiles (which draw next).
-       Panel borders in the gutters are drawn later by renderTabletBackground()
-       in sdl3imgui_tablet.cpp via ImGui's BackgroundDrawList. */
-    int scrW, scrH;
-    {
-      SDL_RendererLogicalPresentation logMode;
-      SDL_GetRenderLogicalPresentation(gRenderer, &scrW, &scrH, &logMode);
-      if (scrW <= 0 || scrH <= 0)
-        SDL_GetCurrentRenderOutputSize(gRenderer, &scrW, &scrH);
-    }
-    /* The frame round the view: one bevel wide and tight against the view,
-       as the background art's is. */
-    float border = (float)sdl3DrawGetTabletBevel();
-    float vpPad = 0.0f;
-
-    /* Fill entire screen with chrome gray */
-    SDL_SetRenderDrawColor(gRenderer, 107, 107, 107, 255);
-    SDL_FRect fullScr = { 0, 0, (float)scrW, (float)scrH };
-    SDL_RenderFillRect(gRenderer, &fullScr);
-
-    /* Black beyond the left and right safe insets, the cutout's side and
-       the margin on the other, as the lobby draws them. The insets are in
-       window points; this is drawn in the logical units. */
-    if (gWindow) {
-      int winW = 0, winH = 0;
-      SDL_GetWindowSize(gWindow, &winW, &winH);
-      if (winW > 0) {
-        const SafeInsets safe = safeInsetsGet(gWindow);
-        const float toLog = (float)scrW / (float)winW;
-        /* The status column and the controls are laid out inside
-           sdl3GetSafeAreaInsets, which on iOS is the system's safe area and
-           is wider on the side away from the cutout than the lobby's margin
-           there. Black runs in to whichever is further, so no gray strip is
-           left between the black and the panels. */
-        float blackL = safe.left * toLog, blackR = safe.right * toLog;
-        float layL = 0, layR = 0;
-        sdl3GetSafeAreaInsets(&layL, NULL, &layR, NULL);
-        if (layL > blackL) blackL = layL;
-        if (layR > blackR) blackR = layR;
-        SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
-        if (blackL > 0.0f) {
-          SDL_FRect l = { 0, 0, blackL, (float)scrH };
-          SDL_RenderFillRect(gRenderer, &l);
-        }
-        if (blackR > 0.0f) {
-          SDL_FRect r = { (float)scrW - blackR, 0, blackR, (float)scrH };
-          SDL_RenderFillRect(gRenderer, &r);
-        }
-      }
-    }
-
-    /* Inset bevel around the game viewport */
-    float gamePixW = (float)(MAIN_SCREEN_SIZE_X * TILE_SIZE_X * effectiveZoom);
-    float gamePixH = (float)(MAIN_SCREEN_SIZE_Y * TILE_SIZE_Y * effectiveZoom);
-    float bx = (float)tabletOriginX - vpPad - border;
-    float by = (float)tabletOriginY - vpPad - border;
-    float bw = gamePixW + (vpPad + border) * 2;
-    float bh = gamePixH + (vpPad + border) * 2;
-    /* Dark edge on top and left, in the background art's two bevel grays */
-    SDL_SetRenderDrawColor(gRenderer, 49, 49, 49, 255);
-    SDL_FRect topE  = { bx, by, bw, border };
-    SDL_FRect leftE = { bx, by + border, border, bh - border };
-    SDL_RenderFillRect(gRenderer, &topE);
-    SDL_RenderFillRect(gRenderer, &leftE);
-    /* Light edge on bottom and right */
-    SDL_SetRenderDrawColor(gRenderer, 165, 165, 165, 255);
-    SDL_FRect botE   = { bx, by + bh - border, bw, border };
-    SDL_FRect rightE = { bx + bw - border, by, border, bh - border };
-    SDL_RenderFillRect(gRenderer, &botE);
-    SDL_RenderFillRect(gRenderer, &rightE);
-    /* Black fill inside bevel (game tiles draw over this) */
-    SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
-    SDL_FRect inner = { bx + border, by + border,
-                        bw - border * 2, bh - border * 2 };
-    SDL_RenderFillRect(gRenderer, &inner);
+    tabletChromeDraw();
   }
 
   /* In tablet mode, temporarily override gZoomFactor so that sprite
@@ -4127,6 +4136,10 @@ static void sdl3DrawDownloadScreenContent(ClientSim *cs, bool justBlack) {
   }
 
   if (tabletMode) {
+    /* The same chrome as the game frame, so the screen does not change
+       round the view when a round ends or a map downloads. */
+    tabletViewportUpdate();
+    tabletChromeDraw();
     if (gTabletVpX >= 100) {
       int gridZf = gZoomFactor;
       float gutterX = 0, gutterY = 0;
@@ -4304,20 +4317,27 @@ void sdl3DrawReturningToLobby(ClientSim *cs) {
    * the white screen. */
   sdl3DrawDownloadScreenContent(cs, TRUE);
 
-  /* Centred caption in the playfield. Tablet mode uses a different
-   * playfield rect; only the desktop layout matters for this transition
-   * (the mobile UIs don't expose a vote-to-lobby flow). */
-  if (!tabletMode) {
-    int zf = gZoomFactor;
-    int originX = MAIN_OFFSET_X * zf;
-    int originY = MAIN_OFFSET_Y * zf;
-    int playfieldW = MAIN_SCREEN_SIZE_X * TILE_SIZE_X * zf;
-    int playfieldH = MAIN_SCREEN_SIZE_Y * TILE_SIZE_Y * zf;
+  /* Centred caption in the playfield: the classic screen's, or the touch
+   * layout's game view. */
+  {
+    float originX, originY, playfieldW, playfieldH;
+    if (tabletMode) {
+      originX    = (float)gTabletVpX;
+      originY    = (float)gTabletVpY;
+      playfieldW = (float)gTabletVpW;
+      playfieldH = (float)gTabletVpH;
+    } else {
+      int zf = gZoomFactor;
+      originX    = (float)(MAIN_OFFSET_X * zf);
+      originY    = (float)(MAIN_OFFSET_Y * zf);
+      playfieldW = (float)(MAIN_SCREEN_SIZE_X * TILE_SIZE_X * zf);
+      playfieldH = (float)(MAIN_SCREEN_SIZE_Y * TILE_SIZE_Y * zf);
+    }
     const char *caption = langGetText(STR_RETURNING_TO_LOBBY);
     int textW = 0, textH = 0;
     if (gFontMsg && TTF_GetStringSize(gFontMsg, caption, 0, &textW, &textH)) {
-      float tx = (float)(originX + (playfieldW - textW) / 2);
-      float ty = (float)(originY + (playfieldH - textH) / 2);
+      float tx = SDL_floorf(originX + (playfieldW - (float)textW) * 0.5f);
+      float ty = SDL_floorf(originY + (playfieldH - (float)textH) * 0.5f);
       SDL_Color white = {200, 200, 200, 255};
       sdl3RenderText(gFontMsg, caption, white, tx, ty);
     }
