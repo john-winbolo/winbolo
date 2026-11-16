@@ -7200,6 +7200,20 @@ static bool rectsIntersect(float ax, float ay, float aw, float ah,
  * sourceX comes from VOTE_ANCHOR_X_* (game-source coords). */
 static void autoPanelComputeAnchors(float *anchorXL, float *anchorXR,
                                     float *anchorY) {
+    /* The touch layout has no status column to sit over, and the anchors
+     * below put the panel on the right gutter's top buttons. There the
+     * anchors are the game view's two sides and a little below its top edge,
+     * and autoPanelApply puts the panel against the right side. */
+    if (uiModeIsTablet()) {
+        int vpX = 0, vpY = 0, vpW = 0, vpH = 0, vpZoom = 0;
+        sdl3DrawGetTabletViewport(&vpX, &vpY, &vpW, &vpH, &vpZoom);
+        if (vpW > 0) {
+            if (anchorXL) *anchorXL = (float)vpX;
+            if (anchorXR) *anchorXR = (float)(vpX + vpW);
+            if (anchorY)  *anchorY  = (float)vpY + ImGui::GetStyle().ItemSpacing.y;
+            return;
+        }
+    }
     int rawZoom = sdl3DrawGetZoomFactor();
     if (rawZoom < 1) rawZoom = 1;
     float destX = 0.0f, destY = 0.0f, gameScale = 1.0f;
@@ -7222,6 +7236,11 @@ static void autoPanelApply(AutoPanelLayout &lay,
                             int numSiblings,
                             float bgAlpha) {
     float anchorCenter = 0.5f * (anchorXL + anchorXR);
+    /* The touch layout's anchors are the game view's two sides, and the
+     * panel goes against the right one, a spacing in from the edge, rather
+     * than in the middle of the view. */
+    bool  rightAlign = uiModeIsTablet();
+    float rightEdge  = anchorXR - ImGui::GetStyle().ItemSpacing.x;
 
     if (!lay.active) {
         /* Stage 1: first frame visible. Pre-guess the size to centre
@@ -7230,7 +7249,8 @@ static void autoPanelApply(AutoPanelLayout &lay,
         lay.active = true;
         lay.sizeKnown = false;
         lay.positioned = false;
-        float guessX = anchorCenter - guessW * 0.5f;
+        float guessX = rightAlign ? rightEdge - guessW
+                                  : anchorCenter - guessW * 0.5f;
         for (int j = 0; j < numSiblings; j++) {
             const AutoPanelLayout *other = siblings[j];
             if (!other || !other->active || !other->positioned) continue;
@@ -7246,7 +7266,8 @@ static void autoPanelApply(AutoPanelLayout &lay,
         lay.lastY = anchorY;
     } else if (lay.sizeKnown && !lay.positioned && lay.capturedW > 60.0f) {
         /* Stage 2: we now have the real auto-sized width; recentre. */
-        float targetX = anchorCenter - lay.capturedW * 0.5f;
+        float targetX = rightAlign ? rightEdge - lay.capturedW
+                                   : anchorCenter - lay.capturedW * 0.5f;
         float targetY = anchorY;
         for (int j = 0; j < numSiblings; j++) {
             const AutoPanelLayout *other = siblings[j];
@@ -7410,11 +7431,15 @@ static void renderOneGameVoteWidget(ClientSim *cs, uint8_t kind,
      * background, matching the pre-noCount behavior. */
     ImDrawList *dl = ImGui::GetWindowDrawList();
     ImVec2 base = ImGui::GetCursorScreenPos();
-    float radius = 22.0f;
-    ImVec2 centre(base.x + radius + 2.0f, base.y + radius + 2.0f);
+    /* 22 beside the desktop's text. The touch layout's text is several times
+     * that size, so there the ring is sized from the font, to stand as tall
+     * as the two lines beside it, and its strokes and margins grow with it. */
+    float radius = uiModeIsTablet() ? ImGui::GetFontSize() * 1.1f : 22.0f;
+    float ringK  = radius / 22.0f;
+    ImVec2 centre(base.x + radius + 2.0f * ringK, base.y + radius + 2.0f * ringK);
 
     /* Background ring (drawn always; the colored arcs paint over it). */
-    dl->AddCircle(centre, radius, IM_COL32(120, 120, 120, 200), 36, 3.0f);
+    dl->AddCircle(centre, radius, IM_COL32(120, 120, 120, 200), 36, 3.0f * ringK);
 
     const ImU32 kYes  = IM_COL32(80, 200, 80, 255);
     const ImU32 kNo   = IM_COL32(220, 70, 70, 255);
@@ -7426,13 +7451,13 @@ static void renderOneGameVoteWidget(ClientSim *cs, uint8_t kind,
             float a0 = kStart;
             float a1 = a0 + slice * (float)snap->yesCount;
             dl->PathArcTo(centre, radius, a0, a1, 36);
-            dl->PathStroke(kYes, 0, 3.5f);
+            dl->PathStroke(kYes, 0, 3.5f * ringK);
         }
         if (snap->noCount > 0) {
             float a0 = kStart + slice * (float)snap->yesCount;
             float a1 = a0 + slice * (float)snap->noCount;
             dl->PathArcTo(centre, radius, a0, a1, 36);
-            dl->PathStroke(kNo, 0, 3.5f);
+            dl->PathStroke(kNo, 0, 3.5f * ringK);
         }
     } else if (snap->threshold > 0 && snap->yesCount > 0) {
         float progress = (float)snap->yesCount / (float)snap->threshold;
@@ -7440,11 +7465,11 @@ static void renderOneGameVoteWidget(ClientSim *cs, uint8_t kind,
         float a0 = kStart;
         float a1 = a0 + progress * IM_PI * 2.0f;
         dl->PathArcTo(centre, radius, a0, a1, 36);
-        dl->PathStroke(kYes, 0, 3.5f);
+        dl->PathStroke(kYes, 0, 3.5f * ringK);
     }
 
     /* Reserve the space for the ring + put the tally text next to it. */
-    ImGui::Dummy(ImVec2(radius * 2 + 8, radius * 2 + 4));
+    ImGui::Dummy(ImVec2(radius * 2 + 8 * ringK, radius * 2 + 4 * ringK));
     ImGui::SameLine();
     ImGui::BeginGroup();
     ImGui::Text("%u / %u",
