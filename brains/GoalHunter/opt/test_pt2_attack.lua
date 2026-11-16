@@ -10,6 +10,7 @@
 --   * master on, not a protected take: v1 stays.
 --   * an error inside v2: v1 stays.
 --   * the BrainTest layers: kept data, the shadow test, a shape per layer.
+--   * HOLD chains: the next pill from the same spot, then the end.
 --
 -- Run from this directory with the LuaJIT built beside the game:
 --   ../../build/_deps/luajit_src-src/src/luajit.exe test_pt2_attack.lua
@@ -255,6 +256,33 @@ do
   _G.overlay_line, _G.overlay_rect, _G.overlay_circle, _G.overlay_text = nil, nil, nil, nil
   _G.overlay_detail, _G.overlay_detail_text, _G._BT_VIZ_IDS = nil, nil, nil
   _G.BRAIN_DEBUG_MODE = false
+end
+
+print("== HOLD chain: next pill from the same spot")
+do
+  local aims = {}
+  package.loaded["attack"] = {
+    _clear_aim_from_world = function(ox, oy, pmx, pmy) aims[#aims + 1] = { pmx, pmy }; return 3, pmx * 256 + 200, pmy * 256 + 50 end,
+    _set_goal_aim = function(goal, pmx, pmy, idx, awx, awy) goal.aim_idx, goal.aim_wx, goal.aim_wy = idx, awx, awy end,
+  }
+  local A = { mx = 128, my = 120, health = 0, owner = "hostile" }
+  local B = { mx = 130, my = 120, health = 15, owner = "hostile" }
+  local world = { pills = { [4] = A, [7] = B } }
+  local goal = { target_id = 4, mx = 128, my = 120, substate = "shoot_pill", _kill_attempt = true,
+                 _pt2 = { mode = "HOLD", ids = { 4, 7 }, step = 1 }, _shield_scan = { pill = A } }
+  check("has_next while A is the target", PA.has_next(goal, world), false)
+  local ok = PA.chain_next({}, goal, world, { tankx = 129 * 256, tanky = 127 * 256 }, 500)
+  check("retargeted", ok and goal.target_id == 7 and goal.mx == 130 and goal.my == 120, goal.target_id)
+  check("aim from the same spot at B", #aims == 1 and aims[1][1] == 130 and goal.aim_idx == 3, goal.aim_idx)
+  check("back to in_range_aim", goal.substate == "in_range_aim", goal.substate)
+  check("new shot accounting", goal._kill_attempt == nil and goal._attack_start_tick == nil, goal._kill_attempt)
+  check("step 2, scan pill B", goal._pt2.step == 2 and goal._shield_scan.pill == B, goal._pt2.step)
+  check("no next after the last pill", not PA.has_next(goal, world), true)
+  B.health = 0
+  check("chain_next false at the end", PA.chain_next({}, goal, world, { tankx = 0, tanky = 0 }, 600) == false, true)
+  local g2 = { target_id = 4, _pt2 = { mode = "SINGLE", ids = { 4 }, step = 1 } }
+  check("SINGLE has no next", not PA.has_next(g2, world), true)
+  package.loaded["attack"] = nil
 end
 
 C.PILLTAKE_V2_EVALUATOR = false

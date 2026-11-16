@@ -491,7 +491,11 @@ function M.to_scan_result(res, pill, standoff, adj_friendly_fn)
                       adj_friendly = adj_friendly_fn and adj_friendly_fn(s.mx, s.my) or nil }
   end
   local chain_ids = {}
-  for i, p in ipairs(b.chain) do chain_ids[i] = M.pill_name(res.inp, p) end
+  local chain_idv = {}
+  for i, p in ipairs(b.chain) do
+    chain_ids[i] = M.pill_name(res.inp, p)
+    chain_idv[i] = res.inp.ids and res.inp.ids[p]
+  end
   local best = {
     kind = "candidate", cx = b.cx, cy = b.cy, mx = b.mx, my = b.my, deg = b.deg,
     -- positive: plan_position demotes a result whose score is 0 or less
@@ -508,7 +512,8 @@ function M.to_scan_result(res, pill, standoff, adj_friendly_fn)
     best = best, pill = pill, standoff = standoff, pill_hp = pill.health,
     fav_bonus_by_size = {}, min_chain = 0, tier_label = "PT2",
     pt2 = true,
-    chain = { pills = chain_ids, kills = b.kills, mode = b.chain_mode and "HOLD" or "SINGLE",
+    chain = { pills = chain_ids, ids = chain_idv, step = 1,
+              kills = b.kills, mode = b.chain_mode and "HOLD" or "SINGLE",
               need = b.need, have = b.have, safe = b.safe },
   }
 end

@@ -233,4 +233,66 @@ function M.after_scan(a)
   return out
 end
 
+-- ── HOLD chains ──────────────────────────────────────────────────────────
+-- The next live pill of the chain after the current target, or nil.
+local function next_pill(goal, world)
+  local ch = goal._pt2
+  if not ch or ch.mode ~= "HOLD" or not ch.ids then return nil end
+  local cur = ch.step or 1
+  if ch.ids[cur] ~= goal.target_id then return nil end
+  for k = cur + 1, #ch.ids do
+    local id = ch.ids[k]
+    local p = id and world.pills and world.pills[id]
+    if p and (p.health or 0) > 0 and not p.in_tank and not p.pos_unknown then return p, id, k end
+  end
+  return nil
+end
+
+function M.has_next(goal, world)
+  return next_pill(goal, world) ~= nil
+end
+
+-- The current chain pill is dead: aim at the next one from this same spot
+-- and go back to the PPT aim path (in_range_aim -> finetune -> shoot_pill).
+-- Returns true when the goal now targets the next pill.
+function M.chain_next(state, goal, world, info, now)
+  local B, bid, k = next_pill(goal, world)
+  if not B then return false end
+  local AT = require("attack")
+  local idx, awx, awy = AT._clear_aim_from_world(info.tankx, info.tanky, B.mx, B.my, world, nil)
+  if not idx then
+    print2(string.format("PT2_CHAIN_STOP t=%d dead=(%d,%d) next=(%d,%d) id=%s: no clear aim from here",
+      now, goal.mx, goal.my, B.mx, B.my, tostring(bid)))
+    return false
+  end
+  print2(string.format("PT2_CHAIN_NEXT t=%d dead=(%d,%d) next=(%d,%d) id=%s step=%d/%d aim=%d",
+    now, goal.mx, goal.my, B.mx, B.my, tostring(bid), k, #goal._pt2.ids, idx))
+  goal._pt2.step = k
+  goal.target_id = bid
+  goal.mx, goal.my = B.mx, B.my
+  AT._set_goal_aim(goal, B.mx, B.my, idx, awx, awy)
+  local sc = goal._shield_scan
+  if sc then sc.pill = B; sc.pill_hp = B.health end
+  goal.substate             = "in_range_aim"
+  goal.aim_tick             = now
+  goal._aim_locked          = nil
+  goal._pre_aim_locked      = nil
+  goal._finetune_taps       = 0
+  goal._finetune_start      = nil
+  goal._finetune_reached_tap = nil
+  goal._finetune_path       = nil
+  goal._finetune_on_pill    = nil
+  goal._shoot_reach_checked = nil
+  goal._shoot_first_steer   = nil
+  -- a new pill: new shot accounting and a new no-progress clock
+  goal._attack_start_tick   = nil
+  goal._charge_start_hp     = nil
+  goal._bullets_needed      = nil
+  goal._kill_attempt        = nil
+  goal._shoot_progress_hp   = nil
+  goal._shoot_progress_tick = nil
+  goal._on_target_in_flight = nil
+  return true
+end
+
 return M
