@@ -2039,9 +2039,14 @@ static void tabletNewswireDraw(void) {
   TTF_Font *font = tabletNewswireFont(gTabletNewswirePx);
   float slide = sdl3DrawNewswireSlideStep();
   if (slide >= 1.0f) return;
-  sdl3DrawNewswireStrip(font, gTabletNewswireX, gTabletNewswireY,
+  /* Over the game view the strip has a bar along its top, a bevel wide, and
+     starts that much higher so the lines stay where they were. Not in the
+     touch layout's full screen map, where no panel has the wide bevel. */
+  float frame = sdl3DrawIsTabletMapFullScreen()
+                  ? 0.0f : (float)sdl3DrawGetTabletBevel();
+  sdl3DrawNewswireStrip(font, gTabletNewswireX, gTabletNewswireY - frame,
                         gTabletNewswireW, gTabletNewswireEdge, slide,
-                        gTabletNewswireText, gTabletNewswireBack);
+                        gTabletNewswireText, gTabletNewswireBack, frame);
 }
 
 bool sdl3DrawSetup(int zoomFactor) {

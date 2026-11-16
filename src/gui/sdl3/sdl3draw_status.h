@@ -176,11 +176,12 @@ Uint64 sdl3DrawGetMessageActivityTick(void);
    1 gone) towards edge, the line it slides off by, and clipped there. The
    lines are drawn as the classic newswire draws its own, in the fixed-width
    font given and showing the rightmost characters that fit, so the scroll
-   moves at one speed and the two lines stay in step. Nothing is drawn while
-   both lines are blank. */
+   moves at one speed and the two lines stay in step. frame, when above zero,
+   is the height of a bar drawn along the strip's top, the backing and the
+   lines starting under it. Nothing is drawn while both lines are blank. */
 void sdl3DrawNewswireStrip(TTF_Font *font, float x, float y, float w,
                            float edge, float slide, Uint8 textAlpha,
-                           Uint8 backAlpha);
+                           Uint8 backAlpha, float frame);
 void sdl3DrawKillsDeaths(int x, int y, int kills, int deaths);
 void sdl3DrawTankLabel(char *str, BYTE playerNum,
                        BYTE mx, BYTE my, BYTE px, BYTE py);

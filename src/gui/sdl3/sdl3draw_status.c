@@ -275,7 +275,7 @@ static bool newswireHasText(void) {
 
 void sdl3DrawNewswireStrip(TTF_Font *font, float x, float y, float w,
                            float edge, float slide, Uint8 textAlpha,
-                           Uint8 backAlpha) {
+                           Uint8 backAlpha, float frame) {
   SDL_assert(sdl3DrawOnRenderThread());
   if (!gRenderer || !font || slide >= 1.0f || edge <= y || w <= 16.0f) return;
   if (!newswireHasText()) return;
@@ -291,6 +291,21 @@ void sdl3DrawNewswireStrip(TTF_Font *font, float x, float y, float w,
 
   SDL_Rect clip = { (int)x, (int)y, (int)w, (int)(edge - y) };
   SDL_SetRenderClipRect(gRenderer, &clip);
+
+  /* The bar along the strip's top, light over dark in the background art's
+     two bevel grays, as the bars between the touch layout's panels are. It
+     is part of the strip: it slides with it and is not there while the
+     strip is not. The backing and the lines start under it. */
+  if (frame > 0.0f) {
+    SDL_FRect light = { x, top, w, frame * 0.5f };
+    SDL_FRect dark  = { x, top + frame * 0.5f, w, frame * 0.5f };
+    SDL_SetRenderDrawBlendMode(gRenderer, SDL_BLENDMODE_NONE);
+    SDL_SetRenderDrawColor(gRenderer, 165, 165, 165, 255);
+    SDL_RenderFillRect(gRenderer, &light);
+    SDL_SetRenderDrawColor(gRenderer, 49, 49, 49, 255);
+    SDL_RenderFillRect(gRenderer, &dark);
+    top += frame;
+  }
 
   SDL_FRect back = { x, top, w, h };
   SDL_SetRenderDrawBlendMode(gRenderer, SDL_BLENDMODE_BLEND);

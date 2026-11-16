@@ -903,15 +903,8 @@ static void renderTabletBackground(void) {
       border, buildLight, buildDark, buildFill);
   }
 
-  /* --- Bottom: messages overlay area --- */
-  if (!s_fullScreen) {
-    /* A thin line along the top of the strip SDL draws, which carries its
-       own backing and slides away to show the game view under it. The strip
-       is as wide as the view, whose frame closes its other three sides. */
-    float lineY = c.msgOverlayY - 3.0f * ps;
-    dl->AddRectFilled(ImVec2(c.msgOverlayX, lineY - border),
-                      ImVec2(c.msgOverlayX + c.msgOverlayW, lineY), colDark);
-  }
+  /* The newswire has no frame here: the bar along its top is drawn with the
+     strip (sdl3DrawNewswireStrip), so it slides away with it. */
 }
 
 /* -------------------------------------------------------
