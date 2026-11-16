@@ -1,16 +1,19 @@
 /*
  * Tests for the pure cJSON parser in wbn_serverlist.c:
- * wbnServerListParse (GET /api/v1/games 200 body).
+ * wbnServerListParse (GET /api/v1/games 200 body), and for
+ * wbnServerListPickAddress, which chooses a row's address.
  *
- * Parser-only: no network. The module references
- * wbn_api_get_public (in http.c) only from wbnFetchServerList,
- * which is stubbed in test_stubs.c so the binary links without
- * curl. wbnFetchServerList itself is validated live, not here.
+ * No network. The module references wbn_api_get_public (in
+ * http.c) only from wbnFetchServerList, which is stubbed in
+ * test_stubs.c so the binary links without curl; the stub keeps
+ * the path it was handed, so the request path is checked here
+ * and the fetch itself is validated live.
  */
 
 #include <string.h>
 #include <stdlib.h>
 
+#include "bolo_addr.h"   /* bolo_net_init, bolo_net_cleanup */
 #include "test_harness.h"
 #include "wbn_serverlist.h"
 
@@ -532,4 +535,213 @@ static int server_text_parse(void) {
 
 int run_wbn_serverlist_server_text(void) {
     return server_text_parse();
+}
+
+/* -------------------------------------------------------------------- */
+
+/* "address6" beside "address". getaddrinfo reads the IPv6 text and needs
+ * Winsock started on Windows, so the cases run between bolo_net_init and
+ * bolo_net_cleanup. */
+static int address6_parse(void) {
+    WbnServerList list;
+    const WbnServerListEntry *s;
+
+    /* Both set: each kept in its own field. A long-form IPv6 address is
+       kept in its short printed form. */
+    UT_ASSERT(wbnServerListParse(
+        "{\"servers\":[{\"address\":\"203.0.113.5\",\"address6\":\"2001:db8::1\"},"
+        "{\"address\":\"203.0.113.6\","
+        "\"address6\":\"2001:0db8:0000:0000:0000:0000:0000:0002\"}]}", &list));
+    UT_ASSERT_MSG(list.count == 2, "count=%d", list.count);
+    s = &list.servers[0];
+    UT_ASSERT_MSG(strcmp(s->address, "203.0.113.5") == 0, "address=\"%s\"",
+                  s->address);
+    UT_ASSERT_MSG(strcmp(s->address6, "2001:db8::1") == 0, "address6=\"%s\"",
+                  s->address6);
+    UT_ASSERT_MSG(strcmp(list.servers[1].address6, "2001:db8::2") == 0,
+                  "long-form address6=\"%s\"", list.servers[1].address6);
+    wbnServerListFree(&list);
+
+    /* No "address6" key: today's shape, address6 empty. */
+    UT_ASSERT(wbnServerListParse(
+        "{\"servers\":[{\"address\":\"play.example.net\",\"port\":27500}]}",
+        &list));
+    s = &list.servers[0];
+    UT_ASSERT_MSG(strcmp(s->address, "play.example.net") == 0,
+                  "address=\"%s\"", s->address);
+    UT_ASSERT_MSG(s->address6[0] == '\0', "absent address6=\"%s\"",
+                  s->address6);
+    wbnServerListFree(&list);
+
+    /* A host listed by its IPv6 address only: address empty. */
+    UT_ASSERT(wbnServerListParse(
+        "{\"servers\":[{\"address\":\"\",\"address6\":\"2001:db8::7\"}]}",
+        &list));
+    s = &list.servers[0];
+    UT_ASSERT_MSG(s->address[0] == '\0', "address=\"%s\"", s->address);
+    UT_ASSERT_MSG(strcmp(s->address6, "2001:db8::7") == 0, "address6=\"%s\"",
+                  s->address6);
+    wbnServerListFree(&list);
+
+    /* Each of these is stored as empty: not an address, an IPv4 address, a
+       bracketed address with a port, an IPv4-mapped address, link-local,
+       loopback, unspecified, an empty string, a number, null. */
+    {
+        static const char *const refused[] = {
+            "\"not an address\"",
+            "\"203.0.113.5\"",
+            "\"[2001:db8::1]:27500\"",
+            "\"::ffff:203.0.113.5\"",
+            "\"fe80::1\"",
+            "\"::1\"",
+            "\"::\"",
+            "\"\"",
+            "42",
+            "null",
+        };
+        for (size_t i = 0; i < sizeof(refused) / sizeof(refused[0]); i++) {
+            char body[160];
+            snprintf(body, sizeof(body),
+                     "{\"servers\":[{\"address\":\"203.0.113.5\","
+                     "\"address6\":%s}]}", refused[i]);
+            UT_ASSERT_MSG(wbnServerListParse(body, &list), "parse %s",
+                          refused[i]);
+            s = &list.servers[0];
+            UT_ASSERT_MSG(s->address6[0] == '\0', "address6 %s kept as \"%s\"",
+                          refused[i], s->address6);
+            UT_ASSERT_MSG(strcmp(s->address, "203.0.113.5") == 0,
+                          "address beside %s=\"%s\"", refused[i], s->address);
+            wbnServerListFree(&list);
+        }
+    }
+    return 0;
+}
+
+int run_wbn_serverlist_address6(void) {
+    int rc;
+    bolo_net_init();
+    rc = address6_parse();
+    bolo_net_cleanup();
+    return rc;
+}
+
+/* -------------------------------------------------------------------- */
+
+/* Fills a row with the two address fields and nothing else. */
+static void pickRow(WbnServerListEntry *e, const char *address,
+                    const char *address6) {
+    memset(e, 0, sizeof(*e));
+    snprintf(e->address, sizeof(e->address), "%s", address);
+    snprintf(e->address6, sizeof(e->address6), "%s", address6);
+}
+
+/* Asserts wbnServerListPickAddress gives want (NULL: returns false). */
+static int expectPick(const char *address, const char *address6, bool v4,
+                      bool v6, const char *want) {
+    WbnServerListEntry e;
+    char out[64];
+    bool ok;
+    pickRow(&e, address, address6);
+    out[0] = 'x';
+    out[1] = '\0';
+    ok = wbnServerListPickAddress(&e, v4, v6, out, sizeof(out));
+    if (want == NULL) {
+        UT_ASSERT_MSG(!ok, "\"%s\"/\"%s\" v4=%d v6=%d picked \"%s\", want none",
+                      address, address6, (int)v4, (int)v6, out);
+        UT_ASSERT_MSG(out[0] == '\0', "out not cleared: \"%s\"", out);
+    } else {
+        UT_ASSERT_MSG(ok, "\"%s\"/\"%s\" v4=%d v6=%d picked none, want \"%s\"",
+                      address, address6, (int)v4, (int)v6, want);
+        UT_ASSERT_MSG(strcmp(out, want) == 0,
+                      "\"%s\"/\"%s\" v4=%d v6=%d picked \"%s\", want \"%s\"",
+                      address, address6, (int)v4, (int)v6, out, want);
+    }
+    return 0;
+}
+
+static int pick_address_rules(void) {
+    const char *v4 = "203.0.113.5";
+    const char *v6 = "2001:db8::1";
+
+    /* An IPv4 address and an IPv4 route: the IPv4 address, whatever else. */
+    if (expectPick(v4, v6, true, true, v4)) return 1;
+    if (expectPick(v4, v6, true, false, v4)) return 1;
+    if (expectPick(v4, "", true, false, v4)) return 1;
+    /* No IPv4 route, an IPv6 address and an IPv6 route: the IPv6 address. */
+    if (expectPick(v4, v6, false, true, v6)) return 1;
+    if (expectPick("", v6, false, true, v6)) return 1;
+    if (expectPick("", v6, true, true, v6)) return 1;
+    /* No route that fits, but an IPv4 address or name: that, for NAT64. */
+    if (expectPick(v4, v6, false, false, v4)) return 1;
+    if (expectPick(v4, "", false, false, v4)) return 1;
+    if (expectPick(v4, "", false, true, v4)) return 1;
+    if (expectPick("play.example.net", "", false, false, "play.example.net"))
+        return 1;
+    /* Only an IPv6 address and no IPv6 route: nothing. */
+    if (expectPick("", v6, true, false, NULL)) return 1;
+    if (expectPick("", v6, false, false, NULL)) return 1;
+    /* Both empty: nothing, whatever the routes. */
+    if (expectPick("", "", true, true, NULL)) return 1;
+    if (expectPick("", "", false, false, NULL)) return 1;
+
+    /* NULL row or no room: false. */
+    {
+        char out[8];
+        WbnServerListEntry e;
+        pickRow(&e, v4, "");
+        UT_ASSERT(!wbnServerListPickAddress(NULL, true, true, out, sizeof(out)));
+        UT_ASSERT(!wbnServerListPickAddress(&e, true, true, out, 0));
+        UT_ASSERT(!wbnServerListPickAddress(&e, true, true, NULL, sizeof(out)));
+    }
+    return 0;
+}
+
+/* A list in the shape the site sends today, with no "address6" anywhere,
+ * picks every row's own "address" for every pair of route flags. */
+static int pick_address_old_list(void) {
+    const char *body =
+        "{\"servers\":["
+        "{\"address\":\"203.0.113.5\",\"port\":27500},"
+        "{\"address\":\"play.example.net\",\"port\":27501},"
+        "{\"address\":\"198.51.100.9\",\"port\":50000}]}";
+    WbnServerList list;
+    UT_ASSERT(wbnServerListParse(body, &list));
+    UT_ASSERT_MSG(list.count == 3, "count=%d", list.count);
+    for (int flags = 0; flags < 4; flags++) {
+        bool v4 = (flags & 1) != 0;
+        bool v6 = (flags & 2) != 0;
+        for (int i = 0; i < list.count; i++) {
+            char out[64];
+            UT_ASSERT_MSG(wbnServerListPickAddress(&list.servers[i], v4, v6,
+                                                   out, sizeof(out)),
+                          "row %d v4=%d v6=%d picked none", i, (int)v4,
+                          (int)v6);
+            UT_ASSERT_MSG(strcmp(out, list.servers[i].address) == 0,
+                          "row %d v4=%d v6=%d picked \"%s\", want \"%s\"", i,
+                          (int)v4, (int)v6, out, list.servers[i].address);
+        }
+    }
+    wbnServerListFree(&list);
+    return 0;
+}
+
+int run_wbn_serverlist_pick_address(void) {
+    int rc;
+    rc = pick_address_rules();     if (rc) return rc;
+    rc = pick_address_old_list();  if (rc) return rc;
+    return 0;
+}
+
+/* -------------------------------------------------------------------- */
+
+/* wbnFetchServerList asks for the list with v6=1. The wbn_api_get_public stub
+ * in test_stubs.c refuses every request and keeps the path it was handed. */
+int run_wbn_serverlist_fetch_path(void) {
+    WbnServerList list;
+    UT_ASSERT(!wbnFetchServerList(&list));
+    UT_ASSERT_MSG(list.count == 0 && list.servers == NULL,
+                  "a refused fetch left count=%d", list.count);
+    UT_ASSERT_MSG(strcmp(ut_wbn_get_public_last_path(), "games?v6=1") == 0,
+                  "path=\"%s\"", ut_wbn_get_public_last_path());
+    return 0;
 }

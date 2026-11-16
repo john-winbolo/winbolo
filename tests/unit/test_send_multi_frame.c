@@ -2,7 +2,7 @@
  * The snapshot trailer is not the only carrier a running tick has.
  *
  * serverSendSnapshot builds one datagram: the snapshot, then one channel frame
- * in whatever is left of UDP_MAX_PAYLOAD. A busy snapshot leaves a few dozen
+ * in whatever is left of UDP_MAX_SEND. A busy snapshot leaves a few dozen
  * bytes, so most of what the channel layer had queued stayed queued. Reliable
  * channels were never lost to that — they wait and a full window is
  * backpressure — but the best-effort effect ring is 64 deep and the voice ring
@@ -46,14 +46,16 @@
 #include <SDL3/SDL.h>
 
 #include "global.h"                 /* MAP_STR_SIZE, MAX_TANKS, BYTE */
-#include "platform_net.h"           /* sockets, struct sockaddr_in */
+#include "platform_net.h"           /* sockets */
+#include "bolo_addr.h"              /* BoloAddr */
 #include "wire_limits.h"            /* PACKET_MAX_PLAYER_NAME */
 #include "netpacks.h"               /* PACKET_* types, PACKET_HEADER_SIZE,
                                      * BOLO_VERSION_*, JOIN_COOKIE_LEN */
 #include "transport_udp.h"          /* WBN_JOIN_KEY_WIRE_LEN, transportUdpServerSend,
                                      * the download-complete + game-event test hooks */
 #include "transport_udp_internal.h" /* packHeader, packU32, unpackU32, getPacketType,
-                                     * UDP_MAX_PAYLOAD, SNAPSHOT_HEADER_WIRE_SIZE,
+                                     * UDP_MAX_PAYLOAD, UDP_MAX_SEND,
+                                     * SNAPSHOT_HEADER_WIRE_SIZE,
                                      * the unpack*Snapshot helpers */
 #include "transport_udp_server_internal.h" /* SNAPSHOT_EXTRA_CHANNEL_FRAMES */
 #include "channel_mux.h"            /* ChannelMux and the channel primitives */
@@ -83,12 +85,12 @@
 #define MF_DRAIN_POLLS 5
 
 /* Reliable game events queued for the one measured send. One channel frame
- * holds at most (UDP_MAX_PAYLOAD - PACKET_HEADER_SIZE - 2) / 14 = 99 of them
+ * holds at most (UDP_MAX_SEND - PACKET_HEADER_SIZE - 2) / 14 = 87 of them
  * (7 bytes of segment header plus a 7-byte EVENT_PING), and the snapshot
- * trailer holds fewer still, so this always needs more than one frame. Four
- * frames hold at least 4 + 99 + 99 + 99 even against the largest snapshot
- * the server can build, so it also always fits inside the budget the loop
- * has. */
+ * trailer holds fewer still, so this always needs more than one frame. The
+ * three standalone frames hold 87 + 87 + 87 = 261 even when the largest
+ * snapshot the server can build leaves the trailer no room at all, so it
+ * also always fits inside the budget the loop has. */
 #define MF_EVENTS 220
 
 /* The fixed pattern in the marker event's y coordinate. */
@@ -152,15 +154,13 @@ static void mfPackConnId(uint8_t *buf, uint64_t connId) {
 
 /* Open a non-blocking UDP socket bound to an ephemeral 127.0.0.1 port. */
 static SOCKET mfOpenSocket(void) {
-    struct sockaddr_in addr;
+    BoloAddr addr;
     unsigned long nonblock = 1;
-    SOCKET s = socket(AF_INET, SOCK_DGRAM, 0);
+    SOCKET s;
+    if (!boloAddrParse("127.0.0.1", 0, &addr)) return INVALID_SOCKET;
+    s = socket(AF_INET, SOCK_DGRAM, 0);
     if (s == INVALID_SOCKET) return INVALID_SOCKET;
-    memset(&addr, 0, sizeof(addr));
-    addr.sin_family      = AF_INET;
-    addr.sin_addr.s_addr = inet_addr("127.0.0.1");
-    addr.sin_port        = 0;
-    if (bind(s, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
+    if (bind(s, (const struct sockaddr *)&addr.ss, addr.len) != 0) {
         closesocket(s);
         return INVALID_SOCKET;
     }
@@ -270,23 +270,23 @@ static void mfDrain(ChannelMux *m, bool *seen, int seenCap) {
  * traffic this raw client produces, and it is what keeps the slot's
  * lastReceivedTick fresh so the timeout sweep does not drop it. */
 static void mfSendFrame(ChannelMux *m, SOCKET sock,
-                        const struct sockaddr_in *serverAddr, uint32_t tick,
+                        const BoloAddr *serverAddr, uint32_t tick,
                         uint32_t *seq) {
     uint8_t cbuf[UDP_MAX_PAYLOAD];
     int frameLen;
 
     channelTick(m, tick, 0);
     frameLen = channelBuildFrame(m, cbuf + PACKET_HEADER_SIZE,
-                                 UDP_MAX_PAYLOAD - PACKET_HEADER_SIZE);
+                                 UDP_MAX_SEND - PACKET_HEADER_SIZE);
     if (frameLen < 2) return;
     packHeader(cbuf, PACKET_CHANNEL, (*seq)++);
     sendto(sock, (const char *)cbuf, PACKET_HEADER_SIZE + frameLen, 0,
-           (const struct sockaddr *)serverAddr, sizeof(*serverAddr));
+           (const struct sockaddr *)&serverAddr->ss, serverAddr->len);
 }
 
 int run_send_drains_channels_multi_frame(void) {
     LoopbackHarness h;
-    struct sockaddr_in serverAddr;
+    BoloAddr serverAddr;
     ChannelMux *peer;
     bool *seen;
     uint8_t joinBuf[1024];
@@ -317,10 +317,7 @@ int run_send_drains_channels_multi_frame(void) {
         UT_FAIL("harness start (send multi frame) failed");
     }
 
-    memset(&serverAddr, 0, sizeof(serverAddr));
-    serverAddr.sin_family      = AF_INET;
-    serverAddr.sin_addr.s_addr = inet_addr("127.0.0.1");
-    serverAddr.sin_port        = htons(h.port);
+    (void)boloAddrParse("127.0.0.1", (uint16_t)(h.port), &serverAddr);
 
     sock = mfOpenSocket();
     if (sock == INVALID_SOCKET) {
@@ -336,7 +333,7 @@ int run_send_drains_channels_multi_frame(void) {
         uint8_t in[UDP_MAX_PAYLOAD];
         if (i == 0) {
             sendto(sock, (const char *)joinBuf, joinLen, 0,
-                   (const struct sockaddr *)&serverAddr, sizeof(serverAddr));
+                   (const struct sockaddr *)&serverAddr.ss, serverAddr.len);
         }
         loopbackHarnessPump(&h);
         while ((n = loopbackRecvFromServer(sock, in, sizeof(in),
@@ -362,7 +359,7 @@ int run_send_drains_channels_multi_frame(void) {
         uint8_t in[UDP_MAX_PAYLOAD];
         if (i == 0) {
             sendto(sock, (const char *)joinBuf, joinLen, 0,
-                   (const struct sockaddr *)&serverAddr, sizeof(serverAddr));
+                   (const struct sockaddr *)&serverAddr.ss, serverAddr.len);
         }
         loopbackHarnessPump(&h);
         while ((n = loopbackRecvFromServer(sock, in, sizeof(in),
@@ -394,7 +391,7 @@ int run_send_drains_channels_multi_frame(void) {
     packHeader(readyBuf, PACKET_MAP_DL_READY, 1u);
     mfPackConnId(readyBuf + PACKET_HEADER_SIZE, connId);
     sendto(sock, (const char *)readyBuf, sizeof(readyBuf), 0,
-           (const struct sockaddr *)&serverAddr, sizeof(serverAddr));
+           (const struct sockaddr *)&serverAddr.ss, serverAddr.len);
 
     for (i = 0; i < MF_DOWNLOAD_MAX && !complete; i++) {
         uint8_t in[UDP_MAX_PAYLOAD];
@@ -506,7 +503,7 @@ int run_send_drains_channels_multi_frame(void) {
         free(peer);
         free(seen);
         UT_FAIL("%d queued game event(s) went out in %d datagram(s) — the "
-                "snapshot trailer carries what is left of UDP_MAX_PAYLOAD and "
+                "snapshot trailer carries what is left of UDP_MAX_SEND and "
                 "nothing follows it, so the rest of the burst waited a tick",
                 MF_EVENTS, got);
     }

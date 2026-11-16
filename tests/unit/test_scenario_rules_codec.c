@@ -27,8 +27,8 @@
  * The segment, not MAX_CONTROL_PACKET, is the ceiling that matters: one
  * control event is one channel segment, and the encoder is handed
  * CHANNEL_CONTROL_SEG less the channel frame's type(1) and bodyLen(2). A
- * fragment measured against the 1400-byte datagram instead would pass here
- * and be dropped at delivery.
+ * fragment measured against MAX_CONTROL_PACKET's 1400 bytes instead would
+ * pass here and be dropped at delivery.
  */
 
 #include <stdint.h>

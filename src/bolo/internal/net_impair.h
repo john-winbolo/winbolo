@@ -23,7 +23,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#include "platform_net.h"   /* struct sockaddr_in */
+#include "bolo_addr.h"      /* BoloAddr */
 
 /*
  * WB_ENABLE_NETIMPAIR — master compile-time switch for the network
@@ -68,7 +68,7 @@ typedef struct {
 typedef struct { /* one queued datagram */
     uint8_t data[NET_IMPAIR_MAX_PACKET];
     int len;
-    struct sockaddr_in addr;
+    BoloAddr addr;
     uint64_t deliverAt;
     bool inUse;
 } NetImpairPacket;
@@ -100,12 +100,12 @@ bool netImpairEnabled(const NetImpair *ni);
  * larger than NET_IMPAIR_MAX_PACKET.  Otherwise the packet is dropped or
  * queued and true is returned. */
 bool netImpairOffer(NetImpair *ni, const uint8_t *data, int len,
-                    const struct sockaddr_in *addr, uint64_t nowMs);
+                    const BoloAddr *addr, uint64_t nowMs);
 
 /* Release the smallest-deliverAt packet whose deliverAt <= nowMs, copying
  * it out and freeing the slot.  Returns the packet length, or -1 if none
  * is due. */
 int  netImpairPop(NetImpair *ni, uint8_t *buf, int maxLen,
-                  struct sockaddr_in *addr, uint64_t nowMs);
+                  BoloAddr *addr, uint64_t nowMs);
 
 #endif /* NET_IMPAIR_H */

@@ -457,7 +457,7 @@ int run_upload_begin_without_trailer_refused(void) {
     LoopbackHarness h;
     uint8_t pkt[PACKET_HEADER_SIZE + 1 + 4 + 1 + 255 + 4];
     size_t bodyLen;
-    struct sockaddr_in from;
+    BoloAddr from;
     bool armed;
     int slot;
 

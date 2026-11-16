@@ -23,7 +23,8 @@
 #include <SDL3/SDL.h>
 
 #include "global.h"            /* MAP_STR_SIZE */
-#include "platform_net.h"      /* sockets, struct sockaddr_in */
+#include "platform_net.h"      /* sockets */
+#include "bolo_addr.h"         /* BoloAddr */
 #include "wire_limits.h"       /* PACKET_MAX_PLAYER_NAME */
 #include "netpacks.h"          /* PACKET_* types, PACKET_HEADER_SIZE, BOLO_VERSION_*, JOIN_COOKIE_LEN */
 #include "transport_udp.h"     /* WBN_JOIN_KEY_WIRE_LEN, JOIN_FLAG_SPECTATOR, MAX_SPECTATORS, count getter */
@@ -83,15 +84,13 @@ static int srpBuildJoin(uint8_t *buf, const char *name, uint8_t flags,
 }
 
 static SOCKET srpOpenSocketOnIp(const char *ip) {
-    struct sockaddr_in addr;
+    BoloAddr addr;
     unsigned long nonblock = 1;
-    SOCKET s = socket(AF_INET, SOCK_DGRAM, 0);
+    SOCKET s;
+    if (!boloAddrParse(ip, 0, &addr)) return INVALID_SOCKET;
+    s = socket(AF_INET, SOCK_DGRAM, 0);
     if (s == INVALID_SOCKET) return INVALID_SOCKET;
-    memset(&addr, 0, sizeof(addr));
-    addr.sin_family      = AF_INET;
-    addr.sin_addr.s_addr = inet_addr(ip);
-    addr.sin_port        = 0;
-    if (bind(s, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
+    if (bind(s, (const struct sockaddr *)&addr.ss, addr.len) != 0) {
         closesocket(s);
         return INVALID_SOCKET;
     }
@@ -102,13 +101,13 @@ static SOCKET srpOpenSocketOnIp(const char *ip) {
 /* Send one JOIN and pump until an accept/reject/challenge arrives. */
 static void srpDriveOnce(LoopbackHarness *h, SOCKET sock,
                          const uint8_t *join, int joinLen,
-                         const struct sockaddr_in *server,
+                         const BoloAddr *server,
                          bool *gotAccept, bool *gotChallenge, bool *gotReject,
                          uint8_t *outCookie) {
     Uint64 deadline;
     *gotAccept = false; *gotChallenge = false; *gotReject = false;
     sendto(sock, (const char *)join, joinLen, 0,
-           (const struct sockaddr *)server, sizeof(*server));
+           (const struct sockaddr *)&server->ss, server->len);
     deadline = SDL_GetTicks() + SRP_REPLY_DEADLINE_MS;
     while (SDL_GetTicks() < deadline) {
         uint8_t in[1024];
@@ -138,7 +137,7 @@ static void srpDriveOnce(LoopbackHarness *h, SOCKET sock,
 /* Full spectator handshake (cookieless → challenge → echo). Returns true if a
  * JOIN_ACCEPT arrived. */
 static bool srpSpectatorJoins(LoopbackHarness *h, SOCKET s,
-                              const struct sockaddr_in *server,
+                              const BoloAddr *server,
                               const char *name) {
     uint8_t joinBuf[1024];
     uint8_t cookie[JOIN_COOKIE_LEN];
@@ -194,17 +193,14 @@ static bool pred_spec_gone(LoopbackHarness *h, void *u) {
 
 int run_spectator_roster_publish(void) {
     LoopbackHarness h;
-    struct sockaddr_in serverAddr;
+    BoloAddr serverAddr;
     int joinIdx;
 
     UT_ASSERT_MSG(loopbackHarnessStart(&h, "Player", /*lobbyMode*/ false,
                                        /*impairSpec*/ NULL, /*seed*/ 1u),
                   "harness start failed");
 
-    memset(&serverAddr, 0, sizeof(serverAddr));
-    serverAddr.sin_family      = AF_INET;
-    serverAddr.sin_addr.s_addr = inet_addr("127.0.0.1");
-    serverAddr.sin_port        = htons(h.port);
+    (void)boloAddrParse("127.0.0.1", (uint16_t)(h.port), &serverAddr);
 
     /* Open viewer slots so the spectator-accept path admits the raw JOINs. */
     serverSimSetMaxSpectators(h.sim, 4);

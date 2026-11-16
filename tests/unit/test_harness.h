@@ -582,6 +582,9 @@ int run_wbn_serverlist_motd(void);
 int run_wbn_serverlist_malformed(void);
 int run_wbn_serverlist_scripts(void);
 int run_wbn_serverlist_server_text(void);
+int run_wbn_serverlist_address6(void);
+int run_wbn_serverlist_pick_address(void);
+int run_wbn_serverlist_fetch_path(void);
 int run_wbn_map_parse(void);
 int run_wbn_map_fetch_policy(void);
 int run_brain_crash_log_writes_file(void);
@@ -966,6 +969,7 @@ int run_autoclose_failed_bot_add_leaves_check_armed(void);
 int run_round_transition_tick_does_not_block(void);
 int run_round_transition_during_rotation_deferred(void);
 int run_round_transition_worker_down_sends_inline(void);
+int run_round_transition_failed_register_no_announce(void);
 
 /* Re-authentication off the tick thread (test_reauth_result.c). The reauth
  * captures the slot and queues client/verify; the reply stamps the slot on a
@@ -2637,6 +2641,30 @@ int run_loopback_join_accept_lost_ready(void);
  * transportUdpServerSend has to put every one of them on the wire — the
  * snapshot plus at most SNAPSHOT_EXTRA_CHANNEL_FRAMES standalone frames. */
 int run_send_drains_channels_multi_frame(void);
+/* Nothing on the wire passes the send cap (test_send_cap.c): over a join, the
+ * map download and a minute of game time of play on the loopback harness, the
+ * largest datagram either end hands udpSendTo is at most UDP_MAX_SEND. */
+int run_send_cap_join_download_play(void);
+/* Joins over IPv6 and over both families at once (test_loopback_v6.c): a
+ * client dialling ::1 joins, downloads the map and disconnects; a client on
+ * 127.0.0.1 and one on ::1 are in one game together; and with the IPv4
+ * fallback socket forced, a join over 127.0.0.1 still completes. The two IPv6
+ * cases pass as skipped on a machine with no IPv6 loopback. */
+int run_loopback_v6_join_download_disconnect(void);
+int run_loopback_mixed_family_one_server(void);
+int run_loopback_ipv4_fallback_socket(void);
+/* Replies leave from the address the datagram arrived on
+ * (test_reply_source.c): the server socket reports the local address of an
+ * IPv6 and of an IPv4 datagram on the dual-stack socket and on the IPv4
+ * fallback socket, a reply naming that address arrives from the address the
+ * peer dialled, and a joined slot stores the loopback address of the family
+ * its client dialled. The IPv6 cases pass as skipped on a machine with no
+ * IPv6 loopback. */
+int run_reply_source_recv_reports_local_v6(void);
+int run_reply_source_recv_reports_local_v4_mapped(void);
+int run_reply_source_send_from_local(void);
+int run_reply_source_ipv4_socket(void);
+int run_reply_source_slot_stores_local(void);
 /* A burst of best-effort traffic survives the tick it was raised on
  * (test_best_effort_burst.c): effect events and a voice frame queued on one
  * tick, with the snapshot trailer already filled by reliable traffic, all reach
@@ -2758,12 +2786,19 @@ int run_join_version_gate(void);
  * JOINs from distinct loopback ephemeral ports (one source IP) draws at most
  * JOIN_RL_BURST accepts, while a JOIN from a distinct source IP is unaffected. */
 int run_join_rate_limit(void);
+/* The limiter's IPv6 buckets, driven directly: two addresses in one /64
+ * share a bucket, and an address in another /64 has its own. */
+int run_join_rate_limit_v6_same_prefix(void);
+int run_join_rate_limit_v6_other_prefix(void);
 
 /* JOIN address-proof cookie handshake (test_cookie_handshake.c): a cookie-less
  * JOIN draws a PACKET_JOIN_CHALLENGE and no slot; echoing the challenge cookie
  * completes the join; a garbage cookie never completes; a cookie expires once
  * the server's time-window advances (via the WB_COOKIE_WINDOW_OFFSET seam). */
 int run_cookie_handshake(void);
+/* An IPv6 joiner's cookie recomputes for its own address and port and not for
+ * another address in the same /64. */
+int run_cookie_handshake_v6(void);
 
 /* Map-send amplification gate (test_map_amp_gate.c): a crafted JOIN over a raw
  * loopback socket draws only a small JOIN_CHALLENGE (no accept, no CHANNEL_BULK
@@ -2911,6 +2946,16 @@ int run_wire_corpus_capture(void);
  * its exact debug string and an undefined type id resolves to "UNKNOWN". */
 int run_packet_type_names(void);
 
+/* IPv6 hole punching through the tracker (test_punch_addr.c): the punch
+ * address body codec, the joiner's punch request for an IPv4 and an IPv6
+ * host, the server's handling of both notify forms into the punch queue, and
+ * both probe-reply forms into the port-map status, SERVER_PORTMAP_IPV6_OK
+ * included. */
+int run_punch_addr_codec(void);
+int run_punch_request_build(void);
+int run_punch_notify_dispatch(void);
+int run_punch_probe_reply_status(void);
+
 /* River tile lookup (test_screencalc_river.c): screenCalcRiver reads its
  * four orthogonal neighbours only as "wet or bridged", so RIVER / ROAD /
  * DEEP_SEA / BOAT are interchangeable there — the contract the four
@@ -3033,6 +3078,15 @@ int run_bot_difficulty_names(void);
  * the advertiser builder + browser parse path, asserting the SRV port, the
  * inLobby/locked flags, every TXT field, and two-instance resolution. */
 int run_mdns_discovery(void);
+
+/* mDNS IPv6 records (test_mdns_discovery.c): a host with only an IPv6
+ * address answers with an AAAA record, no A record and the WinBolo-v6-
+ * instance name; a host with both is listed at its IPv4 address; a
+ * link-local AAAA takes the scope of the datagram's IPv6 source and is
+ * ignored when the source is IPv4. */
+int run_mdns_discovery_aaaa_only(void);
+int run_mdns_discovery_both_prefers_v4(void);
+int run_mdns_discovery_link_local_scope(void);
 
 /* The platform advertiser's strings (test_mdns_discovery.c): the instance
  * label and TXT pairs iOS registers with Bonjour match the raw-socket
@@ -3169,6 +3223,33 @@ int run_addrparse_whitespace(void);
 int run_addrparse_port_bounds(void);
 int run_addrparse_bad_port(void);
 int run_addrparse_empty(void);
+int run_addrparse_bracketed(void);
+int run_addrparse_bare_ipv6(void);
+int run_addrparse_ipv6_scope(void);
+int run_addrparse_ipv6_scheme(void);
+int run_addrparse_format_host_port(void);
+int run_addrparse_steam_connect(void);
+
+/* The IPv4/IPv6 address type and resolver in bolo_addr.h
+ * (test_bolo_addr.c). */
+int run_boloaddr_roundtrip_v4(void);
+int run_boloaddr_roundtrip_v6(void);
+int run_boloaddr_link_local_scope(void);
+int run_boloaddr_mapped_key_equal(void);
+int run_boloaddr_scope_in_key(void);
+int run_boloaddr_prefix_key(void);
+int run_boloaddr_port_zero(void);
+int run_boloaddr_parse_rejects(void);
+int run_boloaddr_no_mapped_text(void);
+int run_boloaddr_classify(void);
+int run_boloaddr_from_sockaddr(void);
+int run_boloaddr_resolve_literals(void);
+int run_boloaddr_resolve_prefer_v4(void);
+int run_boloaddr_to_family(void);
+int run_boloaddr_any(void);
+int run_boloaddr_v4(void);
+int run_boloaddr_from_v4(void);
+int run_boloaddr_local_for_route(void);
 
 /* The map chooser's "Scenarios only" row test
  * (test_map_chooser_scenario_filter.c). */
@@ -5086,6 +5167,10 @@ int ut_status_tank_last_alliance(void);
  * handed. Both are empty strings until the first call. */
 const char *ut_messages_last_top(void);
 const char *ut_messages_last_bottom(void);
+
+/* The path the wbn_api_get_public stub in test_stubs.c was last handed. An
+ * empty string until the first call. */
+const char *ut_wbn_get_public_last_path(void);
 
 #ifdef __cplusplus
 }

@@ -38,17 +38,28 @@
 #include <SDL3/SDL.h>
 #include "global.h"
 #include "platform_net.h"
+#include "bolo_addr.h"
 #include "transport.h"
 #include "transport_udp.h"
 #include "netpacks.h"
 #include "input_packet.h"
 #include "gametype.h"
 #include "control_event.h"
+#include "net_impair.h"   /* WB_ENABLE_NETIMPAIR, for the send-size counter */
 
-/* Maximum UDP datagram payload we'll send.
- * Sits under the standard 1500-byte Ethernet MTU minus IPv4 (20) + UDP (8)
- * headers (= 1472 cap), with headroom for IPv4 options or minor encapsulation
- * overhead. Avoids fragmentation on typical internet paths. */
+/* Two sizes for one datagram, one for each direction.
+ *
+ * UDP_MAX_SEND is the most a sender may put in one datagram, to any peer.
+ * IPv6 routers never fragment, and 1280 bytes is the smallest MTU every IPv6
+ * path has to carry; less the IPv6 header (40) and the UDP header (8) that
+ * leaves 1232 bytes of payload. The same cap is used for IPv4 peers so there
+ * is one send path. Every budget a sender builds a datagram against is this
+ * constant, not the size of the buffer it builds in.
+ *
+ * UDP_MAX_PAYLOAD is the size of every receive buffer. It stays at 1400, the
+ * cap senders were held to before UDP_MAX_SEND, so a datagram from a peer
+ * built with that cap is still read whole rather than cut short. */
+#define UDP_MAX_SEND    1232
 #define UDP_MAX_PAYLOAD 1400
 
 /* Input packet ring buffer size for client redundancy */
@@ -166,6 +177,26 @@ void packHeader(uint8_t *buf, uint8_t packetType, uint32_t sequence);
 uint8_t getPacketType(const uint8_t *buf, int len);
 const char *packetTypeName(uint8_t type);
 
+/* Writes addr as the PUNCH_ADDR_WIRE_SIZE-byte punch address body (see
+ * PACKET_PUNCH_REQUEST6 in netpacks.h) and returns PUNCH_ADDR_WIRE_SIZE. A
+ * plain or mapped IPv4 address is written as family 4. Returns 0, writing
+ * nothing, for an empty, unspecified, loopback or link-local address. */
+int packPunchAddr(uint8_t *out, const BoloAddr *addr);
+/* Reads a punch address body of len bytes into *out (no scope id). False,
+ * with *out untouched, for a body shorter than PUNCH_ADDR_WIRE_SIZE, a family
+ * other than 4 or 6, or an unspecified address. */
+bool unpackPunchAddr(const uint8_t *in, int len, BoloAddr *out);
+
+/* The largest punch request buildPunchRequest writes. */
+#define PUNCH_REQUEST_MAX_LEN (PACKET_HEADER_SIZE + PUNCH_ADDR_WIRE_SIZE)
+/* Builds the punch request a joiner sends the tracker for target, the server
+ * it is joining: PACKET_PUNCH_REQUEST with [IPv4 4][port 2] for a plain or
+ * mapped IPv4 target, PACKET_PUNCH_REQUEST6 with the punch address body for
+ * an IPv6 one. Returns the datagram length, or 0 for an empty, unspecified,
+ * loopback or link-local target, or when cap is under PUNCH_REQUEST_MAX_LEN. */
+int buildPunchRequest(uint8_t *buf, int cap, const BoloAddr *target,
+                      uint32_t sequence);
+
 int packInputPacket(uint8_t *buf, const InputPacket *pkt);
 void unpackInputPacket(const uint8_t *buf, InputPacket *pkt);
 
@@ -216,10 +247,53 @@ void transportUdpParseProxyMeta(const uint8_t *buf, int len,
 
 /* ---- Socket helpers ---- */
 
-SOCKET createUdpSocket(bool exclusive);
-void udpSendTo(SOCKET sock, const uint8_t *buf, int len,
-               const struct sockaddr_in *addr);
-int udpRecvFrom(SOCKET sock, uint8_t *buf, int maxLen,
-                struct sockaddr_in *fromAddr);
+/* Opens a non-blocking UDP socket, dual stack where the platform allows it
+ * (AF_INET6 with IPV6_V6ONLY cleared, so IPv4 peers arrive as mapped
+ * addresses), else AF_INET. *outFamily receives the family opened; every
+ * send on the socket passes it to udpSendTo. */
+SOCKET createUdpSocket(bool exclusive, int *outFamily);
+/* Sends to addr, converted to the socket's family. An empty address, or an
+ * IPv6 destination on an AF_INET socket, is refused with a logged error. */
+void udpSendTo(SOCKET sock, int sockFamily, const uint8_t *buf, int len,
+               const BoloAddr *addr);
+/* Receives one datagram and its source address as the socket reported it (an
+ * IPv4 peer on a dual-stack socket is a mapped address). Returns the length,
+ * or -1 when none is waiting or the source is neither IPv4 nor IPv6. */
+int udpRecvFrom(SOCKET sock, uint8_t *buf, int maxLen, BoloAddr *fromAddr);
+
+/* Asks the socket to report the destination address of each datagram it
+ * receives, for udpRecvFromLocal: IPV6_RECVPKTINFO on an AF_INET6 socket
+ * (plus IP_PKTINFO for its IPv4 peers on Linux and Windows), IP_PKTINFO or
+ * IP_RECVDSTADDR on an AF_INET socket. A platform that refuses is logged
+ * once as a warning and the socket works as before, with no local address
+ * reported. On Windows this also fetches WSARecvMsg. No-op on Emscripten.
+ * Only the server socket calls it. */
+void udpEnableRecvLocalAddr(SOCKET sock, int sockFamily);
+/* udpRecvFrom, and also writes the address the datagram was sent to into
+ * *localAddr: port 0, in the socket's family (an IPv4 datagram on a
+ * dual-stack socket gives a mapped address), with the arrival interface as
+ * the scope id of a link-local address. *localAddr is empty when the socket
+ * reported none, or reported a multicast or broadcast address. */
+int udpRecvFromLocal(SOCKET sock, uint8_t *buf, int maxLen, BoloAddr *fromAddr,
+                     BoloAddr *localAddr);
+/* udpSendTo naming localAddr as the source of the datagram, so a reply goes
+ * out from the address the peer sent to. NULL, empty or an unspecified
+ * localAddr is exactly udpSendTo. A send with the source that fails for any
+ * reason but a full socket buffer is sent again without it, and the first
+ * such failure in the process is logged as a warning. */
+void udpSendToFrom(SOCKET sock, int sockFamily, const uint8_t *buf, int len,
+                   const BoloAddr *addr, const BoloAddr *localAddr);
+
+#if WB_ENABLE_NETIMPAIR
+/* The largest length any caller has handed udpSendTo or udpSendToFrom since
+ * the last reset,
+ * client and server alike, so a test can check that nothing it drove put a
+ * datagram over UDP_MAX_SEND on the wire. Test builds only. */
+int  udpTestLargestSend(void);
+void udpTestResetLargestSend(void);
+/* While on, createUdpSocket opens AF_INET without trying AF_INET6, so a test
+ * can drive the path a machine with no IPv6 stack takes. Test builds only. */
+void udpTestForceIPv4Socket(bool on);
+#endif
 
 #endif /* TRANSPORT_UDP_INTERNAL_H */

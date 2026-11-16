@@ -201,12 +201,13 @@ void serverDisconnectClient(ServerSim *sim, int idx, bool graceful) {
 
     {
         UdpServerClient *c = &udpServer.clients[idx];
+        char addrText[BOLO_ADDR_STR_LEN];
         (void)c;
+        boloAddrFormat(&c->addr, addrText, sizeof(addrText));
         WB_LOG_DEBUG(WB_LOG_CAT_NET,
-            "disconnect slot=%d name='%s' addr=%s:%u graceful=%d "
+            "disconnect slot=%d name='%s' addr=%s graceful=%d "
             "tickCount=%u lastReceivedTick=%u tickDiff=%u (timeout=%d)",
-            idx, c->playerName,
-            inet_ntoa(c->addr.sin_addr), (unsigned)ntohs(c->addr.sin_port),
+            idx, c->playerName, addrText,
             (int)graceful,
             (unsigned)udpServer.tickCount,
             (unsigned)c->lastReceivedTick,
@@ -255,6 +256,7 @@ void serverDisconnectClient(ServerSim *sim, int idx, bool graceful) {
          * broadcast a no-op for this slot; the other slots still see
          * "X has left." normally. */
         udpServer.clients[idx].connected = false;
+        boloAddrClear(&udpServer.clients[idx].localAddr);
         if (serverSimAnnounce(sim, ANNOUNCE_KIND_LEFT, (BYTE)idx, (BYTE)idx)) {
             serverSendServerEnglishBroadcast(sim, chatMsg);
         }

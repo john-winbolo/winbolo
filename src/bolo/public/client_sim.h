@@ -41,6 +41,7 @@
 #include "screenlgm.h"      /* For screenLgm  — clientSimPrepareOverviewEntities */
 #include "screenbullet.h"   /* For screenBullets — clientSimPrepareOverviewEntities */
 #include "brain.h"  /* For BuildInfo, ObjectInfo */
+#include "bolo_addr.h" /* BoloAddr — clientSimGetServerAddr */
 #include "brain_list.h"   /* BrainList — value type used by clientSimGetLobbyBrainList */
 #include "round_stats.h"  /* RoundStatsSummary — clientSimGetLastRoundStats return */
 #include "upload_policy.h" /* UploadPolicy, ScriptUploadPolicy — upload-policy getters */
@@ -980,8 +981,13 @@ bool clientSimIsPingMuted(const ClientSim *cs, uint8_t player);
  * every display tick. NULL when cs is NULL. */
 const OverviewMap    *clientSimGetOverviewMap(const ClientSim *cs);
 
-/* Struct-by-value accessor. */
+/* The IPv4 address of the server, for the brain API's 4-byte field: the
+ * stored address when it is IPv4 (plain or mapped), zero otherwise. */
 struct in_addr clientSimGetServerAddress(const ClientSim *cs);
+
+/* The server address the UDP transport resolved at connect, IPv4 or IPv6.
+ * Returns false and clears *out when none is stored. */
+bool clientSimGetServerAddr(const ClientSim *cs, BoloAddr *out);
 
 /* Cross-struct / interior-pointer accessors — return
  * non-const pointers because callers continue to mutate
@@ -1077,9 +1083,9 @@ void clientSimSetMyLastPlayerName(ClientSim *cs, const char *name);
 void clientSimSetInLobby(ClientSim *cs, bool v);
 void clientSimSetMapDownloadComplete(ClientSim *cs, bool v);
 
-/* Server endpoint info — set by the frontend after the UDP transport
- * resolves the server address; consumed by brain info. */
-void clientSimSetServerAddress(ClientSim *cs, struct in_addr v);
+/* Server endpoint info — the port is set by the frontend once the join
+ * lands; consumed by brain info. The address is stored by the UDP transport
+ * itself (clientSimGetServerAddr). */
 void clientSimSetServerPort(ClientSim *cs, unsigned short v);
 
 /* Bot flag — set by bot_manager.c when creating a bot's ClientSim.

@@ -20,10 +20,12 @@
  *Filename:      mdns_advertise.c
  *Purpose:
  *  Inline mDNS service advertiser for _winbolo._udp.local.
- *  A host opens one IPv4 multicast socket at startup and
- *  answers discovery queries straight from the server tick
- *  (no thread of its own), then closes the socket at
- *  shutdown. The answer record set is built by the socket-free
+ *  A host opens an IPv4 multicast socket when it has an IPv4
+ *  LAN address and an IPv6 multicast socket when it has an
+ *  IPv6 address (both when it has both) at startup, answers
+ *  discovery queries on each straight from the server tick
+ *  (no thread of its own), then closes them at shutdown.
+ *  The answer record set is built by the socket-free
  *  mdnsAdvertiseBuildRecords (defined below), which Pass B's
  *  test drives directly.
  *
@@ -51,8 +53,10 @@ void mdnsAdvertiseSetMulticastHold(void (*hold)(bool on)) { (void)hold; }
 #include <string.h>
 #include <SDL3/SDL.h>
 
-#include "platform_net.h"   /* cross-platform sockets + inet_ntoa */
+#include "platform_net.h"   /* cross-platform sockets */
+#include "bolo_addr.h"      /* BoloAddr, boloAddrLocalForRoute */
 #ifndef _WIN32
+#include <errno.h>
 #include <ifaddrs.h>
 #include <net/if.h>
 #endif
@@ -68,14 +72,24 @@ void mdnsAdvertiseSetMulticastHold(void (*hold)(bool on)) { (void)hold; }
 #include "netpacks.h"       /* infoPacketPackViewPolicies / ...2 */
 #include "../common/wb_log.h"
 
-/* Single advertiser per process (one server instance per process). sock < 0
- * means "not running" — every hook short-circuits on that, so the poll hook
- * is a cheap no-op when the advertiser was never started or failed to open. */
+/* Single advertiser per process (one server instance per process). A socket
+ * below 0 is not open; with both below 0 the advertiser is not running and
+ * every hook short-circuits on that, so the poll hook is a cheap no-op when
+ * the advertiser was never started or failed to open. */
 static struct {
-  int            sock;
+  int            sock4;      /* IPv4 mDNS socket, or -1 */
+  int            sock6;      /* IPv6 mDNS socket, or -1 */
   unsigned short gamePort;
-  struct in_addr localAddr;  /* server LAN address sent in the A record */
-} s_mdns = { -1, 0, { 0 } };
+} s_mdns = { -1, -1, 0 };
+
+/* The addresses sent in the A and AAAA records, each empty when the host
+ * has no address of that family, and the index of the interface the IPv6
+ * address belongs to (0 when unknown). */
+static struct {
+  BoloAddr     v4;
+  BoloAddr     v6;
+  unsigned int v6IfIndex;
+} s_addrs;
 
 /* The platform's own advertiser, when it has one (see mdns_advertise.h).
  * platformPending: started, waiting for the first poll to register.
@@ -84,7 +98,9 @@ static const MdnsPlatformAdvertiser *s_platform = NULL;
 static struct {
   bool     pending;
   bool     running;
-  char     ifName[32];        /* interface of localAddr, "" when unknown */
+  char     ifName[32];        /* interface of the advertised address (the
+                                 IPv4 one when there is one), "" when
+                                 unknown */
   Uint64   lastCheckMs;       /* last time the TXT pairs were compared */
   char     lastTxt[512];      /* the pairs last sent, key=value joined */
   size_t   lastTxtLen;
@@ -192,6 +208,220 @@ static bool mdnsFindLocalAddr(struct in_addr *out, char *ifNameOut,
 }
 
 /*---------------------------------------------------------
+ * The IPv6 address sent in the AAAA record. On POSIX
+ * systems it is read from getifaddrs: an interface that is
+ * up and not loopback, preferring the interface named by
+ * preferIf (the one the IPv4 pick used, NULL when there is
+ * none), then one that is not point-to-point, and on that
+ * interface a global or unique-local address over its
+ * link-local one. A LAN with no router has only link-local
+ * addresses, so a link-local address is still taken when
+ * it is all there is. Never loopback.
+ *
+ * Windows takes the address the routing table sends from
+ * (boloAddrLocalForRoute), which is never link-local, so a
+ * Windows host on a LAN with no router and no IPv4
+ * advertises nothing over IPv6. Listing the interfaces
+ * there needs GetAdaptersAddresses and the IP Helper
+ * library, which this code does not link.
+ *
+ * ifNameOut gets the interface's name and *ifIndexOut its
+ * index where known, "" and 0 otherwise.
+ *---------------------------------------------------------*/
+static bool mdnsFindLocalAddr6(const char *preferIf, BoloAddr *out,
+                               char *ifNameOut, size_t ifNameCap,
+                               unsigned int *ifIndexOut) {
+  if (ifNameCap > 0) {
+    ifNameOut[0] = '\0';
+  }
+  *ifIndexOut = 0;
+  boloAddrClear(out);
+#ifdef _WIN32
+  (void)preferIf;
+  return boloAddrLocalForRoute(AF_INET6, out) != 0;
+#else
+  struct ifaddrs *ifap, *ifa;
+  struct ifaddrs *pick = NULL;
+  int pickScore = -1;
+
+  if (getifaddrs(&ifap) != 0) {
+    return FALSE;
+  }
+  for (ifa = ifap; ifa != NULL; ifa = ifa->ifa_next) {
+    BoloAddr cand;
+    int score = 0;
+    if (ifa->ifa_addr == NULL || ifa->ifa_addr->sa_family != AF_INET6) {
+      continue;
+    }
+    if (!(ifa->ifa_flags & IFF_UP) || (ifa->ifa_flags & IFF_LOOPBACK)) {
+      continue;
+    }
+    if (!boloAddrFromSockaddr(ifa->ifa_addr,
+                              (socklen_t)sizeof(struct sockaddr_in6), &cand)) {
+      continue;
+    }
+    if (boloAddrIsUnspecified(&cand) || boloAddrIsLoopback(&cand) ||
+        boloAddrIsMappedV4(&cand)) {
+      continue;
+    }
+    /* The interface counts for more than the kind of address on it, so a
+     * preferred interface with only a link-local address still wins. */
+    if (preferIf != NULL && ifa->ifa_name != NULL &&
+        strcmp(ifa->ifa_name, preferIf) == 0) {
+      score += 4;
+    }
+    if (!(ifa->ifa_flags & IFF_POINTOPOINT)) {
+      score += 2;
+    }
+    if (!boloAddrIsV6LinkLocal(&cand)) {
+      score += 1;
+    }
+    if (score > pickScore) {
+      pick = ifa;
+      pickScore = score;
+      *out = cand;
+    }
+  }
+  if (pick != NULL) {
+    if (pick->ifa_name != NULL) {
+      if (ifNameCap > 0) {
+        snprintf(ifNameOut, ifNameCap, "%s", pick->ifa_name);
+      }
+      *ifIndexOut = if_nametoindex(pick->ifa_name);
+    }
+    if (boloAddrIsV6LinkLocal(out)) {
+      /* BSD kernels, macOS among them, return a link-local address from
+       * getifaddrs with the interface index written into address bytes 2
+       * and 3. Those bytes are zero on the wire, so they are cleared, and
+       * the index goes in the scope id instead. */
+      struct sockaddr_in6 *sin6 = (struct sockaddr_in6 *)&out->ss;
+      sin6->sin6_addr.s6_addr[2] = 0;
+      sin6->sin6_addr.s6_addr[3] = 0;
+      if (*ifIndexOut != 0) {
+        sin6->sin6_scope_id = *ifIndexOut;
+      }
+    }
+    boloAddrSetPort(out, 0);
+  }
+  freeifaddrs(ifap);
+  return pick != NULL;
+#endif
+}
+
+/* setsockopt with the argument types each platform's declaration takes. */
+static int mdnsSetSockOpt(int sock, int level, int name, const void *value,
+                          size_t len) {
+#ifdef _WIN32
+  return setsockopt((SOCKET)sock, level, name, (const char *)value, (int)len);
+#else
+  return setsockopt(sock, level, name, value, (socklen_t)len);
+#endif
+}
+
+/* Opens the IPv6 mDNS socket on [::]:5353 and returns it, or -1.
+ *
+ * IPV6_V6ONLY is set first: without it a socket on [::]:5353 would also
+ * receive the IPv4 queries the IPv4 socket receives, and every IPv4 query
+ * would be answered twice.
+ *
+ * mdns_socket_setup_ipv6 joins ff02::fb on interface 0, which leaves the
+ * choice of interface to the system. On POSIX systems the group is then
+ * joined again on ifIndex, the interface the advertised address belongs to,
+ * and IPV6_MULTICAST_IF is set to it, so queries are heard and multicast
+ * answers leave on the interface whose address the AAAA record names. A
+ * join refused with EADDRINUSE means the first join already chose that
+ * interface. When the system refuses the interface 0 join (a LAN with only
+ * link-local addresses can have no IPv6 route for the system to choose
+ * by), the library leaves the socket unbound; the socket is then used with
+ * the ifIndex join alone, bound and set non-blocking here as the library
+ * would have done.
+ *
+ * Windows: no interface index is known there (the address comes from the
+ * routing lookup), so the socket keeps the library's interface 0 join and
+ * sends on interface 0. */
+static int mdnsOpenSocket6(unsigned int ifIndex) {
+  struct sockaddr_in6 saddr;
+  int v6only = 1;
+  int sock;
+  bool setupOk;
+
+  memset(&saddr, 0, sizeof(saddr));
+  saddr.sin6_family = AF_INET6;
+  saddr.sin6_addr   = in6addr_any;
+  saddr.sin6_port   = htons(MDNS_PORT);
+#ifdef __APPLE__
+  saddr.sin6_len = sizeof(saddr);
+#endif
+
+  sock = (int)socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP);
+  if (sock < 0) {
+    return -1;
+  }
+  if (mdnsSetSockOpt(sock, IPPROTO_IPV6, IPV6_V6ONLY, &v6only,
+                     sizeof(v6only)) != 0) {
+    WB_LOG_DEBUG(WB_LOG_CAT_NET, "mdns: IPV6_V6ONLY was refused");
+  }
+  setupOk = mdns_socket_setup_ipv6(sock, &saddr) == 0;
+
+#ifdef _WIN32
+  (void)ifIndex;
+#else
+  if (ifIndex != 0) {
+    struct ipv6_mreq req;
+    memset(&req, 0, sizeof(req));
+    req.ipv6mr_multiaddr.s6_addr[0]  = 0xFF;
+    req.ipv6mr_multiaddr.s6_addr[1]  = 0x02;
+    req.ipv6mr_multiaddr.s6_addr[15] = 0xFB;
+    req.ipv6mr_interface = ifIndex;
+    if (mdnsSetSockOpt(sock, IPPROTO_IPV6, IPV6_JOIN_GROUP, &req,
+                       sizeof(req)) != 0 && errno != EADDRINUSE) {
+      WB_LOG_DEBUG(WB_LOG_CAT_NET,
+                   "mdns: joining ff02::fb on interface %u failed (errno %d)",
+                   ifIndex, errno);
+      if (!setupOk) {
+        mdns_socket_close(sock);
+        return -1;
+      }
+    }
+    if (!setupOk) {
+      int flags;
+      if (bind(sock, (const struct sockaddr *)&saddr,
+               (socklen_t)sizeof(saddr)) != 0) {
+        mdns_socket_close(sock);
+        return -1;
+      }
+      flags = fcntl(sock, F_GETFL, 0);
+      if (flags < 0 || fcntl(sock, F_SETFL, flags | O_NONBLOCK) != 0) {
+        mdns_socket_close(sock);
+        return -1;
+      }
+      setupOk = true;
+    }
+    if (mdnsSetSockOpt(sock, IPPROTO_IPV6, IPV6_MULTICAST_IF, &ifIndex,
+                       sizeof(ifIndex)) != 0) {
+      WB_LOG_DEBUG(WB_LOG_CAT_NET,
+                   "mdns: IPV6_MULTICAST_IF %u was refused (errno %d)",
+                   ifIndex, errno);
+    }
+  }
+#endif
+
+  if (!setupOk) {
+    mdns_socket_close(sock);
+    return -1;
+  }
+  return sock;
+}
+
+/* The address as text for a log line, "none" when it is empty. */
+static const char *mdnsAddrText(const BoloAddr *a, char *buf, size_t cap) {
+  if (boloAddrFamily(a) == 0 || !boloAddrFormatHost(a, buf, cap)) {
+    snprintf(buf, cap, "%s", "none");
+  }
+  return buf;
+}
+
+/*---------------------------------------------------------
  * Record builder — socket-free, the unit Pass B's test
  * drives directly. Reads only the MdnsServerInfo POD.
  *---------------------------------------------------------*/
@@ -211,7 +441,9 @@ size_t mdnsAdvertiseBuildRecords(const MdnsServerInfo *info,
   size_t cursor = 0;
   const char *instance;
   size_t instanceLen;
-  const unsigned char *ip;
+  uint8_t ip[4];
+  const uint8_t *ip6;
+  bool haveV4, haveV6;
   int instWritten;
 
   if (info == NULL || records == NULL || txtScratch == NULL ||
@@ -219,17 +451,34 @@ size_t mdnsAdvertiseBuildRecords(const MdnsServerInfo *info,
     return 0;
   }
 
+  haveV4 = boloAddrFamily(&info->addr4) == AF_INET &&
+           boloAddrV4Bytes(&info->addr4, ip);
+  haveV6 = boloAddrFamily(&info->addr6) == AF_INET6;
+  ip6 = boloAddrV6Bytes(&info->addr6);
+  if (!haveV4) {
+    memset(ip, 0, sizeof(ip));
+  }
+
   /* Unique per-host service-instance label, formatted into the front of the
    * caller's scratch (it can't be a static const — two LAN hosts must not
-   * collapse into one DNS-SD instance). The address octets + game port make
-   * it unique; '-' separators keep it a single DNS label (dots would split
-   * it into sub-labels on the wire). */
-  ip = (const unsigned char *)&info->addr.s_addr;
-  instWritten = snprintf(txtScratch, txtScratchSize,
-                         "WinBolo-%u-%u-%u-%u-%u.%s",
-                         (unsigned)ip[0], (unsigned)ip[1], (unsigned)ip[2],
-                         (unsigned)ip[3], (unsigned)info->port,
-                         MDNS_WINBOLO_SERVICE);
+   * collapse into one DNS-SD instance). The address + game port make it
+   * unique; '-' separators keep it a single DNS label (dots would split it
+   * into sub-labels on the wire). A host with an IPv4 address keeps the
+   * IPv4 form, which the iOS browser reads the server address from; a host
+   * with only an IPv6 address is named from that address's last 32 bits. */
+  if (!haveV4 && haveV6 && ip6 != NULL) {
+    instWritten = snprintf(txtScratch, txtScratchSize,
+                           "WinBolo-v6-%02x%02x%02x%02x-%u.%s",
+                           (unsigned)ip6[12], (unsigned)ip6[13],
+                           (unsigned)ip6[14], (unsigned)ip6[15],
+                           (unsigned)info->port, MDNS_WINBOLO_SERVICE);
+  } else {
+    instWritten = snprintf(txtScratch, txtScratchSize,
+                           "WinBolo-%u-%u-%u-%u-%u.%s",
+                           (unsigned)ip[0], (unsigned)ip[1], (unsigned)ip[2],
+                           (unsigned)ip[3], (unsigned)info->port,
+                           MDNS_WINBOLO_SERVICE);
+  }
   if (instWritten < 0 || (size_t)instWritten >= txtScratchSize) {
     return 0;
   }
@@ -263,18 +512,35 @@ size_t mdnsAdvertiseBuildRecords(const MdnsServerInfo *info,
   records[n].ttl         = MDNS_WINBOLO_TTL;
   n++;
 
-  /* records[2]: A host -> server LAN address. */
-  memset(&records[n], 0, sizeof(records[n]));
-  records[n].name.str    = kHostName;
-  records[n].name.length = sizeof(kHostName) - 1;
-  records[n].type        = MDNS_RECORDTYPE_A;
-  records[n].data.a.addr.sin_family = AF_INET;
-  records[n].data.a.addr.sin_addr   = info->addr;
-  records[n].rclass      = MDNS_CLASS_IN;
-  records[n].ttl         = MDNS_WINBOLO_TTL;
-  n++;
+  /* A host -> server IPv4 LAN address, when the host has one. */
+  if (haveV4) {
+    memset(&records[n], 0, sizeof(records[n]));
+    records[n].name.str    = kHostName;
+    records[n].name.length = sizeof(kHostName) - 1;
+    records[n].type        = MDNS_RECORDTYPE_A;
+    records[n].data.a.addr.sin_family = AF_INET;
+    memcpy(&records[n].data.a.addr.sin_addr, ip, sizeof(ip));
+    records[n].rclass      = MDNS_CLASS_IN;
+    records[n].ttl         = MDNS_WINBOLO_TTL;
+    n++;
+  }
 
-  /* records[3..]: one TXT record per key=value pair. Values are formatted
+  /* AAAA host -> server IPv6 address, when the host has one. The record
+   * carries the 16 address bytes only; a browser takes a link-local
+   * address's scope from the interface the answer arrived on. */
+  if (haveV6) {
+    memset(&records[n], 0, sizeof(records[n]));
+    records[n].name.str    = kHostName;
+    records[n].name.length = sizeof(kHostName) - 1;
+    records[n].type        = MDNS_RECORDTYPE_AAAA;
+    memcpy(&records[n].data.aaaa.addr, &info->addr6.ss,
+           sizeof(records[n].data.aaaa.addr));
+    records[n].rclass      = MDNS_CLASS_IN;
+    records[n].ttl         = MDNS_WINBOLO_TTL;
+    n++;
+  }
+
+  /* Then one TXT record per key=value pair. Values are formatted
    * into txtScratch; keep them in the order documented in mdns_records.h. */
 #define MDNS_TXT_ADD(KEY, FMT, ...)                                            \
   do {                                                                        \
@@ -389,8 +655,9 @@ static void mdnsFillServerInfo(ServerSim *sim, MdnsServerInfo *out) {
   BYTE numPlayers = 0, numHumans = 0, numBots = 0;
 
   memset(out, 0, sizeof(*out));
-  out->port = s_mdns.gamePort;
-  out->addr = s_mdns.localAddr;
+  out->port  = s_mdns.gamePort;
+  out->addr4 = s_addrs.v4;
+  out->addr6 = s_addrs.v6;
   if (map != NULL) {
     strncpy(out->mapName, map, sizeof(out->mapName) - 1);
   }
@@ -565,19 +832,43 @@ static void mdnsPlatformPoll(ServerSim *sim) {
 }
 
 void transportUdpServerStartMdnsAdvertiser(unsigned short gamePort) {
-  struct sockaddr_in saddr;
+  struct in_addr v4;
+  char ifName6[sizeof(s_plat.ifName)];
+  char text4[BOLO_ADDR_STR_LEN];
+  char text6[BOLO_ADDR_STR_LEN];
+  bool haveV4, haveV6;
 
-  if (s_mdns.sock >= 0 || s_plat.pending || s_plat.running) {
+  if (s_mdns.sock4 >= 0 || s_mdns.sock6 >= 0 || s_plat.pending ||
+      s_plat.running) {
     return; /* already running */
   }
 
   s_mdns.gamePort = gamePort;
-  if (!mdnsFindLocalAddr(&s_mdns.localAddr, s_plat.ifName,
-                         sizeof(s_plat.ifName))) {
+  memset(&v4, 0, sizeof(v4));
+  boloAddrClear(&s_addrs.v4);
+  boloAddrClear(&s_addrs.v6);
+  s_addrs.v6IfIndex = 0;
+
+  haveV4 = mdnsFindLocalAddr(&v4, s_plat.ifName, sizeof(s_plat.ifName));
+  if (haveV4) {
+    boloAddrFromV4(v4, 0, &s_addrs.v4);
+  }
+  haveV6 = mdnsFindLocalAddr6(haveV4 && s_plat.ifName[0] != '\0'
+                                  ? s_plat.ifName : NULL,
+                              &s_addrs.v6, ifName6, sizeof(ifName6),
+                              &s_addrs.v6IfIndex);
+  if (!haveV4 && !haveV6) {
     WB_LOG_WARN(WB_LOG_CAT_NET,
                 "mdns: no usable LAN interface; advertiser not started");
     return;
   }
+  if (!haveV4) {
+    /* The platform advertiser registers on the interface of the address
+     * being advertised, which is then the IPv6 one. */
+    snprintf(s_plat.ifName, sizeof(s_plat.ifName), "%s", ifName6);
+  }
+  mdnsAddrText(&s_addrs.v4, text4, sizeof(text4));
+  mdnsAddrText(&s_addrs.v6, text6, sizeof(text6));
 
   if (s_platform != NULL) {
     /* Registered on the first poll, which has the server state the TXT
@@ -585,24 +876,39 @@ void transportUdpServerStartMdnsAdvertiser(unsigned short gamePort) {
     s_plat.pending = true;
     s_plat.lastTxtLen = 0;
     WB_LOG_INFO(WB_LOG_CAT_NET,
-                "mdns: advertising %s on %s:%u through the platform",
-                MDNS_WINBOLO_SERVICE, inet_ntoa(s_mdns.localAddr),
-                (unsigned)gamePort);
+                "mdns: advertising %s on port %u (IPv4 %s, IPv6 %s) through "
+                "the platform",
+                MDNS_WINBOLO_SERVICE, (unsigned)gamePort, text4, text6);
     return;
   }
 
-  memset(&saddr, 0, sizeof(saddr));
-  saddr.sin_family = AF_INET;
-  saddr.sin_addr   = s_mdns.localAddr;
-  saddr.sin_port   = htons(MDNS_PORT);
+  if (haveV4) {
+    struct sockaddr_in saddr;
+    memset(&saddr, 0, sizeof(saddr));
+    saddr.sin_family = AF_INET;
+    saddr.sin_addr   = v4;
+    saddr.sin_port   = htons(MDNS_PORT);
 #ifdef __APPLE__
-  saddr.sin_len = sizeof(saddr);
+    saddr.sin_len = sizeof(saddr);
 #endif
-
-  s_mdns.sock = mdns_socket_open_ipv4(&saddr);
-  if (s_mdns.sock < 0) {
+    s_mdns.sock4 = mdns_socket_open_ipv4(&saddr);
+    if (s_mdns.sock4 < 0) {
+      WB_LOG_DEBUG(WB_LOG_CAT_NET, "mdns: the IPv4 multicast socket did not open");
+    }
+  }
+  if (haveV6) {
+    s_mdns.sock6 = mdnsOpenSocket6(s_addrs.v6IfIndex);
+    if (s_mdns.sock6 < 0) {
+      WB_LOG_DEBUG(WB_LOG_CAT_NET, "mdns: the IPv6 multicast socket did not open");
+    }
+  }
+  if (s_mdns.sock4 < 0 && s_mdns.sock6 < 0) {
     WB_LOG_WARN(WB_LOG_CAT_NET,
                 "mdns: failed to open multicast socket; advertiser not started");
+    s_mdns.gamePort = 0;
+    boloAddrClear(&s_addrs.v4);
+    boloAddrClear(&s_addrs.v6);
+    s_addrs.v6IfIndex = 0;
     return;
   }
   if (s_multicastHold != NULL) {
@@ -610,9 +916,11 @@ void transportUdpServerStartMdnsAdvertiser(unsigned short gamePort) {
   }
 
   WB_LOG_INFO(WB_LOG_CAT_NET,
-              "mdns: advertising %s on %s:%u",
-              MDNS_WINBOLO_SERVICE, inet_ntoa(s_mdns.localAddr),
-              (unsigned)gamePort);
+              "mdns: advertising %s on port %u (IPv4 %s, IPv6 %s; sockets: "
+              "IPv4 %s, IPv6 %s)",
+              MDNS_WINBOLO_SERVICE, (unsigned)gamePort, text4, text6,
+              s_mdns.sock4 >= 0 ? "open" : "none",
+              s_mdns.sock6 >= 0 ? "open" : "none");
 }
 
 void transportUdpServerPollMdnsAdvertiser(struct ServerSim *sim) {
@@ -624,14 +932,24 @@ void transportUdpServerPollMdnsAdvertiser(struct ServerSim *sim) {
     mdnsPlatformPoll(sim);
     return;
   }
-  if (s_mdns.sock < 0) {
+  if (s_mdns.sock4 < 0 && s_mdns.sock6 < 0) {
     return; /* never started — cheap no-op */
   }
 
+  /* Both sockets are non-blocking (mdns.h sets that when it sets them up),
+   * so a socket with nothing queued returns at once and neither delays the
+   * other or the server tick. The callback answers on the socket the
+   * question arrived on. */
   mdnsFillServerInfo(sim, &info);
-  ctx.sock = s_mdns.sock;
   ctx.info = &info;
-  mdns_socket_listen(s_mdns.sock, buffer, sizeof(buffer), mdnsQueryCallback, &ctx);
+  if (s_mdns.sock4 >= 0) {
+    ctx.sock = s_mdns.sock4;
+    mdns_socket_listen(s_mdns.sock4, buffer, sizeof(buffer), mdnsQueryCallback, &ctx);
+  }
+  if (s_mdns.sock6 >= 0) {
+    ctx.sock = s_mdns.sock6;
+    mdns_socket_listen(s_mdns.sock6, buffer, sizeof(buffer), mdnsQueryCallback, &ctx);
+  }
 }
 
 void transportUdpServerStopMdnsAdvertiser(void) {
@@ -641,19 +959,25 @@ void transportUdpServerStopMdnsAdvertiser(void) {
     }
     memset(&s_plat, 0, sizeof(s_plat));
     s_mdns.gamePort = 0;
-    memset(&s_mdns.localAddr, 0, sizeof(s_mdns.localAddr));
+    memset(&s_addrs, 0, sizeof(s_addrs));
     return;
   }
-  if (s_mdns.sock < 0) {
+  if (s_mdns.sock4 < 0 && s_mdns.sock6 < 0) {
     return; /* never started / already stopped */
   }
   if (s_multicastHold != NULL) {
     s_multicastHold(false);
   }
-  mdns_socket_close(s_mdns.sock);
-  s_mdns.sock = -1;
+  if (s_mdns.sock4 >= 0) {
+    mdns_socket_close(s_mdns.sock4);
+    s_mdns.sock4 = -1;
+  }
+  if (s_mdns.sock6 >= 0) {
+    mdns_socket_close(s_mdns.sock6);
+    s_mdns.sock6 = -1;
+  }
   s_mdns.gamePort = 0;
-  memset(&s_mdns.localAddr, 0, sizeof(s_mdns.localAddr));
+  memset(&s_addrs, 0, sizeof(s_addrs));
 }
 
 #endif /* __EMSCRIPTEN__ */

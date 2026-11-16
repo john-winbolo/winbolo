@@ -92,18 +92,79 @@
  * declaration lives in transport_udp_server_internal.h. */
 UdpServerState udpServer;
 
+/* The source address a datagram to addr goes out from, or NULL to let the
+ * system pick:
+ *   1. a reply to the datagram being handled goes out from the address that
+ *      datagram was sent to, which covers a peer that has no slot yet;
+ *   2. otherwise a connected client's or spectator's stored local address;
+ *   3. otherwise none: the tracker, punch bursts and anything to an address
+ *      the server has not heard from.
+ * Rule 1 is skipped when the datagram came with no local address, so a
+ * slot's stored one still applies. Both find functions only read the
+ * tables. */
+static const BoloAddr *srvReplySource(const BoloAddr *addr) {
+    int i;
+    if (addr == NULL) {
+        return NULL;
+    }
+    if (boloAddrFamily(&udpServer.rxLocalAddr) != 0 &&
+        boloAddrEqual(addr, &udpServer.rxFromAddr)) {
+        return &udpServer.rxLocalAddr;
+    }
+    i = serverFindClient(addr);
+    if (i >= 0) {
+        return &udpServer.clients[i].localAddr;
+    }
+    i = serverFindSpectator(addr);
+    if (i >= 0) {
+        return &udpServer.spectators[i].localAddr;
+    }
+    return NULL;
+}
+
+void srvRxLocalAddrFor(const BoloAddr *from, BoloAddr *out) {
+    if (out == NULL) {
+        return;
+    }
+    if (from != NULL && boloAddrFamily(&udpServer.rxFromAddr) != 0 &&
+        boloAddrEqual(from, &udpServer.rxFromAddr)) {
+        *out = udpServer.rxLocalAddr;
+    } else {
+        boloAddrClear(out);
+    }
+}
+
+void srvSendToWire(const uint8_t *buf, int len, const BoloAddr *addr) {
+    udpSendToFrom(udpServer.sock, udpServer.sockFamily, buf, len, addr,
+                  srvReplySource(addr));
+#if WB_ENABLE_NETIMPAIR
+    udpServer.wireSent++;
+#endif
+}
+
 /* Outbound datagram wrapper.  Every server->peer send routes through here
  * so the outbound impairment layer can delay/drop/reorder it.  When
  * impairment is disabled (or the datagram is too large for the queue),
- * the packet goes straight onto the wire — behaviourally identical to a
- * direct udpSendTo. */
-void srvSendTo(const uint8_t *buf, int len,
-               const struct sockaddr_in *addr) {
+ * the packet goes straight onto the wire through srvSendToWire. */
+void srvSendTo(const uint8_t *buf, int len, const BoloAddr *addr) {
     if (netImpairEnabled(&srvImpairOut) &&
         netImpairOffer(&srvImpairOut, buf, len, addr, srvNow())) {
         return;
     }
-    udpSendTo(udpServer.sock, buf, len, addr);
+    srvSendToWire(buf, len, addr);
+}
+
+/* srvSendTo for the tracker sends and the punch bursts. They run on the tick
+ * outside the server mutex and never go to a peer that holds a slot, so they
+ * skip the source lookup srvSendTo makes: it reads the client and spectator
+ * tables, which another thread may change under the mutex. The system picks
+ * the source. They still pass through the outbound impairment layer. */
+void srvSendToNoSource(const uint8_t *buf, int len, const BoloAddr *addr) {
+    if (netImpairEnabled(&srvImpairOut) &&
+        netImpairOffer(&srvImpairOut, buf, len, addr, srvNow())) {
+        return;
+    }
+    udpSendTo(udpServer.sock, udpServer.sockFamily, buf, len, addr);
 #if WB_ENABLE_NETIMPAIR
     udpServer.wireSent++;
 #endif
@@ -146,7 +207,7 @@ bool transportUdpServerCreate(unsigned short port,
                               const char *addrToUse,
                               ServerSim *sim,
                               const char *password) {
-    struct sockaddr_in bindAddr;
+    BoloAddr bindAddr;
     int i;
 
     (void)sim; /* Used later during tick */
@@ -158,21 +219,38 @@ bool transportUdpServerCreate(unsigned short port,
     memset(&udpServer, 0, sizeof(udpServer));
     memset(punchQueue, 0, sizeof(punchQueue));
 
-    udpServer.sock = createUdpSocket(true);
+    udpServer.sockFamily = AF_INET;
+    udpServer.sock = createUdpSocket(true, &udpServer.sockFamily);
     if (udpServer.sock == INVALID_SOCKET) {
         return false;
     }
+    /* Before bind, so no datagram can arrive without its destination
+     * address. Every reply then names that address as its source. */
+    udpEnableRecvLocalAddr(udpServer.sock, udpServer.sockFamily);
 
-    memset(&bindAddr, 0, sizeof(bindAddr));
-    bindAddr.sin_family = AF_INET;
-    bindAddr.sin_addr.s_addr = INADDR_ANY;
+    /* The any address of the socket's family, or the configured bind address
+     * converted to it. An address that does not parse, or an IPv6 address
+     * when the socket is the IPv4 fallback, fails the start as a failed bind
+     * does. */
+    boloAddrAny(udpServer.sockFamily, port, &bindAddr);
     if (addrToUse != NULL && addrToUse[0] != '\0') {
-        bindAddr.sin_addr.s_addr = inet_addr(addrToUse);
+        BoloAddr parsed;
+        if (!boloAddrParse(addrToUse, port, &parsed) ||
+            !boloAddrToFamily(&parsed, udpServer.sockFamily, &bindAddr)) {
+            WB_LOG_ERROR(WB_LOG_CAT_NET,
+                "bind address '%s' cannot be used on this %s socket",
+                addrToUse,
+                udpServer.sockFamily == AF_INET6 ? "IPv6" : "IPv4");
+            fprintf(stderr, "[UDP SERVER] bind address '%s' cannot be used\n",
+                    addrToUse);
+            closesocket(udpServer.sock);
+            udpServer.sock = INVALID_SOCKET;
+            return false;
+        }
     }
-    bindAddr.sin_port = htons(port);
 
-    if (bind(udpServer.sock, (struct sockaddr *)&bindAddr,
-             sizeof(bindAddr)) == SOCKET_ERROR) {
+    if (bind(udpServer.sock, (const struct sockaddr *)&bindAddr.ss,
+             bindAddr.len) == SOCKET_ERROR) {
         WB_LOG_ERROR(WB_LOG_CAT_NET, "bind() failed on port %u", port);
         fprintf(stderr, "[UDP SERVER] bind() failed on port %u\n", port);
         closesocket(udpServer.sock);
@@ -184,12 +262,15 @@ bool transportUdpServerCreate(unsigned short port,
      * of 0 means the OS chose one, and this is the only place that choice is
      * visible. Callers take it from transportUdpServerGetBoundPort(). */
     {
-        struct sockaddr_in actual;
-        socklen_t actualLen = (socklen_t)sizeof(actual);
-        memset(&actual, 0, sizeof(actual));
-        if (getsockname(udpServer.sock, (struct sockaddr *)&actual,
-                        &actualLen) == 0) {
-            udpServer.boundPort = ntohs(actual.sin_port);
+        struct sockaddr_storage actualSs;
+        BoloAddr actual;
+        socklen_t actualLen = (socklen_t)sizeof(actualSs);
+        memset(&actualSs, 0, sizeof(actualSs));
+        if (getsockname(udpServer.sock, (struct sockaddr *)&actualSs,
+                        &actualLen) == 0 &&
+            boloAddrFromSockaddr((const struct sockaddr *)&actualSs,
+                                 actualLen, &actual)) {
+            udpServer.boundPort = boloAddrPort(&actual);
         } else {
             /* Should not happen on a socket that just bound; fall back to
                the request so the field is never left at 0 for a real port. */
@@ -222,7 +303,8 @@ bool transportUdpServerCreate(unsigned short port,
     WB_LOG_INFO(WB_LOG_CAT_NET,
         "server created: port=%u bindAddr=%s maxPlayers=%u password=%s",
         port,
-        (addrToUse && *addrToUse) ? addrToUse : "0.0.0.0",
+        (addrToUse && *addrToUse) ? addrToUse
+            : (udpServer.sockFamily == AF_INET6 ? "::" : "0.0.0.0"),
         (unsigned)serverSimGetMaxPlayers(sim),
         (password && *password) ? "yes" : "no");
     udpServer.compressedMapSize = 0;
@@ -974,7 +1056,7 @@ void transportUdpServerCheckTimeouts(ServerSim *sim) {
                 uint8_t cbuf[UDP_MAX_PAYLOAD];
                 int frameLen = channelBuildFrame(
                     &udpServer.channelMux[i], cbuf + PACKET_HEADER_SIZE,
-                    UDP_MAX_PAYLOAD - PACKET_HEADER_SIZE);
+                    UDP_MAX_SEND - PACKET_HEADER_SIZE);
                 if (frameLen <= 2) break;   /* nothing (more) to carry this tick */
                 packHeader(cbuf, PACKET_CHANNEL,
                            udpServer.clients[i].outSequence++);
@@ -1078,9 +1160,11 @@ bool transportUdpServerGetClientAddrStr(BYTE playerNum, char *out, size_t outLen
     if (playerNum >= MAX_TANKS || !udpServer.clients[playerNum].connected) {
         return false;
     }
-    const struct sockaddr_in *a = &udpServer.clients[playerNum].addr;
-    char ip[INET_ADDRSTRLEN] = "?";
-    inet_ntop(AF_INET, &a->sin_addr, ip, sizeof(ip));
-    snprintf(out, outLen, "%s:%u", ip, (unsigned)ntohs(a->sin_port));
+    const BoloAddr *a = &udpServer.clients[playerNum].addr;
+    char text[BOLO_ADDR_STR_LEN];
+    if (!boloAddrFormat(a, text, sizeof(text))) {
+        snprintf(text, sizeof(text), "?:%u", (unsigned)boloAddrPort(a));
+    }
+    snprintf(out, outLen, "%s", text);
     return true;
 }

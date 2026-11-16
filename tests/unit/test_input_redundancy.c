@@ -25,7 +25,7 @@
 #include "server_sim_internal.h"     /* SERVER_INPUT_QUEUE_SIZE, internal field access */
 #include "input_packet.h"
 #include "netpacks.h"                /* INPUT_REDUNDANCY_COUNT, PACKET_HEADER_SIZE */
-#include "transport_udp_internal.h"  /* CLIENT_INPUT_RING_SIZE, UDP_MAX_PAYLOAD, pack/unpack */
+#include "transport_udp_internal.h"  /* CLIENT_INPUT_RING_SIZE, UDP_MAX_SEND, pack/unpack */
 #include "test_harness.h"
 
 /* The redundancy window must fit the queue/ring it flows through. */
@@ -79,7 +79,7 @@ static int check_wire_roundtrip(void) {
 
     /* Header + 1 count byte + a full redundancy window of packed inputs. */
     UT_ASSERT(PACKET_HEADER_SIZE + 1 + INPUT_REDUNDANCY_COUNT * packed
-              <= UDP_MAX_PAYLOAD);
+              <= UDP_MAX_SEND);
     return 0;
 }
 

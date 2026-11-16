@@ -65,7 +65,8 @@
 #include "client_net.h"                 /* clientSimGetConnectState */
 #include "server_sim.h"
 #include "transport_udp.h"              /* udpClientHandleLobbyScenarioListRsp */
-#include "transport_udp_internal.h"     /* PACKET_HEADER_SIZE, UDP_MAX_PAYLOAD */
+#include "transport_udp_internal.h"     /* PACKET_HEADER_SIZE, UDP_MAX_PAYLOAD,
+                                         * UDP_MAX_SEND */
 #include "transport_udp_server_internal.h" /* udpServerPackScenarioListChunk,
                                               udpServer.bulkSend */
 #include "bulk_transfer.h"              /* BULK_KIND_SCENARIO_DETAILS */
@@ -618,7 +619,7 @@ int run_scenario_identity_list_wire(void) {
     siFill(&entries[1], "b.lua", "Beta", "", "");            /* unknown */
     siFill(&entries[2], "c.lua", "Gamma", "WinBolo", "2026-01-31T09:05Z");
 
-    len = udpServerPackScenarioListChunk(buf, (int)sizeof(buf), entries, 3, 0,
+    len = udpServerPackScenarioListChunk(buf, UDP_MAX_SEND,entries, 3, 0,
                                          &next);
     UT_ASSERT(len > 0 && next == 3);
 

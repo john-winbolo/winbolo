@@ -1,6 +1,6 @@
 /*
  * Pure determinism / behaviour tests for the network impairment layer in
- * src/bolo/net_impair.c.  No sockets: sockaddr_in values are filled
+ * src/bolo/net_impair.c.  No sockets: BoloAddr values are filled
  * constants and time is a synthetic nowMs the test advances by hand.
  *
  * The headline property is that, under a fixed bolo_srand() seed, the
@@ -17,11 +17,11 @@
 #include "test_harness.h"
 
 /* A constant peer address — never interpreted by the layer, just carried. */
-static struct sockaddr_in mkAddr(uint16_t port) {
-    struct sockaddr_in a;
-    memset(&a, 0, sizeof(a));
-    a.sin_family = AF_INET;
-    a.sin_port = port;
+static BoloAddr mkAddr(uint16_t port) {
+    BoloAddr a;
+    struct in_addr any;
+    memset(&any, 0, sizeof(any));
+    boloAddrFromV4(any, port, &a);
     return a;
 }
 
@@ -81,8 +81,8 @@ static int parse_test(void) {
 
 static int disabled_test(void) {
     NetImpair ni;
-    struct sockaddr_in addr = mkAddr(3);
-    struct sockaddr_in paddr;
+    BoloAddr addr = mkAddr(3);
+    BoloAddr paddr;
     uint8_t buf[8];
     uint8_t pbuf[NET_IMPAIR_MAX_PACKET];
 
@@ -101,8 +101,8 @@ static int disabled_test(void) {
 static int due_time_test(void) {
     NetImpair ni;
     NetImpairConfig cfg;
-    struct sockaddr_in addr = mkAddr(4);
-    struct sockaddr_in paddr;
+    BoloAddr addr = mkAddr(4);
+    BoloAddr paddr;
     uint8_t buf[8];
     uint8_t pbuf[NET_IMPAIR_MAX_PACKET];
     int plen;
@@ -141,8 +141,8 @@ static int due_time_test(void) {
 static int run_determinism_sequence(uint64_t seed, int *out, int outCap) {
     NetImpair ni;
     NetImpairConfig cfg;
-    struct sockaddr_in addr = mkAddr(1234);
-    struct sockaddr_in paddr;
+    BoloAddr addr = mkAddr(1234);
+    BoloAddr paddr;
     uint8_t buf[16];
     uint8_t pbuf[NET_IMPAIR_MAX_PACKET];
     int produced = 0;
@@ -213,8 +213,8 @@ static int determinism_test(void) {
 static int reorder_test(void) {
     NetImpair ni;
     NetImpairConfig cfg;
-    struct sockaddr_in addr = mkAddr(1);
-    struct sockaddr_in paddr;
+    BoloAddr addr = mkAddr(1);
+    BoloAddr paddr;
     uint8_t buf[8];
     uint8_t pbuf[NET_IMPAIR_MAX_PACKET];
     int order[64];
@@ -260,8 +260,8 @@ static int reorder_test(void) {
 static int burst_test(void) {
     NetImpair ni;
     NetImpairConfig cfg;
-    struct sockaddr_in addr = mkAddr(2);
-    struct sockaddr_in paddr;
+    BoloAddr addr = mkAddr(2);
+    BoloAddr paddr;
     uint8_t buf[8];
     uint8_t pbuf[NET_IMPAIR_MAX_PACKET];
     const int BURST = 3;

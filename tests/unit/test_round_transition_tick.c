@@ -67,6 +67,7 @@ extern bool     wbnStubWorkerRefuses;
 extern int      wbnStubEndSessionCalls;
 extern int      wbnStubBeginSessionCalls;
 extern bool     wbnStubBeginSessionOk;
+extern int      wbnStubAnnounceCalls;
 
 /* A key for the finished round. transportUdpServerSendWbnRekey drops the
  * broadcast when the server holds no key, so the stub has to answer with one
@@ -149,6 +150,7 @@ int run_round_transition_tick_does_not_block(void) {
   wbnStubApplyRegisterCalls = 0;
   wbnStubApplyRegisterOk = TRUE;
   wbnStubRegisterResultReady = FALSE;
+  wbnStubAnnounceCalls = 0;
   s_stashCalls = 0;
 
   /* End the round and let the game-over countdown expire inside
@@ -202,6 +204,9 @@ int run_round_transition_tick_does_not_block(void) {
   UT_ASSERT_MSG(udpServer.clients[slot].wbnJoin.pending == false,
                 "a rekey reached slot %d before the register result came back",
                 slot);
+  UT_ASSERT_MSG(wbnStubAnnounceCalls == 0,
+                "server/announce was queued %d times before the register "
+                "result came back", wbnStubAnnounceCalls);
 
   /* Deliver it: the handler owns everything that needed the new key. */
   wbnStubRegisterResultReady = TRUE;
@@ -211,6 +216,9 @@ int run_round_transition_tick_does_not_block(void) {
   UT_ASSERT_MSG(wbnStubApplyRegisterCalls == 1,
                 "the register result was applied %d times, expected once",
                 wbnStubApplyRegisterCalls);
+  UT_ASSERT_MSG(wbnStubAnnounceCalls == 1,
+                "server/announce was queued %d times after the register "
+                "succeeded, expected once", wbnStubAnnounceCalls);
   UT_ASSERT_MSG(h.sim->wbnSessionRotating == FALSE,
                 "the register result must close the rotation window");
   UT_ASSERT_MSG(udpServer.clients[slot].wbnJoin.pending == true,
@@ -267,6 +275,7 @@ int run_round_transition_during_rotation_deferred(void) {
   wbnStubApplyRegisterCalls = 0;
   wbnStubApplyRegisterOk = TRUE;
   wbnStubRegisterResultReady = FALSE;
+  wbnStubAnnounceCalls = 0;
   s_stashCalls = 0;
 
   /* First round ends. Three jobs, register outstanding. */
@@ -332,6 +341,9 @@ int run_round_transition_during_rotation_deferred(void) {
   UT_ASSERT_MSG(udpServer.clients[slot].wbnJoin.pending == false,
                 "a rekey reached slot %d for a session that was quit at once",
                 slot);
+  UT_ASSERT_MSG(wbnStubAnnounceCalls == 0,
+                "server/announce was queued %d times for a session that was "
+                "quit at once", wbnStubAnnounceCalls);
 
   /* The second register answers: now the window closes and the rekey goes. */
   wbnStubRegisterResultReady = TRUE;
@@ -340,6 +352,9 @@ int run_round_transition_during_rotation_deferred(void) {
   UT_ASSERT_MSG(wbnStubApplyRegisterCalls == 2,
                 "the register results were applied %d times, expected 2",
                 wbnStubApplyRegisterCalls);
+  UT_ASSERT_MSG(wbnStubAnnounceCalls == 1,
+                "server/announce was queued %d times after the second "
+                "register, expected once", wbnStubAnnounceCalls);
   UT_ASSERT_MSG(h.sim->wbnSessionRotating == FALSE,
                 "the second register result must close the rotation window");
   UT_ASSERT_MSG(udpServer.clients[slot].wbnJoin.pending == true,
@@ -404,6 +419,7 @@ int run_round_transition_worker_down_sends_inline(void) {
   wbnStubBeginSessionCalls = 0;
   wbnStubBeginSessionOk = TRUE;
   wbnStubWorkerRefuses = TRUE;
+  wbnStubAnnounceCalls = 0;
   s_stashCalls = 0;
 
   threadsWaitForMutex();
@@ -449,6 +465,9 @@ int run_round_transition_worker_down_sends_inline(void) {
   UT_ASSERT_MSG(wbnStubApplyRegisterCalls == 0,
                 "a queued register result was applied %d times with no job "
                 "queued", wbnStubApplyRegisterCalls);
+  UT_ASSERT_MSG(wbnStubAnnounceCalls == 1,
+                "server/announce was asked for %d times after the "
+                "synchronous register, expected once", wbnStubAnnounceCalls);
   loopbackHarnessPump(&h);
   UT_ASSERT_MSG(udpServer.clients[slot].wbnJoin.pending == true,
                 "no rekey reached slot %d after the synchronous register",
@@ -457,6 +476,75 @@ int run_round_transition_worker_down_sends_inline(void) {
   serverLifecycleSetRoundLogHooks(NULL, NULL);
   wbnStubWorkerRefuses = FALSE;
   wbnStubBeginSessionOk = FALSE;
+  wbnStubRunning = FALSE;
+  wbnStubServerKey[0] = '\0';
+  wbnStubJobCount = 0;
+  wbnStubRegisterResultReady = FALSE;
+  loopbackHarnessStop(&h);
+  return 0;
+}
+
+/* A register that fails leaves no session and no bearer, so nothing may be
+ * announced: the round transition runs as in the first case, but the stub
+ * answers the register's result as a failure. The rotation window still
+ * closes, and server/announce is never asked for. */
+int run_round_transition_failed_register_no_announce(void) {
+  LoopbackHarness h;
+  int slot;
+  int i;
+
+  memset(&h, 0, sizeof(h));
+  UT_ASSERT(loopbackHarnessStart(&h, "Rotator", /*lobbyMode*/ true, NULL,
+                                 /*seed*/ 4245));
+
+  UT_ASSERT_MSG(loopbackHarnessPumpUntil(&h, 400, NULL, NULL) > 0,
+                "the client never finished joining");
+  slot = clientSimGetMyPlayerNum(h.cs);
+  UT_ASSERT_MSG(slot >= 0 && slot < MAX_TANKS,
+                "the client has no server slot (got %d)", slot);
+
+  wbnStubRunning = TRUE;
+  SDL_strlcpy(wbnStubServerKey, RT_SERVER_KEY, WINBOLONET_KEY_LEN);
+  serverLifecycleSetRoundLogHooks(rtRoundLogStash, rtRoundLogFlush);
+
+  UT_ASSERT_MSG(loopbackHarnessTriggerGameStart(&h),
+                "the client's slot was never ready for game start");
+  UT_ASSERT_MSG(loopbackHarnessPumpUntil(&h, 600, rtStateIsRunning, NULL) > 0,
+                "the game never reached the running state");
+
+  wbnStubJobCount = 0;
+  wbnStubApplyRegisterCalls = 0;
+  wbnStubApplyRegisterOk = FALSE;
+  wbnStubRegisterResultReady = FALSE;
+  wbnStubAnnounceCalls = 0;
+  s_stashCalls = 0;
+
+  threadsWaitForMutex();
+  serverSimEnterGameOver(h.sim);
+  h.sim->countdownTicks = 1;
+  threadsReleaseMutex();
+  for (i = 0; i < 40 && wbnStubJobCount == 0; i++) loopbackHarnessPump(&h);
+  UT_ASSERT_MSG(loopbackHarnessPumpUntil(&h, 200, rtStateIsLobby, NULL) > 0,
+                "the game never reached the lobby");
+  UT_ASSERT_MSG(wbnStubJobCount == 3,
+                "the transition queued %d jobs, expected 3 (quit, upload, "
+                "register)", wbnStubJobCount);
+
+  wbnStubRegisterResultReady = TRUE;
+  loopbackHarnessPump(&h);
+  loopbackHarnessPump(&h);
+
+  UT_ASSERT_MSG(wbnStubApplyRegisterCalls == 1,
+                "the register result was applied %d times, expected once",
+                wbnStubApplyRegisterCalls);
+  UT_ASSERT_MSG(h.sim->wbnSessionRotating == FALSE,
+                "a failed register must still close the rotation window");
+  UT_ASSERT_MSG(wbnStubAnnounceCalls == 0,
+                "server/announce was queued %d times after a failed register",
+                wbnStubAnnounceCalls);
+
+  serverLifecycleSetRoundLogHooks(NULL, NULL);
+  wbnStubApplyRegisterOk = TRUE;
   wbnStubRunning = FALSE;
   wbnStubServerKey[0] = '\0';
   wbnStubJobCount = 0;

@@ -712,7 +712,11 @@ static bool commandDecodeSetScriptSetting(const uint8_t *buf, size_t len,
  * shape CMD_LOBBY_SET_MAP uses for its path. A count past
  * CMD_SCRIPT_LIST_MAX is refused rather than trimmed on both sides: a list
  * the encoder cut short is a different list, and the caller would never
- * learn which scripts it lost. */
+ * learn which scripts it lost.
+ *
+ * A list whose encoding would pass COMMAND_MAX_SEND_BYTES is refused the same
+ * way. The fields allow ten names of 127 bytes, 1293 bytes in all, and that
+ * does not fit one PACKET_COMMAND_TICK under UDP_MAX_SEND. */
 static bool commandEncodeSetScriptList(const ClientCommand *cmd,
                                        uint8_t *buf, size_t bufCap,
                                        size_t *outLen) {
@@ -729,6 +733,7 @@ static bool commandEncodeSetScriptList(const ClientCommand *cmd,
         size_t fileLen = strnlen(cmd->u.setScriptList.files[i],
                                  CMD_SCRIPT_LIST_FILE_LEN - 1);
         if (bufCap < pos + 1 + fileLen) return false;
+        if (pos + 1 + fileLen > (size_t)COMMAND_MAX_SEND_BYTES) return false;
         buf[pos++] = (uint8_t)fileLen;
         if (fileLen > 0) {
             memcpy(buf + pos, cmd->u.setScriptList.files[i], fileLen);

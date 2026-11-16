@@ -55,7 +55,7 @@ void transportUdpServerSetUploadConfig(UploadPolicy policy,
 
 typedef struct {
   unsigned short udpPort;
-  const char    *bindAddr;        /* "" or NULL = INADDR_ANY */
+  const char    *bindAddr;        /* "" or NULL = the any address */
   const char    *password;        /* "" or NULL = no password */
   BYTE           maxPlayers;
   BYTE           maxBots;          /* cap on AI bots addable in the lobby;
@@ -233,17 +233,25 @@ typedef enum {
                                       round-trips — joiners on most
                                       networks can still connect via
                                       hole-punching */
-  SERVER_PORTMAP_SYMMETRIC_NAT     /* libplum succeeded but the tracker
+  SERVER_PORTMAP_SYMMETRIC_NAT,    /* libplum succeeded but the tracker
                                       sees a different reflexive address
                                       than libplum reported — symmetric
                                       NAT layer means joiners cannot
                                       hole-punch through */
+  SERVER_PORTMAP_IPV6_OK           /* no IPv4 path (the status would be
+                                      FAILED) but the tracker probe
+                                      round-tripped over IPv6, so joiners
+                                      with IPv6 can connect; externalIp
+                                      is the IPv6 address the tracker saw
+                                      (no brackets) */
 } ServerPortmapStatus;
 
 typedef struct {
   ServerPortmapStatus status;
-  char           externalIp[64];   /* "" unless SUCCEEDED */
-  unsigned short externalPort;     /* 0  unless SUCCEEDED */
+  char           externalIp[64];   /* the mapped address when SUCCEEDED,
+                                      the tracker's view of the server
+                                      otherwise (IPv6 for IPV6_OK), or "" */
+  unsigned short externalPort;     /* its port, or 0 */
   unsigned short internalPort;     /* the host's bound UDP port (for UI) */
 } ServerPortmapInfo;
 
@@ -267,6 +275,27 @@ bool serverInstanceIsNatPunchActive(void);
  * read by serverInstanceGetPortmapInfo. */
 void serverInstanceRecordProbeReply(const char *reflexiveIp,
                                     unsigned short reflexivePort);
+
+/* The same for a PACKET_PUNCH_PROBE_REPLY6 carrying an IPv6 address: the
+ * tracker answered the probe the server sent over IPv6. Kept apart from the
+ * IPv4 reply; it decides SERVER_PORTMAP_IPV6_OK when there is no IPv4 path.
+ * reflexiveIp is the address text with no brackets. */
+void serverInstanceRecordProbeReply6(const char *reflexiveIp,
+                                     unsigned short reflexivePort);
+
+#if defined(WB_ENABLE_NETIMPAIR) && WB_ENABLE_NETIMPAIR
+/* Test builds only (server_static_test). Sets the port-map state that
+ * serverInstanceGetPortmapInfo reads, as a test cannot run libplum or wait
+ * out the timeouts: whether port mapping was asked for, the mapped address
+ * (NULL for none), whether libplum gave up, and whether both probe
+ * deadlines have passed. Clears every recorded probe reply and the manual
+ * probe. (false, NULL, 0, false, false) is the state with no server running. */
+void serverInstanceTestSetPortmapState(bool useNatPortmap,
+                                       const char *mappedIp,
+                                       unsigned short mappedPort,
+                                       bool portmapTimedOut,
+                                       bool probesTimedOut);
+#endif
 
 typedef enum {
   MANUAL_PROBE_IDLE,         /* never run, or reset on shutdown */

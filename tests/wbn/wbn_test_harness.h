@@ -76,6 +76,9 @@ typedef struct {
      * case can tell a reused connection from a fresh one. Written by the
      * listener thread; read after wbnTestListenerStop has joined it. */
     int           conn[WBN_TEST_MAX_PATHS];
+    /* TRUE when the request carried an "Authorization: Bearer" header with
+     * a non-empty value. Only that fact is kept, never the token. */
+    bool          bearer[WBN_TEST_MAX_PATHS];
     SDL_AtomicInt stop;         /* set by the main thread to end the loop */
 } WbnTestListener;
 
@@ -105,5 +108,9 @@ bool wbnTestKeyStampedAtFireTime(void);
 bool wbnTestQueueCapRefusesPosts(void);
 bool wbnTestForcedUpdateFullQueue(void);
 bool wbnTestScenarioFields(void);
+bool wbnTestAnnounceHostsRule(void);
+bool wbnTestApiUrlForHost(void);
+bool wbnTestHostedJobHost(void);
+bool wbnTestAnnouncePosts(void);
 
 #endif /* WINBOLO_TEST_WBN_HARNESS_H */

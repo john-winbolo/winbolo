@@ -46,6 +46,17 @@
 #define CHANNEL_ACK_RECORD_SIZE 9  /* channelId(1) + ackedSeq(4) + highestSeen(4) */
 #define CHANNEL_SEG_HEADER_SIZE 7  /* channelId(1) + seq(4) + len(2)        */
 
+/* A standalone PACKET_CHANNEL datagram holding one ack per channel and one
+ * whole control segment has to fit the send cap. channelBuildFrame never
+ * splits a message-flavor segment, so a control segment that could not fit
+ * beside the acks under UDP_MAX_SEND would never be sent at all.
+ * 8 + 1 + 6 * 9 + 1 + 7 + 1024 = 1095 of 1232. */
+BOLO_STATIC_ASSERT(PACKET_HEADER_SIZE + 1 +
+                       CHANNEL_COUNT * CHANNEL_ACK_RECORD_SIZE + 1 +
+                       CHANNEL_SEG_HEADER_SIZE + CHANNEL_CONTROL_SEG <=
+                       UDP_MAX_SEND,
+                   channel_control_segment_fits_one_send);
+
 static uint32_t channelMin32(uint32_t a, uint32_t b) {
     return a < b ? a : b;
 }

@@ -54,6 +54,7 @@ static const char *lobbyBadgeShortText(ServerPortmapStatus status) {
             return langGetText(STR_DLGLOBBY_PORTMAP_CHECKING);
         case SERVER_PORTMAP_SUCCEEDED:
         case SERVER_PORTMAP_HOLE_PUNCH_OK:
+        case SERVER_PORTMAP_IPV6_OK:
             return langGetText(STR_DLGLOBBY_PORTMAP_ACCESSIBLE);
         case SERVER_PORTMAP_SYMMETRIC_NAT:
         case SERVER_PORTMAP_FAILED:
@@ -108,6 +109,11 @@ void lobbyRenderConnectivityBadge(SDL_Renderer *renderer, float s) {
             icon      = lobbyIcons()->success;
             color     = ImVec4(0.4f, 0.8f, 0.4f, 1.0f);
             detailFmt = langGetText(STR_DLGLOBBY_PORTMAP_DETAIL_HOLE_PUNCH);
+            break;
+        case SERVER_PORTMAP_IPV6_OK:
+            icon      = lobbyIcons()->success;
+            color     = ImVec4(0.4f, 0.8f, 0.4f, 1.0f);
+            detailFmt = langGetText(STR_DLGLOBBY_PORTMAP_DETAIL_IPV6);
             break;
         case SERVER_PORTMAP_SYMMETRIC_NAT:
             icon      = lobbyIcons()->error;
@@ -171,6 +177,14 @@ void lobbyRenderConnectivityBadge(SDL_Renderer *renderer, float s) {
                 args.number = (int)(unsigned)pm2.externalPort;
                 ImGui::Text("%s",
                     langGetTextFmt(STR_DLGLOBBY_PORTMAP_DETAIL_SUCCEEDED, &args));
+                break;
+            }
+            case SERVER_PORTMAP_IPV6_OK: {
+                MessageArgs args = {};
+                SDL_strlcpy(args.string1, pm2.externalIp, sizeof(args.string1));
+                args.number = (int)(unsigned)pm2.externalPort;
+                ImGui::Text("%s",
+                    langGetTextFmt(STR_DLGLOBBY_PORTMAP_DETAIL_IPV6, &args));
                 break;
             }
             case SERVER_PORTMAP_SYMMETRIC_NAT:

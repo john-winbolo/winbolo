@@ -33,6 +33,7 @@
 #include <string.h>
 #include "global.h"
 #include "platform_net.h"
+#include "bolo_addr.h"
 #include "../dnsLookups.h"
 #include "client_sim.h"
 
@@ -130,14 +131,20 @@ static int SDLCALL dnsLookupsThreadFunc(void *data) {
     while (NonEmpty(dnsProcessing) && dnsShouldRun == TRUE) {
       q = dnsProcessing;
       {
-        struct sockaddr_in lookupAddr;
-        struct hostent *hd;
-        lookupAddr.sin_addr.s_addr = inet_addr(q->ip);
-        hd = gethostbyaddr((const char *)&lookupAddr.sin_addr, sizeof(struct in_addr), AF_INET);
-        if (hd == NULL) {
-          strcpy(dest, q->ip);
+        /* Reverse lookup of an IPv4 or IPv6 address. NI_NAMEREQD makes a
+         * missing name an error, so the address text is kept as it was given
+         * whenever no name is found or the text is not a numeric address. */
+        BoloAddr lookupAddr;
+        char host[1025]; /* NI_MAXHOST, which strict POSIX headers hide */
+        host[0] = '\0';
+        if (boloAddrParse(q->ip, 0, &lookupAddr) &&
+            getnameinfo((const struct sockaddr *)&lookupAddr.ss,
+                        lookupAddr.len, host, (unsigned int)sizeof(host),
+                        NULL, 0, NI_NAMEREQD) == 0 &&
+            host[0] != '\0') {
+          SDL_strlcpy(dest, host, sizeof(dest));
         } else {
-          strcpy(dest, hd->h_name);
+          SDL_strlcpy(dest, q->ip, sizeof(dest));
         }
       }
       netProcessedDnsLookup(dnsClientSim, q->ip, dest);

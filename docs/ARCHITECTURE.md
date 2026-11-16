@@ -14,7 +14,7 @@ document is the stable reference for the rules themselves.
 | **T1 — Sim runtime (public API)** | The official front door to the simulation. Opaque handles; no direct struct access. | `server_sim.h`, `client_sim.h`, `client_net.h`, `client_enums.h`, `bolo_map_validate.h` |
 | **T2 — Sim internals** | Implementation details of the sim: state structs, wire protocol, sub-systems. | `tank.h`, `players.h`, `game_sim.h`, `allience.h`, `client_sim_internal.h`, `server_sim_internal.h`, `client_sim_control.h`, `bot_manager.h`, `shells.h`, `mines.h`, `lgm.h`, `viewport.h`, `bolo_packets.h`, `netpacks.h`, `transport_udp.h`, `bolo_map.h`, `starts.h`, `pillbox.h`, `bases.h` |
 | **T3 — Presentation data** | Read-only per-frame views the sim publishes for the renderer. | `viewport_types.h`, `client_render.h`, `client_ui_events.h`, `screentank.h`, `screenbullet.h`, `screenlgm.h`, `screencalc.h`, `frontend.h` |
-| **T4 — Shared leaves** | Plain types and constants, and the handful of resolvers over an opaque `GameSim` that sit beside them. | `types.h`, `global.h`, `tilenum.h`, `gametype.h`, `platform_types.h` |
+| **T4 — Shared leaves** | Plain types and constants, and the handful of resolvers over an opaque `GameSim` that sit beside them. | `types.h`, `global.h`, `tilenum.h`, `gametype.h`, `platform_types.h`, `bolo_addr.h` |
 
 ## Who may include what
 
@@ -881,6 +881,316 @@ in a hand-rolled socket send. (The reliability logic was extracted into these sm
 off-socket modules rather than shrinking `transport_udp_server.c`, which stayed
 large as per-client mux/bulk wiring moved in.)
 
+## Networking: addresses and sockets
+
+The game reaches its peers over IPv4 and IPv6. The rules below say how a
+peer address is stored, turned into text, looked up and sent to, so that new
+network code handles both families the way the existing code does. The
+address type is `src/bolo/public/bolo_addr.h`; the socket helpers are in
+`src/bolo/transport_udp_common.c`, declared in
+`src/bolo/internal/transport_udp_internal.h`.
+
+### One address type
+
+**`BoloAddr` is the only type a peer address is stored in or passed as.** It
+is a `sockaddr_storage` and a length, and a length of 0 means no address.
+`bolo_addr.h` is a header-only T4 leaf: it includes `platform_net.h` and C
+standard headers and nothing else, so the LogViewer binaries, which link no
+`bolo_static`, can use it as well (`src/logviewer/dns.c` does).
+
+**It is the only place that knows about IPv4-mapped addresses and scope
+ids.** On a dual-stack socket an IPv4 peer arrives as `::ffff:a.b.c.d`; on an
+IPv4 socket the same peer arrives as plain IPv4. The helpers treat the two as
+one address:
+
+- Compare with `boloAddrEqual` (host and port), `boloAddrSameHost` (host
+  only) or the keys below, never with `memcmp` on the `sockaddr`. A mapped
+  IPv4 address and the same plain IPv4 address are equal.
+- Write text with `boloAddrFormat` (`1.2.3.4:27500`, `[2001:db8::1]:27500`)
+  or `boloAddrFormatHost` (the host alone, with no brackets). A mapped address
+  prints as plain IPv4, so `::ffff:` never appears on screen or in a log.
+- A link-local IPv6 address keeps its scope id. The scope id takes part in
+  comparisons and prints as a `%scope` suffix (`fe80::1%en0`).
+
+`boloAddrKey` is 21 bytes: the family, the address and, for a link-local
+address only, the scope id. The port is not part of it. `boloAddrPrefixKey`
+is the same key with the last 8 bytes of an IPv6 address zeroed, so every
+address in one /64 gives one key. The join rate limiter
+(`serverJoinRateLimitAllow`, `src/server/udp/udp_server_join.c`) keys its
+buckets on the prefix key, because one home connection holds a whole /64 and
+could otherwise walk addresses as it walks ports. The join cookie
+(`serverCookieCompute`, the same file) uses the whole-address key, because it
+proves the joiner receives at exactly that address.
+
+For the 4-byte address fields of the older wire packets, `boloAddrV4` reads
+the IPv4 address of a plain or mapped address and `boloAddrFromV4` builds an
+address from one.
+
+### One resolver
+
+**`bolo_resolve_addr` in `bolo_addr.h` is the only place a host string that
+may be a name becomes a `BoloAddr`.** `boloAddrParse` reads numeric text
+(brackets, port and `%scope` included) and never looks a name up. What the
+resolver does:
+
+- Off Apple platforms a numeric host is parsed and used as written; only a
+  name reaches `getaddrinfo`.
+- On macOS and iOS every host, an IPv4 literal included, goes through
+  `getaddrinfo` with `AF_UNSPEC` and `AI_DEFAULT`. On an IPv6-only network
+  with NAT64 that call is what turns `1.2.3.4` into the synthesised IPv6
+  address the gateway forwards; parsing the literal directly would give an
+  IPv4 address with no route.
+- A lookup that fails with `AI_ADDRCONFIG` set is tried once more without it,
+  because `AI_ADDRCONFIG` can fail `localhost` on a machine with no network
+  interface up.
+
+The family hint picks among the results: the first of the hinted family, else
+the first of the other. **Every game lookup passes `BOLO_RESOLVE_PREFER`**
+(`AF_INET`), so a name with both A and AAAA records resolves to IPv4: every
+server released before IPv6 support listens on IPv4 only, and the client does
+not try a second address after a failed join. A name with no IPv4 address
+falls back to its IPv6 one, which is the case on an IPv6-only network.
+
+The one exception is a lookup whose datagram must reach the tracker over
+IPv6. `udpClientSendPunchRequest` (`src/bolo/transport_udp_client.c`) for an
+IPv6 target, and `trackerSecondAddrV6` (`src/server/udp/udp_server_tracker.c`)
+for the host's second keepalive and probe, pass `AF_INET6`, then check that
+the result is an IPv6 address that is not IPv4-mapped and send nothing when
+it is not (the hint falls back to IPv4 when the tracker's name has no IPv6
+address).
+
+The game browser's country lookup and reverse lookup
+(`src/gui/sdl3/dialogs/imgui_gamebrowser.cpp`) call `getaddrinfo` themselves
+to produce text; neither produces an address anything is sent to.
+
+### Dual-stack sockets
+
+**`createUdpSocket` opens one socket for both families.** It opens
+`AF_INET6` and clears `IPV6_V6ONLY` before any bind (Windows sets it by
+default and Linux follows the `bindv6only` sysctl), so IPv4 peers reach the
+socket as mapped addresses. When the IPv6 open fails or the option cannot be
+cleared, as on a machine with no IPv6 stack, it opens `AF_INET` instead. It
+returns the family it opened, and each owner keeps that family beside the
+socket (`sockFamily` in the client transport's context and in `udpServer`)
+and passes it to every send.
+
+**`udpSendTo(sock, sockFamily, ...)` converts the destination to the
+socket's family** with `boloAddrToFamily`: an IPv4 destination on an IPv6
+socket goes out as a mapped address. An IPv6 destination on an IPv4 socket
+cannot be sent; it is refused with an error in the log, for the first five
+refusals and then one in every thousand, so a peer the game keeps sending to
+cannot fill the log.
+
+The web build never opens an IPv6 socket: it sends through Emscripten's IPv4
+socket emulation, and `udpOpenDualStackSocket` returns no socket there.
+
+What stays IPv4 only by design:
+
+- The LAN broadcast search (`discoveryFindBroadcastGamesAsync`,
+  `src/bolo/discovery.c`), because IPv6 has no broadcast. mDNS finds IPv6
+  hosts on a LAN instead (see "LAN discovery" below).
+- The 4-byte address fields of the older protocol: `GAMEID.serveraddress` in
+  the info packet, which stays zero when the server's public address is IPv6
+  so the finder uses the datagram's source, and the bodies of packets 153,
+  154 and 157.
+- Port mapping on the router through libplum (`src/bolo/nat_portmap.c`). An
+  IPv6 host behind a router firewall is reached through the tracker instead
+  (see "Hole punching over IPv6" below).
+
+### The reply-source rule
+
+**The server replies to a peer from the local address that peer's datagrams
+arrive on.** A server socket bound to the any address leaves the source of
+each reply to the operating system. On a host with more than one address of a
+family, such as an IPv6 host with a stable and a temporary address, the
+system can pick one the peer never sent to, and a router firewall in front of
+the joiner drops a reply from an address the joiner did not contact.
+
+- `udpEnableRecvLocalAddr` asks the server socket, before it is bound, to
+  report each datagram's destination address (`IPV6_RECVPKTINFO` or
+  `IPV6_PKTINFO`, and `IP_PKTINFO` or `IP_RECVDSTADDR`, by platform). A
+  platform that refuses is logged once as a warning and the socket works as
+  before.
+- `udpRecvFromLocal` returns that address with each datagram, with port 0. A
+  destination that cannot be sent from (unspecified, multicast, or the IPv4
+  limited broadcast) is returned as an empty address.
+- `udpSendToFrom` names a local address as a datagram's source. A send with a
+  source that fails for any reason but a full socket buffer is sent once more
+  without it, and the first such failure in the process is logged as a
+  warning. A source the platform has no control message for is left out the
+  same way.
+
+Each client slot (`UdpServerClient.localAddr`) and each spectator slot stores
+the local address its join arrived on, written at join through
+`srvRxLocalAddrFor`. A client slot's is written again, with its address, when
+a NAT rebind moves the slot to a new address by its connection id
+(`serverHandleInput`, `src/server/udp/udp_server_send.c`).
+
+`srvSendTo` in `src/server/transport_udp_server.c`, which every server send
+to a peer goes through, picks the source in `srvReplySource` by three rules:
+
+1. A reply to the datagram being handled goes out from the address that
+   datagram was sent to. This covers a peer that has no slot yet. The rule is
+   skipped when the datagram came with no local address, so a slot's stored
+   one still applies.
+2. Otherwise, a connected client's or spectator's stored local address.
+3. Otherwise none, and the system picks.
+
+**`srvSendToNoSource` is for sends that run outside the server mutex.** The
+tracker update, the keepalive, the probe and the punch bursts
+(`src/server/udp/udp_server_tracker.c`) run on the tick outside the mutex and
+never go to a peer that holds a slot. `srvSendTo`'s lookup reads the client
+and spectator tables, which another thread may change under the mutex, so
+these sends skip it and let the system pick the source. A new send of that
+kind must use `srvSendToNoSource`.
+
+### The send cap
+
+**`UDP_MAX_SEND` (1232) is the most any sender may put in one datagram, to
+any peer.** IPv6 routers never fragment, and 1280 bytes is the smallest MTU
+every IPv6 path has to carry; less the 40-byte IPv6 header and the 8-byte UDP
+header, that leaves 1232 bytes. IPv4 peers get the same cap, so there is one
+send path. `UDP_MAX_PAYLOAD` (1400) is the size of every receive buffer. It
+is larger so that a datagram from a peer built to 1400, the cap senders were
+held to before, is still read whole.
+
+A new sender budgets against `UDP_MAX_SEND`, never against the size of the
+buffer it builds in. `COMMAND_MAX_SEND_BYTES` (1221,
+`src/bolo/internal/transport_command_codec.h`) is the largest encoded command
+one `PACKET_COMMAND_TICK` can carry under the cap: 1232 less the 8-byte
+header, the count byte and the 2-byte entry length. Only
+`CMD_SET_SCRIPT_LIST` can pass it, since its fields allow 1293 bytes. Its
+encoder refuses such a list, and `clientSimNetSendSetScriptList`
+(`src/bolo/client_net.c`) runs the encoder before queueing and drops a list
+that fails, because a command the queue can never send would hold every later
+command behind it.
+
+The unit case `send_cap_join_download_play` (`tests/unit/test_send_cap.c`)
+joins a server over loopback, takes the map download and plays one minute of
+game time, then checks that the largest datagram either side sent is at most
+`UDP_MAX_SEND`. The counter it reads, `udpTestLargestSend`, exists only in
+builds with `WB_ENABLE_NETIMPAIR`.
+
+### Text forms
+
+**An IPv6 address written with a port is in brackets:**
+`[2001:db8::1]:27500`. In the client, `parseServerAddressPaste` and
+`formatServerAddressHostPort` in
+`src/gui/sdl3/dialogs/server_address_parse.h` are the one reader and the one
+writer of `host:port` text. The reader takes `host`, `host:port`, `[v6]`,
+`[v6]:port`, a bare IPv6 literal (two or more colons and no brackets, read
+whole with no port) and any of these behind a scheme such as `winbolo://`.
+The join dialog, `winbolo://` links (`gameFrontSetAddressFromWebLink`,
+`src/gui/sdl3/gamefront.c`), the in-game join prompt and the web client's
+`server=` parameter all go through it. The writer brackets a host that
+contains a colon, and `formatSteamConnectString` writes the Steam rich
+presence `connect` value with it, so a friend's client reads the value back
+with the same reader.
+
+**A link-local, loopback or unspecified address is never published to Steam
+or shown as the address to give another player.** `formatSteamConnectString`
+refuses such a numeric host (a host name is always allowed).
+`guiServerDisplayAddress` (`src/gui/sdl3/dialogs/imgui_server_address.h`)
+replaces a LAN host's loopback self-join with the address this machine routes
+from, IPv4 first, from `boloAddrLocalForRoute`, which never returns a
+loopback or link-local address; the loopback address stays only when the
+machine has no route in either family. An unspecified address is not shown.
+
+### LAN discovery
+
+**mDNS carries A and AAAA records.** The server's answer
+(`mdnsAdvertiseBuildRecords`, `src/server/mdns_records.h`) has an A record
+when the host has an IPv4 LAN address and an AAAA record when it has an IPv6
+one. The instance name is `WinBolo-<a>-<b>-<c>-<d>-<port>` from the IPv4
+address when there is one, and `WinBolo-v6-<last 8 hex digits of the IPv6
+address>-<port>` on a host with only IPv6. The advertised IPv6 address
+(`mdnsFindLocalAddr6`, `src/server/mdns_advertise.c`) is a global or
+unique-local one over a link-local one on the same interface; on a LAN with no
+router a link-local address is all there is, and it is taken.
+
+**The browser prefers IPv4.** `discoveryMdnsFillServer`
+(`src/bolo/discovery_mdns.c`) takes the A address, else the AAAA address, else
+the datagram's source. An AAAA record carries no scope, so a link-local AAAA
+takes the scope id of the datagram's source, the interface the answer arrived
+on, and is ignored when that is not known. A global AAAA is kept over a
+link-local one in the same answer.
+
+**The vendored `mdns.h` joins ff02::fb on the default interface**
+(`mdns_socket_setup_ipv6` uses interface 0), which leaves the interface to the
+system. On POSIX systems the game's code sets the interface after the library
+has opened the socket: the advertiser joins the group again on the interface
+its AAAA address belongs to and sets `IPV6_MULTICAST_IF` to it, and the
+browser sends its query once on each IPv6 interface. When the system refuses
+the interface 0 join (a LAN with only link-local addresses can have no IPv6
+route to choose by), the advertiser and the browser bind the socket and make
+it non-blocking themselves, as the library would have done. The advertiser's
+IPv6 socket sets `IPV6_V6ONLY`, so it does not answer each IPv4 query a second
+time.
+
+Known limits in the code:
+
+- On Windows the IPv6 address to advertise comes only from the routing table
+  (`boloAddrLocalForRoute`, never link-local), and the group join and the
+  query use interface 0, so a Windows host with no IPv4 address and no router
+  does not advertise over IPv6. Listing the interfaces there needs
+  `GetAdaptersAddresses` and the IP Helper library, which the code does not
+  link.
+- The iOS browser (`iosDiscoveryParseInstance`, `src/gui/ios/ios_discovery.m`)
+  reads the server's address from the dotted-quad instance name, so it does
+  not list a host named `WinBolo-v6-...`.
+
+### Hole punching over IPv6
+
+A host behind a router firewall is reached through the tracker: the joiner
+asks the tracker, the tracker tells the host, and the host sends five 1-byte
+datagrams to the joiner so the router lets the joiner's join in. Packets 153,
+154 and 157 carry a 4-byte IPv4 address and stay for IPv4 targets. Packets
+232 to 234 carry an address of either family:
+
+| Packet | Direction | Body |
+| --- | --- | --- |
+| `PACKET_PUNCH_REQUEST6` (232) | joiner to tracker, over IPv6 | the host's address; the tracker takes the joiner's from the datagram's source |
+| `PACKET_PUNCH_NOTIFY6` (233) | tracker to host | the joiner's address as the tracker saw it |
+| `PACKET_PUNCH_PROBE_REPLY6` (234) | tracker to host | the answer to a `PACKET_PUNCH_PROBE_REQUEST` (156) that arrived over IPv6: the host's address as the tracker saw it |
+
+The body is 19 bytes after the 8-byte header, `[family 1][address 16][port 2,
+big endian]`: family 6 fills all 16 address bytes, and family 4 puts an IPv4
+address in the first 4 and zeros in the rest. No scope id is carried, so a
+link-local address is never sent. `packPunchAddr` and `unpackPunchAddr`
+(`src/bolo/transport_udp_common.c`) are the only writer and reader:
+`packPunchAddr` writes a plain or mapped IPv4 address as family 4 and writes
+nothing for an empty, unspecified, loopback or link-local address, and
+`unpackPunchAddr` refuses a short body, another family and an unspecified
+address.
+
+**The joiner reaches the tracker over the target's family.**
+`buildPunchRequest` writes packet 153 for a plain or mapped IPv4 target and
+232 for an IPv6 one, and nothing for a loopback, link-local or unspecified
+target. The tracker learns the joiner's address from the request's source,
+and the host's burst toward the joiner leaves from the host's own address, so
+for an IPv6 host the tracker has to see the joiner's IPv6 address.
+`udpClientSendPunchRequest` therefore sends a 232 only from a dual-stack
+socket and only to the tracker's IPv6 address, and sends nothing when the
+tracker's name has none.
+
+**The host sends its keepalive and its probe to the tracker over both
+families.** `transportUdpServerSendNatKeepalive` and
+`transportUdpServerSendPunchProbe` send to the address `BOLO_RESOLVE_PREFER`
+gives and, when that is IPv4, the socket is dual stack, the machine has an
+IPv6 route and the tracker's name has an IPv6 address, a second time to the
+tracker's IPv6 address. The tracker can push a notify or a probe reply to the
+host only over a path the host has opened, so both paths are kept open. The
+host drops a 233 that names a loopback or link-local address. A 234 with an
+IPv6 address is recorded apart from the IPv4 result
+(`serverInstanceRecordProbeReply6`); when no IPv4 path was found and that
+probe answered, the port-mapping status the lobby shows is
+`SERVER_PORTMAP_IPV6_OK` (`src/server/server_lifecycle.h`) in place of
+`SERVER_PORTMAP_FAILED`, with the IPv6 address the tracker saw as its
+external address.
+
+The packet numbers and the body layout must match the tracker's own header
+(`tracker/udp.h`).
+
 ## Per-client terrain
 
 The server does not send every terrain change to every client. It keeps, per
@@ -1003,7 +1313,8 @@ public/internal split provides.
 | Backed by a `ControlEventType` variant (state changes — joins, leaves, alliances, chat, lobby, phases, balance, shutdown) | `src/bolo/transport_control_codec.c` (encoder + decoder) |
 | Fixed-layout binary message (per-tick snapshots) | field list in `src/bolo/internal/wire_messages.h` + a `DEFINE_WIRE_CODEC[_MASKED]` line in `src/bolo/transport_udp_common.c` — see "Fixed-layout wire messages" below |
 | Bulk byte transfer (map preview / download / resync / scenario details / script copy) | streamed on `CHANNEL_BULK` behind a bulk-transfer stream header — `src/bolo/bulk_transfer.c`. Download and resync blobs are built per recipient; the scenario details reply (`BULK_KIND_SCENARIO_DETAILS`) carries one script file's rules and callbacks blob, its settings block and its author and updated time; the script copy reply (`BULK_KIND_SCRIPT_PACKAGE`) carries a status byte and then one script file's raw bytes for a player to keep; the brain docs reply (`BULK_KIND_BRAIN_DOCS`) carries a status byte and then one brain's `commands.txt` zlib-compressed, with the docs generation in the header's `gen` |
-| Per-client handshake / reliability (JOIN_ACCEPT, JOIN_REJECT, NAME_CHANGE_REJECT, PONG) | `src/bolo/transport_udp_server.c` / `src/bolo/transport_udp_client.c` |
+| Per-client handshake / reliability (JOIN_ACCEPT, JOIN_REJECT, PONG) | Server: `src/server/udp/udp_server_join.c` builds JOIN_ACCEPT and JOIN_REJECT, `src/server/udp/udp_server_spectator.c` builds a spectator's JOIN_ACCEPT, and `src/server/udp/udp_server_send.c` builds PONG; all of them go out through `srvSendTo` in `src/server/transport_udp_server.c`. Client: `src/bolo/transport_udp_client.c` reads all three. A refused name change has no packet of its own: it is a `CTRL_COMMAND_REJECTED` control event, in the first row |
+| Punch address body (packets 232 to 234) | `packPunchAddr`, `unpackPunchAddr` and `buildPunchRequest` in `src/bolo/transport_udp_common.c`; the packet numbers and the body layout in `src/bolo/internal/netpacks.h`. See "Hole punching over IPv6" above |
 
 These rows say where each payload is *defined*; **how** it is reliably
 carried is the channel-mux reliability layer (above): control events on
@@ -1900,7 +2211,8 @@ provide.
 and is linked into every binary that talks to WBN.
 
 **`winbolonet_server`** is the tracker-reporting surface a server
-runtime calls: `server/register` at boot, per-tick `server/update`,
+runtime calls: `server/register` at boot, `server/announce` after each
+successful register (see "Server addresses" below), per-tick `server/update`,
 lobby and map status updates, teams and balance, client verify,
 and leave on shutdown. It depends on `winbolonet_core`. Linked into
 binaries that run a server.
@@ -1979,7 +2291,9 @@ runs one worker for the life of the process (created after the first
 `server/register`, drained rather than destroyed at a round boundary,
 so its pooled connection carries across rounds), and every post is a
 job on its queue: an endpoint, a body, whether the bearer is attached,
-and a **kind** — `WBN_JOB_NONE` for a post nobody reads the reply to,
+a host (empty for the configured one; only
+`winbolonetThreadAddHostedServerRequest` sets it, for a post that goes
+to another WinBolo.net name), and a **kind** — `WBN_JOB_NONE` for a post nobody reads the reply to,
 `WBN_JOB_REGISTER`, `WBN_JOB_VERIFY`, `WBN_JOB_UPLOAD`. A kinded job is
 queued with `winbolonetThreadAddJob`, which returns a **job id** unique
 for the process, and its reply is held until the tick collects it:
@@ -2024,6 +2338,63 @@ worker posts one job at a time, so without that rule one client could
 put a verify per datagram ahead of the register every other slot is
 waiting on.
 
+### Server addresses
+
+**An address WinBolo.net stores comes from a connection, never from a
+request body.** No body the game sends names the server's own address. To
+give WinBolo.net both addresses of a dual-stack server, the server sends
+`POST server/announce` with the body `{}` once to a name that has only an A
+record and once to a name that has only an AAAA record. Each request can only
+arrive over its own family, and WinBolo.net records the address it arrived
+from as the session's address of that family.
+
+`winbolonetServerAnnounce` (`winbolonet_server.c`) queues the two posts,
+IPv4 first, as fire-and-forget jobs through
+`winbolonetThreadAddHostedServerRequest`, with the bearer attached. A post
+that is refused or fails is logged at debug level and not retried; the next
+register sends it again. It is called at the three places in
+`src/server/server_lifecycle.c` where a register has succeeded and its bearer
+is installed, because a session registered at any one of them would
+otherwise never be announced:
+
+- `serverInstanceStartup`, after `winbolonetCreateServer` registers the first
+  session. That register is synchronous and never reaches the result handler.
+- `serverLifecycleWbnResult`, after a queued round-transition register is
+  applied and just before `serverLifecycleRegisterTail`, so a session the
+  deferred rotation quits at once is not announced.
+- `serverLifecycleQueueRotation`, after the synchronous
+  `winbolonetBeginSession` it falls back to when the worker refuses the quit.
+  With no worker running the two posts are refused there as well.
+
+**Which names.** `winbolonetAnnounceHosts` decides for each family:
+`[WINBOLO.NET] Host4` or `Host6` when set; otherwise, when the host in use is
+the default one (no command-line override, and `Host` empty or giving the
+same API URL as `WBN_DEFAULT_HOST`), `WBN_DEFAULT_HOST4`
+(`wbn4.winbolo.net`) or `WBN_DEFAULT_HOST6` (`wbn6.winbolo.net`); otherwise
+none. A server with a custom host and neither key set sends no announce.
+`httpCreate` reads `Host4` and `Host6` beside `Host` in all three HTTP
+backends, and `httpGetHostSettings` hands them out.
+
+**The per-request host.** `wbn_api_post_server` takes a host as its first
+argument in all three backends (`http.c`, `http_nsurl.m`, `http_jni.c`).
+NULL or empty uses the configured host; any other value is turned into a base
+URL by the rules `Host` follows (`httpApiUrlForHost`). A request with a host
+logs a transport failure at debug level, because an announce to a family the
+machine has no route for is expected to fail. No backend sets an address
+family on the connection: the name decides it.
+
+**The game list.** `wbnFetchServerList` asks for `games?v6=1` on the desktop,
+iOS and Android; the web client fetches the list itself
+(`finder_wasm.c`) without it, because its sockets are IPv4 only. A row may
+then carry `address6`, which the game keeps only when it is a bare IPv6
+literal another player can reach: not bracketed, not IPv4-mapped, not
+link-local, loopback or unspecified. `wbnServerListPickAddress` chooses the
+address a row is pinged and joined at: `address` when this machine has an
+IPv4 route, else `address6` when it has an IPv6 route, else `address` (a name
+or an IPv4 address can still be reached through NAT64). A row with nothing
+this machine can reach is not shown. The game browser asks for the two routes
+once per fetch with `boloAddrLocalForRoute`.
+
 ### Recipe — adding a new WBN endpoint
 
 Two shapes, depending on which side of the tracker the new endpoint
@@ -2061,7 +2432,11 @@ something authoritative to the tracker. Modelled on
    `client/verify` uses plain `wbn_api_call` because the WBN API
    defines it as unauthenticated. The endpoint prefix is not the
    discriminator (e.g. `client/leave` uses the `_server` variant —
-   the server is the caller).
+   the server is the caller). A post that has to reach a WinBolo.net
+   name other than the configured host passes that name as
+   `wbn_api_post_server`'s host, or is queued with
+   `winbolonetThreadAddHostedServerRequest`, as `server/announce` is;
+   every other call passes NULL.
 2. Declare it on `winbolonet_server.h`.
 3. Call it from the appropriate server-side site (`server_sim.c`,
    `server_lifecycle.c`, `transport_udp_server.c`, `servermain.c`),
@@ -2102,7 +2477,10 @@ Authenticated calls go through `wbn_api_call_server` /
 log upload), which are the only sanctioned paths that attach the
 header — the bootstrap calls that run before a bearer exists
 (`server/register` itself, and `client/verify`, which WBN
-defines as unauthenticated) use plain `wbn_api_call`. The narrow
+defines as unauthenticated) use plain `wbn_api_call`.
+`server/announce` goes through `wbn_api_post_server` too, with its
+own host; the worker attaches the bearer when the post fires, and the
+announce's log lines name the host and never the token. The narrow
 accessor `winboloNetGetServerToken` is declared in
 `wbn_bearer.h`, not on the general `winbolonet_core.h` surface —
 its only legitimate callers are `http.c`'s server-scoped call

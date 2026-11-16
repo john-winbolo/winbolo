@@ -320,7 +320,7 @@ static int send_begin(LoopbackHarness *h, int slot, uint8_t kind,
     uint8_t pkt[PACKET_HEADER_SIZE + 6 + 128 + 4];
     int len = hand_begin(pkt, kind, totalLen, name,
         udpServer.channelMux[slot].ch[CHANNEL_BULK].expectedSeq);
-    struct sockaddr_in from;
+    BoloAddr from;
     int code;
 
     threadsWaitForMutex();
@@ -373,7 +373,7 @@ int run_script_upload_begin_refusals(void) {
         int len = hand_begin(pkt, UPLOAD_KIND_SCRIPT,
                              LOBBY_PACKAGE_UPLOAD_MAX_BYTES, "cap.scenario",
                              udpServer.channelMux[slot].ch[CHANNEL_BULK].expectedSeq);
-        struct sockaddr_in from;
+        BoloAddr from;
         bool active, isScript, haveBuf, freed, kindBack, cleared;
         threadsWaitForMutex();
         udpServer.clientReqCooldownTicks[slot] = 0;

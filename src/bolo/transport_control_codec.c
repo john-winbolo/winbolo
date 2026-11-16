@@ -62,8 +62,9 @@
  * whether it is delivered at all.
  *
  * Two framings reach this file and they are not the same size. The wrapper
- * encoders write a datagram — an 8-byte packet header and then the body — and
- * MAX_CONTROL_PACKET (1400) bounds that. The body encoders write into a
+ * encoders write a packet — an 8-byte packet header and then the body — and
+ * MAX_CONTROL_PACKET (1400, a buffer bound, not the UDP_MAX_SEND cap on what
+ * goes on the wire) bounds that. The body encoders write into a
  * channel segment instead: udp_server_control.c hands one
  * CHANNEL_CONTROL_SEG bytes less the channel frame's type(1) and bodyLen(2),
  * and a body that does not fit is logged and dropped there with nothing said

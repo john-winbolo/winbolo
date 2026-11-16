@@ -28,7 +28,8 @@
 #include <SDL3/SDL.h>
 
 #include "global.h"            /* MAP_STR_SIZE */
-#include "platform_net.h"      /* sockets, struct sockaddr_in */
+#include "platform_net.h"      /* sockets */
+#include "bolo_addr.h"         /* BoloAddr */
 #include "wire_limits.h"       /* PACKET_MAX_PLAYER_NAME */
 #include "netpacks.h"          /* PACKET_* types, PACKET_HEADER_SIZE, BOLO_VERSION_*, JOIN_COOKIE_LEN */
 #include "transport_udp.h"     /* WBN_JOIN_KEY_WIRE_LEN, JOIN_FLAG_SPECTATOR, transportUdpServerGetSpectatorCount */
@@ -84,15 +85,13 @@ static int sjBuildJoin(uint8_t *buf, const char *name, uint8_t flags,
 }
 
 static SOCKET sjOpenSocketOnIp(const char *ip) {
-    struct sockaddr_in addr;
+    BoloAddr addr;
     unsigned long nonblock = 1;
-    SOCKET s = socket(AF_INET, SOCK_DGRAM, 0);
+    SOCKET s;
+    if (!boloAddrParse(ip, 0, &addr)) return INVALID_SOCKET;
+    s = socket(AF_INET, SOCK_DGRAM, 0);
     if (s == INVALID_SOCKET) return INVALID_SOCKET;
-    memset(&addr, 0, sizeof(addr));
-    addr.sin_family      = AF_INET;
-    addr.sin_addr.s_addr = inet_addr(ip);
-    addr.sin_port        = 0;
-    if (bind(s, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
+    if (bind(s, (const struct sockaddr *)&addr.ss, addr.len) != 0) {
         closesocket(s);
         return INVALID_SOCKET;
     }
@@ -105,7 +104,7 @@ static SOCKET sjOpenSocketOnIp(const char *ip) {
  * wantNoAccept, pumps extra ticks after a challenge to confirm none follows. */
 static void sjDriveOnce(LoopbackHarness *h, SOCKET sock,
                         const uint8_t *join, int joinLen,
-                        const struct sockaddr_in *server,
+                        const BoloAddr *server,
                         bool wantNoAccept,
                         bool *gotAccept, bool *gotChallenge, bool *gotReject,
                         uint8_t *acceptSlot, uint8_t *outCookie) {
@@ -115,7 +114,7 @@ static void sjDriveOnce(LoopbackHarness *h, SOCKET sock,
     *gotChallenge = false;
     *gotReject    = false;
     sendto(sock, (const char *)join, joinLen, 0,
-           (const struct sockaddr *)server, sizeof(*server));
+           (const struct sockaddr *)&server->ss, server->len);
     deadline = SDL_GetTicks() + SJ_REPLY_DEADLINE_MS;
     while (SDL_GetTicks() < deadline) {
         uint8_t in[1024];
@@ -153,7 +152,7 @@ static void sjDriveOnce(LoopbackHarness *h, SOCKET sock,
  * (challenge but no accept). Retries only when a cookie ages out of its window
  * mid-flight under host starvation. */
 static bool sjHandshakeAccepts(LoopbackHarness *h, SOCKET s,
-                               const struct sockaddr_in *server,
+                               const BoloAddr *server,
                                const char *name, bool expectAccept,
                                uint8_t *acceptSlot) {
     uint8_t joinBuf[1024];
@@ -199,17 +198,14 @@ static bool sjNoSpectators(LoopbackHarness *h, void *user) {
 
 int run_spectator_join(void) {
     LoopbackHarness h;
-    struct sockaddr_in serverAddr;
+    BoloAddr serverAddr;
     BYTE baselinePlayers;
 
     UT_ASSERT_MSG(loopbackHarnessStart(&h, "Player", /*lobbyMode*/ false,
                                        /*impairSpec*/ NULL, /*seed*/ 1u),
                   "harness start failed");
 
-    memset(&serverAddr, 0, sizeof(serverAddr));
-    serverAddr.sin_family      = AF_INET;
-    serverAddr.sin_addr.s_addr = inet_addr("127.0.0.1");
-    serverAddr.sin_port        = htons(h.port);
+    (void)boloAddrParse("127.0.0.1", (uint16_t)(h.port), &serverAddr);
 
     /* Let the harness's own wire client settle into its tank slot so the
      * player-count baseline is stable; the spectator must not change it. */

@@ -30,7 +30,8 @@
 #include <SDL3/SDL.h>
 
 #include "global.h"            /* MAP_STR_SIZE */
-#include "platform_net.h"      /* sockets, struct sockaddr_in */
+#include "platform_net.h"      /* sockets */
+#include "bolo_addr.h"         /* BoloAddr */
 #include "wire_limits.h"       /* PACKET_MAX_PLAYER_NAME */
 #include "netpacks.h"          /* PACKET_* types, PACKET_HEADER_SIZE, BOLO_VERSION_* */
 #include "transport_udp.h"     /* WBN_JOIN_KEY_WIRE_LEN, the counter seam */
@@ -107,15 +108,13 @@ static void rtPackConnId(uint8_t *buf, uint64_t connId) {
 
 /* Open a non-blocking UDP socket bound to an ephemeral 127.0.0.1 port. */
 static SOCKET rtOpenSocket(void) {
-    struct sockaddr_in addr;
+    BoloAddr addr;
     unsigned long nonblock = 1;
-    SOCKET s = socket(AF_INET, SOCK_DGRAM, 0);
+    SOCKET s;
+    if (!boloAddrParse("127.0.0.1", 0, &addr)) return INVALID_SOCKET;
+    s = socket(AF_INET, SOCK_DGRAM, 0);
     if (s == INVALID_SOCKET) return INVALID_SOCKET;
-    memset(&addr, 0, sizeof(addr));
-    addr.sin_family      = AF_INET;
-    addr.sin_addr.s_addr = inet_addr("127.0.0.1");
-    addr.sin_port        = 0;
-    if (bind(s, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
+    if (bind(s, (const struct sockaddr *)&addr.ss, addr.len) != 0) {
         closesocket(s);
         return INVALID_SOCKET;
     }
@@ -129,7 +128,7 @@ static SOCKET rtOpenSocket(void) {
  * knows the map stream has actually opened. */
 static void rtCollect(LoopbackHarness *h, SOCKET sock,
                       const uint8_t *pkt, int pktLen,
-                      const struct sockaddr_in *serverAddr,
+                      const BoloAddr *serverAddr,
                       bool *outAccept, int *outSlot, uint64_t *outConnId,
                       bool *outChannel, uint8_t *outCookie,
                       bool *outChallenge) {
@@ -142,7 +141,7 @@ static void rtCollect(LoopbackHarness *h, SOCKET sock,
         int n;
         if (i == 0 && pkt != NULL) {
             sendto(sock, (const char *)pkt, pktLen, 0,
-                   (const struct sockaddr *)serverAddr, sizeof(*serverAddr));
+                   (const struct sockaddr *)&serverAddr->ss, serverAddr->len);
         }
         loopbackHarnessPump(h);
         while ((n = loopbackRecvFromServer(sock, in, sizeof(in),
@@ -178,7 +177,7 @@ static int rtBuildReady(uint8_t *buf, uint64_t connId, uint32_t seq) {
 
 int run_map_reask_throttle(void) {
     LoopbackHarness h;
-    struct sockaddr_in serverAddr;
+    BoloAddr serverAddr;
     uint8_t joinBuf[1024];
     uint8_t readyBuf[PACKET_HEADER_SIZE + 8];
     uint8_t cookie[JOIN_COOKIE_LEN];
@@ -192,10 +191,7 @@ int run_map_reask_throttle(void) {
                                        /*impairSpec*/ NULL, /*seed*/ 1u),
                   "harness start failed");
 
-    memset(&serverAddr, 0, sizeof(serverAddr));
-    serverAddr.sin_family      = AF_INET;
-    serverAddr.sin_addr.s_addr = inet_addr("127.0.0.1");
-    serverAddr.sin_port        = htons(h.port);
+    (void)boloAddrParse("127.0.0.1", (uint16_t)(h.port), &serverAddr);
 
     sock = rtOpenSocket();
     if (sock == INVALID_SOCKET) {
@@ -258,7 +254,7 @@ int run_map_reask_throttle(void) {
         int p;
         readyLen = rtBuildReady(readyBuf, connId, (uint32_t)(2 + i));
         sendto(sock, (const char *)readyBuf, readyLen, 0,
-               (const struct sockaddr *)&serverAddr, sizeof(serverAddr));
+               (const struct sockaddr *)&serverAddr.ss, serverAddr.len);
         for (p = 0; p < RT_PUMPS_EACH; p++) {
             uint8_t in[2048];
             loopbackHarnessPump(&h);

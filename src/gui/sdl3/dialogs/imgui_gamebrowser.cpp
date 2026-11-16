@@ -104,6 +104,8 @@ bool wasmFinderTakeBack(void);
 #include "lobby/lobby_internal.h"
 
 #include "../map_preview_fetch.h"
+#include "server_address_parse.h"  /* formatServerAddressHostPort */
+#include "bolo_addr.h"             /* BoloAddr, boloAddrLocalForRoute */
 
 static const int DIALOG_W = 1024;
 static const int DIALOG_H = 768;
@@ -920,6 +922,12 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
 #endif
     static bool searchResultOk = false;
     static WbnServerList searchResultList = {};
+    /* Whether this machine had an IPv4 and an IPv6 route when the list was
+     * fetched; wbnServerListPickAddress reads them to choose each row's
+     * address. The search thread sets both before searchDone. The web build
+     * leaves them as they start: its sockets are IPv4 only. */
+    static bool searchHaveV4Route = true;
+    static bool searchHaveV6Route = false;
 
 #ifdef __EMSCRIPTEN__
     /* On the web a search is a fetch the page runs. One the last finder left
@@ -1059,7 +1067,15 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                         const WbnServerListEntry &w = searchResultList.servers[i];
                         ServerEntry e = {};
 
-                        SDL_strlcpy(e.address, w.address, sizeof(e.address));
+                        /* The one address the row is pinged, looked up,
+                         * de-duplicated, shown and joined by. A row with
+                         * nothing this machine can reach is left out. */
+                        if (!wbnServerListPickAddress(&w, searchHaveV4Route,
+                                                      searchHaveV6Route,
+                                                      e.address,
+                                                      sizeof(e.address))) {
+                            continue;
+                        }
                         e.port = (unsigned short)w.port;
                         SDL_strlcpy(e.mapName, w.map, sizeof(e.mapName));
                         SDL_strlcpy(e.version, w.version, sizeof(e.version));
@@ -1481,6 +1497,13 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 searchThread = std::thread([sp]() {
                     bool ret = false;
                     if (sp.tracker) {
+                        /* Asked once per fetch, here off the frame loop:
+                         * each asks the routing table and sends nothing. */
+                        BoloAddr routeAddr;
+                        searchHaveV4Route =
+                            boloAddrLocalForRoute(AF_INET, &routeAddr) != 0;
+                        searchHaveV6Route =
+                            boloAddrLocalForRoute(AF_INET6, &routeAddr) != 0;
                         ret = wbnFetchServerList(&searchResultList);
                     } else {
                         static BroadcastCbData cbd;
@@ -1864,7 +1887,8 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 if (e.hostName[0] != '\0') {
                     SDL_snprintf(where, sizeof(where), "%s", e.hostName);
                 } else {
-                    SDL_snprintf(where, sizeof(where), "%s:%u", e.address, e.port);
+                    formatServerAddressHostPort(e.address, e.port, where,
+                                                sizeof(where));
                 }
                 char name[288];
                 SDL_snprintf(name, sizeof(name), "%s",
@@ -1886,12 +1910,14 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                         /* The full address, as the detail pane gives it:
                          * a resolved host name alone would hide it. */
                         char addr[sizeof(e.hostName) + sizeof(e.address) + 16];
+                        char hostPort[sizeof(e.address) + 16];
+                        formatServerAddressHostPort(e.address, e.port, hostPort,
+                                                    sizeof(hostPort));
                         if (e.hostName[0] != '\0') {
-                            SDL_snprintf(addr, sizeof(addr), "%s (%s:%u)",
-                                         e.hostName, e.address, e.port);
+                            SDL_snprintf(addr, sizeof(addr), "%s (%s)",
+                                         e.hostName, hostPort);
                         } else {
-                            SDL_snprintf(addr, sizeof(addr), "%s:%u",
-                                         e.address, e.port);
+                            SDL_snprintf(addr, sizeof(addr), "%s", hostPort);
                         }
                         ImGui::BeginTooltip();
                         ImGui::TextUnformatted(addr);
@@ -2174,12 +2200,14 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                         }
 
                         char addr[sizeof(sel.hostName) + sizeof(sel.address) + 16];
+                        char hostPort[sizeof(sel.address) + 16];
+                        formatServerAddressHostPort(sel.address, sel.port,
+                                                    hostPort, sizeof(hostPort));
                         if (sel.hostName[0] != '\0') {
-                            SDL_snprintf(addr, sizeof(addr), "%s (%s:%u)",
-                                         sel.hostName, sel.address, sel.port);
+                            SDL_snprintf(addr, sizeof(addr), "%s (%s)",
+                                         sel.hostName, hostPort);
                         } else {
-                            SDL_snprintf(addr, sizeof(addr), "%s:%u",
-                                         sel.address, sel.port);
+                            SDL_snprintf(addr, sizeof(addr), "%s", hostPort);
                         }
                         ImGui::TableNextRow();
                         ImGui::TableSetColumnIndex(0); label(langGetText(STR_DLGBROWSER_ADDRESS));

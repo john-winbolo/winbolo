@@ -1405,6 +1405,7 @@ STR_DLGLOBBY_PORTMAP_DETAIL_SUCCEEDED=Port forwarded automatically via UPnP/NAT-
 STR_DLGLOBBY_PORTMAP_DETAIL_HOLE_PUNCH=Direct port forwarding could not be established, but NAT traversal is active. Joiners coordinate through the tracker to punch through your network's firewall. This works for most home networks; joiners on symmetric NAT or carrier-grade NAT may still fail to connect.
 STR_DLGLOBBY_PORTMAP_DETAIL_SYMMETRIC=Symmetric NAT detected — your network rewrites the source port for every destination, which prevents joiners from reaching you even via NAT traversal. To host successfully, manually forward UDP port {number} on your router to this machine.
 STR_DLGLOBBY_PORTMAP_DETAIL_FAILED=Could not open a firewall port automatically (UPnP/NAT-PMP refused or unavailable) and the tracker could not confirm bidirectional reachability. To host successfully, manually forward UDP port {number} on your router to this machine.
+STR_DLGLOBBY_PORTMAP_DETAIL_IPV6=This server can be reached over IPv6 only, at [{string1}]:{number}. No port forwarding is needed for IPv6. Players without IPv6 cannot join.
 STR_DLGLOBBY_PORTMAP_POPUP_TITLE=Server Reachability
 STR_DLGLOBBY_TEST_CONNECTIVITY=Test connectivity
 STR_DLGLOBBY_TEST_TESTING=Testing...

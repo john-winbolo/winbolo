@@ -28,7 +28,7 @@
 
 #include "transport_udp_internal.h"        /* packHeader, packU16, packU32,
                                             * PACKET_HEADER_SIZE, UDP_MAX_PAYLOAD,
-                                            * SDL_assert */
+                                            * UDP_MAX_SEND, SDL_assert */
 #include "transport_udp_server_internal.h" /* udpServer, SpectatorConn, srvSendTo,
                                             * udpClientDeliverControl,
                                             * serverSendJoinReject, serverNextConnId,
@@ -72,12 +72,11 @@
 
 /* Find a connected spectator by source address. Returns the spectators[]
  * index or -1. Mirrors serverFindClient over the parallel array. */
-int serverFindSpectator(const struct sockaddr_in *addr) {
+int serverFindSpectator(const BoloAddr *addr) {
     int i;
     for (i = 0; i < MAX_SPECTATORS; i++) {
         if (udpServer.spectators[i].connected &&
-            udpServer.spectators[i].addr.sin_addr.s_addr == addr->sin_addr.s_addr &&
-            udpServer.spectators[i].addr.sin_port == addr->sin_port) {
+            boloAddrEqual(&udpServer.spectators[i].addr, addr)) {
             return i;
         }
     }
@@ -90,7 +89,7 @@ int serverFindSpectator(const struct sockaddr_in *addr) {
  * size in lobby/countdown (the live-lobby map streams for the preview) and 0
  * while running (the game-time map rides the ring seed instead). */
 void serverSendSpectatorAccept(int s, ServerSim *sim,
-                               const struct sockaddr_in *addr) {
+                               const BoloAddr *addr) {
     uint8_t acceptBuf[PACKET_HEADER_SIZE + 9 + 8 + 1];
     ServerState st;
     int pos;
@@ -486,7 +485,7 @@ static void serverSetSpectatorCountry(int s, const char *country) {
  * (cookie, version, name, password). country is the resolved GeoIP-or-fallback
  * ISO code stored for the roster broadcast ("" when unknown). */
 void serverAcceptSpectator(ServerSim *sim,
-                           const struct sockaddr_in *fromAddr,
+                           const BoloAddr *fromAddr,
                            const char *name,
                            uint8_t clientType, uint8_t clientHints,
                            const char *spectatorKey, uint8_t wbnFlags,
@@ -553,6 +552,7 @@ void serverAcceptSpectator(ServerSim *sim,
 
     udpServer.spectators[s].connected        = true;
     udpServer.spectators[s].addr             = *fromAddr;
+    srvRxLocalAddrFor(fromAddr, &udpServer.spectators[s].localAddr);
     udpServer.spectators[s].connId           = serverNextConnId();
     snprintf(udpServer.spectators[s].playerName,
              PACKET_MAX_PLAYER_NAME, "%s", name);
@@ -674,6 +674,7 @@ void serverDisconnectSpectator(ServerSim *sim, int s, bool graceful) {
     }
     udpServer.spectators[s].live = false;
     udpServer.spectators[s].connected = false;
+    boloAddrClear(&udpServer.spectators[s].localAddr);
     channelMuxInit(&udpServer.spectators[s].channelMux);   /* reset in place */
     bulkSenderInit(&udpServer.spectators[s].bulkSend);
     if (udpServer.spectators[s].seedBlob != NULL) {
@@ -1065,7 +1066,7 @@ void serverServiceSpectators(ServerSim *sim) {
                 uint8_t cbuf[UDP_MAX_PAYLOAD];
                 int frameLen = channelBuildFrame(
                     &sp->channelMux, cbuf + PACKET_HEADER_SIZE,
-                    UDP_MAX_PAYLOAD - PACKET_HEADER_SIZE);
+                    UDP_MAX_SEND - PACKET_HEADER_SIZE);
                 if (frameLen <= 2) break;   /* nothing (more) to carry this tick */
                 packHeader(cbuf, PACKET_CHANNEL, sp->outSequence++);
                 srvSendTo(cbuf, PACKET_HEADER_SIZE + frameLen, &sp->addr);

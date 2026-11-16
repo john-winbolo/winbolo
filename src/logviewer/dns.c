@@ -38,6 +38,7 @@
 #  include <netinet/in.h>
 #endif
 #include <SDL3/SDL.h>
+#include "bolo_addr.h"
 #include "lv_global.h"
 #include "dns.h"
 
@@ -131,16 +132,19 @@ void lv_dnsShutdown() {
 * host - Host to hold result
 *********************************************************/
 void lv_dnsLookup(char *ip, char *host, size_t host_size) {
-  struct sockaddr_in  addr;
+  BoloAddr addr;
 
   if (dnsEnabled == FALSE) {
     strncpy(host, ip, host_size - 1);
     host[host_size - 1] = '\0';
   } else {
-    addr.sin_family = AF_INET;
-    addr.sin_addr.s_addr = inet_addr(ip);
-    addr.sin_port = 0;
-    int ret = getnameinfo((struct sockaddr *)&addr, sizeof(addr), host, (unsigned int)host_size, NULL, 0, 0);
+    /* IPv4 or IPv6 text; anything that is not a numeric address is copied
+     * through as a failed lookup is. */
+    int ret = -1;
+    if (boloAddrParse(ip, 0, &addr)) {
+      ret = getnameinfo((const struct sockaddr *)&addr.ss, addr.len, host,
+                        (unsigned int)host_size, NULL, 0, 0);
+    }
     if (ret != 0) {
       strncpy(host, ip, host_size - 1);
       host[host_size - 1] = '\0';

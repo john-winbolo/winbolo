@@ -23,7 +23,8 @@
 #include "frontend.h"                      /* frontEndApplyLocalTankPrefs */
 #include "transport.h"
 #include "transport_udp.h"
-#include "bulk_transfer.h"                 /* BULK_SCRIPT_* — the public status values mirror them */
+#include "transport_command_codec.h"       /* commandCodecEncode — the script list's size check */
+#include "bulk_transfer.h"                /* BULK_SCRIPT_* — the public status values mirror them */
 #include "client_snapshot.h"                /* clientSnapshotRenderInterp */
 #include "interpolation.h"                  /* interpRenderControl */
 #include "netpacks.h"                      /* MAP_DOWNLOAD_MAX_SIZE, lobbyBotNameAcceptable */
@@ -654,6 +655,16 @@ void clientSimNetSendSetScriptList(ClientSim *cs,
     fl = strlen(files[i]);
     if (fl == 0 || fl >= CMD_SCRIPT_LIST_FILE_LEN) return;
     memcpy(cmd.u.setScriptList.files[i], files[i], fl + 1);
+  }
+  /* A list too long for one command datagram is refused too. Every name can
+     fit its field and ten of them still pass COMMAND_MAX_SEND_BYTES, and the
+     encoder refuses such a list. Queued, it would sit at the head of the
+     command queue unsent and hold every later command behind it, so it is
+     run through the same encoder the queue drain uses and dropped here. */
+  {
+    uint8_t wire[COMMAND_MAX_WIRE_BYTES];
+    size_t  wireLen = 0;
+    if (!commandCodecEncode(&cmd, wire, sizeof(wire), &wireLen)) return;
   }
   clientSimSubmitCommand(cs, &cmd);
 }

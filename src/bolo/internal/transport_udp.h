@@ -32,6 +32,7 @@
 
 #include "global.h"
 #include "platform_net.h"
+#include "bolo_addr.h"       /* BoloAddr — UdpServerClient.addr */
 #include "input_packet.h"
 #include "transport.h"
 #include "netpacks.h"
@@ -535,7 +536,14 @@ void transportUdpClientClearScriptFetch(Transport *t);
 
 /* Per-client connection info tracked by the server */
 typedef struct UdpServerClient {
-    struct sockaddr_in addr;
+    BoloAddr addr;
+    BoloAddr localAddr;          /* The server address this client's join was
+                                  * sent to (port 0), updated with addr on a
+                                  * re-home. Every send to the client names it
+                                  * as the source, so a host with several
+                                  * addresses answers from the one the client
+                                  * dialled. Empty when the socket reported
+                                  * none; the system then picks. */
     bool connected;
     uint64_t connId;             /* Random per-session id the client echoes on
                                   * its INPUT packets. Lets the slot survive a
@@ -921,7 +929,7 @@ uint64_t transportUdpServerGetClientConnId(BYTE playerNum);
  * mutate, so the match-and-rehome decision is testable in isolation. */
 int transportUdpServerFindByConnId(const UdpServerClient *clients,
                                    uint64_t connId,
-                                   const struct sockaddr_in *fromAddr,
+                                   const BoloAddr *fromAddr,
                                    bool *outRehome);
 
 /* Send an INFO_RESPONSE packet to the tracker server so the game
@@ -946,7 +954,10 @@ void transportUdpServerSetPublicAddress(const char *externalIp,
  * same socket the server is bound to, so the host's NAT mapping for
  * that source port stays alive between heavier tracker updates and
  * the tracker can disambiguate multiple games behind one NAT via the
- * (sourceIp, starttime) tuple. */
+ * (sourceIp, starttime) tuple. Sent to the tracker's IPv4 address and,
+ * when the socket is dual stack, this machine has an IPv6 route and the
+ * tracker has an IPv6 address, to that address too, so the tracker can
+ * reach the server over either family. */
 void transportUdpServerSendNatKeepalive(struct ServerSim *sim,
                                         const char *trackerAddr,
                                         unsigned short trackerPort);
@@ -956,7 +967,8 @@ void transportUdpServerSendNatKeepalive(struct ServerSim *sim,
  * with the source IP:port it sees us as, so we can detect symmetric
  * NAT (libplum's external address vs the tracker's reflexive view)
  * and confirm bidirectional reachability before joiners attempt to
- * connect. */
+ * connect. Sent over IPv6 as well under the same conditions as the
+ * keepalive; the tracker answers that one with PACKET_PUNCH_PROBE_REPLY6. */
 void transportUdpServerSendPunchProbe(const char *trackerAddr,
                                       unsigned short trackerPort);
 
@@ -991,6 +1003,10 @@ bool transportUdpServerTestPendingRemove(int slot);
  * window to tell which inbound packets refresh it. 0 for an out-of-range or
  * unconnected slot, so a dropped slot is distinguishable from a stale one. */
 uint32_t transportUdpServerTestLastReceivedTick(int slot);
+/* Read the server address a connected slot's sends go out from (its stored
+ * localAddr). False, with *out cleared, for an out-of-range or unconnected
+ * slot. */
+bool transportUdpServerTestClientLocalAddr(int slot, BoloAddr *out);
 /* Read a slot's server-side join-download-complete flag. The client reports
  * CONNECTED once it has the full map, but the server only flips this once the
  * download's bytes are acked back on CHANNEL_BULK — a round-trip later. A test

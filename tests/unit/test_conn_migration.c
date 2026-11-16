@@ -25,6 +25,7 @@
 
 #include "global.h"
 #include "platform_net.h"
+#include "bolo_addr.h"
 #include "transport_udp.h"          /* UdpServerClient + connId helpers */
 #include "server_sim.h"
 #include "server_sim_internal.h"    /* lastProcessedInput[] */
@@ -35,12 +36,9 @@
 #include "test_harness.h"
 #include "loopback_harness.h"
 
-static struct sockaddr_in cm_addr(const char *ip, unsigned short port) {
-    struct sockaddr_in a;
-    memset(&a, 0, sizeof(a));
-    a.sin_family      = AF_INET;
-    a.sin_addr.s_addr = inet_addr(ip);
-    a.sin_port        = htons(port);
+static BoloAddr cm_addr(const char *ip, unsigned short port) {
+    BoloAddr a;
+    (void)boloAddrParse(ip, port, &a);
     return a;
 }
 
@@ -50,9 +48,9 @@ int run_conn_migration_rehome(void) {
     memset(clients, 0, sizeof(clients));
 
     const uint64_t ID = 0x0123456789abcdefULL;
-    struct sockaddr_in home   = cm_addr("127.0.0.1", 5000);
-    struct sockaddr_in newPort = cm_addr("127.0.0.1", 6000);  /* port rebind */
-    struct sockaddr_in newIp   = cm_addr("10.0.0.9",  5000);  /* ip rebind */
+    BoloAddr home    = cm_addr("127.0.0.1", 5000);
+    BoloAddr newPort = cm_addr("127.0.0.1", 6000);  /* port rebind */
+    BoloAddr newIp   = cm_addr("10.0.0.9",  5000);  /* ip rebind */
 
     clients[3].connected = true;
     clients[3].connId    = ID;

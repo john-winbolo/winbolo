@@ -74,17 +74,31 @@ def find_binary(build_dir, name):
     return None
 
 
-def wait_for_server(port, timeout=5):
-    """Wait for the server to start listening."""
+def wait_for_server(port, timeout=5, family=None):
+    """Wait for the server to start listening.
+
+    family is socket.AF_INET (the default when None) to send to 127.0.0.1
+    from an IPv4 socket, or socket.AF_INET6 to send to ::1 from an IPv6
+    socket with IPV6_V6ONLY cleared, as the game's own sockets are opened.
+    """
     import socket
+    if family is None:
+        family = socket.AF_INET
+    if family == socket.AF_INET6:
+        target = ('::1', port)
+    else:
+        family = socket.AF_INET
+        target = ('127.0.0.1', port)
     start = time.time()
     while time.time() - start < timeout:
         try:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock = socket.socket(family, socket.SOCK_DGRAM)
+            if family == socket.AF_INET6:
+                sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
             sock.settimeout(0.5)
             # Send a dummy packet to see if server is up
             # The server will respond or at least not ICMP unreachable
-            sock.sendto(b'\x00' * 4, ('127.0.0.1', port))
+            sock.sendto(b'\x00' * 4, target)
             sock.close()
             return True
         except Exception:

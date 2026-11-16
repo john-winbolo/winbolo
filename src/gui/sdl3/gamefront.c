@@ -81,6 +81,7 @@
 #include "dialog_backend.h"
 #include "dialogs/imgui_mapchooser.h"
 #include "dialogs/imgui_messagebox.h"
+#include "dialogs/server_address_parse.h"  /* parseServerAddressPaste, formatServerAddressHostPort, formatSteamConnectString */
 #include "bg_game.h"
 #include "tutorial_maps.h"
 #include "client_frontend_common.h"  /* clientFrontTellScenarioPlayer */
@@ -637,18 +638,22 @@ static void gameFrontSetConnectIfAvailable(ClientSim *cs) {
       serverInstanceIsNatPunchActive()) {
     ServerPortmapInfo pm;
     serverInstanceGetPortmapInfo(&pm);
-    if (pm.externalIp[0] != '\0' && pm.externalPort != 0) {
-      snprintf(connect, sizeof(connect), "+connect %.255s:%u",
-               pm.externalIp, (unsigned)pm.externalPort);
+    if (pm.externalIp[0] != '\0' && pm.externalPort != 0 &&
+        formatSteamConnectString(pm.externalIp, (unsigned)pm.externalPort,
+                                 connect, sizeof(connect))) {
       steam_set_rich_presence("connect", connect);
       return;
     }
   }
   /* Client (or host before its external address has resolved): the address
-   * we joined is reachable by our friends too. */
-  if (udpTransportActive && gameFrontUdpAddress[0] != '\0') {
-    snprintf(connect, sizeof(connect), "+connect %.255s:%u",
-             gameFrontUdpAddress, (unsigned)gameFrontTargetUdp);
+   * we joined is reachable by our friends too, unless it is a loopback,
+   * link-local or unspecified address, which formatSteamConnectString
+   * refuses; a host joined to itself over 127.0.0.1 publishes nothing. The
+   * IPv6 form is bracketed so the friend's client reads the port back. */
+  if (udpTransportActive && gameFrontUdpAddress[0] != '\0' &&
+      formatSteamConnectString(gameFrontUdpAddress,
+                               (unsigned)gameFrontTargetUdp, connect,
+                               sizeof(connect))) {
     steam_set_rich_presence("connect", connect);
   }
 }
@@ -1945,18 +1950,9 @@ static void gameFrontJoinStartClient(void) {
 static void gameFrontJoinLanded(void) {
   udpTransportActive = TRUE;
 
-  /* Store server address in ClientSim for brain info */
-  {
-    struct sockaddr_in saddr;
-    memset(&saddr, 0, sizeof(saddr));
-    saddr.sin_family = AF_INET;
-    saddr.sin_addr.s_addr = inet_addr(gameFrontUdpAddress);
-    if (saddr.sin_addr.s_addr == INADDR_NONE) {
-      bolo_resolve_ipv4(gameFrontUdpAddress, &saddr.sin_addr);
-    }
-    clientSimSetServerAddress(humanSim, saddr.sin_addr);
-    clientSimSetServerPort(humanSim, gameFrontTargetUdp);
-  }
+  /* Store the server port in ClientSim for brain info. The transport stored
+   * the address it resolved when it connected. */
+  clientSimSetServerPort(humanSim, gameFrontTargetUdp);
 
   clientSimSetChatSendFunc(humanSim, gameFrontChatSendCallback);
   clientSimSetNameChangeSendFunc(humanSim, gameFrontNameChangeSendCallback);
@@ -3791,36 +3787,41 @@ void gameFrontSetRegistryKeys(void) {
   /* No-op on macOS/Linux/iOS — registration is handled by Info.plist / .desktop file */
 }
 
+/* Reads the host and port of a winbolo:// link into gameFrontUdpAddress and
+ * gameFrontTargetUdp. The link is "winbolo://host[:port][/...]" or, for an
+ * IPv6 address, "winbolo://[addr]:port"; a link with no valid port leaves
+ * gameFrontTargetUdp at 0. The link text is not modified. */
 void gameFrontSetAddressFromWebLink(char *address) {
-  char *tok;
-  char *ptr;
+  char host[sizeof(gameFrontUdpAddress)];
+  char port[16];
 
   gameFrontTargetUdp = 0;
-  ptr = address + strlen("winbolo://");
-  tok = strtok(ptr, ":");
-  if (tok != NULL) {
-    strcpy(gameFrontUdpAddress, tok);
-    tok = strtok(NULL, ":");
-    if (tok != NULL) {
-      gameFrontTargetUdp = atoi(tok);
+  if (parseServerAddressPaste(address, host, sizeof(host), port, sizeof(port))) {
+    /* A single ':' left in the host is an invalid port the parser kept (for
+     * example "host:0"); the host is the part before it, as it always was
+     * for these links. Two or more ':' is an IPv6 address and stays whole. */
+    char *colon = strchr(host, ':');
+    if (colon != NULL && strchr(colon + 1, ':') == NULL) {
+      *colon = '\0';
+    }
+    wbAddrCopyBounded(gameFrontUdpAddress, sizeof(gameFrontUdpAddress), host);
+    if (port[0] != '\0') {
+      gameFrontTargetUdp = (unsigned short)atoi(port);
     }
   }
 }
 
 void gameFrontHandleUrlOpen(char *url) {
   if (strncmp(url, "winbolo://", 10) == 0 && strcmp(url, "winbolo:///") != 0) {
-    /* Parse address/port from the url parameter (gameFrontSetAddressFromWebLink
-       uses strtok which modifies the string in place). Then store the original
-       URL in fileName so gameFrontStart() can pick it up on restart. */
+    /* Parse address/port from the url parameter, then store a link rebuilt
+       from the parsed globals in fileName so gameFrontStart() can pick it up
+       on restart. An IPv6 host is written back in brackets. */
+    char hostPort[256 + 8];
     gameFrontSetAddressFromWebLink(url);
     strncpy(fileName, "winbolo://", FILENAME_MAX - 1);
-    /* Reconstruct a clean URL from the parsed globals so fileName
-       is not mangled by strtok. */
-    if (gameFrontTargetUdp > 0) {
-      snprintf(fileName, FILENAME_MAX, "winbolo://%.255s:%d", gameFrontUdpAddress, gameFrontTargetUdp);
-    } else {
-      snprintf(fileName, FILENAME_MAX, "winbolo://%.255s", gameFrontUdpAddress);
-    }
+    formatServerAddressHostPort(gameFrontUdpAddress, gameFrontTargetUdp,
+                                hostPort, sizeof(hostPort));
+    snprintf(fileName, FILENAME_MAX, "winbolo://%s", hostPort);
     dlgState = openInternetManual;
   }
 }

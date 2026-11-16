@@ -175,6 +175,11 @@ static void serverLifecycleQueueRotation(ServerSim *sim) {
           serverSimGetNumNeutralBases(sim),
           serverSimGetNumNeutralPills(sim),
           serverSimGetNumPlayers(sim)) == TRUE) {
+      /* The new session and its bearer are in place and nothing quits it
+       * straight away, so WinBolo.net can record its address of each
+       * family. The two posts are queued; if the worker is down they are
+       * refused, as the rotation was. */
+      winbolonetServerAnnounce();
       serverLifecycleRegisterTail(sim);
     } else {
       /* winbolonetBeginSession has switched WinBolo.net off and cleared the
@@ -260,8 +265,12 @@ static void serverLifecycleWbnResult(uint32_t id, uint8_t kind, int status,
         return;
       }
     }
-    /* New key and bearer are installed: close the window, push the held
-     * lobby change, rekey every participating client and re-send the lock. */
+    /* New key and bearer are installed: tell WinBolo.net the session's
+     * address of each family, then close the window, push the held lobby
+     * change, rekey every participating client and re-send the lock. Here
+     * rather than straight after the apply, so a session the deferred
+     * rotation above quits at once is not announced. */
+    winbolonetServerAnnounce();
     serverLifecycleRegisterTail(sim);
   } else {
     /* The register failed, so winbolonetApplyRegisterResult has switched
@@ -293,6 +302,14 @@ static bool  probeReceived        = FALSE; /* any reply ever arrived       */
 static bool  probeTimedOut        = FALSE; /* deadline elapsed w/o reply   */
 static char  probeReflexiveIp[64];
 static unsigned short probeReflexivePort = 0;
+
+/* The same state for the probe sent over IPv6, answered with
+ * PACKET_PUNCH_PROBE_REPLY6. It is sent and timed with the IPv4 probe. */
+static int   probe6ReplyWaitTicks = 0;
+static bool  probe6Received       = FALSE;
+static bool  probe6TimedOut       = FALSE;
+static char  probe6ReflexiveIp[64];
+static unsigned short probe6ReflexivePort = 0;
 
 #define PROBE_SEND_INTERVAL_TICKS  500   /* 10 s @ 50 Hz */
 #define PROBE_TIMEOUT_TICKS       1500   /* 30 s @ 50 Hz */
@@ -620,16 +637,21 @@ bool serverInstanceStartup(ServerSim *sim, const ServerInstanceConfig *cfg) {
     /* Populate the WBN lobby snapshot so register carries the
      * extended settings + human/bot counts on the first POST. */
     serverSimRefreshWbnLobbyInfo(sim);
-    winbolonetCreateServer(sim->mapName, boundPort,
-                           (BYTE)gameTypeGet(&sim->sim.game),
-                           cfg->compTanks,
-                           (BYTE)sim->sim.hiddenMines,
-                           (BYTE)sim->hasPassword,
-                           basesGetNumActive(&sim->sim.bs),
-                           pillsGetNumActive(&sim->sim.pb),
-                           serverSimGetNumNeutralBases(sim),
-                           serverSimGetNumNeutralPills(sim),
-                           serverSimGetNumPlayers(sim));
+    if (winbolonetCreateServer(sim->mapName, boundPort,
+                               (BYTE)gameTypeGet(&sim->sim.game),
+                               cfg->compTanks,
+                               (BYTE)sim->sim.hiddenMines,
+                               (BYTE)sim->hasPassword,
+                               basesGetNumActive(&sim->sim.bs),
+                               pillsGetNumActive(&sim->sim.pb),
+                               serverSimGetNumNeutralBases(sim),
+                               serverSimGetNumNeutralPills(sim),
+                               serverSimGetNumPlayers(sim)) == TRUE) {
+      /* The first session is registered, its bearer is in place and the
+       * worker has been started, so WinBolo.net can record its address of
+       * each family. Nothing quits the first session straight away. */
+      winbolonetServerAnnounce();
+    }
     if (!sim->lobbyEnabled) {
       winbolonetSendLobbyStatus(FALSE);
     }
@@ -668,6 +690,11 @@ bool serverInstanceStartup(ServerSim *sim, const ServerInstanceConfig *cfg) {
   probeTimedOut        = FALSE;
   probeReflexiveIp[0]  = '\0';
   probeReflexivePort   = 0;
+  probe6ReplyWaitTicks = 0;
+  probe6Received       = FALSE;
+  probe6TimedOut       = FALSE;
+  probe6ReflexiveIp[0] = '\0';
+  probe6ReflexivePort  = 0;
   manualProbeState     = MANUAL_PROBE_IDLE;
   manualProbeWaitTicks = 0;
   if (instanceUseNatPortmap) {
@@ -1251,6 +1278,11 @@ void serverInstanceTick(ServerSim *sim) {
         probeTimedOut = TRUE;
       }
     }
+    if (!probe6Received) {
+      if (++probe6ReplyWaitTicks >= PROBE_TIMEOUT_TICKS) {
+        probe6TimedOut = TRUE;
+      }
+    }
   }
 
   if (manualProbeState == MANUAL_PROBE_IN_PROGRESS) {
@@ -1314,6 +1346,11 @@ void serverInstanceShutdown(ServerSim *sim) {
   probeTimedOut        = FALSE;
   probeReflexiveIp[0]  = '\0';
   probeReflexivePort   = 0;
+  probe6ReplyWaitTicks = 0;
+  probe6Received       = FALSE;
+  probe6TimedOut       = FALSE;
+  probe6ReflexiveIp[0] = '\0';
+  probe6ReflexivePort  = 0;
   manualProbeState     = MANUAL_PROBE_IDLE;
   manualProbeWaitTicks = 0;
 }
@@ -1357,6 +1394,12 @@ void serverInstanceGetPortmapInfo(ServerPortmapInfo *out) {
   } else {
     out->status = SERVER_PORTMAP_PENDING;
   }
+  /* No IPv4 path was found, but the probe sent over IPv6 came back: joiners
+   * with IPv6 can reach the server. Any IPv4 outcome above stands as it is,
+   * whether or not the IPv6 probe answered. */
+  if (out->status == SERVER_PORTMAP_FAILED && probe6Received) {
+    out->status = SERVER_PORTMAP_IPV6_OK;
+  }
   out->internalPort   = instanceUdpPort;
   out->externalIp[0]  = '\0';
   out->externalPort   = 0;
@@ -1365,6 +1408,11 @@ void serverInstanceGetPortmapInfo(ServerPortmapInfo *out) {
             sizeof(out->externalIp) - 1);
     out->externalIp[sizeof(out->externalIp) - 1] = '\0';
     out->externalPort = instancePortMap.externalPort;
+  } else if (out->status == SERVER_PORTMAP_IPV6_OK) {
+    strncpy(out->externalIp, probe6ReflexiveIp,
+            sizeof(out->externalIp) - 1);
+    out->externalIp[sizeof(out->externalIp) - 1] = '\0';
+    out->externalPort = probe6ReflexivePort;
   } else if (probeReceived) {
     strncpy(out->externalIp, probeReflexiveIp,
             sizeof(out->externalIp) - 1);
@@ -1389,6 +1437,56 @@ void serverInstanceRecordProbeReply(const char *reflexiveIp,
   }
   threadsReleaseMutex();
 }
+
+void serverInstanceRecordProbeReply6(const char *reflexiveIp,
+                                     unsigned short reflexivePort) {
+  if (reflexiveIp == NULL) return;
+  threadsWaitForMutex();
+  strncpy(probe6ReflexiveIp, reflexiveIp, sizeof(probe6ReflexiveIp) - 1);
+  probe6ReflexiveIp[sizeof(probe6ReflexiveIp) - 1] = '\0';
+  probe6ReflexivePort  = reflexivePort;
+  probe6Received       = TRUE;
+  probe6TimedOut       = FALSE;
+  probe6ReplyWaitTicks = 0;
+  /* The manual test asks whether the tracker can reach this server; an
+   * answer over IPv6 is a yes, as the status it gives says. */
+  if (manualProbeState == MANUAL_PROBE_IN_PROGRESS) {
+    manualProbeState = MANUAL_PROBE_SUCCESS;
+  }
+  threadsReleaseMutex();
+}
+
+#if defined(WB_ENABLE_NETIMPAIR) && WB_ENABLE_NETIMPAIR
+void serverInstanceTestSetPortmapState(bool useNatPortmap,
+                                       const char *mappedIp,
+                                       unsigned short mappedPort,
+                                       bool portmapTimedOut,
+                                       bool probesTimedOut) {
+  threadsWaitForMutex();
+  instanceUseNatPortmap = useNatPortmap;
+  memset(&instancePortMap, 0, sizeof(instancePortMap));
+  if (mappedIp != NULL) {
+    instancePortMap.mapped = TRUE;
+    strncpy(instancePortMap.externalIp, mappedIp,
+            sizeof(instancePortMap.externalIp) - 1);
+    instancePortMap.externalPort = mappedPort;
+  }
+  natPortmapTimedOut   = portmapTimedOut;
+  probeReplyWaitTicks  = 0;
+  probeReceived        = FALSE;
+  probeTimedOut        = probesTimedOut;
+  probeReflexiveIp[0]  = '\0';
+  probeReflexivePort   = 0;
+  probe6ReplyWaitTicks = 0;
+  probe6Received       = FALSE;
+  probe6TimedOut       = probesTimedOut;
+  probe6ReflexiveIp[0] = '\0';
+  probe6ReflexivePort  = 0;
+  manualProbeState     = MANUAL_PROBE_IDLE;
+  manualProbeWaitTicks = 0;
+  threadsReleaseMutex();
+}
+#endif
 
 void serverInstanceTriggerManualProbe(void) {
   threadsWaitForMutex();

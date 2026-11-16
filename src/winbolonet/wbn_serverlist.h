@@ -24,7 +24,12 @@
 #define WBN_SERVERLIST_MODS_MAX 9   /* WBN_MODS_MAX: the mods one round runs */
 
 typedef struct {
-  char address[64];                          /* JSON "address" — join+ping target */
+  char address[64];                          /* JSON "address" — the IPv4 address or
+                                                a name; "" for a host listed by
+                                                its IPv6 address only */
+  char address6[64];                         /* JSON "address6" — an IPv6 address
+                                                another player can reach; "" when
+                                                absent or not usable */
   int  port;                                 /* JSON "port" */
   char serverKey[64];                        /* "server_key" */
   char map[256];                             /* "map" */
@@ -110,10 +115,36 @@ typedef struct {
 bool wbnServerListParse(const char *json, WbnServerList *out);
 
 /*********************************************************
+*NAME:          wbnServerListPickAddress
+*PURPOSE:
+* Chooses the address a listed game is pinged and joined at.
+* In order: "address" when it is set and this machine has an
+* IPv4 route; else "address6" when it is set and this machine
+* has an IPv6 route; else "address" when it is set (a name or
+* an IPv4 address can still be reached through NAT64 on a
+* network with no IPv4 route). Returns true with the chosen
+* text in out; returns false with out empty when the row has
+* nothing this machine can reach, and the row is then not
+* shown. Pure: does no network I/O.
+*
+*ARGUMENTS:
+* e           - The parsed row
+* haveV4Route - This machine has an IPv4 route to the Internet
+* haveV6Route - This machine has an IPv6 route to the Internet
+* out         - Receives the chosen address text
+* outSz       - Size of out in bytes
+*********************************************************/
+bool wbnServerListPickAddress(const WbnServerListEntry *e, bool haveV4Route,
+                              bool haveV6Route, char *out, size_t outSz);
+
+/*********************************************************
 *NAME:          wbnFetchServerList
 *PURPOSE:
-* Issues an unsigned GET /api/v1/games via wbn_api_get_public
-* and parses the response into *out. Returns false on any
+* Issues an unsigned GET /api/v1/games?v6=1 via
+* wbn_api_get_public and parses the response into *out. The
+* v6=1 query asks WinBolo.net for each row's "address6" and
+* for the hosts that have an IPv6 address only; a site that
+* does not know the query ignores it. Returns false on any
 * non-2xx status (including 429) or a transport error, leaving
 * *out zeroed; otherwise returns the parse result. No retry or
 * Retry-After handling.

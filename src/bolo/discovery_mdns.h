@@ -34,6 +34,7 @@
 #define DISCOVERY_MDNS_H
 
 #include "discovery.h"  /* DiscoveryServer */
+#include "bolo_addr.h"  /* BoloAddr */
 #include "mdns.h"       /* mdns_entry_type_t etc. (header-only) */
 
 /* Upper bound on TXT key/value pairs kept from one response. The contract
@@ -47,24 +48,32 @@ typedef struct {
   char value[DISCOVERY_MDNS_VAL_MAX];
 } DiscoveryMdnsTxt;
 
-/* Accumulated SRV / A / TXT for one service instance, gathered from a single
- * response datagram. Self-contained (TXT strings copied in), so it stays
- * valid after the receive buffer is reused. */
+/* Accumulated SRV / A / AAAA / TXT for one service instance, gathered from a
+ * single response datagram. Self-contained (TXT strings copied in), so it
+ * stays valid after the receive buffer is reused. Each address is empty
+ * (boloAddrFamily 0) until it is seen. */
 typedef struct {
   bool             haveSrv;      /* an SRV for our service was seen */
   unsigned short   port;         /* SRV port (host byte order)      */
-  bool             haveAddr;     /* an A record was seen            */
-  struct in_addr   addr;         /* A record address                */
-  bool             haveFrom;     /* sender address captured         */
-  struct in_addr   from;         /* recvfrom source (A fallback)    */
+  BoloAddr         addr4;        /* A record address                */
+  BoloAddr         addr6;        /* AAAA record address; a link-local
+                                    one carries the scope id of the
+                                    interface the datagram came in on */
+  BoloAddr         from;         /* recvfrom source, either family;
+                                    used when no address record was
+                                    usable */
   DiscoveryMdnsTxt txt[DISCOVERY_MDNS_TXT_MAX];
   size_t           txtCount;
 } DiscoveryMdnsResolved;
 
-/* mdns_record_callback_fn. Accumulates one datagram's SRV/A/TXT records for
- * the _winbolo._udp.local service into *user_data (a DiscoveryMdnsResolved
- * that the caller zero-inits per datagram). Touches no socket — pure parse
- * over the supplied buffer. Returns 0 (never stops parsing early). */
+/* mdns_record_callback_fn. Accumulates one datagram's SRV/A/AAAA/TXT records
+ * for the _winbolo._udp.local service into *user_data (a
+ * DiscoveryMdnsResolved that the caller zero-inits per datagram). An AAAA
+ * record carries no scope, so a link-local AAAA takes the sin6_scope_id of
+ * from; when from is not IPv6 or its scope id is 0 the link-local AAAA is
+ * ignored. A global AAAA is kept over a link-local one in the same
+ * datagram. Touches no socket — pure parse over the supplied buffer.
+ * Returns 0 (never stops parsing early). */
 int discoveryMdnsAccumulate(int sock, const struct sockaddr *from, size_t addrlen,
                             mdns_entry_type_t entry, uint16_t query_id, uint16_t rtype,
                             uint16_t rclass, uint32_t ttl, const void *data, size_t size,
@@ -73,7 +82,8 @@ int discoveryMdnsAccumulate(int sock, const struct sockaddr *from, size_t addrle
 
 /* Socket-free: map a resolved instance to a DiscoveryServer following the TXT
  * key schema (map/ver/players/bases/pills/pass/mines/game/ai/lobby/locked;
- * SRV port -> port; A or sender -> address). Returns false (out untouched)
+ * SRV port -> port; the A address, else the AAAA address with its %scope
+ * when link-local, else the sender -> address). Returns false (out untouched)
  * when no SRV was resolved. Unknown/missing keys leave their field default. */
 bool discoveryMdnsFillServer(const DiscoveryMdnsResolved *r, DiscoveryServer *out);
 

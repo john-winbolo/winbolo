@@ -766,6 +766,14 @@ bool winbolonetApplyRegisterResult(int status, const char *response) {
   return wbnStubApplyRegisterOk;
 }
 
+/* server/announce spy (test_round_transition_tick.c): counts the calls the
+ * lifecycle makes after a register has succeeded. */
+int wbnStubAnnounceCalls = 0;
+
+void winbolonetServerAnnounce(void) {
+  wbnStubAnnounceCalls++;
+}
+
 /* ── client/verify queue spy (test_reauth_result.c) ─────────────────────
  * The reauth path queues client/verify for the worker and stamps the slot
  * from udpServerApplyReauthResult when the reply lands. These record the
@@ -941,10 +949,17 @@ int wbn_prefs_put(const char *bearerToken, const char *json_body,
 }
 
 /* The public game-list transport lives in http.c; stubbed here to keep curl
- * out of the link. wbnFetchServerList is never exercised by the unit tests —
- * only the pure wbnServerListParse is. */
+ * out of the link. Every request is refused. The path of the last one is
+ * kept so a test can read the request wbnFetchServerList made; empty until
+ * the first call. */
+static char s_ut_getPublicPath[256] = "";
+
+const char *ut_wbn_get_public_last_path(void) {
+  return s_ut_getPublicPath;
+}
+
 int wbn_api_get_public(const char *path, char **response_out) {
-  (void)path;
+  SDL_strlcpy(s_ut_getPublicPath, path ? path : "", sizeof(s_ut_getPublicPath));
   if (response_out) *response_out = NULL;
   return -1;
 }

@@ -28,7 +28,8 @@
 #include <SDL3/SDL.h>
 
 #include "global.h"            /* MAP_STR_SIZE */
-#include "platform_net.h"      /* sockets, select, struct sockaddr_in */
+#include "platform_net.h"      /* sockets, select */
+#include "bolo_addr.h"         /* BoloAddr */
 #include "wire_limits.h"       /* PACKET_MAX_PLAYER_NAME */
 #include "netpacks.h"          /* PACKET_* types, PACKET_HEADER_SIZE, BOLO_VERSION_* */
 #include "transport_udp.h"     /* WBN_JOIN_KEY_WIRE_LEN, JOIN_FLAG_* */
@@ -83,15 +84,13 @@ static int vgBuildJoin(uint8_t *buf, const char *name,
 
 /* Open a non-blocking UDP socket bound to an ephemeral 127.0.0.1 port. */
 static SOCKET vgOpenSocket(void) {
-    struct sockaddr_in addr;
+    BoloAddr addr;
     unsigned long nonblock = 1;
-    SOCKET s = socket(AF_INET, SOCK_DGRAM, 0);
+    SOCKET s;
+    if (!boloAddrParse("127.0.0.1", 0, &addr)) return INVALID_SOCKET;
+    s = socket(AF_INET, SOCK_DGRAM, 0);
     if (s == INVALID_SOCKET) return INVALID_SOCKET;
-    memset(&addr, 0, sizeof(addr));
-    addr.sin_family      = AF_INET;
-    addr.sin_addr.s_addr = inet_addr("127.0.0.1");
-    addr.sin_port        = 0;
-    if (bind(s, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
+    if (bind(s, (const struct sockaddr *)&addr.ss, addr.len) != 0) {
         closesocket(s);
         return INVALID_SOCKET;
     }
@@ -109,7 +108,7 @@ static SOCKET vgOpenSocket(void) {
  * recv-thread drain) is best-effort. */
 static void vgDriveJoin(LoopbackHarness *h, SOCKET sock,
                         const uint8_t *joinBuf, int joinLen,
-                        const struct sockaddr_in *serverAddr,
+                        const BoloAddr *serverAddr,
                         bool *outGotAccept, bool *outGotReject,
                         uint16_t *outRejectLangid,
                         bool *outGotChallenge, uint8_t *outCookie) {
@@ -125,7 +124,7 @@ static void vgDriveJoin(LoopbackHarness *h, SOCKET sock,
         /* Resend every few pumps to ride out best-effort delivery. */
         if (i % 8 == 0) {
             sendto(sock, (const char *)joinBuf, joinLen, 0,
-                   (const struct sockaddr *)serverAddr, sizeof(*serverAddr));
+                   (const struct sockaddr *)&serverAddr->ss, serverAddr->len);
         }
         loopbackHarnessPump(h);
         while ((n = loopbackRecvFromServer(sock, in, sizeof(in),
@@ -153,7 +152,7 @@ static void vgDriveJoin(LoopbackHarness *h, SOCKET sock,
 
 int run_join_version_gate(void) {
     LoopbackHarness h;
-    struct sockaddr_in serverAddr;
+    BoloAddr serverAddr;
     uint8_t joinBuf[1024];
     uint8_t cookie[JOIN_COOKIE_LEN];
     int joinLen;
@@ -165,10 +164,7 @@ int run_join_version_gate(void) {
                                        /*impairSpec*/ NULL, /*seed*/ 1u),
                   "harness start failed");
 
-    memset(&serverAddr, 0, sizeof(serverAddr));
-    serverAddr.sin_family      = AF_INET;
-    serverAddr.sin_addr.s_addr = inet_addr("127.0.0.1");
-    serverAddr.sin_port        = htons(h.port);
+    (void)boloAddrParse("127.0.0.1", (uint16_t)(h.port), &serverAddr);
 
     /* ---- Negative: wrong version triple (one revision low) ---- */
     badSock = vgOpenSocket();

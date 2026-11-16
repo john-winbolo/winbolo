@@ -11,6 +11,7 @@
 
 #include "global.h"
 #include "platform_net.h"
+#include "bolo_addr.h"
 #include "bolo_rand.h"
 #include "everard_map.h"
 #include "server_sim.h"
@@ -22,6 +23,7 @@
 #include "client_sim_internal.h"  /* ClientSim::transport */
 #include "threads.h"
 #include "transport_udp.h"  /* transportUdpServerRecvQueuePending, GetBoundPort */
+#include "transport_udp_internal.h"  /* createUdpSocket — loopbackIpv6Usable */
 
 #include "loopback_harness.h"
 
@@ -206,7 +208,11 @@ static bool loopbackBringUpServer(LoopbackHarness *h, bool lobbyMode) {
     serverSimSetAllowNewPlayers(h->sim, true);
 
     memset(&cfg, 0, sizeof(cfg));
-    cfg.bindAddr            = "127.0.0.1";
+    /* An IPv4 harness binds 127.0.0.1, as it always has. An IPv6 one binds
+     * the any address: it is the only bind that both a client dialling ::1
+     * and one dialling 127.0.0.1 reach on the dual-stack socket. */
+    cfg.bindAddr            = (h->dial == LOOPBACK_DIAL_IPV6) ? ""
+                                                              : "127.0.0.1";
     cfg.password            = "";
     cfg.maxPlayers          = MAX_TANKS;
     cfg.acceptRemoteClients = true;
@@ -247,12 +253,18 @@ static bool loopbackBringUpServer(LoopbackHarness *h, bool lobbyMode) {
     return true;
 }
 
+/* The host string a client of this dial connects to. */
+static const char *loopbackDialHost(LoopbackDial dial) {
+    return (dial == LOOPBACK_DIAL_IPV6) ? "::1" : "127.0.0.1";
+}
+
 /* Connect a fresh ClientSim over UDP to the harness server. spectator selects a
  * tankless spectator connect (no tank slot, no map download) over a normal
  * player join. impairSpec is applied to the client endpoint before connect.
  * Sets h->cs / h->clientUp. */
 static bool loopbackConnectClientInto(LoopbackHarness *h, const char *playerName,
                                       const char *impairSpec, bool spectator,
+                                      LoopbackDial dial,
                                       struct ClientSim **outCs, bool *outUp) {
     /* Set before connect — transportUdpClientCreate reads WB_NETIMPAIR
      * once at construction. */
@@ -263,7 +275,8 @@ static bool loopbackConnectClientInto(LoopbackHarness *h, const char *playerName
         return false;
     }
     clientSimCreate(*outCs);
-    if (!clientSimConnectUdp(*outCs, "127.0.0.1", h->port, playerName,
+    if (!clientSimConnectUdp(*outCs, loopbackDialHost(dial), h->port,
+                             playerName,
                              /*fallbackCountry*/ "", /*password*/ "",
                              /*wbnApiToken*/ NULL, /*wbnServerKey*/ NULL,
                              /*wantRejoin*/ false, /*trackerAddr*/ "",
@@ -277,10 +290,11 @@ static bool loopbackConnectClientInto(LoopbackHarness *h, const char *playerName
 static bool loopbackConnectClient(LoopbackHarness *h, const char *playerName,
                                   const char *impairSpec, bool spectator) {
     return loopbackConnectClientInto(h, playerName, impairSpec, spectator,
-                                     &h->cs, &h->clientUp);
+                                     h->dial, &h->cs, &h->clientUp);
 }
 
-bool loopbackHarnessAddClient(LoopbackHarness *h, const char *playerName) {
+bool loopbackHarnessAddClientDial(LoopbackHarness *h, const char *playerName,
+                                  LoopbackDial dial) {
     if (h == NULL || !h->serverUp || h->client2Up) {
         return false;
     }
@@ -288,16 +302,24 @@ bool loopbackHarnessAddClient(LoopbackHarness *h, const char *playerName) {
      * WB_NETIMPAIR at its own construction and keeps whatever it was given,
      * so a second client never inherits the first one's impairment. */
     return loopbackConnectClientInto(h, playerName, /*impairSpec*/ NULL,
-                                     /*spectator*/ false, &h->cs2,
+                                     /*spectator*/ false, dial, &h->cs2,
                                      &h->client2Up);
 }
 
-bool loopbackHarnessStartPrepared(LoopbackHarness *h, const char *playerName,
-                                  bool lobbyMode, const char *impairSpec,
-                                  uint64_t seed, LoopbackSimSetup setup,
-                                  void *user) {
+bool loopbackHarnessAddClient(LoopbackHarness *h, const char *playerName) {
+    return loopbackHarnessAddClientDial(h, playerName,
+                                        h != NULL ? h->dial
+                                                  : LOOPBACK_DIAL_IPV4);
+}
+
+static bool loopbackHarnessStartCommon(LoopbackHarness *h,
+                                       const char *playerName,
+                                       bool lobbyMode, const char *impairSpec,
+                                       uint64_t seed, LoopbackSimSetup setup,
+                                       void *user, LoopbackDial dial) {
     if (h == NULL) return false;
     memset(h, 0, sizeof(*h));
+    h->dial = dial;
 
     if (!loopbackBringUpServer(h, lobbyMode)) {
         return false;
@@ -319,11 +341,26 @@ bool loopbackHarnessStartPrepared(LoopbackHarness *h, const char *playerName,
     return true;
 }
 
+bool loopbackHarnessStartPrepared(LoopbackHarness *h, const char *playerName,
+                                  bool lobbyMode, const char *impairSpec,
+                                  uint64_t seed, LoopbackSimSetup setup,
+                                  void *user) {
+    return loopbackHarnessStartCommon(h, playerName, lobbyMode, impairSpec,
+                                      seed, setup, user, LOOPBACK_DIAL_IPV4);
+}
+
 bool loopbackHarnessStart(LoopbackHarness *h, const char *playerName,
                           bool lobbyMode, const char *impairSpec,
                           uint64_t seed) {
     return loopbackHarnessStartPrepared(h, playerName, lobbyMode, impairSpec,
                                         seed, NULL, NULL);
+}
+
+bool loopbackHarnessStartDial(LoopbackHarness *h, const char *playerName,
+                              bool lobbyMode, const char *impairSpec,
+                              uint64_t seed, LoopbackDial dial) {
+    return loopbackHarnessStartCommon(h, playerName, lobbyMode, impairSpec,
+                                      seed, NULL, NULL, dial);
 }
 
 bool loopbackHarnessStartSpectator(LoopbackHarness *h, const char *playerName,
@@ -541,26 +578,67 @@ bool loopbackHarnessTriggerGameStart(LoopbackHarness *h) {
 }
 
 int loopbackRecvFromServer(SOCKET s, uint8_t *buf, int cap,
-                           const struct sockaddr_in *server) {
+                           const BoloAddr *server) {
     for (;;) {
-        struct sockaddr_in from;
-        socklen_t fromLen = (socklen_t)sizeof(from);
+        struct sockaddr_storage fromSs;
+        BoloAddr from;
+        socklen_t fromLen = (socklen_t)sizeof(fromSs);
         int n;
 
-        memset(&from, 0, sizeof(from));
+        memset(&fromSs, 0, sizeof(fromSs));
         n = (int)recvfrom(s, (char *)buf, cap, 0,
-                          (struct sockaddr *)&from, &fromLen);
+                          (struct sockaddr *)&fromSs, &fromLen);
         if (n <= 0) {
             return n;   /* nothing waiting, or the socket gave up */
         }
-        if (from.sin_addr.s_addr == server->sin_addr.s_addr &&
-            from.sin_port == server->sin_port) {
+        /* Compared through the keys, so a mapped and a plain IPv4 form of
+         * the server's address match. */
+        if (boloAddrFromSockaddr((const struct sockaddr *)&fromSs, fromLen,
+                                 &from) &&
+            boloAddrEqual(&from, server)) {
             return n;
         }
         /* Somebody else's datagram. It has been read out of the socket
          * buffer, and going round again is what makes that a drop rather
          * than a short return that would strand the rest of the queue. */
     }
+}
+
+bool loopbackIpv6Usable(const char *caseName) {
+    BoloAddr loopback;
+    SOCKET s;
+    int family = 0;
+    bool ok;
+
+    bolo_net_init();
+    if (!boloAddrParse("::1", 0, &loopback)) {
+        SDL_Log("  %s: skipped — \"::1\" does not parse here", caseName);
+        return false;
+    }
+    s = socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP);
+    if (s == INVALID_SOCKET) {
+        SDL_Log("  %s: skipped — no AF_INET6 socket on this machine", caseName);
+        return false;
+    }
+    ok = bind(s, (const struct sockaddr *)&loopback.ss, loopback.len) == 0;
+    closesocket(s);
+    if (!ok) {
+        SDL_Log("  %s: skipped — [::1] cannot be bound on this machine",
+                caseName);
+        return false;
+    }
+    s = createUdpSocket(false, &family);
+    if (s == INVALID_SOCKET) {
+        SDL_Log("  %s: skipped — createUdpSocket failed", caseName);
+        return false;
+    }
+    closesocket(s);
+    if (family != AF_INET6) {
+        SDL_Log("  %s: skipped — the game's socket is the IPv4 fallback here",
+                caseName);
+        return false;
+    }
+    return true;
 }
 
 void loopbackHarnessStop(LoopbackHarness *h) {

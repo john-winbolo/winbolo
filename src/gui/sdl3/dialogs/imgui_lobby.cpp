@@ -778,7 +778,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
             /* Server address (loopback->LAN and host external-NAT
              * substitution) plus async reverse-DNS and the clickable
              * join-link are all handled by the shared GUI helper. */
-            char dispIp[64];
+            char dispIp[BOLO_ADDR_STR_LEN] = "";
             unsigned dispPort = 0;
             bool haveServerAddr =
                 guiServerDisplayAddress(cs, dispIp, sizeof(dispIp), &dispPort);

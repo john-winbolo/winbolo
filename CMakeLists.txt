@@ -4755,6 +4755,14 @@ set(WINBOLO_UNITTESTS_SOURCES
     # given more reliable game events than one channel frame holds, and every
     # one of them has to leave in that send.
     tests/unit/test_send_multi_frame.c
+    # No datagram either end sends over a join, the map download and a minute
+    # of play is larger than the send cap, UDP_MAX_SEND.
+    tests/unit/test_send_cap.c
+    # Joins over ::1, an IPv4 and an IPv6 client in one game, and a join on the
+    # IPv4 fallback socket.
+    tests/unit/test_loopback_v6.c
+    # The server's replies leave from the address each datagram arrived on.
+    tests/unit/test_reply_source.c
     # The same tick from the client's side: a burst of best-effort effect
     # events and a voice frame have to be applied at a real client, and a
     # quitting player's ownership burst has to reach the peer.
@@ -4926,6 +4934,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # baselines transportUdpServerOnGameStart sends across two fabricated slots.
     tests/unit/test_channel_reset.c
     tests/unit/test_packet_type_names.c
+    # The punch address body (PACKET_PUNCH_*6) and the joiner's punch request,
+    # the server's handling of both notify and probe-reply forms, and the
+    # IPv6-only reachability status.
+    tests/unit/test_punch_addr.c
     # Smart-ping pure headers — the chord packing and its exact-modifier
     # match rule, the pie's slice selection (dead zone and the wrap at the
     # top), and the off-screen edge marker on all four borders and at a
@@ -5010,6 +5022,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     src/gui/sdl3/input_source.c
     tests/unit/test_key_claims.c
     tests/unit/test_server_address_parse.c
+    # The IPv4/IPv6 address type and resolver in bolo_addr.h, header-only.
+    tests/unit/test_bolo_addr.c
     # The map chooser's "Scenarios only" row test, header-only.
     tests/unit/test_map_chooser_scenario_filter.c
     # The background game's map name test (tutorials never picked), header-only.
@@ -5914,6 +5928,9 @@ set(_unit_test_names
     wbn_serverlist_malformed
     wbn_serverlist_scripts
     wbn_serverlist_server_text
+    wbn_serverlist_address6
+    wbn_serverlist_pick_address
+    wbn_serverlist_fetch_path
     wbn_map_parse
     wbn_map_fetch_policy
     brain_crash_log_writes_file
@@ -6716,6 +6733,15 @@ set(_unit_test_names
     loopback_quit_keeps_peer
     loopback_join_accept_lost_ready
     send_drains_channels_multi_frame
+    send_cap_join_download_play
+    loopback_v6_join_download_disconnect
+    loopback_mixed_family_one_server
+    loopback_ipv4_fallback_socket
+    reply_source_recv_reports_local_v6
+    reply_source_recv_reports_local_v4_mapped
+    reply_source_send_from_local
+    reply_source_ipv4_socket
+    reply_source_slot_stores_local
     best_effort_not_dropped
     effect_burst_not_starved_by_reliable
     post_game_segment_applied
@@ -6776,7 +6802,10 @@ set(_unit_test_names
     interp_jitter_e2e
     join_version_gate
     join_rate_limit
+    join_rate_limit_v6_same_prefix
+    join_rate_limit_v6_other_prefix
     cookie_handshake
+    cookie_handshake_v6
     map_amp_gate
     map_reask_throttle
     map_resync_cut_and_deliver_once
@@ -6864,6 +6893,10 @@ set(_unit_test_names
     channel_reset_codec_roundtrip
     channel_reset_two_slot_baselines
     packet_type_names
+    punch_addr_codec
+    punch_request_build
+    punch_notify_dispatch
+    punch_probe_reply_status
     ping_binding_encode_decode
     ping_binding_match
     ping_binding_direct
@@ -6917,6 +6950,9 @@ set(_unit_test_names
     screencalc_river_arms_of_road_centred_cross
     screencalc_river_copies_agree
     mdns_discovery
+    mdns_discovery_aaaa_only
+    mdns_discovery_both_prefers_v4
+    mdns_discovery_link_local_scope
     mdns_platform_pairs
     mdns_view_txt_roundtrip
     client_type_matches_platform
@@ -6940,6 +6976,30 @@ set(_unit_test_names
     addrparse_port_bounds
     addrparse_bad_port
     addrparse_empty
+    addrparse_bracketed
+    addrparse_bare_ipv6
+    addrparse_ipv6_scope
+    addrparse_ipv6_scheme
+    addrparse_format_host_port
+    addrparse_steam_connect
+    boloaddr_roundtrip_v4
+    boloaddr_roundtrip_v6
+    boloaddr_link_local_scope
+    boloaddr_mapped_key_equal
+    boloaddr_scope_in_key
+    boloaddr_prefix_key
+    boloaddr_port_zero
+    boloaddr_parse_rejects
+    boloaddr_no_mapped_text
+    boloaddr_classify
+    boloaddr_from_sockaddr
+    boloaddr_resolve_literals
+    boloaddr_resolve_prefer_v4
+    boloaddr_to_family
+    boloaddr_any
+    boloaddr_v4
+    boloaddr_from_v4
+    boloaddr_local_for_route
     mapchooser_scenario_filter
     bg_map_pick_skips_tutorials
     tutorial_maps_shipped_path
@@ -7003,6 +7063,7 @@ set(_unit_test_names
     round_transition_tick_does_not_block
     round_transition_during_rotation_deferred
     round_transition_worker_down_sends_inline
+    round_transition_failed_register_no_announce
     reauth_result_after_slot_reuse_discarded
     reauth_result_stamps_slot
     reauth_repeat_while_verify_out_refused
@@ -8189,6 +8250,7 @@ add_executable(WinBoloWbnTests
     tests/wbn/test_wbn_queue_cap.c
     tests/wbn/test_wbn_forced_update_full_queue.c
     tests/wbn/test_wbn_scenario_fields.c
+    tests/wbn/test_wbn_announce.c
     src/bolo/global.c
     src/common/prefs.c
     src/common/prefs_doc.c
@@ -8271,6 +8333,22 @@ set_tests_properties(wbn.forced_update_full_queue PROPERTIES TIMEOUT 120)
 add_test(NAME wbn.scenario_fields
          COMMAND $<TARGET_FILE:WinBoloWbnTests> scenario_fields)
 set_tests_properties(wbn.scenario_fields PROPERTIES TIMEOUT 60)
+
+# server/announce: the host rule and the per-request URL, which touch no
+# network, then a hosted job against two listeners and a register followed by
+# both announces against one. Nothing is held: a few seconds each at most.
+add_test(NAME wbn.announce_hosts_rule
+         COMMAND $<TARGET_FILE:WinBoloWbnTests> announce_hosts_rule)
+set_tests_properties(wbn.announce_hosts_rule PROPERTIES TIMEOUT 30)
+add_test(NAME wbn.api_url_for_host
+         COMMAND $<TARGET_FILE:WinBoloWbnTests> api_url_for_host)
+set_tests_properties(wbn.api_url_for_host PROPERTIES TIMEOUT 30)
+add_test(NAME wbn.hosted_job_host
+         COMMAND $<TARGET_FILE:WinBoloWbnTests> hosted_job_host)
+set_tests_properties(wbn.hosted_job_host PROPERTIES TIMEOUT 60)
+add_test(NAME wbn.announce_posts
+         COMMAND $<TARGET_FILE:WinBoloWbnTests> announce_posts)
+set_tests_properties(wbn.announce_posts PROPERTIES TIMEOUT 60)
 
 # ---- Include-rule check: the scenario surface is invisible to a frontend --
 # src/bolo/scenario_api/ is on the include path of scenario_host, sim_owner

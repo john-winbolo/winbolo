@@ -51,7 +51,8 @@
 #include <SDL3/SDL.h>
 
 #include "global.h"            /* MAP_STR_SIZE */
-#include "platform_net.h"      /* sockets, struct sockaddr_in */
+#include "platform_net.h"      /* sockets */
+#include "bolo_addr.h"         /* BoloAddr */
 #include "wire_limits.h"       /* PACKET_MAX_PLAYER_NAME */
 #include "netpacks.h"          /* PACKET_* types, PACKET_HEADER_SIZE, BOLO_VERSION_*, JOIN_COOKIE_LEN */
 #include "transport_udp.h"     /* JOIN_FLAG_SPECTATOR, MAX_SPECTATORS, spectator accessors */
@@ -109,15 +110,13 @@ static int ssBuildJoin(uint8_t *buf, const char *name, uint8_t flags,
 }
 
 static SOCKET ssOpenSocketOnIp(const char *ip) {
-    struct sockaddr_in addr;
+    BoloAddr addr;
     unsigned long nonblock = 1;
-    SOCKET s = socket(AF_INET, SOCK_DGRAM, 0);
+    SOCKET s;
+    if (!boloAddrParse(ip, 0, &addr)) return INVALID_SOCKET;
+    s = socket(AF_INET, SOCK_DGRAM, 0);
     if (s == INVALID_SOCKET) return INVALID_SOCKET;
-    memset(&addr, 0, sizeof(addr));
-    addr.sin_family      = AF_INET;
-    addr.sin_addr.s_addr = inet_addr(ip);
-    addr.sin_port        = 0;
-    if (bind(s, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
+    if (bind(s, (const struct sockaddr *)&addr.ss, addr.len) != 0) {
         closesocket(s);
         return INVALID_SOCKET;
     }
@@ -129,7 +128,7 @@ static SOCKET ssOpenSocketOnIp(const char *ip) {
  * and (on a challenge) its cookie. */
 static void ssDriveOnce(LoopbackHarness *h, SOCKET sock,
                         const uint8_t *join, int joinLen,
-                        const struct sockaddr_in *server,
+                        const BoloAddr *server,
                         bool *gotAccept, bool *gotChallenge, bool *gotReject,
                         uint8_t *outCookie) {
     Uint64 deadline;
@@ -137,7 +136,7 @@ static void ssDriveOnce(LoopbackHarness *h, SOCKET sock,
     *gotChallenge = false;
     *gotReject    = false;
     sendto(sock, (const char *)join, joinLen, 0,
-           (const struct sockaddr *)server, sizeof(*server));
+           (const struct sockaddr *)&server->ss, server->len);
     deadline = SDL_GetTicks() + SS_REPLY_DEADLINE_MS;
     while (SDL_GetTicks() < deadline) {
         uint8_t in[1024];
@@ -168,7 +167,7 @@ static void ssDriveOnce(LoopbackHarness *h, SOCKET sock,
 /* Drive a full spectator handshake (cookieless -> challenge -> echo). Returns
  * true on JOIN_ACCEPT. Retries only when a cookie ages out of its window. */
 static bool ssHandshakeAccepts(LoopbackHarness *h, SOCKET s,
-                               const struct sockaddr_in *server,
+                               const BoloAddr *server,
                                const char *name) {
     uint8_t joinBuf[1024];
     uint8_t cookie[JOIN_COOKIE_LEN];
@@ -210,7 +209,7 @@ static bool ssSeedArmed(LoopbackHarness *h, void *user) {
 
 static int t_seed_arm(void) {
     LoopbackHarness h;
-    struct sockaddr_in serverAddr;
+    BoloAddr serverAddr;
     SOCKET spec;
     char fname[64];
     SpectatorRing *ring;
@@ -231,10 +230,7 @@ static int t_seed_arm(void) {
                                        /*impairSpec*/ NULL, /*seed*/ 1u),
                   "harness start failed");
 
-    memset(&serverAddr, 0, sizeof(serverAddr));
-    serverAddr.sin_family      = AF_INET;
-    serverAddr.sin_addr.s_addr = inet_addr("127.0.0.1");
-    serverAddr.sin_port        = htons(h.port);
+    (void)boloAddrParse("127.0.0.1", (uint16_t)(h.port), &serverAddr);
 
     /* Turn on spectating and stand up a recording ring on top of the running
      * server. specDelayTicks stays at its default 0, so the seed target is the
@@ -313,7 +309,7 @@ static int t_seed_arm(void) {
  * ip selects the spectator's loopback rate-limit bucket; delay is in recordSeq. */
 static int t_feed_lag(const char *ip, uint32_t delay) {
     LoopbackHarness h;
-    struct sockaddr_in serverAddr;
+    BoloAddr serverAddr;
     SOCKET spec;
     char fname[64];
     SpectatorRing *ring;
@@ -332,10 +328,7 @@ static int t_feed_lag(const char *ip, uint32_t delay) {
                                        /*impairSpec*/ NULL, /*seed*/ 1u),
                   "harness start failed");
 
-    memset(&serverAddr, 0, sizeof(serverAddr));
-    serverAddr.sin_family      = AF_INET;
-    serverAddr.sin_addr.s_addr = inet_addr("127.0.0.1");
-    serverAddr.sin_port        = htons(h.port);
+    (void)boloAddrParse("127.0.0.1", (uint16_t)(h.port), &serverAddr);
 
     /* Enable spectating and set the delay BEFORE creating the ring, so the
      * ring's retention is sized from this delay (2d-b sizes it at create). */
@@ -431,7 +424,7 @@ static int t_feed_lag(const char *ip, uint32_t delay) {
  * ip selects the spectator's loopback rate-limit bucket. */
 static int t_cold_start(const char *ip, uint32_t delay) {
     LoopbackHarness h;
-    struct sockaddr_in serverAddr;
+    BoloAddr serverAddr;
     SOCKET spec;
     char fname[64];
     SpectatorRing *ring;
@@ -449,10 +442,7 @@ static int t_cold_start(const char *ip, uint32_t delay) {
                                        /*impairSpec*/ NULL, /*seed*/ 1u),
                   "harness start failed");
 
-    memset(&serverAddr, 0, sizeof(serverAddr));
-    serverAddr.sin_family      = AF_INET;
-    serverAddr.sin_addr.s_addr = inet_addr("127.0.0.1");
-    serverAddr.sin_port        = htons(h.port);
+    (void)boloAddrParse("127.0.0.1", (uint16_t)(h.port), &serverAddr);
 
     /* Set the delay BEFORE creating the ring so retention is sized to cover it
      * (2d-b). A large delay keeps the ring short of a full delay of history
