@@ -129,6 +129,11 @@ end
 
 PER_TEST_TIMEOUT_S = 10 * 60
 
+# The -brain every server is given, and words added to every server's command
+# line. Both are set by main() from --brain and --ds-args.
+BRAIN_INIT = os.path.join(ROOT, "brains", "GoalHunter", "init.lua")
+EXTRA_DS_ARGS = []
+
 # A script= arena is one chunk, and Lua allows 200 locals in one. The gate
 # stops above this many, a few short of the cap, so the message comes before
 # the loader error does.
@@ -392,8 +397,7 @@ class Job(object):
                "-nolobby",
                "-gametype", o["gametype"],
                "-bots", str(o["bots"]),
-               "-brain", os.path.join(ROOT, "brains", "GoalHunter",
-                                      "init.lua"),
+               "-brain", BRAIN_INIT,
                "-ai", o["ai"],
                "-seed", str(o["seed"]),
                "-ticks", str(o["ticks"]),
@@ -413,6 +417,7 @@ class Job(object):
         # all on team N, which a script that tests a team needs.
         if o.get("allybots") is not None:
             cmd += ["-allybots", str(o["allybots"])]
+        cmd += EXTRA_DS_ARGS
         # setting=id=value[,id=value] picks a value for one of the script's
         # own lobby settings, as -setting does.
         for st in (o.get("setting") or "").split(","):
@@ -511,7 +516,17 @@ def main():
     ap.add_argument("--build", default="build-own")
     ap.add_argument("--run-skipped", action="store_true",
                     help="run the arenas marked skip as well")
+    ap.add_argument("--brain", default=None,
+                    help="the -brain init.lua for -bots seats (default: "
+                         "brains/GoalHunter/init.lua of this checkout)")
+    ap.add_argument("--ds-args", default="",
+                    help="words added to every server's command line, "
+                         "e.g. \"-brain-debug -bd-noviz\"")
     args = ap.parse_args()
+    global BRAIN_INIT, EXTRA_DS_ARGS
+    if args.brain:
+        BRAIN_INIT = os.path.abspath(args.brain)
+    EXTRA_DS_ARGS = args.ds_args.split()
 
     build_dir = args.build
     if not os.path.isabs(build_dir):

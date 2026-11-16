@@ -2853,6 +2853,10 @@ local function set_goal_aim(goal, pmx, pmy, idx, awx, awy)
   goal.aim_mx  = pmx + off[1]
   goal.aim_my  = pmy + off[2]
 end
+-- For pt2_attack.chain_next (pill take v2 chains), which re-aims at the next
+-- chain pill from the same spot.
+M._clear_aim_from_world = clear_aim_from_world
+M._set_goal_aim         = set_goal_aim
 
 -- Step 1. Returns:
 --   "ok"      a clear aim was found (already written onto the goal) — carry on
@@ -6760,6 +6764,15 @@ local function update_attack_substate_body(goal, state, world, info)
           _t.shield_pots_n   = 0
         end
       end
+      -- Pill take v2 (pt2_attack.lua). Master off: in a debug run, v2 runs on
+      -- the same inputs and logs PT2_CMP; sscan comes back unchanged. Master
+      -- on (C.PILLTAKE_V2_EVALUATOR): v2's safe plan replaces v1's.
+      if C.PILLTAKE_V2_EVALUATOR or (BRAIN_DEBUG_MODE and C.PT2_SIDE_BY_SIDE_LOG) then
+        sscan = require("pt2_attack").after_scan({
+          state = state, goal = goal, info = info, world = world, pill = pill,
+          sscan = sscan, no_builder = no_builder, npb = _num_pill_blockers,
+          radius = scan_radius, now = now })
+      end
       if sscan and (not sscan.best or (sscan.best.score or 0) <= 0) then
         if BRAIN_DEBUG_MODE then
           local why = no_builder and "LGM dead and no existing cover"
@@ -9566,6 +9579,12 @@ local function update_attack_substate_body(goal, state, world, info)
                         and (pill.health or 0) <= (C.TANK_FINISH_MAX_HP or 3)
                         and (pill.anger or 0) <= (C.TANK_FINISH_MAX_ANGER or 0.25)
     if pill_hp <= 0 then
+      -- Pill take v2 chain (HOLD): the next pill of the chain is shot from
+      -- this same spot, so no swerve and no capture yet.
+      if goal._pt2 and C.PILLTAKE_V2_EVALUATOR
+         and require("pt2_attack").chain_next(state, goal, world, info, now) then
+        return
+      end
       -- Pill actually dead → kill swerve (rush to capture after).
       -- Pill-suicider: no swerve at all — run the post-kill capture handoff
       -- right here instead of after a swerve, then bail (goal is wiped).
@@ -9600,6 +9619,15 @@ local function update_attack_substate_body(goal, state, world, info)
     if should_swerve and not pill_dead and state.is_pill_suicider then
       should_swerve = false
       if BRAIN_DEBUG_MODE then print2(string.format("SWERVE_SKIP t=%d site=shoot_pill_ppt reason=pill_suicider hits=%s hp=%d", now, tostring(goal._shoot_hits_total), pill_hp)) end
+    end
+    -- Pill take v2 chain (HOLD): the spot is in the next pill's shadow only
+    -- while the tank stays on it, so the kill-locked swerve is not made while
+    -- a chain pill is still to come. Being hit still swerves.
+    if should_swerve and not pill_dead and goal._pt2 and C.PILLTAKE_V2_EVALUATOR
+       and goal._shoot_hits_total < C.ATTACK_CURVE_AFTER_HITS
+       and require("pt2_attack").has_next(goal, world) then
+      should_swerve = false
+      print2(string.format("SWERVE_SKIP t=%d site=shoot_pill_ppt reason=pt2_chain_hold hp=%d", now, pill_hp))
     end
 
     if should_swerve then
@@ -10186,6 +10214,8 @@ local function update_attack_substate_body(goal, state, world, info)
   -- a different pill's candidate cluster — a take it's no longer on.
   -- (Followed-tank filtering is already handled by the host binding
   -- overlay_* only in the followed bot, so this is purely the pill guard.)
+  -- Pill take v2 layers (pt2_viz.lua): drawn from v2's kept result.
+  if BRAIN_DEBUG_MODE and goal._pt2_viz then require("pt2_viz").draw(goal) end
   local _ssc = goal._shield_scan
   if _ssc and _ssc.pill and _ssc.pill.mx == goal.mx and _ssc.pill.my == goal.my then
     shield.draw_overlay(_ssc, now)
