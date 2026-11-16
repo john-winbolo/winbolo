@@ -1247,6 +1247,23 @@ M.GOAL_ABANDON_COOLDOWN    = 0     -- ticks before an abandoned goal can be pick
 M.WALL_SHIELD_COMMITMENT        = 200  -- extra switch penalty when wall-shield attack is in progress
 M.ATTACK_TANK_COMMITMENT_BONUS  = 50   -- extra commitment when currently fighting a tank (see it through)
 M.ATTACK_PILL_COMMITMENT_BONUS  = 80   -- extra commitment when mid-attack on a pill; also revokes hysteresis exemption for attack_tank/capture_pill so they can't interrupt for free
+-- 2026-11-16 (Andrew): pool 6 (attack_pill) sends ONE pill to the goal
+-- competition. It picked that pill on its raw cost, and the phase weight and
+-- the territory-influence scale (x0.5 in our ground, x2 in theirs) came only
+-- after, so a cheap pill deep in enemy ground beat a dearer one at home that
+-- the full score would choose. With this on, pool 6 picks its pill on raw
+-- cost x phase weight x influence x NEUTRAL_PILL_OWN_GROUND_FACTOR -- the
+-- same functions and numbers the competition uses. The pill keeps its raw
+-- cost; the competition applies each factor once, as before. KEEL and MAST:
+-- off (raw-cost pick).
+M.POOL6_PICK_WITH_FACTORS = true
+-- 2026-11-16 (Andrew, value approved): a NEUTRAL live pill (from the bot's
+-- own pill records) whose square has influence above 50 (our ground, the
+-- same test as the x0.5 influence scale) costs this much more as an
+-- attack_pill goal, on top of the x0.5. A neutral pill in our ground is free
+-- to take. Applied in the pool 6 pick and in the competition (once each:
+-- the pick only compares). 1.0 = off (KEEL and MAST).
+M.NEUTRAL_PILL_OWN_GROUND_FACTOR = 0.75
 -- defend_pill (reactive: a friendly pill is being destroyed NOW) vs an in-progress
 -- attack_pill. How hard it is to pull us off the take scales with the take's real
 -- investment: FULL hysteresis only while actually shooting/aiming (shells + position
@@ -1254,6 +1271,13 @@ M.ATTACK_PILL_COMMITMENT_BONUS  = 80   -- extra commitment when mid-attack on a 
 -- FREE otherwise (approach / planning ??? nothing invested yet).
 M.DEFEND_ATTACK_BUILD_COMMITMENT = 40  -- moderate commitment defend_pill pays to interrupt a wall-building attack_pill
 M.ATTACK_BASE_COMMITMENT_BONUS  = 250  -- extra commitment when mid-attack on a base ??? applied while we still have >=1 shell. Once you start a base, follow through; the ONLY non-urgent reason to break off is literally running out of shells (0). Critical-armour flee still preempts via the urgent goal-override path.
+-- 2026-11-16 (Andrew): ATTACK_BASE_COMMITMENT_BONUS counts only after the
+-- bot has fired at least one shell at that base during the current goal.
+-- Before the first shot (the drive to the base) nothing is invested yet, so
+-- a much cheaper goal on the way (a neutral pill in our own ground) can take
+-- over. GOAL_SWITCH_PENALTY and the plain commitment stay. KEEL and MAST:
+-- off (the bonus counted from the moment the goal was picked).
+M.ATTACK_BASE_COMMIT_AFTER_FIRST_SHOT = true
 M.CAPTURE_BASE_COMMITMENT_BONUS = 250  -- extra commitment when mid-CAPTURE of a base (driving onto a neutral/ground-down base). Comparable to ATTACK_BASE: if you did the work to grind a base down, follow through and actually take it ??? don't let a normal-cost goal (another base/pill, non-critical refuel) steal it. No shell gate (capturing needs no ammo). Critical-armour flee still preempts via the urgent goal-override path.
 M.BLITZ_STANDOFF_SCORE_BUCKET   = 50   -- soldier blitz-standoff pick: ellipse spots are bucketed into score bands this wide; all spots in the best spot's band are the "best pool", and the soldier offers the one CLOSEST to its tank (least travel for ~equal shield quality) instead of the globally-top-scored far spot.
 -- Blitz spot line-of-sight margin (tiles), 2026-09-24. A blitz spot's shot line
@@ -7559,6 +7583,14 @@ M.PRESETS = {
     --   square (or, 2026-11-16, a live pill square) is shot free (killed).
     --   KEEL waited for him.
     LGM_WALLED_KILL = false,
+    --   2026-11-16: pool 6 picks its pill on the full factors (phase weight,
+    --   influence, neutral-own-ground). KEEL picked on raw cost.
+    POOL6_PICK_WITH_FACTORS = false,
+    --   2026-11-16: neutral live pill in our ground x0.75. KEEL: x1.
+    NEUTRAL_PILL_OWN_GROUND_FACTOR = 1.0,
+    --   2026-11-16: the attack_base commitment bonus counts only after the
+    --   first shell at the base. KEEL counted it from the start of the goal.
+    ATTACK_BASE_COMMIT_AFTER_FIRST_SHOT = false,
     --   2026-11-04: a tank's shell is a kill when it kills the builder at
     --   any rewind 1..13. KEEL tested rewind 1 only.
     BUILDER_CERTAIN_DEATH_REWIND_MAX = 1,
@@ -7813,6 +7845,7 @@ M.PRESETS.mast = {
   REPAIR_FRIENDLY_FIRE_REJECT_TICKS = 400,
   -- Added after 2.2.1: the 2.2.1 behaviour.
   ATK_REPRICE_EVENTS                = false,
+  ATTACK_BASE_COMMIT_AFTER_FIRST_SHOT = false,
   BLITZ_SETUP_16DIR                 = false,
   BLOCKER_MIN_LANE_BRAD             = 0,
   BUILDER_CERTAIN_DEATH_REWIND_MAX  = 1,
@@ -7838,11 +7871,13 @@ M.PRESETS.mast = {
   LGM_KILL_IMPROVED                 = false,
   LGM_WALLED_KILL                   = false,
   LIVE_PHYSICS_WALL                 = false,  -- 2.2.1 had no WALL group
+  NEUTRAL_PILL_OWN_GROUND_FACTOR    = 1.0,
   PF_REROUTE_KEEP_FRAC              = 0,
   PF_REROUTE_KEEP_MARGIN            = 0,
   PF_START_HEADING                  = false,
   PILL_COVER_BY_HEALTH              = false,
   PLACE_FRONT_NEED_TARGET           = false,
+  POOL6_PICK_WITH_FACTORS           = false,
   QUICK_REPAIR_ON_TAKE              = false,
   QUICK_REPAIR_PREDICT_SHOTS        = false,
   REFUEL_NOT_LOW_MULT               = 1.0,

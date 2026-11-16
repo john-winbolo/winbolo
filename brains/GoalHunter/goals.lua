@@ -13741,6 +13741,7 @@ function M.step_eval_queue(state, world, info)
         stale = obj.last_seen and (now - obj.last_seen) or 0,
         obj = obj,  -- ref needed by rederive_pool_partial_best after sync
         reject = entry._skipped,  -- surfaces in the goal log's winner_cands
+        soa = cand_shells_on_arrival,  -- for repick_pool6_with_factors
       }
       if c < pr.best_cost then
         pr.best_cost = c; pr.best_id = id; pr.best_obj = obj
@@ -14764,6 +14765,123 @@ function M.stay_area_rejects(state)
   end
 end
 
+-- ── Shared cost factors (goal_selection and the pool 6 pick) ──────────
+-- These three are the whole-cost factors goal_selection puts on a pool row.
+-- They live here so the pool 6 pick (C.POOL6_PICK_WITH_FACTORS) uses the very
+-- same functions and numbers.
+
+-- Phase weight for one pool row: the C.PHASE_WEIGHTS[phase] table value,
+-- moved toward 1.0 with distance from the tank. Full weight at the tank,
+-- 1.0 at PHASE_WEIGHT_DIST_FALLOFF squares and beyond: the phase preference
+-- is a LOCAL strategy, so a goal far across the map is not pulled in.
+function M.phase_weight_at(phase_weights, pool_name, mx, my, info)
+  local pw = phase_weights and pool_name and phase_weights[pool_name] or 1.0
+  if pw ~= 1.0 and mx then
+    local _fot = C.PHASE_WEIGHT_DIST_FALLOFF
+    local _fo  = (type(_fot) == "table" and ((pool_name and _fot[pool_name]) or _fot.default))
+                 or (type(_fot) == "number" and _fot) or 40
+    local _gd = U.mdist(bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8), mx, my)
+    local _f  = math.min(1.0, _gd / _fo)
+    pw = 1.0 + (pw - 1.0) * (1 - _f)
+  end
+  return pw
+end
+
+-- Territory-influence scale for a goal square: x2 where cpf.influence_at is
+-- below -50 (their ground), x0.5 above 50 (our ground), else x1. Returns the
+-- scale and the influence read. Callers skip it in the opening phase.
+function M.influence_mult_at(mx, my)
+  local inf = cpf.influence_at(mx, my) or 0
+  if inf < -50 then return 2.0, inf end
+  if inf > 50 then return 0.5, inf end
+  return 1.0, inf
+end
+
+-- C.NEUTRAL_PILL_OWN_GROUND_FACTOR for an attack_pill row: the pill is
+-- NEUTRAL and live in the bot's own pill record and its square is in our
+-- ground (influence above 50, the same test as the x0.5 above). Else 1.0.
+function M.neutral_own_ground_mult(pill, inf)
+  local f = C.NEUTRAL_PILL_OWN_GROUND_FACTOR or 1.0
+  if f == 1.0 or not pill then return 1.0 end
+  if pill.owner == "neutral" and (pill.health or 0) > 0 and (inf or 0) > 50 then
+    return f
+  end
+  return 1.0
+end
+
+-- The attack_base follow-through bonus the CURRENT attack_base goal gives
+-- in the hysteresis commitment. nil = no bonus at all (not attack_base, or
+-- no shells left). Else ATTACK_BASE_COMMITMENT_BONUS, or 0 under
+-- C.ATTACK_BASE_COMMIT_AFTER_FIRST_SHOT before the first shell at the base
+-- (steering.note_base_shot sets goal._ab_shot_fired): on the drive to the
+-- base nothing is invested yet. FINAL_SCORES prints it as abcmt.
+function M.attack_base_commit_bonus(goal, info)
+  if not goal or goal.kind ~= "attack_base" or (info.shells or 0) <= 0 then return nil end
+  if C.ATTACK_BASE_COMMIT_AFTER_FIRST_SHOT and not goal._ab_shot_fired then return 0 end
+  return C.ATTACK_BASE_COMMITMENT_BONUS
+end
+
+-- Pool 6 pick on the full factors (C.POOL6_PICK_WITH_FACTORS, and/or a
+-- C.NEUTRAL_PILL_OWN_GROUND_FACTOR other than 1.0). Runs after
+-- rederive_pool_partial_best. Each candidate that is not rejected is
+-- compared on
+--   raw x phase weight x influence x neutral-own-ground
+-- with the factors goal_selection uses (influence and neutral-own-ground
+-- are 1.0 in the opening phase, as there). The pool keeps the winner's RAW
+-- cost (pr.best_cost): goal_selection applies each factor to it once, so
+-- nothing is counted twice. Without POOL6_PICK_WITH_FACTORS only the
+-- neutral-own-ground factor is used in the compare.
+function M.repick_pool6_with_factors(state, info)
+  local with_f = C.POOL6_PICK_WITH_FACTORS
+  local nf_on  = (C.NEUTRAL_PILL_OWN_GROUND_FACTOR or 1.0) ~= 1.0
+  if not (with_f or nf_on) then return end
+  local pr = state.pool_partial and state.pool_partial[6]
+  local cache = state.cost_cache
+  if not pr or not pr.candidates or not cache or not info then return end
+  local phase_weights = C.PHASE_WEIGHTS[state.phase]
+  local opening = (state.phase == "opening")
+  local best_eff, best_raw, best_cand = math.huge, nil, nil
+  local parts = BRAIN_DEBUG_MODE and {} or nil
+  for _, cand in ipairs(pr.candidates) do
+    local ce = cache["6:" .. cand.id]
+    local raw = (ce and ce.cost) or cand.cost or math.huge
+    if ce and not ce._reject and raw < 1e29 then
+      local pw, im, nm, inf = 1.0, 1.0, 1.0, 0
+      if with_f then
+        pw = M.phase_weight_at(phase_weights, "attack_pill", cand.mx, cand.my, info)
+      end
+      if not opening then
+        local m
+        m, inf = M.influence_mult_at(cand.mx, cand.my)
+        if with_f then im = m end
+        nm = M.neutral_own_ground_mult(cand.obj, inf)
+      end
+      local eff = raw
+      if eff > 0 then eff = eff * pw * im * nm end
+      if parts then
+        parts[#parts + 1] = string.format("#%s@(%d,%d)%s raw=%.1f x pw=%.3f x inf=%.2f(%d) x neu=%.2f = %.1f",
+          tostring(cand.id), cand.mx or -1, cand.my or -1,
+          (cand.obj and cand.obj.owner == "neutral") and "N" or "",
+          raw, pw, im, inf, nm, eff)
+      end
+      if eff < best_eff then
+        best_eff, best_raw, best_cand = eff, raw, cand
+      end
+    end
+  end
+  if best_cand then
+    if BRAIN_DEBUG_MODE then
+      print2(string.format("POOL6_PICK t=%d phase=%s raw_best=#%s pick=#%s raw=%.1f eff=%.1f | %s",
+        state.tick or 0, tostring(state.phase), tostring(pr.best_id), tostring(best_cand.id),
+        best_raw, best_eff, table.concat(parts, "; ")))
+    end
+    pr.best_cost = best_raw
+    pr.best_id   = best_cand.id
+    pr.best_obj  = best_cand.obj
+    pr.best_shells_on_arrival = best_cand.soa
+  end
+end
+
 -- Re-derive pool_partial best_cost/id/obj after sync_ally_claimed_rejects
 -- so finalize_pools doesn't pick a candidate that just got REJECT-flagged
 -- by the sync sweep.  Cheap: O(candidates per pool).
@@ -15155,6 +15273,7 @@ function M.finalize_pools(state, world, info)
   apply_blitz_only_gate(state, info, world)
   M.stay_area_rejects(state)
   rederive_pool_partial_best(state)
+  M.repick_pool6_with_factors(state, info)
   local _t_apply = clock_us()
   if BRAIN_PROFILE then
     opt(string.format("    fp sync %.2f ms  apply+rederive %.2f ms",
@@ -17967,19 +18086,13 @@ local function goal_selection(state, world, info, quiet)
         local cost = entry.cost
         -- Apply phase-dependent weight as a multiplier on the full cost.
         local pool_name = POOL_NAMES[idx]
-        local pw = phase_weights and pool_name and phase_weights[pool_name] or 1.0
         -- Distance-attenuate the phase bias toward neutral (1.0): the phase
         -- preference is a LOCAL strategy, so a discounted goal far across the map
         -- shouldn't get pulled in (and distance already dominates a far penalised
         -- one). Full weight at the tank, lerping to 1.0 by PHASE_WEIGHT_DIST_FALLOFF.
-        if pw ~= 1.0 and entry.goal and entry.goal.mx then
-          local _fot = C.PHASE_WEIGHT_DIST_FALLOFF
-          local _fo  = (type(_fot) == "table" and ((pool_name and _fot[pool_name]) or _fot.default))
-                       or (type(_fot) == "number" and _fot) or 40
-          local _gd = U.mdist(bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8), entry.goal.mx, entry.goal.my)
-          local _f  = math.min(1.0, _gd / _fo)
-          pw = 1.0 + (pw - 1.0) * (1 - _f)
-        end
+        -- (M.phase_weight_at: shared with the pool 6 pick.)
+        local pw = M.phase_weight_at(phase_weights, pool_name,
+                                   entry.goal and entry.goal.mx, entry.goal and entry.goal.my, info)
         if cost and cost > 0 then
           cost = cost * pw
         end
@@ -18191,13 +18304,20 @@ local function goal_selection(state, world, info, quiet)
            and not M.focus_plan_flat(c.goal, info)
            and not c.goal.km_ally_pn
            and not c._reject_sentinel then
-          local inf = cpf.influence_at(c.goal.mx, c.goal.my) or 0
-          if inf < -50 then
-            c.cost = c.cost * 2.0
-            c._inf_mult = 2.0
-          elseif inf > 50 then
-            c.cost = c.cost * 0.5
-            c._inf_mult = 0.5
+          local im, inf = M.influence_mult_at(c.goal.mx, c.goal.my)
+          if im ~= 1.0 then
+            c.cost = c.cost * im
+            c._inf_mult = im
+          end
+          -- NEUTRAL_PILL_OWN_GROUND_FACTOR: a neutral live pill in our ground
+          -- (attack_pill row, the bot's own pill record) costs x0.75 more, on
+          -- top of the x0.5. Its own multiplier, so the breakdown shows it.
+          if c.goal.kind == "attack_pill" then
+            local nm = M.neutral_own_ground_mult(c._pill, inf)
+            if nm ~= 1.0 then
+              c.cost = c.cost * nm
+              c._neutral_mult = nm
+            end
           end
         end
       end
@@ -18470,6 +18590,7 @@ local function goal_selection(state, world, info, quiet)
       end
       local cg = goal_group(c.goal.kind)
       local effective_commit = commitment
+      local _ab_commit = nil   -- the attack_base bonus in effective_commit (log only)
       if cur_is_attack_tank then
         effective_commit = effective_commit + C.ATTACK_TANK_COMMITMENT_BONUS
       end
@@ -18480,8 +18601,11 @@ local function goal_selection(state, world, info, quiet)
       -- hard. The ONLY non-urgent reason to break off is literally running dry
       -- (0 shells) — with any ammo left, finish the job. Critical-armour flee
       -- still preempts via init.lua's urgent goal-override (separate from this).
-      if cur_is_attack_base and (info.shells or 0) > 0 then
-        effective_commit = effective_commit + C.ATTACK_BASE_COMMITMENT_BONUS
+      -- ATTACK_BASE_COMMIT_AFTER_FIRST_SHOT: only once a shell has gone at
+      -- the base in this goal (M.attack_base_commit_bonus).
+      if cur_is_attack_base then
+        _ab_commit = M.attack_base_commit_bonus(state.goal, info)
+        if _ab_commit then effective_commit = effective_commit + _ab_commit end
       end
       -- Capture follow-through: once you've started capturing a base (driving
       -- onto a neutral / just-ground-down base), hold it as hard as the grind.
@@ -18501,11 +18625,13 @@ local function goal_selection(state, world, info, quiet)
         c.hysteresis = "type"
         c.switch_flat = C.GOAL_SWITCH_PENALTY
         c.commit_val  = effective_commit
+        c._ab_commit  = _ab_commit
       elseif c.goal.mx ~= state.goal.mx or c.goal.my ~= state.goal.my then
         c.cost = c.cost + C.GOAL_TARGET_SWITCH_PENALTY + effective_commit
         c.hysteresis = "target"
         c.switch_flat = C.GOAL_TARGET_SWITCH_PENALTY
         c.commit_val  = effective_commit
+        c._ab_commit  = _ab_commit
       end
       ::continue_hyst::
     end
@@ -18735,6 +18861,8 @@ local function goal_selection(state, world, info, quiet)
         -- table value) and the territory-influence scale.
         phase_weight = c.phase_weight or 1.0,
         inf_mult     = c._inf_mult or 1.0,
+        neutral_mult = c._neutral_mult or 1.0,
+        ab_commit    = c._ab_commit,
         suicider_mult = c._suicider_mult or 1.0,
         refuel_mult   = c._refuel_mult or 1.0,
         focus_mult    = c._focus_mult or 1.0,
@@ -19267,14 +19395,15 @@ local function goal_selection(state, world, info, quiet)
         --   fight   — FIGHT_COST_MULT, a script's surcharge on attack_tank,
         --             kill_lgm and take_cover
         print2(string.format(
-          "  [%d] %s@%d,%d total=%.1f base=%.1f pen=%.1f inf=%.2f nobuild=%.1f fight=%.2f hyst=%s sw=%.1f cmt=%.1f histT=%s histK=%s wsim=%.1f dens=%.2f pickup=%.1f desc=%s",
+          "  [%d] %s@%d,%d total=%.1f base=%.1f pen=%.1f inf=%.2f neu=%.2f nobuild=%.1f fight=%.2f hyst=%s sw=%.1f cmt=%.1f abcmt=%s histT=%s histK=%s wsim=%.1f dens=%.2f pickup=%.1f desc=%s",
           i,
           c.goal and c.goal.kind or "?",
           c.goal and c.goal.mx or 0, c.goal and c.goal.my or 0,
           c.cost or 0, base, penalty,
-          c._inf_mult or 1.0, c._nobuild_mult or 1.0, c._fight_mult or 1.0,
+          c._inf_mult or 1.0, c._neutral_mult or 1.0, c._nobuild_mult or 1.0, c._fight_mult or 1.0,
           tostring(c.hysteresis or "-"),
           c.switch_flat or 0, c.commit_val or 0,
+          c._ab_commit and string.format("%d", c._ab_commit) or "-",
           tostring(c.hist_target or 0), tostring(c.hist_kind or 0),
           c.wsim_add or 0,
           c.density_mult or 1.0,

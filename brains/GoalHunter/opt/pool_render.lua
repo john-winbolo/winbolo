@@ -2287,6 +2287,7 @@ local function render_state(state, K)
         end
         if gc then
           madd(gc.inf_mult, "INF", "territory influence")
+          madd(gc.neutral_mult, "NO", "neutral pill in our ground")
           madd(gc.suicider_mult, "SU", "pill_suicider")
           madd(gc.focus_mult, "FO", "team focus")
           madd(gc.refuel_mult, "RF", "refuel group")
@@ -2330,6 +2331,23 @@ local function render_state(state, K)
           "inf:territory influence at the GOAL TILE (%d,%d) is %s -> x%.1f. cpf.influence_at < -50 (their half) doubles the bid, > 50 (our half) halves it, in between is x1. Skipped in the opening phase and for refuel_at_base / defend_pill / take_cover / repair_pill (with the repair fix on), for the place follow-through row, and for the kill_me delivery row.",
           w.mx or -1, w.my or -1,
           (inf_mult_d > 1) and "hostile" or "friendly", inf_mult_d)
+      end
+
+      -- NEUTRAL_PILL_OWN_GROUND_FACTOR: a neutral live pill in our ground,
+      -- applied right after the influence scale.
+      local neu_mult_d = (gc and gc.neutral_mult) or 1.0
+      if neu_mult_d ~= 1.0 then
+        detail_formula = string.format("%s * neutral{x%.2f}", detail_formula, neu_mult_d)
+        detail_map[#detail_map + 1] = string.format(
+          "neutral:the pill at (%d,%d) is NEUTRAL and live in our own pill record, and its square is in our ground (influence above 50) -> x%.2f (NEUTRAL_PILL_OWN_GROUND_FACTOR), on top of the x0.5 influence scale.",
+          w.mx or -1, w.my or -1, neu_mult_d)
+      end
+      -- ATTACK_BASE_COMMIT_AFTER_FIRST_SHOT: the attack_base bonus inside
+      -- the commitment (0 = held back, no shell at the base yet).
+      if gc and gc.ab_commit then
+        detail_map[#detail_map + 1] = string.format(
+          "abcommit:attack_base bonus in the commitment = %d (%s)", gc.ab_commit,
+          gc.ab_commit > 0 and "a shell has gone at the base" or "held back: no shell at the base yet")
       end
 
       -- LOADED, BUILDER-LESS surcharge. The LAST multiplier applied to the
