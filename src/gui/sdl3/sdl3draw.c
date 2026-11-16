@@ -3305,14 +3305,23 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
       if (winW > 0) {
         const SafeInsets safe = safeInsetsGet(gWindow);
         const float toLog = (float)scrW / (float)winW;
+        /* The status column and the controls are laid out inside
+           sdl3GetSafeAreaInsets, which on iOS is the system's safe area and
+           is wider on the side away from the cutout than the lobby's margin
+           there. Black runs in to whichever is further, so no gray strip is
+           left between the black and the panels. */
+        float blackL = safe.left * toLog, blackR = safe.right * toLog;
+        float layL = 0, layR = 0;
+        sdl3GetSafeAreaInsets(&layL, NULL, &layR, NULL);
+        if (layL > blackL) blackL = layL;
+        if (layR > blackR) blackR = layR;
         SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
-        if (safe.left > 0.0f) {
-          SDL_FRect l = { 0, 0, safe.left * toLog, (float)scrH };
+        if (blackL > 0.0f) {
+          SDL_FRect l = { 0, 0, blackL, (float)scrH };
           SDL_RenderFillRect(gRenderer, &l);
         }
-        if (safe.right > 0.0f) {
-          SDL_FRect r = { (float)scrW - safe.right * toLog, 0,
-                          safe.right * toLog, (float)scrH };
+        if (blackR > 0.0f) {
+          SDL_FRect r = { (float)scrW - blackR, 0, blackR, (float)scrH };
           SDL_RenderFillRect(gRenderer, &r);
         }
       }
