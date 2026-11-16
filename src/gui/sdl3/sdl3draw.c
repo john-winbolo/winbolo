@@ -1036,6 +1036,10 @@ static bool sdl3LoadBackground(void) {
   return TRUE;
 }
 
+SDL_Texture *sdl3DrawGetBackgroundTexture(void) {
+  return sdl3LoadBackground() ? gBackgroundTex : NULL;
+}
+
 /* The touch layout's kills and deaths panel, under the bases grid: black, the
    kills icon and number in its left half and the deaths pair in its right.
    The icons are the classic screen's, cut from the background art, so a skin

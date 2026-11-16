@@ -516,6 +516,11 @@ bool sdl3DrawGetTabletStatusColumn(float *outX, float *outY, SDL_FRect *outKd);
    the bar between two panels of a column. Zero with no view laid out. */
 int sdl3DrawGetTabletBevel(void);
 
+/* The background art (the active skin's, or data/background.bmp), loaded if
+   it is not yet; NULL when it cannot be. The touch layout cuts the classic
+   screen's small icons out of it. Render thread only. */
+SDL_Texture *sdl3DrawGetBackgroundTexture(void);
+
 /*********************************************************
 *NAME:          sdl3DrawSetDragOffset / GetDragOffset
 *PURPOSE:

@@ -1560,6 +1560,75 @@ static void renderTopBarButtons(ClientSim *cs) {
  * Resource bars — Tank (S/M/A/T) and Closest Base (S/M/A)
  * ------------------------------------------------------- */
 
+/* The stock bars' icons, as the classic screen has them under its tank bars:
+   shells, mines, armour and trees, cut from the background art, each 7 wide
+   and 8 high there. */
+#define STOCK_ICON_SRC_Y   246
+#define STOCK_ICON_SRC_W     7
+#define STOCK_ICON_SRC_H     8
+#define STOCK_ART_W      515.0f
+#define STOCK_ART_H      325.0f
+static const int kStockIconSrcX[4] = { 444, 456, 468, 480 };
+
+/* The share of a bars box's width that four stock icons may take. The icons
+   are the largest whole multiple of their art that fits it, the bars stand
+   one icon and a small gap apart, and what is left of the box is split
+   between the two sides. */
+#define STOCK_GROUP_SHARE 0.8f
+/* A bar's width as a share of its icon's. */
+#define STOCK_BAR_SHARE 0.7f
+
+/* How the bars' box of width w and height h is laid out: the bars at the top
+   and a row of stock icons under them. The column pitch and the icon size
+   come from four bars for both boxes, so the base's three bars stand as close
+   together as the tank's four and the icons are one size. A box too short
+   for the icon row goes without it and the bars take the room. */
+struct StockBoxLayout {
+  float iconW, iconH;   /* one stock icon; zero when there is no row */
+  float barW;           /* one bar */
+  float pitch;          /* from one bar's centre to the next */
+  float barTop, barH;   /* the bars, relative to the box's top */
+  float iconTop;        /* the stock icon row, relative to the box's top */
+};
+static StockBoxLayout stockBoxLayout(float w, float h, float winPad) {
+  StockBoxLayout l = {};
+  float gap = 4.0f;
+  float zoom = floorf(w * STOCK_GROUP_SHARE / 4.0f / (float)STOCK_ICON_SRC_W);
+  if (zoom < 1.0f) zoom = 1.0f;
+  l.iconW = zoom * (float)STOCK_ICON_SRC_W;
+  l.iconH = zoom * (float)STOCK_ICON_SRC_H;
+  l.pitch = l.iconW + zoom;
+  l.barW = floorf(l.iconW * STOCK_BAR_SHARE);
+  float minBar = 40.0f;
+  if (h - winPad * 2 - l.iconH - gap < minBar) l.iconW = l.iconH = 0.0f;
+  l.barTop = winPad;
+  float bottom = h - winPad - (l.iconH > 0.0f ? l.iconH + gap : 0.0f);
+  l.barH = bottom - l.barTop;
+  l.iconTop = bottom + gap;
+  return l;
+}
+
+/* The centre of bar i of n in a box of width w, the n bars together centred
+   in the box. */
+static float stockBarCentre(const StockBoxLayout &l, float w, int i, int n) {
+  return w * 0.5f + ((float)i - (float)(n - 1) * 0.5f) * l.pitch;
+}
+
+/* Stock icon i (shells, mines, armour, trees) centred on cx, top at y. */
+static void stockIcon(ImDrawList *dl, int i, float cx, float y,
+                      const StockBoxLayout &l, ImU32 tint) {
+  SDL_Texture *art = sdl3DrawGetBackgroundTexture();
+  if (!art || l.iconW <= 0.0f) return;
+  ImVec2 uv0((float)kStockIconSrcX[i] / STOCK_ART_W,
+             (float)STOCK_ICON_SRC_Y / STOCK_ART_H);
+  ImVec2 uv1((float)(kStockIconSrcX[i] + STOCK_ICON_SRC_W) / STOCK_ART_W,
+             (float)(STOCK_ICON_SRC_Y + STOCK_ICON_SRC_H) / STOCK_ART_H);
+  imguiPushNearestSamplingOn(dl);
+  dl->AddImage((ImTextureID)art, ImVec2(cx - l.iconW * 0.5f, y),
+               ImVec2(cx + l.iconW * 0.5f, y + l.iconH), uv0, uv1, tint);
+  imguiPopNearestSamplingOn(dl);
+}
+
 static void renderResourceBars(ClientSim *cs) {
   BYTE shells, mines, armour, trees;
   sdl3DrawGetCachedTankStats(&shells, &mines, &armour, &trees);
@@ -1579,8 +1648,6 @@ static void renderResourceBars(ClientSim *cs) {
     float w = s_cfg.topBtnSize;  /* same width as top bar buttons */
     float h = s_cfg.barsH;
     float winPad = 4.0f;
-    float barW = 12.0f;
-    float barGap = (w - winPad * 2 - barW * 4) / 3.0f;
 
     ImGui::SetNextWindowPos(ImVec2(x, y));
     ImGui::SetNextWindowSize(ImVec2(w, h));
@@ -1596,9 +1663,12 @@ static void renderResourceBars(ClientSim *cs) {
       int vtxStart = dl->VtxBuffer.Size;
       ImVec2 winPos = ImGui::GetWindowPos();
 
-      /* 4 vertical bars: S M A T */
-      float maxBarH = h - winPad * 2;
-      float barTop = winPos.y + winPad;
+      /* 4 vertical bars: S M A T, each over its icon. */
+      StockBoxLayout lay = stockBoxLayout(w, h, winPad);
+      float maxBarH = lay.barH;
+      float barW = lay.barW;
+      float barTop = winPos.y + lay.barTop;
+      ImU32 white = IM_COL32(255, 255, 255, 255);
       ImU32 barColor = IM_COL32(0, 200, 0, 200);
       ImU32 bgColor = IM_COL32(40, 40, 40, 180);
 
@@ -1610,12 +1680,13 @@ static void renderResourceBars(ClientSim *cs) {
       BYTE fulls[4] = { fullShells, fullMines, fullArmour, fullTrees };
 
       for (int i = 0; i < 4; i++) {
-        float bx = winPos.x + winPad + i * (barW + barGap);
+        float bx = winPos.x + stockBarCentre(lay, w, i, 4) - barW * 0.5f;
         dl->AddRectFilled(ImVec2(bx, barTop), ImVec2(bx + barW, barTop + maxBarH), bgColor);
         float fillH = fulls[i] ? (vals[i] / (float)fulls[i]) * maxBarH : 0.0f;
         if (fillH > maxBarH) fillH = maxBarH;
         dl->AddRectFilled(ImVec2(bx, barTop + maxBarH - fillH),
                            ImVec2(bx + barW, barTop + maxBarH), barColor);
+        stockIcon(dl, i, bx + barW * 0.5f, winPos.y + lay.iconTop, lay, white);
       }
       scaleDrawListAlphaSince(dl, vtxStart, s_statusAlpha.piece);
     }
@@ -1631,8 +1702,6 @@ static void renderResourceBars(ClientSim *cs) {
     float w = s_cfg.topBtnSize;  /* same width as top bar buttons */
     float h = s_cfg.barsH - 16.0f;  /* slightly shorter, only 3 bars */
     float winPad = 4.0f;
-    float barW = 12.0f;
-    float barGap = (w - winPad * 2 - barW * 3) / 2.0f;
 
     ImGui::SetNextWindowPos(ImVec2(x, y));
     ImGui::SetNextWindowSize(ImVec2(w, h));
@@ -1646,8 +1715,14 @@ static void renderResourceBars(ClientSim *cs) {
       int vtxStart = dl->VtxBuffer.Size;
       ImVec2 winPos = ImGui::GetWindowPos();
 
-      float maxBarH = h - winPad * 2;
-      float barTop = winPos.y + winPad;
+      /* 3 vertical bars: S M A, each over its icon, all faint while the
+         tank is on no base. */
+      StockBoxLayout lay = stockBoxLayout(w, h, winPad);
+      float maxBarH = lay.barH;
+      float barW = lay.barW;
+      float barTop = winPos.y + lay.barTop;
+      ImU32 tint = hasBase ? IM_COL32(255, 255, 255, 255)
+                           : IM_COL32(255, 255, 255, 90);
       ImU32 barColor = hasBase ? IM_COL32(0, 200, 0, 200) : IM_COL32(60, 60, 60, 120);
       ImU32 bgColor = IM_COL32(40, 40, 40, 180);
 
@@ -1659,12 +1734,13 @@ static void renderResourceBars(ClientSim *cs) {
       BYTE fulls[3] = { fullShells, fullMines, fullArmour };
 
       for (int i = 0; i < 3; i++) {
-        float bx = winPos.x + winPad + i * (barW + barGap);
+        float bx = winPos.x + stockBarCentre(lay, w, i, 3) - barW * 0.5f;
         dl->AddRectFilled(ImVec2(bx, barTop), ImVec2(bx + barW, barTop + maxBarH), bgColor);
         float fillH = (hasBase && fulls[i]) ? (vals[i] / (float)fulls[i]) * maxBarH : 0.0f;
         if (fillH > maxBarH) fillH = maxBarH;
         dl->AddRectFilled(ImVec2(bx, barTop + maxBarH - fillH),
                            ImVec2(bx + barW, barTop + maxBarH), barColor);
+        stockIcon(dl, i, bx + barW * 0.5f, winPos.y + lay.iconTop, lay, tint);
       }
       scaleDrawListAlphaSince(dl, vtxStart, s_statusAlpha.piece);
     }
