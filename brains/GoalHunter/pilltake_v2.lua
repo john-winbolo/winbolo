@@ -468,6 +468,9 @@ end
 -- Build the result in the shape shield.scan returns, so build_walls, charge
 -- and engage read it unchanged. world_blockers(rec) gives the existing
 -- blocker squares the plan relies on.
+-- shadow.lua blocker kinds -> attack_shield's names.
+local KIND_V1 = { ally_pill = "friendly_pill", wall = "wall_full", half_wall = "wall_half" }
+
 function M.to_scan_result(res, pill, standoff, adj_friendly_fn)
   local b = res and res.best
   if not b then return nil end
@@ -478,13 +481,14 @@ function M.to_scan_result(res, pill, standoff, adj_friendly_fn)
         local bl = r.block[k]
         if bl.kind ~= "planned" and not seen[bl.sq] then
           seen[bl.sq] = true
-          act[#act + 1] = { mx = bl.sq % 256, my = floor(bl.sq / 256), kind = bl.kind }
+          act[#act + 1] = { mx = bl.sq % 256, my = floor(bl.sq / 256), kind = KIND_V1[bl.kind] or bl.kind }
         end
       end
     end
   end
   for _, s in ipairs(b.plan) do
-    pot[#pot + 1] = { mx = s.mx, my = s.my, adj_friendly = adj_friendly_fn and adj_friendly_fn(s.mx, s.my) or nil }
+    pot[#pot + 1] = { mx = s.mx, my = s.my, kind = "empty", pt2_kind = s.kind,
+                      adj_friendly = adj_friendly_fn and adj_friendly_fn(s.mx, s.my) or nil }
   end
   local chain_ids = {}
   for i, p in ipairs(b.chain) do chain_ids[i] = M.pill_name(res.inp, p) end

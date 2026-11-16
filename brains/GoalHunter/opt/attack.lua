@@ -6261,6 +6261,15 @@ local function update_attack_substate_body(goal, state, world, info)
         end
       end
       goal._shield_scan_pending = nil
+      -- Pill take v2 (pt2_attack.lua). Master off: in a debug run, v2 runs on
+      -- the same inputs and logs PT2_CMP; sscan comes back unchanged. Master
+      -- on (C.PILLTAKE_V2_EVALUATOR): v2's safe plan replaces v1's.
+      if C.PILLTAKE_V2_EVALUATOR or (BRAIN_DEBUG_MODE and C.PT2_SIDE_BY_SIDE_LOG) then
+        sscan = require("pt2_attack").after_scan({
+          state = state, goal = goal, info = info, world = world, pill = pill,
+          sscan = sscan, no_builder = no_builder, npb = _num_pill_blockers,
+          radius = scan_radius, now = now })
+      end
       if sscan and (not sscan.best or (sscan.best.score or 0) <= 0) then
         goal._is_ppt = false
         sscan = nil
