@@ -1347,7 +1347,12 @@ SDL_Texture *sdl3DrawGetManStatusTexture(bool *ready) {
 }
 
 bool sdl3DrawGetManStatusState(bool *isDead, TURNTYPE *angle) {
-  if (!gManStatusReady) return false;
+  /* Whether there is a status to show, not whether the classic screen's
+     texture of it has been drawn: the touch layout draws the shape itself
+     from this state and never builds that texture (sdl3RenderStatusPanels
+     returns early there), so a test on the texture left its indicator
+     blank. */
+  if (!gManStatusValid) return false;
   if (isDead) *isDead = gManStatusDead;
   if (angle)  *angle  = gManStatusAngle;
   return true;
