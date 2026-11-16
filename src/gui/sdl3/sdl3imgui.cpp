@@ -7376,10 +7376,16 @@ static void renderOneGameVoteWidget(ClientSim *cs, uint8_t kind,
      * this widget appears, so it came up underneath them. There it is left
      * to be created in front, and the build buttons' window is the one kept
      * from coming forward when tapped (renderBuildSelectBar). */
+    /* No scroll bar: the widget sizes itself to what is in it, so there is
+     * never anything to scroll to. On the phone it came out a few units
+     * short of its contents and showed a bar down its right side, over the
+     * end of the "Passing in" line. */
     ImGuiWindowFlags voteFlags = ImGuiWindowFlags_AlwaysAutoResize |
                                  ImGuiWindowFlags_NoCollapse |
                                  ImGuiWindowFlags_NoSavedSettings |
                                  ImGuiWindowFlags_NoFocusOnAppearing |
+                                 ImGuiWindowFlags_NoScrollbar |
+                                 ImGuiWindowFlags_NoScrollWithMouse |
                                  ImGuiWindowFlags_NoNavInputs;
     if (!uiModeIsTablet()) voteFlags |= ImGuiWindowFlags_NoBringToFrontOnFocus;
 
