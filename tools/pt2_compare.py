@@ -3,7 +3,8 @@
 
 The GoalHunter brain writes one PT2_CMP line each time v1's shield scan runs
 on a debug run (constants PT2_SIDE_BY_SIDE_LOG). This script reads one or more
-print2.log files, or directories that hold them, and prints:
+print2 logs (.log, or .log.gz as -brain-debug sessions save them), or
+directories that hold them, and prints:
 
   * how many takes were compared, and the agreement rate (diff=same);
   * a count of each kind of difference (so, chain, none_v1, none_v2, none_both);
@@ -15,6 +16,7 @@ Usage:
 
 --rows also prints each compared line in a short table.
 """
+import gzip
 import os
 import re
 import sys
@@ -28,7 +30,7 @@ def find_logs(paths):
         if os.path.isdir(p):
             for root, _dirs, files in os.walk(p):
                 for f in files:
-                    if f.startswith("print2") and f.endswith(".log"):
+                    if f.startswith("print2") and (f.endswith(".log") or f.endswith(".log.gz")):
                         yield os.path.join(root, f)
         else:
             yield p
@@ -65,7 +67,8 @@ def main(argv):
         return 2
     recs = []
     for f in find_logs(paths):
-        with open(f, encoding="utf-8", errors="replace") as fh:
+        opener = gzip.open if f.endswith(".gz") else open
+        with opener(f, "rt", encoding="utf-8", errors="replace") as fh:
             for line in fh:
                 r = parse_line(line)
                 if r:

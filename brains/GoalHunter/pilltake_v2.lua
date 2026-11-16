@@ -75,51 +75,75 @@ end
 -- Evaluate point (px, py) (world units) for target A with planned blockers
 -- `extra` ({[sq] = shots}) and, when aim_fixed is set, only that aim.
 -- Returns a record (see fields at the end) or nil, why.
-local function eval_point(ctx, px, py, extra, aim_fixed)
+--
+-- prev / new_sq (optional, for speed only): prev is the record of the SAME
+-- point and aim, and extra is prev's blockers plus one new square new_sq
+-- that is not on the aim's shot lane. Then the pills in range, the aim and
+-- its lane cannot change, and a ray changes only when it crosses new_sq, so
+-- those parts are taken from prev. The result is the same as a full call.
+local function eval_point(ctx, px, py, extra, aim_fixed, prev, new_sq)
   local inp, A, env = ctx.inp, ctx.A, ctx.env
-  local pr = inp.pill_range + inp.range_margin
-  local pr2 = pr * pr
-  -- T(P)
-  local T = {}
-  local hasA = false
-  for _, p in ipairs(ctx.hostile) do
-    local cx, cy = pill_centre(p)
-    local dx, dy = cx - px, cy - py
-    if dx * dx + dy * dy <= pr2 then
-      T[#T + 1] = p
-      if p == A then hasA = true end
+  local T, aim_idx, lane, clear, lanes
+  if prev then
+    T, aim_idx, lane, clear, lanes = prev.T, prev.aim_idx, prev.lane, prev.clear_aims, prev.lanes
+    env.omx, env.omy = floor(px / 256), floor(py / 256)
+  else
+    local pr = inp.pill_range + inp.range_margin
+    local pr2 = pr * pr
+    -- T(P)
+    T = {}
+    local hasA = false
+    for _, p in ipairs(ctx.hostile) do
+      local cx, cy = pill_centre(p)
+      local dx, dy = cx - px, cy - py
+      if dx * dx + dy * dy <= pr2 then
+        T[#T + 1] = p
+        if p == A then hasA = true end
+      end
     end
-  end
-  if not hasA then return nil, "A_OUT_OF_RANGE" end
-  -- the tank's square, for the base rule of our own shot
-  env.omx, env.omy = floor(px / 256), floor(py / 256)
-  -- OUTGOING: the first clear aim (or the fixed one)
-  local amx, amy = A.mx, A.my
-  local aim_idx, lane = nil, nil
-  local a1, a2 = 1, #M.AIMS
-  if aim_fixed then a1, a2 = aim_fixed, aim_fixed end
-  local why_out = "short"
-  -- every clear aim: the blocker search tries each one, since a wall on
-  -- one aim's lane can be fine for another (v1 scores all five)
-  local clear = {}
-  for ai = a1, a2 do
-    local off = M.AIMS[ai]
-    local ok, why, ln = SH.tank_shot(env, px, py, amx * 256 + off[1], amy * 256 + off[2],
-                                     amx, amy, extra)
-    if ok then
-      clear[#clear + 1] = ai
-      if not aim_idx then aim_idx, lane = ai, ln end
-    else
-      why_out = why
+    if not hasA then return nil, "A_OUT_OF_RANGE" end
+    -- the tank's square, for the base rule of our own shot
+    env.omx, env.omy = floor(px / 256), floor(py / 256)
+    -- OUTGOING: the first clear aim (or the fixed one). The other clear
+    -- aims are found only when the blocker search asks (clear_aims_of).
+    local amx, amy = A.mx, A.my
+    local a1, a2 = 1, #M.AIMS
+    if aim_fixed then a1, a2 = aim_fixed, aim_fixed end
+    local why_out = "short"
+    for ai = a1, a2 do
+      local off = M.AIMS[ai]
+      local ok, why, ln = SH.tank_shot(env, px, py, amx * 256 + off[1], amy * 256 + off[2],
+                                       amx, amy, extra)
+      if ok then
+        aim_idx, lane = ai, ln
+        break
+      else
+        why_out = why
+      end
     end
+    if not aim_idx then return nil, "OUTGOING:" .. tostring(why_out) end
+    clear = { aim_idx }
+    lanes = { [aim_idx] = lane }
   end
-  if not aim_idx then return nil, "OUTGOING:" .. tostring(why_out) end
   -- rays
   local rays = {}
   for i, X in ipairs(T) do
-    local sx, sy = pill_centre(X)
-    rays[i] = SH.cast(env, sx, sy, px, py, SH.PILL_FIRE_LEN, extra)
-    rays[i].X = X
+    local pr_ray = prev and prev.rays[i]
+    local same = false
+    if pr_ray then
+      same = true
+      local sql = pr_ray.sq
+      for k = 1, pr_ray.n_sq do
+        if sql[k] == new_sq then same = false; break end
+      end
+    end
+    if same then
+      rays[i] = pr_ray
+    else
+      local sx, sy = pill_centre(X)
+      rays[i] = SH.cast(env, sx, sy, px, py, SH.PILL_FIRE_LEN, extra)
+      rays[i].X = X
+    end
   end
   -- chain: follow links from A
   local chain = { A }
@@ -171,7 +195,8 @@ local function eval_point(ctx, px, py, extra, aim_fixed)
   local max_ok = #chain <= inp.max_chain
   return {
     px = px, py = py, T = T, rays = rays, chain = chain, in_chain = in_chain,
-    chain_mode = chain_mode, aim_idx = aim_idx, lane = lane, clear_aims = clear,
+    chain_mode = chain_mode, aim_idx = aim_idx, lane = lane, clear_aims = clear, lanes = lanes,
+    aims_done = aim_fixed or (prev and prev.aims_done) or aim_idx, extra_in = extra,
     covered = covered_all, uncovered = uncovered,
     safe = covered_all and max_ok, max_ok = max_ok,
     kills = (chain_mode and max_ok) and #chain or 1,
@@ -179,6 +204,38 @@ local function eval_point(ctx, px, py, extra, aim_fixed)
   }
 end
 M._eval_point = eval_point
+
+-- Every clear aim of a point found with aim_fixed unset: the first one
+-- eval_point found, then the rest. The blocker search tries each one,
+-- since a wall on one aim's lane can be fine for another (v1 scores all
+-- five).
+local function clear_aims_of(ctx, rec)
+  if rec.aims_done < #M.AIMS then
+    local env, A = ctx.env, ctx.A
+    env.omx, env.omy = floor(rec.px / 256), floor(rec.py / 256)
+    for ai = rec.aims_done + 1, #M.AIMS do
+      local off = M.AIMS[ai]
+      local ok, _, ln = SH.tank_shot(env, rec.px, rec.py, A.mx * 256 + off[1], A.my * 256 + off[2],
+                                     A.mx, A.my, rec.extra_in)
+      if ok then
+        rec.clear_aims[#rec.clear_aims + 1] = ai
+        rec.lanes[ai] = ln
+      end
+    end
+    rec.aims_done = #M.AIMS
+  end
+  return rec.clear_aims
+end
+
+-- The record of the same point with another clear aim: only the aim and
+-- its lane differ (the rays do not depend on our aim).
+local function with_aim(rec, ai)
+  local o = {}
+  for k, v in pairs(rec) do o[k] = v end
+  o.aim_idx, o.lane = ai, rec.lanes[ai]
+  o.clear_aims, o.lanes, o.aims_done = { ai }, { [ai] = rec.lanes[ai] }, ai
+  return o
+end
 
 -- ── Blocker search ────────────────────────────────────────────────────────
 -- Squares on ray r where a planned blocker may go, nearest the pill first.
@@ -253,7 +310,7 @@ local function search_one(ctx, rec)
       shots, kind = inp.wall_shots, "wall"
     end
     extra[picked] = shots
-    local nrec = eval_point(ctx, rec.px, rec.py, extra, rec.aim_idx)
+    local nrec = eval_point(ctx, rec.px, rec.py, extra, rec.aim_idx, cur, picked)
     -- the plan must keep our aim and the chain as they were
     if not nrec or nrec.chain[2] ~= A_link0 then
       extra[picked] = nil
@@ -273,11 +330,10 @@ end
 -- then fewer squares to build, then more cover on A's ray.
 local function search_blockers(ctx, rec)
   local best = nil
-  for _, ai in ipairs(rec.clear_aims) do
+  for _, ai in ipairs(clear_aims_of(ctx, rec)) do
     local base = rec
     if ai ~= rec.aim_idx then
-      base = eval_point(ctx, rec.px, rec.py, nil, ai)
-      if base then base.omx, base.omy = rec.omx, rec.omy end
+      base = with_aim(rec, ai)
     end
     if base then
       local r = search_one(ctx, base)
