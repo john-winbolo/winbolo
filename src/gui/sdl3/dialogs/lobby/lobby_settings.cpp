@@ -1429,7 +1429,11 @@ static void lobbyRenderServerBotSlotsRow(ClientSim *cs, bool mayEdit) {
                     sizeof(tip));
     }
 
-    const char *label = langGetText(STR_DLGLOBBY_SERVER_BOT_SLOTS);
+    /* "Server bot slots:", with the colon added here as the Visibility
+     * row does, so the lang string stays the bare name. */
+    char label[96];
+    SDL_snprintf(label, sizeof(label), "%s:",
+                 langGetText(STR_DLGLOBBY_SERVER_BOT_SLOTS));
     float comboW = ImMax(ImGui::CalcTextSize("00").x,
                          ImGui::CalcTextSize(preview).x)
                  + st.FramePadding.x * 2.0f + ImGui::GetFrameHeight();
