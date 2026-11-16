@@ -196,6 +196,9 @@ bot capacity.
   slots at N: the row is read-only for every player (mouse-over "Set by
   -botcapacity on the server"), and the server refuses a change with
   `CMD_REJECT_LOCKED`.
+- `-maxbots N` is another name for `-botcapacity N`: the same setting and
+  the same rules. It is not a limit on the bots in the game. When both are
+  given, `-botcapacity` wins and the server prints a note.
 - The lobby's Server bot slots (Server Settings, 0..16, `LST_SERVER_BOT_SLOTS`)
   sets how many bots the server runs in its own process: its slots in the
   bot placement and its part of the Add Bot limit. The default is the
