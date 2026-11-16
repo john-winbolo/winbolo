@@ -729,33 +729,18 @@ static void drawInsetRect(ImDrawList *dl, float x, float y, float w, float h,
                     ImVec2(x + w - border, y + h - border), colFill);
 }
 
-/* Draw a raised (outset) beveled rectangle — light top/left, dark bottom/right,
-   medium gray fill inside. */
-static void drawRaisedRect(ImDrawList *dl, float x, float y, float w, float h,
-                           float border, ImU32 colLight, ImU32 colDark, ImU32 colFill) {
-  /* Light edge on top and left */
-  dl->AddRectFilled(ImVec2(x, y), ImVec2(x + w, y + border), colLight);             /* top */
-  dl->AddRectFilled(ImVec2(x, y + border), ImVec2(x + border, y + h), colLight);    /* left */
-  /* Dark edge on bottom and right */
-  dl->AddRectFilled(ImVec2(x, y + h - border), ImVec2(x + w, y + h), colDark);      /* bottom */
-  dl->AddRectFilled(ImVec2(x + w - border, y), ImVec2(x + w, y + h - border), colDark); /* right */
-  /* Fill */
-  dl->AddRectFilled(ImVec2(x + border, y + border),
-                    ImVec2(x + w - border, y + h - border), colFill);
-}
-
 static void renderTabletBackground(void) {
-  /* Panel borders for the gutter UI elements.  The chrome gray fill and
-     viewport bevel are drawn earlier via SDL in sdl3DrawMainScreen()
-     (sdl3draw.c) so they appear behind the game tiles.  These borders
-     use ImGui's BackgroundDrawList which renders behind ImGui windows
-     but on top of SDL content — correct for the gutter panels which
-     are all ImGui-drawn. */
+  /* The frames in the gutters.  The chrome gray fill and the game view's
+     frame are drawn earlier via SDL (tabletChromeDraw in sdl3draw.c) so they
+     appear behind the game tiles.  These use ImGui's BackgroundDrawList,
+     which renders behind ImGui windows but on top of SDL content: the right
+     gutter's controls are all ImGui-drawn, and the left gutter's frames are
+     outlines round the grids SDL drew. */
   const TabletLayoutConfig &c = s_cfg;
   float ps = (float)c.screenH / 480.0f;
   if (ps < 0.7f) ps = 0.7f;
-  /* The frames in the full screen map, laid over the map, and the
-     newswire's: thin, 2px at reference 480p. */
+  /* The frames in the full screen map, laid over the map: thin, 2px at
+     reference 480p. */
   float border = 2.0f * ps;
   /* The frames on the gray chrome: as wide as the frame round the game view,
      which is the background art's bevel at the view's zoom (sdl3draw.c). */
@@ -770,18 +755,17 @@ static void renderTabletBackground(void) {
   ImDrawList *dl = ImGui::GetBackgroundDrawList();
 
   /* In full screen the panels lie over the map. A frame there is the bevel
-     alone, at its panel's piece alpha: the backing under each panel is its
-     own window's background, at the backing alpha, and a black fill here as
-     well would darken the map through it twice. The button groups (top row,
-     fire and mine, gunsight) and the newswire get no frame, since their
-     buttons and the newswire's window carry their own backing. */
+     alone, at its panel's piece alpha, with nothing filled inside it: the
+     backing under each panel is its own window's background, at the backing
+     alpha, and a black fill here as well would darken the map through it
+     twice. The button groups (top row, fire and mine, gunsight) get no frame
+     there, since their buttons carry their own backing. Outside full screen
+     the piece alphas are 1. */
   ImU32 colNone = IM_COL32(0, 0, 0, 0);
   ImU32 statusLight = scaleAlpha(colLight, s_statusAlpha.piece);
   ImU32 statusDark  = scaleAlpha(colDark, s_statusAlpha.piece);
-  ImU32 statusFill  = s_fullScreen ? colNone : colBlack;
   ImU32 buildLight  = scaleAlpha(colLight, s_buildAlpha.piece);
   ImU32 buildDark   = scaleAlpha(colDark, s_buildAlpha.piece);
-  ImU32 buildFill   = s_fullScreen ? colNone : colBlack;
 
   /* --- Left gutter: status grids (tanks, pills, bases), kills and deaths --- */
   if (c.showStatusGrids) {
@@ -866,13 +850,13 @@ static void renderTabletBackground(void) {
     drawInsetRect(dl,
       c.tankBarsX - pad - border, c.tankBarsY - pad - border,
       c.topBtnSize + (pad + border) * 2, c.barsH + (pad + border) * 2,
-      border, statusLight, statusDark, statusFill);
+      border, statusLight, statusDark, colNone);
 
     float baseH = c.barsH - 16.0f;
     drawInsetRect(dl,
       c.baseBarsX - pad - border, c.baseBarsY - pad - border,
       c.topBtnSize + (pad + border) * 2, baseH + (pad + border) * 2,
-      border, statusLight, statusDark, statusFill);
+      border, statusLight, statusDark, colNone);
   }
 
   /* --- Right gutter: build bar area (full screen only) --- */
@@ -900,7 +884,7 @@ static void renderTabletBackground(void) {
       c.buildBarX - pad - border, c.buildBarY - pad - border,
       gridW + winPadX * 2 + (pad + border) * 2,
       gridH + winPadY * 2 + (pad + border) * 2,
-      border, buildLight, buildDark, buildFill);
+      border, buildLight, buildDark, colNone);
   }
 
   /* The newswire has no frame here: the bar along its top is drawn with the
