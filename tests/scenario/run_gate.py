@@ -129,6 +129,12 @@ end
 
 PER_TEST_TIMEOUT_S = 10 * 60
 
+# Where each arena's round log (.wbv) goes, one folder per arena, or None for
+# no log. Set by --replay-dir, or by WINBOLO_ARENA_LOG_DIR when that is left
+# out. The server is given the folder, never a file name: -log <file> writes
+# over the same file each round, -log <dir> names a new file per round.
+REPLAY_DIR = None
+
 # A script= arena is one chunk, and Lua allows 200 locals in one. The gate
 # stops above this many, a few short of the cap, so the message comes before
 # the loader error does.
@@ -418,6 +424,12 @@ class Job(object):
         for st in (o.get("setting") or "").split(","):
             if st.strip():
                 cmd += ["-setting", st.strip()]
+        # A round log for WbvRender. The folder has to be there before the
+        # server starts: a -log path that is not a folder is read as a file.
+        if REPLAY_DIR:
+            d = os.path.join(REPLAY_DIR, self.name)
+            os.makedirs(d, exist_ok=True)
+            cmd += ["-log", d]
         return cmd
 
     def start(self, ds, build_dir):
@@ -511,7 +523,14 @@ def main():
     ap.add_argument("--build", default="build-own")
     ap.add_argument("--run-skipped", action="store_true",
                     help="run the arenas marked skip as well")
+    ap.add_argument("--replay-dir",
+                    default=os.environ.get("WINBOLO_ARENA_LOG_DIR") or None,
+                    help="write each arena's round log (.wbv) into "
+                         "<dir>/<arena>/ (default: $WINBOLO_ARENA_LOG_DIR)")
     args = ap.parse_args()
+    global REPLAY_DIR
+    if args.replay_dir:
+        REPLAY_DIR = os.path.abspath(args.replay_dir)
 
     build_dir = args.build
     if not os.path.isabs(build_dir):
