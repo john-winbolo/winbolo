@@ -6,7 +6,9 @@
 --
 --   * master PILLTAKE_V2_EVALUATOR off, debug run, PT2_SIDE_BY_SIDE_LOG on:
 --     v2 runs on the same inputs and logs one PT2_CMP line. v1's result is
---     handed back unchanged; nothing in goal, state or world is written.
+--     handed back unchanged; nothing in goal, state or world is written
+--     (except goal._pt2_viz while a pt2_* BrainTest layer is on, which only
+--     the drawing reads).
 --   * master on, the take is a protected one (goal._is_ppt) and v2 found a
 --     SAFE point: v2's result replaces v1's, in the shield.scan shape, so the
 --     standoff adoption, build_walls and the charge read it as they read
@@ -22,6 +24,7 @@ local PC     = require("pill_cover")
 local V2     = require("pilltake_v2")
 local shield = require("attack_shield")
 local print2 = require("print2")
+local PV     = require("pt2_viz")
 
 local M = {}
 
@@ -133,7 +136,7 @@ end
 -- Agreement test for the log (tolerance: proposal, awaiting Andrew's value).
 M.CMP_TOL_WU = 64
 
-local function cmp_line(now, pill, inp, res, v1, cost_us, drive)
+local function cmp_line(now, pill, inp, res, v1, cost_us, drive, do_print)
   local b = res and res.best
   local v2ok = b and b.safe
   local diff, d_wu = "same", nil
@@ -158,6 +161,26 @@ local function cmp_line(now, pill, inp, res, v1, cost_us, drive)
     for _, s in ipairs(b.plan or {}) do pl[#pl + 1] = string.format("(%d,%d)%s", s.mx, s.my, s.kind == "pill" and "P" or "W") end
     if #pl > 0 then plan = table.concat(pl, " ") end
   end
+  local line = string.format(
+    "PT2_CMP t=%d pill=(%d,%d) hp=%d | v1: so=%s deg=%s aim=%s act=%s pot=%s cover=%s"
+    .. " | v2: so=%s deg=%s aim=%s chain=%s mode=%s kills=%s need=%s have=%s safe=%s lee=%s plan=%s"
+    .. " | diff=%s d_wu=%s why=%s drive=%s cost_us=%d evals=%d",
+    now, pill.mx, pill.my, pill.health or 0,
+    v1 and string.format("(%.2f,%.2f)", v1.cx, v1.cy) or "-",
+    v1 and string.format("%.1f", v1.deg or 0) or "-",
+    v1 and tostring(v1.aim) or "-",
+    v1 and sq_list(v1.act) or "-", v1 and sq_list(v1.pot) or "-",
+    v1 and tostring(v1.cover) or "-",
+    b and string.format("(%.2f,%.2f)", b.cx, b.cy) or "-",
+    b and string.format("%.1f", b.deg) or "-",
+    b and tostring(b.aim_idx) or "-",
+    chain, b and (b.chain_mode and "HOLD" or "SINGLE") or "-",
+    b and tostring(b.kills) or "-", b and tostring(b.need) or "-", b and tostring(b.have) or "-",
+    tostring(v2ok and true or false), b and tostring(b.leeway) or "-", plan,
+    diff, d_wu and string.format("%.0f", d_wu) or "-", why,
+    drive and "v2" or "v1", cost_us, res and res.n_eval or 0)
+  if do_print then print2(line) end
+  return line
 end
 
 -- Called with v1's sscan; returns the sscan to use. See the file header.
@@ -171,9 +194,11 @@ function M.after_scan(a)
   local t0 = clock_us()
   -- A v2 bug must never cost the take: v1's result stands. A budget kill
   -- is passed on, as attack.lua does for shield.scan.
+  local viz_on = BRAIN_DEBUG_MODE and PV.any_on()
   local ok, inp, res = pcall(function()
     local i = M.build_inp(a.state, goal, a.info, a.world, pill, a.no_builder, a.npb, a.radius, a.now)
     if not i then return nil, nil end
+    if viz_on then i.keep_all = true end
     return i, V2.evaluate(i)
   end)
   if not ok then
@@ -185,9 +210,10 @@ function M.after_scan(a)
   if not inp or not res then return a.sscan end
   local cost = clock_us() - t0
   local drive = master and goal._is_ppt and res.best and res.best.safe
-  if log then
-    cmp_line(a.now, pill, inp, res, v1_view(a.world, a.sscan, a.npb), cost, drive)
-  end
+  local v1 = (log or viz_on) and v1_view(a.world, a.sscan, a.npb) or nil
+  local line = (log or viz_on) and cmp_line(a.now, pill, inp, res, v1, cost, drive, log) or nil
+  -- BrainTest layers: goal._pt2_viz is read only by pt2_viz.draw.
+  if viz_on then PV.capture(goal, inp, res, v1, line, a.now) end
   if not drive then
     if master then goal._pt2 = nil end
     return a.sscan

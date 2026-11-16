@@ -9096,6 +9096,7 @@ local function update_attack_substate_body(goal, state, world, info)
   -- a different pill's candidate cluster — a take it's no longer on.
   -- (Followed-tank filtering is already handled by the host binding
   -- overlay_* only in the followed bot, so this is purely the pill guard.)
+  -- Pill take v2 layers (pt2_viz.lua): drawn from v2's kept result.
   local _ssc = goal._shield_scan
   if _ssc and _ssc.pill and _ssc.pill.mx == goal.mx and _ssc.pill.my == goal.my then
     shield.draw_overlay(_ssc, now)

@@ -9,6 +9,7 @@
 --   * master on, protected take: v2's plan in the shield.scan shape.
 --   * master on, not a protected take: v1 stays.
 --   * an error inside v2: v1 stays.
+--   * the BrainTest layers: kept data, the shadow test, a shape per layer.
 --
 -- Run from this directory with the LuaJIT built beside the game:
 --   ../../build/_deps/luajit_src-src/src/luajit.exe test_pt2_attack.lua
@@ -192,6 +193,68 @@ do
   local out = call(goal, world, pill, v1)
   V2.evaluate = real
   check("same sscan table", out == v1, out)
+end
+
+print("== BrainTest layers (debug, every pt2 layer on)")
+do
+  local viz = require("viz")
+  local PV  = require("pt2_viz")
+  -- host stand-ins: layer index per id, toggles on, shapes counted per layer
+  local idx, by_idx = {}, {}
+  for i, id in ipairs(PV.LAYERS) do idx[id] = i; by_idx[i] = id; _G["_BT_VIZ_" .. id:upper()] = true end
+  _G._BT_VIZ_IDS = idx
+  local shapes = {}
+  -- 255 = an id the host did not list: viz.lua's own shape labels (label_overlays)
+  local function count(vi) local id = by_idx[vi] or (vi == 255 and "label") or "other"; shapes[id] = (shapes[id] or 0) + 1 end
+  _G.overlay_line   = function(...) count(select(9, ...)) end
+  _G.overlay_rect   = function(...) count(select(11, ...)) end
+  _G.overlay_circle = function(...) count(select(8, ...)) end
+  _G.overlay_text   = function(...) count(select(10, ...)) end
+  local details = {}
+  _G.overlay_detail = function(id) details[#details + 1] = id end
+  _G.overlay_detail_text = function() end
+  C.PILLTAKE_V2_EVALUATOR = false; _G.BRAIN_DEBUG_MODE = true; _G._PRINT2_ENABLED = true
+  local world, pill = make_world()
+  local goal = { scan_spots = spots(), _is_ppt = true, mx = PMX, my = PMY }
+  local v1 = v1_scan(world, pill)
+  local out = call(goal, world, pill, v1)
+  check("viz on: still the same sscan", out == v1, out)
+  check("goal._pt2 not set", goal._pt2 == nil, goal._pt2)
+  local cap = goal._pt2_viz
+  check("capture kept", cap ~= nil and cap.best ~= nil, cap)
+  check("candidates kept (keep_all)", cap and cap.res.all and #cap.res.all > 100, cap and cap.res.all and #cap.res.all)
+  check("shadow cells computed", cap and cap.cells and #cap.cells[1] > 0, cap and cap.cells and #cap.cells[1])
+  -- the shadow test is the planner's: a cell next to the best point (which
+  -- is covered by its plan) must be in shadow
+  if cap and cap.cells then
+    local b = cap.best
+    local cw = PV.CELL_WU
+    local k = math.floor(b.px / cw) * 65536 + math.floor(b.py / cw)
+    local found = false
+    for _, c in ipairs(cap.cells[1]) do if c == k then found = true end end
+    check("best point's cell is in the target's shadow", found, k)
+    -- and a cell straight south of the pill with no walls is lit
+    local env = cap.inp.env
+    local sx, sy = PMX * 256 + 128, PMY * 256 + 128
+    local SH = require("shadow")
+    local r = SH.cast(env, sx, sy, sx + 20, sy + 7 * 256, SH.PILL_FIRE_LEN, nil)
+    check("no-wall ray reaches the tank (lit)", r.hit == "tank" and r.cover == 0, r.hit)
+  end
+  PV.draw(goal)
+  for _, id in ipairs(PV.LAYERS) do
+    check("layer " .. id .. " drew shapes", (shapes[id] or 0) > 0, shapes[id])
+  end
+  check("no shape tagged with another layer", shapes.other == nil, shapes.other)
+  check("candidate detail entries", #details > 100, #details)
+  -- another pill: nothing drawn
+  shapes = {}
+  goal.mx = PMX + 5
+  PV.draw(goal)
+  check("other target: nothing drawn", next(shapes) == nil, next(shapes))
+  for _, id in ipairs(PV.LAYERS) do _G["_BT_VIZ_" .. id:upper()] = nil end
+  _G.overlay_line, _G.overlay_rect, _G.overlay_circle, _G.overlay_text = nil, nil, nil, nil
+  _G.overlay_detail, _G.overlay_detail_text, _G._BT_VIZ_IDS = nil, nil, nil
+  _G.BRAIN_DEBUG_MODE = false
 end
 
 C.PILLTAKE_V2_EVALUATOR = false

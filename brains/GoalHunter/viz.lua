@@ -211,6 +211,33 @@ M.IDS = {
   shield_blocker_union   = { short = "Shield: blockers union (lua version)",
                              long  = "Union across all candidate standoff angles. BLACK = every tile a pillbox bullet crosses (raw, NO gating — was even considered, incl. tiles our own shot crosses). On top: green=actual wall/pill, yellow=potential buildable, grey=LGM-unreachable (these passed every gate). So black-only = on a shot path but REJECTED (too close/behind/unbuildable); no box = never considered. ON forces the slow lua version of shield.scan; OFF uses the fast c version. Default OFF so unattended -braindebug hosts keep the c version.",
                              default_on = false },
+  -- Pill take v2 (pt2_viz.lua). Drawn from v2's own result, kept once per
+  -- evaluation; v2 runs in debug runs with PT2_SIDE_BY_SIDE_LOG, or with the
+  -- master PILLTAKE_V2_EVALUATOR on.
+  pt2_light      = { short = "PT2: pill range",
+                     long  = "Each live pill v2 knows: a circle at its firing range (2048 wu) and a faint circle at its shell reach (start step + 64 steps x 32 wu = 2208 wu). Red hostile, green allied, grey neutral.",
+                     default_on = false },
+  pt2_shadow     = { short = "PT2: shadows",
+                     long  = "64 wu cells over the ring band around the target (inner ring - 1 to ring + 1). A cell is filled in a pill's colour when that pill's shell aimed at the cell centre stops short, or meets cover >= that ray's bar, with v2's planned blockers in place (the same SH.cast test v2 makes). Dark cells are in every pill's shadow. Computed once per evaluation, only while this layer is on.",
+                     default_on = false },
+  pt2_rays       = { short = "PT2: pill shell rays",
+                     long  = "From each pill in range of v2's best point: the engine shell walk to the tank. Red = reaches the tank with cover under the bar, green = covered (ends at the first blocker), grey = dies before the tank. Orange dot = the chain link (a hostile pill the shell passes). Label d=cover/bar.",
+                     default_on = false },
+  pt2_chain      = { short = "PT2: chain",
+                     long  = "v2's chain: number on each chain pill (1 = target), an arrow from each pill to the next link, and HOLD/SINGLE, kills, need and have under the target.",
+                     default_on = false },
+  pt2_candidates = { short = "PT2: candidates",
+                     long  = "Every ring point v2 tried: green safe, yellow not safe, red rejected (no clear shot, target out of range). The best point is the white dot. Click a box (D inspector) for its tier key (safe, kills, blk, capped leeway) and score = base + builds x cost.",
+                     default_on = false },
+  pt2_leeway     = { short = "PT2: leeway",
+                     long  = "The 8 neighbour points (32 wu out) of v2's best point: green when the point is still covered with the same chain, red with the failing test name.",
+                     default_on = false },
+  pt2_blocker    = { short = "PT2: blockers",
+                     long  = "v2's cover for the best point: existing walls (blue) and allied pills (green) as filled squares, squares to build as outlines with build order; a pill drop slot is marked P.",
+                     default_on = false },
+  pt2_compare    = { short = "PT2: v1 vs v2",
+                     long  = "Side by side: v1's standoff (magenta ring) and its blockers (magenta outlines); v2's standoff (cyan dot), its builds and chain links (cyan); a line between the two with the distance in wu and the diff word; why= under v1's point is v2's verdict on it. D inspector entry pt2_cmp holds the whole PT2_CMP line.",
+                     default_on = false },
   shield_scan_trajectory = { short = "Shield: trajectories",
                              long  = "Green circles on outgoing tiles + red squares on return-fire path + colored aim line" },
   shield_scan_legend     = { short = "Shield: legend",
@@ -656,6 +683,7 @@ M.COLLECT_EXEMPT = {
   label_hud_overlays    = true,
   pill_best_spots_back  = true,
   pill_best_spots_aggro = true,
+  pt2_shadow            = true,   -- about 1400 shell walks per pill per evaluation
 }
 local _collect_exempt = M.COLLECT_EXEMPT
 
