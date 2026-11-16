@@ -90,6 +90,21 @@ local nav_turn_speed = U.nav_turn_speed
 --   Used by the "kill me" delivery, where hitting that ally is the whole
 --   point. Every other allied tank still blocks, so a delivery shot is still
 --   refused when a DIFFERENT team-mate wanders into the lane.
+-- ATTACK_BASE_COMMIT_AFTER_FIRST_SHOT (2026-11-16): has a shell gone at the
+-- goal's base? The attack_base shoot block stores the shell count in
+-- goal._ab_shoot_shells on the tick it presses fire. On a later tick, fewer
+-- shells means that shell left the tank: goal._ab_shot_fired is set and
+-- stays set for the rest of this goal (goal_selection then adds
+-- ATTACK_BASE_COMMITMENT_BONUS). A fire press that a later check took back
+-- leaves the count unchanged, so it does not count.
+function M.note_base_shot(state, goal, info)
+  if goal and goal.kind == "attack_base" and goal._ab_shoot_shells
+     and not goal._ab_shot_fired
+     and (info.shells or 0) < goal._ab_shoot_shells then
+    goal._ab_shot_fired = true
+  end
+end
+
 local function shot_path_clear(info, world, target_wx, target_wy, target_mx, target_my, max_walls, src_wx, src_wy, require_reach, allow_ally_pn)
   max_walls = max_walls or 0
   local ox = src_wx or info.tankx
@@ -4859,6 +4874,7 @@ local function steer_core(state, world, info, goal)
   -- we're within shell range of the base, don't return early — fall through to
   -- the attack_base shooting block. Covers BOTH a point-blank rush (adjacent)
   -- and a crossfire-safe standoff engage point picked out at range.
+  M.note_base_shot(state, goal, info)
   local attack_base_engaging = (goal.kind == "attack_base" and move_dir == nil
     and U.wdist(info.tankx, info.tanky, goal.wx, goal.wy) <= (C.ATTACK_PILL_RANGE or 9.5) * 256)
   if move_dir == nil and not attack_in_range and not attack_base_engaging then
@@ -6043,6 +6059,9 @@ local function steer_core(state, world, info, goal)
         end
         if not _hold then
           keys = bit.bor(keys, KEY_SHOOT)
+          -- Shells now; a lower count on a later tick means the shell left
+          -- (M.note_base_shot).
+          if not goal._ab_shot_fired then goal._ab_shoot_shells = info.shells end
         end
       end
 
