@@ -16862,24 +16862,37 @@ function M.fight_cost_mult(info, goal, cost)
 end
 
 -- LGM_WALLED_KILL (2026-11-14): is our own builder walled in, so that no
--- walk can ever bring him home? Answers "on_wall", "prison" or nil, from
--- our own map only (we always see our own builder).
+-- walk can ever bring him home? Answers "on_wall", "on_pill", "prison" or
+-- nil, from our own map and our own pill records only (we always see our
+-- own builder).
 --   "on_wall": he stands on a wall square. bolo_map.c mapGetManSpeed gives
 --     BUILDING and HALFBUILDING speed 0, and lgm.c lgmReturn steps him by
 --     the speed of the square he is on, so he never moves again. The one
 --     exception is his blessed square (the square of his own errand, which
 --     walks at man_speed_refuel_base until he leaves it), so a builder on
 --     the square he was sent to is not walled.
+--   "on_pill" (2026-11-16): he stands on the square of a LIVE pillbox (any
+--     owner: enemy, neutral or ours), for example one a player put down on
+--     him. mapGetManSpeed gives a live pill MAP_MANSPEED_TPILLBOX (0), so he
+--     never moves again, and the tank cannot drive onto a live pill square
+--     to pick him up. The only way out is a shot on his square: a shell
+--     that hits a pill kills a builder on that square (lgm.c
+--     lgmBlastCatches, the solid-square rule), and he parachutes home. The
+--     same blessed exception holds (he was sent to repair or place that
+--     pill). A dead pill square is walkable, so it is not "on_pill".
 --   "prison": every square he can walk to (4-way, the way his per-axis
---     step moves him) is shut in by walls only, and the tank is not inside.
---     Any other square that stops him (water, a pillbox, the map edge) means
---     it is not a wall ring, and the answer is nil: the stranded rescue deals
---     with those, because the tank can cross or fetch him there.
+--     step moves him) is shut in by walls and live pills only, and the tank
+--     is not inside. Any other square that stops him (water, a dead pill,
+--     the map edge) means it is not a prison, and the answer is nil: the
+--     stranded rescue deals with those, because the tank can cross or fetch
+--     him there.
 -- The flood stops at the first square that proves "not walled", so on open
 -- ground it ends at once. It visits only squares within
 -- C.LGM_WALLED_BOX_RADIUS of the builder (at most 5x5 = 25 squares), so a
 -- big walled area is "not walled" and the check stays cheap.
-function M.lgm_walled_kind(state, info, tmx, tmy)
+-- `world` is optional: without it (old callers, unit tests) no square
+-- counts as a live pill.
+function M.lgm_walled_kind(state, info, tmx, tmy, world)
   local mx = bit.rshift(info.man_x or 0, 8)
   local my = bit.rshift(info.man_y or 0, 8)
   if mx == 0 and my == 0 then return nil end
@@ -16890,10 +16903,23 @@ function M.lgm_walled_kind(state, info, tmx, tmy)
   local function is_wall(tt)
     return tt == C.T_BUILDING or tt == C.T_HALFBUILD
   end
+  -- A live pill square: our own pill records (world.pill_at, what this
+  -- bot has seen) hold a pill there with armour left. The record decides,
+  -- not the terrain: the brain map can show the ground under a pill (a
+  -- pill put down during the game reads as the grass it stands on), and a
+  -- dead pill reads the same as a live one.
+  local function is_live_pill(x, y)
+    return world ~= nil and world.pill_at ~= nil
+           and W.pill_at(world, x, y) ~= nil
+  end
   local tt0 = U.ttype(mx, my)
   if is_wall(tt0) then
     if blessed(mx, my) then return nil end
     return "on_wall"
+  end
+  if is_live_pill(mx, my) then
+    if blessed(mx, my) then return nil end
+    return "on_pill"
   end
   if mx == tmx and my == tmy then return nil end
   local box = C.LGM_WALLED_BOX_RADIUS or 2
@@ -16912,7 +16938,9 @@ function M.lgm_walled_kind(state, info, tmx, tmy)
         seen[k] = true
         if nx == tmx and ny == tmy then return nil end
         local tt = U.ttype(nx, ny)
-        local walk = (C.MAN_SPEED[tt] or 0) > 0 or blessed(nx, ny)
+        local live_pill = is_live_pill(nx, ny)
+        local walk = ((C.MAN_SPEED[tt] or 0) > 0 and not live_pill)
+                     or blessed(nx, ny)
         if walk then
           -- A walkable square outside the box: the space is bigger than
           -- any prison we look for, so it is not walled.
@@ -16921,7 +16949,7 @@ function M.lgm_walled_kind(state, info, tmx, tmy)
           end
           qx[#qx + 1] = nx
           qy[#qy + 1] = ny
-        elseif not is_wall(tt) then
+        elseif not is_wall(tt) and not live_pill then
           return nil
         end
       end
@@ -17155,12 +17183,14 @@ local function goal_selection(state, world, info, quiet)
       -- map. Walled implies stranded. The rescue below then wins at once
       -- (no fire gate: we accept the risk) and drives at him. In a ring it
       -- shoots a ring wall on its route; he walks out through the hole. On
-      -- a wall square the only way out is a shot on his own square, which
-      -- kills him; danger.fire_block lets that shot through, because a dead
-      -- builder parachutes back to the tank (lgm.c lgmKill /
-      -- lgmParchutingIn) and a builder on a wall never moves again.
+      -- a wall square or a live pill square the only way out is a shot on
+      -- his own square, which kills him; danger.fire_block lets that shot
+      -- through, because a dead builder parachutes back to the tank (lgm.c
+      -- lgmKill / lgmParchutingIn) and a builder on a wall or a live pill
+      -- never moves again. On a pill square steering aims at the pill and
+      -- fires (the tank cannot drive onto it).
       if C.LGM_WALLED_KILL then
-        local walled = M.lgm_walled_kind(state, info, tmx, tmy)
+        local walled = M.lgm_walled_kind(state, info, tmx, tmy, world)
         if walled ~= state.lgm_walled and BRAIN_DEBUG_MODE then
           print2(string.format("LGM_WALLED t=%d kind=%s man=(%d,%d) tank=(%d,%d)",
             now, tostring(walled), lgm_mx, lgm_my, tmx, tmy))
@@ -17176,10 +17206,11 @@ local function goal_selection(state, world, info, quiet)
         -- shells again and the goal is no longer refuel_at_base). The
         -- walls already shot stay rubble on the map, so the next rescue
         -- starts from where this one stopped. A builder on a wall square
-        -- dies to the first shell that hits the wall, so there one shell
-        -- is enough.
+        -- or a live pill square dies to the first shell that hits his
+        -- square, so there one shell is enough.
         local shells = info.shells or 0
-        local need = (walled == "on_wall") and 1 or (C.WALL_HP_FULL or 5)
+        local need = (walled == "on_wall" or walled == "on_pill") and 1
+                     or (C.WALL_HP_FULL or 5)
         if not walled then
           state.lgm_walled_reload = nil
         elseif shells < need then

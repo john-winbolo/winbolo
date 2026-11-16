@@ -5463,8 +5463,11 @@ M.FIRE_BLOCK_FRIENDLY_BUILDER = true
 -- walls. In a ring it shoots a ring wall and he walks out. On a wall square
 -- the only freeing shot hits his own square and kills him, and
 -- danger.fire_block lets that shot through: a dead builder parachutes back
--- to the tank. Only our OWN builder on a wall; an ally's builder is still
--- protected. KEEL and MAST: off (the bot waited).
+-- to the tank. 2026-11-16: a builder on the square of a LIVE pillbox (any
+-- owner) is the same case ("on_pill"): he cannot move, the tank cannot
+-- drive onto the pill to fetch him, so the bot shoots the pill, the shell
+-- kills him and he parachutes home. Only our OWN builder; an ally's builder
+-- is still protected. KEEL and MAST: off (the bot waited).
 M.LGM_WALLED_KILL = true
 -- How far the "prison" check looks from the builder, in map squares, each
 -- way. 2 = a 5x5 box centred on him: the walkable floor he is shut in may
@@ -7553,7 +7556,8 @@ M.PRESETS = {
     --   own or an ally's builder. KEEL fired anyway.
     FIRE_BLOCK_FRIENDLY_BUILDER = false,
     --   2026-11-14: a walled-in builder is rescued at once; one on a wall
-    --   square is shot free (killed). KEEL waited for him.
+    --   square (or, 2026-11-16, a live pill square) is shot free (killed).
+    --   KEEL waited for him.
     LGM_WALLED_KILL = false,
     --   2026-11-04: a tank's shell is a kill when it kills the builder at
     --   any rewind 1..13. KEEL tested rewind 1 only.

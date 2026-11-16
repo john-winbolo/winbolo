@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """
-Generate the three walled-builder ROOST arenas (knob LGM_WALLED_KILL):
+Generate the four walled-builder ROOST arenas (knob LGM_WALLED_KILL):
 
   tests/scenario/maps/lgm_in_wall_prison_bot_breaks_ring_builder_gets_home.map
   tests/scenario/maps/lgm_inside_wall_bot_shoots_wall_and_kills_builder.map
   tests/scenario/maps/lgm_in_thick_wall_prison_bot_breaks_all_rings.map
+  tests/scenario/maps/lgm_on_pill_bot_shoots_pill_and_kills_builder.map
 
 All maps are the same open grass field (110..142 square), a forest strip
 west of the spawn for tree errands, one pill four armour down (a top-up
@@ -12,7 +13,7 @@ errand for the builder) and one base in the far corner. The spawn is a
 one-square deep-sea pond (starts.c wants a deep-sea start); the scenario
 script fills it with grass once the tank has driven off. The walls are not
 on the map: each scenario script builds them round the builder when he is
-out of the tank.
+out of the tank. (The on_pill arena puts a live pill on his square instead.)
 
 Run from the repository root:
     python tests/generate_lgm_walled_maps.py
@@ -33,6 +34,7 @@ MAPS = {
     "lgm_in_wall_prison_bot_breaks_ring_builder_gets_home": (121, 123),
     "lgm_inside_wall_bot_shoots_wall_and_kills_builder": (126, 122),
     "lgm_in_thick_wall_prison_bot_breaks_all_rings": (114, 114),
+    "lgm_on_pill_bot_shoots_pill_and_kills_builder": (126, 122),
 }
 
 
