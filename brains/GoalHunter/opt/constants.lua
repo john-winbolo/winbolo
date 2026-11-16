@@ -880,6 +880,48 @@ M.PILL_COVER_BY_HEALTH = true
 M.PPT_COVER_TARGET_SHOTS = 15  -- build phase ends once shield cover reaches this many shots-to-break (friendly pill = PILLS_MAX_HEALTH 15, wall = SHIELD_WALL_COVER_SHOTS 5). 15 = one pill OR three walls. Independent of the blitz gate.
 M.PPT_PILL_WALL_EQUIV = 3.0    -- a dropped/standing friendly pillbox blocker is worth this many WALLS of shield cover (PILLS_MAX_HEALTH 15 / SHIELD_WALL_COVER_SHOTS 5 = 3). The C combo scorer (gh_shield_stamp) weights a pill-filled slot accordingly, so one carried pill stands in for a 3-wall shield.
 M.PPT_PILL_BLOCKERS_MAX = 2    -- cap on how many carried pillboxes the shield planner assumes it can drop onto buildable slots (matches builder.lua's PILLBOX_BLOCKERS_MAX). num_pill_blockers passed to the scorer = min(carried_pills, this).
+-- ── Pill take v2 (2026-11-16; pilltake_v2.lua, PILLTAKE_V2_PLAN.md) ──
+-- Master knob. On: the v2 evaluator picks the take's standoff, its blockers
+-- (built by build_walls) and, with PT2_CHAINS, a chain of pills that shoot
+-- each other. Off (this delivery): v1 drives; v2 only runs side by side in
+-- debug runs (PT2_SIDE_BY_SIDE_LOG) and changes nothing. Every PT2_* knob
+-- below acts only with the master on. KEEL / MAST: off.
+M.PILLTAKE_V2_EVALUATOR = false
+-- Debug only: with BRAIN_DEBUG_MODE and print2 on, run v2 next to v1 at each
+-- shield scan and log one PT2_CMP line (no effect on play; the strip removes
+-- the call from opt/, so prod never runs it).
+M.PT2_SIDE_BY_SIDE_LOG = true
+-- Chains (N >= 2): a hostile pill met by the target's shells before they
+-- reach the tank is a link; the take then counts it as a kill. Off: v2 at
+-- N = 1 only (a link gives no credit). KEEL / MAST: false.
+M.PT2_CHAINS = true
+-- Shots of cover each chain ray needs behind its link (one wall; an allied
+-- pill counts by health). Andrew's value (Nov 16).
+M.PT2_CHAIN_BLOCKER_MIN_SHOTS = 5
+-- Longest chain counted, pills. Proposal, awaiting Andrew's value.
+M.PT2_MAX_CHAIN = 3
+-- Ring step around the target, degrees. Proposal, awaiting Andrew's value.
+M.PT2_ANGLE_STEP_DEG = 2
+-- Extra range past the pill's 2048 wu when listing who can shoot a point
+-- (covers leeway and one knockback), wu. Proposal, awaiting Andrew's value.
+M.PT2_RANGE_MARGIN_WU = 128
+-- Forest neither stops nor shields a ray (it stops one shell and is gone).
+-- Proposal, awaiting Andrew's value.
+M.PT2_FOREST_TRANSPARENT = true
+-- Leeway: count the 8 points 32 wu around a candidate that also pass with
+-- the same blockers; more ranks higher inside a tier, counted up to
+-- PT2_LEEWAY_MIN. A chain needs at least PT2_LEEWAY_MIN. KEEL / MAST: false.
+M.PT2_LEEWAY = true
+M.PT2_LEEWAY_MIN = 6   -- of 8. Proposal, awaiting Andrew's value.
+M.PT2_LEEWAY_TOP = 8   -- candidates that get the leeway test. Proposal, awaiting Andrew's value.
+-- An allied pill in a point's cover ranks it above points covered by walls
+-- only (same chain length). KEEL / MAST: false.
+M.PT2_OWN_PILL_BONUS = true
+-- Most blockers v2 plans to build for one point. Proposal, awaiting Andrew's value.
+M.PT2_BUILD_MAX = 3
+-- Score cost per square to build, in travel-score units (lower score wins).
+-- Proposal, awaiting Andrew's value.
+M.PT2_BUILD_WALL_COST = 10
 -- BLOCKER_ORTHOGONAL_ONLY: a shield blocker (a wall or a dropped pillbox) only
 -- on one of the four squares orthogonally next to the target pill, never a
 -- diagonal one or one further out. The shield scan then always runs in Lua
@@ -7514,6 +7556,12 @@ M.PRESETS = {
     --   2026-11-16: pool 6 picks its pill on the full factors (phase weight,
     --   influence, neutral-own-ground). KEEL picked on raw cost.
     POOL6_PICK_WITH_FACTORS = false,
+    --   2026-11-16: pill take v2 sub-knobs (the master PILLTAKE_V2_EVALUATOR
+    --   is off by default). KEEL had no v2: no chains, no leeway, no
+    --   allied-pill tier.
+    PT2_CHAINS = false,
+    PT2_LEEWAY = false,
+    PT2_OWN_PILL_BONUS = false,
     --   2026-11-16: neutral live pill in our ground x0.75. KEEL: x1.
     NEUTRAL_PILL_OWN_GROUND_FACTOR = 1.0,
     --   2026-11-16: the attack_base commitment bonus counts only after the
@@ -7806,6 +7854,9 @@ M.PRESETS.mast = {
   PILL_COVER_BY_HEALTH              = false,
   PLACE_FRONT_NEED_TARGET           = false,
   POOL6_PICK_WITH_FACTORS           = false,
+  PT2_CHAINS                        = false,  -- 2.2.1 had no pill take v2
+  PT2_LEEWAY                        = false,
+  PT2_OWN_PILL_BONUS                = false,
   QUICK_REPAIR_ON_TAKE              = false,
   QUICK_REPAIR_PREDICT_SHOTS        = false,
   REFUEL_NOT_LOW_MULT               = 1.0,

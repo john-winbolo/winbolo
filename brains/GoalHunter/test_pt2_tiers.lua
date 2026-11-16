@@ -33,6 +33,16 @@ local function check(name, cond, got)
   else fail = fail + 1; print(string.format("  FAIL %s   (got %s)", name, tostring(got))) end
 end
 
+-- ── 0. knobs ─────────────────────────────────────────────────────────────
+print("knobs")
+check("PILLTAKE_V2_EVALUATOR ships off", C.PILLTAKE_V2_EVALUATOR == false)
+check("PT2_CHAIN_BLOCKER_MIN_SHOTS = 5 (Andrew's value)", C.PT2_CHAIN_BLOCKER_MIN_SHOTS == 5)
+for _, kn in ipairs({ "PT2_CHAINS", "PT2_LEEWAY", "PT2_OWN_PILL_BONUS" }) do
+  check(kn .. " default true", C[kn] == true)
+  check(kn .. " keel false", C.PRESETS.keel[kn] == false)
+  check(kn .. " mast false", C.PRESETS.mast[kn] == false)
+end
+
 -- ── 1. rank order ────────────────────────────────────────────────────────
 print("rank order")
 local function k(safe, kills, blk, lee, score)
