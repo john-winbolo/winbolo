@@ -511,6 +511,11 @@ void sdl3DrawGetTabletViewport(int *x, int *y, int *w, int *h, int *zoom);
    for it. False with no view laid out. */
 bool sdl3DrawGetTabletStatusColumn(float *outX, float *outY, SDL_FRect *outKd);
 
+/* How wide the touch layout's frames are, in the layout's units: the bevels
+   round the game view, the status column and the right gutter's panel, and
+   the bar between two panels of a column. Zero with no view laid out. */
+int sdl3DrawGetTabletBevel(void);
+
 /*********************************************************
 *NAME:          sdl3DrawSetDragOffset / GetDragOffset
 *PURPOSE:

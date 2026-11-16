@@ -480,7 +480,7 @@ void tabletLayoutConfigure(TabletLayoutConfig *cfg, int screenW, int screenH,
   /* The grids themselves are drawn by SDL in sdl3DrawMainScreen, at the
      status panels' own size for the effective zoom (STATUS_TANKS_WIDTH x
      STATUS_TANKS_HEIGHT times the zoom), centred between the safe area and
-     the game view's frame with 4 units between them, and the kills and
+     the game view's frame with a bevel's width between them, and the kills and
      deaths panel under them. The frames drawn here must sit on exactly those
      rectangles, so the column's place is read from sdl3draw.c, which draws
      them, not worked out again here. */
@@ -501,7 +501,7 @@ void tabletLayoutConfigure(TabletLayoutConfig *cfg, int screenW, int screenH,
   }
   cfg->statusGridScale = 1.0f;
   float gridH = (float)(STATUS_TANKS_HEIGHT * effectiveZoom);
-  float gridGap = 4.0f;
+  float gridGap = (float)sdl3DrawGetTabletBevel();
   cfg->pillsGridX = cfg->tanksGridX;
   cfg->pillsGridY = cfg->tanksGridY + gridH + gridGap;
   cfg->basesGridX = cfg->tanksGridX;
@@ -754,10 +754,17 @@ static void renderTabletBackground(void) {
   const TabletLayoutConfig &c = s_cfg;
   float ps = (float)c.screenH / 480.0f;
   if (ps < 0.7f) ps = 0.7f;
-  float border = 2.0f * ps;  /* bevel thickness — 2px at reference 480p */
+  /* The frames in the full screen map, laid over the map, and the
+     newswire's: thin, 2px at reference 480p. */
+  float border = 2.0f * ps;
+  /* The frames on the gray chrome: as wide as the frame round the game view,
+     which is the background art's bevel at the view's zoom (sdl3draw.c). */
+  float bevel = (float)sdl3DrawGetTabletBevel();
+  float half  = bevel * 0.5f;
 
-  ImU32 colLight  = IM_COL32(160, 160, 160, 255);  /* highlight edge */
-  ImU32 colDark   = IM_COL32(64,  64,  64,  255);  /* shadow edge */
+  /* The background art's two bevel grays. */
+  ImU32 colLight  = IM_COL32(165, 165, 165, 255);  /* highlight edge */
+  ImU32 colDark   = IM_COL32(49,  49,  49,  255);  /* shadow edge */
   ImU32 colBlack  = IM_COL32(0,   0,   0,   255);  /* recessed fill */
 
   ImDrawList *dl = ImGui::GetBackgroundDrawList();
@@ -776,71 +783,71 @@ static void renderTabletBackground(void) {
   ImU32 buildDark   = scaleAlpha(colDark, s_buildAlpha.piece);
   ImU32 buildFill   = s_fullScreen ? colNone : colBlack;
 
-  /* --- Left gutter: status grids (tanks, pills, bases) --- */
+  /* --- Left gutter: status grids (tanks, pills, bases), kills and deaths --- */
   if (c.showStatusGrids) {
-    /* The grids were drawn by SDL before this list, so the frame's fill is
-       transparent: a black fill here is drawn over them and hides them,
-       which is what the phone showed. The frame is one border wide outside
-       the grid, so it covers no part of it. */
+    /* The grids and the kills and deaths panel were drawn by SDL before this
+       list, so nothing here is filled over them: a black fill hid the grids
+       on the phone. The column is framed as one recess, a bevel wide outside
+       it, and the bevel-wide gap between two panels is a bar, light over
+       dark, as the bars between the desktop's status panels are. In full
+       screen the grids lie over the map and the kills and deaths panel is
+       not drawn, so the column ends under the bases grid. */
     float gridW = (float)(STATUS_TANKS_WIDTH * c.effectiveZoom);
     float gridH = (float)(STATUS_TANKS_HEIGHT * c.effectiveZoom);
+    bool  kd    = !s_fullScreen && c.kdPanelW > 0.0f;
+    float top    = c.tanksGridY;
+    float bottom = kd ? c.kdPanelY + c.kdPanelH : c.basesGridY + gridH;
 
     drawInsetRect(dl,
-      c.tanksGridX - border, c.tanksGridY - border,
-      gridW + border * 2, gridH + border * 2,
-      border, statusLight, statusDark, colNone);
+      c.tanksGridX - bevel, top - bevel,
+      gridW + bevel * 2, (bottom - top) + bevel * 2,
+      bevel, statusLight, statusDark, colNone);
 
-    drawInsetRect(dl,
-      c.pillsGridX - border, c.pillsGridY - border,
-      gridW + border * 2, gridH + border * 2,
-      border, statusLight, statusDark, colNone);
-
-    drawInsetRect(dl,
-      c.basesGridX - border, c.basesGridY - border,
-      gridW + border * 2, gridH + border * 2,
-      border, statusLight, statusDark, colNone);
-
-    /* The kills and deaths panel, drawn by SDL with the grids. Not in full
-       screen, where the grids lie over the map and the panel is not drawn. */
-    if (!s_fullScreen && c.kdPanelW > 0.0f) {
-      drawInsetRect(dl,
-        c.kdPanelX - border, c.kdPanelY - border,
-        c.kdPanelW + border * 2, c.kdPanelH + border * 2,
-        border, statusLight, statusDark, colNone);
+    float barY[3] = { c.tanksGridY + gridH, c.pillsGridY + gridH,
+                      c.basesGridY + gridH };
+    for (int i = 0; i < (kd ? 3 : 2); i++) {
+      dl->AddRectFilled(ImVec2(c.tanksGridX, barY[i]),
+                        ImVec2(c.tanksGridX + gridW, barY[i] + half), statusLight);
+      dl->AddRectFilled(ImVec2(c.tanksGridX, barY[i] + half),
+                        ImVec2(c.tanksGridX + gridW, barY[i] + bevel), statusDark);
     }
   }
 
   /* --- Right gutter: one black panel, top to bottom --- */
   /* Everything in the right gutter sits in one recessed panel, as the
      desktop's panels fill its screen, so no gray shows between the controls.
-     It starts where the game view's frame ends, so the two bevels side by
-     side read as one bar between the view and the panel, and ends at the
-     right safe edge. Grooves across it part the top buttons, the stock bars
-     and build buttons, the scroll stick's zone and the fire controls. Not in
-     full screen, where the controls lie over the map and only the bars and
-     the build buttons keep a frame. */
+     It runs from the game view's frame to the right safe edge. The view's
+     frame is the bar between the two: SDL drew it light, the view's right
+     edge, and its right half is drawn dark here, the panel's left edge. Bars
+     across the panel part the top buttons, the stock bars and build buttons,
+     the scroll stick's zone and the fire controls. Not in full screen, where
+     the controls lie over the map and only the bars and the build buttons
+     keep a frame. */
   if (!s_fullScreen) {
     float gutterLeft = (float)(c.viewportX + c.viewportW);
     float rightEdge  = (float)c.screenW - c.safeRight;
     float pad = (rightEdge - gutterLeft) * 0.03f;   /* tabletLayoutConfigure's */
     if (pad < 4.0f) pad = 4.0f;
-    float x0 = gutterLeft + 5.0f * ps;              /* past the view's frame */
-    float x1 = rightEdge;
-    drawInsetRect(dl, x0, 0.0f, x1 - x0, (float)c.screenH,
-                  border, colLight, colDark, colBlack);
+    float x0 = gutterLeft + bevel;                  /* the panel's inside */
+    float x1 = rightEdge - bevel;
+    float y0 = bevel;
+    float y1 = (float)c.screenH - bevel;
+    dl->AddRectFilled(ImVec2(x0, y0), ImVec2(x1, y1), colBlack);
+    dl->AddRectFilled(ImVec2(gutterLeft + half, 0.0f), ImVec2(rightEdge, y0), colDark);   /* top */
+    dl->AddRectFilled(ImVec2(gutterLeft + half, y0), ImVec2(x0, (float)c.screenH), colDark); /* left */
+    dl->AddRectFilled(ImVec2(x0, y1), ImVec2(rightEdge, (float)c.screenH), colLight);     /* bottom */
+    dl->AddRectFilled(ImVec2(x1, y0), ImVec2(rightEdge, y1), colLight);                   /* right */
 
-    /* A groove: a dark line over a light one, centred on y. */
-    auto groove = [&](float y) {
-      dl->AddRectFilled(ImVec2(x0 + border, y - border),
-                        ImVec2(x1 - border, y), colDark);
-      dl->AddRectFilled(ImVec2(x0 + border, y),
-                        ImVec2(x1 - border, y + border), colLight);
+    /* A bar a bevel wide, centred on y: light over dark. */
+    auto bar = [&](float y) {
+      dl->AddRectFilled(ImVec2(x0, y - half), ImVec2(x1, y), colLight);
+      dl->AddRectFilled(ImVec2(x0, y), ImVec2(x1, y + half), colDark);
     };
     /* Under the top buttons, half way to the bars and the build buttons. */
-    groove(c.topBtnY + c.topBtnSize + pad);
+    bar(c.topBtnY + c.topBtnSize + pad);
     /* Over the scroll stick's zone, half way up to the build buttons. */
     float zoneTop = c.scrollJoyY - pad;
-    if (c.scrollJoyH > 10.0f) groove(zoneTop);
+    if (c.scrollJoyH > 10.0f) bar(zoneTop);
     /* Over the fire controls: above whichever of the gunsight row, the talk
        button and the view buttons' column reaches highest. */
     float ctlTop = c.gsDecCenterY - c.gsDecRadius;
@@ -850,7 +857,7 @@ static void renderTabletBackground(void) {
     if (c.tankViewCenterY - c.tankViewRadius < ctlTop) {
       ctlTop = c.tankViewCenterY - c.tankViewRadius;
     }
-    if (ctlTop - pad > zoneTop + border * 4.0f) groove(ctlTop - pad);
+    if (ctlTop - pad > zoneTop + bevel * 2.0f) bar(ctlTop - pad);
   }
 
   /* --- Right gutter: resource bars area (full screen only) --- */
@@ -898,14 +905,12 @@ static void renderTabletBackground(void) {
 
   /* --- Bottom: messages overlay area --- */
   if (!s_fullScreen) {
-    float pad = 3.0f * ps;
-    float msgH = 76.0f * ps;  /* matches renderMessagesOverlay height */
-    /* The bevel alone: the strip SDL draws inside it carries its own
-       backing, and slides away to show the game view under it. */
-    drawInsetRect(dl,
-      c.msgOverlayX - pad - border, c.msgOverlayY - pad - border,
-      c.msgOverlayW + (pad + border) * 2, msgH + (pad + border) * 2,
-      border, colLight, colDark, colNone);
+    /* A thin line along the top of the strip SDL draws, which carries its
+       own backing and slides away to show the game view under it. The strip
+       is as wide as the view, whose frame closes its other three sides. */
+    float lineY = c.msgOverlayY - 3.0f * ps;
+    dl->AddRectFilled(ImVec2(c.msgOverlayX, lineY - border),
+                      ImVec2(c.msgOverlayX + c.msgOverlayW, lineY), colDark);
   }
 }
 

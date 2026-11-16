@@ -582,9 +582,10 @@ static void tabletViewportUpdate(void) {
   gTabletVpZoom = zoom;
 }
 
-/* The gap, in the layout's units, above the touch layout's status column and
-   between its panels. */
-#define TABLET_STATUS_GAP 4.0f
+/* The background art's panel bevels are 4 or 5 of its pixels wide. The touch
+   layout draws its frames 3 wide at the view's zoom: the widest that leaves
+   the status column a strip of gray either side on a phone. */
+#define TABLET_BEVEL_SRC 3
 
 /* The kills and deaths icons in the background art, and the row the touch
    layout's panel draws them in: both 9x9, the numbers' 13 px font is 15 rows
@@ -602,16 +603,42 @@ static void tabletViewportUpdate(void) {
 #define TABLET_KD_DEATHS_NUM_X    66
 
 /* Where the touch layout's left column goes: the top left of the tanks grid,
-   with the pills and bases grids below it a grid and a gap apart, and the
-   kills and deaths panel under those, down to a gap above the screen's bottom
-   edge. The column is centred between the left safe inset and the frame round
-   the game view, so the gray either side of it is one even border; it never
-   starts left of where it used to, a gap in from the safe inset. kd's width
+   with the pills and bases grids below it a grid and a bevel apart, and the
+   kills and deaths panel under those, down to a bevel above the screen's
+   bottom edge. The column is centred between the left safe inset and the
+   frame round the game view, so the gray either side of it is one even
+   border; it never starts less than a bevel in from the safe inset. kd's width
    is zero when the screen has no room below the bases grid for the numbers'
    row. Every draw site and the frames in sdl3imgui_tablet.cpp read this, so
    they cannot disagree. False with no view laid out. */
 static void sdl3GetSafeAreaInsets(float *outLeft, float *outTop,
                                   float *outRight, float *outBottom);
+
+/* How wide the touch layout's frames are, in the layout's units: the bevel
+   round the game view, round the status column and round the right gutter's
+   panel, and the bar between two panels of a column. A whole number, since
+   the status grids' texture is laid out with it. Never wider than the
+   controls' padding in the right gutter (3% of the gutter, at least 4,
+   tabletLayoutConfigure), which is all the room the panel's bevel has
+   between the view and the first control. Zero with no view laid out. */
+int sdl3DrawGetTabletBevel(void) {
+  if (!gRenderer || gTabletVpZoom <= 0) return 0;
+  int scrW = 0, scrH = 0;
+  SDL_RendererLogicalPresentation logMode;
+  SDL_GetRenderLogicalPresentation(gRenderer, &scrW, &scrH, &logMode);
+  if (scrW <= 0 || scrH <= 0) {
+    SDL_GetCurrentRenderOutputSize(gRenderer, &scrW, &scrH);
+  }
+  float safeR = 0;
+  sdl3GetSafeAreaInsets(NULL, NULL, &safeR, NULL);
+  float gutterW = (float)scrW - safeR - (float)(gTabletVpX + gTabletVpW);
+  float pad = gutterW * 0.03f;
+  if (pad < 4.0f) pad = 4.0f;
+  int bevel = TABLET_BEVEL_SRC * gTabletVpZoom;
+  if (bevel > (int)pad) bevel = (int)pad;
+  return bevel;
+}
+
 bool sdl3DrawGetTabletStatusColumn(float *outX, float *outY, SDL_FRect *outKd) {
   if (outX) *outX = 0.0f;
   if (outY) *outY = 0.0f;
@@ -627,23 +654,22 @@ bool sdl3DrawGetTabletStatusColumn(float *outX, float *outY, SDL_FRect *outKd) {
   float safeL = 0, safeT = 0;
   sdl3GetSafeAreaInsets(&safeL, &safeT, NULL, NULL);
 
-  /* The view's frame is drawn 3 units of padding and a 2 unit bevel outside
-     the view, both at the 480-high reference (sdl3DrawMainScreen). */
-  float ps = (float)scrH / 480.0f;
-  if (ps < 0.7f) ps = 0.7f;
-  float frameLeft = (float)gTabletVpX - 5.0f * ps;
+  /* The view's frame is one bevel wide, outside the view
+     (sdl3DrawMainScreen). */
+  float bevel = (float)sdl3DrawGetTabletBevel();
+  float frameLeft = (float)gTabletVpX - bevel;
 
   float gridW = (float)(gTabletVpZoom * STATUS_TANKS_WIDTH);
   float gridH = (float)(gTabletVpZoom * STATUS_TANKS_HEIGHT);
   float x = SDL_floorf(safeL + (frameLeft - safeL - gridW) * 0.5f);
-  if (x < safeL + TABLET_STATUS_GAP) x = safeL + TABLET_STATUS_GAP;
-  float y = safeT + TABLET_STATUS_GAP;
+  if (x < safeL + bevel) x = safeL + bevel;
+  float y = safeT + bevel;
 
   if (outX) *outX = x;
   if (outY) *outY = y;
   if (outKd) {
-    float top = y + 3.0f * (gridH + TABLET_STATUS_GAP);
-    float h   = (float)scrH - TABLET_STATUS_GAP - top;
+    float top = y + 3.0f * (gridH + bevel);
+    float h   = (float)scrH - bevel - top;
     if (h >= (float)(gTabletVpZoom * (TABLET_KD_ROW_H + 4))) {
       outKd->x = x;
       outKd->y = top;
@@ -1026,7 +1052,7 @@ static void tabletKillsDeathsDraw(void) {
   float rowH = zf * (float)TABLET_KD_ROW_H;
   float safeB = 0;
   sdl3GetSafeAreaInsets(NULL, NULL, NULL, &safeB);
-  float clearH = kd.h + TABLET_STATUS_GAP - safeB;
+  float clearH = kd.h + (float)sdl3DrawGetTabletBevel() - safeB;
   if (clearH < rowH) clearH = kd.h;
   float rowY = SDL_floorf(kd.y + (clearH - rowH) * 0.5f);
 
@@ -2556,7 +2582,7 @@ static bool tabletGridsRender(ClientSim *cs) {
   int zf    = gTabletVpZoom;
   int gridW = zf * STATUS_TANKS_WIDTH;
   int gridH = zf * STATUS_TANKS_HEIGHT;
-  int gap   = 4;
+  int gap   = sdl3DrawGetTabletBevel();
   int texW  = gridW;
   int texH  = 3 * gridH + 2 * gap;
 
@@ -3286,10 +3312,10 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
       if (scrW <= 0 || scrH <= 0)
         SDL_GetCurrentRenderOutputSize(gRenderer, &scrW, &scrH);
     }
-    float ps = (float)scrH / 480.0f;
-    if (ps < 0.7f) ps = 0.7f;
-    float border = 2.0f * ps;
-    float vpPad = 3.0f * ps;
+    /* The frame round the view: one bevel wide and tight against the view,
+       as the background art's is. */
+    float border = (float)sdl3DrawGetTabletBevel();
+    float vpPad = 0.0f;
 
     /* Fill entire screen with chrome gray */
     SDL_SetRenderDrawColor(gRenderer, 107, 107, 107, 255);
@@ -3334,14 +3360,14 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
     float by = (float)tabletOriginY - vpPad - border;
     float bw = gamePixW + (vpPad + border) * 2;
     float bh = gamePixH + (vpPad + border) * 2;
-    /* Dark edge on top and left */
-    SDL_SetRenderDrawColor(gRenderer, 64, 64, 64, 255);
+    /* Dark edge on top and left, in the background art's two bevel grays */
+    SDL_SetRenderDrawColor(gRenderer, 49, 49, 49, 255);
     SDL_FRect topE  = { bx, by, bw, border };
     SDL_FRect leftE = { bx, by + border, border, bh - border };
     SDL_RenderFillRect(gRenderer, &topE);
     SDL_RenderFillRect(gRenderer, &leftE);
     /* Light edge on bottom and right */
-    SDL_SetRenderDrawColor(gRenderer, 160, 160, 160, 255);
+    SDL_SetRenderDrawColor(gRenderer, 165, 165, 165, 255);
     SDL_FRect botE   = { bx, by + bh - border, bw, border };
     SDL_FRect rightE = { bx + bw - border, by, border, bh - border };
     SDL_RenderFillRect(gRenderer, &botE);
@@ -3741,7 +3767,7 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
       float gutterX = 0, gutterY = 0;
       sdl3DrawGetTabletStatusColumn(&gutterX, &gutterY, NULL);
       float gridH = (float)(zf * STATUS_TANKS_HEIGHT);
-      float gridGap = TABLET_STATUS_GAP;
+      float gridGap = (float)sdl3DrawGetTabletBevel();
       sdl3DrawSetStatusPanelOrigins(
         gutterX, gutterY,                         /* tanks */
         gutterX, gutterY + gridH + gridGap,        /* pills */
@@ -3929,7 +3955,7 @@ void sdl3DrawRedrawAll(ClientSim *cs, buildSelect value, RECT *rcWindow,
       float gutterX = 0, gutterY = 0;
       sdl3DrawGetTabletStatusColumn(&gutterX, &gutterY, NULL);
       float gridH = (float)(zf * STATUS_TANKS_HEIGHT);
-      float gridGap = TABLET_STATUS_GAP;
+      float gridGap = (float)sdl3DrawGetTabletBevel();
       sdl3DrawSetStatusPanelOrigins(gutterX, gutterY,
                                     gutterX, gutterY + gridH + gridGap,
                                     gutterX, gutterY + 2*(gridH + gridGap));
@@ -4096,7 +4122,7 @@ static void sdl3DrawDownloadScreenContent(ClientSim *cs, bool justBlack) {
       float gutterX = 0, gutterY = 0;
       sdl3DrawGetTabletStatusColumn(&gutterX, &gutterY, NULL);
       float gridH = (float)(gridZf * STATUS_TANKS_HEIGHT);
-      float gridGap = TABLET_STATUS_GAP;
+      float gridGap = (float)sdl3DrawGetTabletBevel();
       sdl3DrawSetStatusPanelOrigins(gutterX, gutterY,
                                     gutterX, gutterY + gridH + gridGap,
                                     gutterX, gutterY + 2*(gridH + gridGap));
