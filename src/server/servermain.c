@@ -959,6 +959,10 @@ void printArgs() {
   fprintf(stderr, "                brain. Caps lobby \"Add Bot\" requests; -bots and\n");
   fprintf(stderr, "                scenario bots are not capped. It locks the lobby's\n");
   fprintf(stderr, "                Server bot slots at N: no player may change it.\n");
+  fprintf(stderr, "-maxbots <N>  - Another name for -botcapacity <N>: the same setting\n");
+  fprintf(stderr, "                and the same 0-16 range. It is NOT a limit on the\n");
+  fprintf(stderr, "                bots in the game. When both are given, -botcapacity\n");
+  fprintf(stderr, "                wins.\n");
   fprintf(stderr, "-brain <path> - Path to the Lua brain script for bots (default: the\n");
   fprintf(stderr, "                first of Brains/GoalHunter/init.lua,\n");
   fprintf(stderr, "                brains/GoalHunter/init.lua,\n");
@@ -2144,9 +2148,23 @@ int main(int argc, char **argv) {
     }
   }
 
-  /* -botcapacity N: the host bot capacity by hand, and no CPU speed test. */
+  /* -botcapacity N: the host bot capacity by hand, and no CPU speed test.
+   * -maxbots N is another name for it (Andrew, Nov 15 2026): the same
+   * setting, not a limit on the bots in the game. -botcapacity wins when
+   * both are given. capName is the name the messages below print. */
+  {
+  char *capName = NULL;
   if (argExist(argc, argv, "botcapacity") == TRUE) {
-    int capArg = findArg(argc, argv, "botcapacity");
+    capName = "botcapacity";
+    if (argExist(argc, argv, "maxbots") == TRUE) {
+      fprintf(stderr, "Note: -maxbots is another name for -botcapacity; "
+                      "both given, using -botcapacity\n");
+    }
+  } else if (argExist(argc, argv, "maxbots") == TRUE) {
+    capName = "maxbots";
+  }
+  if (capName != NULL) {
+    int capArg = findArg(argc, argv, capName);
     bool capClamped = false;
     botCapacityOverride = BRAIN_CAPACITY_UNKNOWN;
     if (capArg != ARG_NOT_FOUND) {
@@ -2154,14 +2172,15 @@ int main(int argc, char **argv) {
           brainCapacityParseOverride((char *) argv[capArg], &capClamped);
     }
     if (botCapacityOverride == BRAIN_CAPACITY_UNKNOWN) {
-      fprintf(stderr, "Error: -botcapacity needs a whole number from 0 to %d\n",
-              BRAIN_CAPACITY_MAX);
+      fprintf(stderr, "Error: -%s needs a whole number from 0 to %d\n",
+              capName, BRAIN_CAPACITY_MAX);
       return 1;
     }
     if (capClamped) {
-      fprintf(stderr, "Note: -botcapacity is at most %d; using %d\n",
-              BRAIN_CAPACITY_MAX, BRAIN_CAPACITY_MAX);
+      fprintf(stderr, "Note: -%s is at most %d; using %d\n",
+              capName, BRAIN_CAPACITY_MAX, BRAIN_CAPACITY_MAX);
     }
+  }
   }
 
   if (argExist(argc, argv, "maxspectators") == TRUE) {
