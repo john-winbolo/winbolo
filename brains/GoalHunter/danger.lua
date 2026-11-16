@@ -1729,15 +1729,18 @@ function M.fire_block(state, world, info, keys, taps, now)
   local tmx, tmy = bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8)
 
   local who, model, bt, bx, by = nil, nil, nil, nil, nil
-  -- LGM_WALLED_KILL: our own builder stands on a wall square
-  -- (goals.lgm_walled_kind "on_wall", set only while he is out walking).
-  -- He can never move again, the only shot that frees him is a shot on his
-  -- own square, and that shot kills him (lgm.c lgmBlastCatches). A dead
-  -- builder parachutes back, so that shot is not held. A builder in a ring
-  -- of walls ("prison") keeps the normal check: a shot on a ring wall does
-  -- not kill a builder beside it, he walks out through the hole. This is
-  -- for OUR builder only; an ally's builder is still checked below.
-  local own_walled = (C.LGM_WALLED_KILL and state.lgm_walled == "on_wall"
+  -- LGM_WALLED_KILL: our own builder stands on a wall square or on a live
+  -- pill square (goals.lgm_walled_kind "on_wall" / "on_pill", set only
+  -- while he is out walking). He can never move again, the only shot that
+  -- frees him is a shot on his own square, and that shot kills him (lgm.c
+  -- lgmBlastCatches). A dead builder parachutes back, so that shot is not
+  -- held, also when the pill is our own or a neutral one. A builder in a
+  -- ring of walls ("prison") keeps the normal check: a shot on a ring wall
+  -- does not kill a builder beside it, he walks out through the hole. This
+  -- is for OUR builder only; an ally's builder is still checked below.
+  local own_walled = (C.LGM_WALLED_KILL
+                      and (state.lgm_walled == "on_wall"
+                           or state.lgm_walled == "on_pill")
                       and own_status == C.LGM_MOVING) and true or false
   if own_out and not own_walled then
     if own_new then

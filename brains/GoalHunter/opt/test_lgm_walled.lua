@@ -4,8 +4,11 @@
 -- walled in, so that no walk can bring him home?
 --   "on_wall": he stands on a BUILDING or HALFBUILDING square that is not
 --              his blessed (errand) square
---   "prison":  every square he can walk to is shut in by walls only, and
---              the tank is not inside
+--   "on_pill": he stands on a LIVE pillbox square (our pill records say
+--              it has armour, whatever the terrain reads) that is not his
+--              blessed square
+--   "prison":  every square he can walk to is shut in by walls and live
+--              pills only, and the tank is not inside
 --   nil:       anything else (open ground, a hole, water, the tank inside)
 -- No engine: get_terrain reads a table, the map is grass unless set.
 --
@@ -128,6 +131,54 @@ check("4x4 floor, builder on a middle square = prison",
 room(110, 110, 130, 130)
 check("big walled field = nil", kind(120, 120, 140, 140) == nil,
       kind(120, 120, 140, 140))
+
+print("on a live pill square (2026-11-16)")
+-- A pill record the way world.lua keeps them: pill_at[key] is a list.
+local function pworld(list)
+  local w = { pill_at = {} }
+  for _, p in ipairs(list) do
+    local k = p[2] * 256 + p[1]
+    w.pill_at[k] = w.pill_at[k] or {}
+    table.insert(w.pill_at[k], { id = #list, pill = { mx = p[1], my = p[2], health = p[3] } })
+  end
+  return w
+end
+local function pkind(mx, my, tmx, tmy, world, disp)
+  local state = { _lgm_dispatch = disp }
+  local info = { man_x = mx * 256 + 128, man_y = my * 256 + 128 }
+  return G.lgm_walled_kind(state, info, tmx, tmy, world)
+end
+clear(); set(120, 120, C.T_PILLBOX)
+local w_live = pworld({ { 120, 120, 15 } })
+check("live pill under him = on_pill",
+      pkind(120, 120, 126, 126, w_live) == "on_pill", pkind(120, 120, 126, 126, w_live))
+clear()
+check("live pill record on grass terrain = on_pill (a pill put down mid-game)",
+      pkind(120, 120, 126, 126, w_live) == "on_pill", pkind(120, 120, 126, 126, w_live))
+clear(); ring(120, 120, C.T_BUILDING)
+local w_ring_grass = pworld({ { 121, 120, 15 } })
+check("ring of walls, gap holds a live pill on grass = prison",
+      pkind(120, 120, 126, 126, w_ring_grass) == "prison",
+      pkind(120, 120, 126, 126, w_ring_grass))
+clear(); set(120, 120, C.T_PILLBOX)
+local w_dead = pworld({ { 120, 120, 0 } })
+check("dead pill under him = nil",
+      pkind(120, 120, 126, 126, w_dead) == nil, pkind(120, 120, 126, 126, w_dead))
+check("pill square, no pill record = nil",
+      pkind(120, 120, 126, 126, pworld({})) == nil, pkind(120, 120, 126, 126, pworld({})))
+check("no world passed = nil (old callers)",
+      pkind(120, 120, 126, 126, nil) == nil, pkind(120, 120, 126, 126, nil))
+check("live pill on his blessed errand square = nil",
+      pkind(120, 120, 126, 126, w_live, { x = 120, y = 120 }) == nil,
+      pkind(120, 120, 126, 126, w_live, { x = 120, y = 120 }))
+clear(); ring(120, 120, C.T_BUILDING); set(121, 120, C.T_PILLBOX)
+local w_ring = pworld({ { 121, 120, 15 } })
+check("ring of walls with a live pill = prison",
+      pkind(120, 120, 126, 126, w_ring) == "prison", pkind(120, 120, 126, 126, w_ring))
+local w_ring_dead = pworld({ { 121, 120, 0 } })
+check("ring of walls with a dead pill = nil",
+      pkind(120, 120, 126, 126, w_ring_dead) == nil,
+      pkind(120, 120, 126, 126, w_ring_dead))
 
 print("open ground")
 clear()

@@ -4816,6 +4816,42 @@ local function steer_core(state, world, info, goal)
   -- turn-rate / threat-cap / final keys+taps decision block below).
   local _t_nav_apply_start = BRAIN_PROFILE and clock_us() or 0
 
+  -- LGM_WALLED_KILL "on_pill" (goals.lgm_walled_kind): our builder stands
+  -- on a live pill square. He cannot move and the tank cannot drive onto
+  -- the pill to fetch him, so the path search can only take us next to it.
+  -- Once we are within the reach the wall-clear below uses (768 wu, three
+  -- squares), stop, face his square and fire. The shell hits the pill and
+  -- kills him (lgm.c lgmBlastCatches); danger.fire_block lets it through,
+  -- and he parachutes home. Any owner: our own pill takes the hit too.
+  if goal.kind == "rescue_lgm" and state.lgm_walled == "on_pill"
+     and C.LGM_WALLED_KILL and (info.shells or 0) > 0 and info.man_x then
+    local pmx = bit.rshift(info.man_x, 8)
+    local pmy = bit.rshift(info.man_y, 8)
+    local pwx, pwy = U.m2w(pmx), U.m2w(pmy)
+    local pdist = U.wdist(info.tankx, info.tanky, pwx, pwy)
+    if pdist < 768 then
+      state.wall_clearing = true
+      local aim_dir = U.aim_at(info.tankx, info.tanky, pwx, pwy)
+      local corr    = U.adiff(info.direction, aim_dir)
+      if     corr >  10 then keys = bit.bor(keys, KEY_TURNRIGHT)
+      elseif corr < -10 then keys = bit.bor(keys, KEY_TURNLEFT)
+      elseif corr >   2 then taps = bit.bor(taps, KEY_TURNRIGHT)
+      elseif corr <  -2 then taps = bit.bor(taps, KEY_TURNLEFT)
+      end
+      if info.speed > 0 then keys = bit.bor(keys, KEY_SLOWER) end
+      if math.abs(corr) < 8 then taps = bit.bor(taps, KEY_SHOOT) end
+      if state.tick % 10 == 0 then
+        log.reason("steer", {
+          mode = "lgm_on_pill_shoot",
+          pill_mx = pmx, pill_my = pmy,
+          pill_dist = pdist, aim_corr = corr,
+          firing = math.abs(corr) < 8,
+        })
+      end
+      return keys, taps
+    end
+  end
+
   -- No goal or idle: brake to a stop.
   -- When attack_in_range, skip the navigation block and fall through to
   -- the engage aim/shoot block below.
