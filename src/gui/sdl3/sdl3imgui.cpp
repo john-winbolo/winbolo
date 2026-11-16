@@ -7370,14 +7370,21 @@ static void renderOneGameVoteWidget(ClientSim *cs, uint8_t kind,
              drawTag ? langGetText(STR_VOTE_DRAW_TAG) : "",
              (unsigned)kind);
 
+    /* ImGui puts a window created with NoBringToFrontOnFocus behind every
+     * window there already is. On the touch layout those are the build
+     * buttons and the stock bars, which are windows in the right gutter where
+     * this widget appears, so it came up underneath them. There it is left
+     * to be created in front, and the build buttons' window is the one kept
+     * from coming forward when tapped (renderBuildSelectBar). */
+    ImGuiWindowFlags voteFlags = ImGuiWindowFlags_AlwaysAutoResize |
+                                 ImGuiWindowFlags_NoCollapse |
+                                 ImGuiWindowFlags_NoSavedSettings |
+                                 ImGuiWindowFlags_NoFocusOnAppearing |
+                                 ImGuiWindowFlags_NoNavInputs;
+    if (!uiModeIsTablet()) voteFlags |= ImGuiWindowFlags_NoBringToFrontOnFocus;
+
     bool open = true;
-    if (!ImGui::Begin(title, &open,
-                      ImGuiWindowFlags_AlwaysAutoResize |
-                      ImGuiWindowFlags_NoCollapse |
-                      ImGuiWindowFlags_NoSavedSettings |
-                      ImGuiWindowFlags_NoFocusOnAppearing |
-                      ImGuiWindowFlags_NoBringToFrontOnFocus |
-                      ImGuiWindowFlags_NoNavInputs)) {
+    if (!ImGui::Begin(title, &open, voteFlags)) {
         ImGui::End();
         if (!open) { clientSimSetGameVoteWidgetVisible(cs, kind, false); autoPanelReset(lay); }
         return;

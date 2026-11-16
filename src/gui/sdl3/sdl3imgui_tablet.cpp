@@ -1396,10 +1396,13 @@ static void renderBuildSelectBar(ClientSim *cs) {
                         ImVec4(0.0f, 0.0f, 0.0f,
                                s_fullScreen ? s_buildAlpha.backing : 0.5f));
 
+  /* NoBringToFrontOnFocus: a tap on a build button must not lift this window
+     over a widget that lies across it, such as a vote's yes and no. */
   if (ImGui::Begin("##BuildBar", nullptr,
                     ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
                     ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
-                    ImGuiWindowFlags_NoScrollWithMouse)) {
+                    ImGuiWindowFlags_NoScrollWithMouse |
+                    ImGuiWindowFlags_NoBringToFrontOnFocus)) {
     ImDrawList *barDl = ImGui::GetWindowDrawList();
     int barVtxStart = barDl->VtxBuffer.Size;
 
