@@ -22,6 +22,8 @@
 --              any other pill in range (a bystander) needs one wall (5).
 --   P is SAFE when every X in T(P) is out of reach or has its bar, and the
 --   tank has one clear aim at A (5 aims, attack_shield's offsets).
+--   PT2_AIM_NUDGE: with no clear aim at P, P moves forward toward A by
+--   v1's nudge (8 .. 256 wu), and the point is judged where it lands.
 -- When a ray lacks cover, v2 plans blockers on it: a dropped carried pill
 -- first, then walls, on squares the ray crosses before the tank, nearest
 -- the pill first, up to PT2_BUILD_MAX. A wall never goes on our own shot
@@ -83,6 +85,66 @@ local function alive(p)
 end
 
 -- ── One tank point ────────────────────────────────────────────────────────
+-- T(P): every hostile pill whose centre is within pill range (plus the
+-- margin) of point (px, py). Returns T, and true when A is in it.
+local function pills_in_range(ctx, px, py)
+  local inp, A = ctx.inp, ctx.A
+  local pr = inp.pill_range + inp.range_margin
+  local pr2 = pr * pr
+  local T = {}
+  local hasA = false
+  for _, p in ipairs(ctx.hostile) do
+    local cx, cy = pill_centre(p)
+    local dx, dy = cx - px, cy - py
+    if dx * dx + dy * dy <= pr2 then
+      T[#T + 1] = p
+      if p == A then hasA = true end
+    end
+  end
+  return T, hasA
+end
+
+-- PT2_AIM_NUDGE: v1's forward nudge (attack_shield.lua, "Nudge pass").
+-- No aim is clear at (px, py) and the aims in `shorts` fell short (no
+-- wall, pill or base stopped them). Move the point forward, toward A's
+-- centre, in steps of inp.nudge_step_wu up to inp.nudge_max_steps steps
+-- (v1's NUDGE_STEP_WU 8 and NUDGE_MAX_STEPS 32: 8 .. 256 wu), smallest
+-- step first, rounded to the nearest wu as v1's nudge_origin. At each
+-- step try the short aims in aim order; the first clear one wins. An aim
+-- that something stops at a step is dropped (v1: the nudged aim is then
+-- blocked). A step whose square the tank may not stand on is skipped.
+-- Returns nx, ny, nudge_wu, aim_idx, lane, or nil.
+local function nudge_aim(ctx, px, py, extra, shorts)
+  local inp, env, A = ctx.inp, ctx.env, ctx.A
+  local acx, acy = pill_centre(A)
+  local dx, dy = acx - px, acy - py
+  local d = sqrt(dx * dx + dy * dy)
+  if d < 1 then return nil end
+  local live = {}
+  for i = 1, #shorts do live[i] = shorts[i] end
+  local tx, ty = A.mx * 256, A.my * 256
+  for step = 1, inp.nudge_max_steps do
+    local nw = step * inp.nudge_step_wu
+    local frac = nw / d
+    local nx, ny = floor(px + dx * frac + 0.5), floor(py + dy * frac + 0.5)
+    local mx, my = floor(nx / 256), floor(ny / 256)
+    if inp.in_map(mx, my) and inp.stay_in(mx, my) and inp.standable(mx, my) then
+      env.omx, env.omy = mx, my
+      local n = 0
+      for i = 1, #live do
+        local ai = live[i]
+        local off = M.AIMS[ai]
+        local ok, why, ln = SH.tank_shot(env, nx, ny, tx + off[1], ty + off[2], A.mx, A.my, extra)
+        if ok then return nx, ny, nw, ai, ln end
+        if why == "short" then n = n + 1; live[n] = ai end
+      end
+      for k = n + 1, #live do live[k] = nil end
+      if n == 0 then return nil end
+    end
+  end
+  return nil
+end
+
 -- Evaluate point (px, py) (world units) for target A with planned blockers
 -- `extra` ({[sq] = shots}) and, when aim_fixed is set, only that aim.
 -- Returns a record (see fields at the end) or nil, why.
@@ -92,26 +154,22 @@ end
 -- that is not on the aim's shot lane. Then the pills in range, the aim and
 -- its lane cannot change, and a ray changes only when it crosses new_sq, so
 -- those parts are taken from prev. The result is the same as a full call.
-local function eval_point(ctx, px, py, extra, aim_fixed, prev, new_sq)
+--
+-- nudge (optional): with inp.aim_nudge (PT2_AIM_NUDGE) and no clear aim at
+-- (px, py), try v1's forward nudge (nudge_aim). The record is then for
+-- the nudged point: rec.px, rec.py are it, every ray is cast to it, and
+-- rec.nudge_wu is the distance moved (0 when not nudged).
+local function eval_point(ctx, px, py, extra, aim_fixed, prev, new_sq, nudge)
   local inp, A, env = ctx.inp, ctx.A, ctx.env
   local T, aim_idx, lane, clear, lanes
+  local nudge_wu = prev and prev.nudge_wu or 0
   if prev then
     T, aim_idx, lane, clear, lanes = prev.T, prev.aim_idx, prev.lane, prev.clear_aims, prev.lanes
     env.omx, env.omy = floor(px / 256), floor(py / 256)
   else
-    local pr = inp.pill_range + inp.range_margin
-    local pr2 = pr * pr
     -- T(P)
-    T = {}
-    local hasA = false
-    for _, p in ipairs(ctx.hostile) do
-      local cx, cy = pill_centre(p)
-      local dx, dy = cx - px, cy - py
-      if dx * dx + dy * dy <= pr2 then
-        T[#T + 1] = p
-        if p == A then hasA = true end
-      end
-    end
+    local hasA
+    T, hasA = pills_in_range(ctx, px, py)
     if not hasA then return nil, "A_OUT_OF_RANGE" end
     -- the tank's square, for the base rule of our own shot
     env.omx, env.omy = floor(px / 256), floor(py / 256)
@@ -121,6 +179,7 @@ local function eval_point(ctx, px, py, extra, aim_fixed, prev, new_sq)
     local a1, a2 = 1, #M.AIMS
     if aim_fixed then a1, a2 = aim_fixed, aim_fixed end
     local why_out = "short"
+    local shorts = nil
     for ai = a1, a2 do
       local off = M.AIMS[ai]
       local ok, why, ln = SH.tank_shot(env, px, py, amx * 256 + off[1], amy * 256 + off[2],
@@ -130,6 +189,19 @@ local function eval_point(ctx, px, py, extra, aim_fixed, prev, new_sq)
         break
       else
         why_out = why
+        if why == "short" then
+          shorts = shorts or {}
+          shorts[#shorts + 1] = ai
+        end
+      end
+    end
+    if not aim_idx and nudge and shorts and inp.aim_nudge and not aim_fixed then
+      local nx, ny, nw, nai, nln = nudge_aim(ctx, px, py, extra, shorts)
+      if nx then
+        px, py, nudge_wu, aim_idx, lane = nx, ny, nw, nai, nln
+        -- the nudged point is closer to A, so A is still in range
+        T = pills_in_range(ctx, px, py)
+        env.omx, env.omy = floor(px / 256), floor(py / 256)
       end
     end
     if not aim_idx then return nil, "OUTGOING:" .. tostring(why_out) end
@@ -220,7 +292,7 @@ local function eval_point(ctx, px, py, extra, aim_fixed, prev, new_sq)
   end
   depth = depth or (chain_mode and inp.bar_chain or inp.bar_single)
   return {
-    px = px, py = py, T = T, rays = rays, chain = chain, in_chain = in_chain,
+    px = px, py = py, nudge_wu = nudge_wu, T = T, rays = rays, chain = chain, in_chain = in_chain,
     chain_mode = chain_mode, aim_idx = aim_idx, lane = lane, clear_aims = clear, lanes = lanes,
     aims_done = aim_fixed or (prev and prev.aims_done) or aim_idx, extra_in = extra,
     covered = covered_all, uncovered = uncovered,
@@ -522,8 +594,14 @@ function M.evaluate(inp)
         if inp.in_map(mx, my) and inp.stay_in(mx, my) and inp.standable(mx, my) then
           n_eval = n_eval + 1
           local px, py = floor(cx * 256), floor(cy * 256)
-          local rec, why = eval_point(ctx, px, py, nil, nil)
+          local rec, why = eval_point(ctx, px, py, nil, nil, nil, nil, true)
           if rec then
+            -- PT2_AIM_NUDGE moved the point forward on the same bearing:
+            -- the tank drives to the nudged point, and every test was made there.
+            if rec.nudge_wu > 0 then
+              cx, cy = rec.px / 256, rec.py / 256
+              mx, my = floor(cx), floor(cy)
+            end
             rec.deg, rec.cx, rec.cy, rec.mx, rec.my, rec.radius = deg, cx, cy, mx, my, R
             rec.base = inp.score_fn(deg, mx, my, cx, cy)
             local ax = cx + sin(rad(deg)) * inp.approach_offset
@@ -688,7 +766,7 @@ function M.to_scan_result(res, pill, standoff, adj_friendly_fn)
   }
   best.aims[b.aim_idx] = {
     blocked = false, blockers = act, potential_blockers = pot,
-    unreachable_blockers = {}, nudge_wu = 0, score = b.have,
+    unreachable_blockers = {}, nudge_wu = b.nudge_wu or 0, score = b.have,
   }
   return {
     best = best, pill = pill, standoff = standoff, pill_hp = pill.health,
@@ -755,6 +833,9 @@ function M.knob_inp(C, inp)
   inp.range_margin     = C.PT2_RANGE_MARGIN_WU or 128
   inp.blocker_min_dist = 1.0              -- attack_shield.BLOCKER_MIN_DIST
   inp.orth_only        = C.BLOCKER_ORTHOGONAL_ONLY and true or false
+  inp.aim_nudge        = C.PT2_AIM_NUDGE ~= false
+  inp.nudge_step_wu    = 8                -- attack_shield.lua NUDGE_STEP_WU
+  inp.nudge_max_steps  = 32               -- attack_shield.lua NUDGE_MAX_STEPS
   return inp
 end
 

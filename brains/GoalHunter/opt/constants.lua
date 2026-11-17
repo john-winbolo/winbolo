@@ -936,6 +936,12 @@ M.PT2_LEEWAY_TOP = 8   -- candidates that get the leeway test. Proposal, awaitin
 M.PT2_OWN_PILL_BONUS = true
 -- Most blockers v2 plans to build for one point. Proposal, awaiting Andrew's value.
 M.PT2_BUILD_MAX = 3
+-- v1's forward nudge in v2's point test: when no aim is clear at a ring
+-- point and some aims fall short, move the point toward the pill in v1's
+-- steps (attack_shield NUDGE_STEP_WU 8, up to NUDGE_MAX_STEPS 32 = 256 wu),
+-- smallest first, until one aim is clear. The point is then judged, and
+-- driven to, where it lands. Andrew's go (Nov 17). KEEL / MAST: false.
+M.PT2_AIM_NUDGE = true
 -- Score cost per square to build, in travel-score units (lower score wins).
 -- Proposal, awaiting Andrew's value.
 M.PT2_BUILD_WALL_COST = 10
@@ -7580,6 +7586,7 @@ M.PRESETS = {
     PT2_LINK_COVERS_PREV = false,
     PT2_LEEWAY = false,
     PT2_OWN_PILL_BONUS = false,
+    PT2_AIM_NUDGE = false,
     --   2026-11-16: neutral live pill in our ground x0.75. KEEL: x1.
     NEUTRAL_PILL_OWN_GROUND_FACTOR = 1.0,
     --   2026-11-16: the attack_base commitment bonus counts only after the
@@ -7872,6 +7879,7 @@ M.PRESETS.mast = {
   PILL_COVER_BY_HEALTH              = false,
   PLACE_FRONT_NEED_TARGET           = false,
   POOL6_PICK_WITH_FACTORS           = false,
+  PT2_AIM_NUDGE                     = false,
   PT2_CHAINS                        = false,  -- 2.2.1 had no pill take v2
   PT2_LINK_COVERS_PREV              = false,
   PT2_LEEWAY                        = false,
