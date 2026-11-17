@@ -14268,6 +14268,36 @@ local function sync_ally_claimed_rejects(state, info, panel_refresh)
         e.formula = nil
       end
     end
+    -- Pool 6 (attack_pill): the same carrying-pill armour floor the approach
+    -- uses (attack.lua, CARRY_APPROACH_MIN_ARMOUR_ONE / _MANY). Without it the
+    -- bot picks the take, the approach drops it at once, and it picks it again
+    -- every few ticks while it sits still (Nov 17 carried-pills arena: 284
+    -- times, t=956..2390). With it the bot refuels or picks another goal.
+    if pool_idx == 6 and C.CARRY_APPROACH_GOAL_REJECT then
+      local _carried = info and info.carried_pills or 0
+      local _floor = (_carried >= 2)
+        and (C.CARRY_APPROACH_MIN_ARMOUR_MANY or 30)
+        or  (C.CARRY_APPROACH_MIN_ARMOUR_ONE or 30)
+      if _carried >= 1 and (cur_armour or 0) < _floor
+         and not state.is_pill_suicider then
+        if e._reject ~= "carry_armour_too_low" then
+          e._reject = "carry_armour_too_low"
+          e._reject_remaining = 0
+          e.formula = nil
+        end
+        e._armour_at_reject = cur_armour
+        e._carry_floor_at_reject = _floor
+        e._carried_at_reject = _carried
+        goto continue_entry
+      elseif e._reject == "carry_armour_too_low" then
+        e._reject = nil
+        e._reject_remaining = 0
+        e._armour_at_reject = nil
+        e._carry_floor_at_reject = nil
+        e._carried_at_reject = nil
+        e.formula = nil
+      end
+    end
     -- Blitz exemption (pool 6 / attack_pill): the pill is NOT an ally_claimed
     -- lockout while a blitz on it is OPEN — either WE'RE a committed participant
     -- (squad_blitz_target) OR a live joinable call from an ally exists

@@ -215,6 +215,12 @@ local function get_formula_inner(e)
         e._armour_at_reject or 0, C.ATTACK_PILL_UNSAFE_ARMOUR_FLOOR,
         e._pillhp_at_reject or 0, C.ATTACK_PILL_UNSAFE_HP_THRESHOLD))
   end
+  if e._reject == "carry_armour_too_low" then
+    return reject_with_breakdown(e,
+      string.format("REJECT carry_armour_too_low @(%d,%d)", e._mx or 0, e._my or 0),
+      string.format("reject:carry_armour_too_low — carrying %d pill(s), arm=%d (need >= %d)",
+        e._carried_at_reject or 0, e._armour_at_reject or 0, e._carry_floor_at_reject or 0))
+  end
   if e._reject == "blitz_only" then
     return reject_with_breakdown(e,
       string.format("REJECT blitz_only @(%d,%d)", e._mx or 0, e._my or 0),
