@@ -222,6 +222,16 @@ local function enter_swerve(goal, world, state, info, pmx, pmy, mode)
     goal._swerve_turn_ticks_left = C.SWERVE_DEFENSIVE_TURN_TICKS
     goal._swerve_pill_dead       = false
   end
+  -- PT2_FINISH_SWERVE_TURN_TICKS (Andrew, Nov 17): a swerve on pill take
+  -- v2's finish path (1-health pill, still angry, no cover) starts with
+  -- this many turn ticks, whatever the mode. 0 = old rule.
+  local _fin_turn = C.PT2_FINISH_SWERVE_TURN_TICKS or 0
+  if _fin_turn > 0 and goal._pt2 and goal._pt2.finish then
+    goal._swerve_turn_ticks_left = _fin_turn
+    if (goal._swerve_ticks_left or 0) < _fin_turn then
+      goal._swerve_ticks_left = _fin_turn
+    end
+  end
   if not goal._best_swerve_dir then
     compute_best_swerve_dir(goal, world, pmx, pmy, tmx, tmy)
   end
@@ -9062,6 +9072,16 @@ local function update_attack_substate_body(goal, state, world, info)
     -- longer gates completion — threat presence does.
     if (goal._swerve_turn_ticks_left or 0) > 0 then
       goal._swerve_turn_ticks_left = goal._swerve_turn_ticks_left - 1
+    end
+    -- PT2_FINISH_SWERVE_TURN_TICKS (Andrew, Nov 17): on pill take v2's
+    -- finish path the swerve ends when its turn ticks run out, not when the
+    -- shells stop. A dead pill goes to capture_pill; a live one with our
+    -- shells still on the way waits for them (the extend branch below);
+    -- else post_engage picks the next move.
+    if not finish and (C.PT2_FINISH_SWERVE_TURN_TICKS or 0) > 0
+       and goal._pt2 and goal._pt2.finish
+       and (goal._swerve_turn_ticks_left or 0) <= 0 then
+      finish = true
     end
     goal._swerve_ticks_left = finish and 0 or 1
     if goal._swerve_ticks_left <= 0 then

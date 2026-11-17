@@ -785,6 +785,13 @@ M.CARRY_APPROACH_MIN_ARMOUR_MANY = 15
 -- the bot refuels or picks another goal instead of picking the take and
 -- dropping it every few ticks. KEEL / MAST: false (old rule).
 M.CARRY_APPROACH_GOAL_REJECT = true
+-- Turn ticks a swerve starts with on pill take v2's finish path (a 1-health
+-- pill, still angry, charged with no cover). Andrew, Nov 17: try 27.
+-- The old rule: 35 for a kill swerve, 40 for a defensive one. 0 = old rule.
+-- With it on, that swerve also ENDS when the turn ticks run out (to
+-- capture_pill when the pill is dead), instead of when the shells stop.
+-- KEEL / MAST: 0.
+M.PT2_FINISH_SWERVE_TURN_TICKS = 27
 
 -- Attack position planner (pick_attack_standoff in goals.lua)
 M.ATTACK_PLAN_DIRS          = 12   -- candidate directions sampled around the pill
@@ -7718,6 +7725,8 @@ M.PRESETS = {
     CARRY_APPROACH_MIN_ARMOUR_ONE = 30,
     CARRY_APPROACH_MIN_ARMOUR_MANY = 30,
     CARRY_APPROACH_GOAL_REJECT = false,
+    --   2026-11-17: finish-path swerve turn ticks use the old rule.
+    PT2_FINISH_SWERVE_TURN_TICKS = 0,
     --   2026-11-17: a dead pill blocks v1's shot-path checks (old rule).
     SHOT_PATH_SKIP_DEAD_PILLS = false,
     --   2026-11-17: the kill_hardline gate tested again after plan_position.
@@ -8026,6 +8035,7 @@ M.PRESETS.mast = {
   CARRY_APPROACH_MIN_ARMOUR_ONE     = 30,
   CARRY_APPROACH_MIN_ARMOUR_MANY    = 30,
   CARRY_APPROACH_GOAL_REJECT        = false,
+  PT2_FINISH_SWERVE_TURN_TICKS      = 0,
   QUICK_REPAIR_ON_TAKE              = false,
   QUICK_REPAIR_PREDICT_SHOTS        = false,
   REFUEL_NOT_LOW_MULT               = 1.0,
