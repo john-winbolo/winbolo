@@ -7734,16 +7734,21 @@ local function update_attack_substate_body(goal, state, world, info)
     -- Armour minimums are re-enforced EVERY tick on approach, not just at join /
     -- build-walls entry: if we take fire on the way in and drop below the floor,
     -- ABORT the take instead of diving in weak.
-    --   * Carrying a pillbox is cautious mode — same floor as commanding
-    --     (SQUAD_COMMANDER_MIN_ARMOUR); don't risk the pill we're holding.
+    --   * Carrying a pillbox is cautious mode: CARRY_APPROACH_MIN_ARMOUR_ONE
+    --     with one pill, CARRY_APPROACH_MIN_ARMOUR_MANY with more (KEEL/MAST:
+    --     SQUAD_COMMANDER_MIN_ARMOUR, 30); don't risk the pills we're holding.
     --   * The pill-HP-relative unsafe floor (armour_unsafe_for_pill_take) still
     --     exempts a 2+ tank blitz, where the partner shares the incoming fire.
     --   * CHARGE NOW IGNORES SAFETY waives both floors.
-    if (info.carried_pills or 0) >= 1
-       and (info.armour or 0) < (C.SQUAD_COMMANDER_MIN_ARMOUR or 30)
+    local _carried = info.carried_pills or 0
+    local _carry_floor = (_carried >= 2)
+      and (C.CARRY_APPROACH_MIN_ARMOUR_MANY or C.SQUAD_COMMANDER_MIN_ARMOUR or 30)
+      or  (C.CARRY_APPROACH_MIN_ARMOUR_ONE or C.SQUAD_COMMANDER_MIN_ARMOUR or 30)
+    if _carried >= 1
+       and (info.armour or 0) < _carry_floor
        and not (goal._charge_now and C.CHARGE_NOW_IGNORE_SAFETY) then
-      clear_attack_goal(state, string.format("approach abort: carrying pill, armour %d < %d",
-        info.armour or 0, C.SQUAD_COMMANDER_MIN_ARMOUR or 30))
+      clear_attack_goal(state, string.format("approach abort: carrying %d pill(s), armour %d < %d",
+        _carried, info.armour or 0, _carry_floor))
       return
     end
     local _appr_unsafe = armour_unsafe_for_pill_take(info, pill and pill.health, blitz_2plus, goal)

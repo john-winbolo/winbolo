@@ -496,6 +496,8 @@ local ENTRIES = {
   { "ATTACK_PILL_UNSAFE_ARMOUR_FLOOR", "ARMOUR", a_full },
   { "ANGER_WAIT_HIGH_ARMOUR_ARM",      "ARMOUR", a_full },
   { "SQUAD_COMMANDER_MIN_ARMOUR",      "ARMOUR", a_full },
+  { "CARRY_APPROACH_MIN_ARMOUR_ONE",   "ARMOUR", a_full },
+  { "CARRY_APPROACH_MIN_ARMOUR_MANY",  "ARMOUR", a_full },
   { "SQUAD_REFUEL_OK_ARMOUR",          "ARMOUR", a_full },
 
   -- Armour lost per pill HP we shoot off (one shell per pill_shell_damage).

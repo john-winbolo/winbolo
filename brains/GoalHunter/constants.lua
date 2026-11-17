@@ -761,6 +761,18 @@ M.FLEE_PILL_DIST       = 10  -- tiles to flee away from pill when giving up
 -- case that needs a straight drive after it gets its own step.
 -- KEEL / MAST: 15.
 M.POST_KILL_WAIT_TICKS = 0
+-- Armour the tank needs to keep going on a pill take approach while it
+-- carries pills (attack.lua approach abort). Andrew, Nov 17: 10 when it
+-- carries one pill, 15 when it carries more than one. The old rule used
+-- SQUAD_COMMANDER_MIN_ARMOUR (30) for any carried pill, and that left a
+-- tank with armour 20 and one pill unable to finish a 1-health pill.
+-- KEEL / MAST: 30 and 30 (old rule).
+M.CARRY_APPROACH_MIN_ARMOUR_ONE  = 10
+M.CARRY_APPROACH_MIN_ARMOUR_MANY = 15
+-- The attack_pill goal is refused while the tank is under that floor, so
+-- the bot refuels or picks another goal instead of picking the take and
+-- dropping it every few ticks. KEEL / MAST: false (old rule).
+M.CARRY_APPROACH_GOAL_REJECT = true
 
 -- Attack position planner (pick_attack_standoff in goals.lua)
 M.ATTACK_PLAN_DIRS          = 12   -- candidate directions sampled around the pill
@@ -7630,6 +7642,10 @@ M.PRESETS = {
     PT2_FINISH_NO_COVER_MAX_ANGER = -1,
     --   2026-11-17: hold 15 ticks with no goal after a kill (old rule).
     POST_KILL_WAIT_TICKS = 15,
+    --   2026-11-17: carrying-pill approach floor 30 (old rule).
+    CARRY_APPROACH_MIN_ARMOUR_ONE = 30,
+    CARRY_APPROACH_MIN_ARMOUR_MANY = 30,
+    CARRY_APPROACH_GOAL_REJECT = false,
     --   2026-11-17: a dead pill blocks v1's shot-path checks (old rule).
     SHOT_PATH_SKIP_DEAD_PILLS = false,
     --   2026-11-17: the kill_hardline gate tested again after plan_position.
@@ -7935,6 +7951,9 @@ M.PRESETS.mast = {
   PT2_TRAVEL_BAND_TICKS             = 0,
   PT2_FINISH_NO_COVER_MAX_ANGER     = -1,
   POST_KILL_WAIT_TICKS              = 15,
+  CARRY_APPROACH_MIN_ARMOUR_ONE     = 30,
+  CARRY_APPROACH_MIN_ARMOUR_MANY    = 30,
+  CARRY_APPROACH_GOAL_REJECT        = false,
   QUICK_REPAIR_ON_TAKE              = false,
   QUICK_REPAIR_PREDICT_SHOTS        = false,
   REFUEL_NOT_LOW_MULT               = 1.0,
