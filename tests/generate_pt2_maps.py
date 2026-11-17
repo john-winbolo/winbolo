@@ -4,6 +4,7 @@ Make the maps of the pill take v2 (PILLTAKE_V2_EVALUATOR) ROOST arenas:
 
   tests/scenario/maps/pt2_oilrig_twin_neutral_double_take.map
   tests/scenario/maps/pt2_oilrig_twin_neutral_double_take_off.map
+  tests/scenario/maps/pt2_oilrig_single_take.map
       Copies of data/maps/DH-Oil Rig.map, unchanged: the arena scripts
       remove the pills they do not use and put down the bot's own pills.
 
@@ -29,6 +30,7 @@ from generate_lgm_wallshot_map import encode_map_runs  # noqa: E402
 OILRIG_ARENAS = (
     "pt2_oilrig_twin_neutral_double_take",
     "pt2_oilrig_twin_neutral_double_take_off",
+    "pt2_oilrig_single_take",
 )
 FIELD_ARENAS = (
     "pt2_double_take_builds_wall",
