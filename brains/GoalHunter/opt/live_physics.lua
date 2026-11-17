@@ -616,6 +616,7 @@ local ENTRIES = {
   -- the rule of the terrain under the tank (see context()).
   { "SWERVE_TURN_TICKS",           "TURN", function(b, x) return scale_turn(b, x, x.turn_rule) end },
   { "SWERVE_DEFENSIVE_TURN_TICKS", "TURN", function(b, x) return scale_turn(b, x, x.turn_rule) end },
+  { "PT2_FINISH_SWERVE_TURN_TICKS", "TURN", function(b, x) return scale_turn(b, x, x.turn_rule) end },
   { "SQUAD_BLITZ_READY_TIMEOUT",   "TURN", function(b, x) return scale_turn(b, x, "turn_swamp") end },
   -- Turn-radius speed caps: speed / turn rate = radius.
   { "NAV_TURN_TOP_SPEED",    "TURN", function(b, x) return scale_turn_speed(b, x, x.turn_rule) end },
