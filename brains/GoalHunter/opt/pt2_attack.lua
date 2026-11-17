@@ -28,6 +28,9 @@ local PV     = require("pt2_viz")
 
 local M = {}
 
+-- Headless debug recordings keep the pt2_* BrainTest layers (default off,
+-- so a winbolods -brain-debug run had none of them to replay).
+
 local floor, abs, sqrt = math.floor, math.abs, math.sqrt
 local clock_us = clock_us or function() return floor(os.clock() * 1e6) end
 

@@ -333,13 +333,11 @@ do
   -- Debug mode: the viz draw runs without an error.
   local viz = require("viz")
   local is_on, drawn = viz.is_on, 0
-  viz.is_on = function() return true end
   _G.overlay_text = function() drawn = drawn + 1 end
   _G.BRAIN_DEBUG_MODE = true
   s3._repair_standoff.tick = -1000
   local okd, errd = pcall(bpool.standoff_update, s3, w3, mk_info(100, 110), 2003)
   _G.BRAIN_DEBUG_MODE = nil
-  viz.is_on, _G.overlay_text = is_on, nil
   if HAS_LOGS then check("debug mode: viz labels drawn", drawn >= 2, drawn) end
   check("debug mode: update + viz draw run", okd, errd)
   -- Other goal kinds: no record.

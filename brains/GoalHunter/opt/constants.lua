@@ -891,6 +891,11 @@ M.PILLTAKE_V2_EVALUATOR = false
 -- shield scan and log one PT2_CMP line (no effect on play; the strip removes
 -- the call from opt/, so prod never runs it).
 M.PT2_SIDE_BY_SIDE_LOG = true
+-- Debug only: a headless debug run (winbolods -brain-debug) records the
+-- pt2_* BrainTest layers, so a loaded session can show them. Each v2
+-- evaluation then also keeps every candidate and walks the shadow cells
+-- (pt2_shadow). No effect on play; the strip removes it from opt/.
+M.PT2_RECORD_LAYERS = true
 -- Chains (N >= 2): a hostile pill met by the target's shells before they
 -- reach the tank is a link; the take then counts it as a kill. Off: v2 at
 -- N = 1 only (a link gives no credit). KEEL / MAST: false.

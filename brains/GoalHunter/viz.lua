@@ -704,6 +704,8 @@ function M.refresh()
   -- Headless host: the recorder drops every RECORD_SKIP id before it writes
   -- the frame and nothing shows it live, so keep those ids off.
   local rec_skip = M._headless and M.RECORD_SKIP or nil
+  -- Headless host: RECORD_ON ids record even with default_on = false.
+  local rec_on = M._headless and M.RECORD_ON or nil
   for id in pairs(M.IDS) do
     if rec_skip and rec_skip[id] then
       _on[id] = false
@@ -719,6 +721,8 @@ function M.refresh()
       local g = _G[gn]
       if g ~= nil then
         _on[id] = g
+      elseif rec_on and rec_on[id] then
+        _on[id] = true
       else
         -- No host toggle pushed (winbolods / release client): honor the
         -- declared default. default_on=false viz (e.g. label_hud_overlays)
@@ -751,6 +755,7 @@ function M.is_on(viz_id)
   end
   local g = _G["_BT_VIZ_" .. viz_id:upper()]
   if g ~= nil then return g end
+  if M._headless and M.RECORD_ON[viz_id] then return true end
   local entry = M.IDS[viz_id]
   if entry and entry.default_on == false then return false end
   return true
@@ -834,6 +839,12 @@ M.RECORD_SKIP = {
   label_overlays = true,
   attack_scan_spots_all_pills = true,
 }
+
+-- Ids a headless debug host (winbolods -brain-debug, no V window) records
+-- although they default off, so a session loaded in BrainTest has them.
+-- Modules add their own ids here at load (pt2_attack.lua adds the pt2_*
+-- layers when PT2_RECORD_LAYERS is on). Drawing only: no decision reads it.
+M.RECORD_ON = {}
 
 -- CSV of viz indices for the RECORD_SKIP categories (resolved via the live
 -- _BT_VIZ_IDS map). The recorder marks these viz_idx values and drops matching
