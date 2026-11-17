@@ -4605,6 +4605,11 @@ local function update_shot_accounting(goal, world, now)
     return
   end
   local land = C.QUICK_REPAIR_ON_TAKE and {} or nil
+  -- C.PT2_FINISH_CAPTURE_LOCK: the finish path keeps each on-target shell
+  -- in flight with its landing tick, so pt2_kill_lock.lua can find the
+  -- kill shell and how long it has left.
+  local kl_shells = (C.PT2_FINISH_CAPTURE_LOCK and goal._pt2
+                     and goal._pt2.finish) and {} or nil
   local pmx, pmy = goal.mx, goal.my
   local pwx = (pmx + 0.5) * 256
   local pwy = (pmy + 0.5) * 256
@@ -4669,9 +4674,10 @@ local function update_shot_accounting(goal, world, now)
         on_target_fired = on_target_fired + 1
         if s.status == "in_flight" then
           on_target_in_flight = on_target_in_flight + 1
-          if land then
+          if land or kl_shells then
             local lt = QR.shot_land_tick(s, pmx, pmy, now)
-            if lt then land[#land + 1] = lt end
+            if lt and land then land[#land + 1] = lt end
+            if kl_shells then kl_shells[#kl_shells + 1] = { s = s, land = lt } end
           end
         elseif s.status == "dead" then
           local ddx = s.dead_fx - pwx
@@ -4695,6 +4701,8 @@ local function update_shot_accounting(goal, world, now)
   goal._on_target_misses    = misses
   goal._on_target_land      = land
   goal._on_target_land_tick = now
+  goal._on_target_shells      = kl_shells
+  goal._on_target_shells_tick = kl_shells and now or nil
 end
 
 -- C.BLITZ_SETUP_16DIR (2026-11-03): the engine moves a tank in 16 directions
@@ -10144,6 +10152,18 @@ local function update_attack_substate_body(goal, state, world, info)
         tostring(pby_id and pby_id.mx),
         tostring(pby_id and pby_id.my)))
       end -- BRAIN_DEBUG_MODE (SWERVE_END diag)
+      -- C.PT2_FINISH_CAPTURE_LOCK (Andrew, Nov 17): on the finish path, when
+      -- the turn ticks are out, the pill lives and our kill shell is in the
+      -- air, drive to a dead pill for as long as the shell flies, if the
+      -- armour check passes (pt2_kill_lock.lua). Tried once per swerve; a
+      -- skip keeps the old wait (the extend branch below).
+      local _klock = nil
+      if C.PT2_FINISH_CAPTURE_LOCK and pill and pill.health > 0
+         and goal._pt2 and goal._pt2.finish and not goal._pt2_lock_tried
+         and (goal._swerve_turn_ticks_left or 0) <= 0
+         and (goal._on_target_in_flight or 0) >= pill.health then
+        _klock = require("pt2_kill_lock").try_start(state, world, info, goal, pill, now)
+      end
       if not pill or pill.health <= 0 then
         -- Drop the attack_pill goal, then hand it straight to capture_pill on
         -- the pill we just killed. The old behaviour left goal=none and waited
@@ -10162,6 +10182,10 @@ local function update_attack_substate_body(goal, state, world, info)
         else
           print(TAG .. " ATTACK: swerve done, pill dead — releasing to capture_pill")
         end
+      elseif _klock then
+        clear_attack_goal(state, "pt2 finish: capture lock while our kill shell flies")
+        require("pt2_kill_lock").install(state, world, info, _klock, now)
+        return
       elseif (goal._on_target_in_flight or 0) >= pill.health then
         -- Pill still alive but enough on-target shells are in flight
         -- to expect a kill. Don't drop into post_engage yet (it'd
@@ -10729,6 +10753,10 @@ local function walls_off(...)
 end
 
 function M.update_attack_substate(goal, state, world, info)
+  -- C.PT2_FINISH_CAPTURE_LOCK: end the capture lock the tick it must end.
+  if state._pt2_lock then
+    require("pt2_kill_lock").update(state, world, info, state.tick or 0)
+  end
   SM.walls_ok = (goal and goal.through_walls) and true or false
   return walls_off(update_attack_substate_body(goal, state, world, info))
 end
@@ -10802,6 +10830,9 @@ local function heat_hits_landed(anger)
   if n < 0 then n = 0 elseif n > HEAT_MAX_HITS then n = HEAT_MAX_HITS end
   return n
 end
+
+-- Exported for pt2_kill_lock.lua (the pill reload ladder).
+M.heat_hits_landed = heat_hits_landed
 
 -- Shells needed to take a pill at `anger` all the way to PILLBOX_MAX_FIRERATE.
 function M.heat_pill_shots_needed(anger)

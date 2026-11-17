@@ -3400,6 +3400,7 @@ function Brain.think(info)
     -- --strip-block prefix so opt builds drop this entirely.
     if BRAIN_DEBUG_MODE and BRAIN_LOG_GOALS then
       local sub = (g.substate and g.substate ~= "" and g.substate ~= "-") and (" sub=" .. g.substate) or ""
+      if state._pt2_lock then sub = sub .. require("pt2_kill_lock").goal_tag(state, g) end
       print2(string.format("GOAL_CHANGE %s%s", goal_str, sub))
     end
     -- HUD draws (gated)
@@ -7211,7 +7212,8 @@ function Brain.think(info)
         opt(string.format("  pick_goal done %.2f ms", (clock_us() - t_pg0) / 1000))
       end
       if BRAIN_DEBUG_MODE then print2("pick_goal -> ", new_goal and new_goal.kind or "nil",
-             " mx=", new_goal and new_goal.mx, " sub=", new_goal and new_goal.substate) end
+             " mx=", new_goal and new_goal.mx, " sub=", new_goal and new_goal.substate,
+             (new_goal and new_goal._pt2_lock) and " LOCK kill_shell" or "") end
       -- Dump all pool_cache winners with costs for diagnosing goal switches.
       -- Tier-gated: these per-candidate dumps are ~1 ms of string.format +
       -- print2 on a replan tick, which is exactly the tick the capacity

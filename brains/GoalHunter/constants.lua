@@ -792,6 +792,24 @@ M.CARRY_APPROACH_GOAL_REJECT = true
 -- capture_pill when the pill is dead), instead of when the shells stop.
 -- KEEL / MAST: 0.
 M.PT2_FINISH_SWERVE_TURN_TICKS = 27
+-- Capture lock on pill take v2's finish path (pt2_kill_lock.lua). Andrew,
+-- Nov 17. When that swerve's turn ticks run out, the pill still lives and
+-- our kill shell is still in the air, the tank used to swerve in place until
+-- the shell landed. Now it drives to a dead pill that is free to capture
+-- (nearest by travel) for as long as the kill shell flies, if the armour it
+-- is expected to lose in that time leaves it at or above the floor:
+--   expected loss = 5 per shot from the target pill, every other hostile or
+--   neutral pill in range of the drive, and every enemy tank in range;
+--   shots = ticks the kill shell has left / that gun's reload ticks.
+-- The lock wins goal choice over everything else (take_cover too) and ends
+-- the moment the kill shell dies, or at once when armour goes under the
+-- floor or a new hostile pill or tank comes in range. Not on kill_hardline.
+-- KEEL / MAST: false (old rule: wait for the shell).
+M.PT2_FINISH_CAPTURE_LOCK = true
+-- Armour floor for that lock: carrying no pill, one pill, two or more.
+M.PT2_FINISH_LOCK_FLOOR_NONE = 10
+M.PT2_FINISH_LOCK_FLOOR_ONE  = 15
+M.PT2_FINISH_LOCK_FLOOR_MANY = 20
 
 -- Attack position planner (pick_attack_standoff in goals.lua)
 M.ATTACK_PLAN_DIRS          = 12   -- candidate directions sampled around the pill
@@ -7727,6 +7745,8 @@ M.PRESETS = {
     CARRY_APPROACH_GOAL_REJECT = false,
     --   2026-11-17: finish-path swerve turn ticks use the old rule.
     PT2_FINISH_SWERVE_TURN_TICKS = 0,
+    --   2026-11-17: no capture lock while the kill shell flies (old rule).
+    PT2_FINISH_CAPTURE_LOCK = false,
     --   2026-11-17: a dead pill blocks v1's shot-path checks (old rule).
     SHOT_PATH_SKIP_DEAD_PILLS = false,
     --   2026-11-17: the kill_hardline gate tested again after plan_position.
@@ -8036,6 +8056,7 @@ M.PRESETS.mast = {
   CARRY_APPROACH_MIN_ARMOUR_MANY    = 30,
   CARRY_APPROACH_GOAL_REJECT        = false,
   PT2_FINISH_SWERVE_TURN_TICKS      = 0,
+  PT2_FINISH_CAPTURE_LOCK           = false,
   QUICK_REPAIR_ON_TAKE              = false,
   QUICK_REPAIR_PREDICT_SHOTS        = false,
   REFUEL_NOT_LOW_MULT               = 1.0,
