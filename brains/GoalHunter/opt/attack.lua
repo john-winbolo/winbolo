@@ -6564,6 +6564,17 @@ local function update_attack_substate_body(goal, state, world, info)
     end
   end
 
+  -- ── PT2_FINISH_NO_COVER_MAX_ANGER re-plan ─────────────────────────
+  -- Pill take v2 driving: the take was planned before the 1-health pill
+  -- cooled to the finish anger (or the pill or our armour changed since).
+  -- Plan again, once per change (pt2_attack.finish_recheck). After the
+  -- kill_hardline recheck, so a calm pill still goes to kill_hardline.
+  if goal._is_ppt and C.PILLTAKE_V2_EVALUATOR
+     and require("pt2_attack").finish_recheck(goal, info, pill, now, _khr_sub) then
+    reset_to_plan_position(state, goal)
+    return
+  end
+
   -- ══════════════════════════════════════════════════════════════════
   -- Per-tick standoff shot-path sanity check.
   -- Runs for every pre-fire substate where the standoff is committed
@@ -8110,6 +8121,7 @@ local function update_attack_substate_body(goal, state, world, info)
       local _soak_ok = commit_soak_finish(goal, state, info)
       local _tank_finish = _soak_ok and (pill.health or 0) <= (C.TANK_FINISH_MAX_HP or 3)
                            and (pill.anger or 0) <= (C.TANK_FINISH_MAX_ANGER or 0.25)
+                           and not (goal._pt2 and goal._pt2.finish)  -- v2 finish: swerve stays on
       local _kill_locked = goal._kill_attempt and (goal._on_target_in_flight or 0) >= (pill.health or 0)
       local _hits_swerve = (goal._charge_hits_total or 0) >= (C.ATTACK_CURVE_AFTER_HITS or 3)
       -- "Blitz only when hit": an UNDAMAGED committed blitzer in a 3+ party holds
@@ -8156,8 +8168,10 @@ local function update_attack_substate_body(goal, state, world, info)
         goal._aim_locked = nil
         return
       end
-      -- CHARGE NOW: no wait for the pill to cool.
-      if anger > 0.65 and not goal._charge_now then
+      -- CHARGE NOW: no wait for the pill to cool. Pill take v2's finish
+      -- (PT2_FINISH_NO_COVER_MAX_ANGER) picked this spot for a 1-health
+      -- pill at up to that anger: no wait either.
+      if anger > 0.65 and not goal._charge_now and not (goal._pt2 and goal._pt2.finish) then
         goal.aim_tick = now
       else
 
@@ -8177,7 +8191,9 @@ local function update_attack_substate_body(goal, state, world, info)
         goal._detree_shells_at_start = info.shells  -- baseline for actual shots fired
         goal._detree_shots_needed = trees
         print(string.format(TAG .. " ATTACK: aimed, clearing %d trees", trees))
-      elseif goal._is_ppt and goal._shield_scan then
+      elseif goal._is_ppt and goal._shield_scan and not (goal._pt2 and goal._pt2.finish) then
+        -- (A pill take v2 finish has no wall to line up behind, so it takes
+        -- the charge below: a fast drive in, then engage with the swerve.)
         -- Shielded: skip the aggressive charge — move carefully into
         -- range, re-aim precisely, then shoot.
         goal.substate = "in_range_position"
@@ -8739,6 +8755,7 @@ local function update_attack_substate_body(goal, state, world, info)
     local tank_finish = soak_ok and pill and (pill.health or 0) > 0
                         and (pill.health or 0) <= (C.TANK_FINISH_MAX_HP or 3)
                         and (pill.anger or 0) <= (C.TANK_FINISH_MAX_ANGER or 0.25)
+                        and not (goal._pt2 and goal._pt2.finish)  -- v2 finish: swerve stays on
     if pill_hp <= 0 then
       -- Pill take v2 chain (HOLD): the next pill of the chain is shot from
       -- this same spot, so no swerve and no capture yet.
@@ -8844,6 +8861,7 @@ local function update_attack_substate_body(goal, state, world, info)
       local _tank_finish = _soak_ok and pill and (pill.health or 0) > 0
                            and (pill.health or 0) <= (C.TANK_FINISH_MAX_HP or 3)
                            and (pill.anger or 0) <= (C.TANK_FINISH_MAX_ANGER or 0.25)
+                           and not (goal._pt2 and goal._pt2.finish)  -- v2 finish: swerve stays on
       -- "Blitz only when hit": an UNDAMAGED committed blitzer in a 3+ party holds
       -- its proactive swerves. Folded into _kill_locked (kills that disjunct in
       -- BOTH should_swerve and the crosshairs_off branch) and added to the

@@ -965,6 +965,17 @@ M.PT2_BUILD_WALL_COST = 10
 -- Rig, Nov 17: a 1-armour pill, v2 drove 14 squares for more depth).
 -- Andrew's value (Nov 17). 0 = the old rank. KEEL / MAST: 0.
 M.PT2_TRAVEL_BAND_TICKS = 100
+-- Finish a 1-health pill without cover. Andrew (Nov 17): "Let's do >= 0.95
+-- it can engage it without a blocker if it's only 1 armour left but it
+-- needs the swerve logic activated, not a true hardline". When the target
+-- pill has 1 health, its anger is at or under this value (about 3 s of
+-- cooling after full anger) and our armour is ATTACK_RUSH_MIN_ARMOUR or
+-- more, v2 needs no cover on the target's own ray. Other pills in range
+-- keep their cover. The take is the normal one (approach, aim, shoot_pill)
+-- with the swerve on, never kill_hardline. A take planned before the pill
+-- qualified plans again once when it does. -1 = never (the old rule).
+-- Andrew's value (Nov 17). KEEL / MAST: -1.
+M.PT2_FINISH_NO_COVER_MAX_ANGER = 0.95
 -- BLOCKER_ORTHOGONAL_ONLY: a shield blocker (a wall or a dropped pillbox) only
 -- on one of the four squares orthogonally next to the target pill, never a
 -- diagonal one or one further out. The shield scan then always runs in Lua
@@ -7674,6 +7685,7 @@ M.PRESETS = {
     PT2_OWN_PILL_BONUS = false,
     PT2_AIM_NUDGE = false,
     PT2_TRAVEL_BAND_TICKS = 0,
+    PT2_FINISH_NO_COVER_MAX_ANGER = -1,
     --   2026-11-17: the kill_hardline gate tested again after plan_position.
     KILL_HARDLINE_RECHECK = false,
     --   2026-11-16: neutral live pill in our ground x0.75. KEEL: x1.
@@ -7975,6 +7987,7 @@ M.PRESETS.mast = {
   PT2_LEEWAY                        = false,
   PT2_OWN_PILL_BONUS                = false,
   PT2_TRAVEL_BAND_TICKS             = 0,
+  PT2_FINISH_NO_COVER_MAX_ANGER     = -1,
   QUICK_REPAIR_ON_TAKE              = false,
   QUICK_REPAIR_PREDICT_SHOTS        = false,
   REFUEL_NOT_LOW_MULT               = 1.0,

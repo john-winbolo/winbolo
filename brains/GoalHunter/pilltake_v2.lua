@@ -20,6 +20,9 @@
 --                last chain pill needs the cover)
 --                (10: two walls, or one allied pill of 10+ health);
 --              any other pill in range (a bystander) needs one wall (5).
+--   finish (PT2_FINISH_NO_COVER_MAX_ANGER): A has 1 health, its anger is
+--     at or under the knob and our armour is ATTACK_RUSH_MIN_ARMOUR or more:
+--     A's own ray needs no cover (bar 0). Every other pill keeps its bar.
 --   P is SAFE when every X in T(P) is out of reach or has its bar, and the
 --   tank has one clear aim at A (5 aims, attack_shield's offsets).
 --   PT2_AIM_NUDGE: with no clear aim at P, P moves forward toward A by
@@ -86,6 +89,29 @@ end
 
 local function alive(p)
   return p and (p.health or 0) > 0 and not p.in_tank and not p.pos_unknown and p.mx ~= nil
+end
+
+-- PT2_FINISH_NO_COVER_MAX_ANGER (Andrew, Nov 17): true when A's own ray
+-- needs no cover: A has 1 health, its anger (inp.anger_of(A), else A.anger)
+-- is at or under inp.finish_max_anger, and our armour (inp.armour) is at
+-- least inp.finish_min_armour (ATTACK_RUSH_MIN_ARMOUR). A knob under 0
+-- (KEEL / MAST: -1) is never true.
+function M.finish_ok(inp, p)
+  local m = inp.finish_max_anger
+  if not m or m < 0 or not p or (p.health or 0) ~= 1 then return false end
+  if (inp.armour or 0) < (inp.finish_min_armour or 5) then return false end
+  local anger = inp.anger_of and inp.anger_of(p) or (p.anger or 0)
+  return anger <= m
+end
+
+-- The evaluation context for target A.
+local function new_ctx(inp, A)
+  local ctx = { inp = inp, A = A, env = inp.env, reach_cache = {}, hostile = {} }
+  for _, p in ipairs(inp.pills) do
+    if alive(p) and not inp.env.is_ally(p) then ctx.hostile[#ctx.hostile + 1] = p end
+  end
+  ctx.finish = M.finish_ok(inp, A)
+  return ctx
 end
 
 -- ── One tank point ────────────────────────────────────────────────────────
@@ -264,7 +290,9 @@ local function eval_point(ctx, px, py, extra, aim_fixed, prev, new_sq, nudge)
   for i, X in ipairs(T) do
     local r = rays[i]
     local bar
-    if X == A and not chain_mode then bar = inp.bar_single
+    -- finish: A's own ray needs no cover; the other pills keep their bar
+    if X == A and ctx.finish then bar = 0
+    elseif X == A and not chain_mode then bar = inp.bar_single
     elseif in_chain[X] then bar = inp.bar_chain
     else bar = inp.bar_other or inp.wall_shots end
     r.bar = bar
@@ -303,6 +331,7 @@ local function eval_point(ctx, px, py, extra, aim_fixed, prev, new_sq, nudge)
     safe = covered_all and max_ok, max_ok = max_ok,
     kills = (chain_mode and max_ok) and #chain or 1,
     ally_cover = ally_cover, need = need_A, have = have_A, depth = depth,
+    finish = ctx.finish or false,
   }
 end
 M._eval_point = eval_point
@@ -490,7 +519,8 @@ local function hold_safe(ctx, b, hx, hy)
     local dx, dy = sx - hx, sy - hy
     if dx * dx + dy * dy <= pr * pr then
       local bar
-      if p == ctx.A and not b.chain_mode then bar = inp.bar_single
+      if p == ctx.A and ctx.finish then bar = 0
+      elseif p == ctx.A and not b.chain_mode then bar = inp.bar_single
       elseif b.in_chain and b.in_chain[p] then bar = inp.bar_chain
       else bar = inp.bar_other or inp.wall_shots end
       local r = SH.cast(env, sx, sy, hx, hy, SH.PILL_FIRE_LEN, nil)
@@ -571,10 +601,7 @@ M.set_band = set_band
 
 -- Leeway of a given point and plan (for logs and the parity test).
 function M.leeway_at(inp, px, py, extra)
-  local ctx = { inp = inp, A = inp.A, env = inp.env, reach_cache = {}, hostile = {} }
-  for _, p in ipairs(inp.pills) do
-    if alive(p) and not inp.env.is_ally(p) then ctx.hostile[#ctx.hostile + 1] = p end
-  end
+  local ctx = new_ctx(inp, inp.A)
   local rec = eval_point(ctx, px, py, extra, nil)
   if not rec then return 0 end
   rec.extra = extra
@@ -598,16 +625,15 @@ end
 --   approach_offset       squares from the standoff out to the LGM origin
 --   num_pill_blockers, pill_drop_shots, wall_shots, build_max, build_cost
 --   bar_single, bar_chain, bar_other (bystanders), chains, max_chain, leeway_on, leeway_ring_wu,
+--   finish_max_anger, finish_min_armour (PT2_FINISH_NO_COVER_MAX_ANGER);
+--   armour (ours), anger_of(p) (optional; else p.anger)
 --   leeway_top, own_pill_rank, search_top, pill_range, range_margin,
 --   blocker_min_dist, orth_only
 --   keep_all              (optional) keep every candidate for the overlay
 function M.evaluate(inp)
   local A = inp.A
   local env = inp.env
-  local ctx = { inp = inp, A = A, env = env, reach_cache = {}, hostile = {} }
-  for _, p in ipairs(inp.pills) do
-    if alive(p) and not env.is_ally(p) then ctx.hostile[#ctx.hostile + 1] = p end
-  end
+  local ctx = new_ctx(inp, A)
   local pcx, pcy = A.mx + 0.5, A.my + 0.5
   local all = {}
   local best = nil
@@ -741,10 +767,7 @@ end
 -- Run v2's tests on a given point and plan (v1's choice) and return the
 -- first failing test: "-" when it passes them all. extra: {[sq] = shots}.
 function M.judge(inp, px, py, extra, aim_idx)
-  local ctx = { inp = inp, A = inp.A, env = inp.env, reach_cache = {}, hostile = {} }
-  for _, p in ipairs(inp.pills) do
-    if alive(p) and not inp.env.is_ally(p) then ctx.hostile[#ctx.hostile + 1] = p end
-  end
+  local ctx = new_ctx(inp, inp.A)
   local rec, why = eval_point(ctx, px, py, extra, aim_idx)
   if not rec then return why, nil end
   if not rec.max_ok then return "CHAIN_TOO_LONG", rec end
@@ -807,7 +830,10 @@ function M.to_scan_result(res, pill, standoff, adj_friendly_fn)
     pt2 = true,
     chain = { pills = chain_ids, ids = chain_idv, step = 1,
               kills = b.kills, mode = b.chain_mode and "HOLD" or "SINGLE",
-              need = b.need, have = b.have, safe = b.safe },
+              need = b.need, have = b.have, safe = b.safe,
+              -- PT2_FINISH_NO_COVER_MAX_ANGER picked this point: A's ray
+              -- had no cover need (attack.lua keeps the swerve on)
+              finish = b.finish or nil },
   }
 end
 
@@ -853,6 +879,10 @@ function M.knob_inp(C, inp)
   inp.bar_single       = C.PPT_COVER_TARGET_SHOTS or 15
   inp.bar_chain        = C.PT2_CHAIN_BLOCKER_MIN_SHOTS or 10
   inp.bar_other        = inp.wall_shots       -- a bystander: one wall
+  -- finish: a 1-health A at or under this anger needs no cover on its own
+  -- ray (-1 = never), with our armour at ATTACK_RUSH_MIN_ARMOUR or more
+  inp.finish_max_anger = C.PT2_FINISH_NO_COVER_MAX_ANGER or -1
+  inp.finish_min_armour = C.ATTACK_RUSH_MIN_ARMOUR or 5
   inp.chains           = C.PT2_CHAINS ~= false
   inp.link_covers      = C.PT2_LINK_COVERS_PREV ~= false
   inp.max_chain        = C.PT2_MAX_CHAIN or 3
