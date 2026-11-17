@@ -345,29 +345,6 @@ function M.evaluate(state, world, info, now)
   qr.result = result
   state._quick_repair = qr
 
-  if BRAIN_DEBUG_MODE then
-    local key = string.format("%d:%d:%s:%s", p.mx, p.my, result, tostring(k.src))
-    if state._qr_log_key ~= key then
-      state._qr_log_key = key
-      print2(string.format(
-        "QUICK_REPAIR t=%d pill=(%d,%d) hp=%d target=(%d,%d) T_kill=%s src=%s"
-        .. " T_safe=%s walk=%s dwell=%d -> %s%s"
-        .. " (T_repair=now+1+walk=%s margin=%d hostile_hits=%d inflight=%d/%d%s trees=%d/%d)",
-        now, p.mx, p.my, qr.hp, goal.mx, goal.my, tostring(k.t),
-        tostring(k.src or k.why or "-"), tostring(t_safe), tostring(qr.walk),
-        qr.dwell, result,
-        qr.death and string.format(" (shell %s at +%dt, %s, rewind=%s)",
-          tostring(qr.death.src), qr.death.t or 0, tostring(qr.death.how),
-          tostring(qr.death.rewind)) or "",
-        tostring(qr.t_repair), margin, #qr.hits,
-        k.n_inflight or 0, k.hp or 0,
-        k.src == "predict" and string.format(
-          " reload=%d first_fire=%d remaining=%d flight=%d", k.reload, k.first,
-          k.remaining, k.flight) or "",
-        info.trees or 0, qr.trees_need))
-    end
-    M.draw(state, info, qr)
-  end
   return qr
 end
 
@@ -391,8 +368,6 @@ function M.draw(state, info, qr)
   local bx, by = qr.mx + 0.5, qr.my + 0.5
 
   -- 1. The blocker and the verdict.
-  viz.rect("quick_repair_blocker", qr.mx, qr.my, qr.mx + 1, qr.my + 1, r, g, b, 90)
-  viz.circle("quick_repair_blocker", bx, by, 0.6, r, g, b, 230)
   local state_txt = qr.result:gsub("^wait:", "")
   local tail
   if qr.result == "wait:early" then
@@ -406,10 +381,6 @@ function M.draw(state, info, qr)
   else
     tail = ""
   end
-  viz.text("quick_repair_blocker", bx, by - 1.0,
-           string.format("QR %s hp=%d/%d%s", state_txt, qr.hp,
-                         C.PILLS_MAX_HEALTH or 15, tail),
-           "center", r, g, b, 240)
 
   -- 2. The predicted kill and the hostile shells on the blocker.
   local k = qr.kill
@@ -423,22 +394,11 @@ function M.draw(state, info, qr)
         " = %d in flight + %d to fire: first @+%d, every %dt, last @+%d, flight %dt",
         k.n_inflight, k.remaining, k.first - now, k.reload, k.last_fire - now, k.flight)
     end
-    viz.circle("quick_repair_kill", tx, ty, 0.7, 255, 120, 60, 220)
-    viz.text("quick_repair_kill", tx, ty - 1.0, txt, "center", 255, 150, 90, 240)
   else
-    viz.text("quick_repair_kill", tx, ty - 1.0,
-             string.format("kill unknown (%s, %d/%d in flight)",
-                           tostring(k and k.why or "-"), k and k.n_inflight or 0,
-                           k and k.hp or 0),
-             "center", 170, 170, 170, 240)
   end
   for i = 1, #(qr.hits or {}) do
     local h = qr.hits[i]
     local sx, sy = h.x / 256.0, h.y / 256.0
-    viz.line("quick_repair_kill", sx, sy, bx, by, 255, 60, 200, 180)
-    viz.text("quick_repair_kill", sx, sy - 0.5,
-             string.format("%s hits blocker +%dt", h.src, h.t),
-             "center", 255, 90, 220, 240)
   end
 
   -- 3. The walk and T_repair against T_safe.
@@ -450,23 +410,10 @@ function M.draw(state, info, qr)
     local px, py = tfx, tfy
     for i = 1, n or 0 do
       local nx, ny = WALK[i * 2 - 1] / 256.0, WALK[i * 2] / 256.0
-      viz.line("quick_repair_walk", px, py, nx, ny, r, g, b, 160)
       px, py = nx, ny
     end
   else
-    viz.line("quick_repair_walk", tfx, tfy, bx, by, r, g, b, 160)
   end
-  viz.text("quick_repair_walk", tfx + 0.6, tfy + 0.8,
-           string.format("T_repair +%s = 1 + walk %s (armour on arrival; dwell %d after)"
-                         .. " | T_safe +%s = max(kill +%s, last hostile hit +%s) | need"
-                         .. " T_repair >= T_safe + margin %d -> %s",
-                         qr.t_repair and tostring(qr.t_repair - now) or "-",
-                         tostring(qr.walk), qr.build_after,
-                         qr.t_safe and tostring(qr.t_safe - now) or "-",
-                         k and k.t and tostring(k.t - now) or "-",
-                         M.last_hit(qr) and tostring(M.last_hit(qr)) or "none",
-                         qr.margin, qr.result),
-           "topleft", r, g, b, 240)
 end
 
 -- The latest hostile landing on the blocker, ticks from now, or nil.
