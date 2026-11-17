@@ -43,6 +43,19 @@ for _, kn in ipairs({ "PT2_CHAINS", "PT2_LINK_COVERS_PREV", "PT2_LEEWAY", "PT2_O
   check(kn .. " keel false", C.PRESETS.keel[kn] == false)
   check(kn .. " mast false", C.PRESETS.mast[kn] == false)
 end
+-- number knob: 0 = the old rank
+check("PT2_TRAVEL_BAND_TICKS default 100 (Andrew's value)", C.PT2_TRAVEL_BAND_TICKS == 100)
+check("PT2_TRAVEL_BAND_TICKS keel 0", C.PRESETS.keel.PT2_TRAVEL_BAND_TICKS == 0)
+check("PT2_TRAVEL_BAND_TICKS mast 0", C.PRESETS.mast.PT2_TRAVEL_BAND_TICKS == 0)
+do
+  local ki = V2.knob_inp(C, {})
+  check("one score unit is 16 ticks (a road square)", ki.ticks_per_score == 16, ki.ticks_per_score)
+  check("band 100 ticks = 6.25 score units", math.abs(ki.travel_band - 6.25) < 1e-9, ki.travel_band)
+  local save = C.PT2_TRAVEL_BAND_TICKS
+  C.PT2_TRAVEL_BAND_TICKS = 0
+  check("band 0 -> no band", V2.knob_inp(C, {}).travel_band == 0)
+  C.PT2_TRAVEL_BAND_TICKS = save
+end
 
 -- ── 1. rank order ────────────────────────────────────────────────────────
 print("rank order")
@@ -64,6 +77,40 @@ check("chain: ally pill (15) above two walls (10)", V2.better(k(true, 2, 2, 0, 9
 check("chain: depth comes after kills", V2.better(k(true, 3, 1, 0, 99, 10), k(true, 2, 2, 8, 0, 20), 6))
 check("chain: same depth, the allied pill breaks the tie", V2.better(k(true, 2, 2, 0, 99, 15), k(true, 2, 1, 8, 0, 15), 6))
 check("single take: depth is not a key (v1 parity)", V2.better(k(true, 1, 1, 6, 1, 15), k(true, 1, 1, 6, 2, 30), 6))
+-- travel band (PT2_TRAVEL_BAND_TICKS 100 = 6.25 score units of 16 ticks)
+print("travel band")
+local BAND = 100 / 16
+-- chain: near (score 5, 80 t) two walls vs far (score 20, 320 t) ally pill + wall
+local near_c, far_c = k(true, 2, 1, 8, 5, 10), k(true, 2, 2, 8, 20, 20)
+check("band off: far chain wins on depth", V2.better(far_c, near_c, 6))
+check("band 0: same as off", V2.better(far_c, near_c, 6, 0))
+check("band on: near chain wins, far is 240 t slower (> 100 t)", V2.better(near_c, far_c, 6, BAND))
+check("band on: far chain not above near", not V2.better(far_c, near_c, 6, BAND))
+-- inside the band (64 t apart) depth still decides
+local mid_c = k(true, 2, 2, 8, 9, 20)
+check("band on: within the band depth still wins", V2.better(mid_c, near_c, 6, BAND))
+-- single take: near with less leeway vs far with full leeway
+local near_s, far_s = k(true, 1, 1, 5, 2), k(true, 1, 1, 8, 12)
+check("band off: far single wins on leeway", V2.better(far_s, near_s, 6))
+check("band on: near single wins (160 t slower is out)", V2.better(near_s, far_s, 6, BAND))
+check("band on: within the band leeway still wins", V2.better(k(true, 1, 1, 8, 7), near_s, 6, BAND))
+check("band on: safe still above unsafe", V2.better(k(true, 1, 1, 0, 99), k(false, 1, 1, 8, 0), 6, BAND))
+check("band on: kills still above travel", V2.better(k(true, 2, 1, 6, 99, 10), k(true, 1, 1, 8, 0), 6, BAND))
+-- set_band: the quickest of the tier sets the band for the whole sort
+do
+  local list = { k(true, 2, 2, 8, 20, 20), k(true, 2, 1, 8, 5, 10), k(true, 2, 2, 8, 9, 20),
+                 k(true, 2, 2, 8, 30, 30), k(false, 2, 1, 8, 1, 10) }
+  V2.set_band(list, BAND)
+  check("set_band: tier min is the quickest safe chain", list[1].tier_min == 5, list[1].tier_min)
+  check("set_band: unsafe tier has its own min", list[5].tier_min == 1, list[5].tier_min)
+  check("set_band: 9 is in band of 5", list[3].in_band == true)
+  check("set_band: 20 is out of band", list[1].in_band == false)
+  table.sort(list, function(a, b) return V2.better(a, b, 6, BAND) end)
+  check("sorted: in-band deeper point first (score 9)", list[1].score == 9, list[1].score)
+  check("sorted: then the quickest (score 5)", list[2].score == 5, list[2].score)
+  check("sorted: out of band by travel (20 before 30)", list[3].score == 20 and list[4].score == 30)
+  check("sorted: unsafe last", list[5].safe == false)
+end
 
 -- ── 2. evaluate on small maps ───────────────────────────────────────────
 local terrain = {}

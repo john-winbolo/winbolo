@@ -945,6 +945,14 @@ M.PT2_AIM_NUDGE = true
 -- Score cost per square to build, in travel-score units (lower score wins).
 -- Proposal, awaiting Andrew's value.
 M.PT2_BUILD_WALL_COST = 10
+-- Travel band, ticks. Inside a tier (safe, kills) a point whose score
+-- (travel plus PT2_BUILD_WALL_COST per wall, turned into ticks: one score
+-- unit is one road square, 16 ticks) is within this many ticks of the
+-- quickest point counts as equally quick; depth, allied pill and leeway
+-- then decide. A slower point ranks below every point in the band (Oil
+-- Rig, Nov 17: a 1-armour pill, v2 drove 14 squares for more depth).
+-- Andrew's value (Nov 17). 0 = the old rank. KEEL / MAST: 0.
+M.PT2_TRAVEL_BAND_TICKS = 100
 -- BLOCKER_ORTHOGONAL_ONLY: a shield blocker (a wall or a dropped pillbox) only
 -- on one of the four squares orthogonally next to the target pill, never a
 -- diagonal one or one further out. The shield scan then always runs in Lua
@@ -7587,6 +7595,7 @@ M.PRESETS = {
     PT2_LEEWAY = false,
     PT2_OWN_PILL_BONUS = false,
     PT2_AIM_NUDGE = false,
+    PT2_TRAVEL_BAND_TICKS = 0,
     --   2026-11-16: neutral live pill in our ground x0.75. KEEL: x1.
     NEUTRAL_PILL_OWN_GROUND_FACTOR = 1.0,
     --   2026-11-16: the attack_base commitment bonus counts only after the
@@ -7884,6 +7893,7 @@ M.PRESETS.mast = {
   PT2_LINK_COVERS_PREV              = false,
   PT2_LEEWAY                        = false,
   PT2_OWN_PILL_BONUS                = false,
+  PT2_TRAVEL_BAND_TICKS             = 0,
   QUICK_REPAIR_ON_TAKE              = false,
   QUICK_REPAIR_PREDICT_SHOTS        = false,
   REFUEL_NOT_LOW_MULT               = 1.0,
