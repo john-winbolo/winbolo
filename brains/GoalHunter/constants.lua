@@ -907,9 +907,14 @@ M.PT2_SIDE_BY_SIDE_LOG = true
 -- reach the tank is a link; the take then counts it as a kill. Off: v2 at
 -- N = 1 only (a link gives no credit). KEEL / MAST: false.
 M.PT2_CHAINS = true
--- Shots of cover each chain ray needs behind its link (one wall; an allied
--- pill counts by health). Andrew's value (Nov 16).
-M.PT2_CHAIN_BLOCKER_MIN_SHOTS = 5
+-- Shots of cover each chain ray needs behind its link: two walls (5 each),
+-- or an allied pill of 10+ health (a pill counts by health; full health 15
+-- meets it alone). The blocker search builds walls until the need is met,
+-- up to PT2_BUILD_MAX. Inside the same tier (safe, kills) more cover on
+-- the last chain pill's ray ranks higher: ally pill + wall (20) > ally pill
+-- (15) > two walls (10). Andrew's value (Nov 16, second pass: "make double
+-- take require at least two walls"; was 5).
+M.PT2_CHAIN_BLOCKER_MIN_SHOTS = 10
 -- Longest chain counted, pills. Proposal, awaiting Andrew's value.
 M.PT2_MAX_CHAIN = 3
 -- Ring step around the target, degrees. Proposal, awaiting Andrew's value.

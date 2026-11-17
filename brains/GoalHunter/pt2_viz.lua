@@ -87,6 +87,10 @@ end
 -- draw() reads.
 function M.capture(goal, inp, res, v1, cmp, now)
   local best = res and res.best
+  -- evaluate_group picked another pill of the group as A: draw around it
+  if res and res.A and res.A ~= inp.A then
+    inp = setmetatable({ A = res.A }, { __index = inp })
+  end
   local cap = { tick = now, inp = inp, res = res, best = best, v1 = v1, cmp = cmp,
                 pill_mx = inp.A.mx, pill_my = inp.A.my }
   if best and viz.is_on("pt2_shadow") then cap.cells = shadow_cells(inp, best) end
@@ -190,17 +194,31 @@ local function draw_chain(cap)
       end
     end
   end
-  local A = inp.A
+  local A = best.chain[1] or inp.A
   viz.text("pt2_chain", A.mx + 0.5, A.my + 1.4,
-    string.format("%s kills=%d need=%d have=%d", best.chain_mode and "HOLD" or "SINGLE",
-      best.kills, best.need or 0, best.have or 0), "center", 255, 255, 255, 255, 0.9)
+    string.format("%s kills=%d need=%d have=%d depth=%s", best.chain_mode and "HOLD" or "SINGLE",
+      best.kills, best.need or 0, best.have or 0, tostring(best.depth or "-")), "center", 255, 255, 255, 255, 0.9)
+  -- hold point: where the tank waits until every planned wall stands
+  local h = best.hold
+  if h then
+    local r, g, b = 80, 220, 255
+    if not h.safe then r, g, b = 255, 80, 80 end
+    viz.line("pt2_chain", h.fx - 0.3, h.fy - 0.3, h.fx + 0.3, h.fy + 0.3, r, g, b, 255)
+    viz.line("pt2_chain", h.fx - 0.3, h.fy + 0.3, h.fx + 0.3, h.fy - 0.3, r, g, b, 255)
+    viz.line("pt2_chain", best.cx, best.cy, h.fx, h.fy, r, g, b, 140)
+    viz.text("pt2_chain", h.fx, h.fy + 0.6,
+      string.format("hold d=%.2f %s", h.d or 0, h.safe and "safe" or ("UNSAFE " .. tostring(h.why))),
+      "center", r, g, b, 255, 0.8)
+  end
 end
 
 local function cand_body(r, cap_n, build_cost)
   return {
     string.format("deg=%.1f radius=%.2f point=(%.2f,%.2f)", r.deg, r.radius or 0, r.cx, r.cy),
-    string.format("tier key: safe=%s kills=%d blk=%d leeway=%s (capped at %d: %s)",
-      tostring(r.safe), r.kills or 1, r.blk or 1, tostring(r.leeway or "-"), cap_n,
+    string.format("tier key: safe=%s kills=%d depth=%s blk=%d %sleeway=%s (capped at %d: %s)",
+      tostring(r.safe), r.kills or 1, (r.kills or 1) >= 2 and tostring(r.depth or "-") or "(single: not a key)",
+      r.blk or 1, (r.kills or 1) >= 2 and string.format("score=%.2f ", r.score or 0) or "",
+      tostring(r.leeway or "-"), cap_n,
       tostring(r.leeway and math.min(r.leeway, cap_n) or "-")),
     string.format("score = base %.2f + builds %d x %d = %.2f", r.base or 0, r.n_built or 0,
       build_cost, r.score or 0),

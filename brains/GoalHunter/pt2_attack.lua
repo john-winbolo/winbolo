@@ -77,20 +77,24 @@ function M.build_inp(state, goal, info, world, pill, no_builder, npb, radius, no
   if not inp.A then return nil end
   inp.radius = radius
   inp.num_pill_blockers = npb
-  local bans = state.banned_pill_angles and state.banned_pill_angles[pill.my * 256 + pill.mx]
-  if bans then
-    inp.banned = function(deg)
-      local exp = bans[floor((deg % 360) / 5) * 5]
-      return exp ~= nil and now < exp
-    end
+  local goalA = inp.A
+  local curA = goalA
+  inp.banned = function(deg)
+    local bans = state.banned_pill_angles and state.banned_pill_angles[curA.my * 256 + curA.mx]
+    if not bans then return false end
+    local exp = bans[floor((deg % 360) / 5) * 5]
+    return exp ~= nil and now < exp
   end
+  -- evaluate_group: another pill of the group as A. The goal's scan spots
+  -- are angles around the target, so they count only for the target.
+  inp.set_A = function(p) curA = p end
   local spots = goal.scan_spots
   local greens = green_set(spots)
   local boat = info.inboat and 1 or 0
   local tmx = floor((info.tankx or 0) / 256)
   local tmy = floor((info.tanky or 0) / 256)
   inp.score_fn = function(deg, mx, my, cx, cy)
-    local s = nearest_spot(spots, deg)
+    local s = (curA == goalA) and nearest_spot(spots, deg) or nil
     if s and not greens[s] then return 10000 + (s._adj_score or 1000) end
     local dij = cpf.dijkstra_lookup_by_kind(cpf.KIND_NORMAL, mx, my, boat)
     if dij >= 1e29 then dij = cpf.estimate_cost(tmx, tmy, mx, my, boat) end
@@ -199,7 +203,7 @@ function M.after_scan(a)
     local i = M.build_inp(a.state, goal, a.info, a.world, pill, a.no_builder, a.npb, a.radius, a.now)
     if not i then return nil, nil end
     if viz_on then i.keep_all = true end
-    return i, V2.evaluate(i)
+    return i, V2.evaluate_group(i)
   end)
   if not ok then
     local msg = tostring(inp)
@@ -221,15 +225,34 @@ function M.after_scan(a)
   local b = res.best
   local standoff = (a.sscan and a.sscan.standoff)
     or { cx = goal.standoff_fx, cy = goal.standoff_fy, mx = goal.standoff_mx, my = goal.standoff_my }
-  local out = V2.to_scan_result(res, pill, standoff, function(mx, my)
+  -- the pill the tank shoots: the target, or another pill of its group
+  -- whose chain kills the target (evaluate_group)
+  local A = res.A or pill
+  local out = V2.to_scan_result(res, A, standoff, function(mx, my)
     return shield.adjacent_friendly_pill(a.world, mx, my)
   end)
   out.num_pill_blockers = a.npb
   out.pill_wall_equiv = C.PPT_PILL_WALL_EQUIV or 3.0
   goal._pt2 = out.chain
   goal._pt2.tick = a.now
-  print2(string.format("PT2_DRIVE t=%d pill=(%d,%d) so=(%.2f,%.2f) deg=%.1f aim=%d kills=%d build=%d have=%d need=%d",
-    a.now, pill.mx, pill.my, b.cx, b.cy, b.deg, b.aim_idx, b.kills, #b.plan, b.have, b.need))
+  goal._pt2.goal_target = { mx = pill.mx, my = pill.my }
+  if A ~= pill then
+    -- retarget: attack.lua takes sscan.pill as the pill for this take
+    local id = inp.ids and inp.ids[A]
+    if id then goal.target_id = id end
+    goal.mx, goal.my = A.mx, A.my
+    out.pt2_retarget = true
+  end
+  -- hold point: the tank waits here until every planned wall stands
+  local h = b.hold
+  if h then
+    out.hold = { fx = h.fx, fy = h.fy, safe = h.safe }
+    goal._pt2.hold = out.hold
+  end
+  print2(string.format("PT2_DRIVE t=%d A=(%d,%d) goal_target=(%d,%d) so=(%.2f,%.2f) deg=%.1f aim=%d kills=%d build=%d have=%d need=%d depth=%s score=%.0f hold=%s",
+    a.now, A.mx, A.my, pill.mx, pill.my, b.cx, b.cy, b.deg, b.aim_idx, b.kills, #b.plan, b.have, b.need,
+    tostring(b.depth), b.score or 0,
+    h and string.format("(%.2f,%.2f)%s", h.fx, h.fy, h.safe and "" or ":UNSAFE:" .. tostring(h.why)) or "-"))
   return out
 end
 

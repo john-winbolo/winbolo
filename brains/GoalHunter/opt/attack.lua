@@ -6273,6 +6273,12 @@ local function update_attack_substate_body(goal, state, world, info)
           state = state, goal = goal, info = info, world = world, pill = pill,
           sscan = sscan, no_builder = no_builder, npb = _num_pill_blockers,
           radius = scan_radius, now = now })
+        -- v2 picked another pill of the target's group to shoot (its chain
+        -- kills the target too): this take now aims at that pill.
+        if sscan and sscan.pt2_retarget and sscan.pill then
+          pill = sscan.pill
+          pmx, pmy = pill.mx, pill.my
+        end
       end
       if sscan and (not sscan.best or (sscan.best.score or 0) <= 0) then
         goal._is_ppt = false
@@ -6310,6 +6316,14 @@ local function update_attack_substate_body(goal, state, world, info)
           local ux, uy = dxn / dn, dyn / dn
           goal.approach_fx = w.cx + ux * C.ATTACK_APPROACH_OFFSET
           goal.approach_fy = w.cy + uy * C.ATTACK_APPROACH_OFFSET
+          goal.approach_mx = U.mclamp(math.floor(goal.approach_fx))
+          goal.approach_my = U.mclamp(math.floor(goal.approach_fy))
+        end
+        -- Pill take v2: the tank waits for its walls at the hold point (on
+        -- the same bearing, where no pill hits it with the cover that
+        -- stands now), not at the approach point.
+        if sscan.pt2 and sscan.hold and sscan.hold.safe then
+          goal.approach_fx, goal.approach_fy = sscan.hold.fx, sscan.hold.fy
           goal.approach_mx = U.mclamp(math.floor(goal.approach_fx))
           goal.approach_my = U.mclamp(math.floor(goal.approach_fy))
         end
@@ -7792,6 +7806,30 @@ local function update_attack_substate_body(goal, state, world, info)
       end
     end
 
+    -- Pill take v2 (goal._pt2, master on only): every planned wall must
+    -- stand in our map before the tank leaves the hold point to fire. No
+    -- early ends (one blocker, cover target, last wall in flight). When the
+    -- queue ends or stalls with a wall missing, ban this angle and plan
+    -- again (blocked_line_replan; SANITY_PILL_REPLANS_MAX gives up).
+    if goal._pt2 and not goal._charge_now then
+      local missing = 0
+      for _, p in ipairs(list) do
+        if PC.slot_cover_shots(world, p.mx, p.my, U.ttype(p.mx, p.my)) <= 0 then missing = missing + 1 end
+      end
+      built_enough, cover_enough = false, false
+      goal._last_wall_early = nil
+      if missing == 0 then
+        if idx <= #list then
+        end
+        idx = #list + 1
+      elseif idx > #list or stalled then
+        local abandon, bucket, tries = blocked_line_replan(state, goal, pmx, pmy, now)
+        if abandon then
+          clear_attack_goal(state, "pill take v2: planned walls could not be built")
+        end
+        return
+      end
+    end
     -- CHARGE NOW: stop building; what stands is the shield.
     if idx > #list or stalled or built_enough or goal._last_wall_early or cover_enough
        or goal._charge_now then

@@ -87,6 +87,10 @@ end
 -- draw() reads.
 function M.capture(goal, inp, res, v1, cmp, now)
   local best = res and res.best
+  -- evaluate_group picked another pill of the group as A: draw around it
+  if res and res.A and res.A ~= inp.A then
+    inp = setmetatable({ A = res.A }, { __index = inp })
+  end
   local cap = { tick = now, inp = inp, res = res, best = best, v1 = v1, cmp = cmp,
                 pill_mx = inp.A.mx, pill_my = inp.A.my }
   if best and viz.is_on("pt2_shadow") then cap.cells = shadow_cells(inp, best) end
@@ -177,14 +181,22 @@ local function draw_chain(cap)
       end
     end
   end
-  local A = inp.A
+  local A = best.chain[1] or inp.A
+  -- hold point: where the tank waits until every planned wall stands
+  local h = best.hold
+  if h then
+    local r, g, b = 80, 220, 255
+    if not h.safe then r, g, b = 255, 80, 80 end
+  end
 end
 
 local function cand_body(r, cap_n, build_cost)
   return {
     string.format("deg=%.1f radius=%.2f point=(%.2f,%.2f)", r.deg, r.radius or 0, r.cx, r.cy),
-    string.format("tier key: safe=%s kills=%d blk=%d leeway=%s (capped at %d: %s)",
-      tostring(r.safe), r.kills or 1, r.blk or 1, tostring(r.leeway or "-"), cap_n,
+    string.format("tier key: safe=%s kills=%d depth=%s blk=%d %sleeway=%s (capped at %d: %s)",
+      tostring(r.safe), r.kills or 1, (r.kills or 1) >= 2 and tostring(r.depth or "-") or "(single: not a key)",
+      r.blk or 1, (r.kills or 1) >= 2 and string.format("score=%.2f ", r.score or 0) or "",
+      tostring(r.leeway or "-"), cap_n,
       tostring(r.leeway and math.min(r.leeway, cap_n) or "-")),
     string.format("score = base %.2f + builds %d x %d = %.2f", r.base or 0, r.n_built or 0,
       build_cost, r.score or 0),

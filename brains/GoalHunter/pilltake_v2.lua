@@ -14,8 +14,9 @@
 --   bar    = shots of cover a ray needs behind its links:
 --              single take (no link on A's ray): A needs
 --                PPT_COVER_TARGET_SHOTS (15), as v1;
---              chain: every chain pill needs PT2_CHAIN_BLOCKER_MIN_SHOTS (5);
---              any other pill in range (a bystander) needs 5 too.
+--              chain: every chain pill needs PT2_CHAIN_BLOCKER_MIN_SHOTS
+--                (10: two walls, or one allied pill of 10+ health);
+--              any other pill in range (a bystander) needs one wall (5).
 --   P is SAFE when every X in T(P) is out of reach or has its bar, and the
 --   tank has one clear aim at A (5 aims, attack_shield's offsets).
 -- When a ray lacks cover, v2 plans blockers on it: a dropped carried pill
@@ -23,10 +24,17 @@
 -- the pill first, up to PT2_BUILD_MAX. A wall never goes on our own shot
 -- lane, nor in front of a chain link (it would break the chain).
 --
--- Rank (highest first): safe, kills (chain length), blocker rank (an
--- allied pill in the cover above walls only), leeway (neighbour points
--- that also pass), then score (lower is better: the caller's travel score
--- plus a cost per wall to build).
+-- Rank (highest first): safe, kills (chain length), depth (chains only:
+-- the shots of cover on the last chain pill's ray, so ally pill + wall 20
+-- > ally pill 15 > two walls 10), blocker rank (an allied pill in the
+-- cover above walls only; the tie-break after depth), leeway (neighbour
+-- points that also pass), then score (lower is better: the caller's
+-- travel score plus a cost per wall to build).
+--
+-- Hold point (a take that builds): where the tank waits while its builder
+-- puts the walls up. It is on the standoff's bearing, from the approach
+-- point outwards, at the first square no hostile pill can hit with the
+-- cover that stands now (hold_point).
 --
 -- evaluate() is a pure function: every map and cost read goes through the
 -- functions in `inp`, so the unit tests drive it with a hand-made world.
@@ -177,7 +185,9 @@ local function eval_point(ctx, px, py, extra, aim_fixed, prev, new_sq)
   for i, X in ipairs(T) do
     local r = rays[i]
     local bar
-    if X == A and not chain_mode then bar = inp.bar_single else bar = inp.bar_chain end
+    if X == A and not chain_mode then bar = inp.bar_single
+    elseif in_chain[X] then bar = inp.bar_chain
+    else bar = inp.bar_other or inp.wall_shots end
     r.bar = bar
     local ok = (r.hit == "reach") or (r.cover >= bar)
     r.ok = ok
@@ -193,6 +203,16 @@ local function eval_point(ctx, px, py, extra, aim_fixed, prev, new_sq)
     end
   end
   local max_ok = #chain <= inp.max_chain
+  -- depth: shots of cover on the last chain pill's ray (a single take: A's).
+  -- A ray whose shell dies before it reaches us counts as its bar.
+  local last, depth = chain[#chain], nil
+  for i, X in ipairs(T) do
+    if X == last then
+      local r = rays[i]
+      depth = (r.hit == "reach") and math.max(r.cover, r.bar) or r.cover
+    end
+  end
+  depth = depth or (chain_mode and inp.bar_chain or inp.bar_single)
   return {
     px = px, py = py, T = T, rays = rays, chain = chain, in_chain = in_chain,
     chain_mode = chain_mode, aim_idx = aim_idx, lane = lane, clear_aims = clear, lanes = lanes,
@@ -200,7 +220,7 @@ local function eval_point(ctx, px, py, extra, aim_fixed, prev, new_sq)
     covered = covered_all, uncovered = uncovered,
     safe = covered_all and max_ok, max_ok = max_ok,
     kills = (chain_mode and max_ok) and #chain or 1,
-    ally_cover = ally_cover, need = need_A, have = have_A,
+    ally_cover = ally_cover, need = need_A, have = have_A, depth = depth,
   }
 end
 M._eval_point = eval_point
@@ -367,6 +387,57 @@ local function leeway(ctx, rec, ring_wu)
   return n, res
 end
 
+-- ── Hold point ────────────────────────────────────────────────────────────
+-- Where the tank waits while its builder puts the planned walls up. The
+-- walls are not there yet, so only the cover that stands now counts
+-- (extra = nil). A point is safe when every hostile pill in range either
+-- cannot reach it, or meets its bar there: A of a single take the single
+-- bar, a chain pill the chain bar, any other pill one wall. The search
+-- walks out along the standoff's bearing from the approach point (v1's
+-- waiting point) in steps of 64 wu (the overlay's CELL_WU), as far as the
+-- approach point plus one pill range: a pill in range of the standoff is
+-- out of range there. Returns { fx, fy (squares), d (squares from the
+-- standoff), safe, why }: with no safe point, the approach point, safe =
+-- false, why = the pill that hits it.
+local HOLD_STEP = 64 / 256
+local function hold_safe(ctx, b, hx, hy)
+  local inp, env = ctx.inp, ctx.env
+  local pr = inp.pill_range + inp.range_margin
+  for _, p in ipairs(ctx.hostile) do
+    local sx, sy = pill_centre(p)
+    local dx, dy = sx - hx, sy - hy
+    if dx * dx + dy * dy <= pr * pr then
+      local bar
+      if p == ctx.A and not b.chain_mode then bar = inp.bar_single
+      elseif b.in_chain and b.in_chain[p] then bar = inp.bar_chain
+      else bar = inp.bar_other or inp.wall_shots end
+      local r = SH.cast(env, sx, sy, hx, hy, SH.PILL_FIRE_LEN, nil)
+      if r.hit == "tank" and r.cover < bar then return false, M.pill_name(inp, p) end
+    end
+  end
+  return true
+end
+
+function M.hold_point(ctx, b)
+  local inp = ctx.inp
+  local ux, uy = sin(rad(b.deg)), -cos(rad(b.deg))
+  local d0 = inp.approach_offset
+  local dmax = d0 + (inp.pill_range + inp.range_margin) / 256
+  local first_why = nil
+  local d = d0
+  while d <= dmax + 1e-6 do
+    local fx, fy = b.cx + ux * d, b.cy + uy * d
+    local mx, my = floor(fx), floor(fy)
+    if inp.in_map(mx, my) and inp.stay_in(mx, my) and inp.standable(mx, my) then
+      local ok, why = hold_safe(ctx, b, floor(fx * 256), floor(fy * 256))
+      if ok then return { fx = fx, fy = fy, d = d, safe = true } end
+      first_why = first_why or why
+    end
+    d = d + HOLD_STEP
+  end
+  return { fx = b.cx + ux * d0, fy = b.cy + uy * d0, d = d0, safe = false, why = first_why or "no_square" }
+end
+
 -- Rank key comparison: true when a ranks above b.
 -- Leeway counts up to cap (PT2_LEEWAY_MIN): past "enough room", the
 -- travel score decides, as in v1. Without the cap a spot one neighbour
@@ -374,7 +445,13 @@ end
 function M.better(a, b, cap)
   if a.safe ~= b.safe then return a.safe end
   if a.kills ~= b.kills then return a.kills > b.kills end
+  -- depth only between chains: a single take keeps v1's order (parity)
+  if a.kills >= 2 and (a.depth or 0) ~= (b.depth or 0) then return (a.depth or 0) > (b.depth or 0) end
   if a.blk ~= b.blk then return a.blk > b.blk end
+  -- chains: the travel score (v1's travel term, plus the wall cost) comes
+  -- before leeway; a chain already needs PT2_LEEWAY_MIN to be safe. A far
+  -- spot must not win on one more neighbour (Oil Rig, Nov 16).
+  if a.kills >= 2 and a.score ~= b.score then return a.score < b.score end
   cap = cap or 8
   local la, lb = math.min(a.leeway or -1, cap), math.min(b.leeway or -1, cap)
   if la ~= lb then return la > lb end
@@ -409,7 +486,7 @@ end
 --   in_map, stay_in, buildable(mx, my), lgm_reach(omx, omy, mx, my)
 --   approach_offset       squares from the standoff out to the LGM origin
 --   num_pill_blockers, pill_drop_shots, wall_shots, build_max, build_cost
---   bar_single, bar_chain, chains, max_chain, leeway_on, leeway_ring_wu,
+--   bar_single, bar_chain, bar_other (bystanders), chains, max_chain, leeway_on, leeway_ring_wu,
 --   leeway_top, own_pill_rank, search_top, pill_range, range_margin,
 --   blocker_min_dist, orth_only
 --   keep_all              (optional) keep every candidate for the overlay
@@ -497,8 +574,49 @@ function M.evaluate(inp)
     if scored[1] and (not best or M.better(scored[1], best, cap)) then best = scored[1] end
     if best and best.safe then break end
   end
+  if best and best.safe and best.plan and #best.plan > 0 then
+    best.hold = M.hold_point(ctx, best)
+  end
   return { best = best, all = inp.keep_all and all or nil, n_eval = n_eval, n_reject = n_reject,
            hostile = ctx.hostile, inp = inp }
+end
+
+-- ── evaluate_group ────────────────────────────────────────────────────────
+-- A target in a group of hostile pills: a chain that kills the target can
+-- start at another pill of the group (the mirror chain on the near side).
+-- With chains on, every hostile pill in pill range of the target
+-- (pill_range + range_margin) is tried as A too. Another A wins only with a
+-- safe chain that has the target in it, and only when it ranks above the
+-- target's own best (M.better; a tie keeps the target). inp.set_A(p), when
+-- given, sets the per-pill inputs (banned angles, score_fn) before each
+-- run. Returns the winner's result with res.A (the pill the tank shoots)
+-- and res.goal_A (the target). inp.A is the target again on return.
+function M.evaluate_group(inp)
+  local goalA = inp.A
+  local res = M.evaluate(inp)
+  res.A, res.goal_A = goalA, goalA
+  if not inp.chains then return res end
+  local pr = inp.pill_range + inp.range_margin
+  local n_eval, n_reject = res.n_eval, res.n_reject
+  for _, p in ipairs(res.hostile) do
+    local dx, dy = (p.mx - goalA.mx) * 256, (p.my - goalA.my) * 256
+    if p ~= goalA and dx * dx + dy * dy <= pr * pr then
+      inp.A = p
+      if inp.set_A then inp.set_A(p) end
+      local r = M.evaluate(inp)
+      n_eval, n_reject = n_eval + r.n_eval, n_reject + r.n_reject
+      local b = r.best
+      if b and b.safe and b.chain_mode and b.in_chain and b.in_chain[goalA]
+         and (not res.best or M.better(b, res.best, inp.leeway_min)) then
+        r.A, r.goal_A = p, goalA
+        res = r
+      end
+    end
+  end
+  inp.A = goalA
+  if inp.set_A then inp.set_A(goalA) end
+  res.n_eval, res.n_reject = n_eval, n_reject
+  return res
 end
 
 -- Run v2's tests on a given point and plan (v1's choice) and return the
@@ -614,7 +732,8 @@ function M.knob_inp(C, inp)
   inp.build_max        = C.PT2_BUILD_MAX or 3
   inp.build_cost       = C.PT2_BUILD_WALL_COST or 10
   inp.bar_single       = C.PPT_COVER_TARGET_SHOTS or 15
-  inp.bar_chain        = C.PT2_CHAIN_BLOCKER_MIN_SHOTS or 5
+  inp.bar_chain        = C.PT2_CHAIN_BLOCKER_MIN_SHOTS or 10
+  inp.bar_other        = inp.wall_shots       -- a bystander: one wall
   inp.chains           = C.PT2_CHAINS ~= false
   inp.max_chain        = C.PT2_MAX_CHAIN or 3
   inp.leeway_on        = C.PT2_LEEWAY ~= false
