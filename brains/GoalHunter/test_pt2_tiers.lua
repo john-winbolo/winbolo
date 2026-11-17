@@ -519,6 +519,73 @@ do
   cpf.dijkstra_lookup_by_kind, cpf.KIND_NORMAL = save_dij, save_kind
 end
 
+-- ── pt2_attack.build_inp: a finish prices travel without A's danger ─────
+-- Arena 20261117_113930_1 t=850: the point 2.4 squares from the tank
+-- costs 242 with A's danger on its path, a far point 112. Without A's
+-- danger the near point costs 40, the far one 100. On a finish the score
+-- is the cost less A's danger (the C subtract lookup with
+-- threat.pill_contrib[A]), so the near point wins; off a finish, and with
+-- the knob at -1, the plain lookup stays and the subtract is never called.
+print("pt2_attack: a finish prices travel without A's danger")
+do
+  local PA = require("pt2_attack")
+  local save_dij, save_sub, save_kind = cpf.dijkstra_lookup_by_kind, cpf.dijkstra_lookup_subtract_by_kind, cpf.KIND_NORMAL
+  local save_threat = package.loaded["threat"]
+  cpf.KIND_NORMAL = cpf.KIND_NORMAL or 0
+  local NEAR, FAR = { 130, 113 }, { 126, 113 }
+  local full  = { [NEAR[2] * 256 + NEAR[1]] = 242, [FAR[2] * 256 + FAR[1]] = 112 }
+  local minus = { [NEAR[2] * 256 + NEAR[1]] = 40,  [FAR[2] * 256 + FAR[1]] = 100 }
+  local sub_calls, sub_tbl = 0, nil
+  cpf.dijkstra_lookup_by_kind = function(_, x, y) return full[y * 256 + x] or 500 end
+  cpf.dijkstra_lookup_subtract_by_kind = function(_, x, y, _, t)
+    sub_calls = sub_calls + 1; sub_tbl = t
+    return minus[y * 256 + x] or 500
+  end
+  local A = { mx = 128, my = 120, owner = "hostile", health = 1, anger = 0.9, anger_tick = 100 }
+  local A_contrib = { [113 * 256 + 128] = 50 }
+  package.loaded["threat"] = { pill_contrib = { [120 * 256 + 128] = A_contrib } }
+  -- both points next to a green spot: no green penalty, travel only
+  local function scores(hp, anger, knob)
+    A.health, A.anger = hp, anger
+    local save_k = C.PT2_FINISH_NO_COVER_MAX_ANGER
+    if knob then C.PT2_FINISH_NO_COVER_MAX_ANGER = knob end
+    local w = world_of({ A })
+    local goal = { scan_spots = { { deg = 0, has_los = true, _adj_score = 1 } } }
+    local inp = PA.build_inp({}, goal, { armour = 10, tankx = 130 * 256, tanky = 115 * 256 },
+                             w, A, false, 0, 7.0, 100)
+    local n = inp.score_fn(0, NEAR[1], NEAR[2], NEAR[1] + 0.5, NEAR[2] + 0.5)
+    local f = inp.score_fn(0, FAR[1], FAR[2], FAR[1] + 0.5, FAR[2] + 0.5)
+    C.PT2_FINISH_NO_COVER_MAX_ANGER = save_k
+    return n, f, inp
+  end
+  sub_calls = 0
+  local n1, f1, i1 = scores(1, 0.9)
+  check("finish: near point priced without A (40)", n1 == 40, n1)
+  check("finish: far point priced without A (100)", f1 == 100, f1)
+  check("finish: near point wins", n1 < f1, string.format("%s vs %s", n1, f1))
+  check("finish: subtract gets A's own contrib table", sub_tbl == A_contrib, tostring(sub_tbl))
+  check("finish: noA_n counts both points", i1.noA_n == 2 and sub_calls == 2, i1.noA_n)
+  sub_calls = 0
+  local n2, f2, i2 = scores(15, 0)
+  check("not a finish: plain travel, far point wins", n2 == 242 and f2 == 112, string.format("%s %s", n2, f2))
+  check("not a finish: subtract never called", sub_calls == 0 and i2.noA_n == 0, sub_calls)
+  sub_calls = 0
+  local n3, f3, i3 = scores(1, 0.97)
+  check("1hp anger 0.97 (over the knob): plain travel", n3 == 242 and f3 == 112 and sub_calls == 0, n3)
+  sub_calls = 0
+  local n4, f4, i4 = scores(1, 0, -1)
+  check("finish knob -1 (KEEL / MAST): plain travel, bit for bit", n4 == 242 and f4 == 112
+        and sub_calls == 0 and i4.noA_n == 0, string.format("%s %s", n4, f4))
+  -- no contrib table for A (not stamped): the plain lookup, as before
+  package.loaded["threat"] = { pill_contrib = {} }
+  sub_calls = 0
+  local n5, f5, i5 = scores(1, 0.9)
+  check("finish, A not stamped: plain travel", n5 == 242 and f5 == 112 and sub_calls == 0
+        and i5.noA_n == 0, n5)
+  package.loaded["threat"] = save_threat
+  cpf.dijkstra_lookup_by_kind, cpf.dijkstra_lookup_subtract_by_kind, cpf.KIND_NORMAL = save_dij, save_sub, save_kind
+end
+
 -- ── SHOT_PATH_SKIP_DEAD_PILLS: a dead pill lets the shell pass ──────────
 print("SHOT_PATH_SKIP_DEAD_PILLS")
 do
