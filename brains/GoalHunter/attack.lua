@@ -910,7 +910,8 @@ local function standoff_shot_obstacle(goal, pill, world)
       local plist = world.pill_at and world.pill_at[t.my * 256 + t.mx]
       if plist then
         for _, e in ipairs(plist) do
-          if e.pill then
+          -- SHOT_PATH_SKIP_DEAD_PILLS: a dead pill lets the shell pass
+          if U.pill_entry_stops_shell(world, e, t.mx, t.my) then
             return string.format("pill at (%d,%d) in shot path", t.mx, t.my)
           end
         end

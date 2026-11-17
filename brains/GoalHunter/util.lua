@@ -646,6 +646,20 @@ function M.base_tile_stops_tank_shell(world, mx, my, omx, omy)
   return M.base_stops_tank_shell(world, b, M.tank_shell_on_boat(world, omx, omy))
 end
 
+--- Does the world.pill_at entry e on square (mx, my) stop a tank shell?
+--- C.SHOT_PATH_SKIP_DEAD_PILLS on: only a live pill on that square (health
+--- > 0, not in a tank), checked against the live table world.pills[e.id].
+--- That is the engine rule (pillbox.c pillsHitSlot): a dead pill lets the
+--- shell pass, a live pill of ANY owner (ours too) stops it.
+--- Knob off: every entry with a pill stops it (the old rule).
+function M.pill_entry_stops_shell(world, e, mx, my)
+  if not C.SHOT_PATH_SKIP_DEAD_PILLS then return e.pill ~= nil end
+  local p = (e.id and world.pills and world.pills[e.id]) or e.pill
+  if not p or p.in_tank or (p.health or 0) <= 0 then return false end
+  if p.mx ~= nil and (p.mx ~= mx or p.my ~= my) then return false end
+  return true
+end
+
 --- A pill shell: no base ever stops it (owner NEUTRAL, see above).
 function M.base_stops_pill_shell()
   return false

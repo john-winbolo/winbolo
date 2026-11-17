@@ -964,6 +964,14 @@ M.PT2_TRAVEL_BAND_TICKS = 100
 -- qualified plans again once when it does. -1 = never (the old rule).
 -- Andrew's value (Nov 17). KEEL / MAST: -1.
 M.PT2_FINISH_NO_COVER_MAX_ANGER = 0.95
+-- SHOT_PATH_SKIP_DEAD_PILLS: v1's shot-path checks (attack.lua
+-- standoff_shot_obstacle, attack_shield.lua score_aim outgoing ray,
+-- pathfinder.lua pill_shots_clear) count only a LIVE pill (health > 0, not
+-- in a tank) as an obstacle, as the engine does (pillbox.c pillsHitSlot).
+-- Our own live pills still stop our shells. A dead pill on the line made
+-- SANITY_REAIM fire and pushed the standoff away from the short line.
+-- Andrew (Nov 17). false = a dead pill blocks (the old rule; KEEL / MAST).
+M.SHOT_PATH_SKIP_DEAD_PILLS = true
 -- BLOCKER_ORTHOGONAL_ONLY: a shield blocker (a wall or a dropped pillbox) only
 -- on one of the four squares orthogonally next to the target pill, never a
 -- diagonal one or one further out. The shield scan then always runs in Lua
@@ -7614,6 +7622,8 @@ M.PRESETS = {
     PT2_AIM_NUDGE = false,
     PT2_TRAVEL_BAND_TICKS = 0,
     PT2_FINISH_NO_COVER_MAX_ANGER = -1,
+    --   2026-11-17: a dead pill blocks v1's shot-path checks (old rule).
+    SHOT_PATH_SKIP_DEAD_PILLS = false,
     --   2026-11-17: the kill_hardline gate tested again after plan_position.
     KILL_HARDLINE_RECHECK = false,
     --   2026-11-16: neutral live pill in our ground x0.75. KEEL: x1.
@@ -7923,6 +7933,7 @@ M.PRESETS.mast = {
   REPAIR_LOW_DMG_MULT_MAX           = 1.0,
   REPAIR_STANDOFF_ENABLED           = false,
   REPLAN_OFFSET_MODE                = "random",
+  SHOT_PATH_SKIP_DEAD_PILLS         = false,
   SPIKE_PEN_SKIP_MAX_SHOTS          = 0,
   SPIKE_REPAIR_PRIORITY             = false,
   STEER_CAPTURE_TURN_CIRCLE_CAP     = false,
