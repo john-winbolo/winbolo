@@ -123,6 +123,7 @@ enum {
     VCAT_HUD = 0, VCAT_CHARGE, VCAT_PILLTAKE, VCAT_SQUAD, VCAT_NAV,
     VCAT_LGM, VCAT_TANKCBT, VCAT_THREAT, VCAT_CIRCLES, VCAT_PLACEMENT,
     VCAT_ALLY, VCAT_SHELLS, VCAT_REPOSITION, VCAT_DECOY, VCAT_FOCUS, VCAT_QUICKREPAIR,
+    VCAT_PILLTAKE2,
     VCAT_MISC, VCAT_COUNT
 };
 
@@ -130,7 +131,7 @@ static const char *kVizCatLabel[VCAT_COUNT] = {
     "Core HUD", "Charge", "Pill take", "Squad/Blitz", "Nav",
     "LGM", "Tank combat", "Threat", "Circles", "Placement",
     "Ally/Comms", "Shells/Hitbox", "Reposition", "Decoy", "Focused spike",
-    "Quick repair", "Misc",
+    "Quick repair", "Pill take v2", "Misc",
 };
 
 struct VizMeta { const char *id; unsigned char cat; bool hud; };
@@ -158,10 +159,10 @@ static const VizMeta kVizMeta[] = {
     {"plan_trace", VCAT_PILLTAKE, false},        {"shield_scan_candidates", VCAT_PILLTAKE, false},
     {"shield_scan_blockers", VCAT_PILLTAKE, false}, {"shield_blocker_union", VCAT_PILLTAKE, false},
     {"shield_scan_trajectory", VCAT_PILLTAKE, false}, {"shield_scan_legend", VCAT_PILLTAKE, false},
-    {"pt2_light", VCAT_PILLTAKE, false},         {"pt2_shadow", VCAT_PILLTAKE, false},
-    {"pt2_rays", VCAT_PILLTAKE, false},          {"pt2_chain", VCAT_PILLTAKE, false},
-    {"pt2_candidates", VCAT_PILLTAKE, false},    {"pt2_leeway", VCAT_PILLTAKE, false},
-    {"pt2_blocker", VCAT_PILLTAKE, false},       {"pt2_compare", VCAT_PILLTAKE, false},
+    {"pt2_light", VCAT_PILLTAKE2, false},         {"pt2_shadow", VCAT_PILLTAKE2, false},
+    {"pt2_rays", VCAT_PILLTAKE2, false},          {"pt2_chain", VCAT_PILLTAKE2, false},
+    {"pt2_candidates", VCAT_PILLTAKE2, false},    {"pt2_leeway", VCAT_PILLTAKE2, false},
+    {"pt2_blocker", VCAT_PILLTAKE2, false},       {"pt2_compare", VCAT_PILLTAKE2, false},
     {"wall_build_queue", VCAT_PILLTAKE, false},  {"build_status", VCAT_PILLTAKE, false},
     {"build_decision_banner", VCAT_PILLTAKE, false}, {"wall_skip_reason", VCAT_PILLTAKE, false},
     {"pill_take_target", VCAT_PILLTAKE, false},  {"base_shield_viz", VCAT_PILLTAKE, false},

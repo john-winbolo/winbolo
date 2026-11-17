@@ -211,7 +211,8 @@ M.IDS = {
   shield_blocker_union   = { short = "Shield: blockers union (lua version)",
                              long  = "Union across all candidate standoff angles. BLACK = every tile a pillbox bullet crosses (raw, NO gating — was even considered, incl. tiles our own shot crosses). On top: green=actual wall/pill, yellow=potential buildable, grey=LGM-unreachable (these passed every gate). So black-only = on a shot path but REJECTED (too close/behind/unbuildable); no box = never considered. ON forces the slow lua version of shield.scan; OFF uses the fast c version. Default OFF so unattended -braindebug hosts keep the c version.",
                              default_on = false },
-  -- Pill take v2 (pt2_viz.lua). Drawn from v2's own result, kept once per
+  -- Pill take v2 (pt2_viz.lua). BrainTest V window section "Pill take v2".
+  -- Drawn from v2's own result, kept once per
   -- evaluation; v2 runs in debug runs with PT2_SIDE_BY_SIDE_LOG, or with the
   -- master PILLTAKE_V2_EVALUATOR on.
   pt2_light      = { short = "PT2: pill range",
