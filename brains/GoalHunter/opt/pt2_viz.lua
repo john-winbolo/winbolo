@@ -193,8 +193,20 @@ local function draw_chain(cap)
   end
 end
 
-local function cand_body(r, cap_n, build_cost)
+local function cand_body(r, cap_n, build_cost, inp)
+  local tps = inp and inp.ticks_per_score or 16
+  local band_t = inp and inp.travel_band_ticks or 0
+  local band_line
+  if band_t > 0 and r.tier_min then
+    band_line = string.format("travel band: %.0f t (quickest in tier %.0f t + band %d t = %.0f t): %s",
+      (r.score or 0) * tps, r.tier_min * tps, band_t, r.tier_min * tps + band_t,
+      r.in_band and "IN band" or "OUT of band")
+  else
+    band_line = string.format("travel band: off (PT2_TRAVEL_BAND_TICKS %d); travel %.0f t", band_t,
+      (r.score or 0) * tps)
+  end
   return {
+    band_line,
     -- point: where the tank stands; with PT2_AIM_NUDGE that is the nudged
     -- point (every ray was cast to it), nudge wu forward of the ring point
     string.format("deg=%.1f radius=%.2f point=(%.2f,%.2f) nudge=%d wu aim=%s", r.deg, r.radius or 0,
@@ -229,7 +241,7 @@ local function draw_candidates(cap)
       if r.rejected then
         body = { string.format("deg=%.1f point=(%.2f,%.2f) rejected: %s", r.deg, r.cx, r.cy, r.rejected) }
       else
-        body = cand_body(r, inp.leeway_min, inp.build_cost)
+        body = cand_body(r, inp.leeway_min, inp.build_cost, inp)
       end
     end
   end

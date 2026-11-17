@@ -9212,5 +9212,68 @@ end
   UT.reset()
 end)()
 
+-- ── KILL_HARDLINE_RECHECK ───────────────────────────────────────────────
+-- plan_position tests the kill_hardline gate once. With the knob on, a take
+-- in approach / aim / in_range_* tests it again each think, so a tank that
+-- planned from far off rushes the 1-HP pill once it is in range.
+print("attack.lua -- KILL_HARDLINE_RECHECK")
+do
+  local saved = C.KILL_HARDLINE_RECHECK
+  local function rig(tmx, sub)
+    local r = BOT(1, tmx, 20)
+    local p = r.w.pills[5]
+    p.health, p.anger = 1, 0
+    r.w.pill_at = { [20 * 256 + 20] = { { id = 5, pill = p } } }
+    r.st.tick = 500
+    local g = { kind = "attack_pill", target_id = 5, mx = 20, my = 20, substate = sub,
+                _kill_rush_decided = true,
+                standoff_mx = 14, standoff_my = 20, standoff_fx = 14.5, standoff_fy = 20.5 }
+    r.st.goal = g
+    return r, g
+  end
+  -- A case that does not switch runs on into code that needs the engine
+  -- (cpf_simulate_shot); the re-check comes before it, so only the substate
+  -- it leaves counts.
+  local function step(g, r) pcall(ATTACK.update_attack_substate, g, r.st, r.w, r.inf) end
+  check("knob default on", C.KILL_HARDLINE_RECHECK == true, tostring(C.KILL_HARDLINE_RECHECK))
+  check("knob keel false", C.PRESETS.keel.KILL_HARDLINE_RECHECK == false)
+  check("knob mast false", C.PRESETS.mast.KILL_HARDLINE_RECHECK == false)
+  C.KILL_HARDLINE_RECHECK = true
+  for _, sub in ipairs({ "approach", "aim", "in_range_position", "in_range_aim_pre",
+                         "in_range_aim", "in_range_aim_finetune" }) do
+    local r, g = rig(15, sub)
+    ATTACK.update_attack_substate(g, r.st, r.w, r.inf)
+    check("knob on, " .. sub .. ", 1-HP calm pill 5 squares off: kill_hardline",
+          g.substate == "kill_hardline" and g._kill_rush == true, tostring(g.substate))
+  end
+  local r, g = rig(15, "build_walls")
+  step(g, r)
+  check("knob on, build_walls: no switch", g.substate ~= "kill_hardline", tostring(g.substate))
+  r, g = rig(5, "approach")                     -- 15 squares off > HARDLINE_ENGAGE_RANGE
+  step(g, r)
+  check("knob on, out of HARDLINE_ENGAGE_RANGE: no switch", g.substate ~= "kill_hardline", tostring(g.substate))
+  r, g = rig(15, "approach")
+  r.w.pills[5].anger = 0.9
+  step(g, r)
+  check("knob on, angry pill: no switch", g.substate ~= "kill_hardline", tostring(g.substate))
+  r, g = rig(15, "approach")
+  r.inf.armour = 2
+  step(g, r)
+  check("knob on, armour below ATTACK_RUSH_MIN_ARMOUR: no switch", g.substate ~= "kill_hardline", tostring(g.substate))
+  r, g = rig(15, "approach")
+  g._charge_now_careful = true
+  step(g, r)
+  check("knob on, fell back from kill_hardline (careful): no switch", g.substate ~= "kill_hardline", tostring(g.substate))
+  r, g = rig(15, "approach")
+  r.w.pills[5].health = 4
+  step(g, r)
+  check("knob on, pill at 4 HP: no switch", g.substate ~= "kill_hardline", tostring(g.substate))
+  C.KILL_HARDLINE_RECHECK = false
+  r, g = rig(15, "approach")
+  step(g, r)
+  check("knob off: decided once, approach stays", g.substate ~= "kill_hardline", tostring(g.substate))
+  C.KILL_HARDLINE_RECHECK = saved
+end
+
 print(string.format("\n%d passed, %d failed", pass, fail))
 os.exit(fail == 0 and 0 or 1)

@@ -29,7 +29,11 @@
 -- the pill first, up to PT2_BUILD_MAX. A wall never goes on our own shot
 -- lane, nor in front of a chain link (it would break the chain).
 --
--- Rank (highest first): safe, kills (chain length), depth (chains only:
+-- Rank (highest first): safe, kills (chain length), travel band
+-- (PT2_TRAVEL_BAND_TICKS: points whose score, in ticks, is within the band
+-- of the quickest point of the same safe/kills tier count as equal; a
+-- slower point ranks below them, and slower points rank by score; 0 = no
+-- band), depth (chains only:
 -- the shots of cover on the last chain pill's ray, so ally pill + wall 20
 -- > ally pill 15 > two walls 10), blocker rank (an allied pill in the
 -- cover above walls only; the tie-break after depth), leeway (neighbour
@@ -522,9 +526,20 @@ end
 -- Leeway counts up to cap (PT2_LEEWAY_MIN): past "enough room", the
 -- travel score decides, as in v1. Without the cap a spot one neighbour
 -- roomier but far off v1's line would always win.
-function M.better(a, b, cap)
+-- band: PT2_TRAVEL_BAND_TICKS in score units (nil or 0: no band). The
+-- quickest score is the lowest of the two points and of their tiers'
+-- tier_min (set_band), so inside one sort every point of a tier meets the
+-- same quickest point.
+function M.better(a, b, cap, band)
   if a.safe ~= b.safe then return a.safe end
   if a.kills ~= b.kills then return a.kills > b.kills end
+  if band and band > 0 then
+    local sa, sb = a.score, b.score
+    local m = math.min(sa, sb, a.tier_min or sa, b.tier_min or sb)
+    local ia, ib = sa <= m + band, sb <= m + band
+    if ia ~= ib then return ia end
+    if not ia and sa ~= sb then return sa < sb end
+  end
   -- depth only between chains: a single take keeps v1's order (parity)
   if a.kills >= 2 and (a.depth or 0) ~= (b.depth or 0) then return (a.depth or 0) > (b.depth or 0) end
   if a.blk ~= b.blk then return a.blk > b.blk end
@@ -537,6 +552,22 @@ function M.better(a, b, cap)
   if la ~= lb then return la > lb end
   return a.score < b.score
 end
+
+-- Travel band: the quickest score of each (safe, kills) tier, and whether
+-- each point is in the band of it. Run again after safe can change.
+local function set_band(scored, band)
+  if not band or band <= 0 then return end
+  local mins = {}
+  for _, r in ipairs(scored) do
+    local key = (r.safe and "s" or "u") .. r.kills
+    if not mins[key] or r.score < mins[key] then mins[key] = r.score end
+  end
+  for _, r in ipairs(scored) do
+    r.tier_min = mins[(r.safe and "s" or "u") .. r.kills]
+    r.in_band = r.score <= r.tier_min + band
+  end
+end
+M.set_band = set_band
 
 -- Leeway of a given point and plan (for logs and the parity test).
 function M.leeway_at(inp, px, py, extra)
@@ -641,8 +672,9 @@ function M.evaluate(inp)
       fin.score = fin.base + fin.n_built * inp.build_cost
       scored[#scored + 1] = fin
     end
-    local cap = inp.leeway_min
-    table.sort(scored, function(a, b) return M.better(a, b, cap) end)
+    local cap, band = inp.leeway_min, inp.travel_band
+    set_band(scored, band)
+    table.sort(scored, function(a, b) return M.better(a, b, cap, band) end)
     -- leeway on the top candidates, then rank them again
     if inp.leeway_on then
       for i = 1, math.min(inp.leeway_top, #scored) do
@@ -654,10 +686,11 @@ function M.evaluate(inp)
           rec.safe, rec.why_unsafe = false, "LEEWAY"
         end
       end
-      table.sort(scored, function(a, b) return M.better(a, b, cap) end)
+      set_band(scored, band)
+      table.sort(scored, function(a, b) return M.better(a, b, cap, band) end)
     end
     for _, rec in ipairs(scored) do all[#all + 1] = rec end
-    if scored[1] and (not best or M.better(scored[1], best, cap)) then best = scored[1] end
+    if scored[1] and (not best or M.better(scored[1], best, cap, band)) then best = scored[1] end
     if best and best.safe then break end
   end
   if best and best.safe and best.plan and #best.plan > 0 then
@@ -693,7 +726,7 @@ function M.evaluate_group(inp)
       n_eval, n_reject = n_eval + r.n_eval, n_reject + r.n_reject
       local b = r.best
       if b and b.safe and b.chain_mode and b.in_chain and b.in_chain[goalA]
-         and (not res.best or M.better(b, res.best, inp.leeway_min)) then
+         and (not res.best or M.better(b, res.best, inp.leeway_min, inp.travel_band)) then
         r.A, r.goal_A = p, goalA
         res = r
       end
@@ -828,6 +861,12 @@ function M.knob_inp(C, inp)
   inp.leeway_top       = C.PT2_LEEWAY_TOP or 8
   inp.leeway_min       = C.PT2_LEEWAY_MIN or 6
   inp.own_pill_rank    = C.PT2_OWN_PILL_BONUS ~= false
+  -- travel band: the score is v1's Dijkstra cost (TERRAIN_COST_LAND: road
+  -- 1 per square), so one score unit is a road square: 256 wu at the road
+  -- speed MAP_SPEED[T_ROAD] (16 wu/tick) = 16 ticks. The band is in ticks.
+  inp.ticks_per_score  = 256 / ((C.MAP_SPEED and C.MAP_SPEED[C.T_ROAD]) or 16)
+  inp.travel_band_ticks = C.PT2_TRAVEL_BAND_TICKS or 0
+  inp.travel_band      = inp.travel_band_ticks / inp.ticks_per_score
   inp.search_top       = 24               -- proposal, awaiting Andrew's value
   inp.pill_range       = SH.PILL_RANGE
   inp.range_margin     = C.PT2_RANGE_MARGIN_WU or 128
