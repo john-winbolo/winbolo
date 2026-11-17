@@ -56,6 +56,16 @@ do
   check("band 0 -> no band", V2.knob_inp(C, {}).travel_band == 0)
   C.PT2_TRAVEL_BAND_TICKS = save
 end
+-- number knob: -1 = the old rule (A always needs its cover)
+check("PT2_FINISH_NO_COVER_MAX_ANGER default 0.95 (Andrew's value)", C.PT2_FINISH_NO_COVER_MAX_ANGER == 0.95)
+check("PT2_FINISH_NO_COVER_MAX_ANGER keel -1", C.PRESETS.keel.PT2_FINISH_NO_COVER_MAX_ANGER == -1)
+check("PT2_FINISH_NO_COVER_MAX_ANGER mast -1", C.PRESETS.mast.PT2_FINISH_NO_COVER_MAX_ANGER == -1)
+do
+  local ki = V2.knob_inp(C, {})
+  check("finish knob reaches inp", ki.finish_max_anger == 0.95, ki.finish_max_anger)
+  check("finish armour is ATTACK_RUSH_MIN_ARMOUR (5)", ki.finish_min_armour == C.ATTACK_RUSH_MIN_ARMOUR
+        and ki.finish_min_armour == 5, ki.finish_min_armour)
+end
 
 -- ── 1. rank order ────────────────────────────────────────────────────────
 print("rank order")
@@ -344,6 +354,122 @@ do
   if r then
     print(string.format("    ring (%.2f,%.2f) -> nudged (%.2f,%.2f) nudge=%d aim=%s",
       cx, cy, r.px / 256, r.py / 256, r.nudge_wu, V2.AIM_NAMES[r.aim_idx]))
+  end
+end
+
+print("finish: a 1-health pill without cover (PT2_FINISH_NO_COVER_MAX_ANGER)")
+do
+  -- A alone at (128,120). Home is south. The old rule: A's ray needs 15
+  -- (three walls). The finish rule: no cover on A's ray, so the nearest
+  -- point with no build wins.
+  local function fin_run(pills, knobs, armour)
+    local save = {}
+    for kk, v in pairs(knobs or {}) do save[kk] = C[kk]; C[kk] = v end
+    local w = world_of(pills)
+    local inp = V2.knob_inp(C, {})
+    inp = V2.world_inp(w, C, U, PC, cpf, inp, false)
+    for kk in pairs(knobs or {}) do C[kk] = save[kk] end
+    inp.A = pills[1]
+    inp.radius = 7.0
+    inp.num_pill_blockers = 0
+    inp.armour = armour
+    inp.keep_all = true
+    inp.score_fn = function(deg, mx, my, cx, cy)
+      local dx, dy = cx - HOME[1], cy - HOME[2]
+      return math.sqrt(dx * dx + dy * dy)
+    end
+    local res = V2.evaluate(inp)
+    return res.best, res, inp
+  end
+  local function A_of(hp, anger) return { mx = 128, my = 120, owner = "hostile", health = hp, anger = anger } end
+  local function old_bar(b, name)
+    check(name .. ": old bar, A needs 15", b and b.need == 15 and not b.finish, b and b.need)
+    check(name .. ": old bar, walls are built", b and #b.plan > 0, b and #b.plan)
+  end
+  -- 1. 1 health, anger 0.9, armour 10: the finish rule
+  local b, res = fin_run({ A_of(1, 0.9) }, nil, 10)
+  check("1hp anger 0.9: safe", b and b.safe, b and b.safe)
+  check("1hp anger 0.9: finish mode", b and b.finish == true, b and b.finish)
+  check("1hp anger 0.9: A needs no cover (need 0)", b and b.need == 0, b and b.need)
+  check("1hp anger 0.9: nothing to build", b and #b.plan == 0, b and #b.plan)
+  check("1hp anger 0.9: no hold point", b and b.hold == nil)
+  check("1hp anger 0.9: the near point wins (south, toward home)",
+        b and (b.deg >= 160 and b.deg <= 200), b and b.deg)
+  local minsc = math.huge
+  for _, r in ipairs(res.all or {}) do
+    if r.safe and r.score and r.score < minsc then minsc = r.score end
+  end
+  check("1hp anger 0.9: best is in the band of the quickest safe point", b and b.score <= minsc + 100 / 16, b and b.score)
+  local sc = b and V2.to_scan_result(res, b.chain[1], { cx = b.cx, cy = b.cy, mx = b.mx, my = b.my })
+  check("1hp anger 0.9: the scan result carries finish", sc and sc.chain.finish == true and sc.chain.need == 0)
+  -- the rule's edge: anger exactly at the knob qualifies
+  local be = fin_run({ A_of(1, 0.95) }, nil, 10)
+  check("1hp anger 0.95 (the knob): finish", be and be.finish == true and be.need == 0, be and be.need)
+  -- anger_of (the bot's decayed anger) is used when given
+  do
+    local w = world_of({ A_of(1, 0.99) })
+    local inp = V2.world_inp(w, C, U, PC, cpf, V2.knob_inp(C, {}), false)
+    inp.armour = 10
+    check("anger 0.99: no finish", V2.finish_ok(inp, w.pills[1]) == false)
+    inp.anger_of = function() return 0.5 end
+    check("anger_of 0.5 overrides p.anger: finish", V2.finish_ok(inp, w.pills[1]) == true)
+  end
+  -- 2. 1 health, anger 0.97: the old bar
+  old_bar((fin_run({ A_of(1, 0.97) }, nil, 10)), "1hp anger 0.97")
+  -- 3. 2 health, anger 0: the old bar
+  old_bar((fin_run({ A_of(2, 0) }, nil, 10)), "2hp anger 0")
+  -- 4. our armour 4 (< ATTACK_RUSH_MIN_ARMOUR 5): the old bar
+  old_bar((fin_run({ A_of(1, 0.5) }, nil, 4)), "armour 4")
+  check("armour 5 (the minimum): finish", (fin_run({ A_of(1, 0.5) }, nil, 5)).finish == true)
+  -- 5. knob -1 (KEEL / MAST): the old bar
+  old_bar((fin_run({ A_of(1, 0) }, { PT2_FINISH_NO_COVER_MAX_ANGER = -1 }, 10)), "knob -1")
+  -- 6. another pill in range still needs its cover
+  do
+    local A = A_of(1, 0.9)
+    local B = { mx = 131, my = 120, owner = "hostile", health = 15 }
+    local bb = fin_run({ A, B }, nil, 10)
+    check("other pill: finish on A", bb and bb.finish == true and bb.need == 0, bb and bb.need)
+    local b_ok, b_bar = false, nil
+    for _, r in ipairs(bb and bb.rays or {}) do
+      if r.X == B then
+        b_bar = r.bar
+        b_ok = r.ok and (r.hit == "reach" or r.link_cover or r.cover >= r.bar)
+      end
+    end
+    check("other pill: B keeps its bar (>= one wall)", b_bar ~= nil and b_bar >= 5, b_bar)
+    check("other pill: B's ray is out of reach or covered at the best point", b_ok)
+    -- a point south of A that B can hit with no cover: B fails, A passes
+    local w = world_of({ A, B })
+    local inp = V2.world_inp(w, C, U, PC, cpf, V2.knob_inp(C, {}), false)
+    inp.A, inp.armour = A, 10
+    local px, py = math.floor(128.5 * 256), math.floor(127.5 * 256)
+    local why = V2.judge(inp, px, py, nil, nil)
+    check("other pill: B in range with no cover fails the point", why == "OVERLAP:2", why)
+    inp.finish_max_anger = -1
+    local why0 = V2.judge(inp, px, py, nil, nil)
+    check("other pill, knob -1: A's own bar fails first", tostring(why0):sub(1, 5) == "DEPTH", why0)
+    if bb and bb.hold then
+      check("other pill: the hold point is not stopped by A", bb.hold.safe or bb.hold.why ~= "1", bb.hold.why)
+    end
+  end
+  -- 7. the shadow overlay uses the same bar: under the finish rule every
+  --    cell A can shoot is in A's shadow
+  do
+    local viz = require("viz")
+    local PV = require("pt2_viz")
+    local on0 = viz.is_on
+    local bf, rf, inpf = fin_run({ A_of(1, 0.9) }, nil, 10)
+    local g = {}
+    PV.capture(g, inpf, rf, nil, nil, 0)
+    local n_fin = g._pt2_viz and g._pt2_viz.cells and g._pt2_viz.cells[1] and #g._pt2_viz.cells[1] or 0
+    local bo, ro, inpo = fin_run({ A_of(1, 0.97) }, nil, 10)
+    local g2 = {}
+    PV.capture(g2, inpo, ro, nil, nil, 0)
+    local n_old = g2._pt2_viz and g2._pt2_viz.cells and g2._pt2_viz.cells[1] and #g2._pt2_viz.cells[1] or 0
+    check("shadow: finish shades more of A's ring than the old bar", n_fin > n_old,
+          string.format("%d vs %d", n_fin, n_old))
+    print(string.format("    finish so=(%.2f,%.2f) deg=%.1f plan=%d | old so=(%.2f,%.2f) deg=%.1f plan=%d | shadow %d vs %d",
+      bf.cx, bf.cy, bf.deg, #bf.plan, bo.cx, bo.cy, bo.deg, #bo.plan, n_fin, n_old))
   end
 end
 

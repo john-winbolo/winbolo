@@ -67,6 +67,16 @@ local function nearest_spot(spots, deg)
   return best
 end
 
+-- A pill's anger now: world.lua keeps the anger of the tick it last saw
+-- the pill (anger_tick) and it falls 1 / PILL_ANGER_DECAY per tick since.
+function M.anger_now(p, now)
+  local a = p and p.anger or 0
+  if a <= 0 then return 0 end
+  local dt = (now or 0) - (p.anger_tick or now or 0)
+  if dt > 0 then a = a - dt / (C.PILL_ANGER_DECAY or 3000) end
+  return a > 0 and a or 0
+end
+
 -- inp for v2 from the bot's own view. The score is v1's: a point next to a
 -- green spot costs its Dijkstra travel (plus the human-decoy cost, as v1),
 -- any other point 10000 + the spot's adjusted score (so greens always win).
@@ -80,6 +90,9 @@ function M.build_inp(state, goal, info, world, pill, no_builder, npb, radius, no
   if not inp.A then return nil end
   inp.radius = radius
   inp.num_pill_blockers = npb
+  -- PT2_FINISH_NO_COVER_MAX_ANGER: our armour and each pill's anger now
+  inp.armour = info.armour or 0
+  inp.anger_of = function(p) return M.anger_now(p, now) end
   local goalA = inp.A
   local curA = goalA
   inp.banned = function(deg)
@@ -143,6 +156,14 @@ end
 -- Agreement test for the log (tolerance: proposal, awaiting Andrew's value).
 M.CMP_TOL_WU = 64
 
+-- The mode for the logs: SINGLE or HOLD (a chain), "+FINISH" (or FINISH
+-- alone for a single take) when A's ray had no cover need.
+local function mode_of(b)
+  if not b then return "-" end
+  if b.finish then return b.chain_mode and "HOLD+FINISH" or "FINISH" end
+  return b.chain_mode and "HOLD" or "SINGLE"
+end
+
 local function cmp_line(now, pill, inp, res, v1, cost_us, drive, do_print)
   local b = res and res.best
   local v2ok = b and b.safe
@@ -181,7 +202,7 @@ local function cmp_line(now, pill, inp, res, v1, cost_us, drive, do_print)
     b and string.format("(%.2f,%.2f)", b.cx, b.cy) or "-",
     b and string.format("%.1f", b.deg) or "-",
     b and tostring(b.aim_idx) or "-",
-    chain, b and (b.chain_mode and "HOLD" or "SINGLE") or "-",
+    chain, mode_of(b),
     b and tostring(b.kills) or "-", b and tostring(b.need) or "-", b and tostring(b.have) or "-",
     tostring(v2ok and true or false), b and tostring(b.leeway) or "-", plan,
     diff, d_wu and string.format("%.0f", d_wu) or "-", why,
@@ -286,6 +307,8 @@ function M.chain_next(state, goal, world, info, now)
     return false
   end
   goal._pt2.step = k
+  -- the finish rule was for the pill just killed, not for the next one
+  goal._pt2.finish = nil
   goal.target_id = bid
   goal.mx, goal.my = B.mx, B.my
   AT._set_goal_aim(goal, B.mx, B.my, idx, awx, awy)
@@ -310,6 +333,31 @@ function M.chain_next(state, goal, world, info, now)
   goal._shoot_progress_hp   = nil
   goal._shoot_progress_tick = nil
   goal._on_target_in_flight = nil
+  return true
+end
+
+-- ── Finish re-plan (PT2_FINISH_NO_COVER_MAX_ANGER) ───────────────────────
+-- Called each think in the pre-shoot substates. The plan was made when the
+-- pill did (or did not) qualify for the finish rule; anger falls with time
+-- and armour or health can change, so when the answer now differs from
+-- the plan's, the take plans again, once per change of the answer
+-- (goal._pt2_fin_q keeps the last answer). Only with v2 driving (master on,
+-- a protected take) and the knob at 0 or more. Returns true: re-plan now.
+local PRE_SHOOT = { approach = true, aim = true, in_range_position = true,
+                    in_range_aim_pre = true, in_range_aim = true, in_range_aim_finetune = true }
+function M.finish_recheck(goal, info, pill, now, sub)
+  if not C.PILLTAKE_V2_EVALUATOR or not goal._is_ppt or not PRE_SHOOT[sub] then return false end
+  local m = C.PT2_FINISH_NO_COVER_MAX_ANGER or -1
+  if m < 0 or not pill or (pill.health or 0) <= 0 then return false end
+  -- a chain past its first pill shoots on from its spot
+  if goal._pt2 and (goal._pt2.step or 1) > 1 then return false end
+  local anger = M.anger_now(pill, now)
+  local q = (pill.health or 0) == 1 and (info.armour or 0) >= (C.ATTACK_RUSH_MIN_ARMOUR or 5)
+            and anger <= m
+  local planned = (goal._pt2 and goal._pt2.finish) and true or false
+  local prev = goal._pt2_fin_q
+  goal._pt2_fin_q = q
+  if q == planned or prev == q then return false end
   return true
 end
 

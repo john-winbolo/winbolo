@@ -62,6 +62,9 @@ local function shadow_cells(inp, best)
   for i, X in ipairs(best.T) do
     local ray = best.rays[i]
     local bar = ray and ray.bar or inp.bar_chain
+    -- PT2_FINISH_NO_COVER_MAX_ANGER: A's own ray needs no cover (bar 0, as
+    -- eval_point), so every cell A can shoot counts as in A's shadow
+    if X == inp.A and best.finish then bar = 0 end
     -- PT2_LINK_COVERS_PREV: a chain pill is covered by the next chain pill
     local ci = best.in_chain and best.in_chain[X]
     local nxt = inp.link_covers and ci and best.chain[ci + 1] or nil
@@ -172,7 +175,8 @@ local function draw_rays(cap)
       viz.circle("pt2_rays", lx, ly, 0.18, 255, 160, 40, 230, true, false)
     end
     viz.text("pt2_rays", x0 + 0.1, y0 - 0.2,
-      string.format("d=%d/%d", r.cover or 0, r.bar or 0), "topleft", c[1], c[2], c[3], 255, 0.8)
+      string.format("d=%d/%d%s", r.cover or 0, r.bar or 0, (best.finish and X == cap.inp.A) and " finish" or ""),
+      "topleft", c[1], c[2], c[3], 255, 0.8)
   end
 end
 
