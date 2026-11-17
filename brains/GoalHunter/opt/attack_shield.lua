@@ -206,7 +206,9 @@ local function score_aim(spot_wx, spot_wy, origin_mx, origin_my,
         local plist = world.pill_at and world.pill_at[tmy * 256 + tmx]
         if plist then
           for _, e in ipairs(plist) do
-            if e.pill and (e.pill.mx ~= pmx or e.pill.my ~= pmy) then
+            -- SHOT_PATH_SKIP_DEAD_PILLS: a dead pill lets the shell pass
+            if e.pill and (e.pill.mx ~= pmx or e.pill.my ~= pmy)
+               and U.pill_entry_stops_shell(world, e, tmx, tmy) then
               outgoing_blocked_by_wall = true
               break
             end
@@ -237,7 +239,8 @@ local function score_aim(spot_wx, spot_wy, origin_mx, origin_my,
           local plist = world.pill_at and world.pill_at[t.my * 256 + t.mx]
           if plist then
             for _, e in ipairs(plist) do
-              if e.pill and (e.pill.mx ~= pmx or e.pill.my ~= pmy) then
+              if e.pill and (e.pill.mx ~= pmx or e.pill.my ~= pmy)
+                 and U.pill_entry_stops_shell(world, e, t.mx, t.my) then
                 outgoing_blocked_by_wall = true
                 break
               end

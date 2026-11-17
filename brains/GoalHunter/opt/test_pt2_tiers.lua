@@ -60,6 +60,9 @@ end
 check("PT2_FINISH_NO_COVER_MAX_ANGER default 0.95 (Andrew's value)", C.PT2_FINISH_NO_COVER_MAX_ANGER == 0.95)
 check("PT2_FINISH_NO_COVER_MAX_ANGER keel -1", C.PRESETS.keel.PT2_FINISH_NO_COVER_MAX_ANGER == -1)
 check("PT2_FINISH_NO_COVER_MAX_ANGER mast -1", C.PRESETS.mast.PT2_FINISH_NO_COVER_MAX_ANGER == -1)
+check("SHOT_PATH_SKIP_DEAD_PILLS default true", C.SHOT_PATH_SKIP_DEAD_PILLS == true)
+check("SHOT_PATH_SKIP_DEAD_PILLS keel false", C.PRESETS.keel.SHOT_PATH_SKIP_DEAD_PILLS == false)
+check("SHOT_PATH_SKIP_DEAD_PILLS mast false", C.PRESETS.mast.SHOT_PATH_SKIP_DEAD_PILLS == false)
 do
   local ki = V2.knob_inp(C, {})
   check("finish knob reaches inp", ki.finish_max_anger == 0.95, ki.finish_max_anger)
@@ -471,6 +474,100 @@ do
     print(string.format("    finish so=(%.2f,%.2f) deg=%.1f plan=%d | old so=(%.2f,%.2f) deg=%.1f plan=%d | shadow %d vs %d",
       bf.cx, bf.cy, bf.deg, #bf.plan, bo.cx, bo.cy, bo.deg, #bo.plan, n_fin, n_old))
   end
+end
+
+-- ── pt2_attack.build_inp: v1's green filter and the finish ───────────────
+-- v1's ring spots: north (deg 0) not green (adj 50), south (deg 180) green
+-- (adj 1). Off a finish, a point next to a non-green spot costs 10000 +
+-- its adj; on a finish (A 1 health, anger under the knob) it costs its
+-- travel only, as every other point.
+print("pt2_attack: the green filter is off on a finish")
+do
+  package.loaded["print2"] = package.loaded["print2"] or setmetatable({}, { __call = function() end })
+  local PA = require("pt2_attack")
+  local save_dij, save_kind = cpf.dijkstra_lookup_by_kind, cpf.KIND_NORMAL
+  cpf.KIND_NORMAL = cpf.KIND_NORMAL or 0
+  cpf.dijkstra_lookup_by_kind = function() return 42 end
+  local function score_at(hp, anger, deg)
+    local A = { mx = 128, my = 120, owner = "hostile", health = hp, anger = anger, anger_tick = 100 }
+    local w = world_of({ A })
+    local goal = { scan_spots = {
+      { deg = 0,   has_los = true, _adj_score = 50 },
+      { deg = 180, has_los = true, _adj_score = 1 },
+    } }
+    local inp = PA.build_inp({}, goal, { armour = 10, tankx = 128 * 256, tanky = 134 * 256 },
+                             w, A, false, 0, 7.0, 100)
+    return inp.score_fn(deg, 128, 113, 128.5, 113.5), inp
+  end
+  local s1, i1 = score_at(15, 0, 0)
+  check("not a finish: non-green spot costs 10000 + adj", s1 == 10050, s1)
+  check("not a finish: penalty counted", i1.pen_n == 1 and i1.pen_skip_n == 0, i1.pen_n)
+  local s2 = score_at(15, 0, 180)
+  check("not a finish: green spot costs its travel", s2 == 42, s2)
+  local s3, i3 = score_at(1, 0.9, 0)
+  check("finish: non-green spot costs its travel only", s3 == 42, s3)
+  check("finish: skip counted, no penalty", i3.pen_n == 0 and i3.pen_skip_n == 1, i3.pen_skip_n)
+  local s4 = score_at(1, 0.97, 0)
+  check("1hp anger 0.97 (over the knob): penalty stays", s4 == 10050, s4)
+  local save_k = C.PT2_FINISH_NO_COVER_MAX_ANGER
+  C.PT2_FINISH_NO_COVER_MAX_ANGER = -1
+  local s5 = score_at(1, 0, 0)
+  C.PT2_FINISH_NO_COVER_MAX_ANGER = save_k
+  check("finish knob -1 (KEEL / MAST): penalty stays", s5 == 10050, s5)
+  cpf.dijkstra_lookup_by_kind, cpf.KIND_NORMAL = save_dij, save_kind
+end
+
+-- ── SHOT_PATH_SKIP_DEAD_PILLS: a dead pill lets the shell pass ──────────
+print("SHOT_PATH_SKIP_DEAD_PILLS")
+do
+  local live = { mx = 130, my = 122, owner = "hostile", health = 15 }
+  local dead = { mx = 130, my = 122, owner = "hostile", health = 0 }
+  local carried = { mx = 130, my = 122, owner = "hostile", health = 15, in_tank = true }
+  local ours = { mx = 130, my = 122, owner = "ours", health = 3 }
+  local function stops(p, knob)
+    local save = C.SHOT_PATH_SKIP_DEAD_PILLS
+    C.SHOT_PATH_SKIP_DEAD_PILLS = knob
+    local w = { pills = { [1] = p } }
+    local r = U.pill_entry_stops_shell(w, { id = 1, pill = p }, 130, 122)
+    C.SHOT_PATH_SKIP_DEAD_PILLS = save
+    return r
+  end
+  check("knob on: live hostile pill stops the shell", stops(live, true) == true)
+  check("knob on: dead pill lets it pass", stops(dead, true) == false)
+  check("knob on: pill in a tank lets it pass", stops(carried, true) == false)
+  check("knob on: our own live pill stops it", stops(ours, true) == true)
+  check("knob off: dead pill stops it (old rule)", stops(dead, false) == true)
+  -- the live table wins over a stale pill_at entry
+  do
+    local w = { pills = { [1] = dead } }
+    check("knob on: stale entry (live copy dead) lets it pass",
+          U.pill_entry_stops_shell(w, { id = 1, pill = live }, 130, 122) == false)
+  end
+  -- pathfinder.pill_shots_clear: a shot past a dead pill is clear
+  local PF = require("pathfinder")
+  local save_sim = cpf.simulate_shot
+  cpf.SHOT_TANK = cpf.SHOT_TANK or 0
+  -- a straight east line from (125,122) to the target at (135,122)
+  cpf.simulate_shot = function()
+    local out = {}
+    for mx = 125, 136 do out[#out + 1] = { mx = mx, my = 122 } end
+    return out
+  end
+  local target = { mx = 135, my = 122, owner = "hostile", health = 15 }
+  local function clear_with(p, knob)
+    local save = C.SHOT_PATH_SKIP_DEAD_PILLS
+    C.SHOT_PATH_SKIP_DEAD_PILLS = knob
+    local w = { pills = { [1] = target, [2] = p },
+                pill_at = { [sq(135, 122)] = { { id = 1, pill = target } },
+                            [sq(130, 122)] = { { id = 2, pill = p } } } }
+    local ok = PF.pill_shots_clear(125 * 256 + 128, 122 * 256 + 128, target, w)
+    C.SHOT_PATH_SKIP_DEAD_PILLS = save
+    return ok
+  end
+  check("pill_shots_clear knob on: dead pill on the line, clear", clear_with(dead, true) == true)
+  check("pill_shots_clear knob on: our live pill on the line, blocked", clear_with(ours, true) == false)
+  check("pill_shots_clear knob off: dead pill on the line, blocked", clear_with(dead, false) == false)
+  cpf.simulate_shot = save_sim
 end
 
 print(string.format("\n%d passed, %d failed", pass, fail))

@@ -85,7 +85,8 @@ end
 
 -- inp for v2 from the bot's own view. The score is v1's: a point next to a
 -- green spot costs its Dijkstra travel (plus the human-decoy cost, as v1),
--- any other point 10000 + the spot's adjusted score (so greens always win).
+-- any other point 10000 + the spot's adjusted score (so greens always win),
+-- except on a finish: then every point costs its travel only.
 function M.build_inp(state, goal, info, world, pill, no_builder, npb, radius, now)
   local inp = V2.knob_inp(C, {})
   V2.world_inp(world, C, U, PC, cpf, inp, no_builder)
@@ -115,9 +116,21 @@ function M.build_inp(state, goal, info, world, pill, no_builder, npb, radius, no
   local boat = info.inboat and 1 or 0
   local tmx = floor((info.tankx or 0) / 256)
   local tmy = floor((info.tanky or 0) / 256)
+  -- A finish (PT2_FINISH_NO_COVER_MAX_ANGER: A's ray needs no cover) is
+  -- a charge with a swerve: v1's green filter is a blocker-era ranking, so
+  -- it must not push the finish to a far spot. A finish point costs its
+  -- travel only. pen_n / pen_skip_n count the points for the log.
+  inp.pen_n, inp.pen_skip_n = 0, 0
   inp.score_fn = function(deg, mx, my, cx, cy)
     local s = (curA == goalA) and nearest_spot(spots, deg) or nil
-    if s and not greens[s] then return 10000 + (s._adj_score or 1000) end
+    if s and not greens[s] then
+      if V2.finish_ok(inp, curA) then
+        inp.pen_skip_n = inp.pen_skip_n + 1
+      else
+        inp.pen_n = inp.pen_n + 1
+        return 10000 + (s._adj_score or 1000)
+      end
+    end
     local dij = cpf.dijkstra_lookup_by_kind(cpf.KIND_NORMAL, mx, my, boat)
     if dij >= 1e29 then dij = cpf.estimate_cost(tmx, tmy, mx, my, boat) end
     return dij + ((s and s._hd_cost) or 0)
@@ -183,6 +196,11 @@ local function cmp_line(now, pill, inp, res, v1, cost_us, drive, do_print)
   elseif v2ok and not v1 then diff = "none_v1"
   elseif not v1 and not v2ok then diff = "none_both" end
   local why = "-"
+  -- v1's point priced by v2's score (log only; read the counts first, the
+  -- call adds to them)
+  local pen_n, pen_skip_n = inp.pen_n or 0, inp.pen_skip_n or 0
+  local v1_score = v1 and v1.deg and inp.score_fn
+    and inp.score_fn(v1.deg, floor(v1.cx), floor(v1.cy), v1.cx, v1.cy) or nil
   if v1 then
     why = V2.judge(inp, floor(v1.cx * 256), floor(v1.cy * 256), v1.extra, v1.aim) or "-"
   end
@@ -198,7 +216,7 @@ local function cmp_line(now, pill, inp, res, v1, cost_us, drive, do_print)
   local line = string.format(
     "PT2_CMP t=%d pill=(%d,%d) hp=%d | v1: so=%s deg=%s aim=%s act=%s pot=%s cover=%s"
     .. " | v2: so=%s deg=%s aim=%s chain=%s mode=%s kills=%s need=%s have=%s safe=%s lee=%s plan=%s"
-    .. " | diff=%s d_wu=%s why=%s drive=%s cost_us=%d evals=%d",
+    .. " | diff=%s d_wu=%s why=%s drive=%s cost_us=%d evals=%d green_pen=%d green_pen_skip=%d v1_score=%s v2_score=%s",
     now, pill.mx, pill.my, pill.health or 0,
     v1 and string.format("(%.2f,%.2f)", v1.cx, v1.cy) or "-",
     v1 and string.format("%.1f", v1.deg or 0) or "-",
@@ -212,7 +230,8 @@ local function cmp_line(now, pill, inp, res, v1, cost_us, drive, do_print)
     b and tostring(b.kills) or "-", b and tostring(b.need) or "-", b and tostring(b.have) or "-",
     tostring(v2ok and true or false), b and tostring(b.leeway) or "-", plan,
     diff, d_wu and string.format("%.0f", d_wu) or "-", why,
-    drive and "v2" or "v1", cost_us, res and res.n_eval or 0)
+    drive and "v2" or "v1", cost_us, res and res.n_eval or 0, pen_n, pen_skip_n,
+    v1_score and string.format("%.1f", v1_score) or "-", b and string.format("%.1f", b.score or 0) or "-")
   if do_print then print2(line) end
   return line
 end
@@ -279,12 +298,13 @@ function M.after_scan(a)
     out.hold = { fx = h.fx, fy = h.fy, safe = h.safe }
     goal._pt2.hold = out.hold
   end
-  print2(string.format("PT2_DRIVE t=%d A=(%d,%d) goal_target=(%d,%d) so=(%.2f,%.2f) deg=%.1f aim=%d nudge=%d mode=%s A_hp=%d anger=%.3f armour=%d kills=%d build=%d have=%d need=%d depth=%s score=%.0f travel=%.0ft quick=%st band=%d hold=%s",
+  print2(string.format("PT2_DRIVE t=%d A=(%d,%d) goal_target=(%d,%d) so=(%.2f,%.2f) deg=%.1f aim=%d nudge=%d mode=%s A_hp=%d anger=%.3f armour=%d kills=%d build=%d have=%d need=%d depth=%s score=%.0f travel=%.0ft quick=%st band=%d hold=%s green_pen=%d green_pen_skip=%d",
     a.now, A.mx, A.my, pill.mx, pill.my, b.cx, b.cy, b.deg, b.aim_idx, b.nudge_wu or 0,
     mode_of(b), A.health or 0, M.anger_now(A, a.now), inp.armour or 0, b.kills, #b.plan, b.have, b.need,
     tostring(b.depth), b.score or 0, (b.score or 0) * inp.ticks_per_score,
     b.tier_min and string.format("%.0f", b.tier_min * inp.ticks_per_score) or "-", inp.travel_band_ticks,
-    h and string.format("(%.2f,%.2f)%s", h.fx, h.fy, h.safe and "" or ":UNSAFE:" .. tostring(h.why)) or "-"))
+    h and string.format("(%.2f,%.2f)%s", h.fx, h.fy, h.safe and "" or ":UNSAFE:" .. tostring(h.why)) or "-",
+    inp.pen_n or 0, inp.pen_skip_n or 0))
   return out
 end
 
