@@ -37,7 +37,7 @@ end
 print("knobs")
 check("PILLTAKE_V2_EVALUATOR ships off", C.PILLTAKE_V2_EVALUATOR == false)
 check("PT2_CHAIN_BLOCKER_MIN_SHOTS = 10 (Andrew's value, two walls)", C.PT2_CHAIN_BLOCKER_MIN_SHOTS == 10)
-for _, kn in ipairs({ "PT2_CHAINS", "PT2_LEEWAY", "PT2_OWN_PILL_BONUS" }) do
+for _, kn in ipairs({ "PT2_CHAINS", "PT2_LINK_COVERS_PREV", "PT2_LEEWAY", "PT2_OWN_PILL_BONUS" }) do
   check(kn .. " default true", C[kn] == true)
   check(kn .. " keel false", C.PRESETS.keel[kn] == false)
   check(kn .. " mast false", C.PRESETS.mast[kn] == false)
@@ -111,7 +111,14 @@ do
   local b = run({ A, B }, { PT2_CHAINS = true })
   check("a safe chain is found", b and b.safe, b and b.safe)
   check("it is a two-pill chain", b and b.kills == 2 and b.chain_mode, b and b.kills)
-  check("its cover per chain ray >= 10", b and b.have >= 10, b and b.have)
+  -- PT2_LINK_COVERS_PREV (default on): B covers A; only B, the last
+  -- chain pill, needs the 10 shots.
+  check("the last chain ray has cover >= 10", b and b.depth >= 10, b and b.depth)
+  local A_link = false
+  for _, r in ipairs(b and b.rays or {}) do if r.X == A and r.link_cover then A_link = true end end
+  check("A's ray is covered by B (the link)", A_link)
+  local b_off = run({ A, B }, { PT2_CHAINS = true, PT2_LINK_COVERS_PREV = false })
+  check("link rule off: A's own cover >= 10", b_off and b_off.have >= 10, b_off and b_off.have)
   check("two walls hold it", b and #b.plan == 2, b and #b.plan)
   check("its depth is two walls (10)", b and b.depth == 10, b and b.depth)
   -- hold point: the tank waits where neither pill hits it with the cover

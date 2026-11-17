@@ -62,6 +62,9 @@ local function shadow_cells(inp, best)
   for i, X in ipairs(best.T) do
     local ray = best.rays[i]
     local bar = ray and ray.bar or inp.bar_chain
+    -- PT2_LINK_COVERS_PREV: a chain pill is covered by the next chain pill
+    local ci = best.in_chain and best.in_chain[X]
+    local nxt = inp.link_covers and ci and best.chain[ci + 1] or nil
     local sx, sy = pill_centre(X)
     local cells = {}
     for gy = floor((acy - r_hi) / cw), floor((acy + r_hi) / cw) do
@@ -71,7 +74,7 @@ local function shadow_cells(inp, best)
         local d = sqrt(dx * dx + dy * dy)
         if d >= r_lo and d <= r_hi then
           local r = SH.cast(env, sx, sy, cx, cy, SH.PILL_FIRE_LEN, best.extra, tmp)
-          if r.hit == "reach" or r.cover >= bar then
+          if r.hit == "reach" or (nxt and r.link == nxt) or r.cover >= bar then
             cells[#cells + 1] = gx * 65536 + gy
           end
         end
