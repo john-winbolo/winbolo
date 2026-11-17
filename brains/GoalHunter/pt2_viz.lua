@@ -217,7 +217,10 @@ end
 
 local function cand_body(r, cap_n, build_cost)
   return {
-    string.format("deg=%.1f radius=%.2f point=(%.2f,%.2f)", r.deg, r.radius or 0, r.cx, r.cy),
+    -- point: where the tank stands; with PT2_AIM_NUDGE that is the nudged
+    -- point (every ray was cast to it), nudge wu forward of the ring point
+    string.format("deg=%.1f radius=%.2f point=(%.2f,%.2f) nudge=%d wu aim=%s", r.deg, r.radius or 0,
+      r.cx, r.cy, r.nudge_wu or 0, tostring(r.aim_idx)),
     string.format("tier key: safe=%s kills=%d depth=%s blk=%d %sleeway=%s (capped at %d: %s)",
       tostring(r.safe), r.kills or 1, (r.kills or 1) >= 2 and tostring(r.depth or "-") or "(single: not a key)",
       r.blk or 1, (r.kills or 1) >= 2 and string.format("score=%.2f ", r.score or 0) or "",

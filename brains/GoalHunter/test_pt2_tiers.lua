@@ -37,7 +37,8 @@ end
 print("knobs")
 check("PILLTAKE_V2_EVALUATOR ships off", C.PILLTAKE_V2_EVALUATOR == false)
 check("PT2_CHAIN_BLOCKER_MIN_SHOTS = 10 (Andrew's value, two walls)", C.PT2_CHAIN_BLOCKER_MIN_SHOTS == 10)
-for _, kn in ipairs({ "PT2_CHAINS", "PT2_LINK_COVERS_PREV", "PT2_LEEWAY", "PT2_OWN_PILL_BONUS" }) do
+for _, kn in ipairs({ "PT2_CHAINS", "PT2_LINK_COVERS_PREV", "PT2_LEEWAY", "PT2_OWN_PILL_BONUS",
+                      "PT2_AIM_NUDGE" }) do
   check(kn .. " default true", C[kn] == true)
   check(kn .. " keel false", C.PRESETS.keel[kn] == false)
   check(kn .. " mast false", C.PRESETS.mast[kn] == false)
@@ -219,6 +220,84 @@ do
   check("knob off: no allied-pill tier", off and off.blk == 1, off and off.blk)
   print(string.format("    on deg=%.1f plan=%d   off deg=%.1f plan=%d",
     on and on.deg or -1, on and #on.plan or -1, off and off.deg or -1, off and #off.plan or -1))
+end
+
+print("aim nudge (PT2_AIM_NUDGE, v1's forward nudge)")
+do
+  -- A wall two squares north-west of A stops the centre aim from the point
+  -- at bearing 302, radius 7.72; the corner aims fall short there. v1's
+  -- nudge (8 wu steps toward A) finds the BR corner clear 24 wu forward.
+  local SHm = require("shadow")
+  local A = { mx = 128, my = 120, owner = "hostile", health = 15 }
+  terrain[sq(126, 118)] = C.T_BUILDING
+  local w = world_of({ A })
+  local function mk(on)
+    local save = C.PT2_AIM_NUDGE
+    C.PT2_AIM_NUDGE = on
+    local inp = V2.world_inp(w, C, U, PC, cpf, V2.knob_inp(C, {}), false)
+    C.PT2_AIM_NUDGE = save
+    inp.A = A
+    return inp, { inp = inp, A = A, env = inp.env, reach_cache = {}, hostile = { A } }
+  end
+  local deg, R = 302, 7.72
+  local cx = A.mx + 0.5 + math.sin(math.rad(deg)) * R
+  local cy = A.my + 0.5 - math.cos(math.rad(deg)) * R
+  local px, py = math.floor(cx * 256), math.floor(cy * 256)
+  local inp_on, ctx_on = mk(true)
+  local inp_off, ctx_off = mk(false)
+  check("knob reaches inp", inp_on.aim_nudge == true and inp_off.aim_nudge == false)
+  check("v1's nudge values: step 8 wu, 32 steps",
+        inp_on.nudge_step_wu == 8 and inp_on.nudge_max_steps == 32)
+  local _, w_c = V2._eval_point(ctx_on, px, py, nil, 1)
+  check("nudge 0: a wall stops the centre aim", w_c == "OUTGOING:wall", w_c)
+  local r5, w5 = V2._eval_point(ctx_on, px, py, nil, 5)
+  check("nudge 0: the BR corner aim falls short", r5 == nil and w5 == "OUTGOING:short", w5)
+  local r_off, why_off = V2._eval_point(ctx_off, px, py, nil, nil, nil, nil, true)
+  check("knob off: no clear aim, point rejected",
+        r_off == nil and tostring(why_off):sub(1, 9) == "OUTGOING:", why_off)
+  local r = V2._eval_point(ctx_on, px, py, nil, nil, nil, nil, true)
+  check("knob on: a clear aim after a nudge", r ~= nil)
+  check("the smallest nudge that clears it: 24 wu", r and r.nudge_wu == 24, r and r.nudge_wu)
+  check("the clear aim is the BR corner", r and r.aim_idx == 5, r and r.aim_idx)
+  local acx, acy = A.mx * 256 + 128, A.my * 256 + 128
+  local d0 = math.sqrt((acx - px) ^ 2 + (acy - py) ^ 2)
+  local d1 = r and math.sqrt((acx - r.px) ^ 2 + (acy - r.py) ^ 2) or 0
+  check("the point moved 24 wu toward A", r and math.abs((d0 - d1) - 24) < 1.5, d0 - d1)
+  local dmv = r and math.sqrt((r.px - px) ^ 2 + (r.py - py) ^ 2) or 0
+  check("on the same bearing (moved 24 wu in all)", math.abs(dmv - 24) < 1.5, dmv)
+  local rc = r and V2._eval_point(ctx_on, r.px, r.py, nil, 5)
+  check("the BR aim is clear from the nudged point itself", rc ~= nil)
+  if r then
+    local fresh = SHm.cast(inp_on.env, acx, acy, r.px, r.py, SHm.PILL_FIRE_LEN, nil)
+    check("A's ray is cast to the nudged point",
+          r.rays[1].hit == fresh.hit and r.rays[1].n_sq == fresh.n_sq and r.rays[1].end_x == fresh.end_x,
+          r.rays[1].hit)
+  end
+  -- evaluate(): only this bearing on one ring; the drive goes to the nudged point.
+  local function ev(inp)
+    inp.radius = R
+    inp.radii_offsets = { 0 }
+    inp.num_pill_blockers = 0
+    inp.banned = function(dg) return math.abs(dg - deg) > 1e-6 end
+    inp.score_fn = function() return 1 end
+    return V2.evaluate(inp)
+  end
+  local res_on = ev(inp_on)
+  local b = res_on.best
+  check("evaluate: the nudged point is the best", b and b.nudge_wu == 24 and b.deg == deg, b and b.nudge_wu)
+  check("evaluate: best.cx/cy is the nudged point", b and r and b.cx == r.px / 256 and b.cy == r.py / 256,
+        b and string.format("(%.3f,%.3f)", b.cx, b.cy))
+  local out = b and V2.to_scan_result(res_on, A, { cx = cx, cy = cy, mx = math.floor(cx), my = math.floor(cy) })
+  check("scan result: the drive point is nudged, nudge_wu handed on",
+        out and out.best.cx == b.cx and out.best.cy == b.cy and out.best.aims[5].nudge_wu == 24)
+  local res_off = ev(inp_off)
+  check("evaluate, knob off: nothing found on this bearing", res_off.best == nil and res_off.n_reject == 1,
+        res_off.best and res_off.best.deg)
+  terrain[sq(126, 118)] = nil
+  if r then
+    print(string.format("    ring (%.2f,%.2f) -> nudged (%.2f,%.2f) nudge=%d aim=%s",
+      cx, cy, r.px / 256, r.py / 256, r.nudge_wu, V2.AIM_NAMES[r.aim_idx]))
+  end
 end
 
 print(string.format("\n%d passed, %d failed", pass, fail))

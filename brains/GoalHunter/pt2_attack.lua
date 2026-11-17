@@ -258,8 +258,8 @@ function M.after_scan(a)
     out.hold = { fx = h.fx, fy = h.fy, safe = h.safe }
     goal._pt2.hold = out.hold
   end
-  print2(string.format("PT2_DRIVE t=%d A=(%d,%d) goal_target=(%d,%d) so=(%.2f,%.2f) deg=%.1f aim=%d kills=%d build=%d have=%d need=%d depth=%s score=%.0f hold=%s",
-    a.now, A.mx, A.my, pill.mx, pill.my, b.cx, b.cy, b.deg, b.aim_idx, b.kills, #b.plan, b.have, b.need,
+  print2(string.format("PT2_DRIVE t=%d A=(%d,%d) goal_target=(%d,%d) so=(%.2f,%.2f) deg=%.1f aim=%d nudge=%d kills=%d build=%d have=%d need=%d depth=%s score=%.0f hold=%s",
+    a.now, A.mx, A.my, pill.mx, pill.my, b.cx, b.cy, b.deg, b.aim_idx, b.nudge_wu or 0, b.kills, #b.plan, b.have, b.need,
     tostring(b.depth), b.score or 0,
     h and string.format("(%.2f,%.2f)%s", h.fx, h.fy, h.safe and "" or ":UNSAFE:" .. tostring(h.why)) or "-"))
   return out
