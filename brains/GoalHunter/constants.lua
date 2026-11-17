@@ -908,6 +908,13 @@ M.PT2_CHAINS = true
 -- (15) > two walls (10). Andrew's value (Nov 16, second pass: "make double
 -- take require at least two walls"; was 5).
 M.PT2_CHAIN_BLOCKER_MIN_SHOTS = 10
+-- On: a chain pill whose shells meet the next pill of the chain first is
+-- covered by that pill, and only the last chain pill needs
+-- PT2_CHAIN_BLOCKER_MIN_SHOTS of cover. The next pill always dies first
+-- (it takes the shells), so each link covers only the one before it
+-- (Andrew, Nov 17). Off: every chain pill needs that cover behind its link.
+-- KEEL / MAST: false.
+M.PT2_LINK_COVERS_PREV = true
 -- Longest chain counted, pills. Proposal, awaiting Andrew's value.
 M.PT2_MAX_CHAIN = 3
 -- Ring step around the target, degrees. Proposal, awaiting Andrew's value.
@@ -7570,6 +7577,7 @@ M.PRESETS = {
     --   is off by default). KEEL had no v2: no chains, no leeway, no
     --   allied-pill tier.
     PT2_CHAINS = false,
+    PT2_LINK_COVERS_PREV = false,
     PT2_LEEWAY = false,
     PT2_OWN_PILL_BONUS = false,
     --   2026-11-16: neutral live pill in our ground x0.75. KEEL: x1.
@@ -7865,6 +7873,7 @@ M.PRESETS.mast = {
   PLACE_FRONT_NEED_TARGET           = false,
   POOL6_PICK_WITH_FACTORS           = false,
   PT2_CHAINS                        = false,  -- 2.2.1 had no pill take v2
+  PT2_LINK_COVERS_PREV              = false,
   PT2_LEEWAY                        = false,
   PT2_OWN_PILL_BONUS                = false,
   QUICK_REPAIR_ON_TAKE              = false,

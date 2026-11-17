@@ -15,6 +15,9 @@
 --              single take (no link on A's ray): A needs
 --                PPT_COVER_TARGET_SHOTS (15), as v1;
 --              chain: every chain pill needs PT2_CHAIN_BLOCKER_MIN_SHOTS
+--                (with PT2_LINK_COVERS_PREV: a chain pill whose ray meets
+--                the next chain pill first is covered by it; only the
+--                last chain pill needs the cover)
 --                (10: two walls, or one allied pill of 10+ health);
 --              any other pill in range (a bystander) needs one wall (5).
 --   P is SAFE when every X in T(P) is out of reach or has its bar, and the
@@ -189,7 +192,10 @@ local function eval_point(ctx, px, py, extra, aim_fixed, prev, new_sq)
     elseif in_chain[X] then bar = inp.bar_chain
     else bar = inp.bar_other or inp.wall_shots end
     r.bar = bar
-    local ok = (r.hit == "reach") or (r.cover >= bar)
+    -- the next chain pill takes this pill's shells and dies first
+    r.link_cover = inp.link_covers and in_chain[X] and r.link ~= nil
+                   and r.link == chain[in_chain[X] + 1] or false
+    local ok = (r.hit == "reach") or r.link_cover or (r.cover >= bar)
     r.ok = ok
     if X == A then need_A, have_A = bar, (r.hit == "reach") and bar or r.cover end
     if not ok then
@@ -412,7 +418,9 @@ local function hold_safe(ctx, b, hx, hy)
       elseif b.in_chain and b.in_chain[p] then bar = inp.bar_chain
       else bar = inp.bar_other or inp.wall_shots end
       local r = SH.cast(env, sx, sy, hx, hy, SH.PILL_FIRE_LEN, nil)
-      if r.hit == "tank" and r.cover < bar then return false, M.pill_name(inp, p) end
+      local ci = b.in_chain and b.in_chain[p]
+      local linked = inp.link_covers and ci and r.link ~= nil and r.link == b.chain[ci + 1]
+      if r.hit == "tank" and not linked and r.cover < bar then return false, M.pill_name(inp, p) end
     end
   end
   return true
@@ -735,6 +743,7 @@ function M.knob_inp(C, inp)
   inp.bar_chain        = C.PT2_CHAIN_BLOCKER_MIN_SHOTS or 10
   inp.bar_other        = inp.wall_shots       -- a bystander: one wall
   inp.chains           = C.PT2_CHAINS ~= false
+  inp.link_covers      = C.PT2_LINK_COVERS_PREV ~= false
   inp.max_chain        = C.PT2_MAX_CHAIN or 3
   inp.leeway_on        = C.PT2_LEEWAY ~= false
   inp.leeway_ring_wu   = 32               -- proposal, awaiting Andrew's value
