@@ -196,6 +196,11 @@ local function cmp_line(now, pill, inp, res, v1, cost_us, drive, do_print)
   elseif v2ok and not v1 then diff = "none_v1"
   elseif not v1 and not v2ok then diff = "none_both" end
   local why = "-"
+  -- v1's point priced by v2's score (log only; read the counts first, the
+  -- call adds to them)
+  local pen_n, pen_skip_n = inp.pen_n or 0, inp.pen_skip_n or 0
+  local v1_score = v1 and v1.deg and inp.score_fn
+    and inp.score_fn(v1.deg, floor(v1.cx), floor(v1.cy), v1.cx, v1.cy) or nil
   if v1 then
     why = V2.judge(inp, floor(v1.cx * 256), floor(v1.cy * 256), v1.extra, v1.aim) or "-"
   end
@@ -211,7 +216,7 @@ local function cmp_line(now, pill, inp, res, v1, cost_us, drive, do_print)
   local line = string.format(
     "PT2_CMP t=%d pill=(%d,%d) hp=%d | v1: so=%s deg=%s aim=%s act=%s pot=%s cover=%s"
     .. " | v2: so=%s deg=%s aim=%s chain=%s mode=%s kills=%s need=%s have=%s safe=%s lee=%s plan=%s"
-    .. " | diff=%s d_wu=%s why=%s drive=%s cost_us=%d evals=%d green_pen=%d green_pen_skip=%d",
+    .. " | diff=%s d_wu=%s why=%s drive=%s cost_us=%d evals=%d green_pen=%d green_pen_skip=%d v1_score=%s v2_score=%s",
     now, pill.mx, pill.my, pill.health or 0,
     v1 and string.format("(%.2f,%.2f)", v1.cx, v1.cy) or "-",
     v1 and string.format("%.1f", v1.deg or 0) or "-",
@@ -225,7 +230,8 @@ local function cmp_line(now, pill, inp, res, v1, cost_us, drive, do_print)
     b and tostring(b.kills) or "-", b and tostring(b.need) or "-", b and tostring(b.have) or "-",
     tostring(v2ok and true or false), b and tostring(b.leeway) or "-", plan,
     diff, d_wu and string.format("%.0f", d_wu) or "-", why,
-    drive and "v2" or "v1", cost_us, res and res.n_eval or 0, inp.pen_n or 0, inp.pen_skip_n or 0)
+    drive and "v2" or "v1", cost_us, res and res.n_eval or 0, pen_n, pen_skip_n,
+    v1_score and string.format("%.1f", v1_score) or "-", b and string.format("%.1f", b.score or 0) or "-")
   if do_print then print2(line) end
   return line
 end
