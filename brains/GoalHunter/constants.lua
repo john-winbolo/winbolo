@@ -1024,6 +1024,12 @@ M.ATTACK_RUSH_STANDOFF    = 1.5   -- tiles from pill center to park the point-bl
 -- freeze had the stranded flag set.
 M.ATTACK_PP_HOLD_SKIP_STRANDED = true  -- false = hold even on a stranded man (pre-2026-09-07)
 M.HARDLINE_ENGAGE_RANGE   = 10    -- only switch to kill_hardline within this many tiles of the pill (PILL_FIRE_RANGE 8 + 2). Farther away, use the normal approach (which handles boats / disembark); the hardline land-rush only kicks in once we're near firing range.
+-- On: the kill_hardline gate (1-HP pill, ATTACK_RUSH_MIN_ARMOUR,
+-- ATTACK_RUSH_MAX_ANGER, blitz-only, HARDLINE_ENGAGE_RANGE) is tested again
+-- each think in approach, aim and in_range_*, not only once at
+-- plan_position: a tank that planned from far off rushes the 1-HP pill once
+-- it is in range (Oil Rig, Nov 17). Andrew's yes (Nov 17). KEEL / MAST: false.
+M.KILL_HARDLINE_RECHECK = true
 M.HARDLINE_FIRE_AIM_TOL   = 8     -- kill_hardline fires only when the tank's heading is within this many degrees of the pill, so the shot we fire matches the pill-aimed line shot_path_clear validated (never lob a shell off-axis into a stray pillbox/base while driving).
 
 -- Swerve durations (confirmed-kill swerve: pill dead or bullets_fired >= needed)
@@ -7596,6 +7602,8 @@ M.PRESETS = {
     PT2_OWN_PILL_BONUS = false,
     PT2_AIM_NUDGE = false,
     PT2_TRAVEL_BAND_TICKS = 0,
+    --   2026-11-17: the kill_hardline gate tested again after plan_position.
+    KILL_HARDLINE_RECHECK = false,
     --   2026-11-16: neutral live pill in our ground x0.75. KEEL: x1.
     NEUTRAL_PILL_OWN_GROUND_FACTOR = 1.0,
     --   2026-11-16: the attack_base commitment bonus counts only after the
@@ -7872,6 +7880,7 @@ M.PRESETS.mast = {
   FOCUS_SPIKE_ENABLED               = false,
   GC_MODE                           = "auto",
   KILL_PICKUP_LETHAL_EXIT           = false,
+  KILL_HARDLINE_RECHECK             = false,
   KILL_PICKUP_LETHAL_REPLAN         = false,
   LGM_DEST_AIM                      = false,
   LGM_DEST_HOLD_FIRE                = false,

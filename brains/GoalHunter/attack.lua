@@ -7071,6 +7071,46 @@ local function update_attack_substate_body(goal, state, world, info)
     -- Fall through to draw
   end
 
+  -- ── KILL_HARDLINE_RECHECK ─────────────────────────────────────────
+  -- plan_position tests the kill_hardline gate once per goal. A tank
+  -- that was out of HARDLINE_ENGAGE_RANGE then never rushes the 1-HP pill
+  -- (Oil Rig, Nov 17: ~750 ticks around a 1-armour pill). With the knob on,
+  -- the same gate is tested again each think in the pre-shoot substates
+  -- (approach, aim, in_range_*); not build_walls / gather_trees / detree
+  -- (the builder is at work) and not blitz_wait or swerve. A goal that
+  -- fell back from kill_hardline (_charge_now_careful) never comes back.
+  -- Before the standoff shot-path check: kill_hardline does not use the
+  -- standoff line.
+  local _khr_sub = goal.substate
+  if C.KILL_HARDLINE_RECHECK and not goal._kill_rush and not goal._hardline_abort
+     and pill and (pill.health or 0) == 1 and not goal._charge_now_careful
+     and (_khr_sub == "approach" or _khr_sub == "aim" or _khr_sub == "in_range_position"
+          or _khr_sub == "in_range_aim_pre" or _khr_sub == "in_range_aim"
+          or _khr_sub == "in_range_aim_finetune") then
+    local panger = pill.anger or 0
+    local dist = U.mdist(bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8), pmx, pmy)
+    local why = nil
+    if info.armour < (C.ATTACK_RUSH_MIN_ARMOUR or 5) then why = "armour"
+    elseif panger > (C.ATTACK_RUSH_MAX_ANGER or 0.34) then why = "anger"
+    elseif squad.blitz_only(state) and not goal._blitz_committed then why = "blitz_only"
+    elseif dist > (C.HARDLINE_ENGAGE_RANGE or 10) then why = "dist" end
+    if not why then
+      print2(string.format("KILL_HARDLINE_RECHECK t=%d pill=#%s (%d,%d) hp=1 armour=%d anger=%.2f dist=%d sub=%s",
+        now, tostring(goal.target_id), pmx, pmy, info.armour, panger, dist, _khr_sub))
+      goal._kill_rush_decided = true
+      goal._kill_rush  = true
+      goal._aim_locked = nil
+      goal.substate    = "kill_hardline"
+      if BRAIN_DEBUG_MODE then print(string.format(TAG .. " KILL-HARDLINE: pill@(%d,%d) hp=1 armour=%d anger=%.2f", pmx, pmy, info.armour, panger)) end
+      return
+    end
+    if BRAIN_DEBUG_MODE and (not goal._khr_rej_t or now - goal._khr_rej_t >= 50) then
+      goal._khr_rej_t = now
+      print2(string.format("KILL_HARDLINE_RECHECK_NO t=%d pill=#%s (%d,%d) why=%s armour=%d anger=%.2f dist=%d sub=%s",
+        now, tostring(goal.target_id), pmx, pmy, why, info.armour, panger, dist, _khr_sub))
+    end
+  end
+
   -- ══════════════════════════════════════════════════════════════════
   -- Per-tick standoff shot-path sanity check.
   -- Runs for every pre-fire substate where the standoff is committed
