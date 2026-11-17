@@ -14815,6 +14815,19 @@ end
 -- C.ATTACK_BASE_COMMIT_AFTER_FIRST_SHOT before the first shell at the base
 -- (steering.note_base_shot sets goal._ab_shot_fired): on the drive to the
 -- base nothing is invested yet. FINAL_SCORES prints it as abcmt.
+-- Pill take v2 retarget: pt2_attack may move an attack_pill goal from the
+-- pill v1 picked (goal._pt2.goal_target) to another pill of its group (the
+-- one the tank shoots). The pool still builds its attack_pill entry for the
+-- pill v1 picked, so that entry is the current take, not a target switch.
+-- Without this, the entry took the target-switch penalty plus the whole
+-- commitment, and any cheap goal (e.g. a reposition) won the replan.
+function M.pt2_same_take(new_goal, cur)
+  if not (new_goal and cur) then return false end
+  if new_goal.kind ~= "attack_pill" or cur.kind ~= "attack_pill" then return false end
+  local gt = cur._pt2 and cur._pt2.goal_target
+  return gt ~= nil and new_goal.mx == gt.mx and new_goal.my == gt.my
+end
+
 function M.attack_base_commit_bonus(goal, info)
   if not goal or goal.kind ~= "attack_base" or (info.shells or 0) <= 0 then return nil end
   if C.ATTACK_BASE_COMMIT_AFTER_FIRST_SHOT and not goal._ab_shot_fired then return 0 end
@@ -18580,7 +18593,8 @@ local function goal_selection(state, world, info, quiet)
         -- +switch+commitment penalty (which it can never out-cost otherwise).
         local cg = goal_group(c.goal.kind)
         if cg == cur_group
-           and (c.goal.mx ~= state.goal.mx or c.goal.my ~= state.goal.my) then
+           and (c.goal.mx ~= state.goal.mx or c.goal.my ~= state.goal.my)
+           and not M.pt2_same_take(c.goal, state.goal) then
           c.cost = c.cost + C.GOAL_TARGET_SWITCH_PENALTY
           c.hysteresis = "target"
           c.switch_flat = C.GOAL_TARGET_SWITCH_PENALTY
@@ -18626,7 +18640,8 @@ local function goal_selection(state, world, info, quiet)
         c.switch_flat = C.GOAL_SWITCH_PENALTY
         c.commit_val  = effective_commit
         c._ab_commit  = _ab_commit
-      elseif c.goal.mx ~= state.goal.mx or c.goal.my ~= state.goal.my then
+      elseif (c.goal.mx ~= state.goal.mx or c.goal.my ~= state.goal.my)
+             and not M.pt2_same_take(c.goal, state.goal) then
         c.cost = c.cost + C.GOAL_TARGET_SWITCH_PENALTY + effective_commit
         c.hysteresis = "target"
         c.switch_flat = C.GOAL_TARGET_SWITCH_PENALTY
@@ -18926,9 +18941,10 @@ local function goal_selection(state, world, info, quiet)
       if switching then
         local cur_entry = nil
         for _, c in ipairs(pool) do
-          if c.goal.kind == state.goal.kind
-             and c.goal.mx == state.goal.mx
-             and c.goal.my == state.goal.my then
+          if (c.goal.kind == state.goal.kind
+              and c.goal.mx == state.goal.mx
+              and c.goal.my == state.goal.my)
+             or M.pt2_same_take(c.goal, state.goal) then
             cur_entry = c
             break
           end

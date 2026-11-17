@@ -7332,10 +7332,12 @@ function Brain.think(info)
           and ((new_goal.heat   or false) == (state.goal.heat   or false))
           and ((new_goal.watch  or false) == (state.goal.watch  or false))
       end
-      local same_winner = new_goal and new_goal.kind == state.goal.kind
+      local same_winner = (new_goal and new_goal.kind == state.goal.kind
         and new_goal.mx == state.goal.mx and new_goal.my == state.goal.my
         and (new_goal.target_id or -1) == (state.goal.target_id or -1)
-        and _defend_action_same
+        and _defend_action_same)
+        -- pill take v2 retarget: the entry for the pill v1 picked is this take
+        or goals.pt2_same_take(new_goal, state.goal)
       if same_winner then
         new_goal = state.goal  -- re-affirmed current goal: no switch
       elseif swerving then
