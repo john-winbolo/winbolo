@@ -498,6 +498,9 @@ local ENTRIES = {
   { "SQUAD_COMMANDER_MIN_ARMOUR",      "ARMOUR", a_full },
   { "CARRY_APPROACH_MIN_ARMOUR_ONE",   "ARMOUR", a_full },
   { "CARRY_APPROACH_MIN_ARMOUR_MANY",  "ARMOUR", a_full },
+  { "PT2_FINISH_LOCK_FLOOR_NONE",      "ARMOUR", a_full },
+  { "PT2_FINISH_LOCK_FLOOR_ONE",       "ARMOUR", a_full },
+  { "PT2_FINISH_LOCK_FLOOR_MANY",      "ARMOUR", a_full },
   { "SQUAD_REFUEL_OK_ARMOUR",          "ARMOUR", a_full },
 
   -- Armour lost per pill HP we shoot off (one shell per pill_shell_damage).

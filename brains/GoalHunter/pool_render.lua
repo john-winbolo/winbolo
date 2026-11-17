@@ -1067,6 +1067,16 @@ local function get_formula(e)
     if sep then f = f:sub(1, sep - 1) .. disp .. " " .. f:sub(sep) .. map
     else        f = f .. disp .. " ||" .. map:sub(2) end
   end
+  -- C.PT2_FINISH_CAPTURE_LOCK: this dead pill is the capture lock's target
+  -- while our kill shell flies (pt2_kill_lock.lua); the lock wins goal
+  -- choice ahead of every pool.
+  if e._pt2_lock then
+    local disp = " [LOCK kill_shell]"
+    local map  = "|lock: kill_shell, capture_pill held while our kill shell flies"
+    local sep = f:find("||", 1, true)
+    if sep then f = f:sub(1, sep - 1) .. disp .. " " .. f:sub(sep) .. map
+    else        f = f .. disp .. " ||" .. map:sub(2) end
+  end
   -- REJECT row already formatted by inner — no trailing term to append.
   if e._reject == "ally_claimed"
      or e._reject == "order"

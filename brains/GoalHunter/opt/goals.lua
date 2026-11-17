@@ -8096,6 +8096,8 @@ local function filter_capture_pill(obj, state)
   end
   return nil
 end
+-- Exported for pt2_kill_lock.lua (the capture lock's dead-pill pick).
+M.filter_capture_pill = filter_capture_pill
 
 -- The pill the tank is driving to for repair_pill, while our builder is out
 -- of the tank (a farm trip on the way, LGM_MOVING). The pool-5 checks below
@@ -18640,6 +18642,14 @@ M._pick_goal_inner = function(state, world, info, quiet)
   -- init.lua's same_winner test keeps the live goal table. orders.
   -- charge_now_check ends the charge when the goal or the pill is gone.
   if C.CHARGE_NOW_IGNORE_SAFETY and M.charge_now_holds(state) then
+    return state.goal
+  end
+  -- PT2 FINISH CAPTURE LOCK (C.PT2_FINISH_CAPTURE_LOCK, pt2_kill_lock.lua):
+  -- while our kill shell flies, the capture_pill goal on the dead pill wins
+  -- over every pool (take_cover too). The lock ends itself (attack.lua
+  -- update_attack_substate) when the shell dies, armour drops under the
+  -- floor or a new gun comes in range.
+  if state._pt2_lock and require("pt2_kill_lock").holds(state, world, info, quiet) then
     return state.goal
   end
   -- SEA-PILL HARVEST, collect phase. Afloat, on purpose, with cluster pills
