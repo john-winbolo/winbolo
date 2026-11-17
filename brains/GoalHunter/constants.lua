@@ -754,7 +754,13 @@ M.FAST_APPROACH = true
 -- in_range_position) so they all switch to the creep at the same range.
 M.FAST_APPROACH_HANDOFF_WU = 256
 M.FLEE_PILL_DIST       = 10  -- tiles to flee away from pill when giving up
-M.POST_KILL_WAIT_TICKS = 15  -- ticks to hold at standoff after pill dies (in-flight shots clear in ~5)
+-- Ticks the bot holds with goal "none" after a pill dies, before the
+-- capture_pill drive. 0 (Andrew, Nov 17): go straight for the pill. Our
+-- shells cannot hurt our tank and pass over a dead pill, so the old hold
+-- only coasted the tank. A case that needs a swerve keeps the swerve; a
+-- case that needs a straight drive after it gets its own step.
+-- KEEL / MAST: 15.
+M.POST_KILL_WAIT_TICKS = 0
 
 -- Attack position planner (pick_attack_standoff in goals.lua)
 M.ATTACK_PLAN_DIRS          = 12   -- candidate directions sampled around the pill
@@ -7622,6 +7628,8 @@ M.PRESETS = {
     PT2_AIM_NUDGE = false,
     PT2_TRAVEL_BAND_TICKS = 0,
     PT2_FINISH_NO_COVER_MAX_ANGER = -1,
+    --   2026-11-17: hold 15 ticks with no goal after a kill (old rule).
+    POST_KILL_WAIT_TICKS = 15,
     --   2026-11-17: a dead pill blocks v1's shot-path checks (old rule).
     SHOT_PATH_SKIP_DEAD_PILLS = false,
     --   2026-11-17: the kill_hardline gate tested again after plan_position.
@@ -7926,6 +7934,7 @@ M.PRESETS.mast = {
   PT2_OWN_PILL_BONUS                = false,
   PT2_TRAVEL_BAND_TICKS             = 0,
   PT2_FINISH_NO_COVER_MAX_ANGER     = -1,
+  POST_KILL_WAIT_TICKS              = 15,
   QUICK_REPAIR_ON_TAKE              = false,
   QUICK_REPAIR_PREDICT_SHOTS        = false,
   REFUEL_NOT_LOW_MULT               = 1.0,
