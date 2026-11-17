@@ -6,17 +6,46 @@ Andrew's decisions. Where the plan below says something else, these win.
 
 1. **No STEP mode.** PT2_MODE_STEP and everything about stepping out of range
    is dropped. Chains work by BUILDING blockers (HOLD only).
-2. **Chain final blocker: one wall-equivalent.** For a chain (N >= 2) the
-   final blocker needs only `PT2_CHAIN_BLOCKER_MIN_SHOTS = 5` shots (one wall,
-   or one allied pill worth a wall). "Even one wall is fine for a double,
-   people do it all the time." "One pill is fine — we have swerve logic."
-   No extra depth for the cascade clock (section 2.5 is not used as a bar).
+2. **Chain final blocker: two wall-equivalents** (Nov 16, second pass; was
+   one). For a chain (N >= 2) every chain ray needs
+   `PT2_CHAIN_BLOCKER_MIN_SHOTS = 10` shots behind its link: two walls, or an
+   allied pill of 10+ health (full health 15 meets it alone). The walls may
+   be built: the blocker search adds walls until the need is met, up to
+   PT2_BUILD_MAX (3). A pill in range that is not in the chain (a bystander)
+   still needs one wall (5). "Let's make double take require at least two
+   walls, and score it higher if it has more protection like one ally pill
+   and one wall. They can be built."
 3. **Single pill (N = 1) keeps parity with v1:** the PPT_COVER_TARGET_SHOTS
    (15) bar; wall 5, half wall 5; an allied pill by health as today. v2 at
    N = 1 should pick standoffs and blockers close to v1.
-4. **Tiered ranking:** a SAFE longer chain always ranks above a shorter one;
-   an allied-pill final blocker ranks above walls; leeway (neighbour points
-   also pass) ranks higher inside a tier.
+4. **Tiered ranking**, highest first: safe; kills (a SAFE longer chain
+   always ranks above a shorter one); for chains, **depth** = the shots of
+   cover on the last chain pill's ray (ally pill + wall 20 > ally pill 15 >
+   two walls 10); blocker rank (an allied pill in the cover above walls
+   only; for chains now only a tie-break when the depth is equal, for
+   example three walls 15 against an ally pill 15); for chains, the
+   **travel score** (v1's travel term from the scan, plus the wall cost)
+   before leeway, so a far spot cannot win on one more neighbour (Oil Rig
+   video); leeway (neighbour points that also pass, capped at
+   PT2_LEEWAY_MIN); then the score. A single take keeps its v1 order (blk,
+   leeway, score): depth and the early travel key apply to chains only.
+4a. **The tank shoots any pill of the group.** For a target in a group, v2
+   also tries every other hostile pill in pill range of the target as the
+   pill the tank shoots (A). That A wins only with a safe chain that has the
+   target in it, and only when it ranks above the target's own best. The
+   take then retargets to A (PT2_DRIVE logs A= and goal_target=). This finds
+   the mirror chain on the near side (Oil Rig: east, near v1's spot, instead
+   of all the way round to the west).
+4b. **Walls stand before the tank fires.** A take that builds waits at a
+   hold point: on the standoff's bearing, from the approach point outwards
+   in 64 wu steps, the first square where no hostile pill in range hits the
+   tank with the cover that stands now (each pill against its own bar). The
+   tank leaves the hold point for the standoff only when every planned wall
+   is a blocker in its own map. No early ends (one blocker, cover target,
+   last wall in flight). If the queue ends or stalls with a wall missing,
+   the angle is banned and the take plans again (blocked_line_replan; after
+   SANITY_PILL_REPLANS_MAX the take is given up). No safe hold point: the
+   approach point, logged UNSAFE.
 5. **Knobs:** master `PILLTAKE_V2_EVALUATOR`. Sub-knobs act only with the
    master on. constants.lua default = new value; PRESETS.keel and
    PRESETS.mast = old value. (This delivery ships the master default FALSE.)
