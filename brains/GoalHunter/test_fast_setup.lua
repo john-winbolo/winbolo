@@ -294,5 +294,42 @@ do
   check("no join: past F", ok == false)
 end
 
+-- ── fallback: plan fails after the approach went to S ─────────────────────
+-- plan_from_world gives nil for a goal with no _pt2, so plan_for_goal fails.
+print("fallback")
+do
+  local info = { tankx = 1000, tanky = 1000 }
+  local g = { mx = 10, my = 10, substate = "in_range_position", _approach_start = 5,
+              approach_fx = 20.5, approach_fy = 21.5, approach_mx = 20, approach_my = 21,
+              _fs_appr = { fx = 12.25, fy = 13.75, mx = 12, my = 13, sfx = 20.5, sfy = 21.5 } }
+  local plan = FS.plan_for_goal({}, g, info, {}, 100, nil)
+  check("plan fails", plan == nil)
+  check("old approach point back", g.approach_fx == 12.25 and g.approach_fy == 13.75
+        and g.approach_mx == 12 and g.approach_my == 13, g.approach_fx)
+  check("approach runs again", g.substate == "approach" and g._approach_start == nil, g.substate)
+  check("fast setup off for this goal", g._fs_off == true and g._fs_appr == nil)
+  check("off: no new plan", FS.plan_for_goal({}, g, info, {}, 101, nil) == nil)
+  local ax = g.approach_fx
+  FS.approach_for_goal({}, g, info, {}, 102, nil)
+  check("off: approach not moved", g.approach_fx == ax)
+  -- approach not at S (a replan moved it): no undo
+  local g2 = { mx = 10, my = 10, substate = "in_range_position",
+               approach_fx = 30.5, approach_fy = 31.5, approach_mx = 30, approach_my = 31,
+               _fs_appr = { fx = 12.25, fy = 13.75, mx = 12, my = 13, sfx = 20.5, sfy = 21.5 } }
+  FS.plan_for_goal({}, g2, info, {}, 100, nil)
+  check("approach not S: no undo", g2.approach_fx == 30.5 and g2.substate == "in_range_position"
+        and not g2._fs_off, g2.approach_fx)
+  -- approach never moved to S: no undo
+  local g3 = { mx = 10, my = 10, substate = "in_range_position", approach_fx = 30.5, approach_fy = 31.5 }
+  FS.plan_for_goal({}, g3, info, {}, 100, nil)
+  check("no S: no undo", g3.substate == "in_range_position" and not g3._fs_off)
+end
+
+-- ── shot tracker knob ─────────────────────────────────────────────────────
+print("shot tracker knob")
+check("own shells only on by default", C.SHOT_TRACK_OWN_SHELLS_ONLY == true)
+check("keel off", C.PRESETS.keel.SHOT_TRACK_OWN_SHELLS_ONLY == false)
+check("mast off", C.PRESETS.mast.SHOT_TRACK_OWN_SHELLS_ONLY == false)
+
 print(string.format("\n%d passed, %d failed", pass, fail))
 if fail > 0 then os.exit(1) end

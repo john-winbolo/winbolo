@@ -326,21 +326,57 @@ end
 -- point, so the tank comes in on the run line and faces along it: no
 -- turn-around at the standoff. The plan itself is made again at the
 -- aim -> in_range_position step (plan_for_goal), from the state then.
+-- The old approach point is kept in goal._fs_appr, so a plan that fails
+-- later (plan_for_goal) can give the old path back its own approach.
 function M.approach_for_goal(state, goal, info, world, now, obs_fn)
+  if goal._fs_off then return end
   if (goal._pt2 and goal._pt2.finish) or not goal._shield_scan then return end
   local plan = plan_from_world("approach", goal, info, world, now, obs_fn)
   if not plan then return end
+  -- Keep the old point unless the approach is still our S from before (a
+  -- new plan_position writes a new old point over it).
+  local saved = goal._fs_appr
+  if not (saved and goal.approach_fx == saved.sfx and goal.approach_fy == saved.sfy) then
+    saved = { fx = goal.approach_fx, fy = goal.approach_fy,
+              mx = goal.approach_mx, my = goal.approach_my }
+  end
   goal.approach_fx = plan.sx / 256
   goal.approach_fy = plan.sy / 256
   goal.approach_mx = U.mclamp(floor(goal.approach_fx))
   goal.approach_my = U.mclamp(floor(goal.approach_fy))
+  saved.sfx, saved.sfy = goal.approach_fx, goal.approach_fy
+  goal._fs_appr = saved
+end
+
+-- The plan failed after the approach went to S: put the old approach point
+-- back and run the approach again, so from here the take is the old path,
+-- as if fast setup had never moved the approach. Fast setup stays off for
+-- the rest of this goal. Returns true when it did that.
+local function undo_approach(goal, info, now)
+  local saved = goal._fs_appr
+  goal._fs_appr = nil
+  if not (saved and goal.approach_fx == saved.sfx and goal.approach_fy == saved.sfy) then
+    return false
+  end
+  goal.approach_fx, goal.approach_fy = saved.fx, saved.fy
+  goal.approach_mx, goal.approach_my = saved.mx, saved.my
+  goal._fs_off = true
+  goal._approach_start = nil
+  goal.substate = "approach"
+  return true
 end
 
 -- Called at the aim -> in_range_position step of a v2 take (attack.lua).
--- Returns the plan for goal._fs, or nil (the old path).
+-- Returns the plan for goal._fs, or nil (the old path; when the approach
+-- went to S, the old approach first: undo_approach).
 function M.plan_for_goal(state, goal, info, world, now, obs_fn)
+  if goal._fs_off then return nil end
   local plan = plan_from_world("in_range", goal, info, world, now, obs_fn)
-  if not plan then return nil end
+  if not plan then
+    undo_approach(goal, info, now)
+    return nil
+  end
+  goal._fs_appr = nil
   plan.t0 = now
   goal._in_range_dist_tol = DIST_TOL
   return plan

@@ -1023,6 +1023,16 @@ M.PT2_FINISH_NO_COVER_MAX_ANGER = 0.95
 -- PT2_LEEWAY_MIN of the 8 points 32 wu around it; else the old way.
 -- false = the old way (KEEL / MAST).
 M.PT2_FAST_SETUP = true
+-- SHOT_TRACK_OWN_SHELLS_ONLY: shot_tracker.lua keeps one of our shells "in
+-- flight" only while a shell that is not a pill's or an enemy's is near
+-- where it should be. The old match skipped only enemy shells, so a neutral
+-- pill's shell leaving the target pill kept our shell that had just hit
+-- that pill in flight for one more tick. On that tick the pill's health had
+-- already dropped, so the in-flight count was one too high and the
+-- kill-locked swerve started one shell early (Oil Rig carried-pills arena,
+-- Nov 18: the pill lived on 1 health for 1500 ticks). A bug fix.
+-- false = the old match (KEEL / MAST).
+M.SHOT_TRACK_OWN_SHELLS_ONLY = true
 -- SHOT_PATH_SKIP_DEAD_PILLS: v1's shot-path checks (attack.lua
 -- standoff_shot_obstacle, attack_shield.lua score_aim outgoing ray,
 -- pathfinder.lua pill_shots_clear) count only a LIVE pill (health > 0, not
@@ -7741,6 +7751,8 @@ M.PRESETS = {
     PT2_FINISH_NO_COVER_MAX_ANGER = -1,
     --   2026-11-18: no fast setup run (old rule).
     PT2_FAST_SETUP = false,
+    --   2026-11-18: a neutral pill's shell can keep our shell in flight (old rule).
+    SHOT_TRACK_OWN_SHELLS_ONLY = false,
     --   2026-11-17: hold 15 ticks with no goal after a kill (old rule).
     POST_KILL_WAIT_TICKS = 15,
     --   2026-11-17: carrying-pill approach floor 30 (old rule).
@@ -8056,6 +8068,7 @@ M.PRESETS.mast = {
   PT2_TRAVEL_BAND_TICKS             = 0,
   PT2_FINISH_NO_COVER_MAX_ANGER     = -1,
   PT2_FAST_SETUP                    = false,
+  SHOT_TRACK_OWN_SHELLS_ONLY        = false,
   POST_KILL_WAIT_TICKS              = 15,
   CARRY_APPROACH_MIN_ARMOUR_ONE     = 30,
   CARRY_APPROACH_MIN_ARMOUR_MANY    = 30,
