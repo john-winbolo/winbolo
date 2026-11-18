@@ -756,10 +756,10 @@ static void serverLifecycleRotateRound(ServerSim *sim) {
  * Recording is split into fixed wall-clock BLOCKS so a long run produces a
  * sequence of bounded files instead of one giant .btr. Each block is its own
  * debug_sessions/<baseTS>_<N>/ dir: <baseTS> is the GAME's start time and <N>
- * is the 1-based 15-minute block, so block N began at baseTS + (N-1)*15 min
- * (just add 15 min per suffix to read the wall-clock of each). A new game
+ * is the 1-based 3-minute block, so block N began at baseTS + (N-1)*3 min
+ * (just add 3 min per suffix to read the wall-clock of each). A new game
  * resets the base timestamp and block counter. */
-#define BRAINDBG_BLOCK_MS         (15u * 60u * 1000u)            /* 15-minute blocks */
+#define BRAINDBG_BLOCK_MS         (3u * 60u * 1000u)             /* 3-minute blocks */
 #define BRAINDBG_DISK_FLOOR_BYTES (30ULL * 1024 * 1024 * 1024)  /* stop recording below 30 GB free */
 #define BRAINDBG_DISK_CHECK_MS    5000u                         /* throttle the free-space syscall */
 
@@ -1010,7 +1010,7 @@ void serverInstanceTick(ServerSim *sim) {
           }
         }
       }
-      /* 15-minute block roll: finalize the current block and open the next,
+      /* 3-minute block roll: finalize the current block and open the next,
        * seamlessly (no game interruption). */
       if (s_braindbgSessionOpen && (nowMs - s_braindbgBlockStartMs) >= BRAINDBG_BLOCK_MS) {
         s_braindbgBlockNum++;

@@ -9,13 +9,13 @@
  *
  * The recorder names a session dir "<YYYYMMDD_HHMMSS>_<B>[_<label>]"
  * (server_lifecycle.c): the timestamp is the GAME's start, <B> is the
- * 15-minute block, and <label> comes from WINBOLO_BRAINDBG_LABEL — so it
+ * 3-minute block, and <label> comes from WINBOLO_BRAINDBG_LABEL — so it
  * is whatever the label happened to be when the game was STARTED. Coming
  * back a week later to "20260903_011013_2_john" and wanting it to say
  * "oilrig_6bots" is the whole point of this file.
  *
  * One rename is a FAMILY rename. A single game reaches disk as several
- * dirs — every 15-minute block, and every "_part<X>of<N>" brainrec_split
+ * dirs — every 3-minute block, and every "_part<X>of<N>" brainrec_split
  * cut out of a block — so renaming just the row the user clicked would
  * leave the rest of the game under the old name AND break the segment
  * walk (loadBrowserFindSegment matches blocks by ts + label). Every dir

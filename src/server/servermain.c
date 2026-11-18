@@ -3348,7 +3348,7 @@ int main(int argc, char **argv) {
         }
         brainRecordSetEnabled(true);   /* arm; dir + file open at game start */
         fprintf(stderr, "Bot brain debug mode ON (print2 + brainrec.btr; a fresh "
-                        "debug_sessions/<TS>_<N>/ per game, rolled into 15-min "
+                        "debug_sessions/<TS>_<N>/ per game, rolled into 3-min "
                         "blocks (_1,_2,...). Use a base -brain path, not opt/, so "
                         "print2 isn't stripped)\n");
       }

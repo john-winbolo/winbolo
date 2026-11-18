@@ -1071,7 +1071,7 @@ static int btLoadSession(BrainTestApp *app, const char *path) {
     RecordingBuffer *rb = &app->recording;
     int loaded = 0;
     /* Progress = compressed bytes consumed (gzoffset) vs the .btr file size.
-     * Roughly linear, good enough for a 15-minute load bar. */
+     * Roughly linear, good enough for a 3-minute load bar. */
     Sint64 gzTotal = 0;
     { SDL_PathInfo pi; if (SDL_GetPathInfo(path, &pi)) gzTotal = (Sint64)pi.size; }
     Uint64 lastDrawMs = 0;
@@ -7233,7 +7233,7 @@ int main(int argc, char *argv[]) {
                 case SDLK_LEFTBRACKET:
                 case SDLK_RIGHTBRACKET: {
                     /* Walk a long recording one segment at a time: ] loads the
-                     * next _part<X>of<N> (or, off the end, the next 15-minute
+                     * next _part<X>of<N> (or, off the end, the next 3-minute
                      * block's first part), [ the previous one. Only meaningful
                      * while replaying, and the list is rescanned first so a
                      * split that finished after launch is picked up. */
