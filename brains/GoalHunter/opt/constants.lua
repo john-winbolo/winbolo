@@ -938,10 +938,11 @@ M.PPT_PILL_BLOCKERS_MAX = 2    -- cap on how many carried pillboxes the shield p
 -- ── Pill take v2 (2026-11-16; pilltake_v2.lua, PILLTAKE_V2_PLAN.md) ──
 -- Master knob. On: the v2 evaluator picks the take's standoff, its blockers
 -- (built by build_walls) and, with PT2_CHAINS, a chain of pills that shoot
--- each other. Off (this delivery): v1 drives; v2 only runs side by side in
--- debug runs (PT2_SIDE_BY_SIDE_LOG) and changes nothing. Every PT2_* knob
--- below acts only with the master on. KEEL / MAST: off.
-M.PILLTAKE_V2_EVALUATOR = false
+-- each other. On by default since 2026-11-18 (Andrew: HELM uses v2). Off:
+-- v1 drives; v2 only runs side by side in debug runs (PT2_SIDE_BY_SIDE_LOG)
+-- and changes nothing. Every PT2_* knob below acts only with the master on.
+-- KEEL / MAST: off.
+M.PILLTAKE_V2_EVALUATOR = true
 -- Debug only: with BRAIN_DEBUG_MODE and print2 on, run v2 next to v1 at each
 -- shield scan and log one PT2_CMP line (no effect on play; the strip removes
 -- the call from opt/, so prod never runs it).
@@ -7831,9 +7832,9 @@ M.PRESETS = {
     --   2026-11-16: pool 6 picks its pill on the full factors (phase weight,
     --   influence, neutral-own-ground). KEEL picked on raw cost.
     POOL6_PICK_WITH_FACTORS = false,
-    --   2026-11-16: pill take v2 sub-knobs (the master PILLTAKE_V2_EVALUATOR
-    --   is off by default). KEEL had no v2: no chains, no leeway, no
-    --   allied-pill tier.
+    --   2026-11-16: pill take v2 (master on by default since 2026-11-18).
+    --   KEEL had no v2: no chains, no leeway, no allied-pill tier.
+    PILLTAKE_V2_EVALUATOR = false,
     PT2_CHAINS = false,
     PT2_LINK_COVERS_PREV = false,
     PT2_LEEWAY = false,
@@ -8155,6 +8156,7 @@ M.PRESETS.mast = {
   PLACE_FRONT_NEED_TARGET           = false,
   POOL6_PICK_WITH_FACTORS           = false,
   PT2_AIM_NUDGE                     = false,
+  PILLTAKE_V2_EVALUATOR             = false,  -- 2.2.1 had no pill take v2
   PT2_CHAINS                        = false,  -- 2.2.1 had no pill take v2
   PT2_LINK_COVERS_PREV              = false,
   PT2_LEEWAY                        = false,
