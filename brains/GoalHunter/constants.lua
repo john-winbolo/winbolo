@@ -3922,6 +3922,25 @@ M.DEFEND_ALARM_DIJ_STOP_TILES = 9    -- stop summing per-tile Dijkstra cost once
 -- KEEL / MAST: false / 1.0 (too_close always rejects).
 M.DEFEND_ALARM_CLOSE_INTERRUPT  = true
 M.DEFEND_ALARM_CLOSE_TOTAL_MULT = 0.5
+-- ALARM HEAT (Andrew, Nov 18).  While we hold an alarm-mode defend_pill goal
+-- for pill D and enemy tank E is at D, heat a friendly pill with the
+-- attack_tank heat volley (attack.lua defend_heat_steer; same rules as
+-- ATTACK_TANK_HEAT_*: our gun range, LOS, MIN_HP / CAP_MODE hp cap,
+-- MAX_FRAC anger, RETRY / MAX_MISSES / MAX_TICKS).
+--   ENGAGED = an enemy hit on D in DEFEND_ALARM_WINDOW_TICKS, or a hostile
+--   (enemy tank) shell within HEAT_ALLY_SHELL_RADIUS of D this tick.
+--   Engaged: never D; only a neighbour pill with E inside PILL_FIRE_RANGE.
+--   Not engaged: D or a neighbour; with an enemy tank within
+--   DEFEND_HEAT_NEAR_ENEMY_TILES of the pill, the volley is at most
+--   DEFEND_HEAT_NEAR_ENEMY_MAX_SHOTS shells (min with the hp cap).
+-- Pick: closest to E, then more shots, then lower id.  The volley starts
+-- only on a pill in our gun range now (no detour).  Our own heat hits do not
+-- count as alarm hits (perception.lua, HEAT_SELF_STAMP_TICKS).
+-- KEEL / MAST: false.  The two numeric knobs need no keel / mast entry: the
+-- master is off there, so they are never read.
+M.DEFEND_ALARM_HEAT                = true
+M.DEFEND_HEAT_NEAR_ENEMY_TILES     = 9   -- euclidean tiles, enemy tank -> heated pill
+M.DEFEND_HEAT_NEAR_ENEMY_MAX_SHOTS = 2   -- volley cap while an enemy is that close
 M.HEAT_REQUIRE_ENEMY_RANGE   = 10    -- heat only with a hostile tank VISIBLE within this
                                      -- euclidean range of the pill (and not actively
                                      -- shelling it ??? taking_damage blocks first).
@@ -7151,6 +7170,9 @@ M.PRESETS = {
     --   goal (close interrupt), total x0.5. KEEL: too_close always rejects.
     DEFEND_ALARM_CLOSE_INTERRUPT  = false,
     DEFEND_ALARM_CLOSE_TOTAL_MULT = 1.0,
+    --   2026-11-18: alarm defend heats D or a neighbour pill. KEEL: no heat.
+    --   (DEFEND_HEAT_NEAR_ENEMY_* need no entry: unread with this off.)
+    DEFEND_ALARM_HEAT             = false,
     -- 2026-09-05: raised to 3, i.e. the default blitz party went 2..2 -> 2..4.
     SQUAD_MAX_SIZE                = 1,
     -- 2026-09-10: undamaged committed blitzers hold proactive swerves once 3+
@@ -8008,7 +8030,8 @@ M.PRESETS.mast = {
   PT2_FINISH_CAPTURE_LOCK           = false,
   DEFEND_ALARM_CLOSE_INTERRUPT      = false,
   DEFEND_ALARM_CLOSE_TOTAL_MULT     = 1.0,
-  QUICK_REPAIR_ON_TAKE              = false,
+  DEFEND_ALARM_HEAT                 = false,
+  QUICK_REPAIR_ON_TAKE             = false,
   QUICK_REPAIR_PREDICT_SHOTS        = false,
   REFUEL_NOT_LOW_MULT               = 1.0,
   REPAIR_GIVE_WAY                   = false,

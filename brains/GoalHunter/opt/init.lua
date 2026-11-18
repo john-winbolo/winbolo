@@ -505,6 +505,9 @@ local TANK_COMBAT_STATIONARY_SUBS = {
 -- firing / the post-sequence hold are all intentional stillness.
 local DEFEND_HEAT_STATIONARY_SUBS = {
   heat_pill_aim=true, heat_pill_shoot=true, heat_done=true,
+  -- C.DEFEND_ALARM_HEAT volley (attack.defend_heat_steer): stopped, aiming
+  -- at the defended pill (D) or a neighbour pill (N).
+  defend_heat_D=true, defend_heat_N=true,
 }
 -- Substates during which a goal-change should preserve standoff/wall
 -- state (so a re-target doesn't drop in-progress geometry).

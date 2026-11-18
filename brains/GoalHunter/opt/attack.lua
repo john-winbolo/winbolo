@@ -9690,6 +9690,12 @@ function M.heat_pill_reap(state, world, info, goal, now)
      and goal._heat_pid == act.pid then
     return
   end
+  -- The same for a defend_pill alarm volley (C.DEFEND_ALARM_HEAT): the defend
+  -- goal still holding it means M.defend_heat_steer owns the exit.
+  if act.defend and goal and act.goal == goal and goal.kind == "defend_pill"
+     and goal._heat_pid == act.pid then
+    return
+  end
 
   local pill  = world.pills and world.pills[act.pid] or nil
   local dead  = (not pill) or (pill.health or 0) <= 0
@@ -9705,7 +9711,11 @@ function M.heat_pill_reap(state, world, info, goal, now)
     goal._heat_hp0, goal._heat_shells0, goal._heat_start = nil, nil, nil
     goal._heat_allow, goal._heat_hold = nil, nil
     goal._heat_flight, goal._heat_fire_tick = nil, nil
-    if goal.substate == "heat_pill" then goal.substate = nil end
+    if goal.substate == "heat_pill"
+       or (goal._heat_sub and goal.substate == goal._heat_sub) then
+      goal.substate = nil
+    end
+    goal._heat_sub, goal._heat_cap_why, goal._heat_role = nil, nil, nil
   end
 end
 
@@ -9722,16 +9732,24 @@ end
 --
 -- los_fn is steering.lua's shot_path_clear -- the SAME reach-and-blocker test
 -- the fight loop uses to decide whether a shell would land on its target.
-function M.heat_pill_steer(state, world, info, goal, target, now, tmx, tmy, los_fn)
-  if not C.ATTACK_TANK_HEAT_PILL then return nil end
-  if not target or not los_fn then return nil end
+--
+-- The volley itself (continue / start) is shared with the defend_pill alarm
+-- heat (M.defend_heat_steer, C.DEFEND_ALARM_HEAT) through heat_volley_continue
+-- and heat_volley_start below; attack_tank's behaviour is unchanged.
 
+-- ── Finish / abandon an in-flight volley ──────────────────────────────
+-- Returns keys, taps while the volley runs.  When it ends it is closed out
+-- here (HEAT_EXIT, retry stamp, goal fields cleared) and the return is
+-- nil, done_reason, hits, fired.
+-- goal._heat_cap_why (set only by the defend heat) names a volley cut short
+-- of shots_needed by a cap other than health ("near_enemy_cap"); attack_tank
+-- never sets it, so its exits read hp_cap / hp_floor / maxed exactly as before.
+local function heat_volley_continue(state, world, info, goal, now, los_fn)
   local min_hp = C.ATTACK_TANK_HEAT_MIN_HP or 5
   local pid    = goal._heat_pid
   local pill   = pid and world.pills and world.pills[pid] or nil
 
-  -- ── Finish / abandon an in-flight volley ──────────────────────────────
-  if pid then
+  do
     local hits   = pill and ((goal._heat_hp0 or 0) - (pill.health or 0)) or 0
     local fired  = (goal._heat_shells0 or 0) - (info.shells or 0)
     local shots  = goal._heat_shots or 0
@@ -9770,7 +9788,8 @@ function M.heat_pill_steer(state, world, info, goal, target, now, tmx, tmy, los_
       -- is at PILLBOX_MAX_FIRERATE; otherwise its armour ran the volley short
       -- of that, named for the mode that did it (heat_allowed_shots).
       if shots < (goal._heat_need or shots) then
-        done = (C.ATTACK_TANK_HEAT_CAP_MODE == "floor") and "hp_floor" or "hp_cap"
+        done = goal._heat_cap_why
+               or ((C.ATTACK_TANK_HEAT_CAP_MODE == "floor") and "hp_floor" or "hp_cap")
       else
         done = "maxed"
       end
@@ -9813,31 +9832,24 @@ function M.heat_pill_steer(state, world, info, goal, target, now, tmx, tmy, los_
       goal._heat_allow, goal._heat_hold = nil, nil
       goal._heat_flight, goal._heat_fire_tick = nil, nil
       goal._heat_need = nil
-      if goal.substate == "heat_pill" then goal.substate = nil end
-      return nil
+      if goal.substate == "heat_pill"
+         or (goal._heat_sub and goal.substate == goal._heat_sub) then
+        goal.substate = nil
+      end
+      goal._heat_sub, goal._heat_cap_why, goal._heat_role = nil, nil, nil
+      return nil, done, hits, fired
     end
 
     return M.heat_pill_fire(state, world, info, goal, pill, pid, hits,
                             goal._heat_shots or 0, now)
   end
+end
 
-  -- ── Consider starting a volley ────────────────────────────────────────
-  -- Heating pays only against an enemy that is actually THERE: a ghost is an
-  -- extrapolation, and the pill would burn our armour and shells at nothing.
-  -- (Same "live enemy" requirement the defend_pill heat gate applies through
-  -- C.HEAT_REQUIRE_ENEMY_RANGE.)
-  if target.ghost then return nil end
-  -- Never start one afloat. heat_pill_fire brakes the tank and holds it still
-  -- to aim, and a boated tank that stops is a boated tank that stays boated:
-  -- a measured run opened a volley at brain tick 12 while still sitting on its
-  -- spawn pond and spent 117 ticks firing from the water instead of coming
-  -- ashore. Getting onto land is always the better use of those ticks.
-  if info.inboat then return nil end
-
-  local cand = heat_pill_select(state, world, info, goal, target, now,
-                                tmx, tmy, los_fn)
-  if not cand then return nil end
-
+-- ── Start a volley on candidate `cand` ───────────────────────────────────
+-- cand = { id, pill, shots, need, hp, d_wu } as heat_pill_select builds it.
+-- `defend` (nil for attack_tank) is the defend-heat role label "D" / "N":
+-- it rides on the state mirror so the reaper can print DEFEND_HEAT_END.
+local function heat_volley_start(state, world, info, goal, cand, now, defend)
   goal._heat_pid     = cand.id
   goal._heat_shots   = cand.shots
   goal._heat_hp0     = cand.hp
@@ -9865,16 +9877,51 @@ function M.heat_pill_steer(state, world, info, goal, target, now, tmx, tmy, los_
   -- goal is replaced before it finishes (state outlives any goal table).
   state._heat_active = { pid = cand.id, goal = goal, shots = cand.shots,
                          need = cand.need, hp0 = cand.hp,
-                         shells0 = info.shells or 0 }
+                         shells0 = info.shells or 0, defend = defend }
   return M.heat_pill_fire(state, world, info, goal, cand.pill, cand.id, 0,
                           cand.shots, now)
+end
+
+-- Heat-pill executor.  Returns keys, taps while a volley is running (or
+-- starting) so attack_tank holds fire on E for those few ticks; returns nil
+-- when the fight should proceed normally.  (Full notes above
+-- heat_volley_continue.)
+function M.heat_pill_steer(state, world, info, goal, target, now, tmx, tmy, los_fn)
+  if not C.ATTACK_TANK_HEAT_PILL then return nil end
+  if not target or not los_fn then return nil end
+
+  if goal._heat_pid then
+    local k, t = heat_volley_continue(state, world, info, goal, now, los_fn)
+    if k then return k, t end
+    return nil
+  end
+
+  -- ── Consider starting a volley ────────────────────────────────────────
+  -- Heating pays only against an enemy that is actually THERE: a ghost is an
+  -- extrapolation, and the pill would burn our armour and shells at nothing.
+  -- (Same "live enemy" requirement the defend_pill heat gate applies through
+  -- C.HEAT_REQUIRE_ENEMY_RANGE.)
+  if target.ghost then return nil end
+  -- Never start one afloat. heat_pill_fire brakes the tank and holds it still
+  -- to aim, and a boated tank that stops is a boated tank that stays boated:
+  -- a measured run opened a volley at brain tick 12 while still sitting on its
+  -- spawn pond and spent 117 ticks firing from the water instead of coming
+  -- ashore. Getting onto land is always the better use of those ticks.
+  if info.inboat then return nil end
+
+  local cand = heat_pill_select(state, world, info, goal, target, now,
+                                tmx, tmy, los_fn)
+  if not cand then return nil end
+  return heat_volley_start(state, world, info, goal, cand, now, nil)
 end
 
 -- Aim at the pill and hold the trigger.  The engine's reload paces the
 -- shots; we stop when the observed armour drop says enough of them landed.
 function M.heat_pill_fire(state, world, info, goal, pill, pid, hits, shots, now)
   local keys, taps = 0, 0
-  goal.substate = "heat_pill"
+  -- attack_tank: "heat_pill".  The defend alarm heat sets goal._heat_sub to
+  -- "defend_heat_D" / "defend_heat_N" so the status line names the step.
+  goal.substate = goal._heat_sub or "heat_pill"
 
   if info.gunrange < C.GUNSIGHT_MAX then keys = bit.bor(keys, KEY_MORERANGE) end
   if info.speed > 0 then keys = bit.bor(keys, KEY_SLOWER) end
@@ -9903,6 +9950,246 @@ function M.heat_pill_fire(state, world, info, goal, pill, pid, hits, shots, now)
   end
 
   return keys, taps
+end
+
+-- =========================================================================
+-- defend_pill alarm heat (C.DEFEND_ALARM_HEAT, Andrew Nov 18)
+-- =========================================================================
+-- While we hold an ALARM-mode defend_pill goal for pill D and enemy tank E
+-- is at D, heat a friendly pill with the attack_tank volley machinery above
+-- (heat_volley_start / heat_volley_continue / heat_pill_fire: the same hit
+-- counting, miss allowance, MAX_TICKS ceiling, retry latch and
+-- _heat_shot_tick self stamp).
+--
+-- ENGAGED (D is under fire now) =
+--     an enemy hit on D inside DEFEND_ALARM_WINDOW_TICKS (alarm trigger 2a,
+--     the same _alarm_hits ring defend_alarm_status counts)
+--  OR a HOSTILE-labelled shell within HEAT_ALLY_SHELL_RADIUS of D this tick
+--     (perception stamps D._hostile_shell_tick).
+-- ENGAGED: D is never a target.  Only a NEIGHBOUR N (another friendly live
+--   pill) with E inside N's firing range (C.PILL_FIRE_RANGE, euclidean tiles
+--   pill -> E) can be heated.  No near-enemy cap.
+-- NOT ENGAGED: D or a neighbour.  If any live enemy tank is within
+--   DEFEND_HEAT_NEAR_ENEMY_TILES (euclidean) of the pill being heated, the
+--   volley is capped at DEFEND_HEAT_NEAR_ENEMY_MAX_SHOTS (min with the
+--   hp cap).
+-- Every candidate also passes the attack_tank heat rules: in OUR gun range
+-- now (so the volley never detours the defend trip), hp floor / proportional
+-- cap (heat_allowed_shots), anger < ATTACK_TANK_HEAT_MAX_FRAC, shots > 0,
+-- ATTACK_TANK_HEAT_RETRY_TICKS, shells >= shots + SHELL_RESERVE, clear LOS.
+-- (The attack_tank test "pill closer to E than we are" is NOT applied.)
+-- CHOICE: the candidate closest to E (euclidean tiles pill -> E); a tie goes
+-- to the one with more shots allowed, then the lower pill id.
+-- If D turns engaged mid-volley ON D, the volley is aborted at once.
+
+-- Enemy-attributed hits on pill p inside the alarm window.  Same count as
+-- goals.lua defend_alarm_hits (alarm trigger 2a).
+local function dh_alarm_hits(p, now)
+  local win  = C.DEFEND_ALARM_WINDOW_TICKS or 250
+  local ring = p._alarm_hits
+  local n = 0
+  if ring then
+    for i = 1, #ring do
+      local age = now - (ring[i].t or 0)
+      if age >= 0 and age <= win then n = n + 1 end
+    end
+  end
+  return n
+end
+
+-- Is the defended pill D engaged?  Returns engaged, hits_in_window, shell_now.
+function M.defend_heat_engaged(p, now)
+  if not p then return false, 0, false end
+  local n = dh_alarm_hits(p, now)
+  local shell = (p._hostile_shell_tick ~= nil) and (p._hostile_shell_tick == now)
+  return (n > 0) or shell, n, shell
+end
+
+-- E: the nearest LIVE hostile tank within DEFEND_ALARM_ENEMY_TILES of D
+-- (alarm condition 1's rule: nearest wins, ties to the lower tank id).
+function M.defend_heat_enemy(state, p)
+  local r  = C.DEFEND_ALARM_ENEMY_TILES or 11
+  local r2 = r * r
+  local best, best_d2 = nil, nil
+  for _, et in ipairs((state.perc and state.perc.enemy_tanks) or {}) do
+    local dx, dy = (et.mx or 0) - p.mx, (et.my or 0) - p.my
+    local d2 = dx * dx + dy * dy
+    if d2 <= r2 and (best_d2 == nil or d2 < best_d2
+                     or (d2 == best_d2 and (et.id or 0) < (best.id or 0))) then
+      best, best_d2 = et, d2
+    end
+  end
+  return best
+end
+
+-- Nearest live enemy tank (any, not only E) to pill p, euclidean tiles.
+local function dh_nearest_enemy(state, p)
+  local bd = nil
+  for _, et in ipairs((state.perc and state.perc.enemy_tanks) or {}) do
+    local d = heat_tdist(et.mx or 0, et.my or 0, p.mx, p.my)
+    if bd == nil or d < bd then bd = d end
+  end
+  return bd
+end
+
+-- The candidate scan.  Pure apart from los_fn and the print2 lines (quiet
+-- suppresses them), so test_defend_heat.lua drives it directly.
+-- Returns best (or nil) and the rows table (one per friendly live pill).
+function M.defend_heat_pick(state, world, info, d_id, E, engaged, now, los_fn, quiet)
+  local pills = world.pills
+  if not pills or not E then return nil, {} end
+  local ids = {}
+  for id in pairs(pills) do ids[#ids + 1] = id end
+  table.sort(ids)
+
+  local fire_range_wu = ((info.gunrange or 14) / 2.0) * 256
+  local pill_range    = C.PILL_FIRE_RANGE or 8
+  local max_frac      = C.ATTACK_TANK_HEAT_MAX_FRAC or 0.75
+  local min_hp        = C.ATTACK_TANK_HEAT_MIN_HP or 5
+  local floor_mode    = (C.ATTACK_TANK_HEAT_CAP_MODE == "floor")
+  local retry_ticks   = C.ATTACK_TANK_HEAT_RETRY_TICKS or 150
+  local near_tiles    = C.DEFEND_HEAT_NEAR_ENEMY_TILES or 9
+  local near_max      = C.DEFEND_HEAT_NEAR_ENEMY_MAX_SHOTS or 2
+  local retry         = state._heat_pill_retry
+
+  local rows, best = {}, nil
+  for _, id in ipairs(ids) do
+    local p = pills[id]
+    if p and p.owner == "friendly" and (p.health or 0) > 0 and not p.in_tank then
+      local role   = (id == d_id) and "D" or "N"
+      local hp     = p.health or 0
+      local anger  = p.anger or 0
+      local d_pe   = heat_tdist(p.mx, p.my, E.mx or 0, E.my or 0)
+      local pill_wx, pill_wy = U.m2w(p.mx), U.m2w(p.my)
+      local d_wu   = U.wdist(info.tankx, info.tanky, pill_wx, pill_wy)
+      local need   = M.heat_pill_shots_needed(anger)
+      local allowed = heat_allowed_shots(hp)
+      local base   = (need < allowed) and need or allowed
+      local shots  = base
+      local near_d = dh_nearest_enemy(state, p)
+      local near_cap = false
+      if not engaged and near_d and near_d <= near_tiles and shots > near_max then
+        shots, near_cap = near_max, true
+      end
+      local reason, los = nil, nil
+      if role == "D" and engaged then
+        reason = "engaged_never_D"
+      elseif role == "N" and d_pe > pill_range then
+        reason = "enemy_out_of_pill_range"
+      elseif d_wu > fire_range_wu then
+        reason = "out_of_gun_range"
+      elseif floor_mode and hp < min_hp then
+        reason = "hp"
+      elseif (not floor_mode) and allowed <= 0 then
+        reason = "hp"
+      elseif anger >= max_frac then
+        reason = "already_hot"
+      elseif shots <= 0 then
+        reason = "no_shots_needed"
+      elseif retry and retry[id] and (now - retry[id]) < retry_ticks then
+        reason = "retry_wait"
+      elseif (info.shells or 0) < shots + (C.SHELL_RESERVE or 0) then
+        reason = "low_shells"
+      else
+        los = los_fn(info, world, pill_wx, pill_wy, p.mx, p.my)
+        if not los then reason = "no_los" end
+      end
+      local row = { id = id, pill = p, role = role, reason = reason,
+                    shots = shots, need = need, allowed = allowed, base = base,
+                    near_cap = near_cap, near_d = near_d, d_pe = d_pe,
+                    d_wu = d_wu, hp = hp, anger = anger, los = los }
+      rows[#rows + 1] = row
+
+      if reason and BRAIN_DEBUG_MODE and not quiet then
+        -- One line per verdict change per pill, like HEAT_PILL.
+        local seen = state._defend_heat_seen
+        if not seen then seen = {}; state._defend_heat_seen = seen end
+        local key = string.format("%s|%s|%d|%s", reason, role, shots, tostring(los))
+        if seen[id] ~= key then
+          seen[id] = key
+        end
+      end
+
+      if not reason then
+        if not best or d_pe < best.d_pe
+           or (d_pe == best.d_pe and shots > best.shots) then
+          best = row      -- ids ascend, so an exact tie keeps the lower id
+        end
+      end
+    end
+  end
+  return best, rows
+end
+
+-- Close out a defend volley without the HEAT_EXIT path (the engaged flip).
+local function dh_abort(state, goal, now)
+  local pid = goal._heat_pid
+  if pid then
+    state._heat_pill_retry = state._heat_pill_retry or {}
+    state._heat_pill_retry[pid] = now
+  end
+  state._heat_active = nil
+  goal._heat_pid, goal._heat_shots, goal._heat_need = nil, nil, nil
+  goal._heat_hp0, goal._heat_shells0, goal._heat_start = nil, nil, nil
+  goal._heat_allow, goal._heat_hold = nil, nil
+  goal._heat_flight, goal._heat_fire_tick = nil, nil
+  if goal._heat_sub and goal.substate == goal._heat_sub then goal.substate = nil end
+  goal._heat_sub, goal._heat_cap_why, goal._heat_role = nil, nil, nil
+end
+
+-- Defend heat executor, called from steering.lua's defend_pill branch every
+-- tick of an alarm-mode defend goal.  Returns keys, taps while a volley runs
+-- (the tank stops and aims: the trip waits); nil lets travel go on.
+function M.defend_heat_steer(state, world, info, goal, now, los_fn)
+  if not C.DEFEND_ALARM_HEAT then return nil end
+  if not goal or goal.kind ~= "defend_pill" or not goal.alarm or not los_fn then
+    return nil
+  end
+  local d_id = goal.target_id
+  local D = d_id and world.pills and world.pills[d_id] or nil
+  local engaged, nh, shell = M.defend_heat_engaged(D, now)
+
+  -- ── A volley is running ──
+  if goal._heat_pid then
+    if goal._heat_role == "D" and engaged then
+      local pid = goal._heat_pid
+      dh_abort(state, goal, now)
+      return nil
+    end
+    local role = goal._heat_role or "?"
+    local pid  = goal._heat_pid
+    local k, t, done, hits, fired = heat_volley_continue(state, world, info, goal, now, los_fn)
+    if k then return k, t end
+    return nil
+  end
+
+  -- ── Consider starting one ──
+  local why = nil
+  local E = D and M.defend_heat_enemy(state, D) or nil
+  if not D or (D.health or 0) <= 0 then why = "D_gone"
+  elseif not E then why = "no_enemy"
+  elseif E.ghost then why = "enemy_ghost"
+  elseif info.inboat then why = "in_boat"
+  end
+  if why then
+    return nil
+  end
+  -- An ALLIED D is never heated (the attack_tank rules heat friendly pills
+  -- only); its neighbours still can be: pick() only sees friendly pills, so
+  -- an allied d_id simply never matches a row.
+  local best, rows = M.defend_heat_pick(state, world, info, d_id, E, engaged,
+                                        now, los_fn, false)
+  if not best then
+    local w = (#rows == 0) and "no_friendly_pill" or "no_candidate"
+    return nil
+  end
+  state._defend_heat_why = nil
+  goal._heat_role    = best.role
+  goal._heat_sub     = "defend_heat_" .. best.role
+  -- A volley cut short of shots_needed by the near-enemy cap (not by health)
+  -- ends "near_enemy_cap"; one cut by health keeps hp_cap / hp_floor.
+  goal._heat_cap_why = (best.near_cap and best.shots < best.need) and "near_enemy_cap" or nil
+  return heat_volley_start(state, world, info, goal, best, now, best.role)
 end
 
 -- ── Peace list ("peace=1/3/4" init token, C.PEACE_*) ─────────────────────
