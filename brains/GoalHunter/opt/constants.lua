@@ -1054,6 +1054,28 @@ M.PF_DANGER_INITIAL_LOAD = true
 -- fired take_cover at 8.2 squares, out of real range, and dropped the take.
 -- Andrew's yes (Nov 18). false = the old triggers. KEEL / MAST: false.
 M.PT2_HAUL_KEEP_TAKE = true
+-- PT2_DOUBLE_TAKE_DISCOUNT: pool 6 (attack_pill) prices a pill lower when
+-- pill take v2 finds a safe double take on it (pt2_dbl.lua). A shadow v2
+-- run per pill (only when another live hostile or neutral pill is in chain
+-- reach) is cached; a row whose cache says safe chain, kills >= 2 and
+-- have >= need with blockers we can really place (carried pills, trees for
+-- walls) gets:
+--   * xfire, coverage and danger of the other chain pills left out (diff
+--     scan A coverage, diff scan B danger, spot and travel danger);
+--   * the whole cost x PT2_DOUBLE_TAKE_MULT, once (stacks with wound and
+--     spike; not under the blitz join discount).
+-- The ammo term stays A's health only: the chain's other pill dies to its
+-- own neighbour's shells. Needs PILLTAKE_V2_EVALUATOR and PT2_CHAINS.
+-- Andrew's yes (Nov 18). false = the old pool 6 price. KEEL / MAST: false.
+M.PT2_DOUBLE_TAKE_DISCOUNT = true
+-- Cost multiplier on a double-take row. Andrew's value (Nov 18).
+M.PT2_DOUBLE_TAKE_MULT = 0.6
+-- A cached double-take answer older than this is run again, ticks.
+-- Andrew's value (Nov 18).
+M.PT2_DBL_CACHE_TICKS = 250
+-- Shadow v2 runs per tick at most (each 4-19 ms), and only when the last
+-- think left time under the tick budget. Andrew's value (Nov 18).
+M.PT2_DBL_EVALS_PER_TICK = 1
 -- SHOT_PATH_SKIP_DEAD_PILLS: v1's shot-path checks (attack.lua
 -- standoff_shot_obstacle, attack_shield.lua score_aim outgoing ray,
 -- pathfinder.lua pill_shots_clear) count only a LIVE pill (health > 0, not
@@ -7776,6 +7798,7 @@ M.PRESETS = {
     SHOT_TRACK_OWN_SHELLS_ONLY = false,
     PF_DANGER_INITIAL_LOAD = false,
     PT2_HAUL_KEEP_TAKE = false,
+    PT2_DOUBLE_TAKE_DISCOUNT = false,
     --   2026-11-17: hold 15 ticks with no goal after a kill (old rule).
     POST_KILL_WAIT_TICKS = 15,
     --   2026-11-17: carrying-pill approach floor 30 (old rule).
@@ -8095,6 +8118,7 @@ M.PRESETS.mast = {
   SHOT_TRACK_OWN_SHELLS_ONLY        = false,
   PF_DANGER_INITIAL_LOAD            = false,  -- 2.2.1 copied danger only on rebuild
   PT2_HAUL_KEEP_TAKE                = false,  -- 2.2.1 had no pill take v2
+  PT2_DOUBLE_TAKE_DISCOUNT          = false,  -- 2.2.1 had no pill take v2
   POST_KILL_WAIT_TICKS              = 15,
   CARRY_APPROACH_MIN_ARMOUR_ONE     = 30,
   CARRY_APPROACH_MIN_ARMOUR_MANY    = 30,

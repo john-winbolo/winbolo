@@ -12983,6 +12983,27 @@ function M.step_eval_queue(state, world, info)
       local goal_spot_path_len = 0
       local goal_pickup_detail = nil
       local goal_pickup_path   = nil  -- list of {x,y} for viz
+      -- PT2_DOUBLE_TAKE_DISCOUNT (pt2_dbl.lua): a fresh cached safe double
+      -- take on this pill, or nil. Holds the entry (e), the exclusions (ex)
+      -- and each excluded amount for the row text.
+      local _dbl = nil
+      if pool_idx == 6 and C.PT2_DOUBLE_TAKE_DISCOUNT then
+        local D = require("pt2_dbl")
+        local t0 = clock_us()
+        local de = D.get(state, world, info, id, obj, now)
+        local _q, _qwhy = D.qualifies(de)
+        if BRAIN_DEBUG_MODE and de and not _q and now - (state._pt2_dbl.noq_log_t or -1e9) >= 50 then
+          state._pt2_dbl.noq_log_t = now
+          print2(string.format("PT2_DBL_NOQ t=%d pill#%s why=%s", now, tostring(id), tostring(_qwhy)))
+        end
+        if _q then
+          local ex, other = D.exclusions(de, threat)
+          _dbl = { e = de, ex = ex, other = other, set = D.other_set(de),
+                   mult = C.PT2_DOUBLE_TAKE_MULT or 0.6, age = now - de.tick,
+                   diff1 = 0, xfire_ex = 0, spot_ex = 0, travel_ex = 0 }
+        end
+        D.charge(state, now, clock_us() - t0)
+      end
       if pool_idx == 6 then
         -- Quick difficulty scan + best spot cost.
         -- Cache the scan per pill — result only changes when pill HP or
@@ -13112,6 +13133,19 @@ function M.step_eval_queue(state, world, info)
         -- winner progression plays out across consecutive frames for
         -- every cached pill.
         diff_cost = diff_score or 999
+        if _dbl then
+          local de = _dbl.e
+          if de._diff_for ~= _dbl.ex.contrib then
+            local t0 = clock_us()
+            local ds = attack.evaluate_pill_difficulty(obj, world, false,
+              (state._capacity and state._capacity.scan_step) or 5, state.phase, state,
+              tmx, tmy, nil, nil, nil, _dbl.ex)
+            de._diff_for, de._diff = _dbl.ex.contrib, ds or 999
+            require("pt2_dbl").charge(state, now, clock_us() - t0)
+          end
+          _dbl.diff1 = diff_cost
+          diff_cost = de._diff
+        end
         -- NOT `local`: these are the per-candidate accumulators declared at the
         -- top of the queue loop, which the [diag] slow cand line reads.  A
         -- `local` here shadowed them and left diff/spot reading 0.00 while
@@ -13132,6 +13166,13 @@ function M.step_eval_queue(state, world, info)
           spot_cost = cpf.dijkstra_lookup_subtract_by_kind(
                         cpf.KIND_NORMAL, best_spot.mx, best_spot.my, boat_flag, _pc)
           if spot_cost >= 1e9 then spot_cost = 500 end
+          if _dbl then
+            local s2 = cpf.dijkstra_lookup_subtract_by_kind(
+                         cpf.KIND_NORMAL, best_spot.mx, best_spot.my, boat_flag, _dbl.ex.contrib)
+            if s2 >= 1e9 then s2 = 500 end
+            _dbl.spot_ex = spot_cost - s2
+            spot_cost = s2
+          end
           -- Travel = spot → dead pill (pill will be dead by the time we
           -- reach the spot, so this is a short capture walk).
           -- Estimate is accurate here: spot has LOS to the pill and the
@@ -13271,6 +13312,14 @@ function M.step_eval_queue(state, world, info)
           -- (self_dr removed: the offset-aware A* above bakes the
           -- as-if-pill-dead discount directly into spot_cost.)
         end
+        if _dbl and not best_spot and travel < 1e29 and (obj.health or 0) > 0 then
+          local t2 = cpf.smart_cost_minus_pill_danger_dij_only(
+            KIND_NORMAL, cost_dx, cost_dy, _dbl.ex.contrib, obj.mx, obj.my, boat_flag)
+          if t2 < 1e29 then
+            _dbl.travel_ex = travel - t2
+            travel = t2
+          end
+        end
         if (_diff_us > 1000 or _spot_us > 1000) then
           if BRAIN_DEBUG_MODE then print2(string.format("  pool6 candidate id=%s diff=%.2fms spot=%.2fms",
                                tostring(id), _diff_us / 1000, _spot_us / 1000)) end
@@ -13290,7 +13339,7 @@ function M.step_eval_queue(state, world, info)
           end
         end
         -- Crossfire. CROSSFIRE_MULT scales the whole term (1.0 = today).
-        for _, pm in pairs(world.pills) do
+        for _pid, pm in pairs(world.pills) do
           if (pm.mx ~= obj.mx or pm.my ~= obj.my)
              and (pm.owner == "hostile" or pm.owner == "neutral")
              and (pm.health or 0) > 0 then
@@ -13298,7 +13347,12 @@ function M.step_eval_queue(state, world, info)
             if d <= C.PILL_FIRE_RANGE + C.ATTACK_PILL_STANDOFF then
               local max_d = C.PILL_FIRE_RANGE + C.ATTACK_PILL_STANDOFF
               local proximity = 1.0 - d / (max_d + 1)
-              xfire_cost = xfire_cost + C.GOAL_CROSSFIRE_PENALTY * (C.CROSSFIRE_MULT or 1) * proximity
+              local xf = C.GOAL_CROSSFIRE_PENALTY * (C.CROSSFIRE_MULT or 1) * proximity
+              if _dbl and _dbl.set[_pid] then
+                _dbl.xfire_ex = _dbl.xfire_ex + xf
+              else
+                xfire_cost = xfire_cost + xf
+              end
             end
           end
         end
@@ -13454,6 +13508,15 @@ function M.step_eval_queue(state, world, info)
       -- included — wandering off while a decisive spike stands is what
       -- this taxes). 1.0 when no spike / when this IS the spike.
       if spike_pen_mult ~= 1.0 then c = c * spike_pen_mult end
+      if _dbl and c < 1e29 then
+        if BRAIN_DEBUG_MODE and now - (state._pt2_dbl.row_log_t or -1e9) >= 50 then
+          state._pt2_dbl.row_log_t = now
+          print2(string.format("PT2_DBL_ROW t=%d pill#%s chain=%s before=%.1f after=%.1f diff1=%.1f xfire_ex=%.1f spot_ex=%.1f travel_ex=%.1f",
+            now, tostring(id), table.concat(_dbl.e.ids, "-"), c, c * _dbl.mult, _dbl.diff1,
+            _dbl.xfire_ex, _dbl.spot_ex, _dbl.travel_ex))
+        end
+        c = c * _dbl.mult
+      end
 
       -- danger_nearby multiplier (pool 6 only): if this pill was recently
       -- stamped (enemy LGM seen within danger radius during a prior take
@@ -13874,6 +13937,10 @@ function M.step_eval_queue(state, world, info)
         entry._spike_ex_my = _spike_ex_my
         entry._danger_mult = (_danger_nearby_mult ~= 1.0) and _danger_nearby_mult or nil
         entry._danger_left = (_danger_nearby_left > 0) and _danger_nearby_left or nil
+        entry._dbl = _dbl and { mult = _dbl.mult, ids = _dbl.e.ids, kills = _dbl.e.kills,
+                                have = _dbl.e.have, need = _dbl.e.need, walls = _dbl.e.walls,
+                                age = _dbl.age, diff1 = _dbl.diff1, xfire_ex = _dbl.xfire_ex,
+                                spot_ex = _dbl.spot_ex, travel_ex = _dbl.travel_ex } or nil
       elseif pool_idx == 7 then
         entry._base=base_extra; entry._tv=_threat_val; entry._thr=threat_cost
         entry._lgm_mult=_p7_lgm_mult
@@ -15199,6 +15266,7 @@ local function apply_blitz_target(state, info)
   for _, e in pairs(cache) do
     if e._p == 6 and e._id == tgt and e.cost then
       e.cost              = C.SQUAD_BLITZ_COST or 30
+      if e._dbl then e._dbl.skip = "blitz" end   -- PT2_DOUBLE_TAKE_DISCOUNT: a fixed cost
       e._reject           = nil   -- committed: converge on the commander's pill
       e._reject_remaining = 0
       e._blitz            = true
@@ -15377,6 +15445,12 @@ local function apply_blitz_join_discount(state, info, world)
               else
                 fresh = not (e.cost < 1e29)
                 base  = fresh and ref or e.cost               -- reject/sentinel → reference base
+                -- PT2_DOUBLE_TAKE_DISCOUNT: the blitz join sets this cost,
+                -- so the double-take multiplier comes off the base again.
+                if not fresh and e._dbl and not e._dbl.skip then
+                  base = base / e._dbl.mult
+                  e._dbl.skip = "blitz"
+                end
               end
               e.cost              = base * factor
               e._reject           = nil
