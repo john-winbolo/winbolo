@@ -148,6 +148,10 @@ function M.build_inp(state, goal, info, world, pill, no_builder, npb, radius, no
     if dij >= 1e29 then dij = cpf.estimate_cost(tmx, tmy, mx, my, boat) end
     return dij + ((s and s._hd_cost) or 0)
   end
+  -- PT2_CHAIN_CLAIM: chain pills an ally holds against us (pt2_claim.keep)
+  if C.PT2_CHAIN_CLAIM then
+    inp.chain_skip = require("pt2_claim").chain_skip(state, inp, now, (info and info.player_number) or -1)
+  end
   return inp
 end
 

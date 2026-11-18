@@ -12456,11 +12456,17 @@ function M.step_eval_queue(state, world, info)
       -- take on this pill, or nil. Holds the entry (e), the exclusions (ex)
       -- and each excluded amount for the row text.
       local _dbl = nil
+      local _dbl_block = nil   -- PT2_CHAIN_CLAIM: { pid, by } when an ally claims a chain pill
       if pool_idx == 6 and C.PT2_DOUBLE_TAKE_DISCOUNT then
         local D = require("pt2_dbl")
         local t0 = clock_us()
         local de = D.get(state, world, info, id, obj, now)
         local _q, _qwhy = D.qualifies(de)
+        -- PT2_CHAIN_CLAIM: no discount on a chain with a pill an ally claims
+        if _q and C.PT2_CHAIN_CLAIM then
+          local _bp, _bby = require("pt2_claim").chain_ally_claimed(state, de.ids, now, info.player_number or -1)
+          if _bp then _q, _qwhy, _dbl_block = false, "ally_claim", { pid = _bp, by = _bby } end
+        end
         if _q then
           local ex, other = D.exclusions(de, threat)
           _dbl = { e = de, ex = ex, other = other, set = D.other_set(de),
@@ -13382,6 +13388,7 @@ function M.step_eval_queue(state, world, info)
         entry._spike_ex_my = _spike_ex_my
         entry._danger_mult = (_danger_nearby_mult ~= 1.0) and _danger_nearby_mult or nil
         entry._danger_left = (_danger_nearby_left > 0) and _danger_nearby_left or nil
+        entry._dbl_block = _dbl_block
         entry._dbl = _dbl and { mult = _dbl.mult, ids = _dbl.e.ids, kills = _dbl.e.kills,
                                 have = _dbl.e.have, need = _dbl.e.need, walls = _dbl.e.walls,
                                 pills = _dbl.e.pills,
@@ -14044,6 +14051,12 @@ local function sync_ally_claimed_rejects(state, info, panel_refresh)
       -- (rather than inlined) so the DECISION line still states the units the
       -- comparison was made in.
       local match_units = "raw"
+      -- PT2_CHAIN_CLAIM (pt2_claim.lua): an ally's v2 chain claims every
+      -- pill of the chain. match_chain = that ally's target when the match
+      -- came from its chain list, not its target.
+      local match_chain = nil
+      local _PC = (pool_idx == 6 and e._id and C.PT2_CHAIN_CLAIM) and require("pt2_claim") or nil
+      if _PC and not _PC.on() then _PC = nil end
       local tank_dead_at = state.tank_dead_at
       local _diag_p6 = BRAIN_DEBUG_MODE and pool_idx == 6 and e._id
                        and not panel_refresh
@@ -14063,8 +14076,13 @@ local function sync_ally_claimed_rejects(state, info, panel_refresh)
           if h.goal == kind then
             local aid = tonumber(h.target)
             local matched
+            local via_chain = false
             if aid and e._id then
               matched = (aid == e._id)
+              if not matched and _PC and not match_pn then
+                local set = _PC.ally_set(h, ally_pn)
+                if set and set[e._id] then matched = true; via_chain = true end
+              end
             else
               local amx = tonumber(h.mx)
               local amy = tonumber(h.my)
@@ -14072,7 +14090,18 @@ local function sync_ally_claimed_rejects(state, info, panel_refresh)
                 matched = (amx == e._mx and amy == e._my)
               end
             end
-            if matched then
+            if matched and via_chain then
+              -- PT2_CHAIN_CLAIM: a chain match is kept only until a target
+              -- match turns up (keep scanning); the chain branch below
+              -- applies pt2_claim.keep, not force_engaging_reject.
+              match_chain     = aid
+              match_sub       = h.sub
+              match_cost      = tonumber(h.cost)
+              match_pn        = ally_pn
+              match_heartbeat = 1750 - (now - slot.last_tick)
+              if match_heartbeat < 0 then match_heartbeat = 0 end
+            elseif matched then
+              match_chain = nil
               match_sub = h.sub
               -- Pool 6: if the ally is past plan/approach, flag the
               -- entry for unconditional REJECT below.  Cost is
@@ -14150,6 +14179,26 @@ local function sync_ally_claimed_rejects(state, info, panel_refresh)
           -- abandon, no yield. The blitz_full reject above still holds.
           we_keep = true
           _reason = "attack_claim_share (allies' attack claims ignored)"
+        elseif pool_idx == 6 and match_chain then
+          -- ── PT2_CHAIN_CLAIM: the ally's double take uses this pill ──
+          -- Our target: pt2_claim.keep, the rule the ally's chain_skip runs
+          -- with the sides swapped; the loser of a target yields for real.
+          -- Not our target: the chain holds it; no steal request (the ally's
+          -- target is another pill).
+          if we_hold then
+            -- our side as the ally sees it: our advertised cost
+            local _bse = state.broadcast_state_extra
+            local k, why = _PC.keep((_bse and tonumber(_bse.cost)) or our_cost, g.substate or "", true, match_cost, match_sub,
+                                    false, self_pn, match_pn)
+            we_keep = k
+            _reason = string.format("chain_claim p%d (chain of #%d): %s", match_pn, match_chain, why)
+            if not k then
+              state._steal_abandon = { pid = e._id, to = match_pn, tick = now, why = _reason }
+            end
+          else
+            we_keep = false
+            _reason = string.format("ally_chain_claim: p%d chain of #%d", match_pn, match_chain)
+          end
         elseif pool_idx == 6 and e._id then
           -- ── attack_pill: NEGOTIATED steal (stq/sta/str), no silent takeover ──
           -- The old silent cost-steal let a cheaper challenger just KEEP the
@@ -14281,6 +14330,10 @@ local function sync_ally_claimed_rejects(state, info, panel_refresh)
             e.formula = nil
           end
         end
+        if e._ally_chain ~= match_chain then
+          e._ally_chain = match_chain
+          e.formula = nil
+        end
         if we_keep then
           if e._reject == "ally_claimed" then
             e._reject = nil
@@ -14321,6 +14374,7 @@ local function sync_ally_claimed_rejects(state, info, panel_refresh)
         -- steal/dual-hold resolution, hold the reject through the gap until
         -- the winner's own claim broadcast lands — otherwise the next replan
         -- re-picks the pill we just gave away and the yield ping-pongs.
+        if e._ally_chain then e._ally_chain = nil; e.formula = nil end
         local y = (pool_idx == 6) and e._id
                   and state._steal_yielded and state._steal_yielded[e._id]
         -- ── YIELD RELEASE ────────────────────────────────────────────────

@@ -37,6 +37,8 @@ OILRIG_ARENAS = (
     "pt2_oilrig_twin_neutral_double_take_off",
     "pt2_oilrig_single_take",
     "pt2_oilrig_twin_carried_pills",
+    "pt2_chain_claim_two_allies",
+    "pt2_chain_claim_two_allies_off",
 )
 FIELD_ARENAS = (
     "pt2_double_take_builds_wall",

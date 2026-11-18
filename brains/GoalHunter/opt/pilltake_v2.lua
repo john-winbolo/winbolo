@@ -275,7 +275,9 @@ local function eval_point(ctx, px, py, extra, aim_fixed, prev, new_sq, nudge)
         -- but they still go where its last target was. Not followed.
         nxt = nil
       end
-      if not nxt or in_chain[nxt] then break end
+      -- inp.chain_skip (PT2_CHAIN_CLAIM): a pill an ally holds against us
+      -- ends the chain; the plan does not use it.
+      if not nxt or in_chain[nxt] or (inp.chain_skip and inp.chain_skip[nxt]) then break end
       chain[#chain + 1] = nxt
       in_chain[nxt] = #chain
       chain_mode = true
@@ -745,7 +747,8 @@ function M.evaluate_group(inp)
   local n_eval, n_reject = res.n_eval, res.n_reject
   for _, p in ipairs(res.hostile) do
     local dx, dy = (p.mx - goalA.mx) * 256, (p.my - goalA.my) * 256
-    if p ~= goalA and dx * dx + dy * dy <= pr * pr then
+    if p ~= goalA and dx * dx + dy * dy <= pr * pr
+       and not (inp.chain_skip and inp.chain_skip[p]) then
       inp.A = p
       if inp.set_A then inp.set_A(p) end
       local r = M.evaluate(inp)

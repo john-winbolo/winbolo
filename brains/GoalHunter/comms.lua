@@ -220,6 +220,16 @@ function M.process_message(sender, text, tick, state)
   -- Shield WALL tiles a commander is building (build_walls only). Blitz soldiers
   -- route their engage spot + aim point around these. Merged via set_handshake;
   -- empty payload clears (commander left build_walls).
+  -- PT2_CHAIN_CLAIM: the other pills of an ally's v2 chain ("<target> <id>
+  -- ..."); empty clears. Kept in pt2_claim (not slot.info, which the ally's
+  -- /info extra evicts); honoured only while the ally's goal is attack_pill
+  -- on <target>.
+  if text:sub(1, 9) == "/info pch" and (#text == 9 or text:sub(10, 10) == " ") then
+    local pl = text:match("^/info pch (.+)$")
+    if state then require("pt2_claim").rx(sender, pl) end
+    print2(string.format("PCH_RX from p%s chain=%s t=%d", tostring(sender), tostring(pl or "-"), tick))
+    return
+  end
   if text:match("^/info bwl") then
     if state then ally_state.set_handshake(sender, tick, "bwl", text:match("^/info bwl (.+)$")) end
     print2(string.format("BLITZ_RX bwl from p%s payload=%s t=%d", tostring(sender), tostring(text:match("^/info bwl (.+)$")), tick))
