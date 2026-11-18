@@ -7456,7 +7456,56 @@ M.loaded_no_lgm_label = PR.loaded_no_lgm_label   -- text in pool_render.lua
 --                FLEE_HAUL_FULL_PILLS.
 -- `mode_ok` reports whether C.CRITICAL_FLEE_ENABLED selects the carrying mode;
 -- the flee injection honours it, take_cover does not (it is not a flee).
-local function haul_flee_eval(state, info, tmx, tmy)
+-- PT2_HAUL_KEEP_TAKE: during a pill take v2 (attack_pill with goal._pt2),
+-- find a shell that is really coming at us from outside the take. Uses
+-- danger.shells_incoming_near's own hit test (the swerve's: closest approach
+-- in our moving frame inside SWERVE_HIT_RADIUS_WU). A tank shell names its
+-- owner. A pill shell (owner 255) carries no pill id, so the source is the
+-- live hostile/neutral pill whose centre lies nearest the shell's backward
+-- line (a pill fires from its centre along the shell's own angle).
+-- Shells from the chain pills (goal.target_id and goal._pt2.ids) are the
+-- take's own business: fast setup's swerve handles them.
+-- Returns the source label ("pill#N" / "tank#N") or nil.
+local function pt2_haul_shell_src(state, world, info, goal)
+  local _, detail = danger.shells_incoming_near(info, info.tankx, info.tanky)
+  local chain = {}
+  if goal.target_id then chain[goal.target_id] = true end
+  local ids = goal._pt2 and goal._pt2.ids
+  if ids then for k = 1, #ids do if ids[k] then chain[ids[k]] = true end end end
+  for i = 1, #detail do
+    local d = detail[i]
+    if d.threat then
+      if d.owner ~= 255 then
+        return "tank#" .. tostring(d.owner)
+      end
+      -- back-trace: the pill nearest the line behind the shell
+      local ux, uy = U.bsin_f(d.dir), -U.bcos_f(d.dir)
+      local best_id, best_off
+      local wp = world and world.pills or {}
+      for id, p in pairs(wp) do
+        if (p.owner == "hostile" or p.owner == "neutral") and (p.health or 0) > 0
+           and not p.in_tank and not p.pos_unknown then
+          local rx = p.mx * 256 + 128 - d.sx
+          local ry = p.my * 256 + 128 - d.sy
+          local along = rx * ux + ry * uy
+          if along <= 0 then   -- behind the shell
+            local off = math.abs(rx * uy - ry * ux)
+            if not best_off or off < best_off
+               or (off == best_off and id < best_id) then
+              best_id, best_off = id, off
+            end
+          end
+        end
+      end
+      if best_id and not chain[best_id] then
+        return "pill#" .. tostring(best_id)
+      end
+    end
+  end
+  return nil
+end
+
+local function haul_flee_eval(state, info, tmx, tmy, world)
   local h = {
     level = 0,
     mode_ok = (C.CRITICAL_FLEE_ENABLED == "no_builder_and_carrying_only"),
@@ -7491,7 +7540,38 @@ local function haul_flee_eval(state, info, tmx, tmy)
       h.arm_low = false
       h.km_exec = true
     end
-    h.triggered = h.tank_engaging or h.pill_shooting or h.arm_low
+    -- PT2_HAUL_KEEP_TAKE: a pill take v2 in progress keeps going. The pill
+    -- stamp and tank-range tests stand down; only a shell really coming at
+    -- us from outside the take fires the haul. The armour trigger stays as
+    -- the safety net.
+    local g = state.goal
+    if C.PT2_HAUL_KEEP_TAKE and g and g.kind == "attack_pill" and g._pt2 then
+      local now = state.tick or 0
+      local old_why = (h.pill_shooting and "pill_at" or "")
+        .. ((h.pill_shooting and h.tank_engaging) and "+" or "")
+        .. (h.tank_engaging and "tank_range" or "")
+      h.pill_shooting = false
+      h.tank_engaging = false
+      local src = pt2_haul_shell_src(state, world, info, g)
+      h.shell_src = src
+      if src then
+        if state._pt2_haul_fire_tick ~= now then
+          state._pt2_haul_fire_tick = now
+          print2(string.format("PT2_HAUL_FIRE t=%d src=%s sub=%s armour=%d at=(%d,%d)",
+            now, src, tostring(g.substate), info.armour or 0, tmx, tmy))
+        end
+      end
+      local keep_why = (old_why ~= "" and not src and not h.arm_low) and old_why or nil
+      if keep_why ~= state._pt2_haul_keep_why then
+        state._pt2_haul_keep_why = keep_why
+        print2(string.format("PT2_HAUL_KEEP t=%d why=%s sub=%s pill_at=%.1f tank_dist=%s armour=%d at=(%d,%d)",
+          now, keep_why or "none", tostring(g.substate), h.pill_at,
+          h.tank_dist and string.format("%.1f", h.tank_dist) or "-", info.armour or 0, tmx, tmy))
+      end
+      h.triggered = (src ~= nil) or h.arm_low
+    else
+      h.triggered = h.tank_engaging or h.pill_shooting or h.arm_low
+    end
   end
   return h
 end
@@ -7985,7 +8065,7 @@ local function eval_take_cover(state, world, info, tmx, tmy, boat, ammo)
   local holding = (tmx == best.mx and tmy == best.my)
 
   -- ── Triggers: they set the COST, never whether the row exists ──────
-  local haul = haul_flee_eval(state, info, tmx, tmy)
+  local haul = haul_flee_eval(state, info, tmx, tmy, world)
   -- Resupply actually needed? Then the EXISTING critical-flee injection (which
   -- drives to a base and refills) is the better answer and stays in charge;
   -- take_cover bids at its ordinary cost so it can still win on merit.
@@ -8347,7 +8427,7 @@ function KM.eval_wait(state, world, info, tmx, tmy)
   -- The escape rows are in charge whenever they fire. haul_flee_eval is the
   -- SHARED ladder (flee injection + take_cover both read it), so asking it
   -- here is asking the same question they answer, not a third copy.
-  local haul = haul_flee_eval(state, info, tmx, tmy)
+  local haul = haul_flee_eval(state, info, tmx, tmy, world)
   if haul.triggered then return nil end
   -- Our armour floor is waived while the claimant is executing: those last
   -- points ARE the hand-off. (The haul ladder above already waived its own
@@ -17631,7 +17711,7 @@ local function goal_selection(state, world, info, quiet)
   -- aboard, triggers scaled by level, and critical armour always bailing.
   local _flee_mode = C.CRITICAL_FLEE_ENABLED
   local _do_flee = false
-  local _haul = haul_flee_eval(state, info, tmx, tmy)
+  local _haul = haul_flee_eval(state, info, tmx, tmy, world)
   -- "KILL ME" in progress: the claimant's shells are taking the armour off on
   -- purpose, so critical armour must not inject a flee that drives us away
   -- from our own executioner. (An enemy inside the cancel radius clears

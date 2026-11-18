@@ -1042,6 +1042,17 @@ M.SHOT_TRACK_OWN_SHELLS_ONLY = true
 -- Nov 18: drove past two pills and lost 20 armour). Andrew's yes (Nov 18).
 -- false = the old copy-on-rebuild-only rule. KEEL / MAST: false.
 M.PF_DANGER_INITIAL_LOAD = true
+
+-- PT2_HAUL_KEEP_TAKE: while a pill take v2 runs (attack_pill with
+-- goal._pt2, any sub), the haul triggers in goals.lua haul_flee_eval stop
+-- using the threat.pill_at stamp and the enemy-tank range. The haul fires
+-- only when a shell is really coming at our tank (danger.shells_incoming_near
+-- hit test) from a pill outside the take chain or from an enemy tank. Chain
+-- pill shells are left to fast setup's swerve. The armour trigger
+-- (ARMOUR_LOW x level) stays. Diag double take, Nov 18: the 9-square stamp
+-- fired take_cover at 8.2 squares, out of real range, and dropped the take.
+-- Andrew's yes (Nov 18). false = the old triggers. KEEL / MAST: false.
+M.PT2_HAUL_KEEP_TAKE = true
 -- SHOT_PATH_SKIP_DEAD_PILLS: v1's shot-path checks (attack.lua
 -- standoff_shot_obstacle, attack_shield.lua score_aim outgoing ray,
 -- pathfinder.lua pill_shots_clear) count only a LIVE pill (health > 0, not
@@ -7763,6 +7774,7 @@ M.PRESETS = {
     --   2026-11-18: a neutral pill's shell can keep our shell in flight (old rule).
     SHOT_TRACK_OWN_SHELLS_ONLY = false,
     PF_DANGER_INITIAL_LOAD = false,
+    PT2_HAUL_KEEP_TAKE = false,
     --   2026-11-17: hold 15 ticks with no goal after a kill (old rule).
     POST_KILL_WAIT_TICKS = 15,
     --   2026-11-17: carrying-pill approach floor 30 (old rule).
@@ -8080,6 +8092,7 @@ M.PRESETS.mast = {
   PT2_FAST_SETUP                    = false,
   SHOT_TRACK_OWN_SHELLS_ONLY        = false,
   PF_DANGER_INITIAL_LOAD            = false,  -- 2.2.1 copied danger only on rebuild
+  PT2_HAUL_KEEP_TAKE                = false,  -- 2.2.1 had no pill take v2
   POST_KILL_WAIT_TICKS              = 15,
   CARRY_APPROACH_MIN_ARMOUR_ONE     = 30,
   CARRY_APPROACH_MIN_ARMOUR_MANY    = 30,
