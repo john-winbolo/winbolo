@@ -5732,14 +5732,50 @@ end
 --     take) and the bot would flip straight back.  Conditions 1, 2 and 4
 --     still end it.
 M.DEFEND_CI_ATK_SETUP = { plan_position = true, approach = true, blitz_wait = true }
+
+-- Every live attack_pill step that comes BEFORE the first shell at the pill
+-- (C.TAKE_COVER_HAUL_SETUP_NO_HYST, Andrew Nov 18).  Wider than
+-- M.DEFEND_CI_ATK_SETUP, which stays as it is.
+--   plan_position / approach / blitz_wait  choosing / driving to the standoff
+--   gather_trees / build_walls             LGM fetching trees, building the shield
+--   aim                                    stopped at the standoff, turning, no fire
+--   in_range_position / in_range_aim_pre /
+--   in_range_aim / in_range_aim_finetune   PPT creep + aim, no fire
+-- NOT set-up (a shell is going, or has gone, at a pill or a tree): detree,
+-- kill_hardline, charge, engage, shoot_pill, swerve, post_engage, loiter,
+-- rush, disengage, heat_pill.  The old ws_* steps are dead code (inside the
+-- commented-out block at the end of attack.lua), so they are not listed.
+M.ATTACK_PILL_SETUP_SUBS = {
+  plan_position = true, approach = true, blitz_wait = true,
+  gather_trees = true, build_walls = true, aim = true,
+  in_range_position = true, in_range_aim_pre = true,
+  in_range_aim = true, in_range_aim_finetune = true,
+  detree = true,   -- fires at trees on the lane, not at the pill (Andrew, Nov 18)
+}
+
+-- Is goal g an attack_pill in a set-up step, with no shell at the pill yet?
+-- subs = the accepted substate set (default M.ATTACK_PILL_SETUP_SUBS).  The
+-- shot marks must all be clear: _attack_start_tick (set when charge or
+-- shoot_pill begins), _fired (shots since then; a PT2 chain keeps the last
+-- pill's count) and _charge_shells (set at charge entry).  Returns the
+-- substate name or nil.
+function M.attack_pill_in_setup(g, subs)
+  if not g or g.kind ~= "attack_pill" then return nil end
+  local sub = g.substate
+  if sub and (subs or M.ATTACK_PILL_SETUP_SUBS)[sub] and not g._attack_start_tick
+     and (g._fired or 0) == 0 and not g._charge_shells then
+    return sub
+  end
+  return nil
+end
+
 function M.defend_close_interrupt(state, p)
   if not C.DEFEND_ALARM_CLOSE_INTERRUPT then return nil end
   local g = state.goal
   if not g then return nil end
   if g.kind == "attack_pill" then
-    local sub = g.substate
-    if sub and M.DEFEND_CI_ATK_SETUP[sub] and not g._attack_start_tick
-       and (g._fired or 0) == 0 and not g._charge_shells then
+    local sub = M.attack_pill_in_setup(g, M.DEFEND_CI_ATK_SETUP)
+    if sub then
       return "attack_pill/" .. sub
     end
   elseif g.kind == "capture_pill" and g.reposition then
@@ -18628,6 +18664,18 @@ local function goal_selection(state, world, info, quiet)
     if C.ESCAPE_NO_BUILDER_SKIP_HYST and state.loaded_no_lgm then
       ESCAPE_NO_HYST = { flee_to_base = true }
     end
+    -- ── TAKE_COVER_HAUL_SETUP_NO_HYST (Andrew, Nov 18, option A) ─────────
+    -- A take_cover row that fired on its "haul" trigger (prefix "haul" only)
+    -- pays NO hysteresis -- switch 0, commitment 0 (so no
+    -- ATTACK_PILL_COMMITMENT_BONUS either) -- while the CURRENT goal is an
+    -- attack_pill in a set-up step with no shell at the pill yet.  LGM alive
+    -- or dead.  hysteresis = "none:haul_setup" is not "type"/"target", so the
+    -- GOAL_SWITCH_RATIO bar below skips it too.  The history penalty is a
+    -- separate step further down and still applies.  Same asymmetry as the
+    -- escape rule: once take_cover is the goal, other rows pay to displace it.
+    -- Holds the set-up substate name, or nil.
+    local HAUL_SETUP_SUB = C.TAKE_COVER_HAUL_SETUP_NO_HYST
+                           and M.attack_pill_in_setup(state.goal) or nil
     local cur_group = goal_group(state.goal.kind)
     local ticks_on_goal = (state.tick or 0) - (state.goal_set_tick or 0)
     local commitment = math.min(ticks_on_goal * C.GOAL_COMMITMENT_PER_TICK, C.GOAL_COMMITMENT_CAP)
@@ -18703,6 +18751,19 @@ local function goal_selection(state, world, info, quiet)
           c._escape_no_hyst = true
           goto continue_hyst
         end
+      end
+      if HAUL_SETUP_SUB and c.goal.kind == "take_cover"
+         and (c.goal._tc_trigger or ""):sub(1, 4) == "haul" then
+        c.hysteresis  = "none:haul_setup"
+        c.switch_flat = 0
+        c.commit_val  = 0
+        c._haul_setup_no_hyst = HAUL_SETUP_SUB
+        if c.desc and c.desc ~= "" then
+          c.desc = c.desc .. string.format(
+            " haul_setup{cur=attack_pill/%s no hyst: sw 0 + cmt 0, ratio skip}",
+            HAUL_SETUP_SUB)
+        end
+        goto continue_hyst
       end
       -- Engage-break: an attack_tank goal that detected a mid-take
       -- threat (tank in range, further from pill than us) is exempt
@@ -19068,6 +19129,8 @@ local function goal_selection(state, world, info, quiet)
         -- reconcile to its own total.
         nobuild_mult  = c._nobuild_mult or 1.0,
         escape_no_hyst = c._escape_no_hyst or false,
+        -- TAKE_COVER_HAUL_SETUP_NO_HYST: the current take's set-up substate.
+        haul_setup_sub = c._haul_setup_no_hyst,
         -- DEFEND_ALARM_CLOSE_TOTAL_MULT: the multiplier and the cost it was
         -- applied to (shaped + switch + commitment).
         close_mult    = c._close_mult or 1.0,
@@ -19123,6 +19186,13 @@ local function goal_selection(state, world, info, quiet)
       local winner = pool[1]
       local switching = (winner.hysteresis == "type"
                          or winner.hysteresis == "target")
+      -- TAKE_COVER_HAUL_SETUP_NO_HYST: hysteresis "none:haul_setup" is not
+      -- "switching", so the ratio bar is not applied.  Say so in the log.
+      if winner._haul_setup_no_hyst and BRAIN_DEBUG_MODE then
+        print2(string.format(
+          "  hysteresis(mult): ratio=skip(haul_setup) winner take_cover cost=%.1f, cur attack_pill/%s (set-up, no shell at the pill) -- GOAL_SWITCH_RATIO %.2f not applied",
+          winner.cost or 0, tostring(winner._haul_setup_no_hyst), C.GOAL_SWITCH_RATIO))
+      end
       if switching then
         local cur_entry = nil
         for _, c in ipairs(pool) do
@@ -19625,7 +19695,8 @@ local function goal_selection(state, world, info, quiet)
           c.cost or 0, base, penalty,
           c._inf_mult or 1.0, c._neutral_mult or 1.0, c._nobuild_mult or 1.0, c._fight_mult or 1.0,
           c._close_mult or 1.0,
-          c._ci_ratio_skip and "skip(close_int)" or "-",
+          c._ci_ratio_skip and "skip(close_int)"
+            or (c._haul_setup_no_hyst and "skip(haul_setup)") or "-",
           tostring(c.hysteresis or "-"),
           c.switch_flat or 0, c.commit_val or 0,
           c._ab_commit and string.format("%d", c._ab_commit) or "-",
