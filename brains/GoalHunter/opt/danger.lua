@@ -299,6 +299,7 @@ function M.shells_incoming_near(info, px, py, radius)
         detail[#detail + 1] = {
           sx = ob.x, sy = ob.y, cx = px + offx, cy = py + offy,
           dist = math.sqrt(d2), threat = is_hit,
+          owner = ob.owner or 255, dir = ob.direction,
         }
       end
     end
