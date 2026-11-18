@@ -2315,10 +2315,15 @@ local function render_state(state, K)
       for _, mp in ipairs(mult_parts) do mult_sum = mult_sum + mp.v end
       local nb_m   = (gc and gc.nobuild_mult) or 1.0
       local nb_add = (gc and gc.pre_nb and nb_m ~= 1.0) and gc.pre_nb * (nb_m - 1) or 0
+      -- DEFEND_ALARM_CLOSE_TOTAL_MULT (close-interrupt defend_pill row): applied
+      -- to shaped + switch + commitment, before hist. Its part is the amount
+      -- it added (negative for x0.5): pre_ci x (m - 1).
+      local ci_m   = (gc and gc.close_mult) or 1.0
+      local ci_add = (gc and gc.pre_ci and ci_m ~= 1.0) and gc.pre_ci * (ci_m - 1) or 0
       -- Anything in penalty the named parts do not explain (0 when the
       -- parts are complete; shown as OT so the row still adds up).
       local other_pen = gc and (penalty - mult_sum - switch_flat - commit_val
-                                - hist_pen - nb_add) or 0
+                                - ci_add - hist_pen - nb_add) or 0
       if math.abs(other_pen) < 0.5 then other_pen = 0 end
       -- Ticks: when the pool row was priced (the cost_cache entry) and when
       -- goal_selection made this competition record.
@@ -2454,6 +2459,12 @@ local function render_state(state, K)
           "%s:%s x%.2f adds %.0f = running cost %.0f x (%.2f - 1)",
           mp.abbr, mp.name, mp.m, mp.v, mp.run, mp.m)
       end
+      if ci_add ~= 0 then
+        detail_map[#detail_map + 1] = string.format(
+          "CI:close interrupt x%.2f (DEFEND_ALARM_CLOSE_TOTAL_MULT) adds %.0f = (base and multipliers + switch %.0f + commit %.0f) %.0f x (%.2f - 1). Applied after the hysteresis, before hist and nobuild.%s",
+          ci_m, ci_add, switch_flat, commit_val, gc.pre_ci, ci_m,
+          gc.ci_forced_hyst and " The switch + commit are FORCED: this row would be in the free tier vs an attack_pill set-up step, but the close row always pays the normal type switch + commitment." or "")
+      end
       if nb_add ~= 0 then
         detail_map[#detail_map + 1] = string.format(
           "NB:builder-less x%.0f adds %.0f = cost before it %.0f x (%.0f - 1)",
@@ -2461,8 +2472,8 @@ local function render_state(state, K)
       end
       if other_pen ~= 0 then
         detail_map[#detail_map + 1] = string.format(
-          "OT:%.0f of the penalty that no named part explains (penalty %.0f - multipliers %.0f - switch %.0f - commit %.0f - hist %.0f - nobuild %.0f)",
-          other_pen, penalty, mult_sum, switch_flat, commit_val, hist_pen, nb_add)
+          "OT:%.0f of the penalty that no named part explains (penalty %.0f - multipliers %.0f - switch %.0f - commit %.0f - close %.0f - hist %.0f - nobuild %.0f)",
+          other_pen, penalty, mult_sum, switch_flat, commit_val, ci_add, hist_pen, nb_add)
       end
       detail_map[#detail_map + 1] = string.format(
         "ticks:pool row priced at t=%s (cost_cache entry), WINNERS record made at t=%s (goal_selection), panel built at t=%d",
@@ -2478,6 +2489,9 @@ local function render_state(state, K)
         end
         if hist_pen > 0 then
           parts[#parts + 1] = string.format("hist{%.0f}", hist_pen)
+        end
+        if ci_add ~= 0 then
+          parts[#parts + 1] = string.format("close{x%.2f %.0f}", ci_m, ci_add)
         end
         if other_pen ~= 0 then
           parts[#parts + 1] = string.format("other{%.0f}", other_pen)
@@ -2513,7 +2527,12 @@ local function render_state(state, K)
       end
 
       if gc and gc.hyst then
-        detail_formula = string.format("%s (must be < cur*%.1f)", detail_formula, C.GOAL_SWITCH_RATIO)
+        if gc.ci_forced_hyst and C.DEFEND_ALARM_CLOSE_INTERRUPT then
+          -- Close interrupt (option A): plain compare, no ratio.
+          detail_formula = string.format("%s (must be < cur, ratio=skip(close_int))", detail_formula)
+        else
+          detail_formula = string.format("%s (must be < cur*%.1f)", detail_formula, C.GOAL_SWITCH_RATIO)
+        end
       end
 
       -- Row second line: base + penalties = total (all numbers must balance).
@@ -2560,6 +2579,9 @@ local function render_state(state, K)
         end
         if commit_val > 0 then
           parts[#parts + 1] = string.format("+%.0f CM", commit_val)
+        end
+        if ci_add ~= 0 then
+          parts[#parts + 1] = string.format("%+.0f CI", ci_add)
         end
         if hist_pen > 0 then
           parts[#parts + 1] = string.format("+%.0f HT", hist_pen)

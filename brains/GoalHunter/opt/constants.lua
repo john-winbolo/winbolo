@@ -3905,6 +3905,23 @@ M.DEFEND_ALARM_HIT_DISCOUNT   = 10   -- subtracted per enemy hit counted in the 
 M.DEFEND_ALARM_MIN_COST       = 50   -- floor the discount can never go below
 M.DEFEND_ALARM_DIJ_STOP_TILES = 9    -- stop summing per-tile Dijkstra cost once the traced path
                                      -- is within this many euclidean tiles of the pill
+-- CLOSE INTERRUPT (Andrew, Nov 18).  Condition 3 (too_close) is waived, and
+-- ONLY condition 3, while our CURRENT goal is one of:
+--   * attack_pill in a set-up step with no shell fired at the pill yet
+--     (substate plan_position / approach / blitz_wait, goal._attack_start_tick
+--     unset, goal._fired 0, goal._charge_shells unset);
+--   * capture_pill with goal.reposition, any substate but reposition_shoot;
+--   * the defend_pill goal this rule itself started, on the same pill (so the
+--     goal-validity hook does not drop it at once and flip back).
+-- Conditions 1, 2 and 4 still have to hold.  The row costs the alarm net
+-- (max(MIN_COST, BASE_COST - hits x HIT_DISCOUNT)) with NO Dijkstra part (we
+-- are already inside MIN_DIST); goal_selection then adds the normal switch +
+-- commitment and multiplies that TOTAL by DEFEND_ALARM_CLOSE_TOTAL_MULT.
+-- Real game: bot3 drove a set-up take 7.8-8.9 tiles from its own pill while an
+-- enemy shot the pill dead, the row rejected too_close the whole time.
+-- KEEL / MAST: false / 1.0 (too_close always rejects).
+M.DEFEND_ALARM_CLOSE_INTERRUPT  = true
+M.DEFEND_ALARM_CLOSE_TOTAL_MULT = 0.5
 M.HEAT_REQUIRE_ENEMY_RANGE   = 10    -- heat only with a hostile tank VISIBLE within this
                                      -- euclidean range of the pill (and not actively
                                      -- shelling it ??? taking_damage blocks first).
@@ -7130,6 +7147,10 @@ M.PRESETS = {
     -- heat / watch / repair rungs.  This one flag restores all of it; every
     -- other DEFEND_ALARM_* knob is unread while it is false.
     DEFEND_ALARM_MODE             = false,
+    --   2026-11-18: too_close waived while a set-up take / reposition is the
+    --   goal (close interrupt), total x0.5. KEEL: too_close always rejects.
+    DEFEND_ALARM_CLOSE_INTERRUPT  = false,
+    DEFEND_ALARM_CLOSE_TOTAL_MULT = 1.0,
     -- 2026-09-05: raised to 3, i.e. the default blitz party went 2..2 -> 2..4.
     SQUAD_MAX_SIZE                = 1,
     -- 2026-09-10: undamaged committed blitzers hold proactive swerves once 3+
@@ -7985,6 +8006,8 @@ M.PRESETS.mast = {
   CARRY_APPROACH_GOAL_REJECT        = false,
   PT2_FINISH_SWERVE_TURN_TICKS      = 0,
   PT2_FINISH_CAPTURE_LOCK           = false,
+  DEFEND_ALARM_CLOSE_INTERRUPT      = false,
+  DEFEND_ALARM_CLOSE_TOTAL_MULT     = 1.0,
   QUICK_REPAIR_ON_TAKE              = false,
   QUICK_REPAIR_PREDICT_SHOTS        = false,
   REFUEL_NOT_LOW_MULT               = 1.0,
