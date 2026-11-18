@@ -1045,6 +1045,15 @@ M.PT2_FAST_SETUP = true
 -- Nov 18: the pill lived on 1 health for 1500 ticks). A bug fix.
 -- false = the old match (KEEL / MAST).
 M.SHOT_TRACK_OWN_SHELLS_ONLY = true
+
+-- PF_DANGER_INITIAL_LOAD: copy the threat pill grid into the pathfinder
+-- danger grid on the first think tick (normal or manual) even when threat
+-- did not rebuild that tick. Brain open and startup mode build the threat
+-- grid with no copy, and calm pills never trigger a rebuild later, so the
+-- pathfinder routed through pill fire at zero danger cost (diag double take,
+-- Nov 18: drove past two pills and lost 20 armour). Andrew's yes (Nov 18).
+-- false = the old copy-on-rebuild-only rule. KEEL / MAST: false.
+M.PF_DANGER_INITIAL_LOAD = true
 -- SHOT_PATH_SKIP_DEAD_PILLS: v1's shot-path checks (attack.lua
 -- standoff_shot_obstacle, attack_shield.lua score_aim outgoing ray,
 -- pathfinder.lua pill_shots_clear) count only a LIVE pill (health > 0, not
@@ -7825,6 +7834,7 @@ M.PRESETS = {
     PT2_FAST_SETUP = false,
     --   2026-11-18: a neutral pill's shell can keep our shell in flight (old rule).
     SHOT_TRACK_OWN_SHELLS_ONLY = false,
+    PF_DANGER_INITIAL_LOAD = false,
     --   2026-11-17: hold 15 ticks with no goal after a kill (old rule).
     POST_KILL_WAIT_TICKS = 15,
     --   2026-11-17: carrying-pill approach floor 30 (old rule).
@@ -8141,6 +8151,7 @@ M.PRESETS.mast = {
   PT2_FINISH_NO_COVER_MAX_ANGER     = -1,
   PT2_FAST_SETUP                    = false,
   SHOT_TRACK_OWN_SHELLS_ONLY        = false,
+  PF_DANGER_INITIAL_LOAD            = false,  -- 2.2.1 copied danger only on rebuild
   POST_KILL_WAIT_TICKS              = 15,
   CARRY_APPROACH_MIN_ARMOUR_ONE     = 30,
   CARRY_APPROACH_MIN_ARMOUR_MANY    = 30,

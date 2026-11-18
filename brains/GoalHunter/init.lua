@@ -2887,8 +2887,12 @@ function Brain.think(info)
     threat.update(state, world, info)
     -- Sync C danger grid so the cost heatmap stays accurate in manual mode.
     -- Batch-load only when threat actually rebuilt this tick.
-    if threat.rebuilt_this_tick then
+    -- PF_DANGER_INITIAL_LOAD: brain open and startup mode build the threat
+    -- grid without a copy, so calm pills never reach the pathfinder.
+    if threat.rebuilt_this_tick
+       or (C.PF_DANGER_INITIAL_LOAD and not state.pf_danger_loaded) then
       cpf.load_pill_danger_from_threat()
+      state.pf_danger_loaded = true
       metrics.inc("danger_reloads")
     else
       metrics.inc("danger_skips")
@@ -3588,8 +3592,13 @@ function Brain.think(info)
   -- Populate C pathfinder danger grid from Lua threat grid (single source of
   -- truth). Batch-load the whole grid in one C call instead of ~13K per-tile
   -- cpf.set_danger calls, and only when threat.update actually rebuilt it.
-  if threat.rebuilt_this_tick then
+  -- PF_DANGER_INITIAL_LOAD: brain open and startup mode build the threat
+  -- grid with no copy. When pills stay calm the grid never rebuilds again,
+  -- so the pathfinder danger stays 0. Copy once on the first tick here.
+  if threat.rebuilt_this_tick
+     or (C.PF_DANGER_INITIAL_LOAD and not state.pf_danger_loaded) then
     cpf.load_pill_danger_from_threat()
+    state.pf_danger_loaded = true
     metrics.inc("danger_reloads")
   else
     metrics.inc("danger_skips")
