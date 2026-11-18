@@ -99,7 +99,7 @@ static int lbFindEdgePart(const LoadSessionEntry *list, int count,
 
 /* The neighbouring BLOCK of `stem`, preferring its split parts over the whole
  * block dir: stepping forward off the last part should land on the next
- * block's part1, not on a 15-minute file the splitter already superseded. */
+ * block's part1, not on a 3-minute file the splitter already superseded. */
 static int lbFindNeighbourBlock(const LoadSessionEntry *list, int count,
                                 const char *stem, int direction) {
     char ts[16], label[LOADBROWSER_MAX_NAME], want[LOADBROWSER_MAX_NAME];

@@ -56,7 +56,7 @@ int loadBrowserRender(bool *open, const LoadSessionEntry *list, int count,
                       const char *loadedDir, bool *needsRescan);
 
 /* ---- Segment walking (braintest_loadbrowser_segment.c, plain C) --------
- * A recording reaches disk as 15-minute BLOCKS ("<ts>_<B>[_<label>]", the
+ * A recording reaches disk as 3-minute BLOCKS ("<ts>_<B>[_<label>]", the
  * recorder) that brainrec_split may further cut into PARTS
  * ("<block>_part<X>of<N>"). These let the browser offer "next / previous
  * segment" instead of making the user read dir names. */
@@ -116,7 +116,7 @@ bool loadBrowserSplitName(const char *name, char *ts, size_t tsSz, int *block,
 #define LOADBROWSER_LABEL_MAX 32
 
 /* Most (oldDir,newDir) pairs one rename can touch: blocks 1..N of a session
- * plus each block's parts. 15-minute blocks split a few ways over even a very
+ * plus each block's parts. 3-minute blocks split a few ways over even a very
  * long game stay far below this. */
 #define LOADBROWSER_PLAN_MAX  128
 

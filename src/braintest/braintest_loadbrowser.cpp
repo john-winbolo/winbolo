@@ -61,7 +61,7 @@ static bool renameEditor(const LoadSessionEntry *list, int count,
     }
 
     ImGui::Text("Rename %s", e->name);
-    ImGui::TextDisabled("The label is shared by every 15-minute block and split");
+    ImGui::TextDisabled("The label is shared by every 3-minute block and split");
     ImGui::TextDisabled("part of this game, so they all move together.");
     ImGui::Separator();
 
