@@ -96,6 +96,7 @@
 #include "brain_overlay.h"
 #include "brain_record_dij.h"
 #include "brain_record.h"
+#include "brain_record_ticks.h"
 #include "braintest_loadbrowser.h"
 #include "braintest_session_ticks.h"
 #include "braintest_tank_dead.h"
@@ -4561,7 +4562,14 @@ static void renderHUD(BrainTestApp *app, int screenW, int screenH) {
         hudTick = pf_->tick / 2;
         thinkMs = (double)pf_->thinkMs;
     }
-    SDL_snprintf(line, sizeof(line), "Tick: %u  think: %.2fms  Bot: %d",
+    /* Game time since the ORIGINAL game started. Recorded ticks are the
+     * engine's own tick count (100 per second, 6000 per game-minute), and
+     * a later block or split part keeps them, so a small part still shows
+     * where it sits in the whole game. */
+    uint32_t gameSecs = (hudTick * 2u) / BRAINREC_TICKS_PER_SEC;
+    SDL_snprintf(line, sizeof(line),
+                 "Game %u:%02u:%02u  Tick: %u  think: %.2fms  Bot: %d",
+                 gameSecs / 3600u, (gameSecs / 60u) % 60u, gameSecs % 60u,
                  hudTick, thinkMs, app->followBot);
     float tickScale = 2.0f;
     float tickW = (float)strlen(line) * 8.0f * tickScale;
