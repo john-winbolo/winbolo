@@ -11,11 +11,13 @@ Make the maps of the pill take v2 (PILLTAKE_V2_EVALUATOR) ROOST arenas:
 
   tests/scenario/maps/pt2_double_take_builds_wall.map
   tests/scenario/maps/pt2_double_take_builds_wall_off.map
+  tests/scenario/maps/pt2_single_take_3walls.map
+  tests/scenario/maps/pt2_single_take_3walls_off.map
       An open grass field (106..146 x 106..146, so the map's middle is
       (126,126) and the loader does not shift it), one base at (126,140)
       and a one-square deep-sea spawn pond at (126,144) (starts.c wants a
       deep-sea start; the script fills it with grass once the tank has
-      driven off). No pills: the script puts the two neutral pills down.
+      driven off). No pills: the scripts put the neutral pills down.
 
 Run from the repository root:
     python tests/generate_pt2_maps.py
@@ -37,6 +39,8 @@ OILRIG_ARENAS = (
 FIELD_ARENAS = (
     "pt2_double_take_builds_wall",
     "pt2_double_take_builds_wall_off",
+    "pt2_single_take_3walls",
+    "pt2_single_take_3walls_off",
 )
 
 GRASS = 7
