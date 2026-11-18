@@ -1088,6 +1088,18 @@ M.PT2_DBL_CACHE_TICKS = 250
 -- Shadow v2 runs per tick at most (each 4-19 ms), and only when the last
 -- think left time under the tick budget. Andrew's value (Nov 18).
 M.PT2_DBL_EVALS_PER_TICK = 1
+-- PT2_CHAIN_CLAIM (Nov 18, Andrew: "someone doing a double pill needs to
+-- broadcast & claim BOTH pills"). A HELM 2v2 replay: pills 13 and 14 side
+-- by side; one ally took 14, the other a 13+14 double take, and each claim
+-- named only its target, so both went in. true = a v2 chain sends
+-- "/info pch <target> <id> ..." and an ally's claim on a pill counts
+-- whether it is their target or a chain pill. Two claims on one pill: the
+-- engaged bot keeps; both engaged: the target claim keeps; else the
+-- ALLY_CLAIMED_STEAL_FRAC cost band, then the lower player number. The
+-- loser yields its target, or plans its chain without the pill; pt2_dbl
+-- gives no discount on a chain with a claimed pill (pt2_claim.lua).
+-- false = claims name the target only.
+M.PT2_CHAIN_CLAIM = true
 -- SHOT_PATH_SKIP_DEAD_PILLS: v1's shot-path checks (attack.lua
 -- standoff_shot_obstacle, attack_shield.lua score_aim outgoing ray,
 -- pathfinder.lua pill_shots_clear) count only a LIVE pill (health > 0, not
@@ -7871,6 +7883,7 @@ M.PRESETS = {
     PF_DANGER_INITIAL_LOAD = false,
     PT2_HAUL_KEEP_TAKE = false,
     PT2_DOUBLE_TAKE_DISCOUNT = false,
+    PT2_CHAIN_CLAIM = false,
     --   2026-11-17: hold 15 ticks with no goal after a kill (old rule).
     POST_KILL_WAIT_TICKS = 15,
     --   2026-11-17: carrying-pill approach floor 30 (old rule).
@@ -8191,6 +8204,7 @@ M.PRESETS.mast = {
   PF_DANGER_INITIAL_LOAD            = false,  -- 2.2.1 copied danger only on rebuild
   PT2_HAUL_KEEP_TAKE                = false,  -- 2.2.1 had no pill take v2
   PT2_DOUBLE_TAKE_DISCOUNT          = false,  -- 2.2.1 had no pill take v2
+  PT2_CHAIN_CLAIM                   = false,  -- 2.2.1 had no pill take v2
   POST_KILL_WAIT_TICKS              = 15,
   CARRY_APPROACH_MIN_ARMOUR_ONE     = 30,
   CARRY_APPROACH_MIN_ARMOUR_MANY    = 30,

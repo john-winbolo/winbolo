@@ -9035,6 +9035,9 @@ function Brain.think(info)
       end
     end
 
+    -- PT2_CHAIN_CLAIM: a v2 chain claims all of its pills (pt2_claim.lua).
+    if C.PT2_CHAIN_CLAIM then require("pt2_claim").tx(state, world, now, try_send) end
+
     -- `cost` is NOT on the /info state slate (it drifts almost every tick
     -- as we close on the target, which would force a near-per-tick send —
     -- the same trap tx/ty were).  It rides the /info extra channel on a

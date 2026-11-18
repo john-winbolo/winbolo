@@ -203,10 +203,13 @@ local function get_formula_inner(e)
     end
     if e._steal_reason then steal_str = steal_str .. " — " .. tostring(e._steal_reason) end
     if e._steal_note then steal_str = steal_str .. " || request: " .. tostring(e._steal_note) end
+    -- PT2_CHAIN_CLAIM: the claim is a pill of the ally's v2 chain
+    local chain_str = e._ally_chain
+      and string.format(" — via p%s's double take: chain of #%d", tostring(by or "?"), e._ally_chain) or ""
     return reject_with_breakdown(e,
-      string.format("REJECT ally_claimed %dt @(%d,%d)", rem, e._mx or 0, e._my or 0),
-      string.format("reject:ally_claimed %dt — p%s bid %s < ours %.0f%s%s",
-        rem, tostring(by or "?"), their_str, our, diff_str, steal_str))
+      string.format("REJECT ally_claimed%s %dt @(%d,%d)", e._ally_chain and "(chain)" or "", rem, e._mx or 0, e._my or 0),
+      string.format("reject:ally_claimed %dt — p%s bid %s < ours %.0f%s%s%s",
+        rem, tostring(by or "?"), their_str, our, diff_str, chain_str, steal_str))
   end
   if e._reject == "armour_too_low" then
     return reject_with_breakdown(e,
@@ -606,6 +609,12 @@ local function get_formula_inner(e)
     local db = e._dbl
     local _db_spot, _db_trav, _db_diff, _db_xf, _db_term = "", "", "", "", ""
     local _d_dbl = "no safe double take cached for this pill → x1.0"
+    if not db and e._dbl_block then
+      -- PT2_CHAIN_CLAIM: a safe double take exists but an ally claims a chain pill
+      _db_term = string.format(" x dbl{blocked: #%d claimed by p%d}", e._dbl_block.pid, e._dbl_block.by)
+      _d_dbl = string.format("pill take v2 has a safe double take here, but chain pill #%d is claimed by ally p%d → no discount, x1.0",
+        e._dbl_block.pid, e._dbl_block.by)
+    end
     if db then
       _db_spot = string.format(" -chain %.0f", db.spot_ex or 0)
       _db_trav = string.format(" -chain %.0f", db.travel_ex or 0)
@@ -1158,8 +1167,10 @@ local function get_formula(e)
       rel = string.format("within steal band (need %.0f%% cheaper)", frac * 100)
     end
     term_disp = ""  -- no cost contribution
-    term_map  = string.format("|ally_claimed:p%s bid %.0f, ours %.0f — %s",
-                              tostring(e._ally_by or "?"), their, our, rel)
+    term_map  = string.format("|ally_claimed:p%s bid %.0f, ours %.0f — %s%s",
+                              tostring(e._ally_by or "?"), their, our, rel,
+                              e._ally_chain and string.format(" (p%s's chain of #%d)",
+                                tostring(e._ally_by or "?"), e._ally_chain) or "")
     if e._steal_units then
       term_map = term_map .. string.format(" (ours priced on our %s cost %.1f)",
                                            e._steal_units, e._steal_cost or our)
