@@ -7,12 +7,13 @@
 -- same calls the real take makes), only when another live hostile or neutral
 -- pill is in chain reach of the pill. The answer is cached in
 -- state._pt2_dbl.by_id[id] = { safe, kills, ids (chain world ids), have,
--- need, walls, trees_need, tick, hp, owner, carried, trees }. An entry is
+-- need, pills, walls, trees_need, tick, hp, owner, carried, trees }. An entry is
 -- dropped when a chain pill's health or owner changes, our carried pills or
 -- trees change, a wall square changes in pill range of a chain pill
 -- (M.on_tile from threat.update), or it is PT2_DBL_CACHE_TICKS old.
 -- At most PT2_DBL_EVALS_PER_TICK runs per tick, and only when the last think
--- plus the run's measured cost fits under the tick target.
+-- plus the run's cost fits under the tick target (see may_run for the cost
+-- before the first run).
 -- The module keeps no state of its own: all of it lives in state, so a new
 -- game starts empty. goals.lua and threat.lua call it through require() so
 -- think() gets no new upvalue.
@@ -103,7 +104,7 @@ local function run(state, world, info, id, pill, now)
   local e = { tick = now, carried = info.carried_pills or 0, trees = info.trees or 0,
               ids = { id }, hp = { pill.health or 0 }, owner = { pill.owner },
               pos = { { pill.mx, pill.my } },
-              safe = false, kills = 0, have = 0, need = 0, walls = 0, trees_need = 0 }
+              safe = false, kills = 0, have = 0, need = 0, pills = 0, walls = 0, trees_need = 0 }
   if not inp then return e end
   local res = V2.evaluate_group(inp)
   local b = res and res.best
@@ -112,7 +113,8 @@ local function run(state, world, info, id, pill, now)
   e.kills = b.kills or 0
   e.have, e.need = b.have or 0, b.need or 0
   for _, s in ipairs(b.plan or {}) do
-    if s.kind == "wall" then e.walls = e.walls + 1 end
+    if s.kind == "wall" then e.walls = e.walls + 1
+    elseif s.kind == "pill" then e.pills = e.pills + 1 end
   end
   e.trees_need = e.walls * (C.WALL_SHIELD_BUILD_COST or 2)
   -- the chain's pills, the target first
@@ -129,14 +131,30 @@ local function run(state, world, info, id, pill, now)
   return e
 end
 
--- May a shadow run go this tick? One per PT2_DBL_EVALS_PER_TICK, and the
--- last think plus the measured run cost (EWMA) under the tick target.
-local function may_run(s, now)
+-- The run cost may_run checks, in ms. After our first run: the EWMA of our
+-- runs. Before it: the last real v2 run of a take (pt2_attack writes
+-- state._pt2_v2_last_us), else the last think's own ms, so the first run
+-- waits for a tick that used under half the target.
+local function est_ms(s, state, last)
+  if s.n_runs > 0 then return s.est_ms end
+  local seed = state._pt2_v2_last_us
+  if seed then return seed / 1000 end
+  return last
+end
+M._est_ms = est_ms
+
+-- May a shadow run go this tick? One per PT2_DBL_EVALS_PER_TICK, never on a
+-- tick with no measured last think (the first tick of a round), and the last
+-- think plus the run cost under the tick target.
+local function may_run(s, state, now)
   if s.runs_tick ~= now then s.runs_tick, s.runs = now, 0 end
   if s.runs >= (C.PT2_DBL_EVALS_PER_TICK or 1) then return false end
   local br = _G.brain
   local last, tgt = br and br.lastThinkMs or 0, br and br.targetMs or 0
-  if tgt > 0 and last + s.est_ms >= tgt then return false end
+  if tgt > 0 then
+    if last <= 0 then return false end
+    if last + est_ms(s, state, last) >= tgt then return false end
+  end
   return true
 end
 
@@ -152,13 +170,14 @@ function M.get(state, world, info, id, pill, now)
   end
   if e then return e end
   if not M.has_partner(world, pill) then return nil end
-  if not may_run(s, now) then return nil end
+  if not may_run(s, state, now) then return nil end
   s.runs = s.runs + 1
   local t0 = clock_us()
   local ok, r = pcall(run, state, world, info, id, pill, now)
   local us = clock_us() - t0
   local a = C.CAPACITY_EWMA_ALPHA or 0.2
-  s.est_ms = s.est_ms * (1 - a) + (us / 1000) * a
+  -- the first run is the EWMA's start, not a blend with 0
+  s.est_ms = (s.n_runs == 0) and us / 1000 or s.est_ms * (1 - a) + (us / 1000) * a
   s.n_runs = s.n_runs + 1
   s.run_us_sum = s.run_us_sum + us
   if us > s.run_us_max then s.run_us_max = us end
@@ -186,12 +205,16 @@ function M.charge(state, now, us)
   s.us_sum = s.us_sum + us
 end
 
--- The row condition. Returns true, or false and the reason.
+-- The row condition: v2's plan is safe (every ray covered once the plan's
+-- blockers stand), kills at least two pills, and we hold what the plan
+-- uses now: the carried pills it drops and the trees for its walls.
+-- A's standing cover (have/need) is not checked: the plan's blockers are
+-- what make the take real. Returns true, or false and the reason.
 function M.qualifies(e)
   if not e then return false, "none" end
   if not e.safe then return false, "unsafe" end
   if e.kills < 2 or #e.ids < 2 then return false, "kills" end
-  if e.have < e.need then return false, "have<need" end
+  if e.pills > e.carried then return false, "pills" end
   if e.trees < e.trees_need then return false, "trees" end
   return true
 end

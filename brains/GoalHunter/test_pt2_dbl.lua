@@ -6,7 +6,9 @@
 --   * the partner filter, one run per tick, the think-time limit.
 --   * the cache: kept while true, dropped on health / owner / carried /
 --     trees / age / a wall square near a chain pill.
---   * the row condition (safe, kills >= 2, have >= need, trees for walls).
+--   * the row condition (safe, kills >= 2, carried pills and trees for
+--     the plan; have/need not checked).
+--   * the run cost before the first run (first tick, seed, last think).
 --   * the exclusions: summed contrib, the other pills' coverage disks.
 --   * the row text: chip and every excluded amount.
 --
@@ -81,6 +83,7 @@ local e = D.get(state, world, info, 1, A, 10)
 check("A: run once", runs == 1 and e ~= nil, runs)
 check("A: chain ids 1-2", e and table.concat(e.ids, "-") == "1-2", e and table.concat(e.ids, "-"))
 check("A: walls 2, trees need 4", e and e.walls == 2 and e.trees_need == 4)
+check("A: plan drops 1 pill", e and e.pills == 1)
 check("B same tick: limit 1 per tick", D.get(state, world, info, 2, B, 10) == nil and runs == 1, runs)
 check("A same tick: cached", D.get(state, world, info, 1, A, 10) == e and runs == 1, runs)
 check("B next tick: runs", D.get(state, world, info, 2, B, 11) ~= nil and runs == 2, runs)
@@ -92,6 +95,27 @@ check("no time left: no run", D.get(state, world, info, 2, B, 12) == nil and run
 _G.brain = { lastThinkMs = 7, targetMs = 10 }
 check("time left: runs", D.get(state, world, info, 2, B, 13) ~= nil and runs == 3, runs)
 _G.brain = nil
+
+-- ── run cost before the first run ────────────────────────────────────────
+print("first run cost")
+do
+  local st = { tick = 0 }
+  local n0 = runs
+  _G.brain = { lastThinkMs = 0, targetMs = 10 }
+  check("first tick (no last think): no run", D.get(st, world, info, 1, A, 1) == nil and runs == n0, runs)
+  _G.brain = { lastThinkMs = 6, targetMs = 10 }
+  check("unseeded: estimate = last think", D._est_ms(st._pt2_dbl, st, 6) == 6)
+  check("unseeded, last 6 of 10: no run", D.get(st, world, info, 1, A, 2) == nil and runs == n0, runs)
+  st._pt2_v2_last_us = 3000
+  check("seeded from the take's v2 run", D._est_ms(st._pt2_dbl, st, 6) == 3)
+  check("seed 3 + last 6 < 10: runs", D.get(st, world, info, 1, A, 3) ~= nil and runs == n0 + 1, runs)
+  local s = st._pt2_dbl
+  check("first run sets the estimate to its own cost", s.n_runs == 1 and s.est_ms == s.run_us_sum / 1000, s.est_ms)
+  check("after a run: own estimate, not the seed", D._est_ms(s, st, 6) == s.est_ms)
+  _G.brain = { lastThinkMs = 0, targetMs = 0 }
+  check("no target published: no limit", D._est_ms(s, st, 0) == s.est_ms)
+  _G.brain = nil
+end
 
 -- ── cache drops ──────────────────────────────────────────────────────────
 print("cache")
@@ -128,12 +152,14 @@ check("wall 9 from B: dropped", state._pt2_dbl.by_id[1] == nil)
 
 -- ── row condition ────────────────────────────────────────────────────────
 print("condition")
-local base = { safe = true, kills = 2, ids = { 1, 2 }, have = 10, need = 10, trees = 4, trees_need = 4 }
+local base = { safe = true, kills = 2, ids = { 1, 2 }, have = 10, need = 10, trees = 4, trees_need = 4,
+               pills = 1, carried = 1 }
 local function with(k, v) local t = {}; for a, b in pairs(base) do t[a] = b end; t[k] = v; return t end
 check("qualifies", D.qualifies(base) == true)
 check("unsafe", select(2, D.qualifies(with("safe", false))) == "unsafe")
 check("one kill", select(2, D.qualifies(with("kills", 1))) == "kills")
-check("have < need", select(2, D.qualifies(with("have", 9))) == "have<need")
+check("have 0 < need 10, plan drops our pill: qualifies", D.qualifies(with("have", 0)) == true)
+check("plan drops more pills than carried", select(2, D.qualifies(with("pills", 2))) == "pills")
 check("trees short", select(2, D.qualifies(with("trees", 3))) == "trees")
 check("nil", select(2, D.qualifies(nil)) == "none")
 
@@ -168,10 +194,10 @@ local PR = require("pool_render")
 local row = { _p = 6, cost = 100, raw = 12, _mx = 100, _my = 100, _id = 1, _spot = 40, _spot_mx = 95, _spot_my = 100,
   _travel = 12, _travel_wound = 1, _stale = 0, _diff = 30, _anger = 0, _xfire = 0, _intcpt = 0,
   _hp = 1, _wound = 1, _hpv = 15, _ammo = 0, _sh_now = 40, _ttc = 0, _pa = 0, _age = 0, _fin_mult = 1, _fin_wphp = 0, _fin_age = 0, _fin_wpid = -1, _commit_mult = 1, _sh_end = 25,
-  _dbl = { mult = 0.6, ids = { 1, 2 }, kills = 2, have = 10, need = 10, walls = 2, age = 7,
+  _dbl = { mult = 0.6, ids = { 1, 2 }, kills = 2, have = 10, need = 10, pills = 1, walls = 2, age = 7,
            diff1 = 130, xfire_ex = 25, spot_ex = 18, travel_ex = 0 } }
 local f = PR.get_formula(row) or ""
-check("chip", f:find("x dbl{0.60 chain=1-2 kills=2 safe have=10/need=10 age=7t}", 1, true) ~= nil, f)
+check("chip", f:find("x dbl{0.60 chain=1-2 kills=2 safe plan=1P+2W have=10/need=10 age=7t}", 1, true) ~= nil, f)
 check("spot -chain", f:find("spot{40 -chain 18}", 1, true) ~= nil, f)
 check("diff single", f:find("diff{30 single=130}", 1, true) ~= nil, f)
 check("xfire -chain", f:find("xfire{0 -chain 25}", 1, true) ~= nil, f)

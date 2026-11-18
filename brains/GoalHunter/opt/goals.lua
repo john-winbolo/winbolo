@@ -13384,6 +13384,7 @@ function M.step_eval_queue(state, world, info)
         entry._danger_left = (_danger_nearby_left > 0) and _danger_nearby_left or nil
         entry._dbl = _dbl and { mult = _dbl.mult, ids = _dbl.e.ids, kills = _dbl.e.kills,
                                 have = _dbl.e.have, need = _dbl.e.need, walls = _dbl.e.walls,
+                                pills = _dbl.e.pills,
                                 age = _dbl.age, diff1 = _dbl.diff1, xfire_ex = _dbl.xfire_ex,
                                 spot_ex = _dbl.spot_ex, travel_ex = _dbl.travel_ex } or nil
       elseif pool_idx == 7 then

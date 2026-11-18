@@ -615,13 +615,13 @@ local function get_formula_inner(e)
       if db.skip then
         _db_term = string.format(" x dbl{skip: %s chain=%s}", db.skip, chain)
       else
-        _db_term = string.format(" x dbl{%.2f chain=%s kills=%d safe have=%d/need=%d age=%dt}",
-          db.mult, chain, db.kills or 0, db.have or 0, db.need or 0, db.age or 0)
+        _db_term = string.format(" x dbl{%.2f chain=%s kills=%d safe plan=%dP+%dW have=%d/need=%d age=%dt}",
+          db.mult, chain, db.kills or 0, db.pills or 0, db.walls or 0, db.have or 0, db.need or 0, db.age or 0)
       end
       _d_dbl = string.format(
-        "pill take v2 (shadow run, cached %d ticks of PT2_DBL_CACHE_TICKS=%d) has a safe chain %s that kills %d, A's cover have=%d >= need=%d with %d wall(s) we have trees for; spot/pickup/xfire leave out the other chain pills (amounts after -chain), diff is the sweep without their coverage and danger (plain sweep %s), whole cost x PT2_DOUBLE_TAKE_MULT=%.2f%s",
-        db.age or 0, C.PT2_DBL_CACHE_TICKS or 0, chain, db.kills or 0, db.have or 0, db.need or 0,
-        db.walls or 0, _fmt_inf(db.diff1), db.mult,
+        "pill take v2 (shadow run, cached %d ticks of PT2_DBL_CACHE_TICKS=%d) has a safe chain %s that kills %d once its plan stands (%d carried pill(s) dropped, %d wall(s) we have trees for; A's standing cover have=%d need=%d); spot/pickup/xfire leave out the other chain pills (amounts after -chain), diff is the sweep without their coverage and danger (plain sweep %s), whole cost x PT2_DOUBLE_TAKE_MULT=%.2f%s",
+        db.age or 0, C.PT2_DBL_CACHE_TICKS or 0, chain, db.kills or 0, db.pills or 0,
+        db.walls or 0, db.have or 0, db.need or 0, _fmt_inf(db.diff1), db.mult,
         db.skip and (" -- skipped: the " .. db.skip .. " discount set this cost") or "")
     end
     f = string.format(
