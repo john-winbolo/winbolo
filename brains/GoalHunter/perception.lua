@@ -1032,6 +1032,33 @@ function M.update(state, world, info)
     end
   end
 
+  -- ----- Defend alarm heat: hostile shell at a team pill RIGHT NOW -----
+  -- C.DEFEND_ALARM_HEAT (Andrew, Nov 18).  attack.lua's defend heat calls
+  -- the defended pill ENGAGED, and never heats it, while an enemy hit it in
+  -- the alarm window OR a shell labelled SHELLS_BRAIN_HOSTILE (1, an enemy
+  -- TANK's shell) is within HEAT_ALLY_SHELL_RADIUS of it this tick.  Only the
+  -- hostile label counts: pill fire is labelled NEUTRAL (shells.c gives a
+  -- pill's shell owner NEUTRAL), so counting neutral would mark the pill
+  -- engaged every time it fires back at the tank.  Friendly AND allied pills
+  -- (the alarm defends both).  Stamp only; read by attack.defend_heat_engaged.
+  if C.DEFEND_ALARM_HEAT then
+    local SHELL_HOSTILE = 1   -- SHELLS_BRAIN_HOSTILE (shells.h)
+    local r = C.HEAT_ALLY_SHELL_RADIUS or 2
+    for _, ob in ipairs(info.objects) do
+      if ob.type == OBJECT_SHOT and ob.info == SHELL_HOSTILE then
+        local smx = bit.rshift(ob.x, 8)
+        local smy = bit.rshift(ob.y, 8)
+        for _, p in pairs(world.pills) do
+          if (p.owner == "friendly" or p.owner == "allied")
+             and not (p.in_tank or p.carrier or p._synth_carry)
+             and math.abs(p.mx - smx) <= r and math.abs(p.my - smy) <= r then
+            p._hostile_shell_tick = now
+          end
+        end
+      end
+    end
+  end
+
   -- ----- Damage-source log: which shells came near which team pill -----
   -- Companion to the ally-heat watch above, but the opposite question. That
   -- one asks "is every shell here OURS" (suppress the alarm); this one asks,
@@ -1161,7 +1188,28 @@ function M.update(state, world, info)
           --   npill — a NEUTRAL pillbox's stray        -> NOT an enemy, ignored
           -- Compacted to the window on write and capped, so it needs no
           -- per-tick sweep of its own.
-          if C.DEFEND_ALARM_MODE and (src == "tank" or src == "epill") then
+          -- C.DEFEND_ALARM_HEAT: OUR OWN heat shell (or an ally's) must not
+          -- count.  With no hostile shell logged at the pill (how ~= "shell")
+          -- the fallback blames a nearby enemy tank ("presence_tank"), and
+          -- during a defend heat an enemy tank IS near.  So a hit inside
+          -- HEAT_SELF_STAMP_TICKS of our heat shot (_heat_shot_tick) or of an
+          -- all-friendly shell watch stamp (_ally_heat_tick), with no hostile
+          -- shell seen, stays out of the ring: it would otherwise raise the
+          -- alarm on a pill we heated, or mark it engaged mid-volley.
+          local self_heat = false
+          if C.DEFEND_ALARM_HEAT and how ~= "shell" then
+            local hs = C.HEAT_SELF_STAMP_TICKS or 150
+            self_heat = (p._heat_shot_tick and (hit - p._heat_shot_tick) < hs)
+                        or (p._ally_heat_tick and (hit - p._ally_heat_tick) < hs)
+                        or false
+            if self_heat then
+              print2(string.format(
+                "DEFEND_HEAT_SELF t=%d pill@(%d,%d) hit_t=%d src=%s via=%s -> our/ally heat, not an alarm hit",
+                now, p.mx, p.my, hit, src, how))
+            end
+          end
+          if C.DEFEND_ALARM_MODE and (src == "tank" or src == "epill")
+             and not self_heat then
             local ring = p._alarm_hits
             if not ring then ring = {}; p._alarm_hits = ring end
             local win = C.DEFEND_ALARM_WINDOW_TICKS or 250

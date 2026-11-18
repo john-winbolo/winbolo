@@ -4139,6 +4139,24 @@ local function steer_core(state, world, info, goal)
   -- Defend-pill heat: the ARRIVED-phase heat win (goal.heat) parks in
   -- range and tickles our own pill. Returns nil while approaching (or
   -- on a travel-phase defend goal), so generic nav drives us in.
+  -- Defend ALARM heat (C.DEFEND_ALARM_HEAT, Andrew Nov 18): on the way to
+  -- the alarmed pill, heat it or a neighbour pill when one is in our gun
+  -- range NOW (attack.defend_heat_steer).  It returns keys only while a
+  -- volley runs; nil (no candidate in range) lets the trip go on, so the
+  -- volley never makes the tank detour.
+  if goal.kind == "defend_pill" and goal.alarm and C.DEFEND_ALARM_HEAT then
+    local k, t = attack_mod().defend_heat_steer(state, world, info, goal,
+                                                state.tick or 0, shot_path_clear)
+    if k then
+      log.reason("steer", { mode = "defend_alarm_heat",
+        pill = goal._heat_pid, role = goal._heat_role, shots = goal._heat_shots })
+      if BRAIN_PROFILE then
+        opt(string.format("  steer/defend_alarm_heat done %.2f ms",
+                          (clock_us() - _t_phase) / 1000))
+      end
+      return k, t
+    end
+  end
   if goal.kind == "defend_pill" then
     local k, t = defend_pill_steer(state, world, info, goal)
     if k then
