@@ -4853,6 +4853,11 @@ function Brain.think(info)
       -- forces the immediate replan.  Asked through the SAME
       -- goals.defend_alarm_status the pool row prints its reject reason from,
       -- so the panel and the drop can never be different statements.
+      -- CLOSE INTERRUPT (C.DEFEND_ALARM_CLOSE_INTERRUPT): a defend goal that
+      -- started inside MIN_DIST carries goal.close_interrupt, and the status
+      -- function waives too_close for it on the same pill, so it is not
+      -- dropped here the tick after it is installed; conditions 1, 2 and 4
+      -- still end it.
       if goal_valid and C.DEFEND_ALARM_MODE and p then
         local _al_on, _al_why = goals.defend_alarm_status(
           state, world, info, p, now,

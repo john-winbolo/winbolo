@@ -5424,6 +5424,44 @@ local function defend_alarm_enemy(state, p)
   return best, math.sqrt(best_d2)
 end
 
+-- CLOSE INTERRUPT (C.DEFEND_ALARM_CLOSE_INTERRUPT, Andrew Nov 18): may
+-- condition 3 (too_close) be waived for pill p, given our CURRENT goal?
+-- Returns a short label of that goal ("attack_pill/approach",
+-- "capture_pill/reposition:nav", "defend_pill/held") or nil.
+--   * attack_pill in a SET-UP step, before any shell at the pill: substate in
+--     M.DEFEND_CI_ATK_SETUP (the same pre-commit set the blitz abort uses),
+--     and none of the shot marks are set -- _attack_start_tick (set when
+--     charge or shoot_pill begins), _fired (shots since then) or
+--     _charge_shells (set at charge entry).  A take that has fired is seen
+--     through to the end.
+--   * capture_pill with goal.reposition, any substate but reposition_shoot.
+--   * the defend_pill goal this rule started (goal.close_interrupt), on the
+--     SAME pill: without this the goal-validity hook would drop it the tick
+--     after it is installed (the current goal is then defend_pill, not the
+--     take) and the bot would flip straight back.  Conditions 1, 2 and 4
+--     still end it.
+M.DEFEND_CI_ATK_SETUP = { plan_position = true, approach = true, blitz_wait = true }
+function M.defend_close_interrupt(state, p)
+  if not C.DEFEND_ALARM_CLOSE_INTERRUPT then return nil end
+  local g = state.goal
+  if not g then return nil end
+  if g.kind == "attack_pill" then
+    local sub = g.substate
+    if sub and M.DEFEND_CI_ATK_SETUP[sub] and not g._attack_start_tick
+       and (g._fired or 0) == 0 and not g._charge_shells then
+      return "attack_pill/" .. sub
+    end
+  elseif g.kind == "capture_pill" and g.reposition then
+    if g.substate ~= "reposition_shoot" then
+      return "capture_pill/reposition:" .. tostring(g.substate or "-")
+    end
+  elseif g.kind == "defend_pill" and g.close_interrupt
+         and g.pill_mx == p.mx and g.pill_my == p.my then
+    return "defend_pill/held"
+  end
+  return nil
+end
+
 -- M.defend_alarm_status — is the alarm ON for this pill, and if not, which
 -- condition failed?  ONE implementation, called from two places: this pool's
 -- evaluator (at replan cadence) and init.lua's goal-validity hook (every
@@ -5477,10 +5515,16 @@ function M.defend_alarm_status(state, world, info, p, now, tmx, tmy)
   if not (a.trig_damage or a.trig_build) then
     return false, ALARM_R_NO_TRIG, ALARM_R_NO_TRIG, a
   end
-  -- Condition 3 — we must be MORE than MIN_DIST tiles away.
+  -- Condition 3 — we must be MORE than MIN_DIST tiles away.  Waived (and
+  -- only this one) by the close interrupt; a.close_interrupt then carries the
+  -- current-goal label and the row is priced without a Dijkstra part.
   if a.dist <= a.min_dist then
-    return false, string.format("too_close(%.1f<=%d)", a.dist, a.min_dist),
-           ALARM_R_TOO_CLOSE, a
+    local ci = M.defend_close_interrupt(state, p)
+    if not ci then
+      return false, string.format("too_close(%.1f<=%d)", a.dist, a.min_dist),
+             ALARM_R_TOO_CLOSE, a
+    end
+    a.close_interrupt = ci
   end
   -- Condition 4 — the pill is not ALREADY HELD.  Andrew, 2026-09-07: "Let's
   -- just reject the ones that are well_defended / No need to raise that alarm
@@ -5628,8 +5672,14 @@ local function defend_alarm_evidence(a)
     wd = string.format(" al_wd{%d/%dx%d%s}", a.wd_foes or 0, a.wd_allies or 0,
                        a.wd_ratio, a.wd_held and " HELD" or "")
   end
-  return en .. tr .. string.format(" al_dist{%.1f>%d}", a.dist or 0,
-                                   a.min_dist or 9) .. wd
+  local di
+  if a.close_interrupt then
+    di = string.format(" al_dist{%.1f<=%d close_interrupt cur=%s}", a.dist or 0,
+                       a.min_dist or 9, a.close_interrupt)
+  else
+    di = string.format(" al_dist{%.1f>%d}", a.dist or 0, a.min_dist or 9)
+  end
+  return en .. tr .. di .. wd
 end
 
 -- The per-term "How computed" segments.  Andrew's standing rule: EVERY factor
@@ -5666,7 +5716,11 @@ local function defend_alarm_detail(a, bd, p, hp)
                                               and string.format("seen %dt ago", a.lgm_age or -1)
                                               or "NOT seen in the window")
                           or "no build seen in the stamp"),
-    string.format("al_dist:condition 3 — we must be MORE than DEFEND_ALARM_MIN_DIST (%d) tiles from the pill. We are %.1f. Inside that radius there is nothing left to travel to, so the alarm drops and the goal with it.",
+    a.close_interrupt
+      and string.format("al_dist:condition 3 — normally we must be MORE than DEFEND_ALARM_MIN_DIST (%d) tiles from the pill. We are %.1f, but it is WAIVED: CLOSE INTERRUPT (DEFEND_ALARM_CLOSE_INTERRUPT) — the current goal is %s (an attack_pill set-up step plan_position/approach/blitz_wait with no shell at the pill yet, a capture_pill reposition not in reposition_shoot, or the defend goal this rule started). The row has no Dijkstra part, and goal_selection multiplies its total (cost + switch + commitment) by DEFEND_ALARM_CLOSE_TOTAL_MULT %.2f.",
+                        a.min_dist or 9, a.dist or 0, a.close_interrupt,
+                        C.DEFEND_ALARM_CLOSE_TOTAL_MULT or 1.0)
+      or string.format("al_dist:condition 3 — we must be MORE than DEFEND_ALARM_MIN_DIST (%d) tiles from the pill. We are %.1f. Inside that radius there is nothing left to travel to, so the alarm drops and the goal with it.",
                   a.min_dist or 9, a.dist or 0),
     string.format("al_wd:condition 4 — the pill must not already be HELD. Allies within DEFEND_WELL_DEFENDED_RADIUS (%d tiles) of it — visible allied tanks, or allies whose broadcast goal is a defend_pill/repair_pill response aimed here, whichever count is larger, this bot excluded — versus enemy tanks in the same radius. R = ceil(their_team/our_team) rounds the coverage requirement in the defenders' favour, so it is held when foes <= allies x R (and no visible foes plus any ally is held). %s",
                   C.DEFEND_WELL_DEFENDED_RADIUS or 10,
@@ -5692,6 +5746,7 @@ local function eval_defend_pill_alarm(state, world, info, tmx, tmy, boat, ammo)
   local now  = state.tick or 0
   local rows = BRAIN_POOL_VIZ and {} or nil
   local best, best_id, best_cost, best_bd, best_a = nil, nil, math.huge, nil, nil
+  local best_key = math.huge   -- best_cost x the close-interrupt mult (1 if none)
   -- BY ID, not pairs order: the pool must be identical on every machine and
   -- every replay, and a tie between two equally-priced pills must not depend
   -- on the hash order of world.pills.
@@ -5726,8 +5781,13 @@ local function eval_defend_pill_alarm(state, world, info, tmx, tmy, boat, ammo)
         bd.net_raw = base - (a.hits or 0) * disc
         bd.net = bd.net_raw
         if bd.net < flr then bd.net = flr; bd.floored = true end
-        local tcost, method, stop_i, nsteps, smx, smy =
-              defend_alarm_travel(p, boat)
+        local tcost, method, stop_i, nsteps, smx, smy
+        if a.close_interrupt then
+          -- CLOSE INTERRUPT: already inside MIN_DIST, no trip to price.
+          tcost, method = 0, "close"
+        else
+          tcost, method, stop_i, nsteps, smx, smy = defend_alarm_travel(p, boat)
+        end
         if tcost == nil then
           reject_key, reject_txt = "alarm_off:" .. ALARM_R_NO_PATH,
                                    "alarm_off:" .. ALARM_R_NO_PATH
@@ -5736,7 +5796,12 @@ local function eval_defend_pill_alarm(state, world, info, tmx, tmy, boat, ammo)
           bd.dij, bd.dij_method = tcost, method
           bd.dij_stop_i, bd.dij_steps = stop_i, nsteps
           bd.dij_mx, bd.dij_my = smx, smy
-          if method == "path" then
+          if method == "close" then
+            bd.dij_chip = "0 close"
+            bd.dij_why = rows and string.format(
+              "0 — CLOSE INTERRUPT: we are %.1f <= %d tiles from the pill, already inside the stop ring, so there is no trip to price.",
+              a.dist or 0, a.min_dist or 9)
+          elseif method == "path" then
             bd.dij_chip = string.format("%.0f stop%dt %d/%d", tcost,
                                         C.DEFEND_ALARM_DIJ_STOP_TILES or 9,
                                         stop_i or 0, nsteps or 0)
@@ -5758,8 +5823,13 @@ local function eval_defend_pill_alarm(state, world, info, tmx, tmy, boat, ammo)
           end
           cost = bd.net + tcost
           bd.cost = cost
-          if cost < best_cost then
+          -- The close row's TOTAL is multiplied at selection; compare pills
+          -- here on that same footing so a close pill is not out-bid by a
+          -- far one it would beat after the multiplier.
+          local ci_m = a.close_interrupt and (C.DEFEND_ALARM_CLOSE_TOTAL_MULT or 1.0) or 1.0
+          if cost * ci_m < best_key then
             best, best_id, best_cost, best_bd, best_a = p, id, cost, bd, a
+            best_key = cost * ci_m
           end
         end
       end
@@ -5780,11 +5850,16 @@ local function eval_defend_pill_alarm(state, world, info, tmx, tmy, boat, ammo)
                                     or "state:hp=0 — rebuild/capture territory, not defend")
         else
           formula = string.format(
-            "ALARM al_base{%d} - al_hits{%d}*al_disc{%d} = al_net{%.0f}%s + al_dij{%s} = %.0f%s%s||%s",
+            "ALARM al_base{%d} - al_hits{%d}*al_disc{%d} = al_net{%.0f}%s + al_dij{%s} = %.0f%s%s%s||%s",
             C.DEFEND_ALARM_BASE_COST or 100, a.hits or 0,
             C.DEFEND_ALARM_HIT_DISCOUNT or 10, bd.net_raw,
             bd.floored and string.format(" al_floor{%d}", C.DEFEND_ALARM_MIN_COST or 50) or "",
             bd.dij_chip, cost,
+            a.close_interrupt
+              and string.format(" alarm_on:close_interrupt(%.1f<=%d cur=%s) then (x pw x inf + switch + commit) x%.2f at selection",
+                                a.dist or 0, a.min_dist or 9, a.close_interrupt,
+                                C.DEFEND_ALARM_CLOSE_TOTAL_MULT or 1.0)
+              or "",
             defend_alarm_evidence(a),
             defend_alarm_sel_preview(state, tmx, tmy, p.mx, p.my, cost),
             defend_alarm_detail(a, bd, p, hp))
@@ -5817,6 +5892,13 @@ local function eval_defend_pill_alarm(state, world, info, tmx, tmy, boat, ammo)
       best_bd.floored and string.format(" al_floor{%d}", C.DEFEND_ALARM_MIN_COST or 50) or "",
       best_bd.dij_chip, best_cost, defend_alarm_evidence(best_a))
   end
+  -- CLOSE INTERRUPT winner: say so on the desc FINAL_SCORES prints, so the
+  -- x mult goal_selection applies to this row's total is readable there.
+  if BRAIN_POOL_VIZ and best_a.close_interrupt then
+    best_desc = best_desc .. string.format(
+      " alarm_on:close_interrupt(%.1f<=%d cur=%s)", best_a.dist or 0,
+      best_a.min_dist or 9, best_a.close_interrupt)
+  end
   -- Alarm mode is a TRAVEL-AND-FIGHT goal and nothing else: no heat, no watch,
   -- no repair handoff (see the block comment above).  The destination is the
   -- pill itself; condition 3 drops the alarm at MIN_DIST, so the tank is
@@ -5827,6 +5909,11 @@ local function eval_defend_pill_alarm(state, world, info, tmx, tmy, boat, ammo)
              wx = U.m2w(best.mx), wy = U.m2w(best.my),
              target_id = best_id,
              alarm = true,
+             -- CLOSE INTERRUPT: goal_selection multiplies this row's total by
+             -- DEFEND_ALARM_CLOSE_TOTAL_MULT; the validity hook keeps the goal
+             -- inside MIN_DIST while conditions 1, 2 and 4 hold.
+             close_interrupt = best_a.close_interrupt and true or nil,
+             close_cur = best_a.close_interrupt,
              pill_mx = best.mx, pill_my = best.my },
     desc = best_desc,
     cands = rows,
@@ -17739,6 +17826,16 @@ local function goal_selection(state, world, info, quiet)
         if ATK_SHOOTING_SUBS[cur_sub] then _defend_tier = "full"
         elseif ATK_BUILD_SUBS[cur_sub] then _defend_tier = "moderate"
         else _defend_tier = "free" end
+        -- CLOSE INTERRUPT (Andrew, Nov 18): the close defend row is NOT free.
+        -- It pays the normal type switch + commitment (the "full" path below,
+        -- same numbers as any type change away from this attack_pill), and
+        -- the total is then x DEFEND_ALARM_CLOSE_TOTAL_MULT further down.
+        -- Every other free-tier row is unchanged.
+        if _defend_tier == "free" and c.goal.close_interrupt
+           and C.DEFEND_ALARM_CLOSE_INTERRUPT then
+          _defend_tier = "full"
+          c._ci_forced_hyst = true
+        end
       end
       -- ESCAPE_NO_BUILDER_SKIP_HYST: a FULL zero for the escape rows while
       -- the tank is loaded and builder-less. Checked BEFORE the ordinary
@@ -17841,6 +17938,53 @@ local function goal_selection(state, world, info, quiet)
         c._ab_commit  = _ab_commit
       end
       ::continue_hyst::
+    end
+
+    -- ── DEFEND_ALARM_CLOSE_TOTAL_MULT (close interrupt, Andrew Nov 18) ──
+    -- The defend_pill alarm row that waived too_close (goal.close_interrupt)
+    -- has its TOTAL so far -- shaped cost + switch + commitment -- multiplied
+    -- here, right after the hysteresis above and before the history penalty
+    -- and the builder-less multiplier.  Re-checked against the goal we hold
+    -- NOW: the pool row may have been priced on an earlier tick, and a take
+    -- that has since fired (or a reposition now in reposition_shoot) must not
+    -- be interrupted on a stale row, so a row that no longer qualifies is a
+    -- reject.  _close_mult / _pre_ci feed FINAL_SCORES and the WINNERS row.
+    for _, c in ipairs(pool) do
+      local g = c.goal
+      if g and g.kind == "defend_pill" and g.close_interrupt
+         and not c._reject_sentinel then
+        local ci = M.defend_close_interrupt(state,
+                     { mx = g.pill_mx or g.mx, my = g.pill_my or g.my })
+        if not ci then
+          c.cost = C.POOL_REJECT_COST or 1e30
+          c._reject_sentinel = true
+          if c.desc and c.desc ~= "" then
+            c.desc = c.desc .. string.format(" close_int{STALE: cur=%s@%s no longer qualifies -> reject}",
+              tostring(state.goal and state.goal.kind),
+              tostring(state.goal and state.goal.substate))
+          end
+        else
+          -- The x0.5 prices the SWITCH away from a set-up take / reposition only.
+          -- Once we hold this close defend goal it pays full cost, so a close
+          -- tank or LGM can still take over (Andrew, 2026-11-18).
+          local m = (ci ~= "defend_pill/held")
+                    and (C.DEFEND_ALARM_CLOSE_TOTAL_MULT or 1.0) or 1.0
+          if m ~= 1.0 and c.cost and c.cost > 0 then
+            local pre = c.cost
+            c.cost = pre * m
+            c._close_mult = m
+            c._pre_ci = pre
+            if c.desc and c.desc ~= "" then
+              c.desc = c.desc .. string.format(
+                " close_int{cur=%s (shaped %.1f + sw %.1f + cmt %.1f%s = %.1f) x%.2f = %.1f}",
+                ci, pre - (c.switch_flat or 0) - (c.commit_val or 0),
+                c.switch_flat or 0, c.commit_val or 0,
+                c._ci_forced_hyst and " FORCED: no free tier for the close row" or "",
+                pre, m, c.cost)
+            end
+          end
+        end
+      end
     end
 
     -- ── Ally-claimed pass-through ──
@@ -18119,7 +18263,19 @@ local function goal_selection(state, world, info, quiet)
             end
           end
         end
-        if cur_entry and winner.cost > cur_entry.cost * C.GOAL_SWITCH_RATIO then
+        -- CLOSE INTERRUPT (Andrew, Nov 18, option A): the forced-hysteresis
+        -- close defend row (attack_pill set-up only; a capture reposition
+        -- close row is not _ci_forced_hyst and keeps the ratio) already paid
+        -- switch + commitment, so it only has to be cheaper than the current
+        -- goal: plain comparison, no GOAL_SWITCH_RATIO.
+        local _ratio = C.GOAL_SWITCH_RATIO
+        local _ci_skip = winner._ci_forced_hyst and C.DEFEND_ALARM_CLOSE_INTERRUPT
+        if _ci_skip then
+          _ratio = 1.0
+          winner._ci_ratio_skip = true
+        end
+        if cur_entry and ((_ci_skip and winner.cost >= cur_entry.cost)
+                          or (not _ci_skip and winner.cost > cur_entry.cost * _ratio)) then
           -- Promote current to position 1 so the rest of the pipeline
           -- (wsim adjustment, picking pool[1]) chooses it.
           for i, c in ipairs(pool) do
@@ -18399,6 +18555,9 @@ local function goal_selection(state, world, info, quiet)
         --             surcharge on the four "drive at a fight" kinds
         --   fight   — FIGHT_COST_MULT, a script's surcharge on attack_tank,
         --             kill_lgm and take_cover
+        --   ci      — DEFEND_ALARM_CLOSE_TOTAL_MULT on a close-interrupt
+        --             defend_pill row: (base x mults + sw + cmt) x ci,
+        --             then + hist, then x nobuild
       end
       end -- REPLAN_LOG_MIN_TIER
 
