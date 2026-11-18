@@ -597,20 +597,47 @@ local function get_formula_inner(e)
       end
       _d_skip = table.concat(_skip_parts, "; ")
     end
+    -- PT2_DOUBLE_TAKE_DISCOUNT: a safe double take on this pill. The other
+    -- chain pills' amounts are left out of spot / pickup / xfire (shown as
+    -- "-chain N", already taken off the number before it), diff is the
+    -- sweep with their coverage and danger left out (single = the plain
+    -- sweep), and the whole cost is x mult (skip: blitz = the blitz cost
+    -- set it, no multiplier).
+    local db = e._dbl
+    local _db_spot, _db_trav, _db_diff, _db_xf, _db_term = "", "", "", "", ""
+    local _d_dbl = "no safe double take cached for this pill → x1.0"
+    if db then
+      _db_spot = string.format(" -chain %.0f", db.spot_ex or 0)
+      _db_trav = string.format(" -chain %.0f", db.travel_ex or 0)
+      _db_diff = string.format(" single=%s", _fmt_inf(db.diff1))
+      _db_xf   = string.format(" -chain %.0f", db.xfire_ex or 0)
+      local chain = table.concat(db.ids or {}, "-")
+      if db.skip then
+        _db_term = string.format(" x dbl{skip: %s chain=%s}", db.skip, chain)
+      else
+        _db_term = string.format(" x dbl{%.2f chain=%s kills=%d safe plan=%dP+%dW have=%d/need=%d age=%dt}",
+          db.mult, chain, db.kills or 0, db.pills or 0, db.walls or 0, db.have or 0, db.need or 0, db.age or 0)
+      end
+      _d_dbl = string.format(
+        "pill take v2 (shadow run, cached %d ticks of PT2_DBL_CACHE_TICKS=%d) has a safe chain %s that kills %d once its plan stands (%d carried pill(s) dropped, %d wall(s) we have trees for; A's standing cover have=%d need=%d); spot/pickup/xfire leave out the other chain pills (amounts after -chain), diff is the sweep without their coverage and danger (plain sweep %s), whole cost x PT2_DOUBLE_TAKE_MULT=%.2f%s",
+        db.age or 0, C.PT2_DBL_CACHE_TICKS or 0, chain, db.kills or 0, db.pills or 0,
+        db.walls or 0, db.have or 0, db.need or 0, _fmt_inf(db.diff1), db.mult,
+        db.skip and (" -- skipped: the " .. db.skip .. " discount set this cost") or "")
+    end
     f = string.format(
-      "%s(spot{%.0f}@(%d,%d) + pickup{%s}@(%d,%d)→(%d,%d)*wound_x2{%.2f} + (stale{%.0f} + diff{%s} + anger{%.0f} + xfire{%.0f} + intcpt{%.0f}) * hp{%.2f}%s%s + ammo{%s}%s)%s%s"..
+      "%s(spot{%.0f%s}@(%d,%d) + pickup{%s%s}@(%d,%d)→(%d,%d)*wound_x2{%.2f} + (stale{%.0f} + diff{%s%s} + anger{%.0f} + xfire{%.0f%s} + intcpt{%.0f}) * hp{%.2f}%s%s + ammo{%s}%s)%s%s%s"..
       "||spot cost is offset-aware (target pill's danger contribution subtracted via load_danger_offset before A*); NOT scaled by hp or wound"..
-      "|skip:%s|pickup:%s|hp:%s|anger:%s|stale:%s|finish_other:%s|ammo:%s|spot:%s|danger_nearby:%s|atk_tank:%s|spike:%s|spike_pen:%s",
+      "|skip:%s|pickup:%s|hp:%s|anger:%s|stale:%s|finish_other:%s|ammo:%s|spot:%s|danger_nearby:%s|atk_tank:%s|spike:%s|spike_pen:%s|dbl:%s",
       _skip_prefix,
-      e._spot, e._spot_mx or 0, e._spot_my or 0,
-      _fmt_inf(e._travel),
+      e._spot, _db_spot, e._spot_mx or 0, e._spot_my or 0,
+      _fmt_inf(e._travel), _db_trav,
       e._spot_mx or 0, e._spot_my or 0, e._mx or 0, e._my or 0,
       _tw,
-      e._stale, _fmt_inf(e._diff), e._anger, e._xfire, e._intcpt,
-      e._hp, _wound_detail, _spike_mult_term, _ammo_str, _atk_tank_term, _spike_pen_term, _danger_term,
+      e._stale, _fmt_inf(e._diff), _db_diff, e._anger, e._xfire, _db_xf, e._intcpt,
+      e._hp, _wound_detail, _spike_mult_term, _ammo_str, _atk_tank_term, _spike_pen_term, _db_term, _danger_term,
       -- (order: atk_tank inside the parens; spike_pen + danger_nearby are
       -- whole-cost multipliers, displayed trailing outside the parens)
-      _d_skip, _d_pickup, _d_hp, _d_anger, _d_stale, _d_finish_other, _d_ammo, _d_spot, _d_danger, _d_atk_tank, _d_spike, _d_spike_pen)
+      _d_skip, _d_pickup, _d_hp, _d_anger, _d_stale, _d_finish_other, _d_ammo, _d_spot, _d_danger, _d_atk_tank, _d_spike, _d_spike_pen, _d_dbl)
   elseif p == 7 then
     local _lgm_mult_b = e._lgm_mult or 1
     local _fcov_detail = e._fcov_m and string.format(
@@ -2993,6 +3020,7 @@ M.C_NAMES = {
   "PILL_SUICIDER_DEFEND_MULT",
   "PILL_SUICIDER_OTHER_MULT",
   "PING_DEFEND_REPAIR_RANGE",
+  "PT2_DBL_CACHE_TICKS",
   "REFUEL_BASE_COST",
   "REFUEL_DANGER_PENALTY",
   "REFUEL_DANGER_WEIGHT",

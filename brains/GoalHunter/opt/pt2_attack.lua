@@ -276,6 +276,8 @@ function M.after_scan(a)
   end
   if not inp or not res then return a.sscan end
   local cost = clock_us() - t0
+  -- PT2_DOUBLE_TAKE_DISCOUNT: pt2_dbl's first shadow run uses this as its cost
+  if C.PT2_DOUBLE_TAKE_DISCOUNT and a.state then a.state._pt2_v2_last_us = cost end
   -- before cmp_line: its v1 price adds to the counts
   local noA_n = inp.noA_n or 0
   local drive = master and goal._is_ppt and res.best and res.best.safe

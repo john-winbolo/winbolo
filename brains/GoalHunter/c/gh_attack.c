@@ -134,6 +134,10 @@ typedef struct NaAttackCtx {
     float    cov_grid[MAP_TILES];
     uint8_t  pill_at[MAP_TILES];     /* legacy: 1 = non-target pill present */
     float    self_contrib[MAP_TILES];/* pill's own contribution (temp)      */
+    /* Optional arg 9: per-tile pill counts to take off cov_grid (a double
+     * take: the other chain pills' disks).  has_cov_excl = 0 when absent. */
+    uint8_t  cov_excl[MAP_TILES];
+    int      has_cov_excl;
 
     /* ── parity path ─────────────────────────────────────────────────
      * world_synced is set by the last sync_pill_at: 1 when it was handed
@@ -674,6 +678,25 @@ static void load_self_contrib(lua_State *L, NaAttackCtx *ctx) {
     }
 }
 
+/* Load the optional coverage exclusion table (arg 9: {tile_key = count})
+ * into ctx->cov_excl.  Absent or nil: no exclusion, the old behaviour. */
+static void load_cov_excl(lua_State *L, NaAttackCtx *ctx) {
+    ctx->has_cov_excl = 0;
+    if (!lua_istable(L, 9)) return;
+    memset(ctx->cov_excl, 0, sizeof(ctx->cov_excl));
+    ctx->has_cov_excl = 1;
+    lua_pushnil(L);
+    while (lua_next(L, 9)) {
+        if (lua_isinteger(L, -2)) {
+            int k = (int)lua_tointeger(L, -2);
+            int n = (int)lua_tointeger(L, -1);
+            if (k >= 0 && k < MAP_TILES && n > 0)
+                ctx->cov_excl[k] = (uint8_t)(n > 255 ? 255 : n);
+        }
+        lua_pop(L, 1);
+    }
+}
+
 static int push_no_spot(lua_State *L) {
     lua_pushnumber(L, 1e30);
     lua_pushinteger(L, -1);
@@ -899,6 +922,7 @@ static int eval_parity(lua_State *L, NaAttackCtx *ctx, const BYTE *w,
             if (et->proj > 0.0f) continue;
             int k = base_key + et->key_offset;
             int cov = (k >= 0 && k < MAP_TILES) ? (int)ctx->cov_grid[k] : 0;
+            if (ctx->has_cov_excl && k >= 0 && k < MAP_TILES) cov -= (int)ctx->cov_excl[k];
             if (cov > max_coverage) max_coverage = cov;
         }
         double score_e = (max_coverage > 1) ? 100.0 * (double)(max_coverage - 1) : 0.0;
@@ -1103,6 +1127,7 @@ static int eval_legacy(lua_State *L, NaAttackCtx *ctx, const BYTE *world,
 
             /* scan_a: coverage (crossfire) */
             float cov = ctx->cov_grid[k];
+            if (ctx->has_cov_excl) cov -= (float)ctx->cov_excl[k];
             if (cov > max_coverage) max_coverage = cov;
 
             /* scan_b: danger + terrain */
@@ -1222,12 +1247,16 @@ static int eval_legacy(lua_State *L, NaAttackCtx *ctx, const BYTE *world,
 /*
  * gh_attack.evaluate_pill_difficulty(
  *     pmx, pmy, step_deg, phase_not_opening, tmx, tmy,
- *     self_contrib_table_or_nil [, min_lane_brad])
+ *     self_contrib_table_or_nil [, min_lane_brad [, cov_excl_table]])
  * -> best_score, best_mx, best_my, best_deg
  *
  * min_lane_brad (parity path only): C.BLOCKER_MIN_LANE_BRAD, read live by
  * attack.lua on every call so a cfg= override reaches the C sweep.  nil or
  * 0 = no lane rule (GoalHunter 1.5 / 1.6 never pass it).
+ *
+ * cov_excl_table (both paths): {tile_key = n} pill counts taken off the
+ * crossfire coverage before scan A, for a double take (the other chain
+ * pills' disks).  nil or absent = no change.
  *
  * Returns math.huge, -1, -1, -1 when no valid spot is found.
  */
@@ -1249,6 +1278,7 @@ static int l_evaluate_pill_difficulty(lua_State *L) {
 
     load_self_contrib(L, ctx);
     double min_lane = luaL_optnumber(L, 8, 0.0);
+    load_cov_excl(L, ctx);
 
     /* Avoid looking up stamp_idx 0 for step_deg != 5 when stamps are 5-deg only */
     int step = (step_deg > 0) ? step_deg : 5;

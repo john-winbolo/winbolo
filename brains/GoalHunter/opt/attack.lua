@@ -3531,8 +3531,13 @@ end
 local _parity_lua_only = false
 
 
+-- dbl (PT2_DOUBLE_TAKE_DISCOUNT, pt2_dbl.lua): nil, or a double take's
+-- exclusions { contrib = A's contrib plus every other chain pill's, summed
+-- per tile (scan B subtracts it in place of A's alone), cov_excl = {tile_key
+-- = n} other chain pills whose disk covers the tile (scan A takes n off the
+-- coverage) }. C and Lua read the same two tables.
 function M.evaluate_pill_difficulty(pill, world, detailed, scan_step, phase, state, tmx, tmy,
-                                     start_deg, end_deg, acc)
+                                     start_deg, end_deg, acc, dbl)
   -- Per-section diagnostic accumulators. Sub-µs to update; enables
   -- breakdown of where the ~2 ms first-eval cost lives. Logged via
   -- optimize.log when total > 1 ms.
@@ -3566,11 +3571,13 @@ function M.evaluate_pill_difficulty(pill, world, detailed, scan_step, phase, sta
     gh_attack.sync_pill_at(world, pmx, pmy)
     local phase_not_opening = (phase and phase ~= "opening") and true or false
     local self_contrib = threat.pill_contrib and threat.pill_contrib[pmy * 256 + pmx] or nil
+    if dbl then self_contrib = dbl.contrib end
     -- C.BLOCKER_MIN_LANE_BRAD is read here on every call (not at
     -- init_stamps), so a cfg= override reaches the C clear-aim test too.
     local c_score, c_mx, c_my, c_deg = gh_attack.evaluate_pill_difficulty(
       pmx, pmy, step_deg, phase_not_opening,
-      tmx or -1, tmy or -1, self_contrib, C.BLOCKER_MIN_LANE_BRAD or 0)
+      tmx or -1, tmy or -1, self_contrib, C.BLOCKER_MIN_LANE_BRAD or 0,
+      dbl and dbl.cov_excl or nil)
     if c_mx >= 0 then
       return c_score, nil, { mx = c_mx, my = c_my, deg = c_deg, score = c_score }
     elseif not C.ATTACK_PILL_WALL_FALLBACK then
@@ -3633,6 +3640,8 @@ function M.evaluate_pill_difficulty(pill, world, detailed, scan_step, phase, sta
   local _ttype       = U.ttype
   local _in_map      = U.in_map
   local _self_pcontrib = threat.pill_contrib[pmy * 256 + pmx]
+  local _cov_excl = nil
+  if dbl then _self_pcontrib, _cov_excl = dbl.contrib, dbl.cov_excl end
   local _t_prefetch_us = 0
 
   -- Chunked range: [start_deg, end_deg] step step_deg. Single-shot
@@ -3778,6 +3787,7 @@ function M.evaluate_pill_difficulty(pill, world, detailed, scan_step, phase, sta
           local off = stamp[i]
           if off.proj <= 0 then
             local cov = _cov_grid_at and _cov_grid_at(_base_key + off.key_offset) or 0
+            if _cov_excl then cov = cov - (_cov_excl[_base_key + off.key_offset] or 0) end
             if cov > max_coverage then max_coverage = cov end
           end
         end
@@ -3789,6 +3799,7 @@ function M.evaluate_pill_difficulty(pill, world, detailed, scan_step, phase, sta
               local sx2, sy2 = mx + dx2, my + dy2
               if tile_in_ellipse(sx2, sy2) and _in_map(sx2, sy2) then
                 local cov = _cov_grid_at and _cov_grid_at(sy2 * 256 + sx2) or 0
+                if _cov_excl then cov = cov - (_cov_excl[sy2 * 256 + sx2] or 0) end
                 if cov > max_coverage then max_coverage = cov end
               end
             end
@@ -3990,7 +4001,7 @@ function M.evaluate_pill_difficulty(pill, world, detailed, scan_step, phase, sta
     wacc.walls = true
     wacc._single = true
     return M.evaluate_pill_difficulty(pill, world, detailed, scan_step, phase, state,
-                                      tmx, tmy, nil, nil, wacc)
+                                      tmx, tmy, nil, nil, wacc, dbl)
   end
   return f_score, f_spots, f_best
 end
