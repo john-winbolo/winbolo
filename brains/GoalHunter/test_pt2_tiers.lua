@@ -35,7 +35,9 @@ end
 
 -- ── 0. knobs ─────────────────────────────────────────────────────────────
 print("knobs")
-check("PILLTAKE_V2_EVALUATOR ships off", C.PILLTAKE_V2_EVALUATOR == false)
+check("PILLTAKE_V2_EVALUATOR ships on (HELM, Nov 18)", C.PILLTAKE_V2_EVALUATOR == true)
+check("PILLTAKE_V2_EVALUATOR off in MAST", C.PRESETS.mast.PILLTAKE_V2_EVALUATOR == false)
+check("PILLTAKE_V2_EVALUATOR off in KEEL", C.PRESETS.keel.PILLTAKE_V2_EVALUATOR == false)
 check("PT2_CHAIN_BLOCKER_MIN_SHOTS = 10 (Andrew's value, two walls)", C.PT2_CHAIN_BLOCKER_MIN_SHOTS == 10)
 for _, kn in ipairs({ "PT2_CHAINS", "PT2_LINK_COVERS_PREV", "PT2_LEEWAY", "PT2_OWN_PILL_BONUS",
                       "PT2_AIM_NUDGE" }) do
