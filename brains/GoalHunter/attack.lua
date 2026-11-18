@@ -7842,6 +7842,12 @@ local function update_attack_substate_body(goal, state, world, info)
         goal._approach_start = now
         goal._approach_last_progress = now
         goal._approach_last_dist = nil
+        -- PT2_FAST_SETUP: a v2 take that qualifies drives to the fast
+        -- setup point S instead (fast_setup.lua approach_for_goal).
+        if C.PT2_FAST_SETUP and goal._is_ppt and goal._pt2 then
+          require("fast_setup").approach_for_goal(state, goal, info, world, now,
+                                                  shot_path_obstacle_count)
+        end
       end
 
       -- Reach the approach point (precise float, 1.5 tiles behind standoff).
@@ -9080,6 +9086,12 @@ local function update_attack_substate_body(goal, state, world, info)
         -- range, re-aim precisely, then shoot.
         goal.substate = "in_range_position"
         goal._aim_locked = nil
+        -- PT2_FAST_SETUP (Andrew's spec, Nov 18): a v2 take that qualifies
+        -- drives onto the standoff already aimed (fast_setup.lua).
+        if C.PT2_FAST_SETUP then
+          goal._fs = require("fast_setup").plan_for_goal(state, goal, info, world, now,
+                                                         shot_path_obstacle_count)
+        end
         print(TAG .. " ATTACK: shielded aimed, moving into firing range")
       else
         -- Demote-on-missing-scan: if we were PPT but lost the shield
@@ -9170,7 +9182,12 @@ local function update_attack_substate_body(goal, state, world, info)
   -- transition out.
   -- ══════════════════════════════════════════════════════════════════
   if goal.substate == "in_range_position" then
-    if not goal.standoff_mx then
+    -- PT2_FAST_SETUP: the setup run owns the tick while goal._fs is set
+    -- (fast_setup.lua); it returns false when it hands back to this code.
+    if goal._fs and require("fast_setup").attack_tick(state, goal, info, world, now,
+                                                      shot_path_obstacle_count) then
+      -- handled
+    elseif not goal.standoff_mx then
       goal.substate = "plan_position"
       goal.scan_spots = nil
       goal._shield_scan = nil

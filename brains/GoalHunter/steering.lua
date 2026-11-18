@@ -2477,10 +2477,23 @@ local function attack_pill_steer(state, world, info, goal)
   -- glacial), then brake earlier to compensate for the extra momentum
   -- so we still stop on the spot instead of overshooting like charge.
   if goal.substate == "in_range_position" then
+    -- PT2_FAST_SETUP (fast_setup.lua): the turn and run phases steer there;
+    -- the align phase is this creep, aimed at the setup point.
+    if goal._fs then
+      local k, t, fire = require("fast_setup").steer(state, world, info, goal)
+      if k then
+        if fire then
+          k = bit.bor(k, KEY_SHOOT)
+          predict_kill_shot_and_swerve(state, world, info, goal, goal.mx, goal.my)
+        end
+        return k, t
+      end
+    end
     local sfx = goal.standoff_fx or (goal.standoff_mx and (goal.standoff_mx + 0.5))
                                  or (goal.mx + 0.5)
     local sfy = goal.standoff_fy or (goal.standoff_my and (goal.standoff_my + 0.5))
                                  or (goal.my + 0.5)
+    if goal._fs then sfx, sfy = goal._fs.sx / 256, goal._fs.sy / 256 end
     local swx = math.floor(sfx * 256 + 0.5)
     local swy = math.floor(sfy * 256 + 0.5)
     local sdist = U.wdist(info.tankx, info.tanky, swx, swy)

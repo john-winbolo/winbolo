@@ -1007,6 +1007,22 @@ M.PT2_TRAVEL_BAND_TICKS = 100
 -- qualified plans again once when it does. -1 = never (the old rule).
 -- Andrew's value (Nov 17). KEEL / MAST: -1.
 M.PT2_FINISH_NO_COVER_MAX_ANGER = 0.95
+-- PT2_FAST_SETUP: a pill take v2 take drives onto its standoff already
+-- aimed and fires while it moves (Andrew's spec, Nov 18). The bot works
+-- out the gun angle the finetune would end on and a setup point on the
+-- straight 16-direction line through the standoff (just out of range of
+-- every enemy pill that can shoot along the run). The approach drives to
+-- that setup point. Where the tank stops, if it is out of every pill's
+-- range, it starts the run from there and moves back onto the line as it
+-- goes; else it creeps to the setup point first. It faces that angle, then
+-- drives in at full speed and brakes so it stops on the standoff. It fires
+-- on any tick a shell from where it is and where it faces would hit the
+-- pill with nothing in the way, also while it moves. It never fires when
+-- the shell would hit our blocker or anything else first. The take uses
+-- this only when the shot is clear from the standoff and from at least
+-- PT2_LEEWAY_MIN of the 8 points 32 wu around it; else the old way.
+-- false = the old way (KEEL / MAST).
+M.PT2_FAST_SETUP = true
 -- SHOT_PATH_SKIP_DEAD_PILLS: v1's shot-path checks (attack.lua
 -- standoff_shot_obstacle, attack_shield.lua score_aim outgoing ray,
 -- pathfinder.lua pill_shots_clear) count only a LIVE pill (health > 0, not
@@ -7723,6 +7739,8 @@ M.PRESETS = {
     PT2_AIM_NUDGE = false,
     PT2_TRAVEL_BAND_TICKS = 0,
     PT2_FINISH_NO_COVER_MAX_ANGER = -1,
+    --   2026-11-18: no fast setup run (old rule).
+    PT2_FAST_SETUP = false,
     --   2026-11-17: hold 15 ticks with no goal after a kill (old rule).
     POST_KILL_WAIT_TICKS = 15,
     --   2026-11-17: carrying-pill approach floor 30 (old rule).
@@ -8037,6 +8055,7 @@ M.PRESETS.mast = {
   PT2_OWN_PILL_BONUS                = false,
   PT2_TRAVEL_BAND_TICKS             = 0,
   PT2_FINISH_NO_COVER_MAX_ANGER     = -1,
+  PT2_FAST_SETUP                    = false,
   POST_KILL_WAIT_TICKS              = 15,
   CARRY_APPROACH_MIN_ARMOUR_ONE     = 30,
   CARRY_APPROACH_MIN_ARMOUR_MANY    = 30,
