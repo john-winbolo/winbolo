@@ -2389,6 +2389,11 @@ local function render_state(state, K)
           "hyst:none:no_lgm -- ESCAPE_NO_BUILDER_SKIP_HYST. %s, so this escape row (flee_to_base, or a take_cover that fired on its haul / panic trigger) pays switch(0) + commit(0) to ENTER and skips the multiplicative stickiness bar. Asymmetric: once it IS the goal, every other row pays the normal switch + commitment to displace it.",
           M.loaded_no_lgm_label(state))
       end
+      if gc and gc.haul_setup_sub then
+        detail_map[#detail_map + 1] = string.format(
+          "hyst:none:haul_setup -- TAKE_COVER_HAUL_SETUP_NO_HYST. The current goal is attack_pill/%s, a set-up step with no shell at the pill yet, so this take_cover (haul trigger) pays switch(0) + commit(0) (no ATTACK_PILL_COMMITMENT_BONUS) to ENTER and skips the GOAL_SWITCH_RATIO bar. The history penalty still applies.",
+          tostring(gc.haul_setup_sub))
+      end
 
       -- Pillbox-suicider surcharge, applied at selection alongside the phase
       -- weight / influence scale. Rendered whenever it isn't 1.0 so the row's
@@ -2530,6 +2535,8 @@ local function render_state(state, K)
         if gc.ci_forced_hyst and C.DEFEND_ALARM_CLOSE_INTERRUPT then
           -- Close interrupt (option A): plain compare, no ratio.
           detail_formula = string.format("%s (must be < cur, ratio=skip(close_int))", detail_formula)
+        elseif gc.haul_setup_sub then
+          detail_formula = string.format("%s (ratio=skip(haul_setup))", detail_formula)
         else
           detail_formula = string.format("%s (must be < cur*%.1f)", detail_formula, C.GOAL_SWITCH_RATIO)
         end

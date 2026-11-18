@@ -6015,6 +6015,19 @@ M.ATTACK_NO_BUILDER_MULT = 10     -- keel 1 (no such multiplier)
 -- not bounce straight back out of cover.
 M.ESCAPE_NO_BUILDER_SKIP_HYST = true   -- keel false
 
+-- 2b. HAULING OUT OF A SET-UP TAKE (Andrew, Nov 18, option A).  Any loaded
+-- tank, LGM alive or dead.  A take_cover row that fired on its "haul"
+-- trigger (prefix "haul" only -- not panic_no_build, calm, bad_ground or
+-- released) enters with NO hysteresis -- no switch flat, no commitment, no
+-- ATTACK_PILL_COMMITMENT_BONUS and no GOAL_SWITCH_RATIO bar -- while the
+-- current goal is attack_pill in a set-up step with no shell at the pill yet
+-- (goals.lua M.attack_pill_in_setup / M.ATTACK_PILL_SETUP_SUBS).  The
+-- history penalty is a separate step and still applies.  Real game: bot3
+-- t=90491, 2 pills aboard, attack_pill/build_walls; haul cover bid 10 but
+-- paid sw 30 + cmt 75 + bonus 80, lost to the take and lost both pills.
+-- KEEL / MAST: false.
+M.TAKE_COVER_HAUL_SETUP_NO_HYST = true
+
 -- 3. CAPTURING.  A corpse is only worth picking up if we live to place it,
 -- and with no builder we cannot place anything at all -- so a capture in the
 -- state is priced as pure risk with none of the usual sweeteners.
@@ -7425,6 +7438,8 @@ M.PRESETS = {
     --   flee_to_base and a triggered take_cover paid the ordinary switch +
     --   commitment penalty and the multiplicative stickiness bar --
     ESCAPE_NO_BUILDER_SKIP_HYST   = false,
+    --   2026-11-18: a haul take_cover paid full hysteresis vs a set-up take.
+    TAKE_COVER_HAUL_SETUP_NO_HYST = false,
     --   capture_pill's danger term carried the cautious-mode x5 (the state
     --   implies a carried pill, so cautious_mode was always on inside it),
     --   the free-pill bonus ran its full ramp, the cluster discount applied
@@ -8031,6 +8046,7 @@ M.PRESETS.mast = {
   DEFEND_ALARM_CLOSE_INTERRUPT      = false,
   DEFEND_ALARM_CLOSE_TOTAL_MULT     = 1.0,
   DEFEND_ALARM_HEAT                 = false,
+  TAKE_COVER_HAUL_SETUP_NO_HYST     = false,
   QUICK_REPAIR_ON_TAKE             = false,
   QUICK_REPAIR_PREDICT_SHOTS        = false,
   REFUEL_NOT_LOW_MULT               = 1.0,
