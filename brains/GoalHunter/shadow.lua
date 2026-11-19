@@ -248,7 +248,10 @@ function M.cast(env, sx, sy, tx, ty, len, extra, res)
 end
 
 -- tank_shot's tank test: the shell at (x, y) is inside the hit circle of a
--- tank of the flat list tk (ntk numbers).
+-- tank of the flat list tk (ntk numbers). It is a function of its own, not
+-- a loop inside tank_shot's step loop: with the loop inline, LuaJIT's trace
+-- compiler aborted on it in a real game, and that abort ended WinBoloDS
+-- with 0xc0000409 (Nov 19, seed 1, oilrig).
 local function ts_tank_hit(tk, ntk, x, y, r, r2)
   for i = 1, ntk, 2 do
     local dx, dy = x - tk[i], y - tk[i + 1]
@@ -317,13 +320,5 @@ function M.tank_shot(env, ox, oy, ax, ay, tmx, tmy, extra, lane)
   for k = nl + 1, #lane do lane[k] = nil end
   return ok, why, lane
 end
-
--- tank_shot runs in the interpreter. With the JIT on it, WinBoloDS ended
--- with 0xc0000409 in the first minute of the round 2 setup (oilrig 2v2,
--- seeds 1 and 2, Nov 19): LuaJIT's trace compiler raised its abort error
--- (err_raise_ext under trace_abort, from lj_asm) and the process failed in
--- ntdll while that error unwound. With tank_shot off the JIT, both seeds
--- ran with no crash.
-if jit and jit.off then jit.off(M.tank_shot) end
 
 return M
