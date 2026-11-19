@@ -232,6 +232,13 @@ typedef struct {
 	int32_t man_speed_refuel_base;
 	/* Shell hits a wall stands before it falls to rubble. */
 	int32_t building_life;
+	/* How a shell starts and what it hits: the steps of shell_speed it is
+	   moved out of the shooter before its first tick, the circle around a
+	   tank centre a shell has to reach (WORLD units), and how far a pill's
+	   shell flies (map squares). */
+	int32_t shell_start_add;
+	int32_t tank_hit_radius;
+	float   pill_fire_length;
 } BrainRules;
 
 /* This tank's own modifiers, each a percent of the classic figure. The

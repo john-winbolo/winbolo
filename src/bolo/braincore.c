@@ -634,7 +634,10 @@ typedef struct {
   I(man_speed_boat) \
   I(man_speed_deep_sea) \
   I(man_speed_refuel_base) \
-  I(building_life)
+  I(building_life) \
+  I(shell_start_add) \
+  I(tank_hit_radius) \
+  F(pill_fire_length)
 
 /* rules_last is compared with memcmp, which is only safe while BrainRules
  * has no padding bytes. The sum of the listed field sizes must equal the

@@ -21,4 +21,9 @@
 /* Registers the gh_pt2 global. Call once per lua_State. */
 void naPt2Register(lua_State *L);
 
+/* Test hook: one shell walk with the given shell numbers, for the check
+ * against the engine's shell (see gh_pt2.c). */
+int naPt2TestWalk(int kind, const double sh[5], double sx, double sy, double tx, double ty,
+                  double *angle, int *mx, int *my, int *t, int max, int *hit_t);
+
 #endif /* GH_PT2_H */

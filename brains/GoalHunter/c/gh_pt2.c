@@ -52,11 +52,16 @@
 #include <lauxlib.h>
 #include <math.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
 /* ── Engine constants (shadow.lua) ──────────────────────────────────── */
+/* PT2_SHELL_SPEED, PT2_START_ADD, PT2_SHELL_LIFE, PT2_PILL_FIRE_LEN and
+ * PT2_TANK_HIT_R are the classic rules. Each evaluate takes the live ones
+ * from inp.env (shell_speed, shell_start_add, shell_life, pill_fire_len,
+ * tank_hit_r) when given, as shadow.lua does; these are the fallback. */
 #define PT2_RADIANS_MAX   (2.0 * 3.14159)
 #define PT2_SHELL_SPEED   32.0
 #define PT2_START_ADD     5.0
@@ -105,6 +110,24 @@ typedef struct {
     int    skip;       /* chain_skip: -1 not asked yet */
 } Pill;
 
+/* One entry of the shell ray table (see "Shell ray table" below). */
+#define CG_MAXS   32
+#define CG_SLOTS  16384   /* cast(); a power of 2 */
+#define TG_SLOTS  8192    /* tank_shot(); a power of 2 */
+typedef struct {
+    int32_t k1, k2, k3;          /* the key */
+    uint8_t used;                /* 0 free, 1 kept, 2 this key walks */
+    uint8_t n;                   /* squares in ox / oy / t */
+    uint8_t flag;                /* cast: the tank is hit; tank_shot: the
+                                  * last square is the target square */
+    int8_t  minx, maxx, miny, maxy;
+    int16_t hit_t;               /* cast: the tank-hit step */
+    int32_t ex, ey;              /* cast: the end point - the start */
+    double  angle;               /* cast */
+    int8_t  ox[CG_MAXS], oy[CG_MAXS];   /* square - start square */
+    uint8_t t[CG_MAXS];          /* the step the square is entered on */
+} CGeom;
+
 typedef struct {
     Arena     ar;
     uint32_t  gen;
@@ -120,7 +143,17 @@ typedef struct {
      * the result does not change). Indexed by the stack slot of the
      * callback (S_TTYPE ...) or by a P_* part below. */
     int       prof;
-    double    p_ns[40], p_n[40];
+    double    p_ns[48], p_n[48];
+    /* the shell ray table: calloc'd on first use, kept between evaluates */
+    CGeom    *cg, *tg;
+    int       cg_n, tg_n;
+    double    cg_par[5];         /* the shell numbers it was made with */
+    int       cg_par_set;
+    int       cg_off;            /* gh_pt2.table(false): every ray walks */
+    int       cg_check;          /* gh_pt2.table_check(true): each table ray
+                                  * is checked against the walk (tests) */
+    double    cg_checked, cg_bad;
+    char      cg_first[160];
 } Pt2Ctx;
 
 static void ar_reset(Arena *a) {
@@ -244,7 +277,8 @@ enum {
 /* Profile parts that are not a callback. */
 enum {
     P_TOTAL = S_TOP + 1, P_SETUP, P_OUTPUT, P_TT_HIT, P_PO_HIT, P_REACH_HIT,
-    P_EVAL_POINT, P_SEARCH, P_LEEWAY, P_SORT, P_CAST, P_TSHOT, P_HOLD, P_N
+    P_EVAL_POINT, P_SEARCH, P_LEEWAY, P_SORT, P_CAST, P_TSHOT, P_HOLD,
+    P_CG_HIT, P_CG_MISS, P_TG_HIT, P_TG_MISS, P_N
 };
 static const char *s_prof_name[] = {
     "", "", "", "", "", "", "",   /* 0 and S_INP .. S_MEMO */
@@ -254,10 +288,11 @@ static const char *s_prof_name[] = {
     "total", "setup", "output", "ttype_cache_hit", "pill_on_cache_hit", "reach_cache_hit",
     "ring_eval_point", "search_blockers", "leeway", "sort_band",
     "cast", "tank_shot", "hold_point",
+    "cast_table_hit", "cast_table_miss", "tank_shot_table_hit", "tank_shot_table_miss",
     NULL   /* the count check below */
 };
 typedef char pt2_prof_names_ok[(sizeof(s_prof_name) / sizeof(s_prof_name[0]) == P_N + 1) ? 1 : -1];
-typedef char pt2_prof_slots_ok[(P_N <= 40) ? 1 : -1];   /* p_ns[40], p_n[40] */
+typedef char pt2_prof_slots_ok[(P_N <= 48) ? 1 : -1];   /* p_ns[48], p_n[48] */
 
 /* Time a C statement as part `cat` (inclusive of its callbacks). */
 #define PTIME(e, cat, stmt) do { \
@@ -302,6 +337,9 @@ typedef struct {
     double T_BUILDING, T_HALFBUILD, T_BOAT, T_FOREST;
     double e_wall_shots, e_half_wall_shots, e_boat_shots;
     int    forest_transparent;
+    /* the shell numbers (env.shell_speed ...; the classic ones when not given) */
+    double sh_speed, sh_add, sh_life, sh_hit_r, pill_len;
+    int    cg_on;      /* the ray table is used this evaluate */
     /* env.omx / env.omy */
     int    om_set, om_sent;
     double omx, omy, sent_omx, sent_omy;
@@ -367,8 +405,10 @@ static double sincos_args(double angle) {
     return (db / 360.0) * PT2_RADIANS_MAX;
 }
 
-static double life_ticks(double len) {
-    double t = 1 + floor(PT2_SHELL_LIFE * len) - PT2_START_ADD;
+/* shellLifeTicks: 1 + (int)(shell_life * len) - start_add, the product a
+ * float as in the engine (len is a float there). */
+static double life_ticks(const Ev *e, double len) {
+    double t = 1 + floor(f32(e->sh_life * f32(len))) - e->sh_add;
     return t < 0 ? 0 : t;
 }
 
@@ -694,9 +734,10 @@ static void extra_del(Extra *x, int64_t sq) {
 }
 
 /* ── shadow.cast ────────────────────────────────────────────────────── */
-/* keep = 0: the ray is scratch (hold_safe), only hit/link/cover are read. */
-static Ray *cast(Ev *e, double sx, double sy, double tx, double ty, double len,
-                 const Extra *extra, int keep, Ray *scratch) {
+/* keep = 0: the ray is scratch (hold_safe), only hit/link/cover are read.
+ * The walk; cast() below reads the ray table first. */
+static Ray *cast_walk(Ev *e, double sx, double sy, double tx, double ty, double len,
+                      const Extra *extra, int keep, Ray *scratch) {
     int64_t sq_list[PT2_MAX_T];
     double  sq_t[PT2_MAX_T];
     Blk     block[PT2_MAX_T];
@@ -705,11 +746,11 @@ static Ray *cast(Ev *e, double sx, double sy, double tx, double ty, double len,
     double angle = calc_angle(sx, sy, tx, ty);
     res->angle = angle;
     double xa, ya, xs, ys;
-    calc_distance_both(angle, PT2_SHELL_SPEED, &xa, &ya, &xs, &ys);
+    calc_distance_both(angle, e->sh_speed, &xa, &ya, &xs, &ys);
     Walk w;
-    walk_init(&w, sx + PT2_START_ADD * xa, sy + PT2_START_ADD * ya, xs, ys);
-    double n = life_ticks(len);
-    double r = PT2_TANK_HIT_R;
+    walk_init(&w, sx + e->sh_add * xa, sy + e->sh_add * ya, xs, ys);
+    double n = life_ticks(e, len);
+    double r = e->sh_hit_r;
     double r2 = r * r;
     int nsq = 0, nblk = 0;
     double last_sq = -1;
@@ -793,15 +834,15 @@ static Ray *cast(Ev *e, double sx, double sy, double tx, double ty, double len,
 /* ── shadow.tank_shot ───────────────────────────────────────────────── */
 /* Returns the why (TS_OK when the shell enters the target square). On
  * TS_OK *lane_out is the lane (a new object). */
-static int tank_shot(Ev *e, double ox, double oy, double ax, double ay, double tmx, double tmy,
-                     const Extra *extra, Lane **lane_out) {
+static int tank_shot_walk(Ev *e, double ox, double oy, double ax, double ay, double tmx, double tmy,
+                          const Extra *extra, Lane **lane_out) {
     int64_t lane[PT2_MAX_T];
     double angle = tank_angle(ox, oy, ax, ay);
     double xa, ya, xs, ys;
-    calc_distance_both(angle, PT2_SHELL_SPEED, &xa, &ya, &xs, &ys);
+    calc_distance_both(angle, e->sh_speed, &xa, &ya, &xs, &ys);
     Walk w;
-    walk_init(&w, ox + PT2_START_ADD * xa, oy + PT2_START_ADD * ya, xs, ys);
-    double n = life_ticks(PT2_TANK_FIRE_LEN);
+    walk_init(&w, ox + e->sh_add * xa, oy + e->sh_add * ya, xs, ys);
+    double n = life_ticks(e, PT2_TANK_FIRE_LEN);
     int nl = 0;
     double last_sq = -1;
     double omx = rsh8(ox), omy = rsh8(oy);
@@ -830,6 +871,359 @@ static int tank_shot(Ev *e, double ox, double oy, double ax, double ay, double t
         l->v = NEWN(e, int64_t, nl);
         memcpy(l->v, lane, sizeof(int64_t) * (size_t)nl);
         *lane_out = l;
+    }
+    return why;
+}
+
+/* ── Shell ray table ────────────────────────────────────────────────── */
+/* A shell's walk from a whole world point depends only on where its target
+ * is from that point: the angle reads only the difference, the steps are
+ * whole numbers, so every position is the start plus the same whole
+ * offsets. When the start is a square centre (a pill's ray) the squares
+ * crossed are the start square plus the same square offsets. A tank's shot
+ * starts anywhere, so there the key also holds the start's place in its
+ * square (0..255 each way) and the target square from the start square.
+ *
+ * cast() and tank_shot() keep the squares of each walk they make (with the
+ * step each is entered on, the tank-hit step and the end point) under that
+ * key, and a later ray with the same key reads only the terrain, pills and
+ * planned blockers of those squares, in the same order as the walk. The
+ * result is the walk's, bit for bit:
+ *   - a key is kept only when every square of its walk is on the map
+ *     (0..255 each way: no unsigned wrap, and no two squares share a
+ *     my * 256 + mx number), and a ray uses it only when its own squares
+ *     are on the map too; any other ray walks;
+ *   - the table is keyed by the shell numbers too: it is cleared when they
+ *     change, and when it is 3/4 full;
+ *   - hold_safe's scratch rays always walk.
+ * The terrain is not in the table: it is read each time, as the walk does,
+ * and forest needs nothing special (env.forest_transparent is read at the
+ * square, as in the walk). */
+
+static uint32_t cg_hash(int32_t a, int32_t b, int32_t c) {
+    uint32_t h = (uint32_t)a * 0x9E3779B1u;
+    h ^= (uint32_t)b * 0x85EBCA77u;
+    h ^= (uint32_t)c * 0xC2B2AE3Du;
+    h ^= h >> 15;
+    h *= 0x2C1B3C6Du;
+    h ^= h >> 12;
+    return h;
+}
+
+/* The entry of key (k1, k2, k3) (*found = 1) or the free slot for it. */
+static CGeom *cg_slot(CGeom *tab, int nslots, int32_t k1, int32_t k2, int32_t k3, int *found) {
+    uint32_t m = (uint32_t)nslots - 1;
+    uint32_t i = cg_hash(k1, k2, k3) & m;
+    for (;;) {
+        CGeom *g = &tab[i];
+        if (!g->used) { *found = 0; return g; }
+        if (g->k1 == k1 && g->k2 == k2 && g->k3 == k3) { *found = 1; return g; }
+        i = (i + 1) & m;
+    }
+}
+
+/* Make the tables (first use) and clear them when the shell numbers
+ * changed. Returns 1 when this evaluate uses them. */
+static int cg_ready(Ev *e) {
+    Pt2Ctx *c = e->c;
+    if (c->cg_off) return 0;
+    if (!c->cg) {
+        c->cg = (CGeom *)calloc(CG_SLOTS, sizeof(CGeom));
+        c->tg = (CGeom *)calloc(TG_SLOTS, sizeof(CGeom));
+        if (!c->cg || !c->tg) {
+            free(c->cg); free(c->tg); c->cg = NULL; c->tg = NULL;
+            return 0;
+        }
+        c->cg_n = 0; c->tg_n = 0; c->cg_par_set = 0;
+    }
+    double par[5] = { e->sh_speed, e->sh_add, e->sh_life, e->sh_hit_r, e->pill_len };
+    if (!c->cg_par_set || memcmp(par, c->cg_par, sizeof(par)) != 0) {
+        memset(c->cg, 0, sizeof(CGeom) * CG_SLOTS);
+        memset(c->tg, 0, sizeof(CGeom) * TG_SLOTS);
+        c->cg_n = 0; c->tg_n = 0;
+        memcpy(c->cg_par, par, sizeof(par));
+        c->cg_par_set = 1;
+    }
+    return 1;
+}
+
+/* Add square (mx, my) at step t to g, as an offset from (bx, by). Returns 0
+ * when it does not fit (off the map, too far, too many squares). */
+static int cg_add(CGeom *g, double mx, double my, int bx, int by, double t) {
+    if (mx < 0 || mx > 255 || my < 0 || my > 255 || g->n >= CG_MAXS || t > 255) return 0;
+    int ox = (int)mx - bx, oy = (int)my - by;
+    if (ox < -127 || ox > 127 || oy < -127 || oy > 127) return 0;
+    int k = g->n++;
+    g->ox[k] = (int8_t)ox; g->oy[k] = (int8_t)oy; g->t[k] = (uint8_t)t;
+    if (k == 0 || ox < g->minx) g->minx = (int8_t)ox;
+    if (k == 0 || ox > g->maxx) g->maxx = (int8_t)ox;
+    if (k == 0 || oy < g->miny) g->miny = (int8_t)oy;
+    if (k == 0 || oy > g->maxy) g->maxy = (int8_t)oy;
+    return 1;
+}
+
+static int cg_fits(const CGeom *g, int bx, int by) {
+    if (g->used != 1) return 0;
+    if (g->n == 0) return 1;
+    return bx + g->minx >= 0 && bx + g->maxx <= 255 && by + g->miny >= 0 && by + g->maxy <= 255;
+}
+
+/* The walk of cast_walk with no map reads: the squares up to the tank hit
+ * (the square entered on the tank-hit step is kept: its pill is tested
+ * before the tank) or the end of life. */
+static int cg_build_cast(const Ev *e, double sx, double sy, double tx, double ty, double len,
+                         int bx, int by, CGeom *g) {
+    double angle = calc_angle(sx, sy, tx, ty);
+    double xa, ya, xs, ys;
+    calc_distance_both(angle, e->sh_speed, &xa, &ya, &xs, &ys);
+    Walk w;
+    walk_init(&w, sx + e->sh_add * xa, sy + e->sh_add * ya, xs, ys);
+    if (!w.fast) return 0;   /* whole steps only: then a move of the start moves every point */
+    double n = life_ticks(e, len);
+    if (n > 255) return 0;
+    double r = e->sh_hit_r;
+    double r2 = r * r;
+    double last_sq = -1;
+    int tank = 0; double hit_t = 0;
+    g->n = 0;
+    for (double t = 1; t <= n; t++) {
+        double mx, my, sq;
+        walk_step(&w, &mx, &my, &sq);
+        int new_sq = sq != last_sq;
+        if (new_sq && !cg_add(g, mx, my, bx, by, t)) return 0;
+        double dx = w.x - tx, dy = w.y - ty;
+        if (dx < r && dx > -r && dy < r && dy > -r && dx * dx + dy * dy < r2) {
+            tank = 1; hit_t = t;
+            break;
+        }
+        if (new_sq) last_sq = sq;
+    }
+    double ex = w.x - sx, ey = w.y - sy;
+    if (!whole_in(ex, 1073741824.0) || !whole_in(ey, 1073741824.0)) return 0;
+    g->flag = (uint8_t)tank; g->hit_t = (int16_t)hit_t;
+    g->ex = (int32_t)ex; g->ey = (int32_t)ey;
+    g->angle = angle;
+    return 1;
+}
+
+/* cast_walk's result from the table entry g (start square bx, by). */
+static Ray *cg_cast(Ev *e, const CGeom *g, int bx, int by, double sx, double sy, double len,
+                    const Extra *extra) {
+    int64_t sq_list[CG_MAXS];
+    double  sq_t[CG_MAXS];
+    Blk     block[2 * CG_MAXS];
+    Ray *res = NEW(e, Ray);
+    memset(res, 0, sizeof(*res));
+    res->angle = g->angle;
+    double n = life_ticks(e, len);
+    int nsq = 0, nblk = 0;
+    double cover = 0, front = 0;
+    int link = 0; double link_t = 0;
+    for (int k = 0; k < g->n; k++) {
+        double t = g->t[k];
+        double mx = bx + g->ox[k], my = by + g->oy[k];
+        double sq = my * 256 + mx;
+        /* 1. a live pill on the square */
+        int p = pill_on(e, mx, my);
+        if (p) {
+            if (is_ally(e, p)) {
+                double s = cover_of_pill(e, p);
+                cover = cover + s;
+                if (!link) front = front + s;
+                Blk *b = &block[nblk++];
+                b->sq = (int64_t)sq; b->shots = s; b->kind = BK_ALLY_PILL; b->t = t; b->pill = p;
+            } else if (!link) {
+                link = p; link_t = t;
+            }
+        }
+        /* 2. the tank circle: this square's step hit the tank */
+        if (g->flag && t == g->hit_t) break;
+        /* 3. terrain, then planned blockers */
+        sq_list[nsq] = (int64_t)sq; sq_t[nsq] = t;
+        nsq++;
+        double s = 0; int kind = -1;
+        int ei = extra_find(extra, (int64_t)sq);
+        if (ei >= 0) {
+            s = extra->shots[ei]; kind = BK_PLANNED;
+        } else {
+            double tt = ttype(e, mx, my);
+            if (tt == e->T_BUILDING) { s = e->e_wall_shots; kind = BK_WALL; }
+            else if (tt == e->T_HALFBUILD) { s = e->e_half_wall_shots; kind = BK_HALF_WALL; }
+            else if (tt == e->T_BOAT) { s = e->e_boat_shots; kind = BK_BOAT; }
+            else if (tt == e->T_FOREST && !e->forest_transparent) { s = 1; kind = BK_FOREST; }
+        }
+        if (kind >= 0) {
+            cover = cover + s;
+            if (!link) front = front + s;
+            Blk *b = &block[nblk++];
+            b->sq = (int64_t)sq; b->shots = s; b->kind = kind; b->t = t; b->pill = 0;
+        }
+    }
+    res->tank = g->flag; res->t = g->flag ? (double)g->hit_t : n;
+    res->link = link; res->link_t = link_t;
+    res->cover = cover; res->front = front;
+    res->n_sq = nsq; res->n_block = nblk;
+    res->end_x = sx + g->ex; res->end_y = sy + g->ey;
+    res->sq = NEWN(e, int64_t, nsq);
+    res->sq_t = NEWN(e, double, nsq);
+    res->blk = NEWN(e, Blk, nblk);
+    memcpy(res->sq, sq_list, sizeof(int64_t) * (size_t)nsq);
+    memcpy(res->sq_t, sq_t, sizeof(double) * (size_t)nsq);
+    memcpy(res->blk, block, sizeof(Blk) * (size_t)nblk);
+    return res;
+}
+
+static void cg_note(Pt2Ctx *c, const char *what, double a, double b, double x, double y) {
+    c->cg_bad += 1;
+    if (!c->cg_first[0])
+        snprintf(c->cg_first, sizeof(c->cg_first), "%s: start %.0f,%.0f target %.0f,%.0f", what, a, b, x, y);
+}
+
+static int cg_same_ray(const Ray *a, const Ray *b) {
+    if (a->angle != b->angle || a->tank != b->tank || a->t != b->t || a->link != b->link
+        || a->link_t != b->link_t || a->cover != b->cover || a->front != b->front
+        || a->n_sq != b->n_sq || a->n_block != b->n_block || a->end_x != b->end_x
+        || a->end_y != b->end_y) return 0;
+    for (int k = 0; k < a->n_sq; k++)
+        if (a->sq[k] != b->sq[k] || a->sq_t[k] != b->sq_t[k]) return 0;
+    for (int k = 0; k < a->n_block; k++) {
+        const Blk *x = &a->blk[k], *y = &b->blk[k];
+        if (x->sq != y->sq || x->shots != y->shots || x->kind != y->kind || x->t != y->t || x->pill != y->pill)
+            return 0;
+    }
+    return 1;
+}
+
+/* shadow.cast: the table when the ray fits it, else the walk. */
+static Ray *cast(Ev *e, double sx, double sy, double tx, double ty, double len,
+                 const Extra *extra, int keep, Ray *scratch) {
+    if (!keep || !e->cg_on || len != e->pill_len)
+        return cast_walk(e, sx, sy, tx, ty, len, extra, keep, scratch);
+    double bxd = (sx - 128) / 256, byd = (sy - 128) / 256;
+    double dx = tx - sx, dy = ty - sy;
+    if (!(bxd == floor(bxd) && bxd >= 0 && bxd <= 255 && byd == floor(byd) && byd >= 0 && byd <= 255
+          && whole_in(dx, 1048576.0) && whole_in(dy, 1048576.0)))
+        return cast_walk(e, sx, sy, tx, ty, len, extra, keep, scratch);
+    Pt2Ctx *c = e->c;
+    int bx = (int)bxd, by = (int)byd;
+    if (c->cg_n >= CG_SLOTS / 4 * 3) { memset(c->cg, 0, sizeof(CGeom) * CG_SLOTS); c->cg_n = 0; }
+    int found;
+    CGeom *g = cg_slot(c->cg, CG_SLOTS, (int32_t)dx, (int32_t)dy, 0, &found);
+    if (!found) {
+        c->cg_n++;
+        g->k1 = (int32_t)dx; g->k2 = (int32_t)dy; g->k3 = 0;
+        g->used = cg_build_cast(e, sx, sy, tx, ty, len, bx, by, g) ? 1 : 2;
+        PCOUNT(e, P_CG_MISS);
+    } else {
+        PCOUNT(e, P_CG_HIT);
+    }
+    if (!cg_fits(g, bx, by)) return cast_walk(e, sx, sy, tx, ty, len, extra, keep, scratch);
+    Ray *r = cg_cast(e, g, bx, by, sx, sy, len, extra);
+    if (c->cg_check) {
+        Ray *w = cast_walk(e, sx, sy, tx, ty, len, extra, 1, NULL);
+        c->cg_checked += 1;
+        if (!cg_same_ray(r, w)) cg_note(c, "cast", sx, sy, tx, ty);
+    }
+    return r;
+}
+
+/* The walk of tank_shot_walk with no map reads: every new square (offset
+ * from the start square) up to the target square or the end of life. */
+static int cg_build_tshot(const Ev *e, double ox, double oy, double ax, double ay,
+                          double tmx, double tmy, int bx, int by, CGeom *g) {
+    double angle = tank_angle(ox, oy, ax, ay);
+    double xa, ya, xs, ys;
+    calc_distance_both(angle, e->sh_speed, &xa, &ya, &xs, &ys);
+    Walk w;
+    walk_init(&w, ox + e->sh_add * xa, oy + e->sh_add * ya, xs, ys);
+    if (!w.fast) return 0;
+    double n = life_ticks(e, PT2_TANK_FIRE_LEN);
+    if (n > 255) return 0;
+    double last_sq = -1;
+    int tgt = 0;
+    g->n = 0;
+    for (double t = 1; t <= n; t++) {
+        double mx, my, sq;
+        walk_step(&w, &mx, &my, &sq);
+        if (sq != last_sq) {
+            last_sq = sq;
+            if (!cg_add(g, mx, my, bx, by, t)) return 0;
+            if (mx == tmx && my == tmy) { tgt = 1; break; }
+        }
+    }
+    g->flag = (uint8_t)tgt; g->hit_t = 0; g->ex = 0; g->ey = 0; g->angle = angle;
+    return 1;
+}
+
+/* tank_shot_walk's answer from the table entry g (start square bx, by). */
+static int cg_tshot(Ev *e, const CGeom *g, int bx, int by, const Extra *extra, Lane **lane_out) {
+    int64_t lane[CG_MAXS];
+    int nl = 0;
+    int why = TS_SHORT;
+    for (int k = 0; k < g->n; k++) {
+        if (g->flag && k == g->n - 1) { why = TS_OK; break; }
+        double mx = bx + g->ox[k], my = by + g->oy[k];
+        if (g->ox[k] == 0 && g->oy[k] == 0) continue;
+        double sq = my * 256 + mx;
+        lane[nl++] = (int64_t)sq;
+        if (pill_on(e, mx, my)) { why = TS_PILL; break; }
+        if (extra_find(extra, (int64_t)sq) >= 0) { why = TS_PLANNED; break; }
+        double tt = ttype(e, mx, my);
+        if (tt == e->T_BUILDING || tt == e->T_HALFBUILD) { why = TS_WALL; break; }
+        if (base_stops(e, mx, my)) { why = TS_BASE; break; }
+    }
+    if (why == TS_OK && lane_out) {
+        Lane *l = NEW(e, Lane);
+        l->n = nl; l->memo = 0;
+        l->v = NEWN(e, int64_t, nl);
+        memcpy(l->v, lane, sizeof(int64_t) * (size_t)nl);
+        *lane_out = l;
+    }
+    return why;
+}
+
+/* shadow.tank_shot: the table when the shot fits it, else the walk. */
+static int tank_shot(Ev *e, double ox, double oy, double ax, double ay, double tmx, double tmy,
+                     const Extra *extra, Lane **lane_out) {
+    if (!e->cg_on) return tank_shot_walk(e, ox, oy, ax, ay, tmx, tmy, extra, lane_out);
+    double dx = ax - ox, dy = ay - oy;
+    if (!(whole_in(ox, 65536.0) && ox >= 0 && whole_in(oy, 65536.0) && oy >= 0
+          && whole_in(dx, 1048576.0) && whole_in(dy, 1048576.0)
+          && tmx == floor(tmx) && tmy == floor(tmy)))
+        return tank_shot_walk(e, ox, oy, ax, ay, tmx, tmy, extra, lane_out);
+    int oxi = (int)ox, oyi = (int)oy;
+    int bx = oxi >> 8, by = oyi >> 8;
+    double tdx = tmx - bx, tdy = tmy - by;
+    if (tdx < -127 || tdx > 127 || tdy < -127 || tdy > 127)
+        return tank_shot_walk(e, ox, oy, ax, ay, tmx, tmy, extra, lane_out);
+    int32_t k3 = (int32_t)((uint32_t)(oxi & 255) | ((uint32_t)(oyi & 255) << 8)
+                           | ((uint32_t)(uint8_t)(int8_t)tdx << 16)
+                           | ((uint32_t)(uint8_t)(int8_t)tdy << 24));
+    Pt2Ctx *c = e->c;
+    if (c->tg_n >= TG_SLOTS / 4 * 3) { memset(c->tg, 0, sizeof(CGeom) * TG_SLOTS); c->tg_n = 0; }
+    int found;
+    CGeom *g = cg_slot(c->tg, TG_SLOTS, (int32_t)dx, (int32_t)dy, k3, &found);
+    if (!found) {
+        c->tg_n++;
+        g->k1 = (int32_t)dx; g->k2 = (int32_t)dy; g->k3 = k3;
+        g->used = cg_build_tshot(e, ox, oy, ax, ay, tmx, tmy, bx, by, g) ? 1 : 2;
+        PCOUNT(e, P_TG_MISS);
+    } else {
+        PCOUNT(e, P_TG_HIT);
+    }
+    if (!cg_fits(g, bx, by)) return tank_shot_walk(e, ox, oy, ax, ay, tmx, tmy, extra, lane_out);
+    int why = cg_tshot(e, g, bx, by, extra, lane_out);
+    if (c->cg_check) {
+        Lane *wl = NULL;
+        int ww = tank_shot_walk(e, ox, oy, ax, ay, tmx, tmy, extra, lane_out ? &wl : NULL);
+        int same = ww == why;
+        if (same && why == TS_OK && lane_out) {
+            const Lane *a = *lane_out;
+            same = a->n == wl->n;
+            for (int k = 0; same && k < a->n; k++) same = a->v[k] == wl->v[k];
+        }
+        c->cg_checked += 1;
+        if (!same) cg_note(c, "tank_shot", ox, oy, ax, ay);
     }
     return why;
 }
@@ -954,7 +1348,7 @@ static Rec *eval_point(Ev *e, double px, double py, Extra *extra, int aim_fixed,
         } else {
             Pill *X = PI(e, T->v[i]);
             double sx = X->mx * 256 + 128, sy = X->my * 256 + 128;
-            Ray *r; PTIME(e, P_CAST, r = cast(e, sx, sy, px, py, PT2_PILL_FIRE_LEN, extra, 1, NULL));
+            Ray *r; PTIME(e, P_CAST, r = cast(e, sx, sy, px, py, e->pill_len, extra, 1, NULL));
             r->X = T->v[i];
             rays->v[i] = r;
         }
@@ -1256,7 +1650,7 @@ static int hold_safe(Ev *e, Rec *b, double hx, double hy, int *why_pill) {
             else if (p == e->A && !b->chain_mode) bar = e->bar_single;
             else if (ci) bar = e->bar_chain;
             else bar = e->bar_other;
-            Ray *r; PTIME(e, P_CAST, r = cast(e, sx, sy, hx, hy, PT2_PILL_FIRE_LEN, NULL, 0, &scratch));
+            Ray *r; PTIME(e, P_CAST, r = cast(e, sx, sy, hx, hy, e->pill_len, NULL, 0, &scratch));
             int linked = e->link_covers && ci && r->link != 0 && ci < b->chain->n
                          && r->link == b->chain->v[ci];
             if (r->tank && !linked && r->cover < bar) { *why_pill = p; return 0; }
@@ -1793,6 +2187,12 @@ static int l_evaluate(lua_State *L) {
     e->e_half_wall_shots = getnum(L, S_ENV, "half_wall_shots", 0, NULL);
     e->e_boat_shots = getnum(L, S_ENV, "boat_shots", 0, NULL);
     e->forest_transparent = getbool(L, S_ENV, "forest_transparent");
+    e->sh_speed = getnum(L, S_ENV, "shell_speed", PT2_SHELL_SPEED, NULL);
+    e->sh_add = getnum(L, S_ENV, "shell_start_add", PT2_START_ADD, NULL);
+    e->sh_life = getnum(L, S_ENV, "shell_life", PT2_SHELL_LIFE, NULL);
+    e->sh_hit_r = getnum(L, S_ENV, "tank_hit_r", PT2_TANK_HIT_R, NULL);
+    e->pill_len = getnum(L, S_ENV, "pill_fire_len", PT2_PILL_FIRE_LEN, NULL);
+    e->cg_on = cg_ready(e);
 
     /* A */
     lua_getfield(L, S_INP, "A");
@@ -2035,6 +2435,28 @@ static int l_prof_take(lua_State *L) {
     return 1;
 }
 
+/* gh_pt2.table(on): false = every ray walks (no ray table), for the
+ * profile and the tests; true (the default) = the table is used. */
+static int l_table(lua_State *L) {
+    Pt2Ctx *c = get_ctx(L);
+    c->cg_off = !lua_toboolean(L, 1);
+    return 0;
+}
+
+/* gh_pt2.table_check(on): each ray read from the table is also walked and
+ * the two compared (tests only: the walk repeats the base_stops calls).
+ * Returns checked, mismatches, the first mismatch ("" when none) since the
+ * last call, then zeroes them. */
+static int l_table_check(lua_State *L) {
+    Pt2Ctx *c = get_ctx(L);
+    c->cg_check = lua_toboolean(L, 1);
+    lua_pushnumber(L, c->cg_checked);
+    lua_pushnumber(L, c->cg_bad);
+    lua_pushstring(L, c->cg_first);
+    c->cg_checked = 0; c->cg_bad = 0; c->cg_first[0] = 0;
+    return 3;
+}
+
 /* ── Registration ───────────────────────────────────────────────────── */
 static int pt2_ctx_gc(lua_State *L) {
     Pt2Ctx *c = (Pt2Ctx *)lua_touserdata(L, 1);
@@ -2043,6 +2465,7 @@ static int pt2_ctx_gc(lua_State *L) {
     while (k) { Chunk *n = k->next; free(k); k = n; }
     c->ar.head = c->ar.cur = NULL;
     free(c->tt_stamp); free(c->tt_val); free(c->po_stamp); free(c->po_val); free(c->ba_stamp); free(c->pills);
+    free(c->cg); free(c->tg); c->cg = NULL; c->tg = NULL;
     c->tt_stamp = NULL; c->tt_val = NULL; c->po_stamp = NULL; c->po_val = NULL; c->ba_stamp = NULL; c->pills = NULL;
     return 0;
 }
@@ -2051,6 +2474,8 @@ static const luaL_Reg gh_pt2_lib[] = {
     { "evaluate", l_evaluate },
     { "prof", l_prof },
     { "prof_take", l_prof_take },
+    { "table", l_table },
+    { "table_check", l_table_check },
     { NULL, NULL }
 };
 
@@ -2065,4 +2490,45 @@ void naPt2Register(lua_State *L) {
     lua_setfield(L, LUA_REGISTRYINDEX, "gh_pt2_ctx");
     luaL_newlib(L, gh_pt2_lib);
     lua_setglobal(L, "gh_pt2");
+}
+
+/* ── Test hook ──────────────────────────────────────────────────────── */
+/* tests/unit/test_gh_pt2_parity.c checks the walk against the engine's
+ * shell (shells.c) with this. sh = { shell_speed, shell_start_add,
+ * shell_life, tank_hit_r, pill_fire_len }. kind 0: a pill's shell from
+ * (sx, sy) at (tx, ty), as cast walks it; kind 1: a tank's shot, as
+ * tank_shot walks it. Writes the angle, every new square to the end of
+ * life (mx, my, the step it is entered on; at most max) and, for kind 0,
+ * the first step inside the tank circle round (tx, ty) (0 = none).
+ * Returns the number of squares. */
+int naPt2TestWalk(int kind, const double sh[5], double sx, double sy, double tx, double ty,
+                  double *angle, int *mx, int *my, int *t, int max, int *hit_t) {
+    Ev ev;
+    memset(&ev, 0, sizeof(ev));
+    ev.sh_speed = sh[0]; ev.sh_add = sh[1]; ev.sh_life = sh[2]; ev.sh_hit_r = sh[3]; ev.pill_len = sh[4];
+    double a = kind == 0 ? calc_angle(sx, sy, tx, ty) : tank_angle(sx, sy, tx, ty);
+    double xa, ya, xs, ys;
+    calc_distance_both(a, ev.sh_speed, &xa, &ya, &xs, &ys);
+    Walk w;
+    walk_init(&w, sx + ev.sh_add * xa, sy + ev.sh_add * ya, xs, ys);
+    double n = life_ticks(&ev, kind == 0 ? ev.pill_len : PT2_TANK_FIRE_LEN);
+    double r = ev.sh_hit_r, r2 = r * r;
+    double last_sq = -1;
+    int k = 0;
+    *angle = a;
+    if (hit_t) *hit_t = 0;
+    for (double s = 1; s <= n; s++) {
+        double qx, qy, sq;
+        walk_step(&w, &qx, &qy, &sq);
+        if (sq != last_sq) {
+            last_sq = sq;
+            if (k < max) { mx[k] = (int)qx; my[k] = (int)qy; t[k] = (int)s; }
+            k++;
+        }
+        if (kind == 0 && hit_t && *hit_t == 0) {
+            double dx = w.x - tx, dy = w.y - ty;
+            if (dx < r && dx > -r && dy < r && dy > -r && dx * dx + dy * dy < r2) *hit_t = (int)s;
+        }
+    }
+    return k;
 }

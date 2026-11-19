@@ -254,7 +254,7 @@ local function eval_point(ctx, px, py, extra, aim_fixed, prev, new_sq, nudge)
       rays[i] = pr_ray
     else
       local sx, sy = pill_centre(X)
-      rays[i] = SH.cast(env, sx, sy, px, py, SH.PILL_FIRE_LEN, extra)
+      rays[i] = SH.cast(env, sx, sy, px, py, env.pill_fire_len or SH.PILL_FIRE_LEN, extra)
       rays[i].X = X
     end
   end
@@ -525,7 +525,7 @@ local function hold_safe(ctx, b, hx, hy)
       elseif p == ctx.A and not b.chain_mode then bar = inp.bar_single
       elseif b.in_chain and b.in_chain[p] then bar = inp.bar_chain
       else bar = inp.bar_other or inp.wall_shots end
-      local r = SH.cast(env, sx, sy, hx, hy, SH.PILL_FIRE_LEN, nil)
+      local r = SH.cast(env, sx, sy, hx, hy, env.pill_fire_len or SH.PILL_FIRE_LEN, nil)
       local ci = b.in_chain and b.in_chain[p]
       local linked = inp.link_covers and ci and r.link ~= nil and r.link == b.chain[ci + 1]
       if r.hit == "tank" and not linked and r.cover < bar then return false, M.pill_name(inp, p) end
@@ -915,6 +915,21 @@ function M.world_env(world, C, U, PC)
   -- took from its cache to U.ttype's counter.
   env.base_at = world.base_at
   env.count_reads = function(n) require("metrics").inc("get_terrain", n) end
+  return env
+end
+
+-- PT2_LIVE_SHELL: the live shell rules (info.rules) into the shadow env,
+-- where shadow.lua and gh_pt2.c read them. A rule not sent (an older exe)
+-- or out of range stays nil: the walk then uses the classic number.
+function M.live_shell(env, r)
+  if type(env) ~= "table" or type(r) ~= "table" then return env end
+  local function pos(v) return (type(v) == "number" and v > 0) and v or nil end
+  env.shell_speed = pos(r.shell_speed)
+  env.shell_life = pos(r.shell_life)
+  local a = r.shell_start_add
+  env.shell_start_add = (type(a) == "number" and a >= 0) and a or nil
+  env.tank_hit_r = pos(r.tank_hit_radius)
+  env.pill_fire_len = pos(r.pill_fire_length)
   return env
 end
 

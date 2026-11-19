@@ -858,6 +858,7 @@ local R221 = {
   PT2_DOUBLE_TAKE_DISCOUNT = false,
   PT2_DBL_SPLIT = false,
   PT2_DBL_CAN_WIN = false,
+  PT2_LIVE_SHELL = false,
   PT2_CHAIN_CLAIM = false,
   PT2_C_EVAL = false,
   PT2_FAST_SETUP = false,

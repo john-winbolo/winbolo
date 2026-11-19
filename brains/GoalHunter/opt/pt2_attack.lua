@@ -96,6 +96,8 @@ function M.build_inp(state, goal, info, world, pill, no_builder, npb, radius, no
   inp.num_pill_blockers = npb
   -- PT2_FINISH_NO_COVER_MAX_ANGER: our armour and each pill's anger now
   inp.armour = info.armour or 0
+  -- PT2_LIVE_SHELL: the shadow's shells walk the live rules
+  if C.PT2_LIVE_SHELL then V2.live_shell(inp.env, info.rules) end
   inp.anger_of = function(p) return M.anger_now(p, now) end
   local goalA = inp.A
   local curA = goalA

@@ -967,7 +967,7 @@ M.PT2_ANGLE_STEP_DEG = 2
 -- (covers leeway and one knockback), wu. Proposal, awaiting Andrew's value.
 M.PT2_RANGE_MARGIN_WU = 128
 -- Forest neither stops nor shields a ray (it stops one shell and is gone).
--- Proposal, awaiting Andrew's value.
+-- true is Andrew's value: "trees don't block enough to be counted".
 M.PT2_FOREST_TRANSPARENT = true
 -- Leeway: count the 8 points 32 wu around a candidate that also pass with
 -- the same blockers; more ranks higher inside a tier, counted up to
@@ -1111,6 +1111,14 @@ M.PT2_DBL_EVENT_FILE = ""
 -- discount: they cannot win at the discount price. false = every pill.
 -- KEEL / MAST: false.
 M.PT2_DBL_CAN_WIN = true
+-- PT2_LIVE_SHELL (Nov 18, Andrew: rays must follow the engine's shell
+-- exactly): the v2 shadow's shell walks (shadow.lua cast / tank_shot and
+-- gh_pt2.c) use the live rules from info.rules (shell_speed,
+-- shell_start_add, shell_life, tank_hit_radius, pill_fire_length), as the
+-- engine's shell and the shot simulator do. A rule the exe does not send
+-- stays classic. Under classic rules nothing changes. false = the classic
+-- numbers always. KEEL / MAST: false.
+M.PT2_LIVE_SHELL = true
 -- PT2_CHAIN_CLAIM (Nov 18, Andrew: "someone doing a double pill needs to
 -- broadcast & claim BOTH pills"). A HELM 2v2 replay: pills 13 and 14 side
 -- by side; one ally took 14, the other a 13+14 double take, and each claim
@@ -7869,6 +7877,7 @@ M.PRESETS = {
     PT2_DOUBLE_TAKE_DISCOUNT = false,
     PT2_DBL_SPLIT = false,
     PT2_DBL_CAN_WIN = false,
+    PT2_LIVE_SHELL = false,
     PT2_CHAIN_CLAIM = false,
     --   2026-11-18: pill take v2 in Lua only (no C copy).
     PT2_C_EVAL = false,
@@ -8194,6 +8203,7 @@ M.PRESETS.mast = {
   PT2_DOUBLE_TAKE_DISCOUNT          = false,  -- 2.2.1 had no pill take v2
   PT2_DBL_SPLIT                     = false,  -- 2.2.1 had no pill take v2
   PT2_DBL_CAN_WIN                   = false,  -- 2.2.1 had no pill take v2
+  PT2_LIVE_SHELL                    = false,  -- 2.2.1 had no pill take v2
   PT2_CHAIN_CLAIM                   = false,  -- 2.2.1 had no pill take v2
   PT2_C_EVAL                        = false,  -- 2.2.1 had no pill take v2
   POST_KILL_WAIT_TICKS              = 15,

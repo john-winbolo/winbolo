@@ -100,8 +100,13 @@ function M.calc_distance_hp(angle, speed)
   return round_double(speed * cos(db) * 256.0), round_double(speed * sin(db) * 256.0)
 end
 
-function M.life_ticks(len)
-  local t = 1 + floor(M.SHELL_LIFE * len) - M.SHELL_START_ADD
+-- shellLifeTicks: 1 + (int)(shell_life * len) - start_add, the product a
+-- float as in the engine. env (optional): the live shell numbers
+-- (env.shell_life, env.shell_start_add), else the classic ones.
+function M.life_ticks(len, env)
+  local life = env and env.shell_life or M.SHELL_LIFE
+  local add = env and env.shell_start_add or M.SHELL_START_ADD
+  local t = 1 + floor(f32(life * f32(len))) - add
   return t < 0 and 0 or t
 end
 
@@ -134,6 +139,9 @@ end
 --   env.cover_of_pill(pill)    -> shots an allied pill stops (5 * floor(hp/5))
 --   env.T_BUILDING, T_HALFBUILD, T_BOAT, T_FOREST
 --   env.wall_shots, half_wall_shots, boat_shots, forest_transparent
+--   env.shell_speed, shell_start_add, shell_life, tank_hit_r (optional):
+--     the live rules (pilltake_v2 sets them from info.rules), else the
+--     classic M.SHELL_SPEED ... M.TANK_HIT_RADIUS
 -- extra: nil or { [sq] = shots } planned blockers (walls or dropped pills).
 --
 -- Walks the whole life of the shell up to the tank-hit point and returns:
@@ -153,13 +161,15 @@ function M.cast(env, sx, sy, tx, ty, len, extra, res)
   res = res or {}
   local angle = M.calc_angle(sx, sy, tx, ty)
   res.angle = angle
-  local xa, ya = M.calc_distance(angle, M.SHELL_SPEED)
-  local xs, ys = M.calc_distance_hp(angle, M.SHELL_SPEED)
-  local x = sx + M.SHELL_START_ADD * xa
-  local y = sy + M.SHELL_START_ADD * ya
+  local speed = env.shell_speed or M.SHELL_SPEED
+  local add = env.shell_start_add or M.SHELL_START_ADD
+  local xa, ya = M.calc_distance(angle, speed)
+  local xs, ys = M.calc_distance_hp(angle, speed)
+  local x = sx + add * xa
+  local y = sy + add * ya
   local xc, yc = 0, 0
-  local n = M.life_ticks(len or M.PILL_FIRE_LEN)
-  local r = M.TANK_HIT_RADIUS
+  local n = M.life_ticks(len or env.pill_fire_len or M.PILL_FIRE_LEN, env)
+  local r = env.tank_hit_r or M.TANK_HIT_RADIUS
   local r2 = r * r
   local sq_list = res.sq or {}
   local sq_t = res.sq_t or {}
@@ -245,12 +255,14 @@ end
 function M.tank_shot(env, ox, oy, ax, ay, tmx, tmy, extra, lane)
   lane = lane or {}
   local angle = M.tank_angle(ox, oy, ax, ay)
-  local xa, ya = M.calc_distance(angle, M.SHELL_SPEED)
-  local xs, ys = M.calc_distance_hp(angle, M.SHELL_SPEED)
-  local x = ox + M.SHELL_START_ADD * xa
-  local y = oy + M.SHELL_START_ADD * ya
+  local speed = env.shell_speed or M.SHELL_SPEED
+  local add = env.shell_start_add or M.SHELL_START_ADD
+  local xa, ya = M.calc_distance(angle, speed)
+  local xs, ys = M.calc_distance_hp(angle, speed)
+  local x = ox + add * xa
+  local y = oy + add * ya
   local xc, yc = 0, 0
-  local n = M.life_ticks(M.TANK_FIRE_LEN)
+  local n = M.life_ticks(M.TANK_FIRE_LEN, env)
   local nl, last_sq = 0, -1
   local omx, omy = bit.rshift(ox, 8), bit.rshift(oy, 8)
   local ok, why = false, "short"
