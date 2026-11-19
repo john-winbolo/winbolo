@@ -612,7 +612,7 @@ function M.update(state, world, info)
   -- byte, which is also true of NEUTRAL(2): every round a neutral pillbox
   -- fired counted as our own team's friendly fire, and any friendly pill
   -- within one tile of that round's flight path went unrepairable for
-  -- REPAIR_FRIENDLY_FIRE_REJECT_TICKS (400) -- refreshed by the next round,
+  -- REPAIR_FRIENDLY_FIRE_REJECT_TICKS (then 400; 50 since 2026-11-01) -- refreshed by the next round,
   -- so in practice forever while a neutral pill was shooting past it. The two
   -- other shell scans in this file already read the enum correctly
   -- (`ob.info == SHELL_FRIENDLY`, SHELL_FRIENDLY = 0); this one now matches.
@@ -720,6 +720,24 @@ function M.update(state, world, info)
           _ent.dest_wy     = h.dest_wy
           _ent.dest_locked = h.dest_locked
           _ent.lock_status = h.lock_status
+          -- LGM_DEST_AIM: straight-line walk into a dead hostile pill?  The
+          -- lock rides h (read by predict_aim below) and the entry (overlay).
+          -- Knob off: never run, h.dest_pill stays nil, old aim exactly.
+          if C.LGM_DEST_AIM then
+            local dp, ray, why = kill_lgm.find_dest_pill(h, _ent, world.pills, enemy_tanks, now)
+            h.dest_pill = dp
+            _ent.dest_pill, _ent.dest_ray, _ent.dest_why = dp, ray, why
+            -- LGM_DEST_PASS_THROUGH: the pill he just walked through (not his job).
+            _ent.dest_passed = h.dest_passed
+            local passed_now = h.dest_pass_tick == now and h.dest_pass_id or nil
+            local log_key = dp and ("lock#" .. tostring(dp.id)) or why
+            if h.dest_log_key ~= log_key or passed_now then
+              h.dest_log_key = log_key
+            end
+            -- LGM_DEST_HOLD_FIRE: his tank's last known position, for the
+            -- walk off the pill tile after the build (predict_dest_hold).
+            if C.LGM_DEST_HOLD_FIRE then kill_lgm.note_owner_pos(h, _ent, enemy_tanks) end
+          end
         end
         local aim_wx, aim_wy, sl, ft, d_wu, tier = kill_lgm.predict_aim(
           info.tankx, info.tanky, _ent, h)
@@ -731,6 +749,12 @@ function M.update(state, world, info)
         _ent.flight_ticks     = ft
         _ent.predicted_dist_wu = d_wu
         _ent.predict_tier     = tier
+        -- LGM_DEST_HOLD_FIRE: the fire gates hold the trigger on this flag.
+        -- Only predict_aim's hold branch sets tier dest_pill_hold, so the
+        -- flag is false with the knob (or LGM_DEST_AIM) off.
+        _ent.dest_hold   = (tier == "dest_pill_hold")
+        _ent.dest_timing = h and h.dest_timing or nil
+        _ent.dest_intercept = h and h.dest_intercept or nil   -- LGM_DEST_INTERCEPT
         n_lgm = n_lgm + 1
         enemy_lgms[n_lgm] = _ent
       end
@@ -978,6 +1002,33 @@ function M.update(state, world, info)
     end
   end
 
+  -- ----- Defend alarm heat: hostile shell at a team pill RIGHT NOW -----
+  -- C.DEFEND_ALARM_HEAT (Andrew, Nov 18).  attack.lua's defend heat calls
+  -- the defended pill ENGAGED, and never heats it, while an enemy hit it in
+  -- the alarm window OR a shell labelled SHELLS_BRAIN_HOSTILE (1, an enemy
+  -- TANK's shell) is within HEAT_ALLY_SHELL_RADIUS of it this tick.  Only the
+  -- hostile label counts: pill fire is labelled NEUTRAL (shells.c gives a
+  -- pill's shell owner NEUTRAL), so counting neutral would mark the pill
+  -- engaged every time it fires back at the tank.  Friendly AND allied pills
+  -- (the alarm defends both).  Stamp only; read by attack.defend_heat_engaged.
+  if C.DEFEND_ALARM_HEAT then
+    local SHELL_HOSTILE = 1   -- SHELLS_BRAIN_HOSTILE (shells.h)
+    local r = C.HEAT_ALLY_SHELL_RADIUS or 2
+    for _, ob in ipairs(info.objects) do
+      if ob.type == OBJECT_SHOT and ob.info == SHELL_HOSTILE then
+        local smx = bit.rshift(ob.x, 8)
+        local smy = bit.rshift(ob.y, 8)
+        for _, p in pairs(world.pills) do
+          if (p.owner == "friendly" or p.owner == "allied")
+             and not (p.in_tank or p.carrier or p._synth_carry)
+             and math.abs(p.mx - smx) <= r and math.abs(p.my - smy) <= r then
+            p._hostile_shell_tick = now
+          end
+        end
+      end
+    end
+  end
+
   -- ----- Damage-source log: which shells came near which team pill -----
   -- Companion to the ally-heat watch above, but the opposite question. That
   -- one asks "is every shell here OURS" (suppress the alarm); this one asks,
@@ -1104,7 +1155,25 @@ function M.update(state, world, info)
           --   npill — a NEUTRAL pillbox's stray        -> NOT an enemy, ignored
           -- Compacted to the window on write and capped, so it needs no
           -- per-tick sweep of its own.
-          if C.DEFEND_ALARM_MODE and (src == "tank" or src == "epill") then
+          -- C.DEFEND_ALARM_HEAT: OUR OWN heat shell (or an ally's) must not
+          -- count.  With no hostile shell logged at the pill (how ~= "shell")
+          -- the fallback blames a nearby enemy tank ("presence_tank"), and
+          -- during a defend heat an enemy tank IS near.  So a hit inside
+          -- HEAT_SELF_STAMP_TICKS of our heat shot (_heat_shot_tick) or of an
+          -- all-friendly shell watch stamp (_ally_heat_tick), with no hostile
+          -- shell seen, stays out of the ring: it would otherwise raise the
+          -- alarm on a pill we heated, or mark it engaged mid-volley.
+          local self_heat = false
+          if C.DEFEND_ALARM_HEAT and how ~= "shell" then
+            local hs = C.HEAT_SELF_STAMP_TICKS or 150
+            self_heat = (p._heat_shot_tick and (hit - p._heat_shot_tick) < hs)
+                        or (p._ally_heat_tick and (hit - p._ally_heat_tick) < hs)
+                        or false
+            if self_heat then
+            end
+          end
+          if C.DEFEND_ALARM_MODE and (src == "tank" or src == "epill")
+             and not self_heat then
             local ring = p._alarm_hits
             if not ring then ring = {}; p._alarm_hits = ring end
             local win = C.DEFEND_ALARM_WINDOW_TICKS or 250
@@ -1162,7 +1231,9 @@ function M.update(state, world, info)
     for id, b in pairs(world.bases) do
       if b.mx == bmx and b.my == bmy then
         b.obs_shells = info.base.shells or 0
-        b.obs_armour = info.base.armour or 0
+        -- info.base.armour is raw / 5; obs_armour holds RAW armour (util.lua
+        -- base_armour_steps), the same unit EVENT_BASE_STOCK writes.
+        b.obs_armour = U.base_armour_raw_from_info(info.base.armour or 0, b.obs_armour)
         b.obs_tick   = now
         break
       end

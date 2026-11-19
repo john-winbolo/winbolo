@@ -138,10 +138,15 @@ local function verify_alive(shot, info)
   local best2 = math.huge
   local best_x, best_y, best_info, best_type
   local seen_any_shot = false
+  -- C.SHOT_TRACK_OWN_SHELLS_ONLY: a neutral pill's shell is not ours either.
+  -- It leaves the pill square where our shell has just hit, so it kept that
+  -- shell "in flight" one tick after the hit (see constants.lua).
+  local skip_mask = OBJECT_HOSTILE
+  if C.SHOT_TRACK_OWN_SHELLS_ONLY then skip_mask = bit.bor(OBJECT_HOSTILE, OBJECT_NEUTRAL or 0) end
   for _, ob in ipairs(info.objects or {}) do
     if ob.type == OBJECT_SHOT then
       seen_any_shot = true
-      local hostile = bit.band((ob.info or 0), OBJECT_HOSTILE)
+      local hostile = bit.band((ob.info or 0), skip_mask)
       if hostile == 0 then
         local dx = ob.x - shot.cur_fx
         local dy = ob.y - shot.cur_fy

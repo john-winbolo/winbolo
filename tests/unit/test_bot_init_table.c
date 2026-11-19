@@ -21,6 +21,9 @@
  *   - bot_init_table_empty_when_none:
  *       no table (NULL) leaves BRAIN_INIT an empty table rather than
  *       nil, so a brain can read a key off it without a type check.
+ *   - bot_init_cfg_tokens_all_count:
+ *       every cfg=NAME=VALUE token in the [arg] text reaches the brain,
+ *       in order; a second cfg= no longer replaces the first.
  *   - bot_init_arg_text_to_table:
  *       the mapping -bot-init's [arg] suffix goes through: ';'
  *       separated pairs, a bare word as the value "1", the caps the
@@ -137,6 +140,118 @@ int run_bot_init_table_empty_when_none(void) {
     brainCoreSetInitTable(L, &empty);
     UT_ASSERT(fixture_run(L, seen, sizeof(seen)));
     UT_ASSERT_MSG(strcmp(seen, "") == 0, "empty init gave '%s'", seen);
+
+    lua_close(L);
+    return 0;
+}
+
+/* The brain side of the check: GoalHunter's init.lua flattens BRAIN_INIT
+ * to "key=value" text (sorted keys) and splits it on ',' / ';'. This
+ * chunk does the same, then applies the cfg= tokens in order with a later
+ * one winning only for the same NAME, and writes "NAME=VALUE" per name,
+ * plus the raw cfg token order, into globals the test reads back. */
+static const char *CFG_FIXTURE_BRAIN =
+    "local t = BRAIN_INIT\n"
+    "local keys = {}\n"
+    "for k in pairs(t) do keys[#keys + 1] = k end\n"
+    "table.sort(keys)\n"
+    "local toks = {}\n"
+    "for _, k in ipairs(keys) do toks[#toks + 1] = k .. '=' .. t[k] end\n"
+    "local flat = table.concat(toks, ';')\n"
+    "local order, final, names = {}, {}, {}\n"
+    "for tok in flat:gmatch('[^,;]+') do\n"
+    "  local n, v = tok:match('^cfg=([%a_][%w_]*)=(.*)$')\n"
+    "  if n then\n"
+    "    order[#order + 1] = n .. '=' .. v\n"
+    "    if final[n] == nil then names[#names + 1] = n end\n"
+    "    final[n] = v\n"
+    "  end\n"
+    "end\n"
+    "table.sort(names)\n"
+    "local out = {}\n"
+    "for _, n in ipairs(names) do out[#out + 1] = n .. '=' .. final[n] end\n"
+    "CFG_ORDER = table.concat(order, ';')\n"
+    "CFG_FINAL = table.concat(out, ';')\n"
+    "PRESET_SEEN = tostring(t.preset)\n";
+
+static bool cfg_fixture_global(lua_State *L, const char *name,
+                               char *out, size_t outCap) {
+    const char *s;
+    out[0] = '\0';
+    lua_getglobal(L, name);
+    s = lua_tostring(L, -1);
+    if (s == NULL) { lua_pop(L, 1); return false; }
+    snprintf(out, outCap, "%s", s);
+    lua_pop(L, 1);
+    return true;
+}
+
+int run_bot_init_cfg_tokens_all_count(void) {
+    ScnTable t;
+    lua_State *L;
+    char got[512];
+    char formatted[512];
+
+    /* The run13 shape: a preset and two cfg= tokens for different names.
+     * Before the fix the second cfg= replaced the first in the table, so
+     * FOCUS_SPIKE_EVENT_FILE never reached the brain. */
+    UT_ASSERT(scnTableFromArgText(
+        "preset=keel_focus_bench;cfg=FOCUS_SPIKE_EVENT_FILE=run13.txt;"
+        "cfg=PLACE_ENEMY_REACH=60", &t));
+    UT_ASSERT_MSG(t.count == 3, "expected 3 pairs, got %d", (int)t.count);
+    UT_ASSERT(strcmp(t.kv[1].key, "cfg") == 0);
+    UT_ASSERT(strcmp(t.kv[1].value, "FOCUS_SPIKE_EVENT_FILE=run13.txt") == 0);
+    UT_ASSERT(strcmp(t.kv[2].key, "cfg") == 0);
+    UT_ASSERT(strcmp(t.kv[2].value, "PLACE_ENEMY_REACH=60") == 0);
+
+    /* The log line the servers print shows every cfg= token. */
+    scnTableFormat(&t, formatted, sizeof(formatted));
+    UT_ASSERT_MSG(strcmp(formatted,
+                         "preset=keel_focus_bench;"
+                         "cfg=FOCUS_SPIKE_EVENT_FILE=run13.txt;"
+                         "cfg=PLACE_ENEMY_REACH=60") == 0,
+                  "formatted as '%s'", formatted);
+
+    L = luaL_newstate();
+    UT_ASSERT(L != NULL);
+    luaL_openlibs(L);
+    brainCoreSetInitTable(L, &t);
+    UT_ASSERT_MSG(luaL_dostring(L, CFG_FIXTURE_BRAIN) == 0,
+                  "fixture failed: %s", lua_tostring(L, -1));
+    UT_ASSERT(cfg_fixture_global(L, "CFG_ORDER", got, sizeof(got)));
+    UT_ASSERT_MSG(strcmp(got, "FOCUS_SPIKE_EVENT_FILE=run13.txt;"
+                              "PLACE_ENEMY_REACH=60") == 0,
+                  "cfg order '%s'", got);
+    UT_ASSERT(cfg_fixture_global(L, "PRESET_SEEN", got, sizeof(got)));
+    UT_ASSERT_MSG(strcmp(got, "keel_focus_bench") == 0, "preset '%s'", got);
+
+    /* The same NAME twice: both tokens arrive in order, and the later one
+     * wins for that NAME only. The other NAME keeps its value. */
+    UT_ASSERT(scnTableFromArgText(
+        "cfg=A_KNOB=1;cfg=B_KNOB=2;cfg=A_KNOB=3", &t));
+    UT_ASSERT_MSG(t.count == 3, "expected 3 pairs, got %d", (int)t.count);
+    brainCoreSetInitTable(L, &t);
+    UT_ASSERT_MSG(luaL_dostring(L, CFG_FIXTURE_BRAIN) == 0,
+                  "fixture failed: %s", lua_tostring(L, -1));
+    UT_ASSERT(cfg_fixture_global(L, "CFG_ORDER", got, sizeof(got)));
+    UT_ASSERT_MSG(strcmp(got, "A_KNOB=1;B_KNOB=2;A_KNOB=3") == 0,
+                  "cfg order '%s'", got);
+    UT_ASSERT(cfg_fixture_global(L, "CFG_FINAL", got, sizeof(got)));
+    UT_ASSERT_MSG(strcmp(got, "A_KNOB=3;B_KNOB=2") == 0,
+                  "cfg final '%s'", got);
+
+    /* One cfg= token is one plain field, as before. */
+    UT_ASSERT(scnTableFromArgText("cfg=A_KNOB=7", &t));
+    brainCoreSetInitTable(L, &t);
+    UT_ASSERT_MSG(luaL_dostring(L, "CFG_ONE = BRAIN_INIT.cfg") == 0,
+                  "read failed");
+    UT_ASSERT(cfg_fixture_global(L, "CFG_ONE", got, sizeof(got)));
+    UT_ASSERT_MSG(strcmp(got, "A_KNOB=7") == 0, "single cfg '%s'", got);
+
+    /* Other keys still keep the last value. */
+    UT_ASSERT(scnTableFromArgText("preset=a;preset=b", &t));
+    UT_ASSERT(t.count == 1);
+    UT_ASSERT(strcmp(scnTableGet(&t, "preset"), "b") == 0);
 
     lua_close(L);
     return 0;

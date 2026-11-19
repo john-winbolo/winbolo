@@ -57,6 +57,20 @@ bool scnTableSet(ScnTable *t, const char *key, const char *value) {
     return true;
 }
 
+/* Adds a new pair even when the key is already in the table. Only the
+ * arg-text parser uses it, for the repeatable cfg= token. */
+static bool scnTableAppend(ScnTable *t, const char *key, const char *value) {
+    if (t == NULL || key == NULL || key[0] == '\0') return false;
+    if (value == NULL) value = "";
+    if (strlen(key) >= SCN_TABLE_KEY_LEN) return false;
+    if (strlen(value) >= SCN_TABLE_VALUE_LEN) return false;
+    if (t->count >= SCN_TABLE_MAX) return false;
+    scnCopyField(t->kv[t->count].key, key, SCN_TABLE_KEY_LEN);
+    scnCopyField(t->kv[t->count].value, value, SCN_TABLE_VALUE_LEN);
+    t->count++;
+    return true;
+}
+
 const char *scnTableGet(const ScnTable *t, const char *key) {
     uint8_t i;
 
@@ -102,7 +116,14 @@ bool scnTableFromArgText(const char *text, ScnTable *out) {
         eq = strchr(token, '=');
         if (eq != NULL) {
             *eq = '\0';
-            if (!scnTableSet(out, token, eq + 1)) ok = false;
+            if (strcmp(token, "cfg") == 0) {
+                /* Every cfg=NAME=VALUE token is its own pair, in the order
+                 * written, so a second cfg= does not replace the first.
+                 * brainCoreSetInitTable joins them back into one field. */
+                if (!scnTableAppend(out, token, eq + 1)) ok = false;
+            } else if (!scnTableSet(out, token, eq + 1)) {
+                ok = false;
+            }
         } else if (!scnTableSet(out, token, "1")) {
             /* A bare flag is the value "1", which is truthy in Lua. */
             ok = false;

@@ -109,7 +109,14 @@ static bool scenarioAllowsExtraTeams(ServerSim *sim, BYTE slot, BYTE team) {
     if (team == 0 || team >= MAX_TANKS) {
         return TRUE;
     }
-    lp = serverSimGetLobbyPlayer(sim, slot);
+    /* A team the lobby template lists is one the scenario laid out, so it
+       is not an extra team even while nobody is on it: a host who emptied
+       the horde's seats can still add a bot back onto the horde. */
+    if (serverSimScenarioTemplateHasTeam(sim, team)) {
+        return TRUE;
+    }
+    /* An empty seat holds no team, whatever its stale row says. */
+    lp = sim->playerConnected[slot] ? serverSimGetLobbyPlayer(sim, slot) : NULL;
     if (lp != NULL && lp->teamNumber == team) {
         return TRUE;
     }
@@ -257,10 +264,20 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
                                       cmd->u.teamSet.team)) {
             return CMD_REJECT_INVALID;
         }
-        serverSimSetTeam(sim, cmd->u.teamSet.slot, cmd->u.teamSet.team);
-        logAddEvent(log_TeamSet,
-                    cmd->u.teamSet.slot, cmd->u.teamSet.team,
-                    0, 0, 0, NULL);
+        {
+            const LobbyPlayer *was = serverSimGetLobbyPlayer(sim,
+                                                             cmd->u.teamSet.slot);
+            BYTE oldTeam = (was != NULL) ? was->teamNumber : 0;
+            serverSimSetTeam(sim, cmd->u.teamSet.slot, cmd->u.teamSet.team);
+            logAddEvent(log_TeamSet,
+                        cmd->u.teamSet.slot, cmd->u.teamSet.team,
+                        0, 0, 0, NULL);
+            /* A bot moved onto a team the scenario holds seats for becomes
+               one of those seats, and a held seat moved off one becomes an
+               ordinary bot. Nothing changes for a human or with no
+               template. */
+            serverSimScenarioBotMovedTeam(sim, cmd->u.teamSet.slot, oldTeam);
+        }
         serverSimPublishLobbySlot(sim, cmd->u.teamSet.slot);
         lobbyAutoUnreadyOnChange(sim);
         return CMD_OK;
@@ -905,6 +922,23 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
         } else {
             snprintf(botName, sizeof(botName), "Bot %d", slot + 1);
         }
+        /* A bot added to a team the scenario's template holds seats for
+           (fielded = false) is one of that team's held seats, seated by the
+           code the template's own seating uses: there is no ordinary bot on
+           such a team. The team is the one the add would land on, asked the
+           same question the team write below asks. */
+        if (p->teamNumber > 0 && p->teamNumber < MAX_TANKS &&
+            serverSimScenarioTeamIsHeld(sim, p->teamNumber) &&
+            scenarioAllowsExtraTeams(sim, slot, p->teamNumber)) {
+            if (!serverSimScenarioAddHeldSeat(sim, slot, botName,
+                                              p->teamNumber)) {
+                fprintf(stderr, "ADD_BOT reject INVALID: held seat failed (slot=%d team=%d)\n",
+                        (int)slot, (int)p->teamNumber);
+                return CMD_REJECT_INVALID;
+            }
+            lobbyAutoUnreadyOnChange(sim);
+            return CMD_OK;
+        }
         /* A lobby Add Bot carries no configuration: NULL init, so the
          * brain sees an empty BRAIN_INIT. The team stays out of the add
          * and is written below, which is where this arm has always put
@@ -925,6 +959,15 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
         if (p->teamNumber > 0 && p->teamNumber < MAX_TANKS &&
             scenarioAllowsExtraTeams(sim, slot, p->teamNumber)) {
             serverSimSetTeam(sim, slot, p->teamNumber);
+        }
+        /* Wherever the bot landed: a held team makes it a held seat, so a
+           team picked for it by anything but the request follows the same
+           rule. A no-op on every other team and with no template. */
+        serverSimScenarioBotMovedTeam(sim, slot, 0);
+        if (!serverSimIsBot(sim, slot)) return CMD_REJECT_INVALID;
+        if (!serverSimGetLobbyPlayer(sim, slot)->fielded) {
+            lobbyAutoUnreadyOnChange(sim);
+            return CMD_OK;
         }
         /* The new bot's brain mode and difficulty (serverSimResolveNewBotConfig):
          * the lobby default, then what the map requires for this side, then

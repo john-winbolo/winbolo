@@ -77,7 +77,8 @@ local nav_turn_speed = U.nav_turn_speed
 -- max_walls (default 0): how many walls the shot may cross and still count as
 -- "clear". 0 = the legacy strict behavior (any wall blocks). >0 lets the path
 -- cross that many walls (e.g. attack_base grinds 1 wall down) while STILL
--- blocking on pillboxes (any owner), bases, and allied tanks — anywhere on the
+-- blocking on pillboxes (any owner), bases that stop the shell
+-- (U.base_stops_tank_shell), and allied tanks — anywhere on the
 -- line, including beyond a within-budget wall.
 -- src_wx/src_wy: optional shot origin (defaults to the tank). Lets callers test
 --   whether a shot FROM SOME OTHER TILE would reach the target (e.g. scoring a
@@ -89,6 +90,25 @@ local nav_turn_speed = U.nav_turn_speed
 --   Used by the "kill me" delivery, where hitting that ally is the whole
 --   point. Every other allied tank still blocks, so a delivery shot is still
 --   refused when a DIFFERENT team-mate wanders into the lane.
+-- ATTACK_BASE_COMMIT_AFTER_FIRST_SHOT (2026-11-16): has a shell gone at the
+-- goal's base? The attack_base shoot block stores the shell count in
+-- goal._ab_shoot_shells on the tick it presses fire. On a later tick, fewer
+-- shells means that shell left the tank: goal._ab_shot_fired is set and
+-- stays set for the rest of this goal (goal_selection then adds
+-- ATTACK_BASE_COMMITMENT_BONUS). A fire press that a later check took back
+-- leaves the count unchanged, so it does not count.
+function M.note_base_shot(state, goal, info)
+  if goal and goal.kind == "attack_base" and goal._ab_shoot_shells
+     and not goal._ab_shot_fired
+     and (info.shells or 0) < goal._ab_shoot_shells then
+    goal._ab_shot_fired = true
+    if BRAIN_DEBUG_MODE then
+      print2(string.format("BASE_FIRST_SHOT t=%d base=(%d,%d) shells %d -> %d: commitment bonus on",
+        state and state.tick or 0, goal.mx or -1, goal.my or -1, goal._ab_shoot_shells, info.shells or 0))
+    end
+  end
+end
+
 local function shot_path_clear(info, world, target_wx, target_wy, target_mx, target_my, max_walls, src_wx, src_wy, require_reach, allow_ally_pn)
   max_walls = max_walls or 0
   local ox = src_wx or info.tankx
@@ -202,8 +222,10 @@ local function shot_path_clear(info, world, target_wx, target_wy, target_mx, tar
         end
         if blocked then break end
       end
-      local bentry = world.base_at and world.base_at[st.my * 256 + st.mx]
-      if bentry and bentry.base then  -- a base of ANY owner stops the shell
+      -- A base stops the shell only under the engine rule
+      -- (U.base_stops_tank_shell): from land, our own, allied and neutral
+      -- bases do not.
+      if U.base_tile_stops_tank_shell(world, st.mx, st.my, origin_mx, origin_my) then
         blocked = true
         block_reason = "base"
         block_mx, block_my = st.mx, st.my
@@ -402,8 +424,21 @@ local function order_hold_parked(state, goal, info)
 end
 M.order_hold_parked = order_hold_parked
 
+-- REPAIR_STANDOFF (2026-11-03): the standoff square for a repair_pill goal,
+-- or nil. Called through M so steer_core takes no new upvalue.
+function M.repair_standoff_nav(state, goal)
+  return bpool.RS.nav_target(state, goal)
+end
+
 local function intentionally_stationary(goal, info, state)
   if order_hold_parked(state, goal, info) then return true end
+  -- REPAIR_STANDOFF: parked on the standoff square on purpose (sending the
+  -- builder, or waiting while the builder is out).
+  if goal.kind == "repair_pill" and state and info and info.tankx
+     and bpool.RS.at_standoff(state, goal, bit.rshift(info.tankx, 8),
+                              bit.rshift(info.tanky, 8)) then
+    return true
+  end
   local s = goal.substate or ""
   if goal.kind == "attack_pill" and _ap_stationary[s] then return true end
   if goal.kind == "pill_place"  and _pp_stationary[s] then return true end
@@ -577,7 +612,7 @@ local function stuck_recovery(state, info, goal)
   -- STUCK_MOVE_WU in one think (full speed is about 16).  So after
   -- STUCK_LOOKAHEAD_COLLAPSE_TICKS on one path step the collapse turned the
   -- tank back to its own square even while it drove onto the step.
-  -- pilltag_fort_last_shot seed 555: the guard, at rest one square west of
+  -- pilltag_fort_guard_kills_own_pillbox_to_keep_it seed 555: the guard, at rest one square west of
   -- his dead pill, drove at it, was turned away 27 thinks later still on his
   -- square, and circled until the hunter took the pill.  The collapse clock
   -- (acc_since) restarts each time the tank is STUCK_MOVE_WU closer than at
@@ -2442,10 +2477,23 @@ local function attack_pill_steer(state, world, info, goal)
   -- glacial), then brake earlier to compensate for the extra momentum
   -- so we still stop on the spot instead of overshooting like charge.
   if goal.substate == "in_range_position" then
+    -- PT2_FAST_SETUP (fast_setup.lua): the turn and run phases steer there;
+    -- the align phase is this creep, aimed at the setup point.
+    if goal._fs then
+      local k, t, fire = require("fast_setup").steer(state, world, info, goal)
+      if k then
+        if fire then
+          k = bit.bor(k, KEY_SHOOT)
+          predict_kill_shot_and_swerve(state, world, info, goal, goal.mx, goal.my)
+        end
+        return k, t
+      end
+    end
     local sfx = goal.standoff_fx or (goal.standoff_mx and (goal.standoff_mx + 0.5))
                                  or (goal.mx + 0.5)
     local sfy = goal.standoff_fy or (goal.standoff_my and (goal.standoff_my + 0.5))
                                  or (goal.my + 0.5)
+    if goal._fs then sfx, sfy = goal._fs.sx / 256, goal._fs.sy / 256 end
     local swx = math.floor(sfx * 256 + 0.5)
     local swy = math.floor(sfy * 256 + 0.5)
     local sdist = U.wdist(info.tankx, info.tanky, swx, swy)
@@ -2686,6 +2734,14 @@ local function attack_pill_steer(state, world, info, goal)
       local pdir = U.aim_at_f(info.tankx / 256.0, info.tanky / 256.0,
                               pcx, pcy)
       local pcorr = U.adiff(info.direction, pdir)
+      -- C.CLEAR_TURN_TAP_PROGRESS: while the shot reaches the pill but is not
+      -- clear, attack.lua names the nearest clear gun angle. Turn toward it
+      -- (float gun angle, since the lane can be narrower than one brad), so a
+      -- tap that jumps past a narrow lane turns back instead of going on to
+      -- the centre. nil when the knob is off: the old centre turn.
+      if goal._finetune_lane_dir then
+        pcorr = U.adiff(info.tank_angle or info.direction, goal._finetune_lane_dir)
+      end
       -- 3-tier turn (hold for big corrections, tap for fine):
       -- holds give continuous engine rotation; taps stay at /8 ramp
       -- speed PROVIDED the engine's firstLeft/firstRight counter
@@ -4035,6 +4091,91 @@ local function uturn_sweep_hits_sea(info, side)
   return false
 end
 
+-- C.STEER_TURN_CAP_NEXT_SQUARE: the tank's full turn rate in brads per think.
+-- The engine turns the tank twice per think (the keys tick and the game
+-- tick), each time by the terrain's turn rule x our turn modifier, so at
+-- turn rule 1 the tank turns 2 brads per think (recorded: 2 brads per think
+-- at speed 48). `tt` is the terrain under the tank; afloat on river or deep
+-- sea the boat rule applies, as in the engine. With live physics off (or
+-- its TURN group off) the classic rules are used.
+function M.turn_rate_brads(info, tt)
+  local LP = require("live_physics")
+  local rule = LP.TURN_RULE[tt] or "turn_road"
+  if info.inboat and (tt == C.T_RIVER or tt == C.T_DEEPSEA) then
+    rule = "turn_boat"
+  end
+  local rate = LP.CLASSIC[rule] or 1
+  local pct  = 100
+  if C.LIVE_PHYSICS == true and C.LIVE_PHYSICS_TURN == true then
+    local r = info.rules and info.rules[rule]
+    if type(r) == "number" and r == r and r > 0 then rate = r end
+    local m = info.mods and info.mods.turn
+    if type(m) == "number" and m > 0 then pct = m end
+  end
+  return 2 * rate * pct / 100
+end
+
+-- C.STEER_TURN_CAP_NEXT_SQUARE: the farthest a square can be and still be
+-- inside the tank's turning circle, for this speed, heading error and turn
+-- rate. Turn radius R = (speed / 4) / (rate x 2 pi / 256) wu (speed is the
+-- engine speed x 4; the tank moves speed / 4 wu per think). A point at
+-- distance d and heading error e is inside the circle on the side the tank
+-- turns to when d < 2 R sin(e). At an error of 64 brads (90 degrees) or more
+-- sin is taken as 1: a square behind the tank and nearer than one turn
+-- diameter is passed or circled before the turn ends. Returns reach, R.
+function M.next_square_reach(speed, abs_corr, rate)
+  if not speed or speed <= 0 or not rate or rate <= 0 then return 0, 0 end
+  local R = (speed / 4) / (rate * C.TWO_PI / 256)
+  local s = 1
+  if abs_corr < 64 then s = math.sin(abs_corr * C.TWO_PI / 256) end
+  return 2 * R * s, R
+end
+
+-- C.STEER_CAPTURE_TURN_CIRCLE_CAP: the highest speed (info.speed units, engine
+-- speed x 4) at which a point `dist` wu away and abs_corr brads off the nose
+-- is still on or outside the turning circle, so the tank can reach it without
+-- circling. It is next_square_reach solved for speed: dist = 2 R s, with R =
+-- (speed / 4) / (rate x 2 pi / 256) and s = sin(error), taken as 1 at 64 brads
+-- or more. A point straight ahead (s = 0) gives no cap (256).
+function M.turn_circle_speed(abs_corr, dist, rate)
+  if not dist or not rate or rate <= 0 then return 256 end
+  local s = 1
+  if abs_corr < 64 then s = math.sin(abs_corr * C.TWO_PI / 256) end
+  if s <= 0 then return 256 end
+  local speed = 4 * (rate * C.TWO_PI / 256) * dist / (2 * s)
+  if speed >= 256 then return 256 end
+  return math.floor(speed)
+end
+
+-- C.STEER_TURN_CAP_NEXT_SQUARE: true when the next route square (sq_dist wu
+-- away, abs_corr brads off the nose) is inside the turning circle at the
+-- current speed, so the tank cannot reach it without slowing. steer_core
+-- then applies its heading-error turn cap even with the goal 4+ tiles away.
+function M.turn_cap_next_square(info, tmx, tmy, abs_corr, sq_dist)
+  if not sq_dist then return false end
+  local rate = M.turn_rate_brads(info, U.ttype_peek(tmx, tmy))
+  local reach, R = M.next_square_reach(info.speed, abs_corr, rate)
+  local fire = sq_dist < reach
+  if BRAIN_DEBUG_MODE and fire then
+    print2(string.format(
+      "TURN_CAP_NEXT_SQUARE spd=%d err=%d sq_dist=%.0f rate=%.2f R=%.0f reach=%.0f",
+      info.speed or 0, abs_corr, sq_dist, rate, R, reach))
+  end
+  return fire
+end
+
+-- Whether steer_core's heading-error turn cap applies this think. The old
+-- rule: error past ramp_start and the target (dist_t, tiles) within 4 tiles.
+-- With C.STEER_TURN_CAP_NEXT_SQUARE also when the square the error is
+-- measured to (sq_dist wu) is inside the turning circle. Knob off: exactly
+-- the old rule, and the circle test is not run.
+function M.turn_cap_on(info, tmx, tmy, abs_corr, ramp_start, dist_t, sq_dist)
+  if abs_corr <= ramp_start then return false end
+  if dist_t < 4 then return true end
+  if C.STEER_TURN_CAP_NEXT_SQUARE ~= true then return false end
+  return M.turn_cap_next_square(info, tmx, tmy, abs_corr, sq_dist)
+end
+
 -- The whole of steering lives in steer_core; M.steer (bottom of this file) is
 -- a thin wrapper around it so there is ONE place every key leaves the module,
 -- whichever of the many `return`s inside produced it. See the
@@ -4387,6 +4528,24 @@ local function steer_core(state, world, info, goal)
   -- Defend-pill heat: the ARRIVED-phase heat win (goal.heat) parks in
   -- range and tickles our own pill. Returns nil while approaching (or
   -- on a travel-phase defend goal), so generic nav drives us in.
+  -- Defend ALARM heat (C.DEFEND_ALARM_HEAT, Andrew Nov 18): on the way to
+  -- the alarmed pill, heat it or a neighbour pill when one is in our gun
+  -- range NOW (attack.defend_heat_steer).  It returns keys only while a
+  -- volley runs; nil (no candidate in range) lets the trip go on, so the
+  -- volley never makes the tank detour.
+  if goal.kind == "defend_pill" and goal.alarm and C.DEFEND_ALARM_HEAT then
+    local k, t = attack_mod().defend_heat_steer(state, world, info, goal,
+                                                state.tick or 0, shot_path_clear)
+    if k then
+      log.reason("steer", { mode = "defend_alarm_heat",
+        pill = goal._heat_pid, role = goal._heat_role, shots = goal._heat_shots })
+      if BRAIN_PROFILE then
+        opt(string.format("  steer/defend_alarm_heat done %.2f ms",
+                          (clock_us() - _t_phase) / 1000))
+      end
+      return k, t
+    end
+  end
   if goal.kind == "defend_pill" then
     local k, t = defend_pill_steer(state, world, info, goal)
     if k then
@@ -4884,6 +5043,23 @@ local function steer_core(state, world, info, goal)
       nav_wx = info.man_x
       nav_wy = info.man_y
     end
+    -- Focused spike spot, "cluster" rule: drive to the safest stand place
+    -- (goals.lua plan tile block, focus_vote.best_stand); builder.lua sends
+    -- the builder from there.
+    if goal.kind == "place_pill_strategic" and goal._focus_spike and goal._stand_mx then
+      nav_mx, nav_my = goal._stand_mx, goal._stand_my
+      nav_wx, nav_wy = U.m2w(nav_mx), U.m2w(nav_my)
+    end
+    -- REPAIR_STANDOFF (2026-11-03): a repair_pill goal drives to its standoff
+    -- square (repair_standoff.lua) and stops there; the repair feeder sends
+    -- the builder from it. No standoff: the pill square, as before.
+    if goal.kind == "repair_pill" then
+      local so_mx, so_my = M.repair_standoff_nav(state, goal)
+      if so_mx then
+        nav_mx, nav_my = so_mx, so_my
+        nav_wx, nav_wy = U.m2w(nav_mx), U.m2w(nav_my)
+      end
+    end
     if goal.kind == "attack_pill" or goal.kind == "pill_place" then
       if goal.wall_shield and goal.substate == "approach" and goal.prebuild_mx then
         -- Wall-shield: navigate to prebuild position (outside pill range) first
@@ -5203,6 +5379,42 @@ local function steer_core(state, world, info, goal)
   -- turn-rate / threat-cap / final keys+taps decision block below).
   local _t_nav_apply_start = BRAIN_PROFILE and clock_us() or 0
 
+  -- LGM_WALLED_KILL "on_pill" (goals.lgm_walled_kind): our builder stands
+  -- on a live pill square. He cannot move and the tank cannot drive onto
+  -- the pill to fetch him, so the path search can only take us next to it.
+  -- Once we are within the reach the wall-clear below uses (768 wu, three
+  -- squares), stop, face his square and fire. The shell hits the pill and
+  -- kills him (lgm.c lgmBlastCatches); danger.fire_block lets it through,
+  -- and he parachutes home. Any owner: our own pill takes the hit too.
+  if goal.kind == "rescue_lgm" and state.lgm_walled == "on_pill"
+     and C.LGM_WALLED_KILL and (info.shells or 0) > 0 and info.man_x then
+    local pmx = bit.rshift(info.man_x, 8)
+    local pmy = bit.rshift(info.man_y, 8)
+    local pwx, pwy = U.m2w(pmx), U.m2w(pmy)
+    local pdist = U.wdist(info.tankx, info.tanky, pwx, pwy)
+    if pdist < 768 then
+      state.wall_clearing = true
+      local aim_dir = U.aim_at(info.tankx, info.tanky, pwx, pwy)
+      local corr    = U.adiff(info.direction, aim_dir)
+      if     corr >  10 then keys = bit.bor(keys, KEY_TURNRIGHT)
+      elseif corr < -10 then keys = bit.bor(keys, KEY_TURNLEFT)
+      elseif corr >   2 then taps = bit.bor(taps, KEY_TURNRIGHT)
+      elseif corr <  -2 then taps = bit.bor(taps, KEY_TURNLEFT)
+      end
+      if info.speed > 0 then keys = bit.bor(keys, KEY_SLOWER) end
+      if math.abs(corr) < 8 then taps = bit.bor(taps, KEY_SHOOT) end
+      if state.tick % 10 == 0 then
+        log.reason("steer", {
+          mode = "lgm_on_pill_shoot",
+          pill_mx = pmx, pill_my = pmy,
+          pill_dist = pdist, aim_corr = corr,
+          firing = math.abs(corr) < 8,
+        })
+      end
+      return keys, taps
+    end
+  end
+
   -- No goal or idle: brake to a stop.
   -- When attack_in_range, skip the navigation block and fall through to
   -- the engage aim/shoot block below.
@@ -5210,6 +5422,7 @@ local function steer_core(state, world, info, goal)
   -- we're within shell range of the base, don't return early — fall through to
   -- the attack_base shooting block. Covers BOTH a point-blank rush (adjacent)
   -- and a crossfire-safe standoff engage point picked out at range.
+  M.note_base_shot(state, goal, info)
   local attack_base_engaging = (goal.kind == "attack_base" and move_dir == nil
     and U.wdist(info.tankx, info.tanky, goal.wx, goal.wy) <= (C.ATTACK_PILL_RANGE or 9.5) * 256)
   if move_dir == nil and not attack_in_range and not attack_base_engaging then
@@ -5507,18 +5720,32 @@ local function steer_core(state, world, info, goal)
       -- ALWAYS-ON reference rings on the swept pill, EVERY capture_pill tick
       -- (not just while the hunt is engaged): the OUTER ring is the shoot/search
       -- radius (CAPTURE_LGM_HUNT_RADIUS) -- a hostile LGM inside it counts as on
-      -- this pill; the INNER ring is the fire distance (CAPTURE_LGM_HUNT_FIRE_WU,
-      -- in wu -> tiles).  NOTE the fire GATE in code is measured impact-to-MAN
-      -- (and exact-tile when he stands on a solid square), so this inner ring is
-      -- a distance REFERENCE drawn on the pill, not the literal gate centre.
+      -- this pill; the MIDDLE ring is the fire distance (the capture fire check
+      -- in force, kill_lgm.tuning().capture_fire_wu); the next ring is the
+      -- engine's real kill radius (C.LGM_ENGINE_KILL_WU, lgm.c
+      -- MAP_SQUARE_MIDDLE = 128 wu), and the INNERMOST is the aim target
+      -- (C.LGM_KILL_AIM_WU, only while the LGM-kill package is on), so the
+      -- picture shows what we shoot at, what we aim for, AND what would
+      -- actually kill.  NOTE the fire check in code is measured impact-to-MAN
+      -- (and exact-tile when he stands on a solid square), so these are
+      -- distance REFERENCES drawn on the pill, not the literal check centre.
       if BRAIN_DEBUG_MODE and goal.kind == "capture_pill" and goal.mx and goal.my then
         local _cx, _cy = goal.mx + 0.5, goal.my + 0.5
+        local _kt = KL.tuning()
         viz.circle("kill_lgm_status", _cx, _cy,
                    (C.CAPTURE_LGM_HUNT_RADIUS or 2.5),
                    120, 180, 255, 110, false, false)          -- search radius (blue)
         viz.circle("kill_lgm_status", _cx, _cy,
-                   (C.CAPTURE_LGM_HUNT_FIRE_WU or 100) / 256.0,
+                   _kt.capture_fire_wu / 256.0,
                    255, 120, 120, 150, false, false)          -- fire distance (red)
+        viz.circle("kill_lgm_status", _cx, _cy,
+                   _kt.engine_kill_wu / 256.0,
+                   255, 200, 120, 130, false, false)          -- engine kill radius (amber)
+        if _kt.aim_wu then
+          viz.circle("kill_lgm_status", _cx, _cy,
+                     _kt.aim_wu / 256.0,
+                     255, 255, 160, 120, false, false)        -- aim target (pale)
+        end
       end
     end
 
@@ -5606,6 +5833,10 @@ local function steer_core(state, world, info, goal)
     }
     local sub = goal.substate
     local precise_landing = sub and PRECISE_SUBSTATES[sub]
+    -- Navigation's own heading error, before the lookahead below can swap
+    -- `correction` for the next goal's.  The turn keys above already steer by
+    -- it; C.STEER_CAPTURE_TURN_CIRCLE_CAP reads it for its speed cap.
+    local nav_corr = correction
     local lookahead_active = false
     if state.next_goal and eff_dist < brake_dist and not info.inboat
        and not precise_landing then
@@ -5733,7 +5964,13 @@ local function steer_core(state, world, info, goal)
     -- the map.
     local dist_t        = eff_dist / 256.0
     local plow_ease     = (dist_t >= 4) and 1.0 or 0.0  -- legacy var name kept for viz
-    if abs_corr > ramp_start and dist_t < 4 then
+    -- C.STEER_TURN_CAP_NEXT_SQUARE: past 4 tiles the cap also applies when
+    -- the square the heading error is measured to (the route square, or
+    -- next_goal under the lookahead) is inside the turning circle, so a tank
+    -- far from its goal no longer drives circles round that square. Small
+    -- heading wobble stays outside the circle and keeps full speed.
+    if M.turn_cap_on(info, tmx, tmy, abs_corr, ramp_start, dist_t,
+                     lookahead_active and eff_dist or target_dist) then
       if plow_through then
         turn_base_cap = (under_fire or race_mode)
                         and U.nav_turn_cap(C.NAV_TOP_SPEED, C.NAV_TURN_TOP_SPEED) * 2
@@ -5769,6 +6006,37 @@ local function steer_core(state, world, info, goal)
           state._uturn.side or 0, turn_factor, math.floor(turn_base_cap), turn_capped,
           tostring(C.TURN_CAP_UTURN_PIVOT)))
       end
+    end
+    -- C.STEER_CAPTURE_TURN_CIRCLE_CAP (keel false, 2026-11-14): on the last
+    -- step of capture_pill, the pill's own square is the steering target and
+    -- the tank must drive over it.  The cap above is the plow one (twice the
+    -- cruise cap), and under the goal lookahead it reads the NEXT goal's
+    -- heading error and distance, so it was often off.  A tank already moving
+    -- when it came near a dead pill kept speed 44-48, its turning circle was
+    -- wider than the pill's distance, and it drove circles round the pill
+    -- (pilltag_guard_quickly_takes_prize_a_hunter_kills: player 0 one square
+    -- off, heading error 62-69 brads the whole time, while player 1 drove
+    -- straight onto it).  With this on, the speed is also capped at the
+    -- highest speed whose turning circle still reaches the square
+    -- (M.turn_circle_speed: the turning-circle test of
+    -- C.STEER_TURN_CAP_NEXT_SQUARE solved for speed), from navigation's own
+    -- heading error (the one the turn keys steer by).  Engine turn physics
+    -- only, no new value.  capture_pill only (not capture_base).
+    -- The cap is set 4 below the circle speed.  The plow brake below only
+    -- brakes when info.speed > turn_max_speed + 4, and info.speed moves in
+    -- steps of 4 (brain_data.c: engine speed x 4).  So with the cap at the
+    -- circle speed the tank settled up to 4 above it, and its circle was about
+    -- 41 wu wider than the formula.  4 = that brake band (one speed step).
+    if C.STEER_CAPTURE_TURN_CIRCLE_CAP and plow_through
+       and goal.kind == "capture_pill" and goal.mx
+       and state._steer_lx == goal.mx and state._steer_ly == goal.my then
+      local PLOW_BRAKE_BAND = 4  -- the "+ 4" in the plow brake tests below
+      local circle_cap = M.turn_circle_speed(math.abs(nav_corr), target_dist,
+        M.turn_rate_brads(info, U.ttype_peek(tmx, tmy)))
+      if circle_cap < 256 then
+        circle_cap = math.max(0, circle_cap - PLOW_BRAKE_BAND)
+      end
+      if circle_cap < turn_max_speed then turn_max_speed = circle_cap end
     end
 
     -- Plow-mode debug viz: two live lines below the tank (state + decision).
@@ -5808,6 +6076,10 @@ local function steer_core(state, world, info, goal)
         decision_line = string.format(
           "|err|=%d <= ramp_start=%d brad  ->  no cap  (turn_max_speed=%d)",
           abs_corr, ramp_start, turn_max_speed)
+      elseif dist_t >= 4 and turn_base_cap > 0 then
+        decision_line = string.format(
+          "dist=%.1ft >= 4t, next square inside turn circle -> base_cap=%d x ramp_factor=%.2f = %d  (turn_max_speed=%d)",
+          dist_t, math.floor(turn_base_cap), turn_factor, turn_capped, turn_max_speed)
       elseif dist_t >= 4 then
         decision_line = string.format(
           "dist=%.1ft >= 4t -> cap OFF  (turn_max_speed=%d)",
@@ -5836,7 +6108,12 @@ local function steer_core(state, world, info, goal)
     -- the LGM catch up while we sit on it. (Saw a capture_pill crawl at the
     -- pace cap for 300+ ticks two tiles from a free pill because the builder
     -- was out on an unrelated road job.)
+    -- LGM_WALLED_KILL: a walled-in builder (goals.lgm_walled_kind) cannot
+    -- follow the tank at all, so pacing for him only makes the trip for
+    -- shells crawl.
+    local lgm_walled = (C.LGM_WALLED_KILL and state.lgm_walled) and true or false
     if lgm_out and not lgm_is_farming and goal.kind ~= "escape_water"
+       and not lgm_walled
        and goal.kind ~= "rescue_lgm"
        and goal.kind ~= "capture_pill" and goal.kind ~= "capture_base" then
       -- Estimate LGM speed: use the terrain at the LGM's position
@@ -6468,6 +6745,9 @@ local function steer_core(state, world, info, goal)
         end
         if not _hold then
           keys = bit.bor(keys, KEY_SHOOT)
+          -- Shells now; a lower count on a later tick means the shell left
+          -- (M.note_base_shot).
+          if not goal._ab_shot_fired then goal._ab_shoot_shells = info.shells end
         end
       end
       if BRAIN_DEBUG_MODE and not firing then print2(string.format("BASE_NOFIRE t=%d reason=heading_misses corr=%.1f wdist=%.0f (shell at current heading doesn't cross base tile)", state.tick or 0, corr, wdist_base)) end
@@ -6761,11 +7041,23 @@ function M.steer(state, world, info, goal)
   -- never paths through a wall). Sent only when the answer changes. Default
   -- 0 never enters this block (unless a bot_init just set it back to 0, and
   -- then it puts the cost back once).
-  if C.WALL_SHOOT_LIFE_MAX > 0 or state._walls_unshootable then
+  -- The wall cost follows the live building_life too (C.WALL_HP_FULL from
+  -- live_physics.lua): sent once when WALL_HP_FULL leaves 5, and when it
+  -- changes. Classic rules with the knob at 0 never enter.
+  local wall_full = C.WALL_HP_FULL
+  if C.WALL_SHOOT_LIFE_MAX > 0 or state._walls_unshootable
+     or wall_full ~= 5 or state._wall_cost_sent then
     local no_walls = not U.wall_shootable(info)
-    if state._walls_unshootable ~= no_walls then
+    local cost = no_walls and 1e6 or U.live_physics.wall_shoot_cost()
+    if state._walls_unshootable ~= no_walls or state._wall_cost_sent ~= cost then
       state._walls_unshootable = no_walls
-      cpf.set_config("wall_shoot_cost", no_walls and 1e6 or C.WALL_SHOOT_COST)
+      state._wall_cost_sent = cost
+      cpf.set_config("wall_shoot_cost", cost)
+    end
+    -- The shells the C pathfinder spends on a wall (configure default 5).
+    if (state._wall_shells_sent or 5) ~= wall_full then
+      state._wall_shells_sent = wall_full
+      cpf.set_config("wall_shoot_shells", wall_full)
     end
   end
   -- C.EDGE_COST_REFRESH_THINKS: see constants.lua. Default 0 never enters.

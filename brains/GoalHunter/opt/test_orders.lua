@@ -5848,15 +5848,17 @@ print("decoy_getaway.lua -- the decoy getaway")
   end
   local function lastb(hb) return hb.ga.blk and hb.ga.blk.list and hb.ga.blk.list[1] end
 
-  -- A FULL WALL, the last blocker: 5 - 0 = 5 shots, it holds.
+  -- A FULL WALL, the last blocker: building_life + 1 - 0 shots (the rule;
+  -- 5 - 0 = 5 at the classic 4), it holds.
+  local FULL = C.DECOY_GETAWAY_WALL_LIFE + 1
   local b, hb = on_sq1(200)
   check("blocker rig: parked on square 1 after the hit, trigger hit",
         held(hb) and hb.ga.trigs[1] == "hit", tostring(hb.ga.phase))
   TMAP[K(W1)] = C.T_BUILDING
   lock(b, 205); lock(b, 206)
-  check("a full wall: 5 - 0 = 5 shots > 2, it holds",
-        held(hb) and hb.ga.blk and hb.ga.blk.shots == 5 and hb.ga.blk.id == 5 and hb.ga.blk.why == "last"
-        and #hb.ga.blk.list == 1 and lastb(hb).kind == "wall" and lastb(hb).start == 5 and lastb(hb).hits == 0,
+  check("a full wall: building_life + 1 = 5 shots, 5 - 0 = 5 > 2, it holds",
+        FULL == 5 and held(hb) and hb.ga.blk and hb.ga.blk.shots == FULL and hb.ga.blk.id == 5 and hb.ga.blk.why == "last"
+        and #hb.ga.blk.list == 1 and lastb(hb).kind == "wall" and lastb(hb).start == FULL and lastb(hb).hits == 0,
         tostring(hb.ga.blk and hb.ga.blk.shots))
   if drawn then
     local rb = { text = {} }
@@ -6007,14 +6009,20 @@ print("decoy_getaway.lua -- the decoy getaway")
         moved(hb, b) and hb.ga.blk.shots == 2, tostring(hb.ga.blk.shots))
   b.w.pills[8], b.w.pill_at = nil, nil
 
-  -- WALL_LIFE: a building_life of 1 makes a full wall 2 shots.
-  C.DECOY_GETAWAY_WALL_LIFE = 1
+  -- WALL_LIFE: a building_life of 1 (the live rule, through
+  -- live_physics.apply) makes a full wall 2 shots.
+  local LPW = require("live_physics")
+  LPW.apply({ rules = { building_life = 1 } })
+  check("WALL_LIFE from the rule: building_life 1 gives wall life 1", C.DECOY_GETAWAY_WALL_LIFE == 1,
+        tostring(C.DECOY_GETAWAY_WALL_LIFE))
   b, hb = on_sq1(540)
   TMAP[K(W1)] = C.T_BUILDING
   lock(b, 545)
   check("WALL_LIFE 1: a full wall is 2 shots, it moves", moved(hb, b) and hb.ga.blk.shots == 2,
         tostring(hb.ga.blk.shots))
-  C.DECOY_GETAWAY_WALL_LIFE = 4
+  LPW.apply({ rules = {} })
+  check("WALL_LIFE: no building_life sent falls back to 4", C.DECOY_GETAWAY_WALL_LIFE == 4,
+        tostring(C.DECOY_GETAWAY_WALL_LIFE))
 
   -- THE CLOSEST PILL ONLY.  A full wall on pill 5's line (d = 5.39, 5
   -- shots); pill 6 at (22,32) (d = 7, in range) has an open line.  Only pill
@@ -8692,6 +8700,64 @@ do
 end
 
 -- ─────────────────────────────────────────────────────────────────────────
+-- REPAIR_FRIENDLY_FIRE_REJECT_TICKS (2026-11-01): how long a friendly shell
+-- near our pill blocks its repair. Default 50 (1 s), KEEL 400 (8 s). Runs
+-- init.lua's real chunk-load parse against a fresh constants.lua, as above.
+-- ─────────────────────────────────────────────────────────────────────────
+print("\n== REPAIR_FRIENDLY_FIRE_REJECT_TICKS knob ==")
+do
+  local saved_init, saved_arg = rawget(_G, "BRAIN_INIT"), rawget(_G, "BRAIN_INIT_ARG")
+  local STOP = {}
+  local function new_brain(arg)
+    local freshC = dofile("constants.lua")
+    rawset(_G, "BRAIN_INIT", nil)
+    rawset(_G, "BRAIN_INIT_ARG", arg)
+    local chunk = assert(loadfile("init.lua"))
+    local env = setmetatable({
+      require = function(m)
+        if m == "constants" then return freshC end
+        if m == "bitcompat" then return require(m) end
+        error(STOP)
+      end,
+    }, { __index = _G, __newindex = _G })
+    setfenv(chunk, env)
+    local ok, err = pcall(chunk)
+    rawset(_G, "BRAIN_INIT", saved_init)
+    rawset(_G, "BRAIN_INIT_ARG", saved_arg)
+    return freshC, (not ok and err == STOP)
+  end
+
+  check("default is 50 ticks (1 s)",
+        C.REPAIR_FRIENDLY_FIRE_REJECT_TICKS == 50, tostring(C.REPAIR_FRIENDLY_FIRE_REJECT_TICKS))
+  check("PRESETS.keel lists 400",
+        C.PRESETS.keel.REPAIR_FRIENDLY_FIRE_REJECT_TICKS == 400,
+        tostring(C.PRESETS.keel.REPAIR_FRIENDLY_FIRE_REJECT_TICKS))
+
+  local fc, reached = new_brain(nil)
+  check("no tokens: a new brain has 50",
+        reached and fc.REPAIR_FRIENDLY_FIRE_REJECT_TICKS == 50,
+        tostring(fc.REPAIR_FRIENDLY_FIRE_REJECT_TICKS))
+
+  fc, reached = new_brain("cfg=REPAIR_FRIENDLY_FIRE_REJECT_TICKS=125")
+  check("cfg=REPAIR_FRIENDLY_FIRE_REJECT_TICKS=125 sets 125",
+        reached and fc.REPAIR_FRIENDLY_FIRE_REJECT_TICKS == 125,
+        tostring(fc.REPAIR_FRIENDLY_FIRE_REJECT_TICKS))
+
+  fc, reached = new_brain("preset=keel")
+  check("preset=keel gives 400",
+        reached and fc.REPAIR_FRIENDLY_FIRE_REJECT_TICKS == 400,
+        tostring(fc.REPAIR_FRIENDLY_FIRE_REJECT_TICKS))
+
+  fc, reached = new_brain("cfg=REPAIR_FRIENDLY_FIRE_REJECT_TICKS=10;preset=keel")
+  check("cfg= beats preset=keel whatever the order",
+        reached and fc.REPAIR_FRIENDLY_FIRE_REJECT_TICKS == 10,
+        tostring(fc.REPAIR_FRIENDLY_FIRE_REJECT_TICKS))
+
+  check("the shared constants were not touched by the fresh brains",
+        C.REPAIR_FRIENDLY_FIRE_REJECT_TICKS == 50, tostring(C.REPAIR_FRIENDLY_FIRE_REJECT_TICKS))
+end
+
+-- ─────────────────────────────────────────────────────────────────────────
 -- ORDER_NEAR_DEAD_PILL_CAPTURE (K): under an order, capture_pill for a dead
 -- pill within ORDER_NEAR_DEAD_PILL_RADIUS squares of the tank is not given
 -- the "order" reject, and wins the hold phase as a fight does.
@@ -9145,6 +9211,69 @@ end
   C.STUCK_COLLAPSE_NEEDS_CLIP, C.STUCK_COLLAPSE_BRAKE = saved.clip, saved.brake
   UT.reset()
 end)()
+
+-- ── KILL_HARDLINE_RECHECK ───────────────────────────────────────────────
+-- plan_position tests the kill_hardline gate once. With the knob on, a take
+-- in approach / aim / in_range_* tests it again each think, so a tank that
+-- planned from far off rushes the 1-HP pill once it is in range.
+print("attack.lua -- KILL_HARDLINE_RECHECK")
+do
+  local saved = C.KILL_HARDLINE_RECHECK
+  local function rig(tmx, sub)
+    local r = BOT(1, tmx, 20)
+    local p = r.w.pills[5]
+    p.health, p.anger = 1, 0
+    r.w.pill_at = { [20 * 256 + 20] = { { id = 5, pill = p } } }
+    r.st.tick = 500
+    local g = { kind = "attack_pill", target_id = 5, mx = 20, my = 20, substate = sub,
+                _kill_rush_decided = true,
+                standoff_mx = 14, standoff_my = 20, standoff_fx = 14.5, standoff_fy = 20.5 }
+    r.st.goal = g
+    return r, g
+  end
+  -- A case that does not switch runs on into code that needs the engine
+  -- (cpf_simulate_shot); the re-check comes before it, so only the substate
+  -- it leaves counts.
+  local function step(g, r) pcall(ATTACK.update_attack_substate, g, r.st, r.w, r.inf) end
+  check("knob default on", C.KILL_HARDLINE_RECHECK == true, tostring(C.KILL_HARDLINE_RECHECK))
+  check("knob keel false", C.PRESETS.keel.KILL_HARDLINE_RECHECK == false)
+  check("knob mast false", C.PRESETS.mast.KILL_HARDLINE_RECHECK == false)
+  C.KILL_HARDLINE_RECHECK = true
+  for _, sub in ipairs({ "approach", "aim", "in_range_position", "in_range_aim_pre",
+                         "in_range_aim", "in_range_aim_finetune" }) do
+    local r, g = rig(15, sub)
+    ATTACK.update_attack_substate(g, r.st, r.w, r.inf)
+    check("knob on, " .. sub .. ", 1-HP calm pill 5 squares off: kill_hardline",
+          g.substate == "kill_hardline" and g._kill_rush == true, tostring(g.substate))
+  end
+  local r, g = rig(15, "build_walls")
+  step(g, r)
+  check("knob on, build_walls: no switch", g.substate ~= "kill_hardline", tostring(g.substate))
+  r, g = rig(5, "approach")                     -- 15 squares off > HARDLINE_ENGAGE_RANGE
+  step(g, r)
+  check("knob on, out of HARDLINE_ENGAGE_RANGE: no switch", g.substate ~= "kill_hardline", tostring(g.substate))
+  r, g = rig(15, "approach")
+  r.w.pills[5].anger = 0.9
+  step(g, r)
+  check("knob on, angry pill: no switch", g.substate ~= "kill_hardline", tostring(g.substate))
+  r, g = rig(15, "approach")
+  r.inf.armour = 2
+  step(g, r)
+  check("knob on, armour below ATTACK_RUSH_MIN_ARMOUR: no switch", g.substate ~= "kill_hardline", tostring(g.substate))
+  r, g = rig(15, "approach")
+  g._charge_now_careful = true
+  step(g, r)
+  check("knob on, fell back from kill_hardline (careful): no switch", g.substate ~= "kill_hardline", tostring(g.substate))
+  r, g = rig(15, "approach")
+  r.w.pills[5].health = 4
+  step(g, r)
+  check("knob on, pill at 4 HP: no switch", g.substate ~= "kill_hardline", tostring(g.substate))
+  C.KILL_HARDLINE_RECHECK = false
+  r, g = rig(15, "approach")
+  step(g, r)
+  check("knob off: decided once, approach stays", g.substate ~= "kill_hardline", tostring(g.substate))
+  C.KILL_HARDLINE_RECHECK = saved
+end
 
 print(string.format("\n%d passed, %d failed", pass, fail))
 os.exit(fail == 0 and 0 or 1)
