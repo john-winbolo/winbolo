@@ -510,7 +510,6 @@
  * mouse-over on the player's own row, another player's row and a Bot Host
  * program's row */
 #define STR_DLGLOBBY_BOTHOSTS_NOTE 3931
-#define STR_DLGLOBBY_BOTHOST_RESERVE_FMT 3932
 #define STR_DLGLOBBY_BOTHOST_MAX_LABEL 3933
 #define STR_DLGLOBBY_BOTHOST_MAX_OVER 3934
 #define STR_DLGLOBBY_BOTHOST_MAX_OWN_TIP 3935

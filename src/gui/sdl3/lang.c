@@ -1467,7 +1467,6 @@ static const LangEntry langTable[] = {
     {3905, "{string1}: same computer as the server (0 slots)"},
     {3906, "{string1}: same computer as {string2} (0 slots)"},
     {3931, "Bots move between hosts by lag and free CPU."},
-    {3932, "{string1} — tries to keep {number}% CPU free."},
     {3933, "Max slots"},
     {3934, "More than the {number} slots this computer's CPU estimate says fit. Its bots may think slower and play worse."},
     {3935, "The most of the server's bots this computer runs. The server starts it lower and adds bots while the computer has free CPU. Saved on this computer for later games. 0 runs no bot here."},
