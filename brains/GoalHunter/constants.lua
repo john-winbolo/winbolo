@@ -1131,6 +1131,23 @@ M.PT2_DBL_CAN_WIN = true
 -- stays classic. Under classic rules nothing changes. false = the classic
 -- numbers always. KEEL / MAST: false.
 M.PT2_LIVE_SHELL = true
+-- SHOT_SIM_ENGINE_EXACT (Nov 19, Andrew: the shot simulator must match the
+-- engine exactly, with separate rules for a pill's shell and a tank's
+-- shell). cpf.simulate_shot* fly a pill's shell at utilCalcAngle (the
+-- pill's own aim) for pill_fire_length squares, and the tank test in
+-- simulate_shot_with_tanks uses the engine's hit circle (tank_hit_radius)
+-- and the engine's float shell length. false = the old answers: atan2 angle
+-- for a pill too, PILLBOX_FIRE_DISTANCE, a 128 box and whole squares in the
+-- tank test. KEEL / MAST: false.
+M.SHOT_SIM_ENGINE_EXACT = true
+-- PT2_TANKSHOT_BLOCKERS (Nov 19, Andrew: v2 cast item 5). The v2 shadow's
+-- tank_shot (our own shell at the pill) also stops where the engine stops
+-- it: on a boat square, and on any other tank this bot can see (no
+-- cheating), where it is now, on the engine's hit circle (tank_hit_radius).
+-- A team mate's tank stops it too, as in the engine (shellsCalcCollision
+-- skips only the shooter's own tank). false = walls, pills, bases and
+-- planned blockers only. KEEL / MAST: false.
+M.PT2_TANKSHOT_BLOCKERS = true
 -- PT2_CHAIN_CLAIM (Nov 18, Andrew: "someone doing a double pill needs to
 -- broadcast & claim BOTH pills"). A HELM 2v2 replay: pills 13 and 14 side
 -- by side; one ally took 14, the other a 13+14 double take, and each claim
@@ -7950,6 +7967,8 @@ M.PRESETS = {
     PT2_DBL_SPLIT = false,
     PT2_DBL_CAN_WIN = false,
     PT2_LIVE_SHELL = false,
+    SHOT_SIM_ENGINE_EXACT = false,
+    PT2_TANKSHOT_BLOCKERS = false,
     PT2_CHAIN_CLAIM = false,
     --   2026-11-18: pill take v2 in Lua only (no C copy).
     PT2_C_EVAL = false,
@@ -8276,6 +8295,8 @@ M.PRESETS.mast = {
   PT2_DBL_SPLIT                     = false,  -- 2.2.1 had no pill take v2
   PT2_DBL_CAN_WIN                   = false,  -- 2.2.1 had no pill take v2
   PT2_LIVE_SHELL                    = false,  -- 2.2.1 had no pill take v2
+  SHOT_SIM_ENGINE_EXACT             = false,  -- 2.2.1 shot sim: atan2 pill angle, 128 box
+  PT2_TANKSHOT_BLOCKERS             = false,  -- 2.2.1 had no pill take v2
   PT2_CHAIN_CLAIM                   = false,  -- 2.2.1 had no pill take v2
   PT2_C_EVAL                        = false,  -- 2.2.1 had no pill take v2
   POST_KILL_WAIT_TICKS              = 15,

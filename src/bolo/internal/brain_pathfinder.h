@@ -330,6 +330,17 @@ struct BrainPathfinder {
   int32_t shell_speed;
   int32_t shell_start_add;
   int32_t gunsight_max;
+  /* The rest of the shell rules the shot simulator reads: the length a
+   * pill's shell flies (pill_fire_length) and the circle a shell must
+   * reach to hit a tank (tank_hit_radius). Pushed beside the ones above. */
+  float   pill_fire_length;
+  int32_t tank_hit_radius;
+  /* 1 (default): the shot simulator flies the engine's own shell for each
+   * shooter (pill: utilCalcAngle and pill_fire_length; tanks hit on the
+   * engine's hit zone). 0: the old answers (atan2 angle for both shooters,
+   * PILLBOX_FIRE_DISTANCE, a 128 box and whole-square lengths in the tank
+   * test), for the presets that keep the old bot (SHOT_SIM_ENGINE_EXACT). */
+  int32_t shot_sim_exact;
 
   /* ── Incremental Dijkstra slates ──
    * Each slate holds the full state of one Dijkstra search. The brain
@@ -370,6 +381,15 @@ void brainPathfinderSetMoveRules(BrainPathfinder *pf, float brakeRate,
 void brainPathfinderSetShellRules(BrainPathfinder *pf, int32_t shellLife,
                                   int32_t shellSpeed, int32_t shellStartAdd,
                                   int32_t gunsightMax);
+
+/* Push the length a pill's shell flies and the tank hit circle, from the
+ * same place as the shell rules above. */
+void brainPathfinderSetShotRules(BrainPathfinder *pf, float pillFireLength,
+                                 int32_t tankHitRadius);
+
+/* Pick the engine-exact shot simulator (1, the default) or the old one
+ * (0). The Lua shot calls set it from SHOT_SIM_ENGINE_EXACT. */
+void brainPathfinderSetShotSimExact(BrainPathfinder *pf, int exact);
 
 /*
  * Eagerly allocate the per-slate working arrays for every slate AND touch
@@ -831,7 +851,12 @@ typedef struct {
  * shooter_type: BRAIN_SHOT_SHOOTER_TANK or BRAIN_SHOT_SHOOTER_PILL.
  * sight_len:    tank's sightLen (1..gunsight_max). Pass 0 to use
  *               the pathfinder's gunsight_max. Ignored when
- *               shooter_type is PILL.
+ *               shooter_type is PILL (the pill's shell flies
+ *               pill_fire_length).
+ *
+ * The angle is the one each shooter's own code fires at: utilCalcAngle
+ * for a pill (pillsTargetTank), shellAngleFromTarget for a tank (when
+ * shot_sim_exact is 0, shellAngleFromTarget for both).
  *
  * Returns 0 if pf is NULL, origin == target, out_tiles is NULL, or
  * max_tiles<=0. Stops early (returning max_tiles) if the buffer fills. */
@@ -856,10 +881,13 @@ int brainPathfinderSimulateShotAngle(const BrainPathfinder *pf,
 
 /* Same as brainPathfinderSimulateShot but also checks for tank hits.
  * Tank positions are passed via tanks/num_tanks. When the shell enters
- * the 128 wu hitbox of a tank, a hit_type=1 entry is emitted at that
- * point in the sequence (interspersed with tile entries). The shell
- * stops on the first tank hit (same as the engine). owner_player is
- * the firing player — own tank is excluded from hit checks. */
+ * a tank's hit zone (utilIsTankHit with tank_hit_radius: the engine's
+ * circle, or its 128 box under BOLO_LEGACY_SQUARE_COLLISION), a
+ * hit_type=1 entry is emitted at that point in the sequence
+ * (interspersed with tile entries). The shell stops on the first tank
+ * hit (same as the engine). owner_player is the firing player — own
+ * tank is excluded from hit checks. With shot_sim_exact 0 the test is
+ * the old 128 box. */
 int brainPathfinderSimulateShotWithTanks(const BrainPathfinder *pf,
                                           WORLD origin_wx, WORLD origin_wy,
                                           WORLD target_wx, WORLD target_wy,

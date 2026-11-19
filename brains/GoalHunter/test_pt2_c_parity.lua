@@ -17,7 +17,10 @@
 --     PT2_LIVE_SHELL), after the first N_RANDOM so those stay the same;
 --   * the ray table (gh_pt2.c "Shell ray table"): N_TABLE worlds, classic
 --     and live rules, run through the C copy with gh_pt2.table_check(true),
---     which also walks every ray read from the table and compares the two.
+--     which also walks every ray read from the table and compares the two;
+--   * N_BLOCK random worlds with PT2_TANKSHOT_BLOCKERS (env.ts_boats and
+--     0 to 6 other tanks in env.ts_tanks round the target), half with live
+--     rules, and N_BLOCK_TABLE of them through the table check too.
 -- Each case runs the Lua copy, then the C copy, on the same inp. They must
 -- give:
 --   * the same result, field by field (numbers exactly, no tolerance),
@@ -58,6 +61,8 @@ end
 local N_RANDOM = tonumber(rawget(_G, "PT2_N_RANDOM") or 300)
 local N_LIVE   = tonumber(rawget(_G, "PT2_N_LIVE") or 100)
 local N_TABLE  = tonumber(rawget(_G, "PT2_N_TABLE") or 150)
+local N_BLOCK  = tonumber(rawget(_G, "PT2_N_BLOCK") or 100)
+local N_BLOCK_TABLE = tonumber(rawget(_G, "PT2_N_BLOCK_TABLE") or 60)
 
 -- ── deterministic random numbers (not math.random: same on every build) ──
 local seed = 12345
@@ -406,6 +411,70 @@ if G.table_check then
   end
 end
 
+-- ── PT2_TANKSHOT_BLOCKERS: boats and the tanks we see ──────────────────────
+local SH = require("shadow")
+local function tank_blockers(inp)
+  inp.env.ts_boats = true
+  local t = {}
+  local A = inp.A
+  for _ = 1, rnd(7) do
+    t[#t + 1] = (A.mx - 9 + rnd(19)) * 256 + rnd(256)
+    t[#t + 1] = (A.my - 9 + rnd(19)) * 256 + rnd(256)
+  end
+  inp.env.ts_tanks = #t > 0 and t or nil
+end
+local n_block, ts_why = 0, {}
+do
+  local ts0 = SH.tank_shot
+  SH.tank_shot = function(...)
+    local ok, why, ln = ts0(...)
+    local k = ok and "ok" or tostring(why)
+    ts_why[k] = (ts_why[k] or 0) + 1
+    return ok, why, ln
+  end
+  for ci = 1, N_BLOCK do
+    local inp, pills = random_case(N_RANDOM + N_LIVE + N_TABLE + ci)
+    tank_blockers(inp)
+    if ci % 2 == 0 then live_rules(inp.env) end
+    n = n + 1; n_block = n_block + 1
+    local e = run_case(inp, pills)
+    if e then
+      bad = bad + 1
+      first = first or ("tank shot blockers case " .. ci .. ": " .. e)
+    end
+  end
+  SH.tank_shot = ts0
+end
+if G.table_check then
+  G.table_check(true)
+  for ci = 1, N_BLOCK_TABLE do
+    local inp = random_case(N_RANDOM + N_LIVE + N_TABLE + N_BLOCK + ci)
+    tank_blockers(inp)
+    if ci % 2 == 0 then live_rules(inp.env) end
+    inp.capture_file = nil
+    inp.c_eval = true
+    LOG = new_log({})
+    pcall(G.evaluate, inp, V2)
+    LOG = nil
+  end
+  local ck, nb, f1 = G.table_check(false)
+  tab_checked, tab_bad = tab_checked + ck, tab_bad + nb
+  n = n + 1
+  if nb > 0 then
+    bad = bad + 1
+    first = first or (string.format("ray table with tank shot blockers: %d of %d rays differ from the walk; first %s",
+                                    nb, ck, f1))
+  elseif ck == 0 then
+    bad = bad + 1
+    first = first or "ray table with tank shot blockers: no ray read from the table"
+  end
+end
+if (ts_why.tank or 0) == 0 or (ts_why.boat or 0) == 0 then
+  bad = bad + 1
+  first = first or string.format("tank shot blockers: no shot stopped by a tank (%d) or a boat (%d)",
+                                 ts_why.tank or 0, ts_why.boat or 0)
+end
+
 -- ── recorded cases ──────────────────────────────────────────────────────
 local cases_file = rawget(_G, "PT2_CASES_FILE")
 local n_rec = 0
@@ -438,8 +507,11 @@ for _, k in ipairs({ "cases", "best", "safe", "chain", "plan", "nudge", "hold", 
                      "leeway", "reject", "finish", "why_unsafe", "ally_cover", "unsearched" }) do
   cv[#cv + 1] = k .. "=" .. cov[k]
 end
-local cvs = string.format("%d random + %d recorded + %d live shell; table rays checked %d, differ %d; %s",
-  N_RANDOM, n_rec, n_live, tab_checked, tab_bad, table.concat(cv, " "))
+local cvs = string.format("%d random + %d recorded + %d live shell + %d tank shot blockers "
+  .. "(tank_shot stopped by a tank %d, a boat %d, of %d); table rays checked %d, differ %d; %s",
+  N_RANDOM, n_rec, n_live, n_block, ts_why.tank or 0, ts_why.boat or 0,
+  (function() local s = 0; for _, v in pairs(ts_why) do s = s + v end; return s end)(),
+  tab_checked, tab_bad, table.concat(cv, " "))
 print("test_pt2_c_parity: " .. n .. " cases, " .. bad .. " bad; " .. cvs)
 if first then print("  first: " .. first) end
 return n, bad, first or "", cvs

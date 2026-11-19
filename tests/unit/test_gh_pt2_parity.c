@@ -107,40 +107,53 @@ static int pt2p_run(const char *brainDir) {
  * its two first entries (the shooter's square, the spawn square) are put
  * the same way. For our own shells at the pill (tank_shot) the same, with
  * the tank's angle (shellAngleFromTarget) and brainPathfinderSimulateShot.
- * simulate_shot_walk_tanks (a 128 box, not the circle) is only counted. */
+ *
+ * Andrew, Nov 19: the shot simulator must match the engine exactly, with
+ * separate rules for a pill's shell and a tank's shell. So also, on all
+ * three rule sets (each with its own pill_fire_length): the pill's
+ * brainPathfinderSimulateShot at a target point (utilCalcAngle,
+ * pill_fire_length), the tank's at sightLen 14 and 13 (the float half
+ * square), and brainPathfinderSimulateShotWithTanks for both shooters
+ * against tanks on, inside, on the edge of and outside the hit zone
+ * (utilIsTankHit, the test tankShellInHitZone makes), with the owner's
+ * tank skipped. 0 differences. The old answers (SHOT_SIM_ENGINE_EXACT
+ * false) are only counted. A build with BOLO_LEGACY_SQUARE_COLLISION runs
+ * the same test on the 128 box, since both sides call utilIsTankHit. */
 
 #define PT2E_MAX 96
+#define PT2E_TICKS 192
 
 typedef struct { int mx[PT2E_MAX], my[PT2E_MAX], t[PT2E_MAX]; int n; int hit_t; float angle;
-                 int smx, smy; } Pt2EWalk;
+                 int smx, smy; int ticks; WORLD x[PT2E_TICKS + 1], y[PT2E_TICKS + 1]; } Pt2EWalk;
 
-/* The engine's shell: the squares it enters (step 1 on) and the first step
- * inside the circle of radius hitR round (tx, ty) (0 = none). */
-static void pt2e_engine(int kind, const double sh[5], WORLD sx, WORLD sy, WORLD tx, WORLD ty,
+/* The engine's shell: the squares it enters (step 1 on), its place on each
+ * step, and the first step inside the hit zone round (tx, ty) (0 = none).
+ * kind 0 is a pill's shell (utilCalcAngle, the length handed in), kind 1 a
+ * tank's (shellAngleFromTarget, the length handed in). The hit zone is
+ * utilIsTankHit, the test tankShellInHitZone makes. */
+static void pt2e_engine(int kind, const double sh[5], float len, WORLD sx, WORLD sy, WORLD tx, WORLD ty,
                         Pt2EWalk *o) {
     int speed = (int)sh[0], add = (int)sh[1], life = (int)sh[2], hitR = (int)sh[3];
-    float len = kind == 0 ? (float)sh[4] : 7.0f;
     TURNTYPE a = kind == 0 ? utilCalcAngle(sx, sy, tx, ty) : shellAngleFromTarget(sx, sy, tx, ty);
     WORLD x, y;
     shellSpawnPos(sx, sy, a, speed, add, &x, &y);
     o->smx = x >> 8; o->smy = y >> 8;
     int ticks = shellLifeTicks(len, life, add);
+    if (ticks > PT2E_TICKS) ticks = PT2E_TICKS;  /* the rule sets below stay far under */
     int32_t xs = 0, ys = 0, xa = 0, ya = 0;
     utilCalcDistanceHP(&xs, &ys, a, speed);
     int last = -1;
-    o->n = 0; o->hit_t = 0; o->angle = a;
+    o->n = 0; o->hit_t = 0; o->angle = a; o->ticks = ticks;
     for (int t = 1; t <= ticks; t++) {
         shellAdvance1Tick(&x, &y, &xa, &ya, xs, ys);
+        o->x[t] = x; o->y[t] = y;
         int mx = x >> 8, my = y >> 8, sq = my * 256 + mx;
         if (sq != last) {
             last = sq;
             if (o->n < PT2E_MAX) { o->mx[o->n] = mx; o->my[o->n] = my; o->t[o->n] = t; }
             o->n++;
         }
-        if (kind == 0 && o->hit_t == 0) {
-            int dx = (int)tx - (int)x, dy = (int)ty - (int)y;
-            if (abs(dx) < hitR && abs(dy) < hitR && dx * dx + dy * dy < hitR * hitR) o->hit_t = t;
-        }
+        if (o->hit_t == 0 && utilIsTankHit(tx, ty, 0, x, y, 0, (WORLD)hitR)) o->hit_t = t;
     }
 }
 
@@ -162,6 +175,41 @@ static int pt2e_sim_style(WORLD sx, WORLD sy, const Pt2EWalk *w, BrainShotTile *
     return n;
 }
 
+/* What simulate_shot_walk_tanks must give for the engine's shell w among
+ * these tanks: the sim_style squares up to the first step a tank that is
+ * not the owner's is in the hit zone (utilIsTankHit, tank order), then
+ * that hit entry. */
+static int pt2e_with_tanks(WORLD sx, WORLD sy, const Pt2EWalk *w, const double sh[5],
+                           const BrainShotTankPos *tp, int nt, int owner,
+                           BrainShotTile *out, int max) {
+    int n = 0, lx, ly;
+    out[n].mx = (uint8_t)(sx >> 8); out[n].my = (uint8_t)(sy >> 8);
+    out[n].hit_type = BRAIN_SHOT_HIT_TILE; out[n].hit_id = 0; n++;
+    lx = sx >> 8; ly = sy >> 8;
+    if (w->smx != lx || w->smy != ly) {
+        out[n].mx = (uint8_t)w->smx; out[n].my = (uint8_t)w->smy;
+        out[n].hit_type = BRAIN_SHOT_HIT_TILE; out[n].hit_id = 0; n++;
+        lx = w->smx; ly = w->smy;
+    }
+    for (int t = 1; t <= w->ticks && n < max; t++) {
+        int mx = w->x[t] >> 8, my = w->y[t] >> 8;
+        for (int i = 0; i < nt; i++) {
+            if (tp[i].player_num == owner) continue;
+            if (utilIsTankHit(tp[i].wx, tp[i].wy, 0, w->x[t], w->y[t], 0, (WORLD)sh[3])) {
+                out[n].mx = (uint8_t)mx; out[n].my = (uint8_t)my;
+                out[n].hit_type = BRAIN_SHOT_HIT_TANK; out[n].hit_id = tp[i].player_num;
+                return n + 1;
+            }
+        }
+        if (mx != lx || my != ly) {
+            out[n].mx = (uint8_t)mx; out[n].my = (uint8_t)my;
+            out[n].hit_type = BRAIN_SHOT_HIT_TILE; out[n].hit_id = 0; n++;
+            lx = mx; ly = my;
+        }
+    }
+    return n;
+}
+
 static int pt2e_same_tiles(const BrainShotTile *a, int na, const BrainShotTile *b, int nb) {
     if (na != nb) return 0;
     for (int k = 0; k < na; k++)
@@ -169,14 +217,38 @@ static int pt2e_same_tiles(const BrainShotTile *a, int na, const BrainShotTile *
     return 1;
 }
 
+static int pt2e_same_hits(const BrainShotTile *a, int na, const BrainShotTile *b, int nb) {
+    if (!pt2e_same_tiles(a, na, b, nb)) return 0;
+    for (int k = 0; k < na; k++)
+        if (a[k].hit_type != b[k].hit_type || a[k].hit_id != b[k].hit_id) return 0;
+    return 1;
+}
+
+/* The tanks round a target point for the tank tests: one on the point,
+ * three near the edge of the hit zone (inside, on it, outside), one the
+ * owner's own (it must be skipped). */
+static int pt2e_tanks(WORLD x, WORLD y, int hitR, int which, int owner, BrainShotTankPos *tp) {
+    static const int OFF[4][2] = { { 0, 0 }, { 1, 1 }, { -1, 0 }, { 1, -1 } };
+    int d = which == 0 ? 0 : (which == 1 ? hitR * 7 / 10 : (which == 2 ? hitR : hitR * 3 / 2));
+    int o = which % 4;
+    tp[0].wx = (WORLD)((int)x + OFF[o][0] * d); tp[0].wy = (WORLD)((int)y + OFF[o][1] * d);
+    tp[0].player_num = 3;
+    tp[1].wx = x; tp[1].wy = y; tp[1].player_num = (uint8_t)owner;
+    return 2;
+}
+
 static int pt2e_run(const double sh[5], const char *name) {
     BrainPathfinder *pf = brainPathfinderCreate();
     UT_ASSERT(pf != NULL);
     brainPathfinderSetShellRules(pf, (int32_t)sh[2], (int32_t)sh[0], (int32_t)sh[1], 14);
+    brainPathfinderSetShotRules(pf, (float)sh[4], (int32_t)sh[3]);
     static const int PO[4][2] = { { 0, 0 }, { 2, 1 }, { -3, 2 }, { 1, -4 } };
+    static const int SL[2] = { 14, 13 };
     const int amx = 120, amy = 120;
-    int rays = 0, bad_walk = 0, bad_sim = 0, bad_box = 0;
-    int shots = 0, bad_tangle = 0, bad_tangle_sq = 0, bad_twalk = 0, bad_tsim = 0;
+    const int hitR = (int)sh[3];
+    int rays = 0, bad_walk = 0, bad_sim = 0, bad_psim = 0, bad_pwt = 0, pwt = 0;
+    int shots = 0, bad_tangle = 0, bad_tangle_sq = 0, bad_twalk = 0, bad_tsim = 0, bad_twt = 0, twt = 0;
+    int old_psim = 0, old_pwt = 0, old_tsim = 0, old_twt = 0;
     char first[256] = "";
     for (int p = 0; p < 4; p++) {
         WORLD px = (WORLD)((amx + PO[p][0]) * 256 + 128), py = (WORLD)((amy + PO[p][1]) * 256 + 128);
@@ -188,9 +260,10 @@ static int pt2e_run(const double sh[5], const char *name) {
                     WORLD tx = (WORLD)((amx * 256 + 128) + (int)floor(R * sin(rad)));
                     WORLD ty = (WORLD)((amy * 256 + 128) - (int)floor(R * cos(rad)));
                     if (tx == px && ty == py) continue;
+                    int which = (deg / 2 + ri + oi) % 4;
                     /* the pill's shell at the tank point */
                     Pt2EWalk eng, gh;
-                    pt2e_engine(0, sh, px, py, tx, ty, &eng);
+                    pt2e_engine(0, sh, (float)sh[4], px, py, tx, ty, &eng);
                     double ang;
                     gh.n = naPt2TestWalk(0, sh, px, py, tx, ty, &ang, gh.mx, gh.my, gh.t, PT2E_MAX, &gh.hit_t);
                     gh.angle = (float)ang;
@@ -204,22 +277,47 @@ static int pt2e_run(const double sh[5], const char *name) {
                             "pill ray %u,%u to %u,%u: angle %.9g / %.9g, squares %d / %d, hit step %d / %d",
                             px, py, tx, ty, ang, (double)eng.angle, gh.n, eng.n, gh.hit_t, eng.hit_t);
                     }
-                    BrainShotTile sim[PT2E_MAX], mine[PT2E_MAX];
+                    BrainShotTile sim[PT2E_MAX], mine[PT2E_MAX], old[PT2E_MAX];
                     int ns = brainPathfinderSimulateShotAngle(pf, px, py, eng.angle, BRAIN_SHOT_SHOOTER_PILL, 0,
                                                               sim, PT2E_MAX);
                     int nm = pt2e_sim_style(px, py, &eng, mine, PT2E_MAX);
-                    if (!pt2e_same_tiles(sim, ns, mine, nm)) bad_sim++;
-                    /* simulate_shot_walk_tanks: the first tank entry */
-                    BrainShotTankPos tp = { tx, ty, 3 };
-                    BrainShotTile wt[PT2E_MAX];
+                    if (!pt2e_same_tiles(sim, ns, mine, nm)) {
+                        bad_sim++;
+                        if (!first[0]) snprintf(first, sizeof(first), "pill shot sim (angle %.9g) %u,%u at %u,%u: "
+                                                "squares differ", (double)eng.angle, px, py, tx, ty);
+                    }
+                    /* the pill's shot sim at a target point: utilCalcAngle */
+                    ns = brainPathfinderSimulateShot(pf, px, py, tx, ty, BRAIN_SHOT_SHOOTER_PILL, 0, sim, PT2E_MAX);
+                    if (!pt2e_same_tiles(sim, ns, mine, nm)) {
+                        bad_psim++;
+                        if (!first[0]) snprintf(first, sizeof(first), "pill shot sim %u,%u at %u,%u: squares differ",
+                                                px, py, tx, ty);
+                    }
+                    brainPathfinderSetShotSimExact(pf, 0);
+                    int no = brainPathfinderSimulateShot(pf, px, py, tx, ty, BRAIN_SHOT_SHOOTER_PILL, 0, old, PT2E_MAX);
+                    brainPathfinderSetShotSimExact(pf, 1);
+                    if (!pt2e_same_tiles(sim, ns, old, no)) old_psim++;
+                    /* simulate_shot_walk_tanks for the pill's shell */
+                    BrainShotTankPos tp[2];
+                    int nt = pt2e_tanks(tx, ty, hitR, which, 200, tp);
+                    BrainShotTile wt[PT2E_MAX], wx[PT2E_MAX];
                     int nw = brainPathfinderSimulateShotWithTanks(pf, px, py, tx, ty, BRAIN_SHOT_SHOOTER_PILL, 0,
-                                                                  &tp, 1, 200, wt, PT2E_MAX);
-                    int box_hit = 0;
-                    for (int k = 0; k < nw; k++) if (wt[k].hit_type == BRAIN_SHOT_HIT_TANK) box_hit = 1;
-                    if (box_hit != (eng.hit_t > 0)) bad_box++;
+                                                                  tp, nt, 200, wt, PT2E_MAX);
+                    int nx = pt2e_with_tanks(px, py, &eng, sh, tp, nt, 200, wx, PT2E_MAX);
+                    pwt++;
+                    if (!pt2e_same_hits(wt, nw, wx, nx)) {
+                        bad_pwt++;
+                        if (!first[0]) snprintf(first, sizeof(first), "pill shot with tanks %u,%u at %u,%u: "
+                                                "entries %d / %d", px, py, tx, ty, nw, nx);
+                    }
+                    brainPathfinderSetShotSimExact(pf, 0);
+                    no = brainPathfinderSimulateShotWithTanks(pf, px, py, tx, ty, BRAIN_SHOT_SHOOTER_PILL, 0,
+                                                              tp, nt, 200, old, PT2E_MAX);
+                    brainPathfinderSetShotSimExact(pf, 1);
+                    if (!pt2e_same_hits(wt, nw, old, no)) old_pwt++;
                     /* our shell from the tank point at the pill (tank_shot) */
                     Pt2EWalk te, tg;
-                    pt2e_engine(1, sh, tx, ty, px, py, &te);
+                    pt2e_engine(1, sh, 7.0f, tx, ty, px, py, &te);
                     tg.n = naPt2TestWalk(1, sh, tx, ty, px, py, &ang, tg.mx, tg.my, tg.t, PT2E_MAX, NULL);
                     shots++;
                     int ts = tg.n == te.n;
@@ -236,23 +334,53 @@ static int pt2e_run(const double sh[5], const char *name) {
                                                     tx, ty, px, py);
                         }
                     }
-                    int ns2 = brainPathfinderSimulateShot(pf, tx, ty, px, py, BRAIN_SHOT_SHOOTER_TANK, 14,
-                                                          sim, PT2E_MAX);
-                    int nm2 = pt2e_sim_style(tx, ty, &te, mine, PT2E_MAX);
-                    if (!pt2e_same_tiles(sim, ns2, mine, nm2)) bad_tsim++;
+                    for (int si = 0; si < 2; si++) {
+                        Pt2EWalk tl;
+                        pt2e_engine(1, sh, (TURNTYPE)SL[si] / (TURNTYPE)2, tx, ty, px, py, &tl);
+                        int ns2 = brainPathfinderSimulateShot(pf, tx, ty, px, py, BRAIN_SHOT_SHOOTER_TANK, SL[si],
+                                                              sim, PT2E_MAX);
+                        int nm2 = pt2e_sim_style(tx, ty, &tl, mine, PT2E_MAX);
+                        if (!pt2e_same_tiles(sim, ns2, mine, nm2)) bad_tsim++;
+                        brainPathfinderSetShotSimExact(pf, 0);
+                        no = brainPathfinderSimulateShot(pf, tx, ty, px, py, BRAIN_SHOT_SHOOTER_TANK, SL[si],
+                                                         old, PT2E_MAX);
+                        brainPathfinderSetShotSimExact(pf, 1);
+                        if (!pt2e_same_tiles(sim, ns2, old, no)) old_tsim++;
+                        /* simulate_shot_walk_tanks for our shell at a tank by the pill */
+                        nt = pt2e_tanks(px, py, hitR, which, 1, tp);
+                        tp[1].wx = tx; tp[1].wy = ty;  /* the owner sits on the shooter's point */
+                        nw = brainPathfinderSimulateShotWithTanks(pf, tx, ty, px, py, BRAIN_SHOT_SHOOTER_TANK, SL[si],
+                                                                  tp, nt, 1, wt, PT2E_MAX);
+                        nx = pt2e_with_tanks(tx, ty, &tl, sh, tp, nt, 1, wx, PT2E_MAX);
+                        twt++;
+                        if (!pt2e_same_hits(wt, nw, wx, nx)) {
+                            bad_twt++;
+                            if (!first[0]) snprintf(first, sizeof(first), "tank shot with tanks %u,%u at %u,%u "
+                                                    "sight %d: entries %d / %d", tx, ty, px, py, SL[si], nw, nx);
+                        }
+                        brainPathfinderSetShotSimExact(pf, 0);
+                        no = brainPathfinderSimulateShotWithTanks(pf, tx, ty, px, py, BRAIN_SHOT_SHOOTER_TANK, SL[si],
+                                                                  tp, nt, 1, old, PT2E_MAX);
+                        brainPathfinderSetShotSimExact(pf, 1);
+                        if (!pt2e_same_hits(wt, nw, old, no)) old_twt++;
+                    }
                 }
             }
         }
     }
     brainPathfinderDestroy(pf);
-    printf("gh_pt2_engine (%s): %d pill rays: walk differs %d, shot sim differs %d, "
-           "128 box tank test differs %d (report only); %d tank shots: angle differs %d "
-           "(report only; squares differ in %d of them), "
-           "walk differs %d, shot sim differs %d\n",
-           name, rays, bad_walk, bad_sim, bad_box, shots, bad_tangle, bad_tangle_sq, bad_twalk, bad_tsim);
+    printf("gh_pt2_engine (%s): %d pill rays: walk differs %d, shot sim (angle) differs %d, "
+           "shot sim (target) differs %d, with tanks differs %d of %d; %d tank shots: angle differs %d "
+           "(report only; squares differ in %d of them), walk differs %d, shot sim differs %d (sight 14 and 13), "
+           "with tanks differs %d of %d\n",
+           name, rays, bad_walk, bad_sim, bad_psim, bad_pwt, pwt, shots, bad_tangle, bad_tangle_sq,
+           bad_twalk, bad_tsim, bad_twt, twt);
+    printf("  old answers (SHOT_SIM_ENGINE_EXACT false) differ from the engine-exact ones: pill shot sim %d of %d, "
+           "pill with tanks %d of %d, tank shot sim %d of %d, tank with tanks %d of %d\n",
+           old_psim, rays, old_pwt, pwt, old_tsim, twt, old_twt, twt);
     if (first[0]) printf("  first: %s\n", first);
-    if (bad_walk || bad_sim || bad_twalk || bad_tsim) {
-        fprintf(stderr, "FAIL gh_pt2_engine (%s): the shadow's walk is not the engine's shell\n", name);
+    if (bad_walk || bad_sim || bad_psim || bad_pwt || bad_twalk || bad_tsim || bad_twt) {
+        fprintf(stderr, "FAIL gh_pt2_engine (%s): a shell walk is not the engine's shell\n", name);
         return 1;
     }
     return 0;
@@ -261,11 +389,14 @@ static int pt2e_run(const double sh[5], const char *name) {
 static int pt2e_all(void) {
     /* speed, start add, life, tank hit radius, pill fire length */
     static const double classic[5] = { 32, 5, 8, 112, 8.5 };
-    static const double tuned[5]   = { 40, 3, 7, 128, 8.5 };
-    static const double slow[5]    = { 24, 6, 9, 96, 8.5 };
+    static const double tuned[5]   = { 40, 3, 7, 128, 10.25 };
+    static const double slow[5]    = { 24, 6, 9, 96, 6.5 };
+#ifdef BOLO_LEGACY_SQUARE_COLLISION
+    printf("gh_pt2_engine: built with BOLO_LEGACY_SQUARE_COLLISION (128 box hit zone)\n");
+#endif
     int rc = pt2e_run(classic, "classic");
-    rc |= pt2e_run(tuned, "speed 40 add 3 life 7 r 128");
-    rc |= pt2e_run(slow, "speed 24 add 6 life 9 r 96");
+    rc |= pt2e_run(tuned, "speed 40 add 3 life 7 r 128 pill length 10.25");
+    rc |= pt2e_run(slow, "speed 24 add 6 life 9 r 96 pill length 6.5");
     return rc;
 }
 

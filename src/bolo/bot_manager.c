@@ -1507,6 +1507,9 @@ void botRunnerPrepareThink(BotContext *bot, GameSim *world,
                                      world->rules.shell_speed,
                                      world->rules.shell_start_add,
                                      world->rules.gunsight_max);
+        brainPathfinderSetShotRules(bot->brain.pathfinder,
+                                    world->rules.pill_fire_length,
+                                    world->rules.tank_hit_radius);
     }
 
     /* NOTE: dead tanks (waiting to respawn) used to skip the think entirely.

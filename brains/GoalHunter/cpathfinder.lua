@@ -777,7 +777,9 @@ end
 ---
 --- shooter_type: M.SHOT_TANK (default) or M.SHOT_PILL.
 --- sight_len:    tank sightLen 1..14; 0 (default) = GUNSIGHT_MAX.
----               Ignored for SHOT_PILL (uses PILLBOX_FIRE_DISTANCE).
+---               Ignored for SHOT_PILL (the sim's pill_fire_length).
+--- SHOT_PILL aims with the pill's own utilCalcAngle, SHOT_TANK with
+--- atan2 (C.SHOT_SIM_ENGINE_EXACT; false = atan2 for both).
 function M.simulate_shot(ox, oy, tx, ty, shooter_type, sight_len)
   -- Defensive: cpf_simulate_shot's C binding uses luaL_checkinteger
   -- on the wu coords, which crashes the brain if a float slips
@@ -787,7 +789,8 @@ function M.simulate_shot(ox, oy, tx, ty, shooter_type, sight_len)
     math.floor(ox + 0.5), math.floor(oy + 0.5),
     math.floor(tx + 0.5), math.floor(ty + 0.5),
     shooter_type or M.SHOT_TANK,
-    sight_len or 0)
+    sight_len or 0,
+    C.SHOT_SIM_ENGINE_EXACT ~= false)
 end
 
 --- Bit-exact shell trajectory simulation: pass the firing angle
@@ -802,7 +805,8 @@ function M.simulate_shot_angle(ox, oy, angle, shooter_type, sight_len)
     math.floor(ox + 0.5), math.floor(oy + 0.5),
     angle,                              -- pass float through
     shooter_type or M.SHOT_TANK,
-    sight_len or 0)
+    sight_len or 0,
+    C.SHOT_SIM_ENGINE_EXACT ~= false)
 end
 
 --- Predict the tank's resting position if it begins braking THIS tick, using
@@ -835,7 +839,8 @@ function M.predict_stop(tankx, tanky, angle, speed, terrain_cap, trace, min_spee
 end
 
 --- Tank-aware shot simulation: same as simulate_shot but also checks
---- for tank hitbox intersections (128 wu box). Returns entries with
+--- for tank hits on the engine's hit circle (tank_hit_radius; the old
+--- 128 wu box when C.SHOT_SIM_ENGINE_EXACT is false). Returns entries with
 --- hit_type=0 (tile) or hit_type=1 (tank hit, hit_id=player_num).
 --- Shell stops on the first tank hit (consumed).
 --- tanks: array of {wx=, wy=, player_num=} entries.
@@ -850,7 +855,8 @@ function M.simulate_shot_with_tanks(ox, oy, tx, ty, shooter_type, sight_len, tan
     shooter_type or M.SHOT_TANK,
     sight_len or 0,
     tanks,
-    owner_player)
+    owner_player,
+    C.SHOT_SIM_ENGINE_EXACT ~= false)
 end
 
 function M.get_overlay(mx, my)

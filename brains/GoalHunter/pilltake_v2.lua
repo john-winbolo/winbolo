@@ -933,6 +933,26 @@ function M.live_shell(env, r)
   return env
 end
 
+-- PT2_TANKSHOT_BLOCKERS: what else stops our own shell in tank_shot, as in
+-- the engine: a boat square, and the other tanks this bot sees (info.objects,
+-- not its own), where they are now. Ally and enemy alike: the engine's shell
+-- stops on any tank but the shooter's. Sets env.ts_boats and env.ts_tanks.
+function M.tank_blockers(env, info)
+  if type(env) ~= "table" then return env end
+  env.ts_boats = true
+  local t, n = {}, 0
+  local me = info and info.player_number
+  local tank_type = rawget(_G, "OBJECT_TANK")
+  for _, ob in ipairs((info and info.objects) or {}) do
+    if ob.type == tank_type and ob.idnum ~= me and type(ob.x) == "number" and type(ob.y) == "number" then
+      t[n + 1], t[n + 2] = ob.x, ob.y
+      n = n + 2
+    end
+  end
+  env.ts_tanks = n > 0 and t or nil
+  return env
+end
+
 -- The knob part of inp, read from constants each call (cfg can change).
 function M.knob_inp(C, inp)
   inp = inp or {}
