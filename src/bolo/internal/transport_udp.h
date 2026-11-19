@@ -38,6 +38,7 @@
 #include "gametype.h"
 #include "client_connect_state.h"
 #include "server_sim.h"      /* SubscriberHandle */
+#include "bot_host_machine.h" /* BotHostDynamicFlags */
 
 /* Forward declarations */
 struct ClientSim;
@@ -69,12 +70,44 @@ typedef struct {
 /* bit 2: client requests a tankless spectator connection rather than a tank
  * slot.  Branches the join handler to the spectator-accept path. */
 #define JOIN_FLAG_SPECTATOR         0x04
+/* bit 3: the joiner is a Bot Host bot connection for a bot seat the server
+ * already holds. JOIN_BOT_SLOT_TOKEN_LEN bytes of one-time token follow the
+ * address-proof cookie. The server binds the connection to the seat the token
+ * was issued for, without a roster join; it never takes a free seat. */
+#define JOIN_FLAG_BOT_SLOT          0x08
+/* bit 4: the joiner is a Bot Host control connection. A key
+ * (JOIN_BOT_HOST_KEY_LEN bytes), a slot count (1 byte), a host name
+ * (JOIN_BOT_HOST_NAME_LEN bytes) and the host's listen port (2 bytes,
+ * big-endian; left out by an older host) follow the cookie. Accepted only
+ * when the server runs with -bothostkey or -bothosts, the key matches (with
+ * a key) and the host is on the list (with a list). The connection holds no
+ * tank seat and is not shown to players. */
+#define JOIN_FLAG_BOT_HOST          0x10
+
+#define JOIN_BOT_SLOT_TOKEN_LEN     16
+#define JOIN_BOT_HOST_KEY_LEN       64
+#define JOIN_BOT_HOST_NAME_LEN      32
+/* A player's own Bot Host (the one inside a WinBolo client) adds to the Bot
+ * Host join, after the listen port: JOIN_BOT_HOST_PLAYER_MARK (1 byte), its
+ * player number (1 byte) and the CTRL_BOT_HOST_TICKET ticket the server sent
+ * that player (BOT_HOST_TICKET_LEN bytes). The ticket stands in for the key
+ * and the list: the server takes the host only while that player is
+ * connected and only from the player's address. */
+#define JOIN_BOT_HOST_PLAYER_MARK   0x50
+#define JOIN_BOT_HOST_PLAYER_LEN    (1 + 1 + 16)
+/* Most bot connections one Bot Host may offer. */
+#define BOT_HOST_MAX_SLOTS          MAX_TANKS
+/* Most Bot Host control connections one server holds at once. */
+#define MAX_BOT_HOSTS               8
 
 /* JOIN_ACCEPT slot byte the server sends to a tankless spectator in place of a
  * real 0..MAX_TANKS-1 slot — the viewer holds no tank.  A spectator client keys
  * its accept handling off this sentinel; a player-join client sees it as an
  * out-of-range slot (>= MAX_TANKS) and rejects the accept. */
 #define SPECTATOR_ACCEPT_NO_SLOT    0xFFu
+/* JOIN_ACCEPT slot byte the server sends to a Bot Host control connection. The
+ * connection holds no tank seat, like a spectator, but is not one. */
+#define BOT_HOST_ACCEPT_NO_SLOT     0xFEu
 
 /* Cap on concurrent tankless spectator connections held transport-side in
  * spectators[], independent of the MAX_TANKS player slots.  The operator's
@@ -249,6 +282,12 @@ Transport transportUdpClientCreate(struct ClientSim *clientSim,
 
 /* Destroys a client-side UDP transport. */
 void transportUdpClientDestroy(Transport *t);
+
+/* Turns a new client transport into a Bot Host bot connection: its JOINs
+ * carry JOIN_FLAG_BOT_SLOT and the one-time token
+ * (JOIN_BOT_SLOT_TOKEN_LEN bytes) from the server's CTRL_BOT_HOST_ASSIGN.
+ * Call it right after the connect, before the first tick. */
+bool transportUdpClientSetBotSlotToken(Transport *t, const uint8_t *token);
 
 /* Returns the client join state (for UI to display connecting/error). */
 UdpClientJoinState transportUdpClientGetJoinState(Transport *t);
@@ -608,6 +647,12 @@ typedef struct UdpServerClient {
                                   * encodes via the codec table and unicasts
                                   * to this client.  SUBSCRIBER_HANDLE_INVALID
                                   * when no subscription is active. */
+    bool botSlot;                /* this connection is a Bot Host bot
+                                  * connection bound to the bot seat of the
+                                  * same index. It is not a player: it never
+                                  * joined the roster and is never counted,
+                                  * listed or announced. Cleared when the
+                                  * connection is released. */
 } UdpServerClient;
 
 /* The port the server's socket is actually bound to, valid once
@@ -802,6 +847,105 @@ uint32_t transportUdpServerGetTickCount(void);
  * therefore needs a settling window before client UIs flip to game
  * render mode). */
 bool transportUdpServerHasAnyClient(void);
+
+/* Bot Host. SetBotHostKey turns Bot Host connections on with this key (an
+ * empty key turns them off) and hands the bot manager the hooks for seats
+ * whose brains run on a host. PrintBotHosts writes one line per connected
+ * host to stdout for the info and status commands. */
+bool transportUdpServerSetBotHostKey(struct ServerSim *sim, const char *key);
+/* -bothosts: the Bot Hosts this server may use, "ip[:port],..." or a file of
+ * them (see botHostAddrListLoad). The port is the host's listen port
+ * (BOT_HOST_DEFAULT_LISTEN_PORT when left out). Turns Bot Host connections
+ * on as a key does. False when the list cannot be read or a host name does
+ * not resolve. */
+bool transportUdpServerSetBotHostList(struct ServerSim *sim, const char *arg);
+/* The players' own Bot Hosts (on unless -noplayerbothosts): each player is
+ * sent a ticket, and the Bot Host inside that player's client joins with it
+ * in place of a key. Turns Bot Host connections on as a key does. */
+void transportUdpServerSetPlayerBotHosts(struct ServerSim *sim, bool on);
+/* Placement: a host of smallSlots slots or fewer counts bias slots fewer,
+ * so it fills a little later (-bothost-small-slots, -bothost-small-bias).
+ * A negative value keeps that default (BOT_HOST_SMALL_SLOTS_DEFAULT,
+ * BOT_HOST_SMALL_BIAS_DEFAULT in bot_host_link.h). */
+void transportUdpServerSetBotHostPlacement(int smallSlots, double bias);
+/* The lag rules of the bot placement (BotHostPlaceLag in bot_host_link.h):
+ * refMs (0: lag not counted) and maxMs (0: no ceiling); below 0: the
+ * default. */
+void transportUdpServerSetBotHostLag(int refMs, int maxMs);
+/* The overrun move of the bot placement (BotHostOverrunCfg in
+ * bot_host_link.h). Each value below 0 keeps its default. */
+typedef struct {
+    double pct;          /* the target rate in percent; 0: the check is off */
+    double emergencyPct; /* the emergency rate in percent; 0: no emergency */
+    double gain;         /* the target rate part for each move of a bot */
+    double stayFactor;   /* the stay time grows by this for each move */
+    int staySecs;        /* the stay time after the first move */
+    int windowSecs;      /* the time the rate is counted over */
+    int stepSecs;        /* at most one move per host in this time */
+    int stepMinSecs;     /* the shortest wait, for a rate far over */
+    int freeBatch;       /* 1: low free CPU gives up to n bots a step */
+    int freeSampleSecs;  /* the free CPU sample time */
+    int freeHistorySecs; /* the free CPU history kept */
+} BotHostOverrunFlags;
+void transportUdpServerSetBotHostOverrun(const BotHostOverrunFlags *f);
+/* Dynamic bot slots: BotHostDynamicFlags (bot_host_machine.h). */
+void transportUdpServerSetBotHostDynamic(const BotHostDynamicFlags *f);
+/* Writes what the placement measured and chose into the round log (.wbv)
+ * as log_BotHostData records (bothost_record.h). Off by default. */
+void transportUdpServerSetBotHostRecord(bool on);
+/* -bothost-spread-even: the old proportional spread of the bot placement,
+ * which also moves bots between good hosts to even out their counts and
+ * lag. Off by default: a bot stays where it runs well
+ * (botHostPlaceRebalanceKeep in bot_host_link.h). */
+void transportUdpServerSetBotHostSpreadEven(bool on);
+/* -bothost-enforce-server-limit <0|1>: 1 (the default), the server runs no
+ * more in-process bots than its own slots, and a bot with no slot there or
+ * on a good Bot Host is held until a place has one; 0, a bot back from a
+ * Bot Host runs on the server past its slots, as before. */
+void transportUdpServerSetBotHostEnforceServerLimit(bool on);
+/* -bothost-code official|custom. Official (false, the default): the
+ * server sends no brain file to any Bot Host and places a bot only on a host
+ * whose install holds its brain, file for file. Custom (true): hosts
+ * download the server's brain files, as before. */
+void transportUdpServerSetBotHostCode(bool custom);
+/* -bothost-nomove: no bot moves between places while a game runs; each bot
+ * is placed once (BotHostNoMove in bot_host_link.h). Off by default. */
+void transportUdpServerSetBotHostNoMove(bool on);
+/* -bothost-slots name=N: the most slots Bot Host `name` (its listed name,
+ * or the player's name for a player's own host) is given, locked for the
+ * lobby. Once per host; several flags are allowed. False, with the reason
+ * in err, for bad input. */
+bool transportUdpServerAddBotHostSlots(const char *arg, char *err,
+                                       size_t errSz);
+/* The lobby's slot override of Bot Host row `row` (LST_BOT_HOST_SLOTS):
+ * value 0 up to the slots the host reports, or 0xFF for none; player is
+ * the player who set it. Only for a player's own host, by that player: a
+ * dedicated host's Max slots is its own --slots-max. */
+enum {
+    BOT_HOST_SLOT_SET_OK = 0,
+    BOT_HOST_SLOT_SET_LOCKED,    /* -bothost-slots locks the row */
+    BOT_HOST_SLOT_SET_INVALID,   /* above the host's slots, or no such row */
+    BOT_HOST_SLOT_SET_NOT_OWNER, /* only a player's own host, by that player */
+};
+struct ServerSim;
+int  serverBotHostSetSlotOverride(struct ServerSim *sim, int row, int value,
+                                  int player);
+void transportUdpServerPrintBotHosts(void);
+
+/* -brain-debug session blocks, for the Bot Hosts' recordings: RecOpen when
+ * a block opens (dir is "debug_sessions/<name>", tick the server tick),
+ * RecClose when it closes. The hosts record their bots into a folder of the
+ * same name and send it after the game; the server merges it into dir. */
+void transportUdpServerRecOpen(const char *dir, uint32_t tick);
+void transportUdpServerRecClose(void);
+/* Console: "cleardebug" deletes debug_sessions/ except the open block and
+ * tells every Bot Host, now and when it next connects, to delete its
+ * recordings of this server. "brainmerge <session dir> <host dir>" merges a
+ * host's recordings by hand. Each writes one line into msg; false on a
+ * refusal or failure. */
+bool transportUdpServerClearDebug(char *msg, size_t msgLen);
+bool transportUdpServerBrainMerge(const char *sessionDir, const char *hostDir,
+                                  char *msg, size_t msgLen);
 
 /* Refresh the server's compressed map data and re-prime each connected
  * client for download (resend JOIN_ACCEPT, reset chunk tracking).

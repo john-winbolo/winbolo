@@ -180,13 +180,34 @@ typedef enum {
                                  * back on brings the same scripts back in
                                  * the same order. A server built before the
                                  * scenario half skips the mods alone. */
-    LST_POSITIONAL_SOUND  = 17  /* 1 byte bool, carried the plain way
+    LST_POSITIONAL_SOUND  = 17, /* 1 byte bool, carried the plain way
                                  * round: non-zero means on. When on,
                                  * sound events tell a human which side a
                                  * sound is on and roughly how far. Off is
                                  * the classic behaviour, and classic mode
                                  * forces it off and refuses an edit while
                                  * it stays on. */
+    LST_SERVER_BOT_SLOTS  = 18, /* 1 byte, 0..16: how many bots the
+                                 * server runs in its own process (its
+                                 * slots in the bot placement and its part
+                                 * of the Add Bot limit). Above 16 is
+                                 * refused, and so is any change while
+                                 * -botcapacity locks it. The one setting
+                                 * taken while a game runs too, and one
+                                 * that does not clear the ready marks:
+                                 * it is about the server, not the round.
+                                 * An older server drops it as unknown.
+                                 * CTRL_SERVER_BOT_SLOTS carries the value
+                                 * back. */
+    LST_BOT_HOST_SLOTS    = 19  /* 2 bytes: [row][value]: the slot
+                                 * override of Bot Host row `row`, 0 up
+                                 * to the slots the host reports, or 0xFF
+                                 * for none. It only lowers. Taken while a
+                                 * game runs too, and it leaves the ready
+                                 * marks alone, as LST_SERVER_BOT_SLOTS.
+                                 * Refused while -bothost-slots locks the
+                                 * row. CTRL_BOT_HOST_ROW_SLOTS carries the
+                                 * value back. */
 } LobbySettingType;
 
 #endif /* WIRE_LIMITS_H */

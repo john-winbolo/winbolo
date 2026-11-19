@@ -97,6 +97,33 @@ function M.open(filename, seed_tick, engine_tick)
   return file ~= nil
 end
 
+--- Move an open jsonl into the current DEBUG_SESSION_DIR.
+--  A -brain-debug server starts a new block directory every 15 minutes and
+--  sets DEBUG_SESSION_DIR again on every bot, but the brain keeps running, so
+--  without this its jsonl stayed in the first block for the whole game. Keeps
+--  the file name, closes the old file and appends to the new one. Unlike
+--  M.open it neither removes the old file nor writes a life row, and it keeps
+--  this tick's accumulated events. A no-op when no file is open or the path
+--  does not change.
+function M.reopen_in_session_dir()
+  if not file or not current_filename then return false end
+  local dir = _G.DEBUG_SESSION_DIR
+  if type(dir) ~= "string" or dir == "" then return false end
+  local base = current_filename:match("([^/\\]+)$")
+  if not base then return false end
+  local new_name = dir .. "/" .. base
+  if new_name == current_filename then return false end
+  local nf = io.open(new_name, "a")
+  if not nf then
+    print(TAG .. " LOG: FAILED to reopen in " .. dir)
+    return false
+  end
+  file:close()
+  file = nf
+  current_filename = new_name
+  return true
+end
+
 function M.close()
   if file then
     file:close()

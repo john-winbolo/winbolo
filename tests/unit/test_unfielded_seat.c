@@ -32,6 +32,10 @@
  *                                    — fielding one publishes no alliance
  *                                      reset
  * run_unfielded_seat_on_the_wire     — the byte, set and clear
+ * run_unfielded_seat_server_row_lists_held
+ *                                    — the lobby's Bot Host list names the
+ *                                      seat under the server's row, and no
+ *                                      count of that row moves
  *
  * Reads the ServerSim struct directly; the unittests profile permits it.
  */
@@ -728,6 +732,127 @@ int run_unfielded_seat_on_the_wire(void) {
     UT_ASSERT(mirror != NULL);
     UT_ASSERT_MSG(mirror->connected, "the slot did not reach the mirror");
     UT_ASSERT_MSG(!mirror->fielded, "the mirror reads the seat as fielded");
+    clientSimDestroy(cs);
+
+    return 0;
+}
+
+/* ── The server's Bot Host row ────────────────────────────────────── */
+
+/* The lobby's Bot Host list names a held seat under the server's own row,
+ * with the server's bots. The seat has no bot running anywhere, so it is in
+ * neither the row's used count nor its seats: it comes in CTRL_BOT_HOST_HELD
+ * (serverSimHeldBotSeats), which nothing but the list reads. A fielded bot
+ * and a human are not held. */
+#define UF_FIELDED_SEAT 5
+
+int run_unfielded_seat_server_row_lists_held(void) {
+    ServerSim *sim;
+    ControlEvent in, out, st;
+    ControlEncodeBodyFn enc;
+    ControlDecodeBodyFn dec;
+    uint8_t body[16];
+    size_t bodyLen = 0;
+    uint16_t held;
+    ClientSim *cs;
+    const ClientBotHostRow *row;
+    int s, used = 0;
+
+    UT_ASSERT(ufMakeBrainFile("server_row_held"));
+    ut_brain_stub_arm(true);
+    sim = ufLobbySim();
+    UT_ASSERT(sim != NULL);
+    UT_ASSERT(serverSimAddUnfieldedSeat(sim, UF_SEAT, UF_NAME, UF_TEAM));
+    /* A bot with its runner, as the lobby's Add Bot makes one. */
+    UT_ASSERT(serverSimCreateBot(sim, UF_FIELDED_SEAT, ufBrainPath, "Fielded",
+                                 aiFull, gameOpen, false, 2, NULL));
+    UT_ASSERT_MSG(botManagerIsBot(sim, UF_FIELDED_SEAT),
+                  "the fielded bot has no bot pool entry");
+
+    /* Held: the seat with no bot, and not the human or the fielded bot. */
+    held = serverSimHeldBotSeats(sim);
+    UT_ASSERT_MSG(held == (uint16_t)(1u << UF_SEAT),
+                  "held seats 0x%04x, expected 0x%04x", (unsigned)held,
+                  (unsigned)(1u << UF_SEAT));
+
+    /* The server row's used count is its bot pool's bots, as
+       botHostFillServerRow counts them: the held seat is not one. */
+    for (s = 0; s < MAX_TANKS; s++) {
+        if (botManagerIsBot(sim, (BYTE)s) &&
+            !botManagerIsRemote(sim, (BYTE)s)) {
+            used++;
+        }
+    }
+    UT_ASSERT_MSG(used == 1, "the server row counts %d bots, expected 1",
+                  used);
+    UT_ASSERT_MSG(serverSimGetNumBots(sim) == 1,
+                  "the bot pool holds %u bots, expected 1",
+                  (unsigned)serverSimGetNumBots(sim));
+    serverSimDestroy(sim);
+    ut_brain_stub_arm(false);
+    ufDropBrainFile();
+
+    /* On the wire: [idx 1][held 2], and later bytes skipped. */
+    enc = transportControlCodecBodyEncoder(CTRL_BOT_HOST_HELD);
+    dec = transportControlCodecBodyDecoder(CTRL_BOT_HOST_HELD);
+    UT_ASSERT(enc != NULL && dec != NULL);
+    UT_ASSERT(strcmp(controlEventTypeName(CTRL_BOT_HOST_HELD),
+                     "CTRL_BOT_HOST_HELD") == 0);
+    memset(&in, 0, sizeof(in));
+    in.type = CTRL_BOT_HOST_HELD;
+    in.u.botHostHeld.idx = CLIENT_BOT_HOST_SERVER_ROW;
+    in.u.botHostHeld.held = held;
+    UT_ASSERT(enc(&in, NULL, body, sizeof(body), &bodyLen) == ENCODE_OK);
+    UT_ASSERT_MSG(bodyLen == 3, "body is %u bytes, expected 3",
+                  (unsigned)bodyLen);
+    memset(&out, 0, sizeof(out));
+    UT_ASSERT(dec(body, bodyLen, &out));
+    UT_ASSERT(out.type == CTRL_BOT_HOST_HELD);
+    UT_ASSERT(out.u.botHostHeld.idx == CLIENT_BOT_HOST_SERVER_ROW);
+    UT_ASSERT(out.u.botHostHeld.held == held);
+    body[bodyLen] = 0x7F;
+    memset(&out, 0, sizeof(out));
+    UT_ASSERT_MSG(dec(body, bodyLen + 1, &out) &&
+                      out.u.botHostHeld.held == held,
+                  "a longer body must decode the same");
+    UT_ASSERT_MSG(!dec(body, bodyLen - 1, &out), "a short body decoded");
+    body[0] = (uint8_t)BOT_HOST_STATUS_ROWS;
+    UT_ASSERT_MSG(!dec(body, bodyLen, &out), "a row past the list decoded");
+
+    /* The client's row: held next to the bots, and the counts as sent. */
+    cs = clientSimAlloc();
+    UT_ASSERT(cs != NULL);
+    clientSimCreate(cs);
+    memset(&st, 0, sizeof(st));
+    st.type = CTRL_BOT_HOST_STATUS;
+    st.u.botHostStatus.idx = CLIENT_BOT_HOST_SERVER_ROW;
+    st.u.botHostStatus.connected = 1;
+    st.u.botHostStatus.state = BOT_HOST_SYNC_READY;
+    st.u.botHostStatus.percent = 100;
+    st.u.botHostStatus.used = 1;
+    st.u.botHostStatus.slots = 4;
+    st.u.botHostStatus.seats = (uint16_t)(1u << UF_FIELDED_SEAT);
+    SDL_strlcpy(st.u.botHostStatus.name, "Server",
+                sizeof(st.u.botHostStatus.name));
+    clientSimApplyControl(cs, &st);
+    clientSimApplyControl(cs, &in);
+    row = clientSimGetBotHostRow(cs, CLIENT_BOT_HOST_SERVER_ROW);
+    UT_ASSERT(row != NULL);
+    UT_ASSERT_MSG(row->held == held, "the row holds 0x%04x, expected 0x%04x",
+                  (unsigned)row->held, (unsigned)held);
+    UT_ASSERT_MSG(row->used == 1 && row->slots == 4 &&
+                      row->seats == (uint16_t)(1u << UF_FIELDED_SEAT),
+                  "the held seat moved the row's counts: used %u, slots %u, "
+                  "seats 0x%04x", (unsigned)row->used, (unsigned)row->slots,
+                  (unsigned)row->seats);
+    /* The row sent again keeps them; the row gone drops them. */
+    clientSimApplyControl(cs, &st);
+    UT_ASSERT_MSG(row->held == held, "a re-sent row dropped the held seats");
+    st.u.botHostStatus.connected = 0;
+    clientSimApplyControl(cs, &st);
+    UT_ASSERT_MSG(row->held == 0, "a gone row kept the held seats");
+    clientSimApplyControl(cs, &in);
+    UT_ASSERT_MSG(row->held == 0, "a gone row took held seats");
     clientSimDestroy(cs);
 
     return 0;

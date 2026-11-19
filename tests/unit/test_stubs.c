@@ -234,6 +234,19 @@ void luaBrainsSetNextStartEngineTick(unsigned int tick) {
   (void)tick;
 }
 
+/* udp_server_botrec.c reads which brain-debug parts are on, to tell the
+ * Bot Hosts what to record. The tests run no brains: all parts are on, the
+ * default of the real one. */
+void luaBrainsGetDebugParts(int *print2_on, int *pool_on, int *viz_on,
+                            int *jsonl_on);
+void luaBrainsGetDebugParts(int *print2_on, int *pool_on, int *viz_on,
+                            int *jsonl_on) {
+  if (print2_on) *print2_on = 1;
+  if (pool_on)   *pool_on   = 1;
+  if (viz_on)    *viz_on    = 1;
+  if (jsonl_on)  *jsonl_on  = 1;
+}
+
 /* client_sim.c::netProcessedDnsLookup pairs clientMutexWaitFor with
  * clientMutexRelease around a player-location write. The tests never
  * exercise the DNS-lookup completion path, but the symbols still need

@@ -42,6 +42,7 @@ struct LvMenuState {
     bool showOverview;
     bool showTank;
     bool showChat;
+    bool showBotHosts;
     bool showScenarioPanel;
     bool tankBars;             /* Options > Tank Bars checkmark */
     bool builderStatus;        /* Options > Tank Builder Status checkmark */

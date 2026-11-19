@@ -157,6 +157,7 @@ bool transportUdpServerCreate(unsigned short port,
     udpServerFreeScriptUploadBufs();
     memset(&udpServer, 0, sizeof(udpServer));
     memset(punchQueue, 0, sizeof(punchQueue));
+    serverBotHostsReset();
 
     udpServer.sock = createUdpSocket(true);
     if (udpServer.sock == INVALID_SOCKET) {
@@ -349,7 +350,9 @@ bool transportUdpServerHasAnyClient(void) {
     int i;
     if (!udpServer.running) return false;
     for (i = 0; i < MAX_TANKS; i++) {
-        if (udpServer.clients[i].connected) return true;
+        /* A Bot Host bot connection is not a player. */
+        if (udpServer.clients[i].connected &&
+            !udpServer.clients[i].botSlot) return true;
     }
     return false;
 }
@@ -839,8 +842,12 @@ void transportUdpServerDrainEvents(ServerSim *sim) {
                     if (sourcePlayer & 0x80) {
                         /* Tank mine — broadcast to all */
                     } else {
-                        /* LGM mine — only placer and allies */
-                        if (c != sourcePlayer && !playersIsAllie(&serverSimGetGameSim(sim)->plyrs, (BYTE)c, sourcePlayer)) {
+                        /* LGM mine — only placer and allies. A full-view
+                         * Bot Host bot reads every mine, as an in-process
+                         * full-view bot reads them from the server map. */
+                        if (c != sourcePlayer &&
+                            !(udpServer.clients[c].botSlot && !culled) &&
+                            !playersIsAllie(&serverSimGetGameSim(sim)->plyrs, (BYTE)c, sourcePlayer)) {
                             continue;
                         }
                     }
@@ -1013,6 +1020,11 @@ void transportUdpServerCheckTimeouts(ServerSim *sim) {
                       i,
                       (unsigned)(udpServer.tickCount - udpServer.clients[i].lastReceivedTick),
                       (int)CLIENT_TIMEOUT_TICKS);
+            if (udpServer.clients[i].botSlot) {
+                /* The bot stays; its brain comes back in-process. */
+                serverBotSlotLost(sim, i, "timed out");
+                continue;
+            }
             serverCleanupMapDownload(i);
             serverDisconnectClient(sim, i, FALSE);
             serverSimRemovePlayer(sim, (BYTE)i);
@@ -1045,6 +1057,11 @@ void transportUdpServerCheckTimeouts(ServerSim *sim) {
             serverDisconnectSpectator(sim, i, false);
         }
     }
+
+    /* Bot Host connections, bot seat placement and the hosts' channels. */
+    serverServiceBotHosts(sim);
+    /* Every bot's think timing for the clients' System Info. */
+    serverServiceBotTiming(sim);
 }
 
 
@@ -1052,7 +1069,8 @@ int transportUdpServerGetClientCount(void) {
     int count = 0;
     int i;
     for (i = 0; i < MAX_TANKS; i++) {
-        if (udpServer.clients[i].connected) count++;
+        if (udpServer.clients[i].connected &&
+            !udpServer.clients[i].botSlot) count++;
     }
     return count;
 }
@@ -1069,13 +1087,16 @@ int transportUdpServerGetSpectatorCount(void) {
 uint16_t transportUdpServerGetClientPing(BYTE playerNum) {
     if (playerNum >= MAX_TANKS) return 0;
     if (!udpServer.clients[playerNum].connected) return 0;
+    /* An in-process bot shows no ping; a Bot Host bot shows the same. */
+    if (udpServer.clients[playerNum].botSlot) return 0;
     return udpServer.clients[playerNum].pingMs;
 }
 
 bool transportUdpServerGetClientAddrStr(BYTE playerNum, char *out, size_t outLen) {
     if (out == NULL || outLen == 0) return false;
     out[0] = '\0';
-    if (playerNum >= MAX_TANKS || !udpServer.clients[playerNum].connected) {
+    if (playerNum >= MAX_TANKS || !udpServer.clients[playerNum].connected ||
+        udpServer.clients[playerNum].botSlot) {
         return false;
     }
     const struct sockaddr_in *a = &udpServer.clients[playerNum].addr;

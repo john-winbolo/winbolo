@@ -124,6 +124,11 @@ bool serverDedicatedLogHasPendingUpload(void);
 int  serverDedicatedLogServeMode(void);
 void serverDedicatedLogSetServeMode(int mode);
 
+/* Whether the round log gets the bot placement's log_BotHostData records
+ * (the DS's -record-bothost-data; a hosting client's "Record Bot Host
+ * Data" setting). Off by default. */
+void serverDedicatedLogSetBotHostData(bool on);
+
 /* Compose the final .wbv replay path from the -log argument value.
  * Pure (no globals / time / RNG) and cross-platform (SDL_GetPathInfo) so
  * it is unit-testable. See the definition in server_dedicated_log.c for

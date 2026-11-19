@@ -140,7 +140,7 @@ Selected event types (see the `logitem` enum for the complete list):
 | 5 | `log_MapChange` | cell x, y, terrain type |
 | 6 | `log_Shell` | shell  (position, direction, owner) |
 | 7–17 | `log_Sound*` | sound x/y for each of 11 sound events |
-| 18–20 | `log_Message*` | server / all-players / specific-players chat |
+| 18–20 | `log_Message*` | server / all-players / specific-players chat. A dedicated server with `-bothost-enforce-server-limit` writes a `log_MessageServer` line when it holds a bot ("<bot> is paused: no room to run its bot") and when that bot runs again ("<bot> runs again") |
 | 21 | `log_ChangeName` | player + Pascal name |
 | 22–24 | `log_Ally*` | alliance request / accept / leave |
 | 25–26 | `log_BaseSet*` | base owner / stock (shells, mines, armour) |
@@ -169,6 +169,7 @@ Selected event types (see the `logitem` enum for the complete list):
 | 70 | `log_MapName` | Pascal-form name of the map the round is played on. Written when the round starts. A log that opens in the lobby writes its header before the host chooses the map, so the header can name the previous round's map; a reader shows this name in its place |
 | 71 | `log_PlayerLag` | One player's network lag: RTT and the rewind the server used (below) |
 | 72 | `log_OverrunStats` | The server's tick timing and each bot's overruns, as the console's overrun lines print them (below) |
+| 73 | `log_BotHostData` | What the bot placement measured and chose for each host: probes, free CPU readings and decisions (below). Only with `-record-bothost-data` |
 
 ### `log_GameSettings` payload
 
@@ -678,7 +679,7 @@ A 44-byte fixed part:
 
 | Bytes | Field | Notes |
 |---|---|---|
-| 0 | Version | `u8`, 1. A later version adds its fields after the ones below |
+| 0 | Version | `u8`, 2 (1 before the bots' hosts were added). A later version adds its fields after the ones below |
 | 1 | Flags | Bit 0: round end, written as the round's log closed. Bit 1: the round had bots, so bytes 21–42 hold values |
 | 2–5 | Round frames | `u32`, running 20 ms server frames of the round so far. 1500 is 0:30, 3000 is 1:00 |
 | 6–7 | Tick last | `u16` tenths of a ms. The server loop's last frame |
@@ -710,8 +711,41 @@ Then 13 bytes for each bot:
 | 5–8 | Overruns | `u32`. Its thinks over the target this round |
 | 9–12 | Thinks | `u32`. Its thinks this round |
 
-A bot that has no brain has zeros in its part. So a record is 44 bytes with no
-bots and 252 bytes with 16.
+A bot that has no brain has zeros in its part.
+
+Version 2 then adds where each bot's brain ran. First one byte for each bot,
+in the order of the bot parts:
+
+| Value | Meaning |
+|---|---|
+| 0 | The server's own process |
+| 1 to the host count | A Bot Host: its place in the host table below, from 1 |
+| 255 | Not known (a Bot Host whose name the server did not have) |
+
+Then the host table: a `u8` host count, 0 to 16, and for each host a `u8`
+name length, 0 to 31, and that many bytes of the name, with no terminator.
+The name is the one the lobby's Bot Host rows show; for the Bot Host inside
+a player's client it is the player's name. Each host is in the table once,
+in the order its first bot comes.
+
+So a version 2 record is 45 bytes with no bots, 44 + 14 x bots + 1 with
+every bot in the server's process, and at most 781 bytes (16 bots on 16
+hosts with 31-byte names). A version 1 record is 44 bytes with no bots and
+252 bytes with 16. A reader of a version 1 record, or of a version 2 record
+whose host bytes or host table are cut short, has every host not known. A
+host byte past the table reads as not known too.
+
+The Log Viewer's Server timing table puts the bots of a version 2 record
+under a header for each host: "Server:" for the bots in the server's process
+first, then "Bot Host <name>:" for each host in the table's order, then
+"Bot Host ?:" for bots whose host is not known. A record with no host known
+for any bot (version 1) shows one list with no headers.
+
+The same bytes, version 2 and on, are the body of the `CTRL_BOT_TIMING`
+control event (`control_event.h`), which the server sends to every player and
+spectator once a second while the game has bots, and once with no bots when
+the last bot goes. Its roundFrames is 0 and its flags have no round end bit.
+The client's System Info groups its bot rows the same way.
 
 The counts and the peaks start again at each round start; the EWMA and last
 values are the server's running ones. Writing a record resets nothing, so the
@@ -751,6 +785,103 @@ record shorter than 44 bytes, or with version 0, is consumed and ignored. A
 viewer made before this record skips it by its framed length, the same as any
 other event it does not know. `tools/wbv_overruns.py` prints a file's records
 as text.
+
+### `log_BotHostData` payload
+
+What the server's bot placement measured and chose for each host
+(`botHostOvrProbeAll` in `src/server/udp/udp_server_bothost.c`, the rules
+in `botHostOverrunProbe` in `src/bolo/bot_host_link.c`). The payload is the
+whole framed length; `src/bolo/public/bothost_record.h` encodes and decodes
+it. Every multi-byte field is big-endian.
+
+| Offset | Field | Meaning |
+|-------:|-------|---------|
+| 0 | `version:u8` | 3 (2 in logs made before dynamic slots, 1 before the overrun move by rate) |
+| 1 | `kind:u8` | 1 HOST, 2 PROBE, 3 READING, 4 DECISION, 5 CPU |
+| 2 | `host:u8` | 0 the server's own process, h + 1 Bot Host h |
+
+Then, by kind (0xFF in a byte field: none):
+
+- HOST: `player:u8` (the player whose own Bot Host it is, 0xFF for a listed
+  host and the server), then the name as a length byte and its bytes. Written
+  once per host per log, before its first probe.
+- PROBE, once a second per host: `bots:u8`, `slots:u8`, `limit:u8` (0xFF: no
+  lowered limit), `thinks:u16`, `overruns:u16`, `flags:u8` (bit 0: this
+  probe is bad), `badProbes:u8`, `probes:u8` (the bad probes in the window
+  and the probes in it; from version 2 `badProbes` is 0xFF), then from
+  version 2 `windowRate:u16` (the host's rate, its overruns over its thinks
+  in the window, in hundredths of a percent; 0xFFFF while not known). With
+  the scaled wait (`-bothost-overrun-step-min-secs` below the step time),
+  after a move or a raise the window is the probes since that change, so
+  `windowRate` can be known with `probes` below the full window. From
+  version 3 `ceiling:u8` and `start:u8` follow: the host's dynamic slots
+  (`-bothost-dynamic-slots`), the most its live limit may reach and the limit
+  a game starts at, 0xFF in both for a host with no dynamic slots. For a
+  host with dynamic slots `slots` is its ceiling and `limit` its live limit.
+- READING, each free CPU sample per host (default every 5 s): `free:u8`
+  (0..100, 0xFF not known), `botCpu:u8` (the `CTRL_BOT_HOST_CPU` byte),
+  `bots:u8`, `flags:u8` (bit 0: the bots thought; bit 1: bad).
+- DECISION: `decision:u8` (1 trigger (version 1 only), 2 move, 3 cut,
+  4 raise, 5 raise refused, 6 placement refused, 7 would move: the bot stays
+  because of `-bothost-nomove`, 8 the spread offered a server bot to a Bot
+  Host, 9 the spread moved a bot off a Bot Host, 10 no better host: the host
+  is over the target rate but no bot may move, 11 hold: no place has a slot
+  for the bot `seat`, so it is held (`-bothost-enforce-server-limit`;
+  `host` is where it ran, `toHost` is 0xFF, the reason is "no room" and the
+  free CPU check is that of the server), 12 resume: the held bot `seat`
+  runs again on `toHost`, which has a slot (`host` is `toHost`, the reason
+  is "room on the server" or "room on a Bot Host" and the free CPU check is
+  that of `toHost`), 13 dynamic raise: the live limit went up by up to
+  `-bothost-raise-step` bots (the reason is "free CPU above the reserve"),
+  14 start: a game starts at the host's start, 15 carry: a game starts at
+  the limit the last game ended with (`-bothost-carry-limit`); 13 to 15 are
+  version 3 only, and carry the change in `limitBefore` and `limitAfter`),
+  `limitBefore:u8`, `limitAfter:u8`,
+  `badProbes:u8`, `probes:u8`, `flags:u8` (bit 0: the one-bot cost is
+  known; bit 1: the free CPU average is known; bit 2: the one-bot cost
+  is the full-budget estimate), `predicted:s16` (the
+  predicted free CPU in tenths of a percent), `cost:u16` and `freeAvg:u16`
+  (tenths of a percent), `lowestClean:u8`, `highestBad:u8`, `seat:u8` (the
+  bot that moved), `toHost:u8` (where it went, as `host`), then the reason
+  as a length byte and its bytes. Decisions 8 and 9 carry the free CPU
+  check of the host the bot goes to (`toHost`); the others carry that of
+  `host`. Their reason is why the bot moved: "over its slots" (`host` had
+  more bots than its slots), "overrun rate" (the window rate of `host` was
+  at or above the target rate), "low free CPU" (`host` failed the free CPU
+  check for the bots it had), "low free CPU, batch" (one bot of a free CPU
+  batch: `host` was short by several bots and gave them in one step; one
+  decision 8 or 9 per bot, then a decision 3 with the same reason and the
+  lowered limit; one target may take several bots of a batch, as many as
+  its free slots and its free CPU room let it, and the free CPU check of
+  each of its records counts the bots it took before that one), "lower
+  lag" (`toHost`, another Bot Host, has much less lag than `host`), or "the
+  spread" (the even spread of `-bothost-spread-even`, and every decision 8
+  and 9 in logs made before these reasons). From version 2 the reason is
+  followed by `srcRate:u16` and `dstRate:u16` (the window rates of `host`
+  and `toHost` in hundredths of a percent, 0xFFFF none: a target with no
+  bots has no rate), `moves:u8` (m,
+  the bot's overrun moves in this game before this one), `rule:u8` (0 none,
+  1 normal, 2 emergency, 3 trial), `staySecs:u16` (the seconds since the
+  bot's last overrun move, or since it was first seen) and
+  `needStaySecs:u16` (the stay the rule needed, 0 for the emergency rule),
+  0xFFFF none. Decisions 2 and 7 of the overrun move fill all of them;
+  decision 10 fills `srcRate` only; the others have none.
+- CPU, each free CPU sample per host while the game runs: `shown:u32` (the
+  per-bot CPU the lobby and the game show, in thousandths of a percent of
+  that machine's CPU, 0xFFFFFFFF none), `source:u8` (0 none, 1 measured,
+  2 last measured, 3 full budget), `budget:u32` (the full-budget estimate,
+  same unit), `botCpu:u8`, `bots:u8`, `overrunTenths:u16` (the overrun rate
+  since the last CPU record in tenths of a percent, 0xFFFF no thinks),
+  `free:u8` and `slots:u8` (the host's effective slots).
+
+Written only when WinBoloDS runs with `-record-bothost-data`, or a client
+hosts with `Record Bot Host Data=Yes` in the `[SETTINGS]` section of its
+preferences file. Without it the log holds none and its bytes are the same
+as before this record. A reader takes the fields it knows and skips the rest
+by the framed length; a record shorter than its kind's fields, of version 0
+or of a kind it does not know is consumed and ignored. A reader made before
+this record skips it by its framed length. The Log Viewer shows the records
+in its Bot Hosts window.
 
 ## Snapshot body
 
