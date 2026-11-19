@@ -304,9 +304,16 @@ typedef char pt2_prof_slots_ok[(P_N <= 48) ? 1 : -1];   /* p_ns[48], p_n[48] */
         } else { stmt; } \
     } while (0)
 
+/* Profile clock in ns. timespec_get is C11: glibc hides it under -std=gnu99,
+ * so POSIX uses clock_gettime(CLOCK_MONOTONIC) (gnu99 exposes it). Windows
+ * (MSVC UCRT) keeps timespec_get. Only differences are used. */
 static double pt_now(void) {
     struct timespec ts;
+#if defined(_WIN32)
     timespec_get(&ts, TIME_UTC);
+#else
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+#endif
     return (double)ts.tv_sec * 1e9 + (double)ts.tv_nsec;
 }
 
