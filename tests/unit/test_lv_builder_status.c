@@ -159,6 +159,19 @@ int run_lv_builder_status_sums(void) {
     /* A place in the log is a square and a sixteenth of one. */
     UT_ASSERT_MSG(lvBuilderWorld(0, 0) == 0 && lvBuilderWorld(1, 0) == 256 &&
                   lvBuilderWorld(50, 15) == 50 * 256 + 240, "world units");
+    /* A builder on the parachute is logged half a square up and left of
+       where he is. One 128 world units south-east of a tank at (50, 8) is
+       logged on the tank's own square and sixteenth; with the half square
+       back on he is 128 off on each axis, which at 0.01 a tick is 5:17 to
+       the arrival box, not no time at all. */
+    UT_ASSERT_MSG(lvBuilderFlyingWorld(0, 0) == 128 &&
+                  lvBuilderFlyingWorld(50, 8) == 50 * 256 + 128 + 128,
+                  "a flying builder's world units");
+    UT_ASSERT_MSG(lvBuilderFlightMs(lvBuilderWorld(50, 8) - lvBuilderFlyingWorld(50, 8),
+                                    lvBuilderWorld(50, 8) - lvBuilderFlyingWorld(50, 8),
+                                    0.01, 16) / 1000 == 316,
+                  "128 south-east at 0.01: %ld ms",
+                  lvBuilderFlightMs(-128, -128, 0.01, 16));
 
     /* The pictures. */
     UT_ASSERT_MSG(lvBuilderParachute()->width == LV_BUILDER_CELLS &&
@@ -219,14 +232,23 @@ int run_lv_builder_countdown(void) {
     UT_ASSERT_MSG(bs_text(59001, false, "1:00"), "into the minute");
     UT_ASSERT_MSG(bs_text(83000, false, "1:23"), "1:23");
     UT_ASSERT_MSG(bs_text(600000, false, "10:00"), "ten minutes");
-    /* Never under zero, never over 99:59. */
+    /* Never under zero. */
     UT_ASSERT_MSG(bs_text(-1, false, "0:00"), "under zero");
     UT_ASSERT_MSG(bs_text(-500000, true, "~0:00"), "an estimate under zero");
-    UT_ASSERT_MSG(bs_text(100L * 60L * 1000L, false, "99:59"), "100 minutes");
+    /* From an hour up the hours come first, and the minutes get two
+       digits. */
+    UT_ASSERT_MSG(bs_text(3599000L, false, "59:59"), "a second under an hour");
+    UT_ASSERT_MSG(bs_text(3599001L, false, "1:00:00"), "into the hour");
+    UT_ASSERT_MSG(bs_text(100L * 60L * 1000L, false, "1:40:00"), "100 minutes");
+    UT_ASSERT_MSG(bs_text(3723000L, false, "1:02:03"), "1:02:03");
+    UT_ASSERT_MSG(bs_text(99968000L, true, "~27:46:08"), "27 hours 46 minutes");
     /* An estimate has "~" in front. */
     UT_ASSERT_MSG(bs_text(7000, true, "~0:07"), "an estimate");
-    UT_ASSERT_MSG(bs_text(100L * 60L * 1000L, true, "~99:59"), "the longest text");
-    UT_ASSERT_MSG(strlen("~99:59") < LV_BUILDER_TEXT_MAX, "the longest text fits");
+    /* The longest time 32 bits hold, with no overflow on the way. */
+    UT_ASSERT_MSG(bs_text((long)INT32_MAX, true, "~596:31:24"), "the longest time");
+    UT_ASSERT_MSG(bs_text(LV_BUILDER_FLIGHT_MS_MAX, true, "~596:31:24"),
+                  "the longest flight");
+    UT_ASSERT_MSG(strlen("~9999:59:59") < LV_BUILDER_TEXT_MAX, "the longest text fits");
     /* A buffer too small holds what fits, with its end. */
     UT_ASSERT_MSG(lvBuilderCountdownText(83000, false, small, sizeof(small)) == 3 &&
                   strcmp(small, "1:2") == 0, "cut to the buffer (\"%s\")", small);
@@ -268,6 +290,21 @@ int run_lv_builder_countdown(void) {
     UT_ASSERT_MSG(lvBuilderFlightMs(100, 17, 1.0, 16) == 1720,
                   "the longer axis decides: %ld ms",
                   lvBuilderFlightMs(100, 17, 1.0, 16));
+    /* A long flight is answered in full. 50,000 world units at a 64th of a
+       unit a tick is 49,984 x 64 ticks to the box; at 0.01, the slowest the
+       rule goes, it is 27 hours 46 minutes, give or take a tick. */
+    UT_ASSERT_MSG(lvBuilderFlightMs(50000, 0, 0.015625, 16) == 49984L * 64L * 20L,
+                  "50,000 units at 1/64: %ld ms",
+                  lvBuilderFlightMs(50000, 0, 0.015625, 16));
+    UT_ASSERT_MSG(lvBuilderFlightMs(50000, 0, 0.01, 16) >= 99968000L &&
+                      lvBuilderFlightMs(50000, 0, 0.01, 16) <= 99968020L,
+                  "50,000 units at 0.01: %ld ms",
+                  lvBuilderFlightMs(50000, 0, 0.01, 16));
+    /* The longest flight the rules allow, corner to corner at 0.01, is well
+       inside the longest answer. */
+    UT_ASSERT_MSG(lvBuilderFlightMs(65535, 65535, 0.01, 0) < LV_BUILDER_FLIGHT_MS_MAX,
+                  "corner to corner at 0.01: %ld ms",
+                  lvBuilderFlightMs(65535, 65535, 0.01, 0));
     /* A speed too near zero for the ticks to fit a long stops at the
        longest flight. */
     UT_ASSERT_MSG(lvBuilderFlightMs(2560, 0, 1e-300, 16) == LV_BUILDER_FLIGHT_MS_MAX,
@@ -444,9 +481,15 @@ int run_lv_builder_away_text(void) {
     UT_ASSERT_MSG(strcmp(text, " (0:43)") == 0, "42.02 s: \"%s\"", text);
     lvBuilderAwayText(true, 20, text, sizeof(text));
     UT_ASSERT_MSG(strcmp(text, " (0:01)") == 0, "one tick: \"%s\"", text);
-    /* The longest. */
+    /* An hour or more, as the countdown writes it. */
+    lvBuilderAwayText(true, 3723000u, text, sizeof(text));
+    UT_ASSERT_MSG(strcmp(text, " (1:02:03)") == 0, "1:02:03: \"%s\"", text);
+    /* The longest: what 32 signed bits of milliseconds hold, and anything
+       over that is held there. */
     n = lvBuilderAwayText(true, 0xFFFFFFFFu / 2u, text, sizeof(text));
-    UT_ASSERT_MSG(strcmp(text, " (99:59)") == 0 && n == 8, "longest: \"%s\"", text);
+    UT_ASSERT_MSG(strcmp(text, " (596:31:24)") == 0 && n == 12, "longest: \"%s\"", text);
+    lvBuilderAwayText(true, 0xFFFFFFFFu, text, sizeof(text));
+    UT_ASSERT_MSG(strcmp(text, " (596:31:24)") == 0, "over the longest: \"%s\"", text);
     /* Not known: nothing, not even the brackets. */
     strcpy(text, "x");
     n = lvBuilderAwayText(false, 42000, text, sizeof(text));

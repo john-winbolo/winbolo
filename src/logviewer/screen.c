@@ -2555,11 +2555,22 @@ int lv_screenBuilderReturn(int slot, long *remainMs, int *approx) {
     BYTE lx = 0, ly = 0, lpx = 0, lpy = 0, lframe = 0;
     BYTE tx = 0, ty = 0, tpx = 0, tpy = 0, tframe = 0;
     bool onBoat = FALSE;
+    long manX, manY;
     lv_playersGetLgmDetails((BYTE) slot, &lx, &ly, &lpx, &lpy, &lframe);
     lv_playersGetTankDetails((BYTE) slot, &tx, &ty, &tpx, &tpy, &tframe, &onBoat);
+    /* On the parachute frame the log holds where his picture is drawn, half
+       a square up and left of him. In the tick of the death the place is
+       still the one he walked to, which needs nothing added. */
+    if (lframe == LGM_HELICOPTER_FRAME) {
+      manX = (long) lvBuilderFlyingWorld(lx, lpx);
+      manY = (long) lvBuilderFlyingWorld(ly, lpy);
+    } else {
+      manX = (long) lvBuilderWorld(lx, lpx);
+      manY = (long) lvBuilderWorld(ly, lpy);
+    }
     remain = lvBuilderFlightMs(
-        (long) lvBuilderWorld(tx, tpx) - (long) lvBuilderWorld(lx, lpx),
-        (long) lvBuilderWorld(ty, tpy) - (long) lvBuilderWorld(ly, lpy),
+        (long) lvBuilderWorld(tx, tpx) - manX,
+        (long) lvBuilderWorld(ty, tpy) - manY,
         /* Not made a whole number: the rule is a float. Held inside the
            rule's range, so a speed the game would never have run on is not
            divided by. */
