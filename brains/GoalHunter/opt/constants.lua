@@ -1098,6 +1098,11 @@ M.PT2_C_EVAL = true
 -- appends its inputs and the Lua result to the file, for the parity test
 -- cases. "" = off.
 M.PT2_CAPTURE_FILE = ""
+-- PT2_PROF_LOG (debug only): true = each double-take run times its parts
+-- (the Lua around the v2 calls, every C part and callback) and writes a
+-- PT2_DBL_PROF line to print2. The timers cost time, so it is off by
+-- default. It does not change any result.
+M.PT2_PROF_LOG = false
 -- SHOT_PATH_SKIP_DEAD_PILLS: v1's shot-path checks (attack.lua
 -- standoff_shot_obstacle, attack_shield.lua score_aim outgoing ray,
 -- pathfinder.lua pill_shots_clear) count only a LIVE pill (health > 0, not

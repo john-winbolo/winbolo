@@ -83,7 +83,10 @@ end
 -- except on a finish: then every point costs its travel only.
 function M.build_inp(state, goal, info, world, pill, no_builder, npb, radius, now)
   local inp = V2.knob_inp(C, {})
+  -- debug profile (C.PT2_PROF_LOG): the world_inp part of build_inp
+  local tw = BRAIN_DEBUG_MODE and C.PT2_PROF_LOG and clock_us()
   V2.world_inp(world, C, U, PC, cpf, inp, no_builder)
+  if tw then M.prof_world_us = clock_us() - tw end
   inp.A = nil
   for _, p in ipairs(inp.pills) do
     if p == pill or (p.mx == pill.mx and p.my == pill.my and not p.in_tank) then inp.A = p; break end
