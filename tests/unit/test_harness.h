@@ -3132,6 +3132,16 @@ int run_man_dead_pill_walk_ticks(void);
 int run_man_dead_pill_walk_across_water(void);
 int run_man_dead_pill_lifted_waits_for_tank(void);
 int run_man_dead_pill_brain_walk(void);
+/* lgm_helicopter_speed: a parachuting builder flies the rule's own speed on
+ * every heading, the rule takes a fraction, a step wider than the arrival
+ * tolerance still lands, a man moved in flight flies on from where he was
+ * put, and one a script puts back where he is starts from exactly there
+ * (test_lgm_parachute_speed.c). */
+int run_lgm_parachute_speed_same_on_every_heading(void);
+int run_lgm_parachute_speed_takes_a_fraction(void);
+int run_lgm_parachute_wide_step_lands(void);
+int run_lgm_parachute_moved_in_flight(void);
+int run_lgm_parachute_put_back_starts_exact(void);
 int run_teleport_erases_tank_rewind_record(void);
 int run_teleport_shell_hits_new_place(void);
 int run_teleport_rewind_refills(void);
