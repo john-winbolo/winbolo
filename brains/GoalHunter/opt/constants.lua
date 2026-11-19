@@ -2133,6 +2133,28 @@ M.WARMUP_IGNORE_EVAL_IV = true
 -- before warm, so the rebuild only threw the progress away. KEEL / MAST:
 -- false (every replan rebuilds).
 M.WARMUP_KEEP_QUEUE = true
+-- HUMAN_PILL_YIELD (Nov 19, Andrew GO, board #190): a bot leaves a dead pill
+-- to an allied HUMAN that goes for it. Humans broadcast no ally claim, so
+-- human_intent.lua reads the claim from what the bot sees (the human's tank
+-- in a view, its shells) and goals.sync_ally_claimed_rejects rejects the
+-- pool 4 / pool 5 row of that pill with "human_claim". The bot yields even
+-- when it is much closer; it does not escort. Rules in human_intent.lua.
+-- Numbers are Andrew's starting values (tune in testing), at 50 ticks/s.
+-- KEEL / MAST: false (no human claim).
+M.HUMAN_PILL_YIELD              = true
+M.HUMAN_YIELD_RADIUS_TILES      = 12    -- dead pills within 12 tiles of the human
+M.HUMAN_YIELD_CONE_DEG          = 35    -- heading within 35 deg of the pill
+M.HUMAN_YIELD_TRACK_TICKS       = 50    -- 1 s position ring for the heading / closing test
+M.HUMAN_YIELD_HOLD_TICKS        = 35    -- 0.7 s in the cone before the claim
+M.HUMAN_YIELD_CLOSE_TILES       = 2.5   -- within 2.5 tiles: claim at once
+M.HUMAN_YIELD_AWAY_COS          = 0.3   -- turned away: cos(heading, pill) < 0.3 ...
+M.HUMAN_YIELD_AWAY_TICKS        = 50    -- ... for 1 s (also: not seen for 1 s)
+M.HUMAN_YIELD_STOP_TILES        = 4     -- stopped farther than 4 tiles ...
+M.HUMAN_YIELD_STOP_TICKS        = 150   -- ... for 3 s
+M.HUMAN_YIELD_LIMIT_TICKS       = 750   -- hard limit 15 s ...
+M.HUMAN_YIELD_LIMIT_NEAR_TILES  = 2     -- ... unless within 2 tiles
+M.HUMAN_YIELD_POST_TICKS        = 50    -- still claimed 1 s after the release
+M.HUMAN_YIELD_ENEMY_RATIO       = 0.7   -- no yield: a seen enemy tank/LGM < 0.7 x the human's distance
 M.GOAL_POOL_COUNT          = 10    -- number of pool evaluators to spread across ticks
 M.GOAL_CANDS_PER_TICK      = 1     -- A* cost_to evaluations per tick (round-robin)
 M.STARTUP_HOLD_TICKS       = 16    -- hold still for this many ticks after brain start so the eval queue warms up before we commit to a direction
@@ -7926,6 +7948,8 @@ M.PRESETS = {
     --   eval queue on every replan.
     WARMUP_IGNORE_EVAL_IV = false,
     WARMUP_KEEP_QUEUE = false,
+    --   2026-11-19: no human pill claim.
+    HUMAN_PILL_YIELD = false,
     PT2_CHAIN_CLAIM = false,
     --   2026-11-18: pill take v2 in Lua only (no C copy).
     PT2_C_EVAL = false,
@@ -8258,6 +8282,7 @@ M.PRESETS.mast = {
   PT2_ANGLE_STEP_DEG                = 2,      -- 2.2.1 had no pill take v2
   WARMUP_IGNORE_EVAL_IV             = false,  -- 2.2.1: eval_iv throttle in warm-up too
   WARMUP_KEEP_QUEUE                 = false,  -- 2.2.1: every replan rebuilt the queue
+  HUMAN_PILL_YIELD                  = false,  -- 2.2.1 had no human pill claim
   PT2_CHAIN_CLAIM                   = false,  -- 2.2.1 had no pill take v2
   PT2_C_EVAL                        = false,  -- 2.2.1 had no pill take v2
   POST_KILL_WAIT_TICKS              = 15,

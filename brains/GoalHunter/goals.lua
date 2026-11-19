@@ -14418,6 +14418,14 @@ local function sync_ally_claimed_rejects(state, info, panel_refresh)
     end
   end
 
+  -- HUMAN_PILL_YIELD (human_intent.lua): an allied human's claim on a dead
+  -- pill. Required here, not at file scope, to keep this function's upvalues.
+  local _HI = C.HUMAN_PILL_YIELD and require("human_intent") or nil
+  local _hi_logged = nil
+  if _HI then
+    state._hi_logged = state._hi_logged or {}
+    _hi_logged = state._hi_logged
+  end
   for _, e in pairs(cache) do
     local pool_idx = e._p
     -- Diagnostic: log every pool-6 cache entry we visit, so we can see
@@ -14432,6 +14440,39 @@ local function sync_ally_claimed_rejects(state, info, panel_refresh)
         ((e.cost or 0) >= 1e29) and "INF" or string.format("%.0f", e.cost or 0),
         tostring(e._reject), tostring(e._skipped),
         tostring(_REJECT_POOLS[pool_idx] ~= nil)))
+    end
+    -- HUMAN_PILL_YIELD: a dead pill an allied human goes for is the human's.
+    -- Pool 4 (capture_pill) and pool 5 (repair_pill: rebuilding the corpse
+    -- would make it live, and the human could not drive over it). The bot
+    -- yields even when it is much closer; human_intent.yield_claim applies
+    -- the enemy rule and the order rule. Above every ally rule, so no ally
+    -- exemption clears it.
+    if _HI and (pool_idx == 4 or pool_idx == 5) and e._id then
+      local hc = _HI.yield_claim(state, e._id, now)
+      if hc then
+        if e._reject ~= "human_claim" then
+          e._reject = "human_claim"
+          e.formula = nil
+        end
+        e._reject_remaining = hc.post and math.max(0, (hc.until_t or now) - now) or 0
+        e._human_by = hc.pn
+        local key = pool_idx * 65536 + e._id
+        if not panel_refresh and _hi_logged[key] ~= hc.pn then
+          _hi_logged[key] = hc.pn
+          if BRAIN_DEBUG_MODE then
+            print2(string.format("HUMAN_CLAIM_REJECT t=%d pool=%d %s pill#%d@(%s,%s) reason=human_claim by p%d%s",
+              now, pool_idx, _REJECT_POOLS[pool_idx], e._id, tostring(e._mx), tostring(e._my),
+              hc.pn, hc.post and " (after release)" or (" (" .. tostring(hc.why) .. ")")))
+          end
+        end
+        goto continue_entry
+      elseif e._reject == "human_claim" then
+        e._reject = nil
+        e._reject_remaining = 0
+        e._human_by = nil
+        e.formula = nil
+      end
+      if not panel_refresh then _hi_logged[pool_idx * 65536 + e._id] = nil end
     end
     -- Pool 4 (capture_pill) "ally did the take" REJECT.  Snapshot at
     -- FIRST sighting: when a fresh capture_pill candidate appears (the
