@@ -11664,7 +11664,12 @@ function Brain.think(info)
     end
 
     -- PT2_CHAIN_CLAIM: a v2 chain claims all of its pills (pt2_claim.lua).
-    if C.PT2_CHAIN_CLAIM then require("pt2_claim").tx(state, world, now, try_send) end
+    -- drop_lost first: a dropped plan sends the clear on this same tick.
+    if C.PT2_CHAIN_CLAIM then
+      local _pc = require("pt2_claim")
+      _pc.drop_lost(state, world, now, info.player_number or -1)
+      _pc.tx(state, world, now, try_send)
+    end
 
     -- `cost` is NOT on the /info state slate (it drifts almost every tick
     -- as we close on the target, which would force a near-per-tick send —

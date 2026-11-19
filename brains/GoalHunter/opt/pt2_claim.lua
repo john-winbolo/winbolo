@@ -204,6 +204,45 @@ function M.payload(state, world)
   return M.encode(g.target_id, ids)
 end
 
+-- Our live plan: a chain pill past the current step that an ally now holds
+-- against us (the rule chain_skip runs) drops the plan. The take goes back
+-- to plan_position, so the next scan plans without that pill. Without this,
+-- a plan made while we still held the pill kept it until the take ended.
+-- Returns the lost pill id and the ally pn, or nil.
+function M.drop_lost(state, world, now, self_pn)
+  if not M.on() then return nil end
+  local g = state.goal
+  if not g or g.kind ~= "attack_pill" then return nil end
+  local ch = g._pt2
+  if not ch or ch.mode ~= "HOLD" or not ch.ids then return nil end
+  local our_cost, our_sub = our_bid(state)
+  local wp = world and world.pills or {}
+  local lost, lost_by, lost_why, lost_h, lost_t
+  for k = (ch.step or 1) + 1, #ch.ids do
+    local id = ch.ids[k]
+    local p = id and wp[id]
+    if id and id ~= g.target_id and p and (p.owner == "hostile" or p.owner == "neutral")
+       and (p.health or 0) > 0 and not p.in_tank then
+      each_claim(state, id, now, self_pn, function(pn, h, is_t)
+        local keep, why = M.keep(our_cost, our_sub, false, tonumber(h.cost), h.sub, is_t, self_pn, pn)
+        if not keep then
+          lost, lost_by, lost_why, lost_h, lost_t = id, pn, why, h, is_t
+          return true
+        end
+      end)
+      if lost then break end
+    end
+  end
+  if not lost then return nil end
+  -- The full replan reset (standoff, show tick, scan flags, wall list).
+  -- Only substate and scan_spots kept the old standoff: the take went
+  -- straight back to approach on the old plan.
+  require("attack")._reset_to_plan_position(state, g)
+  g._pt2 = nil
+  state._shield_scan_cache = nil
+  return lost, lost_by
+end
+
 -- Sender: change-detect, 300-tick heartbeat (the pblk / bwl shape).
 function M.tx(state, world, now, try_send)
   local pl = M.payload(state, world)
