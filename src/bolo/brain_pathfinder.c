@@ -419,6 +419,9 @@ BrainPathfinder *brainPathfinderCreate(void) {
   pf->shell_speed = classic.shell_speed;
   pf->shell_start_add = classic.shell_start_add;
   pf->gunsight_max = classic.gunsight_max;
+  pf->pill_fire_length = classic.pill_fire_length;
+  pf->tank_hit_radius = classic.tank_hit_radius;
+  pf->shot_sim_exact = 1;
   lgmSeedManSpeed(pf);
 
   /* Resource drain config */
@@ -627,6 +630,51 @@ void brainPathfinderSetShellRules(BrainPathfinder *pf, int32_t shellLife,
   pf->shell_speed = shellSpeed;
   pf->shell_start_add = shellStartAdd;
   pf->gunsight_max = gunsightMax;
+}
+
+void brainPathfinderSetShotRules(BrainPathfinder *pf, float pillFireLength,
+                                 int32_t tankHitRadius) {
+  if (pf == NULL) return;
+  pf->pill_fire_length = pillFireLength;
+  pf->tank_hit_radius = tankHitRadius;
+}
+
+void brainPathfinderSetShotSimExact(BrainPathfinder *pf, int exact) {
+  if (pf == NULL) return;
+  pf->shot_sim_exact = exact ? 1 : 0;
+}
+
+/* The length a shell flies, in map squares, the way each shooter's fire
+ * code hands it to shellsAddItem: a pill's pill_fire_length (pillbox.c),
+ * a tank's sightLen / 2 in TURNTYPE (float) sums (tank.c), so an odd
+ * sightLen gives half a square. exact 0 is the old answer: the
+ * PILLBOX_FIRE_DISTANCE constant, and with whole_squares (the old tank
+ * test) the int sums (int)PILLBOX_FIRE_DISTANCE and sightLen / 2. */
+static float shot_len_units(const BrainPathfinder *pf, int shooter_type,
+                            int sight_len, int whole_squares) {
+  int sl = (sight_len > 0) ? sight_len : (int) pf->gunsight_max;
+  if (pf->shot_sim_exact) {
+    if (shooter_type == BRAIN_SHOT_SHOOTER_PILL) return pf->pill_fire_length;
+    return (TURNTYPE) sl / (TURNTYPE) 2;
+  }
+  if (whole_squares) {
+    if (shooter_type == BRAIN_SHOT_SHOOTER_PILL) return (float)(int)PILLBOX_FIRE_DISTANCE;
+    return (float)(sl / 2);
+  }
+  if (shooter_type == BRAIN_SHOT_SHOOTER_PILL) return PILLBOX_FIRE_DISTANCE;
+  return sl / 2.0f;
+}
+
+/* The angle each shooter fires at a target point: a pill aims with
+ * utilCalcAngle (pillsTargetTank), a tank's shell goes at the tank's
+ * float angle, which shellAngleFromTarget gives for a target point.
+ * exact 0 is the old answer: shellAngleFromTarget for both. */
+static TURNTYPE shot_angle_to(const BrainPathfinder *pf, int shooter_type,
+                              WORLD ox, WORLD oy, WORLD tx, WORLD ty) {
+  if (pf->shot_sim_exact && shooter_type == BRAIN_SHOT_SHOOTER_PILL) {
+    return utilCalcAngle(ox, oy, tx, ty);
+  }
+  return shellAngleFromTarget(ox, oy, tx, ty);
 }
 
 /* One-line check used by the inner search loops. NULL flag → never
@@ -4626,13 +4674,7 @@ static int simulate_shot_walk(const BrainPathfinder *pf,
    * half-tile. For PILL shooter the engine passes PILLBOX_FIRE_DISTANCE
    * (8.5) directly. Keep len_units float so shellLifeTicks sees the
    * same fractional value the engine does. */
-  float len_units;
-  if (shooter_type == BRAIN_SHOT_SHOOTER_PILL) {
-    len_units = PILLBOX_FIRE_DISTANCE;
-  } else {
-    int sl = (sight_len > 0) ? sight_len : (int) pf->gunsight_max;
-    len_units = sl / 2.0f;
-  }
+  float len_units = shot_len_units(pf, shooter_type, sight_len, 0);
 
   /* Spawn position + lifetime budget come from shells.c so the
    * simulator can never drift from the engine's actual shell. The
@@ -4720,18 +4762,14 @@ static int simulate_shot_walk_tanks(const BrainPathfinder *pf,
                                      BrainShotTile *out_tiles, int max_tiles) {
   if (out_tiles == NULL || max_tiles <= 0) return 0;
 
-  int len_units;
-  if (shooter_type == BRAIN_SHOT_SHOOTER_PILL) {
-    len_units = (int)PILLBOX_FIRE_DISTANCE;
-  } else {
-    int sl = (sight_len > 0) ? sight_len : (int) pf->gunsight_max;
-    len_units = sl / 2;
-  }
+  float len_units = shot_len_units(pf, shooter_type, sight_len, 1);
+  const int exact = pf->shot_sim_exact;
+  const WORLD hitR = (WORLD) pf->tank_hit_radius;
 
   WORLD x, y;
   shellSpawnPos(origin_wx, origin_wy, angle, (int) pf->shell_speed,
                 (int) pf->shell_start_add, &x, &y);
-  int ticks = shellLifeTicks((float) len_units, (int) pf->shell_life,
+  int ticks = shellLifeTicks(len_units, (int) pf->shell_life,
                              (int) pf->shell_start_add);
 
   int32_t xStep = 0, yStep = 0;
@@ -4777,11 +4815,15 @@ static int simulate_shot_walk_tanks(const BrainPathfinder *pf,
     x = (WORLD)((int)x + xMove);
     y = (WORLD)((int)y + yMove);
 
-    /* Tank hitbox check — 128 wu box, same as tankIsTankHit */
+    /* Tank hit test: the engine's own (utilIsTankHit, the test
+     * tankShellInHitZone makes), or the old 128 box. */
     for (int i = 0; i < num_tanks; i++) {
       if (tanks[i].player_num == owner_player) continue;
-      if (abs((int)tanks[i].wx - (int)x) < 128 &&
-          abs((int)tanks[i].wy - (int)y) < 128) {
+      bool in_zone = exact
+          ? utilIsTankHit(tanks[i].wx, tanks[i].wy, 0, x, y, 0, hitR)
+          : (abs((int)tanks[i].wx - (int)x) < 128 &&
+             abs((int)tanks[i].wy - (int)y) < 128);
+      if (in_zone) {
         int mx = (int)((unsigned)x >> TANK_SHIFT_MAPSIZE);
         int my = (int)((unsigned)y >> TANK_SHIFT_MAPSIZE);
         out_tiles[count].mx = (uint8_t)mx;
@@ -4819,10 +4861,9 @@ int brainPathfinderSimulateShot(const BrainPathfinder *pf,
                                  BrainShotTile *out_tiles, int max_tiles) {
   if (pf == NULL || out_tiles == NULL || max_tiles <= 0) return 0;
   if (origin_wx == target_wx && origin_wy == target_wy) return 0;
-  /* Angle conversion lives in shells.c so both engine and brain use
-   * the same int rounding. */
-  TURNTYPE angle = shellAngleFromTarget(origin_wx, origin_wy,
-                                        target_wx, target_wy);
+  /* The angle each shooter's own fire code uses (shells.c / util.c). */
+  TURNTYPE angle = shot_angle_to(pf, shooter_type, origin_wx, origin_wy,
+                                 target_wx, target_wy);
   return simulate_shot_walk(pf, origin_wx, origin_wy, angle,
                             shooter_type, sight_len,
                             out_tiles, max_tiles);
@@ -4840,6 +4881,12 @@ int brainPathfinderSimulateShotAngle(const BrainPathfinder *pf,
    * uses a 256-entry sin/cos table internally but interpolates at
    * the call site for sub-brad accuracy. */
   float a = fmodf(fmodf(angle, 256.0f) + 256.0f, 256.0f);
+  /* An angle already in range goes in as it is, as the engine fires it.
+   * The wrap above is not exact for one: a + 256 rounds off the low bits
+   * of a small angle, and utilCalcAngle gives exactly 256 for a target
+   * due north of a pill (BRADIANS_MAX - 0), which the pill fires at 256,
+   * not 0. Both give other steps. */
+  if (pf->shot_sim_exact && angle >= 0.0f && angle <= 256.0f) a = angle;
   return simulate_shot_walk(pf, origin_wx, origin_wy, (TURNTYPE)a,
                             shooter_type, sight_len,
                             out_tiles, max_tiles);
@@ -4855,8 +4902,8 @@ int brainPathfinderSimulateShotWithTanks(const BrainPathfinder *pf,
                                           BrainShotTile *out_tiles, int max_tiles) {
   if (pf == NULL || out_tiles == NULL || max_tiles <= 0) return 0;
   if (origin_wx == target_wx && origin_wy == target_wy) return 0;
-  TURNTYPE angle = shellAngleFromTarget(origin_wx, origin_wy,
-                                        target_wx, target_wy);
+  TURNTYPE angle = shot_angle_to(pf, shooter_type, origin_wx, origin_wy,
+                                 target_wx, target_wy);
   return simulate_shot_walk_tanks(pf, origin_wx, origin_wy, angle,
                                   shooter_type, sight_len,
                                   tanks, num_tanks, owner_player,

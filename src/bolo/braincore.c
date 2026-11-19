@@ -2468,6 +2468,8 @@ static int l_cpf_simulate_shot(lua_State *L) {
   WORLD ty = (WORLD)luaL_checkinteger(L, 4);
   int shooter   = (int)luaL_optinteger(L, 5, BRAIN_SHOT_SHOOTER_TANK);
   int sight_len = (int)luaL_optinteger(L, 6, 0);
+  /* 7: SHOT_SIM_ENGINE_EXACT, when given (cpathfinder.lua passes it). */
+  if (!lua_isnoneornil(L, 7)) brainPathfinderSetShotSimExact(pf, lua_toboolean(L, 7));
 
   BrainShotTile tiles[64];
   int n = brainPathfinderSimulateShot(pf, ox, oy, tx, ty, shooter, sight_len,
@@ -2498,6 +2500,8 @@ static int l_cpf_simulate_shot_angle(lua_State *L) {
   float angle  = (float)luaL_checknumber(L, 3);
   int shooter  = (int)luaL_optinteger(L, 4, BRAIN_SHOT_SHOOTER_TANK);
   int sight_len= (int)luaL_optinteger(L, 5, 0);
+  /* 6: SHOT_SIM_ENGINE_EXACT, when given (cpathfinder.lua passes it). */
+  if (!lua_isnoneornil(L, 6)) brainPathfinderSetShotSimExact(pf, lua_toboolean(L, 6));
 
   BrainShotTile tiles[64];
   int n = brainPathfinderSimulateShotAngle(pf, ox, oy, angle, shooter, sight_len,
@@ -2615,6 +2619,8 @@ static int l_cpf_simulate_shot_with_tanks(lua_State *L) {
   int sight_len  = (int)luaL_optinteger(L, 6, 0);
   luaL_checktype(L, 7, LUA_TTABLE);
   uint8_t owner  = (uint8_t)luaL_checkinteger(L, 8);
+  /* 9: SHOT_SIM_ENGINE_EXACT, when given (cpathfinder.lua passes it). */
+  if (!lua_isnoneornil(L, 9)) brainPathfinderSetShotSimExact(pf, lua_toboolean(L, 9));
 
   /* Read tanks table */
   BrainShotTankPos tanks[MAX_TANKS];

@@ -1492,6 +1492,9 @@ static bool botSyncSnapshotForJob(BotJobCtx *j) {
                                      gs->rules.shell_speed,
                                      gs->rules.shell_start_add,
                                      gs->rules.gunsight_max);
+        brainPathfinderSetShotRules(bot->brain.pathfinder,
+                                    gs->rules.pill_fire_length,
+                                    gs->rules.tank_hit_radius);
     }
 
     /* NOTE: dead tanks (waiting to respawn) used to skip the think entirely.
