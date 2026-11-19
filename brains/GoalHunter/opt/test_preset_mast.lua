@@ -861,6 +861,7 @@ local R221 = {
   PT2_LIVE_SHELL = false,
   SHOT_SIM_ENGINE_EXACT = false,
   PT2_TANKSHOT_BLOCKERS = false,
+  PT2_ANGLE_STEP_DEG = 2,
   PT2_CHAIN_CLAIM = false,
   PT2_C_EVAL = false,
   PT2_FAST_SETUP = false,

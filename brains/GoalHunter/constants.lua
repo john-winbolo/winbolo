@@ -973,8 +973,9 @@ M.PT2_CHAIN_BLOCKER_MIN_SHOTS = 10
 M.PT2_LINK_COVERS_PREV = true
 -- Longest chain counted, pills. Proposal, awaiting Andrew's value.
 M.PT2_MAX_CHAIN = 3
--- Ring step around the target, degrees. Proposal, awaiting Andrew's value.
-M.PT2_ANGLE_STEP_DEG = 2
+-- Ring step around the target, degrees. Andrew approved 1 for HELM (Nov 19):
+-- 360 spots per ring. KEEL / MAST: 2.
+M.PT2_ANGLE_STEP_DEG = 1
 -- Extra range past the pill's 2048 wu when listing who can shoot a point
 -- (covers leeway and one knockback), wu. Proposal, awaiting Andrew's value.
 M.PT2_RANGE_MARGIN_WU = 128
@@ -7969,6 +7970,8 @@ M.PRESETS = {
     PT2_LIVE_SHELL = false,
     SHOT_SIM_ENGINE_EXACT = false,
     PT2_TANKSHOT_BLOCKERS = false,
+    --   2026-11-19: ring step 2 degrees (HELM: 1).
+    PT2_ANGLE_STEP_DEG = 2,
     PT2_CHAIN_CLAIM = false,
     --   2026-11-18: pill take v2 in Lua only (no C copy).
     PT2_C_EVAL = false,
@@ -8297,6 +8300,7 @@ M.PRESETS.mast = {
   PT2_LIVE_SHELL                    = false,  -- 2.2.1 had no pill take v2
   SHOT_SIM_ENGINE_EXACT             = false,  -- 2.2.1 shot sim: atan2 pill angle, 128 box
   PT2_TANKSHOT_BLOCKERS             = false,  -- 2.2.1 had no pill take v2
+  PT2_ANGLE_STEP_DEG                = 2,      -- 2.2.1 had no pill take v2
   PT2_CHAIN_CLAIM                   = false,  -- 2.2.1 had no pill take v2
   PT2_C_EVAL                        = false,  -- 2.2.1 had no pill take v2
   POST_KILL_WAIT_TICKS              = 15,
