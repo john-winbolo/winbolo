@@ -11,6 +11,7 @@
 --     target; dead allies do not count.
 --   * the sender payload: live hostile/neutral chain pills only; cleared
 --     when the take ends.
+--   * drop_lost: a live plan drops a chain pill an ally now holds.
 --   * pilltake_v2: a skipped pill ends the chain.
 --
 -- Run from this directory with the LuaJIT built beside the game:
@@ -154,6 +155,61 @@ PC.tx(s, world, 312, try_send)
 check("take ended: clear sent", sent[3] == "/info pch", sent[3])
 PC.tx(s, world, 313, try_send)
 check("cleared once", #sent == 3)
+
+-- ── drop_lost: a live plan drops a chain pill an ally now holds ─────────
+-- Seed 1 oilrig t=4933: p3 planned 12-13 while it held 13; p2 (target 13)
+-- went to blitz_wait at t=4942. p3 kept the old plan to the end.
+print("drop_lost")
+do
+  -- attack.lua's own replan reset, stubbed: loading attack.lua here rebuilds
+  -- los_stamp_cache.lua. The stub records the call.
+  local reset_goal
+  local saved_attack = package.loaded["attack"]
+  package.loaded["attack"] = { _reset_to_plan_position = function(_, g)
+    reset_goal = g; g.substate = "plan_position"; g.scan_spots = nil; g._shield_scan = nil
+    g._plan_show_tick = nil; g._plan_position_cleared = nil
+  end }
+  local w = { pills = { [12] = { owner = "hostile", health = 15 }, [13] = { owner = "hostile", health = 14 } } }
+  local function mk(sub)
+    return { goal = { kind = "attack_pill", target_id = 12, substate = sub, scan_spots = {}, _shield_scan = {},
+                      _plan_show_tick = 4933, _plan_position_cleared = true, standoff_mx = 135,
+                      _pt2 = { mode = "HOLD", ids = { 12, 13 }, step = 1 } },
+             broadcast_state_extra = { cost = "160" }, _shield_scan_cache = {} }
+  end
+  -- ally p2: target 13, not engaged yet, pricier -> we keep the plan
+  AS.set_info(2, 4940, { goal = "attack_pill", target = "13", sub = "approach", cost = "361" })
+  PC.rx(2, nil)
+  local st = mk("approach")
+  check("ally not engaged, pricier: plan kept", PC.drop_lost(st, w, 4940, 3) == nil and st.goal._pt2 ~= nil)
+  -- ally p2 engaged on 13 -> we lose 13 -> plan dropped, back to plan_position
+  AS.set_info(2, 4942, { goal = "attack_pill", target = "13", sub = "blitz_wait", cost = "361" })
+  local lost, by = PC.drop_lost(st, w, 4942, 3)
+  check("ally engaged on 13: plan dropped", lost == 13 and by == 2, tostring(lost))
+  check("dropped: back to plan_position", st.goal.substate == "plan_position" and st.goal._pt2 == nil
+        and st.goal.scan_spots == nil and st.goal._shield_scan == nil and st._shield_scan_cache == nil)
+  -- seed 1 t=4936: without the full reset the old show tick sent the take
+  -- straight back to approach on the old plan, with no new scan
+  check("dropped: attack's full replan reset ran on the goal", reset_goal == st.goal)
+  check("dropped: payload cleared", PC.payload(st, w) == nil)
+  -- the target itself (step) is never checked here: the sync owns it
+  st = mk("approach")
+  st.goal._pt2.ids = { 13, 12 }
+  st.goal.target_id = 13
+  check("target never dropped here", PC.drop_lost(st, w, 4942, 3) == nil)
+  -- a dead chain pill does not count
+  st = mk("approach")
+  w.pills[13].health = 0
+  check("dead chain pill: plan kept", PC.drop_lost(st, w, 4942, 3) == nil)
+  w.pills[13].health = 14
+  st.goal._pt2.mode = "SINGLE"
+  check("single take: nothing to drop", PC.drop_lost(st, w, 4942, 3) == nil)
+  st.goal._pt2.mode = "HOLD"
+  C.PT2_CHAIN_CLAIM = false
+  check("knob off: plan kept", PC.drop_lost(st, w, 4942, 3) == nil)
+  C.PT2_CHAIN_CLAIM = true
+  AS.set_info(2, 4942, { goal = "explore" })
+  package.loaded["attack"] = saved_attack
+end
 
 -- ── pilltake_v2: a skipped pill ends the chain ───────────────────────────
 print("pilltake_v2")
