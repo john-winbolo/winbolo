@@ -643,6 +643,13 @@ function M.evaluate(inp)
   if cf and cf ~= "" then return require("pt2_capture").evaluate(M, inp, cf) end
   local g = inp.c_eval and rawget(_G, "gh_pt2")
   if g then return g.evaluate(inp, M) end
+  if inp.c_eval and not M._warned_no_c then
+    -- Log only, once per brain: an exe built before gh_pt2.c (a stale Bot
+    -- Host) runs the Lua copy, about 7x slower, and budget-kills ticks.
+    M._warned_no_c = true
+    print("[pilltake_v2] PT2_C_EVAL is on but this exe has no gh_pt2:"
+      .. " the Lua evaluator runs. Rebuild the exe.")
+  end
   return M.evaluate_lua(inp)
 end
 

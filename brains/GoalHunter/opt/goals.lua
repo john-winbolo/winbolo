@@ -11409,6 +11409,7 @@ function M.build_eval_queue(state, world, info)
   -- Fresh queue → not swept yet (warm_ready's sparse-map escape requires a full
   -- sweep of the CURRENT queue). Harmless once _warm_ready has latched.
   state._eval_swept = false
+  state._warm_need_rebuild = nil  -- WARMUP_KEEP_QUEUE: this is the rebuild
   local queue = {}
   local now = state.tick or 0
   local tmx = bit.rshift(info.tankx, 8)
@@ -11930,6 +11931,10 @@ function M.step_eval_queue(state, world, info)
   -- Capacity tier eval_iv: pop a candidate only every Nth tick when
   -- throttled. Tier 10 → every tick. Tier 1 → every 5 ticks.
   local _eval_iv = (state._capacity and state._capacity.eval_iv) or 1
+  -- WARMUP_IGNORE_EVAL_IV: no throttle until the pool is warm.
+  if _eval_iv > 1 and C.WARMUP_IGNORE_EVAL_IV and not M.warm_ready(state) then
+    _eval_iv = 1
+  end
   if _eval_iv > 1 and ((state.tick or 0) % _eval_iv) ~= 0 then return end
 
   local queue = state.eval_queue
@@ -19601,6 +19606,18 @@ function M.warm_count(state)
     end
   end
   return n, need
+end
+
+-- WARMUP_KEEP_QUEUE: may a timer replan keep the eval queue? Only before
+-- warm, when a queue exists, is not swept to the end, and no respawn has
+-- happened since the last rebuild (the first replan after a respawn rebuilds
+-- from the new position). The caller checks the knob and the replan reason.
+function M.warm_keep_queue(state)
+  if M.warm_ready(state) then return false end
+  if state._warm_need_rebuild then return false end
+  local q = state.eval_queue
+  if not q or #q == 0 then return false end
+  return (state.eval_queue_pos or 1) <= #q
 end
 
 function M.warm_ready(state)

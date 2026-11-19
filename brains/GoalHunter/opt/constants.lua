@@ -1101,6 +1101,13 @@ M.PT2_DBL_EVALS_PER_TICK = 1
 -- 6-11 ms let ticks run just over the 12 ms target (87% of the kills were
 -- on a shadow-run tick). false = the run in one go. KEEL / MAST: false.
 M.PT2_DBL_SPLIT = true
+-- PT2_DBL_PART_LEAVE_REST (Nov 19, Andrew's yes): a split part may start only
+-- when this think so far + the part's estimate + the EWMA of the rest of
+-- the think after the shadow pump (the pool queue and everything after it,
+-- parts taken off) stays under the tick target. Without it a 16 ms part on
+-- an 18 ms target ran over on every part (Bot Host with no gh_pt2, game
+-- 20261119_122256). EWMA weight: CAPACITY_EWMA_ALPHA. KEEL / MAST: false.
+M.PT2_DBL_PART_LEAVE_REST = true
 -- Ticks one split job is spread over, brain ticks: part k of n (k from 0,
 -- one whole v2 evaluate each) runs on tick floor(k * spread / n) of the
 -- job. A due part also waits while this think so far plus its estimated
@@ -2124,6 +2131,20 @@ M.GOAL_REPLAN_INTERVAL     = 50    -- ticks between goal decisions
 M.REPLAN_OFFSET_MODE       = "slot"
 M.WARMUP_CAPTURE_MAX_COST  = 150   -- warm-up exemption: a capture_pill (dead pill pickup) priced at or below this wins even before the pools are warm. ~13 tiles by sea cost 34; a cross-map pickup is far above this. (20260831_173448 bot3: respawned in a boat, cost-34 water pickup lost to the explore fallback, landed, pills unreachable thereafter.)
 M.WARMUP_MIN_REAL_GOALS    = 10   -- the rolling pool-eval warms up over ~14-49 ticks; until this many finite-cost (pickable) candidates exist across all pools the bot rides the explore fallback. Once reached: exit explore immediately (don't wait out GOAL_MIN_COMMIT) and stop showing the warmup reject row in the WINNERS panel.
+-- WARMUP_IGNORE_EVAL_IV (Nov 19, Andrew GO): while the pool is not warm
+-- (goals.warm_ready false), step_eval_queue pops its GOAL_CANDS_PER_TICK
+-- candidates every tick and ignores the capacity tier's eval_iv. After a Bot
+-- Host handoff at tier 1 (eval_iv 5) warm-up took 777 ticks. KEEL / MAST:
+-- false (throttle always on).
+M.WARMUP_IGNORE_EVAL_IV = true
+-- WARMUP_KEEP_QUEUE (Nov 19, Andrew GO): while the pool is not warm, a replan
+-- with no urgent, force or refuel-done reason (a timer replan) keeps the eval
+-- queue and its place instead of rebuilding it from the top. The first replan
+-- after a respawn, an urgent / forced / refuel-done replan, a missing queue
+-- and a fully-swept queue still rebuild. pick_goal does not use the pools
+-- before warm, so the rebuild only threw the progress away. KEEL / MAST:
+-- false (every replan rebuilds).
+M.WARMUP_KEEP_QUEUE = true
 M.GOAL_POOL_COUNT          = 10    -- number of pool evaluators to spread across ticks
 M.GOAL_CANDS_PER_TICK      = 1     -- A* cost_to evaluations per tick (round-robin)
 M.STARTUP_HOLD_TICKS       = 16    -- hold still for this many ticks after brain start so the eval queue warms up before we commit to a direction
@@ -7966,12 +7987,17 @@ M.PRESETS = {
     PT2_HAUL_KEEP_TAKE = false,
     PT2_DOUBLE_TAKE_DISCOUNT = false,
     PT2_DBL_SPLIT = false,
+    PT2_DBL_PART_LEAVE_REST = false,
     PT2_DBL_CAN_WIN = false,
     PT2_LIVE_SHELL = false,
     SHOT_SIM_ENGINE_EXACT = false,
     PT2_TANKSHOT_BLOCKERS = false,
     --   2026-11-19: ring step 2 degrees (HELM: 1).
     PT2_ANGLE_STEP_DEG = 2,
+    --   2026-11-19: warm-up keeps the eval_iv throttle and rebuilds the
+    --   eval queue on every replan.
+    WARMUP_IGNORE_EVAL_IV = false,
+    WARMUP_KEEP_QUEUE = false,
     PT2_CHAIN_CLAIM = false,
     --   2026-11-18: pill take v2 in Lua only (no C copy).
     PT2_C_EVAL = false,
@@ -8296,11 +8322,14 @@ M.PRESETS.mast = {
   PT2_HAUL_KEEP_TAKE                = false,  -- 2.2.1 had no pill take v2
   PT2_DOUBLE_TAKE_DISCOUNT          = false,  -- 2.2.1 had no pill take v2
   PT2_DBL_SPLIT                     = false,  -- 2.2.1 had no pill take v2
+  PT2_DBL_PART_LEAVE_REST           = false,  -- 2.2.1 had no pill take v2
   PT2_DBL_CAN_WIN                   = false,  -- 2.2.1 had no pill take v2
   PT2_LIVE_SHELL                    = false,  -- 2.2.1 had no pill take v2
   SHOT_SIM_ENGINE_EXACT             = false,  -- 2.2.1 shot sim: atan2 pill angle, 128 box
   PT2_TANKSHOT_BLOCKERS             = false,  -- 2.2.1 had no pill take v2
   PT2_ANGLE_STEP_DEG                = 2,      -- 2.2.1 had no pill take v2
+  WARMUP_IGNORE_EVAL_IV             = false,  -- 2.2.1: eval_iv throttle in warm-up too
+  WARMUP_KEEP_QUEUE                 = false,  -- 2.2.1: every replan rebuilt the queue
   PT2_CHAIN_CLAIM                   = false,  -- 2.2.1 had no pill take v2
   PT2_C_EVAL                        = false,  -- 2.2.1 had no pill take v2
   POST_KILL_WAIT_TICKS              = 15,

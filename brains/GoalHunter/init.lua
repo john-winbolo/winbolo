@@ -5036,6 +5036,9 @@ function Brain.think(info)
     state._warm_count     = 0
     state._warm_exit_done = nil
     state._eval_swept     = nil  -- new position: require a fresh full eval sweep
+    -- WARMUP_KEEP_QUEUE: the first replan after a respawn still rebuilds the
+    -- queue from the new position.
+    state._warm_need_rebuild = true
     -- Blitz-call registry: our knowledge of others' open calls is stale after a
     -- respawn (we ran no Lua while dead), and our own call is gone. Drop both
     -- and fire a discovery query so commanders re-announce their open calls.
@@ -7205,7 +7208,16 @@ function Brain.think(info)
       -- capture target, replanned, and repair_pill won because pool 4 was
       -- empty; the LGM rebuilt the corpse and the free pill was lost.
       if age <= 3 then print(TAG .. " tick=" .. now .. " calling build_eval_queue") end
-      if C.INCREMENTAL_REPLAN then
+      if C.WARMUP_KEEP_QUEUE and not (urgent_replan or refuel_done or force_replan)
+         and goals.warm_keep_queue(state) then
+        -- WARMUP_KEEP_QUEUE: a timer replan before warm keeps the queue and
+        -- its place (goals.warm_keep_queue has the rule).
+        if BRAIN_DEBUG_MODE then
+          print2(string.format("WARMUP_KEEP_QUEUE t=%d pos=%d/%d warm=%d/%d", now,
+            state.eval_queue_pos or 1, #state.eval_queue,
+            state._warm_count or 0, C.WARMUP_MIN_REAL_GOALS or 0))
+        end
+      elseif C.INCREMENTAL_REPLAN then
         -- Deferred mode still pays the one-cycle blindness for brand-new
         -- corpses; the spike-splitting tradeoff is explicit here.
         state._deferred_build_eval = true
@@ -12093,6 +12105,11 @@ function Brain.think(info)
   -- content of state-slate, bes/bd, bco/bcc/bcq, replies, etc. (dest 0 = the
   -- ally/bot-only internal channel; a nonzero bitmask = specific recipients).
   if BRAIN_DEBUG_MODE and send_msg and send_msg ~= "" then print2(string.format("MSG_TX t=%d dest=%d msg=%s", now, msg_dest or 0, tostring(send_msg))) end
+
+  -- PT2_DBL_PART_LEAVE_REST: the rest-of-think sample for the shadow parts.
+  if C.PT2_DBL_PART_LEAVE_REST and state._pt2_dbl then
+    require("pt2_dbl").note_think_end(state, now)
+  end
 
   -- ── PROFILING LITE: TICK_COST / NEAR_BUDGET ─────────────────────────────
   -- Sits immediately before print2.flush() so it measures as much of the
