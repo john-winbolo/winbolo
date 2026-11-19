@@ -218,7 +218,7 @@ typedef struct {
 	int32_t lgm_cost_pill_new;
 	int32_t lgm_cost_mine;
 	int32_t lgm_gather_trees;
-	int32_t lgm_helicopter_speed;
+	float   lgm_helicopter_speed;
 	/* The cap the builder's walk clamps to on each terrain. */
 	int32_t man_speed_road;
 	int32_t man_speed_grass;

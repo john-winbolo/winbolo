@@ -58,9 +58,8 @@
 -- at his tank. Mac Bolo moves him every other tick by its trig table
 -- shifted down, so his speed depends on his heading: 1.41 to 2.5 world
 -- units a tick, 1.92 on average. WinBolo moves him lgm_helicopter_speed a
--- tick, rounded on each axis: 2.83 to 3.61 at the default 3. This part
--- sets 2, which is 1.41 to 2.24, 2.09 on average. The rule is a whole
--- number, so 2 is the nearest it comes to Mac Bolo.
+-- tick on every heading, 3 by default. This part sets 2, which may be
+-- marginally fast: a little above Mac Bolo's average.
 --
 -- Starts. The engine tells on_choose_start which start the lobby put the
 -- seat on: the start its player picked by hand, else one on the team's

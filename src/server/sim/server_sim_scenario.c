@@ -714,8 +714,11 @@ static ScnOpResult scenarioOpLgmParachute(ServerSim *sim,
         }
     }
 
-    (*l)->x = (WORLD)(((WORLD)ex << TANK_SHIFT_MAPSIZE) + MAP_SQUARE_MIDDLE);
-    (*l)->y = (WORLD)(((WORLD)ey << TANK_SHIFT_MAPSIZE) + MAP_SQUARE_MIDDLE);
+    /* Through lgmFlyFrom, so the part of a world unit his flight had got to
+       goes too: a script that puts him back where he already is, by the
+       whole units, starts him from exactly there. */
+    lgmFlyFrom(l, (WORLD)(((WORLD)ex << TANK_SHIFT_MAPSIZE) + MAP_SQUARE_MIDDLE),
+               (WORLD)(((WORLD)ey << TANK_SHIFT_MAPSIZE) + MAP_SQUARE_MIDDLE));
     (*l)->destX = dx;
     (*l)->destY = dy;
     /* The script moved the builder, so the frames recorded before the move

@@ -250,6 +250,31 @@ int run_lv_builder_countdown(void) {
     /* A speed that is no speed is the game's own. */
     UT_ASSERT_MSG(lvBuilderFlightMs(2560, 0, 0, 16) == 16960, "speed 0");
     UT_ASSERT_MSG(lvBuilderFlightMs(30, 0, 3, -5) == 200, "a tolerance under zero");
+    /* The speed is a float rule: half a unit a tick is twice the ticks, and
+       two and a half is ten ticks for 25 units. */
+    UT_ASSERT_MSG(lvBuilderFlightMs(10, 0, 0.5, 0) == 400, "half a unit a tick");
+    UT_ASSERT_MSG(lvBuilderFlightMs(25, 0, 2.5, 0) == 200, "2.5 units a tick");
+    UT_ASSERT_MSG(lvBuilderFlightMs(2560, 0, -1.0, 16) == 16960, "speed under zero");
+    UT_ASSERT_MSG(lvBuilderFlightMs(2560, 0, NAN, 16) == 16960, "a speed that is no number");
+    /* He lands inside a box of the tolerance either way on both axes, not a
+       circle. 16 off on each axis is inside it however slow he flies, and
+       from 32 off on each axis half his line of 45.25 is left: 23 ticks. */
+    UT_ASSERT_MSG(lvBuilderFlightMs(16, 16, 0.01, 16) == 0,
+                  "in the corner of the box: %ld ms",
+                  lvBuilderFlightMs(16, 16, 0.01, 16));
+    UT_ASSERT_MSG(lvBuilderFlightMs(32, -32, 1.0, 16) == 460,
+                  "a diagonal to the corner of the box: %ld ms",
+                  lvBuilderFlightMs(32, -32, 1.0, 16));
+    UT_ASSERT_MSG(lvBuilderFlightMs(100, 17, 1.0, 16) == 1720,
+                  "the longer axis decides: %ld ms",
+                  lvBuilderFlightMs(100, 17, 1.0, 16));
+    /* A speed too near zero for the ticks to fit a long stops at the
+       longest flight. */
+    UT_ASSERT_MSG(lvBuilderFlightMs(2560, 0, 1e-300, 16) == LV_BUILDER_FLIGHT_MS_MAX,
+                  "a speed of 1e-300: %ld ms",
+                  lvBuilderFlightMs(2560, 0, 1e-300, 16));
+    UT_ASSERT_MSG(lvBuilderFlightMs(2560, 0, 4.9e-324, 16) == LV_BUILDER_FLIGHT_MS_MAX,
+                  "the smallest speed there is");
     return 0;
 }
 

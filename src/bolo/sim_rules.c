@@ -144,7 +144,7 @@ void simRulesClassic(SimRules *out) {
     out->lgm_cost_mine            = LGM_COST_MINE;
     out->lgm_pill_repair_load     = LGM_LOAD_PILLREPAIR;
     out->lgm_gather_trees         = LGM_GATHER_TREE;
-    out->lgm_helicopter_speed     = LGM_HELICOPTER_SPEED;
+    out->lgm_helicopter_speed     = (float) LGM_HELICOPTER_SPEED;
     out->lgm_arrive_tolerance     = LGM_MAX_GOAL;
     out->lgm_return_tolerance     = LGM_RETURN_MAX_GOAL;
     out->lgm_pill_drop_search     = LGM_PILL_DROP_SEARCH;
@@ -534,7 +534,10 @@ static void simRulesWhyFloat(char *why, size_t whyLen, const char *field,
     X(lgm_cost_mine,             INTMIN, 0,      INT32_MAX)                  \
     X(lgm_pill_repair_load,      INT,    1,      255)                        \
     X(lgm_gather_trees,          INT,    1,      255)                        \
-    X(lgm_helicopter_speed,      INT,    1,      255)                        \
+    /* World units a tick, and any part of one. The floor is a parachute     \
+       that all but hangs in the air, which is a table worth being able to   \
+       write. */                                                             \
+    X(lgm_helicopter_speed,      FLT,    0.01,   255.0)                      \
     /* The tolerances are half-widths: the test takes each either way round  \
        the goal, which is what the two-signed constants used to spell. */    \
     X(lgm_arrive_tolerance,      INT,    1,      255)                        \

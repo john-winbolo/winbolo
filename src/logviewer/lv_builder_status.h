@@ -217,19 +217,38 @@ static inline int lvBuilderDeadText(bool known, long remainMs, bool approx,
  * long on its way. */
 #define LV_BUILDER_COUNTDOWN_WIDEST "~0:00"
 
+/* The longest flight lvBuilderFlightMs answers: a day. */
+#define LV_BUILDER_FLIGHT_MS_MAX (24L * 60L * 60L * 1000L)
+
 /* How long a new builder still flies, estimated by the game's rule: he
  * moves in a straight line toward his goal at speed world units a tick and
- * has landed when he is within tolerance of it. dx, dy: from him to the
+ * has landed once he is within tolerance of it on both axes. That is a box
+ * round the goal and not a circle, so what he has left to fly is the part
+ * of his line outside the box: the whole line, less the share of it that
+ * the tolerance is of the longer of his two axes. dx, dy: from him to the
  * goal, in world units. For a live feed, where the log does not hold the
- * landing yet. */
-static inline long lvBuilderFlightMs(long dx, long dy, int speed, int tolerance) {
-    double dist, ticks;
+ * landing yet.
+ *
+ * The speed need not be a whole number, and one that is not above zero is
+ * read as the game's own. The answer stops at LV_BUILDER_FLIGHT_MS_MAX: a
+ * recording can hold a speed as near zero as a double goes, and the ticks
+ * that works out to are more than a long holds. */
+static inline long lvBuilderFlightMs(long dx, long dy, double speed, int tolerance) {
+    double ax, ay, longer, left, ticks;
 
-    if (speed <= 0) speed = LV_BUILDER_FLY_SPEED;
+    /* Written so a NaN lands on the game's own speed too. */
+    if (!(speed > 0.0)) speed = LV_BUILDER_FLY_SPEED;
     if (tolerance < 0) tolerance = 0;
-    dist = sqrt((double)dx * (double)dx + (double)dy * (double)dy) - (double)tolerance;
-    if (dist <= 0.0) return 0;
-    ticks = ceil(dist / (double)speed);
+    ax = fabs((double)dx);
+    ay = fabs((double)dy);
+    longer = (ax > ay) ? ax : ay;
+    if (longer <= (double)tolerance) return 0;
+    left = sqrt(ax * ax + ay * ay) * (longer - (double)tolerance) / longer;
+    ticks = ceil(left / speed);
+    /* Written so an infinity and a NaN land on the longest flight too. */
+    if (!(ticks < (double)(LV_BUILDER_FLIGHT_MS_MAX / LV_BUILDER_TICK_MS))) {
+        return LV_BUILDER_FLIGHT_MS_MAX;
+    }
     return (long)ticks * LV_BUILDER_TICK_MS;
 }
 
