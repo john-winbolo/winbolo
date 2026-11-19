@@ -31,16 +31,29 @@ local runs = 0
 local answer = nil        -- res.best the stub returns
 package.loaded["pt2_attack"] = {
   build_inp = function(state, goal, info, world, pill)
-    local ids = {}
-    for id, p in pairs(world.pills) do ids[p] = id end
-    return { ids = ids, A = pill }
+    local ids, pills = {}, {}
+    for id, p in pairs(world.pills) do ids[p] = id; pills[#pills + 1] = p end
+    return { ids = ids, A = pill, pills = pills }
   end,
 }
+-- split jobs: each group_step is one part of part_us on the fake clock
+local T = 1000000
+_G.clock_us = function() return T end
+local part_us, n_parts_job = 900, 3
 package.loaded["pilltake_v2"] = {
   evaluate_group = function(inp)
     runs = runs + 1
     return { best = answer }
   end,
+  group_begin = function(inp) return { inp = inp, list = {}, i = 0, res = nil } end,
+  group_step = function(job)
+    runs = runs + 1
+    T = T + part_us
+    job.i = job.i + 1
+    if job.i >= n_parts_job then job.res = { best = answer, A = job.inp.A }; return true end
+    return false
+  end,
+  group_parts_left = function(job) return n_parts_job - job.i end,
 }
 _G.brain = nil
 
@@ -57,7 +70,8 @@ local function chain_answer()
 end
 
 local saved = {}
-for _, k in ipairs({ "PT2_DOUBLE_TAKE_DISCOUNT", "PILLTAKE_V2_EVALUATOR", "PT2_CHAINS" }) do saved[k] = C[k] end
+for _, k in ipairs({ "PT2_DOUBLE_TAKE_DISCOUNT", "PILLTAKE_V2_EVALUATOR", "PT2_CHAINS", "PT2_DBL_SPLIT" }) do saved[k] = C[k] end
+C.PT2_DBL_SPLIT = false   -- the one-go path first; the split has its own section
 
 -- ── knob off ──────────────────────────────────────────────────────────────
 print("knob off")
@@ -149,6 +163,77 @@ D.on_tile(state, 106 + 10, 100, C.T_BUILDING)
 check("wall 10 from B: kept", state._pt2_dbl.by_id[1] ~= nil)
 D.on_tile(state, 106 + 9, 100, C.T_BUILDING)
 check("wall 9 from B: dropped", state._pt2_dbl.by_id[1] == nil)
+
+-- ── PT2_DBL_SPLIT: a run as a job of parts ─────────────────────────────
+print("split")
+do
+  C.PT2_DBL_SPLIT = true
+  local st = { tick = 10 }
+  local function at(t) st.tick = t; return t end
+  local n0 = runs
+  part_us, n_parts_job = 900, 3
+  -- no brain: the goal alone (2.0 ms); before any part the estimate is the goal
+  check("start: no answer yet", D.get(st, world, info, 1, A, at(10)) == nil)
+  local s = st._pt2_dbl
+  check("start: one part ran", runs == n0 + 1 and s.job and s.job.n == 1, runs - n0)
+  check("start: estimate = the part", math.abs(s.est_part_ms - 0.9) < 1e-9, s.est_part_ms)
+  check("open job: no second job", D.get(st, world, info, 2, B, at(10)) == nil and s.n_jobs == 1)
+  D.pump(st, world, info, at(10))
+  check("same tick: 1 more part fits (0.9 + 0.9 <= 2.0)", s.job and s.job.n == 2, s.job and s.job.n)
+  D.pump(st, world, info, at(11))
+  check("next tick: done after 3 parts", s.job == nil and s.by_id[1] ~= nil and runs == n0 + 3, runs - n0)
+  check("done: 2 ticks", s.job_ticks[2] == 1)
+  check("done: cached answer", D.get(st, world, info, 1, A, at(12)) == s.by_id[1])
+  -- the room term: tick target less this think so far less the margin
+  s.by_id[2] = nil
+  _G.brain = { lastThinkMs = 5, targetMs = 10 }
+  st._think_t0_us = T - 7500            -- 7.5 ms so far: room 0.5 < 0.9
+  check("no room: no start", D.get(st, world, info, 2, B, at(13)) == nil and s.job == nil)
+  check("goal = room", math.abs(D._goal_ms(s, st) - 0.5) < 1e-9, D._goal_ms(s, st))
+  st._think_t0_us = T - 7000            -- 7.0 ms: room 1.0 >= 0.9
+  check("room for one part: start", D.get(st, world, info, 2, B, at(14)) == nil and s.job and s.job.n == 1)
+  D.pump(st, world, info, at(14))
+  check("room spent: wait", s.job.n == 1 and s.n_wait == 1, s.n_wait)
+  st._think_t0_us = T
+  D.pump(st, world, info, at(15))
+  check("fresh tick: 2 parts, done", s.job == nil and s.by_id[2] ~= nil)
+  _G.brain = nil
+  st._think_t0_us = nil
+  -- drop: a snapshot pill changes
+  s.by_id[1] = nil
+  D.get(st, world, info, 1, A, at(20))
+  B.health = 13
+  D.pump(st, world, info, at(21))
+  check("pill change: dropped", s.job == nil and s.n_drop == 1 and s.by_id[1] == nil)
+  B.health = 15
+  -- drop: a wall near the target
+  D.get(st, world, info, 1, A, at(30))
+  D.on_tile(st, 100 + 3, 100, C.T_BUILDING)
+  D.pump(st, world, info, at(30))
+  check("wall near the job: dropped", s.job == nil and s.n_drop == 2)
+  -- the cap: a job not done in dbl_split ticks is dropped
+  st._capacity = { dbl_split = 3 }
+  part_us, n_parts_job = 1500, 9      -- 1.5 ms parts: one per tick
+  D.get(st, world, info, 1, A, at(40))
+  D.pump(st, world, info, at(41)); D.pump(st, world, info, at(42))
+  check("cap: still open at tick 3", s.job ~= nil and s.job.n == 3, s.job and s.job.n)
+  D.pump(st, world, info, at(43))
+  check("cap: dropped at the cap", s.job == nil and s.n_drop_cap == 1, s.n_drop_cap)
+  st._capacity = nil
+  -- one part alone over the goal
+  local nb = s.n_big
+  part_us, n_parts_job = 2500, 1
+  s.est_part_ms = 1.0
+  s.by_id[3] = nil
+  world.pills[4] = pill(108, 100)       -- a partner for a fresh pill
+  local P4 = world.pills[4]
+  D.get(st, world, info, 4, P4, at(50))
+  check("big part counted", s.n_big == nb + 1 and s.big_us_sum >= 2500, s.n_big)
+  check("big part: est over the goal, next waits", D._est_part_ms(s, st) > 1.0)
+  world.pills[4] = nil
+  part_us, n_parts_job = 900, 3
+  C.PT2_DBL_SPLIT = false
+end
 
 -- ── row condition ────────────────────────────────────────────────────────
 print("condition")

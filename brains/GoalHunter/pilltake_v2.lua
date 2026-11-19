@@ -753,32 +753,61 @@ end
 -- run. Returns the winner's result with res.A (the pill the tank shoots)
 -- and res.goal_A (the target). inp.A is the target again on return.
 function M.evaluate_group(inp)
-  local goalA = inp.A
-  local res = M.evaluate(inp)
-  res.A, res.goal_A = goalA, goalA
-  if not inp.chains then return res end
-  local pr = inp.pill_range + inp.range_margin
-  local n_eval, n_reject = res.n_eval, res.n_reject
-  for _, p in ipairs(res.hostile) do
-    local dx, dy = (p.mx - goalA.mx) * 256, (p.my - goalA.my) * 256
-    if p ~= goalA and dx * dx + dy * dy <= pr * pr
-       and not (inp.chain_skip and inp.chain_skip[p]) then
-      inp.A = p
-      if inp.set_A then inp.set_A(p) end
-      local r = M.evaluate(inp)
-      n_eval, n_reject = n_eval + r.n_eval, n_reject + r.n_reject
-      local b = r.best
-      if b and b.safe and b.chain_mode and b.in_chain and b.in_chain[goalA]
-         and (not res.best or M.better(b, res.best, inp.leeway_min, inp.travel_band)) then
-        r.A, r.goal_A = p, goalA
-        res = r
+  local job = M.group_begin(inp)
+  while not M.group_step(job) do end
+  return job.res
+end
+
+-- evaluate_group in parts, one M.evaluate per M.group_step call (pt2_dbl's
+-- PT2_DBL_SPLIT spreads a shadow run over ticks). The parts give the same
+-- result as evaluate_group when the inputs do not change between them.
+-- group_step returns true when the job is done; the result is job.res.
+function M.group_begin(inp)
+  return { inp = inp, goalA = inp.A, list = nil, i = 1, res = nil }
+end
+
+function M.group_parts_left(job)
+  if not job.list then return 1 end
+  return #job.list - job.i + 1
+end
+
+function M.group_step(job)
+  local inp, goalA = job.inp, job.goalA
+  if not job.list then
+    local res = M.evaluate(inp)
+    res.A, res.goal_A = goalA, goalA
+    job.res, job.n_eval, job.n_reject = res, res.n_eval, res.n_reject
+    job.list = {}
+    if not inp.chains then return true end
+    local pr = inp.pill_range + inp.range_margin
+    for _, p in ipairs(res.hostile) do
+      local dx, dy = (p.mx - goalA.mx) * 256, (p.my - goalA.my) * 256
+      if p ~= goalA and dx * dx + dy * dy <= pr * pr
+         and not (inp.chain_skip and inp.chain_skip[p]) then
+        job.list[#job.list + 1] = p
       end
     end
+  else
+    local p = job.list[job.i]
+    job.i = job.i + 1
+    inp.A = p
+    if inp.set_A then inp.set_A(p) end
+    local r = M.evaluate(inp)
+    inp.A = goalA
+    if inp.set_A then inp.set_A(goalA) end
+    job.n_eval, job.n_reject = job.n_eval + r.n_eval, job.n_reject + r.n_reject
+    local b, res = r.best, job.res
+    if b and b.safe and b.chain_mode and b.in_chain and b.in_chain[goalA]
+       and (not res.best or M.better(b, res.best, inp.leeway_min, inp.travel_band)) then
+      r.A, r.goal_A = p, goalA
+      job.res = r
+    end
   end
-  inp.A = goalA
-  if inp.set_A then inp.set_A(goalA) end
-  res.n_eval, res.n_reject = n_eval, n_reject
-  return res
+  if job.i > #job.list then
+    job.res.n_eval, job.res.n_reject = job.n_eval, job.n_reject
+    return true
+  end
+  return false
 end
 
 -- Run v2's tests on a given point and plan (v1's choice) and return the

@@ -72,6 +72,36 @@ do
         and ki.finish_min_armour == 5, ki.finish_min_armour)
 end
 
+-- PT2_DBL_SPLIT / PT2_DBL_CAN_WIN (Nov 18): on, off in KEEL and MAST
+for _, kn in ipairs({ "PT2_DBL_SPLIT", "PT2_DBL_CAN_WIN" }) do
+  check(kn .. " default true", C[kn] == true)
+  check(kn .. " keel false", C.PRESETS.keel[kn] == false)
+  check(kn .. " mast false", C.PRESETS.mast[kn] == false)
+end
+check("PT2_DBL_SPLIT_MAX_TICKS = 25 (Andrew's value)", C.PT2_DBL_SPLIT_MAX_TICKS == 25)
+check("PT2_DBL_TICK_GOAL_MS = 2.0", C.PT2_DBL_TICK_GOAL_MS == 2.0)
+check("PT2_DBL_TICK_MARGIN_MS = 2.0", C.PT2_DBL_TICK_MARGIN_MS == 2.0)
+check("PT2_DBL_STDERR_LOG default false", C.PT2_DBL_STDERR_LOG == false)
+check("PT2_DBL_CACHE_TICKS = 250 (5 s at 50 brain ticks/s)", C.PT2_DBL_CACHE_TICKS == 250)
+check("PT2_DBL_EVALS_PER_TICK = 1", C.PT2_DBL_EVALS_PER_TICK == 1)
+-- the capacity tier rows carry the double-take values: today's at every tier
+for t = 1, 10 do
+  local row = C.BRAIN_CAPACITY_LEVELS[t]
+  check("tier " .. t .. " dbl_cache 250", row and row.dbl_cache == 250, row and row.dbl_cache)
+  check("tier " .. t .. " dbl_evals 1", row and row.dbl_evals == 1, row and row.dbl_evals)
+  check("tier " .. t .. " dbl_split 25", row and row.dbl_split == 25, row and row.dbl_split)
+  check("tier " .. t .. " dbl_goal 2.0", row and row.dbl_goal == 2.0, row and row.dbl_goal)
+  check("tier " .. t .. " dbl_margin 2.0", row and row.dbl_margin == 2.0, row and row.dbl_margin)
+end
+do
+  local D = require("pt2_dbl")
+  check("tier value wins over the knob", D._tier_val({ _capacity = { dbl_cache = 100 } },
+        "dbl_cache", "PT2_DBL_CACHE_TICKS", 250) == 100)
+  check("no tier row: the knob", D._tier_val({}, "dbl_cache", "PT2_DBL_CACHE_TICKS", 250) == C.PT2_DBL_CACHE_TICKS)
+  check("tier row without the field: the knob", D._tier_val({ _capacity = {} },
+        "dbl_split", "PT2_DBL_SPLIT_MAX_TICKS", 9) == C.PT2_DBL_SPLIT_MAX_TICKS)
+end
+
 -- ── 1. rank order ────────────────────────────────────────────────────────
 print("rank order")
 local function k(safe, kills, blk, lee, score, depth)
@@ -264,6 +294,45 @@ do
   check("group: the target dies in the chain", b and b.in_chain and b.in_chain[T] == 2)
   check("group: the standoff is east", b and b.cx > 131, b and b.cx)
   check("group: inp.A is the target again", inp.A == T)
+  -- PT2_DBL_SPLIT: the same group in parts, one evaluate per group_step,
+  -- and the old one-loop evaluate_group (copied here) give the same answer.
+  HOME[1], HOME[2] = 145.5, 120.5
+  local job = V2.group_begin(inp)
+  check("split: one part before the first step", V2.group_parts_left(job) == 1)
+  local steps = 0
+  repeat steps = steps + 1 until V2.group_step(job) or steps > 20
+  local old = (function()
+    local goalA = inp.A
+    local r0 = V2.evaluate(inp)
+    r0.A, r0.goal_A = goalA, goalA
+    local pr = inp.pill_range + inp.range_margin
+    local ne = r0.n_eval
+    for _, p in ipairs(r0.hostile) do
+      local dx, dy = (p.mx - goalA.mx) * 256, (p.my - goalA.my) * 256
+      if p ~= goalA and dx * dx + dy * dy <= pr * pr and not (inp.chain_skip and inp.chain_skip[p]) then
+        inp.A = p
+        local r = V2.evaluate(inp)
+        ne = ne + r.n_eval
+        local bb = r.best
+        if bb and bb.safe and bb.chain_mode and bb.in_chain and bb.in_chain[goalA]
+           and (not r0.best or V2.better(bb, r0.best, inp.leeway_min, inp.travel_band)) then
+          r.A, r.goal_A = p, goalA
+          r0 = r
+        end
+      end
+    end
+    inp.A = goalA
+    r0.n_eval = ne
+    return r0
+  end)()
+  HOME[1], HOME[2] = h1, h2
+  local jb, ob = job.res.best, old.best
+  check("split: 2 parts (T, then P as A)", steps == 2, steps)
+  check("split: same A as the one-loop group", job.res.A == old.A and job.res.A == P)
+  check("split: same point and kills", jb and ob and jb.cx == ob.cx and jb.cy == ob.cy
+        and jb.kills == ob.kills and jb.safe == ob.safe, jb and jb.cx)
+  check("split: same n_eval", job.res.n_eval == old.n_eval, job.res.n_eval)
+  check("split: inp.A is the target after the parts", inp.A == T)
   print(string.format("    target-only so=(%.2f,%.2f)  group so=(%.2f,%.2f) A=(%d,%d)",
     solo and solo.cx or -1, solo and solo.cy or -1, b and b.cx or -1, b and b.cy or -1,
     res.A.mx, res.A.my))

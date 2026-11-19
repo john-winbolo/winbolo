@@ -11921,6 +11921,12 @@ function M.step_eval_queue(state, world, info)
   local pf = state.pf
   if pf and pf.status == "running" then return end
 
+  -- PT2_DBL_SPLIT: the open double-take job runs its next parts every tick,
+  -- before the queue (pt2_dbl.pump).
+  if C.PT2_DBL_SPLIT and C.PT2_DOUBLE_TAKE_DISCOUNT then
+    require("pt2_dbl").pump(state, world, info, state.tick or 0)
+  end
+
   -- Capacity tier eval_iv: pop a candidate only every Nth tick when
   -- throttled. Tier 10 → every tick. Tier 1 → every 5 ticks.
   local _eval_iv = (state._capacity and state._capacity.eval_iv) or 1
@@ -12457,7 +12463,28 @@ function M.step_eval_queue(state, world, info)
       -- and each excluded amount for the row text.
       local _dbl = nil
       local _dbl_block = nil   -- PT2_CHAIN_CLAIM: { pid, by } when an ally claims a chain pill
-      if pool_idx == 6 and C.PT2_DOUBLE_TAKE_DISCOUNT then
+      -- PT2_DBL_CAN_WIN: look at the double take only when this pill could
+      -- beat the best pool-6 pill at the double-take price: its last cost
+      -- without the discount x PT2_DOUBLE_TAKE_MULT under the best other
+      -- pool-6 cost in cost_cache. Our attack_pill target is always looked at.
+      local _dbl_can_win = true
+      if pool_idx == 6 and C.PT2_DOUBLE_TAKE_DISCOUNT and C.PT2_DBL_CAN_WIN then
+        local _cc = state.cost_cache
+        local _prev = _cc and _cc["6:" .. id]
+        local _g = state.goal
+        local _mine = _g and _g.kind == "attack_pill" and _g.target_id == id
+        if _prev and not _mine and (_prev.cost or math.huge) < 1e29 then
+          local _full = _prev.cost / ((_prev._dbl and _prev._dbl.mult) or 1)
+          local _best = math.huge
+          for _, ce in pairs(_cc) do
+            if ce._p == 6 and ce._id ~= id and not ce._reject and (ce.cost or math.huge) < _best then
+              _best = ce.cost
+            end
+          end
+          if _full * (C.PT2_DOUBLE_TAKE_MULT or 0.6) >= _best then _dbl_can_win = false end
+        end
+      end
+      if pool_idx == 6 and C.PT2_DOUBLE_TAKE_DISCOUNT and _dbl_can_win then
         local D = require("pt2_dbl")
         local t0 = clock_us()
         local de = D.get(state, world, info, id, obj, now)

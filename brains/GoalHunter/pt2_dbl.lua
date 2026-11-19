@@ -13,7 +13,12 @@
 -- (M.on_tile from threat.update), or it is PT2_DBL_CACHE_TICKS old.
 -- At most PT2_DBL_EVALS_PER_TICK runs per tick, and only when the last think
 -- plus the run's cost fits under the tick target (see may_run for the cost
--- before the first run).
+-- before the first run). PT2_DBL_SPLIT: a run is a job of parts, one v2
+-- evaluate each; each tick runs parts while the next part's estimated cost
+-- fits the tick goal (goal_ms), for up to PT2_DBL_SPLIT_MAX_TICKS ticks.
+-- The cache ticks, the runs per tick (one-go path), the tick goal, the
+-- margin and the split ticks come from the capacity tier row (tier_val),
+-- else the knobs.
 -- The module keeps no state of its own: all of it lives in state, so a new
 -- game starts empty. goals.lua and threat.lua call it through require() so
 -- think() gets no new upvalue.
@@ -37,6 +42,10 @@ local function store(state)
   if not s then
     s = { by_id = {}, runs_tick = -1, runs = 0, est_ms = 0,
           n_runs = 0, run_us_sum = 0, run_us_max = 0,
+          -- PT2_DBL_SPLIT: the open job, parts this tick, part stats
+          job = nil, parts_tick = -1, parts = 0, parts_ms = 0, est_part_ms = 0,
+          n_parts = 0, part_us_sum = 0, part_us_max = 0, n_jobs = 0, n_drop = 0,
+          n_drop_cap = 0, n_wait = 0, n_big = 0, big_us_sum = 0, job_ticks = {},
           -- CPU account (M.charge): every us this feature adds, per tick
           t_first = nil, t_cur = -1, us_cur = 0, us_sum = 0, us_tick_max = 0, t_log = 0 }
     state._pt2_dbl = s
@@ -79,11 +88,33 @@ function M.on_tile(state, tx, ty, ntt)
       end
     end
   end
+  -- PT2_DBL_SPLIT: the open job, near the target or a pill of its group
+  local job = s.job
+  if job and not job.dead then
+    local list = { job.inp.A }
+    for _, p in ipairs(job.g.list or {}) do list[#list + 1] = p end
+    for _, p in ipairs(list) do
+      if math.abs(p.mx - tx) <= R and math.abs(p.my - ty) <= R then job.dead = "wall"; break end
+    end
+  end
 end
 
+-- A double-take value for this capacity tier (C.BRAIN_CAPACITY_LEVELS row
+-- field), else the knob. Fields: dbl_cache (PT2_DBL_CACHE_TICKS),
+-- dbl_evals (PT2_DBL_EVALS_PER_TICK), dbl_goal (PT2_DBL_TICK_GOAL_MS),
+-- dbl_margin (PT2_DBL_TICK_MARGIN_MS), dbl_split (PT2_DBL_SPLIT_MAX_TICKS).
+local function tier_val(state, field, knob, dflt)
+  local cap = state and state._capacity
+  local v = cap and cap[field]
+  if v == nil then v = C[knob] end
+  if v == nil then v = dflt end
+  return v
+end
+M._tier_val = tier_val
+
 -- Still true to the world? nil = keep, else the reason it is dropped.
-local function stale_why(e, world, info, now)
-  if now - e.tick > (C.PT2_DBL_CACHE_TICKS or 250) then return "age" end
+local function stale_why(e, world, info, now, state)
+  if now - e.tick > tier_val(state, "dbl_cache", "PT2_DBL_CACHE_TICKS", 250) then return "age" end
   if (info.carried_pills or 0) ~= e.carried then return "carried" end
   if (info.trees or 0) ~= e.trees then return "trees" end
   for i, id in ipairs(e.ids) do
@@ -93,32 +124,24 @@ local function stale_why(e, world, info, now)
   return nil
 end
 
--- The shadow run. Returns the entry (always, a no-chain answer too).
-local function run(state, world, info, id, pill, now)
+-- The entry for a run on pill id: the inputs it saw, and no take yet.
+local function new_entry(info, id, pill, now)
+  return { tick = now, carried = info.carried_pills or 0, trees = info.trees or 0,
+           ids = { id }, hp = { pill.health or 0 }, owner = { pill.owner },
+           pos = { { pill.mx, pill.my } },
+           safe = false, kills = 0, have = 0, need = 0, pills = 0, walls = 0, trees_need = 0 }
+end
+
+-- The v2 inputs for a shadow run on pill, or nil.
+local function make_inp(state, world, info, pill, now)
   local PA = require("pt2_attack")
-  local V2 = require("pilltake_v2")
   local no_builder = info.man_status == C.LGM_DEAD
   local npb = math.min(info.carried_pills or 0, C.PPT_PILL_BLOCKERS_MAX or 2)
-  local radius = C.PPT_STANDOFF
-  -- debug profile (C.PT2_PROF_LOG, PT2_DBL_PROF line): the parts of one run, in us
-  local G = BRAIN_DEBUG_MODE and C.PT2_PROF_LOG and rawget(_G, "gh_pt2")
-  local prof = G and G.prof_take and {}
-  if prof then G.prof(true); G.prof_take() end
-  local t0 = prof and clock_us()
-  local inp = PA.build_inp(state, {}, info, world, pill, no_builder, npb, radius, now)
-  if prof then prof.build_inp = clock_us() - t0; prof.world_inp = PA.prof_world_us or 0 end
-  local e = { tick = now, carried = info.carried_pills or 0, trees = info.trees or 0,
-              ids = { id }, hp = { pill.health or 0 }, owner = { pill.owner },
-              pos = { { pill.mx, pill.my } },
-              safe = false, kills = 0, have = 0, need = 0, pills = 0, walls = 0, trees_need = 0 }
-  if not inp then return e end
-  local t1 = prof and clock_us()
-  local res = V2.evaluate_group(inp)
-  if prof then
-    prof.group = clock_us() - t1
-    prof.c = G.prof_take()
-    M.last_prof = prof
-  end
+  return PA.build_inp(state, {}, info, world, pill, no_builder, npb, C.PPT_STANDOFF, now)
+end
+
+-- Fill entry e from v2's group result.
+local function fill_entry(e, res, inp, id)
   local b = res and res.best
   if not b then return e end
   e.safe = b.safe and b.chain_mode and true or false
@@ -143,6 +166,198 @@ local function run(state, world, info, id, pill, now)
   return e
 end
 
+-- The shadow run in one go. Returns the entry (always, a no-chain answer too).
+local function run(state, world, info, id, pill, now)
+  local V2 = require("pilltake_v2")
+  -- debug profile (C.PT2_PROF_LOG, PT2_DBL_PROF line): the parts of one run, in us
+  local G = BRAIN_DEBUG_MODE and C.PT2_PROF_LOG and rawget(_G, "gh_pt2")
+  local prof = G and G.prof_take and {}
+  if prof then G.prof(true); G.prof_take() end
+  local t0 = prof and clock_us()
+  local inp = make_inp(state, world, info, pill, now)
+  local PA = package.loaded["pt2_attack"]
+  if prof then prof.build_inp = clock_us() - t0; prof.world_inp = PA and PA.prof_world_us or 0 end
+  local e = new_entry(info, id, pill, now)
+  if not inp then return e end
+  local t1 = prof and clock_us()
+  local res = V2.evaluate_group(inp)
+  if prof then
+    prof.group = clock_us() - t1
+    prof.c = G.prof_take()
+    M.last_prof = prof
+  end
+  return fill_entry(e, res, inp, id)
+end
+
+-- ── PT2_DBL_SPLIT: one shadow run as a job of parts over ticks ──────────
+-- Part 1 builds the inputs (a snapshot: the pill list, our tank, armour,
+-- anger and banned angles at the start tick) and runs v2 on the target;
+-- each later part runs v2 with one more pill of the group as A
+-- (pilltake_v2.group_step). One part = one whole v2 evaluate. Each tick
+-- the job runs parts while the next part's estimated cost fits the tick
+-- goal (goal_ms), then waits for the next tick. The job is dropped when a
+-- pill of the snapshot changes (health, owner, square, carried), when the
+-- entry would be dropped (stale_why: our carried pills or trees), when a
+-- wall square changes in pill range of the group (M.on_tile), on a budget
+-- kill, or when it is not done in PT2_DBL_SPLIT_MAX_TICKS ticks; a dropped
+-- pill gets a new job on a later pool-6 visit. The terrain memory and the
+-- Dijkstra travel costs are read live, as the one-go run reads them.
+local function snap_pills(inp)
+  local sn = {}
+  for i, p in ipairs(inp.pills) do
+    sn[i] = { p, p.health or 0, p.owner, p.mx, p.my, p.in_tank and true or false }
+  end
+  return sn
+end
+
+local function job_why(job, world, info, now)
+  if job.dead then return job.dead end
+  local w = stale_why(job.e, world, info, now, job.state)
+  if w then return w end
+  for _, r in ipairs(job.snap) do
+    local p = r[1]
+    if (p.health or 0) ~= r[2] or p.owner ~= r[3] or p.mx ~= r[4] or p.my ~= r[5]
+       or (p.in_tank and true or false) ~= r[6] then
+      return "pill"
+    end
+  end
+  if now - job.t0 >= tier_val(job.state, "dbl_split", "PT2_DBL_SPLIT_MAX_TICKS", 25) then
+    return "cap"
+  end
+  return nil
+end
+
+-- The cost of the next part in ms: the EWMA of our parts. Before our first
+-- part: the last real v2 run of a take (state._pt2_v2_last_us), at most the
+-- tick goal, so the first part runs on a tick with the whole goal free.
+local function est_part_ms(s, state)
+  if s.n_parts > 0 then return s.est_part_ms end
+  local full = tier_val(state, "dbl_goal", "PT2_DBL_TICK_GOAL_MS", 2.0)
+  local seed = state._pt2_v2_last_us
+  if seed and seed / 1000 < full then return seed / 1000 end
+  return full
+end
+M._est_part_ms = est_part_ms
+
+-- The tick goal for the next part, ms: PT2_DBL_TICK_GOAL_MS less the parts
+-- already run this tick, and at most the tick target less this think so far
+-- (state._think_t0_us, from Brain.think) less PT2_DBL_TICK_MARGIN_MS. With
+-- no target published: the goal alone.
+local function goal_ms(s, state)
+  local tick = state.tick or 0
+  if s.parts_tick ~= tick then s.parts_tick, s.parts, s.parts_ms = tick, 0, 0 end
+  local g = tier_val(state, "dbl_goal", "PT2_DBL_TICK_GOAL_MS", 2.0) - s.parts_ms
+  local br = _G.brain
+  local tgt = br and br.targetMs or 0
+  if tgt > 0 then
+    local t0 = state._think_t0_us
+    local so_far = t0 and (clock_us() - t0) / 1000 or 0
+    local room = tgt - so_far - tier_val(state, "dbl_margin", "PT2_DBL_TICK_MARGIN_MS", 2.0)
+    if room < g then g = room end
+  end
+  return g
+end
+M._goal_ms = goal_ms
+
+-- May one more part go this tick? Its estimated cost must fit the goal.
+local function may_part(s, state)
+  return est_part_ms(s, state) <= goal_ms(s, state)
+end
+
+-- Run one part of the job. Stores the entry when the job is done.
+local function job_part(s, state, job, now)
+  local V2 = require("pilltake_v2")
+  s.parts = s.parts + 1
+  local t0 = clock_us()
+  local ok, done = pcall(V2.group_step, job.g)
+  local us = clock_us() - t0
+  local a = C.CAPACITY_EWMA_ALPHA or 0.2
+  s.est_part_ms = (s.n_parts == 0) and us / 1000 or s.est_part_ms * (1 - a) + (us / 1000) * a
+  s.n_parts = s.n_parts + 1
+  s.parts_ms = s.parts_ms + us / 1000
+  s.part_us_sum = s.part_us_sum + us
+  if us > s.part_us_max then s.part_us_max = us end
+  -- one part alone over the whole tick goal: it fits no tick
+  if us / 1000 > tier_val(state, "dbl_goal", "PT2_DBL_TICK_GOAL_MS", 2.0) then
+    s.n_big, s.big_us_sum = s.n_big + 1, s.big_us_sum + us
+  end
+  job.us, job.n = job.us + us, job.n + 1
+  if not ok then
+    s.job = nil
+    local msg = tostring(done)
+    if msg:find("tick_budget_exceeded", 1, true) then error(done, 0) end
+    print("[pt2_dbl] shadow part error: " .. msg)
+    return
+  end
+  if not done then return end
+  s.job = nil
+  local e = fill_entry(job.e, job.g.res, job.inp, job.id)
+  s.by_id[job.id] = e
+  s.n_runs = s.n_runs + 1
+  s.run_us_sum = s.run_us_sum + job.us
+  if job.us > s.run_us_max then s.run_us_max = job.us end
+  local ticks = now - job.t0 + 1
+  s.job_ticks[ticks] = (s.job_ticks[ticks] or 0) + 1
+  if BRAIN_DEBUG_MODE or C.PT2_DBL_STDERR_LOG then
+    local br = _G.brain
+    local line = string.format("PT2_DBL_RUN t=%d pill#%s chain=%s safe=%s kills=%d have=%d need=%d pills=%d/%d walls=%d trees=%d/%d us=%d parts=%d ticks=%d last_ms=%.2f tgt_ms=%.2f est_part_ms=%.2f",
+      now, tostring(job.id), table.concat(e.ids, "-"), tostring(e.safe), e.kills, e.have, e.need,
+      e.pills, e.carried, e.walls, e.trees, e.trees_need, job.us, job.n, ticks,
+      br and br.lastThinkMs or 0, br and br.targetMs or 0, s.est_part_ms)
+    if BRAIN_DEBUG_MODE then print2(line) end
+    if C.PT2_DBL_STDERR_LOG then print(line) end
+  end
+end
+
+-- PT2_DBL_SPLIT: run the open job's next parts. goals.lua calls it once per
+-- tick before the pool queue.
+function M.pump(state, world, info, now)
+  if not on() or not C.PT2_DBL_SPLIT then return end
+  local s = state and state._pt2_dbl
+  local job = s and s.job
+  if not job then return end
+  local t0 = clock_us()
+  local why = job_why(job, world, info, now)
+  if why then
+    s.job = nil
+    s.n_drop = s.n_drop + 1
+    if why == "cap" then s.n_drop_cap = s.n_drop_cap + 1 end
+    if BRAIN_DEBUG_MODE or C.PT2_DBL_STDERR_LOG then
+      local line = string.format("PT2_DBL_DROP t=%d pill#%s why=%s parts=%d ticks=%d us=%d",
+        now, tostring(job.id), why, job.n, now - job.t0, job.us)
+      if BRAIN_DEBUG_MODE then print2(line) end
+      if C.PT2_DBL_STDERR_LOG then print(line) end
+    end
+  else
+    local ran = false
+    while s.job == job and may_part(s, state) do
+      job_part(s, state, job, now)
+      ran = true
+    end
+    if not ran then s.n_wait = s.n_wait + 1 end
+  end
+  M.charge(state, now, clock_us() - t0)
+end
+
+-- PT2_DBL_SPLIT: open a job on pill id and run its first part. The input
+-- build counts toward this tick's parts. Returns the entry when the job is
+-- done at once, else nil.
+local function start_job(s, state, world, info, id, pill, now)
+  local V2 = require("pilltake_v2")
+  local t0 = clock_us()
+  local inp = make_inp(state, world, info, pill, now)
+  local e = new_entry(info, id, pill, now)
+  if not inp then s.by_id[id] = e; return e end
+  local job = { id = id, state = state, t0 = now, e = e, inp = inp, snap = snap_pills(inp),
+                g = V2.group_begin(inp), us = clock_us() - t0, n = 0 }
+  s.parts_ms = s.parts_ms + job.us / 1000
+  s.job = job
+  s.n_jobs = s.n_jobs + 1
+  job_part(s, state, job, now)
+  if s.by_id[id] == e then return e end
+  return nil
+end
+
 -- The run cost may_run checks, in ms. After our first run: the EWMA of our
 -- runs. Before it: the last real v2 run of a take (pt2_attack writes
 -- state._pt2_v2_last_us), else the last think's own ms, so the first run
@@ -160,7 +375,7 @@ M._est_ms = est_ms
 -- think plus the run cost under the tick target.
 local function may_run(s, state, now)
   if s.runs_tick ~= now then s.runs_tick, s.runs = now, 0 end
-  if s.runs >= (C.PT2_DBL_EVALS_PER_TICK or 1) then return false end
+  if s.runs >= tier_val(state, "dbl_evals", "PT2_DBL_EVALS_PER_TICK", 1) then return false end
   local br = _G.brain
   local last, tgt = br and br.lastThinkMs or 0, br and br.targetMs or 0
   if tgt > 0 then
@@ -172,16 +387,23 @@ end
 
 -- The cached answer for pill id, fresh, or nil. Runs v2 when the entry is
 -- missing or stale and this tick allows a run.
+-- PT2_DBL_SPLIT: a new run is a job of parts (M.pump runs the rest); the
+-- answer is there on a later call, once the job is done.
 function M.get(state, world, info, id, pill, now)
   if not on() or not live_enemy(pill) then return nil end
   local s = store(state)
   local e = s.by_id[id]
-  if e and stale_why(e, world, info, now) then
+  if e and stale_why(e, world, info, now, state) then
     s.by_id[id] = nil
     e = nil
   end
   if e then return e end
   if not M.has_partner(world, pill) then return nil end
+  if C.PT2_DBL_SPLIT then
+    if s.job then return nil end   -- one job at a time
+    if not may_part(s, state) then return nil end
+    return start_job(s, state, world, info, id, pill, now)
+  end
   if not may_run(s, state, now) then return nil end
   s.runs = s.runs + 1
   local t0 = clock_us()
@@ -221,7 +443,8 @@ function M.get(state, world, info, id, pill, now)
 end
 
 -- CPU account: us this feature added on tick now (shadow runs, the
--- double-take diff sweep). Debug builds log PT2_DBL_CPU every 500 ticks:
+-- double-take diff sweep). Debug builds (or PT2_DBL_STDERR_LOG, plain
+-- print) log PT2_DBL_CPU every 500 ticks:
 -- mean us per tick since the first charge, and the dearest tick.
 function M.charge(state, now, us)
   local s = store(state)
@@ -232,12 +455,28 @@ function M.charge(state, now, us)
   end
   s.us_cur = s.us_cur + us
   s.us_sum = s.us_sum + us
-  if BRAIN_DEBUG_MODE and now - s.t_log >= 500 then
+  if (BRAIN_DEBUG_MODE or C.PT2_DBL_STDERR_LOG) and now - s.t_log >= 500 then
     s.t_log = now
     local ticks = math.max(1, now - s.t_first + 1)
-    print2(string.format("PT2_DBL_CPU t=%d ticks=%d runs=%d run_mean_us=%.0f run_max_us=%d mean_us_per_tick=%.1f max_tick_us=%d",
+    -- ticks per finished job: mean and p90
+    local nj, sj, p90 = 0, 0, 0
+    for t, n in pairs(s.job_ticks) do nj, sj = nj + n, sj + t * n end
+    if nj > 0 then
+      local acc = 0
+      for t = 1, 1000 do
+        acc = acc + (s.job_ticks[t] or 0)
+        if acc >= 0.9 * nj then p90 = t; break end
+      end
+    end
+    local line = string.format("PT2_DBL_CPU t=%d ticks=%d runs=%d run_mean_us=%.0f run_max_us=%d mean_us_per_tick=%.1f max_tick_us=%d jobs=%d drops=%d parts=%d part_mean_us=%.0f part_max_us=%d",
       now, ticks, s.n_runs, s.n_runs > 0 and s.run_us_sum / s.n_runs or 0, s.run_us_max,
-      s.us_sum / ticks, math.max(s.us_tick_max, s.us_cur)))
+      s.us_sum / ticks, math.max(s.us_tick_max, s.us_cur), s.n_jobs, s.n_drop, s.n_parts,
+      s.n_parts > 0 and s.part_us_sum / s.n_parts or 0, s.part_us_max)
+      .. string.format(" drops_cap=%d waits=%d big=%d big_mean_us=%.0f job_ticks_mean=%.2f job_ticks_p90=%d est_part_ms=%.2f",
+      s.n_drop_cap, s.n_wait, s.n_big, s.n_big > 0 and s.big_us_sum / s.n_big or 0,
+      nj > 0 and sj / nj or 0, p90, s.est_part_ms)
+    if BRAIN_DEBUG_MODE then print2(line) end
+    if C.PT2_DBL_STDERR_LOG then print(line) end
   end
 end
 
