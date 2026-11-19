@@ -78,9 +78,9 @@ for _, kn in ipairs({ "PT2_DBL_SPLIT", "PT2_DBL_CAN_WIN" }) do
   check(kn .. " keel false", C.PRESETS.keel[kn] == false)
   check(kn .. " mast false", C.PRESETS.mast[kn] == false)
 end
-check("PT2_DBL_SPLIT_MAX_TICKS = 25 (Andrew's value)", C.PT2_DBL_SPLIT_MAX_TICKS == 25)
-check("PT2_DBL_TICK_GOAL_MS = 2.0", C.PT2_DBL_TICK_GOAL_MS == 2.0)
-check("PT2_DBL_TICK_MARGIN_MS = 2.0", C.PT2_DBL_TICK_MARGIN_MS == 2.0)
+check("PT2_DBL_SPREAD_TICKS = 5 (tier 10)", C.PT2_DBL_SPREAD_TICKS == 5)
+check("PT2_DBL_SPLIT_MAX_TICKS = 10 (2 x spread)", C.PT2_DBL_SPLIT_MAX_TICKS == 10)
+check("no tick goal knobs", C.PT2_DBL_TICK_GOAL_MS == nil and C.PT2_DBL_TICK_MARGIN_MS == nil)
 check("PT2_DBL_STDERR_LOG default false", C.PT2_DBL_STDERR_LOG == false)
 check("PT2_DBL_CACHE_TICKS = 250 (5 s at 50 brain ticks/s)", C.PT2_DBL_CACHE_TICKS == 250)
 check("PT2_DBL_EVALS_PER_TICK = 1", C.PT2_DBL_EVALS_PER_TICK == 1)
@@ -89,9 +89,10 @@ for t = 1, 10 do
   local row = C.BRAIN_CAPACITY_LEVELS[t]
   check("tier " .. t .. " dbl_cache 250", row and row.dbl_cache == 250, row and row.dbl_cache)
   check("tier " .. t .. " dbl_evals 1", row and row.dbl_evals == 1, row and row.dbl_evals)
-  check("tier " .. t .. " dbl_split 25", row and row.dbl_split == 25, row and row.dbl_split)
-  check("tier " .. t .. " dbl_goal 2.0", row and row.dbl_goal == 2.0, row and row.dbl_goal)
-  check("tier " .. t .. " dbl_margin 2.0", row and row.dbl_margin == 2.0, row and row.dbl_margin)
+  local sp = ({ 25, 20, 16, 14, 12, 10, 8, 7, 6, 5 })[t]
+  check("tier " .. t .. " dbl_spread " .. sp, row and row.dbl_spread == sp, row and row.dbl_spread)
+  check("tier " .. t .. " dbl_split = 2 x spread", row and row.dbl_split == 2 * sp, row and row.dbl_split)
+  check("tier " .. t .. " no goal fields", row and row.dbl_goal == nil and row.dbl_margin == nil)
 end
 do
   local D = require("pt2_dbl")

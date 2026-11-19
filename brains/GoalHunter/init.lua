@@ -1655,8 +1655,8 @@ function Brain.think(info)
   -- clock read per think feeding nothing. clock_us, not os.clock: os.clock is
   -- CPU time, and on Linux that is the whole process (every brain thread).
   local _think_t0 = BRAIN_DEBUG_MODE and clock_us() or 0
-  -- PT2_DBL_SPLIT: this think's start, for the shadow job's tick goal
-  -- (pt2_dbl goal_ms: the tick target less this think so far).
+  -- PT2_DBL_SPLIT: this think's start, for the shadow job's safety net
+  -- (pt2_dbl may_part: this think so far plus a part under the target).
   if C.PT2_DBL_SPLIT then state._think_t0_us = clock_us() end
   state.tick = state.tick + 1
   state._last_info = info

@@ -1081,27 +1081,29 @@ M.PT2_DBL_CACHE_TICKS = 250
 M.PT2_DBL_EVALS_PER_TICK = 1
 -- PT2_DBL_SPLIT (Nov 18, Andrew's yes): a shadow run (evaluate_group, about
 -- 4.5 v2 evaluates) is a job of parts, one evaluate per part, spread over
--- up to PT2_DBL_SPLIT_MAX_TICKS ticks, as many per tick as fit the tick
--- goal (PT2_DBL_TICK_GOAL_MS). The inputs are made once at the start; the job is dropped when a pill changes, the entry would be
+-- PT2_DBL_SPREAD_TICKS ticks, evenly. The inputs are made once at the
+-- start; the job is dropped when a pill changes, the entry would be
 -- dropped, a wall changes near the group, or the job hits the tick cap.
 -- The CPU guard checks one part's cost, not the whole run's. Round 2 (Nov 18): one-go C runs of
 -- 6-11 ms let ticks run just over the 12 ms target (87% of the kills were
 -- on a shadow-run tick). false = the run in one go. KEEL / MAST: false.
 M.PT2_DBL_SPLIT = true
--- Each tick the split job runs parts (one whole v2 evaluate each) while
--- the next part's estimated cost (EWMA of the parts) fits the tick goal:
--- min(PT2_DBL_TICK_GOAL_MS less the parts run this tick, the tick target
--- less this think so far less PT2_DBL_TICK_MARGIN_MS), ms. Else it waits
--- for the next tick. Andrew's values (Nov 18). The tier row's dbl_goal and
--- dbl_margin win over these knobs.
-M.PT2_DBL_TICK_GOAL_MS = 2.0
-M.PT2_DBL_TICK_MARGIN_MS = 2.0
+-- Ticks one split job is spread over, brain ticks: part k of n (k from 0,
+-- one whole v2 evaluate each) runs on tick floor(k * spread / n) of the
+-- job. A due part also waits while this think so far plus its estimated
+-- cost (EWMA of the parts) would reach the tick target. Andrew's value
+-- for tier 10 (Nov 18); the tier row's dbl_spread wins over this knob.
+M.PT2_DBL_SPREAD_TICKS = 5
 -- A split job not done after this many ticks is dropped; the pill gets a
--- new job later. Andrew's value (Nov 18). The tier row's dbl_split wins.
-M.PT2_DBL_SPLIT_MAX_TICKS = 25
+-- new job later. 2 x PT2_DBL_SPREAD_TICKS (Andrew, Nov 18). The tier
+-- row's dbl_split wins over this knob.
+M.PT2_DBL_SPLIT_MAX_TICKS = 10
 -- Bench log: PT2_DBL_CPU / PT2_DBL_RUN / PT2_DBL_DROP as plain print()
--- lines without -brain-debug (log only, no play change).
+-- lines without -brain-debug (log only, no play change). A release DS
+-- drops print(): with PT2_DBL_EVENT_FILE set to a file name the lines also
+-- go to <brain dir>/fs_events/<name>.
 M.PT2_DBL_STDERR_LOG = false
+M.PT2_DBL_EVENT_FILE = ""
 -- PT2_DBL_CAN_WIN (Nov 18, Andrew's yes): pool 6 looks at the double take
 -- of a pill only when its last cost without the discount x
 -- PT2_DOUBLE_TAKE_MULT is under the best other pool-6 cost, or the pill is
@@ -4292,12 +4294,12 @@ M.WSIM_TRUNCATED_COST       = 25
 --   place_r    : caps STRATEGIC_PLACE_SEARCH_RADIUS for the pool-8 placement
 --                scan (12 at the top tiers, scaling down to 2 under CPU load).
 --   tank_step  : eval_attack_tank standoff scan step in degrees (default 5).
---   dbl_cache / dbl_evals / dbl_goal / dbl_margin / dbl_split :
+--   dbl_cache / dbl_evals / dbl_spread / dbl_split :
 --                PT2_DBL_CACHE_TICKS, PT2_DBL_EVALS_PER_TICK,
---                PT2_DBL_TICK_GOAL_MS, PT2_DBL_TICK_MARGIN_MS and
---                PT2_DBL_SPLIT_MAX_TICKS for this tier (pt2_dbl.lua).
---                Andrew's values at every tier (Nov 18); other values
---                per tier await Andrew.
+--                PT2_DBL_SPREAD_TICKS and PT2_DBL_SPLIT_MAX_TICKS for
+--                this tier (pt2_dbl.lua). Andrew's values (Nov 18): cache
+--                250 and 1 run per tick at every tier; spread 5 (tier 10)
+--                up to 25 (tier 1); cap = 2 x spread.
 --   sb_positions / sb_step : shield-blocker ring scan density.
 --                positions ?? step ??? angular coverage. Tier 10 keeps the
 --                legacy 28 ?? 0.5?? (~??7??) sweep. Lower tiers drop to
@@ -4305,16 +4307,16 @@ M.WSIM_TRUNCATED_COST       = 25
 --                coverage stays similar but per-scan cost drops.
 -- =========================================================================
 M.BRAIN_CAPACITY_LEVELS = {
-  [10] = { dij_short=500, dij_long=560, scan_step=5,  pp_spread=1,  ttl_mult=1.0, eval_iv=1, wsim=nil,   place_r=12, tank_step=5,  sb_positions=28, sb_step=0.5, dbl_cache=250, dbl_evals=1, dbl_goal=2.0, dbl_margin=2.0, dbl_split=25 },
-  [9]  = { dij_short=500, dij_long=450, scan_step=5,  pp_spread=6,  ttl_mult=1.0, eval_iv=1, wsim=nil,   place_r=12, tank_step=5,  sb_positions=28, sb_step=0.5, dbl_cache=250, dbl_evals=1, dbl_goal=2.0, dbl_margin=2.0, dbl_split=25 },
-  [8]  = { dij_short=450, dij_long=350, scan_step=10, pp_spread=12, ttl_mult=1.1, eval_iv=1, wsim=5,     place_r=11, tank_step=10, sb_positions=28, sb_step=0.5, dbl_cache=250, dbl_evals=1, dbl_goal=2.0, dbl_margin=2.0, dbl_split=25 },
-  [7]  = { dij_short=400, dij_long=275, scan_step=10, pp_spread=17, ttl_mult=1.3, eval_iv=1, wsim=5,     place_r=10, tank_step=10, sb_positions=28, sb_step=0.5, dbl_cache=250, dbl_evals=1, dbl_goal=2.0, dbl_margin=2.0, dbl_split=25 },
-  [6]  = { dij_short=400, dij_long=200, scan_step=20, pp_spread=22, ttl_mult=1.5, eval_iv=2, wsim=3,     place_r=8, tank_step=10, sb_positions=28, sb_step=0.5, dbl_cache=250, dbl_evals=1, dbl_goal=2.0, dbl_margin=2.0, dbl_split=25 },
-  [5]  = { dij_short=400, dij_long=150, scan_step=20, pp_spread=28, ttl_mult=1.7, eval_iv=2, wsim=3,     place_r=5, tank_step=20, sb_positions=28, sb_step=0.5, dbl_cache=250, dbl_evals=1, dbl_goal=2.0, dbl_margin=2.0, dbl_split=25 },
-  [4]  = { dij_short=400, dij_long=100, scan_step=20, pp_spread=33, ttl_mult=2.0, eval_iv=3, wsim=1,     place_r=5, tank_step=20, sb_positions=28, sb_step=0.5, dbl_cache=250, dbl_evals=1, dbl_goal=2.0, dbl_margin=2.0, dbl_split=25 },
-  [3]  = { dij_short=400, dij_long=75,  scan_step=45, pp_spread=39, ttl_mult=2.5, eval_iv=3, wsim=1,     place_r=4, tank_step=45, sb_positions=28, sb_step=0.5, dbl_cache=250, dbl_evals=1, dbl_goal=2.0, dbl_margin=2.0, dbl_split=25 },
-  [2]  = { dij_short=400, dij_long=50,  scan_step=45, pp_spread=44, ttl_mult=3.0, eval_iv=4, wsim=false, place_r=3, tank_step=45, sb_positions=28, sb_step=0.5, dbl_cache=250, dbl_evals=1, dbl_goal=2.0, dbl_margin=2.0, dbl_split=25 },
-  [1]  = { dij_short=400, dij_long=25,  scan_step=45, pp_spread=50, ttl_mult=4.0, eval_iv=5, wsim=false, place_r=2, tank_step=45, sb_positions=28, sb_step=0.5, dbl_cache=250, dbl_evals=1, dbl_goal=2.0, dbl_margin=2.0, dbl_split=25 },
+  [10] = { dij_short=500, dij_long=560, scan_step=5,  pp_spread=1,  ttl_mult=1.0, eval_iv=1, wsim=nil,   place_r=12, tank_step=5,  sb_positions=28, sb_step=0.5, dbl_cache=250, dbl_evals=1, dbl_spread=5, dbl_split=10 },
+  [9]  = { dij_short=500, dij_long=450, scan_step=5,  pp_spread=6,  ttl_mult=1.0, eval_iv=1, wsim=nil,   place_r=12, tank_step=5,  sb_positions=28, sb_step=0.5, dbl_cache=250, dbl_evals=1, dbl_spread=6, dbl_split=12 },
+  [8]  = { dij_short=450, dij_long=350, scan_step=10, pp_spread=12, ttl_mult=1.1, eval_iv=1, wsim=5,     place_r=11, tank_step=10, sb_positions=28, sb_step=0.5, dbl_cache=250, dbl_evals=1, dbl_spread=7, dbl_split=14 },
+  [7]  = { dij_short=400, dij_long=275, scan_step=10, pp_spread=17, ttl_mult=1.3, eval_iv=1, wsim=5,     place_r=10, tank_step=10, sb_positions=28, sb_step=0.5, dbl_cache=250, dbl_evals=1, dbl_spread=8, dbl_split=16 },
+  [6]  = { dij_short=400, dij_long=200, scan_step=20, pp_spread=22, ttl_mult=1.5, eval_iv=2, wsim=3,     place_r=8, tank_step=10, sb_positions=28, sb_step=0.5, dbl_cache=250, dbl_evals=1, dbl_spread=10, dbl_split=20 },
+  [5]  = { dij_short=400, dij_long=150, scan_step=20, pp_spread=28, ttl_mult=1.7, eval_iv=2, wsim=3,     place_r=5, tank_step=20, sb_positions=28, sb_step=0.5, dbl_cache=250, dbl_evals=1, dbl_spread=12, dbl_split=24 },
+  [4]  = { dij_short=400, dij_long=100, scan_step=20, pp_spread=33, ttl_mult=2.0, eval_iv=3, wsim=1,     place_r=5, tank_step=20, sb_positions=28, sb_step=0.5, dbl_cache=250, dbl_evals=1, dbl_spread=14, dbl_split=28 },
+  [3]  = { dij_short=400, dij_long=75,  scan_step=45, pp_spread=39, ttl_mult=2.5, eval_iv=3, wsim=1,     place_r=4, tank_step=45, sb_positions=28, sb_step=0.5, dbl_cache=250, dbl_evals=1, dbl_spread=16, dbl_split=32 },
+  [2]  = { dij_short=400, dij_long=50,  scan_step=45, pp_spread=44, ttl_mult=3.0, eval_iv=4, wsim=false, place_r=3, tank_step=45, sb_positions=28, sb_step=0.5, dbl_cache=250, dbl_evals=1, dbl_spread=20, dbl_split=40 },
+  [1]  = { dij_short=400, dij_long=25,  scan_step=45, pp_spread=50, ttl_mult=4.0, eval_iv=5, wsim=false, place_r=2, tank_step=45, sb_positions=28, sb_step=0.5, dbl_cache=250, dbl_evals=1, dbl_spread=25, dbl_split=50 },
 }
 
 -- Hard ceiling on the angles ONE advance_pill_eval_chunk call may sweep,
