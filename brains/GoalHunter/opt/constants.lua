@@ -979,7 +979,7 @@ M.PT2_ANGLE_STEP_DEG = 2
 -- (covers leeway and one knockback), wu. Proposal, awaiting Andrew's value.
 M.PT2_RANGE_MARGIN_WU = 128
 -- Forest neither stops nor shields a ray (it stops one shell and is gone).
--- Proposal, awaiting Andrew's value.
+-- true is Andrew's value: "trees don't block enough to be counted".
 M.PT2_FOREST_TRANSPARENT = true
 -- Leeway: count the 8 points 32 wu around a candidate that also pass with
 -- the same blockers; more ranks higher inside a tier, counted up to
@@ -1082,12 +1082,55 @@ M.PT2_HAUL_KEEP_TAKE = true
 M.PT2_DOUBLE_TAKE_DISCOUNT = true
 -- Cost multiplier on a double-take row. Andrew's value (Nov 18).
 M.PT2_DOUBLE_TAKE_MULT = 0.6
--- A cached double-take answer older than this is run again, ticks.
--- Andrew's value (Nov 18).
+-- A cached double-take answer older than this is run again, brain ticks
+-- (50 per second: 250 = 5 s). Andrew's value (Nov 18). The capacity tier
+-- row's dbl_cache (BRAIN_CAPACITY_LEVELS) wins over this knob.
 M.PT2_DBL_CACHE_TICKS = 250
 -- Shadow v2 runs per tick at most (each 4-19 ms), and only when the last
--- think left time under the tick budget. Andrew's value (Nov 18).
+-- think left time under the tick budget. Andrew's value (Nov 18). With
+-- PT2_DBL_SPLIT: parts per tick (more when a job needs them to finish in
+-- PT2_DBL_SPLIT_MAX_TICKS). The tier row's dbl_evals wins over this knob.
 M.PT2_DBL_EVALS_PER_TICK = 1
+-- PT2_DBL_SPLIT (Nov 18, Andrew's yes): a shadow run (evaluate_group, about
+-- 4.5 v2 evaluates) is a job of parts, one evaluate per part, spread over
+-- PT2_DBL_SPREAD_TICKS ticks, evenly. The inputs are made once at the
+-- start; the job is dropped when a pill changes, the entry would be
+-- dropped, a wall changes near the group, or the job hits the tick cap.
+-- The CPU guard checks one part's cost, not the whole run's. Round 2 (Nov 18): one-go C runs of
+-- 6-11 ms let ticks run just over the 12 ms target (87% of the kills were
+-- on a shadow-run tick). false = the run in one go. KEEL / MAST: false.
+M.PT2_DBL_SPLIT = true
+-- Ticks one split job is spread over, brain ticks: part k of n (k from 0,
+-- one whole v2 evaluate each) runs on tick floor(k * spread / n) of the
+-- job. A due part also waits while this think so far plus its estimated
+-- cost (EWMA of the parts) would reach the tick target. Andrew's value
+-- for tier 10 (Nov 18); the tier row's dbl_spread wins over this knob.
+M.PT2_DBL_SPREAD_TICKS = 5
+-- A split job not done after this many ticks is dropped; the pill gets a
+-- new job later. 2 x PT2_DBL_SPREAD_TICKS (Andrew, Nov 18). The tier
+-- row's dbl_split wins over this knob.
+M.PT2_DBL_SPLIT_MAX_TICKS = 10
+-- Bench log: PT2_DBL_CPU / PT2_DBL_RUN / PT2_DBL_DROP as plain print()
+-- lines without -brain-debug (log only, no play change). A release DS
+-- drops print(): with PT2_DBL_EVENT_FILE set to a file name the lines also
+-- go to <brain dir>/fs_events/<name>.
+M.PT2_DBL_STDERR_LOG = false
+M.PT2_DBL_EVENT_FILE = ""
+-- PT2_DBL_CAN_WIN (Nov 18, Andrew's yes): pool 6 looks at the double take
+-- of a pill only when its last cost without the discount x
+-- PT2_DOUBLE_TAKE_MULT is under the best other pool-6 cost, or the pill is
+-- our attack_pill target. The other rows get no shadow run and no
+-- discount: they cannot win at the discount price. false = every pill.
+-- KEEL / MAST: false.
+M.PT2_DBL_CAN_WIN = true
+-- PT2_LIVE_SHELL (Nov 18, Andrew: rays must follow the engine's shell
+-- exactly): the v2 shadow's shell walks (shadow.lua cast / tank_shot and
+-- gh_pt2.c) use the live rules from info.rules (shell_speed,
+-- shell_start_add, shell_life, tank_hit_radius, pill_fire_length), as the
+-- engine's shell and the shot simulator do. A rule the exe does not send
+-- stays classic. Under classic rules nothing changes. false = the classic
+-- numbers always. KEEL / MAST: false.
+M.PT2_LIVE_SHELL = true
 -- PT2_CHAIN_CLAIM (Nov 18, Andrew: "someone doing a double pill needs to
 -- broadcast & claim BOTH pills"). A HELM 2v2 replay: pills 13 and 14 side
 -- by side; one ally took 14, the other a 13+14 double take, and each claim
@@ -4306,6 +4349,12 @@ M.WSIM_TRUNCATED_COST       = 25
 --   place_r    : caps STRATEGIC_PLACE_SEARCH_RADIUS for the pool-8 placement
 --                scan (12 at the top tiers, scaling down to 2 under CPU load).
 --   tank_step  : eval_attack_tank standoff scan step in degrees (default 5).
+--   dbl_cache / dbl_evals / dbl_spread / dbl_split :
+--                PT2_DBL_CACHE_TICKS, PT2_DBL_EVALS_PER_TICK,
+--                PT2_DBL_SPREAD_TICKS and PT2_DBL_SPLIT_MAX_TICKS for
+--                this tier (pt2_dbl.lua). Andrew's values (Nov 18): cache
+--                250 and 1 run per tick at every tier; spread 5 (tier 10)
+--                up to 25 (tier 1); cap = 2 x spread.
 --   sb_positions / sb_step : shield-blocker ring scan density.
 --                positions ?? step ??? angular coverage. Tier 10 keeps the
 --                legacy 28 ?? 0.5?? (~??7??) sweep. Lower tiers drop to
@@ -4313,16 +4362,16 @@ M.WSIM_TRUNCATED_COST       = 25
 --                coverage stays similar but per-scan cost drops.
 -- =========================================================================
 M.BRAIN_CAPACITY_LEVELS = {
-  [10] = { dij_short=500, dij_long=560, scan_step=5,  pp_spread=1,  ttl_mult=1.0, eval_iv=1, wsim=nil,   place_r=12, tank_step=5,  sb_positions=28, sb_step=0.5 },
-  [9]  = { dij_short=500, dij_long=450, scan_step=5,  pp_spread=6,  ttl_mult=1.0, eval_iv=1, wsim=nil,   place_r=12, tank_step=5,  sb_positions=28, sb_step=0.5 },
-  [8]  = { dij_short=450, dij_long=350, scan_step=10, pp_spread=12, ttl_mult=1.1, eval_iv=1, wsim=5,     place_r=11, tank_step=10, sb_positions=28, sb_step=0.5 },
-  [7]  = { dij_short=400, dij_long=275, scan_step=10, pp_spread=17, ttl_mult=1.3, eval_iv=1, wsim=5,     place_r=10, tank_step=10, sb_positions=28, sb_step=0.5 },
-  [6]  = { dij_short=400, dij_long=200, scan_step=20, pp_spread=22, ttl_mult=1.5, eval_iv=2, wsim=3,     place_r=8, tank_step=10, sb_positions=28, sb_step=0.5 },
-  [5]  = { dij_short=400, dij_long=150, scan_step=20, pp_spread=28, ttl_mult=1.7, eval_iv=2, wsim=3,     place_r=5, tank_step=20, sb_positions=28, sb_step=0.5 },
-  [4]  = { dij_short=400, dij_long=100, scan_step=20, pp_spread=33, ttl_mult=2.0, eval_iv=3, wsim=1,     place_r=5, tank_step=20, sb_positions=28, sb_step=0.5 },
-  [3]  = { dij_short=400, dij_long=75,  scan_step=45, pp_spread=39, ttl_mult=2.5, eval_iv=3, wsim=1,     place_r=4, tank_step=45, sb_positions=28, sb_step=0.5 },
-  [2]  = { dij_short=400, dij_long=50,  scan_step=45, pp_spread=44, ttl_mult=3.0, eval_iv=4, wsim=false, place_r=3, tank_step=45, sb_positions=28, sb_step=0.5 },
-  [1]  = { dij_short=400, dij_long=25,  scan_step=45, pp_spread=50, ttl_mult=4.0, eval_iv=5, wsim=false, place_r=2, tank_step=45, sb_positions=28, sb_step=0.5 },
+  [10] = { dij_short=500, dij_long=560, scan_step=5,  pp_spread=1,  ttl_mult=1.0, eval_iv=1, wsim=nil,   place_r=12, tank_step=5,  sb_positions=28, sb_step=0.5, dbl_cache=250, dbl_evals=1, dbl_spread=5, dbl_split=10 },
+  [9]  = { dij_short=500, dij_long=450, scan_step=5,  pp_spread=6,  ttl_mult=1.0, eval_iv=1, wsim=nil,   place_r=12, tank_step=5,  sb_positions=28, sb_step=0.5, dbl_cache=250, dbl_evals=1, dbl_spread=6, dbl_split=12 },
+  [8]  = { dij_short=450, dij_long=350, scan_step=10, pp_spread=12, ttl_mult=1.1, eval_iv=1, wsim=5,     place_r=11, tank_step=10, sb_positions=28, sb_step=0.5, dbl_cache=250, dbl_evals=1, dbl_spread=7, dbl_split=14 },
+  [7]  = { dij_short=400, dij_long=275, scan_step=10, pp_spread=17, ttl_mult=1.3, eval_iv=1, wsim=5,     place_r=10, tank_step=10, sb_positions=28, sb_step=0.5, dbl_cache=250, dbl_evals=1, dbl_spread=8, dbl_split=16 },
+  [6]  = { dij_short=400, dij_long=200, scan_step=20, pp_spread=22, ttl_mult=1.5, eval_iv=2, wsim=3,     place_r=8, tank_step=10, sb_positions=28, sb_step=0.5, dbl_cache=250, dbl_evals=1, dbl_spread=10, dbl_split=20 },
+  [5]  = { dij_short=400, dij_long=150, scan_step=20, pp_spread=28, ttl_mult=1.7, eval_iv=2, wsim=3,     place_r=5, tank_step=20, sb_positions=28, sb_step=0.5, dbl_cache=250, dbl_evals=1, dbl_spread=12, dbl_split=24 },
+  [4]  = { dij_short=400, dij_long=100, scan_step=20, pp_spread=33, ttl_mult=2.0, eval_iv=3, wsim=1,     place_r=5, tank_step=20, sb_positions=28, sb_step=0.5, dbl_cache=250, dbl_evals=1, dbl_spread=14, dbl_split=28 },
+  [3]  = { dij_short=400, dij_long=75,  scan_step=45, pp_spread=39, ttl_mult=2.5, eval_iv=3, wsim=1,     place_r=4, tank_step=45, sb_positions=28, sb_step=0.5, dbl_cache=250, dbl_evals=1, dbl_spread=16, dbl_split=32 },
+  [2]  = { dij_short=400, dij_long=50,  scan_step=45, pp_spread=44, ttl_mult=3.0, eval_iv=4, wsim=false, place_r=3, tank_step=45, sb_positions=28, sb_step=0.5, dbl_cache=250, dbl_evals=1, dbl_spread=20, dbl_split=40 },
+  [1]  = { dij_short=400, dij_long=25,  scan_step=45, pp_spread=50, ttl_mult=4.0, eval_iv=5, wsim=false, place_r=2, tank_step=45, sb_positions=28, sb_step=0.5, dbl_cache=250, dbl_evals=1, dbl_spread=25, dbl_split=50 },
 }
 
 -- Hard ceiling on the angles ONE advance_pill_eval_chunk call may sweep,
@@ -7898,6 +7947,9 @@ M.PRESETS = {
     PF_DANGER_INITIAL_LOAD = false,
     PT2_HAUL_KEEP_TAKE = false,
     PT2_DOUBLE_TAKE_DISCOUNT = false,
+    PT2_DBL_SPLIT = false,
+    PT2_DBL_CAN_WIN = false,
+    PT2_LIVE_SHELL = false,
     PT2_CHAIN_CLAIM = false,
     --   2026-11-18: pill take v2 in Lua only (no C copy).
     PT2_C_EVAL = false,
@@ -8221,6 +8273,9 @@ M.PRESETS.mast = {
   PF_DANGER_INITIAL_LOAD            = false,  -- 2.2.1 copied danger only on rebuild
   PT2_HAUL_KEEP_TAKE                = false,  -- 2.2.1 had no pill take v2
   PT2_DOUBLE_TAKE_DISCOUNT          = false,  -- 2.2.1 had no pill take v2
+  PT2_DBL_SPLIT                     = false,  -- 2.2.1 had no pill take v2
+  PT2_DBL_CAN_WIN                   = false,  -- 2.2.1 had no pill take v2
+  PT2_LIVE_SHELL                    = false,  -- 2.2.1 had no pill take v2
   PT2_CHAIN_CLAIM                   = false,  -- 2.2.1 had no pill take v2
   PT2_C_EVAL                        = false,  -- 2.2.1 had no pill take v2
   POST_KILL_WAIT_TICKS              = 15,

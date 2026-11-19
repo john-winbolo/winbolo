@@ -11,7 +11,13 @@
 --     water, bases, hostile / neutral / allied pills, dead pills, a pill
 --     in a tank, chain skips, banned angles) with random knobs;
 --   * the cases in PT2_CASES_FILE (when set): inputs recorded in a real
---     game by pt2_capture.lua (PT2_CAPTURE_FILE).
+--     game by pt2_capture.lua (PT2_CAPTURE_FILE);
+--   * N_LIVE random worlds with non-classic shell rules in env
+--     (shell_speed, shell_start_add, shell_life, tank_hit_r, pill_fire_len;
+--     PT2_LIVE_SHELL), after the first N_RANDOM so those stay the same;
+--   * the ray table (gh_pt2.c "Shell ray table"): N_TABLE worlds, classic
+--     and live rules, run through the C copy with gh_pt2.table_check(true),
+--     which also walks every ray read from the table and compares the two.
 -- Each case runs the Lua copy, then the C copy, on the same inp. They must
 -- give:
 --   * the same result, field by field (numbers exactly, no tolerance),
@@ -50,6 +56,8 @@ if not G then
 end
 
 local N_RANDOM = tonumber(rawget(_G, "PT2_N_RANDOM") or 300)
+local N_LIVE   = tonumber(rawget(_G, "PT2_N_LIVE") or 100)
+local N_TABLE  = tonumber(rawget(_G, "PT2_N_TABLE") or 150)
 
 -- ── deterministic random numbers (not math.random: same on every build) ──
 local seed = 12345
@@ -350,6 +358,54 @@ for ci = 1, N_RANDOM do
   end
 end
 
+-- ── live shell rules ────────────────────────────────────────────────────
+-- A random rule set; about one case in four keeps a rule classic (nil).
+local function live_rules(env)
+  local function maybe(v) if rnd(4) == 0 then return nil end return v end
+  env.shell_speed = maybe(({ 24, 28, 32, 36, 40, 48 })[1 + rnd(6)])
+  env.shell_start_add = maybe(rnd(8))
+  env.shell_life = maybe(({ 6, 7, 8, 9, 10, 7.5 })[1 + rnd(6)])
+  env.tank_hit_r = maybe(({ 80, 96, 112, 128, 144 })[1 + rnd(5)])
+  env.pill_fire_len = maybe(({ 6, 7.5, 8.5, 9, 10.25 })[1 + rnd(5)])
+end
+
+local n_live = 0
+for ci = 1, N_LIVE do
+  local inp, pills = random_case(N_RANDOM + ci)
+  live_rules(inp.env)
+  n = n + 1; n_live = n_live + 1
+  local e = run_case(inp, pills)
+  if e then
+    bad = bad + 1
+    first = first or ("live shell case " .. ci .. ": " .. e)
+  end
+end
+
+-- ── ray table against the walk ──────────────────────────────────────────
+local tab_checked, tab_bad = 0, 0
+if G.table_check then
+  G.table_check(true)
+  for ci = 1, N_TABLE do
+    local inp = random_case(N_RANDOM + N_LIVE + ci)
+    if ci % 2 == 0 then live_rules(inp.env) end
+    inp.capture_file = nil
+    inp.c_eval = true
+    LOG = new_log({})
+    pcall(G.evaluate, inp, V2)
+    LOG = nil
+  end
+  local ck, nb, f1 = G.table_check(false)
+  tab_checked, tab_bad = ck, nb
+  n = n + 1
+  if nb > 0 then
+    bad = bad + 1
+    first = first or (string.format("ray table: %d of %d rays differ from the walk; first %s", nb, ck, f1))
+  elseif ck == 0 then
+    bad = bad + 1
+    first = first or "ray table: no ray read from the table"
+  end
+end
+
 -- ── recorded cases ──────────────────────────────────────────────────────
 local cases_file = rawget(_G, "PT2_CASES_FILE")
 local n_rec = 0
@@ -382,7 +438,8 @@ for _, k in ipairs({ "cases", "best", "safe", "chain", "plan", "nudge", "hold", 
                      "leeway", "reject", "finish", "why_unsafe", "ally_cover", "unsearched" }) do
   cv[#cv + 1] = k .. "=" .. cov[k]
 end
-local cvs = string.format("%d random + %d recorded; %s", N_RANDOM, n_rec, table.concat(cv, " "))
+local cvs = string.format("%d random + %d recorded + %d live shell; table rays checked %d, differ %d; %s",
+  N_RANDOM, n_rec, n_live, tab_checked, tab_bad, table.concat(cv, " "))
 print("test_pt2_c_parity: " .. n .. " cases, " .. bad .. " bad; " .. cvs)
 if first then print("  first: " .. first) end
 return n, bad, first or "", cvs

@@ -31,16 +31,29 @@ local runs = 0
 local answer = nil        -- res.best the stub returns
 package.loaded["pt2_attack"] = {
   build_inp = function(state, goal, info, world, pill)
-    local ids = {}
-    for id, p in pairs(world.pills) do ids[p] = id end
-    return { ids = ids, A = pill }
+    local ids, pills = {}, {}
+    for id, p in pairs(world.pills) do ids[p] = id; pills[#pills + 1] = p end
+    return { ids = ids, A = pill, pills = pills }
   end,
 }
+-- split jobs: each group_step is one part of part_us on the fake clock
+local T = 1000000
+_G.clock_us = function() return T end
+local part_us, n_parts_job = 900, 3
 package.loaded["pilltake_v2"] = {
   evaluate_group = function(inp)
     runs = runs + 1
     return { best = answer }
   end,
+  group_begin = function(inp) return { inp = inp, list = {}, i = 0, res = nil } end,
+  group_step = function(job)
+    runs = runs + 1
+    T = T + part_us
+    job.i = job.i + 1
+    if job.i >= n_parts_job then job.res = { best = answer, A = job.inp.A }; return true end
+    return false
+  end,
+  group_parts_left = function(job) return n_parts_job - job.i end,
 }
 _G.brain = nil
 
@@ -57,7 +70,8 @@ local function chain_answer()
 end
 
 local saved = {}
-for _, k in ipairs({ "PT2_DOUBLE_TAKE_DISCOUNT", "PILLTAKE_V2_EVALUATOR", "PT2_CHAINS" }) do saved[k] = C[k] end
+for _, k in ipairs({ "PT2_DOUBLE_TAKE_DISCOUNT", "PILLTAKE_V2_EVALUATOR", "PT2_CHAINS", "PT2_DBL_SPLIT" }) do saved[k] = C[k] end
+C.PT2_DBL_SPLIT = false   -- the one-go path first; the split has its own section
 
 -- ── knob off ──────────────────────────────────────────────────────────────
 print("knob off")
@@ -149,6 +163,95 @@ D.on_tile(state, 106 + 10, 100, C.T_BUILDING)
 check("wall 10 from B: kept", state._pt2_dbl.by_id[1] ~= nil)
 D.on_tile(state, 106 + 9, 100, C.T_BUILDING)
 check("wall 9 from B: dropped", state._pt2_dbl.by_id[1] == nil)
+
+-- ── PT2_DBL_SPLIT: a run as a job of parts spread over ticks ───────────
+print("split")
+do
+  C.PT2_DBL_SPLIT = true
+  local st = { tick = 10 }
+  local function at(t) st.tick = t; return t end
+  local n0 = runs
+  part_us, n_parts_job = 900, 5
+  -- spread 5 (the knob, no tier row), 5 parts: one part per tick
+  check("start: no answer yet", D.get(st, world, info, 1, A, at(10)) == nil)
+  local s = st._pt2_dbl
+  check("start: part 0 ran, 5 parts known", runs == n0 + 1 and s.job and s.job.n == 1 and s.job.total == 5,
+        s.job and s.job.total)
+  check("open job: no second job", D.get(st, world, info, 2, B, at(10)) == nil and s.n_jobs == 1)
+  D.pump(st, world, info, at(10))
+  check("tick 0: part 1 not due yet", s.job.n == 1, s.job.n)
+  for t = 11, 13 do D.pump(st, world, info, at(t)) end
+  check("ticks 1-3: one part each", s.job and s.job.n == 4, s.job and s.job.n)
+  D.pump(st, world, info, at(14))
+  check("tick 4: done after 5 parts", s.job == nil and s.by_id[1] ~= nil and runs == n0 + 5, runs - n0)
+  check("done: 5 ticks", s.job_ticks[5] == 1)
+  check("done: cached answer", D.get(st, world, info, 1, A, at(15)) == s.by_id[1])
+  -- 3 parts over 5 ticks: due on ticks 0, 1, 3
+  s.by_id[2] = nil
+  n_parts_job = 3
+  D.get(st, world, info, 2, B, at(20))
+  check("due k=1 at tick 1", D._part_due(s.job, 21) and not D._part_due(s.job, 20))
+  D.pump(st, world, info, at(21))
+  check("due k=2 at tick 3", s.job.n == 2 and not D._part_due(s.job, 22) and D._part_due(s.job, 23))
+  -- a tick with no pump: the due part catches up
+  D.pump(st, world, info, at(24))
+  check("catch-up: done at tick 4", s.job == nil and s.by_id[2] ~= nil)
+  -- the tier row: spread 25, 5 parts: one part every 5 ticks
+  st._capacity = { dbl_spread = 25, dbl_split = 50 }
+  s.by_id[1] = nil
+  n_parts_job = 5
+  D.get(st, world, info, 1, A, at(30))
+  for t = 31, 34 do D.pump(st, world, info, at(t)) end
+  check("spread 25: no part on ticks 1-4", s.job and s.job.n == 1, s.job and s.job.n)
+  D.pump(st, world, info, at(35))
+  check("spread 25: part 1 on tick 5", s.job and s.job.n == 2, s.job and s.job.n)
+  D.pump(st, world, info, at(45))
+  check("spread 25: missed ticks 10 caught up", s.job and s.job.n == 4, s.job and s.job.n)
+  D.pump(st, world, info, at(50))
+  check("spread 25: done on tick 20", s.job == nil and s.by_id[1] ~= nil)
+  st._capacity = nil
+  -- the safety net: this think so far plus one part must stay under the target
+  s.by_id[1] = nil
+  _G.brain = { lastThinkMs = 5, targetMs = 10 }
+  st._think_t0_us = T - 9500            -- 9.5 ms so far + 0.9 >= 10
+  check("no room: no start", D.get(st, world, info, 1, A, at(60)) == nil and s.job == nil)
+  st._think_t0_us = T - 8000            -- 8.0 + 0.9 < 10
+  D.get(st, world, info, 1, A, at(61))
+  check("room: start", s.job and s.job.n == 1)
+  st._think_t0_us = T - 9500
+  local w0 = s.n_wait
+  D.pump(st, world, info, at(62))
+  check("due part waits for room", s.job.n == 1 and s.n_wait == w0 + 1, s.n_wait)
+  st._think_t0_us = T
+  D.pump(st, world, info, at(63))
+  check("next tick: the late part and the due one run", s.job.n == 3, s.job.n)
+  _G.brain = nil
+  st._think_t0_us = nil
+  s.job = nil
+  -- drop: a snapshot pill changes
+  s.by_id[1] = nil
+  local d0 = s.n_drop
+  D.get(st, world, info, 1, A, at(70))
+  B.health = 13
+  D.pump(st, world, info, at(71))
+  check("pill change: dropped", s.job == nil and s.n_drop == d0 + 1 and s.by_id[1] == nil)
+  B.health = 15
+  -- drop: a wall near the target
+  D.get(st, world, info, 1, A, at(80))
+  D.on_tile(st, 100 + 3, 100, C.T_BUILDING)
+  D.pump(st, world, info, at(80))
+  check("wall near the job: dropped", s.job == nil and s.n_drop == d0 + 2)
+  -- the cap: a job not done in dbl_split ticks is dropped
+  st._capacity = { dbl_spread = 25, dbl_split = 3 }
+  D.get(st, world, info, 1, A, at(90))
+  D.pump(st, world, info, at(92))
+  check("cap: still open at tick 2", s.job ~= nil)
+  D.pump(st, world, info, at(93))
+  check("cap: dropped at the cap", s.job == nil and s.n_drop_cap == 1, s.n_drop_cap)
+  st._capacity = nil
+  part_us, n_parts_job = 900, 3
+  C.PT2_DBL_SPLIT = false
+end
 
 -- ── row condition ────────────────────────────────────────────────────────
 print("condition")
