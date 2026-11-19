@@ -249,9 +249,16 @@ end
 
 -- The tank's own shot at a world aim point. Returns
 --   ok (the shell enters the target square before anything stops it),
---   why ("wall", "pill", "base", "planned", "short"),
+--   why ("wall", "pill", "base", "planned", "boat", "tank", "short"),
 --   list of squares crossed before the target square (the shot lane).
 -- env.base_stops(mx, my) -> true when a base there stops a tank shell.
+-- PT2_TANKSHOT_BLOCKERS (pilltake_v2 M.tank_blockers sets them):
+--   env.ts_boats   a boat square stops the shell, as in the engine
+--   env.ts_tanks   flat list { x1, y1, x2, y2, ... } of the other tanks this
+--                  bot sees, where they are now. The engine tests every
+--                  tank but the shooter's own on every step, after the pill
+--                  on the square and before the terrain, on its hit circle
+--                  (env.tank_hit_r); a team mate's tank stops it too.
 function M.tank_shot(env, ox, oy, ax, ay, tmx, tmy, extra, lane)
   lane = lane or {}
   local angle = M.tank_angle(ox, oy, ax, ay)
@@ -266,6 +273,11 @@ function M.tank_shot(env, ox, oy, ax, ay, tmx, tmy, extra, lane)
   local nl, last_sq = 0, -1
   local omx, omy = bit.rshift(ox, 8), bit.rshift(oy, 8)
   local ok, why = false, "short"
+  local tk = env.ts_tanks
+  local ntk = tk and #tk or 0
+  local r = env.tank_hit_r or M.TANK_HIT_RADIUS
+  local r2 = r * r
+  local boats = env.ts_boats
   for t = 1, n do
     xc = xc + xs; yc = yc + ys
     local xm, ym = floor(xc / 256), floor(yc / 256)
@@ -273,17 +285,30 @@ function M.tank_shot(env, ox, oy, ax, ay, tmx, tmy, extra, lane)
     x = x + xm; y = y + ym
     local mx, my = bit.rshift(x, 8), bit.rshift(y, 8)
     local sq = my * 256 + mx
+    local new_sq = false
     if sq ~= last_sq then
       last_sq = sq
       if mx == tmx and my == tmy then ok, why = true, nil; break end
       if not (mx == omx and my == omy) then
+        new_sq = true
         nl = nl + 1; lane[nl] = sq
         if env.pill_on(mx, my) then why = "pill"; break end
-        if extra and extra[sq] then why = "planned"; break end
-        local tt = env.ttype(mx, my)
-        if tt == env.T_BUILDING or tt == env.T_HALFBUILD then why = "wall"; break end
-        if env.base_stops and env.base_stops(mx, my) then why = "base"; break end
       end
+    end
+    if ntk > 0 then
+      local hit = false
+      for i = 1, ntk, 2 do
+        local dx, dy = x - tk[i], y - tk[i + 1]
+        if dx < r and dx > -r and dy < r and dy > -r and dx * dx + dy * dy < r2 then hit = true; break end
+      end
+      if hit then why = "tank"; break end
+    end
+    if new_sq then
+      if extra and extra[sq] then why = "planned"; break end
+      local tt = env.ttype(mx, my)
+      if tt == env.T_BUILDING or tt == env.T_HALFBUILD then why = "wall"; break end
+      if boats and tt == env.T_BOAT then why = "boat"; break end
+      if env.base_stops and env.base_stops(mx, my) then why = "base"; break end
     end
   end
   for k = nl + 1, #lane do lane[k] = nil end

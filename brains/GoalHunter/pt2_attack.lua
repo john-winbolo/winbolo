@@ -104,6 +104,8 @@ function M.build_inp(state, goal, info, world, pill, no_builder, npb, radius, no
   inp.armour = info.armour or 0
   -- PT2_LIVE_SHELL: the shadow's shells walk the live rules
   if C.PT2_LIVE_SHELL then V2.live_shell(inp.env, info.rules) end
+  -- PT2_TANKSHOT_BLOCKERS: boats and the tanks we see stop our own shell
+  if C.PT2_TANKSHOT_BLOCKERS then V2.tank_blockers(inp.env, info) end
   inp.anger_of = function(p) return M.anger_now(p, now) end
   local goalA = inp.A
   local curA = goalA

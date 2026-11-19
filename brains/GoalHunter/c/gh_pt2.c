@@ -68,6 +68,7 @@
 #define PT2_SHELL_LIFE    8.0
 #define PT2_PILL_FIRE_LEN 8.5
 #define PT2_TANK_FIRE_LEN 7.0
+#define PT2_TS_MAX_TANKS 64
 #define PT2_TANK_HIT_R    112.0
 #define PT2_LUA_RAD       0.017453292519943295
 #define PT2_MAX_T         128   /* > life_ticks(8.5) = 64 */
@@ -83,8 +84,8 @@ enum { BK_ALLY_PILL, BK_PLANNED, BK_WALL, BK_HALF_WALL, BK_BOAT, BK_FOREST };
 static const char *s_bk_name[] = { "ally_pill", "planned", "wall", "half_wall", "boat", "forest" };
 
 /* tank_shot why. */
-enum { TS_OK, TS_SHORT, TS_WALL, TS_PILL, TS_BASE, TS_PLANNED };
-static const char *s_ts_name[] = { "ok", "short", "wall", "pill", "base", "planned" };
+enum { TS_OK, TS_SHORT, TS_WALL, TS_PILL, TS_BASE, TS_PLANNED, TS_BOAT, TS_TANK };
+static const char *s_ts_name[] = { "ok", "short", "wall", "pill", "base", "planned", "boat", "tank" };
 
 /* Why codes for rejects and leeway points. */
 enum { W_NONE, W_A_OUT, W_OUTGOING, W_OVERLAP, W_CHAIN, W_QMARK };
@@ -340,6 +341,9 @@ typedef struct {
     /* the shell numbers (env.shell_speed ...; the classic ones when not given) */
     double sh_speed, sh_add, sh_life, sh_hit_r, pill_len;
     int    cg_on;      /* the ray table is used this evaluate */
+    /* PT2_TANKSHOT_BLOCKERS: env.ts_boats, env.ts_tanks (x, y pairs) */
+    int    ts_boats, ts_nt;
+    double ts_t[2 * PT2_TS_MAX_TANKS];
     /* env.omx / env.omy */
     int    om_set, om_sent;
     double omx, omy, sent_omx, sent_omy;
@@ -832,6 +836,41 @@ static Ray *cast_walk(Ev *e, double sx, double sy, double tx, double ty, double 
 }
 
 /* ── shadow.tank_shot ───────────────────────────────────────────────── */
+/* PT2_TANKSHOT_BLOCKERS: a tank of env.ts_tanks has the shell at (x, y)
+ * inside its hit circle (shadow.lua's test, in the same doubles). */
+static int ts_tank_hit(const Ev *e, double x, double y) {
+    double r = e->sh_hit_r, r2 = r * r;
+    for (int i = 0; i < e->ts_nt; i++) {
+        double dx = x - e->ts_t[2 * i], dy = y - e->ts_t[2 * i + 1];
+        if (dx < r && dx > -r && dy < r && dy > -r && dx * dx + dy * dy < r2) return 1;
+    }
+    return 0;
+}
+
+/* Whether a tank of env.ts_tanks may be near the shell from (ox, oy) at the
+ * aim (ax, ay): within its hit circle plus a margin of the line from the
+ * start, as long as the shell flies. The shell keeps to that line within a
+ * few world units (the start offset is add whole steps, each rounded; the
+ * steps are 1/256 exact), so a tank this says no to cannot be hit, and the
+ * ray table (which keeps no places) may answer. Else the walk does. */
+static int ts_tank_near(const Ev *e, double ox, double oy, double ax, double ay) {
+    double dx = ax - ox, dy = ay - oy;
+    double d = sqrt(dx * dx + dy * dy);
+    if (!(d > 0)) return 1;
+    double ux = dx / d, uy = dy / d;
+    double len = (e->sh_add + life_ticks(e, PT2_TANK_FIRE_LEN)) * e->sh_speed + 2;
+    double m = e->sh_hit_r + 8 + e->sh_add;
+    for (int i = 0; i < e->ts_nt; i++) {
+        double px = e->ts_t[2 * i] - ox, py = e->ts_t[2 * i + 1] - oy;
+        double s = px * ux + py * uy;
+        if (s < 0) s = 0;
+        if (s > len) s = len;
+        double qx = px - s * ux, qy = py - s * uy;
+        if (qx * qx + qy * qy < m * m) return 1;
+    }
+    return 0;
+}
+
 /* Returns the why (TS_OK when the shell enters the target square). On
  * TS_OK *lane_out is the lane (a new object). */
 static int tank_shot_walk(Ev *e, double ox, double oy, double ax, double ay, double tmx, double tmy,
@@ -850,18 +889,24 @@ static int tank_shot_walk(Ev *e, double ox, double oy, double ax, double ay, dou
     for (double t = 1; t <= n; t++) {
         double mx, my, sq;
         walk_step(&w, &mx, &my, &sq);
+        int new_sq = 0;
         if (sq != last_sq) {
             last_sq = sq;
             if (mx == tmx && my == tmy) { why = TS_OK; break; }
             if (!(mx == omx && my == omy)) {
+                new_sq = 1;
                 if (nl < PT2_MAX_T) lane[nl] = (int64_t)sq;
                 nl++;
                 if (pill_on(e, mx, my)) { why = TS_PILL; break; }
-                if (extra_find(extra, (int64_t)sq) >= 0) { why = TS_PLANNED; break; }
-                double tt = ttype(e, mx, my);
-                if (tt == e->T_BUILDING || tt == e->T_HALFBUILD) { why = TS_WALL; break; }
-                if (base_stops(e, mx, my)) { why = TS_BASE; break; }
             }
+        }
+        if (e->ts_nt > 0 && ts_tank_hit(e, w.x, w.y)) { why = TS_TANK; break; }
+        if (new_sq) {
+            if (extra_find(extra, (int64_t)sq) >= 0) { why = TS_PLANNED; break; }
+            double tt = ttype(e, mx, my);
+            if (tt == e->T_BUILDING || tt == e->T_HALFBUILD) { why = TS_WALL; break; }
+            if (e->ts_boats && tt == e->T_BOAT) { why = TS_BOAT; break; }
+            if (base_stops(e, mx, my)) { why = TS_BASE; break; }
         }
     }
     if (why == TS_OK && lane_out) {
@@ -1170,6 +1215,7 @@ static int cg_tshot(Ev *e, const CGeom *g, int bx, int by, const Extra *extra, L
         if (extra_find(extra, (int64_t)sq) >= 0) { why = TS_PLANNED; break; }
         double tt = ttype(e, mx, my);
         if (tt == e->T_BUILDING || tt == e->T_HALFBUILD) { why = TS_WALL; break; }
+        if (e->ts_boats && tt == e->T_BOAT) { why = TS_BOAT; break; }
         if (base_stops(e, mx, my)) { why = TS_BASE; break; }
     }
     if (why == TS_OK && lane_out) {
@@ -1186,6 +1232,8 @@ static int cg_tshot(Ev *e, const CGeom *g, int bx, int by, const Extra *extra, L
 static int tank_shot(Ev *e, double ox, double oy, double ax, double ay, double tmx, double tmy,
                      const Extra *extra, Lane **lane_out) {
     if (!e->cg_on) return tank_shot_walk(e, ox, oy, ax, ay, tmx, tmy, extra, lane_out);
+    if (e->ts_nt > 0 && ts_tank_near(e, ox, oy, ax, ay))
+        return tank_shot_walk(e, ox, oy, ax, ay, tmx, tmy, extra, lane_out);
     double dx = ax - ox, dy = ay - oy;
     if (!(whole_in(ox, 65536.0) && ox >= 0 && whole_in(oy, 65536.0) && oy >= 0
           && whole_in(dx, 1048576.0) && whole_in(dy, 1048576.0)
@@ -2193,6 +2241,27 @@ static int l_evaluate(lua_State *L) {
     e->sh_hit_r = getnum(L, S_ENV, "tank_hit_r", PT2_TANK_HIT_R, NULL);
     e->pill_len = getnum(L, S_ENV, "pill_fire_len", PT2_PILL_FIRE_LEN, NULL);
     e->cg_on = cg_ready(e);
+    e->ts_boats = getbool(L, S_ENV, "ts_boats");
+    e->ts_nt = 0;
+    lua_getfield(L, S_ENV, "ts_tanks");
+    if (lua_istable(L, -1)) {
+        int tl = lua_gettop(L);
+        int nn = 0;
+        for (;; nn++) {
+            lua_rawgeti(L, tl, nn + 1);
+            int isnil = lua_isnil(L, -1);
+            if (!isnil) {
+                if (nn >= 2 * PT2_TS_MAX_TANKS)
+                    return luaL_error(L, "gh_pt2.evaluate: env.ts_tanks has over %d numbers", 2 * PT2_TS_MAX_TANKS);
+                e->ts_t[nn] = lua_tonumber(L, -1);
+            }
+            lua_pop(L, 1);
+            if (isnil) break;
+        }
+        if (nn % 2 != 0) return luaL_error(L, "gh_pt2.evaluate: env.ts_tanks has %d numbers", nn);
+        e->ts_nt = nn / 2;
+    }
+    lua_pop(L, 1);
 
     /* A */
     lua_getfield(L, S_INP, "A");
