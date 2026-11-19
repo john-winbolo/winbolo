@@ -454,7 +454,6 @@ STR_DLGLOBBY_SERVER_BOT_SLOTS_TIP=How many bots the server runs in its own proce
 STR_DLGLOBBY_BOTHOST_SAME_SERVER={string1}: same computer as the server (0 slots)
 STR_DLGLOBBY_BOTHOST_SAME_HOST={string1}: same computer as {string2} (0 slots)
 STR_DLGLOBBY_BOTHOSTS_NOTE=Bots move between hosts by lag and free CPU.
-STR_DLGLOBBY_BOTHOST_RESERVE_FMT={string1} — tries to keep {number}% CPU free.
 STR_DLGLOBBY_BOTHOST_MAX_LABEL=Max slots
 STR_DLGLOBBY_BOTHOST_MAX_OVER=More than the {number} slots this computer's CPU estimate says fit. Its bots may think slower and play worse.
 STR_DLGLOBBY_BOTHOST_MAX_OWN_TIP=The most of the server's bots this computer runs. The server starts it lower and adds bots while the computer has free CPU. Saved on this computer for later games. 0 runs no bot here.
