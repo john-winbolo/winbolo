@@ -100,13 +100,25 @@ local function run(state, world, info, id, pill, now)
   local no_builder = info.man_status == C.LGM_DEAD
   local npb = math.min(info.carried_pills or 0, C.PPT_PILL_BLOCKERS_MAX or 2)
   local radius = C.PPT_STANDOFF
+  -- debug profile (C.PT2_PROF_LOG, PT2_DBL_PROF line): the parts of one run, in us
+  local G = BRAIN_DEBUG_MODE and C.PT2_PROF_LOG and rawget(_G, "gh_pt2")
+  local prof = G and G.prof_take and {}
+  if prof then G.prof(true); G.prof_take() end
+  local t0 = prof and clock_us()
   local inp = PA.build_inp(state, {}, info, world, pill, no_builder, npb, radius, now)
+  if prof then prof.build_inp = clock_us() - t0; prof.world_inp = PA.prof_world_us or 0 end
   local e = { tick = now, carried = info.carried_pills or 0, trees = info.trees or 0,
               ids = { id }, hp = { pill.health or 0 }, owner = { pill.owner },
               pos = { { pill.mx, pill.my } },
               safe = false, kills = 0, have = 0, need = 0, pills = 0, walls = 0, trees_need = 0 }
   if not inp then return e end
+  local t1 = prof and clock_us()
   local res = V2.evaluate_group(inp)
+  if prof then
+    prof.group = clock_us() - t1
+    prof.c = G.prof_take()
+    M.last_prof = prof
+  end
   local b = res and res.best
   if not b then return e end
   e.safe = b.safe and b.chain_mode and true or false
@@ -188,6 +200,16 @@ function M.get(state, world, info, id, pill, now)
     return nil
   end
   s.by_id[id] = r
+  local pf = M.last_prof
+  M.last_prof = nil
+  if BRAIN_DEBUG_MODE and pf then
+    -- one line per run: Lua parts, then every C part as name=n/us
+    local parts = {}
+    for k, v in pairs(pf.c or {}) do parts[#parts + 1] = string.format("%s=%d/%.0f", k, v.n, v.us) end
+    table.sort(parts)
+    print2(string.format("PT2_DBL_PROF t=%d pill#%s us=%d build_inp=%.0f world_inp=%.0f group=%.0f %s",
+      now, tostring(id), us, pf.build_inp or 0, pf.world_inp or 0, pf.group or 0, table.concat(parts, " ")))
+  end
   if BRAIN_DEBUG_MODE then
     local br = _G.brain
     print2(string.format("PT2_DBL_RUN t=%d pill#%s chain=%s safe=%s kills=%d have=%d need=%d pills=%d/%d walls=%d trees=%d/%d us=%d last_ms=%.2f tgt_ms=%.2f est_ms=%.2f",

@@ -54,6 +54,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 /* ── Engine constants (shadow.lua) ──────────────────────────────────── */
 #define PT2_RADIANS_MAX   (2.0 * 3.14159)
@@ -111,9 +112,15 @@ typedef struct {
     double   *tt_val;
     uint32_t *po_stamp;
     int      *po_val;
+    uint32_t *ba_stamp;   /* env.base_at keys of this evaluate (gen) */
     Pill    **pills;      /* 1-based; each Pill is in the arena, so a
                              * Pill pointer stays valid while the list grows */
     int       npills, cap_pills;
+    /* gh_pt2.prof(true): time and count each part (debug profile only;
+     * the result does not change). Indexed by the stack slot of the
+     * callback (S_TTYPE ...) or by a P_* part below. */
+    int       prof;
+    double    p_ns[40], p_n[40];
 } Pt2Ctx;
 
 static void ar_reset(Arena *a) {
@@ -234,6 +241,49 @@ enum {
     S_TOP = S_COUNT_READS
 };
 
+/* Profile parts that are not a callback. */
+enum {
+    P_TOTAL = S_TOP + 1, P_SETUP, P_OUTPUT, P_TT_HIT, P_PO_HIT, P_REACH_HIT,
+    P_EVAL_POINT, P_SEARCH, P_LEEWAY, P_SORT, P_CAST, P_TSHOT, P_HOLD, P_N
+};
+static const char *s_prof_name[] = {
+    "", "", "", "", "", "", "",   /* 0 and S_INP .. S_MEMO */
+    "ttype", "pill_on", "is_ally", "cover_of_pill", "base_stops",
+    "in_map", "stay_in", "standable", "buildable", "lgm_reach", "score_fn",
+    "banned", "anger_of", "chain_skip", "base_at", "pill_name", "count_reads",
+    "total", "setup", "output", "ttype_cache_hit", "pill_on_cache_hit", "reach_cache_hit",
+    "ring_eval_point", "search_blockers", "leeway", "sort_band",
+    "cast", "tank_shot", "hold_point",
+    NULL   /* the count check below */
+};
+typedef char pt2_prof_names_ok[(sizeof(s_prof_name) / sizeof(s_prof_name[0]) == P_N + 1) ? 1 : -1];
+typedef char pt2_prof_slots_ok[(P_N <= 40) ? 1 : -1];   /* p_ns[40], p_n[40] */
+
+/* Time a C statement as part `cat` (inclusive of its callbacks). */
+#define PTIME(e, cat, stmt) do { \
+        if ((e)->c->prof) { \
+            double t0_ = pt_now(); \
+            stmt; \
+            (e)->c->p_ns[(cat)] += pt_now() - t0_; (e)->c->p_n[(cat)] += 1; \
+        } else { stmt; } \
+    } while (0)
+
+static double pt_now(void) {
+    struct timespec ts;
+    timespec_get(&ts, TIME_UTC);
+    return (double)ts.tv_sec * 1e9 + (double)ts.tv_nsec;
+}
+
+/* lua_call timed as part `cat` when the profile is on. */
+#define PCALL(e, L, na, nr, cat) do { \
+        if ((e)->c->prof) { \
+            double t0_ = pt_now(); \
+            lua_call((L), (na), (nr)); \
+            (e)->c->p_ns[(cat)] += pt_now() - t0_; (e)->c->p_n[(cat)] += 1; \
+        } else lua_call((L), (na), (nr)); \
+    } while (0)
+#define PCOUNT(e, cat) do { if ((e)->c->prof) (e)->c->p_n[(cat)] += 1; } while (0)
+
 typedef struct {
     lua_State *L;
     Pt2Ctx    *c;
@@ -259,6 +309,9 @@ typedef struct {
     PList *hostile;
     int    finish;
     double tt_hits;
+    /* env.base_stops is set; env.base_at is a table (its in-map keys are
+     * marked in c->ba_stamp) */
+    int    bs_on, ba_tab;
     /* reach_cache: sq -> 0 / 1 (2 = not asked) */
     int64_t *rc_sq; char *rc_val; int rc_n, rc_cap;
     int    memo_n;
@@ -314,21 +367,66 @@ static double sincos_args(double angle) {
     return (db / 360.0) * PT2_RADIANS_MAX;
 }
 
-static void calc_distance(double angle, double speed, double *ox, double *oy) {
-    double db = sincos_args(angle);
-    *ox = round_double(speed * cos(db));
-    *oy = round_double(speed * sin(db));
-}
-
-static void calc_distance_hp(double angle, double speed, double *ox, double *oy) {
-    double db = sincos_args(angle);
-    *ox = round_double(speed * cos(db) * 256.0);
-    *oy = round_double(speed * sin(db) * 256.0);
-}
-
 static double life_ticks(double len) {
     double t = 1 + floor(PT2_SHELL_LIFE * len) - PT2_START_ADD;
     return t < 0 ? 0 : t;
+}
+
+/* calc_distance and calc_distance_hp of one angle: the same cos and sin
+ * (same argument, so the same values), taken once. */
+static void calc_distance_both(double angle, double speed, double *ox, double *oy,
+                               double *hx, double *hy) {
+    double db = sincos_args(angle);
+    double c = cos(db), s = sin(db);
+    *ox = round_double(speed * c);
+    *oy = round_double(speed * s);
+    *hx = round_double(speed * c * 256.0);
+    *hy = round_double(speed * s * 256.0);
+}
+
+/* One shell's walk, a step per tick: the 1/256 carry (xc, yc) and the
+ * world position (x, y), as in the Lua. When every start value is a whole
+ * number in a safe range (always, in practice) the walk runs in int32,
+ * which gives the same numbers: floor(xc / 256) is xc >> 8 and
+ * rsh8(x) is (uint32)x >> 8 for whole x. Else it runs in doubles. */
+typedef struct {
+    int     fast;
+    int32_t xi, yi, xci, yci, xsi, ysi;
+    double  x, y, xc, yc, xs, ys;
+} Walk;
+typedef char pt2_arith_shift_ok[((-256 >> 8) == -1) ? 1 : -1];
+
+static int whole_in(double v, double lim) { return v == floor(v) && v > -lim && v < lim; }
+
+static void walk_init(Walk *w, double x, double y, double xs, double ys) {
+    w->x = x; w->y = y; w->xc = 0; w->yc = 0; w->xs = xs; w->ys = ys;
+    w->fast = whole_in(x, 1073741824.0) && whole_in(y, 1073741824.0)
+              && whole_in(xs, 1048576.0) && whole_in(ys, 1048576.0);
+    if (w->fast) {
+        w->xi = (int32_t)x; w->yi = (int32_t)y; w->xci = 0; w->yci = 0;
+        w->xsi = (int32_t)xs; w->ysi = (int32_t)ys;
+    }
+}
+
+/* One step. Sets w->x, w->y and the square (mx, my, sq = my * 256 + mx). */
+static void walk_step(Walk *w, double *mx, double *my, double *sq) {
+    if (w->fast) {
+        w->xci += w->xsi; w->yci += w->ysi;
+        int32_t xm = w->xci >> 8, ym = w->yci >> 8;
+        w->xci -= xm * 256; w->yci -= ym * 256;
+        w->xi += xm; w->yi += ym;
+        int32_t mxi = (int32_t)((uint32_t)w->xi >> 8), myi = (int32_t)((uint32_t)w->yi >> 8);
+        w->x = (double)w->xi; w->y = (double)w->yi;
+        *mx = (double)mxi; *my = (double)myi;
+        *sq = (double)((int64_t)myi * 256 + mxi);
+    } else {
+        w->xc = w->xc + w->xs; w->yc = w->yc + w->ys;
+        double xm = floor(w->xc / 256), ym = floor(w->yc / 256);
+        w->xc = w->xc - xm * 256; w->yc = w->yc - ym * 256;
+        w->x = w->x + xm; w->y = w->y + ym;
+        *mx = rsh8(w->x); *my = rsh8(w->y);
+        *sq = *my * 256 + *mx;
+    }
 }
 
 /* ── Lua calls ──────────────────────────────────────────────────────── */
@@ -337,7 +435,7 @@ static int call_b2(Ev *e, int fn, double a, double b) {
     lua_pushvalue(L, fn);
     lua_pushnumber(L, a);
     lua_pushnumber(L, b);
-    lua_call(L, 2, 1);
+    PCALL(e, L, 2, 1, fn);
     int r = lua_toboolean(L, -1);
     lua_pop(L, 1);
     return r;
@@ -424,7 +522,7 @@ static int is_ally(Ev *e, int k) {
         lua_State *L = e->L;
         lua_pushvalue(L, S_IS_ALLY);
         push_pill(e, k);
-        lua_call(L, 1, 1);
+        PCALL(e, L, 1, 1, S_IS_ALLY);
         p->ally = lua_toboolean(L, -1);
         lua_pop(L, 1);
     }
@@ -437,7 +535,7 @@ static double cover_of_pill(Ev *e, int k) {
         lua_State *L = e->L;
         lua_pushvalue(L, S_COVER);
         push_pill(e, k);
-        lua_call(L, 1, 1);
+        PCALL(e, L, 1, 1, S_COVER);
         p->cover = lua_tonumber(L, -1);
         p->cover_set = 1;
         lua_pop(L, 1);
@@ -453,6 +551,7 @@ static int chain_skip(Ev *e, int k) {
             p->skip = 0;
         } else {
             push_pill(e, k);
+            PCOUNT(e, S_CHAIN_SKIP);
             lua_gettable(L, S_CHAIN_SKIP);
             p->skip = lua_toboolean(L, -1);
             lua_pop(L, 1);
@@ -466,7 +565,7 @@ static double call_ttype(Ev *e, double mx, double my) {
     lua_pushvalue(L, S_TTYPE);
     lua_pushnumber(L, mx);
     lua_pushnumber(L, my);
-    lua_call(L, 2, 1);
+    PCALL(e, L, 2, 1, S_TTYPE);
     double v = lua_type(L, -1) == LUA_TNUMBER ? lua_tonumber(L, -1) : NAN;
     lua_pop(L, 1);
     return v;
@@ -476,7 +575,7 @@ static double ttype(Ev *e, double mx, double my) {
     if (mx >= 0 && mx <= 255 && my >= 0 && my <= 255) {
         int k = (int)my * 256 + (int)mx;
         Pt2Ctx *c = e->c;
-        if (c->tt_stamp[k] == c->gen) { e->tt_hits += 1; return c->tt_val[k]; }
+        if (c->tt_stamp[k] == c->gen) { e->tt_hits += 1; PCOUNT(e, P_TT_HIT); return c->tt_val[k]; }
         double v = call_ttype(e, mx, my);
         c->tt_stamp[k] = c->gen;
         c->tt_val[k] = v;
@@ -490,7 +589,7 @@ static int call_pill_on(Ev *e, double mx, double my) {
     lua_pushvalue(L, S_PILL_ON);
     lua_pushnumber(L, mx);
     lua_pushnumber(L, my);
-    lua_call(L, 2, 1);
+    PCALL(e, L, 2, 1, S_PILL_ON);
     int k = 0;
     if (lua_istable(L, -1)) k = pill_index(e, -1);
     lua_pop(L, 1);
@@ -501,7 +600,7 @@ static int pill_on(Ev *e, double mx, double my) {
     if (mx >= 0 && mx <= 255 && my >= 0 && my <= 255) {
         int k = (int)my * 256 + (int)mx;
         Pt2Ctx *c = e->c;
-        if (c->po_stamp[k] == c->gen) return c->po_val[k];
+        if (c->po_stamp[k] == c->gen) { PCOUNT(e, P_PO_HIT); return c->po_val[k]; }
         int v = call_pill_on(e, mx, my);
         c->po_stamp[k] = c->gen;
         c->po_val[k] = v;
@@ -512,12 +611,19 @@ static int pill_on(Ev *e, double mx, double my) {
 
 static int base_stops(Ev *e, double mx, double my) {
     lua_State *L = e->L;
-    if (lua_isnil(L, S_BASE_STOPS) || !lua_toboolean(L, S_BASE_STOPS)) return 0;
-    if (lua_istable(L, S_BASE_AT)) {
-        lua_pushnumber(L, my * 256 + mx);
-        lua_rawget(L, S_BASE_AT);
-        int has = !lua_isnil(L, -1);
-        lua_pop(L, 1);
+    if (!e->bs_on) return 0;
+    if (e->ba_tab) {
+        double key = my * 256 + mx;
+        int has;
+        PCOUNT(e, S_BASE_AT);
+        if (key >= 0 && key < PT2_MAP_SQ && key == floor(key)) {
+            has = e->c->ba_stamp[(int)key] == e->c->gen;
+        } else {
+            lua_pushnumber(L, key);
+            lua_rawget(L, S_BASE_AT);
+            has = !lua_isnil(L, -1);
+            lua_pop(L, 1);
+        }
         if (!has) return 0;
     }
     sync_om(e);
@@ -599,11 +705,9 @@ static Ray *cast(Ev *e, double sx, double sy, double tx, double ty, double len,
     double angle = calc_angle(sx, sy, tx, ty);
     res->angle = angle;
     double xa, ya, xs, ys;
-    calc_distance(angle, PT2_SHELL_SPEED, &xa, &ya);
-    calc_distance_hp(angle, PT2_SHELL_SPEED, &xs, &ys);
-    double x = sx + PT2_START_ADD * xa;
-    double y = sy + PT2_START_ADD * ya;
-    double xc = 0, yc = 0;
+    calc_distance_both(angle, PT2_SHELL_SPEED, &xa, &ya, &xs, &ys);
+    Walk w;
+    walk_init(&w, sx + PT2_START_ADD * xa, sy + PT2_START_ADD * ya, xs, ys);
     double n = life_ticks(len);
     double r = PT2_TANK_HIT_R;
     double r2 = r * r;
@@ -613,12 +717,8 @@ static Ray *cast(Ev *e, double sx, double sy, double tx, double ty, double len,
     int link = 0; double link_t = 0;
     int tank = 0; double hit_t = n;
     for (double t = 1; t <= n; t++) {
-        xc = xc + xs; yc = yc + ys;
-        double xm = floor(xc / 256), ym = floor(yc / 256);
-        xc = xc - xm * 256; yc = yc - ym * 256;
-        x = x + xm; y = y + ym;
-        double mx = rsh8(x), my = rsh8(y);
-        double sq = my * 256 + mx;
+        double mx, my, sq;
+        walk_step(&w, &mx, &my, &sq);
         int new_sq = sq != last_sq;
         /* 1. a live pill on the square */
         if (new_sq) {
@@ -639,7 +739,7 @@ static Ray *cast(Ev *e, double sx, double sy, double tx, double ty, double len,
             }
         }
         /* 2. the tank circle */
-        double dx = x - tx, dy = y - ty;
+        double dx = w.x - tx, dy = w.y - ty;
         if (dx < r && dx > -r && dy < r && dy > -r && dx * dx + dy * dy < r2) {
             tank = 1; hit_t = t;
             break;
@@ -676,7 +776,7 @@ static Ray *cast(Ev *e, double sx, double sy, double tx, double ty, double len,
     res->link = link; res->link_t = link_t;
     res->cover = cover; res->front = front;
     res->n_sq = nsq; res->n_block = nblk;
-    res->end_x = x; res->end_y = y;
+    res->end_x = w.x; res->end_y = w.y;
     if (keep) {
         res->sq = NEWN(e, int64_t, nsq);
         res->sq_t = NEWN(e, double, nsq);
@@ -698,23 +798,17 @@ static int tank_shot(Ev *e, double ox, double oy, double ax, double ay, double t
     int64_t lane[PT2_MAX_T];
     double angle = tank_angle(ox, oy, ax, ay);
     double xa, ya, xs, ys;
-    calc_distance(angle, PT2_SHELL_SPEED, &xa, &ya);
-    calc_distance_hp(angle, PT2_SHELL_SPEED, &xs, &ys);
-    double x = ox + PT2_START_ADD * xa;
-    double y = oy + PT2_START_ADD * ya;
-    double xc = 0, yc = 0;
+    calc_distance_both(angle, PT2_SHELL_SPEED, &xa, &ya, &xs, &ys);
+    Walk w;
+    walk_init(&w, ox + PT2_START_ADD * xa, oy + PT2_START_ADD * ya, xs, ys);
     double n = life_ticks(PT2_TANK_FIRE_LEN);
     int nl = 0;
     double last_sq = -1;
     double omx = rsh8(ox), omy = rsh8(oy);
     int why = TS_SHORT;
     for (double t = 1; t <= n; t++) {
-        xc = xc + xs; yc = yc + ys;
-        double xm = floor(xc / 256), ym = floor(yc / 256);
-        xc = xc - xm * 256; yc = yc - ym * 256;
-        x = x + xm; y = y + ym;
-        double mx = rsh8(x), my = rsh8(y);
-        double sq = my * 256 + mx;
+        double mx, my, sq;
+        walk_step(&w, &mx, &my, &sq);
         if (sq != last_sq) {
             last_sq = sq;
             if (mx == tmx && my == tmy) { why = TS_OK; break; }
@@ -781,8 +875,8 @@ static int nudge_aim(Ev *e, double px, double py, const Extra *extra, const int 
             for (int i = 0; i < nlive; i++) {
                 int ai = live[i];
                 Lane *ln = NULL;
-                int why = tank_shot(e, nx, ny, tx + s_aims[ai - 1][0], ty + s_aims[ai - 1][1],
-                                    A->mx, A->my, extra, &ln);
+                int why; PTIME(e, P_TSHOT, why = tank_shot(e, nx, ny, tx + s_aims[ai - 1][0], ty + s_aims[ai - 1][1],
+                                    A->mx, A->my, extra, &ln));
                 if (why == TS_OK) {
                     *onx = nx; *ony = ny; *onw = nw; *oai = ai; *oln = ln;
                     return 1;
@@ -821,8 +915,8 @@ static Rec *eval_point(Ev *e, double px, double py, Extra *extra, int aim_fixed,
         int shorts[PT2_NAIMS], ns = 0;
         for (int ai = a1; ai <= a2; ai++) {
             Lane *ln = NULL;
-            int w = tank_shot(e, px, py, amx * 256 + s_aims[ai - 1][0], amy * 256 + s_aims[ai - 1][1],
-                              amx, amy, extra, &ln);
+            int w; PTIME(e, P_TSHOT, w = tank_shot(e, px, py, amx * 256 + s_aims[ai - 1][0], amy * 256 + s_aims[ai - 1][1],
+                              amx, amy, extra, &ln));
             if (w == TS_OK) { aim_idx = ai; lane = ln; break; }
             why_out = w;
             if (w == TS_SHORT) shorts[ns++] = ai;
@@ -860,7 +954,7 @@ static Rec *eval_point(Ev *e, double px, double py, Extra *extra, int aim_fixed,
         } else {
             Pill *X = PI(e, T->v[i]);
             double sx = X->mx * 256 + 128, sy = X->my * 256 + 128;
-            Ray *r = cast(e, sx, sy, px, py, PT2_PILL_FIRE_LEN, extra, 1, NULL);
+            Ray *r; PTIME(e, P_CAST, r = cast(e, sx, sy, px, py, PT2_PILL_FIRE_LEN, extra, 1, NULL));
             r->X = T->v[i];
             rays->v[i] = r;
         }
@@ -946,9 +1040,9 @@ static Aims *clear_aims_of(Ev *e, Rec *rec) {
         for (double ai = rec->aims_done + 1; ai <= PT2_NAIMS; ai++) {
             int a = (int)ai;
             Lane *ln = NULL;
-            int w = tank_shot(e, rec->px, rec->py, A->mx * 256 + s_aims[a - 1][0],
+            int w; PTIME(e, P_TSHOT, w = tank_shot(e, rec->px, rec->py, A->mx * 256 + s_aims[a - 1][0],
                               A->my * 256 + s_aims[a - 1][1], A->mx, A->my,
-                              (rec->flags & RF_EXTRA_IN) ? rec->extra_in : NULL, &ln);
+                              (rec->flags & RF_EXTRA_IN) ? rec->extra_in : NULL, &ln));
             if (w == TS_OK) {
                 if (rec->clear->n >= PT2_NAIMS) luaL_error(e->L, "gh_pt2: too many aims");
                 rec->clear->v[rec->clear->n++] = a;
@@ -1012,7 +1106,7 @@ static int slot_ok(Ev *e, Rec *rec, Ray *r, int k, const Extra *extra_tmp) {
     if (tt == e->T_BUILDING || tt == e->T_HALFBUILD) return 0;
     if (!buildable(e, mx, my)) return 0;
     for (int i = 0; i < e->rc_n; i++) {
-        if (e->rc_sq[i] == sq) return e->rc_val[i];
+        if (e->rc_sq[i] == sq) { PCOUNT(e, P_REACH_HIT); return e->rc_val[i]; }
     }
     lua_State *L = e->L;
     lua_pushvalue(L, S_LGM_REACH);
@@ -1020,7 +1114,7 @@ static int slot_ok(Ev *e, Rec *rec, Ray *r, int k, const Extra *extra_tmp) {
     lua_pushnumber(L, rec->omy);
     lua_pushnumber(L, mx);
     lua_pushnumber(L, my);
-    lua_call(L, 4, 1);
+    PCALL(e, L, 4, 1, S_LGM_REACH);
     int rc = lua_toboolean(L, -1) ? 1 : 0;
     lua_pop(L, 1);
     if (e->rc_n >= e->rc_cap) {
@@ -1162,7 +1256,7 @@ static int hold_safe(Ev *e, Rec *b, double hx, double hy, int *why_pill) {
             else if (p == e->A && !b->chain_mode) bar = e->bar_single;
             else if (ci) bar = e->bar_chain;
             else bar = e->bar_other;
-            Ray *r = cast(e, sx, sy, hx, hy, PT2_PILL_FIRE_LEN, NULL, 0, &scratch);
+            Ray *r; PTIME(e, P_CAST, r = cast(e, sx, sy, hx, hy, PT2_PILL_FIRE_LEN, NULL, 0, &scratch));
             int linked = e->link_covers && ci && r->link != 0 && ci < b->chain->n
                          && r->link == b->chain->v[ci];
             if (r->tank && !linked && r->cover < bar) { *why_pill = p; return 0; }
@@ -1437,7 +1531,7 @@ static void push_pill_name(Ev *e, int p) {
     lua_pushvalue(L, S_PILL_NAME);
     lua_pushvalue(L, S_INP);
     push_pill(e, p);
-    lua_call(L, 2, 1);
+    PCALL(e, L, 2, 1, S_PILL_NAME);
 }
 
 static void push_why(Ev *e, int why, int arg) {
@@ -1583,18 +1677,21 @@ static int l_evaluate(lua_State *L) {
     luaL_checktype(L, 2, LUA_TTABLE);
     lua_settop(L, 2);
     Pt2Ctx *c = get_ctx(L);
+    double pt0 = c->prof ? pt_now() : 0;
     if (!c->tt_stamp) {
         c->tt_stamp = (uint32_t *)calloc(PT2_MAP_SQ, sizeof(uint32_t));
         c->tt_val = (double *)calloc(PT2_MAP_SQ, sizeof(double));
         c->po_stamp = (uint32_t *)calloc(PT2_MAP_SQ, sizeof(uint32_t));
         c->po_val = (int *)calloc(PT2_MAP_SQ, sizeof(int));
-        if (!c->tt_stamp || !c->tt_val || !c->po_stamp || !c->po_val)
+        c->ba_stamp = (uint32_t *)calloc(PT2_MAP_SQ, sizeof(uint32_t));
+        if (!c->tt_stamp || !c->tt_val || !c->po_stamp || !c->po_val || !c->ba_stamp)
             return luaL_error(L, "gh_pt2: out of memory");
     }
     c->gen++;
     if (c->gen == 0) {
         memset(c->tt_stamp, 0, sizeof(uint32_t) * PT2_MAP_SQ);
         memset(c->po_stamp, 0, sizeof(uint32_t) * PT2_MAP_SQ);
+        memset(c->ba_stamp, 0, sizeof(uint32_t) * PT2_MAP_SQ);
         c->gen = 1;
     }
     ar_reset(&c->ar);
@@ -1635,6 +1732,20 @@ static int l_evaluate(lua_State *L) {
     lua_getfield(L, S_V2, "pill_name");
     lua_getfield(L, S_ENV, "count_reads");
     if (lua_gettop(L) != S_TOP) return luaL_error(L, "gh_pt2: stack");
+    /* base_at: mark the keys once (a key off the map is looked up in the
+     * table at each read, as before) */
+    e->bs_on = !lua_isnil(L, S_BASE_STOPS) && lua_toboolean(L, S_BASE_STOPS);
+    e->ba_tab = lua_istable(L, S_BASE_AT);
+    if (e->bs_on && e->ba_tab) {
+        lua_pushnil(L);
+        while (lua_next(L, S_BASE_AT) != 0) {
+            lua_pop(L, 1);
+            if (lua_type(L, -1) == LUA_TNUMBER) {
+                double key = lua_tonumber(L, -1);
+                if (key >= 0 && key < PT2_MAP_SQ && key == floor(key)) c->ba_stamp[(int)key] = c->gen;
+            }
+        }
+    }
 
     /* inp numbers */
     e->radius = getnum(L, S_INP, "radius", 0, NULL);
@@ -1714,7 +1825,7 @@ static int l_evaluate(lua_State *L) {
             if (lua_toboolean(L, S_ANGER_OF)) {
                 lua_pushvalue(L, S_ANGER_OF);
                 push_pill(e, e->A);
-                lua_call(L, 1, 1);
+                PCALL(e, L, 1, 1, S_ANGER_OF);
                 if (lua_toboolean(L, -1)) { anger = lua_tonumber(L, -1); got = 1; }
                 lua_pop(L, 1);
             }
@@ -1729,6 +1840,7 @@ static int l_evaluate(lua_State *L) {
         e->finish = fin;
     }
 
+    if (c->prof) { c->p_ns[P_SETUP] += pt_now() - pt0; c->p_n[P_SETUP] += 1; }
     Pill *A = PI(e, e->A);
     double pcx = A->mx + 0.5, pcy = A->my + 0.5;
     AllE *all = NULL; int nall = 0, capall = 0;
@@ -1751,7 +1863,7 @@ static int l_evaluate(lua_State *L) {
             if (lua_toboolean(L, S_BANNED)) {
                 lua_pushvalue(L, S_BANNED);
                 lua_pushnumber(L, deg);
-                lua_call(L, 1, 1);
+                PCALL(e, L, 1, 1, S_BANNED);
                 ban = lua_toboolean(L, -1);
                 lua_pop(L, 1);
             }
@@ -1763,7 +1875,8 @@ static int l_evaluate(lua_State *L) {
                 n_eval = n_eval + 1;
                 double px = floor(cx * 256), py = floor(cy * 256);
                 int why = 0, why_arg = 0;
-                Rec *rec = eval_point(e, px, py, NULL, 0, NULL, -1, 1, &why, &why_arg);
+                Rec *rec;
+                PTIME(e, P_EVAL_POINT, rec = eval_point(e, px, py, NULL, 0, NULL, -1, 1, &why, &why_arg));
                 if (rec) {
                     if (rec->nudge_wu > 0) {
                         cx = rec->px / 256; cy = rec->py / 256;
@@ -1774,7 +1887,7 @@ static int l_evaluate(lua_State *L) {
                     lua_pushvalue(L, S_SCORE_FN);
                     lua_pushnumber(L, deg); lua_pushnumber(L, mx); lua_pushnumber(L, my);
                     lua_pushnumber(L, cx); lua_pushnumber(L, cy);
-                    lua_call(L, 5, 1);
+                    PCALL(e, L, 5, 1, S_SCORE_FN);
                     rec->base = lua_tonumber(L, -1);
                     lua_pop(L, 1);
                     rec->flags |= RF_BASE;
@@ -1799,13 +1912,13 @@ static int l_evaluate(lua_State *L) {
                 }
             }
         }
-        if (cands.n > 1) auxsort(e, cands.v, 1, cands.n, prerank_lt);
+        if (cands.n > 1) PTIME(e, P_SORT, auxsort(e, cands.v, 1, cands.n, prerank_lt));
         RecVec scored = { NULL, 0, 0 };
         for (int i = 1; i <= cands.n; i++) {
             Rec *rec = cands.v[i];
             Rec *fin = rec;
             if ((double)i <= e->search_top && !rec->covered) {
-                fin = search_blockers(e, rec);
+                PTIME(e, P_SEARCH, fin = search_blockers(e, rec));
                 fin->deg = rec->deg; fin->cx = rec->cx; fin->cy = rec->cy;
                 fin->mx = rec->mx; fin->my = rec->my; fin->radius = rec->radius;
                 fin->flags |= RF_POS;
@@ -1830,7 +1943,7 @@ static int l_evaluate(lua_State *L) {
             for (int i = 1; (double)i <= top; i++) {
                 Rec *rec = scored.v[i];
                 LeePt *pts;
-                rec->leeway = leeway(e, rec, e->leeway_ring_wu, &pts);
+                PTIME(e, P_LEEWAY, rec->leeway = leeway(e, rec, e->leeway_ring_wu, &pts));
                 rec->lpts = pts;
                 rec->flags |= RF_LEEWAY;
                 if (rec->safe && rec->kills >= 2 && rec->leeway < e->leeway_min) {
@@ -1854,7 +1967,7 @@ static int l_evaluate(lua_State *L) {
     }
     lua_pop(L, 1);   /* radii_offsets */
     if (best && best->safe && (best->flags & RF_PLAN) && best->plan->n > 0) {
-        best->hold = hold_point(e, best);
+        PTIME(e, P_HOLD, best->hold = hold_point(e, best));
         best->flags |= RF_HOLD;
     }
 
@@ -1863,10 +1976,11 @@ static int l_evaluate(lua_State *L) {
     if (e->tt_hits > 0 && lua_toboolean(L, S_COUNT_READS)) {
         lua_pushvalue(L, S_COUNT_READS);
         lua_pushnumber(L, e->tt_hits);
-        lua_call(L, 1, 0);
+        PCALL(e, L, 1, 0, S_COUNT_READS);
     }
 
     /* result */
+    double pt_out = c->prof ? pt_now() : 0;
     lua_createtable(L, 0, 6);
     int res = lua_gettop(L);
     if (best) { push_rec(e, best); lua_setfield(L, res, "best"); }
@@ -1890,6 +2004,34 @@ static int l_evaluate(lua_State *L) {
     setnum(L, "n_reject", n_reject);
     push_plist(e, e->hostile); lua_setfield(L, res, "hostile");
     lua_pushvalue(L, S_INP); lua_setfield(L, res, "inp");
+    if (c->prof) {
+        double t1 = pt_now();
+        c->p_ns[P_OUTPUT] += t1 - pt_out; c->p_n[P_OUTPUT] += 1;
+        c->p_ns[P_TOTAL] += t1 - pt0; c->p_n[P_TOTAL] += 1;
+    }
+    return 1;
+}
+
+/* gh_pt2.prof(on): turn the profile on or off (debug only). */
+static int l_prof(lua_State *L) {
+    Pt2Ctx *c = get_ctx(L);
+    c->prof = lua_toboolean(L, 1);
+    return 0;
+}
+
+/* gh_pt2.prof_take(): { [part] = { n = calls, us = microseconds } } since
+ * the last take, then zero. Only parts with a call are listed. */
+static int l_prof_take(lua_State *L) {
+    Pt2Ctx *c = get_ctx(L);
+    lua_newtable(L);
+    for (int i = S_TTYPE; i < P_N; i++) {
+        if (c->p_n[i] == 0 || !s_prof_name[i]) continue;
+        lua_createtable(L, 0, 2);
+        lua_pushnumber(L, c->p_n[i]); lua_setfield(L, -2, "n");
+        lua_pushnumber(L, c->p_ns[i] / 1000.0); lua_setfield(L, -2, "us");
+        lua_setfield(L, -2, s_prof_name[i]);
+        c->p_n[i] = 0; c->p_ns[i] = 0;
+    }
     return 1;
 }
 
@@ -1900,13 +2042,15 @@ static int pt2_ctx_gc(lua_State *L) {
     Chunk *k = c->ar.head;
     while (k) { Chunk *n = k->next; free(k); k = n; }
     c->ar.head = c->ar.cur = NULL;
-    free(c->tt_stamp); free(c->tt_val); free(c->po_stamp); free(c->po_val); free(c->pills);
-    c->tt_stamp = NULL; c->tt_val = NULL; c->po_stamp = NULL; c->po_val = NULL; c->pills = NULL;
+    free(c->tt_stamp); free(c->tt_val); free(c->po_stamp); free(c->po_val); free(c->ba_stamp); free(c->pills);
+    c->tt_stamp = NULL; c->tt_val = NULL; c->po_stamp = NULL; c->po_val = NULL; c->ba_stamp = NULL; c->pills = NULL;
     return 0;
 }
 
 static const luaL_Reg gh_pt2_lib[] = {
     { "evaluate", l_evaluate },
+    { "prof", l_prof },
+    { "prof_take", l_prof_take },
     { NULL, NULL }
 };
 
