@@ -247,19 +247,6 @@ function M.cast(env, sx, sy, tx, ty, len, extra, res)
   return res
 end
 
--- tank_shot's tank test: the shell at (x, y) is inside the hit circle of a
--- tank of the flat list tk (ntk numbers). It is a function of its own, not
--- a loop inside tank_shot's step loop: with the loop inline, LuaJIT's trace
--- compiler aborted on it in a real game, and that abort ended WinBoloDS
--- with 0xc0000409 (Nov 19, seed 1, oilrig).
-local function ts_tank_hit(tk, ntk, x, y, r, r2)
-  for i = 1, ntk, 2 do
-    local dx, dy = x - tk[i], y - tk[i + 1]
-    if dx < r and dx > -r and dy < r and dy > -r and dx * dx + dy * dy < r2 then return true end
-  end
-  return false
-end
-
 -- The tank's own shot at a world aim point. Returns
 --   ok (the shell enters the target square before anything stops it),
 --   why ("wall", "pill", "base", "planned", "boat", "tank", "short"),
@@ -308,7 +295,14 @@ function M.tank_shot(env, ox, oy, ax, ay, tmx, tmy, extra, lane)
         if env.pill_on(mx, my) then why = "pill"; break end
       end
     end
-    if ntk > 0 and ts_tank_hit(tk, ntk, x, y, r, r2) then why = "tank"; break end
+    if ntk > 0 then
+      local hit = false
+      for i = 1, ntk, 2 do
+        local dx, dy = x - tk[i], y - tk[i + 1]
+        if dx < r and dx > -r and dy < r and dy > -r and dx * dx + dy * dy < r2 then hit = true; break end
+      end
+      if hit then why = "tank"; break end
+    end
     if new_sq then
       if extra and extra[sq] then why = "planned"; break end
       local tt = env.ttype(mx, my)
