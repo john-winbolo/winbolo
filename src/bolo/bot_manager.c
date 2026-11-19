@@ -236,6 +236,26 @@ static BotContext *botFromLua(lua_State *L) {
     return slot ? *(BotContext **)slot : NULL;
 }
 
+/* The module name for a kill site: the file name of the chunk, with no
+ * folders. short_src cuts a long chunk name at LUA_IDSIZE from the left,
+ * so a Bot Host brain (chunk "/home/.../bothost_cache/<hash>/goals.lua")
+ * printed as "[string "/home/andrew/winbolo-test/build-bh/bothost_ca..."]"
+ * and the module was lost. A chunk whose source is code, not a name (it
+ * holds a new line), keeps short_src. Returns a pointer into loc. */
+static const char *brainKillSiteName(const lua_Debug *loc) {
+    const char *src = loc->source;
+    const char *base;
+    const char *p;
+    if (src == NULL || src[0] == '\0') return loc->short_src;
+    if (src[0] == '@' || src[0] == '=') src++;
+    if (strchr(src, '\n') != NULL) return loc->short_src;
+    base = src;
+    for (p = src; *p != '\0'; p++) {
+        if (*p == '/' || *p == '\\') base = p + 1;
+    }
+    return base[0] != '\0' ? base : loc->short_src;
+}
+
 /* Lua count hook installed for the duration of brain.think(). Fires
  * every ~1000 VM instructions; checks the per-bot deadline and, on
  * overrun, sets abort_flag and longjmps out via luaL_error. */
@@ -255,7 +275,7 @@ static void brainBudgetHook(lua_State *L, lua_Debug *ar) {
             lua_Debug loc;
             if (lua_getstack(L, 0, &loc) && lua_getinfo(L, "Sl", &loc)) {
                 SDL_snprintf(bot->killSite, sizeof(bot->killSite), "%s:%d",
-                             loc.short_src, loc.currentline);
+                             brainKillSiteName(&loc), loc.currentline);
             } else {
                 bot->killSite[0] = '\0';
             }

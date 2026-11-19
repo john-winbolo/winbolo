@@ -262,7 +262,28 @@ local function may_part(s, state)
   if tgt <= 0 then return true end
   local t0 = state._think_t0_us
   local so_far = t0 and (clock_us() - t0) / 1000 or 0
-  return so_far + est_part_ms(s, state) < tgt
+  -- PT2_DBL_PART_LEAVE_REST: leave room for the rest of the think too.
+  local rest = C.PT2_DBL_PART_LEAVE_REST and s.rest_ms or 0
+  return so_far + est_part_ms(s, state) + rest < tgt
+end
+
+-- PT2_DBL_PART_LEAVE_REST: the rest-of-think account. mark() at the shadow
+-- pump (each tick the pool queue runs), parts add their us, and
+-- note_think_end() at the main think exit takes the time since the mark,
+-- minus this tick's parts, into the EWMA s.rest_ms. A killed think never
+-- reaches the exit and gives no sample.
+local function rest_mark(s, now)
+  s.rest_mark_tick, s.rest_mark_us, s.rest_part_us = now, clock_us(), 0
+end
+
+function M.note_think_end(state, now)
+  local s = state and state._pt2_dbl
+  if not s or s.rest_mark_tick ~= now then return end
+  s.rest_mark_tick = nil
+  local ms = (clock_us() - s.rest_mark_us - (s.rest_part_us or 0)) / 1000
+  if ms < 0 then ms = 0 end
+  local a = C.CAPACITY_EWMA_ALPHA or 0.2
+  s.rest_ms = s.rest_ms and (s.rest_ms * (1 - a) + ms * a) or ms
 end
 
 -- Is the job's next part due on tick now? Part k of n is due on tick
@@ -281,6 +302,7 @@ local function job_part(s, state, job, now)
   local t0 = clock_us()
   local ok, done = pcall(V2.group_step, job.g)
   local us = clock_us() - t0
+  if s.rest_part_us then s.rest_part_us = s.rest_part_us + us end
   local a = C.CAPACITY_EWMA_ALPHA or 0.2
   s.est_part_ms = (s.n_parts == 0) and us / 1000 or s.est_part_ms * (1 - a) + (us / 1000) * a
   s.n_parts = s.n_parts + 1
@@ -312,6 +334,7 @@ end
 function M.pump(state, world, info, now)
   if not on() or not C.PT2_DBL_SPLIT then return end
   local s = state and state._pt2_dbl
+  if s and C.PT2_DBL_PART_LEAVE_REST then rest_mark(s, now) end
   local job = s and s.job
   if not job then return end
   s.pn = info.player_number
@@ -447,9 +470,9 @@ function M.charge(state, now, us)
       tostring(s.pn), now, ticks, s.n_runs, s.n_runs > 0 and s.run_us_sum / s.n_runs or 0, s.run_us_max,
       s.us_sum / ticks, math.max(s.us_tick_max, s.us_cur), s.n_jobs, s.n_drop, s.n_parts,
       s.n_parts > 0 and s.part_us_sum / s.n_parts or 0, s.part_us_max)
-      .. string.format(" drops_cap=%d waits=%d big2ms=%d big_mean_us=%.0f job_ticks_mean=%.2f job_ticks_p90=%d est_part_ms=%.2f",
+      .. string.format(" drops_cap=%d waits=%d big2ms=%d big_mean_us=%.0f job_ticks_mean=%.2f job_ticks_p90=%d est_part_ms=%.2f rest_ms=%.2f",
       s.n_drop_cap, s.n_wait, s.n_big, s.n_big > 0 and s.big_us_sum / s.n_big or 0,
-      nj > 0 and sj / nj or 0, p90, s.est_part_ms)
+      nj > 0 and sj / nj or 0, p90, s.est_part_ms, s.rest_ms or 0)
     logline(line)
   end
 end

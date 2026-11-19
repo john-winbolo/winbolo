@@ -70,7 +70,7 @@ local function chain_answer()
 end
 
 local saved = {}
-for _, k in ipairs({ "PT2_DOUBLE_TAKE_DISCOUNT", "PILLTAKE_V2_EVALUATOR", "PT2_CHAINS", "PT2_DBL_SPLIT" }) do saved[k] = C[k] end
+for _, k in ipairs({ "PT2_DOUBLE_TAKE_DISCOUNT", "PILLTAKE_V2_EVALUATOR", "PT2_CHAINS", "PT2_DBL_SPLIT", "PT2_DBL_PART_LEAVE_REST" }) do saved[k] = C[k] end
 C.PT2_DBL_SPLIT = false   -- the one-go path first; the split has its own section
 
 -- ── knob off ──────────────────────────────────────────────────────────────
@@ -225,6 +225,25 @@ do
   st._think_t0_us = T
   D.pump(st, world, info, at(63))
   check("next tick: the late part and the due one run", s.job.n == 3, s.job.n)
+  -- PT2_DBL_PART_LEAVE_REST: the rest-of-think EWMA also needs room
+  s.job = nil; s.by_id[1] = nil
+  st._think_t0_us = T - 8000            -- 8.0 + 0.9 < 10, + rest 1.5 >= 10
+  s.rest_ms = 1.5
+  C.PT2_DBL_PART_LEAVE_REST = true
+  check("rest: no start", D.get(st, world, info, 1, A, at(64)) == nil and s.job == nil)
+  C.PT2_DBL_PART_LEAVE_REST = false
+  D.get(st, world, info, 1, A, at(65))
+  check("rest knob off: start", s.job and s.job.n == 1)
+  C.PT2_DBL_PART_LEAVE_REST = true
+  -- the sample: time since the pump mark, this tick's parts taken off
+  s.rest_ms = 2
+  s.rest_mark_tick, s.rest_mark_us, s.rest_part_us = 66, T - 5000, 1000
+  D.note_think_end(st, 66)
+  local a = C.CAPACITY_EWMA_ALPHA or 0.2
+  check("rest sample: EWMA of 4 ms", math.abs(s.rest_ms - (2 * (1 - a) + 4 * a)) < 1e-9, s.rest_ms)
+  D.note_think_end(st, 66)
+  check("rest sample: once per mark", math.abs(s.rest_ms - (2 * (1 - a) + 4 * a)) < 1e-9, s.rest_ms)
+  s.rest_ms = nil
   _G.brain = nil
   st._think_t0_us = nil
   s.job = nil
