@@ -697,6 +697,9 @@ int run_shield_pill_cover_walls(void);
  * with the minimum clear lane (knob BLOCKER_MIN_LANE_BRAD,
  * test_gh_attack_lane_parity.c). */
 int run_gh_attack_lane_parity(void);
+/* Pill take v2 evaluator: gh_pt2.c against pilltake_v2.lua
+ * (test_gh_pt2_parity.c). */
+int run_gh_pt2_parity(void);
 int run_pf_tail_reaches_radius_and_stops(void);
 int run_pf_tail_blocked_by_wall_and_sea(void);
 int run_pf_tail_neutral_zone_slows(void);

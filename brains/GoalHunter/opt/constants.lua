@@ -1088,6 +1088,16 @@ M.PT2_DBL_EVALS_PER_TICK = 1
 -- gives no discount on a chain with a claimed pill (pt2_claim.lua).
 -- false = claims name the target only.
 M.PT2_CHAIN_CLAIM = true
+-- PT2_C_EVAL (Nov 18, Andrew: "we need a C port of pill take v2"): true =
+-- pilltake_v2.evaluate runs the C copy (brains/GoalHunter/c/gh_pt2.c) when
+-- the exe has it (global gh_pt2). The C gives the same result as the Lua
+-- (parity test test_gh_pt2_parity), only faster. An older exe (Bot Host)
+-- has no gh_pt2 and runs the Lua. false = always the Lua.
+M.PT2_C_EVAL = true
+-- PT2_CAPTURE_FILE (debug only): a file path. When set, every v2 evaluate
+-- appends its inputs and the Lua result to the file, for the parity test
+-- cases. "" = off.
+M.PT2_CAPTURE_FILE = ""
 -- SHOT_PATH_SKIP_DEAD_PILLS: v1's shot-path checks (attack.lua
 -- standoff_shot_obstacle, attack_shield.lua score_aim outgoing ray,
 -- pathfinder.lua pill_shots_clear) count only a LIVE pill (health > 0, not
@@ -7812,6 +7822,8 @@ M.PRESETS = {
     PT2_HAUL_KEEP_TAKE = false,
     PT2_DOUBLE_TAKE_DISCOUNT = false,
     PT2_CHAIN_CLAIM = false,
+    --   2026-11-18: pill take v2 in Lua only (no C copy).
+    PT2_C_EVAL = false,
     --   2026-11-17: hold 15 ticks with no goal after a kill (old rule).
     POST_KILL_WAIT_TICKS = 15,
     --   2026-11-17: carrying-pill approach floor 30 (old rule).
@@ -8133,6 +8145,7 @@ M.PRESETS.mast = {
   PT2_HAUL_KEEP_TAKE                = false,  -- 2.2.1 had no pill take v2
   PT2_DOUBLE_TAKE_DISCOUNT          = false,  -- 2.2.1 had no pill take v2
   PT2_CHAIN_CLAIM                   = false,  -- 2.2.1 had no pill take v2
+  PT2_C_EVAL                        = false,  -- 2.2.1 had no pill take v2
   POST_KILL_WAIT_TICKS              = 15,
   CARRY_APPROACH_MIN_ARMOUR_ONE     = 30,
   CARRY_APPROACH_MIN_ARMOUR_MANY    = 30,
