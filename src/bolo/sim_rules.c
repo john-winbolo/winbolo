@@ -978,16 +978,29 @@ static const SimRuleValueKind simRuleValueKinds[] = {
 /* The bounds, off the same list the arms are generated from. An INTMIN row
  * carries the ceiling simRulesWhyInt prints and answers hasHi false, since
  * what caps it is another rule or nothing. cappedBy is -1 in every row here
- * and the pair table below is what fills it in. */
+ * and the pair table below is what fills it in.
+ *
+ * A float row's ends go through a float on the way, because that is the
+ * bound RULE_FLT tests against: 0.01 written as a float is a hair under
+ * 0.01 written as a double. A form holds what an author typed in a float
+ * too, so against the double a rule set to its own floor read as below
+ * it, when the check accepts it. */
 #define SIM_RULE_RANGE_HAS_HI_INT    true
 #define SIM_RULE_RANGE_HAS_HI_INTMIN false
 #define SIM_RULE_RANGE_HAS_HI_FLT    true
+#define SIM_RULE_RANGE_END_INT(v)    ((double) (v))
+#define SIM_RULE_RANGE_END_INTMIN(v) ((double) (v))
+#define SIM_RULE_RANGE_END_FLT(v)    ((double) (float) (v))
 #define SIM_RULE_RANGE_ROW(field, shape, lo, hi)                             \
-    { (double) (lo), (double) (hi), SIM_RULE_RANGE_HAS_HI_##shape, -1 },
+    { SIM_RULE_RANGE_END_##shape(lo), SIM_RULE_RANGE_END_##shape(hi),        \
+      SIM_RULE_RANGE_HAS_HI_##shape, -1 },
 static const SimRuleRange simRuleRanges[] = {
     SIM_RULE_BOUND_LIST(SIM_RULE_RANGE_ROW)
 };
 #undef SIM_RULE_RANGE_ROW
+#undef SIM_RULE_RANGE_END_INT
+#undef SIM_RULE_RANGE_END_INTMIN
+#undef SIM_RULE_RANGE_END_FLT
 #undef SIM_RULE_RANGE_HAS_HI_INT
 #undef SIM_RULE_RANGE_HAS_HI_INTMIN
 #undef SIM_RULE_RANGE_HAS_HI_FLT
