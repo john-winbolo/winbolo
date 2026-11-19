@@ -632,7 +632,21 @@ end
 --   leeway_top, own_pill_rank, search_top, pill_range, range_margin,
 --   blocker_min_dist, orth_only
 --   keep_all              (optional) keep every candidate for the overlay
+--   c_eval                (optional, PT2_C_EVAL) run the C copy when the exe has it
+--   capture_file          (optional, PT2_CAPTURE_FILE) log the case for the parity test
+--
+-- M.evaluate picks the copy: the C one (gh_pt2.evaluate, gh_pt2.c) when
+-- inp.c_eval is on and the exe registered it, else M.evaluate_lua. Both give
+-- the same result (test_gh_pt2_parity). An old exe has no gh_pt2: Lua runs.
 function M.evaluate(inp)
+  local cf = inp.capture_file
+  if cf and cf ~= "" then return require("pt2_capture").evaluate(M, inp, cf) end
+  local g = inp.c_eval and rawget(_G, "gh_pt2")
+  if g then return g.evaluate(inp, M) end
+  return M.evaluate_lua(inp)
+end
+
+function M.evaluate_lua(inp)
   local A = inp.A
   local env = inp.env
   local ctx = new_ctx(inp, A)
@@ -866,6 +880,12 @@ function M.world_env(world, C, U, PC)
   env.base_stops = function(mx, my)
     return U.base_tile_stops_tank_shell(world, mx, my, env.omx or mx, env.omy or my)
   end
+  -- For the C copy (gh_pt2.c): base_stops is false on a square with no
+  -- base_at entry, so the C skips the call there. The C reads each
+  -- square's terrain once per evaluate; count_reads(n) adds the reads it
+  -- took from its cache to U.ttype's counter.
+  env.base_at = world.base_at
+  env.count_reads = function(n) require("metrics").inc("get_terrain", n) end
   return env
 end
 
@@ -908,6 +928,8 @@ function M.knob_inp(C, inp)
   inp.aim_nudge        = C.PT2_AIM_NUDGE ~= false
   inp.nudge_step_wu    = 8                -- attack_shield.lua NUDGE_STEP_WU
   inp.nudge_max_steps  = 32               -- attack_shield.lua NUDGE_MAX_STEPS
+  inp.c_eval           = C.PT2_C_EVAL ~= false
+  inp.capture_file     = C.PT2_CAPTURE_FILE
   return inp
 end
 
