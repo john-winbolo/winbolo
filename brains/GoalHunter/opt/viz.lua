@@ -313,6 +313,8 @@ M.IDS = {
                              long  = "The active focused-spike plan: red double rings on its target bases, and each spike spot with player N and its state (going / placed / dropped / gone)." },
   wounded_pill_marker    = { short = "Wounded pill marker",
                              long  = "Marker on the wounded-pill carryover target" },
+  human_pill_claim       = { short = "Human pill claim",
+                             long  = "HUMAN_PILL_YIELD (human_intent.lua): each allied human this bot sees, with its heading cone (HUMAN_YIELD_CONE_DEG, HUMAN_YIELD_RADIUS_TILES long); its cone candidate pill (yellow ring) with the hold timer; and each claimed dead pill (magenta ring) with the owner player N, how it was claimed (close / shot / cone) and the claim time, or the time left after a release. Grey = the bot does not yield (an enemy is clearly closer, or a person's order is on that pill)." },
   kill_pickup            = { short = "Fresh-kill pickup",
                              long  = "Ring + tank line on the pill we just killed and are committing HARD to grab (yellow=ours, magenta=yielded to a higher-armour blitz ally)" },
   pool6_self_dr          = { short = "self_dr per pool-6 pill",

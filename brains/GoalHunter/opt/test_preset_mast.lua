@@ -865,6 +865,7 @@ local R221 = {
   PT2_ANGLE_STEP_DEG = 2,
   WARMUP_IGNORE_EVAL_IV = false,
   WARMUP_KEEP_QUEUE = false,
+  HUMAN_PILL_YIELD = false,
   PT2_CHAIN_CLAIM = false,
   PT2_C_EVAL = false,
   PT2_FAST_SETUP = false,

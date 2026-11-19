@@ -3551,6 +3551,9 @@ function Brain.think(info)
   -- Update world knowledge
   local t_wu0 = BRAIN_PROFILE and clock_us() or 0
   W.update(world, info, now)
+  -- HUMAN_PILL_YIELD: track allied humans and their dead-pill claims every
+  -- think (require, not a local: think() is at the upvalue cap).
+  if C.HUMAN_PILL_YIELD then require("human_intent").update(state, world, info, now) end
   local t_wu1 = BRAIN_PROFILE and clock_us() or 0
   if BRAIN_PROFILE then
     opt(string.format("  W.update done %.2f ms", (t_wu1 - t_wu0) / 1000))
@@ -6261,6 +6264,10 @@ function Brain.think(info)
     if goals.sync_ally_claimed_rejects then
       goals.sync_ally_claimed_rejects(state, info)
     end
+    -- HUMAN_PILL_YIELD: the goal's pill is now a human's claim. Drop the goal
+    -- (before goal selection, so the replan lands this tick), like the
+    -- ally_blocker yield below.
+    if C.HUMAN_PILL_YIELD then require("human_intent").drop_goal(state, now) end
 
     -- ── attack_pill steal negotiation (stq/sta/str) ──────────────────────
     -- Companion to sync_ally_claimed_rejects' pool-6 rules. Three duties:
@@ -10567,6 +10574,7 @@ function Brain.think(info)
     reposition_vote.draw(state, world, info, state.tick)
     -- Focused spike overlays (require, not a local: think() is at the upvalue cap).
     require("focus_viz").draw(state, world, info, state.tick)
+    if C.HUMAN_PILL_YIELD then require("human_intent").draw(state, world, state.tick) end
     squad.draw_roster(state, info, state.tick)
     squad.draw_labels(state, info, state.tick)
     squad.draw_blitz(state, info, state.tick)
