@@ -5678,7 +5678,7 @@ end
 local DEFEND_BOOST = {}
 function DEFEND_BOOST.mult(info)
   if C.DEFEND_BOOST and U.human_ally_boost(info) then
-    return C.DEFEND_BOOST_GOAL_MULT or 0.8
+    return C.DEFEND_BOOST_GOAL_MULT or 0.9
   end
   return 1.0
 end

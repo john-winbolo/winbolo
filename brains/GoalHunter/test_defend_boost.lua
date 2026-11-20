@@ -1,11 +1,11 @@
 -- =========================================================================
 -- test_defend_boost.lua — standalone unit tests (2026-11-20) for DEFEND_BOOST
--- (constants.lua): every defend_pill row cost x DEFEND_BOOST_GOAL_MULT (0.8),
+-- (constants.lua): every defend_pill row cost x DEFEND_BOOST_GOAL_MULT (0.9),
 -- only with a human ally on the team (util.human_ally_boost) or the test-only
 -- knob HUMAN_ALLY_BOOST_TEST_FORCE:
 --   * the knobs and the KEEL / MAST presets;
 --   * the alarm pool (DEFEND_ALARM_MODE, the default) and the old pool: the
---     returned cost and every row cost are x0.8 with the gate on, x1 with no
+--     returned cost and every row cost are x0.9 with the gate on, x1 with no
 --     human ally or the knob off; the winner is the same pill;
 --   * the row formula and the winner desc carry the defend_boost chip.
 -- No engine: every path costs 10.
@@ -49,7 +49,7 @@ local function near(a, b) return type(a) == "number" and type(b) == "number" and
 
 print("knobs")
 check("DEFEND_BOOST default true", C.DEFEND_BOOST == true)
-check("DEFEND_BOOST_GOAL_MULT 0.8", C.DEFEND_BOOST_GOAL_MULT == 0.8, C.DEFEND_BOOST_GOAL_MULT)
+check("DEFEND_BOOST_GOAL_MULT 0.9", C.DEFEND_BOOST_GOAL_MULT == 0.9, C.DEFEND_BOOST_GOAL_MULT)
 check("keel: DEFEND_BOOST false", C.PRESETS.keel.DEFEND_BOOST == false)
 check("mast: DEFEND_BOOST false", C.PRESETS.mast.DEFEND_BOOST == false)
 
@@ -88,21 +88,21 @@ for _, alarm in ipairs({ true, false }) do
   if type(off) ~= "table" or type(on) ~= "table" then
     check(tag .. ": pool returns a row", false, tostring(soff) .. " / " .. tostring(son))
   else
-    check(tag .. ": human ally: cost x0.8", near(on.cost, 0.8 * off.cost),
+    check(tag .. ": human ally: cost x0.9", near(on.cost, 0.9 * off.cost),
           string.format("%s vs %s", tostring(on.cost), tostring(off.cost)))
     check(tag .. ": same winner", on.goal.target_id == off.goal.target_id)
     check(tag .. ": bot-only: cost unchanged", bot and near(bot.cost, off.cost), bot and bot.cost)
-    check(tag .. ": force knob: cost x0.8", frc and near(frc.cost, 0.8 * off.cost), frc and frc.cost)
+    check(tag .. ": force knob: cost x0.9", frc and near(frc.cost, 0.9 * off.cost), frc and frc.cost)
     check(tag .. ": desc has the chip",
-          on.desc:find("*defend_boost{x0.80 DEFEND_BOOST_GOAL_MULT, human ally}", 1, true) ~= nil, on.desc)
+          on.desc:find("*defend_boost{x0.90 DEFEND_BOOST_GOAL_MULT, human ally}", 1, true) ~= nil, on.desc)
     check(tag .. ": bot-only desc has no chip", bot and not bot.desc:find("defend_boost", 1, true), bot and bot.desc)
     local ron = son.defend_breakdown and son.defend_breakdown.rows[1]
     local roff = soff.defend_breakdown and soff.defend_breakdown.rows[1]
-    check(tag .. ": row cost x0.8", ron and roff and near(ron.cost, 0.8 * roff.cost),
+    check(tag .. ": row cost x0.9", ron and roff and near(ron.cost, 0.9 * roff.cost),
           ron and ron.cost)
     local head = ron and ron.formula:match("^(.-)||") or ""
-    check(tag .. ": row chip before ||", head:find("*defend_boost{x0.80", 1, true) ~= nil, ron and ron.formula)
-    check(tag .. ": row sel preview names xdb0.80", head:find("xdb0.80", 1, true) ~= nil, head)
+    check(tag .. ": row chip before ||", head:find("*defend_boost{x0.90", 1, true) ~= nil, ron and ron.formula)
+    check(tag .. ": row sel preview names xdb0.90", head:find("xdb0.90", 1, true) ~= nil, head)
   end
 end
 _G.BRAIN_POOL_VIZ = nil
