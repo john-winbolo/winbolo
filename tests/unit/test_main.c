@@ -1364,6 +1364,7 @@ static const UnitTestEntry s_tests[] = {
     { "loopback_command_submitted_during_rejoin", run_loopback_command_submitted_during_rejoin },
     { "loopback_channel",                        run_loopback_channel                        },
     { "loopback_hitch_recovers",                 run_loopback_hitch_recovers                 },
+    { "prediction_slow_tank_no_corrections",     run_prediction_slow_tank_no_corrections     },
     { "loopback_quit_keeps_peer",                run_loopback_quit_keeps_peer                },
     { "loopback_join_accept_lost_ready",         run_loopback_join_accept_lost_ready         },
     { "send_drains_channels_multi_frame",        run_send_drains_channels_multi_frame        },

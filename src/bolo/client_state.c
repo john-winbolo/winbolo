@@ -78,6 +78,22 @@ void clientStateRecordInput(ClientState *cs, const InputPacket *pkt) {
     cs->newestInput = pkt->tick;
 }
 
+void clientStateNoteResidual(ClientState *cs, uint32_t tick, tank *predictedTank) {
+    uint8_t idx = tick & (CLIENT_INPUT_HISTORY_SIZE - 1);
+    if (*predictedTank == NULL || cs->history[idx].tick != tick) {
+        return;
+    }
+    cs->residualAfter[idx] = tankGetResidualSpeed(predictedTank);
+}
+
+void clientStateRestoreResidual(const ClientState *cs, uint32_t tick, tank *predictedTank) {
+    uint8_t idx = tick & (CLIENT_INPUT_HISTORY_SIZE - 1);
+    if (*predictedTank == NULL || cs->history[idx].tick != tick) {
+        return;
+    }
+    tankSetResidualSpeed(predictedTank, cs->residualAfter[idx]);
+}
+
 void clientStateTankUpdate(struct GameSim *sim, tank *predictedTank, tankButton tb,
                            bool inBrain, const InputPacket *pkt) {
     /* The server applies each input's INPUT_FLAG_AUTOSLOW before stepping
@@ -105,6 +121,7 @@ void clientStatePredictTick(ClientSim *csim, ClientState *cs, const InputPacket 
      * tankUpdate during death would trigger tankDeath on the client
      * side, picking a different start position than the server. */
     if (tankIsDestroyed(predictedTank) || tankGetDeathWait(predictedTank) > 0) {
+        clientStateNoteResidual(cs, pkt->tick, predictedTank);
         return;
     }
 
@@ -134,6 +151,7 @@ void clientStatePredictTick(ClientSim *csim, ClientState *cs, const InputPacket 
         clientStateTankUpdate(sim, predictedTank, tb, inBrain, pkt);
     }
     sim->isPredicting = FALSE;
+    clientStateNoteResidual(cs, pkt->tick, predictedTank);
 }
 
 bool clientStateReconcile(ClientSim *csim, ClientState *cs, uint32_t lastProcessedInput,
@@ -205,6 +223,7 @@ bool clientStateReconcile(ClientSim *csim, ClientState *cs, uint32_t lastProcess
             /* Replay without shooting to avoid duplicate shells */
             clientStateTankUpdate(sim, predictedTank, tb, FALSE, histPkt);
         }
+        clientStateNoteResidual(cs, tick, predictedTank);
     }
     sim->isPredicting = FALSE;
 

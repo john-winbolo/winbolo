@@ -1705,6 +1705,12 @@ BYTE tankGetFirstRight(tank *value);
 void tankSetFirstLeft(tank *value, BYTE val);
 void tankSetFirstRight(tank *value, BYTE val);
 
+/* The speed a tank moving slower than tank_min_move has saved up towards its
+ * next move. No snapshot carries it, so a client that replays inputs from a
+ * snapshot keeps its own record of it (client_state.h). */
+BYTE tankGetResidualSpeed(tank *value);
+void tankSetResidualSpeed(tank *value, BYTE val);
+
 /*********************************************************
 *NAME:          tankSetLastTankDeath
 *AUTHOR:        Chris Lesnieski
