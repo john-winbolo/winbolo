@@ -1689,6 +1689,26 @@ M.REPAIR_DAMAGE_BONUS      = 3     -- cost reduction per missing HP on friendly 
 M.REPAIR_LOW_DMG_MULT_MAX  = 4.0   -- markup at dmg 1
 M.REPAIR_LOW_DMG_MULT_AT5  = 1.10  -- markup at dmg REPAIR_LOW_DMG_MAX
 M.REPAIR_LOW_DMG_MAX       = 5     -- last dmg with a markup; above it x1
+-- REPAIR_BOOST (Nov 19, Andrew GO, board #241: "about 20% more repairing in
+-- all the pills"). ONLY for a bot whose team has a human ally
+-- (util.human_ally_boost; Andrew Nov 19: "all these are just for bots that
+-- are allies to humans"). A bot-only game is unchanged. Two factors:
+--   * the repair_pill goal cost (pool 5, live AND dead pills) x
+--     REPAIR_BOOST_GOAL_MULT, after the low-damage, contest and spike
+--     multipliers, before the phase weight and the goal switch penalty;
+--     the fallback eval_repair_pill gets the same factor;
+--   * the builder pool's topup and rebuild score x REPAIR_BOOST_BUILDER_MULT,
+--     with the goal-pill / ping weight (builder_pool apply_goal_weight),
+--     before the spike bonus and the BUILDER_POOL_MIN_SCORE bar. Not on a
+--     forced (ping) row, which has its own flat bonus, and not on farm rows.
+-- false = no factor (PRESETS.keel and PRESETS.mast).
+M.REPAIR_BOOST              = true
+M.REPAIR_BOOST_GOAL_MULT    = 0.8   -- pool-5 repair_pill cost x0.8
+M.REPAIR_BOOST_BUILDER_MULT = 1.2   -- builder pool topup/rebuild score x1.2
+-- TEST ONLY. true = util.human_ally_boost acts as if the team had a human
+-- ally, so a bot-only bench game can measure the human-ally factors
+-- (REPAIR_BOOST, REPAIR_SMALL_TOPUP, DEFEND_BOOST). Never true in play.
+M.HUMAN_ALLY_BOOST_TEST_FORCE = false
 M.REPAIR_CONTESTED_MULT    = 3.0   -- repair cost ??N when an enemy tank is closer to the pill than us (contested ??? likely futile)
 -- Repair contest terms (2026-09-02 rework). REPAIR_CONTESTED_MULT above is kept
 -- as the value and as the name anything older may still read; the live pool-5
@@ -5586,6 +5606,21 @@ M.BUILDER_POOL_TOPUP_PER_HP    = 6    -- + this per point of missing armour on a
                                       -- a 4/15 pill outbids a 14/15 one
 M.BUILDER_POOL_TOPUP_MIN_MISSING = 4  -- don't walk out for less than one tree's worth
                                       -- (PILL_REPAIR_AMOUNT) of damage
+-- REPAIR_SMALL_TOPUP (Nov 19, board #241): the pool makes topup rows from
+-- BUILDER_POOL_TOPUP_MIN_MISSING_SMALL missing hp instead of
+-- BUILDER_POOL_TOPUP_MIN_MISSING. builder_pool.topup_min_missing() is the one
+-- reader. builder_can_repair (the pool-5 hand-off, REPAIR_SPLIT) uses the same
+-- minimum while the knob is on, so a pill the pool would not take is never
+-- handed to it: it stays a repair_pill tank goal row. Spike, quick, seed and
+-- ping rows keep their own rules. false = the old minimum and the old
+-- hand-off (the default; KEEL and MAST had it). Like REPAIR_BOOST, ONLY for a bot
+-- whose team has a human ally (util.human_ally_boost).
+-- Default false (Nov 20 bench, DH-Oil Rig seed 3, 4 hard bots, forced human
+-- ally): REPAIR_BOOST alone moved the share of damaged-pill time on repair
+-- from 4.0% to 4.4% (+10%); with this knob too it was 6.5% (+63%), this knob
+-- alone 7.3% (+83%). The target was about +20%, so only REPAIR_BOOST is on.
+M.REPAIR_SMALL_TOPUP                   = false
+M.BUILDER_POOL_TOPUP_MIN_MISSING_SMALL = 2
 
 -- ── Trip and danger: what the job COSTS ──────────────────────────────────
 --   cost = TRIP_W * round_trip_ticks + DANGER_W * threat_at_target
@@ -7950,6 +7985,9 @@ M.PRESETS = {
     WARMUP_KEEP_QUEUE = false,
     --   2026-11-19: no human pill claim.
     HUMAN_PILL_YIELD = false,
+    --   2026-11-19: no repair boost (REPAIR_SMALL_TOPUP and
+    --   HUMAN_ALLY_BOOST_TEST_FORCE are false by default).
+    REPAIR_BOOST = false,
     PT2_CHAIN_CLAIM = false,
     --   2026-11-18: pill take v2 in Lua only (no C copy).
     PT2_C_EVAL = false,
@@ -8283,6 +8321,7 @@ M.PRESETS.mast = {
   WARMUP_IGNORE_EVAL_IV             = false,  -- 2.2.1: eval_iv throttle in warm-up too
   WARMUP_KEEP_QUEUE                 = false,  -- 2.2.1: every replan rebuilt the queue
   HUMAN_PILL_YIELD                  = false,  -- 2.2.1 had no human pill claim
+  REPAIR_BOOST                      = false,  -- 2.2.1 had no repair boost
   PT2_CHAIN_CLAIM                   = false,  -- 2.2.1 had no pill take v2
   PT2_C_EVAL                        = false,  -- 2.2.1 had no pill take v2
   POST_KILL_WAIT_TICKS              = 15,

@@ -61,8 +61,9 @@ static const TermDoc kTermDocs[] = {
     {"bp_danger", "threat.at(target tile) — hostile pills/tanks that have the job tile in range. Charged on non-linear rows only; printed but NOT charged on linear repair rows"},
     {"danger_w",  "BUILDER_POOL_DANGER_W — points charged per danger unit (non-linear rows)"},
     {"dangercost","danger_w x bp_danger — the danger cost subtracted from value (non-linear rows)"},
-    {"bp_raw",    "Builder-pool score BEFORE the goal-pill bonus — value minus the costs above. Printed only on a row that got the bonus; bp_raw x goal_w is the bp_score at the head of the line."},
+    {"bp_raw",    "Builder-pool score BEFORE the goal-pill bonus and the repair boost — value minus the costs above. Printed only on a row that got either; bp_raw x goal_w x repair_boost is the bp_score at the head of the line."},
     {"goal_w",    "Goal-pill bonus (MULTIPLIER on the WHOLE builder-pool score, BUILDER_POOL_GOAL_PILL_BONUS = 1.2): this row's pill is the tank goal's own target (defend_pill / repair_pill target_id), so the tank is parked there and the man walks home to it. Applied after the linear/legacy arithmetic and before the MIN_SCORE bar and the ordering. The chip is printed ONLY when the factor is not 1 — its absence means this row is not the goal's pill, or the bonus is 1.0 (preset=keel, where the goal's pill was first by SEEDING instead)."},
+    {"repair_boost", "Repair boost (REPAIR_BOOST, MULTIPLIER REPAIR_BOOST_BUILDER_MULT = 1.2 on the WHOLE builder-pool score of every topup / rebuild row, after goal_w): bp_raw x goal_w x repair_boost is the bp_score. Only when the bot's team has a human ally. Not on farm or forced rows; absent when REPAIR_BOOST is off (preset=keel, preset=mast) or with no human ally."},
     /* ── LOADED, BUILDER-LESS (constants.lua LOADED_NO_LGM_* / *_NO_LGM_* /
      * KILL_ME_*). The state: >= LOADED_NO_LGM_MIN_PILLS pillboxes aboard and
      * the builder either DEAD or more than LOADED_NO_LGM_ETA_TICKS of walking

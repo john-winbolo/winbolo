@@ -1503,6 +1503,12 @@ local function eval_repair_pill(state, world, info, tmx, tmy, boat, ammo)
       adj_cost = adj_cost * (C.REPAIR_ENEMY_IN_RANGE_MULT or 1.5)
     end
   end
+  -- REPAIR_BOOST: same factor as the pool-5 copy, live and dead pills.
+  local rp_boost = nil
+  if C.REPAIR_BOOST and adj_cost < 1e30 and U.human_ally_boost(info) then
+    rp_boost = C.REPAIR_BOOST_GOAL_MULT or 0.8
+    adj_cost = adj_cost * rp_boost
+  end
   local rp_chip = ""
   if rp_lowdmg ~= 1 then
     rp_chip = string.format(" x%.2f lowdmg(dmg=%d)", rp_lowdmg, damage)
@@ -1516,6 +1522,9 @@ local function eval_repair_pill(state, world, info, tmx, tmy, boat, ammo)
     rp_chip = rp_chip .. string.format(" x%.1f ENEMY_IN_RANGE(#%s %.1ft %s)",
       C.REPAIR_ENEMY_IN_RANGE_MULT or 1.5,
       tostring(rp_soft_id), rp_soft_d or -1, tostring(rp_soft_why))
+  end
+  if rp_boost then
+    rp_chip = rp_chip .. string.format(" x%.2f repair_boost(REPAIR_BOOST_GOAL_MULT, human ally)", rp_boost)
   end
   -- Pool-viz: surface friendly damaged pills we DIDN'T repair because they're a
   -- team-declared take blocker (filtered out above via not p._in_use). Shown as
@@ -13262,6 +13271,15 @@ function M.step_eval_queue(state, world, info)
         _rp_spk = M.spike.tank_mult(state, obj.mx, obj.my, now)
         if _rp_spk then c = c * _rp_spk end
       end
+      -- REPAIR_BOOST (constants.lua): x REPAIR_BOOST_GOAL_MULT on every live
+      -- and dead repair row, the last of the pool-5 multipliers. Before the
+      -- phase weight and the goal switch penalty. Not on an INF row. Only
+      -- with a human ally on the team (U.human_ally_boost).
+      local _rp_boost = nil
+      if pool_idx == 5 and c < 1e30 and C.REPAIR_BOOST and U.human_ally_boost(info) then
+        _rp_boost = C.REPAIR_BOOST_GOAL_MULT or 0.8
+        c = c * _rp_boost
+      end
 
       -- Ally-claimed handling for generic pools (2,3,4,5,6,7,8).
       --
@@ -13480,6 +13498,7 @@ function M.step_eval_queue(state, world, info)
         entry._rp_soft_d = _rp_soft_d
         entry._rp_soft_why = _rp_soft_why
         entry._spk_mult = _rp_spk
+        entry._rp_boost = _rp_boost
         entry._skipped = entry_skipped_builder
       else
         entry._stale=stale_cost; entry._age=_gen_age
@@ -15436,10 +15455,12 @@ function M.finalize_pools(state, world, info)
     if BRAIN_POOL_VIZ then
       if pill.health == 0 then
         local ce5d = state.cost_cache and state.cost_cache["5:" .. pid]
-        desc5 = string.format("repair_pill#%d@(%d,%d) cost=%.0f REBUILD(dead)%s",
+        desc5 = string.format("repair_pill#%d@(%d,%d) cost=%.0f REBUILD(dead)%s%s",
                               pid, pill.mx, pill.my, pcost,
                               (ce5d and ce5d._spk_mult) and string.format(" x%.2f spike_care(1 - SPIKE_REPAIR_TANK_DISCOUNT %.2f)",
-                                ce5d._spk_mult, C.SPIKE_REPAIR_TANK_DISCOUNT) or "")
+                                ce5d._spk_mult, C.SPIKE_REPAIR_TANK_DISCOUNT) or "",
+                              (ce5d and ce5d._rp_boost) and string.format(" x%.2f repair_boost(REPAIR_BOOST_GOAL_MULT, human ally)",
+                                ce5d._rp_boost) or "")
       else
         local ce5 = state.cost_cache and state.cost_cache["5:" .. pid]
         -- Name the contest term that actually fired, with its evidence, so the
@@ -15464,6 +15485,10 @@ function M.finalize_pools(state, world, info)
         if ce5 and ce5._spk_mult then
           _c5 = _c5 .. string.format(" x%.2f spike_care(1 - SPIKE_REPAIR_TANK_DISCOUNT %.2f)",
                   ce5._spk_mult, C.SPIKE_REPAIR_TANK_DISCOUNT)
+        end
+        if ce5 and ce5._rp_boost then
+          _c5 = _c5 .. string.format(" x%.2f repair_boost(REPAIR_BOOST_GOAL_MULT, human ally)",
+                  ce5._rp_boost)
         end
         desc5 = string.format("repair_pill#%d@(%d,%d) cost=%.0f (base+path-dam=%d×%d)%s",
                 pid, pill.mx, pill.my, pcost,
