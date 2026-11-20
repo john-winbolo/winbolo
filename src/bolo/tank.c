@@ -3967,6 +3967,14 @@ void tankSetFirstRight(tank *value, BYTE val) {
   (*value)->firstRight = val;
 }
 
+BYTE tankGetResidualSpeed(tank *value) {
+  return (*value)->residualSpeed;
+}
+
+void tankSetResidualSpeed(tank *value, BYTE val) {
+  (*value)->residualSpeed = val;
+}
+
 /*********************************************************
 *NAME:          tankSetLastTankDeath
 *AUTHOR:        Chris Lesnieski

@@ -1302,6 +1302,11 @@ void clientApplySnapshot(ClientSim *csPtr,
             tankSetFirstLeft(&MY_TANK(csPtr), tanks[i].firstLeft);
             tankSetFirstRight(&MY_TANK(csPtr), tanks[i].firstRight);
             tankSetReload(&MY_TANK(csPtr), tanks[i].reload);
+            /* No snapshot carries the residual speed, so the replay starts
+             * from what this client had after the acknowledged input. */
+            clientStateRestoreResidual(&csPtr->clientState,
+                                       hdr->lastProcessedInput,
+                                       &MY_TANK(csPtr));
 
             /* Replay unacknowledged inputs (suppress sounds/side effects) */
             csPtr->sim.isPredicting = TRUE;
@@ -1356,6 +1361,8 @@ void clientApplySnapshot(ClientSim *csPtr,
                     tankSetShells(&csPtr->sim, &MY_TANK(csPtr), tankGetShells(&MY_TANK(csPtr)) - 1);
                   }
                 }
+                clientStateNoteResidual(&csPtr->clientState, tick,
+                                        &MY_TANK(csPtr));
               }
             }
             csPtr->sim.replayTick = 0;
@@ -1378,6 +1385,13 @@ void clientApplySnapshot(ClientSim *csPtr,
                                    : CLIENT_ERR_POS_CLAMP;
               tankGetWorld(&MY_TANK(csPtr), &postX, &postY);
               postAngle = tankGetAngle(&MY_TANK(csPtr));
+              if (postX != predX || postY != predY) {
+                csPtr->predCorrCount++;
+                csPtr->predCorrPredX = predX;
+                csPtr->predCorrPredY = predY;
+                csPtr->predCorrPostX = postX;
+                csPtr->predCorrPostY = postY;
+              }
               clientErrSmoothAccumulate(&csPtr->errX, &csPtr->errY,
                                         &csPtr->errAngle,
                                         (float)predX - (float)postX,
