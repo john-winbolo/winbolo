@@ -4001,6 +4001,14 @@ M.TRAIL_DROP_MIN_SPEED          = 4     -- tank must be moving at this speed
 
 -- Defend pill response
 M.PILL_ATTACK_COOLDOWN       = 200   -- ticks before clearing under_attack flag (~4 sec)
+-- DEFEND_BOOST (Nov 20, Andrew: "let's also make defend_pill 20% more
+-- likely"): every defend_pill row cost (travel, arrived and alarm rungs) x
+-- DEFEND_BOOST_GOAL_MULT, after all its other terms, before the phase weight
+-- and the goal switch penalty. ONLY for a bot whose team has a human ally
+-- (util.human_ally_boost); a bot-only game is unchanged.
+-- false = no factor (PRESETS.keel and PRESETS.mast).
+M.DEFEND_BOOST           = true
+M.DEFEND_BOOST_GOAL_MULT = 0.8
 M.DEFEND_PILL_BASE_COST      = 250   -- intrinsic commitment cost of a defense trip; distance
                                      -- adds on top, threat multipliers scale the sum DOWN
 
@@ -8060,6 +8068,7 @@ M.PRESETS = {
     --   2026-11-19: no repair boost (REPAIR_SMALL_TOPUP and
     --   HUMAN_ALLY_BOOST_TEST_FORCE are false by default).
     REPAIR_BOOST = false,
+    DEFEND_BOOST = false,
     PT2_CHAIN_CLAIM = false,
     --   2026-11-18: pill take v2 in Lua only (no C copy).
     PT2_C_EVAL = false,
@@ -8394,6 +8403,7 @@ M.PRESETS.mast = {
   WARMUP_KEEP_QUEUE                 = false,  -- 2.2.1: every replan rebuilt the queue
   HUMAN_PILL_YIELD                  = false,  -- 2.2.1 had no human pill claim
   REPAIR_BOOST                      = false,  -- 2.2.1 had no repair boost
+  DEFEND_BOOST                      = false,  -- 2.2.1 had no defend boost
   PT2_CHAIN_CLAIM                   = false,  -- 2.2.1 had no pill take v2
   PT2_C_EVAL                        = false,  -- 2.2.1 had no pill take v2
   POST_KILL_WAIT_TICKS              = 15,

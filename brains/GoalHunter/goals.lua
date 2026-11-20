@@ -5962,8 +5962,33 @@ end
 -- falloff, then the influence multiplier), lifted to a function because alarm
 -- mode is a separate evaluator; a clicked alarm row must reconcile with the
 -- WINNERS view exactly as a keel row does.
-local function defend_alarm_sel_preview(state, tmx, tmy, mx, my, cost)
+-- DEFEND_BOOST (constants.lua): the factor on every defend_pill row cost for
+-- this bot, 1.0 when the knob is off or the team has no human ally. The
+-- factor is the same on every row of a replan, so it never changes which
+-- pill wins inside the pool, only how the pool bids against the others.
+local DEFEND_BOOST = {}
+function DEFEND_BOOST.mult(info)
+  if C.DEFEND_BOOST and U.human_ally_boost(info) then
+    return C.DEFEND_BOOST_GOAL_MULT or 0.8
+  end
+  return 1.0
+end
+-- The chip, put just before the "||" of a row formula (or at the end of a
+-- desc): the cost before the factor is the "= N" printed ahead of it.
+function DEFEND_BOOST.chip(db, c)
+  return string.format(" *defend_boost{x%.2f DEFEND_BOOST_GOAL_MULT, human ally} = %.0f",
+                       db, c * db)
+end
+function DEFEND_BOOST.insert(formula, chip)
+  local i = formula:find("||", 1, true)
+  if not i then return formula .. chip end
+  return formula:sub(1, i - 1) .. chip .. formula:sub(i)
+end
+M.DEFEND_BOOST = DEFEND_BOOST
+
+local function defend_alarm_sel_preview(state, tmx, tmy, mx, my, cost, db)
   if not cost or cost >= math.huge then return "" end
+  db = db or 1.0
   local pw = (C.PHASE_WEIGHTS and C.PHASE_WEIGHTS[state.phase]
               and C.PHASE_WEIGHTS[state.phase].defend_pill) or 1.0
   local _fot = C.PHASE_WEIGHT_DIST_FALLOFF
@@ -5979,8 +6004,8 @@ local function defend_alarm_sel_preview(state, tmx, tmy, mx, my, cost)
     if inf < -50 then im = 2.0 elseif inf > 50 then im = 0.5 end
   end
   return string.format(
-    " ->sel{%.0f xph%.2f xinf%.1f} (+switch/commit at selection)",
-    cost * pw * im, pw, im)
+    " ->sel{%.0f%s xph%.2f xinf%.1f} (+switch/commit at selection)",
+    cost * db * pw * im, (db ~= 1.0) and string.format(" xdb%.2f", db) or "", pw, im)
 end
 
 -- The EVIDENCE chips, shared by the alarmed row, every rejected row and the
@@ -6080,6 +6105,7 @@ end
 -- reason); only alarmed pills bid.
 local function eval_defend_pill_alarm(state, world, info, tmx, tmy, boat, ammo)
   local now  = state.tick or 0
+  local db   = DEFEND_BOOST.mult(info)   -- DEFEND_BOOST, 1.0 when off
   local rows = BRAIN_POOL_VIZ and {} or nil
   local best, best_id, best_cost, best_bd, best_a = nil, nil, math.huge, nil, nil
   local best_key = math.huge   -- best_cost x the close-interrupt mult (1 if none)
@@ -6233,12 +6259,13 @@ local function eval_defend_pill_alarm(state, world, info, tmx, tmy, boat, ammo)
                                 C.DEFEND_ALARM_CLOSE_TOTAL_MULT or 1.0)
               or "",
             defend_alarm_evidence(a),
-            defend_alarm_sel_preview(state, tmx, tmy, p.mx, p.my, cost),
+            defend_alarm_sel_preview(state, tmx, tmy, p.mx, p.my, cost, db),
             defend_alarm_detail(a, bd, p, hp))
+          if db ~= 1.0 then formula = DEFEND_BOOST.insert(formula, DEFEND_BOOST.chip(db, cost)) end
         end
         rows[#rows + 1] = {
           id = id, mx = p.mx, my = p.my,
-          cost = reject_key and 1e30 or cost,
+          cost = reject_key and 1e30 or cost * db,
           formula = formula,
           stale = 0,
           -- The chip is capped at 24 chars by the renderer, which every
@@ -6270,6 +6297,10 @@ local function eval_defend_pill_alarm(state, world, info, tmx, tmy, boat, ammo)
     best_desc = best_desc .. string.format(
       " alarm_on:close_interrupt(%.1f<=%d cur=%s)", best_a.dist or 0,
       best_a.min_dist or 9, best_a.close_interrupt)
+  end
+  if db ~= 1.0 then
+    if BRAIN_POOL_VIZ then best_desc = best_desc .. DEFEND_BOOST.chip(db, best_cost) end
+    best_cost = best_cost * db
   end
   -- Alarm mode is a TRAVEL-AND-FIGHT goal and nothing else: no heat, no watch,
   -- no repair handoff (see the block comment above).  The destination is the
@@ -6332,6 +6363,7 @@ local function eval_defend_pill(state, world, info, tmx, tmy, boat, ammo)
   local _fot = C.PHASE_WEIGHT_DIST_FALLOFF
   local pw_falloff = (type(_fot) == "table" and (_fot.defend_pill or _fot.default))
                      or (type(_fot) == "number" and _fot) or 40
+  local db = DEFEND_BOOST.mult(info)   -- DEFEND_BOOST, 1.0 when off
   local function sel_preview(mx, my, cost)
     if not cost or cost >= math.huge then return "" end
     local pw = pw0
@@ -6348,8 +6380,8 @@ local function eval_defend_pill(state, world, info, tmx, tmy, boat, ammo)
     -- xinf1.0): the term breakdown has to compute the end score from
     -- what is VISIBLE, so no factor may be silently omitted.
     return string.format(
-      " ->sel{%.0f xph%.2f xinf%.1f} (+switch/commit at selection)",
-      cost * pw * im, pw, im)
+      " ->sel{%.0f%s xph%.2f xinf%.1f} (+switch/commit at selection)",
+      cost * db * pw * im, (db ~= 1.0) and string.format(" xdb%.2f", db) or "", pw, im)
   end
 
   -- Repair-readiness (row detail only): could we patch the pill up on
@@ -6540,11 +6572,14 @@ local function eval_defend_pill(state, world, info, tmx, tmy, boat, ammo)
           end
           formula = string.format("REJECT %s||reject:%s%s; %s", reject, why, wb, detail)
         end
+        if db ~= 1.0 and not reject and cost < 1e29 then
+          formula = DEFEND_BOOST.insert(formula, DEFEND_BOOST.chip(db, cost))
+        end
         rows[#rows + 1] = {
           id = id, mx = p.mx, my = p.my,
           -- 1e30 = renderer INF: rejects AND unreachable (dij=math.huge,
           -- which json.lua would otherwise encode as a real-looking 9999).
-          cost = (reject or cost >= math.huge) and 1e30 or cost,
+          cost = (reject or cost >= math.huge) and 1e30 or cost * db,
           formula = formula,
           stale = 0,  -- overwritten with rows' age at panel-read time
           reject = reject,
@@ -6653,6 +6688,10 @@ local function eval_defend_pill(state, world, info, tmx, tmy, boat, ammo)
         math.max(0, (C.PILLS_MAX_HEALTH or 15) - (best.health or 0)),
         best_dmg)
     end
+  end
+  if db ~= 1.0 and best_cost < 1e29 then
+    if BRAIN_POOL_VIZ then best_desc = best_desc .. DEFEND_BOOST.chip(db, best_cost) end
+    best_cost = best_cost * db
   end
   -- A WATCH win drives to the hold tile, not onto the pill: the whole point
   -- is to be somewhere survivable next to it. goal.heat stays nil so
@@ -7104,6 +7143,8 @@ local POOL_EVALUATORS = {
   eval_attack_tank,
   eval_reposition_pill,
 }
+-- Test hook (test_defend_boost.lua): the defend_pill pool on its own.
+M._eval_defend_pill = eval_defend_pill
 
 -- Phase weight keys for each pool evaluator (maps into C.PHASE_WEIGHTS[phase]).
 -- nil = no phase weighting (always critical, e.g. refuel/attack_tank).
