@@ -1037,6 +1037,20 @@ M.PT2_FINISH_NO_COVER_MAX_ANGER = 0.95
 -- PT2_LEEWAY_MIN of the 8 points 32 wu around it; else the old way.
 -- false = the old way (KEEL / MAST).
 M.PT2_FAST_SETUP = true
+-- APPROACH_SKIP_RUNUP_ON_LANE (Nov 20, Andrew: "yes fix it"): the attack_pill
+-- approach step drives to a run-up point ATTACK_APPROACH_OFFSET tiles behind
+-- the standoff. When the tank is already on the firing lane at the standoff
+-- (side offset and distance behind it <= APPROACH_SKIP_RUNUP_LANE_WU, distance
+-- past it toward the pill <= APPROACH_SKIP_RUNUP_MAX_PAST_WU), that point is
+-- behind it and the tank drove a full circle to reach it. true: once stopped
+-- there (speed <= APPROACH_SKIP_RUNUP_STOP_SPEED) it creeps forward to the
+-- standoff, or, when past it, fires from where it is if the shot test passes
+-- (approach_skip.lua). A bug fix for every bot, no human-ally gate.
+-- false = the old way (KEEL / MAST).
+M.APPROACH_SKIP_RUNUP_ON_LANE      = true
+M.APPROACH_SKIP_RUNUP_LANE_WU      = 128  -- the approach step's own spot tolerance
+M.APPROACH_SKIP_RUNUP_MAX_PAST_WU  = 256  -- new: 1 tile, awaits Andrew's yes
+M.APPROACH_SKIP_RUNUP_STOP_SPEED   = 4    -- the approach step's own SPEED_TOL
 -- SHOT_TRACK_OWN_SHELLS_ONLY: shot_tracker.lua keeps one of our shells "in
 -- flight" only while a shell that is not a pill's or an enemy's is near
 -- where it should be. The old match skipped only enemy shells, so a neutral
@@ -8069,6 +8083,7 @@ M.PRESETS = {
     --   HUMAN_ALLY_BOOST_TEST_FORCE are false by default).
     REPAIR_BOOST = false,
     DEFEND_BOOST = false,
+    APPROACH_SKIP_RUNUP_ON_LANE = false,
     PT2_CHAIN_CLAIM = false,
     --   2026-11-18: pill take v2 in Lua only (no C copy).
     PT2_C_EVAL = false,
@@ -8404,6 +8419,7 @@ M.PRESETS.mast = {
   HUMAN_PILL_YIELD                  = false,  -- 2.2.1 had no human pill claim
   REPAIR_BOOST                      = false,  -- 2.2.1 had no repair boost
   DEFEND_BOOST                      = false,  -- 2.2.1 had no defend boost
+  APPROACH_SKIP_RUNUP_ON_LANE       = false,  -- 2.2.1 drove back to the run-up point
   PT2_CHAIN_CLAIM                   = false,  -- 2.2.1 had no pill take v2
   PT2_C_EVAL                        = false,  -- 2.2.1 had no pill take v2
   POST_KILL_WAIT_TICKS              = 15,

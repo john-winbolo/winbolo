@@ -7860,6 +7860,10 @@ local function update_attack_substate_body(goal, state, world, info)
                                                   shot_path_obstacle_count)
         end
       end
+      -- C.APPROACH_SKIP_RUNUP_ON_LANE (approach_skip.lua): the tank already
+      -- on the firing lane at the standoff does not drive a circle back to
+      -- the run-up point behind it.
+      require("approach_skip").check(goal, info, world, now, shot_path_obstacle_count)
 
       -- Reach the approach point (precise float, 1.5 tiles behind standoff).
       -- Tolerance: 64 wu (1/4 tile) AND speed <= 4.
@@ -7910,6 +7914,13 @@ local function update_attack_substate_body(goal, state, world, info)
         viz.text("attack_pill_approach", afx, afy + 0.6,
                  string.format("PILL APPROACH (%d,%d)", math.floor(afx), math.floor(afy)),
                  "center", R, G, B, 255, 0.4)
+        if goal._runup_skip then
+          viz.text("attack_pill_approach", afx, afy + 1.0,
+                   goal._runup_skip == "past"
+                     and "RUN-UP SKIPPED: on lane, fire from here (APPROACH_SKIP_RUNUP_ON_LANE)"
+                     or  "RUN-UP SKIPPED: on lane, creep to standoff (APPROACH_SKIP_RUNUP_ON_LANE)",
+                   "center", R, G, B, 255, 0.35)
+        end
         local sfx = goal.standoff_fx or (goal.standoff_mx and goal.standoff_mx + 0.5)
         local sfy = goal.standoff_fy or (goal.standoff_my and goal.standoff_my + 0.5)
         if sfx and sfy then

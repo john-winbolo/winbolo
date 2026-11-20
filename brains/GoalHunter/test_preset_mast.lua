@@ -868,6 +868,7 @@ local R221 = {
   HUMAN_PILL_YIELD = false,
   REPAIR_BOOST = false,
   DEFEND_BOOST = false,
+  APPROACH_SKIP_RUNUP_ON_LANE = false,
   REPAIR_SMALL_TOPUP = false,
   HUMAN_ALLY_BOOST_TEST_FORCE = false,
   PT2_CHAIN_CLAIM = false,
