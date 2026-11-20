@@ -3975,7 +3975,8 @@ M.PILL_ATTACK_COOLDOWN       = 200   -- ticks before clearing under_attack flag 
 -- (util.human_ally_boost); a bot-only game is unchanged.
 -- false = no factor (PRESETS.keel and PRESETS.mast).
 M.DEFEND_BOOST           = true
-M.DEFEND_BOOST_GOAL_MULT = 0.8
+-- Nov 20 bench: x0.8 gave +169% defend time; Andrew approved 0.9.
+M.DEFEND_BOOST_GOAL_MULT = 0.9
 M.DEFEND_PILL_BASE_COST      = 250   -- intrinsic commitment cost of a defense trip; distance
                                      -- adds on top, threat multipliers scale the sum DOWN
 
