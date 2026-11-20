@@ -36,6 +36,9 @@ _G.TERRAIN_MASK, _G.TERRAIN_MINE_FLAG = 0x0F, 0x40
 _G.get_terrain = function() return 7 end  -- grass everywhere
 
 local C = require("constants")
+-- REPAIR_BOOST and REPAIR_SMALL_TOPUP (Nov 19) change the numbers this
+-- file checks; test_repair_boost.lua covers them, so they are off here.
+C.REPAIR_BOOST, C.REPAIR_SMALL_TOPUP = false, false
 local G = require("goals")
 
 local pass, fail = 0, 0

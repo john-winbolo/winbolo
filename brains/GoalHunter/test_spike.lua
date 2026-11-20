@@ -24,6 +24,9 @@
 package.path = "./?.lua;" .. package.path
 
 local C      = require("constants")
+-- REPAIR_BOOST and REPAIR_SMALL_TOPUP (Nov 19) change the numbers this
+-- file checks; test_repair_boost.lua covers them, so they are off here.
+C.REPAIR_BOOST, C.REPAIR_SMALL_TOPUP = false, false
 local U      = require("util")
 local cpf    = require("cpathfinder")
 local threat = require("threat")

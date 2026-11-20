@@ -1304,10 +1304,16 @@ end
 -- noise on every row of every game, and its absence means exactly "this row is
 -- not the goal's pill" (or BUILDER_POOL_GOAL_PILL_BONUS is 1.0, e.g.
 -- preset=keel), which is why the docs say so.
+-- REPAIR_BOOST adds repair_boost{} to the same link: bp_raw x goal_w x
+-- repair_boost is the bp_score. goal_w{} is printed only when it is not 1.
 local function goal_chips(row)
   local w = row.goal_w or 1.0
-  if w == 1.0 then return "" end
-  return string.format(" = bp_raw{%.0f} x goal_w{%.2f}", row.raw_score or 0, w)
+  local bw = row.boost_w
+  if w == 1.0 and not bw then return "" end
+  local s = string.format(" = bp_raw{%.0f}", row.raw_score or 0)
+  if w ~= 1.0 then s = s .. string.format(" x goal_w{%.2f}", w) end
+  if bw then s = s .. string.format(" x repair_boost{%.2f}", bw) end
+  return s
 end
 
 -- The PING_DEFEND_REPAIR force, as the last link of the chain: the arithmetic
@@ -1397,10 +1403,15 @@ function M.bp_row_formula(row)
   -- chain, so the bp_score segment ends in the number that is actually on the
   -- row rather than in the pre-bonus one.
   local gw = row.goal_w or 1.0
+  local bw = row.boost_w
+  -- "bp_raw(R) x goal_w(G) x repair_boost(B)", each factor only when it applied.
+  local mul_str = string.format("bp_raw(%.0f)", row.raw_score or 0)
+  if gw ~= 1.0 then mul_str = mul_str .. string.format(" x goal_w(%.2f)", gw) end
+  if bw then mul_str = mul_str .. string.format(" x repair_boost(%.2f)", bw) end
+  local has_mul = (gw ~= 1.0) or (bw ~= nil)
   local chain = score_str
-  if gw ~= 1.0 then
-    chain = string.format("bp_raw(%.0f) x goal_w(%.2f) = %s",
-                          row.raw_score or 0, gw, score_str)
+  if has_mul then
+    chain = string.format("%s = %s", mul_str, score_str)
   elseif row.force_bonus then
     chain = string.format("bp_raw(%.0f) + ping_force(%.0f) = %s",
                           row.raw_score or 0, row.force_bonus, score_str)
@@ -1410,8 +1421,8 @@ function M.bp_row_formula(row)
   if row.spike_bonus then
     gw_res = string.format("%.0f", row.spike_pre or 0)
     local pre = gw_res
-    if gw ~= 1.0 then
-      pre = string.format("bp_raw(%.0f) x goal_w(%.2f) = %s", row.raw_score or 0, gw, pre)
+    if has_mul then
+      pre = string.format("%s = %s", mul_str, pre)
     end
     chain = string.format("%s + spike_care(%.0f) = %s", pre, row.spike_bonus, score_str)
   end
@@ -1571,12 +1582,17 @@ function M.bp_row_formula(row)
         dw, dgr, row.c_danger or 0),
     }
   end
-  -- The bonus's own two segments, on both formulas, only when it applied.
-  if gw ~= 1.0 then
+  -- The bonus's own segments, on both formulas, only when it applied.
+  -- gw_after = bp_raw x goal_w, the number repair_boost multiplies.
+  local gw_after = string.format("%.0f", (row.raw_score or 0) * gw)
+  local gw_out = bw and gw_after or gw_res
+  if has_mul then
     segs[#segs + 1] = string.format(
-      "bp_raw:the score BEFORE the goal-pill bonus -- value(%.0f) minus the"
-      .. " costs above = %.0f. bp_raw x goal_w is the bp_score at the head of"
-      .. " the line.", row.value or 0, row.raw_score or 0)
+      "bp_raw:the score BEFORE the goal-pill bonus and the repair boost -- value(%.0f) minus the"
+      .. " costs above = %.0f. %s is the bp_score at the head of"
+      .. " the line.", row.value or 0, row.raw_score or 0, mul_str)
+  end
+  if gw ~= 1.0 then
     if row.goal_src == "ping" then
       segs[#segs + 1] = string.format(
         "goal_w:BUILDER_POOL_PING_PILL_BONUS(%.2f) -- a human (p%s) bot-command"
@@ -1586,7 +1602,7 @@ function M.bp_row_formula(row)
         .. " bonus (the larger one is used, never both).",
         gw, tostring(row.ping_by or "?"), tostring(row.id or "?"),
         tostring(row.ping_until or "?"),
-        row.raw_score or 0, gw, gw_res)
+        row.raw_score or 0, gw, gw_out)
     else
       segs[#segs + 1] = string.format(
         "goal_w:BUILDER_POOL_GOAL_PILL_BONUS(%.2f) -- this row's pill (#%s) IS"
@@ -1595,8 +1611,17 @@ function M.bp_row_formula(row)
         .. " other row, and on every row when the bonus is 1.0 (preset=keel).",
         gw, tostring(row.id or "?"),
         tostring(row.goal_kind or "goal"), tostring(row.id or "?"),
-        row.raw_score or 0, gw, gw_res)
+        row.raw_score or 0, gw, gw_out)
     end
+  end
+  if bw then
+    segs[#segs + 1] = string.format(
+      "repair_boost:REPAIR_BOOST_BUILDER_MULT(%.2f) -- REPAIR_BOOST is on and this"
+      .. " bot's team has a human ally, so every"
+      .. " topup / rebuild row's score is multiplied by it: %s x %.2f = %s."
+      .. " Not on farm rows or forced rows; absent when REPAIR_BOOST is off"
+      .. " (preset=keel, preset=mast) or the team has no human ally.",
+      bw, gw_after, bw, gw_res)
   end
   -- The spike care bonus's own two segments, only when it applied.
   if row.spike_bonus then

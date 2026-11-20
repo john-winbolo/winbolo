@@ -765,6 +765,17 @@ function M.human_ally_count(info)
   return n
 end
 
+-- THE HUMAN-ALLY GATE for the factors that exist only to help a human
+-- team-mate (REPAIR_BOOST, REPAIR_SMALL_TOPUP, DEFEND_BOOST; Andrew Nov 19:
+-- "all these are just for bots that are allies to humans"). true when the
+-- team has at least one human ally, or when the test-only knob
+-- HUMAN_ALLY_BOOST_TEST_FORCE is on (bot-only bench games). A bot-only game
+-- reads false, so its behaviour does not change.
+function M.human_ally_boost(info)
+  if C.HUMAN_ALLY_BOOST_TEST_FORCE then return true end
+  return M.human_ally_count(info) >= 1
+end
+
 -- IS A HUMAN TEAM-MATE STANDING CLOSE TO US?
 --
 -- M.human_ally_count above answers "are there humans on the team", which is a

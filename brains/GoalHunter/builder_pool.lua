@@ -972,6 +972,18 @@ local function pill_blocked(state, p, skip_take)
   return nil
 end
 
+-- The topup minimum (missing hp) for an ordinary discovered row:
+-- BUILDER_POOL_TOPUP_MIN_MISSING_SMALL under REPAIR_SMALL_TOPUP, else
+-- BUILDER_POOL_TOPUP_MIN_MISSING. discover and builder_can_repair both read
+-- it, so the pool-5 hand-off and the pool agree on what the pool will take.
+-- The small minimum applies only with a human ally (U.human_ally_boost).
+function M.topup_min_missing(info)
+  if C.REPAIR_SMALL_TOPUP and U.human_ally_boost(info) then
+    return C.BUILDER_POOL_TOPUP_MIN_MISSING_SMALL or 2
+  end
+  return C.BUILDER_POOL_TOPUP_MIN_MISSING or 4
+end
+
 function M.discover(state, world, info)
   local tmx = bit.rshift(info.tankx, 8)
   local tmy = bit.rshift(info.tanky, 8)
@@ -996,7 +1008,7 @@ function M.discover(state, world, info)
       local spk = spike.care_at(state, p.mx, p.my, state.tick or 0)
       local pleash = spk and math.max(rleash, C.SPIKE_REPAIR_LEASH) or rleash
       local tmin = spk and C.SPIKE_REPAIR_MIN_MISSING
-                   or (C.BUILDER_POOL_TOPUP_MIN_MISSING or 4)
+                   or M.topup_min_missing(info)
       if d <= pleash * 2 then
         local hp = p.health or 0
         local kind, need
@@ -1181,18 +1193,26 @@ function M.goal_weight(state, row)
   return w, src
 end
 
-local function apply_goal_weight(state, row)
+local function apply_goal_weight(state, row, info)
   -- A FORCED row (PING_DEFEND_REPAIR) is not weighted: its score gets the
   -- flat PING_DEFEND_REPAIR_BONUS instead (M.apply_force_bonus), and one
   -- adjustment per row keeps the printed chain a two-step sum.
   if row.forced then
     row.goal_w, row.goal_src, row.ping_by, row.ping_until = 1.0, nil, nil, nil
-    row.raw_score, row.goal_kind = nil, nil
+    row.raw_score, row.goal_kind, row.boost_w = nil, nil, nil
     return
   end
   local w, src = M.goal_weight(state, row)
   row.goal_w = w
   row.goal_src = src
+  -- REPAIR_BOOST: x REPAIR_BOOST_BUILDER_MULT on every topup / rebuild row,
+  -- on top of the goal / ping weight, only with a human ally
+  -- (U.human_ally_boost). row.boost_w is nil when it is off.
+  local bw = 1.0
+  if C.REPAIR_BOOST and row.type ~= "farm" and U.human_ally_boost(info) then
+    bw = C.REPAIR_BOOST_BUILDER_MULT or 1.2
+  end
+  row.boost_w = (bw ~= 1.0) and bw or nil
   -- The ping's sender and end tick, for the goal_w segment (row_formula has
   -- no state to read them from).
   local rp = (src == "ping") and state._repair_ping or nil
@@ -1200,9 +1220,9 @@ local function apply_goal_weight(state, row)
   row.ping_until = rp and rp.until_tick or nil
   -- Never on the no-route sentinel: -1e9 is an ordering device, not a score,
   -- and scaling it would print arithmetic nobody can check.
-  if w ~= 1.0 and row.trip then
+  if (w ~= 1.0 or bw ~= 1.0) and row.trip then
     row.raw_score = row.score
-    row.score = row.score * w
+    row.score = row.score * w * bw
     -- Which goal claimed it, for the panel's goal_w segment. A plain field,
     -- not a debug-only one: the cold-path formula builder reads it back.
     row.goal_kind = state.goal and state.goal.kind or nil
@@ -1268,7 +1288,7 @@ function M.score_row(state, world, info, now, row, ctx)
     else
       row.c_trip, row.c_danger, row.score = 0, 0, -1e9
     end
-    apply_goal_weight(state, row)
+    apply_goal_weight(state, row, info)
     apply_spike(state, row, now)
     return M.gate_row(state, world, info, now, row, ctx)
   end
@@ -1311,7 +1331,7 @@ function M.score_row(state, world, info, now, row, ctx)
     row.c_trip, row.c_danger, row.score = 0, 0, -1e9
   end
 
-  apply_goal_weight(state, row)
+  apply_goal_weight(state, row, info)
   apply_spike(state, row, now)
   return M.gate_row(state, world, info, now, row, ctx)
 end
@@ -1977,12 +1997,20 @@ function M.builder_can_repair(state, world, info, p)
   local tmy = bit.rshift(info.tanky, 8)
   local leash = M.repair_leash()
   -- Spike care: the same reach as the pool's spike rows (discover).
-  if spike.care_at(state, p.mx, p.my, state.tick or 0) then
+  local spk = spike.care_at(state, p.mx, p.my, state.tick or 0)
+  if spk then
     leash = math.max(leash, C.SPIKE_REPAIR_LEASH)
   end
   if M.leash_dist(tmx, tmy, p.mx, p.my) > leash then return nil end
   local maxhp = C.PILLS_MAX_HEALTH or 15
   local hp = p.health or 0
+  -- REPAIR_SMALL_TOPUP: the pool's own topup minimum (discover). A live pill
+  -- missing less than it gets no pool row, so handing it to the builder would
+  -- leave it with nobody; it stays a repair_pill tank goal row instead.
+  if C.REPAIR_SMALL_TOPUP and hp > 0 and U.human_ally_boost(info) then
+    local tmin = spk and C.SPIKE_REPAIR_MIN_MISSING or M.topup_min_missing(info)
+    if (maxhp - hp) < tmin then return nil end
+  end
   local need = (hp <= 0) and (C.BUILDER_POOL_TREES_REBUILD or 4)
                or math.ceil((maxhp - hp) / (C.PILL_REPAIR_AMOUNT or 4))
   if (info.trees or 0) < need then return nil end
