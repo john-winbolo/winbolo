@@ -8036,7 +8036,11 @@ function Brain.think(info)
       -- unchanged.
       state._lgm_dispatch = { x = build_cmd.x, y = build_cmd.y,
                               eta_tick = now + eta, tick = now,
-                              pbox = (build_cmd.action == BUILDMODE_PBOX) or nil }
+                              pbox = (build_cmd.action == BUILDMODE_PBOX) or nil,
+                              -- the engine's blessX/blessY rule for this
+                              -- order (lgm_bless.lua), for the walk sims
+                              bless = require("lgm_bless").for_dispatch(
+                                build_cmd.action, build_cmd.x, build_cmd.y, world) }
       state._repair_dispatch_eta = nil
     end
     -- Placement trip flag. ONE record per placement dispatch (harvest or
