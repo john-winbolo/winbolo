@@ -1183,6 +1183,20 @@ M.PT2_C_EVAL = true
 -- Lua call per square. An older exe skips inp.c_std and calls the Lua
 -- functions. false = the C calls the Lua functions (KEEL, MAST).
 M.PT2_C_STANDABLE = true
+-- PT2_AFTER_SCAN_SPLIT (Nov 21, F2, Andrew's yes): the plan tick runs only
+-- v1's shield.scan; v2 (build_inp and evaluate_group) runs on the next
+-- brain ticks, in parts, over at most PT2_AFTER_SCAN_MAX_TICKS work ticks
+-- (pt2_attack.split_step). The same answer as v2 in one go. The take waits
+-- in its plan until v2 is done. This knob also keeps
+-- goal._shield_scan_pending until goal._shield_scan is set, so a budget
+-- kill inside v2 does not leave the take with no plan; the same part
+-- killed SHIELD_SCAN_BLACKLIST_TRIES times keeps v1's plan. false = v2 in
+-- one go on the plan tick, the flag cleared before it (KEEL, MAST).
+M.PT2_AFTER_SCAN_SPLIT = true
+-- Work ticks for the split v2 run at most. Andrew's value (Nov 21): "it's
+-- fine if it takes up to 5 ticks". A tick killed by the budget is not a
+-- work tick.
+M.PT2_AFTER_SCAN_MAX_TICKS = 5
 -- PT2_CAPTURE_FILE (debug only): a file path. When set, every v2 evaluate
 -- appends its inputs and the Lua result to the file, for the parity test
 -- cases. "" = off.
@@ -8040,6 +8054,7 @@ M.PRESETS = {
     PT2_C_EVAL = false,
     --   2026-11-21: the C copy calls the Lua square tests.
     PT2_C_STANDABLE = false,
+    PT2_AFTER_SCAN_SPLIT = false,
     --   2026-11-17: hold 15 ticks with no goal after a kill (old rule).
     POST_KILL_WAIT_TICKS = 15,
     --   2026-11-17: carrying-pill approach floor 30 (old rule).
@@ -8378,6 +8393,7 @@ M.PRESETS.mast = {
   PT2_CHAIN_CLAIM                   = false,  -- 2.2.1 had no pill take v2
   PT2_C_EVAL                        = false,  -- 2.2.1 had no pill take v2
   PT2_C_STANDABLE                   = false,  -- 2.2.1 had no pill take v2
+  PT2_AFTER_SCAN_SPLIT              = false,  -- 2.2.1 had no pill take v2
   POST_KILL_WAIT_TICKS              = 15,
   CARRY_APPROACH_MIN_ARMOUR_ONE     = 30,
   CARRY_APPROACH_MIN_ARMOUR_MANY    = 30,
