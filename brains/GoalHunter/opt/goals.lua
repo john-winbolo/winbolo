@@ -153,8 +153,18 @@ local function wsim_evaluate_goal(goal, world, info, attack_pill_idx, spot_mx, s
   -- Don't set attack_target — wsim evaluates travel survivability only,
   -- not prolonged combat. Setting it makes the bot shoot at the pill
   -- during travel, angering it and unrealistically accelerating fire rate.
+  -- WSIM_CAPTURE_EXIT_MAX: a capture does not end on the pill square. The
+  -- pickup is instant, and then the tank drives back out of the range of
+  -- the pills that shot at it, so the sim drives that exit leg too.
+  local exit_start, exit_n = 0, 0
+  if goal.kind == "capture_pill" and (C.WSIM_CAPTURE_EXIT_MAX or 0) > 0 then
+    path, exit_start, exit_n = wsim.capture_exit_path(path, tmx, tmy, gmx, gmy,
+      C.WSIM_CAPTURE_EXIT_MAX)
+  end
+
   local _tw0 = clock_us()
   wsim.snapshot(world, info, path, nil)
+  if exit_n > 0 then wsim.set_exit_start(exit_start) end
   local _tw1 = clock_us()
 
   -- Dwell + tick budget. Default for every goal kind is the old behaviour:
@@ -200,9 +210,17 @@ local function wsim_evaluate_goal(goal, world, info, attack_pill_idx, spot_mx, s
   -- formats on a normal wsim. No `state` param here — the tick comes from the
   -- _BRAIN_TICK global init.lua publishes each think.
 
-  local extra_cost = r.damage * C.WSIM_DAMAGE_COST_WEIGHT
+  local exit_dmg = (exit_n > 0) and (r.exit_damage or 0) or 0
+  -- Exit leg damage costs WSIM_CAPTURE_EXIT_DMG_WEIGHT of the rest.
+  local extra_cost = wsim.damage_cost(r.damage, exit_dmg, C.WSIM_DAMAGE_COST_WEIGHT,
+    C.WSIM_CAPTURE_EXIT_DMG_WEIGHT)
   local sim_desc = string.format(" wsim:%ddmg %.1fs arm=%d->%d",
     r.damage, r.ticks / 50.0, info.armour, r.armour)
+  if exit_n > 0 then
+    -- The exit leg: squares offered, ticks driven, damage taken on it.
+    sim_desc = sim_desc .. string.format(" exit:%dsq/%dt/%ddmg",
+      exit_n, r.exit_ticks or 0, exit_dmg)
+  end
   if dwell > 0 then
     -- How much of that damage was taken standing still at the destination,
     -- and over how long a dwell we asked for.
@@ -261,6 +279,9 @@ local function wsim_evaluate_goal(goal, world, info, attack_pill_idx, spot_mx, s
     damage = r.damage, ticks = r.ticks, killed = r.killed,
     armour_remaining = r.armour,
     dwell = dwell, dwell_damage = r.dwell_damage, truncated = r.truncated,
+    exit_squares = exit_n > 0 and exit_n or nil,
+    exit_damage = exit_n > 0 and exit_dmg or nil,
+    exit_ticks = exit_n > 0 and (r.exit_ticks or 0) or nil,
   })
 
   return extra_cost, r.killed, sim_desc, path, r
@@ -8626,11 +8647,26 @@ local function capture_route_probe(state, world, info, pill, pid, tmx, tmy)
   path = capture_route_trim(path, tmx, tmy)
 
   local killed, damage = false, 0
+  local exit_n, exit_dmg, exit_ticks = 0, 0, 0
   if C.WSIM_ENABLED and path and #path >= 2 then
-    wsim.snapshot(world, info, path, nil)
+    -- WSIM_CAPTURE_EXIT_MAX: the sim drives on to the pill square (the A*
+    -- goes to the square next to it) and then the exit leg, the same
+    -- capture sim the goal pool runs. The A* cost and npath stay the
+    -- incoming route's, so they still compare with the slate numbers.
+    local sim_path, exit_start = path, 0
+    if (C.WSIM_CAPTURE_EXIT_MAX or 0) > 0 then
+      sim_path, exit_start, exit_n = wsim.capture_exit_path(path, tmx, tmy,
+        pill.mx, pill.my, C.WSIM_CAPTURE_EXIT_MAX)
+    end
+    wsim.snapshot(world, info, sim_path, nil)
+    if exit_n > 0 then wsim.set_exit_start(exit_start) end
     local r = wsim.run(C.WSIM_MAX_TICKS)
     killed = r.killed and true or false
     damage = r.damage or 0
+    if exit_n > 0 then
+      exit_dmg = r.exit_damage or 0
+      exit_ticks = r.exit_ticks or 0
+    end
   end
 
   ent = { id = pid, tick = now, tmx = tmx, tmy = tmy,
@@ -8652,6 +8688,8 @@ local function capture_route_probe(state, world, info, pill, pid, tmx, tmy)
     ent.cost = cost
   end
   state.capture_route[key] = ent
+  if exit_n > 0 then
+  end
 end
 
 -- Public: the probe's LETHAL verdict for the fresh-kill claim (Override 3b,

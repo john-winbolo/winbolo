@@ -3147,6 +3147,27 @@ static int l_wsim_set_rules(lua_State *L) {
   return 0;
 }
 
+/* wsim_set_fixes{ drive_while_sliding=bool, hit_full_dist=squares,
+ *   hit_far_frac=0..1 } -- the knob fixes of the forward model (see
+ * BrainWorldSim). A missing field is the old value (false / 0). */
+static int l_wsim_set_fixes(lua_State *L) {
+  int drive;
+  float full = 0.0f, far_frac = 0.0f;
+  WSIM_GET(L);
+  luaL_checktype(L, 1, LUA_TTABLE);
+  lua_getfield(L, 1, "drive_while_sliding");
+  drive = lua_toboolean(L, -1);
+  lua_pop(L, 1);
+  lua_getfield(L, 1, "hit_full_dist");
+  if (lua_isnumber(L, -1)) full = (float)lua_tonumber(L, -1);
+  lua_pop(L, 1);
+  lua_getfield(L, 1, "hit_far_frac");
+  if (lua_isnumber(L, -1)) far_frac = (float)lua_tonumber(L, -1);
+  lua_pop(L, 1);
+  brainWorldSimSetFixes(ws, drive, full, far_frac);
+  return 0;
+}
+
 static int l_wsim_add_pill(lua_State *L) {
   WSIM_GET(L);
   int mx     = (int)luaL_checkinteger(L, 1);
@@ -3222,6 +3243,16 @@ static int l_wsim_set_dwell(lua_State *L) {
   return 0;
 }
 
+/* wsim_set_exit_start(n) -- path waypoints 1..n are the incoming path
+ * (the arrival is waypoint n), the rest are the exit leg (see
+ * BrainWorldSim::exit_start). 0 (the default, restored by wsim_clear) =
+ * no exit leg. Call it after wsim_set_path. */
+static int l_wsim_set_exit_start(lua_State *L) {
+  WSIM_GET(L);
+  brainWorldSimSetExitStart(ws, (int)luaL_optinteger(L, 1, 0));
+  return 0;
+}
+
 static int l_wsim_run(lua_State *L) {
   WSimResult r;
   int i;
@@ -3243,6 +3274,12 @@ static int l_wsim_run(lua_State *L) {
    * tell drive damage from dwell damage. 0 when no dwell was requested. */
   lua_pushinteger(L, r.damage_during_dwell);
   lua_setfield(L, -2, "dwell_damage");
+
+  /* Exit leg: its damage (a subset of `damage`) and its ticks. */
+  lua_pushinteger(L, r.exit_damage);
+  lua_setfield(L, -2, "exit_damage");
+  lua_pushinteger(L, r.exit_ticks);
+  lua_setfield(L, -2, "exit_ticks");
 
   lua_pushinteger(L, r.ticks_simulated);
   lua_setfield(L, -2, "ticks");
@@ -3315,12 +3352,14 @@ void brainCoreRegisterWorldSim(lua_State *L, BrainWorldSim **wsPtr) {
     { "wsim_clear",             l_wsim_clear },
     { "wsim_set_terrain_speed", l_wsim_set_terrain_speed },
     { "wsim_set_rules",         l_wsim_set_rules },
+    { "wsim_set_fixes",         l_wsim_set_fixes },
     { "wsim_add_pill",          l_wsim_add_pill },
     { "wsim_add_tank",          l_wsim_add_tank },
     { "wsim_set_path",          l_wsim_set_path },
     { "wsim_set_attack_target", l_wsim_set_attack_target },
     { "wsim_set_lgm",           l_wsim_set_lgm },
     { "wsim_set_dwell",         l_wsim_set_dwell },
+    { "wsim_set_exit_start",    l_wsim_set_exit_start },
     { "wsim_run",               l_wsim_run },
     { NULL, NULL }
   };

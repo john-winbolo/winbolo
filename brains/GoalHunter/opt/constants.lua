@@ -4366,6 +4366,37 @@ M.SWEEP_KILL_WINDOW        = 300    -- ticks (~6s) the sweep incentive lasts aft
 M.SWEEP_KILL_WSIM_MULT     = 0.3    -- damp the wsim danger penalty to this fraction during the window
 M.WSIM_OPENING_ENABLED     = false  -- run wsim AT ALL during the opening phase. Default false: same reasoning ??? taking bases early is so important that we'd rather be reckless and risk dying than have wsim's damage-cost shaping pull us off an opportunity.
 M.WSIM_LGM_DEATH_PENALTY   = 200    -- extra cost if sim predicts LGM will die
+-- World sim fixes (Nov 21, Andrew's values). cworldsim.snapshot pushes them
+-- to the C sim with wsim_set_fixes (an older exe without it keeps the old
+-- model). KEEL, MAST and R221 keep the old model.
+-- WSIM_DRIVE_WHILE_SLIDING (E): true = our tank keeps driving along its
+-- path while a shell push moves it, as in the game (tank.c drives, then
+-- adds the push), and the push is the game's WinBolo push: tank_slide_step
+-- (32 WU) along the shell angle, then each tick the magnitude loses
+-- (magnitude >> tank_bump_decay_shift) + 1. false = the old 26 WU x 0.80
+-- slide, and no driving until it stops.
+M.WSIM_DRIVE_WHILE_SLIDING = true
+-- WSIM_HIT_FULL_DIST / WSIM_HIT_FAR_FRAC (A): a pill hit on a moving tank
+-- d squares away does full shell damage up to FULL_DIST squares, then
+-- shell_damage x (1 - (1 - FAR_FRAC) x (d - FULL_DIST) / (range - FULL_DIST)),
+-- range = pill range in squares (8), rounded half up. Damage 5 gives
+-- 5,5,4,4,3,3,2 at 2..8 squares. Both 0 = the old 1 - dist/range discount
+-- (at least 1 inside half range). A parked tank takes full damage either way.
+M.WSIM_HIT_FULL_DIST = 2
+M.WSIM_HIT_FAR_FRAC  = 0.4
+-- WSIM_CAPTURE_EXIT_MAX (C): capture_pill sims (the goal pool sim and the
+-- CAPTURE_ROUTE sim) drive ON to the pill square (the pickup is instant,
+-- no dwell), then back along the incoming path, at most this many squares
+-- and never past the path start. The C sim ends that exit leg as soon as
+-- the tank is out of pill range of every pill that fired at it in the run
+-- (at once when none did). A death on the exit leg is still a KILL.
+-- 0 = the old sim (the goal pool to the pill square, CAPTURE_ROUTE to the
+-- square next to it, no exit leg).
+M.WSIM_CAPTURE_EXIT_MAX = 10
+-- WSIM_CAPTURE_EXIT_DMG_WEIGHT: exit leg damage costs this share of
+-- WSIM_DAMAGE_COST_WEIGHT in the goal pool:
+--   extra = (damage - exit_damage) x W + exit_damage x W x this.
+M.WSIM_CAPTURE_EXIT_DMG_WEIGHT = 0.5
 
 -- Dwell: how long the tank has to STAND STILL at the destination once it
 -- gets there. The sim keeps running for this many ticks after arrival, with
@@ -8055,6 +8086,12 @@ M.PRESETS = {
     --   2026-11-21: the C copy calls the Lua square tests.
     PT2_C_STANDABLE = false,
     PT2_AFTER_SCAN_SPLIT = false,
+    --   2026-11-21: the old world sim (no driving while pushed, 1 - d/range
+    --   hit discount, capture sim with no exit leg).
+    WSIM_DRIVE_WHILE_SLIDING = false,
+    WSIM_HIT_FULL_DIST = 0,
+    WSIM_HIT_FAR_FRAC = 0,
+    WSIM_CAPTURE_EXIT_MAX = 0,
     --   2026-11-17: hold 15 ticks with no goal after a kill (old rule).
     POST_KILL_WAIT_TICKS = 15,
     --   2026-11-17: carrying-pill approach floor 30 (old rule).
@@ -8394,6 +8431,10 @@ M.PRESETS.mast = {
   PT2_C_EVAL                        = false,  -- 2.2.1 had no pill take v2
   PT2_C_STANDABLE                   = false,  -- 2.2.1 had no pill take v2
   PT2_AFTER_SCAN_SPLIT              = false,  -- 2.2.1 had no pill take v2
+  WSIM_DRIVE_WHILE_SLIDING          = false,  -- 2.2.1 world sim: no driving while pushed
+  WSIM_HIT_FULL_DIST                = 0,      -- 2.2.1 world sim: 1 - d/range discount
+  WSIM_HIT_FAR_FRAC                 = 0,
+  WSIM_CAPTURE_EXIT_MAX             = 0,      -- 2.2.1 world sim: capture sim with no exit leg
   POST_KILL_WAIT_TICKS              = 15,
   CARRY_APPROACH_MIN_ARMOUR_ONE     = 30,
   CARRY_APPROACH_MIN_ARMOUR_MANY    = 30,

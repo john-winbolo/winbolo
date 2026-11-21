@@ -2626,6 +2626,9 @@ int run_obs_events_pill_killed(void);
 int run_sim_rules_shell_flight_follows(void);
 int run_sim_rules_brain_shot_follows(void);
 int run_sim_rules_worldsim_pill_follows(void);
+int run_wsim_fix_drive_while_sliding(void);
+int run_wsim_fix_hit_damage(void);
+int run_wsim_fix_capture_exit(void);
 int run_sim_rules_boat_speed_follows(void);
 int run_sim_rules_obs_reload_follows(void);
 

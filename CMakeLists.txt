@@ -6692,6 +6692,9 @@ set(_unit_test_names
     sim_rules_shell_flight_follows
     sim_rules_brain_shot_follows
     sim_rules_worldsim_pill_follows
+    wsim_fix_drive_while_sliding
+    wsim_fix_hit_damage
+    wsim_fix_capture_exit
     sim_rules_boat_speed_follows
     sim_rules_obs_reload_follows
     sim_rules_describe_names

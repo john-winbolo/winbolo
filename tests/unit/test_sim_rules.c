@@ -97,6 +97,7 @@
  */
 
 #include <stddef.h>
+#include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -2543,6 +2544,238 @@ int run_sim_rules_worldsim_pill_follows(void) {
                       sim->pill_cooldown_ticks == (int) classic.pill_cooldown_ticks,
                   "a clear lost the pill numbers the model was built with");
 
+    brainWorldSimDestroy(sim);
+    return 0;
+}
+
+/* World sim fixes E (WSIM_DRIVE_WHILE_SLIDING) and A (WSIM_HIT_FULL_DIST /
+   WSIM_HIT_FAR_FRAC). The sim is built with the old model; the brain turns
+   the fixes on through brainWorldSimSetFixes. */
+static BYTE wsimFixMap[65536];
+
+/* Our tank 6 squares east of a pill that fires every 23 ticks, driving
+   west to the square next to it. */
+static WSimResult wsimFixDriveRun(int drive) {
+    BrainWorldSim *sim = brainWorldSimCreate();
+    WSimPathPoint pts[5];
+    WSimResult r;
+    int i;
+    brainWorldSimClear(sim);   /* no LGM: Create leaves lgm.dispatch_tick at 0 */
+    memset(wsimFixMap, 7, sizeof(wsimFixMap));   /* grass */
+    brainWorldSimSetMap(sim, wsimFixMap);
+    brainWorldSimSetFixes(sim, drive, 0.0f, 0.0f);
+    brainWorldSimAddPill(sim, 100, 100, 15, 0.0f, 0xFF, 0);
+    sim->pills[0].speed = 23;
+    sim->pills[0].cooldown = 0;
+    brainWorldSimAddTank(sim, 106 * 256 + 128, 100 * 256 + 128, 192, 0, 1, 1, 40);
+    for (i = 0; i < 5; i++) {
+        pts[i].mx = (uint8_t)(105 - i);
+        pts[i].my = 100;
+    }
+    brainWorldSimSetPath(sim, pts, 5);
+    r = brainWorldSimRun(sim, 300);
+    brainWorldSimDestroy(sim);
+    return r;
+}
+
+int run_wsim_fix_drive_while_sliding(void) {
+    WSimResult off = wsimFixDriveRun(0);
+    WSimResult on = wsimFixDriveRun(1);
+    BrainWorldSim *sim = brainWorldSimCreate();
+    SimRules classic;
+    simRulesClassic(&classic);
+
+    /* The push numbers come from the classic rules, and a new sim has the
+       old model. */
+    UT_ASSERT_MSG(sim->tank_slide_step == (int) classic.tank_slide_step &&
+                      sim->tank_bump_decay_shift == (int) classic.tank_bump_decay_shift,
+                  "push step %d shift %d, not the classic %d %d",
+                  sim->tank_slide_step, sim->tank_bump_decay_shift,
+                  (int) classic.tank_slide_step, (int) classic.tank_bump_decay_shift);
+    UT_ASSERT_MSG(sim->drive_while_sliding == 0 && sim->hit_full_dist == 0.0f &&
+                      sim->hit_far_frac == 0.0f, "a new sim is not the old model");
+    brainWorldSimSetFixes(sim, 1, 2.0f, 0.4f);
+    brainWorldSimClear(sim);
+    UT_ASSERT_MSG(sim->drive_while_sliding == 1 && sim->hit_full_dist == 2.0f &&
+                      sim->hit_far_frac == 0.4f, "a clear lost the fixes");
+    brainWorldSimDestroy(sim);
+
+    printf("    off: arrival=%d killed=%d trunc=%d dmg=%d hits=%d ticks=%d\n",
+           off.arrival_tick, off.killed, off.truncated, off.damage_taken,
+           off.num_hits, off.ticks_simulated);
+    printf("    on:  arrival=%d killed=%d trunc=%d dmg=%d hits=%d ticks=%d\n",
+           on.arrival_tick, on.killed, on.truncated, on.damage_taken,
+           on.num_hits, on.ticks_simulated);
+    /* Old model: each push stops the drive for about 18 ticks and the pill
+       fires every 23, so the tank drifts and never gets there. */
+    UT_ASSERT_MSG(off.arrival_tick < 0 && off.truncated,
+                  "the old model reached the square (arrival %d)", off.arrival_tick);
+    /* Fix E: the tank keeps driving under the push and gets there. */
+    UT_ASSERT_MSG(on.arrival_tick > 0 && !on.killed && !on.truncated,
+                  "with the fix the tank did not arrive (arrival %d)", on.arrival_tick);
+    UT_ASSERT_MSG(on.num_hits > 0, "with the fix the pill never hit the tank");
+    return 0;
+}
+
+/* The old moving-tank discount, copied from before the fix. */
+static int wsimFixOldDamage(int shell_damage, int pill_range, int dsq) {
+    float dist_frac = sqrtf((float)dsq) / (float)pill_range;
+    int scaled;
+    if (dist_frac > 1.0f) dist_frac = 1.0f;
+    scaled = (int)(shell_damage * (1.0f - dist_frac) + 0.5f);
+    if (scaled < 1 && dsq <= (pill_range/2) * (pill_range/2)) scaled = 1;
+    return scaled;
+}
+
+int run_wsim_fix_hit_damage(void) {
+    BrainWorldSim *sim = brainWorldSimCreate();
+    static const int want[11] = { 5, 5, 5, 5, 4, 4, 3, 3, 2, 2, 2 };
+    int d, wu;
+
+    UT_ASSERT(sim != NULL);
+    UT_ASSERT_MSG(sim->shell_damage == 5 && sim->pill_range == 2048,
+                  "classic shell damage %d range %d", sim->shell_damage, sim->pill_range);
+    /* Old values (0, 0): the old discount, bit for bit, at every range. */
+    for (wu = 0; wu <= 3000; wu++) {
+        int dsq = wu * wu;
+        UT_ASSERT_MSG(brainWorldSimHitDamage(sim, dsq) == wsimFixOldDamage(5, 2048, dsq),
+                      "old model at %d WU: %d, before the fix %d", wu,
+                      brainWorldSimHitDamage(sim, dsq), wsimFixOldDamage(5, 2048, dsq));
+        UT_ASSERT(brainWorldSimHitDamage(sim, dsq + wu) == wsimFixOldDamage(5, 2048, dsq + wu));
+    }
+    /* Fix A, Andrew's values: 5,5,4,4,3,3,2 at 2..8 squares; 2 past range. */
+    brainWorldSimSetFixes(sim, 0, 2.0f, 0.4f);
+    for (d = 0; d <= 10; d++) {
+        int dsq = (d * 256) * (d * 256);
+        UT_ASSERT_MSG(brainWorldSimHitDamage(sim, dsq) == want[d],
+                      "fix A at %d squares: %d, want %d", d,
+                      brainWorldSimHitDamage(sim, dsq), want[d]);
+    }
+    /* The damage never rises with distance. */
+    for (wu = 1; wu <= 3000; wu++) {
+        UT_ASSERT(brainWorldSimHitDamage(sim, wu * wu) <= brainWorldSimHitDamage(sim, (wu - 1) * (wu - 1)));
+    }
+    brainWorldSimDestroy(sim);
+    return 0;
+}
+
+/* World sim fix C (WSIM_CAPTURE_EXIT_MAX): the exit leg. Our tank starts on
+   square (106,100) and drives west onto the capture square (102,100): the
+   incoming path is 105..102. The exit leg goes back east, 103..(102+n).
+   A hostile pill sits at (100,100); range 8 squares = 2048 WU. */
+typedef struct {
+    WSimResult r;
+    int end_wx;     /* our tank's wx when the run ended */
+} WsimExitRun;
+
+static WsimExitRun wsimExitRun(int exit_squares, int set_exit, int shooter_mx,
+                               int friendly_mx) {
+    BrainWorldSim *sim = brainWorldSimCreate();
+    WSimPathPoint pts[32];
+    WsimExitRun out;
+    int n = 0, i;
+    /* Create leaves lgm.dispatch_tick at 0, so an LGM would walk out at
+       tick 0 and draw pill fire. A clear sets it to -1, as snapshot does. */
+    brainWorldSimClear(sim);
+    memset(wsimFixMap, 7, sizeof(wsimFixMap));   /* grass */
+    brainWorldSimSetMap(sim, wsimFixMap);
+    brainWorldSimSetFixes(sim, 1, 2.0f, 0.4f);
+    brainWorldSimAddPill(sim, shooter_mx, 100, 15, 0.0f, 0xFF, 0);
+    sim->pills[0].speed = 23;   /* fires every 23 ticks, as above */
+    sim->pills[0].cooldown = 0;
+    if (friendly_mx > 0) {
+        /* Our own pill: it never fires at us. */
+        brainWorldSimAddPill(sim, friendly_mx, 100, 15, 0.0f, 1, 1);
+    }
+    brainWorldSimAddTank(sim, 106 * 256 + 128, 100 * 256 + 128, 192, 0, 1, 1, 40);
+    for (i = 105; i >= 102; i--) {
+        pts[n].mx = (uint8_t)i;
+        pts[n].my = 100;
+        n++;
+    }
+    for (i = 1; i <= exit_squares; i++) {
+        pts[n].mx = (uint8_t)(102 + i);
+        pts[n].my = 100;
+        n++;
+    }
+    brainWorldSimSetPath(sim, pts, n);
+    if (set_exit) brainWorldSimSetExitStart(sim, 4);
+    out.r = brainWorldSimRun(sim, 300);
+    out.end_wx = sim->tanks[sim->our_tank_idx].wx;
+    brainWorldSimDestroy(sim);
+    return out;
+}
+
+int run_wsim_fix_capture_exit(void) {
+    int pill_wx = 100 * 256 + 128;
+    WsimExitRun base = wsimExitRun(0, 0, 100, 0);
+    WsimExitRun ex = wsimExitRun(10, 1, 100, 0);
+    WsimExitRun exf = wsimExitRun(10, 1, 100, 112);
+    WsimExitRun shortx = wsimExitRun(3, 1, 100, 0);
+    WsimExitRun quiet0 = wsimExitRun(0, 0, 80, 0);
+    WsimExitRun quiet = wsimExitRun(10, 1, 80, 0);
+    WsimExitRun noset = wsimExitRun(10, 0, 100, 0);
+    BrainWorldSim *sim;
+
+    printf("    base:  arrival=%d dmg=%d ticks=%d\n", base.r.arrival_tick,
+           base.r.damage_taken, base.r.ticks_simulated);
+    printf("    exit:  arrival=%d dmg=%d exit_dmg=%d exit_ticks=%d ticks=%d end_wx=%d (out at > %d)\n",
+           ex.r.arrival_tick, ex.r.damage_taken, ex.r.exit_damage, ex.r.exit_ticks,
+           ex.r.ticks_simulated, ex.end_wx, pill_wx + 2048);
+    printf("    short: exit_ticks=%d end_wx=%d trunc=%d\n", shortx.r.exit_ticks,
+           shortx.end_wx, shortx.r.truncated);
+    printf("    noset: arrival=%d exit_ticks=%d killed=%d trunc=%d ticks=%d\n",
+           noset.r.arrival_tick, noset.r.exit_ticks, noset.r.killed,
+           noset.r.truncated, noset.r.ticks_simulated);
+
+    /* The incoming leg is the old run: same arrival, and the arrival is on
+       the capture square. */
+    UT_ASSERT_MSG(base.r.arrival_tick > 0 && ex.r.arrival_tick == base.r.arrival_tick,
+                  "arrival %d, without the exit %d", ex.r.arrival_tick, base.r.arrival_tick);
+    UT_ASSERT(base.r.exit_damage == 0 && base.r.exit_ticks == 0);
+    /* The pill fired at us, so the exit leg ran and stopped at the first
+       tick out of its range, well before the 10 exit squares ran out. */
+    UT_ASSERT_MSG(!ex.r.killed && !ex.r.truncated && ex.r.exit_ticks > 0,
+                  "exit leg: killed %d trunc %d ticks %d", ex.r.killed,
+                  ex.r.truncated, ex.r.exit_ticks);
+    UT_ASSERT_MSG(ex.end_wx - pill_wx > 2048 && ex.end_wx - pill_wx <= 2048 + 64,
+                  "the exit stopped at %d WU from the pill, not just out of range",
+                  ex.end_wx - pill_wx);
+    UT_ASSERT_MSG(ex.end_wx < 112 * 256 + 128, "the exit drove to its end");
+    UT_ASSERT(ex.r.exit_damage >= 0 && ex.r.exit_damage <= ex.r.damage_taken);
+    UT_ASSERT_MSG(ex.r.damage_taken - ex.r.exit_damage == base.r.damage_taken,
+                  "incoming damage %d, without the exit %d",
+                  ex.r.damage_taken - ex.r.exit_damage, base.r.damage_taken);
+    UT_ASSERT(ex.r.ticks_simulated - ex.r.exit_ticks + 1 == ex.r.arrival_tick);
+    /* A pill that never fires at us does not hold the tank in the exit. */
+    UT_ASSERT_MSG(exf.end_wx == ex.end_wx && exf.r.exit_ticks == ex.r.exit_ticks &&
+                      exf.r.damage_taken == ex.r.damage_taken,
+                  "a friendly pill changed the exit: %d ticks to %d ticks",
+                  ex.r.exit_ticks, exf.r.exit_ticks);
+    /* A short exit leg (3 squares, back to 105) ends with the path, still
+       in range of the pill. */
+    UT_ASSERT_MSG(shortx.end_wx - pill_wx <= 2048 && !shortx.r.truncated &&
+                      !shortx.r.killed && shortx.r.exit_ticks > 0,
+                  "short exit ended at %d WU from the pill", shortx.end_wx - pill_wx);
+    /* No pill fired at us: the run ends at the arrival, bit for bit the old
+       run. */
+    UT_ASSERT(quiet.r.exit_ticks == 0 && quiet.r.exit_damage == 0);
+    UT_ASSERT_MSG(memcmp(&quiet.r, &quiet0.r, sizeof(WSimResult)) == 0,
+                  "an exit leg with no shooter changed the result");
+    /* With no exit start (the knob at 0) the extra squares are one drive:
+       no arrival on the capture square (here the 300 tick cap ends the run
+       first), no exit leg numbers. */
+    UT_ASSERT(noset.r.exit_ticks == 0 && noset.r.exit_damage == 0 &&
+              noset.r.arrival_tick != ex.r.arrival_tick &&
+              (noset.r.arrival_tick > ex.r.arrival_tick || noset.r.truncated));
+    /* A clear drops the exit start; a bad one is ignored. */
+    sim = brainWorldSimCreate();
+    brainWorldSimSetExitStart(sim, 4);
+    UT_ASSERT(sim->exit_start == 4);
+    brainWorldSimClear(sim);
+    UT_ASSERT(sim->exit_start == 0);
+    brainWorldSimSetExitStart(sim, -3);
+    UT_ASSERT(sim->exit_start == 0);
     brainWorldSimDestroy(sim);
     return 0;
 }
