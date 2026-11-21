@@ -76,6 +76,9 @@ void lv_imgui_set_tank_centred(int on);
 /* 1 when Options > Animate Rewind and Fast Forward is ticked. */
 int  lv_imgui_get_jump_anim(void);
 void lv_imgui_toggle_jump_anim(void);
+/* 1 when Options > Animate Seek is ticked (lv_windowSeekToMs). */
+int  lv_imgui_get_seek_anim(void);
+void lv_imgui_toggle_seek_anim(void);
 void lv_imgui_toggle_hide_lobby(void);
 /* Whether the loaded recording declares any region, which is when the
    Regions item is enabled; and the item's flip, which repaints the map. */

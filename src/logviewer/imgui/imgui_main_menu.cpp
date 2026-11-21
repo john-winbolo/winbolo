@@ -141,6 +141,9 @@ bool lv_g_show_regions = false;
 static bool s_tank_centred = false;
 /* Options > Animate Rewind and Fast Forward (lv_jump_anim.h). */
 static bool s_jump_anim = true;
+/* Options > Animate Seek: a seek of the seek bar is made with the same
+ * animation (lv_windowSeekToMs). */
+static bool s_seek_anim = true;
 static bool s_dns_lookups = false;
 static bool s_mode_information = true;  /* true = Information, false = Select Team */
 
@@ -231,6 +234,9 @@ void lv_imgui_main_menu_init(struct LogViewerState *lv) {
     /* On until turned off. */
     lv_platform_config_get_string("LOGVIEWER", "Animate Jumps", "Yes", val, sizeof(val));
     s_jump_anim = !(val[0] == 'N' || val[0] == 'n');
+    /* On until turned off. */
+    lv_platform_config_get_string("LOGVIEWER", "Animate Seek", "Yes", val, sizeof(val));
+    s_seek_anim = !(val[0] == 'N' || val[0] == 'n');
     /* Toggle Screen-True Own Shells (lv_shell_owner.h): on until turned off. */
     lv_platform_config_get_string("LOGVIEWER", "Lag View Own Shells At Present", "Yes", val,
                                   sizeof(val));
@@ -294,6 +300,7 @@ void lv_imgui_main_menu_save(void) {
     lv_platform_config_set_string("LOGVIEWER", "Hit Boxes",
                                   lv_drawGetHitBoxes() ? "Yes" : "No");
     lv_platform_config_set_string("LOGVIEWER", "Animate Jumps", s_jump_anim ? "Yes" : "No");
+    lv_platform_config_set_string("LOGVIEWER", "Animate Seek", s_seek_anim ? "Yes" : "No");
     lv_platform_config_set_string("LOGVIEWER", LV_LAG_PREF_KEY,
                                   lv_screenGetLagFeature() ? "Yes" : "No");
     lv_platform_config_set_string("LOGVIEWER", "Lag View Own Shells At Present",
@@ -383,6 +390,10 @@ void lv_imgui_toggle_tank_centred(void) {
 int lv_imgui_get_jump_anim(void) { return s_jump_anim ? 1 : 0; }
 
 void lv_imgui_toggle_jump_anim(void) { s_jump_anim = !s_jump_anim; }
+
+int lv_imgui_get_seek_anim(void) { return s_seek_anim ? 1 : 0; }
+
+void lv_imgui_toggle_seek_anim(void) { s_seek_anim = !s_seek_anim; }
 
 /* Sets it, so the menu's tick and the screen's flag stay the same thing. */
 void lv_imgui_set_tank_centred(int on) {
@@ -895,9 +906,13 @@ int lv_imgui_main_menu_bar(void) {
             }
 #ifndef __EMSCRIPTEN__
             /* The browser build's Rewind and Fast Forward jump: it has no
-             * animation to turn off. */
+             * animation to turn off. Its seek bar jumps too. */
             if (ImGui::MenuItem(langGetText(STR_LV_JUMP_ANIM), NULL, s_jump_anim)) {
                 s_jump_anim = !s_jump_anim;
+                clicked = 1;
+            }
+            if (ImGui::MenuItem(langGetText(STR_LV_SEEK_ANIM), NULL, s_seek_anim)) {
+                s_seek_anim = !s_seek_anim;
                 clicked = 1;
             }
 #endif

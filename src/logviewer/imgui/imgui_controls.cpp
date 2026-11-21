@@ -41,6 +41,7 @@ extern "C" {
     void lv_windowStop(int corruptLog);
     void lv_windowRewind(void);
     void lv_windowFastForward(void);
+    void lv_windowSeekToMs(uint32_t ms);
     void lv_windowNeedRedraw(void);
     void lv_screenGetTime(char *buffer);
     void lv_updateSpeed(unsigned char speed, int updateSlider);
@@ -102,27 +103,23 @@ static bool s_seek_was_playing = false;
  * value as the recap reel's RECAP_SCRUB_BACK_MS. */
 #define LV_SCRUB_BACK_SECS 0.090
 
-/* Move the world to a slider ratio. Playback must already be paused: the
- * seek walks the log on this thread while lv_windowTimer ticks it on the
- * timer thread. */
-static void seek_to_ratio(float ratio) {
-    lv_clientMutexWaitFor();
-    lv_drawDirtyScreen();
-    lv_screenSeekToPosition(ratio);
-    lv_drawDirtyScreen();
-    lv_clientMutexRelease();
-    lv_windowNeedRedraw();
+/* Move the world to an exact time of the log. It is not a jump: the world
+ * plays there quickly, forward or back, in the animation of Rewind and Fast
+ * Forward (lv_windowSeekToMs), so the tanks and shells are seen to go
+ * there. A new time while that runs is a new target for it. With Options >
+ * Animate Seek off it is a jump. */
+static void seek_to_ms(uint32_t ms) {
+    lv_windowSeekToMs(ms);
 }
 
-/* Move the world to an exact time of the log. Playback must already be
- * paused, as for seek_to_ratio. */
-static void seek_to_ms(uint32_t ms) {
-    lv_clientMutexWaitFor();
-    lv_drawDirtyScreen();
-    lv_screenSeekToTimeMs(ms);
-    lv_drawDirtyScreen();
-    lv_clientMutexRelease();
-    lv_windowNeedRedraw();
+/* The same for a slider ratio: the time is lv_screenSeekToPosition's sum. */
+static void seek_to_ratio(float ratio) {
+    const uint32_t startMs = lv_screenWindowStartMs();
+    const uint32_t lenMs = lv_screenWindowLenMs();
+    if (lenMs == 0) return;
+    if (ratio < 0.0f) ratio = 0.0f;
+    if (ratio > 1.0f) ratio = 1.0f;
+    seek_to_ms(startMs + (uint32_t)(ratio * (float)lenMs));
 }
 
 /* Shift and a drag of the seek bar: playback moves one tick of the log for
@@ -664,11 +661,13 @@ void lv_imgui_controls_window(void) {
             }
 
             /* Live scrub: the world follows the handle as it is dragged, not
-             * only when it is dropped. A forward seek continues the decode
-             * from where it stands, so it costs only the ticks the handle
-             * crossed and runs every frame. A backward seek has to restore a
-             * snapshot and decode forward again, so those are throttled and
-             * only the newest one in a burst is paid for. */
+             * only when it is dropped. Each new place is a new target of the
+             * seek's animation (seek_to_ms), which moves the world there over
+             * the next frames, so a click far along the bar plays there
+             * quickly rather than jumping. A forward target is given every
+             * frame. A backward one is throttled, as the seeks back were
+             * before the animation: each step back restores a snapshot and
+             * decodes forward again. */
             if (s_is_seeking && ImGui::IsItemActive()) {
                 double now = ImGui::GetTime();
                 bool apply = false;

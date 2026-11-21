@@ -74,6 +74,7 @@ static NSMenuItem *s_lv_builderStatusItem  = nil;
 static NSMenuItem *s_lv_pillNumbersItem    = nil;
 static NSMenuItem *s_lv_hitBoxesItem       = nil;
 static NSMenuItem *s_lv_jumpAnimItem       = nil;
+static NSMenuItem *s_lv_seekAnimItem       = nil;
 static NSMenuItem *s_lv_soundEffectsItem   = nil;
 static NSMenu     *s_lv_volumeMenu         = nil;
 static NSMenuItem *s_lv_dnsLookupsItem     = nil;
@@ -136,6 +137,7 @@ static void lv_push_sdl_quit(void) {
 - (void)onTogglePillNumbers:(id)sender;
 - (void)onToggleHitBoxes:(id)sender;
 - (void)onToggleJumpAnim:(id)sender;
+- (void)onToggleSeekAnim:(id)sender;
 - (void)onToggleSoundEffects:(id)sender;
 - (void)onSetSoundVolume:(id)sender;
 - (void)onToggleDnsLookups:(id)sender;
@@ -285,6 +287,7 @@ static void lv_push_sdl_quit(void) {
     lv_windowNeedRedraw();
 }
 - (void)onToggleJumpAnim:(id)sender { (void)sender; lv_imgui_toggle_jump_anim(); }
+- (void)onToggleSeekAnim:(id)sender { (void)sender; lv_imgui_toggle_seek_anim(); }
 - (void)onToggleSoundEffects:(id)sender {
     (void)sender;
     if (s_lv_state) s_lv_state->isSoundsPlaying = s_lv_state->isSoundsPlaying ? false : true;
@@ -720,6 +723,15 @@ void lv_mac_menubar_install(struct SDL_Window *win, struct LogViewerState *lvSta
     [optionsMenu addItem:jumpAnim];
     s_lv_jumpAnimItem = jumpAnim;
 
+    /* Animate Seek, in the in-window menu's place. */
+    NSMenuItem *seekAnim = [[NSMenuItem alloc]
+        initWithTitle:LANG_STR(STR_LV_SEEK_ANIM)
+        action:@selector(onToggleSeekAnim:)
+        keyEquivalent:@""];
+    [seekAnim setTarget:s_lv_bridge];
+    [optionsMenu addItem:seekAnim];
+    s_lv_seekAnimItem = seekAnim;
+
     NSMenuItem *soundEffects = [[NSMenuItem alloc]
         initWithTitle:LANG_STR(STR_MENU_SOUND_EFFECTS)
         action:@selector(onToggleSoundEffects:)
@@ -1048,6 +1060,7 @@ void lv_mac_menubar_uninstall(void) {
     s_lv_pillNumbersItem = nil;
     s_lv_hitBoxesItem = nil;
     s_lv_jumpAnimItem = nil;
+    s_lv_seekAnimItem = nil;
     s_lv_soundEffectsItem = nil;
     s_lv_volumeMenu = nil;
     s_lv_dnsLookupsItem = nil;
@@ -1156,6 +1169,7 @@ void lv_mac_menubar_refresh(const struct LvMenuState *s) {
     if (s_lv_pillNumbersItem) [s_lv_pillNumbersItem setState:(s->pillNumbers ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_lv_hitBoxesItem) [s_lv_hitBoxesItem setState:(s->hitBoxes ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_lv_jumpAnimItem) [s_lv_jumpAnimItem setState:(lv_imgui_get_jump_anim() ? NSControlStateValueOn : NSControlStateValueOff)];
+    if (s_lv_seekAnimItem) [s_lv_seekAnimItem setState:(lv_imgui_get_seek_anim() ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_lv_soundEffectsItem) [s_lv_soundEffectsItem setState:(s->soundEffects ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_lv_volumeMenu) {
         for (NSMenuItem *item in [s_lv_volumeMenu itemArray]) {

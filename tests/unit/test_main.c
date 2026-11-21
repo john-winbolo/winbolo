@@ -3142,6 +3142,7 @@ static const UnitTestEntry s_tests[] = {
     { "lv_jump_anim_lands",                              run_lv_jump_anim_lands                              },
     { "lv_jump_anim_steps",                              run_lv_jump_anim_steps                              },
     { "lv_jump_anim_time",                               run_lv_jump_anim_time                               },
+    { "lv_jump_anim_retarget",                           run_lv_jump_anim_retarget                           },
     { "scn_presentation_codec_bodies",                   run_scn_presentation_codec_bodies                   },
     { "scn_presentation_codec_refuses_short",            run_scn_presentation_codec_refuses_short            },
     { "scn_presentation_decoder_sets_broadcast",         run_scn_presentation_decoder_sets_broadcast         },
