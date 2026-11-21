@@ -116,6 +116,9 @@ typedef struct {
      world units, for the hit areas (lv_hitbox.h). */
   int  tankHitRadius;
   int  pillRange;
+  /* base_status_range: how near a base has to be for the game to show its
+     stock, in world units (the Tank panel's near base, lv_base_near.h). */
+  int  baseStatusRange;
   /* The tank's hit zone, LV_HITBOX_TANK_* (lv_hitbox.h): the circle, the
      square of games before it, or none when the file cannot tell. */
   int  tankHitZone;

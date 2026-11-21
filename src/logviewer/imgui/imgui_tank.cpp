@@ -31,6 +31,14 @@
  * none of it, only the gauges (lvTankLayoutPick has the rule). Nothing is
  * ever cut off, so the panel does not scroll.
  *
+ * Under them is the base the player's own screen showed the stock of: the
+ * nearest neutral or allied base in range, picked as the game picks it
+ * (lv_base_near.h). It is drawn as the game draws it, three green bars
+ * across, cut out of the same background picture with the game's S, M and
+ * A at their left, and beside them its number and its owner in the owner's
+ * colour. With no base near, the bars are empty, as the game's are, and the
+ * line beside them says so.
+ *
  * The selected tank is the one a click on a tank on the map picks, or a
  * click on a tank in the HUD panel. Everything is read off the game's state
  * every frame, so it follows a seek in either direction.
@@ -54,6 +62,7 @@
 extern "C" {
     #include "../lv_hud.h"
     #include "../lv_tank_status.h"
+    #include "../lv_base_near.h"
     #include "../lv_builder_status.h"
     #include "../lv_pill_numbers.h"
     #include "../lv_lag.h"
@@ -104,6 +113,18 @@ extern "C" {
 
 /* The game's green. */
 #define TANK_BAR_COLOUR IM_COL32(0, 255, 0, 255)
+
+/* The near base's bars: the part of the background picture they stand in,
+ * with the S, M and A at their left and a little black round them. The
+ * numbers are the game's (gui/sdl3/overview_hud_layout.cpp cuts the same
+ * slice for the full screen view's HUD: HUD_BASE_BARS_LABEL_W and
+ * HUD_SLICE_PAD). */
+#define TANK_BASE_LABEL_W 15
+#define TANK_BASE_PAD     4
+#define TANK_BASE_SLICE_X (STATUS_BASE_BARS_LEFT - TANK_BASE_LABEL_W)
+#define TANK_BASE_SLICE_Y (STATUS_BASE_BARS_TOP - TANK_BASE_PAD)
+#define TANK_BASE_SLICE_W (TANK_BASE_LABEL_W + STATUS_BASE_BARS_MAX_WIDTH + TANK_BASE_PAD)
+#define TANK_BASE_SLICE_H (STATUS_BASE_BARS_TOTALHEIGHT + 2 * TANK_BASE_PAD)
 
 /* The thin edge round the well, as the HUD panel has round its grids. */
 #define TANK_EDGE_COLOUR IM_COL32(110, 110, 110, 255)
@@ -230,6 +251,21 @@ static float tank_lag_h(bool withGraph) {
     return h;
 }
 
+/* The scale the near base's bars are drawn at in a window with availW of
+ * room across: the gauges' default, or 1 where that is too wide. */
+static int tank_base_scale(float availW) {
+    return (availW >= (float)(TANK_DEFAULT_SCALE * TANK_BASE_SLICE_W) + 2.0f)
+               ? TANK_DEFAULT_SCALE : 1;
+}
+
+/* The room the near base's row takes under the gauges, the gap over it
+ * counted. */
+static float tank_base_h(float availW) {
+    const float bars = (float)(tank_base_scale(availW) * TANK_BASE_SLICE_H) + 2.0f;
+    const float text = ImGui::GetTextLineHeight();
+    return ImGui::GetStyle().ItemSpacing.y + ((bars > text) ? bars : text);
+}
+
 float lv_imgui_tank_dock_height(float dockWidth) {
     const ImGuiStyle &style = ImGui::GetStyle();
     float availW = dockWidth - style.WindowPadding.x * 2.0f;
@@ -237,6 +273,7 @@ float lv_imgui_tank_dock_height(float dockWidth) {
     if (!tank_text_beside(availW)) {
         h += style.ItemSpacing.y + tank_text_h();
     }
+    h += tank_base_h(availW);
     if (lv_screenLagShown()) {
         /* The dock is sized for the largest section, the one with a graph. */
         h += tank_lag_h(true);
@@ -763,6 +800,105 @@ static void tank_text(const LvTankStatus &st, bool icons) {
     }
 }
 
+/* The near base's row: its three bars across, as the game draws them, and
+ * beside them its number and owner, in the owner's colour. Each bar has a
+ * tooltip, "Shells: 12 / 90". With no base near, the bars are empty and the
+ * line is dim. */
+static void tank_base_row(const LvTankStatus &st) {
+    static const langid k_base_name[LV_BASE_GAUGE_COUNT] = {
+        STR_TABLET_SHELLS, STR_TABLET_MINES, STR_TABLET_ARMOUR
+    };
+    static const int k_base_y[LV_BASE_GAUGE_COUNT] = {
+        0, STATUS_BASE_MINES, STATUS_BASE_ARMOUR
+    };
+    ImDrawList *dl = ImGui::GetWindowDrawList();
+    const float s = (float)tank_base_scale(ImGui::GetContentRegionAvail().x);
+    const ImVec2 origin = ImGui::GetCursorScreenPos();
+    float tw = 0.0f, th = 0.0f;
+    SDL_Texture *bg = tank_background(&tw, &th);
+    const bool sliceIn = (bg != nullptr &&
+                          tw >= (float)(TANK_BASE_SLICE_X + TANK_BASE_SLICE_W) &&
+                          th >= (float)(TANK_BASE_SLICE_Y + TANK_BASE_SLICE_H));
+    ImVec2 p0(floorf(origin.x) + 1.0f, floorf(origin.y) + 1.0f);
+    ImVec2 p1(p0.x + s * TANK_BASE_SLICE_W, p0.y + s * TANK_BASE_SLICE_H);
+
+    dl->AddRect(ImVec2(p0.x - 1.0f, p0.y - 1.0f), ImVec2(p1.x + 1.0f, p1.y + 1.0f),
+                TANK_EDGE_COLOUR);
+    if (sliceIn) {
+        imguiPushNearestSamplingOn(dl);
+        dl->AddImage((ImTextureID)(size_t)bg, p0, p1,
+                     ImVec2((float)TANK_BASE_SLICE_X / tw, (float)TANK_BASE_SLICE_Y / th),
+                     ImVec2((float)(TANK_BASE_SLICE_X + TANK_BASE_SLICE_W) / tw,
+                            (float)(TANK_BASE_SLICE_Y + TANK_BASE_SLICE_H) / th));
+        imguiPopNearestSamplingOn(dl);
+    } else {
+        dl->AddRectFilled(p0, p1, IM_COL32_BLACK);
+    }
+
+    /* The bars start where the game starts them and grow to the right. */
+    const float left = p0.x + s * (float)TANK_BASE_LABEL_W;
+    const float top = p0.y + s * (float)TANK_BASE_PAD;
+    for (int g = 0; g < LV_BASE_GAUGE_COUNT; g++) {
+        const float y0 = top + s * (float)k_base_y[g];
+        const float y1 = y0 + s * (float)STATUS_BASE_BARS_HEIGHT;
+        if (st.baseNear) {
+            const float w = lvBaseBarWidth(st.baseValue[g], st.baseFull[g],
+                                           BAR_BASE_FULL_PIXELS, STATUS_BASE_BARS_MAX_WIDTH);
+            if (w > 0.0f) {
+                dl->AddRectFilled(ImVec2(left, y0), ImVec2(floorf(left + s * w), y1),
+                                  TANK_BAR_COLOUR);
+            }
+        }
+
+        /* The room a bar answers the mouse in: its own row of the well,
+         * the letter at its left included. */
+        const float gap = s * (float)STATUS_BASE_BARS_GAP * 0.5f;
+        ImGui::PushID(LV_TANK_GAUGE_COUNT + g);
+        ImGui::SetCursorScreenPos(ImVec2(p0.x, y0 - gap));
+        ImGui::InvisibleButton("##basebar", ImVec2(p1.x - p0.x, (y1 - y0) + 2.0f * gap));
+        if (st.baseNear && ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) {
+            MessageArgs args = {};
+            snprintf(args.string1, sizeof(args.string1), "%s", langGetText(k_base_name[g]));
+            args.number = st.baseValue[g];
+            args.number2 = st.baseFull[g];
+            ImGui::SetTooltip("%s", langGetTextFmt(STR_LV_TANK_STOCK_FMT, &args));
+        }
+        ImGui::PopID();
+    }
+    ImGui::SetCursorScreenPos(origin);
+    ImGui::Dummy(ImVec2(s * TANK_BASE_SLICE_W + 2.0f, s * TANK_BASE_SLICE_H + 2.0f));
+
+    /* Beside the bars, in the middle of their height: "Base 3: Andrew". */
+    ImGui::SameLine(0.0f, ImGui::GetStyle().ItemSpacing.x * 2.0f);
+    {
+        const float rowH = s * TANK_BASE_SLICE_H + 2.0f;
+        const float lineH = ImGui::GetTextLineHeight();
+        if (rowH > lineH) {
+            ImGui::SetCursorPosY(ImGui::GetCursorPosY() + floorf((rowH - lineH) * 0.5f));
+        }
+    }
+    if (st.baseNear) {
+        MessageArgs args = {};
+        args.number = st.baseNum;
+        snprintf(args.string1, sizeof(args.string1), "%s",
+                 st.baseNeutral ? langGetText(STR_LV_TANK_BASE_NEUTRAL) : st.baseOwner);
+        const ImU32 col = (st.baseNeutral || st.baseHasTeam)
+                              ? tank_team_colour(st.baseColour)
+                              : ImGui::GetColorU32(ImGuiCol_Text);
+        ImGui::PushStyleColor(ImGuiCol_Text, col);
+        ImGui::TextUnformatted(langGetTextFmt(STR_LV_TANK_BASE_FMT, &args));
+        ImGui::PopStyleColor();
+    } else {
+        ImGui::TextDisabled("%s", langGetText(STR_LV_TANK_BASE_NONE));
+    }
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) {
+        ImGui::SetTooltip("%s", langGetText(STR_LV_TANK_BASE_TIP));
+    }
+    /* The next item goes under the whole row, not under the line. */
+    ImGui::SetCursorScreenPos(ImVec2(origin.x, origin.y + s * TANK_BASE_SLICE_H + 2.0f));
+    ImGui::Dummy(ImVec2(0.0f, 0.0f));
+}
+
 /* The room under the name and the sizes of what goes in it, for
  * lvTankLayoutPick: all from the size of the window's content and from the
  * font, none of it from what was drawn before. */
@@ -992,6 +1128,8 @@ void lv_imgui_tank_window(void) {
             if (lag.recorded) {
                 avail.y -= tank_lag_h(!(lag.has && lag.bot));
             }
+            /* So does the near base's row. */
+            avail.y -= tank_base_h(avail.x);
             const LvTankRoom room = tank_room(st, avail);
             const LvTankLayout lay = lvTankLayoutPick(&room);
             const bool icons = (lay.text == LV_TANK_TEXT_ICONS);
@@ -1009,6 +1147,7 @@ void lv_imgui_tank_window(void) {
             } else {
                 tank_text(st, icons);
             }
+            tank_base_row(st);
             if (lag.recorded) {
                 tank_lag(st, lag, lagViewSlot);
             }
