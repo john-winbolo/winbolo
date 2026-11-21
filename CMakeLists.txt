@@ -8069,6 +8069,7 @@ set(_unit_test_names
     lv_jump_anim_lands
     lv_jump_anim_steps
     lv_jump_anim_time
+    lv_jump_anim_retarget
     scn_presentation_codec_bodies
     scn_presentation_codec_refuses_short
     scn_presentation_decoder_sets_broadcast
