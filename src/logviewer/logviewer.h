@@ -119,6 +119,9 @@ typedef struct {
   /* lgm_blast_shape: the shape of the builder's open-ground area, 0 to 2
      (LV_HITBOX_BUILDER_SHAPE_* in lv_hitbox.h). */
   int  lgmBlastShape;
+  /* base_status_range: how near a base has to be for the game to show its
+     stock, in world units (the Tank panel's near base, lv_base_near.h). */
+  int  baseStatusRange;
   /* The tank's hit zone, LV_HITBOX_TANK_* (lv_hitbox.h): the circle, the
      square of games before it, or none when the file cannot tell. */
   int  tankHitZone;

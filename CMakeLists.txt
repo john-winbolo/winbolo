@@ -5824,6 +5824,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # how many steps, the log time of each and which is due when
     # (lv_jump_anim.h, header only).
     tests/unit/test_lv_jump_anim.c
+    # The base the viewer's Tank panel shows under the gauges: picked as
+    # the game picks it, and its bars (lv_base_near.h, header only).
+    tests/unit/test_lv_base_near.c
     # The builder marker over each tank on the viewer's map: where it goes,
     # the arrow's direction, the countdown and the table of the times a
     # builder was away (lv_builder_status.h, header only).
@@ -8914,6 +8917,9 @@ set(_unit_test_names
     lv_jump_anim_steps
     lv_jump_anim_time
     lv_jump_anim_retarget
+    lv_base_near_pick
+    lv_base_near_range
+    lv_base_near_bars
     scn_presentation_codec_bodies
     scn_presentation_codec_refuses_short
     scn_presentation_decoder_sets_broadcast

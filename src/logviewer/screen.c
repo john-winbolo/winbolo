@@ -61,6 +61,7 @@
 #include "lv_bot_chip.h"         /* which chip a bot has in the panels */
 #include "lv_overview.h"
 #include "lv_tank_status.h"
+#include "lv_base_near.h"       /* lvBaseNearPick */
 #include "lv_time_fmt.h"
 #include "lv_event_flash.h"
 #include "lv_dock_clear.h"       /* the middle of the view beside a clear sidebar */
@@ -1025,6 +1026,8 @@ static void lv_rulesRefresh(void) {
                                     ? (int)shape
                                     : LGM_BLAST_SHAPE_HALF_SQUARE;
   }
+  g_lv->rules.baseStatusRange = lv_rulesClampInt(
+      lv_screenRuleValueAt(SIM_RULE_base_status_range, t), 0, 65535);
   /* The tank's hit zone: the circle, or the square of games from before it
      (1.91 and earlier), from the header's version and whether the file has
      rule records. */
@@ -6447,6 +6450,7 @@ LogViewerState *lv_decoderCreate(bool fromMainMenu) {
   lv->rules.tankHitRadius  = 112;   /* TANK_HIT_RADIUS */
   lv->rules.pillRange      = 2048;  /* PILLBOX_RANGE */
   lv->rules.lgmBlastShape  = LGM_BLAST_SHAPE_CLASSIC;
+  lv->rules.baseStatusRange = 1792; /* BASE_STATUS_RANGE */
 
   lv->fromMainMenu = fromMainMenu;
   lv->screenSizeX = MAIN_SCREEN_SIZE_X + 15; /* default 30 */
@@ -7458,6 +7462,69 @@ void lv_screenOverviewSnapshot(LvOverview *out) {
   }
 }
 
+/* The base the game shows the stock of for the tank in slot, into out (the
+ * near base of the Tank panel, lv_base_near.h): picked as the player's own
+ * client picks it, against that player's alliances at the playhead and the
+ * base_status_range in force there. A dead tank has none, as it has no place
+ * on the map. */
+static void screenTankNearBase(int slot, LvTankStatus *out) {
+  LvBaseNearItem items[MAX_BASES];
+  BYTE mx = 0, my = 0, px = 0, py = 0, frame = 0;
+  bool onBoat = FALSE;
+  BYTE total;
+  BYTE count;
+  int pick;
+
+  if (g_lv->bs == NULL || !out->alive) {
+    return;
+  }
+  lv_playersGetTankDetails((BYTE) slot, &mx, &my, &px, &py, &frame, &onBoat);
+  if (mx == 0 && my == 0) {
+    return;
+  }
+  total = lv_basesGetNumBases(&g_lv->bs);
+  if (total > MAX_BASES) {
+    total = MAX_BASES;
+  }
+  for (count = 0; count < total; count++) {
+    const base *b = &g_lv->bs->item[count];
+    items[count].active = lv_basesIsActive(&g_lv->bs, (BYTE) (count + 1)) != FALSE;
+    items[count].friendly = (b->owner == NEUTRAL ||
+                             lv_playersIsAllie((BYTE) slot, b->owner) != FALSE);
+    items[count].mapX = b->x;
+    items[count].mapY = b->y;
+  }
+  /* The tank's world place, as the viewer has it: to a 16th of a square. */
+  pick = lvBaseNearPick(items, total, ((long) mx << 8) + ((long) px << TANK_SHIFT_RIGHT2),
+                        ((long) my << 8) + ((long) py << TANK_SHIFT_RIGHT2),
+                        g_lv->rules.baseStatusRange);
+  if (pick == LV_BASE_NEAR_NONE) {
+    return;
+  }
+  {
+    const base *b = &g_lv->bs->item[pick];
+    out->baseNear = 1;
+    out->baseNum = (unsigned char) (pick + 1);
+    out->baseValue[LV_BASE_GAUGE_SHELLS] = b->shells;
+    out->baseValue[LV_BASE_GAUGE_MINES]  = b->mines;
+    out->baseValue[LV_BASE_GAUGE_ARMOUR] = b->armour;
+    out->baseFull[LV_BASE_GAUGE_SHELLS] = g_lv->rules.baseFullShells;
+    out->baseFull[LV_BASE_GAUGE_MINES]  = g_lv->rules.baseFullMines;
+    out->baseFull[LV_BASE_GAUGE_ARMOUR] = g_lv->rules.baseFullArmour;
+    if (b->owner == NEUTRAL || b->owner >= MAX_TANKS) {
+      out->baseNeutral = 1;
+      out->baseColour = lv_screenTeamColour(NEUTRAL_TEAM);
+    } else {
+      char name[PLAYER_NAME_LEN] = "";
+      BYTE team = lv_playersGetTeamForOwner(b->owner);
+      out->baseHasTeam = (team != NEUTRAL_TEAM);
+      out->baseColour = lv_screenTeamColour(team);
+      lv_screenGetPlayerName(name, b->owner, sizeof(name));
+      snprintf(out->baseOwner, sizeof(out->baseOwner), "%s", name);
+    }
+  }
+}
+
 /* Copy out what the Tank panel shows (lv_tank_status.h): the selected tank's
    stocks against their caps, its builder and the pillboxes it carries. The
    selected tank is the viewer's own slot for it (lv_playersGetSelected), not
@@ -7528,6 +7595,7 @@ void lv_screenTankStatusSnapshot(LvTankStatus *out) {
       out->carriedPillNumbers |= lvPillNumberBit(lvPillNumber(count));
     }
   }
+  screenTankNearBase(slot, out);
 }
 
 int lv_screenPillSpots(LvPillSpot *out, int max) {

@@ -1479,6 +1479,13 @@
 /* Log viewer: the hit area round each tank and builder on the map (Options) */
 #define STR_LV_HIT_BOXES                    3470
 #define STR_LV_HIT_BOXES_TIP                3471
+/* Log viewer Tank panel: the base the selected player's screen showed the stock of: its number
+   (number) and owner (string1), the owner word of a neutral one, the line with none near, and
+   the line's tooltip */
+#define STR_LV_TANK_BASE_FMT                3478
+#define STR_LV_TANK_BASE_NEUTRAL            3479
+#define STR_LV_TANK_BASE_NONE               3480
+#define STR_LV_TANK_BASE_TIP                3481
 
 /* Log viewer dialogs */
 #define STR_LV_ASSIGN_COLOURS_HINT          1128
