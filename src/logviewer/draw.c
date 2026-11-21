@@ -546,6 +546,7 @@ float lv_drawZoomPercent(void) {
 static void lvDrawTankLabelsOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
 static void lvDrawTankBarsOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
 static void lvDrawTankMarkOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
+static void lvDrawBaseMarkOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
 static void lvDrawBuilderStatusOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
 static void lvDrawEventFlashOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
 static void lvDrawPingsOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
@@ -622,6 +623,7 @@ static void lvDrawBlitTargetToWindow(void) {
         /* The map pings first: the tank names, the bars and the ring of an
            event go over them. */
         lvDrawPingsOverBlit(&srcRect, &dstRect);
+        lvDrawBaseMarkOverBlit(&srcRect, &dstRect);
         lvDrawTankMarkOverBlit(&srcRect, &dstRect);
         /* Under the bars and the names: thin lines that should not hide
            them. */
@@ -2710,6 +2712,72 @@ static void lvDrawPillNumbersOverBlit(const SDL_FRect *src, const SDL_FRect *dst
     SDL_SetRenderClipRect(sdlRenderer, hadClip ? &oldClip : NULL);
 }
 
+/* The four white corners of a mark (lvTankMarkLayout), 75% solid, cut to
+   the view's picture, dst. */
+static void lvDrawMarkCorners(const LvTankMark *m, const SDL_FRect *dst) {
+    SDL_FRect r[8];
+    SDL_Rect clip, oldClip;
+    bool hadClip;
+    SDL_BlendMode oldBlend = SDL_BLENDMODE_NONE;
+    Uint8 oldR, oldG, oldB, oldA;
+
+    /* Each corner: an arm along the top or bottom, and one down or up
+       the side. */
+    r[0].x = m->x;                     r[0].y = m->y;                     r[0].w = m->arm;   r[0].h = m->thick;
+    r[1].x = m->x;                     r[1].y = m->y;                     r[1].w = m->thick; r[1].h = m->arm;
+    r[2].x = m->x + m->side - m->arm;   r[2].y = m->y;                     r[2].w = m->arm;   r[2].h = m->thick;
+    r[3].x = m->x + m->side - m->thick; r[3].y = m->y;                     r[3].w = m->thick; r[3].h = m->arm;
+    r[4].x = m->x;                     r[4].y = m->y + m->side - m->thick; r[4].w = m->arm;   r[4].h = m->thick;
+    r[5].x = m->x;                     r[5].y = m->y + m->side - m->arm;   r[5].w = m->thick; r[5].h = m->arm;
+    r[6].x = m->x + m->side - m->arm;   r[6].y = m->y + m->side - m->thick; r[6].w = m->arm;   r[6].h = m->thick;
+    r[7].x = m->x + m->side - m->thick; r[7].y = m->y + m->side - m->arm;   r[7].w = m->thick; r[7].h = m->arm;
+
+    hadClip = SDL_RenderClipEnabled(sdlRenderer);
+    SDL_GetRenderClipRect(sdlRenderer, &oldClip);
+    clip.x = (int)dst->x;
+    clip.y = (int)dst->y;
+    clip.w = (int)dst->w;
+    clip.h = (int)dst->h;
+    SDL_SetRenderClipRect(sdlRenderer, &clip);
+    SDL_GetRenderDrawBlendMode(sdlRenderer, &oldBlend);
+    SDL_GetRenderDrawColor(sdlRenderer, &oldR, &oldG, &oldB, &oldA);
+    SDL_SetRenderDrawBlendMode(sdlRenderer, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColor(sdlRenderer, 255, 255, 255,
+                           (Uint8)(LV_TANK_MARK_ALPHA * 255.0f + 0.5f));
+    SDL_RenderFillRects(sdlRenderer, r, 8);
+    SDL_SetRenderDrawColor(sdlRenderer, oldR, oldG, oldB, oldA);
+    SDL_SetRenderDrawBlendMode(sdlRenderer, oldBlend);
+    SDL_SetRenderClipRect(sdlRenderer, hadClip ? &oldClip : NULL);
+}
+
+/* The mark round the selected base: the selected tank's four corners, just
+   outside the base's square. A base is selected by a click on it on the map
+   or in the HUD panel, or by the mouse over its bars in the Tank panel. It
+   follows the tank mark's rule: none when the squares are too small to
+   read. */
+static void lvDrawBaseMarkOverBlit(const SDL_FRect *src, const SDL_FRect *dst) {
+    float scale, tilePx, pxScale, left, top;
+    int vx = 0, vy = 0;
+    bool shown;
+    BYTE zf;
+    LvTankMark m;
+
+    if (src->w <= 0.0f || src->h <= 0.0f) return;
+    lv_clientMutexWaitFor();
+    shown = lv_screenSelectedBaseSquare(&vx, &vy);
+    lv_clientMutexRelease();
+    if (!shown) return;
+    zf = lv_windowGetZoomFactor();
+    scale = dst->w / src->w;
+    tilePx = (float)(zf * TILE_SIZE_X) * scale;
+    pxScale = lvDrawPixelScale();
+    if (!lvTankBarsVisible(tilePx, pxScale)) return;
+    left = dst->x + ((float)(vx * zf * TILE_SIZE_X) - src->x) * scale;
+    top = dst->y + ((float)(vy * zf * TILE_SIZE_Y) - src->y) * scale;
+    m = lvTankMarkLayout(left, top, tilePx, pxScale);
+    lvDrawMarkCorners(&m, dst);
+}
+
 /* The mark round the selected tank: four corners just outside its picture,
    white, 75% solid. It is drawn over the blit like the bars, with the same
    sums for the place, so it stays on its tank. It follows the rules of the
@@ -2720,10 +2788,6 @@ static void lvDrawTankMarkOverBlit(const SDL_FRect *src, const SDL_FRect *dst) {
     float scale, tilePx, pxScale;
     int i, selected;
     bool alive;
-    SDL_Rect clip, oldClip;
-    bool hadClip;
-    SDL_BlendMode oldBlend = SDL_BLENDMODE_NONE;
-    Uint8 oldR, oldG, oldB, oldA;
 
     if (s_tankBarCount == 0 || lv == NULL) return;
     if (src->w <= 0.0f || src->h <= 0.0f) return;
@@ -2739,38 +2803,11 @@ static void lvDrawTankMarkOverBlit(const SDL_FRect *src, const SDL_FRect *dst) {
 
     for (i = 0; i < s_tankBarCount; i++) {
         LvTankMark m;
-        SDL_FRect r[8];
         if (s_tankBarPos[i].slot != (BYTE)selected) continue;
         m = lvTankMarkLayout(dst->x + ((float)s_tankBarPos[i].x - src->x) * scale,
                              dst->y + ((float)s_tankBarPos[i].y - src->y) * scale,
                              tilePx, pxScale);
-        /* Each corner: an arm along the top or bottom, and one down or up
-           the side. */
-        r[0].x = m.x;                  r[0].y = m.y;                    r[0].w = m.arm;   r[0].h = m.thick;
-        r[1].x = m.x;                  r[1].y = m.y;                    r[1].w = m.thick; r[1].h = m.arm;
-        r[2].x = m.x + m.side - m.arm; r[2].y = m.y;                    r[2].w = m.arm;   r[2].h = m.thick;
-        r[3].x = m.x + m.side - m.thick; r[3].y = m.y;                  r[3].w = m.thick; r[3].h = m.arm;
-        r[4].x = m.x;                  r[4].y = m.y + m.side - m.thick; r[4].w = m.arm;   r[4].h = m.thick;
-        r[5].x = m.x;                  r[5].y = m.y + m.side - m.arm;   r[5].w = m.thick; r[5].h = m.arm;
-        r[6].x = m.x + m.side - m.arm; r[6].y = m.y + m.side - m.thick; r[6].w = m.arm;   r[6].h = m.thick;
-        r[7].x = m.x + m.side - m.thick; r[7].y = m.y + m.side - m.arm; r[7].w = m.thick; r[7].h = m.arm;
-
-        hadClip = SDL_RenderClipEnabled(sdlRenderer);
-        SDL_GetRenderClipRect(sdlRenderer, &oldClip);
-        clip.x = (int)dst->x;
-        clip.y = (int)dst->y;
-        clip.w = (int)dst->w;
-        clip.h = (int)dst->h;
-        SDL_SetRenderClipRect(sdlRenderer, &clip);
-        SDL_GetRenderDrawBlendMode(sdlRenderer, &oldBlend);
-        SDL_GetRenderDrawColor(sdlRenderer, &oldR, &oldG, &oldB, &oldA);
-        SDL_SetRenderDrawBlendMode(sdlRenderer, SDL_BLENDMODE_BLEND);
-        SDL_SetRenderDrawColor(sdlRenderer, 255, 255, 255,
-                               (Uint8)(LV_TANK_MARK_ALPHA * 255.0f + 0.5f));
-        SDL_RenderFillRects(sdlRenderer, r, 8);
-        SDL_SetRenderDrawColor(sdlRenderer, oldR, oldG, oldB, oldA);
-        SDL_SetRenderDrawBlendMode(sdlRenderer, oldBlend);
-        SDL_SetRenderClipRect(sdlRenderer, hadClip ? &oldClip : NULL);
+        lvDrawMarkCorners(&m, dst);
         break;
     }
 }

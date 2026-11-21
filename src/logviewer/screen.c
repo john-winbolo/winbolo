@@ -7511,17 +7511,6 @@ static void screenTankNearBase(int slot, LvTankStatus *out) {
     out->baseFull[LV_BASE_GAUGE_SHELLS] = g_lv->rules.baseFullShells;
     out->baseFull[LV_BASE_GAUGE_MINES]  = g_lv->rules.baseFullMines;
     out->baseFull[LV_BASE_GAUGE_ARMOUR] = g_lv->rules.baseFullArmour;
-    if (b->owner == NEUTRAL || b->owner >= MAX_TANKS) {
-      out->baseNeutral = 1;
-      out->baseColour = lv_screenTeamColour(NEUTRAL_TEAM);
-    } else {
-      char name[PLAYER_NAME_LEN] = "";
-      BYTE team = lv_playersGetTeamForOwner(b->owner);
-      out->baseHasTeam = (team != NEUTRAL_TEAM);
-      out->baseColour = lv_screenTeamColour(team);
-      lv_screenGetPlayerName(name, b->owner, sizeof(name));
-      snprintf(out->baseOwner, sizeof(out->baseOwner), "%s", name);
-    }
   }
 }
 
@@ -7627,6 +7616,22 @@ int lv_screenPillSpots(LvPillSpot *out, int max) {
     found++;
   }
   return found;
+}
+
+bool lv_screenSelectedBaseSquare(int *viewX, int *viewY) {
+  const base *b;
+
+  if (g_lv == NULL || g_lv->logLoaded == FALSE || g_lv->bs == NULL ||
+      g_lv->selectedItemType != 1 ||
+      g_lv->selectedItem >= lv_basesGetNumBases(&g_lv->bs) ||
+      lv_basesIsActive(&g_lv->bs, (BYTE) (g_lv->selectedItem + 1)) == FALSE) {
+    return FALSE;
+  }
+  b = &g_lv->bs->item[g_lv->selectedItem];
+  /* The same sums as the pillbox numbers: the view paints one square more
+     on the right and at the bottom. */
+  return lvPillViewSquare(b->x, b->y, g_lv->xOffset, g_lv->yOffset,
+                          lv_screenGetSizeX(), lv_screenGetSizeY(), viewX, viewY);
 }
 
 int lv_screenPillAt(int xPos, int yPos, BYTE *owner, BYTE *armour, int *team) {

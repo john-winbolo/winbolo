@@ -35,9 +35,10 @@
  * nearest neutral or allied base in range, picked as the game picks it
  * (lv_base_near.h). It is drawn as the game draws it, three green bars
  * across, cut out of the same background picture with the game's S, M and
- * A at their left, and beside them its number and its owner in the owner's
- * colour. With no base near, the bars are empty, as the game's are, and the
- * line beside them says so.
+ * A at their left. The mouse over the bars selects that base, as a click
+ * on it on the map does: the map marks it with the selected tank's white
+ * corners and the Item Information panel shows it. With no base near, the
+ * bars are empty, as the game's are, and a dim line beside them says so.
  *
  * The selected tank is the one a click on a tank on the map picks, or a
  * click on a tank in the HUD panel. Everything is read off the game's state
@@ -76,6 +77,7 @@ extern "C" {
     void lv_clientMutexWaitFor(void);
     void lv_clientMutexRelease(void);
     void lv_screenTankStatusSnapshot(LvTankStatus *out);
+    void lv_screenSelectItem(unsigned char itemType, unsigned char itemNum);
     void lv_screenDeselectTank(void);
     bool lv_screenLagShown(void);
     void lv_screenPlayerLagSnapshot(int slot, LvPlayerLag *out);
@@ -800,10 +802,15 @@ static void tank_text(const LvTankStatus &st, bool icons) {
     }
 }
 
-/* The near base's row: its three bars across, as the game draws them, and
- * beside them its number and owner, in the owner's colour. Each bar has a
- * tooltip, "Shells: 12 / 90". With no base near, the bars are empty and the
- * line is dim. */
+/* The base the mouse over the bars last selected (from 1), 0 when the mouse
+ * is not over them. The base is selected once as the mouse comes on, so a
+ * click on another item while the mouse stays is not undone each frame. */
+static int s_base_hover_num = 0;
+
+/* The near base's row: its three bars across, as the game draws them. Each
+ * bar has a tooltip, "Shells: 12 / 90", and the mouse over them selects the
+ * base. With no base near, the bars are empty and a dim line beside them
+ * says so. */
 static void tank_base_row(const LvTankStatus &st) {
     static const langid k_base_name[LV_BASE_GAUGE_COUNT] = {
         STR_TABLET_SHELLS, STR_TABLET_MINES, STR_TABLET_ARMOUR
@@ -821,6 +828,7 @@ static void tank_base_row(const LvTankStatus &st) {
                           th >= (float)(TANK_BASE_SLICE_Y + TANK_BASE_SLICE_H));
     ImVec2 p0(floorf(origin.x) + 1.0f, floorf(origin.y) + 1.0f);
     ImVec2 p1(p0.x + s * TANK_BASE_SLICE_W, p0.y + s * TANK_BASE_SLICE_H);
+    bool overBars = false;
 
     dl->AddRect(ImVec2(p0.x - 1.0f, p0.y - 1.0f), ImVec2(p1.x + 1.0f, p1.y + 1.0f),
                 TANK_EDGE_COLOUR);
@@ -856,6 +864,9 @@ static void tank_base_row(const LvTankStatus &st) {
         ImGui::PushID(LV_TANK_GAUGE_COUNT + g);
         ImGui::SetCursorScreenPos(ImVec2(p0.x, y0 - gap));
         ImGui::InvisibleButton("##basebar", ImVec2(p1.x - p0.x, (y1 - y0) + 2.0f * gap));
+        if (st.baseNear && ImGui::IsItemHovered()) {
+            overBars = true;
+        }
         if (st.baseNear && ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) {
             MessageArgs args = {};
             snprintf(args.string1, sizeof(args.string1), "%s", langGetText(k_base_name[g]));
@@ -865,34 +876,31 @@ static void tank_base_row(const LvTankStatus &st) {
         }
         ImGui::PopID();
     }
+    /* The mouse over the bars selects the base, once as it comes on and
+     * again when the near base changes under it. */
+    if (overBars) {
+        if (s_base_hover_num != st.baseNum) {
+            s_base_hover_num = st.baseNum;
+            lv_clientMutexWaitFor();
+            lv_screenSelectItem(1, (unsigned char)(st.baseNum - 1));
+            lv_clientMutexRelease();
+        }
+    } else {
+        s_base_hover_num = 0;
+    }
     ImGui::SetCursorScreenPos(origin);
     ImGui::Dummy(ImVec2(s * TANK_BASE_SLICE_W + 2.0f, s * TANK_BASE_SLICE_H + 2.0f));
 
-    /* Beside the bars, in the middle of their height: "Base 3: Andrew". */
-    ImGui::SameLine(0.0f, ImGui::GetStyle().ItemSpacing.x * 2.0f);
-    {
+    /* With no base near, beside the empty bars, in the middle of their
+     * height. */
+    if (!st.baseNear) {
+        ImGui::SameLine(0.0f, ImGui::GetStyle().ItemSpacing.x * 2.0f);
         const float rowH = s * TANK_BASE_SLICE_H + 2.0f;
         const float lineH = ImGui::GetTextLineHeight();
         if (rowH > lineH) {
             ImGui::SetCursorPosY(ImGui::GetCursorPosY() + floorf((rowH - lineH) * 0.5f));
         }
-    }
-    if (st.baseNear) {
-        MessageArgs args = {};
-        args.number = st.baseNum;
-        snprintf(args.string1, sizeof(args.string1), "%s",
-                 st.baseNeutral ? langGetText(STR_LV_TANK_BASE_NEUTRAL) : st.baseOwner);
-        const ImU32 col = (st.baseNeutral || st.baseHasTeam)
-                              ? tank_team_colour(st.baseColour)
-                              : ImGui::GetColorU32(ImGuiCol_Text);
-        ImGui::PushStyleColor(ImGuiCol_Text, col);
-        ImGui::TextUnformatted(langGetTextFmt(STR_LV_TANK_BASE_FMT, &args));
-        ImGui::PopStyleColor();
-    } else {
         ImGui::TextDisabled("%s", langGetText(STR_LV_TANK_BASE_NONE));
-    }
-    if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) {
-        ImGui::SetTooltip("%s", langGetText(STR_LV_TANK_BASE_TIP));
     }
     /* The next item goes under the whole row, not under the line. */
     ImGui::SetCursorScreenPos(ImVec2(origin.x, origin.y + s * TANK_BASE_SLICE_H + 2.0f));

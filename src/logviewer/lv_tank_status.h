@@ -69,12 +69,8 @@ typedef struct LvTankStatus {
        the nearest neutral or allied one in range. */
     unsigned char baseNear;     /* 0: none is near enough; the rest is unset */
     unsigned char baseNum;      /* its number, from 1, as the game counts bases */
-    unsigned char baseNeutral;  /* it has no owner */
-    unsigned char baseHasTeam;  /* its owner is in a team */
-    unsigned char baseColour;   /* the palette entry its owner's team is drawn in */
     unsigned char baseValue[LV_BASE_GAUGE_COUNT]; /* what it holds now */
     unsigned char baseFull[LV_BASE_GAUGE_COUNT];  /* the most it holds */
-    char baseOwner[LV_TANK_STATUS_NAME_LEN];      /* its owner's name; empty when neutral */
 } LvTankStatus;
 
 /* The tank the panel shows: the selected one, when that slot has a player

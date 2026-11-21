@@ -763,6 +763,11 @@ void lv_screenTankStatusSnapshot(struct LvTankStatus *out);
 struct LvPillSpot;
 int lv_screenPillSpots(struct LvPillSpot *out, int max);
 
+/* The square of the view the selected base stands in (lv_screenSelectItem),
+ * for the mark round it on the map. False when no base is selected, the
+ * base is off the map, or it is out of the view. Hold the client mutex. */
+bool lv_screenSelectedBaseSquare(int *viewX, int *viewY);
+
 /* The pillbox on the map square under a point of the view's picture, xPos,
  * yPos pixels from its top left (the place a click on the map hands
  * lv_screenMouseInformationClick). Returns its number, from 1, with its
