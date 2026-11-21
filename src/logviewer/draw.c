@@ -51,6 +51,7 @@
 #include "lv_tank_pick.h"
 #include "lv_event_flash.h"
 #include "lv_builder_status.h"
+#include "lv_builder_draw.h"
 #include "lv_pill_numbers.h"
 #include "lv_zoom_text.h"
 #include "clientmutex.h"
@@ -2112,34 +2113,17 @@ BYTE lv_drawGetBuilderStatus(void) {
 /* The cells of one small picture, with its top left at x, y: each cell a
    square of `cell` pixels, grown by `grow` pixels on every side (the dark
    pass under the coloured one uses that for the edge). The colour is the
-   renderer's. */
+   renderer's. The game draws its pillbox and base numbers with the same
+   code (lv_builder_draw.h). */
 static void lvDrawBuilderGlyph(const LvBuilderGlyph *g, float x, float y,
                                float cell, float grow) {
-    int row, col;
-
-    if (g == NULL) return;
-    for (row = 0; row < g->height; row++) {
-        for (col = 0; col < g->width; col++) {
-            SDL_FRect r;
-            if (!lvBuilderGlyphCell(g, col, row)) continue;
-            r.x = x + (float)col * cell - grow;
-            r.y = y + (float)row * cell - grow;
-            r.w = cell + grow * 2.0f;
-            r.h = cell + grow * 2.0f;
-            SDL_RenderFillRect(sdlRenderer, &r);
-        }
-    }
+    lvBuilderDrawGlyph(sdlRenderer, g, x, y, cell, grow);
 }
 
 /* The countdown's characters from x, with their tops at y. */
 static void lvDrawBuilderText(const char *text, float x, float y, float cell,
                               float grow) {
-    for (; *text != '\0'; text++) {
-        const LvBuilderGlyph *g = lvBuilderChar(*text);
-        if (g == NULL) continue;
-        lvDrawBuilderGlyph(g, x, y, cell, grow);
-        x += (float)(g->width + 1) * cell;
-    }
+    lvBuilderDrawText(sdlRenderer, text, x, y, cell, grow);
 }
 
 /* The arrow: a dart with its middle at cx, cy and its point `radius` pixels
