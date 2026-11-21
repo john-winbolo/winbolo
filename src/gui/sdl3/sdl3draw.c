@@ -360,13 +360,6 @@ static void micIndicatorDraw(float x, float y, int px,
 }
 #endif
 
-/* The classic view's pill and base numbers, kept between frames. On this
-   window's renderer, so it is this file's rather than the overview's — that
-   one may be drawing on the pop-out's. Emptied in sdl3DrawCleanup ahead of
-   the renderer, and by the draw itself when a zoom change reopens the
-   faces. */
-static ItemLabelCache     gItemLabelCache;
-
 /* The HUD geometry the last frame blitted, kept so the ImGui side hit-tests
    the panels on exactly the rectangles that were drawn. Only meaningful while
    the flag is set: a frame that drew no HUD clears it. */
@@ -2209,7 +2202,6 @@ void sdl3DrawCleanup(void) {
   overviewSnapshotDestroy(gOverviewSnapshot);
   gOverviewSnapshot    = NULL;
   gOverviewPrepPending = FALSE;
-  itemLabelCacheFlush(&gItemLabelCache);
   if (gRenderer) {
     SDL_DestroyRenderer(gRenderer);
     gRenderer = NULL;
@@ -3490,10 +3482,11 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
 
       /* The pill and base numbers, from the 17x17 screen buffer: a square
          showing a pill or base tile asks the sim which one it is. The
-         shared pass below draws them. */
+         shared pass below draws them, in the Log Viewer's small digits, so
+         no font is needed. */
       OverviewItemLabel itemLabels[MAX_PILLS + MAX_BASES];
       int itemLabelCount = 0;
-      if (gFontLabel) {
+      {
         BYTE lx = 0, ly = 0;
         bool lDone = FALSE;
         while (!lDone) {
@@ -3588,10 +3581,7 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
       ov.labelDisplayScale = 1.0f;
       ov.itemLabels        = itemLabels;
       ov.itemLabelCount    = itemLabelCount;
-      ov.pillFont          = gFontLabel;
-      ov.baseFont          = gFontTiny;
       ov.itemLabelMinScale = 1.0f;
-      ov.itemLabelCache    = &gItemLabelCache;
       ov.clipLeft          = (float)originX;
       ov.clipTop           = (float)originY;
       ov.clipRight         = (float)(originX + gameW);
