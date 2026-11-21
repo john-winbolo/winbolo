@@ -6576,6 +6576,8 @@ local function update_attack_substate_body(goal, state, world, info)
         goal._shield_scan_pending =
           (not (state.is_pill_suicider or goal._human_near or C.PPT_NEVER
                 or M.hd_no_blockers(state, goal))) or nil
+        -- PT2_AFTER_SCAN_SPLIT: a new plan starts a new v2 run
+        goal._pt2_split = nil
       else
         if BRAIN_DEBUG_MODE and not goal._plan_logged then
           print(string.format(TAG .. " PLAN: no candidates for pill@(%d,%d), falling back", pmx, pmy))
@@ -6685,6 +6687,13 @@ local function update_attack_substate_body(goal, state, world, info)
         _num_pill_blockers)
       local sscan
       local _sc = state._shield_scan_cache
+      -- PT2_AFTER_SCAN_SPLIT: v2 runs on the ticks after v1's scan, in parts
+      -- (pt2_attack.split_step). The open run keeps v1's result, so v1 does
+      -- not run again on those ticks; a stale run is dropped here.
+      local _split_pa = C.PT2_AFTER_SCAN_SPLIT
+        and (C.PILLTAKE_V2_EVALUATOR or (BRAIN_DEBUG_MODE and C.PT2_SIDE_BY_SIDE_LOG))
+        and require("pt2_attack") or nil
+      local _split = _split_pa and _split_pa.split_get(goal, pill, _scan_key, _now) or nil
       -- Budget-kill blacklist. A scan the budget hook kills mid-run unwinds
       -- the WHOLE think — no code after the call site executes, so the only
       -- way to notice repeated kills is a marker written BEFORE the call.
@@ -6699,7 +6708,9 @@ local function update_attack_substate_body(goal, state, world, info)
         _att = nil
         state._shield_scan_attempt = nil
       end
-      if _sc and _sc.key == _scan_key
+      if _split then
+        sscan = _split.sscan
+      elseif _sc and _sc.key == _scan_key
          and (_now - (_sc.tick or -1000000)) < (C.SHIELD_SCAN_CACHE_TICKS or 25) then
         sscan = _sc.result
       elseif _att and (_att.count or 0) >= (C.SHIELD_SCAN_BLACKLIST_TRIES or 2) then
@@ -6764,7 +6775,9 @@ local function update_attack_substate_body(goal, state, world, info)
           sscan = nil
         end
       end
-      goal._shield_scan_pending = nil
+      -- PT2_AFTER_SCAN_SPLIT: the flag stays until goal._shield_scan is set
+      -- below, so a budget kill in v2 keeps the take in its plan.
+      if not _split_pa then goal._shield_scan_pending = nil end
       if BRAIN_DEBUG_MODE and state._plan_trace then
         local _t = state._plan_trace
         _t.shield_ran = true
@@ -6802,10 +6815,20 @@ local function update_attack_substate_body(goal, state, world, info)
       -- the same inputs and logs PT2_CMP; sscan comes back unchanged. Master
       -- on (C.PILLTAKE_V2_EVALUATOR): v2's safe plan replaces v1's.
       if C.PILLTAKE_V2_EVALUATOR or (BRAIN_DEBUG_MODE and C.PT2_SIDE_BY_SIDE_LOG) then
-        sscan = require("pt2_attack").after_scan({
+        local _a = {
           state = state, goal = goal, info = info, world = world, pill = pill,
           sscan = sscan, no_builder = no_builder, npb = _num_pill_blockers,
-          radius = scan_radius, now = now })
+          radius = scan_radius, now = now }
+        if _split_pa then
+          -- the plan tick runs v1 only; v2's parts run on the next ticks.
+          -- Until the run is done the take waits in its plan, as it does
+          -- before v1's answer.
+          local _out, _ready = _split_pa.split_step(_split, _a, _scan_key)
+          if not _ready then goto shield_split_wait end
+          sscan = _out
+        else
+          sscan = require("pt2_attack").after_scan(_a)
+        end
         -- v2 picked another pill of the target's group to shoot (its chain
         -- kills the target too): this take now aims at that pill.
         if sscan and sscan.pt2_retarget and sscan.pill then
@@ -6824,6 +6847,10 @@ local function update_attack_substate_body(goal, state, world, info)
       end
       if sscan then sscan.created_tick = now end
       goal._shield_scan = sscan
+      if _split_pa then
+        goal._shield_scan_pending = nil
+        _split_pa.split_done(goal)
+      end
       print2(string.format("SHIELD_SCAN t=%d pill=(%d,%d) blitz=%s result=%s path=%s cands=%s best_score=%s",
         now, pmx, pmy, tostring(goal._blitz or false),
         sscan and "ok" or "DEMOTED(no-shield)",
@@ -6925,6 +6952,7 @@ local function update_attack_substate_body(goal, state, world, info)
         end
         end  -- if w (winner not on a banned angle)
       end
+      ::shield_split_wait::
     end
 
     -- Transition to approach after 3 ticks. The old 50-tick (1s) hold was

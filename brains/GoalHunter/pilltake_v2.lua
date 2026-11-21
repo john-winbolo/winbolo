@@ -1029,6 +1029,28 @@ function M.world_inp(world, C, U, PC, cpf, inp, no_builder)
     return tt ~= C.T_DEEPSEA and tt ~= C.T_RIVER and tt ~= C.T_SWAMP and
            tt ~= C.T_PILLBOX and tt ~= C.T_REFBASE and tt ~= C.T_BOAT
   end
+  -- PT2_C_STANDABLE: the tables for the C copy of the four square tests
+  -- above (gh_pt2.c). The C does a test itself only while inp's function is
+  -- the one named here; a function put in its place later stays Lua. An
+  -- older exe skips inp.c_std. standable and buildable read U.ttype as
+  -- env.ttype, so only when the two are the same.
+  if C.PT2_C_STANDABLE ~= false then
+    local N = U.C_COPIED or {}
+    local same_tt = rawequal(inp.env.ttype, U.ttype)
+    inp.c_std = {
+      in_map    = rawequal(U.in_map, N.in_map) and inp.in_map or nil,
+      stay_in   = rawequal(U.stay_in, N.stay_in) and U.stay_rects and inp.stay_in or nil,
+      standable = same_tt and rawequal(U.is_water, N.is_water) and inp.standable or nil,
+      buildable = same_tt and inp.buildable or nil,
+      cost      = cost_land,
+      water     = { n = 2, C.T_RIVER, C.T_DEEPSEA },
+      nobuild   = { n = 6, C.T_DEEPSEA, C.T_RIVER, C.T_SWAMP, C.T_PILLBOX, C.T_REFBASE, C.T_BOAT },
+      no_builder = no_builder and true or false,
+      rects     = U.stay_rects and U.stay_rects() or false,
+    }
+  else
+    inp.c_std = nil
+  end
   inp.lgm_reach = function(omx, omy, mx, my)
     if abs(mx - omx) + abs(my - omy) <= 1 then return true end
     return cpf.lgm_travel_ticks_map(omx, omy, mx, my, 0, 0, 2000, 150) ~= -1
