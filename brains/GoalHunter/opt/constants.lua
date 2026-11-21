@@ -5934,6 +5934,19 @@ M.FIRE_BLOCK_FRIENDLY_BUILDER = true
 -- kills him and he parachutes home. Only our OWN builder; an ally's builder
 -- is still protected. KEEL and MAST: off (the bot waited).
 M.LGM_WALLED_KILL = true
+-- LGM_STRANDED_BLESS_DISPATCH (Nov 21, Andrew: "Yes"): the stranded check
+-- and loaded_no_lgm_eval give the walk-home sim the builder's job square as
+-- the blessed square while he stands on it, with the engine's rule for which
+-- orders bless (lgm_bless.lua, lgm.c lgmNewPrimaryRequest). Before, a builder
+-- on the pill he just put down read "cannot move" and the tank drove off to
+-- rescue him. A builder on a solid square that is not his job square (a pill
+-- someone else put down on him) is still stranded. false = no bless (KEEL / MAST).
+M.LGM_STRANDED_BLESS_DISPATCH = true
+-- LGM_STRANDED_RECHECK (Nov 21, Andrew: "Yes"): while lgm_stranded is set,
+-- run the same walk every 50 brain ticks and clear the flag when he can walk
+-- home again (log LGM_STRANDED_CLEAR). Before, the flag stayed set until he
+-- was back in the tank. false = the old way (KEEL / MAST).
+M.LGM_STRANDED_RECHECK = true
 -- How far the "prison" check looks from the builder, in map squares, each
 -- way. 2 = a 5x5 box centred on him: the walkable floor he is shut in may
 -- reach 2 squares from him, and a walkable square farther out means "not
@@ -8085,6 +8098,8 @@ M.PRESETS = {
     REPAIR_BOOST = false,
     DEFEND_BOOST = false,
     APPROACH_SKIP_RUNUP_ON_LANE = false,
+    LGM_STRANDED_BLESS_DISPATCH = false,
+    LGM_STRANDED_RECHECK = false,
     PT2_CHAIN_CLAIM = false,
     --   2026-11-18: pill take v2 in Lua only (no C copy).
     PT2_C_EVAL = false,
@@ -8421,6 +8436,8 @@ M.PRESETS.mast = {
   REPAIR_BOOST                      = false,  -- 2.2.1 had no repair boost
   DEFEND_BOOST                      = false,  -- 2.2.1 had no defend boost
   APPROACH_SKIP_RUNUP_ON_LANE       = false,  -- 2.2.1 drove back to the run-up point
+  LGM_STRANDED_BLESS_DISPATCH       = false,  -- 2.2.1 had no bless in the stranded walk
+  LGM_STRANDED_RECHECK              = false,  -- 2.2.1 kept the stranded flag until home
   PT2_CHAIN_CLAIM                   = false,  -- 2.2.1 had no pill take v2
   PT2_C_EVAL                        = false,  -- 2.2.1 had no pill take v2
   POST_KILL_WAIT_TICKS              = 15,

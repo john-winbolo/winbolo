@@ -3255,6 +3255,12 @@ function Brain.think(info)
           row(3, "FIRE_SUPPRESS",    f.fire_suppress)
           row(4, "STRANDED",         state.lgm_stranded == true)
           row(5, string.format("dist=%d", f.lgm_dist or -1), false)
+          row(6, (f.bless_mx and f.bless_mx > 0)
+                   and string.format("BLESS=(%d,%d) own job square (LGM_STRANDED_BLESS_DISPATCH)", f.bless_mx, f.bless_my)
+                   or "BLESS=none", f.bless_mx ~= nil and f.bless_mx > 0)
+          row(7, f.recheck_tick
+                   and string.format("RECHECK t=%d walk=%s (LGM_STRANDED_RECHECK)", f.recheck_tick, tostring(f.recheck_ticks))
+                   or "RECHECK=-", f.recheck_ticks ~= nil and f.recheck_ticks ~= -1)
         else
           -- No factor record yet — the rescue check hasn't run for
           -- this LGM trip. Render a placeholder so the user sees the
@@ -9645,7 +9651,11 @@ function Brain.think(info)
       -- unchanged.
       state._lgm_dispatch = { x = build_cmd.x, y = build_cmd.y,
                               eta_tick = now + eta, tick = now,
-                              pbox = (build_cmd.action == BUILDMODE_PBOX) or nil }
+                              pbox = (build_cmd.action == BUILDMODE_PBOX) or nil,
+                              -- the engine's blessX/blessY rule for this
+                              -- order (lgm_bless.lua), for the walk sims
+                              bless = require("lgm_bless").for_dispatch(
+                                build_cmd.action, build_cmd.x, build_cmd.y, world) }
       state._repair_dispatch_eta = nil
     end
     -- Placement trip flag. ONE record per placement dispatch (harvest or

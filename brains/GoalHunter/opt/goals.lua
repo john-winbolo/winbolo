@@ -7154,9 +7154,13 @@ function M.loaded_no_lgm_eval(state, info, now)
   local recheck = C.LOADED_NO_LGM_ETA_RECHECK_TICKS or 50
   if not f.eta_tick or (now - f.eta_tick) >= recheck then
     f.eta_tick = now
+    -- C.LGM_STRANDED_BLESS_DISPATCH: his job square is blessed while he
+    -- stands on it, as in the engine (lgm_bless.lua).
+    local bx, by = require("lgm_bless").square(state,
+      bit.rshift(info.man_x or 0, 8), bit.rshift(info.man_y or 0, 8))
     local ticks = cpf_lgm_travel_ticks(
       info.man_x or 0, info.man_y or 0, info.tankx or 0, info.tanky or 0,
-      0, 0, 2000, 150)
+      bx, by, 2000, 150)
     f.eta_raw = ticks
     -- -1 == STUCK: he is not coming home on this ground at all.
     f.eta = (ticks == -1) and math.huge or ticks
@@ -17001,49 +17005,11 @@ local function goal_selection(state, world, info, quiet)
       -- to navigate around) even though it'll be fine in another
       -- few ticks. Suppressing during build_walls / ws_* prevents
       -- a spurious rescue_lgm right after a wall finishes.
-      if not state.lgm_stranded and not in_build_dispatch then
-        if not state.lgm_stranded_check_tick
-           or now - state.lgm_stranded_check_tick >= 50 then
-          state.lgm_stranded_check_tick = now
-          local ticks = cpf_lgm_travel_ticks(
-            info.man_x, info.man_y, info.tankx, info.tanky,
-            0, 0, 2000, 150)
-          if ticks == -1 then
-            state.lgm_stranded = true
-          end
-
-          -- Smart pickup: if LGM is nearby and arriving soon, don't rescue
-          state.builder.lgm_nearby = false
-          if ticks and ticks > 0 and lgm_dist <= C.LGM_NEARBY_TILES
-             and ticks < C.LGM_NEARBY_ARRIVAL_TICKS then
-            state.builder.lgm_nearby = true
-            state.builder.lgm_arrival_ticks = ticks
-            state.lgm_stranded = false
-          end
-          -- Stash the per-factor result for the V dialog "LGM stranded
-          -- dbg" overlay (drawn next to the LGM in init.lua). Read by
-          -- the LGM viz code, never affects logic here.
-          state._lgm_stranded_factors = {
-            path_ticks    = ticks,
-            path_fail     = (ticks == -1),
-            build_suppress = false,  -- only set true on the suppression branch
-            nearby_carve  = state.builder.lgm_nearby or false,
-            lgm_dist      = lgm_dist,
-            updated_tick  = now,
-          }
-        end
-      elseif in_build_dispatch then
-        -- Suppressed branch: still expose the suppression to the viz so
-        -- the user can see WHY the rescue check isn't firing.
-        state._lgm_stranded_factors = {
-          path_ticks    = nil,
-          path_fail     = false,
-          build_suppress = true,
-          nearby_carve  = false,
-          lgm_dist      = lgm_dist,
-          updated_tick  = now,
-        }
-      end
+      -- The stranded walk check (lgm_bless.update_stranded): the builder's
+      -- job square blessed (C.LGM_STRANDED_BLESS_DISPATCH) and the flag
+      -- checked again while set (C.LGM_STRANDED_RECHECK).
+      require("lgm_bless").update_stranded(state, info, lgm_mx, lgm_my, tmx, tmy,
+                                           lgm_dist, now, in_build_dispatch)
 
       -- LGM_WALLED_KILL (2026-11-14): a builder who is walled in (on a wall
       -- square, or in a ring of walls) can never walk home, so waiting for
