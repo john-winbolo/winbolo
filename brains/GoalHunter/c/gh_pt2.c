@@ -74,6 +74,9 @@
 #define PT2_MAX_T         128   /* > life_ticks(8.5) = 64 */
 #define PT2_NAIMS         5
 #define PT2_MAP_SQ        65536
+#define PT2_TT_N          64    /* inp.c_std.cost keys 0 .. 63 */
+#define PT2_STD_LIST      8     /* inp.c_std.water / nobuild: at most 8 */
+#define PT2_STAY_MAX      32    /* inp.c_std.rects: at most 32 */
 
 static const double s_aims[PT2_NAIMS][2] = {
     { 128, 128 }, { 24, 24 }, { 255 - 24, 24 }, { 24, 255 - 24 }, { 255 - 24, 255 - 24 },
@@ -279,7 +282,8 @@ enum {
 enum {
     P_TOTAL = S_TOP + 1, P_SETUP, P_OUTPUT, P_TT_HIT, P_PO_HIT, P_REACH_HIT,
     P_EVAL_POINT, P_SEARCH, P_LEEWAY, P_SORT, P_CAST, P_TSHOT, P_HOLD,
-    P_CG_HIT, P_CG_MISS, P_TG_HIT, P_TG_MISS, P_N
+    P_CG_HIT, P_CG_MISS, P_TG_HIT, P_TG_MISS,
+    P_IN_MAP_C, P_STAY_IN_C, P_STANDABLE_C, P_BUILDABLE_C, P_N
 };
 static const char *s_prof_name[] = {
     "", "", "", "", "", "", "",   /* 0 and S_INP .. S_MEMO */
@@ -290,6 +294,7 @@ static const char *s_prof_name[] = {
     "ring_eval_point", "search_blockers", "leeway", "sort_band",
     "cast", "tank_shot", "hold_point",
     "cast_table_hit", "cast_table_miss", "tank_shot_table_hit", "tank_shot_table_miss",
+    "in_map_c", "stay_in_c", "standable_c", "buildable_c",
     NULL   /* the count check below */
 };
 typedef char pt2_prof_names_ok[(sizeof(s_prof_name) / sizeof(s_prof_name[0]) == P_N + 1) ? 1 : -1];
@@ -364,6 +369,12 @@ typedef struct {
     /* reach_cache: sq -> 0 / 1 (2 = not asked) */
     int64_t *rc_sq; char *rc_val; int rc_n, rc_cap;
     int    memo_n;
+    /* PT2_C_STANDABLE (inp.c_std): 1 = the C does that square test itself */
+    int    n_map, n_stay, n_std, n_bld;
+    unsigned char std_ok[PT2_TT_N];   /* terrain t: cost < 9999, not water */
+    double nb[PT2_STD_LIST]; int nb_n;  /* the terrains with no build */
+    int    no_builder;
+    double st_r[4 * PT2_STAY_MAX]; int st_n;   /* x1, y1, x2, y2; 0 = none */
 } Ev;
 
 static double NB[8][2];
@@ -492,10 +503,51 @@ static int call_b2(Ev *e, int fn, double a, double b) {
     return r;
 }
 
-static int in_map(Ev *e, double mx, double my)    { return call_b2(e, S_IN_MAP, mx, my); }
-static int stay_in(Ev *e, double mx, double my)   { return call_b2(e, S_STAY_IN, mx, my); }
-static int standable(Ev *e, double mx, double my) { return call_b2(e, S_STANDABLE, mx, my); }
-static int buildable(Ev *e, double mx, double my) { return call_b2(e, S_BUILDABLE, mx, my); }
+static double ttype(Ev *e, double mx, double my);
+static int pill_on(Ev *e, double mx, double my);
+
+/* The four square tests. With inp.c_std (PT2_C_STANDABLE) each one is done
+ * here, as pilltake_v2.world_inp and util.lua do it:
+ *   in_map    U.in_map: 0 <= mx, my <= 255
+ *   stay_in   U.stay_in: no rect, or inside one (inclusive)
+ *   standable (cost[tt] or 9999) < 9999, not water, no pill on it (the
+ *             terrain and the pill from the caches, as the other reads)
+ *   buildable no_builder = 0; else tt is none of nobuild
+ * Else the Lua function is called. */
+static int in_map(Ev *e, double mx, double my) {
+    if (!e->n_map) return call_b2(e, S_IN_MAP, mx, my);
+    PCOUNT(e, P_IN_MAP_C);
+    return mx >= 0 && mx <= 255 && my >= 0 && my <= 255;
+}
+
+static int stay_in(Ev *e, double mx, double my) {
+    if (!e->n_stay) return call_b2(e, S_STAY_IN, mx, my);
+    PCOUNT(e, P_STAY_IN_C);
+    if (e->st_n == 0) return 1;
+    for (int i = 0; i < e->st_n; i++) {
+        const double *r = e->st_r + 4 * i;
+        if (mx >= r[0] && mx <= r[2] && my >= r[1] && my <= r[3]) return 1;
+    }
+    return 0;
+}
+
+static int standable(Ev *e, double mx, double my) {
+    if (!e->n_std) return call_b2(e, S_STANDABLE, mx, my);
+    PCOUNT(e, P_STANDABLE_C);
+    double tt = ttype(e, mx, my);
+    /* a terrain not a key 0 .. 63 has no cost (9999); NaN fails too */
+    if (!(tt >= 0 && tt < PT2_TT_N && tt == floor(tt)) || !e->std_ok[(int)tt]) return 0;
+    return pill_on(e, mx, my) == 0;
+}
+
+static int buildable(Ev *e, double mx, double my) {
+    if (!e->n_bld) return call_b2(e, S_BUILDABLE, mx, my);
+    PCOUNT(e, P_BUILDABLE_C);
+    if (e->no_builder) return 0;
+    double tt = ttype(e, mx, my);
+    for (int i = 0; i < e->nb_n; i++) if (tt == e->nb[i]) return 0;
+    return 1;
+}
 
 static void set_om(Ev *e, double mx, double my) {
     e->omx = mx; e->omy = my; e->om_set = 1;
@@ -2085,6 +2137,113 @@ static void push_rec(Ev *e, Rec *r) {
 }
 
 /* ── evaluate ───────────────────────────────────────────────────────── */
+/* A list { n = k, v1 .. vk } of at most max numbers into v (a nil entry
+ * is NaN: it equals nothing, as nil in the Lua). 0 = not that shape. */
+static int std_list(lua_State *L, int t, const char *k, double *v, int max, int *n) {
+    lua_getfield(L, t, k);
+    int ok = lua_istable(L, -1);
+    if (ok) {
+        int lt = lua_gettop(L);
+        lua_getfield(L, lt, "n");
+        ok = lua_type(L, -1) == LUA_TNUMBER;
+        double c = ok ? lua_tonumber(L, -1) : 0;
+        lua_pop(L, 1);
+        if (!ok || c < 0 || c > max || c != floor(c)) ok = 0;
+        for (int i = 0; ok && i < (int)c; i++) {
+            lua_rawgeti(L, lt, i + 1);
+            if (lua_isnil(L, -1)) v[i] = NAN;
+            else if (lua_type(L, -1) == LUA_TNUMBER) v[i] = lua_tonumber(L, -1);
+            else ok = 0;
+            lua_pop(L, 1);
+        }
+        if (ok) *n = (int)c;
+    }
+    lua_pop(L, 1);
+    return ok;
+}
+
+/* inp.c_std (pilltake_v2.world_inp, PT2_C_STANDABLE): the C does a test
+ * itself only while inp's function is still the one c_std names, and only
+ * when the tables have the shape read here. An inp without c_std (KEEL,
+ * MAST, the recorded cases) calls the Lua functions. */
+static void std_setup(Ev *e) {
+    lua_State *L = e->L;
+    int t0 = lua_gettop(L);
+    lua_getfield(L, S_INP, "c_std");
+    if (!lua_istable(L, -1)) { lua_settop(L, t0); return; }
+    int t = lua_gettop(L);
+    /* standable: cost (number keys 0 .. 63, number values) and water */
+    double cost[PT2_TT_N], wt[PT2_STD_LIST];
+    int nw = 0;
+    for (int i = 0; i < PT2_TT_N; i++) cost[i] = 9999;
+    int ok_std = 0;
+    lua_getfield(L, t, "cost");
+    if (lua_istable(L, -1)) {
+        int ct = lua_gettop(L);
+        ok_std = 1;
+        lua_pushnil(L);
+        while (lua_next(L, ct) != 0) {
+            if (lua_type(L, -2) != LUA_TNUMBER || lua_type(L, -1) != LUA_TNUMBER) ok_std = 0;
+            else {
+                double k = lua_tonumber(L, -2);
+                if (k < 0 || k >= PT2_TT_N || k != floor(k)) ok_std = 0;
+                else cost[(int)k] = lua_tonumber(L, -1);
+            }
+            lua_pop(L, 1);
+        }
+    }
+    lua_pop(L, 1);
+    if (ok_std) ok_std = std_list(L, t, "water", wt, PT2_STD_LIST, &nw);
+    if (ok_std) {
+        for (int i = 0; i < PT2_TT_N; i++) {
+            int w = 0;
+            for (int j = 0; j < nw; j++) if ((double)i == wt[j]) w = 1;
+            e->std_ok[i] = !(cost[i] >= 9999) && !w;
+        }
+    }
+    int ok_bld = std_list(L, t, "nobuild", e->nb, PT2_STD_LIST, &e->nb_n);
+    lua_getfield(L, t, "no_builder");
+    e->no_builder = lua_toboolean(L, -1);
+    lua_pop(L, 1);
+    /* stay_in: rects false / nil = none; else at most 32 tables of 4 numbers */
+    int ok_stay = 1;
+    e->st_n = 0;
+    lua_getfield(L, t, "rects");
+    if (lua_istable(L, -1)) {
+        int rt = lua_gettop(L);
+        for (int i = 1; ok_stay; i++) {
+            lua_rawgeti(L, rt, i);
+            if (lua_isnil(L, -1)) { lua_pop(L, 1); break; }
+            if (!lua_istable(L, -1) || e->st_n >= PT2_STAY_MAX) ok_stay = 0;
+            for (int j = 0; ok_stay && j < 4; j++) {
+                lua_rawgeti(L, -1, j + 1);
+                if (lua_type(L, -1) != LUA_TNUMBER) ok_stay = 0;
+                else e->st_r[4 * e->st_n + j] = lua_tonumber(L, -1);
+                lua_pop(L, 1);
+            }
+            if (ok_stay) e->st_n++;
+            lua_pop(L, 1);
+        }
+    } else if (lua_toboolean(L, -1)) ok_stay = 0;
+    lua_pop(L, 1);
+    /* the functions inp has now must be the ones c_std names */
+    static const struct { const char *k; int slot; } fs[4] = {
+        { "in_map", S_IN_MAP }, { "stay_in", S_STAY_IN },
+        { "standable", S_STANDABLE }, { "buildable", S_BUILDABLE },
+    };
+    int on[4];
+    for (int i = 0; i < 4; i++) {
+        lua_getfield(L, t, fs[i].k);
+        on[i] = !lua_isnil(L, -1) && lua_rawequal(L, -1, fs[i].slot);
+        lua_pop(L, 1);
+    }
+    e->n_map = on[0];
+    e->n_stay = on[1] && ok_stay;
+    e->n_std = on[2] && ok_std;
+    e->n_bld = on[3] && ok_bld;
+    lua_settop(L, t0);
+}
+
 static double getnum(lua_State *L, int t, const char *k, double def, int *has) {
     lua_getfield(L, t, k);
     int h = lua_type(L, -1) == LUA_TNUMBER;
@@ -2181,6 +2340,7 @@ static int l_evaluate(lua_State *L) {
     lua_getfield(L, S_V2, "pill_name");
     lua_getfield(L, S_ENV, "count_reads");
     if (lua_gettop(L) != S_TOP) return luaL_error(L, "gh_pt2: stack");
+    std_setup(e);
     /* base_at: mark the keys once (a key off the map is looked up in the
      * table at each read, as before) */
     e->bs_on = !lua_isnil(L, S_BASE_STOPS) && lua_toboolean(L, S_BASE_STOPS);

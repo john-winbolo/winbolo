@@ -121,6 +121,12 @@ local function _stay_parse()
   return rects
 end
 
+-- The STAY_AREA rectangles { {x1, y1, x2, y2}, ... } (inclusive), or nil
+-- when none is set. For gh_pt2.c (inp.c_std); do not change them.
+function M.stay_rects()
+  return _stay_parse()
+end
+
 -- True when a STAY_AREA is set.
 function M.stay_on()
   return _stay_parse() ~= nil
@@ -1022,5 +1028,9 @@ end
 -- Live game rules -> physics constants (see live_physics.lua). Reached
 -- through U so Brain.think needs no new upvalue.
 M.live_physics = require("live_physics")
+
+-- The square tests gh_pt2.c copies (pilltake_v2.world_inp, inp.c_std). A
+-- test that puts its own function in one of these places keeps the Lua.
+M.C_COPIED = { in_map = M.in_map, stay_in = M.stay_in, is_water = M.is_water }
 
 return M

@@ -116,11 +116,26 @@ end
 -- ── call logs ───────────────────────────────────────────────────────────
 -- Wrap inp's functions so each call goes into the current log.
 local LOG
+-- The four square tests PT2_C_STANDABLE does in the C (inp.c_std).
+local SQ_TESTS = { "in_map", "stay_in", "standable", "buildable" }
+local SQ_TEST = { in_map = true, stay_in = true, standable = true, buildable = true }
+-- A terrain read: env.ttype, or U.ttype (inp.standable and inp.buildable
+-- read it) when not inside env.ttype.
+local function note_tt(mx, my)
+  LOG.tt_n = LOG.tt_n + 1
+  local k = my * 256 + mx
+  if not LOG.tt_seen[k] then
+    LOG.tt_seen[k] = true
+    LOG.tt_first[#LOG.tt_first + 1] = k
+  end
+end
 local function instrument(inp)
   local env = inp.env
+  inp._orig, inp._wrap = {}, {}
   local function wrap(tab, name, tag)
     local f = tab[name]
     if not f then return end
+    if tab == inp then inp._orig[name] = f end
     tab[name] = function(...)
       local r = f(...)
       local t = { ... }
@@ -136,6 +151,7 @@ local function instrument(inp)
   for _, n in ipairs({ "in_map", "stay_in", "standable", "buildable", "lgm_reach",
                        "score_fn", "banned", "anger_of" }) do
     wrap(inp, n, n)
+    inp._wrap[n] = inp[n]
   end
   local bs = env.base_stops
   if bs then
@@ -150,13 +166,11 @@ local function instrument(inp)
   end
   local tt = env.ttype
   env.ttype = function(mx, my)
-    LOG.tt_n = LOG.tt_n + 1
-    local k = my * 256 + mx
-    if not LOG.tt_seen[k] then
-      LOG.tt_seen[k] = true
-      LOG.tt_first[#LOG.tt_first + 1] = k
-    end
-    return tt(mx, my)
+    note_tt(mx, my)
+    LOG.in_env = true
+    local r = tt(mx, my)
+    LOG.in_env = false
+    return r
   end
   env.count_reads = function(n) LOG.tt_n = LOG.tt_n + n end
   local po = env.pill_on
@@ -187,7 +201,52 @@ end
 
 local cov = { cases = 0, best = 0, safe = 0, chain = 0, plan = 0, nudge = 0, hold = 0,
               hold_unsafe = 0, leeway = 0, reject = 0, finish = 0, why_unsafe = 0,
-              ally_cover = 0, unsearched = 0 }
+              ally_cover = 0, unsearched = 0, std_on = 0 }
+-- PT2_C_STANDABLE on: the square tests the C did itself (gh_pt2.prof_take).
+local std_n = { in_map_c = 0, stay_in_c = 0, standable_c = 0, buildable_c = 0 }
+
+-- The C time, PT2_C_STANDABLE off and on (gh_pt2.prof_take, the same inp
+-- with its own square-test functions): evaluate us and the part of it in
+-- the Lua callbacks.
+local CB = { "ttype", "pill_on", "is_ally", "cover_of_pill", "base_stops", "in_map", "stay_in",
+             "standable", "buildable", "lgm_reach", "score_fn", "banned", "anger_of",
+             "chain_skip", "base_at", "pill_name", "count_reads" }
+local PF = { off = {}, on = {} }
+local function prof_eval(inp, pid, with_std, std)
+  inp.c_std = with_std and std or nil
+  inp.env.omx, inp.env.omy = nil, nil
+  LOG = new_log(pid)
+  G.prof(true); G.prof_take()
+  local ok = pcall(G.evaluate, inp, V2)
+  local pt = G.prof_take()
+  G.prof(false)
+  LOG = nil
+  inp.c_std = std
+  if not ok or not pt.total then return end
+  local cb = 0
+  for _, k in ipairs(CB) do cb = cb + (pt[k] and pt[k].us or 0) end
+  local t = with_std and PF.on or PF.off
+  t[#t + 1] = { us = pt.total.us, cb = cb }
+end
+
+local function pf_text(t)
+  if #t == 0 then return "none" end
+  local us, tot, cb = {}, 0, 0
+  for i, r in ipairs(t) do us[i] = r.us; tot = tot + r.us; cb = cb + r.cb end
+  table.sort(us)
+  local function q(p) return us[math.max(1, math.ceil(p * #us))] / 1000 end
+  return string.format("evaluate ms median %.3f p90 %.3f max %.3f, callbacks %.1f%%",
+                       q(0.5), q(0.9), us[#us] / 1000, tot > 0 and 100 * cb / tot or 0)
+end
+
+-- The Lua log without the square-test lines (the C does those itself).
+local function no_sq(calls)
+  local t = {}
+  for _, c in ipairs(calls) do
+    if not SQ_TEST[c:match("^([%w_]+)%(")] then t[#t + 1] = c end
+  end
+  return t
+end
 
 local function coverage(res)
   local b = res.best
@@ -219,16 +278,20 @@ local function run_case(inp, pills)
   for k, p in ipairs(pills) do inputs[p] = true; pid[p] = k end
   inp.capture_file = nil
   inp.c_eval = true
+  local std = inp.c_std
   inp.env.omx, inp.env.omy = nil, nil
   LOG = new_log(pid)
   local ok1, r1 = pcall(V2.evaluate_lua, inp)
   local L1 = LOG
   local om1x, om1y = inp.env.omx, inp.env.omy
+  -- PT2_C_STANDABLE off (no inp.c_std): the C calls the Lua functions.
+  inp.c_std = nil
   inp.env.omx, inp.env.omy = nil, nil
   LOG = new_log(pid)
   local ok2, r2 = pcall(G.evaluate, inp, V2)
   local L2 = LOG
   LOG = nil
+  inp.c_std = std
   if not ok1 or not ok2 then
     if ok1 ~= ok2 then return "Lua ok=" .. tostring(ok1) .. " C ok=" .. tostring(ok2) .. ": " .. tostring(ok1 and r2 or r1) end
     return nil   -- both raise (a bad input): not a parity case
@@ -245,6 +308,36 @@ local function run_case(inp, pills)
     return string.format("env.omx/omy: Lua %s,%s C %s,%s", tostring(om1x), tostring(om1y),
                          tostring(inp.env.omx), tostring(inp.env.omy))
   end
+  -- PT2_C_STANDABLE on: inp.c_std, and inp's square tests the functions
+  -- c_std names (not the logging wrappers), so the C does them itself.
+  if not std or not inp._orig then return nil end
+  for _, nm in ipairs(SQ_TESTS) do inp[nm] = inp._orig[nm] end
+  prof_eval(inp, pid, false, std)
+  prof_eval(inp, pid, true, std)
+  inp.env.omx, inp.env.omy = nil, nil
+  LOG = new_log(pid)
+  G.prof(true); G.prof_take()
+  local ok3, r3 = pcall(G.evaluate, inp, V2)
+  local pt = G.prof_take()
+  G.prof(false)
+  local L3 = LOG
+  LOG = nil
+  for _, nm in ipairs(SQ_TESTS) do inp[nm] = inp._wrap[nm] end
+  if not ok3 then return "C (square tests in C) raised: " .. tostring(r3) end
+  cov.std_on = cov.std_on + 1
+  for k in pairs(std_n) do std_n[k] = std_n[k] + (pt[k] and pt[k].n or 0) end
+  e = compare(r1, r3, inputs)
+  if e then return "square tests in C: " .. e end
+  e = cmp_list(no_sq(L1.calls), L3.calls, "call (square tests in C)") if e then return e end
+  if L1.tt_n ~= L3.tt_n then
+    return string.format("square tests in C: terrain reads: Lua %d, C %d", L1.tt_n, L3.tt_n)
+  end
+  e = cmp_list(L1.tt_first, L3.tt_first, "first terrain read (square tests in C)") if e then return e end
+  e = cmp_list(L1.po_first, L3.po_first, "first pill_on read (square tests in C)") if e then return e end
+  if not same_num(om1x or -1, inp.env.omx or -1) or not same_num(om1y or -1, inp.env.omy or -1) then
+    return string.format("square tests in C: env.omx/omy: Lua %s,%s C %s,%s", tostring(om1x),
+                         tostring(om1y), tostring(inp.env.omx), tostring(inp.env.omy))
+  end
   return nil
 end
 
@@ -252,7 +345,10 @@ end
 local terrain = {}
 local base_rule = 0
 local function sqk(mx, my) return my * 256 + mx end
-U.ttype      = function(mx, my) return terrain[sqk(mx, my)] or C.T_GRASS end
+U.ttype      = function(mx, my)
+  if LOG and not LOG.in_env then note_tt(mx, my) end
+  return terrain[sqk(mx, my)] or C.T_GRASS
+end
 U.ttype_peek = U.ttype
 U.base_tile_stops_tank_shell = function(world, mx, my, omx, omy)
   local ba = world and world.base_at
@@ -512,6 +608,17 @@ local cvs = string.format("%d random + %d recorded + %d live shell + %d tank sho
   N_RANDOM, n_rec, n_live, n_block, ts_why.tank or 0, ts_why.boat or 0,
   (function() local s = 0; for _, v in pairs(ts_why) do s = s + v end; return s end)(),
   tab_checked, tab_bad, table.concat(cv, " "))
+-- PT2_C_STANDABLE: the C must do each square test itself somewhere.
+local sq = {}
+for _, k in ipairs({ "in_map_c", "stay_in_c", "standable_c", "buildable_c" }) do
+  sq[#sq + 1] = k .. "=" .. std_n[k]
+  if std_n[k] == 0 then
+    bad = bad + 1
+    first = first or ("square tests in C: no " .. k .. " in " .. cov.std_on .. " cases")
+  end
+end
+cvs = cvs .. "; square tests in C: " .. table.concat(sq, " ")
+  .. "; C time (" .. #PF.off .. " cases) off: " .. pf_text(PF.off) .. "; on: " .. pf_text(PF.on)
 print("test_pt2_c_parity: " .. n .. " cases, " .. bad .. " bad; " .. cvs)
 if first then print("  first: " .. first) end
 return n, bad, first or "", cvs

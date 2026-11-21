@@ -875,6 +875,7 @@ local R221 = {
   HUMAN_ALLY_BOOST_TEST_FORCE = false,
   PT2_CHAIN_CLAIM = false,
   PT2_C_EVAL = false,
+  PT2_C_STANDABLE = false,
   PT2_FAST_SETUP = false,
   PT2_FINISH_CAPTURE_LOCK = false,
   PT2_FINISH_SWERVE_TURN_TICKS = 0,

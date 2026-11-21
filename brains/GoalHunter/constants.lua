@@ -1176,6 +1176,13 @@ M.PT2_CHAIN_CLAIM = true
 -- (parity test test_gh_pt2_parity), only faster. An older exe (Bot Host)
 -- has no gh_pt2 and runs the Lua. false = always the Lua.
 M.PT2_C_EVAL = true
+-- PT2_C_STANDABLE (Nov 21, F4): true = the C copy (gh_pt2.c) does the
+-- inp.in_map, inp.stay_in, inp.standable and inp.buildable tests itself,
+-- from its terrain and pill caches and the tables world_inp gives once in
+-- inp.c_std. Same answers as the Lua functions (test_gh_pt2_parity), no
+-- Lua call per square. An older exe skips inp.c_std and calls the Lua
+-- functions. false = the C calls the Lua functions (KEEL, MAST).
+M.PT2_C_STANDABLE = true
 -- PT2_CAPTURE_FILE (debug only): a file path. When set, every v2 evaluate
 -- appends its inputs and the Lua result to the file, for the parity test
 -- cases. "" = off.
@@ -8031,6 +8038,8 @@ M.PRESETS = {
     PT2_CHAIN_CLAIM = false,
     --   2026-11-18: pill take v2 in Lua only (no C copy).
     PT2_C_EVAL = false,
+    --   2026-11-21: the C copy calls the Lua square tests.
+    PT2_C_STANDABLE = false,
     --   2026-11-17: hold 15 ticks with no goal after a kill (old rule).
     POST_KILL_WAIT_TICKS = 15,
     --   2026-11-17: carrying-pill approach floor 30 (old rule).
@@ -8368,6 +8377,7 @@ M.PRESETS.mast = {
   LGM_STRANDED_RECHECK              = false,  -- 2.2.1 kept the stranded flag until home
   PT2_CHAIN_CLAIM                   = false,  -- 2.2.1 had no pill take v2
   PT2_C_EVAL                        = false,  -- 2.2.1 had no pill take v2
+  PT2_C_STANDABLE                   = false,  -- 2.2.1 had no pill take v2
   POST_KILL_WAIT_TICKS              = 15,
   CARRY_APPROACH_MIN_ARMOUR_ONE     = 30,
   CARRY_APPROACH_MIN_ARMOUR_MANY    = 30,
