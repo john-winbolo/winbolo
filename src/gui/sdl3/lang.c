@@ -1075,11 +1075,8 @@ static const LangEntry langTable[] = {
     {3475, "Toggle Screen-True Local Explosions"},
     {3476, "On: the selected player's own shells explode at once where they end, and the server's later explosion of each is hidden. Off: each one explodes when the server's explosion comes"},
     {3477, "Turn on Toggle Screen-True Own Shells first"},
-    /* Log viewer Tank panel: the base the selected player's screen showed the stock of */
-    {3478, "Base {number}: {string1}"},
-    {3479, "Neutral"},
+    /* Log viewer Tank panel: the line beside the empty base bars */
     {3480, "No base near"},
-    {3481, "The base this player's own screen showed the stock of: the nearest neutral or allied base in range, as the game picks it"},
     {3121, "Lag: a bot, screen {number} ms behind"},
     /* The viewer's server timing (log_OverrunStats) in the Game Info panel. */
     {3130, "Server timing"},
