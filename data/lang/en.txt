@@ -3146,7 +3146,7 @@ STR_LV_BOTHOST_RULE_TRIAL=trial
 # The dedicated server's newswire line when it runs more bots than its own
 # slots and no Bot Host can take one (-bothost-enforce-server-limit):
 # {string1} = the bots it runs, {string2} = its slots
-STR_BOTHOST_OVER_SLOTS=The server is running {string1} bots but has only {string2} bot slots. Bots may play worse.
+STR_BOTHOST_OVER_SLOTS=The server is running {string1} bots but has only {string2} bot slots. Bots might play worse.
 # The lobby's Bot Host row of a player's computer when the server sent no
 # name: the player's number, or a plain name when that is not known
 STR_DLGLOBBY_BOTHOST_PLAYER_NAME=Player {number}

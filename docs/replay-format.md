@@ -140,7 +140,7 @@ Selected event types (see the `logitem` enum for the complete list):
 | 5 | `log_MapChange` | cell x, y, terrain type |
 | 6 | `log_Shell` | shell  (position, direction, owner) |
 | 7–17 | `log_Sound*` | sound x/y for each of 11 sound events |
-| 18–20 | `log_Message*` | server / all-players / specific-players chat. A dedicated server with `-bothost-enforce-server-limit` writes a `log_MessageServer` line when it runs more bots than its own slots and no Bot Host can take one ("The server is running 6 bots but has only 3 bot slots. Bots may play worse."), once each time it goes over |
+| 18–20 | `log_Message*` | server / all-players / specific-players chat. A dedicated server with `-bothost-enforce-server-limit` writes a `log_MessageServer` line when it runs more bots than its own slots and no Bot Host can take one ("The server is running 6 bots but has only 3 bot slots. Bots might play worse."), once each time it goes over |
 | 21 | `log_ChangeName` | player + Pascal name |
 | 22–24 | `log_Ally*` | alliance request / accept / leave |
 | 25–26 | `log_BaseSet*` | base owner / stock (shells, mines, armour) |

@@ -306,7 +306,7 @@ bot_host_link.c). A layout that is lopsided but good stays as it is:
   to a good Bot Host with a slot. No bot is ever held for lack of a slot:
   with no such host, every bot runs on the server, as without Bot Hosts.
   The players and the spectators then see one newswire line, "The server
-  is running 6 bots but has only 3 bot slots. Bots may play worse.", at the step
+  is running 6 bots but has only 3 bot slots. Bots might play worse.", at the step
   the server goes over its slots. It comes again only after the server
   was back to its slots or under. The round log gets the line as
   `log_MessageServer`. 0: the placement puts bots on the server past its
