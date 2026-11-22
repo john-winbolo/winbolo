@@ -31,7 +31,11 @@
  *    (a wall to rubble, a forest to grass, a boat to river,
  *    the shore or a bridge a boat's shell hit) is solid on
  *    that frame too (lvHitboxSquareSolid): that shot was a
- *    hit on the square. On
+ *    hit on the square. That terrain rule is only in games of
+ *    2.2.2 and later (simRulesTerrainSquareHitForVersion, from
+ *    the recording's version); in an older game the changed
+ *    square is open ground on that frame, as the recording
+ *    has it. On
  *    one of those squares it catches him only when it is on
  *    his own square. The distance comes from utilIsItemInRange with
  *    the pill_range rule as its limit, so when pill_range is
@@ -322,9 +326,14 @@ static inline bool lvHitboxPillSolid(bool onMap, bool inTank, unsigned armour,
    rubble (its last hit), a forest to grass, a boat to river, or a boat's
    shell on the shore or a bridge. Each is a hit on the square (shells.c
    outSquareHit), so the square is solid on that frame although the
-   recording already has it as open ground. */
-static inline bool lvHitboxSquareSolid(bool wall, bool hitNow) {
-    return wall || hitNow;
+   recording already has it as open ground. squareHitRule: the game plays
+   that rule, simRulesTerrainSquareHitForVersion for the recording's
+   version (2.2.2 and later). When it is false (an older game) hitNow is
+   not read: the square is solid only when it is a wall, the open-ground
+   rule those games played. */
+static inline bool lvHitboxSquareSolid(bool wall, bool hitNow,
+                                       bool squareHitRule) {
+    return wall || (squareHitRule && hitNow);
 }
 
 /* The builder test, as lgmBlastCatches makes it, for an explosion at (x, y)

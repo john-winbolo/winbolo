@@ -2793,6 +2793,7 @@ static const UnitTestEntry s_tests[] = {
     { "lv_hitbox_lgm_fit",                               run_lv_hitbox_lgm_fit                               },
     { "lv_hitbox_lgm_pick",                              run_lv_hitbox_lgm_pick                              },
     { "lv_hitbox_outline",                               run_lv_hitbox_outline                               },
+    { "lv_hitbox_square_hit_by_version",                 run_lv_hitbox_square_hit_by_version                 },
     { "lv_hitbox_zone_from_version",                     run_lv_hitbox_zone_from_version                     },
     { "hit_rules_builder_matches_engine",                run_hit_rules_builder_matches_engine                },
     { "hit_rules_tank_matches_engine",                   run_hit_rules_tank_matches_engine                   },

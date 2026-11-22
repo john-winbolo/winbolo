@@ -4785,6 +4785,7 @@ int run_lv_hitbox_sums(void);
 int run_lv_hitbox_lgm_fit(void);
 int run_lv_hitbox_lgm_pick(void);
 int run_lv_hitbox_outline(void);
+int run_lv_hitbox_square_hit_by_version(void);
 /* The tank's hit zone from a recording's version (test_lv_calibration.c). */
 int run_lv_hitbox_zone_from_version(void);
 /* The hit rules the engine and the log viewer share (test_hit_rules.c):

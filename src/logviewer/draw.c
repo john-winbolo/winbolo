@@ -1870,8 +1870,15 @@ static void lvDrawNoteLgmHit(BYTE mx, BYTE my, BYTE px, BYTE py, BYTE slot, BYTE
     unsigned solid = 0;
     int col, row;
     int sqMx, sqMy, scrMx, scrMy;
+    bool squareHitRule;
 
     if (lv == NULL) return;
+    /* Whether the recorded game counts a shell's hit that changes its square
+       as a hit on that square (2.2.2 and later), from the recording's
+       version, as the engine decides it. */
+    squareHitRule = simRulesTerrainSquareHitForVersion(
+                        lv->versionMajor, lv->versionMinor,
+                        lv->versionRevision) != 0;
     /* His place. A recording holds it to the art pixel, so the closest guess
        is from the line his last recorded pixels walk along
        (lv_playersLgmPlace). With no notes for that pixel it is the middle of
@@ -1909,7 +1916,8 @@ static void lvDrawNoteLgmHit(BYTE mx, BYTE my, BYTE px, BYTE py, BYTE slot, BYTE
             if (ax < 0 || ay < 0 || ax > 255 || ay > 255) continue;
             pos = lv_mapGetPos(&lv->mp, (BYTE)ax, (BYTE)ay);
             if (lvHitboxSquareSolid(pos == BUILDING || pos == HALFBUILDING,
-                                    lv_screenSquareHitNow((BYTE)ax, (BYTE)ay)) ||
+                                    lv_screenSquareHitNow((BYTE)ax, (BYTE)ay),
+                                    squareHitRule) ||
                 lvDrawPillSolidAt(&lv->pb, (BYTE)ax, (BYTE)ay) ||
                 lv_basesExistPos(&lv->bs, (BYTE)ax, (BYTE)ay)) {
                 solid |= 1u << (row * 3 + col);

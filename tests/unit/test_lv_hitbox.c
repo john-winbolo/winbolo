@@ -15,7 +15,8 @@
  *       building, a half building, a live pillbox or a base only on his own
  *       square, and nothing off the 3 by 3 squares round his. A dead
  *       pillbox's square is open ground (lvHitboxPillSolid). A square a
- *       shell's hit changed on this frame is solid (lvHitboxSquareSolid).
+ *       shell's hit changed on this frame is solid (lvHitboxSquareSolid)
+ *       in a game that plays the square-hit rule.
  *       It also checks the places the circles go round: the middle of the
  *       art pixel a recording holds, with the builder's 1 and 2 put back,
  *       and the offsets the game draws the tank and builder pictures at.
@@ -35,6 +36,12 @@
  *       border of his area, and that the outline stops exactly where the
  *       circle meets the edge of a building.
  *
+ *   lv_hitbox_square_hit_by_version - that the square a shell's hit changed
+ *       on this frame is solid only in a recording of 2.2.2 or later
+ *       (simRulesTerrainSquareHitForVersion). In a 2.2.1 recording it is
+ *       open ground, as the hit box drew it before that rule: only a wall
+ *       is solid.
+ *
  *   The tank test is also checked for the square of games before the
  *   circle, and against the size the outline is drawn at.
  */
@@ -46,6 +53,7 @@
 #include <math.h>
 
 #include "lv_hitbox.h"
+#include "sim_rules_names.h"   /* simRulesTerrainSquareHitForVersion */
 #include "test_harness.h"
 
 /* The bit of a square in the 3 by 3 mask, with his own square at 1, 1. */
@@ -179,10 +187,10 @@ int run_lv_hitbox_sums(void) {
        and a square a shell's hit changed on this frame (a wall to rubble on
        its last hit, a forest to grass, a boat to river, the shore or a
        bridge a boat's shell hit). */
-    UT_ASSERT_MSG(lvHitboxSquareSolid(true, false), "a wall is solid");
-    UT_ASSERT_MSG(lvHitboxSquareSolid(false, true),
+    UT_ASSERT_MSG(lvHitboxSquareSolid(true, false, true), "a wall is solid");
+    UT_ASSERT_MSG(lvHitboxSquareSolid(false, true, true),
                   "the frame of a shell's hit that changed the square: it is solid");
-    UT_ASSERT_MSG(!lvHitboxSquareSolid(false, false),
+    UT_ASSERT_MSG(!lvHitboxSquareSolid(false, false, true),
                   "rubble, grass or river with no hit this frame is open ground");
 
     /* The shot that turns a wall to rubble, on the square to his left: the
@@ -192,9 +200,9 @@ int run_lv_hitbox_sums(void) {
        does. And the same shot on his own square catches him in its far
        corner, 178 away. */
     {
-        unsigned leftHit   = lvHitboxSquareSolid(false, true) ? SQ(0, 1) : 0;
-        unsigned leftOpen  = lvHitboxSquareSolid(false, false) ? SQ(0, 1) : 0;
-        unsigned ownHit    = lvHitboxSquareSolid(false, true) ? SQ(1, 1) : 0;
+        unsigned leftHit   = lvHitboxSquareSolid(false, true, true) ? SQ(0, 1) : 0;
+        unsigned leftOpen  = lvHitboxSquareSolid(false, false, true) ? SQ(0, 1) : 0;
+        unsigned ownHit    = lvHitboxSquareSolid(false, true, true) ? SQ(1, 1) : 0;
         UT_ASSERT_MSG(!lvHitboxBuilderCaught(-128.0, 128.0, 0.0, 128.0, leftHit, 128),
                       "the rubble shot on the next square misses him 128 away");
         UT_ASSERT_MSG(lvHitboxBuilderCaught(-128.0, 128.0, 0.0, 128.0, leftOpen, 128),
@@ -510,5 +518,65 @@ int run_lv_hitbox_outline(void) {
        ends at angle 0). */
     lvHitboxBuilderOutline(128.0, 128.0, 0, 128, &o);
     UT_ASSERT_MSG(o.nRuns <= 2, "%d runs for a plain circle", o.nRuns);
+    return 0;
+}
+
+/* The square-hit rule by the recording's version: 2.2.1 and older play the
+   open-ground rule on a square a shell's hit changed, 2.2.2 and later the
+   square rule. The rule comes from the engine's own helper, as draw.c asks
+   it for the recording's header version. */
+int run_lv_hitbox_square_hit_by_version(void) {
+    bool oldRule = simRulesTerrainSquareHitForVersion(2, 2, 1) != 0;
+    bool newRule = simRulesTerrainSquareHitForVersion(2, 2, 2) != 0;
+    bool olderRule = simRulesTerrainSquareHitForVersion(1, 17, 0) != 0;
+    bool laterRule = simRulesTerrainSquareHitForVersion(2, 3, 0) != 0;
+
+    UT_ASSERT_MSG(!oldRule, "2.2.1 plays the open-ground rule");
+    UT_ASSERT_MSG(newRule, "2.2.2 plays the square rule");
+    UT_ASSERT_MSG(!olderRule, "1.17 plays the open-ground rule");
+    UT_ASSERT_MSG(laterRule, "2.3.0 plays the square rule");
+
+    /* A wall is solid in both, with or without a hit this frame. */
+    UT_ASSERT_MSG(lvHitboxSquareSolid(true, false, oldRule), "2.2.1: a wall is solid");
+    UT_ASSERT_MSG(lvHitboxSquareSolid(true, true, oldRule),
+                  "2.2.1: a wall a shell hit and left a wall is solid");
+    UT_ASSERT_MSG(lvHitboxSquareSolid(true, false, newRule), "2.2.2: a wall is solid");
+    UT_ASSERT_MSG(lvHitboxSquareSolid(true, true, newRule),
+                  "2.2.2: a wall a shell hit and left a wall is solid");
+
+    /* The frame of a shell's hit that changed the square (a wall to rubble,
+       a forest to grass, a boat to river, the shore, a bridge): open ground
+       in 2.2.1, solid in 2.2.2. */
+    UT_ASSERT_MSG(!lvHitboxSquareSolid(false, true, oldRule),
+                  "2.2.1: the square a shell's hit changed this frame is open ground");
+    UT_ASSERT_MSG(lvHitboxSquareSolid(false, true, newRule),
+                  "2.2.2: the square a shell's hit changed this frame is solid");
+
+    /* No hit this frame: open ground in both. */
+    UT_ASSERT_MSG(!lvHitboxSquareSolid(false, false, oldRule),
+                  "2.2.1: rubble with no hit this frame is open ground");
+    UT_ASSERT_MSG(!lvHitboxSquareSolid(false, false, newRule),
+                  "2.2.2: rubble with no hit this frame is open ground");
+
+    /* The rubble shot on the square to his left, 128 from him on the first
+       world unit of his own square: in 2.2.1 it catches him, as any blast
+       on open ground 128 away does; in 2.2.2 it misses him, as a hit on a
+       wall does. The same shot on his own square, 178 from him in its far
+       corner: in 2.2.2 it catches him, as a hit on his square does; in
+       2.2.1 that is past 128 on open ground, so it misses him. */
+    {
+        unsigned leftOld = lvHitboxSquareSolid(false, true, oldRule) ? SQ(0, 1) : 0;
+        unsigned leftNew = lvHitboxSquareSolid(false, true, newRule) ? SQ(0, 1) : 0;
+        unsigned ownOld  = lvHitboxSquareSolid(false, true, oldRule) ? SQ(1, 1) : 0;
+        unsigned ownNew  = lvHitboxSquareSolid(false, true, newRule) ? SQ(1, 1) : 0;
+        UT_ASSERT_MSG(lvHitboxBuilderCaught(-128.0, 128.0, 0.0, 128.0, leftOld, 128),
+                      "2.2.1: the rubble shot on the next square catches him 128 away");
+        UT_ASSERT_MSG(!lvHitboxBuilderCaught(-128.0, 128.0, 0.0, 128.0, leftNew, 128),
+                      "2.2.2: the rubble shot on the next square misses him 128 away");
+        UT_ASSERT_MSG(!lvHitboxBuilderCaught(128.0, 128.0, 2.0, 2.0, ownOld, 128),
+                      "2.2.1: the rubble shot misses him in the far corner of its square");
+        UT_ASSERT_MSG(lvHitboxBuilderCaught(128.0, 128.0, 2.0, 2.0, ownNew, 128),
+                      "2.2.2: the rubble shot catches him in the far corner of its square");
+    }
     return 0;
 }
