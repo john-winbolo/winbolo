@@ -3167,6 +3167,9 @@ STR_LV_BOTHOST_RULE_TRIAL=trial
 # slots and no Bot Host can take one (-bothost-enforce-server-limit):
 # {string1} = the bots it runs, {string2} = its slots
 STR_BOTHOST_OVER_SLOTS=The server is running {string1} bots but has only {string2} bot slots. Bots might play worse.
+# The lobby reject toast's line for an Add Bot onto a new team that the
+# map's scenario does not allow
+STR_DLGLOBBY_REJECT_SCENARIO_TEAM=The map's scenario does not allow new teams
 # The lobby's Bot Host row of a player's computer when the server sent no
 # name: the player's number, or a plain name when that is not known
 STR_DLGLOBBY_BOTHOST_PLAYER_NAME=Player {number}

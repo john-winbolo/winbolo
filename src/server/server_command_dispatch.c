@@ -89,6 +89,10 @@ static int lobbyTeamMemberCount(const ServerSim *sim, BYTE team,
  *   - a re-send of the team the slot already holds, which moves nothing;
  *   - a move onto a team another connected slot is already on.
  *
+ * The add-bot arm asks before it seats the bot, so it passes MAX_TANKS
+ * for the slot: no slot holds the team already and nobody is left out of
+ * the count.
+ *
  * The moving slot is left out of the count because it is the one being
  * placed: the question is whether the team it is going to exists without
  * it. So the sole member of a team moving off it and onto an empty one is
@@ -956,6 +960,20 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
                 return CMD_REJECT_INVALID;
             }
         }
+        /* The same question the team-set arm asks, put before anything is
+           made: a host's Add Bot onto a team the scenario does not allow (a
+           new team while it says no extra teams) is refused whole, so no bot
+           is made and no seat is taken. MAX_TANKS stands for the bot not yet
+           seated: no slot holds the team already and nobody is left out of
+           the member count. Team 0 (the join rule's team) and a number past
+           the end are not asked, as in the helper. Only this host path asks;
+           a script spawning or seating a bot, or set_team, does not. */
+        if (!scenarioAllowsExtraTeams(sim, (BYTE)MAX_TANKS, p->teamNumber)) {
+            fprintf(stderr, "ADD_BOT reject SCENARIO_TEAM: team %d is a new "
+                    "team and the scenario allows no extra teams\n",
+                    (int)p->teamNumber);
+            return CMD_REJECT_SCENARIO_TEAM;
+        }
         BYTE slot;
         /* The one seat rule a bot has, shared with the scenario's spawn and
            lobby-add arms: the first free seat below MAX_TANKS, outside the
@@ -1003,11 +1021,8 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
             return CMD_REJECT_INVALID;
         }
         transportUdpServerSetBotName(slot, botName);
-        /* The same question the team-set arm asks. The bot is already seated
-           by here, so unlike that arm the refusal cannot be a return code:
-           it is the team write, and the bot keeps its join-rule team. */
-        if (p->teamNumber > 0 && p->teamNumber < MAX_TANKS &&
-            scenarioAllowsExtraTeams(sim, slot, p->teamNumber)) {
+        /* The team the client named, already let through above. */
+        if (p->teamNumber > 0 && p->teamNumber < MAX_TANKS) {
             serverSimSetTeam(sim, slot, p->teamNumber);
         }
         /* Wherever the bot landed: a held team makes it a held seat, so a

@@ -1503,6 +1503,7 @@ static const LangEntry langTable[] = {
     {3921, "emergency"},
     {3922, "trial"},
     {3943, "The server is running {string1} bots but has only {string2} bot slots. Bots might play worse."},
+    {3944, "The map's scenario does not allow new teams"},
     {3925, "Player {number}"},
     {3926, "Bot Host"},
     /* The Log Viewer's Chat panel */
