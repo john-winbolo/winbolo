@@ -85,6 +85,7 @@ extern "C" {
     int  lv_screenLagViewSlot(void);
     bool lv_screenLagViewStatus(char *name, size_t nameSize, int *behindMs, bool *drawn);
     void lv_drawDirtyScreen(void);
+    void lv_windowNeedRedraw(void);
     SDL_Texture *lv_drawGetStatusBackgroundTexture(void);
     void lv_drawTeamPanelColour(int palette, float *r, float *g, float *b);
     SDL_Texture *lv_drawGetTilesTexture(void);
@@ -1005,6 +1006,9 @@ static void tank_lag(const LvTankStatus &st, const LvPlayerLag &lag, int viewSlo
         lv_screenLagViewSet(on ? (int)st.slot : -1);
         lv_clientMutexRelease();
         lv_drawDirtyScreen();
+        /* A paused game draws no new frame by itself, so ask for one now
+           (as Ctrl+L does). */
+        lv_windowNeedRedraw();
     }
     ImGui::EndDisabled();
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip | ImGuiHoveredFlags_AllowWhenDisabled)) {
@@ -1052,6 +1056,7 @@ void lv_imgui_lag_banner_at(float x, float y, float w) {
             lv_screenLagViewSet(-1);
             lv_clientMutexRelease();
             lv_drawDirtyScreen();
+            lv_windowNeedRedraw();
         }
     }
     ImGui::End();
