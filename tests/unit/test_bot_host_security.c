@@ -192,6 +192,24 @@ int run_bot_host_token_allow_list(void) {
     scnTableClear(&t);
     UT_ASSERT(scnTableSet(&t, "difficulty", "hard;cfg=X=1"));
     UT_ASSERT(!botHostInitTableAllowed(&t));
+
+    /* A key that is not a plain name never passes, even with the value
+     * "false". The brain would build cfg=SOME_CONSTANT=false from the
+     * first, and cfg=SOME_CONSTANT=999 from the second. */
+    scnTableClear(&t);
+    UT_ASSERT(scnTableSet(&t, "cfg=SOME_CONSTANT", "false"));
+    UT_ASSERT(!botHostInitTableAllowed(&t));
+    scnTableClear(&t);
+    UT_ASSERT(scnTableSet(&t, "cfg=SOME_CONSTANT=999;", "false"));
+    UT_ASSERT(!botHostInitTableAllowed(&t));
+    scnTableClear(&t);
+    UT_ASSERT(scnTableSet(&t, "mode ", "turtle"));
+    UT_ASSERT(!botHostInitTableAllowed(&t));
+    /* A plain key written false is still nothing, so it still passes. */
+    scnTableClear(&t);
+    UT_ASSERT(scnTableSet(&t, "difficulty", "false"));
+    UT_ASSERT(scnTableSet(&t, "horde", "false"));
+    UT_ASSERT(botHostInitTableAllowed(&t));
     return 0;
 }
 
