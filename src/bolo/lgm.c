@@ -1672,6 +1672,11 @@ void lgmGetScreenCoords(lgm *lgman, BYTE leftPos, BYTE topPos, BYTE *mx, BYTE *m
    the pillbox on its square (squareHit). The one test every builder death
    is decided by.
 
+   A tank's explosion that damages a live pillbox passes squareHit too
+   (tkExplosionBigExplosion), for the same reason: the pill was live when
+   the explosion went off, so the square is solid even when that damage
+   took its armour to 0.
+
    squareHit: the shell hit the pill on this square (shellsCalcCollision
    outSquareHit). That is a hit on the square whatever armour it left the
    pill, so the shot that kills a pill (its armour is already 0 here) kills
@@ -1680,10 +1685,11 @@ void lgmGetScreenCoords(lgm *lgman, BYTE leftPos, BYTE topPos, BYTE *mx, BYTE *m
    pill's square (packet.go qhit_pill), and the explosion kills the man
    only on that square.
 
-   A dead pill's square that was not hit is open ground: shells fly over a
-   dead pill, so a blast near the edge of its square (a shell that ran out
-   there or hit a tank there, a tank's or a mine's explosion) must reach a
-   builder just across that edge, as it would on any open square. */
+   The square of a pill that was dead before the blast is open ground:
+   shells fly over a dead pill, so a blast near the edge of its square (a
+   shell that ran out there or hit a tank there, a tank's or a mine's
+   explosion) must reach a builder just across that edge, as it would on
+   any open square. */
 static bool lgmBlastCatches(GameSim *sim, WORLD lgmWorldX, WORLD lgmWorldY, WORLD wx, WORLD wy, bool squareHit) {
   map *mp = &sim->mp;
   pillboxes *pb = &sim->pb;
@@ -1922,9 +1928,18 @@ void lgmKill(GameSim *sim, lgm *lgman, tank *tnk, BYTE owner) {
 }
 
 void lgmDeathCheck(GameSim *sim, lgm *lgman, WORLD wx, WORLD wy, BYTE owner, BYTE attacker, BYTE cause, BYTE pill, tank *tnk) {
+  lgmDeathCheckSquareHit(sim, lgman, wx, wy, owner, attacker, cause, pill, tnk,
+                         FALSE);
+}
+
+/* lgmDeathCheck for a blast that damaged the pillbox on its square. squareHit
+   is TRUE when that pillbox was live before the damage: the square is solid
+   although the damage may have taken its armour to 0 (a tank's explosion,
+   tkExplosionBigExplosion). */
+void lgmDeathCheckSquareHit(GameSim *sim, lgm *lgman, WORLD wx, WORLD wy, BYTE owner, BYTE attacker, BYTE cause, BYTE pill, tank *tnk, bool squareHit) {
   if (*lgman == NULL) return;
   lgmDeathCheckAtPosition(sim, lgman, (*lgman)->x, (*lgman)->y, wx, wy, owner,
-                          attacker, cause, pill, tnk, FALSE);
+                          attacker, cause, pill, tnk, squareHit);
 }
 
 static bool lgmInTankCanBeKilled(GameSim *sim, lgm *lgman, tank *tnk);

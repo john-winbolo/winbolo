@@ -2434,6 +2434,7 @@ int run_lgm_blast_live_pill_unchanged(void);
 int run_lgm_blast_pill_kill_shot(void);
 int run_lgm_blast_shell_runs_out_dead_pill(void);
 int run_lgm_blast_shell_hits_tank_dead_pill(void);
+int run_lgm_blast_tank_explosion_kills_pill(void);
 
 /* A -braindebug server records each round into its own session dir
  * (test_braindbg_round_dir.c): the dir it named is cleared at game over, so

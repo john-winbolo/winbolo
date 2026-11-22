@@ -497,6 +497,23 @@ void lgmGetScreenCoords(lgm *lgman, BYTE leftPos, BYTE topPos, BYTE *mx, BYTE *m
 void lgmDeathCheck(struct GameSim *sim, lgm *lgman, WORLD wx, WORLD wy, BYTE owner, BYTE attacker, BYTE cause, BYTE pill, tank *tnk);
 
 /*********************************************************
+*NAME:          lgmDeathCheckSquareHit
+*PURPOSE:
+*  lgmDeathCheck for an explosion that damaged the pillbox
+*  on its square (a tank's explosion,
+*  tkExplosionBigExplosion).
+*
+*ARGUMENTS:
+*  As lgmDeathCheck, and:
+*  squareHit - TRUE when the square held a live pillbox
+*           before the explosion damaged it: the builder
+*           dies only if he is on that square, even when
+*           the damage took the pill's armour to 0. FALSE
+*           is lgmDeathCheck
+*********************************************************/
+void lgmDeathCheckSquareHit(struct GameSim *sim, lgm *lgman, WORLD wx, WORLD wy, BYTE owner, BYTE attacker, BYTE cause, BYTE pill, tank *tnk, bool squareHit);
+
+/*********************************************************
 *NAME:          lgmDeathCheckAtPosition
 *AUTHOR:        John Morrison
 *CREATION DATE: 17/04/26
@@ -525,8 +542,11 @@ void lgmDeathCheck(struct GameSim *sim, lgm *lgman, WORLD wx, WORLD wy, BYTE own
 *           pillbox on its square (shellsCalcCollision
 *           outSquareHit), the shot that kills the pill
 *           included: the builder dies only if he is on that
-*           square, as for a hit on a live pill. FALSE for
-*           every other blast (lgmDeathCheck passes FALSE)
+*           square, as for a hit on a live pill. Also TRUE
+*           for a tank's explosion on a square whose pill
+*           was live before it (lgmDeathCheckSquareHit).
+*           FALSE for every other blast (lgmDeathCheck
+*           passes FALSE)
 *********************************************************/
 void lgmDeathCheckAtPosition(struct GameSim *sim, lgm *lgman, WORLD lgmWorldX, WORLD lgmWorldY, WORLD wx, WORLD wy, BYTE owner, BYTE attacker, BYTE cause, BYTE pill, tank *tnk, bool squareHit);
 

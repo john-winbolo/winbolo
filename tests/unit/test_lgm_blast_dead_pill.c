@@ -56,6 +56,18 @@
  *                                  away across the east edge dies and a
  *                                  builder in the far (north-west) corner
  *                                  lives.
+ * lgm_blast_tank_explosion_kills_pill - a tank's large explosion covers
+ *                                  four squares. With a pill at armour 1 on
+ *                                  each of the four in turn, the explosion
+ *                                  takes it to 0, and a builder in the far
+ *                                  corner of the pill's square dies on all
+ *                                  four: the pill was live when the
+ *                                  explosion went off, so the square rule
+ *                                  holds. Before the fix he lived on three
+ *                                  of the four (the pill is damaged before
+ *                                  the builder is tested there) and died on
+ *                                  the tank's own square. With a pill that
+ *                                  was already dead he lives on all four.
  *
  * The first three call lgmDeathCheckAtPosition directly, with no pill hit,
  * on ut_make_running_sim (slot 0) with the builder out of his tank, so no
@@ -80,6 +92,7 @@
 #include "mines.h"                 /* minesExistPos */
 #include "position_history.h"      /* posHistoryInit, posHistoryRecord */
 #include "shells.h"                /* shellsAddItem, shellsUpdate */
+#include "tankexp.h"               /* tkExplosionBigExplosion, TK_MOVE_RIGHT */
 #include "test_harness.h"
 
 #define LBD_SLOT 0
@@ -458,4 +471,82 @@ int run_lgm_blast_shell_runs_out_dead_pill(void) {
 
 int run_lgm_blast_shell_hits_tank_dead_pill(void) {
     return lbd_dead_pill_shell_test(true, "hit a tank");
+}
+
+/* A tank's large explosion with the pill on one of its four squares. The
+ * explosion moves right and down, so it covers (mx, my), (mx + R, my),
+ * (mx, my + R) and (mx + R, my + R), R being TK_MOVE_RIGHT. dx and dy (0 or
+ * 1) pick which of the four the pill's square is. The builder is out in the
+ * north-west corner of the pill's square, more than 128 from the middle of
+ * every one of the four squares. *armourAfter is the pill's armour after the
+ * explosion. Reports whether the builder died. */
+static int lbd_tank_explosion(BYTE armour, int dx, int dy, bool *died,
+                              BYTE *armourAfter) {
+    LbdFix   f;
+    GameSim *gs;
+    lgm     *man;
+    tank     tanks[MAX_TANKS];
+    lgm     *lgms[MAX_TANKS];
+    BYTE     n = 0;
+    BYTE     c;
+
+    if (lbd_open(&f, armour) != 0) {
+        lbd_close(&f);
+        return 1;
+    }
+    gs = f.gs;
+    man = &gs->lgmen[LBD_SLOT];
+    (*man)->isDead = FALSE;
+    (*man)->inTank = FALSE;
+    (*man)->state = LGM_STATE_IDLE;
+    (*man)->x = LBD_CORNER_X(&f);
+    (*man)->y = LBD_CORNER_Y(&f);
+    for (c = 0; c < MAX_TANKS; c++) {
+        if (f.sim->playerConnected[c] && gs->tanks[c] != NULL) {
+            tanks[n] = gs->tanks[c];
+            lgms[n]  = &gs->lgmen[c];
+            n++;
+        }
+    }
+    tkExplosionBigExplosion(gs, (BYTE)(f.px - dx * TK_MOVE_RIGHT),
+                            (BYTE)(f.py - dy * TK_MOVE_RIGHT), 1, 1, lgms, n,
+                            tanks, &gs->ss, NEUTRAL);
+    *died = ((*man)->isDead == TRUE);
+    *armourAfter = gs->pb->item[LBD_PILL].armour;
+    lbd_close(&f);
+    return 0;
+}
+
+int run_lgm_blast_tank_explosion_kills_pill(void) {
+    int dx, dy;
+
+    for (dy = 0; dy <= 1; dy++) {
+        for (dx = 0; dx <= 1; dx++) {
+            bool died = false;
+            BYTE after = 255;
+
+            if (lbd_tank_explosion(1, dx, dy, &died, &after) != 0) {
+                return 1;
+            }
+            UT_ASSERT_MSG(after == 0,
+                          "square (+%d,+%d): the explosion left the pill at "
+                          "armour %u, not 0", dx, dy, (unsigned)after);
+            UT_ASSERT_MSG(died,
+                          "square (+%d,+%d): a tank explosion that killed a "
+                          "pill left a builder in the corner of its square "
+                          "alive", dx, dy);
+
+            died = true;
+            if (lbd_tank_explosion(0, dx, dy, &died, &after) != 0) {
+                return 1;
+            }
+            UT_ASSERT_MSG(after == 0,
+                          "square (+%d,+%d): the dead pill came back", dx, dy);
+            UT_ASSERT_MSG(!died,
+                          "square (+%d,+%d): a tank explosion on the square "
+                          "of a pill that was already dead killed a builder "
+                          "in its far corner, more than 128 away", dx, dy);
+        }
+    }
+    return 0;
 }
