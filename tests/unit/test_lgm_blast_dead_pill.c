@@ -109,6 +109,13 @@
  *                                  the builder is tested there) and died on
  *                                  the tank's own square. With a pill that
  *                                  was already dead he lives on all four.
+ * lgm_blast_terrain_square_hit_for_version - the versions that play the
+ *                                  square-hit rule above, from
+ *                                  simRulesTerrainSquareHitForVersion: 0
+ *                                  (the old open-ground rule) before 2.2.2,
+ *                                  1 from 2.2.2 on, and 1 for a field
+ *                                  larger than one byte. The brain gets this
+ *                                  as info.terrain_square_hit.
  *
  * The first three call lgmDeathCheckAtPosition directly, with no pill hit,
  * on ut_make_running_sim (slot 0) with the builder out of his tank, so no
@@ -134,6 +141,7 @@
 #include "position_history.h"      /* posHistoryInit, posHistoryRecord */
 #include "shells.h"                /* shellsAddItem, shellsUpdate */
 #include "tankexp.h"               /* tkExplosionBigExplosion, TK_MOVE_RIGHT */
+#include "sim_rules_names.h"       /* simRulesTerrainSquareHitForVersion */
 #include "test_harness.h"
 
 #define LBD_SLOT 0
@@ -760,5 +768,44 @@ int run_lgm_blast_tank_explosion_kills_pill(void) {
                           "in its far corner, more than 128 away", dx, dy);
         }
     }
+    return 0;
+}
+
+/* The versions that play the square-hit rule: 2.2.2 and later. A recording
+ * made by an older build played the open-ground rule, and so does a brain
+ * in a game of an older version. */
+int run_lgm_blast_terrain_square_hit_for_version(void) {
+    static const struct {
+        unsigned major, minor, revision;
+        int      squareHit;
+    } kRows[] = {
+        {   1, 17,   0, 0 },
+        {   1, 91,   0, 0 },
+        {   2,  1,   9, 0 },
+        {   2,  2,   0, 0 },
+        {   2,  2,   1, 0 },
+        {   2,  2,   2, 1 },
+        {   2,  2,   3, 1 },
+        {   2,  3,   0, 1 },
+        {   3,  0,   0, 1 },
+        {   2,  2, 256, 1 },
+        { 256,  0,   0, 1 },
+    };
+    int i;
+
+    for (i = 0; i < (int) (sizeof(kRows) / sizeof(kRows[0])); i++) {
+        int got = simRulesTerrainSquareHitForVersion(kRows[i].major,
+                                                     kRows[i].minor,
+                                                     kRows[i].revision);
+        UT_ASSERT_MSG(got == kRows[i].squareHit,
+                      "version %u.%u.%u: square hit %d, want %d",
+                      kRows[i].major, kRows[i].minor, kRows[i].revision, got,
+                      kRows[i].squareHit);
+    }
+    UT_ASSERT_MSG(simRulesTerrainSquareHitForVersion(
+                      SIM_RULES_TERRAIN_SQUARE_HIT_MAJOR,
+                      SIM_RULES_TERRAIN_SQUARE_HIT_MINOR,
+                      SIM_RULES_TERRAIN_SQUARE_HIT_REVISION) == 1,
+                  "the first version of the rule does not play it");
     return 0;
 }

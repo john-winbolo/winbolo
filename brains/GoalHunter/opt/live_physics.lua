@@ -167,6 +167,11 @@ function M.context(info, out)
     x.reload = floor((x.tank_reload_ticks * x.reload_pct + 50) / 100)
     if x.reload < 1 then x.reload = 1 end
   end
+  -- The game version's builder blast rule for a shell's hit that changes
+  -- its square (info.terrain_square_hit, braincore.c): true = a hit on that
+  -- square, from 2.2.2 on. Not a rule, so not in CLASSIC. A host that does
+  -- not send it gets false, the old open-ground rule.
+  x.terrain_square_hit = (info and info.terrain_square_hit == true) or false
   -- Shells to kill a full-armour tank / a full pill.
   x.tank_kill_shells = ceil(x.tank_full_armour / x.hit_dealt)
   x.pill_kill_shells = ceil(x.pill_max_armour / x.pill_shell_damage)
@@ -663,6 +668,12 @@ local ENTRIES = {
       return b
     end },
   { "LGM_BLAST_PILL_RANGE_WU", "BLAST", direct("pill_range") },
+  -- The builder blast on a forest or a boat where a shell stops: a hit on
+  -- that square (true) in games of 2.2.2 and later, else open ground. The
+  -- game's version decides, through info.terrain_square_hit, so the value
+  -- is the info field's and not the base's. A missing field is false.
+  { "LGM_BLAST_TERRAIN_SQUARE_HIT", "BLAST",
+    function(b, x) return x.terrain_square_hit == true end },
 }
 M.ENTRIES = ENTRIES
 

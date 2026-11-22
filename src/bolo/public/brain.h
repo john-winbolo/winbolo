@@ -477,6 +477,16 @@ typedef struct
 	BrainTankMods mods;
 	BYTE    reload_ticks;
 
+	// Non-zero when the game's version counts a shell's hit that changes
+	// its square (the last hit on a wall, a forest, a boat, the shore, a
+	// bridge, the shot that kills a pill) as a hit on that square for the
+	// builder blast: only a builder on that square dies. 0 = the old
+	// open-ground rule there. No game rule changes it; the version decides
+	// (simRulesTerrainSquareHitForVersion). brain_data.c fills it from this
+	// build's version: the server refuses a client of another version, so
+	// that is the game's version too. Appended, like everything else here.
+	BYTE    terrain_square_hit;
+
 	} BrainInfo;
 
 #pragma pack(pop)
