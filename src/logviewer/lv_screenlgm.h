@@ -55,6 +55,7 @@ struct screenLgmObj {
   BYTE wx;        /* X world offset inside the map square, 0-255. wx >> 4 == px */
   BYTE wy;        /* Y world offset inside the map square, 0-255. wy >> 4 == py */
   BYTE frame;     /* The direction it is facing */
+  BYTE slot;      /* The player whose builder it is */
 };
 
 
@@ -134,8 +135,13 @@ void lv_screenLgmDestroy(screenLgm *value);
 *  frame      - Frame identifer of the tank
 *  wx         - X world offset inside the map square (wx >> 4 == px)
 *  wy         - Y world offset inside the map square (wy >> 4 == py)
+*  slot       - The player whose builder it is
 *********************************************************/
-void lv_screenLgmAddItem(screenLgm *value, BYTE mx, BYTE my, BYTE px, BYTE py, BYTE frame, BYTE wx, BYTE wy);
+void lv_screenLgmAddItem(screenLgm *value, BYTE mx, BYTE my, BYTE px, BYTE py, BYTE frame, BYTE wx, BYTE wy, BYTE slot);
+
+/* The player slot of an item, numbered from 1. NEUTRAL when there is no such
+   item. */
+BYTE lv_screenLgmGetSlot(screenLgm *value, BYTE itemNum);
 
 /*********************************************************
 *NAME:          lv_screenLgmGetItem

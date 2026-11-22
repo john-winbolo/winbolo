@@ -86,8 +86,9 @@ struct GameSim;
  * Define BOLO_LEGACY_SQUARE_COLLISION (compile time only — there is no
  * runtime toggle) to revert BOTH to the original Bolo behaviour: the
  * square `abs(dx) < 128 && abs(dy) < 128` hit-zone and the legacy
- * direction-dependent bounding-box grid-snap building nudge. */
-/* #define BOLO_LEGACY_SQUARE_COLLISION */
+ * direction-dependent bounding-box grid-snap building nudge. The define
+ * itself is in hit_rules.h, which the Log Viewer reads too. */
+#include "hit_rules.h"
 
 /* Hit-circle radius in WORLD units. The map-square mid-radius
  * (MAP_SQUARE_MIDDLE) is 128 — a one-tile-diameter circle. This is set one
