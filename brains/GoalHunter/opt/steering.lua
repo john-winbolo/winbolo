@@ -1890,7 +1890,14 @@ local function demine_steer(state, world, info, goal)
   -- Fire only when the ACTUAL explosion point lands on the mine tile and
   -- nothing (wall / pill / base / ally) eats the shell on the way.
   local target_sl, cur_sl, land_off = mine_shot(info, wx, wy)
-  keys = bit.bor(keys, KL.gunrange_key(info.gunrange, target_sl))
+  -- The last unit is a TAP: a held key moves 2 units per think and steps
+  -- over a 1-unit gap (the same fix as the sea pill detonate below).
+  local gr_key = KL.gunrange_key(cur_sl, target_sl)
+  if math.abs(cur_sl - target_sl) <= 1 then
+    taps = bit.bor(taps, gr_key)
+  else
+    keys = bit.bor(keys, gr_key)
+  end
   -- ONE shot per flight: the shell takes dist/SHELL_SPEED (~4 ticks/tile)
   -- to reach the mine, and only its LANDING detonates it — extra shells
   -- fired while the first is in flight are pure waste. After firing, hold
@@ -4486,8 +4493,17 @@ local function steer_core(state, world, info, goal)
       local corr = U.adiff(info.direction, aim_dir)
       local h, t = U.aim_turn_bits(corr, 6, 1)
       keys = bit.bor(keys, h); taps = bit.bor(taps, t)
-      local target_sl, _, land_off = mine_shot(info, swx, swy)
-      keys = bit.bor(keys, KL.gunrange_key(info.gunrange, target_sl))
+      local target_sl, cur_sl, land_off = mine_shot(info, swx, swy)
+      -- A HELD range key moves the sight 2 units per think, so a 1-unit gap
+      -- held steps over the best sight and back (8,6,8,6 for a best of 7)
+      -- and the shot never fires. The last unit is a TAP (one packet = one
+      -- unit), as init.lua capture_sight_step does.
+      local gr_key = KL.gunrange_key(cur_sl, target_sl)
+      if math.abs(cur_sl - target_sl) <= 1 then
+        taps = bit.bor(taps, gr_key)
+      else
+        keys = bit.bor(keys, gr_key)
+      end
       local now_t = state.tick or 0
       local in_flight = goal._sea_shot_eta and now_t < goal._sea_shot_eta
       -- Stop the moment the tile stops being dry land: the mine has gone off,
