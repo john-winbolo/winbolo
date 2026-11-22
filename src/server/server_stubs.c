@@ -80,6 +80,7 @@ void transportUdpServerOnLobbyMapChange(struct ServerSim *sim) { (void)sim; }
 void transportUdpServerOnGameStart(struct ServerSim *sim) { (void)sim; }
 void transportUdpServerSetLock(struct ServerSim *sim, bool locked) { (void)sim; (void)locked; }
 uint16_t transportUdpServerGetClientPing(BYTE playerNum) { (void)playerNum; return 0; }
+uint16_t transportUdpServerGetLagCompPingMs(BYTE playerNum) { (void)playerNum; return 0; }
 const char *transportUdpServerGetPlayerName(BYTE playerNum) { (void)playerNum; return NULL; }
 /* server_command_dispatch.c's CMD_LOBBY_BOT_CONFIG arm calls this
  * to update the connected-player table's bot name. The non-server
@@ -119,6 +120,16 @@ void transportUdpServerHandleWbnReauth(struct ServerSim *sim,
 const char *transportUdpServerGetClientCountryCode(BYTE playerNum) { (void)playerNum; return ""; }
 uint8_t transportUdpServerGetClientType(BYTE playerNum) { (void)playerNum; return 0; /* CLIENT_TYPE_UNKNOWN */ }
 bool transportUdpServerHasAnyClient(void) { return false; }
+void transportUdpServerPrintBotHosts(void) { }
+/* server_command_dispatch.c calls this for the slot-override command. The
+ * real one lives in udp/udp_server_bothost.c (server_static). With no Bot
+ * Hosts here, every row is "no such row": 2 is BOT_HOST_SLOT_SET_INVALID
+ * in transport_udp.h. */
+int serverBotHostSetSlotOverride(struct ServerSim *sim, int row, int value,
+                                 int player) {
+  (void)sim; (void)row; (void)value; (void)player;
+  return 2;
+}
 bool transportUdpServerGetClientAddrStr(BYTE playerNum, char *out, size_t outLen) {
   (void)playerNum; (void)out; (void)outLen; return false;
 }

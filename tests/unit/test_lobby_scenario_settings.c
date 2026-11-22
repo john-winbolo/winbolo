@@ -82,9 +82,10 @@
  * + scriptUploadPolicy 1 + scriptSharing 1 + startDelay 4
  * + hostSlot 1 + viewPolicy 3 + viewDecay 6 + classic 1
  * + alliesInTrees 1 + voice 1 + overview 1 + lineOfSight 1
- * + smartPingsOff 1 + modsOff 1 + positionalSound 1            = 28
+ * + smartPingsOff 1 + modsOff 1 + positionalSound 1
+ * + hostBotCapacity 1                                          = 29
  */
-#define LS_PLAIN_BODY_LEN 83
+#define LS_PLAIN_BODY_LEN 84
 
 /* The three strings the scripted cases carry, and what each costs on the
  * wire: a one-byte length and that many bytes, no terminator. */
@@ -144,6 +145,7 @@ static void lsFillPlain(ControlEvent *evt) {
     evt->u.lobbySettings.lobbySmartPingsOff       = true;
     evt->u.lobbySettings.lobbyModsOff             = true;
     evt->u.lobbySettings.lobbyPositionalSound     = true;
+    evt->u.lobbySettings.lobbyHostBotCapacity     = 5;
 }
 
 /* The same bytes the fill above should produce, written out by index. Every
@@ -199,6 +201,7 @@ static void lsWantPlain(uint8_t *want) {
     want[80] = 1;                   /* smartPingsOff */
     want[81] = 1;                   /* modsOff */
     want[82] = 1;                   /* positionalSound */
+    want[83] = 5;                   /* hostBotCapacity */
 }
 
 /* Where the first byte that differs is, or -1 when they match. */
@@ -287,37 +290,37 @@ int run_lobby_scenario_settings_scripted_bytes(void) {
     want[pos++] = LS_SCN_DESC_LEN;
     memcpy(want + pos, LS_SCN_DESC, LS_SCN_DESC_LEN);
     pos += LS_SCN_DESC_LEN;
-    /* 83 + source 1 + extraTeams 1 + (1 + 4) + (1 + 8) + (1 + 8) = 108. The
+    /* 84 + source 1 + extraTeams 1 + (1 + 4) + (1 + 8) + (1 + 8) = 109. The
        whole tail sits one byte later each time a byte joins the base, because
        the tail follows the base. Nothing inside the tail moved against
        anything else in it. */
-    UT_ASSERT_MSG(pos == 108,
-                  "the base game type should be at offset 108, not %u",
+    UT_ASSERT_MSG(pos == 109,
+                  "the base game type should be at offset 109, not %u",
                   (unsigned)pos);
     want[pos++] = (uint8_t)gameStrictTournament;
     /* And the kind last of all. Zero here: this event is a scenario, which
        is what a sender that predates the byte can only have been. */
-    UT_ASSERT_MSG(pos == 109,
-                  "the scenario kind should be at offset 109, not %u",
+    UT_ASSERT_MSG(pos == 110,
+                  "the scenario kind should be at offset 110, not %u",
                   (unsigned)pos);
     want[pos++] = 0;
     /* And bound behind the kind. False here: lsFillPlain leaves it clear,
        and a sender that predates the byte can only have meant false. */
-    UT_ASSERT_MSG(pos == 110,
-                  "the bound flag should be at offset 110, not %u",
+    UT_ASSERT_MSG(pos == 111,
+                  "the bound flag should be at offset 111, not %u",
                   (unsigned)pos);
     want[pos++] = 0;
     /* And the script mode behind bound: 1, since the event above says this
        server runs its scripts without the sandbox. */
-    UT_ASSERT_MSG(pos == 111,
-                  "the unsafe flag should be at offset 111, not %u",
+    UT_ASSERT_MSG(pos == 112,
+                  "the unsafe flag should be at offset 112, not %u",
                   (unsigned)pos);
     want[pos++] = 1;
     /* And needs_bots behind unsafe. Zero here: lsFillPlain leaves it
        clear, and this is the byte a decoder reads as 1 when it is absent,
        so a zero written in the right place is what shows. */
-    UT_ASSERT_MSG(pos == 112,
-                  "the needs-bots flag should be at offset 112, not %u",
+    UT_ASSERT_MSG(pos == 113,
+                  "the needs-bots flag should be at offset 113, not %u",
                   (unsigned)pos);
     want[pos++] = 0;
     UT_ASSERT_MSG(pos == LS_SCRIPTED_BODY_LEN,

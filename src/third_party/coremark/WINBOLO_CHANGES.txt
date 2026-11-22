@@ -1,0 +1,40 @@
+CoreMark in WinBolo
+===================
+
+Source: https://github.com/eembc/coremark
+Commit: 1f483d5b8316753a742cbf5590caf5bd0a4e4777
+Licence: Apache 2.0, with the EEMBC Acceptable Use Agreement for the
+CoreMark name (LICENSE.md, kept as it came).
+
+Files taken, unmodified:
+  core_list_join.c  core_main.c  core_matrix.c  core_state.c  core_util.c
+  coremark.h  LICENSE.md  README.md
+
+The .c files match upstream's coremark.md5. coremark.h matches the file at
+the commit above.
+
+Not taken: the port directories (posix, linux, simple, barebones and the
+rest), the Makefile, the docs and the cc/ scripts. CoreMark's own
+multithread port (fork, pthreads, sockets) is not used.
+
+Added by WinBolo (Apache 2.0, so the port stays under CoreMark's licence):
+  winbolo/core_portme.h  winbolo/core_portme.c
+These are the port files CoreMark asks each platform to provide. They take
+the time from SDL_GetTicksNS, give the performance-run seeds (0, 0, 0x66)
+and malloc the data. The threads are WinBolo's own (SDL threads, each with
+its own core_results), in src/cpu_speed/cpu_speed_test.c.
+
+How it is built (CMakeLists.txt, target coremark):
+  - core_main.c is compiled with main renamed to coremark_main, so its
+    iterate() can be linked into WinBolo programs. coremark_main is never
+    called; WinBolo sets up each context the same way main does.
+  - The same Release optimisation as the rest of WinBolo. Some MSVC
+    warnings are switched off for these files only.
+
+Results: the speed test runs for about 2 s, not the 10 s the CoreMark run
+rules ask for, and the port is not a reviewed one. So its numbers are not
+CoreMark scores and are not to be published as such. WinBolo prints them as
+"iterations per second" for comparing machines.
+
+To upgrade: copy the files above from a newer commit, check them against
+its coremark.md5, and change the commit here and in THIRD_PARTY_NOTICES.md.

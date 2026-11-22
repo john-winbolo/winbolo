@@ -118,6 +118,29 @@ add_link_options(-pthread)
 
 FetchContent_MakeAvailable(sdl3 sdl3_ttf imgui lua zlib cjson opus)
 
+# zstd: bolo_static links libzstd_static (brain_record_io.c and brain_pack.c
+# include zstd.h). The same release and switches as the root CMakeLists.txt:
+# static only, no programs, no tests, no legacy formats, no worker threads.
+FetchContent_Declare(zstd
+    GIT_REPOSITORY https://github.com/facebook/zstd.git
+    GIT_TAG        v1.5.7
+    GIT_SHALLOW    TRUE
+    SOURCE_SUBDIR  build/cmake
+    SYSTEM
+    EXCLUDE_FROM_ALL
+)
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(ZSTD_BUILD_STATIC ON CACHE BOOL "" FORCE)
+set(ZSTD_BUILD_SHARED OFF CACHE BOOL "" FORCE)
+set(ZSTD_BUILD_PROGRAMS OFF CACHE BOOL "" FORCE)
+set(ZSTD_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(ZSTD_BUILD_CONTRIB OFF CACHE BOOL "" FORCE)
+set(ZSTD_LEGACY_SUPPORT OFF CACHE BOOL "" FORCE)
+set(ZSTD_MULTITHREAD_SUPPORT OFF CACHE BOOL "" FORCE)
+set(ZSTD_PROGRAMS_LINK_SHARED OFF CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(zstd)
+target_include_directories(libzstd_static SYSTEM INTERFACE "$<BUILD_INTERFACE:${zstd_SOURCE_DIR}/lib>")
+
 ###
 # nanosvg — header-only SVG parser/rasterizer (vendored)
 #
@@ -244,6 +267,9 @@ set(GUI_SOURCES
     ${SRC_ROOT}/gui/sdl3/dialogs/lobby/lobby_settings.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/lobby/lobby_status.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/lobby/lobby_players.cpp
+    # lobby_players.cpp calls the Bot Host inside the client; the web client
+    # runs no bots, so it takes the stubs (bothost_embed.h).
+    ${SRC_ROOT}/bothost/bothost_embed_stub.c
     ${SRC_ROOT}/gui/sdl3/dialogs/lobby/lobby_map_preview.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/lobby/lobby_commands.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/lobby/lobby_recap.cpp

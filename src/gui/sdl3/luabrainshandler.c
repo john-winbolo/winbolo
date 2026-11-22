@@ -106,6 +106,7 @@
 #include "../clientmutex.h"
 #include "../gamefront.h"
 #include "luabrainshandler.h"
+#include "brain_capacity.h"
 #include "brain_sandbox.h"
 
 
@@ -164,6 +165,21 @@ void luaBrainsSetDebugParts(int print2_on, int pool_on, int viz_on, int jsonl_on
     s_bd_jsonl  = jsonl_on  ? 1 : 0;
 }
 
+void luaBrainsGetDebugParts(int *print2_on, int *pool_on, int *viz_on,
+                            int *jsonl_on) {
+    if (print2_on) *print2_on = s_bd_print2;
+    if (pool_on)   *pool_on   = s_bd_pool;
+    if (viz_on)    *viz_on    = s_bd_viz;
+    if (jsonl_on)  *jsonl_on  = s_bd_jsonl;
+}
+
+/* A second folder the sandboxed brains may open files in, besides their own
+ * directory: the Bot Host's recordings folder, where their print2 logs go.
+ * Empty: none. Kept in brain_sandbox.c with the rest of the sandbox. */
+void luaBrainsSetExtraWriteRoot(const char *dir) {
+    brainSandboxSetExtraRoot(dir);
+}
+
 /* Set by --instr-profile. Captured as the BRAIN_INSTR_PROFILE Lua global at
  * brain init; when set, GoalHunter arms its sampling profiler around think. */
 static int s_instr_profile = 0;
@@ -192,7 +208,10 @@ void luaBrainsSetRunScript(const char *path) {
 
 /* Staged per-bot init arg from -bot-init's [..] suffix. Consumed (cleared)
  * by the next luaBrainInstanceCreate, which injects BRAIN_INIT_ARG. */
-static char s_next_init_arg[BRAIN_INIT_ARG_MAX] = "";
+/* Per thread: the Bot Host inside a client stages and creates its brains
+ * on its own thread while the program's other brains are staged and
+ * created on the main thread. Each pair runs on one thread. */
+static THREAD_LOCAL char s_next_init_arg[BRAIN_INIT_ARG_MAX] = "";
 
 void luaBrainsSetNextInitArg(const char *arg) {
     if (arg && arg[0])
@@ -209,7 +228,7 @@ const char *luaBrainsPeekNextInitArg(void) { return s_next_init_arg; }
  * of restarting at 0 every life. Consume-once like s_next_init_arg: a host
  * that never stages one (BrainTest's in-process create) gets 0, which is
  * exactly the game-start value, so the global is never nil. */
-static unsigned int s_next_start_engine_tick = 0;
+static THREAD_LOCAL unsigned int s_next_start_engine_tick = 0;
 
 void luaBrainsSetNextStartEngineTick(unsigned int tick) {
     s_next_start_engine_tick = tick;
@@ -344,6 +363,9 @@ static char *sdl_load_file(const char *path, size_t *outLen) {
 static int sdl_lua_searcher(lua_State *L) {
   const char *modname = luaL_checkstring(L, 1);
   const char *brainDir = lua_tostring(L, lua_upvalueindex(1));
+  /* Upvalue 2: this VM is not sandboxed (--allow-unsafe-brains and not a
+   * Bot Host brain on a player's computer). */
+  const int unsafe = lua_toboolean(L, lua_upvalueindex(2));
   char filepath[512];
   size_t len = 0;
   char *buf;
@@ -353,7 +375,7 @@ static int sdl_lua_searcher(lua_State *L) {
    * done inside the stock searchers, not here), so a name containing a path
    * separator or ".." would let `require("../../etc/foo")` resolve outside the
    * brain dir. Reject those; brain modules are always flat names. */
-  if (!s_allow_unsafe &&
+  if (!unsafe &&
       (SDL_strchr(modname, '/')  || SDL_strchr(modname, '\\') ||
        SDL_strstr(modname, ".."))) {
     lua_pushfstring(L, "\n\tmodule '%s' rejected (sandboxed)", modname);
@@ -377,7 +399,7 @@ static int sdl_lua_searcher(lua_State *L) {
    * bytecode (Lua does not verify bytecode; crafted .luac escapes the VM).
    * Unsafe hosts (BrainTest) keep the default "bt" mode for dev tooling. */
   if (luaL_loadbufferx(L, buf, len, filepath,
-                       s_allow_unsafe ? NULL : "t") != LUA_OK) {
+                       unsafe ? NULL : "t") != LUA_OK) {
     SDL_free(buf);
     return lua_error(L);
   }
@@ -470,15 +492,86 @@ BOLO_STATIC_ASSERT(LUA_BRAINS_PATH_MAX == BRAIN_SANDBOX_PATH_MAX,
                    brain_path_max_matches_sandbox);
 
 
+/* What a caller asks of one brain VM beyond the defaults. */
+typedef struct {
+  bool           forceSandbox; /* sandboxed even with --allow-unsafe-brains */
+  unsigned       budgetMs;     /* capacityOnly: the most time the brain's
+                                  chunk and capacity code take; 0 none */
+  SDL_AtomicInt *abortFlag;    /* capacityOnly: not 0 stops that code */
+} BrainCreateLimits;
+
+static bool brain_instance_create(LuaBrainInstance *inst, const char *path,
+                                  const char *name, ClientSim *cs,
+                                  aiType aiMode, bool debug_mode,
+                                  int player_num, const ScnTable *init,
+                                  bool capacityOnly,
+                                  const BrainCreateLimits *lim);
+
 bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
                             const char *name, ClientSim *cs,
                             aiType aiMode, bool debug_mode,
                             int player_num, const ScnTable *init) {
+  return brain_instance_create(inst, path, name, cs, aiMode, debug_mode,
+                               player_num, init, false, NULL);
+}
+
+bool luaBrainInstanceCreateSandboxed(LuaBrainInstance *inst, const char *path,
+                                     const char *name, ClientSim *cs,
+                                     aiType aiMode, bool debug_mode,
+                                     int player_num, const ScnTable *init) {
+  BrainCreateLimits lim = { true, 0, NULL };
+  return brain_instance_create(inst, path, name, cs, aiMode, debug_mode,
+                               player_num, init, false, &lim);
+}
+
+int luaBrainQueryCapacity(const char *path, const char *name) {
+  LuaBrainInstance inst;
+
+  if (!brain_instance_create(&inst, path, name, NULL, aiNone, false, 0, NULL,
+                             true, NULL)) {
+    return BRAIN_CAPACITY_UNKNOWN;
+  }
+  return inst.capacity;
+}
+
+int luaBrainQueryCapacityLimited(const char *path, const char *name,
+                                 unsigned budgetMs, SDL_AtomicInt *abortFlag) {
+  LuaBrainInstance inst;
+  BrainCreateLimits lim;
+
+  lim.forceSandbox = true;
+  lim.budgetMs = budgetMs;
+  lim.abortFlag = abortFlag;
+  if (!brain_instance_create(&inst, path, name, NULL, aiNone, false, 0, NULL,
+                             true, &lim)) {
+    return BRAIN_CAPACITY_UNKNOWN;
+  }
+  return inst.capacity;
+}
+
+static bool brain_instance_create(LuaBrainInstance *inst, const char *path,
+                                  const char *name, ClientSim *cs,
+                                  aiType aiMode, bool debug_mode,
+                                  int player_num, const ScnTable *init,
+                                  bool capacityOnly,
+                                  const BrainCreateLimits *lim) {
   lua_State *L;
+  /* Not sandboxed: only with --allow-unsafe-brains, and never for a Bot
+   * Host brain on a player's computer (lim->forceSandbox). */
+  const int unsafe = s_allow_unsafe && !(lim != NULL && lim->forceSandbox);
+  /* The brain's chunk and capacity code run under a limit (capacityOnly). */
+  const bool limited = capacityOnly && lim != NULL &&
+                       (lim->budgetMs > 0 || lim->abortFlag != NULL);
+  Uint64 limitStart = 0;
+  /* limited: the VM's memory limit (brain_capacity.h). The VM never
+   * leaves this function then, so it may live on this stack. */
+  BrainCapacityMem capMem;
+  int runErr;
 
   memset(inst, 0, sizeof(*inst));
   inst->cs = cs;
   inst->isFirst = true;
+  inst->capacity = BRAIN_CAPACITY_UNKNOWN;
 
   /* BrainInfo constant header fields */
   inst->bInfo.BoloVersion  = 0x0114;
@@ -492,6 +585,7 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
     WB_LOG_ERROR(WB_LOG_CAT_LUA, "luaBrainInstance: failed to create Lua state for '%s'", name);
     return false;
   }
+  if (limited) brainCapacityMemLimitSet(L, &capMem, BRAIN_CAPACITY_MEM_LIMIT);
 
   /* Zero the BotContext* slot before any C binding can run. Lua does not
    * zero-init extraspace, and brain.open() below can reach botFromLua via
@@ -687,6 +781,9 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
    * brain crash report is written after the queued print2 output, not before
    * it. Idempotent — every brain instance installs the same function. */
   brainCoreSetLogFlushHook(naOptLogFlushSync);
+  /* And the entry point that closes the writer's open files, which the
+   * -brain-debug server calls before it compresses a finished block's logs. */
+  brainCoreSetLogReleaseHook(naOptLogReleaseFiles);
   naAttackRegister(L);
 
   /* Compute brain directory once at function scope so it can be reused for
@@ -726,7 +823,7 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
    * los_stamp_cache.lua, which lives in the non-opt dir — resolve under it.
    * Run before the searcher shuffle below so dropping the native package
    * searchers composes with inserting the SDL source searcher. */
-  if (!s_allow_unsafe) {
+  if (!unsafe) {
     char brainRoot[LUA_BRAINS_PATH_MAX];
     size_t rl;
     SDL_strlcpy(brainRoot, brainDir, sizeof(brainRoot));
@@ -768,7 +865,8 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
       lua_rawseti(L, -2, i + 1);
     }
     lua_pushstring(L, effectiveDir);
-    lua_pushcclosure(L, sdl_lua_searcher, 1);
+    lua_pushboolean(L, unsafe);
+    lua_pushcclosure(L, sdl_lua_searcher, 2);
     lua_rawseti(L, -2, 2);
 
     /* Sandboxed: drop every searcher past the SDL one (slot 2). The stock
@@ -779,7 +877,7 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
      * confines require() to the path-jailed, text-only SDL searcher. The
      * native C searchers were already removed in brainSandboxApply. Cap
      * the loop generously; the table never holds more than ~5 entries. */
-    if (!s_allow_unsafe) {
+    if (!unsafe) {
       for (int i = 3; i <= 16; i++) {
         lua_pushnil(L);
         lua_rawseti(L, -2, i);
@@ -816,7 +914,7 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
     "if jit and jit.opt then jit.opt.start('sizemcode=256','maxmcode=4096') end\n");
 
   /* Sandboxed: hide jit.opt and the rest now the host is done with them. */
-  if (!s_allow_unsafe) {
+  if (!unsafe) {
     brainSandboxRestrictJit(L);
   }
 #endif
@@ -844,7 +942,7 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
 
     /* Sandboxed: text only, as the searcher and loadfile are. A brain's own
      * init.lua must not be a way to load bytecode. */
-    if (brainSandboxLoadInitFile(L, resolvedPath, !s_allow_unsafe) != LUA_OK) {
+    if (brainSandboxLoadInitFile(L, resolvedPath, !unsafe) != LUA_OK) {
       const char *e = lua_tostring(L, -1);
       WB_LOG_ERROR(WB_LOG_CAT_LUA, "luaBrainInstance: failed to load '%s': %s",
               resolvedPath, e);
@@ -854,8 +952,25 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
       return false;
     }
   }
-  if (lua_pcall(L, 0, 1, 0) != LUA_OK) {
+  if (limited) {
+#ifdef WINBOLO_LUAJIT
+    /* The count hook does not run inside compiled traces: this VM only
+     * answers the capacity question, so it runs without the JIT, and the
+     * brain cannot turn it back on. */
+    (void)luaL_dostring(L,
+      "if jit and jit.off then jit.off() end\n"
+      "jit=nil\n"
+      "if package and package.loaded then package.loaded.jit=nil end\n");
+#endif
+    limitStart = SDL_GetTicks();
+    brainCapacityLimitSet(L, lim->budgetMs, lim->abortFlag);
+    brainCapacityMemArm(L, true);
+  }
+  runErr = lua_pcall(L, 0, 1, 0);
+  if (limited) brainCapacityMemArm(L, false);
+  if (runErr != LUA_OK) {
     const char *e = lua_tostring(L, -1);
+    if (limited) brainCapacityLimitClear(L);
     WB_LOG_ERROR(WB_LOG_CAT_LUA, "luaBrainInstance: error running '%s': %s",
             path, e);
     if (debug_mode) { FILE *ef = fopen("brain_error.log", "a");
@@ -871,6 +986,33 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
     return false;
   }
   brainCoreSetGlobalRaw(L, "brain");
+
+  /* How many bots of this brain the machine can run. Asked here, before
+   * brain.open, so the answer does not depend on the game. The brain's
+   * code runs in protected calls under a time limit (brain_capacity.h). */
+  if (limited) {
+    Uint64 used = SDL_GetTicks() - limitStart;
+    unsigned left = 0;
+    brainCapacityLimitClear(L);
+    if (lim->budgetMs > 0) {
+      left = used >= lim->budgetMs ? 1u : lim->budgetMs - (unsigned)used;
+    }
+    inst->capacity = brainCapacityResolveLuaEx(L, path, name, left,
+                                               lim->abortFlag);
+  } else {
+    inst->capacity = brainCapacityResolveLua(L, path, name);
+  }
+  if (capacityOnly) {
+    /* Only the answer was wanted (-cputest): no game, no open. */
+    brainPathfinderDestroy(inst->pathfinder);
+    inst->pathfinder = NULL;
+    brainWorldSimDestroy(inst->worldsim);
+    inst->worldsim = NULL;
+    overlayCmdBufferDestroy(&inst->overlay);
+    inst->overlayPtr = NULL;
+    lua_close(L);
+    return true;
+  }
 
   /* Call brain.open(info) */
   brainDataMakeInfo(cs, &inst->bInfo, true, aiMode);

@@ -210,6 +210,7 @@ bool clientSimCreate(ClientSim *cs) {
   bool savedIsUdpTransport = cs->isUdpTransport;
   bool savedTransportTicksServer = cs->transportTicksServer;
   struct ServerSim *savedBoundServerSim = cs->boundServerSim;
+  const ClientSimBrainRelay *savedBrainRelay = cs->brainRelay;
   SubscriberHandle savedAutoSubHandle = cs->autoSubHandle;
   BrainList savedBrainList = cs->lobbyBrainList;
   /* The per-brain lobby texts arrive with that list and are never resent,
@@ -228,6 +229,7 @@ bool clientSimCreate(ClientSim *cs) {
   cs->isUdpTransport     = savedIsUdpTransport;
   cs->transportTicksServer = savedTransportTicksServer;
   cs->boundServerSim     = savedBoundServerSim;
+  cs->brainRelay         = savedBrainRelay;
   cs->autoSubHandle      = savedAutoSubHandle;
   cs->lobbyBrainList     = savedBrainList;
   cs->lobbyBrainTexts    = savedBrainTexts;
@@ -239,6 +241,9 @@ bool clientSimCreate(ClientSim *cs) {
   cs->serverPort         = savedServerPort;
   cs->isLanOnly          = savedIsLanOnly;
   cs->pendingAllianceRequestFrom = 0xFF;
+  /* No cap until the server says one; the zero would read as a server that
+   * runs no bots. */
+  cs->lobbyHostBotCapacity = -1;
   /* The classic gameplay numbers. A zeroed table would make every rule 0, so
    * this runs before anything can read one. */
   simRulesClassic(&cs->sim.rules);
@@ -475,7 +480,9 @@ void clientSimOnAssignedSlot(ClientSim *cs, BYTE playerNum,
      * step on one side without breaking it on the other. */
     clientSimSetPlayerNum(cs, playerNum);
     clientSimSetupSelf(cs, playerNum, playerName, clientType, clientFlags);
-    frontEndApplyLocalTankPrefs(cs);
+    /* The player's own tank settings: not for a bot connection of the Bot
+     * Host inside the program. */
+    if (!cs->noFrontEnd) frontEndApplyLocalTankPrefs(cs);
 }
 
 /*********************************************************
@@ -2433,6 +2440,69 @@ const ClientSpectatorSlot *clientSimGetSpectatorSlot(const ClientSim *cs, uint8_
   return &cs->spectatorSlots[idx];
 }
 
+const ClientBotHostRow *clientSimGetBotHostRow(const ClientSim *cs, uint8_t idx) {
+  if (cs == NULL || idx >= CLIENT_BOT_HOST_ROWS) return NULL;
+  return &cs->botHostRows[idx];
+}
+
+int clientSimBotHostRowsNoBots(const ClientSim *cs, uint8_t *idx, int cap) {
+  int i, n = 0;
+  if (cs == NULL || idx == NULL) return 0;
+  for (i = 0; i < CLIENT_BOT_HOST_ROWS && n < cap; i++) {
+    const ClientBotHostRow *r = &cs->botHostRows[i];
+    if (i == CLIENT_BOT_HOST_SERVER_ROW || !r->connected) continue;
+    if (r->seats != 0 || r->used != 0) continue;
+    idx[n++] = (uint8_t)i;
+  }
+  return n;
+}
+
+bool clientSimGetBotTiming(const ClientSim *cs, OverrunRecord *out) {
+  uint8_t bytes[OVERRUN_RECORD_MAX_BYTES];
+  uint16_t len;
+  if (cs == NULL || out == NULL) return false;
+  len = cs->botTimingLen;
+  if (len == 0 || len > sizeof(bytes)) return false;
+  memcpy(bytes, cs->botTimingBytes, len);
+  return overrunRecordDecode(bytes, (int)len, out);
+}
+
+bool clientSimGetBotHostTicket(const ClientSim *cs, uint8_t *player,
+                               uint8_t *ticket, char *brain, uint32_t *gen) {
+  if (cs == NULL || !cs->botHostTicketValid) return false;
+  if (player != NULL) *player = cs->botHostTicketPlayer;
+  if (ticket != NULL) memcpy(ticket, cs->botHostTicket, BOT_HOST_TICKET_LEN);
+  if (brain != NULL) {
+    SDL_strlcpy(brain, cs->botHostTicketBrain, BOT_HOST_BRAIN_NAME_LEN);
+  }
+  if (gen != NULL) *gen = cs->botHostTicketGen;
+  return true;
+}
+
+void clientSimSetNoFrontEnd(ClientSim *cs, bool v) {
+  if (cs != NULL) cs->noFrontEnd = v;
+}
+
+bool clientSimGetNoFrontEnd(const ClientSim *cs) {
+  return cs != NULL && cs->noFrontEnd;
+}
+
+bool clientSimBotHostSyncing(const ClientSim *cs, int *percent) {
+  bool any = false;
+  int low = 100;
+  int i;
+  if (cs != NULL) {
+    for (i = 0; i < CLIENT_BOT_HOST_ROWS; i++) {
+      const ClientBotHostRow *r = &cs->botHostRows[i];
+      if (!r->connected || r->state != BOT_HOST_SYNC_SYNCING) continue;
+      any = true;
+      if (r->percent < low) low = r->percent;
+    }
+  }
+  if (percent != NULL) *percent = any ? low : 100;
+  return any;
+}
+
 const ScnPanelList *clientSimGetScnPanel(const ClientSim *cs, uint8_t id) {
   uint8_t owner;
   if (cs == NULL || id >= SCN_PANEL_IDS) return NULL;
@@ -2927,6 +2997,16 @@ struct ServerSim *clientSimGetBoundServerSim(const ClientSim *cs) {
   return cs->boundServerSim;
 }
 
+void clientSimSetBrainRelay(ClientSim *cs, const ClientSimBrainRelay *relay) {
+  if (cs == NULL) return;
+  cs->brainRelay = relay;
+}
+
+const ClientSimBrainRelay *clientSimGetBrainRelay(const ClientSim *cs) {
+  if (cs == NULL) return NULL;
+  return cs->brainRelay;
+}
+
 void clientSimSetConnectErrorReason(ClientSim *cs, const char *str) {
   if (cs == NULL) return;
   cs->connectErrorId = 0;
@@ -3231,6 +3311,10 @@ bool clientSimGetAlliesInTrees(const ClientSim *cs) {
 
 bool clientSimGetPositionalSound(const ClientSim *cs) {
   return cs ? cs->positionalSound : false;
+}
+
+int clientSimGetLobbyHostBotCapacity(const ClientSim *cs) {
+  return cs ? cs->lobbyHostBotCapacity : -1;
 }
 
 uint8_t clientSimGetOverviewWindow(const ClientSim *cs) {
@@ -4824,6 +4908,12 @@ void clientSimNetStatusMessage(ClientSim *cs, char *messageStr) {
   clientMessageAdd(clientSimGetMessages(cs), networkStatus, (char *) "Network Status", messageStr);
 }
 
+void clientSimNewswireText(ClientSim *cs, const char *text) {
+  if (cs == NULL || text == NULL) return;
+  clientMessageAdd(clientSimGetMessages(cs), newsWireMessage,
+                   (char *) "WinBolo", (char *) text);
+}
+
 void clientSimSetCursorPos(ClientSim *cs, BYTE posX, BYTE posY) {
   viewportSetCursor(clientSimViewportMut(cs), posX, posY);
 }
@@ -5293,5 +5383,11 @@ bool clientSimGetStart(ClientSim *cs, BYTE i,
   if (x)   *x   = s.x;
   if (y)   *y   = s.y;
   if (dir) *dir = startsConvertDir((BYTE)((s.dir < 16) ? s.dir : 0));
+  return true;
+}
+
+bool clientSimGetServerBotSlots(const ClientSim *cs, ClientServerBotSlots *out) {
+  if (cs == NULL || !cs->serverBotSlotsHave) return false;
+  if (out != NULL) *out = cs->serverBotSlots;
   return true;
 }

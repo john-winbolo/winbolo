@@ -158,6 +158,8 @@ set(_server_static_sources
     server_lifecycle.c
     transport_udp_server.c
     udp/udp_server_admin.c
+    udp/udp_server_bothost.c
+    udp/udp_server_botrec.c
     udp/udp_server_control.c
     udp/udp_server_dispatch.c
     udp/udp_server_join.c

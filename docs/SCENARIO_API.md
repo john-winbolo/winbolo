@@ -18,6 +18,7 @@ bug worth reporting.
 
 - [Where a scenario lives](#where-a-scenario-lives)
 - [Packaging](#packaging)
+- [How a brain or scenario becomes official](#how-a-brain-or-scenario-becomes-official)
 - [Mods](#mods)
 - [The script list](#the-script-list)
 - [Uploads](#uploads)
@@ -385,6 +386,25 @@ there the console says once that the loose script is what runs and the packed
 one is not. Delete the loose script and the next reload hands the map back to
 its own chunk. When you are done, pack it and take the loose script away: a
 server that has both runs the loose one.
+
+---
+
+## How a brain or scenario becomes official
+
+Merge it into main, and the next release ships it. A client runs bots only
+with brain files that its own build shipped. Init tokens that a scenario
+passes to bots must be on the allow-list in `src/bolo/bot_host_guard.c`.
+
+There is no other step. The build finds each brain on its own: every folder
+under `brains/` that holds an `init.lua` or an `opt/init.lua` is copied
+into the game's `Brains/` folder, and the SHA-256 of each of its files goes
+into a table inside the program (`cmake/brain_folders.cmake`,
+`cmake/brain_shipped_table.cmake`). A client built with
+`WINBOLO_BOTHOST_OFFICIAL_ONLY` checks its `Brains/` folder against that
+table before its Bot Host runs a bot. A brain file that was changed, added
+or removed after the build is not run, and one line in the log names it.
+An older client that does not have a new brain runs none of its bots: the
+server runs those bots itself, or on a Bot Host that has the brain.
 
 ---
 

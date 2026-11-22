@@ -163,6 +163,10 @@ char *lobbyFrameChatInput(void) {
 static void lobbyFrameInitState(ClientSim *cs) {
     SDL_Window *window = sdl3DrawGetWindow();
 
+    /* A lobby is opened or joined: the CPU speed test starts in the
+     * background when no result is stored for this version. */
+    lobbyCpuSpeedOpen();
+
     int screenW = 1024, screenH = 768;
     if (window) {
         SDL_GetWindowSize(window, &screenW, &screenH);
@@ -232,6 +236,10 @@ static void lobbyFrameInitState(ClientSim *cs) {
 static void lobbyBotAnnounceReset(void);
 
 extern "C" void imguiLobbyFrameReset(void) {
+    /* The game starts or the player leaves: a CPU speed test still running
+     * stops and stores nothing. */
+    lobbyCpuSpeedClose();
+
     if (s_lf.mapPreviewTex) {
         SDL_DestroyTexture(s_lf.mapPreviewTex);
         s_lf.mapPreviewTex = NULL;
@@ -441,6 +449,9 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
     /* Same place, same reason: a bot that has just joined your team says what
        its brain can do, once, in team chat. */
     lobbyBotAnnouncePoll(cs);
+
+    /* A CPU speed test that has ended gives its result to the brains. */
+    lobbyCpuSpeedPoll();
 
     SDL_Window   *window   = sdl3DrawGetWindow();
     SDL_Renderer *renderer = sdl3DrawGetRenderer();
@@ -1257,12 +1268,14 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                                 if (botsAllowed && hasTransport) {
                                     char btnId[64];
                                     SDL_snprintf(btnId, sizeof(btnId), "%s##%d", langGetText(STR_DLGLOBBY_ADDBOT), i);
-                                    bool pending = lobbyAddBotPending(cs);
+                                    const char *offReason = lobbyAddBotOffReason(cs);
+                                    bool pending = lobbyAddBotPending(cs) || offReason != NULL;
                                     if (pending) ImGui::BeginDisabled();
                                     if (ImGui::SmallButton(btnId)) {
                                         lobbySendAddBotDebounced(cs, -1, 0);
                                     }
                                     if (pending) ImGui::EndDisabled();
+                                    lobbyAddBotOffTooltip(offReason);
                                 }
                             }
                         }
@@ -1618,7 +1631,14 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                                               ? lobbyComputeRankedEligibility(cs)
                                               : LobbyRankedEligibility{true, 0, 0, 0};
                 bool rankedBlocksReady = rankedActive && !readyRe.sizesEligible;
-                bool canReady = clientSimIsMapDownloadComplete(cs) && !rankedBlocksReady;
+                /* While a Bot Host gets the server's brain files the lobby
+                 * waits for it: Ready is off (Unready stays on) until it
+                 * holds them or the server stops waiting after 60 s. */
+                int botHostSyncPct = 0;
+                bool botHostBlocksReady = !myReady &&
+                    clientSimBotHostSyncing(cs, &botHostSyncPct);
+                bool canReady = clientSimIsMapDownloadComplete(cs) && !rankedBlocksReady &&
+                                !botHostBlocksReady;
 
                 /* Controller mode draws each action's bound glyph inline, just
                  * left of the button it triggers (A = Ready, B = Leave); the
@@ -1676,6 +1696,12 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                 if (rankedBlocksReady &&
                     ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
                     lobbyRankedShapeTooltip(readyRe);
+                } else if (botHostBlocksReady &&
+                           ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                    MessageArgs syncArgs = {};
+                    syncArgs.number = botHostSyncPct;
+                    ImGui::SetTooltip("%s", langGetTextFmt(STR_DLGLOBBY_READY_BOTHOST_SYNC_FMT,
+                                                           &syncArgs));
                 }
                 }  /* close !spectator: Ready button */
 
@@ -2031,12 +2057,14 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                         if (botsAllowed && hasTransport) {
                             char btnId[16];
                             SDL_snprintf(btnId, sizeof(btnId), "Add Bot##%d", i);
-                            bool pending = lobbyAddBotPending(cs);
+                            const char *offReason = lobbyAddBotOffReason(cs);
+                            bool pending = lobbyAddBotPending(cs) || offReason != NULL;
                             if (pending) ImGui::BeginDisabled();
                             if (ImGui::SmallButton(btnId)) {
                                 lobbySendAddBotDebounced(cs, -1, 0);
                             }
                             if (pending) ImGui::EndDisabled();
+                            lobbyAddBotOffTooltip(offReason);
                         }
                     }
                 }
@@ -2417,7 +2445,14 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                                               ? lobbyComputeRankedEligibility(cs)
                                               : LobbyRankedEligibility{true, 0, 0, 0};
                 bool rankedBlocksReady = rankedActive && !readyRe.sizesEligible;
-                bool canReady = clientSimIsMapDownloadComplete(cs) && !rankedBlocksReady;
+                /* While a Bot Host gets the server's brain files the lobby
+                 * waits for it: Ready is off (Unready stays on) until it
+                 * holds them or the server stops waiting after 60 s. */
+                int botHostSyncPct = 0;
+                bool botHostBlocksReady = !myReady &&
+                    clientSimBotHostSyncing(cs, &botHostSyncPct);
+                bool canReady = clientSimIsMapDownloadComplete(cs) && !rankedBlocksReady &&
+                                !botHostBlocksReady;
 
                 /* No legacy Balance Teams button in the right column —
                  * the Balance-from-WBN affordance lives next to the
@@ -2459,6 +2494,12 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                 if (rankedBlocksReady &&
                     ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
                     lobbyRankedShapeTooltip(readyRe);
+                } else if (botHostBlocksReady &&
+                           ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                    MessageArgs syncArgs = {};
+                    syncArgs.number = botHostSyncPct;
+                    ImGui::SetTooltip("%s", langGetTextFmt(STR_DLGLOBBY_READY_BOTHOST_SYNC_FMT,
+                                                           &syncArgs));
                 }
                 }  /* close !spectator: Ready button */
             }
@@ -3034,6 +3075,8 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
          * does not reach the server until the game starts. */
         voiceTick(cs);
 #endif
+        /* This computer's Bot Host, as in the game loop. */
+        gameFrontBotHostService(cs);
 
 #if BOLO_RECAP_CLIP_GIF
         /* Lets the gallery free its preview when the recap that draws it is

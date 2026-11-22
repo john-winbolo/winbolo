@@ -174,7 +174,12 @@ uint8_t getPacketType(const uint8_t *buf, int len) {
     X(PACKET_PLAYER_MUTE, "PLAYER_MUTE") \
     X(PACKET_VOICE_STATE, "VOICE_STATE") \
     X(PACKET_MAP_PING, "MAP_PING") \
-    X(PACKET_PLAYER_PING_MUTE, "PLAYER_PING_MUTE")
+    X(PACKET_PLAYER_PING_MUTE, "PLAYER_PING_MUTE") \
+    X(PACKET_BOT_TEAM_MSG, "BOT_TEAM_MSG") \
+    X(PACKET_BOT_STATS, "BOT_STATS") \
+    X(PACKET_BOT_HOST_ANNOUNCE, "BOT_HOST_ANNOUNCE") \
+    X(PACKET_BOT_HOST_QUERY, "BOT_HOST_QUERY") \
+    X(PACKET_BOT_HOST_INVITE, "BOT_HOST_INVITE")
 
 const char *packetTypeName(uint8_t type) {
     switch (type) {
@@ -331,6 +336,16 @@ SOCKET createUdpSocket(bool exclusive) {
 #else
     (void)exclusive;
 #endif
+    {
+        /* 4 MB socket buffers: a Bot Host's recording upload has about
+         * 1.3 MB in flight, and the default buffer (64 KB on Windows) drops
+         * a burst of it. Only a request: the system may give less. */
+        int bufBytes = 4 * 1024 * 1024;
+        setsockopt(sock, SOL_SOCKET, SO_RCVBUF, (const char *)&bufBytes,
+                   sizeof(bufBytes));
+        setsockopt(sock, SOL_SOCKET, SO_SNDBUF, (const char *)&bufBytes,
+                   sizeof(bufBytes));
+    }
     ioctlsocket(sock, FIONBIO, &nonBlock);
     return sock;
 }

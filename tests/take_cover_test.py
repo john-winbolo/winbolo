@@ -49,6 +49,7 @@ STDERR = HERE / "take_cover_stderr.txt"
 LABEL = "take_cover_test"
 
 sys.path.insert(0, str(HERE))
+from session_log_io import log_exists, read_log_text
 from generate_take_cover_map import (          # noqa: E402
     NEUTRAL_PILLS, SPAWN, EXPECT_PICK, BAD_GROUND, pill_at)
 
@@ -129,10 +130,10 @@ def run(ticks, build_dir):
         print(Path(crashes[0]).read_text(errors="ignore")[:1500])
         return 1
     log = sess / "print2_bot0.log"
-    if not log.exists():
+    if not log_exists(log):
         print(f"FAIL: no print2_bot0.log under {sess}")
         return 1
-    text = log.read_text(errors="ignore")
+    text = read_log_text(log)
 
     # ── 1. take_cover was actually chosen ──────────────────────────────
     goals = GOAL_RE.findall(text)

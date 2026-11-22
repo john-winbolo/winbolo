@@ -336,6 +336,12 @@ typedef struct {
      * it uniformly (loopback, LAN, missing MMDB). */
     char fallbackCountry[3];
 
+    /* Bot Host bot connection. When set, every JOIN carries
+     * JOIN_FLAG_BOT_SLOT and this one-time token after the cookie, and the
+     * server binds the connection to the bot seat it handed the Bot Host. */
+    bool    botSlot;
+    uint8_t botSlotToken[JOIN_BOT_SLOT_TOKEN_LEN];
+
     /* Lobby map upload — the PACKET_LOBBY_MAP_UPLOAD_* state machine that
      * used to live in imgui_lobby's per-frame pump. The frontend kicks it
      * off via transportUdpClientStartLobbyMapUpload* and reads progress back
@@ -4499,7 +4505,7 @@ static bool udpClientTick(void *ctx) {
                  * + 2-byte trailing fallbackCountry + JOIN_COOKIE_LEN
                  * address-proof cookie (additive, per the connect-driven
                  * model). Server treats the trailing fields as optional. */
-                uint8_t jbuf[PACKET_HEADER_SIZE + PACKET_MAX_PLAYER_NAME + MAP_STR_SIZE + 3 + WBN_JOIN_KEY_WIRE_LEN + 1 + 2 + 2 + JOIN_COOKIE_LEN];
+                uint8_t jbuf[PACKET_HEADER_SIZE + PACKET_MAX_PLAYER_NAME + MAP_STR_SIZE + 3 + WBN_JOIN_KEY_WIRE_LEN + 1 + 2 + 2 + JOIN_COOKIE_LEN + JOIN_BOT_SLOT_TOKEN_LEN];
                 int joffset = PACKET_HEADER_SIZE;
                 char playerKey[WBN_JOIN_KEY_WIRE_LEN];
                 memset(playerKey, 0, sizeof(playerKey));
@@ -4559,6 +4565,8 @@ static bool udpClientTick(void *ctx) {
                 /* Tankless spectator join: the server branches to the
                  * spectator-accept path (0xFF slot, no map). */
                 if (c->spectator)              joinFlags |= JOIN_FLAG_SPECTATOR;
+                /* Bot Host bot connection: the token follows the cookie. */
+                if (c->botSlot)                joinFlags |= JOIN_FLAG_BOT_SLOT;
                 jbuf[joffset++] = joinFlags;
                 jbuf[joffset++] = bolo_detect_client_type();
                 {
@@ -4584,6 +4592,10 @@ static bool udpClientTick(void *ctx) {
                     memset(jbuf + joffset, 0, JOIN_COOKIE_LEN);
                 }
                 joffset += JOIN_COOKIE_LEN;
+                if (c->botSlot) {
+                    memcpy(jbuf + joffset, c->botSlotToken, JOIN_BOT_SLOT_TOKEN_LEN);
+                    joffset += JOIN_BOT_SLOT_TOKEN_LEN;
+                }
                 /* Join requests bypass delay — they're control plane */
                 udpClientSendTo(c, jbuf, joffset);
                 WB_LOG_DEBUG(WB_LOG_CAT_NET,
@@ -4941,6 +4953,15 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
         }
     }
 
+    /* The server's address for whoever reads it from the ClientSim (the
+     * Bot Host inside the client joins the same server): a front end that
+     * set it already keeps its own. */
+    if (clientSim != NULL &&
+        clientSimGetServerAddress(clientSim).s_addr == 0) {
+        clientSimSetServerAddress(clientSim, c->serverAddr.sin_addr);
+        clientSimSetServerPort(clientSim, serverPort);
+    }
+
     /* Copy player name, password, and WBN credentials */
     memset(c->playerName, 0, PACKET_MAX_PLAYER_NAME);
     strncpy(c->playerName, playerName, PACKET_MAX_PLAYER_NAME - 1);
@@ -5246,6 +5267,16 @@ void transportUdpClientChannelTestStats(Transport *t, uint8_t ch,
     if (expectedSeq) *expectedSeq = c->channelMux.ch[ch].expectedSeq;
     if (ackedSeq)    *ackedSeq    = c->channelMux.ch[ch].ackedSeq;
     if (framesRx)    *framesRx    = c->channelFramesRx;
+}
+
+/* A Bot Host bot connection: see transport_udp.h. */
+bool transportUdpClientSetBotSlotToken(Transport *t, const uint8_t *token) {
+    TransportUdpClientCtx *c;
+    if (t == NULL || t->ctx == NULL || token == NULL) return false;
+    c = (TransportUdpClientCtx *)t->ctx;
+    c->botSlot = true;
+    memcpy(c->botSlotToken, token, JOIN_BOT_SLOT_TOKEN_LEN);
+    return true;
 }
 
 /* Test-only: begin a real map resync now, without waiting for a checksum
