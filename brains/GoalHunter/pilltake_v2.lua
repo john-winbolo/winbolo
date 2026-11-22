@@ -1,8 +1,6 @@
 -- =========================================================================
 -- pilltake_v2.lua -- the pill take v2 evaluator (2026-11-16)
 --
--- Design: PILLTAKE_V2_PLAN.md (read its "Decisions (Nov 16)" first).
---
 -- For a target pill A, v2 tries tank points P on a ring around A. At each P:
 --   T(P)   = every live pill that is not ours and can target P
 --            (centre within pill range 2048 wu + a margin).
