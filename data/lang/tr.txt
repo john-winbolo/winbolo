@@ -339,7 +339,6 @@ STR_LONG=Uzun
 STR_MENU_NO_OWN_LABEL=Kendi tankını etiketleme
 STR_MENU_PILLBOX_LABELS=Bunker Etiketleri
 STR_MENU_BASE_LABELS=İkmal Üssü Etiketleri
-STR_MENU_HIDE_MAIN=Ana Görünümü Gizle
 STR_MENU_DEVICE=Aygıt:
 STR_MENU_DESKTOP=Masaüstü
 STR_MENU_WINBOLO=WinBolo

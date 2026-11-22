@@ -167,9 +167,9 @@ void windowZoomChange(BYTE amount, bool fromDragResize) {
   windowSetZoomFactor(amount);
 }
 
-void windowSetFrameRate(int newFrameRate, bool setTimer) {
-  (void)setTimer;
-  frameRate = newFrameRate;
+void windowSetFrameRate(int newFrameRate, bool inGame) {
+  (void)inGame;
+  frameRate = frameLimitValid(newFrameRate) ? newFrameRate : FRAME_LIMIT_DEFAULT;
 }
 
 /* windowShowGunsight_toggle, windowAutomaticScrolling_toggle,
