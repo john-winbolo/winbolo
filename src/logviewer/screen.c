@@ -61,6 +61,7 @@
 #include "lv_bot_chip.h"         /* which chip a bot has in the panels */
 #include "lv_overview.h"
 #include "lv_tank_status.h"
+#include "lv_base_near.h"       /* lvBaseNearPick */
 #include "lv_time_fmt.h"
 #include "lv_event_flash.h"
 #include "lv_dock_clear.h"       /* the middle of the view beside a clear sidebar */
@@ -997,6 +998,8 @@ static void lv_rulesRefresh(void) {
                                     ? (int)shape
                                     : LGM_BLAST_SHAPE_HALF_SQUARE;
   }
+  g_lv->rules.baseStatusRange = lv_rulesClampInt(
+      lv_screenRuleValueAt(SIM_RULE_base_status_range, t), 0, 65535);
   /* The tank's hit zone: the circle, or the square of games from before it
      (1.91 and earlier), from the header's version and whether the file has
      rule records. */
@@ -6308,6 +6311,7 @@ LogViewerState *lv_decoderCreate(bool fromMainMenu) {
   lv->rules.tankHitRadius  = 112;   /* TANK_HIT_RADIUS */
   lv->rules.pillRange      = 2048;  /* PILLBOX_RANGE */
   lv->rules.lgmBlastShape  = LGM_BLAST_SHAPE_CLASSIC;
+  lv->rules.baseStatusRange = 1792; /* BASE_STATUS_RANGE */
 
   lv->fromMainMenu = fromMainMenu;
   lv->screenSizeX = MAIN_SCREEN_SIZE_X + 15; /* default 30 */
@@ -7319,6 +7323,88 @@ void lv_screenOverviewSnapshot(LvOverview *out) {
   }
 }
 
+/* The base (0 up) the game shows the stock of for the tank in slot, or
+ * LV_BASE_NEAR_NONE (lv_base_near.h): picked as the player's own client picks
+ * it, against that player's alliances at the playhead and the
+ * base_status_range in force there. A dead tank has none, as it has no place
+ * on the map. The Tank panel's near base and the game screen's base bars
+ * both come from here. */
+static int screenNearBaseIndex(BYTE slot) {
+  LvBaseNearItem items[MAX_BASES];
+  BYTE mx = 0, my = 0, px = 0, py = 0, frame = 0;
+  bool onBoat = FALSE;
+  BYTE total;
+  BYTE count;
+
+  if (g_lv == NULL || g_lv->bs == NULL || slot >= MAX_TANKS ||
+      !g_lv->gameViewHud[slot].alive) {
+    return LV_BASE_NEAR_NONE;
+  }
+  lv_playersGetTankDetails(slot, &mx, &my, &px, &py, &frame, &onBoat);
+  if (mx == 0 && my == 0) {
+    return LV_BASE_NEAR_NONE;
+  }
+  total = lv_basesGetNumBases(&g_lv->bs);
+  if (total > MAX_BASES) {
+    total = MAX_BASES;
+  }
+  for (count = 0; count < total; count++) {
+    const base *b = &g_lv->bs->item[count];
+    items[count].active = lv_basesIsActive(&g_lv->bs, (BYTE) (count + 1)) != FALSE;
+    items[count].friendly = (b->owner == NEUTRAL ||
+                             lv_playersIsAllie(slot, b->owner) != FALSE);
+    items[count].mapX = b->x;
+    items[count].mapY = b->y;
+  }
+  /* The tank's world place, as the viewer has it: to a 16th of a square. */
+  return lvBaseNearPick(items, total, ((long) mx << 8) + ((long) px << TANK_SHIFT_RIGHT2),
+                        ((long) my << 8) + ((long) py << TANK_SHIFT_RIGHT2),
+                        g_lv->rules.baseStatusRange);
+}
+
+/* The near base of the Tank panel (screenNearBaseIndex), into out. */
+static void screenTankNearBase(int slot, LvTankStatus *out) {
+  int pick = screenNearBaseIndex((BYTE) slot);
+  if (pick == LV_BASE_NEAR_NONE) {
+    return;
+  }
+  {
+    const base *b = &g_lv->bs->item[pick];
+    out->baseNear = 1;
+    out->baseNum = (unsigned char) (pick + 1);
+    out->baseValue[LV_BASE_GAUGE_SHELLS] = b->shells;
+    out->baseValue[LV_BASE_GAUGE_MINES]  = b->mines;
+    out->baseValue[LV_BASE_GAUGE_ARMOUR] = b->armour;
+    out->baseFull[LV_BASE_GAUGE_SHELLS] = g_lv->rules.baseFullShells;
+    out->baseFull[LV_BASE_GAUGE_MINES]  = g_lv->rules.baseFullMines;
+    out->baseFull[LV_BASE_GAUGE_ARMOUR] = g_lv->rules.baseFullArmour;
+  }
+}
+
+/* What the game screen's base bars show for the tank in slot: the stock of
+ * the same base as the Tank panel's near base (screenNearBaseIndex), at the
+ * playhead. Returns FALSE, with all three at 0, when no base is near or no
+ * log is loaded; the bars then draw empty, as the game's do. The caller holds
+ * the client mutex. */
+bool lv_screenNearBaseStock(BYTE slot, BYTE *shells, BYTE *mines, BYTE *armour) {
+  int pick = LV_BASE_NEAR_NONE;
+  BYTE s = 0, m = 0, a = 0;
+
+  if (g_lv != NULL && g_lv->logLoaded != FALSE) {
+    pick = screenNearBaseIndex(slot);
+  }
+  if (pick != LV_BASE_NEAR_NONE) {
+    const base *b = &g_lv->bs->item[pick];
+    s = b->shells;
+    m = b->mines;
+    a = b->armour;
+  }
+  if (shells) *shells = s;
+  if (mines)  *mines  = m;
+  if (armour) *armour = a;
+  return pick != LV_BASE_NEAR_NONE;
+}
+
 /* Copy out what the Tank panel shows (lv_tank_status.h): the selected tank's
    stocks against their caps, its builder and the pillboxes it carries. The
    selected tank is the viewer's own slot for it (lv_playersGetSelected), not
@@ -7389,6 +7475,7 @@ void lv_screenTankStatusSnapshot(LvTankStatus *out) {
       out->carriedPillNumbers |= lvPillNumberBit(lvPillNumber(count));
     }
   }
+  screenTankNearBase(slot, out);
 }
 
 int lv_screenPillSpots(LvPillSpot *out, int max) {
@@ -7420,6 +7507,78 @@ int lv_screenPillSpots(LvPillSpot *out, int max) {
     found++;
   }
   return found;
+}
+
+/* The base the mouse over the Tank panel's base bars has selected (from 1),
+   0 when the mouse is not over them; and the selection from before, which
+   comes back when the mouse leaves. Only this selection gets the mark on
+   the map (lv_screenSelectedBaseSquare). */
+static int  s_hoverBase = 0;
+static BYTE s_hoverPrevType = 0;
+static BYTE s_hoverPrevItem = 0;
+
+/* An item of the selection kept from before the hover, if the log still has
+   it on the map. */
+static bool screenItemStillThere(BYTE itemType, BYTE itemNum) {
+  if (itemType == 1) {
+    return g_lv->bs != NULL && itemNum < lv_basesGetNumBases(&g_lv->bs) &&
+           lv_basesIsActive(&g_lv->bs, (BYTE) (itemNum + 1)) == TRUE;
+  }
+  if (itemType == 2) {
+    return g_lv->pb != NULL && itemNum < lv_pillsGetNumPills(&g_lv->pb) &&
+           lv_pillsIsActive(&g_lv->pb, (BYTE) (itemNum + 1)) == TRUE;
+  }
+  return false;
+}
+
+/* The Tank panel calls this each frame with the base under the mouse (from
+   1), or 0 when the mouse is not over the bars, the bars are empty or the
+   panel is not drawn. The base is selected while the mouse stays; when it
+   leaves, the selection from before comes back. The caller holds the
+   client mutex. */
+void lv_screenHoverBase(int baseNum) {
+  if (g_lv == NULL || g_lv->logLoaded == FALSE) {
+    s_hoverBase = 0;
+    return;
+  }
+  if (baseNum == s_hoverBase) {
+    return;
+  }
+  if (baseNum > 0) {
+    if (s_hoverBase == 0) {
+      s_hoverPrevType = g_lv->selectedItemType;
+      s_hoverPrevItem = g_lv->selectedItem;
+    }
+    s_hoverBase = baseNum;
+    lv_screenSelectItem(1, (BYTE) (baseNum - 1));
+    return;
+  }
+  s_hoverBase = 0;
+  if (screenItemStillThere(s_hoverPrevType, s_hoverPrevItem)) {
+    g_lv->selectedItemType = s_hoverPrevType;
+    g_lv->selectedItem = s_hoverPrevItem;
+  } else {
+    g_lv->selectedItemType = 0;
+    g_lv->selectedItem = 0;
+  }
+  screenShowSelectedItem();
+}
+
+bool lv_screenSelectedBaseSquare(int *viewX, int *viewY) {
+  const base *b;
+
+  if (g_lv == NULL || g_lv->logLoaded == FALSE || g_lv->bs == NULL ||
+      s_hoverBase == 0 || g_lv->selectedItemType != 1 ||
+      g_lv->selectedItem != (BYTE) (s_hoverBase - 1) ||
+      g_lv->selectedItem >= lv_basesGetNumBases(&g_lv->bs) ||
+      lv_basesIsActive(&g_lv->bs, (BYTE) (g_lv->selectedItem + 1)) == FALSE) {
+    return FALSE;
+  }
+  b = &g_lv->bs->item[g_lv->selectedItem];
+  /* The same sums as the pillbox numbers: the view paints one square more
+     on the right and at the bottom. */
+  return lvPillViewSquare(b->x, b->y, g_lv->xOffset, g_lv->yOffset,
+                          lv_screenGetSizeX(), lv_screenGetSizeY(), viewX, viewY);
 }
 
 int lv_screenPillAt(int xPos, int yPos, BYTE *owner, BYTE *armour, int *team) {

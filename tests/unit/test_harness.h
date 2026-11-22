@@ -4949,6 +4949,11 @@ int run_lv_jump_targets(void);
 int run_lv_jump_anim_lands(void);
 int run_lv_jump_anim_steps(void);
 int run_lv_jump_anim_time(void);
+int run_lv_jump_anim_retarget(void);
+int run_lv_base_near_pick(void);
+int run_lv_base_near_range(void);
+int run_lv_base_near_bars(void);
+int run_lv_base_near_game_screen(void);
 
 /* The four presentation control events (test_scenario_presentation_codec.c):
  * their body codecs against hand-written bytes, the refusals a short or

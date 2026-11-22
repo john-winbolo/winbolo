@@ -74,6 +74,7 @@ static NSMenuItem *s_lv_builderStatusItem  = nil;
 static NSMenuItem *s_lv_pillNumbersItem    = nil;
 static NSMenuItem *s_lv_hitBoxesItem       = nil;
 static NSMenuItem *s_lv_jumpAnimItem       = nil;
+static NSMenuItem *s_lv_seekAnimItem       = nil;
 static NSMenuItem *s_lv_soundEffectsItem   = nil;
 static NSMenu     *s_lv_volumeMenu         = nil;
 static NSMenuItem *s_lv_dnsLookupsItem     = nil;
@@ -85,6 +86,8 @@ static NSMenuItem *s_lv_winCommentsItem    = nil;
 static NSMenuItem *s_lv_winHudItem         = nil;
 static NSMenuItem *s_lv_winOverviewItem    = nil;
 static NSMenuItem *s_lv_winTankItem        = nil;
+static NSMenuItem *s_lv_tankBaseItem       = nil;
+static NSMenuItem *s_lv_tankLagItem        = nil;
 static NSMenuItem *s_lv_winChatItem        = nil;
 static NSMenuItem *s_lv_winClipsItem       = nil;
 static NSMenuItem *s_lv_winScnPanelItem    = nil;
@@ -135,6 +138,7 @@ static void lv_push_sdl_quit(void) {
 - (void)onTogglePillNumbers:(id)sender;
 - (void)onToggleHitBoxes:(id)sender;
 - (void)onToggleJumpAnim:(id)sender;
+- (void)onToggleSeekAnim:(id)sender;
 - (void)onToggleSoundEffects:(id)sender;
 - (void)onSetSoundVolume:(id)sender;
 - (void)onToggleDnsLookups:(id)sender;
@@ -283,6 +287,7 @@ static void lv_push_sdl_quit(void) {
     lv_windowNeedRedraw();
 }
 - (void)onToggleJumpAnim:(id)sender { (void)sender; lv_imgui_toggle_jump_anim(); }
+- (void)onToggleSeekAnim:(id)sender { (void)sender; lv_imgui_toggle_seek_anim(); }
 - (void)onToggleSoundEffects:(id)sender {
     (void)sender;
     if (s_lv_state) s_lv_state->isSoundsPlaying = s_lv_state->isSoundsPlaying ? false : true;
@@ -309,6 +314,8 @@ static void lv_push_sdl_quit(void) {
 - (void)onToggleHud:(id)sender { (void)sender; lv_g_show_hud_window = !lv_g_show_hud_window; }
 - (void)onToggleOverview:(id)sender { (void)sender; lv_g_show_overview_window = !lv_g_show_overview_window; }
 - (void)onToggleTank:(id)sender { (void)sender; lv_g_show_tank_window = !lv_g_show_tank_window; }
+- (void)onToggleTankBase:(id)sender { (void)sender; lv_g_tank_show_base = !lv_g_tank_show_base; }
+- (void)onToggleTankLag:(id)sender { (void)sender; lv_g_tank_show_lag = !lv_g_tank_show_lag; }
 - (void)onToggleChat:(id)sender { (void)sender; lv_g_show_chat_window = !lv_g_show_chat_window; }
 - (void)onToggleClips:(id)sender {
     (void)sender;
@@ -717,6 +724,15 @@ void lv_mac_menubar_install(struct SDL_Window *win, struct LogViewerState *lvSta
     [optionsMenu addItem:jumpAnim];
     s_lv_jumpAnimItem = jumpAnim;
 
+    /* Animate Seek, in the in-window menu's place. */
+    NSMenuItem *seekAnim = [[NSMenuItem alloc]
+        initWithTitle:LANG_STR(STR_LV_SEEK_ANIM)
+        action:@selector(onToggleSeekAnim:)
+        keyEquivalent:@""];
+    [seekAnim setTarget:s_lv_bridge];
+    [optionsMenu addItem:seekAnim];
+    s_lv_seekAnimItem = seekAnim;
+
     NSMenuItem *soundEffects = [[NSMenuItem alloc]
         initWithTitle:LANG_STR(STR_MENU_SOUND_EFFECTS)
         action:@selector(onToggleSoundEffects:)
@@ -835,6 +851,23 @@ void lv_mac_menubar_install(struct SDL_Window *win, struct LogViewerState *lvSta
     [winTank setTarget:s_lv_bridge];
     [winMenu addItem:winTank];
     s_lv_winTankItem = winTank;
+
+    /* What the Tank panel shows under its gauges, as in the in-window menu. */
+    NSMenuItem *tankBase = [[NSMenuItem alloc]
+        initWithTitle:LANG_STR(STR_LV_TANK_SHOW_BASE)
+        action:@selector(onToggleTankBase:)
+        keyEquivalent:@""];
+    [tankBase setTarget:s_lv_bridge];
+    [winMenu addItem:tankBase];
+    s_lv_tankBaseItem = tankBase;
+
+    NSMenuItem *tankLag = [[NSMenuItem alloc]
+        initWithTitle:LANG_STR(STR_LV_TANK_SHOW_LAG)
+        action:@selector(onToggleTankLag:)
+        keyEquivalent:@""];
+    [tankLag setTarget:s_lv_bridge];
+    [winMenu addItem:tankLag];
+    s_lv_tankLagItem = tankLag;
 
     NSMenuItem *winChat = [[NSMenuItem alloc]
         initWithTitle:LANG_STR(STR_LV_WIN_CHAT)
@@ -1037,6 +1070,7 @@ void lv_mac_menubar_uninstall(void) {
     s_lv_pillNumbersItem = nil;
     s_lv_hitBoxesItem = nil;
     s_lv_jumpAnimItem = nil;
+    s_lv_seekAnimItem = nil;
     s_lv_soundEffectsItem = nil;
     s_lv_volumeMenu = nil;
     s_lv_dnsLookupsItem = nil;
@@ -1048,6 +1082,8 @@ void lv_mac_menubar_uninstall(void) {
     s_lv_winHudItem = nil;
     s_lv_winOverviewItem = nil;
     s_lv_winTankItem = nil;
+    s_lv_tankBaseItem = nil;
+    s_lv_tankLagItem = nil;
     s_lv_winChatItem = nil;
     s_lv_winClipsItem = nil;
     s_lv_winScnPanelItem = nil;
@@ -1144,6 +1180,7 @@ void lv_mac_menubar_refresh(const struct LvMenuState *s) {
     if (s_lv_pillNumbersItem) [s_lv_pillNumbersItem setState:(s->pillNumbers ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_lv_hitBoxesItem) [s_lv_hitBoxesItem setState:(s->hitBoxes ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_lv_jumpAnimItem) [s_lv_jumpAnimItem setState:(lv_imgui_get_jump_anim() ? NSControlStateValueOn : NSControlStateValueOff)];
+    if (s_lv_seekAnimItem) [s_lv_seekAnimItem setState:(lv_imgui_get_seek_anim() ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_lv_soundEffectsItem) [s_lv_soundEffectsItem setState:(s->soundEffects ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_lv_volumeMenu) {
         for (NSMenuItem *item in [s_lv_volumeMenu itemArray]) {
@@ -1164,6 +1201,8 @@ void lv_mac_menubar_refresh(const struct LvMenuState *s) {
     if (s_lv_winHudItem) [s_lv_winHudItem setState:(s->showHud ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_lv_winOverviewItem) [s_lv_winOverviewItem setState:(s->showOverview ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_lv_winTankItem) [s_lv_winTankItem setState:(s->showTank ? NSControlStateValueOn : NSControlStateValueOff)];
+    if (s_lv_tankBaseItem) [s_lv_tankBaseItem setState:(lv_g_tank_show_base ? NSControlStateValueOn : NSControlStateValueOff)];
+    if (s_lv_tankLagItem) [s_lv_tankLagItem setState:(lv_g_tank_show_lag ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_lv_winChatItem) [s_lv_winChatItem setState:(s->showChat ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_lv_winClipsItem) {
         [s_lv_winClipsItem setHidden:(s->gifAvailable ? NO : YES)];

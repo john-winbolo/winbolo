@@ -1404,6 +1404,8 @@
 #define STR_LV_ZOOM_TIP                     2851
 /* Log viewer Options menu: Rewind and Fast Forward go to the new place in a short animation, not a jump */
 #define STR_LV_JUMP_ANIM                    2852
+/* Log viewer Options menu: a seek of the seek bar goes to the new place in the same short animation */
+#define STR_LV_SEEK_ANIM                    2853
 /* Log viewer: the number of each pillbox on the map (Options), the list of
    pillbox numbers in a tooltip (string1, "1, 4, 7"), and the Events panel's
    lines for a pillbox taken, with its number (number) */
@@ -1415,6 +1417,10 @@
 /* Log viewer: the hit area round each tank and builder on the map (Options) */
 #define STR_LV_HIT_BOXES                    3470
 #define STR_LV_HIT_BOXES_TIP                3471
+/* Log viewer Tank panel: the line beside the empty base bars when no base is near enough */
+#define STR_LV_TANK_BASE_NONE               3480
+#define STR_LV_TANK_SHOW_BASE               3481
+#define STR_LV_TANK_SHOW_LAG                3482
 
 /* Log viewer dialogs */
 #define STR_LV_ASSIGN_COLOURS_HINT          1128

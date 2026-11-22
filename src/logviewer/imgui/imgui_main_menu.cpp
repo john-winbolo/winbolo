@@ -128,6 +128,8 @@ bool lv_g_show_scenario_panel_window = true;
 bool lv_g_show_hud_window = true;
 bool lv_g_show_overview_window = true;
 bool lv_g_show_tank_window = true;
+bool lv_g_tank_show_base = true;
+bool lv_g_tank_show_lag = true;
 bool lv_g_show_chat_window = true;
 bool lv_g_reset_window_positions = false;
 /* Off until asked for: the outlines sit over the map a recording is watched
@@ -138,6 +140,9 @@ bool lv_g_show_regions = false;
 static bool s_tank_centred = false;
 /* Options > Animate Rewind and Fast Forward (lv_jump_anim.h). */
 static bool s_jump_anim = true;
+/* Options > Animate Seek: a seek of the seek bar is made with the same
+ * animation (lv_windowSeekToMs). */
+static bool s_seek_anim = true;
 static bool s_dns_lookups = false;
 static bool s_mode_information = true;  /* true = Information, false = Select Team */
 
@@ -192,6 +197,11 @@ void lv_imgui_main_menu_init(struct LogViewerState *lv) {
 
     lv_platform_config_get_string("LOGVIEWER", "Window.Tank.Visible", "Yes", val, sizeof(val));
     lv_g_show_tank_window = (val[0] == 'Y' || val[0] == 'y');
+    /* The Tank panel's base row and lag section: on until turned off. */
+    lv_platform_config_get_string("LOGVIEWER", "Window.Tank.Base", "Yes", val, sizeof(val));
+    lv_g_tank_show_base = !(val[0] == 'N' || val[0] == 'n');
+    lv_platform_config_get_string("LOGVIEWER", "Window.Tank.Lag", "Yes", val, sizeof(val));
+    lv_g_tank_show_lag = !(val[0] == 'N' || val[0] == 'n');
 
     lv_platform_config_get_string("LOGVIEWER", "Window.Chat.Visible", "Yes", val, sizeof(val));
     lv_g_show_chat_window = (val[0] == 'Y' || val[0] == 'y');
@@ -225,6 +235,9 @@ void lv_imgui_main_menu_init(struct LogViewerState *lv) {
     /* On until turned off. */
     lv_platform_config_get_string("LOGVIEWER", "Animate Jumps", "Yes", val, sizeof(val));
     s_jump_anim = !(val[0] == 'N' || val[0] == 'n');
+    /* On until turned off. */
+    lv_platform_config_get_string("LOGVIEWER", "Animate Seek", "Yes", val, sizeof(val));
+    s_seek_anim = !(val[0] == 'N' || val[0] == 'n');
     /* Toggle Screen-True Own Shells (lv_shell_owner.h): on until turned off. */
     lv_platform_config_get_string("LOGVIEWER", "Lag View Own Shells At Present", "Yes", val,
                                   sizeof(val));
@@ -272,6 +285,8 @@ void lv_imgui_main_menu_save(void) {
     lv_platform_config_set_string("LOGVIEWER", "Window.HUD.Visible", lv_g_show_hud_window ? "Yes" : "No");
     lv_platform_config_set_string("LOGVIEWER", "Window.Overview.Visible", lv_g_show_overview_window ? "Yes" : "No");
     lv_platform_config_set_string("LOGVIEWER", "Window.Tank.Visible", lv_g_show_tank_window ? "Yes" : "No");
+    lv_platform_config_set_string("LOGVIEWER", "Window.Tank.Base", lv_g_tank_show_base ? "Yes" : "No");
+    lv_platform_config_set_string("LOGVIEWER", "Window.Tank.Lag", lv_g_tank_show_lag ? "Yes" : "No");
     lv_platform_config_set_string("LOGVIEWER", "Window.Chat.Visible", lv_g_show_chat_window ? "Yes" : "No");
     {
         char side[16];
@@ -287,6 +302,7 @@ void lv_imgui_main_menu_save(void) {
     lv_platform_config_set_string("LOGVIEWER", "Hit Boxes",
                                   lv_drawGetHitBoxes() ? "Yes" : "No");
     lv_platform_config_set_string("LOGVIEWER", "Animate Jumps", s_jump_anim ? "Yes" : "No");
+    lv_platform_config_set_string("LOGVIEWER", "Animate Seek", s_seek_anim ? "Yes" : "No");
     lv_platform_config_set_string("LOGVIEWER", LV_LAG_PREF_KEY,
                                   lv_screenGetLagFeature() ? "Yes" : "No");
     lv_platform_config_set_string("LOGVIEWER", "Lag View Own Shells At Present",
@@ -377,6 +393,10 @@ int lv_imgui_get_jump_anim(void) { return s_jump_anim ? 1 : 0; }
 
 void lv_imgui_toggle_jump_anim(void) { s_jump_anim = !s_jump_anim; }
 
+int lv_imgui_get_seek_anim(void) { return s_seek_anim ? 1 : 0; }
+
+void lv_imgui_toggle_seek_anim(void) { s_seek_anim = !s_seek_anim; }
+
 /* Sets it, so the menu's tick and the screen's flag stay the same thing. */
 void lv_imgui_set_tank_centred(int on) {
     s_tank_centred = on ? true : false;
@@ -455,8 +475,16 @@ static void handle_keyboard_shortcuts(int *clicked) {
 
     ImGuiIO& io = ImGui::GetIO();
 
-    /* Zoom shortcuts: +/= to zoom in, - to zoom out (no modifier required) */
+    /* Zoom shortcuts: +/= to zoom in, - to zoom out, with no modifier or
+     * with Ctrl (Ctrl and plus / Ctrl and minus is the zoom key most programs
+     * use). Not with Alt. On macOS Cmd+plus / Cmd+minus are the native menu
+     * bar's Zoom In / Zoom Out (mac_menubar.mm), which has acted already, so
+     * here the key counts only without Cmd (io.KeyCtrl is Cmd there). */
+#ifdef __APPLE__
     if (!io.KeyCtrl && !io.KeyAlt) {
+#else
+    if (!io.KeyAlt) {
+#endif
         if (ImGui::IsKeyPressed(ImGuiKey_Equal, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadAdd, false)) {
             zoom_at_center(lv_drawGetZoomStepIndex() + 1);
             *clicked = 1;
@@ -880,9 +908,13 @@ int lv_imgui_main_menu_bar(void) {
             }
 #ifndef __EMSCRIPTEN__
             /* The browser build's Rewind and Fast Forward jump: it has no
-             * animation to turn off. */
+             * animation to turn off. Its seek bar jumps too. */
             if (ImGui::MenuItem(langGetText(STR_LV_JUMP_ANIM), NULL, s_jump_anim)) {
                 s_jump_anim = !s_jump_anim;
+                clicked = 1;
+            }
+            if (ImGui::MenuItem(langGetText(STR_LV_SEEK_ANIM), NULL, s_seek_anim)) {
+                s_seek_anim = !s_seek_anim;
                 clicked = 1;
             }
 #endif
@@ -957,6 +989,15 @@ int lv_imgui_main_menu_bar(void) {
             }
             if (ImGui::MenuItem(langGetText(STR_LV_WIN_TANK), "Ctrl+8", lv_g_show_tank_window)) {
                 lv_g_show_tank_window = !lv_g_show_tank_window;
+                clicked = 1;
+            }
+            /* What the Tank panel shows under its gauges. */
+            if (ImGui::MenuItem(langGetText(STR_LV_TANK_SHOW_BASE), NULL, lv_g_tank_show_base)) {
+                lv_g_tank_show_base = !lv_g_tank_show_base;
+                clicked = 1;
+            }
+            if (ImGui::MenuItem(langGetText(STR_LV_TANK_SHOW_LAG), NULL, lv_g_tank_show_lag)) {
+                lv_g_tank_show_lag = !lv_g_tank_show_lag;
                 clicked = 1;
             }
             if (ImGui::MenuItem(langGetText(STR_LV_WIN_CHAT), "Ctrl+9", lv_g_show_chat_window)) {
