@@ -219,9 +219,21 @@ void lv_imgui_main_menu_init(struct LogViewerState *lv) {
     /* On until turned off: a number is small and hides nothing. */
     lv_platform_config_get_string("LOGVIEWER", "Pillbox Numbers", "Yes", val, sizeof(val));
     lv_drawSetPillNumbers((val[0] == 'N' || val[0] == 'n') ? 0 : 1);
+    /* Off until asked for: the lines sit over the map. */
+    lv_platform_config_get_string("LOGVIEWER", "Hit Boxes", "No", val, sizeof(val));
+    lv_drawSetHitBoxes((val[0] == 'Y' || val[0] == 'y') ? 1 : 0);
     /* On until turned off. */
     lv_platform_config_get_string("LOGVIEWER", "Animate Jumps", "Yes", val, sizeof(val));
     s_jump_anim = !(val[0] == 'N' || val[0] == 'n');
+    /* Toggle Screen-True Own Shells (lv_shell_owner.h): on until turned off. */
+    lv_platform_config_get_string("LOGVIEWER", "Lag View Own Shells At Present", "Yes", val,
+                                  sizeof(val));
+    lv_screenSetScreenTrueShells(!(val[0] == 'N' || val[0] == 'n') ? 1 : 0);
+    /* Toggle Screen-True Local Explosions (lv_early_blast.h): off until
+       turned on. */
+    lv_platform_config_get_string("LOGVIEWER", "Screen-True Local Explosions", "No", val,
+                                  sizeof(val));
+    lv_screenSetScreenTrueExplosions((val[0] == 'Y' || val[0] == 'y') ? 1 : 0);
     /* The lag display (lv_lag.h) is read in lvHostSetupCore, which every
        host runs before this. It has no menu item. */
 }
@@ -272,9 +284,15 @@ void lv_imgui_main_menu_save(void) {
                                   lv_drawGetBuilderStatus() ? "Yes" : "No");
     lv_platform_config_set_string("LOGVIEWER", "Pillbox Numbers",
                                   lv_drawGetPillNumbers() ? "Yes" : "No");
+    lv_platform_config_set_string("LOGVIEWER", "Hit Boxes",
+                                  lv_drawGetHitBoxes() ? "Yes" : "No");
     lv_platform_config_set_string("LOGVIEWER", "Animate Jumps", s_jump_anim ? "Yes" : "No");
     lv_platform_config_set_string("LOGVIEWER", LV_LAG_PREF_KEY,
                                   lv_screenGetLagFeature() ? "Yes" : "No");
+    lv_platform_config_set_string("LOGVIEWER", "Lag View Own Shells At Present",
+                                  lv_screenGetScreenTrueShells() ? "Yes" : "No");
+    lv_platform_config_set_string("LOGVIEWER", "Screen-True Local Explosions",
+                                  lv_screenGetScreenTrueExplosions() ? "Yes" : "No");
 }
 
 static void zoom_at_center(int stepIndex) {
@@ -386,6 +404,37 @@ void lv_imgui_toggle_regions(void) {
     lv_windowNeedRedraw();
 }
 
+/* What a click on the Options menu's "See What the Selected Player Saw" or a
+ * press of its key would do now (lv_lagViewToggle): the slot to set, or
+ * LV_LAG_TOGGLE_NONE when the item is disabled. *on is TRUE while the view
+ * is on for the selected tank's player, which ticks the item. */
+static int lag_view_toggle_target(bool *on) {
+    int sel, viewSlot, target;
+    bool recorded, hasRecord;
+    lv_clientMutexWaitFor();
+    sel = lv_screenSelectedTank();
+    viewSlot = lv_screenLagViewSlot();
+    recorded = lv_screenLagRecorded();
+    hasRecord = (sel >= 0) && lv_screenPlayerLagNow(sel, NULL, NULL);
+    lv_clientMutexRelease();
+    target = lv_lagViewToggle(lv_screenGetLagFeature() != 0, s_lv->isLoaded != 0, recorded,
+                              sel, viewSlot, hasRecord);
+    if (on != NULL) {
+        *on = (viewSlot >= 0 && viewSlot == sel);
+    }
+    return target;
+}
+
+/* Sets the lag view to target and asks for the frame now, so the change
+ * shows at once, also while the replay is paused. */
+static void lag_view_apply(int target) {
+    lv_clientMutexWaitFor();
+    lv_screenLagViewSet(target);
+    lv_drawDirtyScreen();
+    lv_clientMutexRelease();
+    lv_windowNeedRedraw();
+}
+
 int lv_imgui_get_dns_lookups(void) { return s_dns_lookups ? 1 : 0; }
 
 void lv_imgui_toggle_dns_lookups(void) {
@@ -431,6 +480,25 @@ static void handle_keyboard_shortcuts(int *clicked) {
 #else
     bool ctrl = io.KeyCtrl && !io.KeySuper;
 #endif
+
+    /* Ctrl+L: Options > See What the Selected Player Saw, on for the
+     * selected tank's player or off, as a click on the item does. When the
+     * item is disabled the key does nothing. The item has no native twin
+     * on macOS (mac_menubar.mm), so there Cmd+L comes here as well as
+     * Control+L. Not with Shift or Alt. */
+#ifdef __APPLE__
+    bool lagMod = (io.KeyCtrl != io.KeySuper);
+#else
+    bool lagMod = ctrl;
+#endif
+    if (lagMod && !io.KeyShift && !io.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_L, false)) {
+        int target = lag_view_toggle_target(NULL);
+        if (target != LV_LAG_TOGGLE_NONE) {
+            lag_view_apply(target);
+            *clicked = 1;
+        }
+    }
+
     if (!ctrl) return;
 
     /* A live game watched from the game (spectatorRun). Open, Stop and the
@@ -746,6 +814,17 @@ int lv_imgui_main_menu_bar(void) {
             if (ImGui::IsItemHovered()) {
                 ImGui::SetTooltip("%s", langGetText(STR_LV_PILL_NUMBERS_TIP));
             }
+            if (ImGui::MenuItem(langGetText(STR_LV_HIT_BOXES), NULL,
+                                lv_drawGetHitBoxes() != 0)) {
+                /* Drawn over the map each time it is put on the screen, as
+                 * the bars are. */
+                lv_drawSetHitBoxes(lv_drawGetHitBoxes() ? 0 : 1);
+                lv_windowNeedRedraw();
+                clicked = 1;
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("%s", langGetText(STR_LV_HIT_BOXES_TIP));
+            }
             if (lv_screenGetLagFeature()) {
                 /* The lag view for the selected tank's player: ticked while
                  * it is that player's. A click turns it on for the selected
@@ -754,27 +833,49 @@ int lv_imgui_main_menu_bar(void) {
                  * the item is there only while the lag display is on. As
                  * with the Tank panel's check box, it can be turned on only
                  * when the selected player has a record at the playhead; a
-                 * view that is on can always be turned off. */
-                int sel, viewSlot;
-                bool recorded, hasRecord;
-                lv_clientMutexWaitFor();
-                sel = lv_screenSelectedTank();
-                viewSlot = lv_screenLagViewSlot();
-                recorded = lv_screenLagRecorded();
-                hasRecord = (sel >= 0) && lv_screenPlayerLagNow(sel, NULL, NULL);
-                lv_clientMutexRelease();
-                const bool on = (viewSlot >= 0 && viewSlot == sel);
-                if (ImGui::MenuItem(langGetText(STR_LV_LAG_MENU), NULL, on,
-                                    s_lv->isLoaded != 0 && recorded &&
-                                        (hasRecord || viewSlot >= 0))) {
-                    lv_clientMutexWaitFor();
-                    lv_screenLagViewSet(on ? -1 : sel);
-                    lv_clientMutexRelease();
-                    lv_windowNeedRedraw();
+                 * view that is on can always be turned off. Ctrl+L does
+                 * the same (handle_keyboard_shortcuts). */
+                bool on = false;
+                const int target = lag_view_toggle_target(&on);
+                if (ImGui::MenuItem(langGetText(STR_LV_LAG_MENU), "Ctrl+L", on,
+                                    target != LV_LAG_TOGGLE_NONE)) {
+                    lag_view_apply(target);
                     clicked = 1;
                 }
                 if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
                     ImGui::SetTooltip("%s", langGetText(STR_LV_LAG_MENU_TIP));
+                }
+                /* In the lag view, the chosen player's own shells come from
+                 * the present frame, as that player's own screen drew them
+                 * (lv_shell_owner.h). Off draws them at the old time. */
+                const bool ownShells = lv_screenGetScreenTrueShells() != 0;
+                if (ImGui::MenuItem(langGetText(STR_LV_SCREEN_TRUE_SHELLS), NULL, ownShells)) {
+                    lv_screenSetScreenTrueShells(ownShells ? 0 : 1);
+                    lv_windowNeedRedraw();
+                    clicked = 1;
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("%s", langGetText(STR_LV_SCREEN_TRUE_SHELLS_TIP));
+                }
+                /* Toggle Screen-True Local Explosions (lv_early_blast.h): in
+                 * the lag view, the chosen player's own shells explode at once
+                 * where they end, and the server's later explosion of each
+                 * is hidden.
+                 * It works only with Toggle Screen-True Own Shells on
+                 * (lv_earlyBlastOn), so the item is off and greyed until
+                 * that one is on. The saved choice is kept meanwhile. */
+                const bool explOn = lv_earlyBlastOn(lv_screenGetScreenTrueShells() != 0,
+                                                    lv_screenGetScreenTrueExplosions() != 0);
+                if (ImGui::MenuItem(langGetText(STR_LV_SCREEN_TRUE_EXPL), NULL, explOn,
+                                    lv_screenGetScreenTrueShells() != 0)) {
+                    lv_screenSetScreenTrueExplosions(explOn ? 0 : 1);
+                    lv_windowNeedRedraw();
+                    clicked = 1;
+                }
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                    ImGui::SetTooltip("%s", langGetText(lv_screenGetScreenTrueShells()
+                                                            ? STR_LV_SCREEN_TRUE_EXPL_TIP
+                                                            : STR_LV_SCREEN_TRUE_EXPL_OFF_TIP));
                 }
             }
 #ifndef __EMSCRIPTEN__

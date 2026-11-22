@@ -5288,6 +5288,11 @@ set(WINBOLO_UNITTESTS_SOURCES
     # clip-time fit resolves base cells from the log's own snapshots
     # (test_lv_calibration.c).
     tests/unit/test_lv_calibration.c
+    # The lag view's shell owner matcher against the game's shell code
+    # (test_lv_shell_owner.c).
+    tests/unit/test_lv_shell_owner.c
+    # The lag view's early blast toggle (test_lv_early_blast.c).
+    tests/unit/test_lv_early_blast.c
     # Log viewer snapshot index: time lookups and a ten-day log's worth of
     # entries (test_lv_snapshot_index.c).
     tests/unit/test_lv_snapshot_index.c
@@ -5376,6 +5381,11 @@ set(WINBOLO_UNITTESTS_SOURCES
     # The bars the viewer draws over each tank: where they go, how full
     # they are and their colours (lv_tank_bars.h, header only).
     tests/unit/test_lv_tank_bars.c
+    # The hit areas the viewer draws round each tank and each builder: the
+    # engine's own rules (lv_hitbox.h and hit_rules.h, header only).
+    tests/unit/test_lv_hitbox.c
+    # The hit rules the engine and the log viewer share (hit_rules.h).
+    tests/unit/test_hit_rules.c
     # A click on a tank on the viewer's map: which tank a point is on and
     # the mark round the selected one (lv_tank_pick.h, header only).
     tests/unit/test_lv_tank_pick.c
@@ -6205,8 +6215,27 @@ set(_unit_test_names
     lv_player_lag_read
     lv_lag_track
     lv_lag_ring
+    lv_lag_view_toggle
     lv_lag_feature_default_off
     lv_lag_view_draw
+    lv_lag_view_own_shells
+    lv_lag_view_lost_owner
+    lv_shell_owner_recording
+    lv_shell_owner_rules
+    lv_shell_owner_real_flight
+    lv_shell_owner_start
+    lv_shell_owner_link
+    lv_shell_owner_one_line
+    lv_shell_owner_ids
+    lv_early_blast_rules
+    lv_early_blast_ended
+    lv_early_blast_frames
+    lv_early_blast_match
+    lv_early_blast_hide
+    lv_early_blast_needs_own_shells
+    lv_early_blast_same_place
+    lv_early_blast_many_players
+    lv_early_blast_watch_miss
     lv_lag_view_rename
     lv_overrun_read
     log_roundtrip_ping
@@ -6850,6 +6879,8 @@ set(_unit_test_names
     lgm_blast_shape_solid_square
     lgm_blast_shape_classic_matches_old
     lgm_blast_shape_pill_range
+    lgm_blast_shape_classic_144
+    lgm_blast_shape_for_version
     teleport_erases_tank_rewind_record
     teleport_shell_hits_new_place
     teleport_rewind_refills
@@ -8113,6 +8144,7 @@ set(_unit_test_names
     lv_scripts_json_hostile_values
     lv_scripts_json_over_cap
     lv_scripts_json_close_clears
+    lv_scripts_json_blast_shape_by_version
     lv_rule_changes_collected
     lv_rule_changes_seek
     lv_rule_changes_plain_round
@@ -8158,6 +8190,13 @@ set(_unit_test_names
     lv_overview_neutral_row
     lv_tank_status_sums
     lv_tank_bars_sums
+    lv_hitbox_sums
+    lv_hitbox_lgm_fit
+    lv_hitbox_lgm_pick
+    lv_hitbox_outline
+    lv_hitbox_zone_from_version
+    hit_rules_builder_matches_engine
+    hit_rules_tank_matches_engine
     lv_tank_pick_sums
     lv_marks_fade
     lv_window_size_parse
