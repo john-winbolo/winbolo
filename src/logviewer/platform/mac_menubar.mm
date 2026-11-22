@@ -72,6 +72,7 @@ static NSMenuItem *s_lv_regionsItem        = nil;
 static NSMenuItem *s_lv_tankBarsItem       = nil;
 static NSMenuItem *s_lv_builderStatusItem  = nil;
 static NSMenuItem *s_lv_pillNumbersItem    = nil;
+static NSMenuItem *s_lv_baseNumbersItem    = nil;
 static NSMenuItem *s_lv_hitBoxesItem       = nil;
 static NSMenuItem *s_lv_jumpAnimItem       = nil;
 static NSMenuItem *s_lv_seekAnimItem       = nil;
@@ -136,6 +137,7 @@ static void lv_push_sdl_quit(void) {
 - (void)onToggleTankBars:(id)sender;
 - (void)onToggleBuilderStatus:(id)sender;
 - (void)onTogglePillNumbers:(id)sender;
+- (void)onToggleBaseNumbers:(id)sender;
 - (void)onToggleHitBoxes:(id)sender;
 - (void)onToggleJumpAnim:(id)sender;
 - (void)onToggleSeekAnim:(id)sender;
@@ -279,6 +281,11 @@ static void lv_push_sdl_quit(void) {
 - (void)onTogglePillNumbers:(id)sender {
     (void)sender;
     lv_drawSetPillNumbers(lv_drawGetPillNumbers() ? 0 : 1);
+    lv_windowNeedRedraw();
+}
+- (void)onToggleBaseNumbers:(id)sender {
+    (void)sender;
+    lv_drawSetBaseNumbers(lv_drawGetBaseNumbers() ? 0 : 1);
     lv_windowNeedRedraw();
 }
 - (void)onToggleHitBoxes:(id)sender {
@@ -612,8 +619,6 @@ void lv_mac_menubar_install(struct SDL_Window *win, struct LogViewerState *lvSta
     s_lv_zoomOutItem = zoomOutItem;
     /* Items are added into the submenu by refresh after the step rebuild. */
 
-    [optionsMenu addItem:[NSMenuItem separatorItem]];
-
     /* Mode submenu */
     NSMenuItem *modeRoot = [optionsMenu addItemWithTitle:LANG_STR(STR_LV_MODE) action:nil keyEquivalent:@""];
     NSMenu *modeMenu = [[NSMenu alloc] initWithTitle:LANG_STR(STR_LV_MODE)];
@@ -636,14 +641,6 @@ void lv_mac_menubar_install(struct SDL_Window *win, struct LogViewerState *lvSta
     [modeMenu addItem:modeSelect];
     s_lv_modeSelectItem = modeSelect;
 
-    NSMenuItem *useTeamColours = [[NSMenuItem alloc]
-        initWithTitle:LANG_STR(STR_LV_USE_TEAM_COLOURS)
-        action:@selector(onToggleUseTeamColours:)
-        keyEquivalent:@""];
-    [useTeamColours setTarget:s_lv_bridge];
-    [optionsMenu addItem:useTeamColours];
-    s_lv_useTeamColoursItem = useTeamColours;
-
     NSMenuItem *tankCentred = [[NSMenuItem alloc]
         initWithTitle:LANG_STR(STR_LV_TANK_CENTRED)
         action:@selector(onToggleTankCentred:)
@@ -652,13 +649,33 @@ void lv_mac_menubar_install(struct SDL_Window *win, struct LogViewerState *lvSta
     [optionsMenu addItem:tankCentred];
     s_lv_tankCentredItem = tankCentred;
 
-    NSMenuItem *hideLobby = [[NSMenuItem alloc]
-        initWithTitle:LANG_STR(STR_LV_HIDE_LOBBY)
-        action:@selector(onToggleHideLobby:)
+    [optionsMenu addItem:[NSMenuItem separatorItem]];
+
+    NSMenuItem *useTeamColours = [[NSMenuItem alloc]
+        initWithTitle:LANG_STR(STR_LV_USE_TEAM_COLOURS)
+        action:@selector(onToggleUseTeamColours:)
         keyEquivalent:@""];
-    [hideLobby setTarget:s_lv_bridge];
-    [optionsMenu addItem:hideLobby];
-    s_lv_hideLobbyItem = hideLobby;
+    [useTeamColours setTarget:s_lv_bridge];
+    [optionsMenu addItem:useTeamColours];
+    s_lv_useTeamColoursItem = useTeamColours;
+
+    NSMenuItem *pillNumbers = [[NSMenuItem alloc]
+        initWithTitle:LANG_STR(STR_LV_PILL_NUMBERS)
+        action:@selector(onTogglePillNumbers:)
+        keyEquivalent:@""];
+    [pillNumbers setTarget:s_lv_bridge];
+    [pillNumbers setToolTip:LANG_STR(STR_LV_PILL_NUMBERS_TIP)];
+    [optionsMenu addItem:pillNumbers];
+    s_lv_pillNumbersItem = pillNumbers;
+
+    NSMenuItem *baseNumbers = [[NSMenuItem alloc]
+        initWithTitle:LANG_STR(STR_LV_BASE_NUMBERS)
+        action:@selector(onToggleBaseNumbers:)
+        keyEquivalent:@""];
+    [baseNumbers setTarget:s_lv_bridge];
+    [baseNumbers setToolTip:LANG_STR(STR_LV_BASE_NUMBERS_TIP)];
+    [optionsMenu addItem:baseNumbers];
+    s_lv_baseNumbersItem = baseNumbers;
 
     NSMenuItem *regions = [[NSMenuItem alloc]
         initWithTitle:LANG_STR(STR_MAPEDIT_SCENARIO_REGIONS)
@@ -668,6 +685,17 @@ void lv_mac_menubar_install(struct SDL_Window *win, struct LogViewerState *lvSta
     [regions setToolTip:LANG_STR(STR_LV_REGIONS_TIP)];
     [optionsMenu addItem:regions];
     s_lv_regionsItem = regions;
+
+    NSMenuItem *hitBoxes = [[NSMenuItem alloc]
+        initWithTitle:LANG_STR(STR_LV_HIT_BOXES)
+        action:@selector(onToggleHitBoxes:)
+        keyEquivalent:@""];
+    [hitBoxes setTarget:s_lv_bridge];
+    [hitBoxes setToolTip:LANG_STR(STR_LV_HIT_BOXES_TIP)];
+    [optionsMenu addItem:hitBoxes];
+    s_lv_hitBoxesItem = hitBoxes;
+
+    [optionsMenu addItem:[NSMenuItem separatorItem]];
 
     NSMenuItem *tankBars = [[NSMenuItem alloc]
         initWithTitle:LANG_STR(STR_LV_TANK_BARS)
@@ -687,23 +715,7 @@ void lv_mac_menubar_install(struct SDL_Window *win, struct LogViewerState *lvSta
     [optionsMenu addItem:builderStatus];
     s_lv_builderStatusItem = builderStatus;
 
-    NSMenuItem *pillNumbers = [[NSMenuItem alloc]
-        initWithTitle:LANG_STR(STR_LV_PILL_NUMBERS)
-        action:@selector(onTogglePillNumbers:)
-        keyEquivalent:@""];
-    [pillNumbers setTarget:s_lv_bridge];
-    [pillNumbers setToolTip:LANG_STR(STR_LV_PILL_NUMBERS_TIP)];
-    [optionsMenu addItem:pillNumbers];
-    s_lv_pillNumbersItem = pillNumbers;
-
-    NSMenuItem *hitBoxes = [[NSMenuItem alloc]
-        initWithTitle:LANG_STR(STR_LV_HIT_BOXES)
-        action:@selector(onToggleHitBoxes:)
-        keyEquivalent:@""];
-    [hitBoxes setTarget:s_lv_bridge];
-    [hitBoxes setToolTip:LANG_STR(STR_LV_HIT_BOXES_TIP)];
-    [optionsMenu addItem:hitBoxes];
-    s_lv_hitBoxesItem = hitBoxes;
+    [optionsMenu addItem:[NSMenuItem separatorItem]];
 
     /* Exception to the both-bars rule (docs/ARCHITECTURE.md, "Contract -
      * both bars in lockstep"): the in-window View menu's player lag view
@@ -763,6 +775,16 @@ void lv_mac_menubar_install(struct SDL_Window *win, struct LogViewerState *lvSta
         [volumeMenu addItem:item];
     }
     s_lv_volumeMenu = volumeMenu;
+
+    [optionsMenu addItem:[NSMenuItem separatorItem]];
+
+    NSMenuItem *hideLobby = [[NSMenuItem alloc]
+        initWithTitle:LANG_STR(STR_LV_HIDE_LOBBY)
+        action:@selector(onToggleHideLobby:)
+        keyEquivalent:@""];
+    [hideLobby setTarget:s_lv_bridge];
+    [optionsMenu addItem:hideLobby];
+    s_lv_hideLobbyItem = hideLobby;
 
     NSMenuItem *dnsLookups = [[NSMenuItem alloc]
         initWithTitle:LANG_STR(STR_LV_DNS_LOOKUPS)
@@ -1068,6 +1090,7 @@ void lv_mac_menubar_uninstall(void) {
     s_lv_tankBarsItem = nil;
     s_lv_builderStatusItem = nil;
     s_lv_pillNumbersItem = nil;
+    s_lv_baseNumbersItem = nil;
     s_lv_hitBoxesItem = nil;
     s_lv_jumpAnimItem = nil;
     s_lv_seekAnimItem = nil;
@@ -1178,6 +1201,7 @@ void lv_mac_menubar_refresh(const struct LvMenuState *s) {
     if (s_lv_tankBarsItem) [s_lv_tankBarsItem setState:(s->tankBars ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_lv_builderStatusItem) [s_lv_builderStatusItem setState:(s->builderStatus ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_lv_pillNumbersItem) [s_lv_pillNumbersItem setState:(s->pillNumbers ? NSControlStateValueOn : NSControlStateValueOff)];
+    if (s_lv_baseNumbersItem) [s_lv_baseNumbersItem setState:(s->baseNumbers ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_lv_hitBoxesItem) [s_lv_hitBoxesItem setState:(s->hitBoxes ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_lv_jumpAnimItem) [s_lv_jumpAnimItem setState:(lv_imgui_get_jump_anim() ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_lv_seekAnimItem) [s_lv_seekAnimItem setState:(lv_imgui_get_seek_anim() ? NSControlStateValueOn : NSControlStateValueOff)];

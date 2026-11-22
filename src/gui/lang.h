@@ -1344,8 +1344,8 @@
 #define STR_LV_LAG_MENU                     3119
 #define STR_LV_LAG_MENU_TIP                 3120
 #define STR_LV_LAG_LINE_BOT                 3121
-/* The lag view's shell toggles in the Options menu. Toggle Screen-True Own
-   Shells (lv_shell_owner.h) and its tooltip. Toggle Screen-True Local
+/* The lag view's shell toggles in the Options menu. Screen-True Own
+   Shells (lv_shell_owner.h) and its tooltip. Screen-True Local
    Explosions (lv_early_blast.h): its name, its tooltip, and the tooltip
    while it is off because the first toggle is off. */
 #define STR_LV_SCREEN_TRUE_SHELLS           3472
@@ -1413,6 +1413,10 @@
 #define STR_LV_PILL_NUMBERS                 2866
 #define STR_LV_PILL_NUMBERS_TIP             2867
 #define STR_LV_PILL_NUMBERS_LIST            2868
+/* Options > Base Numbers: the number of each base on the map, and its
+   tooltip. */
+#define STR_LV_BASE_NUMBERS                 3483
+#define STR_LV_BASE_NUMBERS_TIP             3484
 #define STR_LV_MSG_PILL_CAPTURED            2869
 #define STR_LV_MSG_PILL_STOLEN              2870
 /* Log viewer: the hit area round each tank and builder on the map (Options) */

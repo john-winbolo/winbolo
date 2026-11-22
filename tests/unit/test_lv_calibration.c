@@ -42,6 +42,7 @@
 #include "lv_players.h"      /* lv_playersGetDrawnTankDetails */
 #include "logviewer.h"
 #include "lv_hitbox.h"       /* LV_HITBOX_TANK_* */
+#include "lv_pill_numbers.h" /* LvPillSpot */
 #include "lv_log.h"
 #include "blocks.h"
 #include "lv_bolo_map.h"
@@ -1557,6 +1558,141 @@ int run_lv_lag_ring(void) {
   return 0;
 }
 
+/* The lag view draws the pillboxes and the map one round trip back, in
+ * whole entries rounded down, as the server rounds the rewind. */
+int run_lv_lag_rtt_back(void) {
+  UT_ASSERT(lv_lagRttBackMs(0) == 0);
+  UT_ASSERT(lv_lagRttBackMs(19) == 0);
+  UT_ASSERT(lv_lagRttBackMs(20) == 20);
+  UT_ASSERT(lv_lagRttBackMs(82) == 80);   /* 4 entries */
+  UT_ASSERT(lv_lagRttBackMs(99) == 80);
+  UT_ASSERT(lv_lagRttBackMs(100) == 100);
+  UT_ASSERT(lv_lagRttBackMs(65535) == 65520);
+  return 0;
+}
+
+/* The frame a time back from the present: none when the newest frame is
+ * not the present's, when the time back is more than the present, or when
+ * the ring holds nothing that old. */
+int run_lv_lag_ring_back(void) {
+  static LvLagRing r;
+  const LvLagFrame *f;
+  int i;
+
+  lv_lagRingClear(&r);
+  UT_ASSERT(lv_lagRingBack(&r, 0, 0) == NULL);
+  for (i = 1; i <= 10; i++) {
+    LvLagFrame *n = lv_lagRingPush(&r, (uint32_t)i * LV_LAG_ENTRY_MS);
+    n->shellCount = i;
+  }
+  /* The present itself, and four entries back. */
+  f = lv_lagRingBack(&r, 200, 0);
+  UT_ASSERT(f != NULL && f->shellCount == 10);
+  f = lv_lagRingBack(&r, 200, lv_lagRttBackMs(82));
+  UT_ASSERT(f != NULL && f->shellCount == 6);
+  /* The oldest frame, and one older than it. */
+  f = lv_lagRingBack(&r, 200, 180);
+  UT_ASSERT(f != NULL && f->shellCount == 1);
+  UT_ASSERT(lv_lagRingBack(&r, 200, 200) == NULL);
+  /* More than the present, and a present that is not the newest frame. */
+  UT_ASSERT(lv_lagRingBack(&r, 200, 220) == NULL);
+  UT_ASSERT(lv_lagRingBack(&r, 220, 20) == NULL);
+  UT_ASSERT(lv_lagRingBack(&r, 180, 20) == NULL);
+  return 0;
+}
+
+/* Each frame notes the map squares that changed in its entry, and the map
+ * at an older frame is made from the present one by undoing the newer
+ * frames' changes, newest first. A frame with more changes than it keeps
+ * is marked, and the map before it cannot be made. */
+int run_lv_lag_map_undo(void) {
+  static LvLagRing r;
+  static uint8_t prev[LV_LAG_MAP_SIDE * LV_LAG_MAP_SIDE];
+  static uint8_t cur[LV_LAG_MAP_SIDE * LV_LAG_MAP_SIDE];
+  static uint8_t draw[LV_LAG_MAP_SIDE * LV_LAG_MAP_SIDE];
+  const size_t at1 = (size_t)10 * LV_LAG_MAP_SIDE + 20;   /* x 10, y 20 */
+  const size_t at2 = (size_t)255 * LV_LAG_MAP_SIDE + 255; /* the last square */
+  const LvLagFrame *f1, *f2, *f3;
+  LvLagFrame *f;
+  int i;
+
+  lv_lagRingClear(&r);
+  memset(cur, 3, sizeof(cur));
+  /* Entry 1: the ring starts, so its frame has no changes. */
+  f = lv_lagRingPush(&r, 20);
+  memcpy(prev, cur, sizeof(prev));
+  f1 = f;
+  /* Entry 2: (10,20) goes 3 to 4. */
+  cur[at1] = 4;
+  f = lv_lagRingPush(&r, 40);
+  lv_lagMapDiff(prev, cur, f);
+  UT_ASSERT(f->squareCount == 1 && !f->squaresFull);
+  UT_ASSERT(f->squares[0].x == 10 && f->squares[0].y == 20);
+  UT_ASSERT(f->squares[0].was == 3 && f->squares[0].now == 4);
+  UT_ASSERT(memcmp(prev, cur, sizeof(prev)) == 0);
+  f2 = f;
+  /* Entry 3: (10,20) goes 4 to 5, and (255,255) 3 to 7. */
+  cur[at1] = 5;
+  cur[at2] = 7;
+  f = lv_lagRingPush(&r, 60);
+  lv_lagMapDiff(prev, cur, f);
+  UT_ASSERT(f->squareCount == 2);
+  f3 = f;
+
+  /* The newest frame needs nothing undone. */
+  UT_ASSERT(lv_lagMapChangesAfter(&r, f3) == 0);
+  UT_ASSERT(lv_lagMapChangesAfter(&r, f2) == 2);
+  UT_ASSERT(lv_lagMapChangesAfter(&r, f1) == 3);
+
+  /* At entry 2: (10,20) is 4, (255,255) is 3. */
+  memcpy(draw, cur, sizeof(draw));
+  lv_lagMapUndo(&r, f2, draw);
+  UT_ASSERT(draw[at1] == 4 && draw[at2] == 3);
+  /* At entry 1: both are 3, the same as the map was then. */
+  memcpy(draw, cur, sizeof(draw));
+  lv_lagMapUndo(&r, f1, draw);
+  UT_ASSERT(draw[at1] == 3 && draw[at2] == 3);
+  for (i = 0; i < LV_LAG_MAP_SIDE * LV_LAG_MAP_SIDE; i++) {
+    if (draw[i] != 3) break;
+  }
+  UT_ASSERT_MSG(i == LV_LAG_MAP_SIDE * LV_LAG_MAP_SIDE, "square %d is %u after the undo", i,
+                (unsigned)draw[i]);
+  /* The present map is not changed by an undo on a copy. */
+  UT_ASSERT(cur[at1] == 5 && cur[at2] == 7);
+
+  /* Entry 4: more squares change than one frame keeps. */
+  for (i = 0; i < LV_LAG_SQUARES_MAX + 5; i++) {
+    cur[(size_t)100 * LV_LAG_MAP_SIDE + (size_t)i] = 9;
+  }
+  f = lv_lagRingPush(&r, 80);
+  lv_lagMapDiff(prev, cur, f);
+  UT_ASSERT(f->squaresFull && f->squareCount == LV_LAG_SQUARES_MAX);
+  /* prev still follows the map, so the next frame's changes are right. */
+  UT_ASSERT(memcmp(prev, cur, sizeof(prev)) == 0);
+  /* A full frame takes no more. */
+  UT_ASSERT(!lv_lagFrameAddSquare(f, 1, 2, 3, 4));
+  UT_ASSERT(f->squaresFull && f->squareCount == LV_LAG_SQUARES_MAX);
+  /* The map at entry 4 needs nothing undone; before it, nothing can be
+     made again. */
+  UT_ASSERT(lv_lagMapChangesAfter(&r, f) == 0);
+  UT_ASSERT(lv_lagMapChangesAfter(&r, f3) == -1);
+  UT_ASSERT(lv_lagMapChangesAfter(&r, f1) == -1);
+
+  /* Entry 5: one change, which can be undone back to entry 4. */
+  cur[at1] = 6;
+  f = lv_lagRingPush(&r, 100);
+  lv_lagMapDiff(prev, cur, f);
+  UT_ASSERT(f->squareCount == 1 && !f->squaresFull);
+  UT_ASSERT(lv_lagMapChangesAfter(&r, &r.frames[(r.newest - 1 + LV_LAG_FRAMES) % LV_LAG_FRAMES]) == 1);
+
+  /* A frame that is not in the ring. */
+  {
+    static LvLagFrame other;
+    UT_ASSERT(lv_lagMapChangesAfter(&r, &other) == -1);
+  }
+  return 0;
+}
+
 /*
  * One click on "See What the Selected Player Saw", or one press of Ctrl+L:
  * on for the selected tank's player when that player has a record, off when
@@ -1673,16 +1809,26 @@ static unsigned lagDrawPlace(int slot, int k) {
 static uint32_t lagDrawMs(int k) { return (uint32_t)k * 20u; }
 
 /* One running-round snapshot with slots 0 ("A") and 1 ("B") on the map at
- * their entry-k places, in the block layout of putSnapshotSlot1. */
-static void putLagDrawSnapshot(LogBuf *b, int k) {
+ * their entry-k places, in the block layout of putSnapshotSlot1. pills is
+ * the pillbox block, its length byte first, or NULL for none. */
+static void putLagDrawSnapshotItems(LogBuf *b, int k, const uint8_t *pills, int pillsLen,
+                                    const uint8_t *bases, int basesLen) {
   static const uint8_t mapRun[5] = {5, 0, 0, 2, (8 << 4) | GRASS};
   static const uint8_t mapTerminator[4] = {4, 255, 255, 255};
   int i;
 
   putU8(b, LOG_SNAPSHOT);
   putZeros(b, 8);
-  putU8(b, 1); putU8(b, 0);          /* pills */
-  putU8(b, 1); putU8(b, 0);          /* bases */
+  if (pills != NULL) {
+    put(b, pills, (size_t)pillsLen);
+  } else {
+    putU8(b, 1); putU8(b, 0);        /* pills */
+  }
+  if (bases != NULL) {
+    put(b, bases, (size_t)basesLen);
+  } else {
+    putU8(b, 1); putU8(b, 0);        /* bases */
+  }
   putU8(b, 1); putU8(b, 0);          /* starts */
   put(b, mapRun, sizeof(mapRun));
   put(b, mapTerminator, 4);
@@ -1703,6 +1849,14 @@ static void putLagDrawSnapshot(LogBuf *b, int k) {
       putU8(b, 2); putU8(b, 0); putU8(b, 0);
     }
   }
+}
+
+static void putLagDrawSnapshotPills(LogBuf *b, int k, const uint8_t *pills, int pillsLen) {
+  putLagDrawSnapshotItems(b, k, pills, pillsLen, NULL, 0);
+}
+
+static void putLagDrawSnapshot(LogBuf *b, int k) {
+  putLagDrawSnapshotPills(b, k, NULL, 0);
 }
 
 /* One log_PlayerLocation event, in a LOG_EVENT frame opened by the caller:
@@ -1966,6 +2120,198 @@ int run_lv_lag_view_draw(void) {
                 lagDrawPlace(1, 50));
 
   lv_screenSetLagFeature(0);
+  lv_decoderDestroy(lv);
+  lv_screenSetHideLobby(savedHide);
+  remove(path);
+  return 0;
+}
+
+/* ---- the lag view's pillboxes and map ------------------------------------ */
+
+/* What the view held after one draw with its left column at 55 and its top
+ * row at 50: the squares at (56,52), (57,52) and (58,52), and the column of
+ * each pillbox number. */
+typedef struct {
+  BYTE at56, at57, at58;
+  int  spots;
+  int  spotX[4];
+} LagMapSeen;
+
+static void lagMapDraw(LagMapSeen *seen) {
+  LvPillSpot spots[4];
+  int i;
+  memset(seen, 0, sizeof(*seen));
+  lv_screenSetOffset(55, 50);
+  lv_screenUpdate(redraw);
+  seen->at56 = lv_screenGetPos(NULL, 1, 2);
+  seen->at57 = lv_screenGetPos(NULL, 2, 2);
+  seen->at58 = lv_screenGetPos(NULL, 3, 2);
+  seen->spots = lv_screenPillSpots(spots, 4);
+  for (i = 0; i < seen->spots && i < 4; i++) {
+    seen->spotX[i] = spots[i].viewX;
+  }
+}
+
+/*
+ * The lag view draws the pillboxes and the map as they were one round trip
+ * before the playhead: a client puts each pillbox and map change on its
+ * screen when it gets there, so the newest it had when its input reached
+ * the server was one round trip old. The map itself is not changed.
+ *
+ *   entry  0  (0 ms)      snapshot: A and B on the map, pillbox 1 at
+ *                         (57,52) at full armour, (58,52) deep sea
+ *   entry 10  (200 ms)    A's lag record: 100 ms round trip, rewind 5
+ *   entry 40  (800 ms)    pillbox 1 moves to (56,52) with armour 0, and
+ *                         (58,52) becomes road
+ *
+ * At entry 42 the view for A draws the map as at entry 37, before the
+ * change; at entry 46, as at entry 41, after it.
+ */
+int run_lv_lag_view_map(void) {
+  const char *path = "lv_lag_view_map.wbv";
+  static const uint8_t rec[4] = {0, 0x00, 0x64, 5};   /* A: 100 ms, rewind 5 */
+  /* One pillbox: x, y, armour, owner, speed, inTank, reload, justSeen,
+     coolDown. */
+  static const uint8_t pills[11] = {10, 1, 57, 52, 15, 0xFF, 50, 0, 0, 0, 0};
+  LogBuf b;
+  LogViewerState *lv;
+  int savedHide = lv_screenGetHideLobby();
+  LagMapSeen before, off, on;
+  bool drawn = false;
+  int k;
+
+  b.len = 0;
+  putHeader(&b);
+  putLagDrawSnapshotPills(&b, 0, pills, (int)sizeof(pills));
+  for (k = 1; k <= 60; k++) {
+    putU8(&b, LOG_EVENT);
+    putU8(&b, (uint8_t)(k == 10 ? 4 : (k == 40 ? 6 : 3)));
+    putLagDrawLocation(&b, 0, k);
+    putLagDrawLocation(&b, 1, k);
+    putLagDrawLgm(&b, 1, k);
+    if (k == 10) {
+      putU8(&b, log_PlayerLag);
+      putU8(&b, 0); putU8(&b, 4);
+      put(&b, rec, sizeof(rec));
+    }
+    if (k == 40) {
+      putU8(&b, log_PillSetPlace);
+      putU8(&b, 0); putU8(&b, 3);
+      putU8(&b, 0); putU8(&b, 56); putU8(&b, 52);
+      putU8(&b, log_PillSetHealth);
+      putU8(&b, 0); putU8(&b, 1);
+      putU8(&b, 0x00);                  /* v2: pillbox 0, armour 0 */
+      putU8(&b, log_MapChange);
+      putU8(&b, 0); putU8(&b, 3);
+      putU8(&b, 58); putU8(&b, 52); putU8(&b, ROAD);
+    }
+  }
+  putU8(&b, LOG_QUIT);
+
+  lv_screenSetHideLobby(0);
+  lv_screenSetLagFeature(1);
+  lv = loadSynthetic(&b, path);
+  UT_ASSERT_MSG(lv != NULL, "synthetic lag map log failed to build/load");
+
+  /* Before the change. */
+  if (lagDrawPlayTo(lv, 38) != 0) return 1;
+  lagMapDraw(&before);
+  UT_ASSERT_MSG(before.spots == 1 && before.spotX[0] == 2,
+                "before the change: %d numbers, the first at column %d", before.spots,
+                before.spotX[0]);
+
+  /* Two entries after it, with the view off: the present. */
+  if (lagDrawPlayTo(lv, 42) != 0) return 1;
+  lagMapDraw(&off);
+  UT_ASSERT_MSG(off.at56 != before.at56 && off.at57 != before.at57 && off.at58 != before.at58,
+                "the change did not show with the view off: %u/%u/%u, before %u/%u/%u",
+                off.at56, off.at57, off.at58, before.at56, before.at57, before.at58);
+  UT_ASSERT_MSG(off.spots == 1 && off.spotX[0] == 1, "view off: %d numbers, the first at %d",
+                off.spots, off.spotX[0]);
+
+  /* The view on for A: one round trip (5 entries) back is entry 37. */
+  lv_screenLagViewSet(0);
+  UT_ASSERT(lv_screenLagViewSlot() == 0);
+  UT_ASSERT(lv_screenLagViewStatus(NULL, 0, NULL, &drawn));
+  UT_ASSERT_MSG(drawn, "no frame drawn at entry 42");
+  lagMapDraw(&on);
+  UT_ASSERT_MSG(on.at56 == before.at56 && on.at57 == before.at57 && on.at58 == before.at58,
+                "view on at entry 42: %u/%u/%u, want entry 37's %u/%u/%u", on.at56, on.at57,
+                on.at58, before.at56, before.at57, before.at58);
+  UT_ASSERT_MSG(on.spots == 1 && on.spotX[0] == 2, "view on: %d numbers, the first at %d",
+                on.spots, on.spotX[0]);
+  /* The map and the pillbox themselves are the present's. */
+  UT_ASSERT_MSG(lv_mapGetPos(&lv->mp, 58, 52) == ROAD, "the lag view changed the map: %u",
+                (unsigned)lv_mapGetPos(&lv->mp, 58, 52));
+  UT_ASSERT(lv->pb->item[0].x == 56 && lv->pb->item[0].armour == 0);
+
+  /* Six entries after the change, the round trip back is after it too. */
+  if (lagDrawPlayTo(lv, 46) != 0) return 1;
+  lagMapDraw(&on);
+  lv_screenLagViewSet(-1);
+  lagMapDraw(&off);
+  UT_ASSERT_MSG(on.at56 == off.at56 && on.at57 == off.at57 && on.at58 == off.at58,
+                "view on at entry 46: %u/%u/%u, the present %u/%u/%u", on.at56, on.at57,
+                on.at58, off.at56, off.at57, off.at58);
+  UT_ASSERT(on.spots == 1 && on.spotX[0] == 1);
+
+  lv_screenSetLagFeature(0);
+  lv_decoderDestroy(lv);
+  lv_screenSetHideLobby(savedHide);
+  remove(path);
+  return 0;
+}
+
+/* ---- the base numbers ------------------------------------------------------ */
+
+/*
+ * Options > Base Numbers: the bases whose numbers the map shows
+ * (lv_screenBaseSpots), with the sums of the pillbox numbers. Three bases:
+ * base 1 at (57,52) and base 3 at (60,53) are in the view whose left column
+ * is 55 and top row 50, base 2 at (150,150) is not. Numbers count from 1.
+ */
+int run_lv_base_spots(void) {
+  const char *path = "lv_base_spots.wbv";
+  /* The block's length, numBases, then x, y, owner, armour, shells, mines,
+     refuelTime, baseTime (2), justStopped for each. */
+  static const uint8_t bases[32] = {31, 3,
+                                    57, 52, 0xFF, 90, 40, 40, 0, 0, 0, 0,
+                                    150, 150, 0xFF, 90, 40, 40, 0, 0, 0, 0,
+                                    60, 53, 0xFF, 90, 40, 40, 0, 0, 0, 0};
+  LogBuf b;
+  LogViewerState *lv;
+  LvPillSpot spots[MAX_BASES];
+  int savedHide = lv_screenGetHideLobby();
+  int n, k;
+
+  b.len = 0;
+  putHeader(&b);
+  putLagDrawSnapshotItems(&b, 0, NULL, 0, bases, (int)sizeof(bases));
+  for (k = 1; k <= 3; k++) {
+    putU8(&b, LOG_EVENT);
+    putU8(&b, 2);
+    putLagDrawLocation(&b, 0, k);
+    putLagDrawLocation(&b, 1, k);
+  }
+  putU8(&b, LOG_QUIT);
+
+  lv_screenSetHideLobby(0);
+  lv = loadSynthetic(&b, path);
+  UT_ASSERT_MSG(lv != NULL, "synthetic base log failed to build/load");
+  if (lagDrawPlayTo(lv, 2) != 0) return 1;
+  lv_screenSetOffset(55, 50);
+  lv_screenUpdate(redraw);
+
+  n = lv_screenBaseSpots(spots, MAX_BASES);
+  UT_ASSERT_MSG(n == 2, "%d base numbers in the view, want 2", n);
+  UT_ASSERT_MSG(spots[0].number == 1 && spots[0].viewX == 2 && spots[0].viewY == 2,
+                "base 1: number %d at %d,%d", spots[0].number, spots[0].viewX, spots[0].viewY);
+  UT_ASSERT_MSG(spots[1].number == 3 && spots[1].viewX == 5 && spots[1].viewY == 3,
+                "base 3: number %d at %d,%d", spots[1].number, spots[1].viewX, spots[1].viewY);
+  /* No more than asked for. */
+  UT_ASSERT(lv_screenBaseSpots(spots, 1) == 1 && spots[0].number == 1);
+  UT_ASSERT(lv_screenBaseSpots(spots, 0) == 0);
+
   lv_decoderDestroy(lv);
   lv_screenSetHideLobby(savedHide);
   remove(path);

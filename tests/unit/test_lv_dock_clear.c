@@ -364,6 +364,36 @@ int run_lv_dock_clear_prefs(void) {
     return 0;
 }
 
+/* The Tank panel's length in a clear sidebar follows its lag section, which
+ * only a recording with lag records has (lvDockClearRoomLen). The numbers
+ * are the ones a Tank panel 368 points long had: 98 of them for the lag
+ * section with its graph. */
+int run_lv_dock_clear_room_len(void) {
+    /* No lag records: the section's room goes, the rest keeps its length. */
+    UT_ASSERT_MSG(lvDockClearRoomLen(368, 98, 0, 48) == 270, "the section goes, its room goes");
+    UT_ASSERT_MSG(lvDockClearRoomLen(270, 0, 98, 48) == 368, "it comes back, so does its room");
+    UT_ASSERT_MSG(lvDockClearRoomLen(270, 0, 0, 48) == 270, "no change, no move");
+    UT_ASSERT_MSG(lvDockClearRoomLen(368, 98, 98, 48) == 368, "shown and kept: no move");
+    /* A larger font makes the section larger: the length follows. */
+    UT_ASSERT_MSG(lvDockClearRoomLen(368, 98, 120, 48) == 390, "a larger section");
+    /* Saved before the room was kept: taken to hold no room for the
+       section. With no section in view nothing moves; a section in view
+       adds its room. */
+    UT_ASSERT_MSG(lvDockClearRoomLen(368, -1, 0, 48) == 368, "an old length, no lag records");
+    UT_ASSERT_MSG(lvDockClearRoomLen(368, -1, 98, 48) == 466, "an old length, lag records");
+    /* Windows > Tank: Lag Indicators off: no section at all. */
+    UT_ASSERT_MSG(lvDockClearRoomLen(270, -1, 0, 48) == 270, "an old length, the section off");
+    UT_ASSERT_MSG(lvDockClearRoomLen(368, 98, 0, 48) == 270, "turned off: its room goes");
+    /* No length yet: the first one counts the section already. */
+    UT_ASSERT_MSG(lvDockClearRoomLen(0, -1, 0, 48) == 0, "no length yet: as it is");
+    UT_ASSERT_MSG(lvDockClearRoomLen(0, 0, 98, 48) == 0, "no length yet, section shown");
+    /* Never under the least, never over the most. */
+    UT_ASSERT_MSG(lvDockClearRoomLen(100, 98, 0, 48) == 48, "never under the least");
+    UT_ASSERT_MSG(lvDockClearRoomLen(LV_DOCK_CLEAR_LEN_MAX, 0, 98, 48) == LV_DOCK_CLEAR_LEN_MAX,
+                  "never over the most");
+    return 0;
+}
+
 int run_lv_dock_default_layout(void) {
     LvDockSides sides;
     LvDockDefaultStack stack;

@@ -6076,11 +6076,16 @@ set(_unit_test_names
     lv_player_lag_read
     lv_lag_track
     lv_lag_ring
+    lv_lag_rtt_back
+    lv_lag_ring_back
+    lv_lag_map_undo
     lv_lag_view_toggle
     lv_lag_feature_default_off
     lv_lag_view_draw
     lv_lag_view_own_shells
     lv_lag_view_lost_owner
+    lv_lag_view_map
+    lv_base_spots
     lv_shell_owner_recording
     lv_shell_owner_rules
     lv_shell_owner_real_flight
@@ -8064,6 +8069,7 @@ set(_unit_test_names
     lv_dock_clear_rects
     lv_dock_clear_map
     lv_dock_clear_prefs
+    lv_dock_clear_room_len
     lv_dock_default_layout
     lv_dump_recorded_round
     lv_spmap_owner_table

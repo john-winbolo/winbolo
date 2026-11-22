@@ -152,6 +152,9 @@ static bool         s_tankBars = FALSE;
 static bool         s_builderStatus = FALSE;
 /* The number of each pillbox on the map (lv_pill_numbers.h). On until set. */
 static bool         s_pillNumbers = TRUE;
+/* The number of each base on the map, drawn as the pillbox numbers are.
+   Off until set. */
+static bool         s_baseNumbers = FALSE;
 /* The hit areas (lv_hitbox.h). Off until set. Like the bars they are drawn
    over the blit, from places lv_drawTanks and lv_drawLGMs note in
    render-target pixels. */
@@ -551,6 +554,7 @@ static void lvDrawBuilderStatusOverBlit(const SDL_FRect *src, const SDL_FRect *d
 static void lvDrawEventFlashOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
 static void lvDrawPingsOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
 static void lvDrawPillNumbersOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
+static void lvDrawBaseNumbersOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
 static void lvDrawHitBoxesOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
 
 /* Paint the world render target into the viewer's own window.
@@ -620,6 +624,7 @@ static void lvDrawBlitTargetToWindow(void) {
         /* The pillbox numbers before everything else: they belong to the
            map, and all that moves over it goes over them. */
         lvDrawPillNumbersOverBlit(&srcRect, &dstRect);
+        lvDrawBaseNumbersOverBlit(&srcRect, &dstRect);
         /* The map pings first: the tank names, the bars and the ring of an
            event go over them. */
         lvDrawPingsOverBlit(&srcRect, &dstRect);
@@ -2503,6 +2508,14 @@ BYTE lv_drawGetPillNumbers(void) {
     return s_pillNumbers ? TRUE : FALSE;
 }
 
+void lv_drawSetBaseNumbers(BYTE on) {
+    s_baseNumbers = on ? TRUE : FALSE;
+}
+
+BYTE lv_drawGetBaseNumbers(void) {
+    return s_baseNumbers ? TRUE : FALSE;
+}
+
 void lv_drawSetHitBoxes(BYTE on) {
     s_hitBoxes = on ? TRUE : FALSE;
 }
@@ -2656,27 +2669,21 @@ static void lvDrawHitBoxesOverBlit(const SDL_FRect *src, const SDL_FRect *dst) {
     SDL_SetRenderClipRect(sdlRenderer, hadClip ? &oldClip : NULL);
 }
 
-/* The number of each pillbox that stands on the map, at the bottom right
-   corner of its square (lvPillLabelLayout): white digits with a black edge,
-   the builder marker's, drawn over the blit at the screen's own pixels so
-   they are sharp and of a size to read at every zoom. A pillbox a tank
-   carries has none. The list is the one at the playback time, copied out
-   under the client mutex. */
-static void lvDrawPillNumbersOverBlit(const SDL_FRect *src, const SDL_FRect *dst) {
-    LvPillSpot spots[MAX_PILLS];
+/* A number at the bottom right corner of each of n squares of the view
+   (lvPillLabelLayout): white digits with a black edge, the builder
+   marker's, drawn over the blit at the screen's own pixels so they are
+   sharp and of a size to read at every zoom. The pillbox numbers and the
+   base numbers both use it. */
+static void lvDrawMapNumbersOverBlit(const LvPillSpot *spots, int n, const SDL_FRect *src,
+                                     const SDL_FRect *dst) {
     float scale, tilePx, pxScale, edge;
-    int n, i, pass;
+    int i, pass;
     BYTE zf;
     SDL_Rect clip, oldClip;
     bool hadClip;
     SDL_BlendMode oldBlend = SDL_BLENDMODE_NONE;
     Uint8 oldR, oldG, oldB, oldA;
 
-    if (!s_pillNumbers) return;
-    if (src->w <= 0.0f || src->h <= 0.0f) return;
-    lv_clientMutexWaitFor();
-    n = lv_screenPillSpots(spots, MAX_PILLS);
-    lv_clientMutexRelease();
     if (n <= 0) return;
 
     zf = lv_windowGetZoomFactor();
@@ -2718,6 +2725,36 @@ static void lvDrawPillNumbersOverBlit(const SDL_FRect *src, const SDL_FRect *dst
     SDL_SetRenderDrawColor(sdlRenderer, oldR, oldG, oldB, oldA);
     SDL_SetRenderDrawBlendMode(sdlRenderer, oldBlend);
     SDL_SetRenderClipRect(sdlRenderer, hadClip ? &oldClip : NULL);
+}
+
+/* The number of each pillbox that stands on the map (lvDrawMapNumbersOverBlit).
+   A pillbox a tank carries has none. The list is the one at the playback
+   time, copied out under the client mutex. */
+static void lvDrawPillNumbersOverBlit(const SDL_FRect *src, const SDL_FRect *dst) {
+    LvPillSpot spots[MAX_PILLS];
+    int n;
+
+    if (!s_pillNumbers) return;
+    if (src->w <= 0.0f || src->h <= 0.0f) return;
+    lv_clientMutexWaitFor();
+    n = lv_screenPillSpots(spots, MAX_PILLS);
+    lv_clientMutexRelease();
+    lvDrawMapNumbersOverBlit(spots, n, src, dst);
+}
+
+/* The number of each base on the map (lvDrawMapNumbersOverBlit), in the
+   same place and look as a pillbox's. The list is the one at the playback
+   time, copied out under the client mutex. */
+static void lvDrawBaseNumbersOverBlit(const SDL_FRect *src, const SDL_FRect *dst) {
+    LvPillSpot spots[MAX_BASES];
+    int n;
+
+    if (!s_baseNumbers) return;
+    if (src->w <= 0.0f || src->h <= 0.0f) return;
+    lv_clientMutexWaitFor();
+    n = lv_screenBaseSpots(spots, MAX_BASES);
+    lv_clientMutexRelease();
+    lvDrawMapNumbersOverBlit(spots, n, src, dst);
 }
 
 /* The four white corners of a mark (lvTankMarkLayout), 75% solid, cut to

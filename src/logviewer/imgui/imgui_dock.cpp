@@ -57,7 +57,12 @@ extern "C" {
  * by weight. A panel with heightFor has a fixed height too, but one that
  * depends on how wide the dock is, so it is asked for when the layout is
  * built. The anchor is the panel left in the dock space's central node, the
- * one that takes up the slack when the window changes height. */
+ * one that takes up the slack when the window changes height.
+ *
+ * A panel with roomFor has a section it shows only some of the time; roomFor
+ * gives the room that section takes now (full false) or when it is shown
+ * (full true). In a clear sidebar the panel's length grows and shrinks with
+ * it (s_room). */
 struct LvDockPanel {
     const char *id;
     bool       *show;
@@ -65,6 +70,7 @@ struct LvDockPanel {
     float       weight;
     bool        anchor;
     float     (*heightFor)(float dockWidth);
+    float     (*roomFor)(bool full);
 };
 
 /* The HUD is second, under the controls: its grids are a fixed size, so it
@@ -75,16 +81,16 @@ struct LvDockPanel {
  * its rows the same way, as does the Tank panel with its
  * four gauges. */
 static const LvDockPanel k_panels[] = {
-    { "###controls",   &lv_g_show_controls_window,       0.0f,               0.0f, false, lv_imgui_controls_dock_height },
-    { "###hud",        &lv_g_show_hud_window,            0.0f,               0.0f, false, lv_imgui_hud_dock_height },
-    { "###overview",   &lv_g_show_overview_window,       0.0f,               0.0f, false, lv_imgui_overview_dock_height },
-    { "###tank",       &lv_g_show_tank_window,           0.0f,               0.0f, false, lv_imgui_tank_dock_height },
-    { "###gameinfo",   &lv_g_show_game_info_window,      0.0f,               3.0f, false, nullptr },
-    { "###lvscnpanel", &lv_g_show_scenario_panel_window, 0.0f,               3.0f, false, nullptr },
-    { "###iteminfo",   &lv_g_show_item_info_window,      0.0f,               2.0f, false, nullptr },
-    { "###events",     &lv_g_show_events_window,         0.0f,               5.0f, true,  nullptr },
-    { "###comments",   &lv_g_show_comments_window,       0.0f,               3.0f, false, nullptr },
-    { "###chat",       &lv_g_show_chat_window,           0.0f,               2.0f, false, nullptr },
+    { "###controls",   &lv_g_show_controls_window,       0.0f,               0.0f, false, lv_imgui_controls_dock_height, nullptr },
+    { "###hud",        &lv_g_show_hud_window,            0.0f,               0.0f, false, lv_imgui_hud_dock_height, nullptr },
+    { "###overview",   &lv_g_show_overview_window,       0.0f,               0.0f, false, lv_imgui_overview_dock_height, nullptr },
+    { "###tank",       &lv_g_show_tank_window,           0.0f,               0.0f, false, lv_imgui_tank_dock_height, lv_imgui_tank_dock_lag_room },
+    { "###gameinfo",   &lv_g_show_game_info_window,      0.0f,               3.0f, false, nullptr, nullptr },
+    { "###lvscnpanel", &lv_g_show_scenario_panel_window, 0.0f,               3.0f, false, nullptr, nullptr },
+    { "###iteminfo",   &lv_g_show_item_info_window,      0.0f,               2.0f, false, nullptr, nullptr },
+    { "###events",     &lv_g_show_events_window,         0.0f,               5.0f, true,  nullptr, nullptr },
+    { "###comments",   &lv_g_show_comments_window,       0.0f,               3.0f, false, nullptr, nullptr },
+    { "###chat",       &lv_g_show_chat_window,           0.0f,               2.0f, false, nullptr, nullptr },
 };
 #define LV_DOCK_PANEL_COUNT ((int)(sizeof(k_panels) / sizeof(k_panels[0])))
 static_assert(LV_DOCK_PANEL_COUNT == LV_DOCK_CLEAR_PANELS,
@@ -130,6 +136,12 @@ static LvDockSide s_side[LV_DOCK_SIDES] = {
  * lvDockClearPanels. */
 static bool s_clear[LV_DOCK_SIDES] = { false, false, false, false };
 static int  s_len[LV_DOCK_SIDES][LV_DOCK_CLEAR_PANELS];
+
+/* The part of each such length that is for the section a panel shows only
+ * some of the time (k_panels roomFor): what the length was last fitted to.
+ * -1 for a length saved before this was kept with it (lvDockClearRoomLen).
+ * 0 for a panel with no such section. */
+static int  s_room[LV_DOCK_SIDES][LV_DOCK_CLEAR_PANELS];
 
 /* The part of each sidebar its panels took the last time it drew: all of
  * the strip for a solid one, and for one with no panel in it. */
@@ -274,6 +286,13 @@ void lv_imgui_dock_init(struct LogViewerState *lv) {
             snprintf(key, sizeof(key), "Dock.Len.%s", s_side[i].key);
             lv_platform_config_get_string("LOGVIEWER", key, "", lens, sizeof(lens));
             lvDockClearLensParse(lens, s_len[i]);
+            /* None saved: the length is from before the room was kept. */
+            snprintf(key, sizeof(key), "Dock.Room.%s", s_side[i].key);
+            lv_platform_config_get_string("LOGVIEWER", key, "", lens, sizeof(lens));
+            bool known = lvDockClearLensParse(lens, s_room[i]) != 0;
+            for (int k = 0; k < LV_DOCK_CLEAR_PANELS; k++) {
+                if (!known && k_panels[k].roomFor != nullptr) s_room[i][k] = -1;
+            }
         }
     }
 
@@ -376,6 +395,13 @@ void lv_imgui_dock_save(void) {
         char lens[256];
         snprintf(key, sizeof(key), "Dock.Len.%s", s_side[i].key);
         if (lvDockClearLensFormat(s_len[i], lens, sizeof(lens)) > 0) {
+            lv_platform_config_set_string("LOGVIEWER", key, lens);
+        }
+        /* Not while a room is still not known: it stays not known. */
+        bool known = true;
+        for (int k = 0; k < LV_DOCK_CLEAR_PANELS; k++) known = known && s_room[i][k] >= 0;
+        snprintf(key, sizeof(key), "Dock.Room.%s", s_side[i].key);
+        if (known && lvDockClearLensFormat(s_room[i], lens, sizeof(lens)) > 0) {
             lv_platform_config_set_string("LOGVIEWER", key, lens);
         }
     }
@@ -674,6 +700,8 @@ static void apply_default(void) {
         s.size = sides.size[i];
         s_clear[i] = lvDockDefaultClear(i) != 0;
         lvDockDefaultLens(i, s_len[i]);
+        /* The default lengths have no room for a section in them. */
+        for (int k = 0; k < LV_DOCK_CLEAR_PANELS; k++) s_room[i][k] = 0;
         s_slot_drag[i] = false;
         s_want_default[i] = s.enabled && lvDockDefaultStackOf(i).count > 0;
     }
@@ -1135,6 +1163,15 @@ static void draw_side(int side, ImVec2 pos, ImVec2 size, int other, int extent) 
             }
             anyPanel = true;
             mins[i] = minLen;
+            if (wide && k_panels[p].roomFor != nullptr) {
+                /* A section the panel shows only some of the time came or
+                 * went (the Tank panel's lag section, with a recording that
+                 * has lag records or not): the length follows it. The room
+                 * is a height, so only a left or right sidebar's length. */
+                const int now = (int)ceilf(k_panels[p].roomFor(false));
+                s_len[side][p] = lvDockClearRoomLen(s_len[side][p], s_room[side][p], now, minLen);
+                s_room[side][p] = now;
+            }
             if (s_len[side][p] <= 0 && cur > 0) {
                 /* The first time the panel is here: its content's length,
                  * once that is known. Until then it stays as it is. */
