@@ -3805,9 +3805,13 @@ endif()
 add_executable(brainrec_split
     src/tools/brainrec_split.c
     src/bolo/brain_record_walk.c
-    src/bolo/brain_record_io.c)
+    src/bolo/brain_record_io.c
+    src/bolo/brain_value_pack.c
+    src/bolo/pool_render_host.c)
 bolo_apply_include_rules(brainrec_split runtime_only)
-target_link_libraries(brainrec_split PRIVATE SDL3::SDL3 zlibstatic libzstd_static)
+# lua_static: pool_render_host.c and brain_value_pack.c, for --render-pool (raw pool
+# blocks to JSON).
+target_link_libraries(brainrec_split PRIVATE SDL3::SDL3 zlibstatic libzstd_static lua_static)
 if(WIN32)
     target_link_libraries(brainrec_split PRIVATE psapi)
 endif()
@@ -3829,6 +3833,9 @@ set(BRAINTEST_SOURCES
     src/braintest/braintest_loadbrowser.cpp
     src/braintest/braintest_loadbrowser_segment.c
     src/braintest/braintest_loadbrowser_rename.c
+    src/braintest/braintest_session_ticks.c
+    src/braintest/braintest_tank_dead.c
+    src/bolo/brain_record_walk.c
     src/braintest/braintest_panel_registry.c
     src/braintest/braintest_panel_types.c
     src/braintest/braintest_panelwindow.cpp
@@ -4759,6 +4766,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     # commit, reconciling them when a round comes back, re-seating them when
     # an emptied lobby resets, and leaving a preview and a plain map alone.
     tests/unit/test_lobby_template.c
+    # Lobby bots on a scenario team held with fielded = false.
+    tests/unit/test_lobby_held_team_bots.c
     # A lobby map change keeping the bots and the host's script list.
     tests/unit/test_lobby_map_keeps_bots.c
     tests/unit/test_survival_lobby_round.c
@@ -4992,10 +5001,22 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_brain_view_data.c
     tests/unit/test_bolo_rand.c
     tests/unit/test_pf_corner_cut.c
+    tests/unit/test_pf_foot_boat_route.c
+    tests/unit/test_pf_start_heading.c
+    tests/unit/test_pf_route_keep.c
+    tests/unit/test_pf_offchain_root.c
     tests/unit/test_pf_edge_cost_sync.c
     tests/unit/test_pf_influence_tail.c
     # Bench (does nothing unless WB_BENCH=1): the decoy-square blocker step.
     tests/unit/test_bench_decoy_step.c
+    # GoalHunter shield scan: a pill on our own shell path blocks the aim.
+    tests/unit/test_shield_outgoing_pill.c
+    # GoalHunter shield scan: a friendly pill's cover by its health.
+    tests/unit/test_shield_pill_cover.c
+    # GoalHunter clear-aim test with the minimum clear lane, C next to Lua.
+    tests/unit/test_gh_attack_lane_parity.c
+    # GoalHunter pill take v2 evaluator, C copy next to the Lua copy.
+    tests/unit/test_gh_pt2_parity.c
     # BrainTest Load Session next/prev-segment lookup. The finder is plain C
     # and ImGui-free precisely so it can be linked here; the rest of the
     # browser (braintest_loadbrowser.cpp) is not part of this target.
@@ -5074,6 +5095,14 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_entity_sync.c
     tests/unit/test_entity_record.c
     tests/unit/test_brain_removed_items.c
+    src/bolo/brain_record_walk.c
+    tests/unit/test_pool_render_host.c
+    # The Load Session list's game length (BrainTest's tick-range lookup).
+    tests/unit/test_session_ticks.c
+    src/braintest/braintest_session_ticks.c
+    # The rule that keeps a dead tank off BrainTest's playback map.
+    tests/unit/test_braintest_tank_dead.c
+    src/braintest/braintest_tank_dead.c
     tests/unit/test_btr_container.c
     tests/unit/test_brainrec_split.c
     tests/unit/test_starts_pick_incremental.c
@@ -5216,6 +5245,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_replay_version_compat.c
     # The brain recorder's own version check.
     tests/unit/test_brainrec_version.c
+    tests/unit/test_brainrec_session_map.c
+    # The recorded Dijkstra box (brainrec v8).
+    tests/unit/test_brainrec_dij.c
     tests/unit/test_brain_record_host.c
     # Loopback transport tests: real UDP client + server over localhost,
     # sharing the loopback_harness fixture.
@@ -5547,6 +5579,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # panel reads: the process figures, each bot's Lua heap and the world
     # list counts of a hosted sim.
     tests/unit/test_memory_info.c
+    # Lua collection after the think, in the time left before the deadline
+    # (src/bolo/brain_gc.c), on bare lua_States.
+    tests/unit/test_brain_gc.c
     # Compiled standalone (libcurl-free) so the bearer-state, news-parser
     # and country-cache tests can link without dragging the rest of
     # winbolonet_core into the test binary. The test_stubs.c stubs cover
@@ -6458,6 +6493,8 @@ set(_unit_test_names
     brain_sandbox_hostile_astar_log_removed
     brain_sandbox_hostile_file_jail
     brain_sandbox_hostile_off_map_terrain
+    brain_sandbox_hostile_pack_encode
+    brain_sandbox_hostile_pack_decode
     brain_sandbox_jit_limits
     brain_msgh_budget_kill_no_traceback
     brain_msgh_real_error_keeps_traceback
@@ -6484,10 +6521,23 @@ set(_unit_test_names
     pf_dijkstra_no_solid_corner_cut
     pf_astar_no_solid_corner_cut
     pf_costto_no_solid_corner_cut
+    pf_foot_next_step_goes_to_boat
+    pf_foot_stale_boat_root_keeps_route
+    pf_start_heading_first_step_goes_ahead
+    pf_start_heading_off_keeps_old_costs
+    pf_route_keep_reprice_matches_slate
+    pf_route_keep_check_values
+    pf_offchain_lowest_g_not_root
+    pf_offchain_chain_rank_not_root
+    pf_offchain_dead_end_keeps_root
     pf_edge_sync_blocks_new_corner
     pf_edge_sync_prices_new_wall
     pf_edge_sync_matches_full_rebuild
     bench_decoy_step_first
+    shield_outgoing_pill_blocks
+    shield_pill_cover_walls
+    gh_attack_lane_parity
+    gh_pt2_parity
     pf_tail_reaches_radius_and_stops
     pf_tail_blocked_by_wall_and_sea
     pf_tail_neutral_zone_slows
@@ -6504,6 +6554,11 @@ set(_unit_test_names
     loadbrowser_rename_family_plan
     loadbrowser_rename_rejections
     loadbrowser_rename_applies
+    session_name_natural_sort
+    session_ticks_recorder_note
+    session_ticks_real_dirs
+    braintest_tank_status_dead
+    braintest_tank_render_dead
     countdown_abort_publishes_phase
     lobby_auto_unready_clears_humans_keeps_bots
     mapdir_root_fallback
@@ -6744,6 +6799,14 @@ set(_unit_test_names
     replay_v2_pill_health_nibble
     replay_v1_pill_health_nibble
     brainrec_version_rejects_old
+    brainrec_session_map_roundtrip
+    brainrec_dij_changed_only
+    brainrec_dij_boat_layer
+    brainrec_dij_reset_on_new_start
+    brainrec_dij_keyframe_equals_replay
+    brainrec_dij_old_file_loads
+    brainrec_dij_danger_box
+    brainrec_dij_src_heading
     brainrec_host_merge_by_tick
     brainrec_host_merge_mid_block_move
     brainrec_host_merge_other_version_rebuilt_brain
@@ -6979,6 +7042,8 @@ set(_unit_test_names
     entity_record_seek_lands_on_the_right_liveness
     brain_removed_items_info_masks
     brain_removed_items_recording_masks
+    pool_render_raw_matches_old_json
+    pool_render_json_and_bad_blocks
     btr_zstd_recording_reads_back
     btr_zstd_skip_across_blocks
     btr_gzip_skip_past_2gib
@@ -7351,6 +7416,9 @@ set(_unit_test_names
     sim_rules_shell_flight_follows
     sim_rules_brain_shot_follows
     sim_rules_worldsim_pill_follows
+    wsim_fix_drive_while_sliding
+    wsim_fix_hit_damage
+    wsim_fix_capture_exit
     sim_rules_boat_speed_follows
     sim_rules_obs_reload_follows
     sim_rules_describe_names
@@ -8021,6 +8089,9 @@ set(_unit_test_names
     lobby_template_no_mode_leaves_config
     lobby_template_seat_new_seat_base
     lobby_template_add_bot_takes_template
+    lobby_held_add_bot_seats_held
+    lobby_held_move_on_and_off
+    lobby_held_all_fielded_unchanged
     lobby_map_keeps_bots_plain
     lobby_map_keeps_bots_scenario
     lobby_map_keeps_bots_map_own_row
@@ -8362,6 +8433,11 @@ set(_unit_test_names
     scenario_lua_popup
     scenario_lua_wall_shots
     scenario_lua_acting_rows_refuse_a_check
+    brain_gc_auto_leaves_collector
+    brain_gc_slack_steps_in_free_time
+    brain_gc_slack_no_free_time_no_steps
+    brain_gc_slack_heap_limits
+    brain_gc_slack_step_time
     scenario_sandbox_removed_names_are_nil
     scenario_sandbox_bytecode_chunk_refused
     scenario_sandbox_collectgarbage_stop_refused
@@ -8870,6 +8946,7 @@ set(_unit_test_names
     bot_init_table_two_bots_keep_own
     bot_init_table_empty_when_none
     bot_init_arg_text_to_table
+    bot_init_cfg_tokens_all_count
     scenario_bot_init_lands
     scenario_bot_init_refusals
     scenario_bot_init_parked_seat

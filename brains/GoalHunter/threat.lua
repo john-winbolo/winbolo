@@ -810,6 +810,9 @@ function M.update(state, world, info)
     -- the builder is ours or an ally: a friendly LGM must stand AT its
     -- build site, so any friendly LGM within 3 tiles means team work.
     local ntt = raw_tt(tx, ty)
+    -- PT2_DOUBLE_TAKE_DISCOUNT: a wall square changed near a chain pill
+    -- drops that pill's cached double take (pt2_dbl.lua).
+    if state and state._pt2_dbl then require("pt2_dbl").on_tile(state, tx, ty, ntt) end
     if ntt == C.T_BUILDING or ntt == C.T_HALFBUILD then
       local ours = false
       if info and info.man_status ~= C.LGM_INTANK then

@@ -1,0 +1,735 @@
+-- =========================================================================
+-- pt2_attack.lua -- pill take v2 inside attack.lua's plan (2026-11-16)
+--
+-- One call, after_scan(), from the deferred shield scan in plan_position
+-- (attack.lua), on the tick v1's shield.scan has its answer:
+--
+--   * master PILLTAKE_V2_EVALUATOR off, debug run, PT2_SIDE_BY_SIDE_LOG on:
+--     v2 runs on the same inputs and logs one PT2_CMP line. v1's result is
+--     handed back unchanged; nothing in goal, state or world is written
+--     (except goal._pt2_viz while a pt2_* BrainTest layer is on, which only
+--     the drawing reads).
+--   * master on, the take is a protected one (goal._is_ppt) and v2 found a
+--     SAFE point: v2's result replaces v1's, in the shield.scan shape, so the
+--     standoff adoption, build_walls and the charge read it as they read
+--     v1's. goal._pt2 keeps the chain. v2 found nothing safe: v1 stays.
+--
+-- Its own module so attack.lua gains no new local or upvalue.
+-- =========================================================================
+
+local C      = require("constants")
+local U      = require("util")
+local cpf    = require("cpathfinder")
+local PC     = require("pill_cover")
+local V2     = require("pilltake_v2")
+local shield = require("attack_shield")
+local print2 = require("print2")
+local PV     = require("pt2_viz")
+
+local M = {}
+
+-- Headless debug recordings keep the pt2_* BrainTest layers (default off,
+-- so a winbolods -brain-debug run had none of them to replay).
+if BRAIN_DEBUG_MODE then
+  if C.PT2_RECORD_LAYERS then
+    local viz = require("viz")
+    for _, id in ipairs(PV.LAYERS) do viz.RECORD_ON[id] = true end
+  end
+end
+
+local floor, abs, sqrt = math.floor, math.abs, math.sqrt
+local clock_us = clock_us or function() return floor(os.clock() * 1e6) end
+
+-- v1's green set (plan_position steps 2 and 3): clear-shot spots with an
+-- adjusted score under 10, or else the best clear-shot spot and all within
+-- 25% of it.
+local function green_set(spots)
+  local greens, los = {}, {}
+  for _, s in ipairs(spots or {}) do
+    if s.has_los then
+      los[#los + 1] = s
+      if s._adj_score and s._adj_score < 10 then greens[s] = true end
+    end
+  end
+  if next(greens) == nil and #los > 0 then
+    table.sort(los, function(a, b) return (a._adj_score or math.huge) < (b._adj_score or math.huge) end)
+    local th = (los[1]._adj_score or math.huge) * 1.25
+    for _, s in ipairs(los) do
+      if (s._adj_score or math.huge) <= th then greens[s] = true else break end
+    end
+  end
+  return greens
+end
+
+-- The nearest spot of v1's ring by angle.
+local function nearest_spot(spots, deg)
+  local best, bd = nil, nil
+  for _, s in ipairs(spots or {}) do
+    if s.deg then
+      local d = abs(((s.deg - deg) + 540) % 360 - 180)
+      if not bd or d < bd then best, bd = s, d end
+    end
+  end
+  return best
+end
+
+-- A pill's anger now: world.lua keeps the anger of the tick it last saw
+-- the pill (anger_tick) and it falls 1 / PILL_ANGER_DECAY per tick since.
+function M.anger_now(p, now)
+  local a = p and p.anger or 0
+  if a <= 0 then return 0 end
+  local dt = (now or 0) - (p.anger_tick or now or 0)
+  if dt > 0 then a = a - dt / (C.PILL_ANGER_DECAY or 3000) end
+  return a > 0 and a or 0
+end
+
+-- inp for v2 from the bot's own view. The score is v1's: a point next to a
+-- green spot costs its Dijkstra travel (plus the human-decoy cost, as v1),
+-- any other point 10000 + the spot's adjusted score (so greens always win),
+-- except on a finish: then every point costs its travel only.
+function M.build_inp(state, goal, info, world, pill, no_builder, npb, radius, now)
+  local inp = V2.knob_inp(C, {})
+  -- debug profile (C.PT2_PROF_LOG): the world_inp part of build_inp
+  local tw = BRAIN_DEBUG_MODE and C.PT2_PROF_LOG and clock_us()
+  V2.world_inp(world, C, U, PC, cpf, inp, no_builder)
+  if tw then M.prof_world_us = clock_us() - tw end
+  inp.A = nil
+  for _, p in ipairs(inp.pills) do
+    if p == pill or (p.mx == pill.mx and p.my == pill.my and not p.in_tank) then inp.A = p; break end
+  end
+  if not inp.A then return nil end
+  inp.radius = radius
+  inp.num_pill_blockers = npb
+  -- PT2_FINISH_NO_COVER_MAX_ANGER: our armour and each pill's anger now
+  inp.armour = info.armour or 0
+  -- PT2_LIVE_SHELL: the shadow's shells walk the live rules
+  if C.PT2_LIVE_SHELL then V2.live_shell(inp.env, info.rules) end
+  -- PT2_TANKSHOT_BLOCKERS: boats and the tanks we see stop our own shell
+  if C.PT2_TANKSHOT_BLOCKERS then V2.tank_blockers(inp.env, info) end
+  inp.anger_of = function(p) return M.anger_now(p, now) end
+  local goalA = inp.A
+  local curA = goalA
+  inp.banned = function(deg)
+    local bans = state.banned_pill_angles and state.banned_pill_angles[curA.my * 256 + curA.mx]
+    if not bans then return false end
+    local exp = bans[floor((deg % 360) / 5) * 5]
+    return exp ~= nil and now < exp
+  end
+  -- evaluate_group: another pill of the group as A. The goal's scan spots
+  -- are angles around the target, so they count only for the target.
+  inp.set_A = function(p) curA = p end
+  local spots = goal.scan_spots
+  local greens = green_set(spots)
+  local boat = info.inboat and 1 or 0
+  local tmx = floor((info.tankx or 0) / 256)
+  local tmy = floor((info.tanky or 0) / 256)
+  -- A finish (PT2_FINISH_NO_COVER_MAX_ANGER: A's ray needs no cover) is
+  -- a charge with a swerve: v1's green filter is a blocker-era ranking, so
+  -- it must not push the finish to a far spot. A finish point costs its
+  -- travel only. pen_n / pen_skip_n count the points for the log.
+  -- The travel of a finish point also leaves out A's own danger: the
+  -- Dijkstra cost along the same path less A's stamped danger on it
+  -- (threat.pill_contrib[A], the C subtract lookup goals.lua uses for a
+  -- pill it will kill on the way). The danger of every other hostile pill
+  -- stays in. noA_n counts the points priced so, for the log.
+  inp.pen_n, inp.pen_skip_n, inp.noA_n = 0, 0, 0
+  local th = package.loaded["threat"]
+  local contrib_A, contrib_of = nil, nil
+  inp.score_fn = function(deg, mx, my, cx, cy)
+    local s = (curA == goalA) and nearest_spot(spots, deg) or nil
+    local fin = V2.finish_ok(inp, curA)
+    if s and not greens[s] then
+      if fin then
+        inp.pen_skip_n = inp.pen_skip_n + 1
+      else
+        inp.pen_n = inp.pen_n + 1
+        return 10000 + (s._adj_score or 1000)
+      end
+    end
+    local dij
+    if fin then
+      if contrib_of ~= curA then
+        contrib_of = curA
+        contrib_A = th and th.pill_contrib and th.pill_contrib[curA.my * 256 + curA.mx] or nil
+      end
+      if contrib_A then
+        dij = cpf.dijkstra_lookup_subtract_by_kind(cpf.KIND_NORMAL, mx, my, boat, contrib_A)
+        inp.noA_n = inp.noA_n + 1
+      end
+    end
+    if not dij then dij = cpf.dijkstra_lookup_by_kind(cpf.KIND_NORMAL, mx, my, boat) end
+    if dij >= 1e29 then dij = cpf.estimate_cost(tmx, tmy, mx, my, boat) end
+    return dij + ((s and s._hd_cost) or 0)
+  end
+  -- PT2_CHAIN_CLAIM: chain pills an ally holds against us (pt2_claim.keep)
+  if C.PT2_CHAIN_CLAIM then
+    inp.chain_skip = require("pt2_claim").chain_skip(state, inp, now, (info and info.player_number) or -1)
+  end
+  return inp
+end
+
+-- v1's winner: point, aim, blockers and the cover they give.
+-- approach_skip.shield_check reads the take's plan with it too: a v2 plan
+-- (to_scan_result) marks each planned square pt2_kind "pill" or "wall".
+local function v1_view(world, sscan, npb)
+  local b = sscan and sscan.best
+  if not b or (b.score or 0) <= 0 then return nil end
+  local aim = b.best_aim_idx and b.aims and b.aims[b.best_aim_idx]
+  local act, pot, extra, cover = {}, {}, {}, 0
+  if aim then
+    for _, bl in ipairs(aim.blockers or {}) do
+      act[#act + 1] = bl
+      if bl.kind == "friendly_pill" then
+        cover = cover + PC.pill_walls(PC.pill_on_square(world, bl.mx, bl.my)) * (C.SHIELD_WALL_COVER_SHOTS or 5)
+      else
+        cover = cover + (C.SHIELD_WALL_COVER_SHOTS or 5)
+      end
+    end
+    local left = npb
+    for _, bl in ipairs(aim.potential_blockers or {}) do
+      pot[#pot + 1] = bl
+      local sh = (left > 0) and 15 or (C.SHIELD_WALL_COVER_SHOTS or 5)
+      if bl.pt2_kind then sh = (bl.pt2_kind == "pill") and 15 or (C.SHIELD_WALL_COVER_SHOTS or 5) end
+      if left > 0 then left = left - 1 end
+      extra[bl.my * 256 + bl.mx] = sh
+      cover = cover + sh
+    end
+  end
+  return { cx = b.cx, cy = b.cy, deg = b.deg, aim = b.best_aim_idx, act = act, pot = pot,
+           extra = extra, cover = cover }
+end
+
+M.v1_view = v1_view
+
+local function sq_list(list)
+  local p = {}
+  for _, s in ipairs(list or {}) do p[#p + 1] = string.format("(%d,%d)", s.mx, s.my) end
+  return #p > 0 and table.concat(p, " ") or "-"
+end
+
+-- Agreement test for the log (tolerance: proposal, awaiting Andrew's value).
+M.CMP_TOL_WU = 64
+
+-- The mode for the logs: SINGLE or HOLD (a chain), "+FINISH" (or FINISH
+-- alone for a single take) when A's ray had no cover need.
+local function mode_of(b)
+  if not b then return "-" end
+  if b.finish then return b.chain_mode and "HOLD+FINISH" or "FINISH" end
+  return b.chain_mode and "HOLD" or "SINGLE"
+end
+
+local function cmp_line(now, pill, inp, res, v1, cost_us, drive, do_print)
+  local b = res and res.best
+  local v2ok = b and b.safe
+  local diff, d_wu = "same", nil
+  if v1 and v2ok then
+    local dx, dy = (v1.cx - b.cx) * 256, (v1.cy - b.cy) * 256
+    d_wu = sqrt(dx * dx + dy * dy)
+    if b.kills >= 2 then diff = "chain"
+    elseif d_wu > M.CMP_TOL_WU then diff = "so" end
+  elseif v1 and not v2ok then diff = "none_v2"
+  elseif v2ok and not v1 then diff = "none_v1"
+  elseif not v1 and not v2ok then diff = "none_both" end
+  local why = "-"
+  -- v1's point priced by v2's score (log only; read the counts first, the
+  -- call adds to them)
+  local pen_n, pen_skip_n, noA_n = inp.pen_n or 0, inp.pen_skip_n or 0, inp.noA_n or 0
+  local v1_score = v1 and v1.deg and inp.score_fn
+    and inp.score_fn(v1.deg, floor(v1.cx), floor(v1.cy), v1.cx, v1.cy) or nil
+  if v1 then
+    why = V2.judge(inp, floor(v1.cx * 256), floor(v1.cy * 256), v1.extra, v1.aim) or "-"
+  end
+  local chain, plan = "-", "-"
+  if b then
+    local c = {}
+    for _, p in ipairs(b.chain) do c[#c + 1] = V2.pill_name(inp, p) end
+    chain = table.concat(c, "-")
+    local pl = {}
+    for _, s in ipairs(b.plan or {}) do pl[#pl + 1] = string.format("(%d,%d)%s", s.mx, s.my, s.kind == "pill" and "P" or "W") end
+    if #pl > 0 then plan = table.concat(pl, " ") end
+  end
+  local line = string.format(
+    "PT2_CMP t=%d pill=(%d,%d) hp=%d | v1: so=%s deg=%s aim=%s act=%s pot=%s cover=%s"
+    .. " | v2: so=%s deg=%s aim=%s chain=%s mode=%s kills=%s need=%s have=%s safe=%s lee=%s plan=%s"
+    .. " | diff=%s d_wu=%s why=%s drive=%s cost_us=%d evals=%d green_pen=%d green_pen_skip=%d travel_noA=%d noA_pts=%d v1_score=%s v2_score=%s",
+    now, pill.mx, pill.my, pill.health or 0,
+    v1 and string.format("(%.2f,%.2f)", v1.cx, v1.cy) or "-",
+    v1 and string.format("%.1f", v1.deg or 0) or "-",
+    v1 and tostring(v1.aim) or "-",
+    v1 and sq_list(v1.act) or "-", v1 and sq_list(v1.pot) or "-",
+    v1 and tostring(v1.cover) or "-",
+    b and string.format("(%.2f,%.2f)", b.cx, b.cy) or "-",
+    b and string.format("%.1f", b.deg) or "-",
+    b and tostring(b.aim_idx) or "-",
+    chain, mode_of(b),
+    b and tostring(b.kills) or "-", b and tostring(b.need) or "-", b and tostring(b.have) or "-",
+    tostring(v2ok and true or false), b and tostring(b.leeway) or "-", plan,
+    diff, d_wu and string.format("%.0f", d_wu) or "-", why,
+    drive and "v2" or "v1", cost_us, res and res.n_eval or 0, pen_n, pen_skip_n,
+    noA_n > 0 and 1 or 0, noA_n,
+    v1_score and string.format("%.1f", v1_score) or "-", b and string.format("%.1f", b.score or 0) or "-")
+  if do_print then print2(line) end
+  return line
+end
+
+-- Called with v1's sscan; returns the sscan to use. See the file header.
+-- a = { state, goal, info, world, pill, sscan, no_builder, npb, radius, now }
+-- Does v2 run for this take? false: after_scan hands v1's sscan back as is.
+local function v2_wanted(goal)
+  local master = C.PILLTAKE_V2_EVALUATOR
+  local log = BRAIN_DEBUG_MODE and C.PT2_SIDE_BY_SIDE_LOG and _G._PRINT2_ENABLED
+  if not master and not log then return false end
+  if master and not goal._is_ppt and not log then return false end
+  return true
+end
+
+-- The part of after_scan after the evaluate: inp/res from build_inp and
+-- evaluate_group, cost their time in us. The split run (PT2_AFTER_SCAN_SPLIT)
+-- ends here too, so both give the same answer for the same inp and res.
+local function finish(a, inp, res, cost)
+  local master = C.PILLTAKE_V2_EVALUATOR
+  local log = BRAIN_DEBUG_MODE and C.PT2_SIDE_BY_SIDE_LOG and _G._PRINT2_ENABLED
+  local goal, pill = a.goal, a.pill
+  local viz_on = BRAIN_DEBUG_MODE and PV.any_on()
+  if not inp or not res then return a.sscan end
+  -- PT2_DOUBLE_TAKE_DISCOUNT: pt2_dbl's first shadow run uses this as its cost
+  if C.PT2_DOUBLE_TAKE_DISCOUNT and a.state then a.state._pt2_v2_last_us = cost end
+  -- before cmp_line: its v1 price adds to the counts
+  local noA_n = inp.noA_n or 0
+  local drive = master and goal._is_ppt and res.best and res.best.safe
+  local v1 = (log or viz_on) and v1_view(a.world, a.sscan, a.npb) or nil
+  local line = (log or viz_on) and cmp_line(a.now, pill, inp, res, v1, cost, drive, log) or nil
+  -- BrainTest layers: goal._pt2_viz is read only by pt2_viz.draw.
+  if viz_on then PV.capture(goal, inp, res, v1, line, a.now) end
+  if not drive then
+    if master then goal._pt2 = nil end
+    return a.sscan
+  end
+  local b = res.best
+  local standoff = (a.sscan and a.sscan.standoff)
+    or { cx = goal.standoff_fx, cy = goal.standoff_fy, mx = goal.standoff_mx, my = goal.standoff_my }
+  -- the pill the tank shoots: the target, or another pill of its group
+  -- whose chain kills the target (evaluate_group)
+  local A = res.A or pill
+  local out = V2.to_scan_result(res, A, standoff, function(mx, my)
+    return shield.adjacent_friendly_pill(a.world, mx, my)
+  end)
+  out.num_pill_blockers = a.npb
+  out.pill_wall_equiv = C.PPT_PILL_WALL_EQUIV or 3.0
+  goal._pt2 = out.chain
+  goal._pt2.tick = a.now
+  goal._pt2.goal_target = { mx = pill.mx, my = pill.my }
+  if A ~= pill then
+    -- retarget: attack.lua takes sscan.pill as the pill for this take
+    local id = inp.ids and inp.ids[A]
+    if id then goal.target_id = id end
+    goal.mx, goal.my = A.mx, A.my
+    out.pt2_retarget = true
+  end
+  -- hold point: the tank waits here until every planned wall stands
+  local h = b.hold
+  if h then
+    out.hold = { fx = h.fx, fy = h.fy, safe = h.safe }
+    goal._pt2.hold = out.hold
+  end
+  print2(string.format("PT2_DRIVE t=%d A=(%d,%d) goal_target=(%d,%d) so=(%.2f,%.2f) deg=%.1f aim=%d nudge=%d mode=%s A_hp=%d anger=%.3f armour=%d kills=%d build=%d have=%d need=%d depth=%s score=%.0f travel=%.0ft quick=%st band=%d hold=%s green_pen=%d green_pen_skip=%d travel_noA=%d noA_pts=%d",
+    a.now, A.mx, A.my, pill.mx, pill.my, b.cx, b.cy, b.deg, b.aim_idx, b.nudge_wu or 0,
+    mode_of(b), A.health or 0, M.anger_now(A, a.now), inp.armour or 0, b.kills, #b.plan, b.have, b.need,
+    tostring(b.depth), b.score or 0, (b.score or 0) * inp.ticks_per_score,
+    b.tier_min and string.format("%.0f", b.tier_min * inp.ticks_per_score) or "-", inp.travel_band_ticks,
+    h and string.format("(%.2f,%.2f)%s", h.fx, h.fy, h.safe and "" or ":UNSAFE:" .. tostring(h.why)) or "-",
+    inp.pen_n or 0, inp.pen_skip_n or 0, noA_n > 0 and 1 or 0, noA_n))
+  return out
+end
+
+function M.after_scan(a)
+  if not v2_wanted(a.goal) then return a.sscan end
+  local t0 = clock_us()
+  -- A v2 bug must never cost the take: v1's result stands. A budget kill
+  -- is passed on, as attack.lua does for shield.scan.
+  local viz_on = BRAIN_DEBUG_MODE and PV.any_on()
+  local ok, inp, res = pcall(function()
+    local i = M.build_inp(a.state, a.goal, a.info, a.world, a.pill, a.no_builder, a.npb, a.radius, a.now)
+    if not i then return nil, nil end
+    if viz_on then i.keep_all = true end
+    return i, V2.evaluate_group(i)
+  end)
+  if not ok then
+    local msg = tostring(inp)
+    if msg:find("tick_budget_exceeded", 1, true) then error(inp, 0) end
+    print("[pt2] evaluator error, v1 kept: " .. msg)
+    return a.sscan
+  end
+  if not inp or not res then return a.sscan end
+  return finish(a, inp, res, clock_us() - t0)
+end
+
+-- ── SHIELD_SCAN_PENDING_SURVIVES_V2: v2 in one go, across a budget kill ──
+-- With PT2_AFTER_SCAN_SPLIT off, attack.lua runs v2 in one go on the plan
+-- tick, after v1's shield.scan. Before, attack.lua cleared
+-- goal._shield_scan_pending before that run and set goal._shield_scan only
+-- after it, so a budget kill inside v2 left neither: the next tick drove in
+-- with no plan (20261121_002624, bot1 t=9247 and t=9685: a safe double take
+-- found, no walls built). With the knob on:
+--   * attack.lua keeps the flag until goal._shield_scan is set
+--     (M.keeps_pending), as the split run does;
+--   * the next tick takes v1's answer from v1's own cache (same scan key,
+--     SHIELD_SCAN_CACHE_TICKS) and runs v2 again with a fresh budget;
+--   * a marker written before the run counts the kills on this scan key;
+--     after SHIELD_SCAN_BLACKLIST_TRIES kills v2 is given up for the key
+--     and v1's answer stands (as an evaluator error does). The marker goes
+--     when a run ends, when the key changes, or after
+--     SHIELD_SCAN_BLACKLIST_TICKS.
+-- Off: after_scan as before.
+function M.keeps_pending(split_pa)
+  return (split_pa or C.SHIELD_SCAN_PENDING_SURVIVES_V2) and true or false
+end
+
+function M.one_go(a, key)
+  if not C.SHIELD_SCAN_PENDING_SURVIVES_V2 then return M.after_scan(a) end
+  if not v2_wanted(a.goal) then return a.sscan end
+  local st = a.state or {}
+  local now = a.now or 0
+  local att = st._pt2_v2_attempt
+  if att and (att.key ~= key or now - (att.tick or 0) > (C.SHIELD_SCAN_BLACKLIST_TICKS or 250)) then
+    att = nil
+    st._pt2_v2_attempt = nil
+  end
+  if att and (att.count or 0) >= (C.SHIELD_SCAN_BLACKLIST_TRIES or 2) then
+    if C.PILLTAKE_V2_EVALUATOR then a.goal._pt2 = nil end
+    M.last_run = { parts = 1, work = 0, kills = att.count, ticks = 0, giveup = "kills" }
+    print2(string.format("PT2_ONEGO_GIVEUP t=%d pill=(%d,%d) kills=%d -- v1 shield.scan kept",
+      now, a.pill.mx, a.pill.my, att.count))
+    return a.sscan
+  end
+  if att then
+    att.count, att.tick = (att.count or 0) + 1, now
+    print2(string.format("PT2_ONEGO_RETRY t=%d pill=(%d,%d) try=%d", now, a.pill.mx, a.pill.my, att.count))
+  else
+    st._pt2_v2_attempt = { key = key, count = 1, tick = now }
+  end
+  -- a budget kill unwinds from here with the marker set
+  local out = M.after_scan(a)
+  st._pt2_v2_attempt = nil
+  return out
+end
+
+-- ── PT2_AFTER_SCAN_SPLIT: v2 after the shield scan, in parts over ticks ──
+-- The plan tick (attack.lua's deferred shield scan) runs only v1's
+-- shield.scan. v2 runs on the next brain ticks, in parts: part 0 is
+-- build_inp, part 1 is v2 on the target, each later part is v2 with one
+-- more pill of the group as A (pilltake_v2.group_step). The parts are
+-- spread over at most PT2_AFTER_SCAN_MAX_TICKS work ticks: each work tick
+-- runs its share of the parts left, and more while this think so far plus
+-- one part's estimate stays under the tick target (pt2_dbl's safety net).
+-- The last work tick runs all parts left. finish() then makes the same
+-- answer as after_scan in one go.
+--
+-- Budget kills, as attack.lua does for v1's shield.scan:
+--   * attack.lua keeps goal._shield_scan_pending until goal._shield_scan is
+--     set, so the take stays in its plan, as before v1's answer.
+--   * goal._pt2_split keeps the v1 result and the parts done. A part marks
+--     itself (sp.in_part) before it starts and clears the mark when it
+--     ends; a kill leaves the mark, and the next tick puts the part's
+--     inputs back and runs that part again. The parts done stay done.
+--   * the same part killed SHIELD_SCAN_BLACKLIST_TRIES times: give up v2 for
+--     this plan, keep v1's sscan (PT2_SPLIT_GIVEUP), as an evaluator error
+--     does today. So does a run dropped SHIELD_SCAN_BLACKLIST_TRIES times
+--     in a row.
+--   * finish() (the step after the last part) is marked the same way.
+-- A killed tick is not a work tick. Each part and finish() can be killed
+-- once and run again (the second kill gives up), so a run that ends with
+-- v2's answer takes at most MAX_TICKS + parts + 1 ticks after the plan tick
+-- (parts = 2 + the group pills in pill range; 5 + 2 + n). A run that gives
+-- up ends on the tick after the second kill.
+--
+-- The run is dropped (and starts again from v1's scan) when it goes stale:
+-- the v1 scan key changes (target square or health, standoff, angle, scan
+-- radius, LGM dead or alive, our armour, carried pills), the target id
+-- changes, the target's owner changes, a pill of v2's input list changes
+-- (health, owner, square, carried), or it is older than
+-- SHIELD_SCAN_CACHE_TICKS (v1's result would be old in v1's own cache).
+
+local function snap_pills(inp)
+  local sn = {}
+  for i, p in ipairs(inp.pills) do
+    sn[i] = { p, p.health or 0, p.owner, p.mx, p.my, p.in_tank and true or false }
+  end
+  return sn
+end
+
+local function snap_changed(sn)
+  for _, r in ipairs(sn) do
+    local p = r[1]
+    if (p.health or 0) ~= r[2] or p.owner ~= r[3] or p.mx ~= r[4] or p.my ~= r[5]
+       or (p.in_tank and true or false) ~= r[6] then
+      return true
+    end
+  end
+  return false
+end
+
+-- The last run's outcome, for the tests (the log lines are debug only):
+-- { parts, work, kills, ticks, giveup = why or nil }, and the last drop's why.
+M.last_run, M.last_drop = nil, nil
+
+-- The open run for this plan, or nil (none, or dropped as stale).
+function M.split_get(goal, pill, key, now)
+  local sp = goal._pt2_split
+  if not sp then return nil end
+  local why
+  if sp.key ~= key then why = "key"
+  elseif goal.target_id ~= sp.target_id then why = "target"
+  elseif pill.owner ~= sp.owner then why = "owner"
+  elseif now - sp.t0 > (C.SHIELD_SCAN_CACHE_TICKS or 25) then why = "age"
+  elseif sp.snap and snap_changed(sp.snap) then why = "pill"
+  end
+  if not why then return sp end
+  goal._pt2_split = nil
+  goal._pt2_split_drops = (goal._pt2_split_drops or 0) + 1
+  M.last_drop = why
+  print2(string.format("PT2_SPLIT_DROP t=%d pill=(%d,%d) why=%s parts=%d ticks=%d drops=%d",
+    now, pill.mx, pill.my, why, sp.n, now - sp.t0, goal._pt2_split_drops))
+  return nil
+end
+
+-- Give up v2 for this plan: v1's sscan, as after_scan's evaluator error.
+local function giveup(goal, pill, sscan, now, why, sp)
+  goal._pt2_split = nil
+  goal._pt2_split_drops = nil
+  if C.PILLTAKE_V2_EVALUATOR then goal._pt2 = nil end
+  M.last_run = { parts = sp and sp.n or 0, work = sp and sp.work or 0, kills = sp and sp.n_kill or 0,
+                 ticks = sp and now - sp.t0 or 0, giveup = why }
+  print2(string.format("PT2_SPLIT_GIVEUP t=%d pill=(%d,%d) why=%s part=%s kills=%d parts_done=%d -- v1 shield.scan kept",
+    now, pill.mx, pill.my, why, sp and tostring(sp.last_kill) or "-", sp and sp.n_kill or 0, sp and sp.n or 0))
+  return sscan
+end
+
+local function may_part(state, est_ms)
+  local br = _G.brain
+  local tgt = br and br.targetMs or 0
+  if tgt <= 0 then return true end
+  local t0 = state and state._think_t0_us
+  if not t0 then return false end
+  local s = state._pt2_dbl
+  local rest = (C.PT2_DBL_PART_LEAVE_REST and s and s.rest_ms) or 0
+  return (clock_us() - t0) / 1000 + est_ms + rest < tgt
+end
+
+-- Run part sp.n. Returns true when the run is done. A budget kill is passed
+-- on with sp.in_part still set.
+local function run_part(sp, a)
+  local k = sp.n
+  local ok, r
+  sp.in_part = k
+  local t0 = clock_us()
+  if k == 0 then
+    ok, r = pcall(function()
+      local i = M.build_inp(a.state, a.goal, a.info, a.world, a.pill, a.no_builder, a.npb, a.radius, a.now)
+      if i and BRAIN_DEBUG_MODE and PV.any_on() then i.keep_all = true end
+      if i then sp.g, sp.snap = V2.group_begin(i), snap_pills(i) end
+      sp.inp, sp.a = i or false, a
+      return not i
+    end)
+  else
+    local inp, g = sp.inp, sp.g
+    sp.save = { g.i, inp.pen_n, inp.pen_skip_n, inp.noA_n }
+    ok, r = pcall(V2.group_step, g)
+  end
+  local us = clock_us() - t0
+  if not ok then
+    local msg = tostring(r)
+    if msg:find("tick_budget_exceeded", 1, true) then error(r, 0) end
+    sp.in_part = nil
+    print("[pt2] evaluator error, v1 kept: " .. msg)
+    return nil, msg
+  end
+  sp.in_part = nil
+  sp.n = k + 1
+  if BRAIN_DEBUG_MODE then sp.ms[#sp.ms + 1] = us / 1000 end
+  sp.us = sp.us + us
+  local st = a.state
+  if st then
+    local al = C.CAPACITY_EWMA_ALPHA or 0.2
+    st._pt2_split_est_ms = st._pt2_split_est_ms and (st._pt2_split_est_ms * (1 - al) + (us / 1000) * al) or us / 1000
+  end
+  return r
+end
+
+-- A part that started and did not end (a budget kill): put back what the
+-- part changed before its evaluate came back.
+local function restore(sp)
+  local inp, g, sv = sp.inp, sp.g, sp.save
+  if not (inp and g and sv) then return end
+  g.i, inp.pen_n, inp.pen_skip_n, inp.noA_n = sv[1], sv[2], sv[3], sv[4]
+  inp.A = g.goalA
+  if inp.set_A then inp.set_A(g.goalA) end
+end
+
+-- One tick of the split run. sp: M.split_get's answer. a: after_scan's
+-- arguments, a.sscan v1's result. Returns (sscan, true) when the plan is
+-- ready, (nil, false) while the run goes on (the take waits in its plan).
+function M.split_step(sp, a, key)
+  local goal, now = a.goal, a.now
+  if not sp then
+    if not v2_wanted(goal) then return a.sscan, true end
+    local tries = C.SHIELD_SCAN_BLACKLIST_TRIES or 2
+    if (goal._pt2_split_drops or 0) >= tries then
+      return giveup(goal, a.pill, a.sscan, now, "drops", nil), true
+    end
+    -- the plan tick: v1 only
+    goal._pt2_split = { key = key, t0 = now, target_id = goal.target_id, owner = a.pill.owner,
+                        sscan = a.sscan, n = 0, ms = {}, us = 0, kills = {}, n_kill = 0, work = 0 }
+    return nil, false
+  end
+  local tries = C.SHIELD_SCAN_BLACKLIST_TRIES or 2
+  if sp.in_part then
+    local k = sp.in_part
+    sp.in_part = nil
+    sp.kills[k] = (sp.kills[k] or 0) + 1
+    sp.n_kill, sp.last_kill = sp.n_kill + 1, k
+    if k ~= "fin" then restore(sp) end
+    print2(string.format("PT2_SPLIT_KILL t=%d pill=(%d,%d) part=%s kills=%d/%d",
+      now, a.pill.mx, a.pill.my, tostring(k), sp.kills[k], tries))
+    if sp.kills[k] >= tries then
+      return giveup(goal, a.pill, sp.sscan, now, "kills", sp), true
+    end
+  end
+  -- the answer is made: a kill after it (in attack.lua, before the plan is
+  -- set) gets the same answer again
+  if sp.out then return sp.out, true end
+  if not sp.done then
+    local maxt = C.PT2_AFTER_SCAN_MAX_TICKS or 5
+    local left = maxt - sp.work
+    local need = 1
+    if left <= 1 then
+      need = math.huge
+    elseif sp.g and sp.g.list then
+      need = math.ceil(V2.group_parts_left(sp.g) / left)
+    end
+    local st = a.state
+    local ran, done, err = 0, false, nil
+    repeat
+      if ran >= need and not may_part(st, (st and st._pt2_split_est_ms) or 0) then break end
+      done, err = run_part(sp, (sp.n == 0) and a or sp.a)
+      if err then return giveup(goal, a.pill, sp.sscan, now, "error", sp), true end
+      ran = ran + 1
+    until done
+    sp.work = sp.work + 1
+    if not done then return nil, false end
+    sp.done = true
+  end
+  -- finish is marked as a part too ("fin"): killed TRIES times, v1 stays
+  sp.in_part = "fin"
+  local out = finish(sp.a, sp.inp or nil, sp.g and sp.g.res, sp.us)
+  sp.in_part = nil
+  sp.out = out
+  M.last_run = { parts = sp.n, work = sp.work, kills = sp.n_kill, ticks = now - sp.t0 }
+  if BRAIN_DEBUG_MODE then
+    local ms = {}
+    for i, v in ipairs(sp.ms) do ms[i] = string.format("%.2f", v) end
+    print2(string.format("PT2_SPLIT t=%d pill=(%d,%d) parts=%d ms=%s total_ms=%.2f ticks=%d work_ticks=%d kills=%d start=%d",
+      now, a.pill.mx, a.pill.my, sp.n, table.concat(ms, ","), sp.us / 1000, now - sp.t0, sp.work, sp.n_kill, sp.t0))
+  end
+  goal._pt2_split_drops = nil
+  return out, true
+end
+
+-- attack.lua: the plan is set (goal._shield_scan), the run is over.
+function M.split_done(goal)
+  goal._pt2_split = nil
+end
+
+-- ── HOLD chains ──────────────────────────────────────────────────────────
+-- The next live pill of the chain after the current target, or nil.
+local function next_pill(goal, world)
+  local ch = goal._pt2
+  if not ch or ch.mode ~= "HOLD" or not ch.ids then return nil end
+  local cur = ch.step or 1
+  if ch.ids[cur] ~= goal.target_id then return nil end
+  for k = cur + 1, #ch.ids do
+    local id = ch.ids[k]
+    local p = id and world.pills and world.pills[id]
+    if p and (p.health or 0) > 0 and not p.in_tank and not p.pos_unknown then return p, id, k end
+  end
+  return nil
+end
+
+function M.has_next(goal, world)
+  return next_pill(goal, world) ~= nil
+end
+
+-- The current chain pill is dead: aim at the next one from this same spot
+-- and go back to the PPT aim path (in_range_aim -> finetune -> shoot_pill).
+-- Returns true when the goal now targets the next pill.
+function M.chain_next(state, goal, world, info, now)
+  local B, bid, k = next_pill(goal, world)
+  if not B then return false end
+  local AT = require("attack")
+  local idx, awx, awy = AT._clear_aim_from_world(info.tankx, info.tanky, B.mx, B.my, world, nil)
+  if not idx then
+    print2(string.format("PT2_CHAIN_STOP t=%d dead=(%d,%d) next=(%d,%d) id=%s: no clear aim from here",
+      now, goal.mx, goal.my, B.mx, B.my, tostring(bid)))
+    return false
+  end
+  print2(string.format("PT2_CHAIN_NEXT t=%d dead=(%d,%d) next=(%d,%d) id=%s step=%d/%d aim=%d",
+    now, goal.mx, goal.my, B.mx, B.my, tostring(bid), k, #goal._pt2.ids, idx))
+  goal._pt2.step = k
+  -- the finish rule was for the pill just killed, not for the next one
+  goal._pt2.finish = nil
+  goal.target_id = bid
+  goal.mx, goal.my = B.mx, B.my
+  AT._set_goal_aim(goal, B.mx, B.my, idx, awx, awy)
+  local sc = goal._shield_scan
+  if sc then sc.pill = B; sc.pill_hp = B.health end
+  goal.substate             = "in_range_aim"
+  goal.aim_tick             = now
+  goal._aim_locked          = nil
+  goal._pre_aim_locked      = nil
+  goal._finetune_taps       = 0
+  goal._finetune_start      = nil
+  goal._finetune_reached_tap = nil
+  goal._finetune_path       = nil
+  goal._finetune_on_pill    = nil
+  goal._shoot_reach_checked = nil
+  goal._shoot_first_steer   = nil
+  -- a new pill: new shot accounting and a new no-progress clock
+  goal._attack_start_tick   = nil
+  goal._charge_start_hp     = nil
+  goal._bullets_needed      = nil
+  goal._kill_attempt        = nil
+  goal._shoot_progress_hp   = nil
+  goal._shoot_progress_tick = nil
+  goal._on_target_in_flight = nil
+  return true
+end
+
+-- ── Finish re-plan (PT2_FINISH_NO_COVER_MAX_ANGER) ───────────────────────
+-- Called each think in the pre-shoot substates. The plan was made when the
+-- pill did (or did not) qualify for the finish rule; anger falls with time
+-- and armour or health can change, so when the answer now differs from
+-- the plan's, the take plans again, once per change of the answer
+-- (goal._pt2_fin_q keeps the last answer). Only with v2 driving (master on,
+-- a protected take) and the knob at 0 or more. Returns true: re-plan now.
+local PRE_SHOOT = { approach = true, aim = true, in_range_position = true,
+                    in_range_aim_pre = true, in_range_aim = true, in_range_aim_finetune = true }
+function M.finish_recheck(goal, info, pill, now, sub)
+  if not C.PILLTAKE_V2_EVALUATOR or not goal._is_ppt or not PRE_SHOOT[sub] then return false end
+  local m = C.PT2_FINISH_NO_COVER_MAX_ANGER or -1
+  if m < 0 or not pill or (pill.health or 0) <= 0 then return false end
+  -- a chain past its first pill shoots on from its spot
+  if goal._pt2 and (goal._pt2.step or 1) > 1 then return false end
+  local anger = M.anger_now(pill, now)
+  local q = (pill.health or 0) == 1 and (info.armour or 0) >= (C.ATTACK_RUSH_MIN_ARMOUR or 5)
+            and anger <= m
+  local planned = (goal._pt2 and goal._pt2.finish) and true or false
+  local prev = goal._pt2_fin_q
+  goal._pt2_fin_q = q
+  if q == planned or prev == q then return false end
+  print2(string.format("PT2_FINISH_REPLAN t=%d pill=#%s (%d,%d) hp=%d anger=%.3f max=%.2f armour=%d qualifies=%s plan_finish=%s v2_plan=%s sub=%s",
+    now, tostring(goal.target_id), pill.mx, pill.my, pill.health or 0, anger, m, info.armour or 0,
+    tostring(q), tostring(planned), tostring(goal._pt2 ~= nil), tostring(sub)))
+  return true
+end
+
+return M

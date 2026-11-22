@@ -601,47 +601,8 @@ function M.update(state, world, info)
     cpf.set_lgm_blocked(blocked, road)
   end
 
-  -- Friendly-fire repair guard: stamp any friendly pill a friendly shot (own OR
-  -- ally) is sitting on / right next to, so eval_repair_pill won't heal a pill
-  -- the team is shooting down to reposition. Observing the actual bullet is more
-  -- reliable than the repos broadcast (no latency) AND covers our OWN shots, so
-  -- we don't heal the pill we were just about to move.
-  --
-  -- A SHELL'S `info` IS AN ENUM, NOT A BITFIELD (2026-09-06 fix). The C side
-  -- fills it from shells.h's SHELLS_BRAIN_* -- FRIENDLY 0, HOSTILE 1,
-  -- NEUTRAL 2 (brain_data.c:493-497, shells.c:1199-1203) -- so the only
-  -- friendly value is 0. This test used to read
-  -- `bit.band(ob.info, OBJECT_HOSTILE) == 0`, the predicate for a TANK's info
-  -- byte, which is also true of NEUTRAL(2): every round a neutral pillbox
-  -- fired counted as our own team's friendly fire, and any friendly pill
-  -- within one tile of that round's flight path went unrepairable for
-  -- REPAIR_FRIENDLY_FIRE_REJECT_TICKS (400) -- refreshed by the next round,
-  -- so in practice forever while a neutral pill was shooting past it. The two
-  -- other shell scans in this file already read the enum correctly
-  -- (`ob.info == SHELL_FRIENDLY`, SHELL_FRIENDLY = 0); this one now matches.
-  -- cheb<=1 window absorbs fast shells skipping a tile between snapshot ticks.
-  local fshot_tiles = nil
-  for _, ob in ipairs(info.objects) do
-    if ob.type == 1 and ob.info == 0 then  -- 1 = OBJECT_SHOT, 0 = SHELLS_BRAIN_FRIENDLY
-      fshot_tiles = fshot_tiles or {}
-      fshot_tiles[U.mkey(bit.rshift(ob.x, 8), bit.rshift(ob.y, 8))] = true
-    end
-  end
-  if fshot_tiles then
-    for _, p in pairs(world.pills) do
-      if p.owner == "friendly" and p.health > 0 and not p.in_tank then
-        for ddy = -1, 1 do
-          for ddx = -1, 1 do
-            local nx, ny = p.mx + ddx, p.my + ddy
-            if nx >= 0 and nx <= 255 and ny >= 0 and ny <= 255
-               and fshot_tiles[U.mkey(nx, ny)] then
-              p._friendly_shot_tick = now
-            end
-          end
-        end
-      end
-    end
-  end
+  -- Friendly-fire repair guard (M.stamp_friendly_fire below).
+  M.stamp_friendly_fire(state, world, info, now)
 
   -- ----- Allied LGM protection (aIndy: avoid driving over allied LGMs) -----
   -- ----- Enemy LGM tracking (live sightings in 15x15 view) --------------
@@ -659,6 +620,10 @@ function M.update(state, world, info)
   local prev_enemy_lgms = state._prev_enemy_lgms or state._elgm_buf_b
   local enemy_lgms = (prev_enemy_lgms == state._elgm_buf_a) and state._elgm_buf_b
                                                              or state._elgm_buf_a
+  -- The shell rules for the kill-LGM and capture-LGM-hunt aim
+  -- (C.LGM_SHELL_MODEL_RULES; kill_lgm keeps the classic values when a
+  -- host sends none). Every think, before predict_aim.
+  kill_lgm.set_rules(info.rules)
   local n_lgm = 0
   for _, ob in ipairs(info.objects) do
     if ob.type == OBJECT_BUILDMAN then
@@ -724,9 +689,29 @@ function M.update(state, world, info)
           _ent.dest_wy     = h.dest_wy
           _ent.dest_locked = h.dest_locked
           _ent.lock_status = h.lock_status
+          -- LGM_DEST_AIM: straight-line walk into a dead hostile pill?  The
+          -- lock rides h (read by predict_aim below) and the entry (overlay).
+          -- Knob off: never run, h.dest_pill stays nil, old aim exactly.
+          if C.LGM_DEST_AIM then
+            local dp, ray, why = kill_lgm.find_dest_pill(h, _ent, world.pills, enemy_tanks, now)
+            h.dest_pill = dp
+            _ent.dest_pill, _ent.dest_ray, _ent.dest_why = dp, ray, why
+            -- LGM_DEST_PASS_THROUGH: the pill he just walked through (not his job).
+            _ent.dest_passed = h.dest_passed
+            local passed_now = h.dest_pass_tick == now and h.dest_pass_id or nil
+            local log_key = dp and ("lock#" .. tostring(dp.id)) or why
+            if h.dest_log_key ~= log_key or passed_now then
+              h.dest_log_key = log_key
+              if BRAIN_DEBUG_MODE then print2(string.format("LGM_DEST_AIM t=%d lgm=%s pos=(%d,%d) %s%s", now, tostring(_ent.idnum), _ent.wx, _ent.wy, dp and string.format("LOCK pill#%s tile=(%d,%d) along=%.0f perp=%.0f/%.0f speed=%.1f", tostring(dp.id), dp.mx, dp.my, dp.along, dp.perp, dp.tol, ray.speed) or string.format("fallback=%s%s", why, ray and string.format(" heading=(%.2f,%.2f) speed=%.1f", ray.ux, ray.uy, ray.speed) or ""), passed_now and string.format(" | PASSED pill#%s: walked on >16 wu past its centre, not his job%s", tostring(passed_now), dp and " -> next pill on his line" or " -> no pill further on, plain lead") or "")) end
+            end
+            -- LGM_DEST_HOLD_FIRE: his tank's last known position, for the
+            -- walk off the pill tile after the build (predict_dest_hold).
+            if C.LGM_DEST_HOLD_FIRE then kill_lgm.note_owner_pos(h, _ent, enemy_tanks) end
+          end
         end
         local aim_wx, aim_wy, sl, ft, d_wu, tier = kill_lgm.predict_aim(
           info.tankx, info.tanky, _ent, h)
+        _ent.stop_return = h and h.stop_return or nil   -- LGM_LEAD_STOP_RETURN
         _ent.predicted_wx     = aim_wx
         _ent.predicted_wy     = aim_wy
         _ent.predicted_mx     = bit.rshift(math.floor(aim_wx), 8)
@@ -735,6 +720,23 @@ function M.update(state, world, info)
         _ent.flight_ticks     = ft
         _ent.predicted_dist_wu = d_wu
         _ent.predict_tier     = tier
+        -- LGM_DEST_HOLD_FIRE: the fire gates hold the trigger on this flag.
+        -- Only predict_aim's hold branch sets tier dest_pill_hold, so the
+        -- flag is false with the knob (or LGM_DEST_AIM) off.
+        _ent.dest_hold   = (tier == "dest_pill_hold")
+        _ent.dest_timing = h and h.dest_timing or nil
+        _ent.dest_intercept = h and h.dest_intercept or nil   -- LGM_DEST_INTERCEPT
+        if BRAIN_DEBUG_MODE and C.LGM_DEST_HOLD_FIRE and h then
+          local dt = h.dest_timing
+          local di = h.dest_intercept
+          local hold_key = (di and ("intercept#" .. tostring(h.dest_pill and h.dest_pill.id)))
+                           or (dt and (dt.verdict .. "#" .. tostring(h.dest_pill and h.dest_pill.id))) or nil
+          if h.dest_hold_log_key ~= hold_key then
+            h.dest_hold_log_key = hold_key
+            if di then print2(string.format("LGM_DEST_HOLD t=%d lgm=%s pill#%s INTERCEPT on his walk in: shell meets him at step %d (T=%d), before the pill tile (on it at step %s) aim=(%.0f,%.0f) D=%.0f sl=%d", now, tostring(_ent.idnum), tostring(h.dest_pill and h.dest_pill.id), di.s_hit, di.T, tostring(di.s_enter), di.aim_wx, di.aim_wy, di.D, di.sl))
+            elseif dt then print2(string.format("LGM_DEST_HOLD t=%d lgm=%s pill#%s %s %s shell_off=%d steps (T=%d) on_tile=[%s,%s+%d+%s] exit=%s%s %s", now, tostring(_ent.idnum), tostring(h.dest_pill and h.dest_pill.id), dt.live and "live" or "dead", dt.verdict == "fire" and "FIRE" or ("holding fire (" .. dt.verdict .. ")"), dt.s_x, dt.T_x, tostring(dt.s_enter), tostring(dt.s_arrive), dt.dwell, tostring(dt.s_exit), tostring(dt.exit_src), dt.exit_stalled and "(stalled)" or "", dt.how)) end
+          end
+        end
         n_lgm = n_lgm + 1
         enemy_lgms[n_lgm] = _ent
       end
@@ -996,6 +998,33 @@ function M.update(state, world, info)
     end
   end
 
+  -- ----- Defend alarm heat: hostile shell at a team pill RIGHT NOW -----
+  -- C.DEFEND_ALARM_HEAT (Andrew, Nov 18).  attack.lua's defend heat calls
+  -- the defended pill ENGAGED, and never heats it, while an enemy hit it in
+  -- the alarm window OR a shell labelled SHELLS_BRAIN_HOSTILE (1, an enemy
+  -- TANK's shell) is within HEAT_ALLY_SHELL_RADIUS of it this tick.  Only the
+  -- hostile label counts: pill fire is labelled NEUTRAL (shells.c gives a
+  -- pill's shell owner NEUTRAL), so counting neutral would mark the pill
+  -- engaged every time it fires back at the tank.  Friendly AND allied pills
+  -- (the alarm defends both).  Stamp only; read by attack.defend_heat_engaged.
+  if C.DEFEND_ALARM_HEAT then
+    local SHELL_HOSTILE = 1   -- SHELLS_BRAIN_HOSTILE (shells.h)
+    local r = C.HEAT_ALLY_SHELL_RADIUS or 2
+    for _, ob in ipairs(info.objects) do
+      if ob.type == OBJECT_SHOT and ob.info == SHELL_HOSTILE then
+        local smx = bit.rshift(ob.x, 8)
+        local smy = bit.rshift(ob.y, 8)
+        for _, p in pairs(world.pills) do
+          if (p.owner == "friendly" or p.owner == "allied")
+             and not (p.in_tank or p.carrier or p._synth_carry)
+             and math.abs(p.mx - smx) <= r and math.abs(p.my - smy) <= r then
+            p._hostile_shell_tick = now
+          end
+        end
+      end
+    end
+  end
+
   -- ----- Damage-source log: which shells came near which team pill -----
   -- Companion to the ally-heat watch above, but the opposite question. That
   -- one asks "is every shell here OURS" (suppress the alarm); this one asks,
@@ -1125,7 +1154,28 @@ function M.update(state, world, info)
           --   npill — a NEUTRAL pillbox's stray        -> NOT an enemy, ignored
           -- Compacted to the window on write and capped, so it needs no
           -- per-tick sweep of its own.
-          if C.DEFEND_ALARM_MODE and (src == "tank" or src == "epill") then
+          -- C.DEFEND_ALARM_HEAT: OUR OWN heat shell (or an ally's) must not
+          -- count.  With no hostile shell logged at the pill (how ~= "shell")
+          -- the fallback blames a nearby enemy tank ("presence_tank"), and
+          -- during a defend heat an enemy tank IS near.  So a hit inside
+          -- HEAT_SELF_STAMP_TICKS of our heat shot (_heat_shot_tick) or of an
+          -- all-friendly shell watch stamp (_ally_heat_tick), with no hostile
+          -- shell seen, stays out of the ring: it would otherwise raise the
+          -- alarm on a pill we heated, or mark it engaged mid-volley.
+          local self_heat = false
+          if C.DEFEND_ALARM_HEAT and how ~= "shell" then
+            local hs = C.HEAT_SELF_STAMP_TICKS or 150
+            self_heat = (p._heat_shot_tick and (hit - p._heat_shot_tick) < hs)
+                        or (p._ally_heat_tick and (hit - p._ally_heat_tick) < hs)
+                        or false
+            if self_heat then
+              print2(string.format(
+                "DEFEND_HEAT_SELF t=%d pill@(%d,%d) hit_t=%d src=%s via=%s -> our/ally heat, not an alarm hit",
+                now, p.mx, p.my, hit, src, how))
+            end
+          end
+          if C.DEFEND_ALARM_MODE and (src == "tank" or src == "epill")
+             and not self_heat then
             local ring = p._alarm_hits
             if not ring then ring = {}; p._alarm_hits = ring end
             local win = C.DEFEND_ALARM_WINDOW_TICKS or 250
@@ -1183,7 +1233,9 @@ function M.update(state, world, info)
     for id, b in pairs(world.bases) do
       if b.mx == bmx and b.my == bmy then
         b.obs_shells = info.base.shells or 0
-        b.obs_armour = info.base.armour or 0
+        -- info.base.armour is raw / 5; obs_armour holds RAW armour (util.lua
+        -- base_armour_steps), the same unit EVENT_BASE_STOCK writes.
+        b.obs_armour = U.base_armour_raw_from_info(info.base.armour or 0, b.obs_armour)
         b.obs_tick   = now
         break
       end
@@ -1239,6 +1291,69 @@ function M.update(state, world, info)
   end
 
   state.perc = perc
+end
+
+-- Friendly-fire repair guard: stamp any friendly pill a friendly shot (own OR
+-- ally) is sitting on / right next to, so eval_repair_pill won't heal a pill
+-- the team is shooting down to reposition. Observing the actual bullet is more
+-- reliable than the repos broadcast (no latency) AND covers our OWN shots, so
+-- we don't heal the pill we were just about to move.
+--
+-- A SHELL'S `info` IS AN ENUM, NOT A BITFIELD (2026-09-06 fix). The C side
+-- fills it from shells.h's SHELLS_BRAIN_* -- FRIENDLY 0, HOSTILE 1,
+-- NEUTRAL 2 (brain_data.c:493-497, shells.c:1199-1203) -- so the only
+-- friendly value is 0. This test used to read
+-- `bit.band(ob.info, OBJECT_HOSTILE) == 0`, the predicate for a TANK's info
+-- byte, which is also true of NEUTRAL(2): every round a neutral pillbox
+-- fired counted as our own team's friendly fire, and any friendly pill
+-- within one tile of that round's flight path went unrepairable for
+-- REPAIR_FRIENDLY_FIRE_REJECT_TICKS (then 400; 50 since 2026-11-01) -- refreshed by the next round,
+-- so in practice forever while a neutral pill was shooting past it. The two
+-- other shell scans in this file already read the enum correctly
+-- (`ob.info == SHELL_FRIENDLY`, SHELL_FRIENDLY = 0); this one now matches.
+-- cheb<=1 window absorbs fast shells skipping a tile between snapshot ticks.
+-- C.QUICK_REPAIR_SKIP_OWN_FIRE (2026-11-22): a second stamp,
+-- p._friendly_shot_other_tick, from every friendly shell EXCEPT our own
+-- tank's shells on their way to the take target (quick_repair
+-- .own_shell_at_target). Only the quick repair row reads it
+-- (builder_pool pill_blocked); every other path reads the first stamp,
+-- which still counts every friendly shell.
+function M.stamp_friendly_fire(state, world, info, now)
+  local fshot_tiles, fshot_other = nil, nil
+  local _qr_skip = C.QUICK_REPAIR_SKIP_OWN_FIRE and C.QUICK_REPAIR_ON_TAKE
+  local _qr_g = _qr_skip and state.goal
+  local _qr_tmx, _qr_tmy
+  if _qr_g and _qr_g.kind == "attack_pill" and _qr_g.mx and _qr_g.my then
+    _qr_tmx, _qr_tmy = _qr_g.mx, _qr_g.my
+  end
+  for _, ob in ipairs(info.objects) do
+    if ob.type == 1 and ob.info == 0 then  -- 1 = OBJECT_SHOT, 0 = SHELLS_BRAIN_FRIENDLY
+      fshot_tiles = fshot_tiles or {}
+      local k = U.mkey(bit.rshift(ob.x, 8), bit.rshift(ob.y, 8))
+      fshot_tiles[k] = true
+      if _qr_skip and not (_qr_tmx and require("quick_repair").own_shell_at_target(
+                             ob, info.player_number, _qr_tmx, _qr_tmy)) then
+        fshot_other = fshot_other or {}
+        fshot_other[k] = true
+      end
+    end
+  end
+  if fshot_tiles then
+    for _, p in pairs(world.pills) do
+      if p.owner == "friendly" and p.health > 0 and not p.in_tank then
+        for ddy = -1, 1 do
+          for ddx = -1, 1 do
+            local nx, ny = p.mx + ddx, p.my + ddy
+            if nx >= 0 and nx <= 255 and ny >= 0 and ny <= 255 then
+              local k = U.mkey(nx, ny)
+              if fshot_tiles[k] then p._friendly_shot_tick = now end
+              if fshot_other and fshot_other[k] then p._friendly_shot_other_tick = now end
+            end
+          end
+        end
+      end
+    end
+  end
 end
 
 return M

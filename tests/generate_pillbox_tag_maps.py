@@ -28,7 +28,8 @@ ARENAS = [
     "pilltag_man_kill",
     "pilltag_drive_over",
     "pilltag_shoot_built_prize",
-    "pilltag_fort_last_shot",
+    "pilltag_fort_guard_kills_own_pillbox_to_keep_it",
+    "pilltag_guard_quickly_takes_prize_a_hunter_kills",
     "pilltag_team_hop",
 ]
 

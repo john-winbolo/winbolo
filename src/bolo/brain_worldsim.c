@@ -181,6 +181,89 @@ static void wsim_apply_slide(BrainWorldSim *sim, WSimTank *tank) {
   }
 }
 
+/* A tank is still being pushed: the old slide or the WinBolo push. */
+static int wsim_sliding(const WSimTank *tank) {
+  return tank->slide_vx != 0.0f || tank->slide_vy != 0.0f ||
+         tank->bump_x != 0 || tank->bump_y != 0;
+}
+
+/* tank.c tankBumpStep: a push component's move this tick, its magnitude
+ * >> 9 with the sign put back. */
+static int32_t wsim_bump_step(int32_t bump) {
+  return bump >= 0 ? (bump >> 9) : -((-bump) >> 9);
+}
+
+/* tank.c tankBumpDecay: the magnitude loses (magnitude >> shift) + 1 and
+ * stops at zero. */
+static int32_t wsim_bump_decay(int32_t bump, int32_t shift) {
+  int32_t mag = bump >= 0 ? bump : -bump;
+  mag -= (mag >> shift) + 1;
+  if (mag <= 0) return 0;
+  return bump >= 0 ? mag : -mag;
+}
+
+/* One tick of the WinBolo push (drive_while_sliding on). The game moves
+ * the tank by the push after its drive step (tank.c Step 3). The terrain
+ * test per axis is the one wsim_apply_slide uses: a push into terrain the
+ * tank cannot enter stops that axis. */
+static void wsim_apply_bump(BrainWorldSim *sim, WSimTank *tank) {
+  int new_wx, new_wy;
+  if (tank->bump_x == 0 && tank->bump_y == 0) return;
+
+  new_wx = tank->wx + wsim_bump_step(tank->bump_x);
+  if (new_wx < 0) new_wx = 0;
+  if (new_wx > 65535) new_wx = 65535;
+  if (sim->terrain_speed[wsim_terrain_at(sim->map, new_wx, tank->wy)] > 0) {
+    tank->wx = new_wx;
+  } else {
+    tank->bump_x = 0;
+  }
+
+  new_wy = tank->wy + wsim_bump_step(tank->bump_y);
+  if (new_wy < 0) new_wy = 0;
+  if (new_wy > 65535) new_wy = 65535;
+  if (sim->terrain_speed[wsim_terrain_at(sim->map, tank->wx, new_wy)] > 0) {
+    tank->wy = new_wy;
+  } else {
+    tank->bump_y = 0;
+  }
+
+  tank->bump_x = wsim_bump_decay(tank->bump_x, sim->tank_bump_decay_shift);
+  tank->bump_y = wsim_bump_decay(tank->bump_y, sim->tank_bump_decay_shift);
+}
+
+/* Moving-target damage for a hit at dsq (WU squared) from the pill.
+ * Old model (hit_full_dist and hit_far_frac both 0): shell_damage *
+ * (1 - dist/range), rounded half up, at least 1 inside half range.
+ * New model: full damage up to hit_full_dist squares, then a line down to
+ * hit_far_frac of it at pill range, rounded half up (the 1e-6 keeps an
+ * exact .5 from rounding down on float error). No floor: the line ends at
+ * hit_far_frac, not 0. */
+static int wsim_moving_hit_damage(const BrainWorldSim *sim, int dsq) {
+  int scaled;
+  if (sim->hit_full_dist <= 0.0f && sim->hit_far_frac <= 0.0f) {
+    float dist_frac = sqrtf((float)dsq) / (float)sim->pill_range;
+    if (dist_frac > 1.0f) dist_frac = 1.0f;
+    scaled = (int)(sim->shell_damage * (1.0f - dist_frac) + 0.5f);
+    if (scaled < 1 && dsq <= (sim->pill_range/2) * (sim->pill_range/2)) {
+      /* floor: very close shots always do at least 1 dmg */
+      scaled = 1;
+    }
+    return scaled;
+  }
+  {
+    double range_sq = (double)sim->pill_range / WSIM_WU_PER_TILE;
+    double full = (double)sim->hit_full_dist;
+    double d = sqrt((double)dsq) / WSIM_WU_PER_TILE;
+    double frac;
+    if (d > range_sq) d = range_sq;
+    if (d <= full || range_sq <= full) return sim->shell_damage;
+    frac = 1.0 - (1.0 - (double)sim->hit_far_frac) * (d - full) / (range_sq - full);
+    scaled = (int)(sim->shell_damage * frac + 0.5 + 1e-6);
+    return scaled;
+  }
+}
+
 BrainWorldSim *brainWorldSimCreate(void) {
   BrainWorldSim *sim = (BrainWorldSim *)calloc(1, sizeof(BrainWorldSim));
   SimRules classic;
@@ -203,6 +286,12 @@ BrainWorldSim *brainWorldSimCreate(void) {
   sim->pill_attack_ticks     = classic.pill_attack_ticks;
   sim->pill_attack_min_ticks = classic.pill_attack_min_ticks;
   sim->pill_cooldown_ticks   = classic.pill_cooldown_ticks;
+  sim->tank_slide_step       = classic.tank_slide_step;
+  sim->tank_bump_decay_shift = classic.tank_bump_decay_shift;
+  sim->drive_while_sliding   = 0;
+  sim->hit_full_dist         = 0.0f;
+  sim->hit_far_frac          = 0.0f;
+  sim->lgm.dispatch_tick     = -1;   /* no builder out, as brainWorldSimClear */
   sim->terrain_speed[0]  =  0; /* BUILDING */
   sim->terrain_speed[1]  = (float) classic.speed_river;
   sim->terrain_speed[2]  = (float) classic.speed_swamp;
@@ -252,6 +341,7 @@ void brainWorldSimClear(BrainWorldSim *sim) {
   sim->pill_attack_min_ticks = saved_pill_attack_min_ticks;
   sim->pill_cooldown_ticks = saved_pill_cooldown_ticks;
   sim->dwell_ticks = 0;
+  sim->exit_start = 0;
 
   memset(&sim->lgm, 0, sizeof(sim->lgm));
   sim->lgm.dispatch_tick = -1;
@@ -294,6 +384,21 @@ void brainWorldSimSetRules(BrainWorldSim *sim, int shell_damage, int pill_range,
     sim->tank_shoot_interval = shoot_interval;
   }
   if (forest_range > 0)          sim->forest_range = forest_range;
+}
+
+int brainWorldSimHitDamage(const BrainWorldSim *sim, int dsq) {
+  return sim ? wsim_moving_hit_damage(sim, dsq) : 0;
+}
+
+void brainWorldSimSetFixes(BrainWorldSim *sim, int drive_while_sliding,
+                           float hit_full_dist, float hit_far_frac) {
+  if (!sim) return;
+  if (!(hit_full_dist > 0.0f)) hit_full_dist = 0.0f;   /* also NaN */
+  if (!(hit_far_frac > 0.0f)) hit_far_frac = 0.0f;
+  if (hit_far_frac > 1.0f) hit_far_frac = 1.0f;
+  sim->drive_while_sliding = drive_while_sliding ? 1 : 0;
+  sim->hit_full_dist = hit_full_dist;
+  sim->hit_far_frac = hit_far_frac;
 }
 
 void brainWorldSimAddPill(BrainWorldSim *sim, int mx, int my,
@@ -343,6 +448,8 @@ void brainWorldSimAddTank(BrainWorldSim *sim, int wx, int wy,
   t->armour = (int16_t)armour;
   t->slide_vx = 0.0f;
   t->slide_vy = 0.0f;
+  t->bump_x = 0;
+  t->bump_y = 0;
 
   if (is_ours) {
     sim->our_tank_idx = sim->num_tanks;
@@ -378,6 +485,29 @@ void brainWorldSimSetDwell(BrainWorldSim *sim, int dwell_ticks) {
   sim->dwell_ticks = dwell_ticks;
 }
 
+void brainWorldSimSetExitStart(BrainWorldSim *sim, int exit_start) {
+  if (!sim) return;
+  if (exit_start < 0) exit_start = 0;
+  sim->exit_start = exit_start;
+}
+
+/* Exit leg stop rule: our tank is out of pill_range of every live pill
+ * that fired at it in this run. A pill fires at dsq <= range^2, so out of
+ * range is dsq > range^2. */
+static int wsim_exit_clear(const BrainWorldSim *sim, const WSimTank *our) {
+  int i;
+  int r2 = sim->pill_range * sim->pill_range;
+  for (i = 0; i < sim->num_pills; i++) {
+    const WSimPill *p = &sim->pills[i];
+    if (p->health == 0 || p->shots_at_us == 0) continue;
+    if (wsim_dist_sq((p->mx << 8) + 128, (p->my << 8) + 128,
+                     our->wx, our->wy) <= r2) {
+      return 0;
+    }
+  }
+  return 1;
+}
+
 /* ------------------------------------------------------------------ */
 /* Simulation loop                                                     */
 /* ------------------------------------------------------------------ */
@@ -390,6 +520,14 @@ WSimResult brainWorldSimRun(BrainWorldSim *sim, int max_ticks) {
   int our_shoot_timer = 0;
   int initial_armour;
   int dwell_damage = 0;   /* damage our tank took while parked at the dest */
+  /* Exit leg: with one, the incoming path ends at incoming_end and the
+   * arrival is there. Without one incoming_end is num_path, the old code. */
+  int exit_active = (sim->dwell_ticks <= 0 && sim->exit_start > 0 &&
+                     sim->exit_start < sim->num_path);
+  int incoming_end = exit_active ? sim->exit_start : sim->num_path;
+  int in_exit = 0;        /* arrived, and driving the exit leg */
+  int exit_tick0 = 0;     /* tick the exit leg began (the arrival tick) */
+  int exit_armour0 = 0;   /* our armour at the arrival */
 
   memset(&result, 0, sizeof(result));
   result.arrival_tick = -1;
@@ -426,7 +564,10 @@ WSimResult brainWorldSimRun(BrainWorldSim *sim, int max_ticks) {
     /* ============================================================= */
     /* 1. MOVE OUR TANK along path waypoints at terrain speed        */
     /* ============================================================= */
-    if (path_idx < sim->num_path && (our->slide_vx == 0.0f && our->slide_vy == 0.0f)) {
+    /* With drive_while_sliding the tank drives while a push moves it, as
+     * in the game (tank.c: Step 2 drive, then Step 3 the push). */
+    if (path_idx < sim->num_path &&
+        (sim->drive_while_sliding || !wsim_sliding(our))) {
       int dest_wx = (sim->path[path_idx].mx << 8) + 128;
       int dest_wy = (sim->path[path_idx].my << 8) + 128;
       int terrain = wsim_terrain_at(sim->map, our->wx, our->wy);
@@ -443,8 +584,16 @@ WSimResult brainWorldSimRun(BrainWorldSim *sim, int max_ticks) {
           our->wx = dest_wx;
           our->wy = dest_wy;
           path_idx++;
-          if (path_idx >= sim->num_path && result.arrival_tick < 0) {
+          if (path_idx >= incoming_end && result.arrival_tick < 0) {
             result.arrival_tick = (int16_t)tick;
+            if (exit_active) {
+              /* Exit leg: end here as before when no pill that fired at
+               * us has us in range; else keep driving out. */
+              if (wsim_exit_clear(sim, our)) goto done;
+              in_exit = 1;
+              exit_tick0 = tick;
+              exit_armour0 = our->armour;
+            }
             /* With no dwell requested, stop simulating — wsim then only
              * evaluates travel survivability, not prolonged combat at the
              * destination. With a dwell, fall through and keep running:
@@ -460,10 +609,15 @@ WSimResult brainWorldSimRun(BrainWorldSim *sim, int max_ticks) {
       } else if (spd <= 0) {
         /* Impassable terrain — skip to next waypoint */
         path_idx++;
+        /* The incoming path ran out with no arrival: no exit leg either,
+         * the same end as a path with none. */
+        if (exit_active && !in_exit && path_idx >= incoming_end) {
+          path_idx = sim->num_path;
+        }
       }
     } else if (sim->dwell_ticks > 0 && result.arrival_tick >= 0 &&
                path_idx >= sim->num_path && sim->num_path > 0 &&
-               our->slide_vx == 0.0f && our->slide_vy == 0.0f) {
+               (sim->drive_while_sliding || !wsim_sliding(our))) {
       /* Dwell hold. The tank has arrived and is standing on the spot, but
        * pill knockback keeps shoving it off the tile. A real parked bot
        * drives back onto its spot, so pull the tank home at terrain speed
@@ -493,23 +647,31 @@ WSimResult brainWorldSimRun(BrainWorldSim *sim, int max_ticks) {
     /* 2. APPLY KNOCKBACK SLIDE                                      */
     /* ============================================================= */
     wsim_apply_slide(sim, our);
+    wsim_apply_bump(sim, our);
 
     /* 2b. Proximity arrival — pill knockback can prevent exact waypoint
      * arrival, trapping the tank in a push-approach loop until death.
      * If we're within 1 tile of the final waypoint, count as arrived. */
-    if (path_idx < sim->num_path && result.arrival_tick < 0) {
-      int last_idx = sim->num_path - 1;
+    if (path_idx < incoming_end && result.arrival_tick < 0) {
+      int last_idx = incoming_end - 1;
       int final_wx = (sim->path[last_idx].mx << 8) + 128;
       int final_wy = (sim->path[last_idx].my << 8) + 128;
       int fdx = final_wx - our->wx;
       int fdy = final_wy - our->wy;
       if (fdx * fdx + fdy * fdy <= 128 * 128) {
         result.arrival_tick = (int16_t)tick;
-        if (sim->dwell_ticks <= 0) goto done;
+        if (exit_active) {
+          if (wsim_exit_clear(sim, our)) goto done;
+          in_exit = 1;
+          exit_tick0 = tick;
+          exit_armour0 = our->armour;
+          path_idx = incoming_end;  /* drive the exit leg from here */
+        }
+        if (sim->dwell_ticks <= 0 && !in_exit) goto done;
         /* Dwelling: retire the rest of the path so the tank stops
          * advancing and holds here (section 1's dwell-hold branch keys
          * off path_idx >= num_path). Close enough is arrived. */
-        path_idx = sim->num_path;
+        if (!in_exit) path_idx = sim->num_path;
       }
     }
 
@@ -520,7 +682,8 @@ WSimResult brainWorldSimRun(BrainWorldSim *sim, int max_ticks) {
       WSimTank *t = &sim->tanks[i];
       if (t->is_ours) continue;
       wsim_apply_slide(sim, t);
-      if ((t->slide_vx == 0.0f && t->slide_vy == 0.0f) && t->speed > 0) {
+      wsim_apply_bump(sim, t);
+      if (!wsim_sliding(t) && t->speed > 0) {
         t->wx += (int)(wsim_sin_table[t->direction] * t->speed);
         t->wy += (int)(wsim_cos_table[t->direction] * t->speed);
         /* Clamp */
@@ -718,13 +881,7 @@ WSimResult brainWorldSimRun(BrainWorldSim *sim, int max_ticks) {
             if (is_our_tank && our_parked) {
               scaled = sim->shell_damage;
             } else {
-              float dist_frac = sqrtf((float)dsq) / (float)sim->pill_range;
-              if (dist_frac > 1.0f) dist_frac = 1.0f;
-              scaled = (int)(sim->shell_damage * (1.0f - dist_frac) + 0.5f);
-              if (scaled < 1 && dsq <= (sim->pill_range/2) * (sim->pill_range/2)) {
-                /* floor: very close shots always do at least 1 dmg */
-                scaled = 1;
-              }
+              scaled = wsim_moving_hit_damage(sim, dsq);
             }
             t->armour -= scaled;
             if (is_our_tank && our_parked) {
@@ -746,8 +903,19 @@ WSimResult brainWorldSimRun(BrainWorldSim *sim, int max_ticks) {
               float adx = (float)(t->wx - pill_wx);
               float ady = (float)(t->wy - pill_wy);
               float ang = atan2f(adx, -ady);  /* bolo coords */
-              t->slide_vx = WSIM_SLIDE_INITIAL_SPEED * sinf(ang);
-              t->slide_vy = WSIM_SLIDE_INITIAL_SPEED * (-cosf(ang));
+              if (sim->drive_while_sliding) {
+                /* tank.c tankShellKnockback (WinBolo push): the step
+                 * along the shell angle, rounded like utilCalcDistance,
+                 * in 512ths. A new hit replaces the push. */
+                float step = (float)sim->tank_slide_step;
+                t->bump_x = (int32_t)lroundf(step * sinf(ang)) * 512;
+                t->bump_y = (int32_t)lroundf(step * (-cosf(ang))) * 512;
+                t->slide_vx = 0.0f;
+                t->slide_vy = 0.0f;
+              } else {
+                t->slide_vx = WSIM_SLIDE_INITIAL_SPEED * sinf(ang);
+                t->slide_vy = WSIM_SLIDE_INITIAL_SPEED * (-cosf(ang));
+              }
             }
 
             if (is_our_tank) {
@@ -806,6 +974,12 @@ WSimResult brainWorldSimRun(BrainWorldSim *sim, int max_ticks) {
       break;
     }
 
+    /* Exit leg done: out of range of every pill that fired at us. */
+    if (in_exit && wsim_exit_clear(sim, our)) {
+      result.ticks_simulated = (int16_t)tick;
+      break;
+    }
+
     /* Path complete, dwell served, and no pending LGM.
      * The dwell test is skipped when arrival_tick is unset — that means the
      * path ran out under us (impassable-terrain skips) rather than being
@@ -843,6 +1017,10 @@ done:
   result.armour_remaining = our->armour;
   result.damage_taken = (int16_t)(initial_armour - our->armour);
   result.damage_during_dwell = (int16_t)dwell_damage;
+  if (in_exit) {
+    result.exit_damage = (int16_t)(exit_armour0 - our->armour);
+    result.exit_ticks = (int16_t)(result.ticks_simulated - exit_tick0 + 1);
+  }
 
   /* LGM outcome */
   if (sim->lgm.dispatch_tick < 0) {

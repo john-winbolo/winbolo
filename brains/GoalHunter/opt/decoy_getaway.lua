@@ -22,7 +22,8 @@
 -- way (block() below), so it goes to squares those pills would still shoot
 -- at but that something else shields.  So a chain is ready before the
 -- blocker falls, and THE BLOCKER STEP has a next square to step to.  A pill
--- whose shell runs out or stops on an enemy pill or a base is not in Ps.
+-- whose shell runs out or stops on an enemy pill is not in Ps.  (A pill
+-- shell flies over every base: U.base_stops_pill_shell.)
 --
 -- STAY THE CLOSEST (DECOY_GETAWAY_STAY_CLOSEST, Oct 6).  A pill shoots the
 -- closest tank, so a decoy square must stay closer to the pill than any
@@ -42,7 +43,8 @@
 --   * the shell stops on a full wall (T_BUILDING)       -> DECOY_GETAWAY_WALL_FULL
 --   * the shell stops on a damaged wall (T_HALFBUILD)   -> DECOY_GETAWAY_WALL_DAMAGED
 --   * the shell stops on OUR (or an ally's) live pill   -> health / PILLS_MAX_HEALTH
---   * the shell stops on an enemy pill or on a base     -> 0
+--   * the shell stops on an enemy pill                  -> 0
+--     (a pill shell never stops on a base: U.base_stops_pill_shell)
 --   * the shell trace fails (the C call errors)         -> 0   "error"
 -- The shell is the real one: goals.sea_shot_reaches, with WALLS ONLY as the
 -- terrain that eats it.  A tree or a boat is shot away, so it is not cover:
@@ -798,9 +800,10 @@ end
 --                  it, so the SMALLEST value is used: 1 (move sooner).
 --   pill           its armour, pill_shell_damage (1) off per shell:
 --                  ceil(armour / pill_shell_damage).
--- building_life and pill_shell_damage are rules the brain cannot read, so
--- they are the engine defaults: DECOY_GETAWAY_WALL_LIFE (BUILDING_LIFE 4)
--- and DECOY_GETAWAY_PILL_SHELL_DAMAGE (PILLBOX_SHELL_DAMAGE 1).  A wall's
+-- building_life is DECOY_GETAWAY_WALL_LIFE: the classic BUILDING_LIFE 4
+-- in constants.lua, set to the live info.rules.building_life by
+-- live_physics.lua (group WALL).  pill_shell_damage is
+-- DECOY_GETAWAY_PILL_SHELL_DAMAGE (PILLBOX_SHELL_DAMAGE 1).  A wall's
 -- count after that is THE HIT LEDGER's (below M.blockers).
 function M.shots_left(kind, pill)
   if kind == "wall" then return (C.DECOY_GETAWAY_WALL_LIFE or 4) + 1 end

@@ -633,7 +633,10 @@ bool serverSimGetTankRender(ServerSim *sim, BYTE i, TankRenderInfo *out) {
     out->dir     = tankGetDir(t);
     out->angle   = tankGetAngle(t);
     out->on_boat = tankIsOnBoat(t);
-    out->alive   = (tankGetDeathWait(t) == 0);
+    /* Dead while in the respawn wait, and also while destroyed with the
+       wait run out but no start found yet. Same rule as the client's
+       interpolation (TANK_STATUS_DEAD | TANK_STATUS_DESTROYED). */
+    out->alive   = (tankGetDeathWait(t) == 0) && !tankIsDestroyed(t);
     return true;
 }
 

@@ -83,6 +83,13 @@ typedef struct {
   uint32_t version;
   uint32_t started_tick;   /* tick passed to Start; identifies "recency" for lookups */
   uint32_t completed_tick; /* tick when done flipped true; 0 while running */
+  /* Tank heading at the slate root, set by
+   * brainPathfinderDijkstraSetSourceHeading only while the "start_heading"
+   * config key is on. has_src_heading 0 = no heading (the old behaviour: the
+   * root's first steps pay no turn cost). src_heading is the Bolo direction
+   * 0..255 (0 = north, clockwise), read when the slate was started. */
+  int      has_src_heading;
+  int      src_heading;
 } DijkstraSlate;
 
 /* Per-instance pathfinder state */
@@ -179,6 +186,13 @@ struct BrainPathfinder {
    * touches the chain ahead. Set from Lua via
    * cpf_set_config("nextstep_chain_veer", 1). */
   float nextstep_chain_veer;
+  /* start_heading: 0 = off (historical behaviour), non-zero = on. The
+   * Dijkstra slate root has no arrival direction, so its first steps paid no
+   * turn cost and a full reverse was as cheap as straight ahead. When on,
+   * brainPathfinderDijkstraSetSourceHeading records the tank heading on the
+   * slate and the root's first steps pay the same turn_lut cost as any other
+   * step. Set from Lua via cpf_set_config("start_heading", 1). */
+  float start_heading;
 
   /* Last tile the rule above vetoed, for the brain's debug print only.
    * sea_veto_seq increments on every veto, so the Lua wrapper can tell a
@@ -188,6 +202,32 @@ struct BrainPathfinder {
   int16_t  sea_veto_from_x, sea_veto_from_y;
   int16_t  sea_veto_rej_x,  sea_veto_rej_y;
   int16_t  sea_veto_pick_x, sea_veto_pick_y;
+
+  /* Last answer of brainPathfinderDijkstraNextStep, for the route keep
+   * (GoalHunter PF_REROUTE_KEEP_MARGIN / PF_REROUTE_KEEP_FRAC). Written on
+   * every call; no decision in this file reads it. ns_valid 0 = the last
+   * call gave no step. ns_slate is the slate that answered, ns_fresh 1 when
+   * it was the most recently started slate of the kind (0 = a newer slate
+   * has not reached the destination yet and an older one answered).
+   * ns_mode: 1 = step on the traced chain, 2 = veer round an obstacle,
+   * 3 = chain-rank pick with the tank off the chain, 4 = lowest-g neighbour
+   * with the tank off the chain. ns_chain holds the traced chain of that
+   * slate, destination first (ns_chain[0]) toward the root. */
+  int      ns_valid;
+  int      ns_slate;
+  int      ns_fresh;
+  int      ns_mode;
+  uint32_t ns_started;
+  uint32_t ns_version;
+  int      ns_chain_len;
+  int      ns_chain[512];
+  /* Route saved by brainPathfinderDijkstraRouteSave from the ns_* answer:
+   * the chain the tank was following, priced again later with the current
+   * grids by brainPathfinderDijkstraRouteReprice. */
+  int      keep_len;
+  int      keep_exact;
+  float    keep_danger_scale;
+  int      keep_chain[512];
 
   /* A* working state — doubled for boat/land state pairs.
    * Node index = (boat ? 65536 : 0) + y*256 + x
@@ -290,6 +330,17 @@ struct BrainPathfinder {
   int32_t shell_speed;
   int32_t shell_start_add;
   int32_t gunsight_max;
+  /* The rest of the shell rules the shot simulator reads: the length a
+   * pill's shell flies (pill_fire_length) and the circle a shell must
+   * reach to hit a tank (tank_hit_radius). Pushed beside the ones above. */
+  float   pill_fire_length;
+  int32_t tank_hit_radius;
+  /* 1 (default): the shot simulator flies the engine's own shell for each
+   * shooter (pill: utilCalcAngle and pill_fire_length; tanks hit on the
+   * engine's hit zone). 0: the old answers (atan2 angle for both shooters,
+   * PILLBOX_FIRE_DISTANCE, a 128 box and whole-square lengths in the tank
+   * test), for the presets that keep the old bot (SHOT_SIM_ENGINE_EXACT). */
+  int32_t shot_sim_exact;
 
   /* ── Incremental Dijkstra slates ──
    * Each slate holds the full state of one Dijkstra search. The brain
@@ -330,6 +381,15 @@ void brainPathfinderSetMoveRules(BrainPathfinder *pf, float brakeRate,
 void brainPathfinderSetShellRules(BrainPathfinder *pf, int32_t shellLife,
                                   int32_t shellSpeed, int32_t shellStartAdd,
                                   int32_t gunsightMax);
+
+/* Push the length a pill's shell flies and the tank hit circle, from the
+ * same place as the shell rules above. */
+void brainPathfinderSetShotRules(BrainPathfinder *pf, float pillFireLength,
+                                 int32_t tankHitRadius);
+
+/* Pick the engine-exact shot simulator (1, the default) or the old one
+ * (0). The Lua shot calls set it from SHOT_SIM_ENGINE_EXACT. */
+void brainPathfinderSetShotSimExact(BrainPathfinder *pf, int exact);
 
 /*
  * Eagerly allocate the per-slate working arrays for every slate AND touch
@@ -400,7 +460,43 @@ void  brainPathfinderDijkstraStart(BrainPathfinder *pf, int slate, uint32_t tick
                                     int shells, int trees, int mines, int armour,
                                     float max_cost, int exact,
                                     float danger_scale, int kind, int allow_boat);
+/* Give the slate root the tank heading (Bolo direction 0..255) so its first
+ * steps pay the turn cost. Call right after Start, before the first Step.
+ * Does nothing unless the "start_heading" config key is on; Start clears it. */
+void  brainPathfinderDijkstraSetSourceHeading(BrainPathfinder *pf, int slate,
+                                               int heading);
 int   brainPathfinderDijkstraStep(BrainPathfinder *pf, int slate, uint32_t tick, int budget);
+
+/* Route keep (GoalHunter PF_REROUTE_KEEP_MARGIN). See the ns_* and keep_*
+ * fields above.
+ *
+ * RouteSave: copy the chain of the last NextStep answer into the saved
+ * route. Returns its length, 0 when the last call gave no step.
+ *
+ * RouteReprice: cost of the saved route from tile (fx,fy) to its end (the
+ * destination), priced again with the current edge costs, danger, overlay
+ * and mines, by the same formula as the slate expansion, including the turn
+ * cost at each square (the turn at (fx,fy) itself is priced from the
+ * direction the route arrived there). COST_INF when (fx,fy) is not on the
+ * saved route or a step can no longer be made. O(route length, max 512).
+ *
+ * KeepCheck: compare the last NextStep answer (the new slate) with keeping
+ * the old step (ox,oy) from tank tile (tx,ty), destination (dx,dy).
+ *   *g_new  = new slate cost from the tank to the destination;
+ *   *g_keep = new slate cost from the tank to (ox,oy)
+ *             + RouteReprice(ox,oy).
+ * Returns 0 when both values are set, else a reason not to keep:
+ *   1 no answer, 2 an older slate answered (the newest has not reached the
+ *   destination), 3 (ox,oy) has overlay 32767, 4 (ox,oy) is not reached by
+ *   the new slate, 5 (ox,oy) is not on the saved route or the saved route
+ *   ends somewhere else. */
+int   brainPathfinderDijkstraRouteSave(BrainPathfinder *pf);
+float brainPathfinderDijkstraRouteReprice(const BrainPathfinder *pf,
+                                          int fx, int fy);
+int   brainPathfinderDijkstraKeepCheck(const BrainPathfinder *pf,
+                                       int tx, int ty, int ox, int oy,
+                                       int dx, int dy,
+                                       float *g_new, float *g_keep);
 float brainPathfinderDijkstraCostAt(BrainPathfinder *pf, int slate,
                                      int x, int y, int boat);
 int   brainPathfinderDijkstraStatus(BrainPathfinder *pf, int slate,
@@ -644,6 +740,23 @@ int brainPathfinderLgmWalkPathMap(BrainPathfinder *pf,
                                    int maxTicks, int stuckTicks,
                                    WORLD *pathX, WORLD *pathY, int pathMax);
 
+/* The same walk again, from a start given in WORLD units instead of a map
+ * square's centre. The engine puts the builder down on the tank's own
+ * position moved LGM_START_OFFSET towards his target (lgm.c
+ * lgmApplyStartOffset), not on the centre of the tank's square; a caller
+ * that needs where he is tick by tick starts him there. The destination is
+ * still the centre of square (dmx, dmy), as lgmNewPrimaryRequest sets it. */
+int brainPathfinderLgmWalkPath(BrainPathfinder *pf,
+                                WORLD sx, WORLD sy, BYTE dmx, BYTE dmy,
+                                BYTE blessX, BYTE blessY,
+                                int maxTicks, int stuckTicks,
+                                WORLD *pathX, WORLD *pathY, int pathMax);
+
+/* The man's speed on square (mx, my) as every LGM walk sim above sees it:
+ * the terrain speed, or 0 on a square marked LGM-impassable. 0 means he
+ * cannot walk there. */
+int brainPathfinderLgmManSpeed(BrainPathfinder *pf, BYTE mx, BYTE my);
+
 /* LGM overlay: clear all, then mark (mx,my) tiles the LGM can't cross
  * (live pills, enemy bases) and tiles he crosses at road speed whatever the
  * terrain (dead pills: mapGetManSpeed with man_dead_pill_terrain_speed 0).
@@ -738,7 +851,12 @@ typedef struct {
  * shooter_type: BRAIN_SHOT_SHOOTER_TANK or BRAIN_SHOT_SHOOTER_PILL.
  * sight_len:    tank's sightLen (1..gunsight_max). Pass 0 to use
  *               the pathfinder's gunsight_max. Ignored when
- *               shooter_type is PILL.
+ *               shooter_type is PILL (the pill's shell flies
+ *               pill_fire_length).
+ *
+ * The angle is the one each shooter's own code fires at: utilCalcAngle
+ * for a pill (pillsTargetTank), shellAngleFromTarget for a tank (when
+ * shot_sim_exact is 0, shellAngleFromTarget for both).
  *
  * Returns 0 if pf is NULL, origin == target, out_tiles is NULL, or
  * max_tiles<=0. Stops early (returning max_tiles) if the buffer fills. */
@@ -763,10 +881,13 @@ int brainPathfinderSimulateShotAngle(const BrainPathfinder *pf,
 
 /* Same as brainPathfinderSimulateShot but also checks for tank hits.
  * Tank positions are passed via tanks/num_tanks. When the shell enters
- * the 128 wu hitbox of a tank, a hit_type=1 entry is emitted at that
- * point in the sequence (interspersed with tile entries). The shell
- * stops on the first tank hit (same as the engine). owner_player is
- * the firing player — own tank is excluded from hit checks. */
+ * a tank's hit zone (utilIsTankHit with tank_hit_radius: the engine's
+ * circle, or its 128 box under BOLO_LEGACY_SQUARE_COLLISION), a
+ * hit_type=1 entry is emitted at that point in the sequence
+ * (interspersed with tile entries). The shell stops on the first tank
+ * hit (same as the engine). owner_player is the firing player — own
+ * tank is excluded from hit checks. With shot_sim_exact 0 the test is
+ * the old 128 box. */
 int brainPathfinderSimulateShotWithTanks(const BrainPathfinder *pf,
                                           WORLD origin_wx, WORLD origin_wy,
                                           WORLD target_wx, WORLD target_wy,

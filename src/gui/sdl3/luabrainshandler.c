@@ -103,11 +103,13 @@
 #include "gh_shield_stamp.h"
 #include "gh_opt_log.h"
 #include "gh_attack.h"
+#include "gh_pt2.h"
 #include "../clientmutex.h"
 #include "../gamefront.h"
 #include "luabrainshandler.h"
 #include "brain_capacity.h"
 #include "brain_sandbox.h"
+#include "brain_value_pack.h"
 
 
 /* ------------------------------------------------------------------ */
@@ -602,6 +604,10 @@ static bool brain_instance_create(LuaBrainInstance *inst, const char *path,
   lua_setglobal(L, "print");
 
   brainCoreRegisterConstants(L);
+  /* brain_value_encode(value) -> string: packs plain data for the raw pool
+   * capture (brains/GoalHunter/pool_render.lua). The brain gets this one
+   * function, not LuaJIT's string.buffer, which the sandbox keeps out. */
+  brainValueRegisterEncode(L);
 
   /* Signal to the brain whether it's running under BrainTest (debug) or
    * a release host (WinBolo / WinBoloDS).  Brains use this to skip debug
@@ -785,6 +791,8 @@ static bool brain_instance_create(LuaBrainInstance *inst, const char *path,
    * -brain-debug server calls before it compresses a finished block's logs. */
   brainCoreSetLogReleaseHook(naOptLogReleaseFiles);
   naAttackRegister(L);
+  /* gh_pt2 — pill take v2 evaluator in C (pilltake_v2.lua M.evaluate_lua). */
+  naPt2Register(L);
 
   /* Compute brain directory once at function scope so it can be reused for
    * the SDL searcher, BRAIN_DIR global, and opt/ detection below. */
