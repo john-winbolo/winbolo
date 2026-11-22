@@ -1693,6 +1693,8 @@ static const LangNameEntry kLangNameTable[] = {
     { "STR_LV_TANK_HINT", STR_LV_TANK_HINT },
     { "STR_LV_TANK_NO_STOCK", STR_LV_TANK_NO_STOCK },
     { "STR_LV_TANK_PILLS", STR_LV_TANK_PILLS },
+    { "STR_LV_TANK_SHOW_BASE", STR_LV_TANK_SHOW_BASE },
+    { "STR_LV_TANK_SHOW_LAG", STR_LV_TANK_SHOW_LAG },
     { "STR_LV_TANK_STOCK_FMT", STR_LV_TANK_STOCK_FMT },
     { "STR_LV_TEAM_BALANCE", STR_LV_TEAM_BALANCE },
     { "STR_LV_TEAM_COLOURS", STR_LV_TEAM_COLOURS },
@@ -2707,4 +2709,4 @@ static const LangNameEntry kLangNameTable[] = {
     { "STR_YES", STR_YES },
 };
 
-#define K_LANG_NAME_TABLE_SIZE  2692
+#define K_LANG_NAME_TABLE_SIZE  2696

@@ -740,6 +740,11 @@ void lv_screenMouseClick(int xPos, int yPos);
  * as an information click on it on the map does. Hold the client mutex. */
 void lv_screenSelectItem(BYTE itemType, BYTE itemNum);
 
+/* The base under the mouse over the Tank panel's base bars (from 1), or 0,
+ * each frame. The base is selected while the mouse stays, and the selection
+ * from before comes back when it leaves. Hold the client mutex. */
+void lv_screenHoverBase(int baseNum);
+
 /* Copy out what the HUD panel draws (lv_hud.h). Hold the client mutex. */
 struct LvHudSnapshot;
 void lv_screenHudSnapshot(struct LvHudSnapshot *out);
@@ -768,7 +773,9 @@ struct LvPillSpot;
 int lv_screenPillSpots(struct LvPillSpot *out, int max);
 
 /* The square of the view the selected base stands in (lv_screenSelectItem),
- * for the mark round it on the map. False when no base is selected, the
+ * for the mark round it on the map. Only a base the mouse over the Tank
+ * panel's base bars selects (lv_screenHoverBase) has it. False when no base
+ * is selected that way, the
  * base is off the map, or it is out of the view. Hold the client mutex. */
 bool lv_screenSelectedBaseSquare(int *viewX, int *viewY);
 

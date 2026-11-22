@@ -7477,11 +7477,67 @@ int lv_screenPillSpots(LvPillSpot *out, int max) {
   return found;
 }
 
+/* The base the mouse over the Tank panel's base bars has selected (from 1),
+   0 when the mouse is not over them; and the selection from before, which
+   comes back when the mouse leaves. Only this selection gets the mark on
+   the map (lv_screenSelectedBaseSquare). */
+static int  s_hoverBase = 0;
+static BYTE s_hoverPrevType = 0;
+static BYTE s_hoverPrevItem = 0;
+
+/* An item of the selection kept from before the hover, if the log still has
+   it on the map. */
+static bool screenItemStillThere(BYTE itemType, BYTE itemNum) {
+  if (itemType == 1) {
+    return g_lv->bs != NULL && itemNum < lv_basesGetNumBases(&g_lv->bs) &&
+           lv_basesIsActive(&g_lv->bs, (BYTE) (itemNum + 1)) == TRUE;
+  }
+  if (itemType == 2) {
+    return g_lv->pb != NULL && itemNum < lv_pillsGetNumPills(&g_lv->pb) &&
+           lv_pillsIsActive(&g_lv->pb, (BYTE) (itemNum + 1)) == TRUE;
+  }
+  return false;
+}
+
+/* The Tank panel calls this each frame with the base under the mouse (from
+   1), or 0 when the mouse is not over the bars, the bars are empty or the
+   panel is not drawn. The base is selected while the mouse stays; when it
+   leaves, the selection from before comes back. The caller holds the
+   client mutex. */
+void lv_screenHoverBase(int baseNum) {
+  if (g_lv == NULL || g_lv->logLoaded == FALSE) {
+    s_hoverBase = 0;
+    return;
+  }
+  if (baseNum == s_hoverBase) {
+    return;
+  }
+  if (baseNum > 0) {
+    if (s_hoverBase == 0) {
+      s_hoverPrevType = g_lv->selectedItemType;
+      s_hoverPrevItem = g_lv->selectedItem;
+    }
+    s_hoverBase = baseNum;
+    lv_screenSelectItem(1, (BYTE) (baseNum - 1));
+    return;
+  }
+  s_hoverBase = 0;
+  if (screenItemStillThere(s_hoverPrevType, s_hoverPrevItem)) {
+    g_lv->selectedItemType = s_hoverPrevType;
+    g_lv->selectedItem = s_hoverPrevItem;
+  } else {
+    g_lv->selectedItemType = 0;
+    g_lv->selectedItem = 0;
+  }
+  screenShowSelectedItem();
+}
+
 bool lv_screenSelectedBaseSquare(int *viewX, int *viewY) {
   const base *b;
 
   if (g_lv == NULL || g_lv->logLoaded == FALSE || g_lv->bs == NULL ||
-      g_lv->selectedItemType != 1 ||
+      s_hoverBase == 0 || g_lv->selectedItemType != 1 ||
+      g_lv->selectedItem != (BYTE) (s_hoverBase - 1) ||
       g_lv->selectedItem >= lv_basesGetNumBases(&g_lv->bs) ||
       lv_basesIsActive(&g_lv->bs, (BYTE) (g_lv->selectedItem + 1)) == FALSE) {
     return FALSE;

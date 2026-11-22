@@ -1420,6 +1420,8 @@
 #define STR_LV_HIT_BOXES_TIP                3471
 /* Log viewer Tank panel: the line beside the empty base bars when no base is near enough */
 #define STR_LV_TANK_BASE_NONE               3480
+#define STR_LV_TANK_SHOW_BASE               3481
+#define STR_LV_TANK_SHOW_LAG                3482
 
 /* Log viewer dialogs */
 #define STR_LV_ASSIGN_COLOURS_HINT          1128

@@ -2728,11 +2728,11 @@ static void lvDrawMarkCorners(const LvTankMark *m, const SDL_FRect *dst) {
     SDL_SetRenderClipRect(sdlRenderer, hadClip ? &oldClip : NULL);
 }
 
-/* The mark round the selected base: the selected tank's four corners, just
-   outside the base's square. A base is selected by a click on it on the map
-   or in the HUD panel, or by the mouse over its bars in the Tank panel. It
-   follows the tank mark's rule: none when the squares are too small to
-   read. */
+/* The mark round the base under the mouse over the Tank panel's base bars:
+   the selected tank's four corners, just outside the base's square. Only
+   while the mouse stays there (lv_screenHoverBase): a base selected by a
+   click on the map or in the HUD panel has none. It follows the tank mark's
+   rule: none when the squares are too small to read. */
 static void lvDrawBaseMarkOverBlit(const SDL_FRect *src, const SDL_FRect *dst) {
     float scale, tilePx, pxScale, left, top;
     int vx = 0, vy = 0;

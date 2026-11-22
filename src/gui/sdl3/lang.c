@@ -1122,6 +1122,8 @@ static const LangEntry langTable[] = {
     {2851, "Map zoom. 100% is the game's own size. Change it with + and -, the mouse wheel, or Options > Zoom"},
     {2852, "Animate Rewind and Fast Forward"},
     {2853, "Animate Seek"},
+    {3481, "Tank: Base Resources"},
+    {3482, "Tank: Lag Indicators"},
     /* Log viewer: the number of each pillbox on the map (Options), the list of pillbox numbers in a tooltip, and the Events panel's lines for a pillbox taken */
     {2866, "Pillbox Numbers"},
     {2867, "The number of each pillbox beside it on the map, the number the game's own pillbox list gives it"},

@@ -77,7 +77,7 @@ extern "C" {
     void lv_clientMutexWaitFor(void);
     void lv_clientMutexRelease(void);
     void lv_screenTankStatusSnapshot(LvTankStatus *out);
-    void lv_screenSelectItem(unsigned char itemType, unsigned char itemNum);
+    void lv_screenHoverBase(int baseNum);
     void lv_screenDeselectTank(void);
     bool lv_screenLagShown(void);
     void lv_screenPlayerLagSnapshot(int slot, LvPlayerLag *out);
@@ -260,12 +260,17 @@ static int tank_base_scale(float availW) {
                ? TANK_DEFAULT_SCALE : 1;
 }
 
-/* The room the near base's row takes under the gauges, the gap over it
- * counted. */
-static float tank_base_h(float availW) {
-    const float bars = (float)(tank_base_scale(availW) * TANK_BASE_SLICE_H) + 2.0f;
+/* The room the near base's row takes under the gauges at a scale, the gap
+ * over it counted. */
+static float tank_base_h_at(float scale) {
+    const float bars = scale * (float)TANK_BASE_SLICE_H + 2.0f;
     const float text = ImGui::GetTextLineHeight();
     return ImGui::GetStyle().ItemSpacing.y + ((bars > text) ? bars : text);
+}
+
+/* The same, at the scale the dock is sized for. */
+static float tank_base_h(float availW) {
+    return tank_base_h_at((float)tank_base_scale(availW));
 }
 
 float lv_imgui_tank_dock_height(float dockWidth) {
@@ -275,8 +280,10 @@ float lv_imgui_tank_dock_height(float dockWidth) {
     if (!tank_text_beside(availW)) {
         h += style.ItemSpacing.y + tank_text_h();
     }
-    h += tank_base_h(availW);
-    if (lv_screenLagShown()) {
+    if (lv_g_tank_show_base) {
+        h += tank_base_h(availW);
+    }
+    if (lv_g_tank_show_lag && lv_screenLagShown()) {
         /* The dock is sized for the largest section, the one with a graph. */
         h += tank_lag_h(true);
     }
@@ -802,16 +809,17 @@ static void tank_text(const LvTankStatus &st, bool icons) {
     }
 }
 
-/* The base the mouse over the bars last selected (from 1), 0 when the mouse
- * is not over them. The base is selected once as the mouse comes on, so a
- * click on another item while the mouse stays is not undone each frame. */
+/* The base under the mouse over the bars this frame (from 1), 0 when the
+ * mouse is not over them or the bars are empty. lv_imgui_tank_window hands
+ * it to lv_screenHoverBase at the end of each frame, also when the row is
+ * not drawn, so the base and its mark on the map go when the mouse leaves. */
 static int s_base_hover_num = 0;
 
 /* The near base's row: its three bars across, as the game draws them. Each
  * bar has a tooltip, "Shells: 12 / 90", and the mouse over them selects the
  * base. With no base near, the bars are empty and a dim line beside them
  * says so. */
-static void tank_base_row(const LvTankStatus &st) {
+static void tank_base_row(const LvTankStatus &st, float s) {
     static const langid k_base_name[LV_BASE_GAUGE_COUNT] = {
         STR_TABLET_SHELLS, STR_TABLET_MINES, STR_TABLET_ARMOUR
     };
@@ -819,7 +827,6 @@ static void tank_base_row(const LvTankStatus &st) {
         0, STATUS_BASE_MINES, STATUS_BASE_ARMOUR
     };
     ImDrawList *dl = ImGui::GetWindowDrawList();
-    const float s = (float)tank_base_scale(ImGui::GetContentRegionAvail().x);
     const ImVec2 origin = ImGui::GetCursorScreenPos();
     float tw = 0.0f, th = 0.0f;
     SDL_Texture *bg = tank_background(&tw, &th);
@@ -876,17 +883,9 @@ static void tank_base_row(const LvTankStatus &st) {
         }
         ImGui::PopID();
     }
-    /* The mouse over the bars selects the base, once as it comes on and
-     * again when the near base changes under it. */
+    /* The mouse over the bars selects the base while it stays there. */
     if (overBars) {
-        if (s_base_hover_num != st.baseNum) {
-            s_base_hover_num = st.baseNum;
-            lv_clientMutexWaitFor();
-            lv_screenSelectItem(1, (unsigned char)(st.baseNum - 1));
-            lv_clientMutexRelease();
-        }
-    } else {
-        s_base_hover_num = 0;
+        s_base_hover_num = st.baseNum;
     }
     ImGui::SetCursorScreenPos(origin);
     ImGui::Dummy(ImVec2(s * TANK_BASE_SLICE_W + 2.0f, s * TANK_BASE_SLICE_H + 2.0f));
@@ -1058,8 +1057,19 @@ void lv_imgui_lag_banner_at(float x, float y, float w) {
     ImGui::End();
 }
 
+/* Hand this frame's base under the mouse to the screen, and start the next
+ * frame with none. */
+static void tank_base_hover_apply(void) {
+    const int num = s_base_hover_num;
+    s_base_hover_num = 0;
+    lv_clientMutexWaitFor();
+    lv_screenHoverBase(num);
+    lv_clientMutexRelease();
+}
+
 void lv_imgui_tank_window(void) {
     if (!lv_g_show_tank_window) {
+        tank_base_hover_apply();
         return;
     }
 
@@ -1133,13 +1143,30 @@ void lv_imgui_tank_window(void) {
              * well or under it; and the scale of the well. */
             /* The lag section keeps its room under the rest. */
             ImVec2 avail = ImGui::GetContentRegionAvail();
-            if (lag.recorded) {
+            const bool showLag = lv_g_tank_show_lag && lag.recorded;
+            if (showLag) {
                 avail.y -= tank_lag_h(!(lag.has && lag.bot));
             }
-            /* So does the near base's row. */
-            avail.y -= tank_base_h(avail.x);
-            const LvTankRoom room = tank_room(st, avail);
-            const LvTankLayout lay = lvTankLayoutPick(&room);
+            /* So does the near base's row. It is drawn at the gauges' own
+             * scale, never larger: the largest scale at which the gauges,
+             * their text and the row all fit. The row is wider than the
+             * well, so the width can hold the gauges back too. With the row
+             * turned off (Windows > Tank: Base Resources) the gauges have
+             * the room alone. */
+            LvTankRoom room = tank_room(st, avail);
+            LvTankLayout lay = {};
+            if (!lv_g_tank_show_base) {
+                lay = lvTankLayoutPick(&room);
+            }
+            for (int sc = TANK_MAX_SCALE; lv_g_tank_show_base && sc >= 1; sc--) {
+                room.availH = avail.y - tank_base_h_at((float)sc);
+                room.maxScale = sc;
+                lay = lvTankLayoutPick(&room);
+                if (lay.scale >= (float)sc &&
+                    avail.x >= (float)(sc * TANK_BASE_SLICE_W) + 2.0f) {
+                    break;
+                }
+            }
             const bool icons = (lay.text == LV_TANK_TEXT_ICONS);
 
             ImVec2 origin = ImGui::GetCursorScreenPos();
@@ -1155,11 +1182,14 @@ void lv_imgui_tank_window(void) {
             } else {
                 tank_text(st, icons);
             }
-            tank_base_row(st);
-            if (lag.recorded) {
+            if (lv_g_tank_show_base) {
+                tank_base_row(st, (lay.scale < 1.0f) ? lay.scale : floorf(lay.scale));
+            }
+            if (showLag) {
                 tank_lag(st, lag, lagViewSlot);
             }
         }
     }
     ImGui::End();
+    tank_base_hover_apply();
 }

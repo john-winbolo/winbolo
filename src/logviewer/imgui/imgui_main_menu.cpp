@@ -128,6 +128,8 @@ bool lv_g_show_scenario_panel_window = true;
 bool lv_g_show_hud_window = true;
 bool lv_g_show_overview_window = true;
 bool lv_g_show_tank_window = true;
+bool lv_g_tank_show_base = true;
+bool lv_g_tank_show_lag = true;
 bool lv_g_show_chat_window = true;
 bool lv_g_reset_window_positions = false;
 /* Off until asked for: the outlines sit over the map a recording is watched
@@ -195,6 +197,11 @@ void lv_imgui_main_menu_init(struct LogViewerState *lv) {
 
     lv_platform_config_get_string("LOGVIEWER", "Window.Tank.Visible", "Yes", val, sizeof(val));
     lv_g_show_tank_window = (val[0] == 'Y' || val[0] == 'y');
+    /* The Tank panel's base row and lag section: on until turned off. */
+    lv_platform_config_get_string("LOGVIEWER", "Window.Tank.Base", "Yes", val, sizeof(val));
+    lv_g_tank_show_base = !(val[0] == 'N' || val[0] == 'n');
+    lv_platform_config_get_string("LOGVIEWER", "Window.Tank.Lag", "Yes", val, sizeof(val));
+    lv_g_tank_show_lag = !(val[0] == 'N' || val[0] == 'n');
 
     lv_platform_config_get_string("LOGVIEWER", "Window.Chat.Visible", "Yes", val, sizeof(val));
     lv_g_show_chat_window = (val[0] == 'Y' || val[0] == 'y');
@@ -278,6 +285,8 @@ void lv_imgui_main_menu_save(void) {
     lv_platform_config_set_string("LOGVIEWER", "Window.HUD.Visible", lv_g_show_hud_window ? "Yes" : "No");
     lv_platform_config_set_string("LOGVIEWER", "Window.Overview.Visible", lv_g_show_overview_window ? "Yes" : "No");
     lv_platform_config_set_string("LOGVIEWER", "Window.Tank.Visible", lv_g_show_tank_window ? "Yes" : "No");
+    lv_platform_config_set_string("LOGVIEWER", "Window.Tank.Base", lv_g_tank_show_base ? "Yes" : "No");
+    lv_platform_config_set_string("LOGVIEWER", "Window.Tank.Lag", lv_g_tank_show_lag ? "Yes" : "No");
     lv_platform_config_set_string("LOGVIEWER", "Window.Chat.Visible", lv_g_show_chat_window ? "Yes" : "No");
     {
         char side[16];
@@ -980,6 +989,15 @@ int lv_imgui_main_menu_bar(void) {
             }
             if (ImGui::MenuItem(langGetText(STR_LV_WIN_TANK), "Ctrl+8", lv_g_show_tank_window)) {
                 lv_g_show_tank_window = !lv_g_show_tank_window;
+                clicked = 1;
+            }
+            /* What the Tank panel shows under its gauges. */
+            if (ImGui::MenuItem(langGetText(STR_LV_TANK_SHOW_BASE), NULL, lv_g_tank_show_base)) {
+                lv_g_tank_show_base = !lv_g_tank_show_base;
+                clicked = 1;
+            }
+            if (ImGui::MenuItem(langGetText(STR_LV_TANK_SHOW_LAG), NULL, lv_g_tank_show_lag)) {
+                lv_g_tank_show_lag = !lv_g_tank_show_lag;
                 clicked = 1;
             }
             if (ImGui::MenuItem(langGetText(STR_LV_WIN_CHAT), "Ctrl+9", lv_g_show_chat_window)) {
