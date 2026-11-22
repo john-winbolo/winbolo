@@ -243,7 +243,7 @@ do
   local ax, ay, sl, ft, dwu, tier = K.predict_aim(tx, ty, lgm, h)
   check("impact on the pill tile -> tier dest_pill", tier == "dest_pill", tier)
   check("aim = pill tile centre", ax == pcx and ay == pcy, string.format("(%.0f,%.0f)", ax, ay))
-  check("sightLen from tank to centre", sl == K.sightlen_for(math.sqrt((tx - pcx) ^ 2 + (ty - pcy) ^ 2)), sl)
+  check("sightLen from tank to centre", sl == K.sight_for(math.sqrt((tx - pcx) ^ 2 + (ty - pcy) ^ 2)), sl)
   -- The 3-window dest_lock (map-edge sim) would lead him PAST the pill.
   local h_old = {}
   for k, v in pairs(h) do h_old[k] = v end
@@ -353,7 +353,7 @@ do
   local D = math.sqrt((pcx - tx) ^ 2 + (pcy - ty) ^ 2)
   local ux, uy = (pcx - tx) / D, (pcy - ty) / D
   local function tile_at(t)
-    local d = 32 * (t + 5)
+    local d = K.shell_dist_at(t)
     return bit.rshift(math.floor(tx + ux * d), 8), bit.rshift(math.floor(ty + uy * d), 8)
   end
   local mx, my = tile_at(dt.T_entry)
@@ -363,7 +363,7 @@ do
   check("live pill: ... and not one tick earlier", not (px == pmx and py == 100), string.format("(%d,%d)", px, py))
   check("live pill: goes off at T_entry, before T_full", dt.T_x == dt.T_entry and dt.T_entry < dt.T_full and ft == dt.T_x,
         string.format("T_x=%d T_entry=%d T_full=%d", dt.T_x, dt.T_entry, dt.T_full))
-  check("live pill: gunsight range reaches the tile", 128 * sl >= 32 * (dt.T_entry + 5), sl)
+  check("live pill: gunsight range reaches the tile", K.shell_travel(sl) >= K.shell_dist_at(dt.T_entry), sl)
 end
 
 -- 21. Hold at the lead phase, release once the blast lands while he is on
@@ -676,7 +676,9 @@ print("\nkill_lgm.lua - walk-in intercept + pass-through")
 C.LGM_DEST_INTERCEPT = true
 C.LGM_DEST_PASS_THROUGH = true
 
-local MAX_REACH = K.MAX_SIGHTLEN * 128
+-- The farthest a shell flies: 14*128 wu with LGM_SHELL_MODEL_RULES off,
+-- the rules burst (128*14+32 wu on the classic rules) with it on.
+local MAX_REACH = K.max_travel()
 
 -- 32. Reachable on the walk in: tank 3 tiles south of his line, well before
 --     the pill -> lead point on his line, off the pill tile, fire allowed.
@@ -692,7 +694,7 @@ do
         ax > lgm.wx and ax < pmx * 256 and math.abs(ay - pcy) < 32,
         string.format("(%.0f,%.0f)", ax, ay))
   check("lead point in shell reach, sightLen for it",
-        di and di.D <= MAX_REACH and sl == K.sightlen_for(di.D) and ft == K.flight_ticks(sl),
+        di and di.D <= MAX_REACH and sl == K.sight_for(di.D) and ft == K.flight_ticks(sl),
         di and di.D)
   check("shell meets him before he is on the pill tile",
         di and (di.s_enter == nil or di.s_hit < di.s_enter),
@@ -899,7 +901,8 @@ end
 -- 43. BLAST_DEAD_PILL_OPEN: a dead pill's tile is open ground for the
 --     builder blast test (lgm.c lgmBlastCatches).  A shell that flies over the
 --     dead pill (he has not arrived when it ends) kills him only within 128 wu
---     of where it ends, 128*sl along the line to the pill centre, on the tile
+--     of where it ends, K.shell_travel(sl) along the line to the pill centre (128*sl
+--     with LGM_SHELL_MODEL_RULES off), on the tile
 --     or off it.  Sweep: man walking east toward the centre from 120..400 wu
 --     west of it, shooter south or south-west at 2..4 tiles.  Every verdict must match the
 --     distance rule; at least one man off the tile is shot and at least one
@@ -921,8 +924,8 @@ do
       if dt and dt.open_blast then
         n = n + 1
         local D = math.sqrt((pcx - tx) ^ 2 + (pcy - ty) ^ 2)
-        local bx = tx + (pcx - tx) / D * 128 * dt.sl
-        local by = ty + (pcy - ty) / D * 128 * dt.sl
+        local bx = tx + (pcx - tx) / D * K.shell_travel(dt.sl)
+        local by = ty + (pcy - ty) / D * K.shell_travel(dt.sl)
         local mx, my = K.sim_forward_to_dest(lgm.wx + 0.0, lgm.wy + 0.0, pcx, pcy,
                                              dt.s_x, pmx, pmy)
         local ddx, ddy = mx - bx, my - by
