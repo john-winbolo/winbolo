@@ -413,13 +413,11 @@ int run_man_dead_pill_walk_across_water(void) {
  * tank comes to him: on river the tank drives onto his spot; on deep sea
  * it sails to MDP_BOAT_GAP west of him on a boat.
  *
- * This is the Mac Bolo behaviour, from the rooklift clone at commit
- * f355e4f: goport/sim/man.go:452-485 (each step is tested at the man's new
- * place by man_blocked, his four feet in the middle of his square, and a
- * refused step turns him back), man.go:534-544 (only his tank within 9 px,
- * 13 px on his way back, lets him through), man.go:554 (blocks_man refuses
- * river and deep sea), and goport/sim/audit_man_test.go:84-88 (a man in
- * the water "stays there for good" unless his tank comes within 13 px). */
+ * This is the Mac Bolo behaviour. A builder's step is tested at the place
+ * it would take him to, and a step onto river or deep sea is refused
+ * unless his tank is close by. So a builder left standing on water when
+ * the pillbox under him is lifted stays there until his tank comes to
+ * him. */
 static int mdpLiftedWaits(BYTE under) {
     const char *water = under == RIVER ? "river" : "deep sea";
     ServerSim *sim = mdpMakeSim();

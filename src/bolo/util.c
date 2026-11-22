@@ -644,7 +644,7 @@ int utilSpiralRing(const utilSpiralCursor *s) {
 *PURPOSE:
 *  Moves the cursor to the next square of the spiral.
 *
-*  UTIL_SPIRAL_NORTH is Mac Bolo's gen_scatter in int:
+*  UTIL_SPIRAL_NORTH is the order Mac Bolo searches in:
 *  from the centre to due north of it, along a ring
 *  clockwise, and from the square just west of due north
 *  round to due north of the next ring.
