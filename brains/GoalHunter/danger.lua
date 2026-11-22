@@ -328,13 +328,15 @@ end
 -- reached from shells.c only when a shell EXPLODES -- lines 368 and 452, the
 -- collision path and the end-of-life path). Given the explosion at (wx,wy):
 --
---   solid = the explosion tile is BUILDING / HALFBUILDING / has a pillbox /
---           has a base;
+--   solid = the explosion tile is BUILDING / HALFBUILDING / has a LIVE
+--           pillbox (pillsIsPillHit, armour > 0) / has a base. A dead pill's
+--           tile is open ground, so a shell that flies over a corpse and ends
+--           there is tested with the 128-WU rule, as case 3 below does;
 --   not solid -> the man dies if euclidean dist(man, explosion) <=
 --           MAP_SQUARE_MIDDLE (128 WU, half a tile);
 --   solid    -> he dies only if his TILE is the explosion tile (he can stand
---           on a base or on the pill he is working on; he can never stand in
---           a wall).
+--           on a base or on a live pill he is repairing; he can never stand
+--           in a wall).
 --
 -- A SHELL FLYING THROUGH THE MAN DOES NOT TOUCH HIM. That single fact is the
 -- shape of this whole function: the question is not "does the shell cross his
