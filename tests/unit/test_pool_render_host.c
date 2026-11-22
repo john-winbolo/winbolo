@@ -11,6 +11,9 @@
  * branch's pool text (the [t=] price ticks and the WINNERS parts). The
  * raw blocks were first packed with string.buffer ("WBPR1:"); they were
  * converted to the brain_value_pack form ("WBPR2:") with the same capture tables.
+ * Later the JSON files gained the "|dbl:" part that the pool 6 pill row
+ * text got with PT2_DOUBLE_TAKE_DISCOUNT (these blocks hold no double take,
+ * so each such row ends its spike_pen part with the "no safe double take" note).
  * The
  * render runs in pool_render_host's plain lua_State, the way BrainTest and
  * brainrec_split use it, with brains/GoalHunter as the brain directory.
