@@ -591,6 +591,7 @@ int run_wbn_map_fetch_policy(void);
 int run_brain_crash_log_writes_file(void);
 int run_brain_crash_log_falls_back_to_luaptr(void);
 int run_brain_push_rules_written_on_change(void);
+int run_brain_push_terrain_square_hit(void);
 int run_brain_bounds_tail_bad_steps(void);
 int run_brain_bounds_tail_bad_neutral(void);
 int run_brain_bounds_think_errors(void);
@@ -2488,11 +2489,21 @@ int run_lgm_kill_seen_out_dead_tank(void);
 /* A blast on a pillbox's square against a builder (test_lgm_blast_dead_pill.c):
  * a dead pill's square is open ground, so the blast kills within half a
  * square across its edge and not in its far corner; a live pill's square is
- * still solid. The shot that kills a pill is a hit on its square. */
+ * still solid. Shell hits on a wall, a forest, a boat, the shore or a bridge
+ * are hits on the square. */
 int run_lgm_blast_dead_pill_edge(void);
 int run_lgm_blast_dead_pill_far_corner(void);
 int run_lgm_blast_live_pill_unchanged(void);
 int run_lgm_blast_pill_kill_shot(void);
+int run_lgm_blast_wall_rubble_shot(void);
+int run_lgm_blast_forest_shot(void);
+int run_lgm_blast_boat_shot(void);
+int run_lgm_blast_shore_shot(void);
+int run_lgm_blast_bridge_shot(void);
+int run_lgm_blast_road_open_ground(void);
+int run_lgm_blast_mined_bridge_shot(void);
+/* The versions that play the square-hit rule (2.2.2 and later). */
+int run_lgm_blast_terrain_square_hit_for_version(void);
 int run_lgm_blast_shell_runs_out_dead_pill(void);
 int run_lgm_blast_shell_hits_tank_dead_pill(void);
 int run_lgm_blast_tank_explosion_kills_pill(void);

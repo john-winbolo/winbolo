@@ -6076,6 +6076,7 @@ set(_unit_test_names
     brain_crash_log_writes_file
     brain_crash_log_falls_back_to_luaptr
     brain_push_rules_written_on_change
+    brain_push_terrain_square_hit
     brain_bounds_tail_bad_steps
     brain_bounds_tail_bad_neutral
     brain_bounds_think_errors
@@ -6768,6 +6769,14 @@ set(_unit_test_names
     lgm_blast_dead_pill_far_corner
     lgm_blast_live_pill_unchanged
     lgm_blast_pill_kill_shot
+    lgm_blast_wall_rubble_shot
+    lgm_blast_forest_shot
+    lgm_blast_boat_shot
+    lgm_blast_shore_shot
+    lgm_blast_bridge_shot
+    lgm_blast_road_open_ground
+    lgm_blast_mined_bridge_shot
+    lgm_blast_terrain_square_hit_for_version
     lgm_blast_shell_runs_out_dead_pill
     lgm_blast_shell_hits_tank_dead_pill
     lgm_blast_tank_explosion_kills_pill

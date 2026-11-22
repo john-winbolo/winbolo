@@ -438,6 +438,23 @@ SimRuleChange simRulesDescribeValue(SimRuleUnit unit, double classic,
                                     double value);
 SimRuleChange simRulesDescribeChange(int rule, double value);
 
+/* The first version where a shell's hit that changes its square (the last
+ * hit on a wall, a forest, a boat, the shore, a bridge) is a hit on that
+ * square for the builder blast: only a builder on
+ * that square dies. Builds before it used the open-ground rule there (a
+ * builder within 128 wu of the square's middle dies). No rule switches it:
+ * the version alone decides. */
+#define SIM_RULES_TERRAIN_SQUARE_HIT_MAJOR    2
+#define SIM_RULES_TERRAIN_SQUARE_HIT_MINOR    2
+#define SIM_RULES_TERRAIN_SQUARE_HIT_REVISION 2
+
+/* 1 when a game made by this version plays the square-hit rule above, 0 for
+ * a version older than SIM_RULES_TERRAIN_SQUARE_HIT_*. A field larger than
+ * one byte (out of range on the wire and in a recording header) is taken as
+ * the newest version. The brain gets this as info.terrain_square_hit. */
+int simRulesTerrainSquareHitForVersion(unsigned major, unsigned minor,
+                                       unsigned revision);
+
 #ifdef __cplusplus
 }  /* extern "C" */
 #endif

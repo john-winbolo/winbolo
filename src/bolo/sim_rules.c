@@ -1236,3 +1236,20 @@ SimRuleChange simRulesDescribeChange(int rule, double value) {
     return simRulesDescribeValue(simRuleUnits[rule], simRulesClassicValue(rule),
                                  value);
 }
+
+int simRulesTerrainSquareHitForVersion(unsigned major, unsigned minor,
+                                       unsigned revision) {
+    unsigned long have = ((unsigned long) major << 16) |
+                         ((unsigned long) minor << 8) | revision;
+    unsigned long first =
+        ((unsigned long) SIM_RULES_TERRAIN_SQUARE_HIT_MAJOR << 16) |
+        ((unsigned long) SIM_RULES_TERRAIN_SQUARE_HIT_MINOR << 8) |
+        SIM_RULES_TERRAIN_SQUARE_HIT_REVISION;
+
+    /* Each field is one byte on the wire and in the recording header, so
+       a larger value is out of range: take it as the newest version. */
+    if (major > 255 || minor > 255 || revision > 255) {
+        return 1;
+    }
+    return (have >= first) ? 1 : 0;
+}
