@@ -1077,10 +1077,11 @@ void printArgs() {
   fprintf(stderr, "-bothost-keel - the KEEL values of all the dynamic slot flags above (fixed slots, no reserve); a flag\n");
   fprintf(stderr, "                given as well still counts\n");
   fprintf(stderr, "-record-bothost-data - write the bot placement probes, free CPU readings and decisions into the round log (.wbv)\n");
-  fprintf(stderr, "-bothost-enforce-server-limit <0|1> - 1: the server runs no more bots than its own slots; a bot with\n");
-  fprintf(stderr, "                no slot there or on a good Bot Host is held (it keeps its tank and its stats, its tank\n");
-  fprintf(stderr, "                stands still) until a place has one. 0: a bot back from a Bot Host runs on the server\n");
-  fprintf(stderr, "                past its slots, as before (default 1)\n");
+  fprintf(stderr, "-bothost-enforce-server-limit <0|1> - 1: no bot is placed on the server past its own slots, and a\n");
+  fprintf(stderr, "                bot past them moves to a good Bot Host with a slot. No bot is ever held: with no such\n");
+  fprintf(stderr, "                host every bot runs on the server, and the players are told once that the bots may\n");
+  fprintf(stderr, "                play worse. 0: the placement puts bots on the server past its slots, as before\n");
+  fprintf(stderr, "                (default 1)\n");
   fprintf(stderr, "-bothost-code <official|custom> - official: no brain file goes to a Bot Host; a bot runs on a\n");
   fprintf(stderr, "                host only when the host's own install holds its brain, file for file. custom: hosts\n");
   fprintf(stderr, "                download this server's brain files (a player's built-in host built to run only\n");

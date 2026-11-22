@@ -513,35 +513,27 @@ int botHostPlacePickOther(const BotHostPlaceHost *hosts, int n,
                          NULL);
 }
 
-bool botHostServerFallBackHolds(bool enforce, int serverBots,
-                                int serverSlots) {
-    return enforce && serverBots >= serverSlots;
-}
-
-int botHostPlaceHeldTarget(const BotHostPlaceHost *hosts, int n,
-                           int smallSlots, double bias,
-                           const BotHostPlaceLag *lag) {
-    if (hosts == NULL || n <= 0) return -1;
-    if (hosts[0].slots > 0 && hosts[0].bots < hosts[0].slots) return 0;
-    if (n < 2) return -1;
+int botHostPlaceGoodHost(const BotHostPlaceHost *hosts, int n,
+                         int smallSlots, double bias,
+                         const BotHostPlaceLag *lag) {
+    if (hosts == NULL || n < 2) return -1;
     return placePickSkip(hosts, n, smallSlots, bias, lag, 0, true, NULL);
 }
 
-int botHostHeldOldest(const bool *held, const uint32_t *since, int n,
-                      uint32_t now) {
-    int i, best = -1;
-    uint32_t bestAge = 0;
-    if (held == NULL || since == NULL) return -1;
-    for (i = 0; i < n; i++) {
-        uint32_t age;
-        if (!held[i]) continue;
-        age = now - since[i];
-        if (best < 0 || age > bestAge) {
-            best = i;
-            bestAge = age;
-        }
+void botHostOverWarnInit(BotHostOverWarn *w) {
+    if (w != NULL) w->warned = false;
+}
+
+bool botHostOverWarnStep(BotHostOverWarn *w, int serverBots, int serverSlots,
+                         bool hostTakes) {
+    if (w == NULL) return false;
+    if (serverBots <= serverSlots) {
+        w->warned = false;
+        return false;
     }
-    return best;
+    if (hostTakes || w->warned) return false;
+    w->warned = true;
+    return true;
 }
 
 bool botHostPlaceRebalance(const BotHostPlaceHost *hosts, int n,

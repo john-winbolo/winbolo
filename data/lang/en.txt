@@ -3143,10 +3143,10 @@ STR_LV_BOTHOST_RULE_NORMAL=normal
 STR_LV_BOTHOST_RULE_EMERGENCY=emergency
 STR_LV_BOTHOST_RULE_TRIAL=trial
 
-# The dedicated server's newswire lines for a bot held because neither the
-# server nor a Bot Host has a slot for it (-bothost-enforce-server-limit)
-STR_BOTHOST_BOT_PAUSED={player} is paused: no room to run its bot
-STR_BOTHOST_BOT_RUNS_AGAIN={player} runs again
+# The dedicated server's newswire line when it runs more bots than its own
+# slots and no Bot Host can take one (-bothost-enforce-server-limit):
+# {string1} = the bots it runs, {string2} = its slots
+STR_BOTHOST_OVER_SLOTS=The server runs {string1} bots but has only {string2} bot slots. Bots may play worse.
 # The lobby's Bot Host row of a player's computer when the server sent no
 # name: the player's number, or a plain name when that is not known
 STR_DLGLOBBY_BOTHOST_PLAYER_NAME=Player {number}

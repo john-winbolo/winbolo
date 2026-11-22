@@ -202,11 +202,11 @@ typedef struct {
      * held is true when the seat came back from a Bot Host and the
      * in-process build failed: the seat keeps its tank, its name and its
      * stats, thinks nothing, and is built again at the next round start.
-     * heldNoRoom is true (with held) when the seat is held because neither
-     * the server nor a Bot Host has a slot for its brain
-     * (-bothost-enforce-server-limit): it is not built at a round start,
-     * only when the Bot Host side finds it room (botManagerResumeHeld) or
-     * hands it to a host.
+     * heldNoRoom is true (with held) when the seat is held by
+     * botManagerHoldNoRoom: it is not built at a round start, only by
+     * botManagerResumeHeld or when it goes to a host. The dedicated server
+     * no longer holds a bot for lack of a slot; its placement step gives
+     * any seat held so its brain back at once.
      * remoteStats is the last CMD_BOT_STATS the host sent for the seat. */
     bool            remote;
     bool            held;

@@ -3791,10 +3791,10 @@
 #define STR_LV_BOTHOST_DEC_LIMIT_CARRY           3940
 #define STR_LV_BOTHOST_TIP_DYNAMIC               3941
 
-/* The dedicated server's newswire lines for a bot held because neither the
- * server nor a Bot Host has a slot for it (-bothost-enforce-server-limit) */
-#define STR_BOTHOST_BOT_PAUSED                   3923
-#define STR_BOTHOST_BOT_RUNS_AGAIN               3924
+/* The dedicated server's newswire line when it runs more bots than its own
+ * slots and no Bot Host can take one (-bothost-enforce-server-limit):
+ * {string1} = the bots it runs, {string2} = its slots */
+#define STR_BOTHOST_OVER_SLOTS                   3943
 
 /* The lobby's Bot Host row of a player's computer when the server sent no
  * name: the player's number, or, when that is not known, a plain name */

@@ -49,16 +49,15 @@
  *      its free slots, however much free CPU room it has.
  *  14. bot_host_place_keep_batch_cpu_limit: a Bot Host target takes no
  *      more than its free CPU room; the full server takes none.
- *  15. bot_host_enforce_fall_back_holds: with -bothost-enforce-server-limit
- *      the bots that come back from a host past the server's slots are
- *      held, and no placement puts a bot on a full server.
- *  16. bot_host_enforce_host_resumes: held bots run again, the longest
- *      held first, on the server while it has a slot, then on a good Bot
- *      Host that connects.
- *  17. bot_host_enforce_leave_resumes: a bot that leaves the server lets
- *      one held bot run again there.
- *  18. bot_host_enforce_off_keeps_fall_back: -bothost-enforce-server-limit
- *      0 holds no bot; the server takes bots past its slots, as before.
+ *  15. bot_host_enforce_over_warns: with -bothost-enforce-server-limit a
+ *      server over its slots with no host to take a bot holds no bot and
+ *      tells the players once; back to its slots and over again, once
+ *      more. No placement puts a new bot on a full server.
+ *  16. bot_host_enforce_good_host: the good Bot Host with a slot that
+ *      takes a bot of a server over its slots; none when every host is
+ *      full, bad or takes no bots.
+ *  17. bot_host_enforce_off_keeps_fall_back: -bothost-enforce-server-limit
+ *      0: the server takes bots past its slots, as before.
  */
 
 #include <stdint.h>
@@ -972,56 +971,55 @@ int run_bot_host_place_keep_batch_cpu_limit(void) {
 }
 
 /* ================================================================
- * 15 to 18. The server's own bot limit (-bothost-enforce-server-limit)
+ * 15 to 17. The server's own bot limit (-bothost-enforce-server-limit)
  * ================================================================ */
 
-/* The seats of the held tables below (MAX_TANKS in the game). */
-#define ENFORCE_SEATS 16
-
-/* Bots that come back from a host one at a time to a server with serverBots
- * of serverSlots: how many run on the server and how many are held. */
-static void enforceFallBack(bool enforce, int *serverBots, int serverSlots,
-                            int back, int *held) {
-    int k;
-    *held = 0;
-    for (k = 0; k < back; k++) {
-        if (botHostServerFallBackHolds(enforce, *serverBots, serverSlots)) {
-            (*held)++;
-        } else {
-            (*serverBots)++;
-        }
-    }
-}
-
-int run_bot_host_enforce_fall_back_holds(void) {
+int run_bot_host_enforce_over_warns(void) {
     static const int slots[1] = { 4 };
     int bots[1] = { 4 };
     BotHostPlaceHost h[2];
-    int serverBots = 2, held = 0;
+    BotHostOverWarn w;
+    int k, told = 0;
 
-    /* The server runs 2 of its 3 slots; its Bot Host with 4 bots goes. */
-    enforceFallBack(true, &serverBots, 3, 4, &held);
-    UT_ASSERT_MSG(serverBots == 3 && held == 3, "server %d held %d",
-                  serverBots, held);
-    /* A full server holds the first one too. */
-    serverBots = 3;
-    enforceFallBack(true, &serverBots, 3, 2, &held);
-    UT_ASSERT(serverBots == 3 && held == 2);
-    /* A server with 0 slots runs none. */
-    serverBots = 0;
-    enforceFallBack(true, &serverBots, 0, 1, &held);
-    UT_ASSERT(serverBots == 0 && held == 1);
+    /* No bot is ever held: the step only says when to tell the players.
+     * At or under its slots, nothing. */
+    botHostOverWarnInit(&w);
+    UT_ASSERT(!botHostOverWarnStep(&w, 2, 3, false));
+    UT_ASSERT(!botHostOverWarnStep(&w, 3, 3, false));
+    /* Over its slots with no host to take a bot: one message, at the step
+     * it goes over, however long it stays over and however far. */
+    for (k = 0; k < 20; k++) {
+        if (botHostOverWarnStep(&w, k < 10 ? 5 : 6, 3, false)) told++;
+    }
+    UT_ASSERT_MSG(told == 1, "told %d", told);
+    /* Back to its slots, then over again: a second message. */
+    UT_ASSERT(!botHostOverWarnStep(&w, 3, 3, false));
+    UT_ASSERT(botHostOverWarnStep(&w, 4, 3, false));
+    UT_ASSERT(!botHostOverWarnStep(&w, 4, 3, false));
+    /* Under its slots counts as back too. */
+    UT_ASSERT(!botHostOverWarnStep(&w, 1, 3, false));
+    UT_ASSERT(botHostOverWarnStep(&w, 4, 3, false));
 
-    /* No placement puts a bot on the full server: with the host full too,
-     * there is no place for a new bot and no place for a held one. */
+    /* While a host can take a bot (or an offer waits), the spread moves
+     * one and the message waits; it goes out when no host can. */
+    botHostOverWarnInit(&w);
+    UT_ASSERT(!botHostOverWarnStep(&w, 5, 3, true));
+    UT_ASSERT(!botHostOverWarnStep(&w, 4, 3, true));
+    UT_ASSERT(botHostOverWarnStep(&w, 4, 3, false));
+    UT_ASSERT(!botHostOverWarnStep(&w, 4, 3, true));
+    UT_ASSERT(!botHostOverWarnStep(&w, 4, 3, false));
+    /* A server with 0 slots and one bot is over them. */
+    botHostOverWarnInit(&w);
+    UT_ASSERT(botHostOverWarnStep(&w, 1, 0, false));
+    UT_ASSERT(!botHostOverWarnStep(NULL, 9, 0, false));
+
+    /* The spread still puts no new bot on the full capped server: with
+     * the host full too, there is no place for one. */
     keepTable(h, 2, 3, 3, slots, bots, 2.0);
     h[0].capped = true;
     UT_ASSERT(botHostPlacePickLag(h, 2, BOT_HOST_SMALL_SLOTS_DEFAULT,
                                   BOT_HOST_SMALL_BIAS_DEFAULT,
                                   &keepLag) == -1);
-    UT_ASSERT(botHostPlaceHeldTarget(h, 2, BOT_HOST_SMALL_SLOTS_DEFAULT,
-                                     BOT_HOST_SMALL_BIAS_DEFAULT,
-                                     &keepLag) == -1);
     /* A host over its slots gives no bot to the full server either. */
     {
         int from = -1, to = -1;
@@ -1034,113 +1032,40 @@ int run_bot_host_enforce_fall_back_holds(void) {
     return 0;
 }
 
-int run_bot_host_enforce_host_resumes(void) {
+int run_bot_host_enforce_good_host(void) {
     static const int slots[2] = { 2, 4 };
     int bots[2] = { 0, 4 };
     BotHostPlaceHost h[3];
-    bool held[ENFORCE_SEATS];
-    uint32_t since[ENFORCE_SEATS];
-    int order[3], where[3], k, s;
 
-    memset(held, 0, sizeof(held));
-    memset(since, 0, sizeof(since));
-    /* Seats 2, 5 and 6 held at ticks 300, 100 and 200. */
-    held[2] = true;
-    since[2] = 300;
-    held[5] = true;
-    since[5] = 100;
-    held[6] = true;
-    since[6] = 200;
-
-    /* The server runs 2 of its 3 slots, host 1 (2 slots) has just
-     * connected, host 2 is full. */
-    keepTable(h, 3, 3, 2, slots, bots, 2.0);
+    /* The server runs 5 bots for its 3 slots, host 1 (2 slots) is empty,
+     * host 2 is full: host 1 takes a bot. */
+    keepTable(h, 3, 3, 5, slots, bots, 2.0);
     h[0].capped = true;
-    for (k = 0; k < 3; k++) {
-        int tgt = botHostPlaceHeldTarget(h, 3, BOT_HOST_SMALL_SLOTS_DEFAULT,
-                                         BOT_HOST_SMALL_BIAS_DEFAULT,
-                                         &keepLag);
-        s = botHostHeldOldest(held, since, ENFORCE_SEATS, 400);
-        UT_ASSERT_MSG(tgt >= 0 && s >= 0, "step %d tgt %d seat %d", k, tgt,
-                      s);
-        order[k] = s;
-        where[k] = tgt;
-        held[s] = false;
-        h[tgt].bots++;
-    }
-    /* The longest held first: 5, 6, 2. The server first, then host 1. */
-    UT_ASSERT_MSG(order[0] == 5 && order[1] == 6 && order[2] == 2,
-                  "order %d %d %d", order[0], order[1], order[2]);
-    UT_ASSERT_MSG(where[0] == 0 && where[1] == 1 && where[2] == 1,
-                  "where %d %d %d", where[0], where[1], where[2]);
-    UT_ASSERT(h[0].bots == 3 && h[1].bots == 2 && h[2].bots == 4);
-    UT_ASSERT(botHostHeldOldest(held, since, ENFORCE_SEATS, 400) == -1);
-
-    /* A bad host, or one that takes no bots, is no place for a held bot;
-     * the server is, while it has a slot, even when it is bad. */
-    bots[0] = 0;
-    keepTable(h, 3, 3, 3, slots, bots, 2.0);
-    h[0].capped = true;
+    UT_ASSERT(botHostPlaceGoodHost(h, 3, BOT_HOST_SMALL_SLOTS_DEFAULT,
+                                   BOT_HOST_SMALL_BIAS_DEFAULT,
+                                   &keepLag) == 1);
+    /* A bad host, or one that takes no bots, takes none. */
     h[1].bad = true;
-    UT_ASSERT(botHostPlaceHeldTarget(h, 3, BOT_HOST_SMALL_SLOTS_DEFAULT,
-                                     BOT_HOST_SMALL_BIAS_DEFAULT,
-                                     &keepLag) == -1);
+    UT_ASSERT(botHostPlaceGoodHost(h, 3, BOT_HOST_SMALL_SLOTS_DEFAULT,
+                                   BOT_HOST_SMALL_BIAS_DEFAULT,
+                                   &keepLag) == -1);
     h[1].bad = false;
     h[1].open = false;
-    UT_ASSERT(botHostPlaceHeldTarget(h, 3, BOT_HOST_SMALL_SLOTS_DEFAULT,
-                                     BOT_HOST_SMALL_BIAS_DEFAULT,
-                                     &keepLag) == -1);
-    h[0].bots = 2;
-    h[0].bad = true;
-    UT_ASSERT(botHostPlaceHeldTarget(h, 3, BOT_HOST_SMALL_SLOTS_DEFAULT,
-                                     BOT_HOST_SMALL_BIAS_DEFAULT,
-                                     &keepLag) == 0);
-    /* Ties of the held time go to the lower seat; the count wraps. */
-    memset(held, 0, sizeof(held));
-    held[3] = held[1] = true;
-    since[3] = since[1] = 0xFFFFFFF0u;
-    UT_ASSERT(botHostHeldOldest(held, since, ENFORCE_SEATS, 16) == 1);
-    since[3] = 0xFFFFFFE0u;
-    UT_ASSERT(botHostHeldOldest(held, since, ENFORCE_SEATS, 16) == 3);
-    return 0;
-}
-
-int run_bot_host_enforce_leave_resumes(void) {
-    static const int slots[1] = { 2 };
-    int bots[1] = { 2 };
-    BotHostPlaceHost h[2];
-    bool held[ENFORCE_SEATS];
-    uint32_t since[ENFORCE_SEATS];
-    int tgt, s;
-
-    memset(held, 0, sizeof(held));
-    memset(since, 0, sizeof(since));
-    held[4] = true;
-    since[4] = 500;
-    held[7] = true;
-    since[7] = 450;
-
-    /* The server is full (3 of 3), its one host too: both stay held. */
-    keepTable(h, 2, 3, 3, slots, bots, 2.0);
+    UT_ASSERT(botHostPlaceGoodHost(h, 3, BOT_HOST_SMALL_SLOTS_DEFAULT,
+                                   BOT_HOST_SMALL_BIAS_DEFAULT,
+                                   &keepLag) == -1);
+    /* Every host full: none. The server is never the answer, even with
+     * room of its own. */
+    bots[0] = 2;
+    keepTable(h, 3, 3, 1, slots, bots, 2.0);
     h[0].capped = true;
-    UT_ASSERT(botHostPlaceHeldTarget(h, 2, BOT_HOST_SMALL_SLOTS_DEFAULT,
-                                     BOT_HOST_SMALL_BIAS_DEFAULT,
-                                     &keepLag) == -1);
-
-    /* A bot leaves the server: the one held longest (seat 7) runs there. */
-    h[0].bots = 2;
-    tgt = botHostPlaceHeldTarget(h, 2, BOT_HOST_SMALL_SLOTS_DEFAULT,
-                                 BOT_HOST_SMALL_BIAS_DEFAULT, &keepLag);
-    s = botHostHeldOldest(held, since, ENFORCE_SEATS, 600);
-    UT_ASSERT_MSG(tgt == 0 && s == 7, "tgt %d seat %d", tgt, s);
-    held[s] = false;
-    h[0].bots++;
-
-    /* Only one: the server is full again and seat 4 stays held. */
-    UT_ASSERT(botHostPlaceHeldTarget(h, 2, BOT_HOST_SMALL_SLOTS_DEFAULT,
-                                     BOT_HOST_SMALL_BIAS_DEFAULT,
-                                     &keepLag) == -1);
-    UT_ASSERT(botHostHeldOldest(held, since, ENFORCE_SEATS, 600) == 4);
+    UT_ASSERT(botHostPlaceGoodHost(h, 3, BOT_HOST_SMALL_SLOTS_DEFAULT,
+                                   BOT_HOST_SMALL_BIAS_DEFAULT,
+                                   &keepLag) == -1);
+    /* No hosts at all: none. */
+    UT_ASSERT(botHostPlaceGoodHost(h, 1, BOT_HOST_SMALL_SLOTS_DEFAULT,
+                                   BOT_HOST_SMALL_BIAS_DEFAULT,
+                                   &keepLag) == -1);
     return 0;
 }
 
@@ -1148,13 +1073,6 @@ int run_bot_host_enforce_off_keeps_fall_back(void) {
     static const int slots[1] = { 4 };
     int bots[1] = { 4 };
     BotHostPlaceHost h[2];
-    int serverBots = 2, held = 0;
-
-    /* All 4 bots of the host that went run on the server, 6 of 3 slots. */
-    enforceFallBack(false, &serverBots, 3, 4, &held);
-    UT_ASSERT_MSG(serverBots == 6 && held == 0, "server %d held %d",
-                  serverBots, held);
-    UT_ASSERT(!botHostServerFallBackHolds(false, 16, 0));
 
     /* Not capped: with every Bot Host full, the full server still takes a
      * new bot, as before. */

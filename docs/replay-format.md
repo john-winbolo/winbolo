@@ -140,7 +140,7 @@ Selected event types (see the `logitem` enum for the complete list):
 | 5 | `log_MapChange` | cell x, y, terrain type |
 | 6 | `log_Shell` | shell  (position, direction, owner) |
 | 7–17 | `log_Sound*` | sound x/y for each of 11 sound events |
-| 18–20 | `log_Message*` | server / all-players / specific-players chat. A dedicated server with `-bothost-enforce-server-limit` writes a `log_MessageServer` line when it holds a bot ("<bot> is paused: no room to run its bot") and when that bot runs again ("<bot> runs again") |
+| 18–20 | `log_Message*` | server / all-players / specific-players chat. A dedicated server with `-bothost-enforce-server-limit` writes a `log_MessageServer` line when it runs more bots than its own slots and no Bot Host can take one ("The server runs 6 bots but has only 3 bot slots. Bots may play worse."), once each time it goes over |
 | 21 | `log_ChangeName` | player + Pascal name |
 | 22–24 | `log_Ally*` | alliance request / accept / leave |
 | 25–26 | `log_BaseSet*` | base owner / stock (shells, mines, armour) |
@@ -825,13 +825,14 @@ Then, by kind (0xFF in a byte field: none):
   4 raise, 5 raise refused, 6 placement refused, 7 would move: the bot stays
   because of `-bothost-nomove`, 8 the spread offered a server bot to a Bot
   Host, 9 the spread moved a bot off a Bot Host, 10 no better host: the host
-  is over the target rate but no bot may move, 11 hold: no place has a slot
-  for the bot `seat`, so it is held (`-bothost-enforce-server-limit`;
-  `host` is where it ran, `toHost` is 0xFF, the reason is "no room" and the
-  free CPU check is that of the server), 12 resume: the held bot `seat`
-  runs again on `toHost`, which has a slot (`host` is `toHost`, the reason
-  is "room on the server" or "room on a Bot Host" and the free CPU check is
-  that of `toHost`), 13 dynamic raise: the live limit went up by up to
+  is over the target rate but no bot may move, 11 hold: no place had a
+  slot for the bot `seat`, so it was held (`host` is where it ran,
+  `toHost` is 0xFF, the reason is "no room" and the free CPU check is that
+  of the server), 12 resume: the held bot `seat` ran again on `toHost`,
+  which had a slot (`host` is `toHost`, the reason is "room on the server"
+  or "room on a Bot Host" and the free CPU check is that of `toHost`);
+  only older servers wrote 11 and 12, as a server now holds no bot, 13
+  dynamic raise: the live limit went up by up to
   `-bothost-raise-step` bots (the reason is "free CPU above the reserve"),
   14 start: a game starts at the host's start, 15 carry: a game starts at
   the limit the last game ended with (`-bothost-carry-limit`); 13 to 15 are

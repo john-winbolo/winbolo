@@ -818,28 +818,33 @@ bool botHostNoMoveGiveBack(const BotHostNoMove *nm, bool running, int bots,
                            int slots);
 
 /* ---- The server's own bot limit (-bothost-enforce-server-limit) ----------
- * With the option on, the server runs no more in-process bots than its own
- * slots. A bot with no slot on the server and none on a good Bot Host is
- * held: it keeps its seat, its tank and its stats, its brain does not run
- * and its tank stands still. It runs again when a place has a slot.
+ * With the option on, the placement puts no bot on the server past its own
+ * slots (the capped field), and a bot of a server over its slots moves to a
+ * good Bot Host with a slot. No bot is held for lack of a slot: with no
+ * such host every bot runs on the server, and the players are told once
+ * that the bots may play worse.
  *
- * FallBackHolds: a bot that comes back from a Bot Host to a server that
- *   runs serverBots in-process bots of serverSlots is held, not run there.
- *   Always false with the option off (the server goes past its slots, as
- *   before). */
-bool botHostServerFallBackHolds(bool enforce, int serverBots,
-                                int serverSlots);
-/* Where a held bot runs again, or -1 (it stays held). Index 0 is the
- * server: it comes first while its bots are below its slots (its free CPU
- * and its bad flag are not counted). Else the best good Bot Host by the
- * usual rule (botHostPlacePickOther, no bad host). */
-int  botHostPlaceHeldTarget(const BotHostPlaceHost *hosts, int n,
-                            int smallSlots, double bias,
-                            const BotHostPlaceLag *lag);
-/* The held bot that runs again first: the one held longest (the lowest
- * since, counted back from now); ties go to the lower seat. held[i] marks
- * seat i held. -1 when none is. */
-int  botHostHeldOldest(const bool *held, const uint32_t *since, int n,
-                       uint32_t now);
+ * PlaceGoodHost: the good Bot Host (index 1 or more; index 0, the server,
+ *   is passed by) that would take a bot of the server now by the usual rule
+ *   (botHostPlacePickOther, no bad host), or -1 when none has a slot. */
+int  botHostPlaceGoodHost(const BotHostPlaceHost *hosts, int n,
+                          int smallSlots, double bias,
+                          const BotHostPlaceLag *lag);
+/* The warning that the server runs more bots than its own slots. warned:
+ * it went out, and the server has not been back to its slots or under
+ * since.
+ *
+ * OverWarnStep, each placement step: true when the warning goes out now.
+ *   That is the first step with serverBots over serverSlots while no host
+ *   can take a bot (hostTakes false: no good Bot Host has a slot and no
+ *   offer waits). Once only: it goes out again only after a step with
+ *   serverBots at serverSlots or under. While a host can take a bot the
+ *   spread moves one, and the warning waits. */
+typedef struct {
+    bool warned;
+} BotHostOverWarn;
+void botHostOverWarnInit(BotHostOverWarn *w);
+bool botHostOverWarnStep(BotHostOverWarn *w, int serverBots, int serverSlots,
+                         bool hostTakes);
 
 #endif /* BOT_HOST_LINK_H */
