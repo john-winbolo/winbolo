@@ -29,6 +29,12 @@
 -- our tank's place change from job to job. A job ends when the man dies, is
 -- back in his tank, or WALK_FRAMES pass.
 --
+-- LKL_ROW, LKL_WALK, LKL_OX_MAX (the _near twins): his row is LKL_ROW squares
+-- north of our tank (4), he walks LKL_WALK squares each side of the centre
+-- column (7), and our tank's column offset is clamped to LKL_OX_MAX (no
+-- clamp). The shell lines and the fire-range line give the tank-to-man
+-- distance as each shell leaves.
+--
 -- LKL_ARRIVE: our tank has no shells while he walks out, and is put in its
 -- place, nose 20 brads off, with full shells on the frame he stops. Every
 -- shot is then in the stop or the walk back (C.LGM_LEAD_STOP_RETURN).
@@ -65,7 +71,8 @@
 -- The twins: lgm_kill_lag_old (every LGM_AIM_* knob, LGM_TELEPORT_REPEAT_VIEW,
 -- LGM_SHELL_MODEL_RULES, LGM_FIRE_LOS_STRICT and LGM_LEAD_STOP_RETURN off),
 -- _d1 / _d1_old (delay 1), _stop / _stop_old (LKL_ARRIVE), _pill (LKL_PILL
--- and LKL_ARRIVE, no old twin: see its header). The _old twins are
+-- and LKL_ARRIVE, no old twin: see its header), _near / _near_old (the man
+-- 2-3.6 squares from our tank). The _old twins are
 -- expected to fail.
 --
 -- GATE: ticks=40000 bots=0 ai=yesfull gametype=open
@@ -106,6 +113,7 @@ local pill_wasted = 0
 local ph_shots = { walk = 0, stop = 0, back = 0 }
 local ph_hits = { walk = 0, stop = 0, back = 0 }
 local sb_shots, sb_hits = 0, 0
+local fire_n, fire_min, fire_max = 0, math.huge, 0   -- tank to man at fire, squares
 
 local function opt(name, dflt)
   local v = _G[name]
@@ -169,7 +177,9 @@ local function model_travel(g, sight)
 end
 
 local function our_place(L)
-  return A.cx + L[2], A.cy
+  local ox, m = L[2], opt("LKL_OX_MAX", nil)
+  if m then ox = math.max(-m, math.min(m, ox)) end
+  return A.cx + ox, A.cy
 end
 
 local function put_us(g, full)
@@ -190,8 +200,9 @@ local function place(g)
   local L = LAYOUT[(trial - 1) % #LAYOUT + 1]
   local dir = L[1]
   A.dir = dir
-  A.fx, A.fy = A.cx - 7 * dir, A.cy - 4
-  A.dx, A.dy = A.cx + 7 * dir, A.cy - 4
+  local row, walk = opt("LKL_ROW", 4), opt("LKL_WALK", 7)
+  A.fx, A.fy = A.cx - walk * dir, A.cy - row
+  A.dx, A.dy = A.cx + walk * dir, A.cy - row
   g.set_tile(A.dx, A.dy, g.TERRAIN.grass)
   g.teleport(FOE, A.fx, A.fy, 0)
   g.set_boat(FOE, false)
@@ -233,6 +244,14 @@ local function finish(g, why)
   -- fire frame after the order, man phase at the burst, sight, real burst
   -- to the model burst, real burst to the man.
   for i, s in ipairs(shots) do
+    local fm = man_at[s.frame - 1] or man_at[s.frame]
+    if fm and not s.stray then
+      local r = math.sqrt((fm[1] - s.gx) ^ 2 + (fm[2] - s.gy) ^ 2) / 256
+      fire_n = fire_n + 1
+      if r < fire_min then fire_min = r end
+      if r > fire_max then fire_max = r end
+      s.range = r
+    end
     local ph = s.burst and (man_ph[s.burst - 1] or man_ph[s.burst]) or "?"
     local m = s.burst and (man_at[s.burst - 1] or man_at[s.burst])
     local man_d = (m and s.rx) and math.sqrt((s.rx - m[1]) ^ 2 + (s.ry - m[2]) ^ 2)
@@ -248,8 +267,9 @@ local function finish(g, why)
       if man_d and man_d <= 128 then sb_hits = sb_hits + 1 end
     end
     -- man: burst to the man, and (dx, dy) the burst less the man, wu
-    g.log(string.format("LKL  shell %d f+%d %s>%s sight %d %s model %s man %s%s%s", i,
-      s.frame - A.out_at, fph, ph, s.sight, s.expired and "ran out" or "hit",
+    g.log(string.format("LKL  shell %d f+%d r%s %s>%s sight %d %s model %s man %s%s%s", i,
+      s.frame - A.out_at, s.range and string.format("%.1f", s.range) or "-",
+      fph, ph, s.sight, s.expired and "ran out" or "hit",
       s.model_err and string.format("%+.0f", s.model_err) or "-",
       man_d and string.format("%.0f", man_d) or "-",
       man_d and string.format(" (%+.0f,%+.0f)", s.rx - m[1], s.ry - m[2]) or "",
@@ -356,7 +376,8 @@ function on_tick(g, tick)
   if phase == "settle" then
     if frame == 60 then
       g.teleport(US, A.cx, A.cy, 0); g.set_boat(US, false)
-      g.teleport(FOE, A.cx - 7, A.cy - 4, 0); g.set_boat(FOE, false)
+      g.teleport(FOE, A.cx - opt("LKL_WALK", 7), A.cy - opt("LKL_ROW", 4), 0)
+      g.set_boat(FOE, false)
     end
     if frame == 62 then
       g.fill_rect(A.cx - 14, A.cy - 12, A.cx + 14, A.cy + 3, g.TERRAIN.grass)
@@ -440,6 +461,8 @@ function on_tick(g, tick)
         ph_hits.stop, ph_shots.stop, ph_hits.back, ph_shots.back))
       g.log(string.format("LKL fired in the stop, burst in the walk back: %d/%d within 128 wu",
         sb_hits, sb_shots))
+      g.log(string.format("LKL fire range (tank to man as the shell leaves): %d shells, %.1f-%.1f squares",
+        fire_n, fire_n > 0 and fire_min or 0, fire_max))
       -- (a verdict line is cut at VERDICT_MAX, so the words are short)
       verdict(first_kills >= need_first and kills >= need_kills and model_bad == 0
               and (not pill or pill_wasted == 0), string.format(
