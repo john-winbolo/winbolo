@@ -1070,6 +1070,13 @@ static const LangEntry langTable[] = {
     {3118, "{string1}, {number} ms round trip"},
     {3119, "See What the Selected Player Saw"},
     {3120, "Draw the round as the selected tank's player saw it on their own screen. The recording must hold lag records"},
+    {3472, "Toggle Screen-True Own Shells"},
+    {3474, "On: the selected player's own shells are drawn at the present, as their own screen drew them at once. Off: they are drawn at the old time, as every other shell is"},
+    {3475, "Toggle Screen-True Local Explosions"},
+    {3476, "On: the selected player's own shells explode at once where they end, and the server's later explosion of each is hidden. Off: each one explodes when the server's explosion comes"},
+    {3477, "Turn on Toggle Screen-True Own Shells first"},
+    /* Log viewer Tank panel: the line beside the empty base bars */
+    {3480, "No base near"},
     {3121, "Lag: a bot, screen {number} ms behind"},
     /* The viewer's server timing (log_OverrunStats) in the Game Info panel. */
     {3130, "Server timing"},
@@ -1114,12 +1121,17 @@ static const LangEntry langTable[] = {
     {2850, "Show only the events of the ticked kinds"},
     {2851, "Map zoom. 100% is the game's own size. Change it with + and -, the mouse wheel, or Options > Zoom"},
     {2852, "Animate Rewind and Fast Forward"},
+    {2853, "Animate Seek"},
+    {3481, "Tank: Base Resources"},
+    {3482, "Tank: Lag Indicators"},
     /* Log viewer: the number of each pillbox on the map (Options), the list of pillbox numbers in a tooltip, and the Events panel's lines for a pillbox taken */
     {2866, "Pillbox Numbers"},
     {2867, "The number of each pillbox beside it on the map, the number the game's own pillbox list gives it"},
     {2868, "Numbers: {string1}"},
     {2869, "{player} captured Neutral Pillbox {number}"},
     {2870, "{player} just stole pillbox {number} from {other}"},
+    {3470, "Toggle Hit Boxes"},
+    {3471, "Over each tank on the map, the circle a shell must reach to hit it. Over each builder out of his tank, the area an explosion must be in to kill him"},
 
     /* Log viewer dialogs */
     {1128, "Assign colours to each player team:"},

@@ -150,3 +150,22 @@ int run_lv_jump_anim_time(void) {
     UT_ASSERT(lvJumpAnimStepAt(10, 250, 0) == 0);
     return 0;
 }
+
+/* A seek of the seek bar given a new target while its animation runs: the
+   time goes on, but never from later than LV_JUMP_ANIM_RETARGET_MS, so the
+   world is never left at the handle's old place, and the first frame after
+   the new target goes most of the way there. */
+int run_lv_jump_anim_retarget(void) {
+    UT_ASSERT(LV_JUMP_ANIM_RETARGET_MS == 125);
+    UT_ASSERT(lvJumpAnimRetargetElapsed(0, LV_JUMP_ANIM_RETARGET_MS) == 0);
+    UT_ASSERT(lvJumpAnimRetargetElapsed(60, LV_JUMP_ANIM_RETARGET_MS) == 60);
+    UT_ASSERT(lvJumpAnimRetargetElapsed(125, LV_JUMP_ANIM_RETARGET_MS) == 125);
+    UT_ASSERT(lvJumpAnimRetargetElapsed(126, LV_JUMP_ANIM_RETARGET_MS) == 125);
+    UT_ASSERT(lvJumpAnimRetargetElapsed(5000, LV_JUMP_ANIM_RETARGET_MS) == 125);
+    /* From there the target is not due before the end of the time, and one
+       frame on (16 ms) three quarters of the steps are done. */
+    UT_ASSERT(lvJumpAnimStepAt(LV_JUMP_ANIM_RETARGET_MS, LV_JUMP_ANIM_MS, 12) == 9);
+    UT_ASSERT(lvJumpAnimStepAt(LV_JUMP_ANIM_RETARGET_MS + 16, LV_JUMP_ANIM_MS, 12) == 9);
+    UT_ASSERT(lvJumpAnimStepAt(LV_JUMP_ANIM_MS - 1, LV_JUMP_ANIM_MS, 12) == 11);
+    return 0;
+}
