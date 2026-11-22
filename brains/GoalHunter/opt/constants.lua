@@ -1206,6 +1206,18 @@ M.PT2_AFTER_SCAN_MAX_TICKS = 5
 -- cleared before v2, so a kill there left no plan and the tank drove in
 -- with no walls (20261121_002624 bot1 t=9247) (KEEL, MAST).
 M.SHIELD_SCAN_PENDING_SURVIVES_V2 = true
+-- BLITZ_NO_DOUBLE_TAKE (Nov 22, Andrew: "No blitzes with double takes!
+-- double takes need pills to target specific directions so other players
+-- will throw it off"). true = a take under a double-take plan is never a
+-- blitz (pt2_dbl.no_blitz): its own v2 plan kills 2+ pills, or this bot's
+-- double-take cache qualifies on the pill with no ally claim on a chain
+-- pill. Latched on the goal. The take opens no call (an open one closes),
+-- squad status "dbl" sends committed soldiers away, a blitz leader drops
+-- the blitz before GO and finishes solo with the plan, the bot answers no
+-- call on the pill (availability "dbl"), and BLITZ_SWITCH does not pull it
+-- to another pill. A blitz-only bot is not changed. false = old rule.
+-- KEEL / MAST: false.
+M.BLITZ_NO_DOUBLE_TAKE = true
 -- PT2_CAPTURE_FILE (debug only): a file path. When set, every v2 evaluate
 -- appends its inputs and the Lua result to the file, for the parity test
 -- cases. "" = off.
@@ -8168,6 +8180,8 @@ M.PRESETS = {
     SHELL_MODEL_RULES_ALL    = false,
     --   2026-11-22: a budget kill in v2 (one go) loses the plan (old rule).
     SHIELD_SCAN_PENDING_SURVIVES_V2 = false,
+    --   2026-11-22: a double take can still be a blitz (old rule).
+    BLITZ_NO_DOUBLE_TAKE = false,
     --   2026-11-17: hold 15 ticks with no goal after a kill (old rule).
     POST_KILL_WAIT_TICKS = 15,
     --   2026-11-17: carrying-pill approach floor 30 (old rule).
@@ -8524,6 +8538,7 @@ M.PRESETS.mast = {
   LGM_LEAD_STOP_RETURN              = false,  -- 2.2.1: no stop-and-return lead
   SHELL_MODEL_RULES_ALL             = false,  -- 2.2.1: other shell sites at 128 * sight
   SHIELD_SCAN_PENDING_SURVIVES_V2   = false,  -- 2.2.1 had no pill take v2
+  BLITZ_NO_DOUBLE_TAKE              = false,  -- 2.2.1 had no double takes
   POST_KILL_WAIT_TICKS              = 15,
   CARRY_APPROACH_MIN_ARMOUR_ONE     = 30,
   CARRY_APPROACH_MIN_ARMOUR_MANY    = 30,

@@ -11684,7 +11684,10 @@ function Brain.think(info)
       if _g and _g.kind == "attack_pill" and not state.squad_cmdr
          and state.squad_role == squad.ROLE_COMMANDER
          and _g.target_id and _g.target_id >= 0
-         and squad.BLITZ_CALL_OPEN_SUB[_g.substate or ""] then
+         and squad.BLITZ_CALL_OPEN_SUB[_g.substate or ""]
+         -- C.BLITZ_NO_DOUBLE_TAKE: a double take holds no call; an open
+         -- one closes (bcc) on the tick the take latches it.
+         and not (C.BLITZ_NO_DOUBLE_TAKE and _g._blitz_dbl) then
         if _g._blitz or state._my_blitz_call == _g.target_id then
           cur_call = _g.target_id
         end

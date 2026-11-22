@@ -491,6 +491,45 @@ function M.qualifies(e)
   return true
 end
 
+-- BLITZ_NO_DOUBLE_TAKE (2026-11-22): is the attack_pill goal g under a
+-- double-take plan? A double take needs the pills to shoot in set
+-- directions. Other tanks at the pill pull its fire away and break the
+-- plan, so such a take is never a blitz. Two signs, either one is enough:
+--   "plan"    the take's own v2 plan kills 2 or more pills (goal._pt2,
+--             set by pt2_attack.finish only for a safe plan);
+--   "shadow"  this bot's own double-take cache has a fresh entry on the
+--             pill that qualifies (M.qualifies: safe, 2+ kills, the pills
+--             and trees the plan needs are on hand).
+-- The answer latches on the goal (g._blitz_dbl) until the goal ends, so an
+-- entry that ages out cannot turn the take back into a blitz.
+-- A blitz-only bot (squad.blitz_only) attacks only in a blitz, so the rule
+-- does not apply to it. Only this bot's own map memory and pills feed both
+-- signs. Returns the reason or nil.
+function M.no_blitz(state, g, world, info, now)
+  if not C.BLITZ_NO_DOUBLE_TAKE then return nil end
+  if not (g and g.kind == "attack_pill" and g.target_id) then return nil end
+  if g._blitz_dbl then return g._blitz_dbl end
+  if require("squad").blitz_only(state) then return nil end
+  local why
+  local p2 = g._pt2
+  if p2 and (p2.kills or 0) >= 2 then
+    why = "plan"
+  else
+    local s = state and state._pt2_dbl
+    local e = s and s.by_id[g.target_id]
+    if e and world and info and not stale_why(e, world, info, now or 0, state)
+       and M.qualifies(e)
+       -- the pool's PT2_CHAIN_CLAIM rule: a chain pill an ally claims
+       -- spoils the double take (no discount, and no sign here)
+       and not (C.PT2_CHAIN_CLAIM and require("pt2_claim").chain_ally_claimed(
+                  state, e.ids, now or 0, info.player_number or -1)) then
+      why = "shadow"
+    end
+  end
+  if why then g._blitz_dbl = why end
+  return why
+end
+
 -- Exclusions for the row: the summed contrib of the target and every other
 -- chain pill (threat.pill_contrib), and the other chain pills' coverage
 -- disks ({tile_key = n}). Cached in the entry; the contrib sum is built

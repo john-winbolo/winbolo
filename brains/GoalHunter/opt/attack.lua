@@ -5362,6 +5362,28 @@ local function update_attack_substate_body(goal, state, world, info)
   -- transient bookkeeping gap (the commander's /info state target went stale while
   -- it only sent bac/pblk), NOT the commander leaving — don't drop our negotiated
   -- standoff over it (saw bot0 lose its approach spot exactly this way).
+  -- C.BLITZ_NO_DOUBLE_TAKE (2026-11-22): a take under a double-take plan
+  -- (pt2_dbl.no_blitz: the take's own v2 plan kills 2+ pills, or our
+  -- double-take cache qualifies on the pill) is never a blitz. Other tanks
+  -- at the pill pull its fire off the set directions the plan needs. Before
+  -- GO we drop the blitz and finish solo with the plan's walls and pills
+  -- (_blitz_solo: the existing solo-take latch). squad.update then opens no
+  -- call and says "dbl", so committed soldiers leave. A committed soldier
+  -- (squad_blitz_accepted) runs the commander's plan, not its own: no check.
+  if C.BLITZ_NO_DOUBLE_TAKE and not state.squad_blitz_accepted
+     and not goal._blitz_committed and not goal._blitz_solo
+     and require("pt2_dbl").no_blitz(state, goal, world, info, now) then
+    local _was = goal._blitz
+    goal._blitz      = false
+    goal._blitz_solo = true
+    if goal.substate == "blitz_wait" then
+      -- the degrade-to-solo path below does the same: re-approach so the
+      -- in-position decision builds the shield for a solo take
+      goal.substate = "approach"
+      goal._blitz_ready_since = nil
+      state.squad_blitz_in_position = nil
+    end
+  end
   local _cmdr_gone  = not state.squad_blitz_accepted
   local _retargeted = state.squad_blitz_target and goal.target_id ~= state.squad_blitz_target
   if goal._blitz and not goal._blitz_committed and _blitz_precommit
