@@ -80,6 +80,7 @@ void transportUdpServerOnLobbyMapChange(struct ServerSim *sim) { (void)sim; }
 void transportUdpServerOnGameStart(struct ServerSim *sim) { (void)sim; }
 void transportUdpServerSetLock(struct ServerSim *sim, bool locked) { (void)sim; (void)locked; }
 uint16_t transportUdpServerGetClientPing(BYTE playerNum) { (void)playerNum; return 0; }
+uint16_t transportUdpServerGetLagCompPingMs(BYTE playerNum) { (void)playerNum; return 0; }
 const char *transportUdpServerGetPlayerName(BYTE playerNum) { (void)playerNum; return NULL; }
 /* server_command_dispatch.c's CMD_LOBBY_BOT_CONFIG arm calls this
  * to update the connected-player table's bot name. The non-server

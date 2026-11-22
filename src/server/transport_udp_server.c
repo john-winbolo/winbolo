@@ -1092,6 +1092,30 @@ uint16_t transportUdpServerGetClientPing(BYTE playerNum) {
     return udpServer.clients[playerNum].pingMs;
 }
 
+uint16_t transportUdpServerGetLagCompPingMs(BYTE playerNum) {
+    const BotHostSeat *seat;
+    const BotHostConn *hc;
+    double ms;
+    if (playerNum >= MAX_TANKS) return 0;
+    if (!udpServer.clients[playerNum].connected) return 0;
+    if (!udpServer.clients[playerNum].botSlot) {
+        return udpServer.clients[playerNum].pingMs;
+    }
+    /* A Bot Host bot. Only once its brain thinks on the host do its inputs
+     * come from there; before that (PENDING, BOUND) they come from the
+     * server's own process, with no delay. */
+    seat = &udpServer.botSeats[playerNum];
+    if (seat->state != BOT_SEAT_REMOTE || seat->host < 0 ||
+        seat->host >= MAX_BOT_HOSTS) {
+        return 0;
+    }
+    hc = &udpServer.botHosts[seat->host];
+    if (!hc->connected || !hc->lagKnown || !(hc->lagMs >= 0.0)) return 0;
+    ms = hc->lagMs + 0.5;
+    if (ms > 65534.0) ms = 65534.0;
+    return (uint16_t)ms;
+}
+
 bool transportUdpServerGetClientAddrStr(BYTE playerNum, char *out, size_t outLen) {
     if (out == NULL || outLen == 0) return false;
     out[0] = '\0';

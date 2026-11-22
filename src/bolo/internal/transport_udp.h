@@ -740,6 +740,15 @@ int transportUdpServerGetSpectatorCount(void);
 /* Returns ping for a given player (0 if not connected). */
 uint16_t transportUdpServerGetClientPing(BYTE playerNum);
 
+/* The round trip in ms the server's lag-compensation ping estimate uses for
+ * a player (serverSimComputeLagCompTicks, used when the input has no view
+ * tick). A human: his ping, the same as transportUdpServerGetClientPing. A
+ * bot whose brain thinks on a remote Bot Host: that host's smoothed lag, so
+ * the bot gets the rewind a human that far away gets. Any other bot, or a
+ * host with no lag measured yet: 0. Only the rewind reads it; the ping shown
+ * for a bot stays 0. */
+uint16_t transportUdpServerGetLagCompPingMs(BYTE playerNum);
+
 /* Test seam: overwrite a connected slot's measured ping so the high-ping
  * enforcement path (transportUdpServerEnforcePing) can be driven
  * deterministically. Real RTT over the unit tests' loopback socket is ~0ms and

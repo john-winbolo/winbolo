@@ -3106,6 +3106,8 @@ int run_conn_migration_e2e(void);
  * snapshot serverTick, 0 until two are applied). */
 int run_viewtick_rewind(void);
 int run_viewtick_displayed_tick(void);
+/* A Bot Host bot with view tick 0 is rewound by its host's measured lag. */
+int run_viewtick_rewind_bot_host(void);
 
 /* Differential check of the generated flat-leaf-snapshot codecs against the
  * hand-rolled packers (test_wire_corpus.c). The capture entry regenerates the
