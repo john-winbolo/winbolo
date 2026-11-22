@@ -19,11 +19,18 @@
 -- 3. A builder on a lone forest square next to grass, the line on the
 --    grass within 128 of him: no forest on the line, open ground, so he can
 --    be killed.
--- 4. The keel values (both knobs off) give the old answers: the shell flies
---    on over a forest, open ground everywhere.
--- 5. SHELL_STOPS_ON_FOREST_BOAT on, BLAST_TERRAIN_SQUARE_HIT off: the stop
---    is open ground on the stop square's middle (the old engine rule).
+-- 4. KEEL (SHELL_STOPS_ON_FOREST_BOAT off, LIVE_PHYSICS off) gives the old
+--    answers: the shell flies on over a forest, open ground everywhere,
+--    even in a game whose version has the square-hit rule.
+-- 5. SHELL_STOPS_ON_FOREST_BOAT on, a game older than 2.2.2
+--    (info.terrain_square_hit false): the stop is open ground on the stop
+--    square's middle (the old engine rule).
 -- 6. A boat stops the shell as a forest does.
+-- 7. No info.terrain_square_hit (an old host): the old rule, as in 5.
+--
+-- The square-hit rule is not a knob: live_physics.apply sets
+-- C.LGM_BLAST_TERRAIN_SQUARE_HIT from info.terrain_square_hit, which the
+-- engine sets from the game's version (true from 2.2.2 on).
 -- =========================================================================
 
 package.path = "./?.lua;" .. package.path
@@ -33,6 +40,7 @@ local bit = require("bitcompat")
 local C = require("constants")
 local U = require("util")
 local D = require("danger")
+local LP = require("live_physics")
 
 local pass, fail = 0, 0
 local function check(name, cond, got)
@@ -52,9 +60,12 @@ local function key(mx, my) return my * 256 + mx end
 U.ttype = function(mx, my) return map[key(mx, my)] or C.T_GRASS end
 U.ttype_peek = U.ttype
 
-local function knobs(stop, square)
+-- stop: C.SHELL_STOPS_ON_FOREST_BOAT. square_hit: info.terrain_square_hit
+-- as the engine sends it (true for 2.2.2 and later, false before), or nil
+-- for a host that does not send it.
+local function knobs(stop, square_hit)
   C.SHELL_STOPS_ON_FOREST_BOAT = stop
-  C.BLAST_TERRAIN_SQUARE_HIT = square
+  LP.apply({ terrain_square_hit = square_hit })
 end
 
 -- The tank on square (100, 100), heading east.
@@ -79,6 +90,8 @@ print("1. builder two squares deep in a forest")
 set_map(forest_row)
 knobs(true, true)
 do
+  check("a 2.2.2 game turns the square-hit rule on",
+        C.LGM_BLAST_TERRAIN_SQUARE_HIT == true, C.LGM_BLAST_TERRAIN_SQUARE_HIT)
   local mwx, mwy = 106 * 256 + 128, OY1
   local t, smx, smy = D.forest_boat_stop(OX, OY1, HX, HY, MAX_ALONG)
   check("the line stops on the first forest square (104,100)",
@@ -120,10 +133,13 @@ do
         ex == mwx and ey == oy and sqx == nil, ex)
 end
 
-print("4. keel: both knobs off, the old answers")
+print("4. keel: the old answers, even in a 2.2.2 game")
 set_map(forest_row)
-knobs(false, false)
+C.LIVE_PHYSICS = false
+knobs(false, true)
 do
+  check("LIVE_PHYSICS off leaves the square-hit rule off",
+        C.LGM_BLAST_TERRAIN_SQUARE_HIT == false, C.LGM_BLAST_TERRAIN_SQUARE_HIT)
   check("no stop is modelled", D.forest_boat_stop(OX, OY1, HX, HY, MAX_ALONG) == nil)
   check("the man two squares deep is killable, as before",
         killable(OY1, 106 * 256 + 128, OY1))
@@ -135,10 +151,14 @@ do
         killable(100 * 256 + 200, 106 * 256 + 128, 101 * 256 + 40))
 end
 
-print("5. the shell stops, the stop is open ground")
+C.LIVE_PHYSICS = true
+
+print("5. a game older than 2.2.2: the shell stops, the stop is open ground")
 set_map(forest_row)
 knobs(true, false)
 do
+  check("an old game leaves the square-hit rule off",
+        C.LGM_BLAST_TERRAIN_SQUARE_HIT == false, C.LGM_BLAST_TERRAIN_SQUARE_HIT)
   local ex, ey, sqx = D.capture_shot_end(OX, OY1, HX, HY, 6 * 256)
   check("the shot blows up on (104,100)'s middle, no square rule",
         ex == 104 * 256 + 128 and ey == OY1 and sqx == nil, ex)
@@ -158,6 +178,22 @@ do
   check("the line stops on the boat (103,100)", smx == 103, smx)
   check("a man past the boat cannot be killed",
         not killable(OY1, 105 * 256 + 128, OY1))
+end
+
+print("7. no info.terrain_square_hit: the old rule")
+set_map(forest_row)
+knobs(true, true)
+knobs(true, nil)
+do
+  check("a missing field turns the square-hit rule off",
+        C.LGM_BLAST_TERRAIN_SQUARE_HIT == false, C.LGM_BLAST_TERRAIN_SQUARE_HIT)
+  local ex, ey, sqx = D.capture_shot_end(OX, OY1, HX, HY, 6 * 256)
+  check("the shot blows up on (104,100)'s middle, no square rule",
+        ex == 104 * 256 + 128 and ey == OY1 and sqx == nil, ex)
+  check("a man 122 from that middle can be killed",
+        killable(OY1, 104 * 256 + 250, OY1))
+  check("a man in that square's far corner, 171 away, cannot",
+        not killable(OY1, 104 * 256 + 250, OY1 + 120))
 end
 
 print(string.format("\n%d passed, %d failed", pass, fail))

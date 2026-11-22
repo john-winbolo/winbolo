@@ -7150,7 +7150,7 @@ function Brain.think(info)
         -- reaches).  Solid square (live pill/base/building): the ray must
         -- actually cross his tile -- splash won't kill there, only an in-tile hit.
         -- A forest or a boat on the line stops the shell there; with
-        -- C.BLAST_TERRAIN_SQUARE_HIT that stop kills only a man on that square
+        -- C.LGM_BLAST_TERRAIN_SQUARE_HIT that stop kills only a man on that square
         -- (danger.capture_man_killable).
         -- Otherwise fall back to hovering the sight on the pill centre.
         local killable = false

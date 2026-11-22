@@ -587,6 +587,7 @@ int run_wbn_map_fetch_policy(void);
 int run_brain_crash_log_writes_file(void);
 int run_brain_crash_log_falls_back_to_luaptr(void);
 int run_brain_push_rules_written_on_change(void);
+int run_brain_push_terrain_square_hit(void);
 int run_brain_bounds_tail_bad_steps(void);
 int run_brain_bounds_tail_bad_neutral(void);
 int run_brain_bounds_think_errors(void);
@@ -2486,6 +2487,8 @@ int run_lgm_blast_shore_shot(void);
 int run_lgm_blast_bridge_shot(void);
 int run_lgm_blast_road_open_ground(void);
 int run_lgm_blast_mined_bridge_shot(void);
+/* The versions that play the square-hit rule (2.2.2 and later). */
+int run_lgm_blast_terrain_square_hit_for_version(void);
 int run_lgm_blast_shell_runs_out_dead_pill(void);
 int run_lgm_blast_shell_hits_tank_dead_pill(void);
 int run_lgm_blast_tank_explosion_kills_pill(void);
