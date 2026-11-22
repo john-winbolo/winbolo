@@ -3796,6 +3796,10 @@
  * {string1} = the bots it runs, {string2} = its slots */
 #define STR_BOTHOST_OVER_SLOTS                   3943
 
+/* The lobby reject toast's line for an Add Bot onto a new team that the
+ * map's scenario does not allow (CMD_REJECT_SCENARIO_TEAM) */
+#define STR_DLGLOBBY_REJECT_SCENARIO_TEAM        3944
+
 /* The lobby's Bot Host row of a player's computer when the server sent no
  * name: the player's number, or, when that is not known, a plain name */
 #define STR_DLGLOBBY_BOTHOST_PLAYER_NAME         3925

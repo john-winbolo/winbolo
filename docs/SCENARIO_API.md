@@ -1442,7 +1442,7 @@ rather than left to misbehave quietly.
 
 | Function | Asked | Answer |
 |---|---|---|
-| `allow_extra_teams()` | When a host would put a seat on a team no other seat is on. | `true` to allow. Ordinary rule: yes. |
+| `allow_extra_teams()` | When a host would put a seat on a team no other seat is on. | `true` to allow. Ordinary rule: yes. On `false`, a host's Add Bot onto that team is refused whole: no bot is made and no seat is taken. |
 | `allow_base_win()` | Before the round checks whether one side owns every base. | `false` takes that ending out of the round and leaves every other ending alone. Ordinary rule: yes. |
 | `can_respawn(p)` | On the last tick of a dead tank's wait. | `false` holds the tank where it is, and the question is asked again next tick. Ordinary rule: yes. |
 | `can_build(p, action, x, y, n)` | Before a builder order goes ahead. `action` is the order as given — `"trees"`, `"road"`, `"building"`, `"pill"`, `"mine"` or `"boat"` — before the engine decides whether the square makes it a repair. `n` is the pillbox for a pill order and `nil` otherwise. | `false` refuses the order. Ordinary rule: yes. |
