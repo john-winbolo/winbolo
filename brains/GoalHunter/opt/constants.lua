@@ -3442,6 +3442,15 @@ M.LGM_AIM_SIGHT_TAP       = true  -- search may tap the sight one step (odd sigh
 -- Andrew's yes (Nov 22, item 13 idea 3). false = fire on any D. KEEL /
 -- MAST: false.
 M.LGM_AIM_DELAY_CONFIRM   = true
+-- LGM_AIM_DELAY_BEST_RATE: in the delay measure (lgm_aim choose) a d may win,
+-- and D may be confirmed, only when no other d with samples has a lower
+-- error rate, a d still short of the window / 2 samples included. That d
+-- blocks the switch and wins only once it has its own samples.
+-- lgm_kill_lag_near (2026-11-22): at t=122 D=4 won on 2/16 errors while
+-- D=3 had 0/15; the shell at t=158 left on D=4. Andrew's yes (Nov 22, item
+-- 19). false = the lowest rate among the d with window / 2 samples. KEEL /
+-- MAST: false.
+M.LGM_AIM_DELAY_BEST_RATE = true
 -- Teleport check of the man's velocity (kill_lgm.update_velocity): a man
 -- seen at the same place for n thinks (a repeated snapshot) may then move
 -- up to n x 16 wu; the velocity is kept. false = any jump > 16 wu resets it.
@@ -8247,6 +8256,7 @@ M.PRESETS = {
     LGM_AIM_SEARCH_MOVE = false,
     LGM_AIM_SIGHT_TAP = false,
     LGM_AIM_DELAY_CONFIRM = false,
+    LGM_AIM_DELAY_BEST_RATE = false,
     LGM_TELEPORT_REPEAT_VIEW = false,
     LGM_AIM_LEAD_CONVERGE    = false,
     LGM_SHELL_MODEL_RULES    = false,
@@ -8616,6 +8626,7 @@ M.PRESETS.mast = {
   LGM_AIM_SEARCH_MOVE               = false,
   LGM_AIM_SIGHT_TAP                 = false,
   LGM_AIM_DELAY_CONFIRM             = false,  -- 2.2.1 had no delay measure
+  LGM_AIM_DELAY_BEST_RATE           = false,  -- 2.2.1 had no delay measure
   LGM_TELEPORT_REPEAT_VIEW          = false,  -- 2.2.1: any 32 wu jump resets the velocity
   LGM_AIM_LEAD_CONVERGE             = false,  -- 2.2.1: two-pass lead, only lengthens
   LGM_SHELL_MODEL_RULES             = false,  -- 2.2.1: shell bursts at 128 * sight

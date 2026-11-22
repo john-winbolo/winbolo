@@ -53,6 +53,8 @@ local bit = require('bitcompat')
 --                           an odd sight length can be reached
 --   LGM_AIM_DELAY_CONFIRM   the fire check holds fire until D has
 --                           LGM_AIM_DELAY_WINDOW / 2 samples (M.delay_confirmed)
+--   LGM_AIM_DELAY_BEST_RATE a d wins, and D is confirmed, only when no other
+--                           d with samples has a lower error rate
 -- TEST_KEY_DELAY_THINKS (test only, default 0) holds our keys back that many
 -- thinks before the engine gets them, to play a remote seat's delay on a
 -- local server.
@@ -420,6 +422,26 @@ local function choose(s, now)
       if rd < bar and rd < br then best, br = d, rd end
     end
   end
+  -- C.LGM_AIM_DELAY_BEST_RATE (2026-11-22): a d may win, and D may be
+  -- confirmed, only when no other d with samples has a lower error rate,
+  -- a d still short of n_min included. Such a d blocks; it wins only once
+  -- it has n_min samples itself. lgm_kill_lag_near (3-tick): at t=122
+  -- D=4 won on 2/16 while D=3 had 0/15, and the shell at t=158 left on D=4.
+  local function blocker(d0)
+    local r0 = (N[d0] > 0) and (E[d0] / N[d0]) or 0
+    for d = 1, dmax do
+      if d ~= d0 and N[d] > 0 and E[d] / N[d] < r0 then return d end
+    end
+    return nil
+  end
+  local best_rate = C.LGM_AIM_DELAY_BEST_RATE
+  if best_rate and best ~= cur then
+    local b = blocker(best)
+    if b then
+      s.blk = b * 100 + best
+      best = cur
+    end
+  end
   if best ~= s.D then
     s.D = best
     -- C.LGM_AIM_DELAY_CONFIRM: a new D starts unconfirmed.
@@ -427,8 +449,10 @@ local function choose(s, now)
   end
   -- C.LGM_AIM_DELAY_CONFIRM: D is confirmed once it has n_min samples in the
   -- window; it stays confirmed until D changes.
-  if not s.confirmed and N[s.D] >= n_min then
+  if not s.confirmed and N[s.D] >= n_min
+     and not (best_rate and blocker(s.D)) then
     s.confirmed = true
+    s.blk = nil
   end
 end
 
@@ -476,6 +500,8 @@ function M.note_shot_source(state, info, keys, taps, now, send_msg, msg_dest)
   end
   return send_msg, msg_dest
 end
+
+M._choose = choose   -- for test_lgm_aim.lua
 
 -- C.LGM_AIM_DELAY_CONFIRM (2026-11-22): may the kill-LGM fire check fire on
 -- the present D? Not before D has n_min (LGM_AIM_DELAY_WINDOW / 2) samples

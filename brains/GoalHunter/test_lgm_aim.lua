@@ -49,7 +49,7 @@ local KNOBS = { "LGM_AIM_KEYS_IN_FLIGHT", "LGM_AIM_DELAY_EST", "LGM_AIM_LAUNCH_P
                 "LGM_AIM_TURN_RULE", "LGM_AIM_SEARCH_MOVE", "LGM_AIM_SIGHT_TAP",
                 "LGM_TELEPORT_REPEAT_VIEW", "LGM_AIM_LEAD_CONVERGE",
                 "LGM_SHELL_MODEL_RULES", "LGM_FIRE_LOS_STRICT", "LGM_LEAD_STOP_RETURN",
-                "LGM_AIM_DELAY_CONFIRM" }
+                "LGM_AIM_DELAY_CONFIRM", "LGM_AIM_DELAY_BEST_RATE" }
 -- t[k] = false turns one knob off for a test that looks at another fix
 -- alone. In "old" mode every knob is off whatever t says.
 local function cfg(t)
@@ -711,14 +711,53 @@ else
           LA.delay_confirmed(st) and LA.delay(st) == Dreal,
           string.format("D %d, first confirm at think %s, %d change(s)", LA.delay(st),
                         tostring(first_conf), changes))
-    -- NOTE (2026-11-22): the flag needs only n_min samples on the present
-    -- D, not the lowest error. With a real delay 3, D = 1 gets its 16
-    -- samples first (at think 9, 7 errors) and is confirmed until D moves
-    -- on. Shown here, not checked: Andrew's spec is n_min samples.
-    print(string.format("  note real delay %d: %s", Dreal,
-      conf_on_wrong and "confirmed on a wrong D for a while (n_min samples, not the lowest error)"
-                    or "never confirmed on a wrong D"))
+    -- C.LGM_AIM_DELAY_BEST_RATE: D is confirmed only with the lowest error
+    -- rate. Without it, with a real delay 3, D = 1 got its 16 samples first
+    -- (think 9, 7 errors) and was confirmed until D moved on.
+    check(string.format("real delay %d: never confirmed on a wrong D", Dreal),
+          not conf_on_wrong, conf_on_wrong)
   end
+  -- lgm_kill_lag_near, 3-tick, every seed, t=122: the window held
+  -- 1:4/15 2:2/15 3:0/15 4:2/16 5:3/16 ... 14:12/16 (errors / samples).
+  -- D = 3 has no error but one sample short of 16; D = 4 has 16.
+  local NN = { 15, 15, 15, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16 }
+  local EE = { 4, 2, 0, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12 }
+  local function t122(best_rate)
+    cfg({ D0 = 1 })
+    C.LGM_AIM_DELAY_BEST_RATE = best_rate
+    local st = {}
+    local s = LA.st_of(st)
+    for j = 1, 16 do
+      local err, inf = {}, {}
+      for d = 1, 14 do
+        inf[d] = (j <= NN[d]) and 1 or 0
+        err[d] = (j <= EE[d]) and 1 or 0
+      end
+      local t = 106 + j
+      s.recs[t % (C.LGM_AIM_DELAY_MAX + C.LGM_AIM_DELAY_WINDOW + 2)] = { tick = t, g1 = 0, g2 = 0,
+        t1 = 0, t2 = 0, err = err, inf = inf }
+    end
+    LA._choose(s, 122)
+    return st, s
+  end
+  local st, s = t122(false)
+  check("t=122 case, best rate off: D = 4 wins and is confirmed (the old fault)",
+        LA.delay(st) == 4 and LA.delay_confirmed(st), string.format("D %d confirmed %s",
+        LA.delay(st), tostring(LA.delay_confirmed(st))))
+  st, s = t122(true)
+  check("t=122 case, best rate on: D stays 1, not confirmed (D = 3 at 0/15 blocks)",
+        LA.delay(st) == 1 and not LA.delay_confirmed(st), string.format("D %d confirmed %s",
+        LA.delay(st), tostring(LA.delay_confirmed(st))))
+  -- t=123: one more sample, for D = 3 only, with no error.
+  local err, inf = {}, {}
+  for d = 1, 14 do err[d], inf[d] = 0, (d == 3) and 1 or 0 end
+  s.recs[123 % (C.LGM_AIM_DELAY_MAX + C.LGM_AIM_DELAY_WINDOW + 2)] = { tick = 123, g1 = 0, g2 = 0,
+    t1 = 0, t2 = 0, err = err, inf = inf }
+  LA._choose(s, 123)
+  check("t=123: D = 3 has 16 samples, wins and is confirmed",
+        LA.delay(st) == 3 and LA.delay_confirmed(st), string.format("D %d confirmed %s",
+        LA.delay(st), tostring(LA.delay_confirmed(st))))
+  cfg()
   -- The flag and the two ways round it.
   cfg({ D0 = 1 })
   local st = {}
