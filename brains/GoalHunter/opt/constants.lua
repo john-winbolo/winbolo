@@ -1077,6 +1077,21 @@ M.PF_DANGER_INITIAL_LOAD = true
 -- fired take_cover at 8.2 squares, out of real range, and dropped the take.
 -- Andrew's yes (Nov 18). false = the old triggers. KEEL / MAST: false.
 M.PT2_HAUL_KEEP_TAKE = true
+-- HAUL_KEEP_LGM_KILL: while kill_lgm has an enemy builder target close by
+-- with a clear line of sight (pool 13's winner; pathfinder.wall_hp_between
+-- == 0), the haul triggers in goals.lua haul_flee_eval stop using the
+-- threat.pill_at stamp and the enemy-tank range, as PT2_HAUL_KEEP_TAKE does.
+-- The haul fires only for a shell really coming at our tank or low armour
+-- (ARMOUR_LOW x level). Close = tank to builder, Euclidean, within
+-- HAUL_KEEP_LGM_KILL_TILES_ONE squares with 1 pill aboard, _MANY with more.
+-- Play test 20261121_195017_5 bot2 t=42194: 1 pill aboard, our builder
+-- dead, armour 40/40, the enemy builder 2.2 squares away in clear sight, no
+-- shell coming: the haul chose flee_to_base over kill_lgm. Andrew's yes
+-- (Nov 22, "9b-1", both distances his). false = the old triggers.
+-- KEEL / MAST: false.
+M.HAUL_KEEP_LGM_KILL = true
+M.HAUL_KEEP_LGM_KILL_TILES_ONE  = 6   -- squares, 1 pill aboard (Andrew)
+M.HAUL_KEEP_LGM_KILL_TILES_MANY = 4   -- squares, 2+ pills aboard (Andrew)
 -- PT2_DOUBLE_TAKE_DISCOUNT: pool 6 (attack_pill) prices a pill lower when
 -- pill take v2 finds a safe double take on it (pt2_dbl.lua). A shadow v2
 -- run per pill (only when another live hostile or neutral pill is in chain
@@ -8157,6 +8172,7 @@ M.PRESETS = {
     SHOT_TRACK_OWN_SHELLS_ONLY = false,
     PF_DANGER_INITIAL_LOAD = false,
     PT2_HAUL_KEEP_TAKE = false,
+    HAUL_KEEP_LGM_KILL = false,
     PT2_DOUBLE_TAKE_DISCOUNT = false,
     PT2_DBL_SPLIT = false,
     PT2_DBL_PART_LEAVE_REST = false,
@@ -8532,6 +8548,7 @@ M.PRESETS.mast = {
   SHOT_TRACK_OWN_SHELLS_ONLY        = false,
   PF_DANGER_INITIAL_LOAD            = false,  -- 2.2.1 copied danger only on rebuild
   PT2_HAUL_KEEP_TAKE                = false,  -- 2.2.1 had no pill take v2
+  HAUL_KEEP_LGM_KILL                = false,  -- 2.2.1 hauled on pill stamp / tank range
   PT2_DOUBLE_TAKE_DISCOUNT          = false,  -- 2.2.1 had no pill take v2
   PT2_DBL_SPLIT                     = false,  -- 2.2.1 had no pill take v2
   PT2_DBL_PART_LEAVE_REST           = false,  -- 2.2.1 had no pill take v2

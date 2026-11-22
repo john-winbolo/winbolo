@@ -7253,6 +7253,28 @@ local function pt2_haul_shell_src(state, world, info, goal)
   return nil
 end
 
+-- HAUL_KEEP_LGM_KILL (Nov 22, Andrew): the enemy builder kill_lgm is after
+-- this tick (pool 13's winner, so a builder this player sees, peace list
+-- applied, shells aboard) when he is close with a clear line of sight:
+-- within HAUL_KEEP_LGM_KILL_TILES_ONE squares of the tank (Euclidean, tank
+-- to builder) with 1 pill aboard, HAUL_KEEP_LGM_KILL_TILES_MANY with more.
+-- Clear = kill_lgm's own LOS test (pathfinder.wall_hp_between == 0).
+-- Returns the builder entry and its distance in squares, or nil.
+local function haul_lgm_kill_target(state, info, carry)
+  local row = state.pool_cache and state.pool_cache[13]
+  local lgm = row and row.goal and row.goal._lgm_track
+  if not (lgm and lgm.wx and lgm.wy and info.tankx and info.tanky) then return nil end
+  local dx, dy = (lgm.wx - info.tankx) / 256, (lgm.wy - info.tanky) / 256
+  local d = math.sqrt(dx * dx + dy * dy)
+  local n = (carry > 1) and C.HAUL_KEEP_LGM_KILL_TILES_MANY or C.HAUL_KEEP_LGM_KILL_TILES_ONE
+  if not n or d > n then return nil end
+  if PF.wall_hp_between(bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8),
+                        lgm.mx, lgm.my) ~= 0 then
+    return nil
+  end
+  return lgm, d
+end
+
 local function haul_flee_eval(state, info, tmx, tmy, world)
   local h = {
     level = 0,
@@ -7313,11 +7335,38 @@ local function haul_flee_eval(state, info, tmx, tmy, world)
       end
       h.triggered = (src ~= nil) or h.arm_low
     else
-      h.triggered = h.tank_engaging or h.pill_shooting or h.arm_low
+      -- HAUL_KEEP_LGM_KILL: an enemy builder close by with a clear line of
+      -- sight is ours to kill. As in PT2_HAUL_KEEP_TAKE, the pill stamp and
+      -- the tank-range tests stand down; only a shell really coming at us
+      -- (the same pt2_haul_shell_src test, no chain pills to leave out) or
+      -- low armour fires the haul.
+      local lgm, ld
+      if C.HAUL_KEEP_LGM_KILL then lgm, ld = haul_lgm_kill_target(state, info, h.carry) end
+      if lgm then
+        local now = state.tick or 0
+        local old_why = (h.pill_shooting and "pill_at" or "")
+          .. ((h.pill_shooting and h.tank_engaging) and "+" or "")
+          .. (h.tank_engaging and "tank_range" or "")
+        h.pill_shooting = false
+        h.tank_engaging = false
+        local src = pt2_haul_shell_src(state, world, info, {})
+        h.shell_src = src
+        h.lgm_keep = true
+        h.lgm_dist = ld
+        local keep_why = (old_why ~= "" and not src and not h.arm_low) and old_why or nil
+        if keep_why ~= state._haul_lgm_keep_why then
+          state._haul_lgm_keep_why = keep_why
+        end
+        h.triggered = (src ~= nil) or h.arm_low
+      else
+        if state._haul_lgm_keep_why then state._haul_lgm_keep_why = nil end
+        h.triggered = h.tank_engaging or h.pill_shooting or h.arm_low
+      end
     end
   end
   return h
 end
+M.haul_flee_eval = haul_flee_eval   -- test_haul_keep_lgm_kill.lua
 
 -- Standable for a TANK: the terrain a take_cover tile is allowed to be.
 -- Mirrors the pathfinder's wall/deepsea table (brain_pathfinder.c) plus the
