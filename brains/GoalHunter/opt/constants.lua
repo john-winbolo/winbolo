@@ -6228,6 +6228,14 @@ M.QUICK_REPAIR_MARGIN_TICKS = 2
 -- shells still stamp it. Every other repair path reads the first stamp, as
 -- before. false = the quick row reads the first stamp. KEEL / MAST: false.
 M.QUICK_REPAIR_SKIP_OWN_FIRE = true
+-- QUICK_REPAIR_TANK_CLEAR_TICKS (Nov 22, Andrew: 16). A pill that shoots at
+-- our tank shoots along the builder's way out to the blocker, and a shell it
+-- fires after the send is not in the certain-death check. While a live
+-- non-friendly pill can shoot our tank, the quick repair sends only when no
+-- non-friendly shell lands on the tank within this many ticks AND no such
+-- pill's next shot (its last fire + its reload, the flight to the tank) can
+-- land within it (quick_repair.tank_clear). 0 = off. KEEL / MAST: 0.
+M.QUICK_REPAIR_TANK_CLEAR_TICKS = 16
 -- The take substates in which the tank is shooting the target pill: the
 -- firing run that QUICK_REPAIR_PREDICT_SHOTS needs.
 M.QUICK_REPAIR_FIRE_SUBSTATES = {
@@ -8194,6 +8202,8 @@ M.PRESETS = {
     BLITZ_NO_DOUBLE_TAKE = false,
     --   2026-11-22: our own shells at the target refuse the quick repair.
     QUICK_REPAIR_SKIP_OWN_FIRE = false,
+    --   2026-11-22: the quick repair does not wait for the tank to be clear.
+    QUICK_REPAIR_TANK_CLEAR_TICKS = 0,
     --   2026-11-17: hold 15 ticks with no goal after a kill (old rule).
     POST_KILL_WAIT_TICKS = 15,
     --   2026-11-17: carrying-pill approach floor 30 (old rule).
@@ -8552,6 +8562,7 @@ M.PRESETS.mast = {
   SHIELD_SCAN_PENDING_SURVIVES_V2   = false,  -- 2.2.1 had no pill take v2
   BLITZ_NO_DOUBLE_TAKE              = false,  -- 2.2.1 had no double takes
   QUICK_REPAIR_SKIP_OWN_FIRE        = false,  -- 2.2.1 had no quick repair
+  QUICK_REPAIR_TANK_CLEAR_TICKS     = 0,      -- 2.2.1 had no quick repair
   POST_KILL_WAIT_TICKS              = 15,
   CARRY_APPROACH_MIN_ARMOUR_ONE     = 30,
   CARRY_APPROACH_MIN_ARMOUR_MANY    = 30,

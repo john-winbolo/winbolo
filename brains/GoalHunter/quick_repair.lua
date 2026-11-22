@@ -37,8 +37,10 @@ local bit = require('bitcompat')
 --             and the builder is in the tank (not afloat, no pool job)
 --             and the tank holds the wood the repair needs
 --             and danger.lgm_certain_death says nothing for that pill.
+--             and the tank is clear of pill fire for
+--             QUICK_REPAIR_TANK_CLEAR_TICKS (M.tank_clear).
 --   Otherwise wait, with the first failing reason, in this order:
---   nokill, reach, early, man, wood, death.
+--   nokill, reach, early, man, wood, death, tank.
 --
 -- The send itself is the builder pool's: on "send" builder_pool.update marks
 -- that pill's row quick (take_blocker, leash, mode, tree reserve and
@@ -171,6 +173,94 @@ function M.own_shell_at_target(ob, self_pn, tmx, tmy)
   local vx =  U.bsin_f(ob.angle or 0) * C.SHELL_SPEED
   local vy = -U.bcos_f(ob.angle or 0) * C.SHELL_SPEED
   return M.ticks_to_tile(ob.x + 0.0, ob.y + 0.0, vx, vy, tmx, tmy, moves) ~= nil
+end
+
+-- C.QUICK_REPAIR_TANK_CLEAR_TICKS (W, Nov 22, Andrew): the tank must be
+-- clear of pill fire for W ticks. A pill that shoots at the tank shoots
+-- along the line the builder walks out on (the blocker sits between the tank
+-- and the pills), and a shell fired after the send is not in the
+-- certain-death check. So while a live non-friendly pill can shoot our tank
+-- (the pill range reaches the tank), send only when
+--   (a) no non-friendly shell in the air lands on the tank tile within W
+--       ticks (shells_on_blocker flown at the tank tile), and
+--   (b) no such pill's next shot can land on the tank within W ticks:
+--       next fire = the later of now + 1 and (last fire + reload);
+--       last fire = from its youngest visible shell whose line runs back to
+--         the pill tile: its distance from the pill centre / SHELL_SPEED
+--         moves ago (none seen = no last fire);
+--       reload = pt2_kill_lock.pill_reload (the engine's halving ladder at
+--         the pill's anger);
+--       land = next fire + the flight from the pill tile to the tank tile.
+-- Returns nil when clear (or W <= 0, or no pill can shoot the tank), else
+-- { why = "shell" | "next", t = ticks from now, src / pill, ... }.
+function M.tank_clear(world, info, now)
+  local W = C.QUICK_REPAIR_TANK_CLEAR_TICKS or 0
+  if W <= 0 then return nil end
+  local x = LP.context(info, LPX) or {}
+  local pr = x.pill_range or 2048
+  local pr2 = pr * pr
+  local tmx = bit.rshift(info.tankx, 8)
+  local tmy = bit.rshift(info.tanky, 8)
+  local guns
+  for id, p in pairs(world.pills or {}) do
+    if (p.health or 0) > 0 and not p.in_tank and not p.carrier
+       and p.owner ~= "friendly" and p.owner ~= "allied" then
+      local dx = p.mx * 256 + 128 - info.tankx
+      local dy = p.my * 256 + 128 - info.tanky
+      if dx * dx + dy * dy <= pr2 then
+        guns = guns or {}
+        guns[#guns + 1] = id
+      end
+    end
+  end
+  if not guns then return nil end
+  local hits = M.shells_on_blocker(world, info, tmx, tmy)
+  for i = 1, #hits do
+    if hits[i].t <= W then
+      return { why = "shell", t = hits[i].t, src = hits[i].src }
+    end
+  end
+  local N = C.LGM_SHELL_PREDICT_TICKS or 63
+  local objs = info.objects or {}
+  local KLK = require("pt2_kill_lock")
+  local PA = require("pt2_attack")
+  for gi = 1, #guns do
+    local id = guns[gi]
+    local p = world.pills[id]
+    local last
+    for _, ob in ipairs(objs) do
+      if ob.type == OBJECT_SHOT and (ob.owner or 255) == 255 and (ob.info or 0) ~= 0 then
+        local vx =  U.bsin_f(ob.angle or 0) * C.SHELL_SPEED
+        local vy = -U.bcos_f(ob.angle or 0) * C.SHELL_SPEED
+        if M.ticks_to_tile(ob.x + 0.0, ob.y + 0.0, -vx, -vy, p.mx, p.my, N) then
+          -- Its line runs back to this pill: it left the pill centre this
+          -- many moves ago.
+          local ddx, ddy = ob.x - (p.mx * 256 + 128), ob.y - (p.my * 256 + 128)
+          local k = math.floor(math.sqrt(ddx * ddx + ddy * ddy) / C.SHELL_SPEED + 0.5)
+          if not last or now - k > last then last = now - k end
+        end
+      end
+    end
+    local reload = KLK.pill_reload(PA.anger_now(p, now), x)
+    local nxt = now + 1
+    if last and last + reload > nxt then nxt = last + reload end
+    local px, py = p.mx * 256 + 128, p.my * 256 + 128
+    local dx, dy = info.tankx - px, info.tanky - py
+    local d = math.sqrt(dx * dx + dy * dy)
+    local flight = 0
+    if d > 0 then
+      flight = M.ticks_to_tile(px, py, dx / d * C.SHELL_SPEED, dy / d * C.SHELL_SPEED,
+                               tmx, tmy, N)
+    end
+    if flight then
+      local land = nxt + flight - now
+      if land <= W then
+        return { why = "next", t = land, pill = id, reload = reload,
+                 last = last and (last - now) or nil, flight = flight }
+      end
+    end
+  end
+  return nil
 end
 
 -- The reload interval: live_physics' figure (the engine's own reload ticks
@@ -356,7 +446,13 @@ function M.evaluate(state, world, info, now)
       result = "wait:death"
       qr.death = hit
     else
-      result = "send"
+      local tc = M.tank_clear(world, info, now)
+      if tc then
+        result = "wait:tank"
+        qr.tank = tc
+      else
+        result = "send"
+      end
     end
   end
   qr.result = result
@@ -375,7 +471,18 @@ function M.evaluate(state, world, info, now)
         qr.dwell, result,
         qr.death and string.format(" (shell %s at +%dt, %s, rewind=%s)",
           tostring(qr.death.src), qr.death.t or 0, tostring(qr.death.how),
-          tostring(qr.death.rewind)) or "",
+          tostring(qr.death.rewind))
+        or qr.tank and (qr.tank.why == "shell"
+          and string.format(" (shell %s on the tank at +%dt <= %d)",
+                            tostring(qr.tank.src), qr.tank.t,
+                            C.QUICK_REPAIR_TANK_CLEAR_TICKS or 0)
+          or string.format(" (pill #%s next shot on the tank at +%dt <= %d:"
+                           .. " last fire %s, reload %d, flight %d)",
+                           tostring(qr.tank.pill), qr.tank.t,
+                           C.QUICK_REPAIR_TANK_CLEAR_TICKS or 0,
+                           qr.tank.last and string.format("%+dt", qr.tank.last) or "none",
+                           qr.tank.reload or 0, qr.tank.flight or 0))
+        or "",
         tostring(qr.t_repair), margin, #qr.hits,
         k.n_inflight or 0, k.hp or 0,
         k.src == "predict" and string.format(
@@ -393,6 +500,7 @@ local RESULT_RGB = {
   send          = { 80, 255, 80 },
   ["wait:early"] = { 255, 220, 60 },
   ["wait:death"] = { 255, 70, 70 },
+  ["wait:tank"]  = { 255, 120, 70 },
   ["wait:nokill"] = { 170, 170, 170 },
   ["wait:wood"]  = { 200, 140, 60 },
   ["wait:man"]   = { 120, 180, 255 },
@@ -418,6 +526,8 @@ function M.draw(state, info, qr)
     tail = string.format(" (shell %s at +%dt, %s, rewind=%s)", tostring(qr.death.src),
                          qr.death.t or 0, tostring(qr.death.how),
                          tostring(qr.death.rewind))
+  elseif qr.result == "wait:tank" and qr.tank then
+    tail = string.format(" (%s on the tank +%dt)", qr.tank.why, qr.tank.t)
   elseif qr.result == "wait:wood" then
     tail = string.format(" (trees %d < %d)", info.trees or 0, qr.trees_need)
   else
