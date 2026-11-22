@@ -1083,7 +1083,7 @@ void pillsClampToRules(struct GameSim *sim, pillboxes *value);
 void pillsFillToRules(struct GameSim *sim, pillboxes *value);
 
 /* The search for somewhere to put down a pillbox that was being carried:
-   Mac Bolo's gen_scatter spiral, a utilSpiralCursor that starts each ring
+   the spiral Mac Bolo searches in, a utilSpiralCursor that starts each ring
    on the square straight north of the centre (UTIL_SPIRAL_NORTH). The walk
    ends after the last ring that touches the minable area. */
 typedef struct {

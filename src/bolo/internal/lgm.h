@@ -123,6 +123,72 @@ struct GameSim;
 #define LGM_BRAIN_PARTIAL 1
 #define LGM_BRAIN_TOTAL 2
 
+/* The lgm_blast_shape rule: the area of open ground an explosion catches a
+   builder in. dx and dy are the explosion's place less the builder's, in
+   world units (256 to a square).
+   - LGM_BLAST_SHAPE_HALF_SQUARE: "Half-square circle". A circle of radius
+     MAP_SQUARE_MIDDLE (128), edge included, the WinBolo rule.
+   - LGM_BLAST_SHAPE_MAC_BOX: "Mac Bolo box". |dx| < 128 and |dy| < 128,
+     edge left out. Mac Bolo tests each axis on its own in this way.
+   - LGM_BLAST_SHAPE_MAC_AREA: "Mac Bolo equivalent area circle". A circle
+     of radius LGM_BLAST_MAC_AREA_RADIUS, edge included: 256 / sqrt(pi) is
+     about 144.4, so it covers about the same area as the box.
+   Every shape also stops at the pill_range rule: a builder further than
+   pill_range from the explosion is safe. That limit is the old test's, and
+   it changes a shape only when pill_range is under the shape's reach (128,
+   about 180 and 144). */
+#define LGM_BLAST_SHAPE_HALF_SQUARE 0
+#define LGM_BLAST_SHAPE_MAC_BOX     1
+#define LGM_BLAST_SHAPE_MAC_AREA    2
+#define LGM_BLAST_SHAPE_CLASSIC     LGM_BLAST_SHAPE_HALF_SQUARE
+#define LGM_BLAST_MAC_BOX_HALF      128
+#define LGM_BLAST_MAC_AREA_RADIUS   144
+
+/*********************************************************
+*NAME:          lgmBlastOpenGroundCatches
+*PURPOSE:
+*  Whether an explosion on open ground (not a building, a
+*  half building, a pillbox or a base) catches a builder
+*  dx, dy world units from it, by the lgm_blast_shape
+*  rule. shape is the rule's value; a value outside the
+*  three plays as the half-square circle.
+*
+*  The half-square circle keeps the old test exactly: it
+*  read its distance from utilIsItemInRange with the
+*  pill_range rule as the limit, and past that limit the
+*  distance never passes. So with pill_range under 128 the
+*  circle has radius pill_range. The other two shapes stop
+*  at pill_range the same way: a builder further than
+*  pill_range from the explosion is safe. A pill_range
+*  under 0 catches no builder.
+*
+*ARGUMENTS:
+*  shape     - The lgm_blast_shape rule
+*  pillRange - The pill_range rule
+*  dx        - Explosion X less the builder's X
+*  dy        - Explosion Y less the builder's Y
+*********************************************************/
+static inline bool lgmBlastOpenGroundCatches(int32_t shape, int32_t pillRange,
+                                             long dx, long dy) {
+  long ax = dx < 0 ? -dx : dx;
+  long ay = dy < 0 ? -dy : dy;
+  double d2 = (double) dx * dx + (double) dy * dy;
+
+  /* Every shape: within pill_range, the limit utilIsItemInRange measured
+     the old test against. */
+  if (pillRange < 0 || d2 > (double) pillRange * pillRange) {
+    return false;
+  }
+  if (shape == LGM_BLAST_SHAPE_MAC_BOX) {
+    return ax < LGM_BLAST_MAC_BOX_HALF && ay < LGM_BLAST_MAC_BOX_HALF;
+  }
+  if (shape == LGM_BLAST_SHAPE_MAC_AREA) {
+    return d2 <= (double) LGM_BLAST_MAC_AREA_RADIUS * LGM_BLAST_MAC_AREA_RADIUS;
+  }
+  /* The half-square circle: within MAP_SQUARE_MIDDLE. */
+  return d2 <= (double) MAP_SQUARE_MIDDLE * MAP_SQUARE_MIDDLE;
+}
+
 typedef struct lgmObj *lgm;
 
 struct lgmObj {
@@ -500,6 +566,23 @@ void lgmGetScreenCoords(lgm *lgman, BYTE leftPos, BYTE topPos, BYTE *mx, BYTE *m
 void lgmDeathCheck(struct GameSim *sim, lgm *lgman, WORLD wx, WORLD wy, BYTE owner, BYTE attacker, BYTE cause, BYTE pill, tank *tnk);
 
 /*********************************************************
+*NAME:          lgmDeathCheckSquareHit
+*PURPOSE:
+*  lgmDeathCheck for an explosion that damaged the pillbox
+*  on its square (a tank's explosion,
+*  tkExplosionBigExplosion).
+*
+*ARGUMENTS:
+*  As lgmDeathCheck, and:
+*  squareHit - TRUE when the square held a live pillbox
+*           before the explosion damaged it: the builder
+*           dies only if he is on that square, even when
+*           the damage took the pill's armour to 0. FALSE
+*           is lgmDeathCheck
+*********************************************************/
+void lgmDeathCheckSquareHit(struct GameSim *sim, lgm *lgman, WORLD wx, WORLD wy, BYTE owner, BYTE attacker, BYTE cause, BYTE pill, tank *tnk, bool squareHit);
+
+/*********************************************************
 *NAME:          lgmDeathCheckAtPosition
 *AUTHOR:        John Morrison
 *CREATION DATE: 17/04/26
@@ -524,8 +607,17 @@ void lgmDeathCheck(struct GameSim *sim, lgm *lgman, WORLD wx, WORLD wy, BYTE own
 *  pill   - The pill index whose shell it was, or
 *           DMG_NO_PILL
 *  tnk    - Pointer to the tank
+*  squareHit - TRUE when the explosion is a shell's hit on the
+*           pillbox on its square (shellsCalcCollision
+*           outSquareHit), the shot that kills the pill
+*           included: the builder dies only if he is on that
+*           square, as for a hit on a live pill. Also TRUE
+*           for a tank's explosion on a square whose pill
+*           was live before it (lgmDeathCheckSquareHit).
+*           FALSE for every other blast (lgmDeathCheck
+*           passes FALSE)
 *********************************************************/
-void lgmDeathCheckAtPosition(struct GameSim *sim, lgm *lgman, WORLD lgmWorldX, WORLD lgmWorldY, WORLD wx, WORLD wy, BYTE owner, BYTE attacker, BYTE cause, BYTE pill, tank *tnk);
+void lgmDeathCheckAtPosition(struct GameSim *sim, lgm *lgman, WORLD lgmWorldX, WORLD lgmWorldY, WORLD wx, WORLD wy, BYTE owner, BYTE attacker, BYTE cause, BYTE pill, tank *tnk, bool squareHit);
 
 /*********************************************************
 *NAME:          lgmDeathCheckSeenOut
@@ -557,8 +649,9 @@ void lgmDeathCheckAtPosition(struct GameSim *sim, lgm *lgman, WORLD lgmWorldX, W
 *  pill   - The pill index whose shell it was, or
 *           DMG_NO_PILL
 *  tnk    - Pointer to the tank
+*  squareHit - As lgmDeathCheckAtPosition
 *********************************************************/
-void lgmDeathCheckSeenOut(struct GameSim *sim, lgm *lgman, WORLD lgmWorldX, WORLD lgmWorldY, WORLD wx, WORLD wy, BYTE owner, BYTE attacker, BYTE cause, BYTE pill, tank *tnk);
+void lgmDeathCheckSeenOut(struct GameSim *sim, lgm *lgman, WORLD lgmWorldX, WORLD lgmWorldY, WORLD wx, WORLD wy, BYTE owner, BYTE attacker, BYTE cause, BYTE pill, tank *tnk, bool squareHit);
 
 /*********************************************************
 *NAME:          lgmKillInTank
