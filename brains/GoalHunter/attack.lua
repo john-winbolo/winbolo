@@ -6872,7 +6872,11 @@ local function update_attack_substate_body(goal, state, world, info)
         goal._is_ppt = false
         sscan = nil
       end
-      if sscan then sscan.created_tick = now end
+      if sscan then
+        sscan.created_tick = now
+        -- approach_skip.shield_check: which planned squares are pill drops
+        if sscan.num_pill_blockers == nil then sscan.num_pill_blockers = _num_pill_blockers end
+      end
       goal._shield_scan = sscan
       if _keep_pending then goal._shield_scan_pending = nil end
       if _split_pa then _split_pa.split_done(goal) end
@@ -7916,7 +7920,7 @@ local function update_attack_substate_body(goal, state, world, info)
       -- C.APPROACH_SKIP_RUNUP_ON_LANE (approach_skip.lua): the tank already
       -- on the firing lane at the standoff does not drive a circle back to
       -- the run-up point behind it.
-      require("approach_skip").check(goal, info, world, now, shot_path_obstacle_count)
+      require("approach_skip").check(goal, info, world, now, shot_path_obstacle_count, state)
 
       -- Reach the approach point (precise float, 1.5 tiles behind standoff).
       -- Tolerance: 64 wu (1/4 tile) AND speed <= 4.

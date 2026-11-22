@@ -1037,8 +1037,16 @@ M.PT2_FAST_SETUP = true
 -- false = the old way (KEEL / MAST).
 M.APPROACH_SKIP_RUNUP_ON_LANE      = true
 M.APPROACH_SKIP_RUNUP_LANE_WU      = 128  -- the approach step's own spot tolerance
-M.APPROACH_SKIP_RUNUP_MAX_PAST_WU  = 256  -- new: 1 tile, awaits Andrew's yes
+M.APPROACH_SKIP_RUNUP_MAX_PAST_WU  = 256  -- 1 tile (Nov 22, Andrew: yes)
 M.APPROACH_SKIP_RUNUP_STOP_SPEED   = 4    -- the approach step's own SPEED_TOL
+-- APPROACH_SKIP_RUNUP_SHIELD_CHECK (Nov 22, Andrew): past the standoff, the
+-- run-up skip fires from where the tank is only when the take's own cover
+-- test passes there too: pilltake_v2.judge at the tank's place with the
+-- take's plan (approach_skip.shield_check). A clear shot alone is not
+-- enough: one square past the standoff, the pill's ray can go round the
+-- blockers. When the test fails, the tank drives back (the old way).
+-- No numbers of its own. false = the shot test only (KEEL / MAST).
+M.APPROACH_SKIP_RUNUP_SHIELD_CHECK = true
 -- SHOT_TRACK_OWN_SHELLS_ONLY: shot_tracker.lua keeps one of our shells "in
 -- flight" only while a shell that is not a pill's or an enemy's is near
 -- where it should be. The old match skipped only enemy shells, so a neutral
@@ -8169,6 +8177,7 @@ M.PRESETS = {
     REPAIR_BOOST = false,
     DEFEND_BOOST = false,
     APPROACH_SKIP_RUNUP_ON_LANE = false,
+    APPROACH_SKIP_RUNUP_SHIELD_CHECK = false,
     LGM_STRANDED_BLESS_DISPATCH = false,
     LGM_STRANDED_RECHECK = false,
     PT2_CHAIN_CLAIM = false,
@@ -8537,6 +8546,7 @@ M.PRESETS.mast = {
   REPAIR_BOOST                      = false,  -- 2.2.1 had no repair boost
   DEFEND_BOOST                      = false,  -- 2.2.1 had no defend boost
   APPROACH_SKIP_RUNUP_ON_LANE       = false,  -- 2.2.1 drove back to the run-up point
+  APPROACH_SKIP_RUNUP_SHIELD_CHECK  = false,  -- 2.2.1 had no run-up skip
   LGM_STRANDED_BLESS_DISPATCH       = false,  -- 2.2.1 had no bless in the stranded walk
   LGM_STRANDED_RECHECK              = false,  -- 2.2.1 kept the stranded flag until home
   PT2_CHAIN_CLAIM                   = false,  -- 2.2.1 had no pill take v2

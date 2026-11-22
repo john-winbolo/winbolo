@@ -169,6 +169,8 @@ function M.build_inp(state, goal, info, world, pill, no_builder, npb, radius, no
 end
 
 -- v1's winner: point, aim, blockers and the cover they give.
+-- approach_skip.shield_check reads the take's plan with it too: a v2 plan
+-- (to_scan_result) marks each planned square pt2_kind "pill" or "wall".
 local function v1_view(world, sscan, npb)
   local b = sscan and sscan.best
   if not b or (b.score or 0) <= 0 then return nil end
@@ -187,6 +189,7 @@ local function v1_view(world, sscan, npb)
     for _, bl in ipairs(aim.potential_blockers or {}) do
       pot[#pot + 1] = bl
       local sh = (left > 0) and 15 or (C.SHIELD_WALL_COVER_SHOTS or 5)
+      if bl.pt2_kind then sh = (bl.pt2_kind == "pill") and 15 or (C.SHIELD_WALL_COVER_SHOTS or 5) end
       if left > 0 then left = left - 1 end
       extra[bl.my * 256 + bl.mx] = sh
       cover = cover + sh
@@ -195,6 +198,8 @@ local function v1_view(world, sscan, npb)
   return { cx = b.cx, cy = b.cy, deg = b.deg, aim = b.best_aim_idx, act = act, pot = pot,
            extra = extra, cover = cover }
 end
+
+M.v1_view = v1_view
 
 local function sq_list(list)
   local p = {}

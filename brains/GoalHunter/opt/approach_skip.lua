@@ -20,9 +20,11 @@
 -- The take then goes on as usual and creeps forward to the standoff.
 -- Past the standoff: only when the shot test from here passes (fast_setup's
 -- shot_ok: the shell sim reaches the pill and nothing is in the way, our
--- blocker pill included). Then the standoff and the run-up point both move
--- to where the tank is, so the take fires from here. When the test fails,
--- nothing changes (the old way).
+-- blocker pill included). With C.APPROACH_SKIP_RUNUP_SHIELD_CHECK (Nov 22,
+-- Andrew) the take's own cover test must pass here too (M.shield_check:
+-- pilltake_v2.judge at the tank's place with the take's plan). Then the
+-- standoff and the run-up point both move to where the tank is, so the
+-- take fires from here. When a test fails, nothing changes (the old way).
 -- While the tank still moves on the lane, the run-up point is held on the
 -- tank so it brakes there; the choice above is made once it has stopped
 -- (speed <= APPROACH_SKIP_RUNUP_STOP_SPEED, the approach's own SPEED_TOL).
@@ -37,6 +39,7 @@ local print2 = require("print2")
 local M = {}
 
 local sqrt, abs, floor = math.sqrt, math.abs, math.floor
+local clock_us = rawget(_G, "clock_us") or function() return floor(os.clock() * 1e6) end
 
 -- Where tank (tx, ty) is against the lane from pill centre (pcx, pcy) out
 -- through standoff (sx, sy); all world units. along > 0: behind the
@@ -64,10 +67,49 @@ function M.classify(along, side)
   return "past"
 end
 
+-- C.APPROACH_SKIP_RUNUP_SHIELD_CHECK (Nov 22, Andrew): is the tank covered
+-- at (tx, ty), its place past the standoff? Andrew: "can the tank hit the
+-- pill in a corner or its center aim WHILE still not hitting any of the
+-- blockers AND the pill hitting those blockers as it shoots at the tank".
+-- This is the take's own test, pilltake_v2.judge, run at the tank's place:
+--   * inp: pt2_attack.build_inp (knob_inp + world_inp, the same inp the
+--     take's plan was made with), so only what this bot sees;
+--   * extra: the take's planned blockers (pt2_attack.v1_view of the take's
+--     shield scan: a planned pill drop 15 shots, a planned wall one wall),
+--     as pt2_attack's PT2_CMP line judges v1's point;
+--   * judge goes through M.AIMS in order (centre, then the corners): the
+--     first aim whose shot reaches the pill without a blocker in the way
+--     is used. Then each hostile pill in range shoots at the tank's place
+--     (the shadow ray from its centre), and its ray must meet its cover bar
+--     (A's 15, a chain pill's 10, a bystander one wall), as at the standoff.
+--     A pill's ray does not depend on our aim, so the first clear aim
+--     gives the same answer as each aim in turn.
+-- A take with no shield plan (no goal._shield_scan.best) has no cover to
+-- keep: "-" (the old way).
+-- Returns why ("-" = covered, else judge's first failing test), the aim
+-- index used, the cost in us, and "plan" or "no_plan".
+function M.shield_check(state, goal, info, world, now, tx, ty)
+  local t0 = clock_us()
+  local sscan = goal._shield_scan
+  if not (sscan and sscan.best) then return "-", nil, clock_us() - t0, "no_plan" end
+  local PA = require("pt2_attack")
+  local V2 = require("pilltake_v2")
+  local pill = (goal.target_id and world.pills and world.pills[goal.target_id])
+               or { mx = goal.mx, my = goal.my }
+  local npb = sscan.num_pill_blockers or 0
+  local inp = PA.build_inp(state or {}, goal, info, world, pill,
+                           info.man_status == C.LGM_DEAD, npb, nil, now)
+  if not inp then return "NO_TARGET", nil, clock_us() - t0, "plan" end
+  local v = PA.v1_view(world, sscan, npb)
+  local why, rec = V2.judge(inp, floor(tx), floor(ty), v and v.extra or nil, nil)
+  return why or "-", rec and rec.aim_idx, clock_us() - t0, "plan"
+end
+
 -- Called every approach tick from attack.lua, after the first-tick init.
--- obs_fn: attack.lua's shot_path_obstacle_count. Returns true when it moved
--- the run-up point (and maybe the standoff).
-function M.check(goal, info, world, now, obs_fn)
+-- obs_fn: attack.lua's shot_path_obstacle_count. state: the brain state
+-- (for the shield check). Returns true when it moved the run-up point (and
+-- maybe the standoff).
+function M.check(goal, info, world, now, obs_fn, state)
   if not C.APPROACH_SKIP_RUNUP_ON_LANE then return false end
   if not (goal.standoff_mx and goal.mx and info.tankx) then return false end
   -- Once per approach entry: _approach_start is new on each entry.
@@ -116,6 +158,16 @@ function M.check(goal, info, world, now, obs_fn)
     if not ang then
       restore()
       return false
+    end
+    goal._runup_shield = nil
+    if C.APPROACH_SKIP_RUNUP_SHIELD_CHECK then
+      local why, aim, us, plan = M.shield_check(state, goal, info, world, now, tx, ty)
+      goal._runup_shield = string.format("shield=%s aim=%s plan=%s cost_us=%d",
+                                         why, tostring(aim), plan, us)
+      if why ~= "-" then
+        restore()
+        return false
+      end
     end
     goal.standoff_fx, goal.standoff_fy = tx / 256, ty / 256
     goal.standoff_mx = U.mclamp(floor(goal.standoff_fx))
