@@ -1365,6 +1365,11 @@ int run_server_overrun_stats_due(void);
 int run_lv_player_lag_read(void);
 int run_lv_lag_track(void);
 int run_lv_lag_ring(void);
+/* The lag view's pillboxes and map, one round trip back (lv_lag.h). */
+int run_lv_lag_rtt_back(void);
+int run_lv_lag_ring_back(void);
+int run_lv_lag_map_undo(void);
+int run_lv_lag_view_map(void);
 int run_lv_lag_view_toggle(void);
 int run_lv_lag_feature_default_off(void);
 int run_lv_lag_view_draw(void);

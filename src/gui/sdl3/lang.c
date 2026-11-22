@@ -1063,7 +1063,7 @@ static const LangEntry langTable[] = {
     {3111, "Lag: none recorded for this player yet"},
     {3112, "Round-trip time across the recording, in ms. The highest is {number} ms. The white line is the playhead"},
     {3113, "See what this player saw"},
-    {3114, "Draw the other tanks, the builders and the shells where this player's screen showed them: as far back as the server's rewind for this player. This player's own tank stays at its present place"},
+    {3114, "Draw the other tanks, the builders and the shells where this player's screen showed them: as far back as the server's rewind for this player. The pillboxes and the map are drawn one round trip back, as this player's screen had them. This player's own tank stays at its present place"},
     {3115, "{string1}'s screen, {number} ms behind"},
     {3116, "{string1}'s screen: no history for this time yet, the present is shown"},
     {3117, "Turn off"},

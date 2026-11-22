@@ -6034,11 +6034,15 @@ set(_unit_test_names
     lv_player_lag_read
     lv_lag_track
     lv_lag_ring
+    lv_lag_rtt_back
+    lv_lag_ring_back
+    lv_lag_map_undo
     lv_lag_view_toggle
     lv_lag_feature_default_off
     lv_lag_view_draw
     lv_lag_view_own_shells
     lv_lag_view_lost_owner
+    lv_lag_view_map
     lv_shell_owner_recording
     lv_shell_owner_rules
     lv_shell_owner_real_flight
