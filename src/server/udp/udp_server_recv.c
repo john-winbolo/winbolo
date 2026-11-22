@@ -162,6 +162,33 @@ uint32_t udpServerRecvDropCount(void) {
 NetImpair srvImpairIn;
 NetImpair srvImpairOut;
 
+bool srvImpairPeer(const NetImpair *ni, const struct sockaddr_in *addr) {
+    uint32_t ip;
+    if (!ni->cfg.lanOnly) {
+        return true;
+    }
+    ip = ntohl(addr->sin_addr.s_addr);
+    if (!netImpairAddrIsLan(ip)) {
+        return false;  /* an internet peer already has its own lag */
+    }
+#ifdef BOT_HOST_LINK_H
+    /* Builds with Bot Host support (bot_host_link.h comes in through
+     * transport_udp_server_internal.h) keep the -bothosts list in
+     * udpServer.botHostAllow, IPv4 in network order. A listed host is on
+     * the LAN, but its bots must not get the extra lag. Any port matches:
+     * a host's bot connections come from ports of their own. */
+    {
+        int i;
+        for (i = 0; i < udpServer.botHostAllowCount; i++) {
+            if (udpServer.botHostAllow[i].ip == addr->sin_addr.s_addr) {
+                return false;
+            }
+        }
+    }
+#endif
+    return true;
+}
+
 void transportUdpServerSetNetImpair(const char *spec) {
 #if WB_ENABLE_NETIMPAIR
     NetImpairConfig cfg;
@@ -174,9 +201,11 @@ void transportUdpServerSetNetImpair(const char *spec) {
     netImpairEnable(&srvImpairIn, &cfg);
     netImpairEnable(&srvImpairOut, &cfg);
     WB_LOG_INFO(WB_LOG_CAT_NET,
-        "netimpair enabled: delay=%ums jitter=%ums loss=%u%% burst=%u",
+        "netimpair enabled: delay=%ums jitter=%ums loss=%u%% burst=%u "
+        "lanonly=%d",
         (unsigned)cfg.baseDelayMs, (unsigned)cfg.jitterMs,
-        (unsigned)cfg.lossPercent, (unsigned)cfg.burstLossLen);
+        (unsigned)cfg.lossPercent, (unsigned)cfg.burstLossLen,
+        cfg.lanOnly ? 1 : 0);
 #else
     /* Impairment tooling compiled out (WB_ENABLE_NETIMPAIR == 0). */
     (void)spec;
@@ -258,7 +287,8 @@ void transportUdpServerRecv(ServerSim *sim) {
     udpServer.tickCount++;
 
     while ((len = udpRecvFrom(udpServer.sock, buf, sizeof(buf), &fromAddr)) > 0) {
-        if (netImpairEnabled(&srvImpairIn)) {
+        if (netImpairEnabled(&srvImpairIn) &&
+            srvImpairPeer(&srvImpairIn, &fromAddr)) {
             netImpairOffer(&srvImpairIn, buf, len, &fromAddr,
                            srvNow());
         } else {
@@ -288,7 +318,8 @@ void transportUdpServerDrainRecvQueue(ServerSim *sim) {
 
     while (tail != head) {
         RecvQueueEntry *entry = &recvQueue[tail];
-        if (netImpairEnabled(&srvImpairIn)) {
+        if (netImpairEnabled(&srvImpairIn) &&
+            srvImpairPeer(&srvImpairIn, &entry->fromAddr)) {
             netImpairOffer(&srvImpairIn, entry->data, entry->len,
                            &entry->fromAddr, srvNow());
         } else {
