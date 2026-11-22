@@ -883,8 +883,13 @@ local function pill_blocked(state, p, skip_take)
   -- AND denying the corpse to the enemy driver who took it 190 ticks later.
   -- skip_take: the quick repair (C.QUICK_REPAIR_ON_TAKE) inside its window.
   if p._in_use and (p.health or 0) > 0 and not skip_take then return "take_blocker" end
-  if p._friendly_shot_tick
-     and ((state.tick or 0) - p._friendly_shot_tick)
+  -- C.QUICK_REPAIR_SKIP_OWN_FIRE: the quick row reads the stamp that leaves
+  -- out our own tank's shells on their way to the take target
+  -- (perception.lua). Ally shells and our other shells still count.
+  local fs_tick = p._friendly_shot_tick
+  if skip_take and C.QUICK_REPAIR_SKIP_OWN_FIRE then fs_tick = p._friendly_shot_other_tick end
+  if fs_tick
+     and ((state.tick or 0) - fs_tick)
          < (C.REPAIR_FRIENDLY_FIRE_REJECT_TICKS or 50) then
     return "friendly_fire"
   end

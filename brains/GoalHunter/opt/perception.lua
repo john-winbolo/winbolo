@@ -598,47 +598,8 @@ function M.update(state, world, info)
     cpf.set_lgm_blocked(blocked, road)
   end
 
-  -- Friendly-fire repair guard: stamp any friendly pill a friendly shot (own OR
-  -- ally) is sitting on / right next to, so eval_repair_pill won't heal a pill
-  -- the team is shooting down to reposition. Observing the actual bullet is more
-  -- reliable than the repos broadcast (no latency) AND covers our OWN shots, so
-  -- we don't heal the pill we were just about to move.
-  --
-  -- A SHELL'S `info` IS AN ENUM, NOT A BITFIELD (2026-09-06 fix). The C side
-  -- fills it from shells.h's SHELLS_BRAIN_* -- FRIENDLY 0, HOSTILE 1,
-  -- NEUTRAL 2 (brain_data.c:493-497, shells.c:1199-1203) -- so the only
-  -- friendly value is 0. This test used to read
-  -- `bit.band(ob.info, OBJECT_HOSTILE) == 0`, the predicate for a TANK's info
-  -- byte, which is also true of NEUTRAL(2): every round a neutral pillbox
-  -- fired counted as our own team's friendly fire, and any friendly pill
-  -- within one tile of that round's flight path went unrepairable for
-  -- REPAIR_FRIENDLY_FIRE_REJECT_TICKS (then 400; 50 since 2026-11-01) -- refreshed by the next round,
-  -- so in practice forever while a neutral pill was shooting past it. The two
-  -- other shell scans in this file already read the enum correctly
-  -- (`ob.info == SHELL_FRIENDLY`, SHELL_FRIENDLY = 0); this one now matches.
-  -- cheb<=1 window absorbs fast shells skipping a tile between snapshot ticks.
-  local fshot_tiles = nil
-  for _, ob in ipairs(info.objects) do
-    if ob.type == 1 and ob.info == 0 then  -- 1 = OBJECT_SHOT, 0 = SHELLS_BRAIN_FRIENDLY
-      fshot_tiles = fshot_tiles or {}
-      fshot_tiles[U.mkey(bit.rshift(ob.x, 8), bit.rshift(ob.y, 8))] = true
-    end
-  end
-  if fshot_tiles then
-    for _, p in pairs(world.pills) do
-      if p.owner == "friendly" and p.health > 0 and not p.in_tank then
-        for ddy = -1, 1 do
-          for ddx = -1, 1 do
-            local nx, ny = p.mx + ddx, p.my + ddy
-            if nx >= 0 and nx <= 255 and ny >= 0 and ny <= 255
-               and fshot_tiles[U.mkey(nx, ny)] then
-              p._friendly_shot_tick = now
-            end
-          end
-        end
-      end
-    end
-  end
+  -- Friendly-fire repair guard (M.stamp_friendly_fire below).
+  M.stamp_friendly_fire(state, world, info, now)
 
   -- ----- Allied LGM protection (aIndy: avoid driving over allied LGMs) -----
   -- ----- Enemy LGM tracking (live sightings in 15x15 view) --------------
@@ -1294,6 +1255,69 @@ function M.update(state, world, info)
   end
 
   state.perc = perc
+end
+
+-- Friendly-fire repair guard: stamp any friendly pill a friendly shot (own OR
+-- ally) is sitting on / right next to, so eval_repair_pill won't heal a pill
+-- the team is shooting down to reposition. Observing the actual bullet is more
+-- reliable than the repos broadcast (no latency) AND covers our OWN shots, so
+-- we don't heal the pill we were just about to move.
+--
+-- A SHELL'S `info` IS AN ENUM, NOT A BITFIELD (2026-09-06 fix). The C side
+-- fills it from shells.h's SHELLS_BRAIN_* -- FRIENDLY 0, HOSTILE 1,
+-- NEUTRAL 2 (brain_data.c:493-497, shells.c:1199-1203) -- so the only
+-- friendly value is 0. This test used to read
+-- `bit.band(ob.info, OBJECT_HOSTILE) == 0`, the predicate for a TANK's info
+-- byte, which is also true of NEUTRAL(2): every round a neutral pillbox
+-- fired counted as our own team's friendly fire, and any friendly pill
+-- within one tile of that round's flight path went unrepairable for
+-- REPAIR_FRIENDLY_FIRE_REJECT_TICKS (then 400; 50 since 2026-11-01) -- refreshed by the next round,
+-- so in practice forever while a neutral pill was shooting past it. The two
+-- other shell scans in this file already read the enum correctly
+-- (`ob.info == SHELL_FRIENDLY`, SHELL_FRIENDLY = 0); this one now matches.
+-- cheb<=1 window absorbs fast shells skipping a tile between snapshot ticks.
+-- C.QUICK_REPAIR_SKIP_OWN_FIRE (2026-11-22): a second stamp,
+-- p._friendly_shot_other_tick, from every friendly shell EXCEPT our own
+-- tank's shells on their way to the take target (quick_repair
+-- .own_shell_at_target). Only the quick repair row reads it
+-- (builder_pool pill_blocked); every other path reads the first stamp,
+-- which still counts every friendly shell.
+function M.stamp_friendly_fire(state, world, info, now)
+  local fshot_tiles, fshot_other = nil, nil
+  local _qr_skip = C.QUICK_REPAIR_SKIP_OWN_FIRE and C.QUICK_REPAIR_ON_TAKE
+  local _qr_g = _qr_skip and state.goal
+  local _qr_tmx, _qr_tmy
+  if _qr_g and _qr_g.kind == "attack_pill" and _qr_g.mx and _qr_g.my then
+    _qr_tmx, _qr_tmy = _qr_g.mx, _qr_g.my
+  end
+  for _, ob in ipairs(info.objects) do
+    if ob.type == 1 and ob.info == 0 then  -- 1 = OBJECT_SHOT, 0 = SHELLS_BRAIN_FRIENDLY
+      fshot_tiles = fshot_tiles or {}
+      local k = U.mkey(bit.rshift(ob.x, 8), bit.rshift(ob.y, 8))
+      fshot_tiles[k] = true
+      if _qr_skip and not (_qr_tmx and require("quick_repair").own_shell_at_target(
+                             ob, info.player_number, _qr_tmx, _qr_tmy)) then
+        fshot_other = fshot_other or {}
+        fshot_other[k] = true
+      end
+    end
+  end
+  if fshot_tiles then
+    for _, p in pairs(world.pills) do
+      if p.owner == "friendly" and p.health > 0 and not p.in_tank then
+        for ddy = -1, 1 do
+          for ddx = -1, 1 do
+            local nx, ny = p.mx + ddx, p.my + ddy
+            if nx >= 0 and nx <= 255 and ny >= 0 and ny <= 255 then
+              local k = U.mkey(nx, ny)
+              if fshot_tiles[k] then p._friendly_shot_tick = now end
+              if fshot_other and fshot_other[k] then p._friendly_shot_other_tick = now end
+            end
+          end
+        end
+      end
+    end
+  end
 end
 
 return M

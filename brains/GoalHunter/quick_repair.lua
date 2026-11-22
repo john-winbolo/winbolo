@@ -156,6 +156,23 @@ function M.shells_on_blocker(world, info, bmx, bmy)
   return out
 end
 
+-- C.QUICK_REPAIR_SKIP_OWN_FIRE: is shell ob our own tank's shell on its way
+-- to the take target tile (tmx, tmy)? It is ours when its owner is our
+-- player number. It is on its way when its flight (SHELL_SPEED a tick along
+-- its exact angle, its remaining life in moves, the same flight as
+-- shells_on_blocker) reaches the target tile. Walls are not looked at: a
+-- shell we fired at the target is our shot at the target either way.
+function M.own_shell_at_target(ob, self_pn, tmx, tmy)
+  if not (ob and self_pn ~= nil and tmx and tmy) then return false end
+  if ob.owner ~= self_pn then return false end
+  local N = C.LGM_SHELL_PREDICT_TICKS or 63
+  local life = ob.life
+  local moves = (type(life) == "number" and life >= 0 and life <= N) and life or N
+  local vx =  U.bsin_f(ob.angle or 0) * C.SHELL_SPEED
+  local vy = -U.bcos_f(ob.angle or 0) * C.SHELL_SPEED
+  return M.ticks_to_tile(ob.x + 0.0, ob.y + 0.0, vx, vy, tmx, tmy, moves) ~= nil
+end
+
 -- The reload interval: live_physics' figure (the engine's own reload ticks
 -- when the host sends them, else rules x reload mod).
 function M.reload_ticks(info)

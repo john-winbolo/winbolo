@@ -6218,6 +6218,16 @@ M.QUICK_REPAIR_ON_TAKE = true
 M.QUICK_REPAIR_PREDICT_SHOTS = true
 -- Brain ticks the repair must land after T_safe (Andrew approved 2).
 M.QUICK_REPAIR_MARGIN_TICKS = 2
+-- QUICK_REPAIR_SKIP_OWN_FIRE (Nov 22, Andrew: "Sure"). Our own shells at the
+-- target fly past the blocker, and perception stamps the blocker with
+-- friendly fire (REPAIR_FRIENDLY_FIRE_REJECT_TICKS). That stamp refused the
+-- quick row until the last shell was 1 s gone, about 2.8 s per take late
+-- (1.2 to 3.6 s) in the grass double-take demo. true = the quick row reads a
+-- second stamp that leaves out our own tank's shells on their way to the
+-- take target (quick_repair.own_shell_at_target). Ally shells and our other
+-- shells still stamp it. Every other repair path reads the first stamp, as
+-- before. false = the quick row reads the first stamp. KEEL / MAST: false.
+M.QUICK_REPAIR_SKIP_OWN_FIRE = true
 -- The take substates in which the tank is shooting the target pill: the
 -- firing run that QUICK_REPAIR_PREDICT_SHOTS needs.
 M.QUICK_REPAIR_FIRE_SUBSTATES = {
@@ -8182,6 +8192,8 @@ M.PRESETS = {
     SHIELD_SCAN_PENDING_SURVIVES_V2 = false,
     --   2026-11-22: a double take can still be a blitz (old rule).
     BLITZ_NO_DOUBLE_TAKE = false,
+    --   2026-11-22: our own shells at the target refuse the quick repair.
+    QUICK_REPAIR_SKIP_OWN_FIRE = false,
     --   2026-11-17: hold 15 ticks with no goal after a kill (old rule).
     POST_KILL_WAIT_TICKS = 15,
     --   2026-11-17: carrying-pill approach floor 30 (old rule).
@@ -8539,6 +8551,7 @@ M.PRESETS.mast = {
   SHELL_MODEL_RULES_ALL             = false,  -- 2.2.1: other shell sites at 128 * sight
   SHIELD_SCAN_PENDING_SURVIVES_V2   = false,  -- 2.2.1 had no pill take v2
   BLITZ_NO_DOUBLE_TAKE              = false,  -- 2.2.1 had no double takes
+  QUICK_REPAIR_SKIP_OWN_FIRE        = false,  -- 2.2.1 had no quick repair
   POST_KILL_WAIT_TICKS              = 15,
   CARRY_APPROACH_MIN_ARMOUR_ONE     = 30,
   CARRY_APPROACH_MIN_ARMOUR_MANY    = 30,
