@@ -14,6 +14,7 @@ local viz = require("viz")
 local opt = require("optimize")
 local threat = require("threat")
 local bpool = require("builder_pool")   -- capture_lgm_hunt: ally claim on the pill tile
+local KL = require("kill_lgm")          -- shell model (C.SHELL_MODEL_RULES_ALL)
 local print2 = require("print2")
 -- attack.lua owns the attack_tank heat-pill decision (selection, shots_needed
 -- from the engine's speed-halving ladder, volley termination). Required LAZILY
@@ -1499,7 +1500,8 @@ local function reposition_steer(state, world, info, goal)
   -- Not in firing range yet → let general capture nav drive us right up.
   local pill_wx, pill_wy = U.m2w(goal.mx), U.m2w(goal.my)
   local dist          = U.wdist(info.tankx, info.tanky, pill_wx, pill_wy)
-  local fire_range_wu = ((info.gunrange or 14) / 2.0) * 256
+  -- C.SHELL_MODEL_RULES_ALL: the burst from the rules (off: 128 * sight).
+  local fire_range_wu = KL.shell_travel(info.gunrange or 14, KL.all_on())
   if dist > fire_range_wu then
     goal.substate = "approach"
     return nil
@@ -1599,7 +1601,8 @@ local function defend_pill_steer(state, world, info, goal)
 
   local pill_wx, pill_wy = U.m2w(pill.mx), U.m2w(pill.my)
   local dist          = U.wdist(info.tankx, info.tanky, pill_wx, pill_wy)
-  local fire_range_wu = ((info.gunrange or 14) / 2.0) * 256
+  -- C.SHELL_MODEL_RULES_ALL: the burst from the rules (off: 128 * sight).
+  local fire_range_wu = KL.shell_travel(info.gunrange or 14, KL.all_on())
   local los_clear = dist <= fire_range_wu
     and shot_path_clear(info, world, pill_wx, pill_wy, pill.mx, pill.my)
   if not los_clear then
@@ -1641,10 +1644,43 @@ end
 -- shell only detonates a mine when it ENDS on the mined square (engine
 -- fires minesExpAddItem at shell death: collision or range-expiry), so the
 -- fire gate mirrors kill_lgm's: the actual explosion point (tank +
--- 128*gunrange wu along the heading) must land within DEMINE_LAND_WU of
--- the mine tile center before the trigger is pulled.
+-- KL.shell_travel(gunrange) wu along the heading) must land within
+-- DEMINE_LAND_WU of the mine tile center before the trigger is pulled.
 -- =========================================================================
-local KL = require("kill_lgm")
+
+-- The mine shot (kill_mine and the sea-pill detonate): the sight whose
+-- burst is nearest the mine, and how far from the mine (wx, wy) a shell
+-- fired now, at the sight we hold now, bursts. C.SHELL_MODEL_RULES_ALL:
+-- the burst from the rules (classic 128 * sight + 32 wu); off: 128 * sight
+-- and round(dist / 128), as before. Returns target_sl, cur_sl, land_off.
+local function mine_shot(info, wx, wy)
+  local on = KL.all_on()
+  local dist = U.wdist(info.tankx, info.tanky, wx, wy)
+  local target_sl = KL.sight_for(dist, on)
+  local cur_sl = info.gunrange or 14
+  local travel = KL.shell_travel(cur_sl, on)
+  local rad    = (info.direction or 0) * C.TWO_PI / 256
+  local ex_wx  = info.tankx + math.sin(rad) * travel
+  local ex_wy  = info.tanky - math.cos(rad) * travel
+  local off_dx, off_dy = ex_wx - wx, ex_wy - wy
+  return target_sl, cur_sl, math.sqrt(off_dx * off_dx + off_dy * off_dy)
+end
+M.mine_shot = mine_shot
+
+-- C.TANK_COMBAT_FIRE_MAX_FLIGHT: how far out (wu) the lead point may be for
+-- the tank-combat shot. 64 wu of slack: the shell hits anywhere inside the
+-- target's hit circle. C.SHELL_MODEL_RULES_ALL: the shell's burst,
+-- KL.shell_travel (shell_speed * (shell_start_add + steps): the start offset
+-- counted, the start from the rules). Off: steps * shell_speed, with the
+-- start 5 and the start offset left out, as before.
+function M.combat_reach_wu(info)
+  if KL.all_on() then return KL.shell_travel(info.gunrange or 14, true) + 64 end
+  local r = info.rules
+  local life = (r and r.shell_life and r.shell_life > 0) and r.shell_life or 8
+  local spd  = (r and r.shell_speed and r.shell_speed > 0) and r.shell_speed or 32
+  local steps = 1 + math.floor(life * (info.gunrange or 14) / 2) - 5
+  return steps * spd + 64
+end
 
 -- =========================================================================
 -- Capture-pill LGM hunt (C.CAPTURE_LGM_HUNT).
@@ -1851,17 +1887,10 @@ local function demine_steer(state, world, info, goal)
   local h, t = U.aim_turn_bits(corr, 6, 1)
   keys = bit.bor(keys, h); taps = bit.bor(taps, t)
   -- Gunsight length: pull the shell's end-of-life onto the mine's distance.
-  local target_sl = KL.sightlen_for(dist)
-  keys = bit.bor(keys, KL.gunrange_key(info.gunrange, target_sl))
   -- Fire only when the ACTUAL explosion point lands on the mine tile and
   -- nothing (wall / pill / base / ally) eats the shell on the way.
-  local cur_sl = info.gunrange or 14
-  local travel = 128 * cur_sl
-  local rad    = (info.direction or 0) * C.TWO_PI / 256
-  local ex_wx  = info.tankx + math.sin(rad) * travel
-  local ex_wy  = info.tanky - math.cos(rad) * travel
-  local off_dx, off_dy = ex_wx - wx, ex_wy - wy
-  local land_off = math.sqrt(off_dx * off_dx + off_dy * off_dy)
+  local target_sl, cur_sl, land_off = mine_shot(info, wx, wy)
+  keys = bit.bor(keys, KL.gunrange_key(info.gunrange, target_sl))
   -- ONE shot per flight: the shell takes dist/SHELL_SPEED (~4 ticks/tile)
   -- to reach the mine, and only its LANDING detonates it — extra shells
   -- fired while the first is in flight are pure waste. After firing, hold
@@ -2834,8 +2863,9 @@ local function attack_pill_steer(state, world, info, goal)
     -- Within (shoot distance + 1) tiles of the pill, fire whenever the shot
     -- will hit the pillbox and NOT a base / other pill / allied tank. Shells
     -- travel gunrange/2 map tiles; forests are shot through. shot_path_clear
-    -- is the same safety check used elsewhere.
-    local shoot_tiles = (info.gunrange or C.GUNSIGHT_MAX) / 2.0
+    -- is the same safety check used elsewhere. C.SHELL_MODEL_RULES_ALL: the
+    -- burst from the rules, in tiles (classic gunrange/2 + 1/8).
+    local shoot_tiles = KL.shell_travel(info.gunrange or C.GUNSIGHT_MAX, KL.all_on()) / 256.0
     local fire_w      = (shoot_tiles + 1.0) * 256.0
     local dist_to_pill = U.wdist(info.tankx, info.tanky, pill_wx, pill_wy)
     -- Only fire when actually POINTED at the pill (within tol). kill_hardline
@@ -3577,18 +3607,11 @@ local function tank_combat_steer(state, world, info, goal)
   goal._engage_stuck_mx = tmx
   goal._engage_stuck_my = tmy
   -- C.TANK_COMBAT_FIRE_MAX_FLIGHT: hold the shot when the lead point is past
-  -- where the shell dies. A shell lives 1 + shell_life * (gunsight / 2) -
-  -- SHELL_START_ADD (5) steps of shell_speed wu (src/bolo/shells.c
-  -- shellLifeTicks), from the live rules and the gunsight we hold now. 64 wu
-  -- of slack: the shell hits anywhere inside the target's hit circle.
+  -- where the shell dies (M.combat_reach_wu: the burst of the gunsight we
+  -- hold now, from the live rules, + 64 wu of slack).
   local _range_ok = true
   if C.TANK_COMBAT_FIRE_MAX_FLIGHT then
-    local r = info.rules
-    local life = (r and r.shell_life and r.shell_life > 0) and r.shell_life or 8
-    local spd  = (r and r.shell_speed and r.shell_speed > 0) and r.shell_speed or 32
-    local steps = 1 + math.floor(life * (info.gunrange or 14) / 2) - 5
-    local reach_wu = steps * spd + 64
-    _range_ok = U.wdist(info.tankx, info.tanky, pred_wx, pred_wy) <= reach_wu
+    _range_ok = U.wdist(info.tankx, info.tanky, pred_wx, pred_wy) <= M.combat_reach_wu(info)
   end
   local _gate_why = (not _aim_ok and "aim") or (not _shells_ok and "shells")
                     or (not _steady_ok and "steady") or (not _range_ok and "range") or nil
@@ -4463,15 +4486,8 @@ local function steer_core(state, world, info, goal)
       local corr = U.adiff(info.direction, aim_dir)
       local h, t = U.aim_turn_bits(corr, 6, 1)
       keys = bit.bor(keys, h); taps = bit.bor(taps, t)
-      local target_sl = KL.sightlen_for(dist)
+      local target_sl, _, land_off = mine_shot(info, swx, swy)
       keys = bit.bor(keys, KL.gunrange_key(info.gunrange, target_sl))
-      local cur_sl = info.gunrange or 14
-      local travel = 128 * cur_sl
-      local rad    = (info.direction or 0) * C.TWO_PI / 256
-      local ex_wx  = info.tankx + math.sin(rad) * travel
-      local ex_wy  = info.tanky - math.cos(rad) * travel
-      local off_dx, off_dy = ex_wx - swx, ex_wy - swy
-      local land_off = math.sqrt(off_dx * off_dx + off_dy * off_dy)
       local now_t = state.tick or 0
       local in_flight = goal._sea_shot_eta and now_t < goal._sea_shot_eta
       -- Stop the moment the tile stops being dry land: the mine has gone off,

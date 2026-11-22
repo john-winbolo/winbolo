@@ -26,6 +26,7 @@ local bit = require('bitcompat')
 local C = require("constants")
 local U = require("util")
 local viz = require("viz")
+local KL = require("kill_lgm")   -- shell model (C.SHELL_MODEL_RULES_ALL)
 
 local M = {}
 
@@ -100,10 +101,11 @@ local function make_shot(info, tick)
   local rad_step_y = rd(C.SHELL_SPEED * math.sin(rad))
   local fx = info.tankx + SHELL_START_ADD * rad_step_x
   local fy = info.tanky + SHELL_START_ADD * rad_step_y
-  -- Use the same gun_range (7.0) as the always-on yellow crosshair so the
-  -- recorded destination matches what the user sees on screen.
+  -- The burst of the longest sight (7.0 tiles = 128 * 14 wu with
+  -- C.SHELL_MODEL_RULES_ALL off; on: from the rules, like the always-on
+  -- yellow crosshair) so the recorded destination matches the screen.
   local cross_fx, cross_fy = U.crosshair_at(
-    info.tankx, info.tanky, dir, 7.0)
+    info.tankx, info.tanky, dir, KL.max_travel(KL.all_on()) / 256.0)
   -- crosshair_at returns float TILE coords; convert to world wu.
   cross_fx = cross_fx * 256
   cross_fy = cross_fy * 256

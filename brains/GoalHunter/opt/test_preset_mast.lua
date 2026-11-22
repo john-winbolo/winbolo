@@ -892,6 +892,7 @@ local R221 = {
   LGM_SHELL_MODEL_RULES    = false,
   LGM_FIRE_LOS_STRICT      = false,
   LGM_LEAD_STOP_RETURN     = false,
+  SHELL_MODEL_RULES_ALL    = false,
   PT2_FAST_SETUP = false,
   PT2_FINISH_CAPTURE_LOCK = false,
   PT2_FINISH_SWERVE_TURN_TICKS = 0,

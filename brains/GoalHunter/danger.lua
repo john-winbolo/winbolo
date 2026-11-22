@@ -1368,11 +1368,13 @@ end
 -- Our shell, as the engine fires it (tank.c tankUpdate, shells.c
 -- shellsAddItem):
 --   * angle: the tank's float angle (info.tank_angle);
---   * start: tank + shell_start_add (5) x utilCalcDistance(angle,
---     shell_speed), whole numbers;
+--   * start: tank + shell_start_add (classic 5) x utilCalcDistance(angle,
+--     shell_speed), whole numbers (C.SHELL_MODEL_RULES_ALL: the rule's
+--     value; off: always 5);
 --   * steps: utilCalcDistanceHP (x256, rounded) with a carried fraction
 --     (shellAdvance1Tick);
---   * moves: shellLifeTicks = 1 + (int)(shell_life * gunrange / 2) - 5;
+--   * moves: shellLifeTicks = 1 + (int)(shell_life * gunrange / 2) -
+--     shell_start_add;
 --   * each world tick it moves, then shellsCalcCollision tests, in order:
 --     (1) a live pill (armour > 0, not in a tank) on its square: blast at
 --     the square's centre; (2) any tank but ours within tank_hit_radius
@@ -1411,7 +1413,8 @@ end
 -- lgm.h LGM_MIN_GOAL / LGM_MAX_GOAL: the builder is at his spot when he is
 -- this close on both axes. An engine fact.
 local LGM_GOAL_BOX = 16
--- The engine's own numbers when info.rules does not carry them.
+-- The engine's own numbers when info.rules does not carry them (and the
+-- start with C.SHELL_MODEL_RULES_ALL off).
 local FB_SHELL_START_ADD = 5
 local FB_BASE_SPEED = 32
 local FB_BASE_LIFE = 8
@@ -1521,12 +1524,17 @@ local function fb_shell(world, info)
   local life = rules.shell_life or FB_BASE_LIFE
   local angle = info.tank_angle or info.direction or 0
   local len = (info.gunrange or 14) / 2
-  local moves = 1 + math.floor(life * len) - FB_SHELL_START_ADD
+  local add = FB_SHELL_START_ADD
+  if C.SHELL_MODEL_RULES_ALL and type(rules.shell_start_add) == "number"
+     and rules.shell_start_add >= 0 then
+    add = rules.shell_start_add
+  end
+  local moves = 1 + math.floor(life * len) - add
   if moves < 0 then moves = 0 end
   local ax, ay = fb_dist(angle, speed, 1)
   local hx, hy = fb_dist(angle, speed, 256)
-  local x = info.tankx + FB_SHELL_START_ADD * ax
-  local y = info.tanky + FB_SHELL_START_ADD * ay
+  local x = info.tankx + add * ax
+  local y = info.tanky + add * ay
   local accx, accy = 0, 0
   local on_boat = info.inboat and true or false
   local hit_r = rules.tank_hit_radius or C.TANK_HIT_RADIUS_WU or 112
@@ -1590,6 +1598,7 @@ local function fb_shell(world, info)
   end
   return moves + 1, x, y, false, "expiry"
 end
+M.fb_shell = fb_shell   -- for test_shell_model_all.lua
 
 -- Track one builder's errand across ticks: has he been at his spot, and is
 -- he walking away from it. `tr` is his record in state._fire_block.

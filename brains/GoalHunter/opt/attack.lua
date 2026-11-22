@@ -25,6 +25,7 @@ local KIND_NORMAL = cpf.KIND_NORMAL
 
 local print2 = require("print2")
 local opt    = require("optimize")
+local KL     = require("kill_lgm")   -- shell model (C.SHELL_MODEL_RULES_ALL)
 -- clock_us is registered as a C global. Cache the upvalue and provide
 -- a no-op fallback so unit-test runs without the C host don't crash.
 local clock_us = clock_us or function() return 0 end
@@ -8982,8 +8983,12 @@ local function update_attack_substate_body(goal, state, world, info)
       -- Float angle so the displayed crosshair matches the engine's
       -- actual firing direction; info.direction is a floor and would
       -- show the crosshair offset from the true shell path.
+      -- C.SHELL_MODEL_RULES_ALL: the burst of the longest sight from the
+      -- rules (off: 7.0 tiles, 128 * 14 wu).
+      local _ON = KL.all_on()
       local cx, cy = U.crosshair_at(info.tankx, info.tanky,
-                                    info.tank_angle or info.direction, 7.0)
+                                    info.tank_angle or info.direction,
+                                    KL.max_travel(_ON) / 256.0)
       local cdx, cdy = cx - (pmx + 0.5), cy - (pmy + 0.5)
       local crosshairs_off = math.sqrt(cdx * cdx + cdy * cdy) > 0.7
 
@@ -9653,7 +9658,8 @@ local function heat_pill_select(state, world, info, goal, target, now, tmx, tmy,
   table.sort(ids)
 
   local d_us_enemy   = heat_tdist(tmx, tmy, target.mx, target.my)
-  local fire_range_wu = ((info.gunrange or 14) / 2.0) * 256
+  -- C.SHELL_MODEL_RULES_ALL: the burst from the rules (off: 128 * sight).
+  local fire_range_wu = KL.shell_travel(info.gunrange or 14, KL.all_on())
   local max_frac     = C.ATTACK_TANK_HEAT_MAX_FRAC or 0.75
   local min_hp       = C.ATTACK_TANK_HEAT_MIN_HP or 5
   local floor_mode   = (C.ATTACK_TANK_HEAT_CAP_MODE == "floor")
@@ -9876,7 +9882,7 @@ local function heat_volley_continue(state, world, info, goal, now, los_fn)
     if not done then
       local pill_wx, pill_wy = U.m2w(pill.mx), U.m2w(pill.my)
       local d_wu = U.wdist(info.tankx, info.tanky, pill_wx, pill_wy)
-      if d_wu > ((info.gunrange or 14) / 2.0) * 256 then
+      if d_wu > KL.shell_travel(info.gunrange or 14, KL.all_on()) then
         done = "out_of_range"
       elseif not los_fn(info, world, pill_wx, pill_wy, pill.mx, pill.my) then
         done = "lost_los"
@@ -10102,7 +10108,8 @@ function M.defend_heat_pick(state, world, info, d_id, E, engaged, now, los_fn, q
   for id in pairs(pills) do ids[#ids + 1] = id end
   table.sort(ids)
 
-  local fire_range_wu = ((info.gunrange or 14) / 2.0) * 256
+  -- C.SHELL_MODEL_RULES_ALL: the burst from the rules (off: 128 * sight).
+  local fire_range_wu = KL.shell_travel(info.gunrange or 14, KL.all_on())
   local pill_range    = C.PILL_FIRE_RANGE or 8
   local max_frac      = C.ATTACK_TANK_HEAT_MAX_FRAC or 0.75
   local min_hp        = C.ATTACK_TANK_HEAT_MIN_HP or 5

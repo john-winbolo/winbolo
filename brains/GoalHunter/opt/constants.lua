@@ -3395,6 +3395,14 @@ M.LGM_FIRE_LOS_STRICT     = true
 -- the rest of lgm_build_ticks, then on his walk back the way he came
 -- (kill_lgm.stop_return_plan). false = the linear lead of his last walk.
 M.LGM_LEAD_STOP_RETURN    = true
+-- 2026-11-22: the same shell model (kill_lgm.shell_travel / sight_for, from
+-- info.rules: classic 128 * sight + 32 wu) for every other site that needs
+-- where a tank shell ends: the kill_mine and sea-pill detonate sight and
+-- burst test, the pill and tank fire ranges (steering.lua, attack.lua),
+-- danger.lua's own-shell start (rules.shell_start_add, not 5), and the
+-- debug crosshairs. false = 128 * sight wu, start 5, as before. KEEL / MAST:
+-- false.
+M.SHELL_MODEL_RULES_ALL   = true
 -- TEST ONLY: hold our own keys back this many thinks before the engine gets
 -- them (a remote seat's delay on a local server). 0 = off. Never in a game.
 M.TEST_KEY_DELAY_THINKS   = 0
@@ -8148,6 +8156,7 @@ M.PRESETS = {
     LGM_SHELL_MODEL_RULES    = false,
     LGM_FIRE_LOS_STRICT      = false,
     LGM_LEAD_STOP_RETURN     = false,
+    SHELL_MODEL_RULES_ALL    = false,
     --   2026-11-17: hold 15 ticks with no goal after a kill (old rule).
     POST_KILL_WAIT_TICKS = 15,
     --   2026-11-17: carrying-pill approach floor 30 (old rule).
@@ -8502,6 +8511,7 @@ M.PRESETS.mast = {
   LGM_SHELL_MODEL_RULES             = false,  -- 2.2.1: shell bursts at 128 * sight
   LGM_FIRE_LOS_STRICT               = false,  -- 2.2.1: line check stops at the man's tile
   LGM_LEAD_STOP_RETURN              = false,  -- 2.2.1: no stop-and-return lead
+  SHELL_MODEL_RULES_ALL             = false,  -- 2.2.1: other shell sites at 128 * sight
   POST_KILL_WAIT_TICKS              = 15,
   CARRY_APPROACH_MIN_ARMOUR_ONE     = 30,
   CARRY_APPROACH_MIN_ARMOUR_MANY    = 30,

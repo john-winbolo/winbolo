@@ -683,9 +683,9 @@ end
 local MAX_SIGHTLEN = 14   -- longest gunsight (half tiles): a shell never flies past 14*128 wu
 M.MAX_SIGHTLEN = MAX_SIGHTLEN
 
--- The old model (C.LGM_SHELL_MODEL_RULES false, and steering.lua's demine /
--- kill_mine / sea-detonate aim, which keep it): a shell bursts 128 wu a
--- sight step out, 4*sl - 5 ticks after it leaves.
+-- The old model (C.LGM_SHELL_MODEL_RULES false for the kill-LGM aim,
+-- C.SHELL_MODEL_RULES_ALL false for the other sites): a shell bursts 128 wu
+-- a sight step out, 4*sl - 5 ticks after it leaves.
 function M.sightlen_for(distance_wu)
   local s = math.floor(distance_wu / 128 + 0.5)
   if s < 2  then return 2  end
@@ -737,15 +737,32 @@ local function life_moves(sl)
   return L
 end
 
+-- Which model a call uses. The functions below take an optional last
+-- argument `on`: nil = C.LGM_SHELL_MODEL_RULES (the kill-LGM and
+-- capture-LGM-hunt aim); the other sites pass M.all_on().
+local function model_on(on)
+  if on == nil then return C.LGM_SHELL_MODEL_RULES end
+  return on
+end
+
+-- C.SHELL_MODEL_RULES_ALL (2026-11-22): the same rules model for every
+-- other site that needs where a tank shell ends: the mine shots
+-- (steering.lua demine_steer and the sea-pill detonate), the pill and tank
+-- fire ranges (steering.lua, attack.lua), danger.lua's own-shell start, and
+-- the debug crosshairs. false = 128 * sight wu, as before.
+function M.all_on()
+  return C.SHELL_MODEL_RULES_ALL and true or false
+end
+
 -- The longest sight the aim may use.
-function M.max_sight()
-  if C.LGM_SHELL_MODEL_RULES then return SR.sight_max end
+function M.max_sight(on)
+  if model_on(on) then return SR.sight_max end
   return MAX_SIGHTLEN
 end
 
 -- How far out (wu, along the nose) a shell fired at sight sl bursts.
-function M.shell_travel(sl)
-  if C.LGM_SHELL_MODEL_RULES then return SR.speed * (SR.start_add + life_moves(sl)) end
+function M.shell_travel(sl, on)
+  if model_on(on) then return SR.speed * (SR.start_add + life_moves(sl)) end
   return 128 * sl
 end
 
@@ -806,31 +823,32 @@ function M.fire_line_blocked(tiles, q, stops)
 end
 
 -- The farthest a shell flies (the reach of the longest sight).
-function M.max_travel()
-  return M.shell_travel(M.max_sight())
+function M.max_travel(on)
+  return M.shell_travel(M.max_sight(on), on)
 end
 
 -- How far out the shell is t ticks after it leaves, on the flight_ticks
 -- clock (it is at shell_travel(sl) when t = flight_ticks(sl)).
-function M.shell_dist_at(t)
-  if C.LGM_SHELL_MODEL_RULES then return SR.speed * (SR.start_add + 1 + t) end
+function M.shell_dist_at(t, on)
+  if model_on(on) then return SR.speed * (SR.start_add + 1 + t) end
   return 32 * (t + 5)
 end
 
 -- The sight whose burst is nearest distance_wu, for the kill-LGM and
--- capture-LGM-hunt aim (the old sightlen_for with the knob off).
-function M.sight_for(distance_wu)
-  if not C.LGM_SHELL_MODEL_RULES then return M.sightlen_for(distance_wu) end
+-- capture-LGM-hunt aim (the old sightlen_for with the knob off). `on`: see
+-- model_on.
+function M.sight_for(distance_wu, on)
+  if not model_on(on) then return M.sightlen_for(distance_wu) end
   local best, best_e = 2, math.huge
   for sl = 2, SR.sight_max do
-    local e = math.abs(M.shell_travel(sl) - distance_wu)
+    local e = math.abs(M.shell_travel(sl, true) - distance_wu)
     if e < best_e then best, best_e = sl, e end
   end
   return best
 end
 
-function M.flight_ticks(sightLen)
-  if C.LGM_SHELL_MODEL_RULES then
+function M.flight_ticks(sightLen, on)
+  if model_on(on) then
     -- The burst is L ticks after the fire tick; the builder test is one
     -- tick before it (see above).
     local t = life_moves(sightLen) - 1

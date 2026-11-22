@@ -3019,9 +3019,10 @@ function Brain.think(info)
       -- sightLen is in half-tiles (see constants.lua GUNSIGHT_MAX
       -- comment): shell travels sightLen/2 map tiles.  At max
       -- gunrange=14 the shell lands 7 tiles away; at min gunrange=2
-      -- it lands 1 tile away.
+      -- it lands 1 tile away. C.SHELL_MODEL_RULES_ALL: the burst from the
+      -- rules (classic gunrange/2 + 1/8 tile).
       local twx, twy = info.tankx / 256.0, info.tanky / 256.0
-      local gun_range = (info.gunrange or 14) / 2.0
+      local gun_range = kill_lgm.shell_travel(info.gunrange or 14, kill_lgm.all_on()) / 256.0
       local aim_wx = twx + U.bsin_f(info.direction) * gun_range
       local aim_wy = twy - U.bcos_f(info.direction) * gun_range
       viz.line("tank_aim_marker", aim_wx - 0.3, aim_wy, aim_wx + 0.3, aim_wy, 255, 255, 0, 150)
@@ -8017,9 +8018,10 @@ function Brain.think(info)
   -- Yellow crosshairs: ALWAYS on.  Position = actual shell-landing
   -- distance.  sightLen is in half-tiles (GUNSIGHT_MAX = 14 → 7 tile
   -- shot range), so shell travel in tiles = info.gunrange / 2.
+  -- C.SHELL_MODEL_RULES_ALL: the burst from the rules (classic + 1/8 tile).
   if BRAIN_DEBUG_MODE and viz.is_on("tank_aim_marker") then
     local ax, ay = U.crosshair_at(info.tankx, info.tanky, info.direction,
-                                   (info.gunrange or 14) / 2.0)
+                                   kill_lgm.shell_travel(info.gunrange or 14, kill_lgm.all_on()) / 256.0)
     local shooting = (bit.band(keys, KEY_SHOOT)) ~= 0
     local cg = shooting and 0 or 255
     viz.line("tank_aim_marker", ax - 0.3, ay, ax + 0.3, ay, 255, cg, 0, 150)
@@ -8761,8 +8763,9 @@ function Brain.think(info)
     -- upvalue count, and they close over info / world directly.
     --
     -- Drive the crosshair so the shell impact lands nearest a WORLD target point
-    -- (px_w, py_w in wu): impact for sightLen L sits 128*L wu ahead on the current
-    -- heading, so the best length is round(along/128).  Returns TWO keys (held,
+    -- (px_w, py_w in wu): impact for sightLen L sits kill_lgm.shell_travel(L) wu
+    -- ahead on the current heading (128*L with C.LGM_SHELL_MODEL_RULES off), so
+    -- the best length is kill_lgm.sight_for(along).  Returns TWO keys (held,
     -- tap): >1 sightLen unit to go closes fast with a HELD key (2 packets/think =
     -- 2 units); the FINAL unit is a TAP (one packet = one unit = 64 wu), because a
     -- held key moves in steps of 2 and strands us a unit short on odd offsets.
@@ -8999,7 +9002,8 @@ function Brain.think(info)
         --
         -- The search is the shape of the kill_lgm goal's 27-candidate search:
         -- for each (turn x throttle x sight) combination predict the tank one
-        -- THINK ahead, put the impact 128*sightLen along the new heading, score
+        -- THINK ahead, put the impact kill_lgm.shell_travel(sightLen) along the
+        -- new heading (128*sightLen with C.LGM_SHELL_MODEL_RULES off), score
         -- by distance to the man, keep the minimum.  Which axes we are allowed
         -- to move:
         --   TURN     only when the hunt already owns the turn (steer "turn",

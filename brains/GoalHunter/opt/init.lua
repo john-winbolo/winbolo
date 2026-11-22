@@ -6764,6 +6764,7 @@ function Brain.think(info)
   -- Yellow crosshairs: ALWAYS on.  Position = actual shell-landing
   -- distance.  sightLen is in half-tiles (GUNSIGHT_MAX = 14 → 7 tile
   -- shot range), so shell travel in tiles = info.gunrange / 2.
+  -- C.SHELL_MODEL_RULES_ALL: the burst from the rules (classic + 1/8 tile).
 
   -- Target crosshairs + range circles when attacking
 
@@ -7266,8 +7267,9 @@ function Brain.think(info)
     -- upvalue count, and they close over info / world directly.
     --
     -- Drive the crosshair so the shell impact lands nearest a WORLD target point
-    -- (px_w, py_w in wu): impact for sightLen L sits 128*L wu ahead on the current
-    -- heading, so the best length is round(along/128).  Returns TWO keys (held,
+    -- (px_w, py_w in wu): impact for sightLen L sits kill_lgm.shell_travel(L) wu
+    -- ahead on the current heading (128*L with C.LGM_SHELL_MODEL_RULES off), so
+    -- the best length is kill_lgm.sight_for(along).  Returns TWO keys (held,
     -- tap): >1 sightLen unit to go closes fast with a HELD key (2 packets/think =
     -- 2 units); the FINAL unit is a TAP (one packet = one unit = 64 wu), because a
     -- held key moves in steps of 2 and strands us a unit short on odd offsets.
@@ -7504,7 +7506,8 @@ function Brain.think(info)
         --
         -- The search is the shape of the kill_lgm goal's 27-candidate search:
         -- for each (turn x throttle x sight) combination predict the tank one
-        -- THINK ahead, put the impact 128*sightLen along the new heading, score
+        -- THINK ahead, put the impact kill_lgm.shell_travel(sightLen) along the
+        -- new heading (128*sightLen with C.LGM_SHELL_MODEL_RULES off), score
         -- by distance to the man, keep the minimum.  Which axes we are allowed
         -- to move:
         --   TURN     only when the hunt already owns the turn (steer "turn",
