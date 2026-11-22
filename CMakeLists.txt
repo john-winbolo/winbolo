@@ -7994,6 +7994,7 @@ set(_unit_test_names
     lv_dock_clear_rects
     lv_dock_clear_map
     lv_dock_clear_prefs
+    lv_dock_clear_room_len
     lv_dock_default_layout
     lv_dump_recorded_round
     lv_spmap_owner_table

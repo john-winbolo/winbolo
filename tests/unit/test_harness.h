@@ -4748,6 +4748,8 @@ int run_lv_dock_clear_layout(void);
 int run_lv_dock_clear_rects(void);
 int run_lv_dock_clear_map(void);
 int run_lv_dock_clear_prefs(void);
+/* The Tank panel's length there follows its lag section. */
+int run_lv_dock_clear_room_len(void);
 /* The arrangement of the sidebars a new user starts with
  * (test_lv_dock_clear.c, lv_dock_default.h). */
 int run_lv_dock_default_layout(void);
