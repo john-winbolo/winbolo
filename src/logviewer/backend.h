@@ -755,6 +755,11 @@ void lv_screenOverviewSnapshot(struct LvOverview *out);
 struct LvTankStatus;
 void lv_screenTankStatusSnapshot(struct LvTankStatus *out);
 
+/* The stock of the base the game screen's base bars show for the tank in
+ * slot: the same base as the Tank panel's near base, at the playback time.
+ * FALSE, with all three at 0, when no base is near. Hold the client mutex. */
+bool lv_screenNearBaseStock(BYTE slot, BYTE *shells, BYTE *mines, BYTE *armour);
+
 /* The pillboxes whose numbers the map shows (lv_pill_numbers.h): each one
  * that stands on the map in the squares the view paints, its square in the
  * view and its number. Writes at most max and returns how many. Hold the

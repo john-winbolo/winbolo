@@ -7291,25 +7291,26 @@ void lv_screenOverviewSnapshot(LvOverview *out) {
   }
 }
 
-/* The base the game shows the stock of for the tank in slot, into out (the
- * near base of the Tank panel, lv_base_near.h): picked as the player's own
- * client picks it, against that player's alliances at the playhead and the
+/* The base (0 up) the game shows the stock of for the tank in slot, or
+ * LV_BASE_NEAR_NONE (lv_base_near.h): picked as the player's own client picks
+ * it, against that player's alliances at the playhead and the
  * base_status_range in force there. A dead tank has none, as it has no place
- * on the map. */
-static void screenTankNearBase(int slot, LvTankStatus *out) {
+ * on the map. The Tank panel's near base and the game screen's base bars
+ * both come from here. */
+static int screenNearBaseIndex(BYTE slot) {
   LvBaseNearItem items[MAX_BASES];
   BYTE mx = 0, my = 0, px = 0, py = 0, frame = 0;
   bool onBoat = FALSE;
   BYTE total;
   BYTE count;
-  int pick;
 
-  if (g_lv->bs == NULL || !out->alive) {
-    return;
+  if (g_lv == NULL || g_lv->bs == NULL || slot >= MAX_TANKS ||
+      !g_lv->gameViewHud[slot].alive) {
+    return LV_BASE_NEAR_NONE;
   }
-  lv_playersGetTankDetails((BYTE) slot, &mx, &my, &px, &py, &frame, &onBoat);
+  lv_playersGetTankDetails(slot, &mx, &my, &px, &py, &frame, &onBoat);
   if (mx == 0 && my == 0) {
-    return;
+    return LV_BASE_NEAR_NONE;
   }
   total = lv_basesGetNumBases(&g_lv->bs);
   if (total > MAX_BASES) {
@@ -7319,14 +7320,19 @@ static void screenTankNearBase(int slot, LvTankStatus *out) {
     const base *b = &g_lv->bs->item[count];
     items[count].active = lv_basesIsActive(&g_lv->bs, (BYTE) (count + 1)) != FALSE;
     items[count].friendly = (b->owner == NEUTRAL ||
-                             lv_playersIsAllie((BYTE) slot, b->owner) != FALSE);
+                             lv_playersIsAllie(slot, b->owner) != FALSE);
     items[count].mapX = b->x;
     items[count].mapY = b->y;
   }
   /* The tank's world place, as the viewer has it: to a 16th of a square. */
-  pick = lvBaseNearPick(items, total, ((long) mx << 8) + ((long) px << TANK_SHIFT_RIGHT2),
+  return lvBaseNearPick(items, total, ((long) mx << 8) + ((long) px << TANK_SHIFT_RIGHT2),
                         ((long) my << 8) + ((long) py << TANK_SHIFT_RIGHT2),
                         g_lv->rules.baseStatusRange);
+}
+
+/* The near base of the Tank panel (screenNearBaseIndex), into out. */
+static void screenTankNearBase(int slot, LvTankStatus *out) {
+  int pick = screenNearBaseIndex((BYTE) slot);
   if (pick == LV_BASE_NEAR_NONE) {
     return;
   }
@@ -7341,6 +7347,30 @@ static void screenTankNearBase(int slot, LvTankStatus *out) {
     out->baseFull[LV_BASE_GAUGE_MINES]  = g_lv->rules.baseFullMines;
     out->baseFull[LV_BASE_GAUGE_ARMOUR] = g_lv->rules.baseFullArmour;
   }
+}
+
+/* What the game screen's base bars show for the tank in slot: the stock of
+ * the same base as the Tank panel's near base (screenNearBaseIndex), at the
+ * playhead. Returns FALSE, with all three at 0, when no base is near or no
+ * log is loaded; the bars then draw empty, as the game's do. The caller holds
+ * the client mutex. */
+bool lv_screenNearBaseStock(BYTE slot, BYTE *shells, BYTE *mines, BYTE *armour) {
+  int pick = LV_BASE_NEAR_NONE;
+  BYTE s = 0, m = 0, a = 0;
+
+  if (g_lv != NULL && g_lv->logLoaded != FALSE) {
+    pick = screenNearBaseIndex(slot);
+  }
+  if (pick != LV_BASE_NEAR_NONE) {
+    const base *b = &g_lv->bs->item[pick];
+    s = b->shells;
+    m = b->mines;
+    a = b->armour;
+  }
+  if (shells) *shells = s;
+  if (mines)  *mines  = m;
+  if (armour) *armour = a;
+  return pick != LV_BASE_NEAR_NONE;
 }
 
 /* Copy out what the Tank panel shows (lv_tank_status.h): the selected tank's

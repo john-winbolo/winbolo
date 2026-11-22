@@ -7,11 +7,19 @@
  * test_lv_base_near.c - the base the log viewer's Tank panel shows under the
  * selected tank's gauges (lv_base_near.h): picked as the game's
  * basesGetClosestForPlayer picks it, and its bars as long as the game draws
- * them.
+ * them. The last test is the game screen's base bars (lv_screenNearBaseStock
+ * in screen.c): they show the same base as the Tank panel.
  */
 
 #include <stdbool.h>
+#include <string.h>
 
+#include "lv_global.h"
+#include "backend.h"
+#include "logviewer.h"
+#include "lv_bases.h"
+#include "lv_players.h"
+#include "lv_tank_status.h"
 #include "lv_base_near.h"
 #include "test_harness.h"
 
@@ -74,5 +82,89 @@ int run_lv_base_near_bars(void) {
     UT_ASSERT(lvBaseBarWidth(10, 0, 60, 60) == 0.0f);
     UT_ASSERT(lvBaseBarWidth(200, 90, 60, 60) == 60.0f);
     UT_ASSERT(lvBaseBarWidth(20, 40, 60, 60) == 30.0f);
+    return 0;
+}
+
+/* One base for the game screen test, as a recording puts it in. */
+static void bnSetBase(LogViewerState *lv, BYTE num, BYTE x, BYTE y, BYTE owner,
+                      BYTE shells, BYTE mines, BYTE armour) {
+    base b;
+    memset(&b, 0, sizeof(b));
+    b.x = x; b.y = y; b.owner = owner;
+    b.shells = shells; b.mines = mines; b.armour = armour;
+    lv_basesSetBase(&lv->bs, &b, num);
+}
+
+/* The game screen's base bars show the stock of the base the Tank panel shows
+   for the same tank: the nearest neutral or allied one in range, none while
+   the tank is dead or far from every base. Player 1's tank is at the middle
+   of square 97,100. Base 1 (player 2's) is 2 squares away, base 2 (neutral)
+   3, base 3 (player 1's own) 5. */
+int run_lv_base_near_game_screen(void) {
+    LogViewerState *lv = lv_decoderCreate(false);
+    LvTankStatus st;
+    char location[1] = "";
+    BYTE s = 99, m = 99, a = 99;
+    bool near;
+
+    UT_ASSERT(lv != NULL);
+    /* The setup every load runs: the base store and an empty players table. */
+    lv_screenSetSizeX(30);
+    lv_screenSetSizeY(30);
+    lv_screenSetup();
+    lv->logLoaded = TRUE;
+    lv_playersSetPlayer(1, "One", location, 97, 100, 8, 8, 0, FALSE, 0, NULL, FALSE, FALSE, 0);
+    lv_playersSetPlayer(2, "Two", location, 10, 10, 8, 8, 0, FALSE, 0, NULL, FALSE, FALSE, 0);
+    lv_playersSetSelected(1);
+    lv->gameViewHud[1].alive = TRUE;
+    lv_basesSetNumBases(&lv->bs, 3);
+    bnSetBase(lv, 1, 99, 100, 2, 5, 6, 7);
+    bnSetBase(lv, 2, 100, 100, NEUTRAL, 40, 20, 10);
+    bnSetBase(lv, 3, 102, 100, 1, 90, 90, 90);
+
+    /* The enemy's base is nearer; the neutral one is shown. */
+    near = lv_screenNearBaseStock(1, &s, &m, &a);
+    UT_ASSERT_MSG(near && s == 40 && m == 20 && a == 10,
+                  "neutral base: near %d, stock %u/%u/%u (want 40/20/10)", near, s, m, a);
+    lv_screenTankStatusSnapshot(&st);
+    UT_ASSERT_MSG(st.baseNear == 1 && st.baseNum == 2 &&
+                  st.baseValue[LV_BASE_GAUGE_SHELLS] == s &&
+                  st.baseValue[LV_BASE_GAUGE_MINES] == m &&
+                  st.baseValue[LV_BASE_GAUGE_ARMOUR] == a,
+                  "the Tank panel shows base %u near %u, not the game screen's",
+                  st.baseNum, st.baseNear);
+
+    /* Allied to player 2: player 2's base is now the nearest friendly one. */
+    lv_playersAcceptAlliance(1, 2);
+    near = lv_screenNearBaseStock(1, &s, &m, &a);
+    UT_ASSERT_MSG(near && s == 5 && m == 6 && a == 7,
+                  "allied base: near %d, stock %u/%u/%u (want 5/6/7)", near, s, m, a);
+    lv_screenTankStatusSnapshot(&st);
+    UT_ASSERT_MSG(st.baseNear == 1 && st.baseNum == 1, "the Tank panel shows base %u",
+                  st.baseNum);
+
+    /* Dead: no base, and the bars are empty. */
+    lv->gameViewHud[1].alive = FALSE;
+    s = m = a = 99;
+    near = lv_screenNearBaseStock(1, &s, &m, &a);
+    UT_ASSERT_MSG(!near && s == 0 && m == 0 && a == 0,
+                  "dead tank: near %d, stock %u/%u/%u (want none)", near, s, m, a);
+    lv_screenTankStatusSnapshot(&st);
+    UT_ASSERT(st.baseNear == 0);
+
+    /* Alive again, but 9 squares from the nearest base: none. */
+    lv->gameViewHud[1].alive = TRUE;
+    lv_playersUpdateTank(1, 90, 100, 8, 8, 0, FALSE);
+    s = m = a = 99;
+    near = lv_screenNearBaseStock(1, &s, &m, &a);
+    UT_ASSERT_MSG(!near && s == 0 && m == 0 && a == 0,
+                  "far tank: near %d, stock %u/%u/%u (want none)", near, s, m, a);
+    lv_screenTankStatusSnapshot(&st);
+    UT_ASSERT(st.baseNear == 0);
+
+    /* A slot past the players names no tank. */
+    UT_ASSERT(!lv_screenNearBaseStock(MAX_TANKS, &s, &m, &a));
+
+    lv_decoderDestroy(lv);
     return 0;
 }

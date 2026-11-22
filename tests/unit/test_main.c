@@ -2836,6 +2836,7 @@ static const UnitTestEntry s_tests[] = {
     { "lv_base_near_pick",                               run_lv_base_near_pick                               },
     { "lv_base_near_range",                              run_lv_base_near_range                              },
     { "lv_base_near_bars",                               run_lv_base_near_bars                               },
+    { "lv_base_near_game_screen",                        run_lv_base_near_game_screen                        },
     { "scn_presentation_codec_bodies",                   run_scn_presentation_codec_bodies                   },
     { "scn_presentation_codec_refuses_short",            run_scn_presentation_codec_refuses_short            },
     { "scn_presentation_decoder_sets_broadcast",         run_scn_presentation_decoder_sets_broadcast         },

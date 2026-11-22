@@ -8076,6 +8076,7 @@ set(_unit_test_names
     lv_base_near_pick
     lv_base_near_range
     lv_base_near_bars
+    lv_base_near_game_screen
     scn_presentation_codec_bodies
     scn_presentation_codec_refuses_short
     scn_presentation_decoder_sets_broadcast
