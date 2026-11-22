@@ -6827,8 +6827,13 @@ function Brain.think(info)
           local et_wy = U.m2w(et.my)
           local aim_dir = U.aim_at(info.tankx, info.tanky, et_wx, et_wy)
           local aim_corr = U.adiff(info.direction, aim_dir)
+          -- C.DRIVEBY_REQUIRE_REACH: the shell at the present sight must
+          -- reach the tank (see steering.lua's drive-by shot).
           if math.abs(aim_corr) <= C.TANK_COMBAT_OPPORTUNISTIC_AIM
-             and _shot_path_clear_init(info, world, et_wx, et_wy, et.mx, et.my) then
+             and _shot_path_clear_init(info, world, et_wx, et_wy, et.mx, et.my,
+                                       nil, nil, nil, C.DRIVEBY_REQUIRE_REACH or nil, nil,
+                                       C.DRIVEBY_REQUIRE_REACH and info.gunrange or nil,
+                                       C.DRIVEBY_REQUIRE_REACH or nil) then
             taps = bit.bor(taps, KEY_SHOOT)
             log.event("opportunistic_tank_shot",
               string.format("at(%d,%d) dist=%d aim=%.0f",

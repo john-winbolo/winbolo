@@ -91,6 +91,12 @@ local nav_turn_speed = U.nav_turn_speed
 --   Used by the "kill me" delivery, where hitting that ally is the whole
 --   point. Every other allied tank still blocks, so a delivery shot is still
 --   refused when a DIFFERENT team-mate wanders into the lane.
+-- sight: the gun's sight length for the shell walk (info.gunrange); nil or
+--   0 = the longest sight (GUNSIGHT_MAX), as before. With require_reach, a
+--   shell whose burst falls short of the target is then refused.
+-- hostile_hit_reaches: when true, a shell that hits a hostile tank on the
+--   way counts as reaching the target (the drive-by shot at an enemy tank:
+--   the shell meets the tank's hitbox before it reaches the tank's tile).
 -- ATTACK_BASE_COMMIT_AFTER_FIRST_SHOT (2026-11-16): has a shell gone at the
 -- goal's base? The attack_base shoot block stores the shell count in
 -- goal._ab_shoot_shells on the tick it presses fire. On a later tick, fewer
@@ -106,7 +112,7 @@ function M.note_base_shot(state, goal, info)
   end
 end
 
-local function shot_path_clear(info, world, target_wx, target_wy, target_mx, target_my, max_walls, src_wx, src_wy, require_reach, allow_ally_pn)
+local function shot_path_clear(info, world, target_wx, target_wy, target_mx, target_my, max_walls, src_wx, src_wy, require_reach, allow_ally_pn, sight, hostile_hit_reaches)
   max_walls = max_walls or 0
   local ox = src_wx or info.tankx
   local oy = src_wy or info.tanky
@@ -129,13 +135,13 @@ local function shot_path_clear(info, world, target_wx, target_wy, target_mx, tar
   if #tank_positions > 0 then
     tiles = cpf.simulate_shot_with_tanks(ox, oy,
                                          target_wx, target_wy,
-                                         cpf.SHOT_TANK, 0,
+                                         cpf.SHOT_TANK, sight or 0,
                                          tank_positions,
                                          info.player_number or 255)
   else
     tiles = cpf.simulate_shot(ox, oy,
                               target_wx, target_wy,
-                              cpf.SHOT_TANK, 0)
+                              cpf.SHOT_TANK, sight or 0)
   end
   if not tiles then return true end
   local origin_mx = bit.rshift(ox, 8)
@@ -172,6 +178,8 @@ local function shot_path_clear(info, world, target_wx, target_wy, target_mx, tar
         blocked = true
         block_reason = string.format("allied_tank#%d", st.hit_id or 0)
         block_mx, block_my = st.mx, st.my
+      elseif hostile_hit_reaches then
+        reached = true
       end
       break
     end
@@ -5828,8 +5836,15 @@ local function steer_core(state, world, info, goal)
           if et.dist <= 8
              and not (state.peace and attack_mod().peace_spared(state, et.id)) then
             local aim = U.aim_at(info.tankx, info.tanky, U.m2w(et.mx), U.m2w(et.my))
+            -- C.DRIVEBY_REQUIRE_REACH: walk the shell at the present sight
+            -- and fire only when it reaches the tank (lgm_kill_lag_near,
+            -- 2026-11-22: at sight 2-4 the shell burst at 288-544 wu, short
+            -- of a tank 500-640 wu away). false = the longest sight, no reach.
+            local _dbr = C.DRIVEBY_REQUIRE_REACH
             if math.abs(U.adiff(info.direction, aim)) < 8
-               and shot_path_clear(info, world, U.m2w(et.mx), U.m2w(et.my), et.mx, et.my) then
+               and shot_path_clear(info, world, U.m2w(et.mx), U.m2w(et.my), et.mx, et.my,
+                                   nil, nil, nil, _dbr or nil, nil,
+                                   _dbr and info.gunrange or nil, _dbr or nil) then
               taps = bit.bor(taps, KEY_SHOOT)
               shot_fired = true
               break

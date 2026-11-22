@@ -3218,6 +3218,15 @@ M.TANK_COMBAT_JINK_PERIOD       = 10    -- ticks between jink direction changes
 M.TANK_COMBAT_JINK_ANGLE        = 32    -- bolo angle offset for lateral jink (~45??)
 M.TANK_COMBAT_OPPORTUNISTIC_RANGE = 4   -- tiles: fire at enemy if already aimed near them
 M.TANK_COMBAT_OPPORTUNISTIC_AIM = 8     -- bolo angle units (~11??) aim tolerance for opportunistic shot
+-- DRIVEBY_REQUIRE_REACH: the two drive-by shots at an enemy tank
+-- (steering.lua "Opportunistic shooting while navigating", init.lua
+-- opportunistic tank shot) walk the shell at the present sight
+-- (info.gunrange) and fire only when it reaches the tank (a hostile tank hit
+-- on the way counts). lgm_kill_lag_near, 2026-11-22: at sight 2-4 these
+-- shells burst at 288-544 wu, short of a tank 500-640 wu away; 18 of 18
+-- drive-by first shells landed short. Andrew's yes (Nov 22, item 13 idea 1).
+-- false = the longest sight and no reach test, as before. KEEL / MAST: false.
+M.DRIVEBY_REQUIRE_REACH = true
 -- ── attack_tank aim and fire knobs (2026-10-01, Joust) ─────────────────────
 -- Every default below is the OLD behaviour; Joust turns them on for its bots
 -- with PRESETS.joust (data/maps/Joust.scenario.lua, game.bot_init). Each
@@ -8220,6 +8229,8 @@ M.PRESETS = {
     LGM_SHELL_MODEL_RULES    = false,
     LGM_FIRE_LOS_STRICT      = false,
     LGM_LEAD_STOP_RETURN     = false,
+    --   2026-11-22: drive-by tank shots at any sight, no reach test.
+    DRIVEBY_REQUIRE_REACH    = false,
     SHELL_MODEL_RULES_ALL    = false,
     --   2026-11-22: a budget kill in v2 (one go) loses the plan (old rule).
     SHIELD_SCAN_PENDING_SURVIVES_V2 = false,
@@ -8585,6 +8596,7 @@ M.PRESETS.mast = {
   LGM_SHELL_MODEL_RULES             = false,  -- 2.2.1: shell bursts at 128 * sight
   LGM_FIRE_LOS_STRICT               = false,  -- 2.2.1: line check stops at the man's tile
   LGM_LEAD_STOP_RETURN              = false,  -- 2.2.1: no stop-and-return lead
+  DRIVEBY_REQUIRE_REACH             = false,  -- 2.2.1: drive-by tank shots at any sight
   SHELL_MODEL_RULES_ALL             = false,  -- 2.2.1: other shell sites at 128 * sight
   SHIELD_SCAN_PENDING_SURVIVES_V2   = false,  -- 2.2.1 had no pill take v2
   BLITZ_NO_DOUBLE_TAKE              = false,  -- 2.2.1 had no double takes
