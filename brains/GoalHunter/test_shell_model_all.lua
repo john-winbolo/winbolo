@@ -22,11 +22,14 @@
 --   4. danger.fb_shell (own-builder fire block): the shell starts at the
 --      rule's shell_start_add, so its blast tick is the engine's.
 --   5. No brain source still holds an old 128 * sight site.
+--   6. shot_tracker.make_shot (the own-shot track, display and hit record):
+--      the shell starts shell_start_add steps out and steps shell_speed wu
+--      a tick, so it reaches the engine burst after L steps.
 --
 -- Run from this directory with the LuaJIT built beside the game:
 --   ../../build/_deps/luajit_src-src/src/luajit.exe test_shell_model_all.lua
 -- Arguments:
---   old        run 1-4 with C.SHELL_MODEL_RULES_ALL = false (the old code
+--   old        run 1-4 and 6 with C.SHELL_MODEL_RULES_ALL = false (the old code
 --              paths; they must fail).
 --   src=<dir>  run 5 on the .lua files in <dir> (default: this directory).
 -- =========================================================================
@@ -47,6 +50,7 @@ U.ttype = function() return C.T_GRASS end
 local KL = require("kill_lgm")
 local S = require("steering")
 local D = require("danger")
+local ST = require("shot_tracker")
 
 if OLD then C.SHELL_MODEL_RULES_ALL = false end
 print(string.format("C.SHELL_MODEL_RULES_ALL = %s", tostring(C.SHELL_MODEL_RULES_ALL)))
@@ -194,6 +198,36 @@ for _, rs in ipairs(RULES) do
         T == L + 1 and ex == TX and ey == TY - real and how == "expiry",
         string.format("tick %s, (%s, %s) = %s wu out, %s", tostring(T), tostring(ex), tostring(ey),
                       tostring(ey and (TY - ey)), tostring(how)))
+end
+
+-- ── 6. own-shot track (shot_tracker.make_shot) ───────────────────────────
+-- Nose north (direction 0) and east (direction 64): one step is shell_speed
+-- wu along the nose, the start is shell_start_add steps out, and L steps
+-- later the track is at the engine burst of the longest sight.
+print("6. own-shot track (shot_tracker.make_shot)")
+local TRACK_RULES = {}
+for _, rs in ipairs(RULES) do TRACK_RULES[#TRACK_RULES + 1] = rs end
+TRACK_RULES[#TRACK_RULES + 1] = { name = "out of range (speed 0, add -1): classic",
+                                  r = { shell_speed = 0, shell_start_add = -1 },
+                                  want = {} }
+for _, rs in ipairs(TRACK_RULES) do
+  local want = rs.want or rs.r
+  local speed = want.shell_speed or 32
+  local add = want.shell_start_add or 5
+  local real, L = engine_burst(want, 14)
+  local TX, TY = 100 * 256 + 128, 120 * 256 + 128
+  local north = ST.make_shot({ tankx = TX, tanky = TY, direction = 0, rules = rs.r }, 1)
+  local east  = ST.make_shot({ tankx = TX, tanky = TY, direction = 64, rules = rs.r }, 1)
+  local ok = north.step_x == 0 and north.step_y == -speed
+             and east.step_x == speed and east.step_y == 0
+             and north.fire_fx == TX and north.fire_fy == TY - add * speed
+             and east.fire_fx == TX + add * speed and east.fire_fy == TY
+             and north.fire_fy + L * north.step_y == TY - real
+  check(string.format("%s: start %d wu out, step %d wu, burst %d wu out", rs.name,
+                      add * speed, speed, real), ok,
+        string.format("north start %s step (%s, %s); east start %s step (%s, %s)",
+                      tostring(TY - north.fire_fy), tostring(north.step_x), tostring(north.step_y),
+                      tostring(east.fire_fx - TX), tostring(east.step_x), tostring(east.step_y)))
 end
 
 -- ── 5. no old 128 * sight site left ──────────────────────────────────────

@@ -88,7 +88,19 @@ local function make_shot(info, tick)
   -- SHELL_START_ADD = 5 (override in shells.c). Per-tick advance uses the
   -- same (xAdd, yAdd). Doing it this way gives us a bit-exact match with
   -- the engine's cs->sim shell positions.
+  -- C.SHELL_MODEL_RULES_ALL on: the start add and the speed come from the
+  -- game rules (info.rules.shell_start_add, shell_speed), like the engine
+  -- under a rules override; the classic 5 and C.SHELL_SPEED when a rule is
+  -- missing or out of range. Off: the classic values always. Display and
+  -- the hit record only.
   local SHELL_START_ADD = 5
+  local speed = C.SHELL_SPEED
+  if KL.all_on() then
+    local rules = info.rules or {}
+    local ra, rs = rules.shell_start_add, rules.shell_speed
+    if type(ra) == "number" and ra >= 0 then SHELL_START_ADD = ra end
+    if type(rs) == "number" and rs >= 1 then speed = rs end
+  end
   local a = dir - 64
   if a < 0 then a = a + 256 end
   local rad = a * (2 * math.pi / 256)
@@ -97,8 +109,8 @@ local function make_shot(info, tick)
     if x >= 0 then return math.floor(x + 0.5) end
     return -math.floor(-x + 0.5)
   end
-  local rad_step_x = rd(C.SHELL_SPEED * math.cos(rad))
-  local rad_step_y = rd(C.SHELL_SPEED * math.sin(rad))
+  local rad_step_x = rd(speed * math.cos(rad))
+  local rad_step_y = rd(speed * math.sin(rad))
   local fx = info.tankx + SHELL_START_ADD * rad_step_x
   local fy = info.tanky + SHELL_START_ADD * rad_step_y
   -- The burst of the longest sight (7.0 tiles = 128 * 14 wu with
@@ -170,6 +182,8 @@ local function verify_alive(shot, info)
   shot._saw_any_shot = seen_any_shot
   return best2 <= tol2
 end
+
+M.make_shot = make_shot   -- for test_shell_model_all.lua
 
 function M.update(info, tick)
   local cur_shells = info.shells or 0
