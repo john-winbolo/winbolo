@@ -540,7 +540,11 @@ int run_lobby_map_keeps_bots_scenario(void) {
     UT_ASSERT_MSG(otherBot > 0, "Add Bot on team 1 was refused");
     UT_ASSERT(mkSetDifficulty(sim, (BYTE)otherBot, 0) == CMD_OK);
     mkSnapshot(sim, was);
-    UT_ASSERT(was[hostBot].bot && !was[hostBot].keepSeat);
+    /* The scenario's team 3 is fielded = false, so it has no ordinary bots:
+       a host's Add Bot onto it becomes one of its held seats (keepSeat), made
+       as the template's own seats are. The bot on team 1 stays ordinary. */
+    UT_ASSERT(was[hostBot].bot && was[hostBot].keepSeat);
+    UT_ASSERT(was[otherBot].bot && !was[otherBot].keepSeat);
     UT_ASSERT(was[otherBot].difficulty == 0);
 
     /* A map with fewer starts than the lobby has players, then back. The
@@ -561,17 +565,20 @@ int run_lobby_map_keeps_bots_scenario(void) {
     mkSnapshot(sim, now);
     if (mkSameRoster(was, now, "back onto the big map") != 0) return 1;
     if (mkScriptListIs(sim, kList, 2, "back onto the big map") != 0) return 1;
-    UT_ASSERT_MSG(sim->botMgr.bots[hostBot].active &&
-                  sim->botMgr.bots[otherBot].active,
+    /* Only the team 1 bot has a bot running behind it in the lobby. The
+       host's bot on team 3 is a held seat, and a held seat has no bot until
+       the scenario fields it; mkSameRoster has already held it as a seat. */
+    UT_ASSERT_MSG(sim->botMgr.bots[otherBot].active,
                   "a host's bot has nothing behind it after two map changes");
 
     /* The rule that still takes bots off: a different lobby layout. Picking
        none takes the scenario's lobby away, so its seats go and the host's
-       own bots stay, which is what a plain map has always done. */
+       own bot on team 1 stays, which is what a plain map has always done.
+       The host's bot on team 3 is one of the scenario's held seats, so it
+       goes with them; the loop below checks that no held seat is left. */
     UT_ASSERT(mkPick(sim, NULL, 0) == CMD_OK);
-    UT_ASSERT_MSG(serverSimIsBot(sim, (BYTE)hostBot) &&
-                  serverSimIsBot(sim, (BYTE)otherBot),
-                  "the host's own bots went with the scenario's lobby");
+    UT_ASSERT_MSG(serverSimIsBot(sim, (BYTE)otherBot),
+                  "the host's own bot went with the scenario's lobby");
     for (i = 0; i < MAX_TANKS; i++) {
         UT_ASSERT_MSG(!(sim->playerConnected[i] &&
                         sim->lobbyPlayers[i].keepSeat),
@@ -1133,24 +1140,26 @@ int run_lobby_script_keeps_bots_swap(void) {
     mkSnapshot(sim, now);
     if (mkSameRoster(was, now, "a mod beside the scenario") != 0) return 1;
 
-    /* The mod in place of the scenario: its seats go with it, and the two
-       bots the host added stay as the host left them. Every seat but the
-       host's two is compared against what it holds now, so the check below
-       is on those two alone. */
+    /* The mod in place of the scenario: its seats go with it, and the bot
+       the host added on team 1 stays as the host left it. The host's bot on
+       team 3 is one of the scenario's seats: team 3 is fielded = false, so
+       an Add Bot onto it makes a held seat (keepSeat), and it goes with the
+       others. Every seat but the team 1 bot is compared against what it
+       holds now, so the check below is on that one alone. */
+    UT_ASSERT(was[hostBot].bot && was[hostBot].keepSeat);
     UT_ASSERT_MSG(mkPick(sim, kRoulette, 1) == CMD_OK,
                   "the mod alone was refused");
     mkSnapshot(sim, now);
     for (i = 0; i < MAX_TANKS; i++) {
         UT_ASSERT_MSG(!(now[i].connected && now[i].keepSeat),
                       "seat %d of the scenario outlived it", (int)i);
-        if ((int)i == hostBot || (int)i == otherBot) continue;
+        if ((int)i == otherBot) continue;
         was[i] = now[i];
     }
     if (mkSameRoster(was, now, "the mod in place of the scenario") != 0) {
         return 1;
     }
-    UT_ASSERT_MSG(sim->botMgr.bots[hostBot].active &&
-                  sim->botMgr.bots[otherBot].active,
+    UT_ASSERT_MSG(sim->botMgr.bots[otherBot].active,
                   "a host's bot has nothing behind it after the swap");
 
     /* And the scenario picked back in place of the mod. Its template lays
