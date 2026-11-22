@@ -291,6 +291,7 @@ BrainWorldSim *brainWorldSimCreate(void) {
   sim->drive_while_sliding   = 0;
   sim->hit_full_dist         = 0.0f;
   sim->hit_far_frac          = 0.0f;
+  sim->lgm.dispatch_tick     = -1;   /* no builder out, as brainWorldSimClear */
   sim->terrain_speed[0]  =  0; /* BUILDING */
   sim->terrain_speed[1]  = (float) classic.speed_river;
   sim->terrain_speed[2]  = (float) classic.speed_swamp;

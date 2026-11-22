@@ -2560,7 +2560,7 @@ static WSimResult wsimFixDriveRun(int drive) {
     WSimPathPoint pts[5];
     WSimResult r;
     int i;
-    brainWorldSimClear(sim);   /* no LGM: Create leaves lgm.dispatch_tick at 0 */
+    brainWorldSimClear(sim);
     memset(wsimFixMap, 7, sizeof(wsimFixMap));   /* grass */
     brainWorldSimSetMap(sim, wsimFixMap);
     brainWorldSimSetFixes(sim, drive, 0.0f, 0.0f);
@@ -2633,6 +2633,8 @@ int run_wsim_fix_hit_damage(void) {
     int d, wu;
 
     UT_ASSERT(sim != NULL);
+    UT_ASSERT_MSG(sim->lgm.dispatch_tick == -1,
+                  "a new sim has no builder out: dispatch_tick %d", (int)sim->lgm.dispatch_tick);
     UT_ASSERT_MSG(sim->shell_damage == 5 && sim->pill_range == 2048,
                   "classic shell damage %d range %d", sim->shell_damage, sim->pill_range);
     /* Old values (0, 0): the old discount, bit for bit, at every range. */
