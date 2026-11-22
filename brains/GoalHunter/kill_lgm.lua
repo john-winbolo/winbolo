@@ -1148,7 +1148,12 @@ local LEAD_CONVERGE_STEPS = 8
 -- lgm_build_ticks ticks only count it down, and the tick after that is his
 -- first step back (lgmReturn). So a man first seen standing at tick s
 -- (arrived at s - 1) stands through tick s - 1 + lgm_build_ticks.
---   left = s - 1 + lgm_build_ticks - now  (0 once he has stood past it)
+--   left = s - 1 + lgm_build_ticks - now
+--   left < 0: he is overdue (he should have taken his first step back and
+--        has not: stuck, or a wait the model does not know). Andrew
+--        2026-11-22: "if they don't start moving when they should, then
+--        the target should jump back to its current position". The aim is
+--        where he stands, whatever the flight time, until he moves.
 --   flight T (x KILL_LGM_LEAD_SCALE) <= left: he is where he stands;
 --   else he has walked back T - left steps, the reverse of his walk-out
 --        heading, with the terrain speed the dest sim uses
@@ -1163,10 +1168,12 @@ function M.stop_return_plan(h, lgm)
   local stood = now - h.sr_stop_tick
   if not stand_counts(h, stood) then return nil end
   local left = h.sr_stop_tick - 1 + SR.build - now
-  if left < 0 then left = 0 end
+  local left_raw = left
+  local overdue = left < 0
+  if overdue then left = math.huge end      -- stop_return_at: where he stands
   local wx, wy = lgm.wx + 0.0, lgm.wy + 0.0
   local ex, ey = M.project_to_edge(wx, wy, -h.sr_ux, -h.sr_uy)
-  return { wx = wx, wy = wy, left = left, stood = stood, ex = ex, ey = ey,
+  return { wx = wx, wy = wy, left = left, left_raw = left_raw, overdue = overdue, stood = stood, ex = ex, ey = ey,
            ux = h.sr_ux, uy = h.sr_uy,
            mx = bit.rshift(math.floor(wx), 8), my = bit.rshift(math.floor(wy), 8) }
 end

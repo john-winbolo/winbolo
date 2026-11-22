@@ -10085,12 +10085,14 @@ function Brain.think(info)
           "  stopped at (%.0f,%.0f) for %d ticks; walk-out heading u=(%.2f,%.2f)",
           sr.wx, sr.wy, sr.stood, sr.ux or 0, sr.uy or 0))
         viz.detail_text(did, string.format(
-          "  left = stop tick - 1 + lgm_build_ticks %d - now = %d (0 once past)",
-          kill_lgm.SHELL_RULES.build, sr.left))
+          "  left = stop tick - 1 + lgm_build_ticks %d - now = %d",
+          kill_lgm.SHELL_RULES.build, sr.left_raw or 0))
         viz.detail_text(did, string.format(
           "  T = flight_ticks(sight_for(|tank - aim|)) = %d (refit to the aim); t = T * %.2f = %.1f",
           sr.T or 0, LS, t_lead))
-        if t_lead <= sr.left then
+        if sr.overdue then
+          viz.detail_text(did, "  left < 0: overdue (he should have walked back) -> aim = where he stands")
+        elseif t_lead <= sr.left then
           viz.detail_text(did, "  t <= left: he still stands there -> aim = where he stands")
         else
           viz.detail_text(did, string.format(

@@ -637,5 +637,48 @@ do
   check("kept answer used while both stay the same", ok == true, tostring(ok))
 end
 
+-- 14. Stop-and-return lead, overdue stand (LGM_LEAD_STOP_RETURN, Andrew
+-- 2026-11-22: "if they don't start moving when they should, then the
+-- target should jump back to its current position"). The man walks out
+-- for WALK ticks and then stands 3 x the work time (stuck, or a job the
+-- model does not know). From the first tick he should have walked back
+-- and has not, the aim must be on him where he stands, in his tile.
+print("14. stop-and-return lead, overdue stand (LGM_LEAD_STOP_RETURN)")
+do
+  cfg()
+  local X0, Y0, WALK = 20000, 30000, 60
+  local WORK = 20                      -- lgm_build_ticks (classic rules)
+  local STAND = 3 * WORK               -- he stands this long
+  local A = WALK
+  local function man_at(t)
+    if t <= A then return X0 + 16 * t, Y0 end
+    return X0 + 16 * A, Y0
+  end
+  local TX, TY = X0 + 16 * A, Y0 - 1100
+  local st = {}
+  local lgm = { idnum = 6, wx = X0, wy = Y0 }
+  KL.update_velocity(st, lgm, 0)
+  local n, on, worst, worst_t = 0, 0, 0, 0
+  for t = 1, A + STAND do
+    lgm.wx, lgm.wy = man_at(t)
+    local vx, vy = KL.update_velocity(st, lgm, t)
+    lgm.v_ema_x, lgm.v_ema_y = vx, vy
+    local h = st._enemy_lgm_history[6]
+    local ax, ay = KL.predict_aim(TX, TY, lgm, h)
+    -- He is seen standing from tick A + 1, so he should take his first
+    -- step back at tick A + WORK + 1. From then on he is overdue.
+    if t >= A + WORK + 1 then
+      n = n + 1
+      local miss = math.sqrt((ax - lgm.wx) ^ 2 + (ay - lgm.wy) ^ 2)
+      local same_tile = bit.rshift(math.floor(ax), 8) == bit.rshift(math.floor(lgm.wx), 8)
+                        and bit.rshift(math.floor(ay), 8) == bit.rshift(math.floor(lgm.wy), 8)
+      if same_tile then on = on + 1 end
+      if miss > worst then worst, worst_t = miss, t end
+    end
+  end
+  check("overdue stand: the aim is in his tile every tick",
+        on == n, string.format("%d/%d; worst %.0f wu from him at tick %d", on, n, worst, worst_t))
+end
+
 print(string.format("\n%d passed, %d failed", pass, fail))
 os.exit(fail == 0 and 0 or 1)
