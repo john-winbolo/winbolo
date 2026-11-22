@@ -437,7 +437,8 @@ end
 -- with state._shot_src (set where the fire bit is set: k = the kill-LGM fire
 -- check, t = init.lua's opportunistic tank shot, n = steering's drive-by),
 -- else o (any other code). When info.shells drops (a shell left), the
--- records not yet told go out in one chat line to our own player:
+-- records not yet told go out in one chat line to every other player (a
+-- line to our own player only is a local echo and never reaches the server):
 --   "shotsrc <tick>[-<tick>]:<code> ..."
 -- (a run of ticks with one code is one item). The line waits while the think
 -- already has a message. Returns send_msg, msg_dest for the think.
@@ -470,7 +471,8 @@ function M.note_shot_source(state, info, keys, taps, now, send_msg, msg_dest)
       table.remove(q, 1)
     end
     s.src_due = #q > 0
-    return "shotsrc " .. table.concat(parts, " "), bit.lshift(1, state.player_number or 0)
+    return "shotsrc " .. table.concat(parts, " "),
+           bit.band(0xFFFF, bit.bnot(bit.lshift(1, state.player_number or 0)))
   end
   return send_msg, msg_dest
 end
