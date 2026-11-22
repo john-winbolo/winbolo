@@ -8461,6 +8461,17 @@ function Brain.think(info)
           local rad = (info.direction or 0) * C.TWO_PI / 256
           local explode_wx = info.tankx + math.sin(rad) * shell_travel_wu
           local explode_wy = info.tanky - math.cos(rad) * shell_travel_wu
+          -- C.LGM_AIM_LAUNCH_POSE: score the burst of the shell as it will
+          -- really leave: the sight and heading after the keys still in
+          -- flight and this think's own sight / turn keys (lgm_aim.lua).
+          -- The server does not rewind the shooter, so this is all of it.
+          if C.LGM_AIM_LAUNCH_POSE then
+            local _rate = steer.turn_rate_brads(info, U.ttype_peek(
+              math.floor(info.tankx / 256), math.floor(info.tanky / 256)))
+            explode_wx, explode_wy, cur_sl = require("lgm_aim").launch_impact(
+              state, info, now, keys, taps, _rate)
+            _ev.launch_sl = cur_sl
+          end
           local ex_dx = explode_wx - aim_wx
           local ex_dy = explode_wy - aim_wy
           local impact_off = math.sqrt(ex_dx * ex_dx + ex_dy * ex_dy)
@@ -8496,6 +8507,19 @@ function Brain.think(info)
             _ev.status = "shooting"
             taps = bit.bor(taps, KEY_SHOOT)
             _already_fired = true
+            if C.LGM_AIM_LAUNCH_POSE then
+              require("lgm_aim").note_fire(state, now, keys, taps)
+            end
+            -- One line per shot the fire check passes: the man as seen,
+            -- his lead point, where this shell is scored to burst, and the
+            -- delay D, so a miss can be taken apart from the log alone.
+            print2(string.format(
+              "LGM_FIRE_CHECK t=%d man=(%.0f,%.0f) v=(%.1f,%.1f) aim=(%.0f,%.0f)"
+              .. " burst=(%.0f,%.0f) off=%.0f sl=%d D=%d tank=(%d,%d) dir=%s",
+              now, elm.wx or 0, elm.wy or 0, elm.v_ema_x or 0, elm.v_ema_y or 0,
+              aim_wx, aim_wy, explode_wx, explode_wy, impact_off, cur_sl,
+              require("lgm_aim").delay(state), info.tankx, info.tanky,
+              tostring(info.tank_angle or info.direction)))
             log.event("kill_lgm_shot",
               string.format("lgm@(%d,%d) dist=%d aim=%.0f sl=%d/%d v=(%.1f,%.1f)",
                             elm.mx, elm.my, elm.dist, aim_corr,
@@ -8616,8 +8640,25 @@ function Brain.think(info)
     local TWO_PI_OVER_256 = math.pi * 2 / 256
     local best_score = math.huge
     local best_keys  = 0
+    local best_taps  = 0
     local cands
     if BRAIN_DEBUG_MODE then cands = {} end
+    if C.LGM_AIM_KEYS_IN_FLIGHT or C.LGM_AIM_TURN_RULE or C.LGM_AIM_SEARCH_MOVE
+       or C.LGM_AIM_SIGHT_TAP then
+      -- lgm_aim.search (C.LGM_AIM_*): the same 27 moves (45 with sight
+      -- taps), planned from the pose after the keys still in flight, with
+      -- the engine's turn rate and ramp and the engine's move (speed / 4 wu
+      -- a think). See lgm_aim.lua.
+      local _rate = steer.turn_rate_brads(info, U.ttype_peek(
+        math.floor(tank_wx / 256), math.floor(tank_wy / 256)))
+      local _D
+      best_keys, best_taps, best_score, cands, _D = require("lgm_aim").search(
+        state, info, now, lgm_wx, lgm_wy, _rate, TURN_DELTA, SPEED_DELTA,
+        BRAIN_DEBUG_MODE and true or false)
+      TURNS = nil   -- the old loop below is skipped
+      if BRAIN_DEBUG_MODE then cur_dir = info.tank_angle or cur_dir end
+    end
+    if TURNS then
     for _, t in ipairs(TURNS) do
       local new_dir = (cur_dir + t.d) % 256
       local rad = new_dir * TWO_PI_OVER_256
@@ -8660,11 +8701,16 @@ function Brain.think(info)
         end
       end
     end
+    end
     -- Override the action bits: clear the six we manage, set the
     -- winning combination.  Anything else (KEY_SHOOT, KEY_DROPMINE,
     -- etc.) is preserved.
     local CLEAR = bit.bor(bit.bor(bit.bor(bit.bor(bit.bor(KEY_TURNLEFT, KEY_TURNRIGHT), KEY_FASTER), KEY_SLOWER), KEY_MORERANGE), KEY_LESSRANGE)
     keys = bit.bor((bit.band(keys, bit.bnot(CLEAR))), best_keys)
+    if best_taps ~= 0 then
+      -- C.LGM_AIM_SIGHT_TAP: a one-step sight move goes in the taps.
+      taps = bit.bor(bit.band(taps, bit.bnot(CLEAR)), best_taps)
+    end
     if BRAIN_DEBUG_MODE then
       state._kill_lgm_search = {
         score  = best_score,
@@ -12122,6 +12168,16 @@ function Brain.think(info)
   -- ally's builder (C.FIRE_BLOCK_FRIENDLY_BUILDER), the fire bit comes off
   -- the held keys and the taps. Nothing after this line touches the keys.
   keys, taps = danger.fire_block(state, world, info, keys, taps, now)
+  -- lgm_aim (C.LGM_AIM_*): on the think a kill-LGM shell is fired, put back
+  -- the sight / turn keys the fire check scored, so the shell leaves with the
+  -- pose it was approved for. Then record what this think sends (the keys in
+  -- flight and the delay measure). TEST_KEY_DELAY_THINKS (test only) holds
+  -- the keys back there. Both are a no-op with every LGM_AIM_* knob off.
+  do
+    local LA = require("lgm_aim")
+    keys, taps = LA.freeze_fire_keys(state, keys, taps, now)
+    keys, taps = LA.note_sent(state, info, keys, taps, now)
+  end
 
   -- Audit hook: log EVERY real outbound message (at most one per tick). Grep
   -- "MSG_TX" across a session to audit actual /info bus traffic — cadence and

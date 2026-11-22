@@ -466,12 +466,28 @@ function M.update_velocity(state, lgm, now)
   -- brain-tick observations, or the engine otherwise teleported it.
   -- The pre-jump samples must NOT influence post-jump velocity, so we
   -- full-reset the history.
+  --
+  -- 2026-11-21 (C.LGM_TELEPORT_REPEAT_VIEW): a remote seat's snapshot can
+  -- show the man at the same place for n thinks and then the walk of all n
+  -- at once (session 20261121_195017_5, tick 42155: same place, then +32).
+  -- That is a walk, not a jump: allow 16 wu per think since his place last
+  -- changed, and keep the velocity. The count stops at LGM_AIM_DELAY_MAX
+  -- (the server's rewind cap): a man who stood still longer and then jumps
+  -- far was really moved (a new job from his tank).
   local samples = h.samples
   local prev = samples[#samples]
   if prev then
     local dwx = math.abs(lgm.wx - prev.wx)
     local dwy = math.abs(lgm.wy - prev.wy)
-    if dwx > 16 or dwy > 16 then
+    local lim = 16
+    if C.LGM_TELEPORT_REPEAT_VIEW then
+      local since = now - (h.pos_change_tick or prev.tick)
+      local cap = C.LGM_AIM_DELAY_MAX or 14
+      if since > cap then since = cap end
+      if since > 1 then lim = 16 * since end
+    end
+    if dwx ~= 0 or dwy ~= 0 then h.pos_change_tick = now end
+    if dwx > lim or dwy > lim then
       h.samples = { { wx = lgm.wx, wy = lgm.wy, tick = now } }
       h.dest_wx, h.dest_wy = nil, nil
       h.dest_locked = false
@@ -910,6 +926,10 @@ end
 -- flight-time refit).  dest_wx/dy set = the engine-faithful sim toward it
 -- (bless_mx/my: the pill tile he may step onto, the sim holds him at its
 -- centre -- he is never led THROUGH the pill); nil = linear v*T.
+-- C.LGM_AIM_LEAD_CONVERGE: the most refits of the flight time. Not a tuning
+-- value: the fixed point is reached in 2-4 steps (a man walks at most half
+-- the shell speed); this only stops a loop that flips between two values.
+local LEAD_CONVERGE_STEPS = 8
 local function lead_point(tank_wx, tank_wy, lgm_wx, lgm_wy, vx, vy,
                           dest_wx, dest_wy, bless_mx, bless_my)
   local dx = tank_wx - lgm_wx
@@ -918,6 +938,35 @@ local function lead_point(tank_wx, tank_wy, lgm_wx, lgm_wy, vx, vy,
   local T1 = M.flight_ticks(M.sightlen_for(D))
 
   local LEAD = C.KILL_LGM_LEAD_SCALE
+  -- C.LGM_AIM_LEAD_CONVERGE (2026-11-21): the flight time must be the
+  -- flight to the LEAD point, not to where he stands now. The old two
+  -- passes below only ever lengthened it (T2 > T1). A man walking across
+  -- the gun at 6 squares is 5 squares away at his lead point: T1 = 43
+  -- ticks, the real flight 27, and the shell went off 230 wu ahead of him
+  -- (tests/scenario/lgm_kill_lag, walk 1). So iterate T = flight(lead(T))
+  -- until it repeats. Each step changes T by at most half (the man is at
+  -- most half the shell's speed), so it settles in a few steps.
+  if C.LGM_AIM_LEAD_CONVERGE then
+    local function lead_at(T)
+      if dest_wx then
+        local sT = math.floor(T * LEAD + 0.5)
+        if sT < 1 then return lgm_wx, lgm_wy end
+        return M.sim_forward_to_dest(lgm_wx, lgm_wy, dest_wx, dest_wy, sT,
+                                     bless_mx, bless_my)
+      end
+      return lgm_wx + vx * T * LEAD, lgm_wy + vy * T * LEAD
+    end
+    local T = T1
+    local ax, ay = lead_at(T)
+    for _ = 1, LEAD_CONVERGE_STEPS do
+      local qx, qy = tank_wx - ax, tank_wy - ay
+      local nT = M.flight_ticks(M.sightlen_for(math.sqrt(qx * qx + qy * qy)))
+      if nT == T then break end
+      T = nT
+      ax, ay = lead_at(T)
+    end
+    return ax, ay
+  end
   local pos1_wx, pos1_wy
   if dest_wx then
     -- Apply the lead scale by reducing the number of engine-sim

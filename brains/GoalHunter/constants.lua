@@ -3354,6 +3354,34 @@ M.KILL_LGM_NAV_INSET   = 3   -- tiles: nav target sits this far INSIDE the engag
 -- Both read at use time (kill_lgm.predict_aim, init.lua fire gate).
 M.KILL_LGM_LEAD_SCALE = 1.00  -- keel 0.77 (both tiers: linear v*T and dest_lock sim steps)
 M.KILL_LGM_FIRE_WU    = 128   -- keel 64 (burst must land this close to the predicted man)
+-- 2026-11-21: kill-LGM aim with keys in flight (lgm_aim.lua). Session
+-- 20261121_195017_5__2v2_combined, bot 2 on a remote Bot Host: keys took
+-- effect 3 brain ticks late, the crosshair search asked again for sight
+-- steps already on the way (sight 14 -> 2 -> 12 -> 2 -> 10 -> 2), and the
+-- fire check scored the snapshot's sight, not the sight the shell left with
+-- (missed by about 500 wu). All on; KEEL / MAST: all off (the old aim).
+M.LGM_AIM_KEYS_IN_FLIGHT  = true  -- search plans from info + the keys sent, not yet seen
+M.LGM_AIM_DELAY_EST       = true  -- the delay D is measured online per bot
+M.LGM_AIM_DELAY_DEFAULT   = 1     -- D before any measure: 1 = a bot inside the server
+M.LGM_AIM_DELAY_MAX       = 14    -- = LAG_COMP_MAX_TICKS (server rewind cap, 280 ms)
+M.LGM_AIM_DELAY_WINDOW    = 32    -- thinks of history for the D measure
+M.LGM_AIM_LAUNCH_POSE     = true  -- fire check scores the pose the shell leaves from;
+                                  -- the fire think's sight / turn keys stay as scored
+M.LGM_AIM_TURN_RULE       = true  -- search turns at the terrain turn rate + engine ramp,
+                                  -- not KILL_LGM_TURN_DELTA
+M.LGM_AIM_SEARCH_MOVE     = true  -- search moves speed/4 wu a think (engine), not speed wu
+M.LGM_AIM_SIGHT_TAP       = true  -- search may tap the sight one step (odd sight lengths)
+-- Teleport check of the man's velocity (kill_lgm.update_velocity): a man
+-- seen at the same place for n thinks (a repeated snapshot) may then move
+-- up to n x 16 wu; the velocity is kept. false = any jump > 16 wu resets it.
+M.LGM_TELEPORT_REPEAT_VIEW = true
+-- Lead point (kill_lgm.lead_point): the shell flight time is refitted to the
+-- distance of the lead point until it repeats. false = the old two passes,
+-- which only lengthen it (they led a crossing man too far).
+M.LGM_AIM_LEAD_CONVERGE   = true
+-- TEST ONLY: hold our own keys back this many thinks before the engine gets
+-- them (a remote seat's delay on a local server). 0 = off. Never in a game.
+M.TEST_KEY_DELAY_THINKS   = 0
 -- ── LGM destination aim (2026-09-25) ──────────────────────────────────────
 -- An enemy builder walks a straight line from where his tank stood to the
 -- CENTRE of the tile he was sent to (lgm.c lgmNewPrimaryRequest sets destX/Y
@@ -8092,6 +8120,15 @@ M.PRESETS = {
     WSIM_HIT_FULL_DIST = 0,
     WSIM_HIT_FAR_FRAC = 0,
     WSIM_CAPTURE_EXIT_MAX = 0,
+    --   2026-11-21: the old kill-LGM aim (keys act at once, snapshot sight).
+    LGM_AIM_KEYS_IN_FLIGHT = false,
+    LGM_AIM_DELAY_EST = false,
+    LGM_AIM_LAUNCH_POSE = false,
+    LGM_AIM_TURN_RULE = false,
+    LGM_AIM_SEARCH_MOVE = false,
+    LGM_AIM_SIGHT_TAP = false,
+    LGM_TELEPORT_REPEAT_VIEW = false,
+    LGM_AIM_LEAD_CONVERGE    = false,
     --   2026-11-17: hold 15 ticks with no goal after a kill (old rule).
     POST_KILL_WAIT_TICKS = 15,
     --   2026-11-17: carrying-pill approach floor 30 (old rule).
@@ -8435,6 +8472,14 @@ M.PRESETS.mast = {
   WSIM_HIT_FULL_DIST                = 0,      -- 2.2.1 world sim: 1 - d/range discount
   WSIM_HIT_FAR_FRAC                 = 0,
   WSIM_CAPTURE_EXIT_MAX             = 0,      -- 2.2.1 world sim: capture sim with no exit leg
+  LGM_AIM_KEYS_IN_FLIGHT            = false,  -- 2.2.1 kill-LGM aim: keys act at once
+  LGM_AIM_DELAY_EST                 = false,
+  LGM_AIM_LAUNCH_POSE               = false,  -- 2.2.1 fire check: snapshot sight
+  LGM_AIM_TURN_RULE                 = false,
+  LGM_AIM_SEARCH_MOVE               = false,
+  LGM_AIM_SIGHT_TAP                 = false,
+  LGM_TELEPORT_REPEAT_VIEW          = false,  -- 2.2.1: any 32 wu jump resets the velocity
+  LGM_AIM_LEAD_CONVERGE             = false,  -- 2.2.1: two-pass lead, only lengthens
   POST_KILL_WAIT_TICKS              = 15,
   CARRY_APPROACH_MIN_ARMOUR_ONE     = 30,
   CARRY_APPROACH_MIN_ARMOUR_MANY    = 30,
