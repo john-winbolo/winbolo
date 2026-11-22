@@ -424,8 +424,8 @@ SimRuleChange simRulesDescribeValue(SimRuleUnit unit, double classic,
 SimRuleChange simRulesDescribeChange(int rule, double value);
 
 /* The first version where a shell's hit that changes its square (the last
- * hit on a wall, a forest, a boat, the shore, a bridge, the shot that kills
- * a pill) is a hit on that square for the builder blast: only a builder on
+ * hit on a wall, a forest, a boat, the shore, a bridge) is a hit on that
+ * square for the builder blast: only a builder on
  * that square dies. Builds before it used the open-ground rule there (a
  * builder within 128 wu of the square's middle dies). No rule switches it:
  * the version alone decides. */
