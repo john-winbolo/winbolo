@@ -1841,9 +1841,29 @@ void lv_drawTanks(screenTanks *tks) {
     if (simple) SDL_SetRenderDrawBlendMode(sdlRenderer, oldBlend);
 }
 
+/* Whether a live pillbox is on square (x, y), for the builder hit box: the
+   pill's armour as recorded, through lvHitboxPillSolid. A dead pill's square
+   is open ground, as in lgmBlastCatches, except on the frame of the hit that
+   killed it (lv_screenPillHitNow): that shot is a hit on its square.
+   deadPillOpen: the recorded game plays that rule (2.2.2 and later); in an
+   older game every pill on the map makes its square solid. */
+static bool lvDrawPillSolidAt(pillboxes *pb, BYTE x, BYTE y, bool deadPillOpen) {
+    BYTE count;
+    for (count = 0; count < (*pb)->numPills; count++) {
+        if ((*pb)->item[count].x == x && (*pb)->item[count].y == y &&
+            lvHitboxPillSolid((*pb)->active[count] != FALSE,
+                              (*pb)->item[count].inTank != FALSE,
+                              (*pb)->item[count].armour,
+                              lv_screenPillHitNow(count), deadPillOpen)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 /* Note a builder's hit area: his place, his square, and which of the 3 by 3
-   squares round his are a building, a half building, a pillbox or a base
-   (lgmBlastCatches). mx, my are his square on the screen; the screen starts
+   squares round his are a building, a half building, a live pillbox or a
+   base (lgmBlastCatches). mx, my are his square on the screen; the screen starts
    at the view's offset, as lv_playersMakeScreenLgm made the list. The
    squares are read now, as the map is drawn. */
 static void lvDrawNoteLgmHit(BYTE mx, BYTE my, BYTE px, BYTE py, BYTE slot, BYTE zf) {
@@ -1852,8 +1872,16 @@ static void lvDrawNoteLgmHit(BYTE mx, BYTE my, BYTE px, BYTE py, BYTE slot, BYTE
     unsigned solid = 0;
     int col, row;
     int sqMx, sqMy, scrMx, scrMy;
+    bool squareHitRule;
 
     if (lv == NULL) return;
+    /* Whether the recorded game counts a shell's hit that changes its square
+       as a hit on that square (2.2.2 and later), from the recording's
+       version, as the engine decides it. The same version also has a dead
+       pill's square as open ground (lvDrawPillSolidAt). */
+    squareHitRule = simRulesTerrainSquareHitForVersion(
+                        lv->versionMajor, lv->versionMinor,
+                        lv->versionRevision) != 0;
     /* His place. A recording holds it to the art pixel, so the closest guess
        is from the line his last recorded pixels walk along
        (lv_playersLgmPlace). With no notes for that pixel it is the middle of
@@ -1890,8 +1918,10 @@ static void lvDrawNoteLgmHit(BYTE mx, BYTE my, BYTE px, BYTE py, BYTE slot, BYTE
             BYTE pos;
             if (ax < 0 || ay < 0 || ax > 255 || ay > 255) continue;
             pos = lv_mapGetPos(&lv->mp, (BYTE)ax, (BYTE)ay);
-            if (pos == BUILDING || pos == HALFBUILDING ||
-                lv_pillsExistPos(&lv->pb, (BYTE)ax, (BYTE)ay) ||
+            if (lvHitboxSquareSolid(pos == BUILDING || pos == HALFBUILDING,
+                                    lv_screenSquareHitNow((BYTE)ax, (BYTE)ay),
+                                    squareHitRule) ||
+                lvDrawPillSolidAt(&lv->pb, (BYTE)ax, (BYTE)ay, squareHitRule) ||
                 lv_basesExistPos(&lv->bs, (BYTE)ax, (BYTE)ay)) {
                 solid |= 1u << (row * 3 + col);
             }

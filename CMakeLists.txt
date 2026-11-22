@@ -8206,6 +8206,7 @@ set(_unit_test_names
     lv_hitbox_lgm_fit
     lv_hitbox_lgm_pick
     lv_hitbox_outline
+    lv_hitbox_square_hit_by_version
     lv_hitbox_zone_from_version
     hit_rules_builder_matches_engine
     hit_rules_tank_matches_engine
