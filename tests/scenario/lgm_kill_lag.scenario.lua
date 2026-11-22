@@ -85,7 +85,8 @@
 -- square without killing him (C.LGM_FIRE_LOS_STRICT).
 --
 -- The twins: lgm_kill_lag_old (every LGM_AIM_* knob, LGM_TELEPORT_REPEAT_VIEW,
--- LGM_SHELL_MODEL_RULES, LGM_FIRE_LOS_STRICT and LGM_LEAD_STOP_RETURN off),
+-- LGM_SHELL_MODEL_RULES, LGM_FIRE_LOS_STRICT, LGM_LEAD_STOP_RETURN and the
+-- two DRIVEBY_* knobs off),
 -- _d1 / _d1_old (delay 1), _stop / _stop_old (LKL_ARRIVE), _pill (LKL_PILL
 -- and LKL_ARRIVE, no old twin: see its header), _near / _near_old (the man
 -- 2-3.6 squares from our tank). The _old twins are
