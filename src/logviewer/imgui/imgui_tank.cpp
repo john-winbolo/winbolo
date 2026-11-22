@@ -274,6 +274,14 @@ static float tank_base_h(float availW) {
     return tank_base_h_at((float)tank_base_scale(availW));
 }
 
+float lv_imgui_tank_dock_lag_room(bool full) {
+    if (!lv_g_tank_show_lag || (!full && !lv_screenLagShown())) {
+        return 0.0f;
+    }
+    /* The dock is sized for the largest section, the one with a graph. */
+    return tank_lag_h(true);
+}
+
 float lv_imgui_tank_dock_height(float dockWidth) {
     const ImGuiStyle &style = ImGui::GetStyle();
     float availW = dockWidth - style.WindowPadding.x * 2.0f;
@@ -284,10 +292,7 @@ float lv_imgui_tank_dock_height(float dockWidth) {
     if (lv_g_tank_show_base) {
         h += tank_base_h(availW);
     }
-    if (lv_g_tank_show_lag && lv_screenLagShown()) {
-        /* The dock is sized for the largest section, the one with a graph. */
-        h += tank_lag_h(true);
-    }
+    h += lv_imgui_tank_dock_lag_room(false);
     /* One more: the heights are whole pixels and the text's may not be. */
     return ceilf(h) + 1.0f + style.WindowPadding.y * 2.0f + ImGui::GetFrameHeight();
 }

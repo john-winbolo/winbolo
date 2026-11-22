@@ -8,7 +8,7 @@
  *Filename:      lv_hitbox.h
  *Purpose:
  *  The areas the Log Viewer draws round each tank and each
- *  builder on the map (Options > Toggle Hit Boxes; draw.c
+ *  builder on the map (Options > Hit Boxes; draw.c
  *  draws them). They are the engine's own tests, from the
  *  header the engine uses too (src/bolo/public/hit_rules.h),
  *  put in the viewer's terms:

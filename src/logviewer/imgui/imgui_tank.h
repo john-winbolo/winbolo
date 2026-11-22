@@ -27,6 +27,13 @@ void lv_imgui_tank_window(void);
  * dock's built layout; needs the ImGui context. */
 float lv_imgui_tank_dock_height(float dockWidth);
 
+/* The room the lag section under the gauges takes in the dock. With full
+ * false, the room it takes now: 0 when no lag section is drawn (a recording
+ * with no lag records, or Windows > Tank: Lag Indicators off). With full
+ * true, the room it takes when the recording has lag records. Needs the
+ * ImGui context. */
+float lv_imgui_tank_dock_lag_room(bool full);
+
 /* The banner over the map while the lag view ("see what this player saw")
  * is on: whose screen the map shows, how far behind the present it is, and
  * the button that turns the view off. x, y and w are the map's left, top

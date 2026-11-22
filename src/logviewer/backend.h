@@ -773,6 +773,13 @@ bool lv_screenNearBaseStock(BYTE slot, BYTE *shells, BYTE *mines, BYTE *armour);
 struct LvPillSpot;
 int lv_screenPillSpots(struct LvPillSpot *out, int max);
 
+/* The bases whose numbers the map shows (Options > Base Numbers): each one
+ * on the map in the squares the view paints, its square in the view and its
+ * number, from 1 as the pillboxes' are. The bases are those at the present,
+ * in the lag view too. Writes at most max and returns how many. Hold the
+ * client mutex. */
+int lv_screenBaseSpots(struct LvPillSpot *out, int max);
+
 /* The square of the view the selected base stands in (lv_screenSelectItem),
  * for the mark round it on the map. Only a base the mouse over the Tank
  * panel's base bars selects (lv_screenHoverBase) has it. False when no base
@@ -888,7 +895,7 @@ bool lv_screenLagViewStatus(char *name, size_t nameSize, int *behindMs, bool *dr
  * have none. */
 void lv_screenLagShellOwnerStats(LvShellOwnerStats *out);
 
-/* "Toggle Screen-True Own Shells" (lv_shell_owner.h), on by default: in the
+/* "Screen-True Own Shells" (lv_shell_owner.h), on by default: in the
  * lag view the chosen player's own shells are drawn from the present frame,
  * as that player's own screen drew them. Off draws them from the old frame,
  * as every other shell is. The value is one bool that lv_screenUpdate
@@ -896,10 +903,10 @@ void lv_screenLagShellOwnerStats(LvShellOwnerStats *out);
 void lv_screenSetScreenTrueShells(int enabled);
 int  lv_screenGetScreenTrueShells(void);
 
-/* "Toggle Screen-True Local Explosions" (lv_early_blast.h), off by
+/* "Screen-True Local Explosions" (lv_early_blast.h), off by
  * default: in the lag view each own shell of the chosen player explodes at the present where it ended, and the
  * server's later explosion of that shell is hidden. It does something only
- * while "Toggle Screen-True Own Shells" is on (lv_earlyBlastOn). Stats gives
+ * while "Screen-True Own Shells" is on (lv_earlyBlastOn). Stats gives
  * how many own shells ended and how many server explosions were found for
  * them. The toggle is one bool that lv_screenUpdate reads, so the menu
  * sets and gets it with no client mutex; hold the client mutex for the
