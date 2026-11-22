@@ -6814,10 +6814,13 @@ function Brain.think(info)
 
   -- Opportunistic tank shot: fire at enemy tanks while doing other things.
   -- Only if not already in tank combat and not shooting at something else.
+  -- C.DRIVEBY_YIELD_LGM_KILL: not while the kill-LGM fire check below has a
+  -- builder in range (kill_lgm.man_in_fire_range).
   if state.goal.kind ~= "attack_tank"
      and (bit.band(keys, KEY_SHOOT)) == 0 and (bit.band(taps, KEY_SHOOT)) == 0
      and info.shells > C.SHELL_RESERVE
-     and not info.inboat then
+     and not info.inboat
+     and not (C.DRIVEBY_YIELD_LGM_KILL and kill_lgm.man_in_fire_range(state, info)) then
     local perc = state.perc
     if perc and perc.enemy_tanks then
       for _, et in ipairs(perc.enemy_tanks) do

@@ -754,6 +754,27 @@ function M.all_on()
   return C.SHELL_MODEL_RULES_ALL and true or false
 end
 
+-- C.DRIVEBY_YIELD_LGM_KILL (2026-11-22): does the kill-LGM fire check
+-- (init.lua) have a hostile builder in range this think? The same gates as
+-- that check before its aim test: not in a boat, shells above
+-- SHELL_RESERVE, the man not spared by peace, and Euclidean distance within
+-- KILL_LGM_SHOOT_RANGE squares. Only builders this player sees
+-- (state.perc.enemy_lgms). While true, the drive-by tank shots hold fire, so
+-- the shell and the reload stay for the man.
+function M.man_in_fire_range(state, info)
+  if info.inboat or (info.shells or 0) <= C.SHELL_RESERVE then return false end
+  local lgms = state.perc and state.perc.enemy_lgms
+  if not lgms then return false end
+  local r = C.KILL_LGM_SHOOT_RANGE * 256
+  local r2 = r * r
+  local spared = require("attack").peace_spared
+  for _, elm in ipairs(lgms) do
+    local dx, dy = (elm.wx or 0) - info.tankx, (elm.wy or 0) - info.tanky
+    if dx * dx + dy * dy <= r2 and not spared(state, elm.idnum) then return true end
+  end
+  return false
+end
+
 -- The longest sight the aim may use.
 function M.max_sight(on)
   if model_on(on) then return SR.sight_max end

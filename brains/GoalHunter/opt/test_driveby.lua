@@ -9,6 +9,10 @@
 -- count as reaching it. lgm_kill_lag_near (2026-11-22): at sight 2-4 the
 -- drive-by shells burst at 288-544 wu, short of a tank 500-640 wu away.
 --
+-- DRIVEBY_YIELD_LGM_KILL: kill_lgm.man_in_fire_range says when the kill-LGM
+-- fire check has a hostile builder in range; the drive-by shots then hold
+-- fire.
+--
 -- Run from this directory with the LuaJIT built beside the game:
 --   ../../build/_deps/luajit_src-src/src/luajit.exe test_driveby.lua
 -- =========================================================================
@@ -120,6 +124,40 @@ print("\n-- 3. the knob")
 check("3a DRIVEBY_REQUIRE_REACH default on", C.DRIVEBY_REQUIRE_REACH == true)
 check("3b KEEL off", C.PRESETS.keel.DRIVEBY_REQUIRE_REACH == false)
 check("3c MAST off", C.PRESETS.mast.DRIVEBY_REQUIRE_REACH == false)
+check("3d DRIVEBY_YIELD_LGM_KILL default on", C.DRIVEBY_YIELD_LGM_KILL == true)
+check("3e KEEL off", C.PRESETS.keel.DRIVEBY_YIELD_LGM_KILL == false)
+check("3f MAST off", C.PRESETS.mast.DRIVEBY_YIELD_LGM_KILL == false)
+
+print("\n-- 4. kill_lgm.man_in_fire_range")
+do
+  local R = C.KILL_LGM_SHOOT_RANGE * 256
+  local function st(lgms, peace)
+    return { tick = 100, perc = { enemy_lgms = lgms }, peace = peace }
+  end
+  local info = { tankx = OX, tanky = OY, shells = 40, inboat = false }
+  local man_in = { wx = OX + R - 1, wy = OY, idnum = 1 }
+  local man_out = { wx = OX + R + 64, wy = OY, idnum = 1 }
+  check("4a no builders seen: false", KL.man_in_fire_range(st({}), info) == false)
+  check("4b no perception: false", KL.man_in_fire_range({}, info) == false)
+  check("4c a builder inside KILL_LGM_SHOOT_RANGE: true",
+        KL.man_in_fire_range(st({ man_in }), info) == true)
+  check("4d a builder outside it: false", KL.man_in_fire_range(st({ man_out }), info) == false)
+  check("4e Euclidean: a builder at (R*0.8, R*0.8) is out",
+        KL.man_in_fire_range(st({ { wx = OX + R * 0.8, wy = OY + R * 0.8, idnum = 1 } }), info) == false)
+  info.inboat = true
+  check("4f in a boat: false", KL.man_in_fire_range(st({ man_in }), info) == false)
+  info.inboat = false
+  info.shells = C.SHELL_RESERVE
+  check("4g shells at SHELL_RESERVE: false", KL.man_in_fire_range(st({ man_in }), info) == false)
+  info.shells = 40
+  local saved = C.PEACE_ENABLED
+  C.PEACE_ENABLED = true
+  check("4h spared by peace: false",
+        KL.man_in_fire_range(st({ man_in }, { [1] = true }), info) == false)
+  check("4i another man not spared: true",
+        KL.man_in_fire_range(st({ man_in, { wx = OX, wy = OY + 256, idnum = 2 } }, { [1] = true }), info) == true)
+  C.PEACE_ENABLED = saved
+end
 
 print(string.format("\n%d passed, %d failed", pass, fail))
 if fail > 0 then os.exit(1) end

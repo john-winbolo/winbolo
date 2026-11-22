@@ -5830,8 +5830,11 @@ local function steer_core(state, world, info, goal)
       local perc = state.perc or {}
       local shot_fired = false
 
-      -- Enemy tanks
-      if not shot_fired then
+      -- Enemy tanks. C.DRIVEBY_YIELD_LGM_KILL: not while the kill-LGM fire
+      -- check has a builder in range (kill_lgm.man_in_fire_range).
+      if not shot_fired
+         and not (C.DRIVEBY_YIELD_LGM_KILL
+                  and require("kill_lgm").man_in_fire_range(state, info)) then
         for _, et in ipairs(perc.enemy_tanks or {}) do
           if et.dist <= 8
              and not (state.peace and attack_mod().peace_spared(state, et.id)) then

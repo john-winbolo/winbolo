@@ -894,6 +894,7 @@ local R221 = {
   LGM_FIRE_LOS_STRICT      = false,
   LGM_LEAD_STOP_RETURN     = false,
   DRIVEBY_REQUIRE_REACH = false,
+  DRIVEBY_YIELD_LGM_KILL = false,
   SHELL_MODEL_RULES_ALL    = false,
   SHIELD_SCAN_PENDING_SURVIVES_V2 = false,
   BLITZ_NO_DOUBLE_TAKE = false,

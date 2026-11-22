@@ -3227,6 +3227,15 @@ M.TANK_COMBAT_OPPORTUNISTIC_AIM = 8     -- bolo angle units (~11??) aim toleranc
 -- drive-by first shells landed short. Andrew's yes (Nov 22, item 13 idea 1).
 -- false = the longest sight and no reach test, as before. KEEL / MAST: false.
 M.DRIVEBY_REQUIRE_REACH = true
+-- DRIVEBY_YIELD_LGM_KILL: while the kill-LGM fire check (init.lua) has a
+-- hostile builder in range (kill_lgm.man_in_fire_range: the check's own
+-- gates, within KILL_LGM_SHOOT_RANGE), both drive-by tank shots hold fire,
+-- so the shell and the reload stay for the man. lgm_kill_lag_near,
+-- 2026-11-22: on the even jobs the nose swept across the enemy tank on its
+-- way to the man and a drive-by shell went first. Andrew's yes (Nov 22,
+-- item 13 idea 2). false = the drive-by shots fire as before. KEEL / MAST:
+-- false.
+M.DRIVEBY_YIELD_LGM_KILL = true
 -- ── attack_tank aim and fire knobs (2026-10-01, Joust) ─────────────────────
 -- Every default below is the OLD behaviour; Joust turns them on for its bots
 -- with PRESETS.joust (data/maps/Joust.scenario.lua, game.bot_init). Each
@@ -8231,6 +8240,7 @@ M.PRESETS = {
     LGM_LEAD_STOP_RETURN     = false,
     --   2026-11-22: drive-by tank shots at any sight, no reach test.
     DRIVEBY_REQUIRE_REACH    = false,
+    DRIVEBY_YIELD_LGM_KILL   = false,
     SHELL_MODEL_RULES_ALL    = false,
     --   2026-11-22: a budget kill in v2 (one go) loses the plan (old rule).
     SHIELD_SCAN_PENDING_SURVIVES_V2 = false,
@@ -8597,6 +8607,7 @@ M.PRESETS.mast = {
   LGM_FIRE_LOS_STRICT               = false,  -- 2.2.1: line check stops at the man's tile
   LGM_LEAD_STOP_RETURN              = false,  -- 2.2.1: no stop-and-return lead
   DRIVEBY_REQUIRE_REACH             = false,  -- 2.2.1: drive-by tank shots at any sight
+  DRIVEBY_YIELD_LGM_KILL            = false,  -- 2.2.1: drive-by shots with a man in range
   SHELL_MODEL_RULES_ALL             = false,  -- 2.2.1: other shell sites at 128 * sight
   SHIELD_SCAN_PENDING_SURVIVES_V2   = false,  -- 2.2.1 had no pill take v2
   BLITZ_NO_DOUBLE_TAKE              = false,  -- 2.2.1 had no double takes
