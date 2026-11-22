@@ -153,7 +153,7 @@ local function draw_rays(cap)
     if r.hit == "reach" then c = { 150, 150, 150 }
     elseif r.ok then c = { 60, 220, 60 }
     else c = { 255, 50, 50 } end
-    local pts, n = SH.shell_points(sx, sy, r.angle, SH.PILL_FIRE_LEN, _pts)
+    local pts, n = SH.shell_points(sx, sy, r.angle, SH.PILL_FIRE_LEN, _pts, cap.inp and cap.inp.env)
     -- a covered shell ends at the first blocker it meets; the others at the
     -- tank (or the end of their life)
     local stop = r.t or n

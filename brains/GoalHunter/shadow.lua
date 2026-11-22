@@ -21,6 +21,7 @@
 -- =========================================================================
 
 local bit = require('bitcompat')
+local C = require('constants')   -- C.SHELL_MODEL_RULES_ALL (shell_points)
 
 local M = {}
 
@@ -112,14 +113,21 @@ end
 
 -- The world points of a shell, one per tick, into out (flat x1,y1,x2,y2...).
 -- Returns out, n_points. For tests and the BrainTest ray layer.
-function M.shell_points(ox, oy, angle, len, out)
+-- env (optional): the shadow env. With C.SHELL_MODEL_RULES_ALL on, its live
+-- shell rules (env.shell_speed, shell_start_add, shell_life, as
+-- pilltake_v2.live_shell sets them) start and move the shell, the same as
+-- M.cast; a rule that is nil stays classic. Off, or no env: always classic.
+function M.shell_points(ox, oy, angle, len, out, env)
   out = out or {}
-  local xa, ya = M.calc_distance(angle, M.SHELL_SPEED)
-  local xs, ys = M.calc_distance_hp(angle, M.SHELL_SPEED)
-  local x = ox + M.SHELL_START_ADD * xa
-  local y = oy + M.SHELL_START_ADD * ya
+  local renv = (env and C.SHELL_MODEL_RULES_ALL) and env or nil
+  local speed = renv and renv.shell_speed or M.SHELL_SPEED
+  local add = renv and renv.shell_start_add or M.SHELL_START_ADD
+  local xa, ya = M.calc_distance(angle, speed)
+  local xs, ys = M.calc_distance_hp(angle, speed)
+  local x = ox + add * xa
+  local y = oy + add * ya
   local xc, yc = 0, 0
-  local n = M.life_ticks(len)
+  local n = M.life_ticks(len, renv)
   for t = 1, n do
     xc = xc + xs; yc = yc + ys
     local xm, ym = floor(xc / 256), floor(yc / 256)

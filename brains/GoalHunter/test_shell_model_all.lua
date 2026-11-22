@@ -25,11 +25,14 @@
 --   6. shot_tracker.make_shot (the own-shot track, display and hit record):
 --      the shell starts shell_start_add steps out and steps shell_speed wu
 --      a tick, so it reaches the engine burst after L steps.
+--   7. shadow.shell_points (the v2 ray points, BrainTest ray layer): the
+--      shell starts, steps and lives by the env's live rules
+--      (pilltake_v2.live_shell), classic when a rule is missing.
 --
 -- Run from this directory with the LuaJIT built beside the game:
 --   ../../build/_deps/luajit_src-src/src/luajit.exe test_shell_model_all.lua
 -- Arguments:
---   old        run 1-4 and 6 with C.SHELL_MODEL_RULES_ALL = false (the old code
+--   old        run 1-4, 6 and 7 with C.SHELL_MODEL_RULES_ALL = false (the old code
 --              paths; they must fail).
 --   src=<dir>  run 5 on the .lua files in <dir> (default: this directory).
 -- =========================================================================
@@ -228,6 +231,47 @@ for _, rs in ipairs(TRACK_RULES) do
         string.format("north start %s step (%s, %s); east start %s step (%s, %s)",
                       tostring(TY - north.fire_fy), tostring(north.step_x), tostring(north.step_y),
                       tostring(east.fire_fx - TX), tostring(east.step_x), tostring(east.step_y)))
+end
+
+-- ── 7. v2 ray points (shadow.shell_points, the BrainTest ray layer) ──────
+-- The env is the one pilltake_v2.live_shell fills from info.rules. Nose
+-- north (angle 0 brad points up the map, -y): the first point is
+-- shell_start_add steps of shell_speed out plus one step, and the last of
+-- the 1 + life * len - add points is speed * (add + n) wu out. A missing
+-- or out-of-range rule falls back to the classic numbers.
+print("7. v2 ray points (shadow.shell_points)")
+do
+  local SH = require("shadow")
+  local V2 = require("pilltake_v2")
+  local PRULES = {}
+  for _, rs in ipairs(RULES) do PRULES[#PRULES + 1] = rs end
+  PRULES[#PRULES + 1] = { name = "out of range (speed 0, add -1): classic",
+                          r = { shell_speed = 0, shell_start_add = -1 }, want = {} }
+  local OX, OY = 100 * 256 + 128, 120 * 256 + 128
+  local LEN = SH.PILL_FIRE_LEN
+  for _, rs in ipairs(PRULES) do
+    local want = rs.want or rs.r
+    local speed = want.shell_speed or 32
+    local add = want.shell_start_add or 5
+    local life = want.shell_life or 8
+    local n_want = 1 + math.floor(life * LEN) - add
+    if n_want < 0 then n_want = 0 end
+    local env = V2.live_shell({}, rs.r)
+    local pts, n = SH.shell_points(OX, OY, 0, LEN, nil, env)
+    local fx, fy = pts[1], pts[2]
+    local lx, ly = pts[2 * n - 1], pts[2 * n]
+    local ok = n == n_want and fx == OX and fy == OY - (add + 1) * speed
+               and lx == OX and ly == OY - (add + n) * speed
+    check(string.format("%s: %d points, first %d wu out, last %d wu out", rs.name,
+                        n_want, (add + 1) * speed, (add + n_want) * speed), ok,
+          string.format("%s points, first (%s, %s wu out), last (%s, %s wu out)",
+                        tostring(n), tostring(fx and fx - OX), tostring(fy and OY - fy),
+                        tostring(lx and lx - OX), tostring(ly and OY - ly)))
+  end
+  -- No env (an old caller): the classic walk, whatever the knob.
+  local pts, n = SH.shell_points(OX, OY, 0, LEN)
+  check("no env: the classic walk (64 points, first 192 wu out)",
+        n == 64 and pts[2] == OY - 192, string.format("%s points, first %s wu out", tostring(n), tostring(pts[2] and OY - pts[2])))
 end
 
 -- ── 5. no old 128 * sight site left ──────────────────────────────────────
