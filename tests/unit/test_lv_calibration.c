@@ -1811,7 +1811,8 @@ static uint32_t lagDrawMs(int k) { return (uint32_t)k * 20u; }
 /* One running-round snapshot with slots 0 ("A") and 1 ("B") on the map at
  * their entry-k places, in the block layout of putSnapshotSlot1. pills is
  * the pillbox block, its length byte first, or NULL for none. */
-static void putLagDrawSnapshotPills(LogBuf *b, int k, const uint8_t *pills, int pillsLen) {
+static void putLagDrawSnapshotItems(LogBuf *b, int k, const uint8_t *pills, int pillsLen,
+                                    const uint8_t *bases, int basesLen) {
   static const uint8_t mapRun[5] = {5, 0, 0, 2, (8 << 4) | GRASS};
   static const uint8_t mapTerminator[4] = {4, 255, 255, 255};
   int i;
@@ -1823,7 +1824,11 @@ static void putLagDrawSnapshotPills(LogBuf *b, int k, const uint8_t *pills, int 
   } else {
     putU8(b, 1); putU8(b, 0);        /* pills */
   }
-  putU8(b, 1); putU8(b, 0);          /* bases */
+  if (bases != NULL) {
+    put(b, bases, (size_t)basesLen);
+  } else {
+    putU8(b, 1); putU8(b, 0);        /* bases */
+  }
   putU8(b, 1); putU8(b, 0);          /* starts */
   put(b, mapRun, sizeof(mapRun));
   put(b, mapTerminator, 4);
@@ -1844,6 +1849,10 @@ static void putLagDrawSnapshotPills(LogBuf *b, int k, const uint8_t *pills, int 
       putU8(b, 2); putU8(b, 0); putU8(b, 0);
     }
   }
+}
+
+static void putLagDrawSnapshotPills(LogBuf *b, int k, const uint8_t *pills, int pillsLen) {
+  putLagDrawSnapshotItems(b, k, pills, pillsLen, NULL, 0);
 }
 
 static void putLagDrawSnapshot(LogBuf *b, int k) {
@@ -2247,6 +2256,62 @@ int run_lv_lag_view_map(void) {
   UT_ASSERT(on.spots == 1 && on.spotX[0] == 1);
 
   lv_screenSetLagFeature(0);
+  lv_decoderDestroy(lv);
+  lv_screenSetHideLobby(savedHide);
+  remove(path);
+  return 0;
+}
+
+/* ---- the base numbers ------------------------------------------------------ */
+
+/*
+ * Options > Base Numbers: the bases whose numbers the map shows
+ * (lv_screenBaseSpots), with the sums of the pillbox numbers. Three bases:
+ * base 1 at (57,52) and base 3 at (60,53) are in the view whose left column
+ * is 55 and top row 50, base 2 at (150,150) is not. Numbers count from 1.
+ */
+int run_lv_base_spots(void) {
+  const char *path = "lv_base_spots.wbv";
+  /* The block's length, numBases, then x, y, owner, armour, shells, mines,
+     refuelTime, baseTime (2), justStopped for each. */
+  static const uint8_t bases[32] = {31, 3,
+                                    57, 52, 0xFF, 90, 40, 40, 0, 0, 0, 0,
+                                    150, 150, 0xFF, 90, 40, 40, 0, 0, 0, 0,
+                                    60, 53, 0xFF, 90, 40, 40, 0, 0, 0, 0};
+  LogBuf b;
+  LogViewerState *lv;
+  LvPillSpot spots[MAX_BASES];
+  int savedHide = lv_screenGetHideLobby();
+  int n, k;
+
+  b.len = 0;
+  putHeader(&b);
+  putLagDrawSnapshotItems(&b, 0, NULL, 0, bases, (int)sizeof(bases));
+  for (k = 1; k <= 3; k++) {
+    putU8(&b, LOG_EVENT);
+    putU8(&b, 2);
+    putLagDrawLocation(&b, 0, k);
+    putLagDrawLocation(&b, 1, k);
+  }
+  putU8(&b, LOG_QUIT);
+
+  lv_screenSetHideLobby(0);
+  lv = loadSynthetic(&b, path);
+  UT_ASSERT_MSG(lv != NULL, "synthetic base log failed to build/load");
+  if (lagDrawPlayTo(lv, 2) != 0) return 1;
+  lv_screenSetOffset(55, 50);
+  lv_screenUpdate(redraw);
+
+  n = lv_screenBaseSpots(spots, MAX_BASES);
+  UT_ASSERT_MSG(n == 2, "%d base numbers in the view, want 2", n);
+  UT_ASSERT_MSG(spots[0].number == 1 && spots[0].viewX == 2 && spots[0].viewY == 2,
+                "base 1: number %d at %d,%d", spots[0].number, spots[0].viewX, spots[0].viewY);
+  UT_ASSERT_MSG(spots[1].number == 3 && spots[1].viewX == 5 && spots[1].viewY == 3,
+                "base 3: number %d at %d,%d", spots[1].number, spots[1].viewX, spots[1].viewY);
+  /* No more than asked for. */
+  UT_ASSERT(lv_screenBaseSpots(spots, 1) == 1 && spots[0].number == 1);
+  UT_ASSERT(lv_screenBaseSpots(spots, 0) == 0);
+
   lv_decoderDestroy(lv);
   lv_screenSetHideLobby(savedHide);
   remove(path);

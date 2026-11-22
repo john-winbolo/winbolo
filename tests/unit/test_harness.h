@@ -1370,6 +1370,8 @@ int run_lv_lag_rtt_back(void);
 int run_lv_lag_ring_back(void);
 int run_lv_lag_map_undo(void);
 int run_lv_lag_view_map(void);
+/* Options > Base Numbers: the bases in the view (test_lv_calibration.c). */
+int run_lv_base_spots(void);
 int run_lv_lag_view_toggle(void);
 int run_lv_lag_feature_default_off(void);
 int run_lv_lag_view_draw(void);

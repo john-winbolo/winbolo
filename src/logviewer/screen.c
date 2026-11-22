@@ -265,7 +265,7 @@ static int32_t lv_lagWorld(BYTE m, BYTE p) {
   return (int32_t) m * 256 + (int32_t) p * 16;
 }
 
-/* "Toggle Screen-True Own Shells" (lv_shell_owner.h). On by default: the
+/* "Screen-True Own Shells" (lv_shell_owner.h). On by default: the
    lag view draws the chosen player's own shells from the present frame. */
 static bool s_screenTrueShells = TRUE;
 
@@ -275,8 +275,8 @@ void lv_screenSetScreenTrueShells(int enabled) {
 
 int lv_screenGetScreenTrueShells(void) { return s_screenTrueShells ? 1 : 0; }
 
-/* "Toggle Screen-True Local Explosions" (lv_early_blast.h). Off by
-   default, and drawn only while "Toggle Screen-True Own Shells" is on too
+/* "Screen-True Local Explosions" (lv_early_blast.h). Off by
+   default, and drawn only while "Screen-True Own Shells" is on too
    (lv_earlyBlastOn). It is used from lv_lagFindShellOwners and
    lv_screenUpdate. */
 static bool              s_screenTrueExpl = FALSE;
@@ -385,7 +385,7 @@ static void lv_lagApplyShellIdEvents(const LvShellOwnerIdEvents *ev) {
 
 /* Give the shells of the newest frame f their owners and ids
    (lv_shell_owner.h), from the frame of the entry before it, and note
-   which tanks fired. With "Toggle Screen-True Own Shells" on, the lag view
+   which tanks fired. With "Screen-True Own Shells" on, the lag view
    draws the chosen player's own shells at the present, as the player's own
    client drew them, and every other shell at the old time.
 
@@ -1679,7 +1679,7 @@ void lv_screenUpdate(updateType value) {
        lv_screenUpdateView above took them from (lv_lagViewMapFrame). */
     const LvLagFrame *now = &s_lagRing.frames[s_lagRing.newest];
     const bool ownAtPresent = s_screenTrueShells;
-    /* Toggle Screen-True Local Explosions (lv_early_blast.h): the early blasts. */
+    /* Screen-True Local Explosions (lv_early_blast.h): the early blasts. */
     const bool earlyBlast = lv_earlyBlastOn(s_screenTrueShells, s_screenTrueExpl);
     int i;
     lv_playersSetLagFrame(lagFrame, s_lagViewSlot);
@@ -1690,7 +1690,7 @@ void lv_screenUpdate(updateType value) {
        the order items go in. So the kept shells go in from the end of the
        frame, and the newest explosion is drawn on top, as in the game. */
     bool keep[LV_LAG_SHELLS_MAX];
-    /* Toggle Screen-True Local Explosions (lv_early_blast.h): each early
+    /* Screen-True Local Explosions (lv_early_blast.h): each early
        blast of the chosen player hides its server explosion, one record
        per frame. */
     LvBlastPt explPts[LV_LAG_SHELLS_MAX];
@@ -7624,6 +7624,39 @@ int lv_screenPillSpots(LvPillSpot *out, int max) {
     out[found].viewX = vx;
     out[found].viewY = vy;
     out[found].number = lvPillNumber(count);
+    found++;
+  }
+  return found;
+}
+
+int lv_screenBaseSpots(LvPillSpot *out, int max) {
+  BYTE count;
+  BYTE total;
+  int found = 0;
+
+  if (out == NULL || max <= 0 || g_lv == NULL || g_lv->logLoaded == FALSE ||
+      g_lv->bs == NULL) {
+    return 0;
+  }
+  total = lv_basesGetNumBases(&g_lv->bs);
+  if (total > MAX_BASES) {
+    total = MAX_BASES;
+  }
+  for (count = 0; count < total && found < max; count++) {
+    const base *b = &g_lv->bs->item[count];
+    int vx = 0, vy = 0;
+    if (lv_basesIsActive(&g_lv->bs, (BYTE) (count + 1)) == FALSE) {
+      continue;
+    }
+    /* The same sums as the pillbox numbers: the view paints one square more
+       on the right and at the bottom. */
+    if (!lvPillViewSquare(b->x, b->y, g_lv->xOffset, g_lv->yOffset,
+                          lv_screenGetSizeX(), lv_screenGetSizeY(), &vx, &vy)) {
+      continue;
+    }
+    out[found].viewX = vx;
+    out[found].viewY = vy;
+    out[found].number = count + 1;
     found++;
   }
   return found;

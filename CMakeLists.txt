@@ -6043,6 +6043,7 @@ set(_unit_test_names
     lv_lag_view_own_shells
     lv_lag_view_lost_owner
     lv_lag_view_map
+    lv_base_spots
     lv_shell_owner_recording
     lv_shell_owner_rules
     lv_shell_owner_real_flight

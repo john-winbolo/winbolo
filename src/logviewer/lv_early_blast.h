@@ -7,7 +7,7 @@
  *Name:          Log Viewer early blast
  *Filename:      lv_early_blast.h
  *Purpose:
- *  The lag view option "Toggle Screen-True Local Explosions",
+ *  The lag view option "Screen-True Local Explosions",
  *  off by default. It shows what the player would see if the
  *  game did this: when a player's own shell ends, that player's
  *  client draws the explosion at once where its own shell
@@ -59,8 +59,8 @@
 
 #include "lv_shell_owner.h"
 
-/* Whether the early blast is drawn: "Toggle Screen-True Local Explosions"
-   (screenTrueExpl) is on, and so is "Toggle Screen-True Own Shells"
+/* Whether the early blast is drawn: "Screen-True Local Explosions"
+   (screenTrueExpl) is on, and so is "Screen-True Own Shells"
    (screenTrueShells), as the early blast starts where the own shells drawn
    from the present frame end. */
 static inline bool lv_earlyBlastOn(bool screenTrueShells, bool screenTrueExpl) {
