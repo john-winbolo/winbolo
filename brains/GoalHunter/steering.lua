@@ -6498,6 +6498,7 @@ local function steer_core(state, world, info, goal)
                                    _dbr and info.gunrange or nil, _dbr or nil) then
               taps = bit.bor(taps, KEY_SHOOT)
               shot_fired = true
+              state._shot_src = "n"   -- C.TEST_SHOT_SOURCE_SAY
               if BRAIN_DEBUG_MODE then
                 viz.line("tank_combat_viz", info.tankx / 256.0, info.tanky / 256.0,
                   et.mx + 0.5, et.my + 0.5, 255, 255, 0, 120)

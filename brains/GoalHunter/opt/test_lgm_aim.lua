@@ -48,7 +48,8 @@ local KL = require("kill_lgm")
 local KNOBS = { "LGM_AIM_KEYS_IN_FLIGHT", "LGM_AIM_DELAY_EST", "LGM_AIM_LAUNCH_POSE",
                 "LGM_AIM_TURN_RULE", "LGM_AIM_SEARCH_MOVE", "LGM_AIM_SIGHT_TAP",
                 "LGM_TELEPORT_REPEAT_VIEW", "LGM_AIM_LEAD_CONVERGE",
-                "LGM_SHELL_MODEL_RULES", "LGM_FIRE_LOS_STRICT", "LGM_LEAD_STOP_RETURN" }
+                "LGM_SHELL_MODEL_RULES", "LGM_FIRE_LOS_STRICT", "LGM_LEAD_STOP_RETURN",
+                "LGM_AIM_DELAY_CONFIRM" }
 -- t[k] = false turns one knob off for a test that looks at another fix
 -- alone. In "old" mode every knob is off whatever t says.
 local function cfg(t)
@@ -678,6 +679,60 @@ do
   end
   check("overdue stand: the aim is in his tile every tick",
         on == n, string.format("%d/%d; worst %.0f wu from him at tick %d", on, n, worst, worst_t))
+end
+
+-- ── 15. delay confirm (LGM_AIM_DELAY_CONFIRM) ────────────────────────────
+-- The fire check may fire only once D has LGM_AIM_DELAY_WINDOW / 2 samples
+-- in the window; a change of D makes it wait again for the new D.
+print("15. delay confirm (LGM_AIM_DELAY_CONFIRM)")
+if OLD then
+  cfg()
+  check("knob off: always confirmed", LA.delay_confirmed({}) == true, LA.delay_confirmed({}))
+else
+  for _, Dreal in ipairs({ 1, 3 }) do
+    cfg({ D0 = 1 })
+    local e = new_engine({ D = Dreal, gun = 8 })
+    local st = {}
+    local first_conf, changes, lastD = nil, 0, LA.delay(st)
+    local conf_on_wrong = false
+    check(string.format("real delay %d: not confirmed before any sample", Dreal),
+          LA.delay_confirmed(st) == false, LA.delay_confirmed(st))
+    for t = 1, 160 do
+      local ty = -128 * (6 + 4 * math.sin(t / 7))
+      think(st, e, t, 300 * math.sin(t / 11), ty, false)
+      local D = LA.delay(st)
+      if D ~= lastD then changes = changes + 1; lastD = D end
+      if LA.delay_confirmed(st) then
+        if not first_conf then first_conf = t end
+        if D ~= Dreal then conf_on_wrong = true end
+      end
+    end
+    check(string.format("real delay %d: confirmed in the end on D %d", Dreal, Dreal),
+          LA.delay_confirmed(st) and LA.delay(st) == Dreal,
+          string.format("D %d, first confirm at think %s, %d change(s)", LA.delay(st),
+                        tostring(first_conf), changes))
+    -- NOTE (2026-11-22): the flag needs only n_min samples on the present
+    -- D, not the lowest error. With a real delay 3, D = 1 gets its 16
+    -- samples first (at think 9, 7 errors) and is confirmed until D moves
+    -- on. Shown here, not checked: Andrew's spec is n_min samples.
+    print(string.format("  note real delay %d: %s", Dreal,
+      conf_on_wrong and "confirmed on a wrong D for a while (n_min samples, not the lowest error)"
+                    or "never confirmed on a wrong D"))
+  end
+  -- The flag and the two ways round it.
+  cfg({ D0 = 1 })
+  local st = {}
+  local s = LA.st_of(st)
+  s.confirmed = true
+  check("confirmed with the flag set", LA.delay_confirmed(st) == true)
+  s.confirmed = false
+  check("not confirmed with the flag clear", LA.delay_confirmed(st) == false)
+  C.LGM_AIM_DELAY_CONFIRM = false
+  check("knob off: confirmed whatever the flag", LA.delay_confirmed(st) == true)
+  C.LGM_AIM_DELAY_CONFIRM = true
+  C.LGM_AIM_DELAY_EST = false
+  check("LGM_AIM_DELAY_EST off (fixed D): confirmed", LA.delay_confirmed(st) == true)
+  cfg()
 end
 
 print(string.format("\n%d passed, %d failed", pass, fail))

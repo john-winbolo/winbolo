@@ -5850,6 +5850,7 @@ local function steer_core(state, world, info, goal)
                                    _dbr and info.gunrange or nil, _dbr or nil) then
               taps = bit.bor(taps, KEY_SHOOT)
               shot_fired = true
+              state._shot_src = "n"   -- C.TEST_SHOT_SOURCE_SAY
               break
             end
           end

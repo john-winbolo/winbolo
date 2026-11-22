@@ -6838,6 +6838,7 @@ function Brain.think(info)
                                        C.DRIVEBY_REQUIRE_REACH and info.gunrange or nil,
                                        C.DRIVEBY_REQUIRE_REACH or nil) then
             taps = bit.bor(taps, KEY_SHOOT)
+            state._shot_src = "t"   -- C.TEST_SHOT_SOURCE_SAY
             log.event("opportunistic_tank_shot",
               string.format("at(%d,%d) dist=%d aim=%.0f",
                             et.mx, et.my, et.dist, aim_corr))
@@ -7047,11 +7048,15 @@ function Brain.think(info)
             _ev.status = "dest_hold"
           elseif impact_off > KILL_WU then
             _ev.status = "gunrange_off"
+          elseif C.LGM_AIM_DELAY_CONFIRM and not require("lgm_aim").delay_confirmed(state) then
+            -- C.LGM_AIM_DELAY_CONFIRM: the delay D has too few samples yet.
+            _ev.status = "delay_unconfirmed"
           elseif _shoot_busy or _already_fired then
             _ev.status = "ready_busy"
           else
             _ev.status = "shooting"
             taps = bit.bor(taps, KEY_SHOOT)
+            state._shot_src = "k"   -- C.TEST_SHOT_SOURCE_SAY
             _already_fired = true
             if C.LGM_AIM_LAUNCH_POSE then
               require("lgm_aim").note_fire(state, now, keys, taps)
@@ -9517,6 +9522,9 @@ function Brain.think(info)
   do
     local LA = require("lgm_aim")
     keys, taps = LA.freeze_fire_keys(state, keys, taps, now)
+    -- C.TEST_SHOT_SOURCE_SAY (test only): which code pressed fire, told to
+    -- the arena in chat. Before note_sent: these are the think's own keys.
+    send_msg, msg_dest = LA.note_shot_source(state, info, keys, taps, now, send_msg, msg_dest)
     keys, taps = LA.note_sent(state, info, keys, taps, now)
   end
 

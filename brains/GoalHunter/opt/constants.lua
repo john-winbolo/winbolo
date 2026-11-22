@@ -3433,6 +3433,15 @@ M.LGM_AIM_TURN_RULE       = true  -- search turns at the terrain turn rate + eng
                                   -- not KILL_LGM_TURN_DELTA
 M.LGM_AIM_SEARCH_MOVE     = true  -- search moves speed/4 wu a think (engine), not speed wu
 M.LGM_AIM_SIGHT_TAP       = true  -- search may tap the sight one step (odd sight lengths)
+-- LGM_AIM_DELAY_CONFIRM: the kill-LGM fire check holds fire until the delay
+-- measure has confirmed D: D has LGM_AIM_DELAY_WINDOW / 2 (16) samples in
+-- the window. Confirmed stays set until D changes; after a change, fire
+-- holds again until the new D is confirmed (lgm_aim.delay_confirmed).
+-- lgm_kill_lag_near (2026-11-22): job 1 of every 3-tick game fired at
+-- t=158 on D=4 (true delay 3) and the shell left at sight 6, not 4.
+-- Andrew's yes (Nov 22, item 13 idea 3). false = fire on any D. KEEL /
+-- MAST: false.
+M.LGM_AIM_DELAY_CONFIRM   = true
 -- Teleport check of the man's velocity (kill_lgm.update_velocity): a man
 -- seen at the same place for n thinks (a repeated snapshot) may then move
 -- up to n x 16 wu; the velocity is kept. false = any jump > 16 wu resets it.
@@ -3468,6 +3477,10 @@ M.SHELL_MODEL_RULES_ALL   = true
 -- TEST ONLY: hold our own keys back this many thinks before the engine gets
 -- them (a remote seat's delay on a local server). 0 = off. Never in a game.
 M.TEST_KEY_DELAY_THINKS   = 0
+-- TEST_SHOT_SOURCE_SAY (test only, 2026-11-22): the brain tells the arena in
+-- chat which code pressed fire (lgm_aim.note_shot_source). Only the
+-- lgm_kill_lag arenas turn it on (cfg token). Off = no message.
+M.TEST_SHOT_SOURCE_SAY    = false
 -- ── LGM destination aim (2026-09-25) ──────────────────────────────────────
 -- An enemy builder walks a straight line from where his tank stood to the
 -- CENTRE of the tile he was sent to (lgm.c lgmNewPrimaryRequest sets destX/Y
@@ -8233,6 +8246,7 @@ M.PRESETS = {
     LGM_AIM_TURN_RULE = false,
     LGM_AIM_SEARCH_MOVE = false,
     LGM_AIM_SIGHT_TAP = false,
+    LGM_AIM_DELAY_CONFIRM = false,
     LGM_TELEPORT_REPEAT_VIEW = false,
     LGM_AIM_LEAD_CONVERGE    = false,
     LGM_SHELL_MODEL_RULES    = false,
@@ -8601,6 +8615,7 @@ M.PRESETS.mast = {
   LGM_AIM_TURN_RULE                 = false,
   LGM_AIM_SEARCH_MOVE               = false,
   LGM_AIM_SIGHT_TAP                 = false,
+  LGM_AIM_DELAY_CONFIRM             = false,  -- 2.2.1 had no delay measure
   LGM_TELEPORT_REPEAT_VIEW          = false,  -- 2.2.1: any 32 wu jump resets the velocity
   LGM_AIM_LEAD_CONVERGE             = false,  -- 2.2.1: two-pass lead, only lengthens
   LGM_SHELL_MODEL_RULES             = false,  -- 2.2.1: shell bursts at 128 * sight

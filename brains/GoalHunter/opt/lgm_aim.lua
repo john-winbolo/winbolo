@@ -51,6 +51,8 @@ local bit = require('bitcompat')
 --                           up to launch
 --   LGM_AIM_SIGHT_TAP       the search may also TAP the sight (one step), so
 --                           an odd sight length can be reached
+--   LGM_AIM_DELAY_CONFIRM   the fire check holds fire until D has
+--                           LGM_AIM_DELAY_WINDOW / 2 samples (M.delay_confirmed)
 -- TEST_KEY_DELAY_THINKS (test only, default 0) holds our keys back that many
 -- thinks before the engine gets them, to play a remote seat's delay on a
 -- local server.
@@ -420,7 +422,67 @@ local function choose(s, now)
   end
   if best ~= s.D then
     s.D = best
+    -- C.LGM_AIM_DELAY_CONFIRM: a new D starts unconfirmed.
+    s.confirmed = false
   end
+  -- C.LGM_AIM_DELAY_CONFIRM: D is confirmed once it has n_min samples in the
+  -- window; it stays confirmed until D changes.
+  if not s.confirmed and N[s.D] >= n_min then
+    s.confirmed = true
+  end
+end
+
+-- C.TEST_SHOT_SOURCE_SAY (test only, default false): tell the arena which
+-- code pressed fire. A think whose keys or taps hold KEY_SHOOT is recorded
+-- with state._shot_src (set where the fire bit is set: k = the kill-LGM fire
+-- check, t = init.lua's opportunistic tank shot, n = steering's drive-by),
+-- else o (any other code). When info.shells drops (a shell left), the
+-- records not yet told go out in one chat line to our own player:
+--   "shotsrc <tick>[-<tick>]:<code> ..."
+-- (a run of ticks with one code is one item). The line waits while the think
+-- already has a message. Returns send_msg, msg_dest for the think.
+local SHOT_SRC_MAX_LEN = 120
+function M.note_shot_source(state, info, keys, taps, now, send_msg, msg_dest)
+  local src = state._shot_src
+  state._shot_src = nil
+  if not C.TEST_SHOT_SOURCE_SAY then return send_msg, msg_dest end
+  local s = st_of(state)
+  local q = s.src_q
+  if not q then q = {}; s.src_q = q end
+  if bit.band(bit.bor(keys, taps), KEY_SHOOT) ~= 0 then
+    local c = src or "o"
+    local last = q[#q]
+    if last and last.c == c and last.b == now - 1 then last.b = now
+    else q[#q + 1] = { a = now, b = now, c = c } end
+  end
+  local sh = info.shells or 0
+  if s.src_shells and sh < s.src_shells then s.src_due = true end
+  s.src_shells = sh
+  if s.src_due and not send_msg and #q > 0 then
+    local parts, len = {}, 8
+    while #q > 0 do
+      local r = q[1]
+      local item = (r.a == r.b) and string.format("%d:%s", r.a, r.c)
+                   or string.format("%d-%d:%s", r.a, r.b, r.c)
+      if len + #item + 1 > SHOT_SRC_MAX_LEN then break end
+      parts[#parts + 1] = item
+      len = len + #item + 1
+      table.remove(q, 1)
+    end
+    s.src_due = #q > 0
+    return "shotsrc " .. table.concat(parts, " "), bit.lshift(1, state.player_number or 0)
+  end
+  return send_msg, msg_dest
+end
+
+-- C.LGM_AIM_DELAY_CONFIRM (2026-11-22): may the kill-LGM fire check fire on
+-- the present D? Not before D has n_min (LGM_AIM_DELAY_WINDOW / 2) samples
+-- in the window, the first time and again after each change of D. True
+-- with the knob off, or with LGM_AIM_DELAY_EST off (D is then the fixed
+-- LGM_AIM_DELAY_DEFAULT).
+function M.delay_confirmed(state)
+  if not (C.LGM_AIM_DELAY_CONFIRM and C.LGM_AIM_DELAY_EST) then return true end
+  return st_of(state).confirmed and true or false
 end
 
 local function any_on()

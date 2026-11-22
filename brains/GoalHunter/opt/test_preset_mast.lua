@@ -888,6 +888,7 @@ local R221 = {
   LGM_AIM_TURN_RULE = false,
   LGM_AIM_SEARCH_MOVE = false,
   LGM_AIM_SIGHT_TAP = false,
+  LGM_AIM_DELAY_CONFIRM = false,
   LGM_TELEPORT_REPEAT_VIEW = false,
   LGM_AIM_LEAD_CONVERGE    = false,
   LGM_SHELL_MODEL_RULES    = false,

@@ -60,9 +60,25 @@
 -- is where he was on the frame before the burst (the builder test is one
 -- tick back, shells.c SHELL_LGM_REWIND_LESS).
 --
+-- THE SHELL SOURCE (2026-11-22). The brain tells the arena in chat which
+-- code pressed fire on each think (cfg=TEST_SHOT_SOURCE_SAY, lgm_aim
+-- note_shot_source): k = the kill-LGM fire check, t / n = a drive-by tank
+-- shot (init.lua / steering.lua), o = other. A shell first seen on frame f
+-- was pressed on think f - LKL_KEY_DELAY. Each shell line shows its source.
+-- The job counts, the phase tallies and the fire range count only kill-LGM
+-- shells (k); a kill by any other shell is a "d" in the job list. A shell
+-- with no source told is "?" and is counted as a kill-LGM shell.
+--
+-- THE REWIND PROBE (2026-11-22). Each shell line also gives "scr": the burst
+-- to the man on the burst frame, which is what a bot in the server sees.
+-- "man" is the burst to the man one frame before, where the server tests
+-- him. On the frame he dies his place is his last step carried on. The end line counts the kill-LGM shells where the two places give a
+-- different answer (within 128 wu or not) and which one the death agreed
+-- with.
+--
 -- THE VERDICT. A job is a FIRST-SHELL KILL when the builder dies to the
--- first shell our tank fires in that job; the kill goes to the shell whose
--- burst frame is nearest the death frame. PASS when at least NEED_FIRST of
+-- first kill-LGM shell our tank fires in that job; the kill goes to the
+-- shell whose burst frame is nearest the death frame. PASS when at least NEED_FIRST of
 -- the TRIALS jobs are first-shell kills, at least NEED_KILLS jobs end with
 -- the builder dead, every shell that ran out burst within 16 wu of the
 -- model burst, and (LKL_PILL) no shell hit the pillbox on his
@@ -114,6 +130,12 @@ local ph_shots = { walk = 0, stop = 0, back = 0 }
 local ph_hits = { walk = 0, stop = 0, back = 0 }
 local sb_shots, sb_hits = 0, 0
 local fire_n, fire_min, fire_max = 0, math.huge, 0   -- tank to man at fire, squares
+local src_by_tick = {}            -- brain think -> shot source code (on_chat)
+local src_n = {}                  -- shells by source
+local drive_kills = 0             -- jobs ended by a shell that was not kill-LGM
+-- the rewind probe: kill-LGM shells where the server place (man) and the
+-- present place (scr) disagree, and which one the death agreed with
+local rw_split, rw_srv_ok, rw_scr_ok = 0, 0, 0
 
 local function opt(name, dflt)
   local v = _G[name]
@@ -141,6 +163,17 @@ function can_target(g, pill, p)
   return false
 end
 
+-- The brain's shot source line: "shotsrc <tick>[-<tick>]:<code> ...".
+function on_chat(g, p, text, scripted)
+  if p ~= US or scripted then return end
+  local body = text:match("shotsrc (.*)$")
+  if not body then return end
+  for a, b, c in body:gmatch("(%d+)%-?(%d*):(%a)") do
+    a = tonumber(a); b = tonumber(b) or a
+    for t = a, b do src_by_tick[t] = c end
+  end
+end
+
 function on_lgm_died(g, p, killer, mx, my, scripted)
   if p == FOE and phase == "out" and not died then
     died = { killer = killer, frame = frame }
@@ -151,6 +184,7 @@ end
 -- first and sets them in its own body after.
 local function tokens()
   local t = PINS .. ";cfg=TEST_KEY_DELAY_THINKS=" .. tostring(opt("LKL_KEY_DELAY", 2))
+          .. ";cfg=TEST_SHOT_SOURCE_SAY=true"
   local extra = opt("LKL_TOKENS", "")
   if extra ~= "" then t = t .. ";" .. extra end
   return t
@@ -214,6 +248,12 @@ local function place(g)
   arrived, died, pill_armour = nil, nil, nil
 end
 
+-- The source of a shot: the brain's code for the think that pressed fire.
+local function src_of(s)
+  return src_by_tick[s.frame - opt("LKL_KEY_DELAY", 2)] or "?"
+end
+local function is_kill_shot(s) local c = src_of(s); return c == "k" or c == "?" end
+
 -- the shot that killed the man: the one whose burst frame is nearest
 local function killing_shot()
   if not died or died.killer ~= US then return nil end
@@ -230,11 +270,19 @@ end
 local function finish(g, why)
   if pill_n then g.remove_pill(pill_n); pill_n = nil end
   local k, kd = killing_shot()
-  local first = k == 1
-  if died and died.killer == US then kills = kills + 1 end
+  -- the first kill-LGM shell of the job
+  local first_k = nil
+  for i, s in ipairs(shots) do
+    if is_kill_shot(s) then first_k = i; break end
+  end
+  local by_k = k and is_kill_shot(shots[k])
+  local first = k ~= nil and k == first_k
+  if died and died.killer == US then
+    if k and not by_k then drive_kills = drive_kills + 1 else kills = kills + 1 end
+  end
   if first then first_kills = first_kills + 1 end
   local dph = died and (man_ph[died.frame - 1] or man_ph[died.frame]) or "-"
-  results[#results + 1] = first and "1" or (died and "k" or "-")
+  results[#results + 1] = first and "1" or (died and (by_k == false and "d" or "k") or "-")
   g.log(string.format("LKL job %d dir=%d: %s, %d shots", trial, A.dir,
     died and string.format("died f+%d in %s killer=%s shell=%s (burst off %s)",
                            died.frame - A.out_at, dph, tostring(died.killer),
@@ -244,8 +292,11 @@ local function finish(g, why)
   -- fire frame after the order, man phase at the burst, sight, real burst
   -- to the model burst, real burst to the man.
   for i, s in ipairs(shots) do
+    local src = src_of(s)
+    local ks = is_kill_shot(s)
+    src_n[src] = (src_n[src] or 0) + 1
     local fm = man_at[s.frame - 1] or man_at[s.frame]
-    if fm and not s.stray then
+    if fm and not s.stray and ks then
       local r = math.sqrt((fm[1] - s.gx) ^ 2 + (fm[2] - s.gy) ^ 2) / 256
       fire_n = fire_n + 1
       if r < fire_min then fire_min = r end
@@ -255,24 +306,41 @@ local function finish(g, why)
     local ph = s.burst and (man_ph[s.burst - 1] or man_ph[s.burst]) or "?"
     local m = s.burst and (man_at[s.burst - 1] or man_at[s.burst])
     local man_d = (m and s.rx) and math.sqrt((s.rx - m[1]) ^ 2 + (s.ry - m[2]) ^ 2)
-    if ph_shots[ph] then
+    -- On the burst frame of the shell that killed him he is no longer
+    -- recorded: his place then is one more step of his last move.
+    local mn = s.burst and man_at[s.burst]
+    if not mn and m and s.burst then
+      local m2 = man_at[s.burst - 2]
+      if m2 then mn = { 2 * m[1] - m2[1], 2 * m[2] - m2[2] } end
+    end
+    local scr_d = (mn and s.rx) and math.sqrt((s.rx - mn[1]) ^ 2 + (s.ry - mn[2]) ^ 2)
+    if ks and man_d and scr_d and ((man_d <= 128) ~= (scr_d <= 128)) then
+      rw_split = rw_split + 1
+      local dead = (k == i)
+      if (man_d <= 128) == dead then rw_srv_ok = rw_srv_ok + 1 end
+      if (scr_d <= 128) == dead then rw_scr_ok = rw_scr_ok + 1 end
+    end
+    if not ks then
+      -- not a kill-LGM shell: shown, not counted
+    elseif ph_shots[ph] then
       ph_shots[ph] = ph_shots[ph] + 1
       if man_d and man_d <= 128 then ph_hits[ph] = ph_hits[ph] + 1 end
     end
     -- Fired while he stands, burst once he walks back: the shells the
     -- stop-and-return lead is for.
     local fph = man_ph[s.frame - 1] or man_ph[s.frame] or "?"
-    if fph == "stop" and ph == "back" then
+    if ks and fph == "stop" and ph == "back" then
       sb_shots = sb_shots + 1
       if man_d and man_d <= 128 then sb_hits = sb_hits + 1 end
     end
     -- man: burst to the man, and (dx, dy) the burst less the man, wu
-    g.log(string.format("LKL  shell %d f+%d r%s %s>%s sight %d %s model %s man %s%s%s", i,
+    g.log(string.format("LKL  shell %d %s f+%d r%s %s>%s sight %d %s model %s man %s%s scr %s%s", i, src,
       s.frame - A.out_at, s.range and string.format("%.1f", s.range) or "-",
       fph, ph, s.sight, s.expired and "ran out" or "hit",
       s.model_err and string.format("%+.0f", s.model_err) or "-",
       man_d and string.format("%.0f", man_d) or "-",
       man_d and string.format(" (%+.0f,%+.0f)", s.rx - m[1], s.ry - m[2]) or "",
+      scr_d and string.format("%.0f", scr_d) or "-",
       s.pill and " PILL" or ""))
   end
 end
@@ -463,6 +531,13 @@ function on_tick(g, tick)
         sb_hits, sb_shots))
       g.log(string.format("LKL fire range (tank to man as the shell leaves): %d shells, %.1f-%.1f squares",
         fire_n, fire_n > 0 and fire_min or 0, fire_max))
+      local sn = {}
+      for c, n in pairs(src_n) do sn[#sn + 1] = c .. "=" .. n end
+      table.sort(sn)
+      g.log(string.format("LKL shell sources: %s; kills by other shells %d",
+        table.concat(sn, " "), drive_kills))
+      g.log(string.format("LKL rewind probe: %d kill-LGM shells split (man/scr); death agrees with man %d, scr %d",
+        rw_split, rw_srv_ok, rw_scr_ok))
       -- (a verdict line is cut at VERDICT_MAX, so the words are short)
       verdict(first_kills >= need_first and kills >= need_kills and model_bad == 0
               and (not pill or pill_wasted == 0), string.format(
