@@ -346,6 +346,53 @@ function M.after_scan(a)
   return finish(a, inp, res, clock_us() - t0)
 end
 
+-- ── SHIELD_SCAN_PENDING_SURVIVES_V2: v2 in one go, across a budget kill ──
+-- With PT2_AFTER_SCAN_SPLIT off, attack.lua runs v2 in one go on the plan
+-- tick, after v1's shield.scan. Before, attack.lua cleared
+-- goal._shield_scan_pending before that run and set goal._shield_scan only
+-- after it, so a budget kill inside v2 left neither: the next tick drove in
+-- with no plan (20261121_002624, bot1 t=9247 and t=9685: a safe double take
+-- found, no walls built). With the knob on:
+--   * attack.lua keeps the flag until goal._shield_scan is set
+--     (M.keeps_pending), as the split run does;
+--   * the next tick takes v1's answer from v1's own cache (same scan key,
+--     SHIELD_SCAN_CACHE_TICKS) and runs v2 again with a fresh budget;
+--   * a marker written before the run counts the kills on this scan key;
+--     after SHIELD_SCAN_BLACKLIST_TRIES kills v2 is given up for the key
+--     and v1's answer stands (as an evaluator error does). The marker goes
+--     when a run ends, when the key changes, or after
+--     SHIELD_SCAN_BLACKLIST_TICKS.
+-- Off: after_scan as before.
+function M.keeps_pending(split_pa)
+  return (split_pa or C.SHIELD_SCAN_PENDING_SURVIVES_V2) and true or false
+end
+
+function M.one_go(a, key)
+  if not C.SHIELD_SCAN_PENDING_SURVIVES_V2 then return M.after_scan(a) end
+  if not v2_wanted(a.goal) then return a.sscan end
+  local st = a.state or {}
+  local now = a.now or 0
+  local att = st._pt2_v2_attempt
+  if att and (att.key ~= key or now - (att.tick or 0) > (C.SHIELD_SCAN_BLACKLIST_TICKS or 250)) then
+    att = nil
+    st._pt2_v2_attempt = nil
+  end
+  if att and (att.count or 0) >= (C.SHIELD_SCAN_BLACKLIST_TRIES or 2) then
+    if C.PILLTAKE_V2_EVALUATOR then a.goal._pt2 = nil end
+    M.last_run = { parts = 1, work = 0, kills = att.count, ticks = 0, giveup = "kills" }
+    return a.sscan
+  end
+  if att then
+    att.count, att.tick = (att.count or 0) + 1, now
+  else
+    st._pt2_v2_attempt = { key = key, count = 1, tick = now }
+  end
+  -- a budget kill unwinds from here with the marker set
+  local out = M.after_scan(a)
+  st._pt2_v2_attempt = nil
+  return out
+end
+
 -- ── PT2_AFTER_SCAN_SPLIT: v2 after the shield scan, in parts over ticks ──
 -- The plan tick (attack.lua's deferred shield scan) runs only v1's
 -- shield.scan. v2 runs on the next brain ticks, in parts: part 0 is

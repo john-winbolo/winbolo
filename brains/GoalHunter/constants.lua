@@ -1197,6 +1197,15 @@ M.PT2_AFTER_SCAN_SPLIT = true
 -- fine if it takes up to 5 ticks". A tick killed by the budget is not a
 -- work tick.
 M.PT2_AFTER_SCAN_MAX_TICKS = 5
+-- SHIELD_SCAN_PENDING_SURVIVES_V2 (Nov 22, Andrew: "Fix it"): with
+-- PT2_AFTER_SCAN_SPLIT off, v2 runs in one go on the plan tick. true: keep
+-- goal._shield_scan_pending until goal._shield_scan is set, so a budget kill
+-- inside v2 keeps the take in its plan; the next tick takes v1's answer from
+-- v1's cache and runs v2 again; after SHIELD_SCAN_BLACKLIST_TRIES kills on
+-- the same scan key v1's plan stands (pt2_attack.one_go). false = the flag
+-- cleared before v2, so a kill there left no plan and the tank drove in
+-- with no walls (20261121_002624 bot1 t=9247) (KEEL, MAST).
+M.SHIELD_SCAN_PENDING_SURVIVES_V2 = true
 -- PT2_CAPTURE_FILE (debug only): a file path. When set, every v2 evaluate
 -- appends its inputs and the Lua result to the file, for the parity test
 -- cases. "" = off.
@@ -8157,6 +8166,8 @@ M.PRESETS = {
     LGM_FIRE_LOS_STRICT      = false,
     LGM_LEAD_STOP_RETURN     = false,
     SHELL_MODEL_RULES_ALL    = false,
+    --   2026-11-22: a budget kill in v2 (one go) loses the plan (old rule).
+    SHIELD_SCAN_PENDING_SURVIVES_V2 = false,
     --   2026-11-17: hold 15 ticks with no goal after a kill (old rule).
     POST_KILL_WAIT_TICKS = 15,
     --   2026-11-17: carrying-pill approach floor 30 (old rule).
@@ -8512,6 +8523,7 @@ M.PRESETS.mast = {
   LGM_FIRE_LOS_STRICT               = false,  -- 2.2.1: line check stops at the man's tile
   LGM_LEAD_STOP_RETURN              = false,  -- 2.2.1: no stop-and-return lead
   SHELL_MODEL_RULES_ALL             = false,  -- 2.2.1: other shell sites at 128 * sight
+  SHIELD_SCAN_PENDING_SURVIVES_V2   = false,  -- 2.2.1 had no pill take v2
   POST_KILL_WAIT_TICKS              = 15,
   CARRY_APPROACH_MIN_ARMOUR_ONE     = 30,
   CARRY_APPROACH_MIN_ARMOUR_MANY    = 30,

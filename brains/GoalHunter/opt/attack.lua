@@ -6306,9 +6306,11 @@ local function update_attack_substate_body(goal, state, world, info)
           sscan = nil
         end
       end
-      -- PT2_AFTER_SCAN_SPLIT: the flag stays until goal._shield_scan is set
-      -- below, so a budget kill in v2 keeps the take in its plan.
-      if not _split_pa then goal._shield_scan_pending = nil end
+      -- PT2_AFTER_SCAN_SPLIT and C.SHIELD_SCAN_PENDING_SURVIVES_V2 (v2 in one
+      -- go): the flag stays until goal._shield_scan is set below, so a budget
+      -- kill in v2 keeps the take in its plan (pt2_attack.one_go).
+      local _keep_pending = require("pt2_attack").keeps_pending(_split_pa)
+      if not _keep_pending then goal._shield_scan_pending = nil end
       -- Pill take v2 (pt2_attack.lua). Master off: in a debug run, v2 runs on
       -- the same inputs and logs PT2_CMP; sscan comes back unchanged. Master
       -- on (C.PILLTAKE_V2_EVALUATOR): v2's safe plan replaces v1's.
@@ -6325,7 +6327,7 @@ local function update_attack_substate_body(goal, state, world, info)
           if not _ready then goto shield_split_wait end
           sscan = _out
         else
-          sscan = require("pt2_attack").after_scan(_a)
+          sscan = require("pt2_attack").one_go(_a, _scan_key)
         end
         -- v2 picked another pill of the target's group to shoot (its chain
         -- kills the target too): this take now aims at that pill.
@@ -6340,10 +6342,8 @@ local function update_attack_substate_body(goal, state, world, info)
       end
       if sscan then sscan.created_tick = now end
       goal._shield_scan = sscan
-      if _split_pa then
-        goal._shield_scan_pending = nil
-        _split_pa.split_done(goal)
-      end
+      if _keep_pending then goal._shield_scan_pending = nil end
+      if _split_pa then _split_pa.split_done(goal) end
       if sscan and sscan.best then
         local w = sscan.best
         -- Belt and braces on top of the filter inside shield.scan: never adopt a
