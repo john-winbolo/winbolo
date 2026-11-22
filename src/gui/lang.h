@@ -3096,8 +3096,8 @@
  * at the end of the file, and tank_deep_sea_safe took the next free one
  * after those. tank_hit_sets_off_mines took the next free one at the end of
  * the file after that, and man_dead_pill_terrain_speed took the next free one
- * at the end of the file after that. lgm_blast_shape took 3478, past the
- * ids other open branches use. The
+ * at the end of the file after that. lgm_blast_shape took 3478; 3429 to
+ * 3477 are left free. The
  * order of the block is SIM_RULE_LIST's throughout, which is the order that
  * matters, and a hole in the numbers costs nothing: langTable is searched by
  * id rather than indexed by it. */

@@ -587,6 +587,27 @@ int run_wbn_map_fetch_policy(void);
 int run_brain_crash_log_writes_file(void);
 int run_brain_crash_log_falls_back_to_luaptr(void);
 int run_brain_push_rules_written_on_change(void);
+int run_brain_bounds_tail_bad_steps(void);
+int run_brain_bounds_tail_bad_neutral(void);
+int run_brain_bounds_think_errors(void);
+int run_brain_bounds_wrapper_called_from_lua(void);
+int run_brain_bounds_kill_outside_think(void);
+int run_brain_bounds_host_globals_raw(void);
+int run_brain_bounds_on_init_metatable(void);
+int run_brain_crash_log_outside_think(void);
+int run_brain_bounds_deserialize_open(void);
+int run_brain_bounds_next_step_bad_start(void);
+int run_brain_bounds_shells_at_bad_tile(void);
+int run_brain_bounds_push_replaced_info(void);
+int run_brain_bounds_stamps_bad_tables(void);
+int run_brain_bounds_threat_range(void);
+int run_brain_crash_log_ignores_brain_globals(void);
+int run_brain_sandbox_hostile_native_preloads(void);
+int run_brain_sandbox_hostile_bytecode_init(void);
+int run_brain_sandbox_hostile_loaders_removed(void);
+int run_brain_sandbox_hostile_astar_log_removed(void);
+int run_brain_sandbox_hostile_file_jail(void);
+int run_brain_sandbox_hostile_off_map_terrain(void);
 int run_brain_msgh_budget_kill_no_traceback(void);
 int run_brain_msgh_real_error_keeps_traceback(void);
 int run_brain_inbox_push_peek_fifo(void);
@@ -2423,6 +2444,18 @@ int run_lgm_kill_seen_out_no_record(void);
 int run_lgm_kill_seen_out_already_dead(void);
 int run_lgm_kill_seen_out_tank_hit_blast(void);
 int run_lgm_kill_seen_out_dead_tank(void);
+
+/* A blast on a pillbox's square against a builder (test_lgm_blast_dead_pill.c):
+ * a dead pill's square is open ground, so the blast kills within half a
+ * square across its edge and not in its far corner; a live pill's square is
+ * still solid. The shot that kills a pill is a hit on its square. */
+int run_lgm_blast_dead_pill_edge(void);
+int run_lgm_blast_dead_pill_far_corner(void);
+int run_lgm_blast_live_pill_unchanged(void);
+int run_lgm_blast_pill_kill_shot(void);
+int run_lgm_blast_shell_runs_out_dead_pill(void);
+int run_lgm_blast_shell_hits_tank_dead_pill(void);
+int run_lgm_blast_tank_explosion_kills_pill(void);
 
 /* A -braindebug server records each round into its own session dir
  * (test_braindbg_round_dir.c): the dir it named is cleared at game over, so
@@ -4527,6 +4560,7 @@ int run_scenario_compose_commit_map_keeps_operator_mod(void);
 int run_scenario_compose_commit_map_fixed_operator_mod(void);
 int run_scenario_compose_map_kind_cached(void);
 int run_scenario_compose_fallback_strict(void);
+int run_scenario_compose_mods_after_scenario_type(void);
 int run_scenario_compose_needs_bots_any_mod(void);
 int run_scenario_compose_needs_bots_scenario_and_mod(void);
 int run_scenario_compose_on_tick_bottom_first(void);

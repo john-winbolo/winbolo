@@ -346,6 +346,10 @@ static int l_naThreatConfigure(lua_State *L) {
         lua_pop(L, 1);
 
     READ_INT("PILL_RANGE_MAP",           ctx->pill_range_map);
+    /* The occlusion arrays are sized for MAX_DISK_R, and a scenario can set
+     * this constant with a cfg= token. */
+    if (ctx->pill_range_map < 0) ctx->pill_range_map = 0;
+    if (ctx->pill_range_map > MAX_DISK_R) ctx->pill_range_map = MAX_DISK_R;
     READ_INT("MIN_TREEHIDE_DIST_MAP",    ctx->min_treehide_dist);
     READ_NUM("PILL_DANGER_EDGE_FALLOFF", ctx->pill_danger_edge_falloff);
     READ_NUM("PILL_DANGER_BASE",         ctx->pill_danger_base);
@@ -802,6 +806,12 @@ float *naThreatGetCovGrid(lua_State *L) {
 
 int naThreatRawTT(lua_State *L, int mx, int my) {
     NaThreatCtx *ctx = getCtx(L);
+    /* Callers add a stamp's offset to a pill's tile, so this can be off the
+     * map. Only an index outside the map's memory is answered here, as the
+     * deep sea every map is ringed with: one that wraps to the next row
+     * reads as it always has. */
+    int64_t idx = (int64_t)my * MAP_W + mx;
+    if (idx < 0 || idx >= (int64_t)MAP_W * MAP_W) return ctx->t_deepsea;
     return raw_tt(ctx, mx, my);
 }
 

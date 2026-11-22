@@ -63,7 +63,7 @@ static const langid srdDescIds[] = {
  * free one after those, tank_hit_sets_off_mines took the next free one at
  * the end of the file after that, man_dead_pill_terrain_speed took the
  * next free one at the end of the file after that, and lgm_blast_shape took
- * 3478, past the ids other open branches use. See the block comment
+ * 3478, with 3429 to 3477 left free. See the block comment
  * in lang.h. */
 #define SRD_FIRST_ID  2345u
 #define SRD_LAST_ID   2425u

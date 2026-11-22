@@ -26,6 +26,31 @@
 set(WINBOLO_LUAJIT_LUAJIT_TAG   "faaf663340347a78b22ed94c63c24fe090bd9784"
     CACHE STRING "Pinned LuaJIT (v2.1 branch) commit to build")
 
+# LuaJIT extras that bot brains have no use for, compiled out of every build:
+# ffi calls any C function and reads or writes any address, so a brain that
+# reached it would be outside the brain sandbox altogether; jit.profile and
+# string.buffer are C code exposed to Lua that nothing here uses. The trace
+# compiler is untouched. Spelled as -D defines, which LuaJIT's Makefile takes
+# in XCFLAGS and cl.exe takes in the CL environment variable.
+set(BOLO_LUAJIT_LOCKDOWN_XCFLAGS
+    -DLUAJIT_DISABLE_FFI
+    -DLUAJIT_DISABLE_PROFILE
+    -DLUAJIT_DISABLE_BUFFER)
+
+# bolo_luajit_rebuild_on_change(<target> <switches>)
+#
+# ExternalProject runs a build step once and its stamp then holds it off, even
+# when the step's command changes, and LuaJIT's Makefile does not notice new
+# flags either. This writes <switches> -- the flags LuaJIT is built with -- to a
+# file the build step depends on, so changing them reruns the step in a tree
+# that already built LuaJIT. The step has to begin with a make clean for the
+# new flags to reach every object.
+function(bolo_luajit_rebuild_on_change _target _switches)
+    set(_file "${CMAKE_CURRENT_BINARY_DIR}/${_target}-switches.txt")
+    file(CONFIGURE OUTPUT "${_file}" CONTENT "${_switches}\n" @ONLY)
+    ExternalProject_Add_StepDependencies(${_target} build "${_file}")
+endfunction()
+
 # bolo_luajit_cross_build(<target>
 #     SOURCE_DIR   <dir>        the LuaJIT checkout; the Makefile builds in it
 #     OUTPUT_DIR   <dir>        receives libluajit.a and the step's stamps
@@ -37,7 +62,8 @@ set(WINBOLO_LUAJIT_LUAJIT_TAG   "faaf663340347a78b22ed94c63c24fe090bd9784"
 #     TARGET_SYS   <Linux|iOS>
 #     [TARGET_FLAGS <args...>]  flags for every target compile and link
 #     [XCFLAGS <args...>]       LuaJIT's own switches (-DLUAJIT_DISABLE_JIT,
-#                               ...). -fPIC is always on: the archive links
+#                               ...). BOLO_LUAJIT_LOCKDOWN_XCFLAGS are always
+#                               added. -fPIC is always on: the archive links
 #                               into a shared library on Android and a
 #                               position-independent app on iOS
 #     [ARCHES <arch...>]        Apple: one slice per architecture, built with
@@ -86,7 +112,7 @@ function(bolo_luajit_cross_build _target)
     string(JOIN " " _host_cc      ${_a_HOST_CC})
     string(JOIN " " _target_cc    ${_a_TARGET_CC})
     string(JOIN " " _target_flags ${_a_TARGET_FLAGS})
-    string(JOIN " " _xcflags      -fPIC ${_a_XCFLAGS})
+    string(JOIN " " _xcflags      -fPIC ${BOLO_LUAJIT_LOCKDOWN_XCFLAGS} ${_a_XCFLAGS})
     string(JOIN " " _arches       ${_a_ARCHES})
     set(_lib "${_a_OUTPUT_DIR}/libluajit.a")
 
@@ -116,5 +142,6 @@ function(bolo_luajit_cross_build _target)
         BUILD_ALWAYS      ${_always}
         INSTALL_COMMAND   ""
         BUILD_BYPRODUCTS  "${_lib}")
+    bolo_luajit_rebuild_on_change(${_target} "${_xcflags}")
     set(${_a_LIB_VAR} "${_lib}" PARENT_SCOPE)
 endfunction()

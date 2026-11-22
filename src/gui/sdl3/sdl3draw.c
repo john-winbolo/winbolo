@@ -2142,6 +2142,9 @@ void sdl3DrawCleanup(void) {
 
   /* ImGui cleanup before destroying renderer/window */
   sdl3ImguiCleanup();
+  /* The pop-out windows outlive each game (sdl3ImguiCleanup only hides
+     them) and go here, with the main renderer and window. */
+  sdl3ImguiDestroyPopOuts();
 
 #if !defined(__ANDROID__) && !defined(__IPHONEOS__)
   /* News popup teardown sits in this process-exit hook (not in

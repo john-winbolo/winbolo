@@ -9,9 +9,8 @@
  *
  *   0 "Half-square circle" — the WinBolo rule and the default: a circle of
  *     radius 128 world units (half a square), edge included.
- *   1 "Mac Bolo box" — |dx| < 128 and |dy| < 128, as Mac Bolo's
- *     drawexplosion routine tests it (explode() in the Go port), centre to
- *     centre.
+ *   1 "Mac Bolo box" — |dx| < 128 and |dy| < 128, centre to centre. Mac
+ *     Bolo tests each axis on its own in this way.
  *   2 "Mac Bolo equivalent area circle" — a circle of radius 144, edge
  *     included, about the area of the box.
  *
@@ -172,7 +171,7 @@ static bool lbsBlastKills(ServerSim *sim, WORLD lx, WORLD ly, WORLD wx,
     gs->lgmen[0]->y      = ly;
     lgmDeathCheckAtPosition(gs, &gs->lgmen[0], lx, ly, wx, wy, NEUTRAL,
                             NEUTRAL, DMG_SRC_UNKNOWN, DMG_NO_PILL,
-                            &gs->tanks[0]);
+                            &gs->tanks[0], FALSE);
     return gs->lgmen[0]->isDead != FALSE;
 }
 
