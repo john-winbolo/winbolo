@@ -45,6 +45,7 @@ typedef struct {
   char playerName[PLAYER_NAME_LEN]; /* Player name */
   PlayerBitMap pills;               /* pills and base ownership */
   PlayerBitMap bases;
+  BYTE team;                        /* Team the player was on when leaving, 0 for none */
   int timeOut;                     /* Time left */
 } playerRejoinInfo;
 
@@ -105,7 +106,19 @@ void playersRejoinUpdate();
 *ARGUMENTS:
 *
 *********************************************************/
-void playersRejoinAddPlayer(char *playerName, PlayerBitMap pills, PlayerBitMap bases);
+void playersRejoinAddPlayer(char *playerName, PlayerBitMap pills, PlayerBitMap bases, BYTE team);
+
+/*********************************************************
+*NAME:          playersRejoinGetTeam
+*PURPOSE:
+* Returns the team a rejoining player was on when leaving,
+* or 0 when there is no record for that name (none was
+* kept, or it has timed out). Leaves the record in place.
+*
+*ARGUMENTS:
+*  playerName - The player name requesting the rejoin
+*********************************************************/
+BYTE playersRejoinGetTeam(const char *playerName);
 
 /*********************************************************
 *NAME:          playersRejoinRequest

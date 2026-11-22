@@ -64,6 +64,14 @@
  *   infection_puts_leaver_back — Infection keeps a seat on its side
  *   rejoin_is_a_joiner        — a rejoin gets a free team and its neutral
  *                               pills
+ *   rejoin_keeps_team         — a rejoin goes back on its old team when it
+ *                               still has a player
+ *   rejoin_keeps_team_no_pills — the same for a player who owns nothing
+ *   rejoin_empty_team_is_new  — a rejoin whose old team emptied gets a
+ *                               free team
+ *   join_without_rejoin_is_new — a join not asking to rejoin is unchanged
+ *   rejoin_next_round_is_new  — a rejoin record does not last into the
+ *                               next round
  *   joiner_slot_before_join   — a joiner's team goes out before its join
  *   lobby_joiner_keeps_rule   — the lobby keeps the smallest-team pick
  *   lobby_drops_empty_teams   — the next lobby does not list a team the
@@ -109,6 +117,7 @@
 #include "scenario_panel.h"
 #include "threads.h"
 #include "players.h"
+#include "playersrejoin.h"
 #include "pillbox.h"
 #include "bases.h"
 #include "tank.h"
@@ -1096,10 +1105,11 @@ int run_team_sides_infection_puts_leaver_back(void) {
     return 0;
 }
 
-/* Seat 0 on team 1 and seat 1 alone on team 3, owning pills 1 and 2. Seat 1
-   drops, which leaves both pills neutral, and seat 0 takes pill 2. Seat 1
-   rejoins: it is a joiner (D11), so it gets the lowest free team, not team 3,
-   and only the pill that is still neutral comes back. */
+/* Player 0 on team 1 and player 1 alone on team 3, owning pills 1 and 2. Player 1
+   drops, which leaves both pills neutral and team 3 with nobody, and player 0
+   takes pill 2. Player 1 rejoins: it is a joiner (D11), and its old team is
+   empty, so it gets the lowest free team, not team 3, and only the pill
+   that is still neutral comes back. */
 int run_team_sides_rejoin_is_a_joiner(void) {
     const BYTE teams[2] = { 1, 3 };
     ServerSim *sim = tsRunningSim(teams, 2);
@@ -1132,6 +1142,245 @@ int run_team_sides_rejoin_is_a_joiner(void) {
                   "the pill seat 0 took went to %u",
                   (unsigned)gs->pb->item[1].owner);
     serverSimDestroy(sim);
+    return 0;
+}
+
+/* No pill and no base on the map is owned by slot. */
+static bool tsOwnsNothing(ServerSim *sim, BYTE slot) {
+    BYTE i, n = pillsGetNumPills(&sim->sim.pb);
+    for (i = 1; i <= n; i++) {
+        if (pillsGetPillOwner(&sim->sim.pb, i) == slot) return false;
+    }
+    n = basesGetNumBases(&sim->sim.bs);
+    for (i = 1; i <= n; i++) {
+        if (basesGetBaseOwner(&sim->sim.bs, i) == slot) return false;
+    }
+    return true;
+}
+
+/* Players 0 and 1 on team 1, player 2 on team 2. Player 1 owns a pill, drops and
+   rejoins: team 1 still has player 0, so player 1 is put back on team 1 by the
+   alliance accept, which goes out after its join. */
+int run_team_sides_rejoin_keeps_team(void) {
+    const BYTE teams[3] = { 1, 1, 2 };
+    ServerSim *sim = tsRunningSim(teams, 3);
+    TsEvents *cap = (TsEvents *)calloc(1, sizeof(TsEvents));
+    SubscriberHandle h;
+    int join, acc;
+
+    UT_ASSERT(sim != NULL && cap != NULL);
+    UT_ASSERT(pillsGetNumPills(&sim->sim.pb) >= 1);
+    sim->sim.pb->item[0].owner = 1;
+    serverSimRemovePlayer(sim, 1);
+
+    h = serverSimRegisterSubscriber(sim, tsCaptureAll, cap);
+    UT_ASSERT(h != SUBSCRIBER_HANDLE_INVALID);
+    memset(cap, 0, sizeof(*cap));
+    serverSimAddPlayer(sim, 1, "P1", true);
+
+    UT_ASSERT_MSG(tsTeam(sim, 1) == 1, "the rejoiner is on team %u",
+                  (unsigned)tsTeam(sim, 1));
+    UT_ASSERT(tsAllied(sim, 0, 1) && tsAllied(sim, 1, 0));
+    UT_ASSERT(!tsAllied(sim, 1, 2));
+    UT_ASSERT(tsTeam(sim, 0) == 1 && tsTeam(sim, 2) == 2);
+    UT_ASSERT(serverSimSidesAgree(sim));
+    join = tsFind(cap, 0, CTRL_PLAYER_JOIN);
+    acc  = tsFind(cap, 0, CTRL_ALLIANCE_ACCEPT);
+    UT_ASSERT_MSG(join >= 0 && acc > join,
+                  "the join and the accept went out at %d and %d", join, acc);
+    UT_ASSERT(cap->evts[acc].u.allianceAccept.newMember == 1);
+    UT_ASSERT(tsTeam(sim, cap->evts[acc].u.allianceAccept.acceptedBy) == 1);
+    UT_ASSERT(tsFindSlot(cap, acc, 1) > acc);
+
+    serverSimUnregisterSubscriber(sim, h);
+    serverSimDestroy(sim);
+    free(cap);
+    return 0;
+}
+
+/* The same with a player who owns no pill and no base: the team comes back
+   all the same. */
+int run_team_sides_rejoin_keeps_team_no_pills(void) {
+    const BYTE teams[3] = { 1, 1, 2 };
+    ServerSim *sim = tsRunningSim(teams, 3);
+
+    UT_ASSERT(sim != NULL);
+    UT_ASSERT(tsOwnsNothing(sim, 1));
+    serverSimRemovePlayer(sim, 1);
+    serverSimAddPlayer(sim, 1, "P1", true);
+    UT_ASSERT_MSG(tsTeam(sim, 1) == 1, "the rejoiner is on team %u",
+                  (unsigned)tsTeam(sim, 1));
+    UT_ASSERT(tsAllied(sim, 0, 1));
+    UT_ASSERT(!tsAllied(sim, 1, 2));
+    UT_ASSERT(serverSimSidesAgree(sim));
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* Player 0 on team 1, player 1 alone on team 4, player 2 on team 2. Player 1 drops,
+   which leaves team 4 with nobody, and rejoins: it gets the lowest free
+   team, team 3, not team 4, and no ally. */
+int run_team_sides_rejoin_empty_team_is_new(void) {
+    const BYTE teams[3] = { 1, 4, 2 };
+    ServerSim *sim = tsRunningSim(teams, 3);
+
+    UT_ASSERT(sim != NULL);
+    serverSimRemovePlayer(sim, 1);
+    serverSimAddPlayer(sim, 1, "P1", true);
+    UT_ASSERT_MSG(tsTeam(sim, 1) == 3, "the rejoiner is on team %u",
+                  (unsigned)tsTeam(sim, 1));
+    UT_ASSERT(!tsAllied(sim, 0, 1) && !tsAllied(sim, 1, 2));
+    UT_ASSERT(serverSimSidesAgree(sim));
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* A join that does not ask to rejoin is a plain joiner, as before: player 1
+   left team 1, which still has player 0, and comes back on the lowest free
+   team with no ally. */
+int run_team_sides_join_without_rejoin_is_new(void) {
+    const BYTE teams[3] = { 1, 1, 2 };
+    ServerSim *sim = tsRunningSim(teams, 3);
+
+    UT_ASSERT(sim != NULL);
+    serverSimRemovePlayer(sim, 1);
+    serverSimAddPlayer(sim, 1, "P1", false);
+    UT_ASSERT_MSG(tsTeam(sim, 1) == 3, "the joiner is on team %u",
+                  (unsigned)tsTeam(sim, 1));
+    UT_ASSERT(!tsAllied(sim, 0, 1) && !tsAllied(sim, 1, 2));
+    UT_ASSERT(serverSimSidesAgree(sim));
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* Players 0 and 1 on team 1, player 2 on team 2. Player 1 drops in round
+   1. The round ends and round 2 starts, where team 1 still has player 0.
+   Player 1 rejoins in round 2: the record from round 1 is gone, so player 1
+   gets a free team, not team 1. */
+int run_team_sides_rejoin_next_round_is_new(void) {
+    const BYTE teams[3] = { 1, 1, 2 };
+    ServerSim *sim = tsRunningSim(teams, 3);
+
+    UT_ASSERT(sim != NULL);
+    serverSimRemovePlayer(sim, 1);
+    serverSimEnterGameOver(sim);
+    serverSimReturnToLobby(sim);
+    serverSimStartGame(sim);
+    UT_ASSERT_MSG(sim->state == serverStateRunning,
+                  "round 2 did not start (state %d)", (int)sim->state);
+    UT_ASSERT(serverSimIsPlayerConnected(sim, 0));
+    UT_ASSERT(serverSimIsPlayerConnected(sim, 2));
+    UT_ASSERT_MSG(tsTeam(sim, 0) == 1 && tsTeam(sim, 2) == 2,
+                  "round 2 has teams %u and %u",
+                  (unsigned)tsTeam(sim, 0), (unsigned)tsTeam(sim, 2));
+
+    serverSimAddPlayer(sim, 1, "P1", true);
+    UT_ASSERT_MSG(tsTeam(sim, 1) != 1 && tsTeam(sim, 1) != 0,
+                  "the rejoiner is on team %u", (unsigned)tsTeam(sim, 1));
+    UT_ASSERT(!tsAllied(sim, 0, 1) && !tsAllied(sim, 1, 2));
+    UT_ASSERT(serverSimSidesAgree(sim));
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* A policy whose can_ally always says no, and what it was last asked. */
+typedef struct {
+    int  asks;
+    BYTE player;
+    BYTE other;
+} TsAllyNo;
+
+static bool tsCanAllyNo(void *ctx, BYTE player, BYTE other) {
+    TsAllyNo *c = (TsAllyNo *)ctx;
+    c->asks++;
+    c->player = player;
+    c->other  = other;
+    return false;
+}
+
+/* Players 0 and 1 on team 1, player 2 on team 2. Player 1 drops and
+   rejoins, but the scenario's can_ally refuses: the restore asks it as a
+   player's own accept does, with the rejoiner first, and on the no the
+   rejoiner gets the lowest free team, team 3, with no ally. */
+int run_team_sides_rejoin_can_ally_refused(void) {
+    const BYTE teams[3] = { 1, 1, 2 };
+    ServerSim *sim = tsRunningSim(teams, 3);
+    ScenarioPolicy pol;
+    TsAllyNo ctx;
+
+    UT_ASSERT(sim != NULL);
+    serverSimRemovePlayer(sim, 1);
+    memset(&pol, 0, sizeof(pol));
+    memset(&ctx, 0, sizeof(ctx));
+    pol.canAlly = tsCanAllyNo;
+    pol.ctx     = &ctx;
+    serverSimSetScenarioPolicy(sim, &pol);
+    serverSimAddPlayer(sim, 1, "P1", true);
+    serverSimSetScenarioPolicy(sim, NULL);
+
+    UT_ASSERT_MSG(ctx.asks >= 1, "can_ally was not asked");
+    UT_ASSERT_MSG(ctx.player == 1 && ctx.other == 0,
+                  "can_ally was asked with %u and %u",
+                  (unsigned)ctx.player, (unsigned)ctx.other);
+    UT_ASSERT_MSG(tsTeam(sim, 1) == 3, "the rejoiner is on team %u",
+                  (unsigned)tsTeam(sim, 1));
+    UT_ASSERT(!tsAllied(sim, 0, 1) && !tsAllied(sim, 1, 2));
+    UT_ASSERT(serverSimSidesAgree(sim));
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* The same in a ranked round: the rejoiner goes back to the side the
+   lobby gave them, team 1, allied with P0, as in any other round. */
+int run_team_sides_rejoin_ranked_keeps_team(void) {
+    const BYTE teams[3] = { 1, 1, 2 };
+    ServerSim *sim = tsRunningSim(teams, 3);
+
+    UT_ASSERT(sim != NULL);
+    serverSimSetRanked(sim, true);
+    serverSimRemovePlayer(sim, 1);
+    serverSimAddPlayer(sim, 1, "P1", true);
+    UT_ASSERT_MSG(tsTeam(sim, 1) == 1, "the rejoiner is on team %u",
+                  (unsigned)tsTeam(sim, 1));
+    UT_ASSERT(tsAllied(sim, 0, 1) && tsAllied(sim, 1, 0));
+    UT_ASSERT(!tsAllied(sim, 1, 2));
+    UT_ASSERT(serverSimSidesAgree(sim));
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* The rejoin table holds MAX_TANKS records. With every record in use, a
+   new leaver replaces the oldest record, not the one in the first entry.
+   R0 is added first and so is the oldest; it leaves again, which renews
+   its record in the first entry and makes R1 the oldest. The new leaver
+   must then replace R1 and keep R0. */
+int run_team_sides_rejoin_full_table_drops_oldest(void) {
+    char name[PLAYER_NAME_LEN];
+    int i;
+
+    playersRejoinCreate();
+    for (i = 0; i < MAX_TANKS; i++) {
+        snprintf(name, sizeof(name), "R%d", i);
+        playersRejoinAddPlayer(name, 0, 0, (BYTE)((i % 15) + 1));
+        playersRejoinUpdate();
+    }
+    playersRejoinAddPlayer("R0", 0, 0, 1);
+    playersRejoinUpdate();
+    playersRejoinAddPlayer("New", 0, 0, 7);
+
+    UT_ASSERT_MSG(playersRejoinGetTeam("New") == 7,
+                  "the new record has team %u",
+                  (unsigned)playersRejoinGetTeam("New"));
+    UT_ASSERT_MSG(playersRejoinGetTeam("R1") == 0,
+                  "the oldest record, R1, is still kept");
+    UT_ASSERT_MSG(playersRejoinGetTeam("R0") == 1,
+                  "the renewed record, R0, was replaced");
+    for (i = 2; i < MAX_TANKS; i++) {
+        snprintf(name, sizeof(name), "R%d", i);
+        UT_ASSERT_MSG(playersRejoinGetTeam(name) == (BYTE)((i % 15) + 1),
+                      "record %s was lost", name);
+    }
+    playersRejoinCreate();
     return 0;
 }
 
