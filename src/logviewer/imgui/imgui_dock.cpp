@@ -1169,9 +1169,7 @@ static void draw_side(int side, ImVec2 pos, ImVec2 size, int other, int extent) 
                  * has lag records or not): the length follows it. The room
                  * is a height, so only a left or right sidebar's length. */
                 const int now = (int)ceilf(k_panels[p].roomFor(false));
-                const int full = (int)ceilf(k_panels[p].roomFor(true));
-                s_len[side][p] = lvDockClearRoomLen(s_len[side][p], s_room[side][p], full, now,
-                                                    minLen);
+                s_len[side][p] = lvDockClearRoomLen(s_len[side][p], s_room[side][p], now, minLen);
                 s_room[side][p] = now;
             }
             if (s_len[side][p] <= 0 && cur > 0) {

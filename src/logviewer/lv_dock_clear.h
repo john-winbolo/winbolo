@@ -135,13 +135,14 @@ static inline int lvDockClearSnapLen(int current, int content, int min) {
  * the panel keeps the length the user gave it and no empty room is left.
  *
  * room < 0: the length was saved before the room was kept with it. It is
- * then taken to hold the section at full size (full), as the panel was
- * sized with the section in view. len <= 0 (no length yet) stays as it is:
- * the first length counts the section already (lvDockClearFirstLen). Never
- * less than min. */
-static inline int lvDockClearRoomLen(int len, int room, int full, int now, int min) {
+ * then taken to hold no room for the section, so a panel opened with no
+ * section in view keeps the length it had. From then on the room is kept,
+ * and the length follows the section. len <= 0 (no length yet) stays as it
+ * is: the first length counts the section already (lvDockClearFirstLen).
+ * Never less than min. */
+static inline int lvDockClearRoomLen(int len, int room, int now, int min) {
     if (len <= 0) return len;
-    if (room < 0) room = full;
+    if (room < 0) room = 0;
     len += now - room;
     if (len < min) len = min;
     if (len > LV_DOCK_CLEAR_LEN_MAX) len = LV_DOCK_CLEAR_LEN_MAX;
