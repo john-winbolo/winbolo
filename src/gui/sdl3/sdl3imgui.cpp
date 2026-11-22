@@ -1089,13 +1089,17 @@ static SDL_Texture *overviewEnsureCrosshair(SDL_Renderer *r) {
 
 static bool popOutCreate(PopOutWindow *pw, const char *title, int w, int h, Uint32 flags) {
     /* Re-show an existing pop-out rather than recreating it. We deliberately
-     * keep the SDL_Window + Metal SDL_Renderer alive across closes: destroying
-     * a Metal renderer mid-run releases Metal objects that the Steam overlay
-     * (gameoverlayrenderer.dylib) has cached, and the overlay then messages the
-     * freed object on the next present of the main window -> SIGSEGV. The
-     * renderers are only torn down for real at shutdown (sdl3ImguiCleanup). */
+     * keep the SDL_Window + Metal SDL_Renderer alive across closes and across
+     * games: destroying a Metal renderer mid-run releases Metal objects that
+     * the Steam overlay (gameoverlayrenderer.dylib) has cached, and the overlay
+     * then messages the freed object on the next present of the main window
+     * -> SIGSEGV. The renderers are only torn down for real at process exit
+     * (sdl3ImguiDestroyPopOuts); the end of a game hides them
+     * (sdl3ImguiCleanup). The window may be from an earlier game, so the title
+     * is set again in case the language changed since. */
     if (pw->window) {
         pw->open = true;
+        SDL_SetWindowTitle(pw->window, title);
         SDL_ShowWindow(pw->window);
         SDL_RaiseWindow(pw->window);
         return true;
@@ -6145,7 +6149,8 @@ static void renderScenarioPanelPopOuts(ClientSim *cs) {
 }
 
 /* The pop-outs' textures go before the renderers they were made on, and the
-   views with the game. Called from sdl3ImguiCleanup ahead of popOutDestroy. */
+   views with the game. Called from sdl3ImguiCleanup, which keeps the
+   renderers (see popOutCreate) and lets the textures be made again on them. */
 static void scnPanelViewsCleanup(void) {
     for (int i = 0; i < SCN_POP_OWNERS; i++) {
         ScnPanelPopTex &t = s_scnPopTex[i];
@@ -12384,7 +12389,7 @@ void sdl3ImguiCleanup(void) {
         inputTouchSetScrollJoystickZone(0.0f, 0.0f, 0.0f, 0.0f);
         inputTouchSetControlRects(nullptr, 0);
     }
-    /* The five two-form panels go with the game as well. popOutDestroy below
+    /* The five two-form panels go with the game as well. The hide below
        clears the pop-out half, but the in-window half is a plain flag that
        nothing here was resetting, and this path reaches overviewInWindowSet
        directly rather than through overviewInWindowChoose, which is where the
@@ -12399,8 +12404,9 @@ void sdl3ImguiCleanup(void) {
     s_showSendMsg      = false;
     s_showPlayersPanel = false;
     inputGamepadShutdown();
-    /* Before the loop: all of these were made on the Map Overview pop-out's
-       renderer, which popOutDestroy tears down. */
+    /* All of these were made on the Map Overview pop-out's renderer. The
+       renderer is kept for the next game (see popOutCreate), and each is made
+       again on it the first time it is drawn. */
     overviewViewDestroy(s_overviewView);
     s_overviewView = nullptr;
     overviewSnapshotDestroy(s_overviewSnapshot);
@@ -12416,9 +12422,9 @@ void sdl3ImguiCleanup(void) {
         s_overviewCrosshair = nullptr;
     }
     s_overviewCrosshairRenderer = nullptr;
-    /* Textures die with the renderer that made them, so the pop-out's copies
-     * and its flag cache go before popOutDestroy takes its renderer down —
-     * SDL_DestroyTexture afterwards would be running against freed state. */
+    /* The pop-out's copies and its flag cache go with the game too. They
+     * are freed here, while the renderer that made them is alive, and loaded
+     * again on the same renderer when the next game draws them. */
     if (s_tilesPopOut) {
         SDL_DestroyTexture(s_tilesPopOut);
         s_tilesPopOut = nullptr;
@@ -12427,7 +12433,13 @@ void sdl3ImguiCleanup(void) {
     scnPanelViewsCleanup();
     destroyIconSlot(ICON_SLOT_POPOUT);
     flagsDestroy();
-    for (int i = 0; i < POPOUT_COUNT; i++) popOutDestroy(s_popOuts[i]);
+    /* Hidden, not destroyed. This runs at the end of every game, and the
+     * main window goes on presenting afterwards (the lobby, the welcome
+     * screen). Destroying a pop-out's Metal renderer here crashed the Steam
+     * overlay on that next present — see popOutCreate. The windows and
+     * renderers are destroyed at process exit, in sdl3ImguiDestroyPopOuts.
+     * Nothing is raised: the player may be leaving for another program. */
+    for (int i = 0; i < POPOUT_COUNT; i++) popOutHideEx(s_popOuts[i], false);
     destroyIconSlot(ICON_SLOT_MAIN);
     /* Renderer-free, so they outlive both slots and are freed once here. */
     if (s_iconBotChipSurfGreen) { SDL_DestroySurface(s_iconBotChipSurfGreen); s_iconBotChipSurfGreen = nullptr; }
@@ -12450,4 +12462,11 @@ void sdl3ImguiCleanup(void) {
     }
     s_window   = nullptr;
     s_renderer = nullptr;
+}
+
+void sdl3ImguiDestroyPopOuts(void) {
+    /* No test of s_window: sdl3ImguiCleanup has normally run already and
+       cleared it, and the pop-outs it hid are still here. Their textures
+       were freed there. */
+    for (int i = 0; i < POPOUT_COUNT; i++) popOutDestroy(s_popOuts[i]);
 }
