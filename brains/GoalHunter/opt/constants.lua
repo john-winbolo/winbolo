@@ -924,7 +924,7 @@ M.PILL_COVER_BY_HEALTH = true
 M.PPT_COVER_TARGET_SHOTS = 15  -- build phase ends once shield cover reaches this many shots-to-break (friendly pill = PILLS_MAX_HEALTH 15, wall = SHIELD_WALL_COVER_SHOTS 5). 15 = one pill OR three walls. Independent of the blitz gate.
 M.PPT_PILL_WALL_EQUIV = 3.0    -- a dropped/standing friendly pillbox blocker is worth this many WALLS of shield cover (PILLS_MAX_HEALTH 15 / SHIELD_WALL_COVER_SHOTS 5 = 3). The C combo scorer (gh_shield_stamp) weights a pill-filled slot accordingly, so one carried pill stands in for a 3-wall shield.
 M.PPT_PILL_BLOCKERS_MAX = 2    -- cap on how many carried pillboxes the shield planner assumes it can drop onto buildable slots (matches builder.lua's PILLBOX_BLOCKERS_MAX). num_pill_blockers passed to the scorer = min(carried_pills, this).
--- ── Pill take v2 (2026-11-16; pilltake_v2.lua, PILLTAKE_V2_PLAN.md) ──
+-- ── Pill take v2 (2026-11-16; pilltake_v2.lua) ──
 -- Master knob. On: the v2 evaluator picks the take's standoff, its blockers
 -- (built by build_walls) and, with PT2_CHAINS, a chain of pills that shoot
 -- each other. On by default since 2026-11-18 (Andrew: HELM uses v2). Off:
