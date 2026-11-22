@@ -632,11 +632,12 @@ BYTE lgmRequestRefusal(GameSim *sim, lgm *lgman, tank *tnk, BYTE mapX, BYTE mapY
  *
  * Where the danger is now: a hit bursts 80 to 111 from the centre of a still
  * tank on the shooter's side, and the builder dies within MAP_SQUARE_MIDDLE
- * of the burst. So a hit can kill him only while he is 48 or less out: his
- * first 2 ticks out on grass and his first 4 on forest, when the tank is
- * still or drives at the shooter. A tank that drives away from the shooter
- * on a road, a boat or a base keeps pace with him, and the danger lasts as
- * long as it does. */
+ * of the burst (the classic lgm_blast_shape; these figures are for it).
+ * So a hit can kill him only while he is 48 or less out: his first 2 ticks
+ * out on grass and his first 4 on forest, when the tank is still or drives
+ * at the shooter. A tank that drives away from the shooter on a road, a
+ * boat or a base keeps pace with him, and the danger lasts as long as it
+ * does. */
 #define LGM_START_OFFSET 16
 
 /*********************************************************
@@ -1667,10 +1668,11 @@ void lgmGetScreenCoords(lgm *lgman, BYTE leftPos, BYTE topPos, BYTE *mx, BYTE *m
 *              kills it included: the square rule applies
 *********************************************************/
 /* Whether an explosion at (wx, wy) catches a man at (lgmWorldX, lgmWorldY):
-   within half a square of it on open ground, or on the very square when the
-   explosion is on a wall, a live pillbox or a base, or is a shell's hit on
-   the pillbox on its square (squareHit). The one test every builder death
-   is decided by.
+   in the lgm_blast_shape rule's area round it on open ground (within half a
+   square in the classic table, lgmBlastOpenGroundCatches), or on the very
+   square when the explosion is on a wall, a live pillbox or a base, or is a
+   shell's hit on the pillbox on its square (squareHit). The one test every
+   builder death is decided by.
 
    A tank's explosion that damages a live pillbox passes squareHit too
    (tkExplosionBigExplosion), for the same reason: the pill was live when
@@ -1681,9 +1683,9 @@ void lgmGetScreenCoords(lgm *lgman, BYTE leftPos, BYTE topPos, BYTE *mx, BYTE *m
    outSquareHit). That is a hit on the square whatever armour it left the
    pill, so the shot that kills a pill (its armour is already 0 here) kills
    a builder anywhere on the square and nobody off it, as the hits before
-   it do. Mac Bolo does the same: a shell's hit on a pill explodes at the
-   pill's square (packet.go qhit_pill), and the explosion kills the man
-   only on that square.
+   it do. Mac Bolo does the same: a shell's hit on a pillbox explodes at
+   the pillbox's square, and the explosion kills the builder only on that
+   square.
 
    The square of a pill that was dead before the blast is open ground:
    shells fly over a dead pill, so a blast near the edge of its square (a
@@ -1698,7 +1700,6 @@ static bool lgmBlastCatches(GameSim *sim, WORLD lgmWorldX, WORLD lgmWorldY, WORL
   BYTE checkMapY;                   /* LGM Y Map co-ordinate (from check position) */
   bool solid;                       /* Is the map square the lgm on solid or not */
   bool dead;                        /* Are we dead */
-  double distance;
   BYTE pos;
   BYTE mx, my;
   WORLD conv;
@@ -1712,13 +1713,18 @@ static bool lgmBlastCatches(GameSim *sim, WORLD lgmWorldX, WORLD lgmWorldY, WORL
   mx = (BYTE) (wx >> 8);
   my = (BYTE) (wy >> 8);
 
-  utilIsItemInRange(lgmWorldX, lgmWorldY, wx, wy, (WORLD) sim->rules.pill_range, &distance);
   pos = mapGetPos(mp, mx, my);
   solid = FALSE;
   if (squareHit == TRUE || pos == BUILDING || pos == HALFBUILDING || pillsIsPillHit(pb, mx, my) == TRUE || basesExistPos(bs, mx, my) == TRUE) {
     solid = TRUE;
   }
-  if (solid == FALSE && distance <= MAP_SQUARE_MIDDLE) {
+  /* Open ground: the lgm_blast_shape rule's area round the explosion (a
+     circle of half a square in the classic table). */
+  if (solid == FALSE &&
+      lgmBlastOpenGroundCatches(sim->rules.lgm_blast_shape,
+                                sim->rules.pill_range,
+                                (long) wx - (long) lgmWorldX,
+                                (long) wy - (long) lgmWorldY)) {
     dead = TRUE;
   } else if (solid == TRUE && checkMapX == mx && checkMapY == my) {
     dead = TRUE;
@@ -1794,7 +1800,7 @@ void lgmDropCarriedPill(GameSim *sim, lgm *lgman) {
   lgmMapY = (BYTE) ((unsigned int) ((*lgman)->y) >> 8);
 
   /* The same search a dead tank's pills are put down with, round the
-     square he is on, as Mac Bolo's qman_drop_pill does. A map with nowhere
+     square he is on, as Mac Bolo does. A map with nowhere
      at all to put it leaves the pill marked carried for the rest of the
      round, rather than searching for ever. */
   pillsDropSpiralStart(&spiral, lgmMapX, lgmMapY);
