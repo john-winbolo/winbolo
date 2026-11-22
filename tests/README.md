@@ -196,6 +196,9 @@ bot capacity.
   slots at N: the row is read-only for every player (mouse-over "Set by
   -botcapacity on the server"), and the server refuses a change with
   `CMD_REJECT_LOCKED`.
+- `-maxbots N` is another name for `-botcapacity N`: the same setting and
+  the same rules. It is not a limit on the bots in the game. When both are
+  given, `-botcapacity` wins and the server prints a note.
 - The lobby's Server bot slots (Server Settings, 0..16, `LST_SERVER_BOT_SLOTS`)
   sets how many bots the server runs in its own process: its slots in the
   bot placement and its part of the Add Bot limit. The default is the
@@ -209,7 +212,7 @@ bot capacity.
   `Bot capacity: 3 bots of GoalHunter (CPU speed test, stored result)`,
   `... measured now`, or `Bot capacity: override 3 (-botcapacity)`.
 - A lobby Add Bot request past the number is refused with
-  `CMD_REJECT_BOT_LIMIT`, as `-maxbots` does. While the test runs, every
+  `CMD_REJECT_BOT_LIMIT`. While the test runs, every
   Add Bot request is refused. `-bots N` at start-up, scenario bots and
   sidecar bots are not capped. The console has no add-bot command.
 - The number goes to clients as the last byte of the fixed part of the
@@ -297,29 +300,21 @@ bot_host_link.c). A layout that is lopsided but good stays as it is:
   between good places so that each is about equally full, with the lag
   rules below. The stay rule still holds.
 - The server's own bot limit (`-bothost-enforce-server-limit <0|1>`, 1 by
-  default; the value before this change is 0): the server runs no more
-  in-process bots than its own slots. A bot that comes back from a Bot
-  Host (a fall-back: its host gone, the brain files changed, a host that
-  offers fewer slots) to a server whose slots are full is held, and so is
-  a bot of a server over its slots (they went down, or a bot was added)
-  while no good Bot Host has a slot. A held bot keeps its seat, its tank,
-  its stats, its pills and its bases; its brain does not run and its tank
-  stands still. It stays held at a round start and a map rotation. Each
-  placement step the bot held longest runs again where a place has a
-  slot: the server first (below its slots; its free CPU and its bad flag
-  are not counted), then the good Bot Hosts by the usual rule, one bot a
-  step. The players and the spectators see "<bot> is paused: no room to
-  run its bot" when no place has a slot for it, and "<bot> runs again"
-  after that. The console says which bot was held or resumed and why. The
-  round log gets the two lines as `log_MessageServer`, and with
-  `-record-bothost-data` the DECISION records 11 (hold) and 12 (resume).
-  0 gives the old fall-back: the bot runs on the server past its slots.
-  The limit works only while the server takes Bot Hosts (the placement
-  runs only then). The lobby's Add Bot limit stays as it is: an add past
-  the server's slots plus the Bot Hosts' slots is refused.
-- Unit tests: `bot_host_enforce_fall_back_holds`,
-  `bot_host_enforce_host_resumes`, `bot_host_enforce_leave_resumes` and
-  `bot_host_enforce_off_keeps_fall_back` (`--test <name>`).
+  default; the value before this change is 0): the placement puts no bot
+  on the server past its own slots, and a bot of a server over its slots
+  (they went down, a bot was added, or a Bot Host's bots came back) moves
+  to a good Bot Host with a slot. No bot is ever held for lack of a slot:
+  with no such host, every bot runs on the server, as without Bot Hosts.
+  The players and the spectators then see one newswire line, "The server
+  is running 6 bots but has only 3 bot slots. Bots might play worse.", at the step
+  the server goes over its slots. It comes again only after the server
+  was back to its slots or under. The round log gets the line as
+  `log_MessageServer`. 0: the placement puts bots on the server past its
+  slots, as before. The limit works only while the server takes Bot Hosts
+  (the placement runs only then). The lobby's Add Bot limit stays as it
+  is: an add past the server's slots plus the Bot Hosts' slots is refused.
+- Unit tests: `bot_host_enforce_over_warns`, `bot_host_enforce_good_host`
+  and `bot_host_enforce_off_keeps_fall_back` (`--test <name>`).
 - Unit tests: `bot_host_place_keep_*` (`--test <name>`), among them
   `bot_host_place_keep_scaled_wait`, `bot_host_place_keep_step_min_old`,
   `bot_host_place_keep_free_batch`, `bot_host_place_keep_batch_no_target`,

@@ -430,6 +430,7 @@ STR_DLGLOBBY_BOTHOST_LATE=too slow, not used this game
 STR_DLGLOBBY_BOTHOST_REC_UPLOAD_FMT=uploading recordings {number}%, {number2} of {number3} bots
 STR_DLGLOBBY_BOTHOST_REC_LOWDISK=not recording: low disk
 STR_DLGLOBBY_BOTHOST_REC_MERGING=merging recordings
+STR_DLGLOBBY_BOTHOST_REC_UPLOAD_ETA_FMT=uploading recordings {number}%, {number2} of {number3} bots, {string1} left
 
 # The Bot Host inside this client: the lobby line under the Bot Host rows
 # ({number} = bots it runs now, {number2} = bots it can run), and the
@@ -454,7 +455,6 @@ STR_DLGLOBBY_SERVER_BOT_SLOTS_TIP=How many bots the server runs in its own proce
 STR_DLGLOBBY_BOTHOST_SAME_SERVER={string1}: same computer as the server (0 slots)
 STR_DLGLOBBY_BOTHOST_SAME_HOST={string1}: same computer as {string2} (0 slots)
 STR_DLGLOBBY_BOTHOSTS_NOTE=Bots move between hosts by lag and free CPU.
-STR_DLGLOBBY_BOTHOST_RESERVE_FMT={string1} — tries to keep {number}% CPU free.
 STR_DLGLOBBY_BOTHOST_MAX_LABEL=Max slots
 STR_DLGLOBBY_BOTHOST_MAX_OVER=More than the {number} slots this computer's CPU estimate says fit. Its bots may think slower and play worse.
 STR_DLGLOBBY_BOTHOST_MAX_OWN_TIP=The most of the server's bots this computer runs. The server starts it lower and adds bots while the computer has free CPU. Saved on this computer for later games. 0 runs no bot here.
@@ -3143,10 +3143,10 @@ STR_LV_BOTHOST_RULE_NORMAL=normal
 STR_LV_BOTHOST_RULE_EMERGENCY=emergency
 STR_LV_BOTHOST_RULE_TRIAL=trial
 
-# The dedicated server's newswire lines for a bot held because neither the
-# server nor a Bot Host has a slot for it (-bothost-enforce-server-limit)
-STR_BOTHOST_BOT_PAUSED={player} is paused: no room to run its bot
-STR_BOTHOST_BOT_RUNS_AGAIN={player} runs again
+# The dedicated server's newswire line when it runs more bots than its own
+# slots and no Bot Host can take one (-bothost-enforce-server-limit):
+# {string1} = the bots it runs, {string2} = its slots
+STR_BOTHOST_OVER_SLOTS=The server is running {string1} bots but has only {string2} bot slots. Bots might play worse.
 # The lobby's Bot Host row of a player's computer when the server sent no
 # name: the player's number, or a plain name when that is not known
 STR_DLGLOBBY_BOTHOST_PLAYER_NAME=Player {number}

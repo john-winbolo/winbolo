@@ -476,6 +476,9 @@
 #define STR_DLGLOBBY_BOTHOST_REC_UPLOAD_FMT 3435
 #define STR_DLGLOBBY_BOTHOST_REC_LOWDISK    3436
 #define STR_DLGLOBBY_BOTHOST_REC_MERGING    3437
+/* As STR_DLGLOBBY_BOTHOST_REC_UPLOAD_FMT, with the time left ({string1},
+ * H:MM, or "--:--" until it is known) */
+#define STR_DLGLOBBY_BOTHOST_REC_UPLOAD_ETA_FMT 3942
 /* The Bot Host inside this client: the lobby line under the Bot Host rows
  * ({number} = bots it runs now, {number2} = bots it can run), and the
  * newswire line when the count changes ({number} = bots it runs now) */
@@ -507,7 +510,6 @@
  * mouse-over on the player's own row, another player's row and a Bot Host
  * program's row */
 #define STR_DLGLOBBY_BOTHOSTS_NOTE 3931
-#define STR_DLGLOBBY_BOTHOST_RESERVE_FMT 3932
 #define STR_DLGLOBBY_BOTHOST_MAX_LABEL 3933
 #define STR_DLGLOBBY_BOTHOST_MAX_OVER 3934
 #define STR_DLGLOBBY_BOTHOST_MAX_OWN_TIP 3935
@@ -2210,7 +2212,7 @@
 #define STR_KICK_MAP_DESYNC                 1495
 
 /* Reject toast — server refused an Add Bot because the lobby is already
- * at the operator-configured -maxbots cap. */
+ * at the game bot limit. */
 #define STR_DLGLOBBY_REJECT_BOT_LIMIT       1496
 
 /* WinBolo.net 1v1 ladder position shown in the status block.
@@ -3789,10 +3791,10 @@
 #define STR_LV_BOTHOST_DEC_LIMIT_CARRY           3940
 #define STR_LV_BOTHOST_TIP_DYNAMIC               3941
 
-/* The dedicated server's newswire lines for a bot held because neither the
- * server nor a Bot Host has a slot for it (-bothost-enforce-server-limit) */
-#define STR_BOTHOST_BOT_PAUSED                   3923
-#define STR_BOTHOST_BOT_RUNS_AGAIN               3924
+/* The dedicated server's newswire line when it runs more bots than its own
+ * slots and no Bot Host can take one (-bothost-enforce-server-limit):
+ * {string1} = the bots it runs, {string2} = its slots */
+#define STR_BOTHOST_OVER_SLOTS                   3943
 
 /* The lobby's Bot Host row of a player's computer when the server sent no
  * name: the player's number, or, when that is not known, a plain name */

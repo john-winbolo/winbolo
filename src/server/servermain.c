@@ -952,9 +952,6 @@ void printArgs() {
 
   fprintf(stderr, "\nBots & AI:\n");
   fprintf(stderr, "-bots <N>     - Number of AI bot players to add (default: 0)\n");
-  fprintf(stderr, "-maxbots <N>  - Maximum number of AI bots that can be in the lobby\n");
-  fprintf(stderr, "                (default: 0 = no limit). Caps lobby \"Add Bot\" requests\n");
-  fprintf(stderr, "                and clamps -bots.\n");
   fprintf(stderr, "-botcapacity <N> - The most bots this server runs in its own process\n");
   fprintf(stderr, "                (0-16; 0 = none). Skips the CPU speed test. Without it\n");
   fprintf(stderr, "                the server runs the 2 s test the first time its lobby\n");
@@ -963,6 +960,10 @@ void printArgs() {
   fprintf(stderr, "                brain. Caps lobby \"Add Bot\" requests; -bots and\n");
   fprintf(stderr, "                scenario bots are not capped. It locks the lobby's\n");
   fprintf(stderr, "                Server bot slots at N: no player may change it.\n");
+  fprintf(stderr, "-maxbots <N>  - Another name for -botcapacity <N>: the same setting\n");
+  fprintf(stderr, "                and the same 0-16 range. It is NOT a limit on the\n");
+  fprintf(stderr, "                bots in the game. When both are given, -botcapacity\n");
+  fprintf(stderr, "                wins.\n");
   fprintf(stderr, "-brain <path> - Path to the Lua brain script for bots (default: the\n");
   fprintf(stderr, "                first of Brains/GoalHunter/init.lua,\n");
   fprintf(stderr, "                brains/GoalHunter/init.lua,\n");
@@ -1077,10 +1078,11 @@ void printArgs() {
   fprintf(stderr, "-bothost-keel - the KEEL values of all the dynamic slot flags above (fixed slots, no reserve); a flag\n");
   fprintf(stderr, "                given as well still counts\n");
   fprintf(stderr, "-record-bothost-data - write the bot placement probes, free CPU readings and decisions into the round log (.wbv)\n");
-  fprintf(stderr, "-bothost-enforce-server-limit <0|1> - 1: the server runs no more bots than its own slots; a bot with\n");
-  fprintf(stderr, "                no slot there or on a good Bot Host is held (it keeps its tank and its stats, its tank\n");
-  fprintf(stderr, "                stands still) until a place has one. 0: a bot back from a Bot Host runs on the server\n");
-  fprintf(stderr, "                past its slots, as before (default 1)\n");
+  fprintf(stderr, "-bothost-enforce-server-limit <0|1> - 1: no bot is placed on the server past its own slots, and a\n");
+  fprintf(stderr, "                bot past them moves to a good Bot Host with a slot. No bot is ever held: with no such\n");
+  fprintf(stderr, "                host every bot runs on the server, and the players are told once that the bots may\n");
+  fprintf(stderr, "                play worse. 0: the placement puts bots on the server past its slots, as before\n");
+  fprintf(stderr, "                (default 1)\n");
   fprintf(stderr, "-bothost-code <official|custom> - official: no brain file goes to a Bot Host; a bot runs on a\n");
   fprintf(stderr, "                host only when the host's own install holds its brain, file for file. custom: hosts\n");
   fprintf(stderr, "                download this server's brain files (a player's built-in host built to run only\n");
@@ -2081,7 +2083,6 @@ int main(int argc, char **argv) {
   char *useAddr;
   char debugFileName[2048];
   int maxPlayers;
-  int maxBots;
   int botCapacityOverride = -1; /* -botcapacity N, or -1 for none */
   int maxSpectators = 16;
   int specDelay = 90;
@@ -2099,7 +2100,6 @@ int main(int argc, char **argv) {
   isQuiet = FALSE;
   isNoInput = FALSE;
   maxPlayers = 0;
-  maxBots = 0;
 
   alarmRaised = alarmNone;
 #ifdef _WIN32
@@ -2159,16 +2159,23 @@ int main(int argc, char **argv) {
     }
   }
 
-  if (argExist(argc, argv, "maxbots") == TRUE) {
-    maxBots = atoi((char *) argv[findArg(argc, argv, "maxbots")]);
-    if (maxBots < 0 || maxBots > MAX_TANKS) {
-      maxBots = 0;
-    }
-  }
-
-  /* -botcapacity N: the host bot capacity by hand, and no CPU speed test. */
+  /* -botcapacity N: the host bot capacity by hand, and no CPU speed test.
+   * -maxbots N is another name for it (Andrew, Nov 15 2026): the same
+   * setting, not a limit on the bots in the game. -botcapacity wins when
+   * both are given. capName is the name the messages below print. */
+  {
+  char *capName = NULL;
   if (argExist(argc, argv, "botcapacity") == TRUE) {
-    int capArg = findArg(argc, argv, "botcapacity");
+    capName = "botcapacity";
+    if (argExist(argc, argv, "maxbots") == TRUE) {
+      fprintf(stderr, "Note: -maxbots is another name for -botcapacity; "
+                      "both given, using -botcapacity\n");
+    }
+  } else if (argExist(argc, argv, "maxbots") == TRUE) {
+    capName = "maxbots";
+  }
+  if (capName != NULL) {
+    int capArg = findArg(argc, argv, capName);
     bool capClamped = false;
     botCapacityOverride = BRAIN_CAPACITY_UNKNOWN;
     if (capArg != ARG_NOT_FOUND) {
@@ -2176,14 +2183,15 @@ int main(int argc, char **argv) {
           brainCapacityParseOverride((char *) argv[capArg], &capClamped);
     }
     if (botCapacityOverride == BRAIN_CAPACITY_UNKNOWN) {
-      fprintf(stderr, "Error: -botcapacity needs a whole number from 0 to %d\n",
-              BRAIN_CAPACITY_MAX);
+      fprintf(stderr, "Error: -%s needs a whole number from 0 to %d\n",
+              capName, BRAIN_CAPACITY_MAX);
       return 1;
     }
     if (capClamped) {
-      fprintf(stderr, "Note: -botcapacity is at most %d; using %d\n",
-              BRAIN_CAPACITY_MAX, BRAIN_CAPACITY_MAX);
+      fprintf(stderr, "Note: -%s is at most %d; using %d\n",
+              capName, BRAIN_CAPACITY_MAX, BRAIN_CAPACITY_MAX);
     }
+  }
   }
 
   if (argExist(argc, argv, "maxspectators") == TRUE) {
@@ -2993,12 +3001,6 @@ int main(int argc, char **argv) {
       numBots = atoi((char *)argv[argNum]);
       if (numBots < 0) numBots = 0;
       if (numBots > MAX_TANKS) numBots = MAX_TANKS;
-      if (maxBots > 0 && numBots > maxBots) {
-        fprintf(stderr,
-                "Warning: -bots %d exceeds -maxbots %d, capping at %d\n",
-                numBots, maxBots, maxBots);
-        numBots = maxBots;
-      }
     }
     argNum = findArg(argc, argv, "brain");
     if (argNum != ARG_NOT_FOUND) {
@@ -3225,7 +3227,6 @@ int main(int argc, char **argv) {
     instCfg.bindAddr            = useAddr;
     instCfg.password            = pass;
     instCfg.maxPlayers          = (BYTE)maxPlayers;
-    instCfg.maxBots             = (BYTE)maxBots;
     instCfg.maxSpectators       = (BYTE)maxSpectators;
     instCfg.specDelaySeconds    = (uint16_t)specDelay;
     instCfg.acceptRemoteClients = TRUE;

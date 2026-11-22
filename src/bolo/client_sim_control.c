@@ -470,6 +470,15 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
                     r->slotOverride = keep.slotOverride;
                     r->slotLocked   = keep.slotLocked;
                 }
+                /* The upload's bytes and rate, while it goes on. */
+                if (keep.connected && keep.recBytesHave &&
+                    evt->u.botHostStatus.recState ==
+                        BOT_HOST_REC_STATE_UPLOADING) {
+                    r->recBytesHave = true;
+                    r->recSentKiB   = keep.recSentKiB;
+                    r->recTotalKiB  = keep.recTotalKiB;
+                    r->recRate      = keep.recRate;
+                }
                 if (keep.connected && keep.rowLimitsHave) {
                     r->rowLimitsHave = true;
                     r->limitCeiling  = keep.limitCeiling;
@@ -535,6 +544,20 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
                 r->limitCeiling = evt->u.botHostRowLimits.ceiling;
                 r->limitReserve = evt->u.botHostRowLimits.reserve;
                 r->limitFits    = evt->u.botHostRowLimits.fits;
+            }
+        }
+        break;
+
+    case CTRL_BOT_HOST_REC_BYTES:
+        if (evt->u.botHostRecBytes.idx < CLIENT_BOT_HOST_ROWS) {
+            ClientBotHostRow *r = &cs->botHostRows[evt->u.botHostRecBytes.idx];
+            if (r->connected) {
+                if (!r->recBytesHave) botHostRecRateReset(&r->recRate);
+                r->recBytesHave = true;
+                r->recSentKiB   = evt->u.botHostRecBytes.sentKiB;
+                r->recTotalKiB  = evt->u.botHostRecBytes.totalKiB;
+                botHostRecRateSample(&r->recRate, (uint32_t)SDL_GetTicks(),
+                                     r->recSentKiB, r->recTotalKiB);
             }
         }
         break;

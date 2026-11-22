@@ -799,8 +799,17 @@ static void renderBotHostGroup(ClientSim *cs, int myPlayerNum) {
             ua.number = r->recPercent;
             ua.number2 = r->recBotsDone;
             ua.number3 = r->recBots;
+            /* The time left, H:MM ("--:--" until the rate is known), when
+             * the server sends the bytes; an older one does not. */
+            if (r->recBytesHave) {
+                botHostRecRateEta(&r->recRate, (uint32_t)SDL_GetTicks(),
+                                  ua.string1, sizeof(ua.string1));
+            }
             SDL_strlcpy(args.string2,
-                        langGetTextFmt(STR_DLGLOBBY_BOTHOST_REC_UPLOAD_FMT, &ua),
+                        langGetTextFmt(r->recBytesHave
+                                           ? STR_DLGLOBBY_BOTHOST_REC_UPLOAD_ETA_FMT
+                                           : STR_DLGLOBBY_BOTHOST_REC_UPLOAD_FMT,
+                                       &ua),
                         sizeof(args.string2));
         } else if (r->recState == BOT_HOST_REC_STATE_MERGING) {
             SDL_strlcpy(args.string2,
@@ -830,8 +839,7 @@ static void renderBotHostGroup(ClientSim *cs, int myPlayerNum) {
         args.number2 = effSlots;
 
         /* The row: "Laptop: ready, 2 of 2 slots". A Bot Host row from a
-         * server with dynamic slots says the free CPU it tries to keep in
-         * its place ("Laptop — tries to keep 25% CPU free."), with the
+         * server with dynamic slots shows only the host's name, with the
          * state after it while the host is not ready, and the line above
          * as its mouse-over. */
         char line[512];
@@ -841,12 +849,7 @@ static void renderBotHostGroup(ClientSim *cs, int myPlayerNum) {
         SDL_strlcpy(line, rowTip, sizeof(line));
         const bool limits = !isServer && r->rowLimitsHave;
         if (limits) {
-            MessageArgs la = {};
-            SDL_strlcpy(la.string1, args.string1, sizeof(la.string1));
-            la.number = r->limitReserve;
-            SDL_strlcpy(line,
-                        langGetTextFmt(STR_DLGLOBBY_BOTHOST_RESERVE_FMT, &la),
-                        sizeof(line));
+            SDL_strlcpy(line, args.string1, sizeof(line));
             if (r->state != BOT_HOST_SYNC_READY ||
                 r->recState == BOT_HOST_REC_STATE_UPLOADING ||
                 r->recState == BOT_HOST_REC_STATE_MERGING ||

@@ -116,8 +116,8 @@ typedef enum {
     CMD_REJECT_NAME_MIXED_SCRIPTS,
     CMD_REJECT_NAME_INVALID,
     CMD_REJECT_NAME_TAKEN,
-    /* Lobby add-bot refused because the server's -maxbots cap is
-     * already reached. Surfaced to the host via the reject toast as a
+    /* Lobby add-bot refused because the game bot limit is already
+     * reached, or the CPU speed test is still running. Surfaced to the host via the reject toast as a
      * dedicated "bot limit reached" line rather than the generic
      * CMD_REJECT_INVALID. */
     CMD_REJECT_BOT_LIMIT,

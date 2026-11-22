@@ -134,11 +134,12 @@ enum {
   BOTHOST_DECISION_NO_BETTER      = 10, /* the host is over the target
                                          * rate, but no bot may move to a
                                          * better host */
-  BOTHOST_DECISION_HOLD           = 11, /* a bot was held: no place has a
-                                         * slot for it
-                                         * (-bothost-enforce-server-limit) */
-  BOTHOST_DECISION_RESUME         = 12, /* a held bot runs again where a
-                                         * place has a slot */
+  BOTHOST_DECISION_HOLD           = 11, /* a bot was held: no place had a
+                                         * slot for it. No longer written:
+                                         * the server holds no bot now */
+  BOTHOST_DECISION_RESUME         = 12, /* a held bot ran again where a
+                                         * place had a slot. No longer
+                                         * written */
   BOTHOST_DECISION_LIMIT_RAISE    = 13, /* version 3: the dynamic limit
                                          * went up */
   BOTHOST_DECISION_LIMIT_START    = 14, /* a game starts at the start */

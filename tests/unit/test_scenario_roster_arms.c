@@ -576,15 +576,11 @@ int run_scenario_lobby_add_bot(void) {
     raLobbyAddOp(&op, 0, true, NULL, "no_such_brain_at_all.lua");
     UT_ASSERT(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_NOT_FOUND);
 
-    /* The operator's cap, which the lobby's own Add Bot enforces. Written
-       straight onto the sim: -maxbots is read at startup and there is no
-       setter for it. */
-    sim->maxBots = 1;
     UT_ASSERT(raBotCount(sim) == 0);
     memset(&out, 0, sizeof(out));
     raLobbyAddOp(&op, 2, true, "Helper", NULL);
     UT_ASSERT_MSG(serverSimApplyScenarioOp(sim, &op, &out) == SCN_OP_OK,
-                  "the first bot is inside the cap");
+                  "the fielded add is accepted");
     UT_ASSERT_MSG(raBotCount(sim) == 1, "the bot should be in the lobby");
     UT_ASSERT_MSG(serverSimIsBot(sim, out.slot),
                   "out.slot %d does not hold the bot", (int)out.slot);
@@ -595,11 +591,6 @@ int run_scenario_lobby_add_bot(void) {
        table rather than somebody else's. */
     UT_ASSERT(ut_brain_stub_made(out.slot));
     UT_ASSERT(ut_brain_stub_init(out.slot)->count == 0);
-
-    raLobbyAddOp(&op, 0, true, "Second", NULL);
-    UT_ASSERT_MSG(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_FULL,
-                  "the second bot is past the cap");
-    UT_ASSERT(raBotCount(sim) == 1);
 
     serverSimDestroy(sim);
     raDropBrainFile();

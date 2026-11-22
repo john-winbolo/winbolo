@@ -45,7 +45,10 @@
 #include "net_impair.h"     /* NetImpair */
 #include "../../winbolonet/winbolonet_core.h" /* WINBOLONET_KEY_LEN */
 
-#define RECV_QUEUE_SIZE 1024
+/* 4096 datagrams: a Bot Host with a wide bulk ring (channel_mux.h) can
+ * have about 1000 datagrams in flight, and the queue is read once a
+ * tick. */
+#define RECV_QUEUE_SIZE 4096
 
 #define LOBBY_REQ_COOLDOWN_TICKS 25  /* ~0.5s at 50 Hz */
 #define SERVER_UPLOAD_IDLE_TIMEOUT_MS 15000 /* outlasts both client watchdogs (5s BEGIN-ACK, 10s bulk stall) */
@@ -392,11 +395,12 @@ typedef struct {
     uint32_t recSentSeq;      /* the block state last told to the host */
     uint32_t recClearSent;    /* the cleardebug count last told to it */
     bool     recUploadOwed;   /* an UPLOAD is to be sent */
-    bool     recUploadPaced;
     uint8_t  recState;        /* BOT_HOST_REC_STATE_* the host reported */
     uint8_t  recPercent;
     uint8_t  recBotsDone;     /* UPLOADING: bots whose files are sent */
     uint8_t  recBots;         /* UPLOADING: bots with files to send */
+    uint32_t recSentKiB;      /* UPLOADING: KiB sent (0 from an older host) */
+    uint32_t recTotalKiB;     /* UPLOADING: KiB to send */
     bool     recLowDiskLogged;
     bool     recMergeWant;    /* a finished upload waits for the merge */
     BulkReceiver recRecv;
@@ -954,6 +958,9 @@ void serverEnumBotHostRows(void (*deliver)(void *, const ControlEvent *),
                            void *deliverCtx);
 /* Queue one control event on Bot Host h's control channel. */
 bool serverBotHostSendEvent(int h, const ControlEvent *evt);
+/* The wide bulk receive ring of Bot Host h, as an UPLOAD's a field:
+ * (segment size << 20) | window, or 0 when h has the built-in ring. */
+uint32_t serverBotHostBulkWide(int h);
 
 /* Bot Host brain recordings (udp_server_botrec.c). */
 /* CTRL_BOT_HOST_REC from host h. */
@@ -975,6 +982,10 @@ void serverBotRecRow(int h, uint8_t *state, uint8_t *percent,
                      uint8_t *botsDone, uint8_t *bots);
 /* True while host h sends or waits for a merge: it is not released. */
 bool serverBotRecBusy(int h);
+/* The connection a finished merge answers (udp_server_botrec.c). */
+int  serverBotRecAckTarget(int was, uint64_t connId, bool playerHost,
+                           uint32_t addr, const char *hostSafe,
+                           const char *block);
 /* One recording piece (BULK_KIND_REC_CHUNK) from host h. The bulk sink
  * calls it; the unit tests call it straight. */
 void serverBotRecPiece(int h, const BulkStreamHeader *hd,

@@ -164,6 +164,10 @@ bool botHostInitTableAllowed(const ScnTable *t) {
         const char *v = t->kv[i].value;
         char tok[SCN_TABLE_KEY_LEN + SCN_TABLE_VALUE_LEN + 2];
         if (k[0] == '\0') continue;
+        /* Every key must be a plain name. The brain joins each key and value
+         * into a k=v token, so a key that holds '=' or ';' could carry a
+         * token this list never sees. Check the key before any value. */
+        if (!guardName(k)) return false;
         if (guardIsWord(k)) {
             if (strcmp(v, "1") == 0 || v[0] == '\0' ||
                 strcmp(v, "true") == 0 || strcmp(v, "0") == 0 ||

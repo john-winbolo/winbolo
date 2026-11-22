@@ -125,6 +125,49 @@ void brainRecInClose(BrainRecIn *in);
 /* Detect the format of the first bytes of a file (at least 4 bytes). */
 BrainRecFormat brainRecDetectFormat(const unsigned char *head, size_t n);
 
+/* ---- text logs (print2_bot*.log) ------------------------------------ */
+/* A finished print2 log is stored as <name>.zst: one plain zstd stream
+ * (the zstd tool reads it), with long-distance matching and a 128 MiB
+ * window, because print2 repeats lines across the whole game. Older
+ * builds wrote <name>.gz. brainRecInOpen reads all three forms (plain,
+ * gzip, zstd), so it is also the log reader; a reader that knows only
+ * the plain name looks for <name>.zst and <name>.gz too.
+ *
+ * The settings come from a measurement on a 150 MB print2 log of a real
+ * 2v2 game, on one core of a Ryzen 5 5600 (gzip -6 made 10.6 MB):
+ *   level 15                          5.67 MB   3.9 s
+ *   level 17                          5.16 MB  16.5 s
+ *   level 19                          4.10 MB  60.0 s
+ *   level 19, btopt, searchLog 1,
+ *     minMatch 6 (these)              4.37 MB   7.8 s
+ * Reading it back takes about 0.1 s. */
+#define BRAINLOG_ZSTD_LEVEL       19
+#define BRAINLOG_ZSTD_SEARCH_LOG  1
+#define BRAINLOG_ZSTD_MIN_MATCH   6
+#define BRAINLOG_ZSTD_WINDOW_LOG  27
+#define BRAINLOG_ZSTD_EXT         ".zst"
+#define BRAINLOG_GZIP_EXT         ".gz"
+
+typedef enum {
+    BRAINLOG_PLAIN = 0,
+    BRAINLOG_GZIP  = 1,
+    BRAINLOG_ZSTD  = 2,
+} BrainLogFormat;
+
+/* The form a log file name says: ".zst", ".gz" or anything else. */
+BrainLogFormat brainLogFormatOfName(const char *name);
+
+typedef struct BrainLogOut BrainLogOut;
+
+/* Create (truncate) path for a log of the given form. srcSize is the
+ * size of the text when known (0 when not): zstd then uses no larger a
+ * window than the text needs. NULL on error. */
+BrainLogOut *brainLogOutOpen(const char *path, BrainLogFormat fmt,
+                             uint64_t srcSize);
+bool brainLogOutWrite(BrainLogOut *o, const void *p, size_t n);
+/* End the stream and close. Frees o. False if any write failed. */
+bool brainLogOutClose(BrainLogOut *o);
+
 #ifdef __cplusplus
 }
 #endif

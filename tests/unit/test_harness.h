@@ -229,8 +229,6 @@ int run_lobby_add_bot_rejects_ai_none(void);
 int run_lobby_add_bot_rejects_not_in_lobby(void);
 int run_lobby_add_bot_rejects_non_host_sender(void);
 int run_lobby_bot_count_counts_only_connected_bots(void);
-int run_lobby_maxbots_cap_boundary(void);
-int run_lobby_add_bot_rejects_when_at_maxbots(void);
 int run_lobby_add_bot_rejects_at_host_capacity(void);
 int run_server_bot_slots_codec(void);
 int run_server_bot_slots_setting(void);
@@ -702,6 +700,7 @@ int run_channel_mux_control_backlog_delivers_in_order(void);
 int run_channel_mux_control_backlog_full_refuses(void);
 int run_channel_mux_game_channel_still_refuses_at_window(void);
 int run_channel_mux_control_reset_clears_backlog(void);
+int run_channel_mux_bulk_wide(void);
 
 /* Spectator delayed-stream ring (test_spectator_ring.c): segmentation,
  * keyframe-at-segment-start, mid-interval seek + replay, segment isolation,
@@ -996,9 +995,8 @@ int run_bot_host_place_keep_batch_server_room(void);
 int run_bot_host_place_keep_batch_no_reading(void);
 int run_bot_host_place_keep_batch_slot_limit(void);
 int run_bot_host_place_keep_batch_cpu_limit(void);
-int run_bot_host_enforce_fall_back_holds(void);
-int run_bot_host_enforce_host_resumes(void);
-int run_bot_host_enforce_leave_resumes(void);
+int run_bot_host_enforce_over_warns(void);
+int run_bot_host_enforce_good_host(void);
 int run_bot_host_enforce_off_keeps_fall_back(void);
 /* A Bot Host that joins a game in progress (test_bot_host_midgame.c). */
 int run_bot_host_place_keep_lag_join(void);
@@ -1043,6 +1041,8 @@ int run_bot_host_cpu_bot_codec(void);
 int run_bot_host_cpu_budget(void);
 int run_bot_host_cpu_bot_client_row(void);
 int run_bot_host_lag_codec(void);
+int run_bot_host_rec_bytes_codec(void);
+int run_bot_host_rec_eta(void);
 int run_bot_timing_codec(void);
 int run_bot_timing_client_copy(void);
 /* Bot Hosts on one computer, the game bot limit and the row slot override
@@ -1644,6 +1644,9 @@ int run_brainrec_host_merge_other_version_rebuilt_brain(void);
 int run_brainrec_host_merge_missing_block(void);
 int run_brainrec_host_merge_dir_keeps_raw(void);
 int run_brainrec_host_merge_verdict(void);
+int run_brainrec_host_merge_again_acks_merged(void);
+int run_brainrec_host_merge_replace_waits(void);
+int run_brainrec_host_ack_target_rejoined(void);
 /* The Bot Host's recorder keeps its blocks (test_bothost_rec.c). */
 int run_bothost_rec_upload_keeps_files(void);
 int run_bothost_rec_lowdisk_keeps_files(void);
@@ -1652,6 +1655,7 @@ int run_brainrec_host_path_checks(void);
 int run_brainrec_dir_lock_orders_merge_and_gzip(void);
 int run_brainrec_host_make_absolute(void);
 int run_brainrec_host_print2_gz(void);
+int run_brainrec_print2_zst_round_trip(void);
 int run_brainrec_host_rec_codec(void);
 int run_brainrec_host_legend_unclosed(void);
 int run_brainrec_host_upload_no_session(void);
@@ -3123,6 +3127,8 @@ int run_conn_migration_e2e(void);
  * snapshot serverTick, 0 until two are applied). */
 int run_viewtick_rewind(void);
 int run_viewtick_displayed_tick(void);
+/* A Bot Host bot with view tick 0 is rewound by its host's measured lag. */
+int run_viewtick_rewind_bot_host(void);
 
 /* Differential check of the generated flat-leaf-snapshot codecs against the
  * hand-rolled packers (test_wire_corpus.c). The capture entry regenerates the

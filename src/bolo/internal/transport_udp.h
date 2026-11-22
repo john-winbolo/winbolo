@@ -758,6 +758,15 @@ int transportUdpServerGetSpectatorCount(void);
 /* Returns ping for a given player (0 if not connected). */
 uint16_t transportUdpServerGetClientPing(BYTE playerNum);
 
+/* The round trip in ms the server's lag-compensation ping estimate uses for
+ * a player (serverSimComputeLagCompTicks, used when the input has no view
+ * tick). A human: his ping, the same as transportUdpServerGetClientPing. A
+ * bot whose brain thinks on a remote Bot Host: that host's smoothed lag, so
+ * the bot gets the rewind a human that far away gets. Any other bot, or a
+ * host with no lag measured yet: 0. Only the rewind reads it; the ping shown
+ * for a bot stays 0. */
+uint16_t transportUdpServerGetLagCompPingMs(BYTE playerNum);
+
 /* Test seam: overwrite a connected slot's measured ping so the high-ping
  * enforcement path (transportUdpServerEnforcePing) can be driven
  * deterministically. Real RTT over the unit tests' loopback socket is ~0ms and
@@ -938,10 +947,12 @@ void transportUdpServerSetBotHostRecord(bool on);
  * lag. Off by default: a bot stays where it runs well
  * (botHostPlaceRebalanceKeep in bot_host_link.h). */
 void transportUdpServerSetBotHostSpreadEven(bool on);
-/* -bothost-enforce-server-limit <0|1>: 1 (the default), the server runs no
- * more in-process bots than its own slots, and a bot with no slot there or
- * on a good Bot Host is held until a place has one; 0, a bot back from a
- * Bot Host runs on the server past its slots, as before. */
+/* -bothost-enforce-server-limit <0|1>: 1 (the default), the placement puts
+ * no bot on the server past its own slots, and a bot past them moves to a
+ * good Bot Host with a slot. No bot is held: with no such host every bot
+ * runs on the server, and the players are told once that the bots may play
+ * worse. 0, the placement puts bots on the server past its slots, as
+ * before. */
 void transportUdpServerSetBotHostEnforceServerLimit(bool on);
 /* -bothost-code official|custom. Official (false, the default): the
  * server sends no brain file to any Bot Host and places a bot only on a host

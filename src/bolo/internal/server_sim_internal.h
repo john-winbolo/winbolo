@@ -522,7 +522,6 @@ struct ServerSim {
                                     * in the same process calls. Cleared
                                     * when the seat's player leaves. */
     BYTE     maxPlayers;           /* cap on join slots; 0 falls back to MAX_TANKS */
-    BYTE     maxBots;              /* cap on AI bots in the lobby; 0 = no cap */
     int      hostBotCapacity;      /* how many bots this server runs in its
                                     * own process at full strength (the CPU
                                     * speed test, or -botcapacity): 0..16,
@@ -689,6 +688,11 @@ struct ServerSim {
     BYTE         pendingHarvestBuildX[MAX_TANKS];
     BYTE         pendingHarvestBuildY[MAX_TANKS];
     uint16_t     playerPing[MAX_TANKS];           /* Per-player ping in ms (server-measured RTT) */
+    /* The round trip the lag-compensation ping estimate uses
+     * (transportUdpServerGetLagCompPingMs). The same as playerPing for a
+     * human; for a bot on a remote Bot Host, the host's lag, where playerPing
+     * (the ping shown) is 0. */
+    uint16_t     lagCompPingMs[MAX_TANKS];
 
     /* Input jitter buffer — delay processing until buffer reaches target depth */
 #define JITTER_BUFFER_MIN       1   /* Minimum buffer depth (ticks) */

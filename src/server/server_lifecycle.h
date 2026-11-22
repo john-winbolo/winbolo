@@ -58,8 +58,6 @@ typedef struct {
   const char    *bindAddr;        /* "" or NULL = INADDR_ANY */
   const char    *password;        /* "" or NULL = no password */
   BYTE           maxPlayers;
-  BYTE           maxBots;          /* cap on AI bots addable in the lobby;
-                                      0 = no cap */
   BYTE           maxSpectators;    /* cap on spectator connections; 0 = spectating disabled */
   uint16_t       specDelaySeconds; /* spectator view delay in seconds; 0 = live (no floor) */
 

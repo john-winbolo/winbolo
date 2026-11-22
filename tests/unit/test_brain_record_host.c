@@ -8,11 +8,13 @@
  * server's brainrec.btr, the path checks the upload and cleardebug use,
  * and the CTRL_BOT_HOST_REC wire message.
  *
- * The .btr files here are made by hand: frames with no tanks, shells,
- * bases, pills or map changes, so the only thing in them is the per-bot
- * entries. Each local body carries a thinkMs the test picks, and each host
- * record carries its own input sequence as its thinkMs, so the merged file
- * says which record filled which frame.
+ * The server's own recorder (brainRecordTick) writes the .btr files here,
+ * so they have the frame layout of the version this build writes. A plan
+ * says, per frame, which bot slots run on the host (the hosted marker, its
+ * gen and the last input the server took) and which run on the server.
+ * Each host record carries its own input sequence as its thinkMs, so the
+ * merged file says which record filled which frame. A local body must
+ * come through the merge as the recorder wrote it.
  */
 #include <stdint.h>
 #include <stdio.h>
@@ -26,17 +28,19 @@
 #include "brain_record_host.h"
 #include "brain_record_walk.h"
 #include "client_sim.h"
+#include "server_sim.h"
+#include "server_sim_internal.h" /* lobbyPlayers, lastProcessedInput */
 #include "control_event.h"
 #include "transport_control_codec.h"
 #include "bulk_transfer.h"
 #include "transport_udp_server_internal.h" /* serverBotRecPiece, udpServer */
+#include "input_packet.h"   /* TankSnapshot ... PillSnapshot sizes */
 #include "test_harness.h"
 
-/* One bot entry of a hand-made frame. */
+/* One bot of a recorded frame, as the plan wants it. */
 typedef struct {
     uint8_t  slot;
     bool     hosted;
-    float    thinkMs;    /* local body */
     uint16_t gen;        /* hosted marker */
     uint32_t lpi;        /* hosted marker: the last input the server took */
 } TbrBot;
@@ -45,56 +49,61 @@ static bool tbrWrite(BrainRecOut *f, const void *p, size_t n) {
     return n == 0 || brainRecOutWrite(f, p, n);
 }
 
-static BrainRecOut *tbrOpenBtr(const char *path) {
-    BrainRecHeader hdr;
-    const char *legend = "{\"cats\":[]}";
-    uint32_t llen = (uint32_t)strlen(legend);
-    BrainRecOut *f = brainRecOutOpen(path);
-    if (f == NULL) return NULL;
-    memset(&hdr, 0, sizeof(hdr));
-    memcpy(hdr.magic, BRAINREC_MAGIC, BRAINREC_MAGIC_LEN);
-    hdr.version = BRAINREC_VERSION;
-    memcpy(hdr.mapName, "Test", 4);
-    if (!tbrWrite(f, &hdr, sizeof(hdr)) || !tbrWrite(f, &llen, 4) ||
-        !tbrWrite(f, legend, llen)) {
-        (void)brainRecOutClose(f);
-        return NULL;
-    }
-    return f;
+/* Fills bots[0..n-1] (slot already set) for frame number frame. */
+typedef void (*TbrPlanFn)(int frame, TbrBot *bots, int n);
+
+/* This frame's plan by slot, for the recorder's hosted-bot hook. */
+static TbrBot g_tbrPlan[MAX_TANKS];
+
+static bool tbrHostedHook(BYTE slot, uint16_t *placeGen, char *hostName) {
+    if (slot >= MAX_TANKS || !g_tbrPlan[slot].hosted) return false;
+    *placeGen = g_tbrPlan[slot].gen;
+    SDL_strlcpy(hostName, "testhost", 32);
+    return true;
 }
 
-static bool tbrFrame(BrainRecOut *f, uint32_t tick, const TbrBot *bots,
-                     int n) {
-    uint32_t magic = BRAINREC_FRAME_MAGIC;
-    uint8_t zero4[4] = {0, 0, 0, 0};
-    uint8_t kf = 0;
-    uint32_t nd = 0;
-    uint8_t nb = (uint8_t)n;
-    uint8_t alliances[MAX_TANKS * 4];
-    uint32_t masks[2] = {0xFFFFFFFFu, 0xFFFFFFFFu};
-    BrainRecBuf b;
-    int i;
-    bool ok;
-
-    ok = tbrWrite(f, &magic, 4) && tbrWrite(f, &tick, 4) &&
-         tbrWrite(f, zero4, 4) &&        /* tanks, shells, bases, pills */
-         tbrWrite(f, &kf, 1) && tbrWrite(f, &nd, 4) && tbrWrite(f, &nb, 1);
-    brainRecBufInit(&b);
-    for (i = 0; ok && i < n; i++) {
-        brainRecBufReset(&b);
-        if (bots[i].hosted) {
-            brainRecBodyEncodeHosted(&b, bots[i].gen, "testhost", bots[i].lpi);
-        } else {
-            (void)brainRecBodyEncode(&b, bots[i].thinkMs, NULL, NULL, NULL,
-                                     NULL);
-        }
-        ok = !b.failed && tbrWrite(f, &bots[i].slot, 1) &&
-             tbrWrite(f, b.data, b.len);
+/* Record frames frames of a game into dir/brainrec.btr with the server's
+ * recorder. slots[] (ascending) are the bot slots; plan says per frame
+ * which of them are hosted. A slot not in slots[] is no bot, so it has no
+ * entry (slot 0 is the human player ut_make_running_sim adds). */
+static bool tbrRecord(const char *dir, const uint8_t *slots, int n,
+                      int frames, TbrPlanFn plan) {
+    ServerSim *sim = ut_make_running_sim("Player0");
+    TbrBot bots[MAX_TANKS];
+    int f, k;
+    if (sim == NULL) return false;
+    if (n > MAX_TANKS || !SDL_CreateDirectory(dir)) {
+        serverSimDestroy(sim);
+        return false;
     }
-    brainRecBufFree(&b);
-    memset(alliances, 0, sizeof(alliances));
-    return ok && tbrWrite(f, alliances, sizeof(alliances)) &&
-           tbrWrite(f, masks, sizeof(masks));
+    for (k = 0; k < n; k++) {
+        char name[16];
+        snprintf(name, sizeof(name), "Bot%u", (unsigned)slots[k]);
+        if (slots[k] != 0) serverSimAddPlayer(sim, slots[k], name, false);
+        sim->lobbyPlayers[slots[k]].isBot = true;
+    }
+    brainRecordSetHostedInfoFn(tbrHostedHook);
+    brainRecordSetSessionDir(dir);
+    brainRecordSetEnabled(true);
+    for (f = 0; f < frames; f++) {
+        memset(bots, 0, sizeof(bots));
+        memset(g_tbrPlan, 0, sizeof(g_tbrPlan));
+        for (k = 0; k < n; k++) bots[k].slot = slots[k];
+        plan(f, bots, n);
+        for (k = 0; k < n; k++) g_tbrPlan[slots[k]] = bots[k];
+        serverSimTick(sim);
+        for (k = 0; k < n; k++) {
+            if (bots[k].hosted) sim->lastProcessedInput[slots[k]] = bots[k].lpi;
+        }
+        brainRecordTick(sim);
+    }
+    brainRecordEndGame();
+    brainRecordSetEnabled(false);
+    brainRecordSetSessionDir(NULL);
+    brainRecordSetHostedInfoFn(NULL);
+    memset(g_tbrPlan, 0, sizeof(g_tbrPlan));
+    serverSimDestroy(sim);
+    return true;
 }
 
 /* A host file for (slot, gen) with one record per seq in [first, last],
@@ -203,8 +212,24 @@ static bool tbrRead(const char *path, TbrOut *o) {
             ok = false;
             break;
         }
-        /* magic, tick, four zero counts, kf 0, nd 0 */
-        pos = 4 + 4 + 4 + 1 + 4;
+        /* The same steps as brainRecWalkFrame: magic, tick, the four
+         * snapshot lists, the map track, then the bots. */
+        pos = 4 + 4;
+        pos += 1 + (size_t)buf.data[pos] * sizeof(TankSnapshot);
+        pos += 1 + (size_t)buf.data[pos] * sizeof(ShellSnapshot);
+        pos += 1 + (size_t)buf.data[pos] * sizeof(BaseSnapshot);
+        pos += 1 + (size_t)buf.data[pos] * sizeof(PillSnapshot);
+        if (buf.data[pos++] != 0) {
+            pos += (size_t)MAP_ARRAY_SIZE * MAP_ARRAY_SIZE;
+        } else {
+            uint32_t nd;
+            memcpy(&nd, buf.data + pos, 4);
+            pos += 4 + (size_t)nd * 5;
+        }
+        if (pos >= buf.len) {
+            ok = false;
+            break;
+        }
         o->bots[o->frames] = buf.data[pos++];
         for (b = 0; b < o->bots[o->frames]; b++) {
             size_t bl;
@@ -243,35 +268,32 @@ static bool tbrRead(const char *path, TbrOut *o) {
 /* ================================================================
  * Host records fill the hosted markers by input sequence.
  * ================================================================ */
+static void tbrPlanByTick(int frame, TbrBot *bots, int n) {
+    (void)n;
+    bots[1].hosted = true;
+    bots[1].gen = 5;
+    bots[1].lpi = 10u + 2u * (uint32_t)frame;
+}
+
 int run_brainrec_host_merge_by_tick(void) {
-    char btr[1024], hbr[1024], out[1024];
+    static const uint8_t slots[2] = {0, 1};
+    char dir[1024], btr[1100], hbr[1024], out[1024];
     const char *files[1];
-    BrainRecOut *f;
     BrainRecMergeStats st;
-    TbrOut o;
+    static TbrOut in, o;
     char err[256];
     int i;
 
-    UT_ASSERT(utScratchPath(btr, sizeof(btr), "brainrec.btr"));
+    UT_ASSERT(utScratchPath(dir, sizeof(dir), "sess"));
     UT_ASSERT(utScratchPath(hbr, sizeof(hbr), "bot1_g5.hbr"));
     UT_ASSERT(utScratchPath(out, sizeof(out), "merged.btr"));
+    snprintf(btr, sizeof(btr), "%s/%s", dir, BRAINREC_FILENAME);
 
     /* 20 frames: slot 0 runs on the server, slot 1 on the host (gen 5).
      * The server took input 10, 12, ... 48 by these frames. */
-    f = tbrOpenBtr(btr);
-    UT_ASSERT(f != NULL);
-    for (i = 0; i < 20; i++) {
-        TbrBot bots[2];
-        memset(bots, 0, sizeof(bots));
-        bots[0].slot = 0;
-        bots[0].thinkMs = 1.5f;
-        bots[1].slot = 1;
-        bots[1].hosted = true;
-        bots[1].gen = 5;
-        bots[1].lpi = 10u + 2u * (uint32_t)i;
-        UT_ASSERT(tbrFrame(f, 100u + 2u * (uint32_t)i, bots, 2));
-    }
-    UT_ASSERT(brainRecOutClose(f));
+    UT_ASSERT(tbrRecord(dir, slots, 2, 20, tbrPlanByTick));
+    UT_ASSERT(tbrRead(btr, &in));
+    UT_ASSERT(in.frames == 20);
     /* The host thought from input 12 on (its first think came one think
      * after the server's first marker) and stopped at 44: the last two
      * frames lag by 2 and 4, inside the stale window. */
@@ -293,9 +315,10 @@ int run_brainrec_host_merge_by_tick(void) {
     for (i = 0; i < 20; i++) {
         uint32_t lpi = 10u + 2u * (uint32_t)i;
         float want = (float)(lpi < 12u ? 12u : (lpi > 44u ? 44u : lpi));
-        UT_ASSERT(o.bots[i] == 2);
-        UT_ASSERT(o.slot[i][0] == 0 && !o.hosted[i][0]);
-        UT_ASSERT(o.thinkMs[i][0] == 1.5f);
+        UT_ASSERT(o.bots[i] == 2 && in.bots[i] == 2);
+        UT_ASSERT(o.slot[i][0] == 0 && !o.hosted[i][0] && !in.hosted[i][0]);
+        UT_ASSERT(o.thinkMs[i][0] == in.thinkMs[i][0]);
+        UT_ASSERT(in.hosted[i][1]);
         UT_ASSERT(o.slot[i][1] == 1);
         UT_ASSERT_MSG(!o.hosted[i][1], "frame %d still a marker", i);
         UT_ASSERT_MSG(o.thinkMs[i][1] == want, "frame %d: %f, want %f", i,
@@ -312,39 +335,36 @@ int run_brainrec_host_merge_by_tick(void) {
  * A bot that moves between the host and the server inside one block,
  * and is placed on the host twice (two gens).
  * ================================================================ */
+static void tbrPlanMidBlock(int i, TbrBot *bots, int n) {
+    (void)n;
+    if ((i >= 5 && i < 10) || i >= 15) {
+        bots[0].hosted = true;
+        bots[0].gen = (uint16_t)(i < 10 ? 5 : 9);
+        bots[0].lpi = 2u + 2u * (uint32_t)(i < 10 ? i - 5 : i - 15);
+    }
+}
+
 int run_brainrec_host_merge_mid_block_move(void) {
-    char btr[1024], h5[1024], h9[1024], out[1024];
+    static const uint8_t slots[1] = {2};
+    char dir[1024], btr[1100], h5[1024], h9[1024], out[1024];
     const char *files[2];
-    BrainRecOut *f;
     BrainRecMergeStats st;
-    TbrOut o;
+    static TbrOut in, o;
     char err[256];
     int i;
 
-    UT_ASSERT(utScratchPath(btr, sizeof(btr), "brainrec.btr"));
+    UT_ASSERT(utScratchPath(dir, sizeof(dir), "sess"));
     UT_ASSERT(utScratchPath(h5, sizeof(h5), "bot2_g5.hbr"));
     UT_ASSERT(utScratchPath(h9, sizeof(h9), "bot2_g9.hbr"));
     UT_ASSERT(utScratchPath(out, sizeof(out), "merged.btr"));
+    snprintf(btr, sizeof(btr), "%s/%s", dir, BRAINREC_FILENAME);
 
     /* Frames 0-4: slot 2 on the server. 5-9: on the host, gen 5 (its
      * input sequence starts again from 2). 10-14: back on the server.
      * 15-19: on the host again, gen 9, a new connection from 2. */
-    f = tbrOpenBtr(btr);
-    UT_ASSERT(f != NULL);
-    for (i = 0; i < 20; i++) {
-        TbrBot bot;
-        memset(&bot, 0, sizeof(bot));
-        bot.slot = 2;
-        if ((i >= 5 && i < 10) || i >= 15) {
-            bot.hosted = true;
-            bot.gen = (uint16_t)(i < 10 ? 5 : 9);
-            bot.lpi = 2u + 2u * (uint32_t)(i < 10 ? i - 5 : i - 15);
-        } else {
-            bot.thinkMs = 500.0f + (float)i;
-        }
-        UT_ASSERT(tbrFrame(f, 200u + 2u * (uint32_t)i, &bot, 1));
-    }
-    UT_ASSERT(brainRecOutClose(f));
+    UT_ASSERT(tbrRecord(dir, slots, 1, 20, tbrPlanMidBlock));
+    UT_ASSERT(tbrRead(btr, &in));
+    UT_ASSERT(in.frames == 20);
     UT_ASSERT(tbrHostFile(h5, 2, 5, 2, 10));
     UT_ASSERT(tbrHostFile(h9, 2, 9, 2, 10));
 
@@ -366,8 +386,10 @@ int run_brainrec_host_merge_mid_block_move(void) {
             float want = (float)(2 + 2 * (i < 10 ? i - 5 : i - 15));
             UT_ASSERT_MSG(o.thinkMs[i][0] == want, "frame %d: %f want %f", i,
                           (double)o.thinkMs[i][0], (double)want);
+            UT_ASSERT(in.hosted[i][0]);
         } else {
-            UT_ASSERT(o.thinkMs[i][0] == 500.0f + (float)i);
+            UT_ASSERT(!in.hosted[i][0]);
+            UT_ASSERT(o.thinkMs[i][0] == in.thinkMs[i][0]);
         }
     }
     return 0;
@@ -418,13 +440,24 @@ static bool tbrHostFileV(const char *path, uint8_t slot, uint16_t gen,
     return ok;
 }
 
+static void tbrPlanOtherVersion(int i, TbrBot *bots, int n) {
+    int k;
+    (void)n;
+    for (k = 0; k < 2; k++) {
+        bots[k].hosted = true;
+        bots[k].gen = 1;
+        bots[k].lpi = 2u * (uint32_t)i;
+    }
+}
+
 int run_brainrec_host_merge_other_version_rebuilt_brain(void) {
-    char btr[1024], h0a[1024], h0b[1024], h0bad[1024], h1[1024], out[1024];
+    static const uint8_t slots[3] = {0, 1, 2};
+    char dir[1024], btr[1100];
+    char h0a[1024], h0b[1024], h0bad[1024], h1[1024], out[1024];
     char name[64];
     const char *files[4];
-    BrainRecOut *f;
     BrainRecMergeStats st;
-    TbrOut o;
+    static TbrOut in, o;
     char err[256];
     int i;
 
@@ -436,33 +469,19 @@ int run_brainrec_host_merge_other_version_rebuilt_brain(void) {
     hostRecFileName(name, sizeof(name), 0, 1);
     UT_ASSERT(strcmp(name, "bot0_g1.hbr") == 0);
 
-    UT_ASSERT(utScratchPath(btr, sizeof(btr), "brainrec.btr"));
+    UT_ASSERT(utScratchPath(dir, sizeof(dir), "sess"));
     UT_ASSERT(utScratchPath(h0a, sizeof(h0a), "bot0_g1.hbr"));
     UT_ASSERT(utScratchPath(h0b, sizeof(h0b), "bot0_g1_p1.hbr"));
     UT_ASSERT(utScratchPath(h0bad, sizeof(h0bad), "bot0_g1_p2.hbr"));
     UT_ASSERT(utScratchPath(h1, sizeof(h1), "bot1_g1.hbr"));
     UT_ASSERT(utScratchPath(out, sizeof(out), "merged.btr"));
+    snprintf(btr, sizeof(btr), "%s/%s", dir, BRAINREC_FILENAME);
 
     /* 20 frames. Slots 0 and 1 are hosted markers of gen 1 whose last
      * input goes 0, 2, ... 38; slot 2 runs on the server. */
-    f = tbrOpenBtr(btr);
-    UT_ASSERT(f != NULL);
-    for (i = 0; i < 20; i++) {
-        TbrBot bots[3];
-        memset(bots, 0, sizeof(bots));
-        bots[0].slot = 0;
-        bots[0].hosted = true;
-        bots[0].gen = 1;
-        bots[0].lpi = 2u * (uint32_t)i;
-        bots[1].slot = 1;
-        bots[1].hosted = true;
-        bots[1].gen = 1;
-        bots[1].lpi = 2u * (uint32_t)i;
-        bots[2].slot = 2;
-        bots[2].thinkMs = 3.0f;
-        UT_ASSERT(tbrFrame(f, 50u + 2u * (uint32_t)i, bots, 3));
-    }
-    UT_ASSERT(brainRecOutClose(f));
+    UT_ASSERT(tbrRecord(dir, slots, 3, 20, tbrPlanOtherVersion));
+    UT_ASSERT(tbrRead(btr, &in));
+    UT_ASSERT(in.frames == 20);
 
     /* Slot 0: an older brainrec version than the server's. Its brain is
      * built again after input 18; the new part starts at 22. Slot 1: a
@@ -504,7 +523,8 @@ int run_brainrec_host_merge_other_version_rebuilt_brain(void) {
                       i, (double)o.thinkMs[i][0], (double)want0);
         UT_ASSERT_MSG(o.thinkMs[i][1] == (float)lpi, "frame %d slot 1: %f", i,
                       (double)o.thinkMs[i][1]);
-        UT_ASSERT(!o.hosted[i][2] && o.thinkMs[i][2] == 3.0f);
+        UT_ASSERT(in.hosted[i][0] && in.hosted[i][1] && !in.hosted[i][2]);
+        UT_ASSERT(!o.hosted[i][2] && o.thinkMs[i][2] == in.thinkMs[i][2]);
         /* The pool JSON of the host comes through (every second record
          * has one). */
         if ((lpi % 4u) == 0) {
@@ -521,33 +541,30 @@ int run_brainrec_host_merge_other_version_rebuilt_brain(void) {
 /* ================================================================
  * No host data: the markers stay and the file still walks.
  * ================================================================ */
+static void tbrPlanMissing(int i, TbrBot *bots, int n) {
+    (void)n;
+    bots[0].hosted = true;
+    bots[0].gen = 6;
+    bots[0].lpi = 20u + 2u * (uint32_t)i;
+}
+
 int run_brainrec_host_merge_missing_block(void) {
-    char btr[1024], hWrong[1024], out[1024];
+    static const uint8_t slots[2] = {3, 4};
+    char dir[1024], btr[1100], hWrong[1024], out[1024];
     const char *files[2];
-    BrainRecOut *f;
     BrainRecMergeStats st;
-    TbrOut o;
+    static TbrOut in, o;
     char err[256];
     int i;
 
-    UT_ASSERT(utScratchPath(btr, sizeof(btr), "brainrec.btr"));
+    UT_ASSERT(utScratchPath(dir, sizeof(dir), "sess"));
     UT_ASSERT(utScratchPath(hWrong, sizeof(hWrong), "bot3_g4.hbr"));
     UT_ASSERT(utScratchPath(out, sizeof(out), "merged.btr"));
+    snprintf(btr, sizeof(btr), "%s/%s", dir, BRAINREC_FILENAME);
 
-    f = tbrOpenBtr(btr);
-    UT_ASSERT(f != NULL);
-    for (i = 0; i < 6; i++) {
-        TbrBot bots[2];
-        memset(bots, 0, sizeof(bots));
-        bots[0].slot = 3;
-        bots[0].hosted = true;
-        bots[0].gen = 6;
-        bots[0].lpi = 20u + 2u * (uint32_t)i;
-        bots[1].slot = 4;
-        bots[1].thinkMs = 2.0f;
-        UT_ASSERT(tbrFrame(f, 300u + 2u * (uint32_t)i, bots, 2));
-    }
-    UT_ASSERT(brainRecOutClose(f));
+    UT_ASSERT(tbrRecord(dir, slots, 2, 6, tbrPlanMissing));
+    UT_ASSERT(tbrRead(btr, &in));
+    UT_ASSERT(in.frames == 6);
 
     /* No files at all. */
     UT_ASSERT_MSG(brainRecMergeFiles(btr, NULL, 0, out, &st, err, sizeof(err)),
@@ -556,8 +573,10 @@ int run_brainrec_host_merge_missing_block(void) {
     UT_ASSERT(tbrRead(out, &o));
     UT_ASSERT(o.frames == 6);
     for (i = 0; i < 6; i++) {
+        UT_ASSERT(o.bots[i] == 2 && o.slot[i][0] == 3 && o.slot[i][1] == 4);
         UT_ASSERT(o.hosted[i][0]);
-        UT_ASSERT(!o.hosted[i][1] && o.thinkMs[i][1] == 2.0f);
+        UT_ASSERT(!in.hosted[i][1]);
+        UT_ASSERT(!o.hosted[i][1] && o.thinkMs[i][1] == in.thinkMs[i][1]);
     }
 
     /* A file of another placement (gen 4) and one that is not a host
@@ -600,15 +619,116 @@ static bool tbrWriteText(const char *path, const char *text, bool gz) {
     }
 }
 
+/* The same reader the merge uses: plain, gzip or zstd. */
 static bool tbrReadText(const char *path, char *out, size_t sz) {
-    gzFile g = gzopen(path, "rb");
-    int n;
-    if (g == NULL) return false;
-    n = gzread(g, out, (unsigned)(sz - 1));
-    gzclose(g);
-    if (n < 0) return false;
+    BrainRecIn *in = brainRecInOpen(path);
+    size_t n;
+    bool err;
+    if (in == NULL) return false;
+    n = brainRecInRead(in, out, sz - 1);
+    err = brainRecInError(in);
+    brainRecInClose(in);
+    if (err) return false;
     out[n] = '\0';
     return true;
+}
+
+static bool tbrWriteZst(const char *path, const char *text) {
+    BrainLogOut *o = brainLogOutOpen(path, BRAINLOG_ZSTD, strlen(text));
+    bool ok;
+    if (o == NULL) return false;
+    ok = brainLogOutWrite(o, text, strlen(text));
+    return brainLogOutClose(o) && ok;
+}
+
+static BrainRecFormat tbrFormatOf(const char *path) {
+    unsigned char head[4] = {0};
+    size_t n;
+    FILE *f = fopen(path, "rb");
+    if (f == NULL) return BRAINREC_FMT_NONE;
+    n = fread(head, 1, sizeof head, f);
+    fclose(f);
+    return brainRecDetectFormat(head, n);
+}
+
+/* ================================================================
+ * The print2 log store: a zstd log reads back, through the merge's
+ * reader, to the same text, in a long log too. A host's .log.zst that
+ * clashes with the server's .log.zst is merged by tick and stays zstd.
+ * ================================================================ */
+int run_brainrec_print2_zst_round_trip(void) {
+    char sess[1024], host[1024], a[1100], b[1100], c[1100], text[512];
+    SDL_PathInfo pi;
+
+    UT_ASSERT(utScratchPath(sess, sizeof(sess), "zsess"));
+    UT_ASSERT(utScratchPath(host, sizeof(host), "zhost"));
+    UT_ASSERT(SDL_CreateDirectory(sess));
+    UT_ASSERT(SDL_CreateDirectory(host));
+    UT_ASSERT(brainLogFormatOfName("x.log.zst") == BRAINLOG_ZSTD);
+    UT_ASSERT(brainLogFormatOfName("x.log.gz") == BRAINLOG_GZIP);
+    UT_ASSERT(brainLogFormatOfName("x.log") == BRAINLOG_PLAIN);
+
+    /* A long log (2 MB, lines over 64 KB apart) reads back byte for byte. */
+    {
+        size_t cap = 2u << 20, len = 0, got;
+        char *big = (char *)malloc(cap), *back = (char *)malloc(cap + 16);
+        BrainLogOut *o;
+        BrainRecIn *in;
+        int t = 0;
+        UT_ASSERT(big != NULL && back != NULL);
+        while (len + 64 < cap) {
+            len += (size_t)snprintf(big + len, cap - len,
+                                    "===TICK %d===\nline %d %d\n", t, t * 7, t % 13);
+            t++;
+        }
+        snprintf(c, sizeof(c), "%s/big.log.zst", sess);
+        o = brainLogOutOpen(c, BRAINLOG_ZSTD, len);
+        UT_ASSERT(o != NULL);
+        UT_ASSERT(brainLogOutWrite(o, big, len / 3));
+        UT_ASSERT(brainLogOutWrite(o, big + len / 3, len - len / 3));
+        UT_ASSERT(brainLogOutClose(o));
+        UT_ASSERT(tbrFormatOf(c) == BRAINREC_FMT_ZSTD);
+        UT_ASSERT(SDL_GetPathInfo(c, &pi) && pi.size > 0 && (size_t)pi.size < len / 10);
+        in = brainRecInOpen(c);
+        UT_ASSERT(in != NULL);
+        got = brainRecInRead(in, back, cap + 16);
+        UT_ASSERT(!brainRecInError(in) && !brainRecInTruncated(in));
+        brainRecInClose(in);
+        UT_ASSERT_MSG(got == len, "read %u of %u", (unsigned)got, (unsigned)len);
+        UT_ASSERT(memcmp(big, back, len) == 0);
+        free(big);
+        free(back);
+        (void)SDL_RemovePath(c);
+    }
+
+    /* The clash: both zstd; merged by tick, kept zstd, raw copy kept. */
+    snprintf(a, sizeof(a), "%s/print2_bot1.log.zst", sess);
+    snprintf(b, sizeof(b), "%s/print2_bot1.log.zst", host);
+    UT_ASSERT(tbrWriteZst(a, "head s\n===TICK 10===\ns10\n===TICK 30===\ns30\n"));
+    UT_ASSERT(tbrWriteZst(b, "===TICK 20===\nh20\n===TICK 40===\nh40\n"));
+    /* A host .zst clashing with the server's older .gz form. */
+    snprintf(c, sizeof(c), "%s/print2_bot2.log.gz", sess);
+    UT_ASSERT(tbrWriteText(c, "===TICK 1===\ns1\n", true));
+    snprintf(c, sizeof(c), "%s/print2_bot2.log.zst", host);
+    UT_ASSERT(tbrWriteZst(c, "===TICK 2===\nh2\n"));
+
+    UT_ASSERT(brainRecMergeDir(sess, host, "h", NULL, NULL, NULL));
+
+    UT_ASSERT(tbrFormatOf(a) == BRAINREC_FMT_ZSTD);
+    UT_ASSERT(tbrReadText(a, text, sizeof(text)));
+    UT_ASSERT(strcmp(text, "head s\n===TICK 10===\ns10\n===TICK 20===\nh20\n"
+                           "===TICK 30===\ns30\n===TICK 40===\nh40\n") == 0);
+    snprintf(b, sizeof(b), "%s/%s/h_print2_bot1.log.zst", sess, BRAINREC_HOST_RAW_DIR);
+    UT_ASSERT(tbrReadText(b, text, sizeof(text)));
+    UT_ASSERT(strcmp(text, "===TICK 20===\nh20\n===TICK 40===\nh40\n") == 0);
+    /* The .gz server file takes the .zst host log in, and stays gzip. */
+    snprintf(c, sizeof(c), "%s/print2_bot2.log.gz", sess);
+    UT_ASSERT(tbrReadText(c, text, sizeof(text)));
+    UT_ASSERT(strcmp(text, "===TICK 1===\ns1\n===TICK 2===\nh2\n") == 0);
+    snprintf(c, sizeof(c), "%s/print2_bot2.log.zst", sess);
+    UT_ASSERT(!SDL_GetPathInfo(c, &pi));
+    UT_ASSERT(!SDL_GetPathInfo(host, &pi));
+    return 0;
 }
 
 int run_brainrec_host_print2_gz(void) {
@@ -683,7 +803,7 @@ int run_brainrec_dir_lock_orders_merge_and_gzip(void) {
     UT_ASSERT(SDL_CreateDirectory(sess));
     UT_ASSERT(SDL_CreateDirectory(other));
     snprintf(plain, sizeof(plain), "%s/print2_bot0.log", sess);
-    snprintf(gz, sizeof(gz), "%s/print2_bot0.log.gz", sess);
+    snprintf(gz, sizeof(gz), "%s/print2_bot0.log.zst", sess);
     (void)SDL_RemovePath(gz);
     UT_ASSERT(tbrWriteText(plain, "===TICK 1===\nx\n", false));
 
@@ -703,7 +823,7 @@ int run_brainrec_dir_lock_orders_merge_and_gzip(void) {
     UT_ASSERT(th != NULL);
     for (i = 0; i < 200 && SDL_GetAtomicInt(&g.started) == 0; i++) SDL_Delay(5);
     SDL_Delay(300);
-    /* The compression waits: the plain log is still there, no .gz. */
+    /* The compression waits: the plain log is still there, no .zst. */
     UT_ASSERT(g.count == -1);
     UT_ASSERT(tbrExists(plain));
     UT_ASSERT(!tbrExists(gz));
@@ -923,31 +1043,18 @@ int run_brainrec_host_rec_codec(void) {
  * was read and filled entries.
  * ================================================================ */
 
-/* A session folder whose brainrec.btr has 6 frames: slot 1 hosted (gen 5,
- * inputs 20 to 30), slot 0 local. */
+static void tbrPlanSession(int i, TbrBot *bots, int n) {
+    (void)n;
+    bots[1].hosted = true;
+    bots[1].gen = 5;
+    bots[1].lpi = 20u + 2u * (uint32_t)i;
+}
+
+/* A session folder whose brainrec.btr has 6 frames: slot 0 local, slot 1
+ * hosted (gen 5, inputs 20 to 30). */
 static bool tbrSession(const char *dir) {
-    char btr[1100];
-    BrainRecOut *f;
-    int i;
-    if (!SDL_CreateDirectory(dir)) return false;
-    snprintf(btr, sizeof(btr), "%s/%s", dir, BRAINREC_FILENAME);
-    f = tbrOpenBtr(btr);
-    if (f == NULL) return false;
-    for (i = 0; i < 6; i++) {
-        TbrBot bots[2];
-        memset(bots, 0, sizeof(bots));
-        bots[0].slot = 1;
-        bots[0].hosted = true;
-        bots[0].gen = 5;
-        bots[0].lpi = 20u + 2u * (uint32_t)i;
-        bots[1].slot = 0;
-        bots[1].thinkMs = 1.0f;
-        if (!tbrFrame(f, 200u + 2u * (uint32_t)i, bots, 2)) {
-            (void)brainRecOutClose(f);
-            return false;
-        }
-    }
-    return brainRecOutClose(f);
+    static const uint8_t slots[2] = {0, 1};
+    return tbrRecord(dir, slots, 2, 6, tbrPlanSession);
 }
 
 int run_brainrec_host_merge_dir_keeps_raw(void) {
@@ -978,7 +1085,9 @@ int run_brainrec_host_merge_dir_keeps_raw(void) {
     snprintf(p, sizeof(p), "%s/%s", sess, BRAINREC_FILENAME);
     UT_ASSERT(tbrRead(p, &o));
     UT_ASSERT(o.frames == 6);
-    for (i = 0; i < 6; i++) UT_ASSERT(!o.hosted[i][0]);
+    for (i = 0; i < 6; i++) {
+        UT_ASSERT(o.bots[i] == 2 && o.slot[i][1] == 1 && !o.hosted[i][1]);
+    }
     /* ... and kept it as it came, with the host's print2 log. */
     snprintf(p, sizeof(p), "%s/%s/h_bot1_g5.hbr", sess, BRAINREC_HOST_RAW_DIR);
     UT_ASSERT(hostRecReaderOpen(&r, p));
@@ -1056,6 +1165,195 @@ int run_brainrec_host_merge_verdict(void) {
         UT_ASSERT(strcmp(t, "unknown reason") != 0);
     }
     UT_ASSERT(strcmp(brainRecMergeFailText(99), "unknown reason") == 0);
+    return 0;
+}
+
+/* Frames in path, by the shared walker; -1 if it cannot be read. */
+static int tbrCountFrames(const char *path) {
+    BrainRecIn *g = brainRecInOpen(path);
+    BrainRecReader r;
+    BrainRecFrameInfo fi;
+    BrainRecWalkStatus ws;
+    int n = 0;
+    if (g == NULL) return -1;
+    brainRecWalkReaderFromIn(&r, g);
+    if (brainRecWalkPreamble(&r, NULL, NULL) != BRAINREC_WALK_OK) {
+        brainRecInClose(g);
+        return -1;
+    }
+    for (;;) {
+        ws = brainRecWalkFrame(&r, &fi);
+        if (ws == BRAINREC_WALK_EOF) break;
+        if (ws != BRAINREC_WALK_OK) {
+            n = -1;
+            break;
+        }
+        n++;
+    }
+    brainRecInClose(g);
+    return n;
+}
+
+/* The Lenovo case (session 20261114_001428): a host sends a block the
+ * server merged before (it never got that ACK). The second merge finds no
+ * entry left for its files: NO_FILL. Sending it again would give the same
+ * answer each time, so the ACK is MERGED and the host stops. Every other
+ * failure is still FAILED. */
+int run_brainrec_host_merge_again_acks_merged(void) {
+    char sess[1024], host[1024], p[1200];
+    BrainRecMergeStats st;
+    uint8_t r;
+
+    UT_ASSERT(utScratchPath(sess, sizeof(sess), "againsess"));
+    UT_ASSERT(utScratchPath(host, sizeof(host), "againhost"));
+    UT_ASSERT(tbrSession(sess));
+
+    /* First upload: it fills every entry. */
+    UT_ASSERT(SDL_CreateDirectory(host));
+    snprintf(p, sizeof(p), "%s/bot1_g5.hbr", host);
+    UT_ASSERT(tbrHostFile(p, 1, 5, 20, 30));
+    UT_ASSERT(brainRecMergeDir(sess, host, "h", &st, NULL, NULL));
+    UT_ASSERT_MSG(st.markers == 6 && st.filled + st.stale == 6,
+                  "markers %u filled %u stale %u", (unsigned)st.markers,
+                  (unsigned)st.filled, (unsigned)st.stale);
+    r = brainRecMergeVerdict(true, &st);
+    UT_ASSERT(r == BOT_HOST_REC_FAIL_NONE);
+    UT_ASSERT(brainRecMergeAckState(r) == BOT_HOST_REC_ACK_MERGED);
+
+    /* The same file again: nothing is left to fill. */
+    UT_ASSERT(SDL_CreateDirectory(host));
+    snprintf(p, sizeof(p), "%s/bot1_g5.hbr", host);
+    UT_ASSERT(tbrHostFile(p, 1, 5, 20, 30));
+    UT_ASSERT(brainRecMergeDir(sess, host, "h", &st, NULL, NULL));
+    UT_ASSERT_MSG(st.markers == 0 && st.filled == 0 && st.hostFiles == 1 &&
+                  st.hostFilesUnused == 1, "markers %u filled %u files %u "
+                  "unused %u", (unsigned)st.markers, (unsigned)st.filled,
+                  (unsigned)st.hostFiles, (unsigned)st.hostFilesUnused);
+    r = brainRecMergeVerdict(true, &st);
+    UT_ASSERT_MSG(r == BOT_HOST_REC_FAIL_NO_FILL, "reason %u", (unsigned)r);
+    UT_ASSERT(brainRecMergeAckState(r) == BOT_HOST_REC_ACK_MERGED);
+    /* Kept as it came. */
+    snprintf(p, sizeof(p), "%s/%s/h_bot1_g5.hbr", sess, BRAINREC_HOST_RAW_DIR);
+    UT_ASSERT(tbrExists(p));
+
+    /* Every other reason makes the host send again. */
+    for (r = BOT_HOST_REC_FAIL_BROKEN; r < BOT_HOST_REC_FAIL_NO_FILL; r++) {
+        UT_ASSERT_MSG(brainRecMergeAckState(r) == BOT_HOST_REC_ACK_FAILED,
+                      "reason %u", (unsigned)r);
+    }
+    UT_ASSERT(brainRecMergeAckState(99) == BOT_HOST_REC_ACK_FAILED);
+    return 0;
+}
+
+typedef struct {
+    FILE *f;
+    Uint32 holdMs;
+} TbrHold;
+
+static int SDLCALL tbrHoldThread(void *data) {
+    TbrHold *h = (TbrHold *)data;
+    SDL_Delay(h->holdMs);
+    fclose(h->f);
+    return 0;
+}
+
+/* Another program holds brainrec.btr open for a moment when the merge
+ * replaces it (BrainTest's load browser, a virus scanner). On Windows
+ * the rename fails while the file is open; the merge waits and tries
+ * again instead of "replace failed" (andrew-bsmt's first merge in session
+ * 20261114_001428). */
+int run_brainrec_host_merge_replace_waits(void) {
+    char sess[1024], host[1024], p[1200], btr[1200];
+    BrainRecMergeStats st;
+    TbrHold hold;
+    SDL_Thread *t;
+    bool ok;
+    int frames;
+
+    UT_ASSERT(utScratchPath(sess, sizeof(sess), "holdsess"));
+    UT_ASSERT(utScratchPath(host, sizeof(host), "holdhost"));
+    UT_ASSERT(tbrSession(sess));
+    UT_ASSERT(SDL_CreateDirectory(host));
+    snprintf(p, sizeof(p), "%s/bot1_g5.hbr", host);
+    UT_ASSERT(tbrHostFile(p, 1, 5, 20, 30));
+
+    snprintf(btr, sizeof(btr), "%s/%s", sess, BRAINREC_FILENAME);
+    hold.f = fopen(btr, "rb");
+    UT_ASSERT(hold.f != NULL);
+    hold.holdMs = 1500u;
+    t = SDL_CreateThread(tbrHoldThread, "tbr_hold", &hold);
+    UT_ASSERT(t != NULL);
+    ok = brainRecMergeDir(sess, host, "h", &st, NULL, NULL);
+    SDL_WaitThread(t, NULL);
+    UT_ASSERT(ok);
+    UT_ASSERT(brainRecMergeVerdict(ok, &st) == BOT_HOST_REC_FAIL_NONE);
+    UT_ASSERT_MSG(st.markers == 6 && st.filled == 6 && st.missing == 0,
+                  "markers %u filled %u missing %u", (unsigned)st.markers,
+                  (unsigned)st.filled, (unsigned)st.missing);
+    frames = tbrCountFrames(btr);
+    UT_ASSERT_MSG(frames == 6, "the merged file has %d frames", frames);
+    /* No copy is left beside it. */
+    snprintf(p, sizeof(p), "%s.merge.tmp", btr);
+    UT_ASSERT(!tbrExists(p));
+    snprintf(p, sizeof(p), "%s.bak", btr);
+    UT_ASSERT(!tbrExists(p));
+    return 0;
+}
+
+/* A host that joins again while its upload is merged gets the ACK on its
+ * new connection (the Lenovo's upload folder went from _2 to _3, and its
+ * MERGED answer was lost). Only the same name, kind and address count, and
+ * a new connection that sends the block again now waits for its own. */
+int run_brainrec_host_ack_target_rejoined(void) {
+    static BotHostConn saved[3];
+    static const char *block = "ut652_ack_block";
+    BotHostConn *a = &udpServer.botHosts[0];
+    BotHostConn *b = &udpServer.botHosts[1];
+    BotHostConn *c = &udpServer.botHosts[2];
+    const uint32_t ip = 0x2400A8C0u;   /* 192.168.0.36, as stored */
+    int same, rejoined, otherIp, otherName, sending, gone;
+
+    saved[0] = *a; saved[1] = *b; saved[2] = *c;
+    memset(a, 0, sizeof(*a));
+    memset(b, 0, sizeof(*b));
+    memset(c, 0, sizeof(*c));
+    SDL_strlcpy(a->name, "andrew-lenovo", sizeof(a->name));
+    a->connected = true;
+    a->connId = 11;
+    a->addr.sin_addr.s_addr = ip;
+
+    /* Still the same connection. */
+    same = serverBotRecAckTarget(0, 11, false, ip, "andrew-lenovo", block);
+
+    /* It went and joined again on slot 1. */
+    a->connected = false;
+    *b = *a;
+    b->connected = true;
+    b->connId = 12;
+    /* Another host of another name on slot 2 is never chosen. */
+    SDL_strlcpy(c->name, "andrew-bsmt", sizeof(c->name));
+    c->connected = true;
+    c->connId = 13;
+    c->addr.sin_addr.s_addr = ip;
+    rejoined = serverBotRecAckTarget(0, 11, false, ip, "andrew-lenovo", block);
+    otherName = serverBotRecAckTarget(0, 11, false, ip, "andrew-laptop", block);
+    otherIp = serverBotRecAckTarget(0, 11, false, ip + 1u, "andrew-lenovo",
+                                    block);
+    /* The new connection sends the block again now: no ACK for it. */
+    b->recState = BOT_HOST_REC_STATE_UPLOADING;
+    sending = serverBotRecAckTarget(0, 11, false, ip, "andrew-lenovo", block);
+    b->recState = 0;
+    /* Gone and not back. */
+    b->connected = false;
+    gone = serverBotRecAckTarget(0, 11, false, ip, "andrew-lenovo", block);
+
+    *a = saved[0]; *b = saved[1]; *c = saved[2];
+    UT_ASSERT_MSG(same == 0, "same %d", same);
+    UT_ASSERT_MSG(rejoined == 1, "rejoined %d", rejoined);
+    UT_ASSERT_MSG(otherName == -1, "other name %d", otherName);
+    UT_ASSERT_MSG(otherIp == -1, "other ip %d", otherIp);
+    UT_ASSERT_MSG(sending == -1, "sending %d", sending);
+    UT_ASSERT_MSG(gone == -1, "gone %d", gone);
     return 0;
 }
 

@@ -28,6 +28,7 @@
 #include "client_sim.h"
 #include "client_sim_internal.h"
 #include "client_sim_control.h"
+#include "bot_host_rec_eta.h"
 #include "control_event.h"
 #include "transport_control_codec.h"
 #include "bot_host_cpu.h"
@@ -803,5 +804,160 @@ int run_bot_timing_client_copy(void) {
     clientSimCreate(cs);
     UT_ASSERT(!clientSimGetBotTiming(cs, &back));
     clientSimDestroy(cs);
+    return 0;
+}
+
+
+/* CTRL_BOT_HOST_REC_BYTES: round trip, bad bodies refused, and the client's
+ * row keeps the bytes and rate while the upload goes on. */
+static void applyRecStatus(ClientSim *cs, uint8_t idx, uint8_t recState) {
+    ControlEvent evt;
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_BOT_HOST_STATUS;
+    evt.u.botHostStatus.idx = idx;
+    evt.u.botHostStatus.connected = 1;
+    evt.u.botHostStatus.state = BOT_HOST_SYNC_READY;
+    evt.u.botHostStatus.percent = 100;
+    evt.u.botHostStatus.slots = 4;
+    evt.u.botHostStatus.recState = recState;
+    evt.u.botHostStatus.recBots = 2;
+    SDL_strlcpy(evt.u.botHostStatus.name, "andrew-bsmt",
+                sizeof(evt.u.botHostStatus.name));
+    clientSimApplyControl(cs, &evt);
+}
+
+int run_bot_host_rec_bytes_codec(void) {
+    ControlEncodeBodyFn enc = transportControlCodecBodyEncoder(CTRL_BOT_HOST_REC_BYTES);
+    ControlDecodeBodyFn dec = transportControlCodecBodyDecoder(CTRL_BOT_HOST_REC_BYTES);
+    ControlEvent in, out;
+    uint8_t buf[16];
+    size_t len = 0;
+    ClientSim *cs;
+    const ClientBotHostRow *r;
+
+    UT_ASSERT(enc != NULL && dec != NULL);
+    UT_ASSERT(strcmp(controlEventTypeName(CTRL_BOT_HOST_REC_BYTES),
+                     "CTRL_BOT_HOST_REC_BYTES") == 0);
+    memset(&in, 0, sizeof(in));
+    in.type = CTRL_BOT_HOST_REC_BYTES;
+    in.u.botHostRecBytes.idx = 2;
+    in.u.botHostRecBytes.sentKiB = 0x00012345u;
+    in.u.botHostRecBytes.totalKiB = 0x01020304u;
+    UT_ASSERT(enc(&in, NULL, buf, sizeof(buf), &len) == ENCODE_OK);
+    UT_ASSERT(len == 9);
+    UT_ASSERT(dec(buf, len, &out));
+    UT_ASSERT(out.type == CTRL_BOT_HOST_REC_BYTES);
+    UT_ASSERT(out.u.botHostRecBytes.idx == 2);
+    UT_ASSERT(out.u.botHostRecBytes.sentKiB == 0x00012345u);
+    UT_ASSERT(out.u.botHostRecBytes.totalKiB == 0x01020304u);
+    /* Later bytes skipped; short bodies, the server row and more sent than
+     * there is to send refused. */
+    buf[9] = 0x77;
+    UT_ASSERT(dec(buf, 10, &out));
+    UT_ASSERT(!dec(buf, 8, &out));
+    buf[0] = BOT_HOST_STATUS_ROWS - 1;
+    UT_ASSERT(!dec(buf, 9, &out));
+    in.u.botHostRecBytes.sentKiB = in.u.botHostRecBytes.totalKiB + 1u;
+    UT_ASSERT(enc(&in, NULL, buf, sizeof(buf), &len) == ENCODE_OK);
+    UT_ASSERT(!dec(buf, len, &out));
+    UT_ASSERT(enc(&in, NULL, buf, 8, &len) != ENCODE_OK);
+
+    /* The client's row: none from an older server; kept through a STATUS
+     * while the upload goes on; gone when it ends. */
+    cs = clientSimAlloc();
+    UT_ASSERT(cs != NULL);
+    clientSimCreate(cs);
+    applyRecStatus(cs, 0, BOT_HOST_REC_STATE_UPLOADING);
+    r = clientSimGetBotHostRow(cs, 0);
+    UT_ASSERT(!r->recBytesHave);
+    in.u.botHostRecBytes.idx = 0;
+    in.u.botHostRecBytes.sentKiB = 100;
+    in.u.botHostRecBytes.totalKiB = 400;
+    clientSimApplyControl(cs, &in);
+    UT_ASSERT(r->recBytesHave && r->recSentKiB == 100 && r->recTotalKiB == 400);
+    UT_ASSERT(r->recRate.count == 1);
+    applyRecStatus(cs, 0, BOT_HOST_REC_STATE_UPLOADING);
+    UT_ASSERT(r->recBytesHave && r->recSentKiB == 100 && r->recTotalKiB == 400);
+    UT_ASSERT(r->recRate.count == 1);
+    applyRecStatus(cs, 0, BOT_HOST_REC_STATE_MERGING);
+    UT_ASSERT(!r->recBytesHave);
+    /* A new upload starts its rate from nothing. */
+    applyRecStatus(cs, 0, BOT_HOST_REC_STATE_UPLOADING);
+    clientSimApplyControl(cs, &in);
+    UT_ASSERT(r->recBytesHave && r->recRate.count == 1);
+    clientSimDestroy(cs);
+    return 0;
+}
+
+/* The lobby's time left: H:MM rounded up, "--:--" until the rate is known
+ * or when no bytes came in for a window, and a new upload starts over. */
+int run_bot_host_rec_eta(void) {
+    BotHostRecRate r;
+    char out[BOT_HOST_REC_ETA_LEN];
+    double rate = 0.0;
+    uint32_t t;
+
+    botHostRecEtaFormat(0, 0.0, out, sizeof(out));
+    UT_ASSERT(strcmp(out, "--:--") == 0);
+    botHostRecEtaFormat(100, -1.0, out, sizeof(out));
+    UT_ASSERT(strcmp(out, "--:--") == 0);
+    botHostRecEtaFormat(0, 10.0, out, sizeof(out));
+    UT_ASSERT(strcmp(out, "0:00") == 0);
+    botHostRecEtaFormat(1, 1000.0, out, sizeof(out));        /* 1 ms */
+    UT_ASSERT(strcmp(out, "0:01") == 0);
+    botHostRecEtaFormat(600, 10.0, out, sizeof(out));        /* 60 s */
+    UT_ASSERT(strcmp(out, "0:01") == 0);
+    botHostRecEtaFormat(610, 10.0, out, sizeof(out));        /* 61 s */
+    UT_ASSERT(strcmp(out, "0:02") == 0);
+    botHostRecEtaFormat(36000u * 2u + 60u * 5u, 10.0, out, sizeof(out));
+    UT_ASSERT_MSG(strcmp(out, "2:01") == 0, "got %s", out);  /* 7230 s */
+    botHostRecEtaFormat(0xFFFFFFFFu, 1.0, out, sizeof(out));
+    UT_ASSERT(strcmp(out, "99:59") == 0);
+
+    /* One sample, then samples under a second apart: not known. */
+    botHostRecRateReset(&r);
+    botHostRecRateSample(&r, 1000, 0, 6000);
+    UT_ASSERT(!botHostRecRateKiBps(&r, 1000, &rate));
+    botHostRecRateSample(&r, 1500, 50, 6000);
+    UT_ASSERT(!botHostRecRateKiBps(&r, 1500, &rate));
+    botHostRecRateEta(&r, 1500, out, sizeof(out));
+    UT_ASSERT(strcmp(out, "--:--") == 0);
+    /* 100 KiB/s for 20 s: the rate covers about the last 10 s. */
+    for (t = 2000; t <= 21000; t += 1000) {
+        botHostRecRateSample(&r, t, (t - 1000) / 10u, 6000);
+    }
+    UT_ASSERT(botHostRecRateKiBps(&r, 21000, &rate));
+    UT_ASSERT_MSG(rate > 99.0 && rate < 101.0, "rate %.2f", rate);
+    UT_ASSERT(21000u - r.ms[0] >= BOT_HOST_REC_RATE_WINDOW_MS &&
+              21000u - r.ms[0] < BOT_HOST_REC_RATE_WINDOW_MS + 1000u);
+    /* 6000 - 2000 = 4000 KiB at 100 KiB/s: 40 s, shown as 0:01. */
+    botHostRecRateEta(&r, 21000, out, sizeof(out));
+    UT_ASSERT_MSG(strcmp(out, "0:01") == 0, "got %s", out);
+    /* Another total: a new upload, the samples start over. */
+    for (t = 22000; t <= 32000; t += 1000) {
+        botHostRecRateSample(&r, t, (t - 22000u) / 5u, 60000);
+    }
+    UT_ASSERT(r.ms[0] == 22000);
+    UT_ASSERT(botHostRecRateKiBps(&r, 32000, &rate));
+    UT_ASSERT_MSG(rate > 199.0 && rate < 201.0, "rate %.2f", rate);
+    /* No bytes for a whole window: not known. */
+    UT_ASSERT(!botHostRecRateKiBps(&r, 32000 + BOT_HOST_REC_RATE_WINDOW_MS,
+                                   &rate));
+    /* Fewer bytes than before: a new upload, the samples start over. */
+    botHostRecRateSample(&r, 33000, 10, 60000);
+    UT_ASSERT(r.count == 1);
+    /* A stall shows as a falling rate while samples keep coming. */
+    botHostRecRateReset(&r);
+    botHostRecRateSample(&r, 0, 0, 1000);
+    botHostRecRateSample(&r, 5000, 500, 1000);
+    UT_ASSERT(botHostRecRateKiBps(&r, 5000, &rate) && rate > 99.0);
+    botHostRecRateSample(&r, 9000, 500, 1000);
+    UT_ASSERT(botHostRecRateKiBps(&r, 9000, &rate) && rate < 60.0);
+    /* More samples than the ring holds. */
+    botHostRecRateReset(&r);
+    for (t = 0; t < 100; t++) botHostRecRateSample(&r, t * 50u, t, 1000);
+    UT_ASSERT(r.count == BOT_HOST_REC_RATE_SAMPLES);
+    UT_ASSERT(botHostRecRateKiBps(&r, 99u * 50u, &rate));
+    UT_ASSERT_MSG(rate > 19.0 && rate < 21.0, "rate %.2f", rate);
     return 0;
 }

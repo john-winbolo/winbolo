@@ -478,6 +478,11 @@ typedef struct {
     BotHostSaltLimit saltLimit;
     /* Server-bound bulk: the brain recordings this host sends. */
     BulkSender recBulk;
+    /* The server's wide bulk receive ring (its UPLOAD's a field), and
+     * whether this connection's send ring is now the wide one. */
+    uint32_t   wideWin;
+    uint32_t   wideSeg;
+    bool       wideOn;
 
     /* Announcing while idle. */
     bool       announceDue;
@@ -715,6 +720,9 @@ static void ctlStartJoin(HostServer *sv) {
     sv->lastRecvMs = nowMs();
     sv->joinStartMs = nowMs();
     channelMuxInit(&sv->mux);
+    sv->wideWin = 0;
+    sv->wideSeg = 0;
+    sv->wideOn = false;
     ctlSendJoin(sv);
 }
 
@@ -736,14 +744,48 @@ static void ctlSendQuit(HostServer *sv) {
     udpSendTo(sv->sock, buf, sizeof(buf), &sv->addr);
 }
 
+/* The wide bulk send rings, one for each server place, made the first time
+ * a server asks for an upload into a wide ring and kept for the program's
+ * life: about 2.1 MB each. */
+static void *s_wideSend[BOT_HOST_MAX_SERVERS];
+
+/* Move the bulk send side to the wide ring the server offered, once the
+ * channel is idle (channelBulkUseWideSend needs no unacked segment). */
+static void ctlWidenBulk(HostServer *sv) {
+    int srv = serverIndex(sv);
+    if (sv->wideOn || sv->wideWin == 0 || srv < 0 ||
+        srv >= BOT_HOST_MAX_SERVERS) {
+        return;
+    }
+    if (bulkSenderBusy(&sv->recBulk) || !channelBulkSendIdle(&sv->mux)) return;
+    if (s_wideSend[srv] == NULL) {
+        s_wideSend[srv] = malloc(channelBulkWideSendBytes(CHANNEL_BULK_WIDE_WINDOW,
+                                                          CHANNEL_MAX_SEG));
+        if (s_wideSend[srv] == NULL) {
+            sv->wideWin = 0;   /* the built-in ring stays */
+            return;
+        }
+    }
+    sv->wideOn = channelBulkUseWideSend(&sv->mux, s_wideSend[srv], sv->wideWin,
+                                        sv->wideSeg);
+    if (!sv->wideOn) sv->wideWin = 0;   /* a size it does not take */
+}
+
 /* Send the channel's acks and the host's sync messages. */
 static void ctlPump(HostServer *sv) {
-    int frames;
+    int frames, maxFrames;
     if (sv->state != CTL_CONNECTED) return;
-    channelTick(&sv->mux, sv->muxTick++, sv->rttMs);
+    /* The mux counts 20 ms ticks, as the server's does: its retransmit
+     * timeout is in ticks (at least 2), and a count of loop passes (about
+     * 1 ms each) resent the whole unacked tail before the server, which
+     * acks once a tick, could answer. */
+    channelTick(&sv->mux, nowMs() / BOT_HOST_TICK_MS, sv->rttMs);
+    ctlWidenBulk(sv);
     bulkSenderPump(&sv->recBulk, &sv->mux);
-    for (frames = 0; frames < (bulkSenderBusy(&sv->recBulk) ? 16 : 4);
-         frames++) {
+    /* While an upload is under way, as many frames as the window gives. */
+    maxFrames = (bulkSenderBusy(&sv->recBulk) || !channelBulkSendIdle(&sv->mux))
+                    ? 512 : 4;
+    for (frames = 0; frames < maxFrames; frames++) {
         uint8_t buf[UDP_MAX_PAYLOAD];
         int len = channelBuildFrame(&sv->mux, buf + PACKET_HEADER_SIZE,
                                     UDP_MAX_PAYLOAD - PACKET_HEADER_SIZE);
@@ -785,7 +827,26 @@ static bool recIoBulkIdle(int srv) {
 static bool recIoBulkSend(int srv, const BulkStreamHeader *h,
                           const uint8_t *blob, uint32_t len) {
     if (!recIoBulkIdle(srv)) return false;
-    return bulkSenderBegin(&servers[srv].recBulk, h, blob, len);
+    if (!bulkSenderBegin(&servers[srv].recBulk, h, blob, len)) return false;
+    /* Into the channel's stream buffer now, not on the next pass. */
+    bulkSenderPump(&servers[srv].recBulk, &servers[srv].mux);
+    return true;
+}
+
+static void recIoBulkWide(int srv, uint32_t wide) {
+    HostServer *sv;
+    uint32_t win = wide & 0xFFFFFu, seg = wide >> 20;
+    if (srv < 0 || srv >= serverCount) return;
+    sv = &servers[srv];
+    if (sv->wideOn) return;   /* already wide for this connection */
+    if (win < CHANNEL_BULK_WINDOW || seg < CHANNEL_BULK_SEG) {
+        sv->wideWin = 0;
+        return;
+    }
+    if (win > CHANNEL_BULK_WIDE_WINDOW) win = CHANNEL_BULK_WIDE_WINDOW;
+    if (seg > CHANNEL_MAX_SEG) seg = CHANNEL_MAX_SEG;
+    sv->wideWin = win;
+    sv->wideSeg = seg;
 }
 
 /* Tell the server the slots it may use, and turn down an assign when
@@ -2675,6 +2736,13 @@ static void hostThinkJob(int index, void *userData) {
             hs->poolDoneExpr = hs->poolExpr;
         }
     }
+
+    /* Lua collection in the time left before the think deadline, as the
+     * server does it (bot_manager.c runBotThinkJob): after the think and the
+     * pool capture, outside lastThinkMs, ending 2 ms before the deadline. */
+    if (!hs->job.needRemove) {
+        botRunnerCollectGarbage(&hs->bot);
+    }
 }
 
 static void seatSendStats(HostSeat *hs) {
@@ -2946,11 +3014,6 @@ static void hostTick(uint32_t startLate) {
     }
 
     sendEnd = SDL_GetPerformanceCounter();
-    /* A tick that built a brain or ran a first think has one-time setup
-     * in it (the brain build, the recording's first file). Such a sample
-     * is not the normal serial work. As the first sample it would seed the
-     * average high and hold the budget at its 1 ms floor for many ticks,
-     * so those ticks are left out. */
     if (active > 0) {
         HostTickStats *ts = &tickStats;
         double before = (double)(brainStart - setupStart) * 1000.0 / freq;
@@ -2982,6 +3045,11 @@ static void hostTick(uint32_t startLate) {
             memset(ts, 0, sizeof(*ts));
         }
     }
+    /* A tick that built a brain or ran a first think has one-time setup
+     * in it (the brain build, the recording's first file). Such a sample
+     * is not the normal serial work. As the first sample it would seed the
+     * average high and hold the budget at its 1 ms floor for many ticks,
+     * so those ticks are left out. */
     if (!built && !anyFirst) {
         double serialMs = (double)(brainStart - setupStart);
         if (optBudgetLegacy) serialMs += (double)(sendEnd - brainEnd);
@@ -3286,7 +3354,7 @@ int main(int argc, char *argv[]) {
          * is turned on per block (its log goes into the block's folder);
          * the jsonl log is not recorded here. */
         static const HostRecIo io = { recIoSendEvent, recIoBulkIdle,
-                                      recIoBulkSend };
+                                      recIoBulkSend, recIoBulkWide };
         char recRoot[600];
         SDL_snprintf(recRoot, sizeof(recRoot), "%s/recordings", optCacheDir);
         luaBrainsSetDebugParts(0, 1, 1, 0);
@@ -3306,6 +3374,7 @@ int main(int argc, char *argv[]) {
             ctlService(&servers[i]);
             if (!servers[i].refused) anyUsable = true;
         }
+        hostRecPumpUploads();
         if (!anyUsable) {
             fprintf(stderr, "[bothost] every server refused this host\n");
             break;
@@ -3451,6 +3520,7 @@ static int SDLCALL embedThreadFn(void *arg) {
             ctlService(&servers[i]);
             if (!servers[i].refused) anyUsable = true;
         }
+        hostRecPumpUploads();
         if (!anyUsable) {
             HOST_EVENT("[bothost] Bot Host \"%s\": the server refused it",
                        optName);
@@ -3606,7 +3676,7 @@ bool botHostInprocStart(const BotHostEmbedConfig *cfg) {
          * one Bot Host at a time; if other bots must ever record in
          * another way at the same time, these need per-host options. */
         static const HostRecIo io = { recIoSendEvent, recIoBulkIdle,
-                                      recIoBulkSend };
+                                      recIoBulkSend, recIoBulkWide };
         char recRoot[600];
         luaBrainsGetDebugParts(&embedSavedParts[0], &embedSavedParts[1],
                                &embedSavedParts[2], &embedSavedParts[3]);

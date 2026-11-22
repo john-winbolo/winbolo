@@ -38,6 +38,9 @@ typedef struct {
     /* Queue one bulk transfer on srv; false when it cannot. */
     bool (*bulkSend)(int srv, const BulkStreamHeader *h, const uint8_t *blob,
                      uint32_t len);
+    /* The server's wide bulk receive ring, from an UPLOAD's a field
+     * ((segment size << 20) | window; 0: none). May be NULL. */
+    void (*bulkWide)(int srv, uint32_t wide);
 } HostRecIo;
 
 /* cacheDir: the brain cache ('/' separators). minFreeGb: record only while
@@ -52,6 +55,10 @@ void hostRecServerDown(int srv);
 
 /* A CTRL_BOT_HOST_REC from server srv. */
 void hostRecOnEvent(int srv, const ControlEvent *evt);
+
+/* Queue the next upload pieces while the bulk senders take them. Call it
+ * often (each pass of the main loop); hostRecService calls it too. */
+void hostRecPumpUploads(void);
 
 /* Seats (idx: the host's pool index). SeatBuilt after a brain was made for
  * the seat; SeatGone when the seat or its brain goes. */

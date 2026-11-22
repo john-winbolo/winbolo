@@ -171,6 +171,11 @@ typedef struct {
  * merge worked, every host file was read and each one filled entries;
  * else the BOT_HOST_REC_FAIL_* reason. ok: what brainRecMergeDir gave. */
 uint8_t brainRecMergeVerdict(bool ok, const BrainRecMergeStats *st);
+/* The ACK state a verdict sends: BOT_HOST_REC_ACK_MERGED (the host marks
+ * the block uploaded) or BOT_HOST_REC_ACK_FAILED (it sends it again
+ * later). NO_FILL is MERGED: sending the same files again fills nothing
+ * more, and they are kept in bothost_raw/. */
+uint8_t brainRecMergeAckState(uint8_t reason);
 /* A short English text for a BOT_HOST_REC_FAIL_* reason. */
 const char *brainRecMergeFailText(uint8_t reason);
 
@@ -201,9 +206,10 @@ char *brainRecLegendAddSlot(const char *legend, int slot,
 /* Merge print2 logs: both files are runs of "===TICK n===" blocks (any
  * lines before the first block are kept at the top). The blocks of both
  * are written to outPath in tick order, a's first on equal ticks. Each
- * input may be plain or gzip; gzOut makes outPath gzip. */
+ * input may be plain, gzip or zstd (brainRecInOpen detects it); outFmt
+ * is the form of outPath. */
 bool brainRecMergePrint2(const char *a, const char *b, const char *outPath,
-                         bool gzOut);
+                         BrainLogFormat outFmt);
 
 /* Merge one host's uploaded folder into a session folder:
  *   - its .hbr files into the session's brainrec.btr (checked, then

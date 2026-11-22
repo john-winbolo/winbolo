@@ -42,7 +42,6 @@
 
 void serverSimApplyInstanceConfig(ServerSim *sim, const ServerInstanceConfig *cfg) {
   sim->sim.viewPlayer = cfg->viewPlayer;
-  sim->maxBots        = cfg->maxBots;
   sim->maxSpectators  = cfg->maxSpectators;
   sim->specDelayTicks = (uint32_t)cfg->specDelaySeconds * 50u;   /* 50 ticks/s */
 

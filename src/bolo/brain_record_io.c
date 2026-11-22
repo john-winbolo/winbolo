@@ -462,3 +462,125 @@ void brainRecInClose(BrainRecIn *in) {
     free(in->seekRaw);
     free(in);
 }
+
+/* ===================================================================== */
+/* Text logs                                                             */
+/* ===================================================================== */
+
+static bool ends_with(const char *s, const char *suffix) {
+    size_t n = strlen(s), m = strlen(suffix);
+    return n >= m && strcmp(s + n - m, suffix) == 0;
+}
+
+BrainLogFormat brainLogFormatOfName(const char *name) {
+    if (name == NULL) return BRAINLOG_PLAIN;
+    if (ends_with(name, BRAINLOG_ZSTD_EXT)) return BRAINLOG_ZSTD;
+    if (ends_with(name, BRAINLOG_GZIP_EXT)) return BRAINLOG_GZIP;
+    return BRAINLOG_PLAIN;
+}
+
+struct BrainLogOut {
+    BrainLogFormat fmt;
+    FILE          *fp;      /* plain and zstd */
+    gzFile         gz;
+    ZSTD_CCtx     *cctx;
+    unsigned char *obuf;
+    size_t         obufCap;
+    bool           err;
+};
+
+BrainLogOut *brainLogOutOpen(const char *path, BrainLogFormat fmt,
+                             uint64_t srcSize) {
+    BrainLogOut *o = (BrainLogOut *)calloc(1, sizeof *o);
+    if (!o) return NULL;
+    o->fmt = fmt;
+    if (fmt == BRAINLOG_GZIP) {
+        o->gz = gzopen(path, "wb6");
+        if (!o->gz) { free(o); return NULL; }
+        gzbuffer(o->gz, 1u << 18);
+        return o;
+    }
+    o->fp = fopen(path, "wb");
+    if (!o->fp) { free(o); return NULL; }
+    if (fmt != BRAINLOG_ZSTD) return o;
+
+    /* A short text needs no 128 MiB window: the smallest power of two that
+     * holds it (at least 1 MiB), so a reader of a small log needs little
+     * memory. */
+    int wlog = BRAINLOG_ZSTD_WINDOW_LOG;
+    if (srcSize > 0) {
+        int need = 20;
+        while (need < BRAINLOG_ZSTD_WINDOW_LOG && ((uint64_t)1 << need) < srcSize) need++;
+        wlog = need;
+    }
+    o->cctx = ZSTD_createCCtx();
+    o->obufCap = ZSTD_CStreamOutSize();
+    o->obuf = (unsigned char *)malloc(o->obufCap);
+    if (!o->cctx || !o->obuf ||
+        ZSTD_isError(ZSTD_CCtx_setParameter(o->cctx, ZSTD_c_compressionLevel, BRAINLOG_ZSTD_LEVEL)) ||
+        ZSTD_isError(ZSTD_CCtx_setParameter(o->cctx, ZSTD_c_strategy, ZSTD_btopt)) ||
+        ZSTD_isError(ZSTD_CCtx_setParameter(o->cctx, ZSTD_c_searchLog, BRAINLOG_ZSTD_SEARCH_LOG)) ||
+        ZSTD_isError(ZSTD_CCtx_setParameter(o->cctx, ZSTD_c_minMatch, BRAINLOG_ZSTD_MIN_MATCH)) ||
+        ZSTD_isError(ZSTD_CCtx_setParameter(o->cctx, ZSTD_c_windowLog, wlog)) ||
+        ZSTD_isError(ZSTD_CCtx_setParameter(o->cctx, ZSTD_c_enableLongDistanceMatching, 1)) ||
+        ZSTD_isError(ZSTD_CCtx_setParameter(o->cctx, ZSTD_c_checksumFlag, 1))) {
+        ZSTD_freeCCtx(o->cctx);
+        free(o->obuf);
+        fclose(o->fp);
+        free(o);
+        return NULL;
+    }
+    return o;
+}
+
+static bool log_pump(BrainLogOut *o, const void *p, size_t n, ZSTD_EndDirective mode) {
+    ZSTD_inBuffer in = { p, n, 0 };
+    for (;;) {
+        ZSTD_outBuffer out = { o->obuf, o->obufCap, 0 };
+        size_t r = ZSTD_compressStream2(o->cctx, &out, &in, mode);
+        if (ZSTD_isError(r)) { o->err = true; return false; }
+        if (out.pos > 0 && fwrite(o->obuf, 1, out.pos, o->fp) != out.pos) {
+            o->err = true;
+            return false;
+        }
+        if (mode == ZSTD_e_continue ? (in.pos == in.size) : (r == 0)) return true;
+    }
+}
+
+bool brainLogOutWrite(BrainLogOut *o, const void *p, size_t n) {
+    if (!o || o->err) return false;
+    if (n == 0) return true;
+    switch (o->fmt) {
+        case BRAINLOG_GZIP: {
+            const unsigned char *d = (const unsigned char *)p;
+            while (n > 0) {
+                unsigned k = n > (1u << 30) ? (1u << 30) : (unsigned)n;
+                if (gzwrite(o->gz, d, k) != (int)k) { o->err = true; return false; }
+                d += k;
+                n -= k;
+            }
+            return true;
+        }
+        case BRAINLOG_ZSTD:
+            return log_pump(o, p, n, ZSTD_e_continue);
+        default:
+            if (fwrite(p, 1, n, o->fp) != n) { o->err = true; return false; }
+            return true;
+    }
+}
+
+bool brainLogOutClose(BrainLogOut *o) {
+    bool ok;
+    if (!o) return true;
+    ok = !o->err;
+    if (o->fmt == BRAINLOG_GZIP) {
+        if (gzclose(o->gz) != Z_OK) ok = false;
+    } else {
+        if (ok && o->fmt == BRAINLOG_ZSTD && !log_pump(o, NULL, 0, ZSTD_e_end)) ok = false;
+        if (fclose(o->fp) != 0) ok = false;
+    }
+    ZSTD_freeCCtx(o->cctx);
+    free(o->obuf);
+    free(o);
+    return ok;
+}

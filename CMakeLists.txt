@@ -6505,9 +6505,8 @@ set(_unit_test_names
     bot_host_place_keep_batch_no_reading
     bot_host_place_keep_batch_slot_limit
     bot_host_place_keep_batch_cpu_limit
-    bot_host_enforce_fall_back_holds
-    bot_host_enforce_host_resumes
-    bot_host_enforce_leave_resumes
+    bot_host_enforce_over_warns
+    bot_host_enforce_good_host
     bot_host_enforce_off_keeps_fall_back
     bot_host_overrun_window_rate
     bot_host_overrun_step_spacing
@@ -6544,6 +6543,8 @@ set(_unit_test_names
     bot_host_cpu_budget
     bot_host_cpu_bot_client_row
     bot_host_lag_codec
+    bot_host_rec_bytes_codec
+    bot_host_rec_eta
     bot_timing_codec
     bot_timing_client_copy
     bot_host_machine_addr
@@ -6656,6 +6657,9 @@ set(_unit_test_names
     brainrec_host_merge_missing_block
     brainrec_host_merge_dir_keeps_raw
     brainrec_host_merge_verdict
+    brainrec_host_merge_again_acks_merged
+    brainrec_host_merge_replace_waits
+    brainrec_host_ack_target_rejoined
     bothost_rec_upload_keeps_files
     bothost_rec_lowdisk_keeps_files
     bothost_rec_pool_raw_flag
@@ -6663,6 +6667,7 @@ set(_unit_test_names
     brainrec_dir_lock_orders_merge_and_gzip
     brainrec_host_make_absolute
     brainrec_host_print2_gz
+    brainrec_print2_zst_round_trip
     brainrec_host_rec_codec
     brainrec_host_legend_unclosed
     brainrec_host_upload_no_session
@@ -7425,6 +7430,7 @@ set(_unit_test_names
     conn_migration_rehome
     conn_migration_e2e
     viewtick_rewind
+    viewtick_rewind_bot_host
     viewtick_displayed_tick
     wire_corpus
     channel_mux
@@ -7433,6 +7439,7 @@ set(_unit_test_names
     channel_mux_control_backlog_full_refuses
     channel_mux_game_channel_still_refuses_at_window
     channel_mux_control_reset_clears_backlog
+    channel_mux_bulk_wide
     spectator_ring
     spectator_ring_nolog
     spectator_ring_nolog_tick_anchors
@@ -7632,13 +7639,11 @@ set(_unit_test_names
     server_text_codec_via_chat_wire
     vote_surrender_blocked_without_lobby
     vote_back_to_lobby_blocked_without_lobby
-    lobby_add_bot_rejects_when_at_maxbots
     lobby_add_bot_rejects_at_host_capacity
     server_bot_slots_codec
     server_bot_slots_setting
     server_bot_slots_locked
     lobby_bot_count_counts_only_connected_bots
-    lobby_maxbots_cap_boundary
     empty_return_to_lobby_removes_bots_and_unlocks
     bot_pool_wire_chunk_transport
     bot_pool_catalog_id

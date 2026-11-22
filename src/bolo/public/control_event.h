@@ -92,7 +92,9 @@
 #define BOT_HOST_REC_OP_CLEAR    5  /* delete this server's recordings */
 #define BOT_HOST_REC_OP_ACK      6  /* a block upload was taken (state) */
 /* Host to server: */
-#define BOT_HOST_REC_OP_STATE    16 /* the recording state and progress */
+#define BOT_HOST_REC_OP_STATE    16 /* the recording state and progress;
+                                     * UPLOADING: a, b = KiB sent, KiB
+                                     * to send (0, 0 from an older host) */
 #define BOT_HOST_REC_OP_DONE     17 /* every file of the block is sent */
 #define BOT_HOST_REC_OP_CLEARED  18 /* CLEAR done: a, b = bytes lo, hi */
 #define BOT_HOST_REC_OP_MAX      18
@@ -112,15 +114,19 @@
 #define BOT_HOST_REC_F_LOWDISK   0x10u
 /* ACK results, in state. The host keeps its files in every case; only
  * CLEAR deletes them. */
-#define BOT_HOST_REC_ACK_MERGED  1  /* every host file was read and filled
-                                     * entries: the host marks the block
-                                     * uploaded */
+#define BOT_HOST_REC_ACK_MERGED  1  /* every host file was read and the
+                                     * merge was written: the host marks the
+                                     * block uploaded. percent may still
+                                     * carry BOT_HOST_REC_FAIL_NO_FILL (a
+                                     * file filled no entry, often a block
+                                     * merged before), botsTotal the count */
 #define BOT_HOST_REC_ACK_SAVED   2  /* older servers: kept beside the session;
                                      * the host marks the block uploaded */
 #define BOT_HOST_REC_ACK_FAILED  3  /* not merged: the host keeps the block
                                      * not uploaded and sends it again */
-/* ACK FAILED: the reason in percent, the host files that could not be read
- * in botsDone, the host files that filled no entry in botsTotal. */
+/* ACK (FAILED, and MERGED with NO_FILL): the reason in percent, the host
+ * files that could not be read in botsDone, the host files that filled no
+ * entry in botsTotal. */
 #define BOT_HOST_REC_FAIL_NONE       0
 #define BOT_HOST_REC_FAIL_BROKEN     1  /* the upload came in broken */
 #define BOT_HOST_REC_FAIL_NO_SESSION 2  /* no such finished session folder */
@@ -724,6 +730,14 @@ typedef enum {
      * so an older client skips it; a client of an older server gets none
      * and shows the row with no Max slots box. */
     CTRL_BOT_HOST_ROW_LIMITS,
+    /* CTRL_BOT_HOST_REC_BYTES — server to lobby players and spectators:
+     * for Bot Host row idx while it uploads its recordings, the KiB sent
+     * and the KiB to send, as the host reports them. Sent when they
+     * change, at most once each second, and on join. The lobby works out
+     * the time left from it. A type of its own, so an older client skips
+     * it; a client of an older server, or of a server whose host is
+     * older, gets none and shows the row with no time left. */
+    CTRL_BOT_HOST_REC_BYTES,
     CTRL_EVENT_TYPE_COUNT   /* sentinel — must stay last */
 } ControlEventType;
 
@@ -1917,6 +1931,13 @@ typedef struct ControlEvent {
             uint8_t reserve;     /* percent */
             uint8_t fits;        /* BOT_HOST_LIMIT_NONE: not known */
         } botHostRowLimits;
+
+        /* CTRL_BOT_HOST_REC_BYTES — see the enum. */
+        struct {
+            uint8_t  idx;        /* the row, 0..MAX_BOT_HOSTS - 1 */
+            uint32_t sentKiB;    /* at most totalKiB */
+            uint32_t totalKiB;
+        } botHostRecBytes;
     } u;
 } ControlEvent;
 
