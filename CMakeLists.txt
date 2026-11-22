@@ -7339,6 +7339,7 @@ set(_unit_test_names
     conn_migration_rehome
     conn_migration_e2e
     viewtick_rewind
+    viewtick_rewind_bot_host
     viewtick_displayed_tick
     wire_corpus
     channel_mux
