@@ -1844,15 +1844,17 @@ void lv_drawTanks(screenTanks *tks) {
 /* Whether a live pillbox is on square (x, y), for the builder hit box: the
    pill's armour as recorded, through lvHitboxPillSolid. A dead pill's square
    is open ground, as in lgmBlastCatches, except on the frame of the hit that
-   killed it (lv_screenPillHitNow): that shot is a hit on its square. */
-static bool lvDrawPillSolidAt(pillboxes *pb, BYTE x, BYTE y) {
+   killed it (lv_screenPillHitNow): that shot is a hit on its square.
+   deadPillOpen: the recorded game plays that rule (2.2.2 and later); in an
+   older game every pill on the map makes its square solid. */
+static bool lvDrawPillSolidAt(pillboxes *pb, BYTE x, BYTE y, bool deadPillOpen) {
     BYTE count;
     for (count = 0; count < (*pb)->numPills; count++) {
         if ((*pb)->item[count].x == x && (*pb)->item[count].y == y &&
             lvHitboxPillSolid((*pb)->active[count] != FALSE,
                               (*pb)->item[count].inTank != FALSE,
                               (*pb)->item[count].armour,
-                              lv_screenPillHitNow(count))) {
+                              lv_screenPillHitNow(count), deadPillOpen)) {
             return true;
         }
     }
@@ -1875,7 +1877,8 @@ static void lvDrawNoteLgmHit(BYTE mx, BYTE my, BYTE px, BYTE py, BYTE slot, BYTE
     if (lv == NULL) return;
     /* Whether the recorded game counts a shell's hit that changes its square
        as a hit on that square (2.2.2 and later), from the recording's
-       version, as the engine decides it. */
+       version, as the engine decides it. The same version also has a dead
+       pill's square as open ground (lvDrawPillSolidAt). */
     squareHitRule = simRulesTerrainSquareHitForVersion(
                         lv->versionMajor, lv->versionMinor,
                         lv->versionRevision) != 0;
@@ -1918,7 +1921,7 @@ static void lvDrawNoteLgmHit(BYTE mx, BYTE my, BYTE px, BYTE py, BYTE slot, BYTE
             if (lvHitboxSquareSolid(pos == BUILDING || pos == HALFBUILDING,
                                     lv_screenSquareHitNow((BYTE)ax, (BYTE)ay),
                                     squareHitRule) ||
-                lvDrawPillSolidAt(&lv->pb, (BYTE)ax, (BYTE)ay) ||
+                lvDrawPillSolidAt(&lv->pb, (BYTE)ax, (BYTE)ay, squareHitRule) ||
                 lv_basesExistPos(&lv->bs, (BYTE)ax, (BYTE)ay)) {
                 solid |= 1u << (row * 3 + col);
             }

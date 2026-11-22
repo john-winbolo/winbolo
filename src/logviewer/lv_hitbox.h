@@ -314,10 +314,15 @@ static inline int lvHitboxBuilderReach(int pillRange) {
    the pill's armour as the recording has it. hitNow: the pill lost its last
    armour on this frame. That was a hit on the pill, and a shell's hit on a
    pill is a hit on its square whatever armour it leaves (shells.c
-   outSquareHit), so the square stays solid on that frame. */
+   outSquareHit), so the square stays solid on that frame. deadPillOpen: the
+   game plays the dead-pill rule (2.2.2 and later, the same version as the
+   square-hit rule below). When it is false (an older game) armour and
+   hitNow are not read: every pillbox on the map, dead or alive, makes its
+   square solid, as those games played. */
 static inline bool lvHitboxPillSolid(bool onMap, bool inTank, unsigned armour,
-                                     bool hitNow) {
-    return onMap && !inTank && (armour > 0 || hitNow);
+                                     bool hitNow, bool deadPillOpen) {
+    if (!onMap || inTank) return false;
+    return !deadPillOpen || armour > 0 || hitNow;
 }
 
 /* Whether a square's terrain makes it solid for the builder test. wall: the
