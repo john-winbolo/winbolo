@@ -635,6 +635,7 @@ typedef struct {
   I(man_speed_deep_sea) \
   I(man_speed_refuel_base) \
   I(building_life) \
+  I(lgm_blast_shape) \
   I(shell_start_add) \
   I(tank_hit_radius) \
   F(pill_fire_length)

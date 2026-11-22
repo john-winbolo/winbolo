@@ -232,6 +232,10 @@ typedef struct {
 	int32_t man_speed_refuel_base;
 	/* Shell hits a wall stands before it falls to rubble. */
 	int32_t building_life;
+	/* The open-ground area an explosion catches a builder in: 0 the
+	   half-square circle (radius 128), 1 the Mac Bolo box (|dx| and |dy|
+	   under 128), 2 the Mac Bolo equivalent area circle (radius 144). */
+	int32_t lgm_blast_shape;
 	/* How a shell starts and what it hits: the steps of shell_speed it is
 	   moved out of the shooter before its first tick, the circle around a
 	   tank centre a shell has to reach (WORLD units), and how far a pill's

@@ -7309,17 +7309,20 @@ function Brain.think(info)
       return key, 0                                                 -- far: HELD
     end
     -- A man is "solid" to lgm.c's death check (in-tile-only kill, no splash) when
-    -- he stands on a building, a half-build, a base, OR ANY DEPLOYED PILL.  The
-    -- engine (pillbox.c pillsScanExistPos) tests DEPLOYMENT, not armour, and the
-    -- dead corpse we're sweeping is still a deployed pill -- so a man on it is
-    -- solid, and only an in-tile hit kills him.  world.lua indexes pill_at only for
-    -- a deployed (not-carried) pill, so ANY pill_at entry means solid regardless of
-    -- health.  (This is a DIFFERENT rule from the shell-collision LOS check, which
-    -- correctly keeps health>0 because shells only collide with LIVE pills.)
+    -- he stands on a building, a half-build, a base, or a LIVE pill.  The engine
+    -- (lgm.c lgmBlastCatches) tests pillsIsPillHit, armour > 0, so the dead
+    -- corpse we're sweeping is open ground: the 128-wu splash reaches a man on
+    -- it.  C.BLAST_DEAD_PILL_OPEN false (KEEL) keeps the old engine rule, where
+    -- ANY deployed pill was solid regardless of health.  world.lua indexes
+    -- pill_at only for a deployed (not-carried) pill, and W.pill_at gives the
+    -- live one there.
     local function lgm_on_solid(mx, my)
       local tt = U.ttype(mx, my)
       if tt == C.T_BUILDING or tt == C.T_HALFBUILD then return true end
-      if world.pill_at and world.pill_at[my * 256 + mx] then return true end
+      if world.pill_at and world.pill_at[my * 256 + mx] then
+        if not C.BLAST_DEAD_PILL_OPEN then return true end
+        if W.pill_at(world, mx, my) then return true end
+      end
       local bentry = world.base_at and world.base_at[my * 256 + mx]
       if bentry and bentry.base then return true end
       return false
@@ -7459,12 +7462,13 @@ function Brain.think(info)
             end
           end
         end
-        -- KILLABLE from this heading?  Open ground: within KT.perp_wu of the ray
-        -- (splash reaches).  That is 128 wu with the package off, and it opens to
-        -- the fire check when the check is wider, so this test can never refuse
-        -- a shot the fire check would take.  Solid square (live pill/base/
-        -- building): the ray must actually cross his tile -- splash won't kill
-        -- there, only an in-tile hit.  This decides the SHOT, not the tracking.
+        -- KILLABLE from this heading?  Open ground (a dead pill too): in the
+        -- lgm_blast_shape rule's area round the ray (0 is within 128 wu; splash
+        -- reaches), and with the package on and a fire check wider than 128,
+        -- within KT.perp_wu of the ray, so this test can never refuse a shot
+        -- the fire check would take.  Solid square (live pill/base/building):
+        -- the ray must actually cross his tile -- splash won't kill there, only
+        -- an in-tile hit.  This decides the SHOT, not the tracking.
         local killable = false
         local cmx, cmy
         if cand then
@@ -7472,7 +7476,11 @@ function Brain.think(info)
           if lgm_on_solid(cmx, cmy) then
             killable = ray_crosses_tile(info.tankx, info.tanky, hx, hy, cmx, cmy, MAX_ALONG)
           else
-            killable = (cand_perp <= KT.perp_wu)
+            -- The lgm_blast_shape rule's area; 0 is the old perp <= 128.  A
+            -- wider fire check (KT.perp_wu > 128) opens it to match.
+            local wide = KT.perp_wu or 128
+            killable = U.lgm_open_blast_catches_perp(cand_perp, hx, hy)
+                       or (wide > 128 and cand_perp <= wide)
           end
         end
 
@@ -7783,7 +7791,15 @@ function Brain.think(info)
                    and (bit.band(ob.info, OBJECT_HOSTILE)) == 0
                    and not (ob.type == OBJECT_TANK and ob.idnum == (info.player_number or -1)) then
                   local bdx, bdy = ob.x - ex_wx, ob.y - ex_wy
-                  if bdx * bdx + bdy * bdy <= 128 * 128 then
+                  -- A builder: the lgm_blast_shape rule's area. A tank keeps
+                  -- the 128 circle.
+                  local caught
+                  if ob.type == OBJECT_BUILDMAN then
+                    caught = U.lgm_open_blast_catches(bdx, bdy)
+                  else
+                    caught = bdx * bdx + bdy * bdy <= 128 * 128
+                  end
+                  if caught then
                     blast_ok = false
                     clh.lane_block = "friendly_blast"
                     break
@@ -7795,7 +7811,7 @@ function Brain.think(info)
                 local mmx, mmy = own_man_out_pos()
                 if mmx then
                   local bdx, bdy = mmx - ex_wx, mmy - ex_wy
-                  if bdx * bdx + bdy * bdy <= 128 * 128 then
+                  if U.lgm_open_blast_catches(bdx, bdy) then
                     blast_ok = false
                     clh.lane_block = "own_builder_blast"
                   end

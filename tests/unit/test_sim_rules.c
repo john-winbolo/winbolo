@@ -359,6 +359,7 @@ int run_sim_rules_classic_defaults(void) {
 
     /* Dead pillbox builder speed */
     SR_EQ(man_dead_pill_terrain_speed, 0);
+    SR_EQ(lgm_blast_shape, 0);
 
     return 0;
 }

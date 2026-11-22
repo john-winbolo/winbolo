@@ -297,6 +297,7 @@ M.LIVE_PHYSICS_TURN   = true  -- turn-time sizing (swerve turn, blitz ready time
 M.LIVE_PHYSICS_ACCEL  = true  -- brake / look-ahead distances and brake profiles follow our accel + brake rates
 M.LIVE_PHYSICS_SHELL  = true  -- shell speed, gunsight max
 M.LIVE_PHYSICS_WALL   = true  -- wall shots (WALL_HP_FULL / HALF, the getaway wall life, the C pathfinder's wall shells and cost) follow building_life
+M.LIVE_PHYSICS_BLAST  = true  -- the builder blast model follows the lgm_blast_shape and pill_range rules (LGM_BLAST_SHAPE, LGM_BLAST_PILL_RANGE_WU)
 -- Top-speed caps in info.speed units (engine speed x4): 64 = road top speed,
 -- 48 = the navigation cruise cap. Live rules scale them with the road speed
 -- rule and our speed modifier.
@@ -3763,10 +3764,11 @@ M.CAPTURE_LGM_HUNT_SWEEP_NUDGE_BRADS = 10
 -- already in this table, and preset=keel must still be able to set it.)
 -- With LGM_KILL_IMPROVED off (easy and medium), -1 means 100 wu, the value
 -- this knob held before the package, so those levels play as they did.
--- As with the shared check, a man on a SOLID square is killed by lgm.c ONLY
--- when the shell lands in his EXACT tile (lgmDeathCheckAtPosition: solid
--- square => same-square-only, no splash), so that shot uses the exact-tile
--- test instead of this radius.
+-- As with the shared check, a man on a SOLID square (a live pill, a base or a
+-- building; a dead pill is open ground, see BLAST_DEAD_PILL_OPEN) is killed by
+-- lgm.c ONLY when the shell lands in his EXACT tile (lgmDeathCheckAtPosition:
+-- solid square => same-square-only, no splash), so that shot uses the
+-- exact-tile test instead of this radius.
 -- KEEL: 64 (the old shared ½-tile check, pinned so keel is unchanged).
 M.CAPTURE_LGM_HUNT_FIRE_WU       = -1
 -- TRACK_TILES: how far from the TANK a hostile LGM can stand and still be the
@@ -3810,6 +3812,18 @@ M.CAPTURE_LGM_HUNT_PICK_NEAREST_PILL = true
 -- Read only while LGM_KILL_IMPROVED is true.
 -- KEEL: 2.  Left at 2 on purpose: raising it is a separate decision.
 M.CAPTURE_SIGHT_HOLD_MIN_STEPS   = 2
+-- BLAST_DEAD_PILL_OPEN (2026-11-06): the engine's builder blast test
+-- (lgm.c lgmBlastCatches) counts a DEAD pill's square as open ground: a blast
+-- there kills a man within 128 wu, on that square or across its edge, and
+-- not a man in its far corner. Only a LIVE pill (pillsIsPillHit, armour > 0),
+-- a base or a building is solid (same-square-only kill). A shell that HITS a
+-- pill is a hit on its square, the shot that kills it included (shells.c
+-- outSquareHit): same-square-only, as for any live pill. The brain reads the
+-- pill's health from what the player sees (the pill sprite and the pill
+-- status panel both show a dead pill). true = a man on a dead pill is aimed
+-- at with the open-ground rule (init.lua lgm_on_solid). KEEL: false (any
+-- deployed pill, dead or alive, is solid -- the old engine rule).
+M.BLAST_DEAD_PILL_OPEN = true
 -- REFIRE_MAX_MISSES: keep firing at the same man every reload-available tick,
 -- but give up after this many consecutive misses (a shot whose flight completed
 -- with the man still alive).  Counter resets on a kill or a target change, and
@@ -6024,7 +6038,29 @@ M.LGM_SHELL_PREDICT_TICKS = 63
 -- kills the man when the explosion is within MAP_SQUARE_MIDDLE of him (on a
 -- tile that is not solid). global.h MAP_SQUARE_MIDDLE = 128. Not a tunable --
 -- changing it makes the gate disagree with the engine.
+-- This is the radius of the classic lgm_blast_shape (0, "Half-square
+-- circle"); U.lgm_open_blast_catches picks the shape the game plays with.
 M.LGM_SHELL_KILL_RADIUS_WU = 128
+-- The other two lgm_blast_shape values (src/bolo/internal/lgm.h): 1, the
+-- "Mac Bolo box", is |dx| < LGM_BLAST_MAC_BOX_HALF_WU and |dy| < that;
+-- 2, the "Mac Bolo equivalent area circle", has the radius
+-- LGM_BLAST_MAC_AREA_RADIUS_WU (256 / sqrt(pi), about 144.4, the box's
+-- area). Engine facts, not tunables.
+M.LGM_BLAST_MAC_BOX_HALF_WU = 128
+M.LGM_BLAST_MAC_AREA_RADIUS_WU = 144
+-- 2026-11-07: the builder blast shape every builder blast model uses (the
+-- shell gate, the kill-builder aim and the blast check before a shot,
+-- through U.lgm_open_blast_catches): 0 the half-square circle, 1 the Mac
+-- Bolo box, 2 the Mac Bolo equivalent area circle. live_physics.lua group
+-- BLAST (LIVE_PHYSICS_BLAST) sets it from the lgm_blast_shape rule each
+-- think. Under the classic rule (0), or with LIVE_PHYSICS or
+-- LIVE_PHYSICS_BLAST off, it stays 0, the old model.
+M.LGM_BLAST_SHAPE = 0
+-- 2026-11-07: the engine stops every shape at the pill_range rule (lgm.h
+-- lgmBlastOpenGroundCatches): a builder further than this from the
+-- explosion is safe. Classic 2048, far past every shape, so it changes
+-- nothing. live_physics.lua group BLAST sets it from pill_range each think.
+M.LGM_BLAST_PILL_RANGE_WU = 2048
 -- The engine's shell-vs-tank hit zone, in world units: tank.h:102
 -- TANK_HIT_RADIUS = 112 ("one-tile mid-radius (128) - 16 wu"), tested as a
 -- CIRCLE by tankIsTankHitAtPosition. The shell gate uses it for one thing --
@@ -7574,6 +7610,7 @@ M.PRESETS = {
     LGM_KILL_AIM_TILES            = 5,          -- moot: no aim refinement with the master off
     LGM_KILL_AIM_THROTTLE         = false,      -- refinement never touches the throttle
     LGM_ENGINE_KILL_WU            = 128,        -- engine fact (lgm.c MAP_SQUARE_MIDDLE), overlay only
+    BLAST_DEAD_PILL_OPEN          = false,      -- 2026-11-06: a dead pill's square is solid for the builder blast, as the old engine had it
     CAPTURE_LGM_HUNT_REFIRE_MAX_MISSES = 0,     -- no capture-target refire (off)
     -- 2026-09-08: a hostile LGM within CAPTURE_LGM_PRIORITY_RADIUS tiles
     -- (Chebyshev) of the pill the capture flow is driving at now gets his
