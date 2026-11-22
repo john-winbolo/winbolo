@@ -12,9 +12,11 @@ local bit = require('bitcompat')
 --   * init.lua        — kill_lgm fire block reads the predicted aim and
 --                       drives gunrange via KEY_MORERANGE/KEY_LESSRANGE.
 --
--- LGMs die when a shell explodes within MAP_SQUARE_MIDDLE (128 wu) of
--- their position on non-solid terrain, or on the exact tile on solid
--- terrain (lgm.c:1321).
+-- LGMs die when a shell explodes within the engine's builder blast reach
+-- of their position on non-solid terrain (lgm.c lgmBlastCatches: 128 wu,
+-- MAP_SQUARE_MIDDLE, in this tree; the lgm_blast_shape rule where
+-- U.lgm_open_blast_catches exists, 144 wu on the classic table), or on the
+-- exact tile on solid terrain.
 --
 -- Predictor — tiers, picked per call:
 --   0. dest_pill / dest_pill_lead (LGM_DEST_AIM) — his recent positions lie
@@ -60,6 +62,26 @@ local V_HISTORY_TICKS = V_WINDOW_TICKS * NUM_WINDOWS_FOR_MATCH + 2
 -- a tile or two still registers as "on the same straight-line path."
 local MATCH_DEG       = 9.2
 local MATCH_MAG_FRAC  = 0.29
+-- Below this speed (wu a tick) a window counts as standing still.
+local STILL_V         = 0.5
+
+-- C.LGM_LEAD_STOP_RETURN: when a stand counts as a stop. An enemy man's
+-- place comes in 16 wu steps (players.c playersGetBrainLgmsInRect:
+-- lgmPixelX << TANK_SHIFT_RIGHT2), so a man who walks under 16 wu a tick on
+-- an axis can show the same place for a tick or more while he walks: up to
+-- ceil(16 / (speed x the larger axis part of his heading)) - 1 repeats. A
+-- remote seat's snapshot can also repeat for D - 1 thinks (D = the measured
+-- key delay, lgm_aim). A stand shorter than both is not a stop.
+local LGM_POS_STEP_WU = 16
+local function stand_counts(h, stood)
+  local need = (h.sr_D or 1) - 1
+  local ax = math.max(math.abs(h.sr_ux), math.abs(h.sr_uy)) * (h.sr_sp or 16)
+  if ax > 0 then
+    local rep_max = math.ceil(LGM_POS_STEP_WU / ax) - 1
+    if rep_max > need then need = rep_max end
+  end
+  return stood >= need
+end
 
 -- Drop history entries we haven't seen for this many ticks.
 local STALE_TICKS = 250  -- 5s @ 50 Hz
@@ -402,7 +424,7 @@ end
 local function vels_match_diag(v1x, v1y, v2x, v2y)
   local m1 = math.sqrt(v1x * v1x + v1y * v1y)
   local m2 = math.sqrt(v2x * v2x + v2y * v2y)
-  if m1 < 0.5 or m2 < 0.5 then
+  if m1 < STILL_V or m2 < STILL_V then
     return false, "still", 0.0, 0.0
   end
   local mhi, mlo = math.max(m1, m2), math.min(m1, m2)
@@ -492,6 +514,8 @@ function M.update_velocity(state, lgm, now)
       h.dest_wx, h.dest_wy = nil, nil
       h.dest_locked = false
       h.v_ema_x, h.v_ema_y = 0.0, 0.0
+      h.sr_stop_tick, h.sr_ux, h.sr_uy, h.sr_sp = nil, nil, nil, nil   -- LGM_LEAD_STOP_RETURN
+      h.sr_resume_tick = nil
       h.last_tick = now
       h.lock_status = string.format("RESET teleport Δ=(%d,%d)", dwx, dwy)
       return 0.0, 0.0
@@ -506,10 +530,28 @@ function M.update_velocity(state, lgm, now)
     end
   end
 
+  -- C.LGM_LEAD_STOP_RETURN: he moves again after a stop that counted. The
+  -- normal lead takes over at once, with the velocity of the new walk: the
+  -- window starts at his last standing sample, not 10 ticks back in the
+  -- stand (that velocity is a fraction of his walk for 10 ticks).
+  if C.LGM_LEAD_STOP_RETURN and prev and (lgm.wx ~= prev.wx or lgm.wy ~= prev.wy) then
+    if h.sr_stop_tick and h.sr_ux and stand_counts(h, prev.tick - h.sr_stop_tick) then
+      h.sr_resume_tick = prev.tick
+    end
+    h.sr_stop_tick = nil
+  end
   local oldest_in_window
-  for i = 1, #samples do
-    if (now - samples[i].tick) <= V_WINDOW_TICKS then
-      oldest_in_window = samples[i]; break
+  local resume = C.LGM_LEAD_STOP_RETURN and h.sr_resume_tick
+  if resume and now - resume < V_WINDOW_TICKS then
+    for i = 1, #samples do
+      if samples[i].tick == resume then oldest_in_window = samples[i]; break end
+    end
+  end
+  if not oldest_in_window then
+    for i = 1, #samples do
+      if (now - samples[i].tick) <= V_WINDOW_TICKS then
+        oldest_in_window = samples[i]; break
+      end
     end
   end
   oldest_in_window = oldest_in_window or samples[1]
@@ -517,6 +559,25 @@ function M.update_velocity(state, lgm, now)
   if dt > 0 then
     h.v_ema_x = (lgm.wx - oldest_in_window.wx) / dt
     h.v_ema_y = (lgm.wy - oldest_in_window.wy) / dt
+  end
+
+  -- C.LGM_LEAD_STOP_RETURN: the walk heading, and the tick he stopped
+  -- after a walk (stop_return_lead below). Knob off: nothing is written.
+  if C.LGM_LEAD_STOP_RETURN and prev then
+    if lgm.wx ~= prev.wx or lgm.wy ~= prev.wy then
+      local sp = math.sqrt(h.v_ema_x * h.v_ema_x + h.v_ema_y * h.v_ema_y)
+      if sp >= STILL_V then
+        h.sr_ux, h.sr_uy, h.sr_sp = h.v_ema_x / sp, h.v_ema_y / sp, sp
+      end
+    elseif h.sr_ux and not h.sr_stop_tick then
+      -- Not moved since prev: his last step was at prev.tick or before, so
+      -- prev.tick + 1 is the first tick he stood (now, one sample a tick).
+      h.sr_stop_tick = prev.tick + 1
+    end
+    -- The measured key delay (lgm_aim): with D > 1 a snapshot can repeat
+    -- for a think or two while he walks (LGM_TELEPORT_REPEAT_VIEW), so a
+    -- stop counts only once he has stood D - 1 more ticks.
+    h.sr_D = require("lgm_aim").delay(state)
   end
 
   local v1x, v1y, v2x, v2y, v3x, v3y = three_window_velocities(samples, now)
@@ -617,11 +678,14 @@ function M.purge_stale(state, now, visible_lgms)
 end
 
 -- --------------------------------------------------------------------------
--- M.sightlen_for(distance_wu) / M.flight_ticks(sightLen)
+-- M.sightlen_for(distance_wu) / M.flight_ticks(sightLen) and the shell model
 -- --------------------------------------------------------------------------
 local MAX_SIGHTLEN = 14   -- longest gunsight (half tiles): a shell never flies past 14*128 wu
 M.MAX_SIGHTLEN = MAX_SIGHTLEN
 
+-- The old model (C.LGM_SHELL_MODEL_RULES false, and steering.lua's demine /
+-- kill_mine / sea-detonate aim, which keep it): a shell bursts 128 wu a
+-- sight step out, 4*sl - 5 ticks after it leaves.
 function M.sightlen_for(distance_wu)
   local s = math.floor(distance_wu / 128 + 0.5)
   if s < 2  then return 2  end
@@ -629,16 +693,158 @@ function M.sightlen_for(distance_wu)
   return s
 end
 
+-- C.LGM_SHELL_MODEL_RULES (2026-11-21): where and when a tank shell ends,
+-- from the game rules, for the kill-LGM and capture-LGM-hunt aim.
+-- Engine facts (tank.c 683-689, shells.c shellsAddItem / shellLifeTicks /
+-- shellsUpdate, server_sim_tick.c):
+--   * the tank fires with len = sight / 2; the shell starts shell_start_add
+--     steps of shell_speed ahead of the tank;
+--   * its life is L = max(0, 1 + floor(shell_life * sight / 2) -
+--     shell_start_add) moves of shell_speed; tankUpdate runs before
+--     shellsUpdate, so the first move is on the fire tick;
+--   * on the update after the last move it bursts where it stands, L ticks
+--     after the fire tick;
+--   * so it bursts shell_speed * (shell_start_add + L) wu out: classic
+--     128 * sight + 32, not 128 * sight (play test 20261121_231141: all 13
+--     full-life hunt shells burst 31-39 wu past the brain's burst);
+--   * a bot's shell is tested against a builder one tick before the burst
+--     (shells.c SHELL_LGM_REWIND_LESS), so the man that counts is where he
+--     is L - 1 ticks after the fire tick: classic 4 * sight - 5, the old
+--     flight time.
+-- The rules come from info.rules (M.set_rules, once a think in perception),
+-- with the classic table (sim_rules.c simRulesClassic) when a host sends
+-- none. No new numbers: the classic values only stand in for a missing rule.
+local SR = { speed = 32, life = 8, start_add = 5, sight_max = 14, build = 20 }
+M.SHELL_RULES = SR
+
+local function rule_num(r, k, dflt, lo)
+  local v = r and r[k]
+  if type(v) == "number" and v >= lo then return v end
+  return dflt
+end
+
+function M.set_rules(rules)
+  SR.speed     = rule_num(rules, "shell_speed", 32, 1)
+  SR.life      = rule_num(rules, "shell_life", 8, 1)
+  SR.start_add = rule_num(rules, "shell_start_add", 5, 0)
+  SR.sight_max = math.floor(rule_num(rules, "gunsight_max", 14, 2))
+  SR.build     = rule_num(rules, "lgm_build_ticks", 20, 0)
+end
+
+local function life_moves(sl)
+  local L = 1 + math.floor(SR.life * sl / 2) - SR.start_add
+  if L < 0 then return 0 end
+  return L
+end
+
+-- The longest sight the aim may use.
+function M.max_sight()
+  if C.LGM_SHELL_MODEL_RULES then return SR.sight_max end
+  return MAX_SIGHTLEN
+end
+
+-- How far out (wu, along the nose) a shell fired at sight sl bursts.
+function M.shell_travel(sl)
+  if C.LGM_SHELL_MODEL_RULES then return SR.speed * (SR.start_add + life_moves(sl)) end
+  return 128 * sl
+end
+
+-- The kill-LGM fire check's line of sight (init.lua, before a shot).
+-- C.LGM_FIRE_LOS_STRICT (2026-11-21, play test 20261121_231141_1, bot 2,
+-- tick 4888): the old walk stopped at the man's tile BEFORE the blocker
+-- test, and the answer was kept for KILL_LGM_LOS_CHECK_INTERVAL ticks. The
+-- man built pill #2 on his work tile (140,115) at tick 4856 and stood on it
+-- to 4883; the check at about 4880 said "clear", and the shell at 4888,
+-- aimed at him one tile on, hit the pill. With the knob on, the walk runs
+-- to the AIM tile (the burst), tests the man's tile like any other, and the
+-- answer is kept only while the man's tile and the aim tile stay the same.
+--
+-- los_cache_ok(ce, now, interval, man_mx, man_my, aim_mx, aim_my): may
+-- the kept answer ce be used?
+function M.los_cache_ok(ce, now, interval, man_mx, man_my, aim_mx, aim_my)
+  if not ce or (now - ce.tick) >= interval then return false end
+  if not C.LGM_FIRE_LOS_STRICT then return true end
+  return ce.mmx == man_mx and ce.mmy == man_my
+         and ce.amx == aim_mx and ce.amy == aim_my
+end
+
+-- fire_line_blocked(tiles, q, stops): is the shot blocked? tiles = the
+-- tiles the shell crosses (cpf.simulate_shot), in order. q = { tank_wx,
+-- tank_wy, aim_wx, aim_wy, origin_mx, origin_my, man_mx, man_my, aim_mx,
+-- aim_my, dest_mx, dest_my (LGM_DEST_AIM: the destination pill's tile is
+-- the target, not a blocker; nil when not aimed at it) }. stops(mx, my) is
+-- true for a tile that stops the shell (a wall, a live pill, a base under
+-- the engine rule). The tank's own tile is never tested.
+function M.fire_line_blocked(tiles, q, stops)
+  local strict = C.LGM_FIRE_LOS_STRICT
+  -- Knob on: no tile whose centre is more than half a tile past the aim
+  -- point is on the shell's path.
+  local far2
+  if strict then
+    local adx, ady = q.aim_wx - q.tank_wx, q.aim_wy - q.tank_wy
+    local far = math.sqrt(adx * adx + ady * ady) + 128
+    far2 = far * far
+  end
+  for ti = 1, #tiles do
+    local t = tiles[ti]
+    if strict then
+      -- The aim tile is where the shell bursts: a live pill or a wall there
+      -- stops it at that tile, and the blast on a solid tile kills the man
+      -- on it, which is where the aim puts him. The man's tile, when the
+      -- aim is elsewhere, is tested like any other tile below.
+      if t.mx == q.aim_mx and t.my == q.aim_my then return false end
+      local cdx = t.mx * 256 + 128 - q.tank_wx
+      local cdy = t.my * 256 + 128 - q.tank_wy
+      if cdx * cdx + cdy * cdy > far2 then return false end
+    elseif t.mx == q.man_mx and t.my == q.man_my then return false end
+    if q.dest_mx and t.mx == q.dest_mx and t.my == q.dest_my then return false end
+    if not (t.mx == q.origin_mx and t.my == q.origin_my) and stops(t.mx, t.my) then
+      return true
+    end
+  end
+  return false
+end
+
+-- The farthest a shell flies (the reach of the longest sight).
+function M.max_travel()
+  return M.shell_travel(M.max_sight())
+end
+
+-- How far out the shell is t ticks after it leaves, on the flight_ticks
+-- clock (it is at shell_travel(sl) when t = flight_ticks(sl)).
+function M.shell_dist_at(t)
+  if C.LGM_SHELL_MODEL_RULES then return SR.speed * (SR.start_add + 1 + t) end
+  return 32 * (t + 5)
+end
+
+-- The sight whose burst is nearest distance_wu, for the kill-LGM and
+-- capture-LGM-hunt aim (the old sightlen_for with the knob off).
+function M.sight_for(distance_wu)
+  if not C.LGM_SHELL_MODEL_RULES then return M.sightlen_for(distance_wu) end
+  local best, best_e = 2, math.huge
+  for sl = 2, SR.sight_max do
+    local e = math.abs(M.shell_travel(sl) - distance_wu)
+    if e < best_e then best, best_e = sl, e end
+  end
+  return best
+end
+
 function M.flight_ticks(sightLen)
+  if C.LGM_SHELL_MODEL_RULES then
+    -- The burst is L ticks after the fire tick; the builder test is one
+    -- tick before it (see above).
+    local t = life_moves(sightLen) - 1
+    if t < 1 then return 1 end
+    return t
+  end
   -- shells.c:133 (post-PR-77 formula):
-  --   shellLifeTicks(len) = 1 + SHELL_LIFE(8)*len - SHELL_START_ADD(6)
-  -- Tank passes len = sightLen/2 (brain_pathfinder.c:3221), so:
-  --   ticks-to-impact = 1 + 8*(sightLen/2) - 6 = 4*sightLen - 5
+  --   shellLifeTicks(len) = 1 + SHELL_LIFE(8)*len - SHELL_START_ADD(5)
+  -- Tank passes len = sightLen/2 (tank.c:683-689), and the builder test is
+  -- one tick before the burst, so:
+  --   ticks-to-impact = 1 + 8*(sightLen/2) - 5 - 1 = 4*sightLen - 5
   -- The +1 was restored in PR #77 to match the WinBolo v1 formula
   -- (commit 63888991 had dropped it as a trajectory-dot display fix
-  -- but that shortened all shell lifetimes by one tick).  Without
-  -- PR #77 the formula is `4*sightLen - 6` — undo this `-5` back to
-  -- `-6` if reverting.
+  -- but that shortened all shell lifetimes by one tick).
   local t = 4 * sightLen - 5
   if t < 1 then return 1 end
   return t
@@ -674,21 +880,24 @@ end
 -- goes off while the man stands on the pill tile.
 --
 -- Engine facts the timeline uses:
---   * shell position after t flight ticks = tank + 32*(t+5) wu along the
---     line (SHELL_SPEED 32, the start push; the same clock flight_ticks uses:
---     4*sl - 5 ticks to 128*sl wu).
+--   * shell position after t flight ticks = tank + shell_dist_at(t) wu
+--     along the line (the same clock flight_ticks uses: it reaches
+--     shell_travel(sl) at t = flight_ticks(sl); with C.LGM_SHELL_MODEL_RULES
+--     off, 32*(t+5) wu and 128*sl wu at 4*sl - 5).
 --   * a LIVE pill (armour > 0) stops the shell on the first tick it is inside
 --     the pill tile and the blast goes off at the tile centre
 --     (shellsCalcCollision -> pillsIsPillHit, shells.c:722-730).
 --   * a DEAD pill does not (pillsIsPillHit needs armour > 0,
---     pillbox.c:652): the shell flies on and ends its life at 128*sl.  The
+--     pillbox.c:652): the shell flies on and ends its life at
+--     shell_travel(sl).  The
 --     repair on his arrival makes it live at once, so a shell that is inside
 --     the tile at or after his arrival tick goes off then.
 --   * a LIVE pill's tile is solid for the builder death test: the blast kills
 --     him only if he is ON the pill tile.  A DEAD pill's tile is open ground
 --     (lgm.c lgmBlastCatches tests pillsIsPillHit, armour > 0): the shell
---     that flies over and ends at 128*sl kills him only within 128 wu of
---     where it ends, on the tile or off it.  C.BLAST_DEAD_PILL_OPEN false
+--     that flies over and ends at shell_travel(sl) kills him only within the
+--     builder blast reach of where it ends (128 wu here; the lgm_blast_shape
+--     rule where U.lgm_open_blast_catches exists), on the tile or off it.  C.BLAST_DEAD_PILL_OPEN false
 --     (KEEL, or unset) keeps the old rule, where a dead pill's tile was
 --     solid too.
 --   * he stands on it for LGM_BUILD_TIME (20) game ticks after arriving:
@@ -717,8 +926,6 @@ end
 -- conversion predict_aim uses for the lead.
 -- --------------------------------------------------------------------------
 local DWELL_STEPS      = 20  -- lgm.h LGM_BUILD_TIME (sim_rules lgm_build_ticks)
-local SHELL_WU_TICK    = 32  -- shells.h SHELL_SPEED
-local SHELL_START_TICK = 5   -- flight_ticks: 128*sl wu reached at tick 4*sl - 5
 M.DEST_DWELL_STEPS = DWELL_STEPS
 
 -- First flight tick (>= 1) at which a shell fired from the tank at the tile
@@ -730,7 +937,7 @@ function M.shell_tile_entry_ticks(tank_wx, tank_wy, mx, my, T_full)
   if D < 1 then return 1 end
   local ux, uy = dx / D, dy / D
   for t = 1, T_full do
-    local d = SHELL_WU_TICK * (t + SHELL_START_TICK)
+    local d = M.shell_dist_at(t)
     local x, y = tank_wx + ux * d, tank_wy + uy * d
     if bit.rshift(math.floor(x), 8) == mx and bit.rshift(math.floor(y), 8) == my then
       return t
@@ -826,7 +1033,7 @@ end
 function M.predict_dest_hold(tank_wx, tank_wy, lgm, h, pill)
   local dx, dy = tank_wx - pill.cx, tank_wy - pill.cy
   local D = math.sqrt(dx * dx + dy * dy)
-  local sl = M.sightlen_for(D)
+  local sl = M.sight_for(D)
   local T_full = M.flight_ticks(sl)
   local T_entry = M.shell_tile_entry_ticks(tank_wx, tank_wy, pill.mx, pill.my, T_full)
   local LEAD = M.lead_scale()
@@ -874,13 +1081,14 @@ function M.predict_dest_hold(tank_wx, tank_wy, lgm, h, pill)
   local verdict
   local blast_wx, blast_wy, man_wx, man_wy
   if open_blast then
-    -- A dead pill's tile is open ground: the shell ends 128*sl along the
-    -- line to the pill centre, and he dies if he is within 128 wu of that
-    -- point then (he has not arrived yet, so the pill is still dead).
-    -- Not there = he is still on his way: hold.
+    -- A dead pill's tile is open ground: the shell ends shell_travel(sl)
+    -- along the line to the pill centre, and he dies if the builder blast
+    -- catches him there then (he has not arrived yet, so the pill is still
+    -- dead). Not there = he is still on his way: hold.
     if D >= 1 then
-      blast_wx = tank_wx - dx / D * 128 * sl
-      blast_wy = tank_wy - dy / D * 128 * sl
+      local travel = M.shell_travel(sl)
+      blast_wx = tank_wx - dx / D * travel
+      blast_wy = tank_wy - dy / D * travel
     else
       blast_wx, blast_wy = pill.cx + 0.0, pill.cy + 0.0
     end
@@ -889,7 +1097,8 @@ function M.predict_dest_hold(tank_wx, tank_wy, lgm, h, pill)
                                            pill.mx, pill.my)
     local bdx, bdy = man_wx - blast_wx, man_wy - blast_wy
     -- The lgm_blast_shape rule's area when this brain has the helper
-    -- (U.lgm_open_blast_catches); else the 128 WU circle.
+    -- (U.lgm_open_blast_catches); else the engine's 128 WU circle in this
+    -- tree (lgm.c lgmBlastCatches, MAP_SQUARE_MIDDLE).
     local caught
     if U.lgm_open_blast_catches then
       caught = U.lgm_open_blast_catches(bdx, bdy)
@@ -930,12 +1139,68 @@ end
 -- value: the fixed point is reached in 2-4 steps (a man walks at most half
 -- the shell speed); this only stops a loop that flips between two values.
 local LEAD_CONVERGE_STEPS = 8
+
+-- --------------------------------------------------------------------------
+-- C.LGM_LEAD_STOP_RETURN (2026-11-21, Andrew): a builder who stops after a
+-- walk is at work. The engine (lgm.c lgmMoveAway / lgmUpdate) gives every
+-- job the same wait: the tick he arrives sets waitTime = lgm_build_ticks
+-- (any job, so nothing about the job has to be seen), the next
+-- lgm_build_ticks ticks only count it down, and the tick after that is his
+-- first step back (lgmReturn). So a man first seen standing at tick s
+-- (arrived at s - 1) stands through tick s - 1 + lgm_build_ticks.
+--   left = s - 1 + lgm_build_ticks - now  (0 once he has stood past it)
+--   flight T (x KILL_LGM_LEAD_SCALE) <= left: he is where he stands;
+--   else he has walked back T - left steps, the reverse of his walk-out
+--        heading, with the terrain speed the dest sim uses
+--        (sim_forward_to_dest toward the map edge on that line).
+-- The flight time is refitted to the lead point until it repeats (the
+-- LGM_AIM_LEAD_CONVERGE loop), with that knob on or off: the plan has one
+-- answer per T. The moment he moves again, update_velocity clears the stop
+-- and the normal lead takes over. Returns nil when no stop is known.
+function M.stop_return_plan(h, lgm)
+  if not (h and h.sr_stop_tick and h.sr_ux) then return nil end
+  local now = h.last_tick or h.sr_stop_tick
+  local stood = now - h.sr_stop_tick
+  if not stand_counts(h, stood) then return nil end
+  local left = h.sr_stop_tick - 1 + SR.build - now
+  if left < 0 then left = 0 end
+  local wx, wy = lgm.wx + 0.0, lgm.wy + 0.0
+  local ex, ey = M.project_to_edge(wx, wy, -h.sr_ux, -h.sr_uy)
+  return { wx = wx, wy = wy, left = left, stood = stood, ex = ex, ey = ey,
+           ux = h.sr_ux, uy = h.sr_uy,
+           mx = bit.rshift(math.floor(wx), 8), my = bit.rshift(math.floor(wy), 8) }
+end
+
+local function stop_return_at(sr, T)
+  local t = T * C.KILL_LGM_LEAD_SCALE
+  if t <= sr.left then return sr.wx, sr.wy end
+  local steps = math.floor(t - sr.left + 0.5)
+  if steps < 1 then return sr.wx, sr.wy end
+  -- His work square is the blessed one (lgm.c blessX / blessY): he walks
+  -- off it at man_speed_refuel_base even when it is now a wall or a pill.
+  return M.sim_forward_to_dest(sr.wx, sr.wy, sr.ex, sr.ey, steps, sr.mx, sr.my)
+end
+
+local function stop_return_lead(tank_wx, tank_wy, sr)
+  local dx, dy = tank_wx - sr.wx, tank_wy - sr.wy
+  local T = M.flight_ticks(M.sight_for(math.sqrt(dx * dx + dy * dy)))
+  local ax, ay = stop_return_at(sr, T)
+  for _ = 1, LEAD_CONVERGE_STEPS do
+    local qx, qy = tank_wx - ax, tank_wy - ay
+    local nT = M.flight_ticks(M.sight_for(math.sqrt(qx * qx + qy * qy)))
+    if nT == T then break end
+    T = nT
+    ax, ay = stop_return_at(sr, T)
+  end
+  return ax, ay, T
+end
+
 local function lead_point(tank_wx, tank_wy, lgm_wx, lgm_wy, vx, vy,
                           dest_wx, dest_wy, bless_mx, bless_my)
   local dx = tank_wx - lgm_wx
   local dy = tank_wy - lgm_wy
   local D  = math.sqrt(dx * dx + dy * dy)
-  local T1 = M.flight_ticks(M.sightlen_for(D))
+  local T1 = M.flight_ticks(M.sight_for(D))
 
   local LEAD = C.KILL_LGM_LEAD_SCALE
   -- C.LGM_AIM_LEAD_CONVERGE (2026-11-21): the flight time must be the
@@ -960,7 +1225,7 @@ local function lead_point(tank_wx, tank_wy, lgm_wx, lgm_wy, vx, vy,
     local ax, ay = lead_at(T)
     for _ = 1, LEAD_CONVERGE_STEPS do
       local qx, qy = tank_wx - ax, tank_wy - ay
-      local nT = M.flight_ticks(M.sightlen_for(math.sqrt(qx * qx + qy * qy)))
+      local nT = M.flight_ticks(M.sight_for(math.sqrt(qx * qx + qy * qy)))
       if nT == T then break end
       T = nT
       ax, ay = lead_at(T)
@@ -985,7 +1250,7 @@ local function lead_point(tank_wx, tank_wy, lgm_wx, lgm_wy, vx, vy,
   local pdx = tank_wx - pos1_wx
   local pdy = tank_wy - pos1_wy
   local pD  = math.sqrt(pdx * pdx + pdy * pdy)
-  local T2  = M.flight_ticks(M.sightlen_for(pD))
+  local T2  = M.flight_ticks(M.sight_for(pD))
   local aim_wx, aim_wy = pos1_wx, pos1_wy
   if T2 > T1 then
     local extra = T2 - T1
@@ -1011,8 +1276,9 @@ end
 --   * the lead point is NOT on the pill tile: the shell meets him before he
 --     steps onto it (on the tile only a blast in the tile kills him, and that
 --     is the hold-fire window's job);
---   * the lead point is in reach: at most MAX_SIGHTLEN * 128 wu from the
---     tank (a shell never flies further);
+--   * the lead point is in reach: at most max_travel() wu from the tank
+--     (a shell never flies further; MAX_SIGHTLEN * 128 with
+--     C.LGM_SHELL_MODEL_RULES off);
 --   * a LIVE pill is not on the shell's line before the lead point (it would
 --     stop the shell: shellsCalcCollision -> pillsIsPillHit).  A dead pill
 --     does not stop it.
@@ -1031,15 +1297,15 @@ function M.predict_dest_intercept(tank_wx, tank_wy, lgm, h, pill)
   end
   local fdx, fdy = aim_wx - tank_wx, aim_wy - tank_wy
   local fD = math.sqrt(fdx * fdx + fdy * fdy)
-  if fD > MAX_SIGHTLEN * 128 then return nil end   -- out of reach
-  local sl = M.sightlen_for(fD)
+  if fD > M.max_travel() then return nil end   -- out of reach
+  local sl = M.sight_for(fD)
   local T  = M.flight_ticks(sl)
   if pill.live and fD >= 1 then
-    -- The shell's positions tank + 32*(t+5) wu along the line (the clock
-    -- shell_tile_entry_ticks uses), up to the lead point.
+    -- The shell's positions tank + shell_dist_at(t) wu along the line (the
+    -- clock shell_tile_entry_ticks uses), up to the lead point.
     local ux, uy = fdx / fD, fdy / fD
     for t = 1, T do
-      local d = SHELL_WU_TICK * (t + SHELL_START_TICK)
+      local d = M.shell_dist_at(t)
       if d > fD then break end
       if bit.rshift(math.floor(tank_wx + ux * d), 8) == pill.mx
          and bit.rshift(math.floor(tank_wy + uy * d), 8) == pill.my then
@@ -1086,6 +1352,22 @@ function M.predict_aim(tank_wx, tank_wy, lgm, h)
     if a_wx then return a_wx, a_wy, a_sl, a_ft, a_d, a_tier end
     pill = nil
   end
+  -- C.LGM_LEAD_STOP_RETURN: he stopped after a walk, so he is at work; lead
+  -- him where he stands and then on his walk back (stop_return_plan). The
+  -- dest-pill hold / intercept above keep their own on-tile timeline and
+  -- come first. Writes h.stop_return (logs, overlay).
+  if C.LGM_LEAD_STOP_RETURN then
+    local sr = M.stop_return_plan(h, lgm)
+    if h then h.stop_return = sr end
+    if sr then
+      local s_wx, s_wy, s_T = stop_return_lead(tank_wx, tank_wy, sr)
+      sr.T, sr.aim_wx, sr.aim_wy = s_T, s_wx, s_wy
+      local qx, qy = tank_wx - s_wx, tank_wy - s_wy
+      local qD = math.sqrt(qx * qx + qy * qy)
+      local qsl = M.sight_for(qD)
+      return s_wx, s_wy, qsl, M.flight_ticks(qsl), qD, "stop_return"
+    end
+  end
   local bless_mx, bless_my
   if pill then
     dest_wx, dest_wy = pill.cx, pill.cy
@@ -1126,7 +1408,7 @@ function M.predict_aim(tank_wx, tank_wy, lgm, h)
   local fdx = tank_wx - aim_wx
   local fdy = tank_wy - aim_wy
   local fD  = math.sqrt(fdx * fdx + fdy * fdy)
-  local sightLen = M.sightlen_for(fD)
+  local sightLen = M.sight_for(fD)
   return aim_wx, aim_wy, sightLen, M.flight_ticks(sightLen), fD, tier
 end
 

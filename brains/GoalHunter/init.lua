@@ -8405,7 +8405,12 @@ function Brain.think(info)
                             or ("t" .. elm.mx .. "," .. elm.my)
           local ce = los_cache[cache_key]
           local los_blocked
-          if ce and (now - ce.tick) < KILL_LGM_LOS_CHECK_INTERVAL then
+          -- C.LGM_FIRE_LOS_STRICT: kill_lgm.los_cache_ok and
+          -- kill_lgm.fire_line_blocked (the play-test case is there).
+          local aim_tmx = bit.rshift(math.floor(aim_wx), 8)
+          local aim_tmy = bit.rshift(math.floor(aim_wy), 8)
+          if kill_lgm.los_cache_ok(ce, now, KILL_LGM_LOS_CHECK_INTERVAL,
+                                   elm.mx, elm.my, aim_tmx, aim_tmy) then
             los_blocked = ce.blocked
           else
             los_blocked = false
@@ -8419,34 +8424,28 @@ function Brain.think(info)
               -- target, not a blocker (a live damaged pill would read as one).
               local dpt = (elm.predict_tier == "dest_pill" or elm.predict_tier == "dest_pill_hold")
                           and elm.dest_pill or nil
-              for ti = 1, #tiles do
-                local t = tiles[ti]
-                if t.mx == elm.mx and t.my == elm.my then break end
-                if dpt and t.mx == dpt.mx and t.my == dpt.my then break end
-                if not (t.mx == origin_mx and t.my == origin_my) then
-                  local tt = U.ttype(t.mx, t.my)
-                  if tt == C.T_BUILDING or tt == C.T_HALFBUILD then
-                    los_blocked = true; break
-                  end
-                  local plist = world.pill_at and world.pill_at[t.my * 256 + t.mx]
-                  if plist then
-                    for _, pe in ipairs(plist) do
-                      if pe.pill and pe.pill.health and pe.pill.health > 0 then
-                        los_blocked = true; break
-                      end
-                    end
-                    if los_blocked then break end
-                  end
-                  -- A base stops the shell only under the engine rule
-                  -- (U.base_stops_tank_shell): our own, allied and neutral
-                  -- bases do not stop a shot from land.
-                  if U.base_tile_stops_tank_shell(world, t.mx, t.my, origin_mx, origin_my) then
-                    los_blocked = true; break
+              los_blocked = kill_lgm.fire_line_blocked(tiles, {
+                tank_wx = info.tankx, tank_wy = info.tanky, aim_wx = aim_wx, aim_wy = aim_wy,
+                origin_mx = origin_mx, origin_my = origin_my, man_mx = elm.mx, man_my = elm.my,
+                aim_mx = aim_tmx, aim_my = aim_tmy,
+                dest_mx = dpt and dpt.mx, dest_my = dpt and dpt.my,
+              }, function(mx, my)
+                local tt = U.ttype(mx, my)
+                if tt == C.T_BUILDING or tt == C.T_HALFBUILD then return true end
+                local plist = world.pill_at and world.pill_at[my * 256 + mx]
+                if plist then
+                  for _, pe in ipairs(plist) do
+                    if pe.pill and pe.pill.health and pe.pill.health > 0 then return true end
                   end
                 end
-              end
+                -- A base stops the shell only under the engine rule
+                -- (U.base_stops_tank_shell): our own, allied and neutral
+                -- bases do not stop a shot from land.
+                return U.base_tile_stops_tank_shell(world, mx, my, origin_mx, origin_my)
+              end)
             end
-            los_cache[cache_key] = { tick = now, blocked = los_blocked }
+            los_cache[cache_key] = { tick = now, blocked = los_blocked,
+                                     mmx = elm.mx, mmy = elm.my, amx = aim_tmx, amy = aim_tmy }
           end
           _ev.los_blocked = los_blocked
           -- Fire-gate: shell explosion point must land inside a
@@ -8454,10 +8453,12 @@ function Brain.think(info)
           -- LGM center.  Engine's kill radius is the full 128 wu
           -- (lgm.c:1321) but we tighten by half so we don't lean on
           -- splash — small prediction error still kills.  Shell
-          -- explodes at tank + 128*sl wu in the firing direction
-          -- (sl in half-tiles, so 128 wu/unit).
+          -- explodes at tank + kill_lgm.shell_travel(sl) wu in the
+          -- firing direction (128*sl with C.LGM_SHELL_MODEL_RULES off;
+          -- 128*sl + 32 in the engine on the classic rules).
           local cur_sl = info.gunrange or 14
-          local shell_travel_wu = 128 * cur_sl
+          -- C.LGM_SHELL_MODEL_RULES: the engine's burst (else 128 * sight).
+          local shell_travel_wu = kill_lgm.shell_travel(cur_sl)
           local rad = (info.direction or 0) * C.TWO_PI / 256
           local explode_wx = info.tankx + math.sin(rad) * shell_travel_wu
           local explode_wy = info.tanky - math.cos(rad) * shell_travel_wu
@@ -8679,7 +8680,8 @@ function Brain.think(info)
           -- Crosshair = tank + (gunrange/2 tiles in heading dir),
           -- converted to wu (× 256).  sightLen is in half-tiles
           -- (see GUNSIGHT_MAX comment in constants.lua).
-          local cross_wu = (new_gun / 2.0) * 256
+          -- C.LGM_SHELL_MODEL_RULES: the engine's burst instead.
+          local cross_wu = kill_lgm.shell_travel(new_gun)
           local cross_wx = pred_tank_wx + sin_d * cross_wu
           local cross_wy = pred_tank_wy - cos_d * cross_wu
           local dx = cross_wx - lgm_wx
@@ -8769,8 +8771,9 @@ function Brain.think(info)
       local rad = (info.direction or 0) * C.TWO_PI / 256
       local hx, hy = math.sin(rad), -math.cos(rad)
       local along = (px_w - info.tankx) * hx + (py_w - info.tanky) * hy
-      local L = math.floor(along / 128 + 0.5)
-      if L < 2 then L = 2 elseif L > 14 then L = 14 end
+      -- C.LGM_SHELL_MODEL_RULES: the sight whose engine burst is nearest
+      -- (knob off: round(along / 128), 2..14, as before).
+      local L = kill_lgm.sight_for(along)
       if L == G then return 0, 0 end                                -- settled
       local key = (L > G) and KEY_MORERANGE or KEY_LESSRANGE
       -- HOLD vs TAP.  A held key steps the engine every ENGINE tick while we
@@ -8887,7 +8890,9 @@ function Brain.think(info)
         local KT = kill_lgm.tuning()
         local rad  = (info.direction or 0) * C.TWO_PI / 256
         local hx, hy = math.sin(rad), -math.cos(rad)
-        local MAX_ALONG = 14 * 128            -- sightLen 14 -> impact 7 tiles ahead
+        -- The longest shell (C.LGM_SHELL_MODEL_RULES: from the rules; knob
+        -- off: sightLen 14 -> impact 7 tiles ahead).
+        local MAX_ALONG = kill_lgm.max_travel()
         local R = C.CAPTURE_LGM_HUNT_RADIUS or 2
         local CIRCLE = C.CAPTURE_LGM_HUNT_CIRCLE
         local cand, cand_perp, cand_along = nil, math.huge, math.huge
@@ -8970,7 +8975,7 @@ function Brain.think(info)
             hk, tk = capture_sight_step(tgt_wx, tgt_wy)
           else
             local tsl = (cand and killable and cand.target_sightLen)
-                        or kill_lgm.sightlen_for(clh.dist_wu)
+                        or kill_lgm.sight_for(clh.dist_wu)
             hk = kill_lgm.gunrange_key(info.gunrange or 14, tsl)
           end
           keys = bit.bor(keys, hk)
@@ -9028,10 +9033,13 @@ function Brain.think(info)
           local sl0 = cur_gun
           if bit.band(rk0, KEY_MORERANGE) ~= 0 then sl0 = cur_gun + 1
           elseif bit.band(rk0, KEY_LESSRANGE) ~= 0 then sl0 = cur_gun - 1 end
-          if sl0 < 2 then sl0 = 2 elseif sl0 > 14 then sl0 = 14 end
+          local sl_hi = kill_lgm.max_sight()
+          if sl0 < 2 then sl0 = 2 elseif sl0 > sl_hi then sl0 = sl_hi end
           local r0 = cur_dir * C.TWO_PI / 256
-          local ex0 = info.tankx + math.sin(r0) * 128 * sl0 - tgt_wx
-          local ey0 = info.tanky - math.cos(r0) * 128 * sl0 - tgt_wy
+          -- C.LGM_SHELL_MODEL_RULES: the engine burst (else 128 * sight).
+          local tr0 = kill_lgm.shell_travel(sl0)
+          local ex0 = info.tankx + math.sin(r0) * tr0 - tgt_wx
+          local ey0 = info.tanky - math.cos(r0) * tr0 - tgt_wy
           clh.aim_err_wu = math.sqrt(ex0 * ex0 + ey0 * ey0)
           clh.aim_wu     = KT.aim_wu
           -- CLOSE ONLY (C.LGM_KILL_AIM_TILES).  Beyond this straight-line
@@ -9101,9 +9109,10 @@ function Brain.think(info)
                         -- is applied before the shot, so sl0 is the length the
                         -- "hold the sight" candidate really flies at.
                         local ng = sl0 + g.d
-                        if ng < 2 then ng = 2 elseif ng > 14 then ng = 14 end
-                        local dx = ptx + shx * 128 * ng - tgt_wx
-                        local dy = pty + shy * 128 * ng - tgt_wy
+                        if ng < 2 then ng = 2 elseif ng > sl_hi then ng = sl_hi end
+                        local trg = kill_lgm.shell_travel(ng)
+                        local dx = ptx + shx * trg - tgt_wx
+                        local dy = pty + shy * trg - tgt_wy
                         local sc = dx * dx + dy * dy
                         if sc < best then
                           best, best_turn, best_spd, best_gun = sc, t.k, sp.k, g.k
@@ -9195,9 +9204,12 @@ function Brain.think(info)
           local sl_eff = cur_sl
           if bit.band(rk, KEY_MORERANGE) ~= 0 then sl_eff = cur_sl + 1
           elseif bit.band(rk, KEY_LESSRANGE) ~= 0 then sl_eff = cur_sl - 1 end
-          if sl_eff < 2 then sl_eff = 2 elseif sl_eff > 14 then sl_eff = 14 end
-          local ex_wx = info.tankx + hx * 128 * sl_eff   -- predicted impact this tick
-          local ex_wy = info.tanky + hy * 128 * sl_eff
+          local sl_hi5 = kill_lgm.max_sight()
+          if sl_eff < 2 then sl_eff = 2 elseif sl_eff > sl_hi5 then sl_eff = sl_hi5 end
+          -- C.LGM_SHELL_MODEL_RULES: the engine burst (else 128 * sight).
+          local tr_eff = kill_lgm.shell_travel(sl_eff)
+          local ex_wx = info.tankx + hx * tr_eff   -- predicted impact this tick
+          local ex_wy = info.tanky + hy * tr_eff
           local hit
           if lgm_on_solid(cmx, cmy) then
             local imx = bit.rshift(math.floor(ex_wx + 0.5), 8)
@@ -9300,7 +9312,7 @@ function Brain.think(info)
         -- No LGM in the radius (armour-rise trigger): keep the crosshair ON THE
         -- PILL we're sweeping (greedy sight-over-pill), parked on the corpse and
         -- ready to snap onto a man the instant one enters the radius.
-        local tsl = kill_lgm.sightlen_for(clh.dist_wu)
+        local tsl = kill_lgm.sight_for(clh.dist_wu)
         if C.CAPTURE_LGM_HUNT_SIGHT_ON_PILL then
           local hk, tk = capture_sight_step(clh.pmx * 256 + 128, clh.pmy * 256 + 128)
           keys = bit.bor(keys, hk)
@@ -9355,8 +9367,9 @@ function Brain.think(info)
           local _kt = kill_lgm.tuning()
           local cur_sl = info.gunrange or 14
           local rad    = (info.direction or 0) * C.TWO_PI / 256
-          local ex_wx  = info.tankx + math.sin(rad) * 128 * cur_sl
-          local ex_wy  = info.tanky - math.cos(rad) * 128 * cur_sl
+          local cur_tr = kill_lgm.shell_travel(cur_sl)   -- C.LGM_SHELL_MODEL_RULES
+          local ex_wx  = info.tankx + math.sin(rad) * cur_tr
+          local ex_wy  = info.tanky - math.cos(rad) * cur_tr
           local ddx    = ex_wx - clh.aim_wx
           local ddy    = ex_wy - clh.aim_wy
           if math.sqrt(ddx * ddx + ddy * ddy) <= _kt.armour_fire_wu then
@@ -10010,9 +10023,7 @@ function Brain.think(info)
         -- D_now: distance from tank to LGM right now (input to sightLen)
         local twx, twy = info.tankx, info.tanky
         local d_now = math.sqrt((twx - lwx)^2 + (twy - lwy)^2)
-        local sl_now = math.floor(d_now / 128 + 0.5)
-        if sl_now < 2  then sl_now = 2  end
-        if sl_now > 14 then sl_now = 14 end
+        local sl_now = kill_lgm.sight_for(d_now)
         viz.detail_text(did, "linear lead — how each value was derived:")
         viz.detail_text(did, "")
         viz.detail_text(did, "1) velocity (10-tick finite difference over samples):")
@@ -10028,10 +10039,20 @@ function Brain.think(info)
         viz.detail_text(did, string.format(
           "     D_now = |tank - lgm| = sqrt((%.0f-%.0f)² + (%.0f-%.0f)²) = %.0fwu",
           twx, lwx, twy, lwy, d_now))
-        viz.detail_text(did, string.format(
-          "     sightLen = round(D_now / 128) clamped[2..14] = %d", sl_now))
-        viz.detail_text(did, string.format(
-          "     T = flight_ticks(sl) = 4*sl - 5 (shells.c:133, post-PR-77) = %d sim-ticks", T))
+        if C.LGM_SHELL_MODEL_RULES then
+          local SR = kill_lgm.SHELL_RULES
+          viz.detail_text(did, string.format(
+            "     sightLen = sight whose burst %d*(%d + L) is nearest D_now [2..%d] = %d",
+            SR.speed, SR.start_add, SR.sight_max, sl_now))
+          viz.detail_text(did, string.format(
+            "     L = 1 + floor(%d*sl/2) - %d; T = flight_ticks(sl) = L - 1 = %d sim-ticks",
+            SR.life, SR.start_add, T))
+        else
+          viz.detail_text(did, string.format(
+            "     sightLen = round(D_now / 128) clamped[2..14] = %d", sl_now))
+          viz.detail_text(did, string.format(
+            "     T = flight_ticks(sl) = 4*sl - 5 (shells.c:133, post-PR-77) = %d sim-ticks", T))
+        end
         viz.detail_text(did, "")
         viz.detail_text(did, "3) lead offset (KILL_LGM_LEAD_SCALE; 1.00 = textbook lead):")
         viz.detail_text(did, string.format(
@@ -10047,13 +10068,36 @@ function Brain.think(info)
           lwx, lwy, sx, sy, lwx + sx, lwy + sy))
         viz.detail_text(did, "")
         viz.detail_text(did, "5) two-pass refit:")
-        viz.detail_text(did, "     T2 = flight_ticks(sightlen_for(|tank - pos1|))")
+        viz.detail_text(did, "     T2 = flight_ticks(sight_for(|tank - pos1|))")
         viz.detail_text(did, string.format(
           "     if T2 > T1: aim = pos1 + v * (T2-T1) * %.2f", LS))
         viz.detail_text(did, "     else:       aim = pos1")
         viz.detail_text(did, string.format(
           "     final aim shown on PRED ring: predicted=(%.0f,%.0f)",
           elm.predicted_wx or 0, elm.predicted_wy or 0))
+      elseif tier == "stop_return" and elm.stop_return then
+        -- C.LGM_LEAD_STOP_RETURN: every term of the stop-and-return lead.
+        local sr = elm.stop_return
+        local LS = C.KILL_LGM_LEAD_SCALE
+        local t_lead = (sr.T or 0) * LS
+        viz.detail_text(did, "stop-and-return lead (he stopped after a walk: at work):")
+        viz.detail_text(did, string.format(
+          "  stopped at (%.0f,%.0f) for %d ticks; walk-out heading u=(%.2f,%.2f)",
+          sr.wx, sr.wy, sr.stood, sr.ux or 0, sr.uy or 0))
+        viz.detail_text(did, string.format(
+          "  left = stop tick - 1 + lgm_build_ticks %d - now = %d (0 once past)",
+          kill_lgm.SHELL_RULES.build, sr.left))
+        viz.detail_text(did, string.format(
+          "  T = flight_ticks(sight_for(|tank - aim|)) = %d (refit to the aim); t = T * %.2f = %.1f",
+          sr.T or 0, LS, t_lead))
+        if t_lead <= sr.left then
+          viz.detail_text(did, "  t <= left: he still stands there -> aim = where he stands")
+        else
+          viz.detail_text(did, string.format(
+            "  t > left: walked back round(t - left) = %d steps along -u (sim_forward_to_dest)",
+            math.floor(t_lead - sr.left + 0.5)))
+        end
+        viz.detail_text(did, string.format("  aim = (%.0f,%.0f)", sr.aim_wx or 0, sr.aim_wy or 0))
       elseif tier == "dest_lock" then
         local D  = elm.predicted_dist_wu or 0
         local T  = elm.flight_ticks or 0
@@ -10064,7 +10108,7 @@ function Brain.think(info)
           "  dest: wu=(%.0f,%.0f) (3-match ray to map edge)",
           elm.dest_wx or 0, elm.dest_wy or 0))
         viz.detail_text(did, string.format(
-          "  T = flight_ticks(sightlen_for(D=%.0fwu)) = %d sim-ticks", D, T))
+          "  T = flight_ticks(sight_for(D=%.0fwu)) = %d sim-ticks", D, T))
         viz.detail_text(did, string.format(
           "  sim_T = round(T * KILL_LGM_LEAD_SCALE(%.2f)) = %d", DS, sT))
         viz.detail_text(did, "  sim_forward_to_dest steps from lgm toward dest,")
@@ -10090,10 +10134,10 @@ function Brain.think(info)
         if dt then
           -- LGM_DEST_HOLD_FIRE: every term of the fire / hold verdict.
           viz.detail_text(did, string.format(
-            "  aim = pill centre; D=%.0fwu sl=sightlen_for(D)=%d T_full=4*sl-5=%d",
+            "  aim = pill centre; D=%.0fwu sl=sight_for(D)=%d T_full=flight_ticks(sl)=%d",
             dt.D, dt.sl, dt.T_full))
           viz.detail_text(did, string.format(
-            "  T_entry = first t>=1 with tank+32*(t+5)wu inside the tile = %d",
+            "  T_entry = first t>=1 with tank+shell_dist_at(t)wu inside the tile = %d",
             dt.T_entry))
           viz.detail_text(did, string.format(
             "  steps = round(T * %.2f): s_full=%d s_entry=%d", DS, dt.s_full, dt.s_entry))
@@ -10122,7 +10166,7 @@ function Brain.think(info)
           end
         else
           viz.detail_text(did, string.format(
-            "  T = flight_ticks(sightlen_for(D=%.0fwu)) = %d; sim_T = round(T * %.2f) = %d",
+            "  T = flight_ticks(sight_for(D=%.0fwu)) = %d; sim_T = round(T * %.2f) = %d",
             D, T, DS, math.floor(T * DS + 0.5)))
           viz.detail_text(did, "  sim walks him to the pill centre (pill tile passable at")
           viz.detail_text(did, "  MAN_SPEED_BLESSED) and holds him there once within 16 wu")
@@ -10136,8 +10180,8 @@ function Brain.think(info)
             "  INTERCEPT on his walk in: lead point (%.0f,%.0f) is off the pill tile (%d,%d)",
             di.aim_wx, di.aim_wy, dp.mx, dp.my))
           viz.detail_text(did, string.format(
-            "  reach: D=%.0fwu <= MAX_SIGHTLEN %d * 128 = %d; sl=%d T=4*sl-5=%d",
-            di.D, kill_lgm.MAX_SIGHTLEN, kill_lgm.MAX_SIGHTLEN * 128, di.sl, di.T))
+            "  reach: D=%.0fwu <= max_travel() = %d; sl=%d T=flight_ticks(sl)=%d",
+            di.D, kill_lgm.max_travel(), di.sl, di.T))
           viz.detail_text(did, string.format(
             "  shell meets him at step round(T * %.2f) = %d; on the pill tile at step %s",
             DS, di.s_hit, tostring(di.s_enter)))

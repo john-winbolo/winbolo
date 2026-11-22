@@ -58,6 +58,7 @@ local bit = require('bitcompat')
 
 local C = require("constants")
 local print2 = require("print2")
+local KL = require("kill_lgm")   -- shell model (C.LGM_SHELL_MODEL_RULES)
 
 local M = {}
 
@@ -224,7 +225,8 @@ function M.launch_impact(state, info, now, keys, taps, rate)
     D = M.delay(state), half = (rate or 2) / 2, ramp = true, move = 0.25,
     pending = true })
   local a = ang * math.pi * 2 / 256
-  local travel = 128 * gun
+  -- C.LGM_SHELL_MODEL_RULES: where the engine bursts it (else 128 * gun).
+  local travel = KL.shell_travel(gun)
   return x + math.sin(a) * travel, y - math.cos(a) * travel, gun, ang
 end
 
@@ -306,7 +308,7 @@ function M.search(state, info, now, lgm_wx, lgm_wy, rate, turn_delta, speed_delt
         cur[4] = t.d
         local x, y, ang, gun = pose(s, info, now, cur, "next", o)
         local a = ang * math.pi * 2 / 256
-        local cw = 128 * gun
+        local cw = KL.shell_travel(gun)   -- the burst (128 * gun, knob off)
         local cx = x + math.sin(a) * cw
         local cy = y - math.cos(a) * cw
         local dx, dy = cx - lgm_wx, cy - lgm_wy
@@ -333,7 +335,18 @@ end
 -- turn sign) is compared with the keys sent d thinks ago, for every d in
 -- 1..LGM_AIM_DELAY_MAX. A tick counts for a d when either side moved; it is
 -- an error when they differ. Over the last LGM_AIM_DELAY_WINDOW thinks the d
--- with the lowest error rate wins; D moves only to a strictly better d.
+-- with the lowest error rate wins; D moves only to a clearly better d (see
+-- choose).
+--
+-- 2026-11-21 (play test 20261121_231141_1, bot 1, tick 2037): one key
+-- made D run away. The key sent at s matched at s + 1 (d = 1: 0 errors in
+-- 1) and was an error for d = 2 at s + 2. At s + 32 the d = 1 tick left the
+-- window first: d = 1 had no samples, which counted as rate math.huge, so
+-- d = 2 with 1 error in 1 "won" (D 1 -> 2), and so on, one step a tick, up
+-- to 14, with no key at all. Now a tick that tells no d apart (the same
+-- verdict for every d) is not kept, the present D with no samples has rate
+-- 0 (nothing against it), and a new d needs LGM_AIM_DELAY_WINDOW / 2
+-- samples and at least one full error fewer than the present D.
 local function observe(s, info, now)
   local prev = s.last_obs
   local gun = info.gunrange or 14
@@ -366,6 +379,13 @@ local function observe(s, info, now)
     end
     err[d], inf[d] = e, n
   end
+  -- A tick with the same verdict for every d tells no d apart: no
+  -- information, not kept (with the knob LGM_AIM_DELAY_EST on, see above).
+  local same = true
+  for d = 2, dmax do
+    if err[d] ~= err[1] or inf[d] ~= inf[1] then same = false; break end
+  end
+  if same then return nil end
   return err, inf
 end
 
@@ -385,11 +405,18 @@ local function choose(s, now)
   end
   local cur = s.D
   if cur < 1 then cur = 1 elseif cur > dmax then cur = dmax end
-  local function rate(d) return (N[d] > 0) and (E[d] / N[d]) or math.huge end
-  local best, br = cur, rate(cur)
+  -- The present D with no samples has nothing against it (rate 0). A d
+  -- needs half a window of samples to win, and at least one full error
+  -- fewer than the present D at its own sample count.
+  local n_min = math.floor(W / 2)
+  local cur_rate = (N[cur] > 0) and (E[cur] / N[cur]) or 0
+  local bar = (N[cur] > 0) and ((E[cur] - 1) / N[cur]) or -1
+  local best, br = cur, cur_rate
   for d = 1, dmax do
-    local rd = rate(d)
-    if rd < br then best, br = d, rd end
+    if d ~= cur and N[d] >= n_min then
+      local rd = E[d] / N[d]
+      if rd < bar and rd < br then best, br = d, rd end
+    end
   end
   if best ~= s.D then
     s.D = best

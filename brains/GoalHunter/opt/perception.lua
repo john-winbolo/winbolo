@@ -656,6 +656,10 @@ function M.update(state, world, info)
   local prev_enemy_lgms = state._prev_enemy_lgms or state._elgm_buf_b
   local enemy_lgms = (prev_enemy_lgms == state._elgm_buf_a) and state._elgm_buf_b
                                                              or state._elgm_buf_a
+  -- The shell rules for the kill-LGM and capture-LGM-hunt aim
+  -- (C.LGM_SHELL_MODEL_RULES; kill_lgm keeps the classic values when a
+  -- host sends none). Every think, before predict_aim.
+  kill_lgm.set_rules(info.rules)
   local n_lgm = 0
   for _, ob in ipairs(info.objects) do
     if ob.type == OBJECT_BUILDMAN then
@@ -741,6 +745,7 @@ function M.update(state, world, info)
         end
         local aim_wx, aim_wy, sl, ft, d_wu, tier = kill_lgm.predict_aim(
           info.tankx, info.tanky, _ent, h)
+        _ent.stop_return = h and h.stop_return or nil   -- LGM_LEAD_STOP_RETURN
         _ent.predicted_wx     = aim_wx
         _ent.predicted_wy     = aim_wy
         _ent.predicted_mx     = bit.rshift(math.floor(aim_wx), 8)

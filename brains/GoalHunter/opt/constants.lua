@@ -3379,6 +3379,22 @@ M.LGM_TELEPORT_REPEAT_VIEW = true
 -- distance of the lead point until it repeats. false = the old two passes,
 -- which only lengthen it (they led a crossing man too far).
 M.LGM_AIM_LEAD_CONVERGE   = true
+-- 2026-11-21 (play test 20261121_231141): kill-LGM fixes. All on; KEEL /
+-- MAST: all off (the old aim).
+-- Where and when a tank shell ends, for the kill-LGM and capture-LGM-hunt
+-- aim, from info.rules (kill_lgm.shell_travel / flight_ticks): classic
+-- 128 * sight + 32 wu. false = 128 * sight wu (13 of 13 hunt shells burst
+-- 31-39 wu past the brain's burst).
+M.LGM_SHELL_MODEL_RULES   = true
+-- Fire line check (init.lua kill-LGM fire block): walk the shell's tiles to
+-- the AIM tile and test the man's own tile too; keep a cached answer only
+-- while the man's tile and the aim tile stay the same. false = stop at the
+-- man's tile, before its pill test, and keep the answer 10 ticks.
+M.LGM_FIRE_LOS_STRICT     = true
+-- A man who stops after a walk is at work: lead him where he stands for
+-- the rest of lgm_build_ticks, then on his walk back the way he came
+-- (kill_lgm.stop_return_plan). false = the linear lead of his last walk.
+M.LGM_LEAD_STOP_RETURN    = true
 -- TEST ONLY: hold our own keys back this many thinks before the engine gets
 -- them (a remote seat's delay on a local server). 0 = off. Never in a game.
 M.TEST_KEY_DELAY_THINKS   = 0
@@ -8129,6 +8145,9 @@ M.PRESETS = {
     LGM_AIM_SIGHT_TAP = false,
     LGM_TELEPORT_REPEAT_VIEW = false,
     LGM_AIM_LEAD_CONVERGE    = false,
+    LGM_SHELL_MODEL_RULES    = false,
+    LGM_FIRE_LOS_STRICT      = false,
+    LGM_LEAD_STOP_RETURN     = false,
     --   2026-11-17: hold 15 ticks with no goal after a kill (old rule).
     POST_KILL_WAIT_TICKS = 15,
     --   2026-11-17: carrying-pill approach floor 30 (old rule).
@@ -8480,6 +8499,9 @@ M.PRESETS.mast = {
   LGM_AIM_SIGHT_TAP                 = false,
   LGM_TELEPORT_REPEAT_VIEW          = false,  -- 2.2.1: any 32 wu jump resets the velocity
   LGM_AIM_LEAD_CONVERGE             = false,  -- 2.2.1: two-pass lead, only lengthens
+  LGM_SHELL_MODEL_RULES             = false,  -- 2.2.1: shell bursts at 128 * sight
+  LGM_FIRE_LOS_STRICT               = false,  -- 2.2.1: line check stops at the man's tile
+  LGM_LEAD_STOP_RETURN              = false,  -- 2.2.1: no stop-and-return lead
   POST_KILL_WAIT_TICKS              = 15,
   CARRY_APPROACH_MIN_ARMOUR_ONE     = 30,
   CARRY_APPROACH_MIN_ARMOUR_MANY    = 30,

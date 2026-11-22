@@ -16,6 +16,11 @@
 --   luajit test_lgm_aim.lua old    every LGM_AIM_* knob and
 --                                  LGM_TELEPORT_REPEAT_VIEW off = the old
 --                                  aim; the fix checks FAIL here.
+--   luajit test_lgm_aim.lua lgm_aim=<file>
+--                                  load lgm_aim from <file> (for example the
+--                                  parent commit's): test 11 checks a fix
+--                                  with no knob (the delay measure), so
+--                                  this is how it is seen to fail.
 --
 -- Run from this directory with the LuaJIT built beside the game:
 --   ../../build-own-deps/luajit_src/src/luajit.exe test_lgm_aim.lua
@@ -30,14 +35,20 @@ _G.KEY_MORERANGE, _G.KEY_LESSRANGE = 0x40, 0x80
 TERRAIN_MASK = 0xFF
 function get_terrain() return 7 end
 
-local OLD = (arg and arg[1] == "old")
+local OLD = false
+for _, a in ipairs(arg or {}) do
+  if a == "old" then OLD = true end
+  local la = a:match("^lgm_aim=(.+)$")
+  if la then package.preload["lgm_aim"] = function() return dofile(la) end end
+end
 local C = require("constants")
 local LA = require("lgm_aim")
 local KL = require("kill_lgm")
 
 local KNOBS = { "LGM_AIM_KEYS_IN_FLIGHT", "LGM_AIM_DELAY_EST", "LGM_AIM_LAUNCH_POSE",
                 "LGM_AIM_TURN_RULE", "LGM_AIM_SEARCH_MOVE", "LGM_AIM_SIGHT_TAP",
-                "LGM_TELEPORT_REPEAT_VIEW", "LGM_AIM_LEAD_CONVERGE" }
+                "LGM_TELEPORT_REPEAT_VIEW", "LGM_AIM_LEAD_CONVERGE",
+                "LGM_SHELL_MODEL_RULES", "LGM_FIRE_LOS_STRICT", "LGM_LEAD_STOP_RETURN" }
 -- t[k] = false turns one knob off for a test that looks at another fix
 -- alone. In "old" mode every knob is off whatever t says.
 local function cfg(t)
@@ -61,7 +72,18 @@ local function adiff(a, b) local d = (b - a) % 256; if d >= 128 then d = d - 256
 local function new_engine(o)
   return { x = o.x or 0, y = o.y or 0, ang = o.ang or 0, gun = o.gun or 14,
            speed = o.speed or 0, D = o.D or 1, q = {}, fl = 0, fr = 0, rate = 2,
-           shots = {} }
+           shots = {}, real = o.real }
+end
+-- The engine's shell (tank.c 683-689, shells.c, sim_rules.c classic table):
+-- it starts start_add steps of speed ahead, moves L = max(0, 1 +
+-- floor(life * sight / 2) - start_add) steps, and bursts. Returns the burst
+-- distance and L.
+local function engine_travel(sl, r)
+  r = r or {}
+  local speed, life, add = r.shell_speed or 32, r.shell_life or 8, r.shell_start_add or 5
+  local L = 1 + math.floor(life * sl / 2) - add
+  if L < 0 then L = 0 end
+  return speed * (add + L), L
 end
 local function eng_gun(e, k)
   if band(k, KEY_MORERANGE) ~= 0 then e.gun = e.gun + 1
@@ -87,8 +109,10 @@ local function eng_step(e, keys, taps)
   eng_gun(e, keys)
   if band(p1, KEY_SHOOT) ~= 0 then
     local a = e.ang * TWO_PI_256
-    e.shots[#e.shots + 1] = { x = e.x + math.sin(a) * 128 * e.gun,
-                              y = e.y - math.cos(a) * 128 * e.gun, gun = e.gun }
+    -- e.real: the engine's burst (tests 10+); else the old 128 * sight.
+    local tr = e.real and engine_travel(e.gun) or 128 * e.gun
+    e.shots[#e.shots + 1] = { x = e.x + math.sin(a) * tr,
+                              y = e.y - math.cos(a) * tr, gun = e.gun }
   end
   eng_turn(e, keys)
   local a = e.ang * TWO_PI_256
@@ -319,7 +343,9 @@ do
     local function real(k, t)
       local e2 = new_engine({ D = 1, gun = 8, speed = 128 })
       eng_step(e2, k, t)
-      return math.abs(e2.y - 128 * e2.gun + d)
+      -- The crosshair = the burst the brain models (KL.shell_travel: the
+      -- engine's with LGM_SHELL_MODEL_RULES, else 128 * sight).
+      return math.abs(e2.y - KL.shell_travel(e2.gun) + d)
     end
     for _, g in ipairs({ { 0, 0 }, { KEY_MORERANGE, 0 }, { KEY_LESSRANGE, 0 },
                          { 0, KEY_MORERANGE }, { 0, KEY_LESSRANGE } }) do
@@ -397,12 +423,218 @@ do
   local tx, ty = 32364, 33101
   local lgm = { wx = 31232, wy = 32112, v_ema_x = 16.0, v_ema_y = 0.0 }
   local ax, ay = KL.predict_aim(tx, ty, lgm, nil)
-  local real_ft = KL.flight_ticks(KL.sightlen_for(
+  local real_ft = KL.flight_ticks(KL.sight_for(
     math.sqrt((ax - tx) ^ 2 + (ay - ty) ^ 2)))
   local mx, my = lgm.wx + 16 * real_ft, lgm.wy
   local off = math.sqrt((ax - mx) ^ 2 + (ay - my) ^ 2)
   check("the aim point is where he is when a shell to it bursts (<= 64 wu)",
         off <= 64, string.format("lead %.0f wu, flight %d, %.0f wu off", ax - lgm.wx, real_ft, off))
+end
+
+-- ── 10. the shell model from the rules (LGM_SHELL_MODEL_RULES) ────────────
+-- Play test 20261121_231141: 13 of 13 full-life hunt shells burst 31-39 wu
+-- past the brain's burst. The model must match the engine's shell for the
+-- classic rules and for other rules, within 16 wu, at every sight.
+print("10. shell model from the rules (LGM_SHELL_MODEL_RULES)")
+do
+  cfg()
+  local function run(r, name)
+    KL.set_rules(r)
+    local worst, worst_sl, bad_t = 0, 0, 0
+    local hi = (r and r.gunsight_max) or 14
+    for sl = 2, hi do
+      local tr, L = engine_travel(sl, r)
+      local e = math.abs(KL.shell_travel(sl) - tr)
+      if e > worst then worst, worst_sl = e, sl end
+      -- The man that counts is where he is one tick before the burst
+      -- (shells.c SHELL_LGM_REWIND_LESS): L - 1 ticks after the fire tick.
+      local want = L - 1; if want < 1 then want = 1 end
+      if KL.flight_ticks(sl) ~= want then bad_t = bad_t + 1 end
+    end
+    check(name .. ": burst within 16 wu of the engine at every sight",
+          worst <= 16, string.format("worst %.0f wu at sight %d", worst, worst_sl))
+    check(name .. ": flight time = engine L - 1 at every sight", bad_t == 0,
+          bad_t .. " sights wrong")
+  end
+  run(nil, "classic rules")
+  run({ shell_speed = 40, shell_life = 10, shell_start_add = 4, gunsight_max = 12,
+        lgm_build_ticks = 30 }, "rules speed 40 life 10 start_add 4 max 12")
+  KL.set_rules(nil)
+  -- Closed loop on the engine's shell: delay 1, nose on, the man still at
+  -- 900 wu. The shell the fire check passes must burst within 16 wu of the
+  -- model burst the check scored.
+  local e = new_engine({ D = 1, gun = 14, real = true })
+  local st, scored = {}, nil
+  for t = 1, 40 do
+    local info = snapshot(e)
+    local before = #e.shots
+    think(st, e, t, 0, -900, true)
+    if #e.shots > before then
+      local bx, by
+      if C.LGM_AIM_LAUNCH_POSE then
+        bx, by = LA.launch_impact(st, info, t, 0, KEY_SHOOT, 2)
+      else
+        bx, by = 0, -KL.shell_travel(info.gunrange)
+      end
+      scored = { bx = bx, by = by }
+      break
+    end
+  end
+  local s = e.shots[1]
+  local err = (s and scored) and math.sqrt((s.x - scored.bx) ^ 2 + (s.y - scored.by) ^ 2) or -1
+  check("closed loop: the real burst is within 16 wu of the model burst",
+        s and err <= 16, s and string.format(
+          "sight %d, real burst %.0f wu from the model, %.0f wu from the man",
+          s.gun, err, math.sqrt(s.x ^ 2 + (s.y + 900) ^ 2)) or "no shot")
+end
+
+-- ── 11. the delay measure does not run away (no knob: LGM_AIM_DELAY_EST) ──
+-- Play test 20261121_231141_1, bot 1, tick 2037: a bot in the server
+-- (delay 1), idle at sight 14, sent one key and then none. 32 thinks later
+-- the d = 1 sample left the window first; D went 1 -> 2 on "1 error in 1",
+-- then 2 -> 3, and on up to 14. The fix has no knob, so this test runs the
+-- measure on in both modes; run it with lgm_aim=<the parent's file> to see
+-- the old measure fail.
+print("11. delay measure: no runaway from one key (delay 1, idle, sight 14)")
+do
+  cfg()
+  C.LGM_AIM_DELAY_EST = true
+  local e = new_engine({ D = 1, gun = 14 })
+  local st, top, first_bad = {}, 1, nil
+  for t = 1, 120 do
+    local info = snapshot(e)
+    local k = (t == 3) and KEY_TURNLEFT or 0
+    local keys, taps = LA.note_sent(st, info, k, 0, t)
+    eng_send(e, keys, taps)
+    local D = LA.delay(st)
+    if D > top then top = D end
+    if D ~= 1 and not first_bad then first_bad = t end
+  end
+  check("D stays 1 over 120 thinks", top == 1,
+        string.format("highest D %d%s", top, first_bad and (", first off 1 at think " .. first_bad) or ""))
+  -- Busy keys after an idle stretch: the measure still finds a real delay 3
+  -- (the minimum sample count does not stop it).
+  cfg()
+  C.LGM_AIM_DELAY_EST = true
+  e = new_engine({ D = 3, gun = 8 })
+  st = {}
+  for t = 1, 40 do
+    local info = snapshot(e)
+    local keys, taps = LA.note_sent(st, info, 0, 0, t)
+    eng_send(e, keys, taps)
+  end
+  for t = 41, 160 do
+    local ty = -128 * (6 + 4 * math.sin(t / 7))
+    think(st, e, t, 300 * math.sin(t / 11), ty, false)
+  end
+  check("then a real delay 3 is still found", LA.delay(st) == 3, LA.delay(st))
+  cfg()
+end
+
+-- ── 12. stop-and-return lead (LGM_LEAD_STOP_RETURN) ──────────────────────
+-- A builder on a job: he walks out east at 16 wu a tick, stops, works for
+-- lgm_build_ticks (20) ticks, and walks back west the way he came (lgm.c:
+-- waitTime = lgm_build_ticks on the arrival tick, first step back after
+-- it). Our tank stands 1100 wu north of his stop spot. At every tick of the
+-- stop and of the walk back, the man at (this tick + the flight time to
+-- the aim point) must be within 64 wu of the aim point.
+-- Play test: bot 1 ticks 8386-8426 missed by 400-700 wu in these phases.
+print("12. stop-and-return lead (LGM_LEAD_STOP_RETURN)")
+do
+  cfg()
+  local X0, Y0, WALK, WORK = 20000, 30000, 60, 20
+  local A = WALK                       -- arrival tick (his last step out)
+  local function man_at(t)
+    if t <= A then return X0 + 16 * t, Y0 end
+    if t <= A + WORK then return X0 + 16 * A, Y0 end
+    local back = t - (A + WORK)
+    if back > A then back = A end
+    return X0 + 16 * A - 16 * back, Y0
+  end
+  local TX, TY = X0 + 16 * A, Y0 - 1100
+  local st = {}
+  local lgm = { idnum = 5, wx = X0, wy = Y0 }
+  KL.update_velocity(st, lgm, 0)
+  local worst = { stop = 0, back = 0 }
+  local worst_t = { stop = 0, back = 0 }
+  local n = { stop = 0, back = 0 }
+  local hit = { stop = 0, back = 0 }
+  for t = 1, A + WORK + 24 do
+    lgm.wx, lgm.wy = man_at(t)
+    local vx, vy = KL.update_velocity(st, lgm, t)
+    lgm.v_ema_x, lgm.v_ema_y = vx, vy
+    local h = st._enemy_lgm_history[5]
+    local ax, ay = KL.predict_aim(TX, TY, lgm, h)
+    local T = KL.flight_ticks(KL.sight_for(math.sqrt((ax - TX) ^ 2 + (ay - TY) ^ 2)))
+    local rx, ry = man_at(t + T)
+    local miss = math.sqrt((ax - rx) ^ 2 + (ay - ry) ^ 2)
+    local ph = (t > A and t <= A + WORK) and "stop" or (t > A + WORK and "back" or nil)
+    if ph then
+      n[ph] = n[ph] + 1
+      if miss <= 64 then hit[ph] = hit[ph] + 1 end
+      if miss > worst[ph] then worst[ph], worst_t[ph] = miss, t end
+    end
+  end
+  check("stop phase: the aim is on him at the burst (<= 64 wu) every tick",
+        hit.stop == n.stop, string.format("%d/%d; worst %.0f wu at tick %d",
+          hit.stop, n.stop, worst.stop, worst_t.stop))
+  check("walk back: the aim is on him at the burst (<= 64 wu) every tick",
+        hit.back == n.back, string.format("%d/%d; worst %.0f wu at tick %d",
+          hit.back, n.back, worst.back, worst_t.back))
+end
+
+-- 13. The fire check's line of sight (kill_lgm.fire_line_blocked and
+-- los_cache_ok, LGM_FIRE_LOS_STRICT). Play test 20261121_231141_1, bot 2,
+-- tick 4888: the man stood on the live pill he built on his work tile
+-- (140,115); the shell, aimed at him one tile on (141,115), hit the pill.
+-- The tank is due west on row 115. The old walk stopped at the man's tile
+-- before it tested for a blocker, so the shot read as clear.
+print("13. fire line of sight (LGM_FIRE_LOS_STRICT)")
+do
+  cfg()
+  local ROW = 115
+  local function line(mx0, mx1)
+    local t = {}
+    for mx = mx0, mx1 do t[#t + 1] = { mx = mx, my = ROW } end
+    return t
+  end
+  local blockers = {}
+  local function stops(mx, my) return blockers[my * 256 + mx] == true end
+  local function q(man_mx, aim_mx, extra)
+    local r = { tank_wx = 130 * 256 + 128, tank_wy = ROW * 256 + 128,
+                aim_wx = aim_mx * 256 + 128, aim_wy = ROW * 256 + 128,
+                origin_mx = 130, origin_my = ROW, man_mx = man_mx, man_my = ROW,
+                aim_mx = aim_mx, aim_my = ROW }
+    for k, v in pairs(extra or {}) do r[k] = v end
+    return r
+  end
+  local function blocked(x0, x1, man_mx, aim_mx, extra)
+    return KL.fire_line_blocked(line(x0, x1), q(man_mx, aim_mx, extra), stops)
+  end
+  blockers = { [ROW * 256 + 140] = true }      -- the live pill on his work tile
+  local b = blocked(130, 142, 140, 141)
+  check("pill on his tile, aim one tile on: blocked", b == true, tostring(b))
+  b = blocked(130, 142, 140, 140)
+  check("pill on his tile, aim on his tile: clear (the blast there kills him)",
+        b == false, tostring(b))
+  blockers = { [ROW * 256 + 143] = true }      -- a wall two tiles past the aim
+  b = blocked(130, 144, 140, 141)
+  check("wall two tiles past the aim tile: clear", b == false, tostring(b))
+  blockers = { [ROW * 256 + 136] = true }      -- a pill on the way
+  b = blocked(130, 142, 140, 141)
+  check("pill short of the man: blocked", b == true, tostring(b))
+  blockers = { [ROW * 256 + 141] = true }      -- the destination pill (LGM_DEST_AIM)
+  b = blocked(130, 143, 140, 142, { dest_mx = 141, dest_my = ROW })
+  check("aim past the destination pill's tile: it is the target, clear",
+        b == false, tostring(b))
+  -- The kept answer: the check at about tick 4880 saw him on tile 139 with
+  -- the aim on 140. Two ticks on, he is on 140 and the aim on 141.
+  local ce = { tick = 4880, blocked = false, mmx = 139, mmy = ROW, amx = 140, amy = ROW }
+  local ok = KL.los_cache_ok(ce, 4882, 10, 140, ROW, 141, ROW)
+  check("kept answer not used once the man's tile or the aim tile change",
+        ok == false, tostring(ok))
+  ok = KL.los_cache_ok(ce, 4882, 10, 139, ROW, 140, ROW)
+  check("kept answer used while both stay the same", ok == true, tostring(ok))
 end
 
 print(string.format("\n%d passed, %d failed", pass, fail))
