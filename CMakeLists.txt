@@ -4689,6 +4689,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_lgm_quit_pill.c
     tests/unit/test_lgm_start_offset.c
     tests/unit/test_lgm_absent_on_shooter_screen.c
+    tests/unit/test_lgm_blast_dead_pill.c
     tests/unit/test_braindbg_round_dir.c
     tests/unit/test_jitter_buffer_grow.c
     tests/unit/test_shell_projection.c
@@ -5003,6 +5004,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # man_dead_pill_terrain_speed: the builder's speed on the square of a
     # dead pillbox.
     tests/unit/test_man_dead_pill_speed.c
+    # lgm_blast_shape: the open-ground area round an explosion that kills a
+    # builder.
+    tests/unit/test_lgm_blast_shape.c
     tests/unit/test_teleport_clears_rewind.c
     tests/unit/test_shell_rewind_rules.c
     tests/unit/test_input_gate.c
@@ -6579,6 +6583,13 @@ set(_unit_test_names
     lgm_kill_seen_out_already_dead
     lgm_kill_seen_out_tank_hit_blast
     lgm_kill_seen_out_dead_tank
+    lgm_blast_dead_pill_edge
+    lgm_blast_dead_pill_far_corner
+    lgm_blast_live_pill_unchanged
+    lgm_blast_pill_kill_shot
+    lgm_blast_shell_runs_out_dead_pill
+    lgm_blast_shell_hits_tank_dead_pill
+    lgm_blast_tank_explosion_kills_pill
     lgm_start_offset
     braindbg_second_round_new_dir
     lgm_draw_own_matches_wire
@@ -6681,6 +6692,12 @@ set(_unit_test_names
     man_dead_pill_walk_across_water
     man_dead_pill_lifted_waits_for_tank
     man_dead_pill_brain_walk
+    lgm_blast_shape_half_square
+    lgm_blast_shape_mac_box
+    lgm_blast_shape_mac_area
+    lgm_blast_shape_solid_square
+    lgm_blast_shape_classic_matches_old
+    lgm_blast_shape_pill_range
     teleport_erases_tank_rewind_record
     teleport_shell_hits_new_place
     teleport_rewind_refills
@@ -8150,6 +8167,42 @@ set(_unit_test_names
 # wbv_summary_capture is omitted for the same reason: it (re)writes the
 # committed tests/fixtures/wbv/*.summary files that wbv_fixture_summaries
 # compares against, via `WinBoloUnitTests --test wbv_summary_capture`.
+
+# unit_test_names_match: every test registered in tests/unit/test_main.c
+# must be in _unit_test_names, so CTest runs it. Left out on purpose: the
+# fixture writers above (test_main.c s_fixtureWriters) and the netdebug_*
+# tests, which the WB_NETDEBUG block further down registers. A test that is
+# missing stops the configure with its name. The match ends at the comma
+# after the name, so a registration wrapped onto two lines is read too.
+set(_unit_test_on_demand
+    wire_corpus_capture
+    spectator_seed_capture
+    wbv_v2_capture
+    wbv_summary_capture
+)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+             "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/test_main.c")
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/test_main.c"
+     _unit_test_main_lines
+     REGEX "^[ \t]*{[ \t]*\"[^\"]+\"[ \t]*,")
+set(_unit_test_missing "")
+foreach(_line IN LISTS _unit_test_main_lines)
+    string(REGEX REPLACE "^[ \t]*{[ \t]*\"([^\"]+)\".*$" "\\1"
+           _unit_test_main_name "${_line}")
+    if(NOT _unit_test_main_name IN_LIST _unit_test_names
+       AND NOT _unit_test_main_name IN_LIST _unit_test_on_demand
+       AND NOT _unit_test_main_name MATCHES "^netdebug_")
+        list(APPEND _unit_test_missing ${_unit_test_main_name})
+    endif()
+endforeach()
+if(_unit_test_missing)
+    list(JOIN _unit_test_missing ", " _unit_test_missing_text)
+    message(FATAL_ERROR
+            "unit_test_names_match: tests/unit/test_main.c registers tests "
+            "that are not in _unit_test_names: ${_unit_test_missing_text}. "
+            "Add each one to _unit_test_names in CMakeLists.txt.")
+endif()
+
 foreach(_name IN LISTS _unit_test_names)
     add_test(NAME unit.${_name}
              COMMAND $<TARGET_FILE:WinBoloUnitTests> --test ${_name})
