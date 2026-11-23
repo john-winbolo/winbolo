@@ -83,10 +83,10 @@ static int32_t tankBumpDecay(int32_t bump, int32_t shift) {
 static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
                             tankButton tb, bool inBrain);
 
-#ifdef BOLO_LEGACY_SQUARE_COLLISION
-/* The direction-dependent bounding boxes are only consulted by the legacy
- * grid-snap nudge; the default circle resolver uses the tank_hit_radius
- * rule. */
+/* The direction-dependent bounding boxes. The land boxes are consulted by
+ * the tank_collision_mac rule (tankNudgeBuildingsMac) and by the legacy
+ * grid-snap nudge, the boat boxes by the legacy nudge only. The default
+ * circle resolver uses the tank_hit_radius rule. */
 
 /* Land tank bounding box insets (from tank_self_XX.png sprites)
  * Values are transparent pixel margins from each sprite edge.
@@ -111,6 +111,7 @@ static const TankBoundingBox tank_bbox_land[16] = {
     /* 15 (NNW) */ { .top = 1, .left = 3, .bottom = 0, .right = 1 },
 };
 
+#ifdef BOLO_LEGACY_SQUARE_COLLISION
 /* Boat tank bounding box insets (from tank_selfboat_XX.png sprites)
  * Values are transparent pixel margins from each sprite edge.
  * Converted to distance-from-center in tankNudgeBuildings: (8 - margin) << 4
@@ -259,27 +260,29 @@ static void tankNudgeOtherTanks(GameSim *sim, tank *value) {
  * bounding box. Returns accumulated BumpInfo flags.
  *********************************************************/
 static BumpInfo tankNudgeBuildingsMac(GameSim *sim, tank *value, int maxNudges) {
-  /* Mac Bolo tank boxes: top, left, bottom, right in sprite pixels.
-   * Both boat and land movement use these sixteen tank boxes. WinBolo
-   * stores centres, whereas Mac stores the sprite's top-left corner. */
-  static const BYTE boxes[16][4] = {
-    {1,3,14,12}, {1,1,15,12}, {2,0,15,13}, {3,0,14,14},
-    {3,1,12,14}, {1,0,12,14}, {0,0,13,13}, {0,1,14,12},
-    {1,3,14,12}, {0,3,14,14}, {0,2,13,15}, {1,1,12,15},
-    {3,1,12,14}, {3,1,14,15}, {2,2,15,15}, {1,3,15,14}
-  };
-  /* Mac Bolo rounds a heading exactly halfway between two sectors up; this
+  /* The tank's box is the opaque area of its land sprite for the way it
+   * faces (tank_bbox_land), on a boat as on land.
+   *
+   * Mac Bolo rounds a heading exactly halfway between two sectors up; this
    * rounds it down, like the sprite and the movement, so a tank always
    * collides with the box of the way it is facing and going. */
-  const BYTE *box = boxes[utilGetDir((*value)->angle)];
+  const TankBoundingBox *box = &tank_bbox_land[utilGetDir((*value)->angle)];
+  /* How far the box reaches from the tank's position, in world units. The
+   * sprite's 16 pixels run 0 to 15 and the tank's position is pixel 8, so
+   * the first opaque pixel is 8 - margin up or left of it and the last is
+   * 7 - margin down or right. */
+  const int reachUp = (8 - (int)box->top) * 16;
+  const int reachLeft = (8 - (int)box->left) * 16;
+  const int reachDown = (7 - (int)box->bottom) * 16;
+  const int reachRight = (7 - (int)box->right) * 16;
   BumpInfo bumptype = BumpInfo_None;
   WORLD x = (*value)->x, y = (*value)->y;
   int i;
   for (i = 0; i < maxNudges; i++) {
-    WORLD top = (WORLD)(y + ((int)box[0] - 8) * 16);
-    WORLD left = (WORLD)(x + ((int)box[1] - 8) * 16);
-    WORLD bottom = (WORLD)(y + ((int)box[2] - 8) * 16);
-    WORLD right = (WORLD)(x + ((int)box[3] - 8) * 16);
+    WORLD top = (WORLD)(y - reachUp);
+    WORLD left = (WORLD)(x - reachLeft);
+    WORLD bottom = (WORLD)(y + reachDown);
+    WORLD right = (WORLD)(x + reachRight);
     BYTE hits = 0;
     bool first = i == 0;
     if (tankBuildingCollision(sim, value, x, top, &bumptype, first)) hits |= 1;
