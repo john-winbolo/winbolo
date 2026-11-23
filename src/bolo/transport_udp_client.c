@@ -4559,6 +4559,9 @@ static bool udpClientTick(void *ctx) {
                 /* Tankless spectator join: the server branches to the
                  * spectator-accept path (0xFF slot, no map). */
                 if (c->spectator)              joinFlags |= JOIN_FLAG_SPECTATOR;
+                /* The frontend can show the rejoin question. */
+                if (clientSimGetAskRejoin(c->clientSim))
+                                               joinFlags |= JOIN_FLAG_ASK_REJOIN;
                 jbuf[joffset++] = joinFlags;
                 jbuf[joffset++] = bolo_detect_client_type();
                 {

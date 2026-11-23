@@ -37,7 +37,12 @@ struct GameSim;
 #include "pillbox.h"
 #include "bases.h"
 
-#define MAX_REJOIN_TIME 6000
+/* The server tick that counts a record's timeOut, SERVER_TICK_LENGTH
+ * (server_lifecycle.h), is two game ticks: 20 ms, 50 times a second */
+#define REJOIN_TICKS_PER_SECOND (1000 / (GAME_TICK_LENGTH * 2))
+
+/* A record lasts 5 minutes */
+#define MAX_REJOIN_TIME (5 * 60 * REJOIN_TICKS_PER_SECOND)
 
 /* The different player rejoin information */
 typedef struct {
@@ -161,6 +166,18 @@ void playersRejoinClearTeam(BYTE team);
 *  age - Filled with MAX_TANKS values, one per team number
 *********************************************************/
 void playersRejoinHeldTeams(int age[MAX_TANKS]);
+
+/*********************************************************
+*NAME:          playersRejoinGetAge
+*PURPOSE:
+* Returns the age (timeOut, in server ticks) of the record
+* for that name, or -1 when there is no record. Leaves the
+* record in place.
+*
+*ARGUMENTS:
+*  playerName - The player name
+*********************************************************/
+int playersRejoinGetAge(const char *playerName);
 
 /*********************************************************
 *NAME:          playersRejoinRequest

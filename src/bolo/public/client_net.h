@@ -113,6 +113,12 @@ const char *clientSimGetConnectErrorReason(const ClientSim *cs);
  * frontend compares it with STR_REJECT_INCORRECT_PASSWORD to decide whether
  * to ask for the password again. */
 langid      clientSimGetConnectErrorLangId(const ClientSim *cs);
+/* ask true makes the next UDP JOIN carry JOIN_FLAG_ASK_REJOIN: this
+ * frontend can show the rejoin question. A Join under the name of a player
+ * who left a short time ago then fails with STR_REJECT_CAN_REJOIN, and the
+ * frontend asks the player whether to rejoin. Call it after clientSimCreate
+ * and before clientSimConnectUdp. */
+void        clientSimSetAskRejoin(ClientSim *cs, bool ask);
 BYTE        clientSimGetServerPlayerNum(const ClientSim *cs);
 const BYTE *clientSimGetServerMapData(const ClientSim *cs, int *outLen);
 /* serverTick of the frame interp is currently displaying (second-newest applied

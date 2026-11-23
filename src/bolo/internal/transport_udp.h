@@ -69,6 +69,13 @@ typedef struct {
 /* bit 2: client requests a tankless spectator connection rather than a tank
  * slot.  Branches the join handler to the spectator-accept path. */
 #define JOIN_FLAG_SPECTATOR         0x04
+/* bit 3: this client can show the rejoin question. A Join (no
+ * JOIN_FLAG_WANT_REJOIN) with this bit, while a rejoin record has the
+ * name, is not seated: the server answers with a JOIN_REJECT that carries
+ * STR_REJECT_CAN_REJOIN, and the client sends the JOIN again with
+ * JOIN_FLAG_WANT_REJOIN, or without this bit to join as a new player.
+ * Only the GUI client sets it. */
+#define JOIN_FLAG_ASK_REJOIN        0x08
 
 /* JOIN_ACCEPT slot byte the server sends to a tankless spectator in place of a
  * real 0..MAX_TANKS-1 slot — the viewer holds no tank.  A spectator client keys
