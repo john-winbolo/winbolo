@@ -31,6 +31,10 @@
  *      (serverBotHostSyncStep) and its row (serverBotHostSyncRow): the
  *      pause while not needed, no wait for a host that sits out the game,
  *      and the late mark on the row.
+ *   8. bot_host_sync_late_back: a late host that then reports every file
+ *      of the current generation while the server is still in the lobby
+ *      takes bots again (its skip marks clear, its row is ready). After the
+ *      game start, or with an older generation, it stays late.
  */
 
 #include <stdbool.h>
@@ -618,5 +622,78 @@ int run_bot_host_sync_server_step(void) {
     UT_ASSERT_MSG(rowLate == BOT_HOST_SYNC_ROW_LATE, "row %d", rowLate);
     UT_ASSERT_MSG(rowSkipsLate == BOT_HOST_SYNC_ROW_LATE, "row %d",
                   rowSkipsLate);
+    return 0;
+}
+
+/* ================================================================
+ * 8. A late host that catches up in the lobby
+ * ================================================================ */
+
+/* Host 0 marked late in the lobby (as serverServiceBotHosts leaves it),
+ * then reporting every file of generation gen. */
+static void lateHostSetup(BotHostConn *hc, uint32_t gen) {
+    memset(hc, 0, sizeof(*hc));
+    SDL_strlcpy(hc->name, "ut652late", sizeof(hc->name));
+    hc->connected = true;
+    hc->syncLate = true;
+    hc->skipGame = true;
+    hc->skipUntilStarts = 3;
+    hc->syncGen = gen;
+    hc->syncDone = 2000;
+    hc->syncTotal = 2000;
+    hc->syncReady = true;
+}
+
+int run_bot_host_sync_late_back(void) {
+    static BotHostConn saved;
+    BotHostConn *hc = &udpServer.botHosts[0];
+    const uint32_t savedGen = udpServer.brainManifestGen;
+    bool backLobby, backStarted, backOldGen, backAgain;
+    bool lobbyLate, lobbySkip, startedLate, startedSkip, oldLate, oldSkip;
+    int rowLobby, rowStarted, rowOld;
+    uint32_t lobbyUntil;
+
+    saved = *hc;
+    udpServer.brainManifestGen = 12;
+
+    /* (a) In the lobby, every file of the current generation: back. */
+    lateHostSetup(hc, 12);
+    backLobby = serverBotHostLateBack(0, true);
+    lobbyLate = hc->syncLate;
+    lobbySkip = hc->skipGame;
+    lobbyUntil = hc->skipUntilStarts;
+    rowLobby = serverBotHostSyncRow(0, true, false);
+    /* Once back, a second call changes nothing and logs nothing. */
+    backAgain = serverBotHostLateBack(0, true);
+
+    /* (b) The same report after the game started: still late. */
+    lateHostSetup(hc, 12);
+    backStarted = serverBotHostLateBack(0, false);
+    startedLate = hc->syncLate;
+    startedSkip = hc->skipGame;
+    rowStarted = serverBotHostSyncRow(0, true, true);
+
+    /* (c) Every file, but of an older generation: still late. */
+    lateHostSetup(hc, 11);
+    backOldGen = serverBotHostLateBack(0, true);
+    oldLate = hc->syncLate;
+    oldSkip = hc->skipGame;
+    rowOld = serverBotHostSyncRow(0, true, true);
+
+    *hc = saved;
+    udpServer.brainManifestGen = savedGen;
+
+    UT_ASSERT(backLobby);
+    UT_ASSERT(!lobbyLate && !lobbySkip && lobbyUntil == 0);
+    UT_ASSERT_MSG(rowLobby == BOT_HOST_SYNC_ROW_READY, "row %d", rowLobby);
+    UT_ASSERT(!backAgain);
+    UT_ASSERT(!backStarted);
+    UT_ASSERT(startedLate && startedSkip);
+    /* It holds the files, so the row is ready, but it takes no bots. */
+    UT_ASSERT_MSG(rowStarted == BOT_HOST_SYNC_ROW_READY, "row %d",
+                  rowStarted);
+    UT_ASSERT(!backOldGen);
+    UT_ASSERT(oldLate && oldSkip);
+    UT_ASSERT_MSG(rowOld == BOT_HOST_SYNC_ROW_LATE, "row %d", rowOld);
     return 0;
 }

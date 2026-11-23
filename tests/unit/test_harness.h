@@ -932,6 +932,7 @@ int run_brain_sync_shipped_edited(void);
 int run_brain_sync_shipped_missing(void);
 int run_brain_sync_crlf_hash(void);
 int run_brain_sync_crlf_table_agrees(void);
+int run_brain_sync_runtime_skip(void);
 /* Packed brain sync and session folders (test_brain_pack.c). */
 int run_brain_pack_manifest_v2(void);
 int run_brain_pack_all_equal(void);
@@ -1016,6 +1017,7 @@ int run_bot_host_sync_new_gen(void);
 int run_bot_host_sync_packed_big_file(void);
 int run_bot_host_sync_slots_flap(void);
 int run_bot_host_sync_server_step(void);
+int run_bot_host_sync_late_back(void);
 /* The overrun check of the bot placement, the free CPU percent and the
  * log_BotHostData payload (test_bot_host_overrun.c). */
 int run_bot_host_overrun_window_rate(void);
@@ -2866,6 +2868,9 @@ int run_loopback_quiet_lobby_control_loss(void);
 int run_loopback_command_liveness(void);
 int run_loopback_command_queued_behind_map_change(void);
 int run_loopback_command_submitted_during_rejoin(void);
+/* A lobby map change re-sends JOIN_ACCEPT with no roster replay after it: the
+ * client keeps its own slot's flags (PLAYER_FLAG_BOT for a Bot Host bot). */
+int run_loopback_map_change_keeps_own_flags(void);
 /* Parallel channel layer over the loopback transport: empty-flow inertness
  * plus a synthetic message round-trip under loss + jitter + dup. */
 int run_loopback_channel(void);

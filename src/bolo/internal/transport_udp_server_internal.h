@@ -981,6 +981,12 @@ uint32_t serverBotHostBulkWide(int h);
  * a limit is marked late (syncLate, skipGame) and the reason is returned;
  * the caller sets skipUntilStarts. */
 BotHostSyncWait serverBotHostSyncStep(int h, bool needed, bool skipsGame);
+/* A late host (syncLate or skipGame) that now holds every file of the
+ * current generation takes bots again: its late and skip marks are cleared
+ * and a line is logged. Only while inLobby (the game has not started); a
+ * host that is still syncing, or holds an older generation, stays late.
+ * True when the marks were cleared. */
+bool serverBotHostLateBack(int h, bool inLobby);
 /* The BOT_HOST_SYNC_ROW_* state of host h's lobby row, with needed and
  * skipsGame as for serverBotHostSyncStep. */
 int serverBotHostSyncRow(int h, bool needed, bool skipsGame);

@@ -166,6 +166,42 @@ bool brainSyncPathSafe(const char *rel) {
     return true;
 }
 
+/* The runtime-file skip list (see brain_sync.h). Keep it short and exact:
+ * a name here is never sent to a Bot Host. */
+static const char *const runtimeDirs[] = { "fs_events" };
+static const char *const runtimeExts[] = { ".log", ".jsonl" };
+
+/* True when the folder name (one path part, len bytes) is on the list. */
+static bool runtimeDirName(const char *part, size_t len) {
+    size_t i;
+    for (i = 0; i < sizeof(runtimeDirs) / sizeof(runtimeDirs[0]); i++) {
+        if (strlen(runtimeDirs[i]) == len &&
+            SDL_strncasecmp(part, runtimeDirs[i], len) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool brainSyncIsRuntimePath(const char *rel) {
+    const char *start, *slash, *dot;
+    size_t i;
+    if (rel == NULL) return false;
+    /* Every folder part of the path. */
+    start = rel;
+    while ((slash = strchr(start, '/')) != NULL) {
+        if (runtimeDirName(start, (size_t)(slash - start))) return true;
+        start = slash + 1;
+    }
+    /* The file name's extension. */
+    dot = strrchr(start, '.');
+    if (dot == NULL) return false;
+    for (i = 0; i < sizeof(runtimeExts) / sizeof(runtimeExts[0]); i++) {
+        if (SDL_strcasecmp(dot, runtimeExts[i]) == 0) return true;
+    }
+    return false;
+}
+
 bool brainSyncNameSafe(const char *name) {
     size_t len;
     if (name == NULL) return false;
@@ -232,6 +268,80 @@ const BrainSyncBrain *brainSyncFindBrain(const BrainSyncManifest *m,
         if (strcmp(m->brains[b].name, name) == 0) return &m->brains[b];
     }
     return NULL;
+}
+
+/* ── What changed between two manifests ────────────────────────────────── */
+
+const char *brainSyncDiffKindText(BrainSyncDiffKind k) {
+    switch (k) {
+    case BRAIN_SYNC_DIFF_ADDED:   return "added";
+    case BRAIN_SYNC_DIFF_REMOVED: return "removed";
+    default:                      return "changed";
+    }
+}
+
+static void diffPut(BrainSyncDiff *out, int max, int *n, BrainSyncDiffKind k,
+                    const char *brain, const BrainSyncFile *was,
+                    const BrainSyncFile *now) {
+    if (out != NULL && *n < max) {
+        BrainSyncDiff *d = &out[*n];
+        memset(d, 0, sizeof(*d));
+        d->kind = k;
+        SDL_strlcpy(d->brain, brain, sizeof(d->brain));
+        SDL_strlcpy(d->path, now != NULL ? now->path : was->path,
+                    sizeof(d->path));
+        if (was != NULL) { d->oldSize = was->size; d->oldHash = was->hash; }
+        if (now != NULL) { d->newSize = now->size; d->newHash = now->hash; }
+    }
+    (*n)++;
+}
+
+/* The differences in one brain. a or b may be NULL (the brain is on one
+ * side only). Both file lists are sorted by path. */
+static void diffBrain(const BrainSyncBrain *a, const BrainSyncBrain *b,
+                      const char *name, BrainSyncDiff *out, int max, int *n) {
+    int ia = 0, ib = 0;
+    int na = a != NULL ? a->fileCount : 0;
+    int nb = b != NULL ? b->fileCount : 0;
+    while (ia < na || ib < nb) {
+        int cmp;
+        if (ia >= na) cmp = 1;
+        else if (ib >= nb) cmp = -1;
+        else cmp = strcmp(a->files[ia].path, b->files[ib].path);
+        if (cmp < 0) {
+            diffPut(out, max, n, BRAIN_SYNC_DIFF_REMOVED, name,
+                    &a->files[ia++], NULL);
+        } else if (cmp > 0) {
+            diffPut(out, max, n, BRAIN_SYNC_DIFF_ADDED, name, NULL,
+                    &b->files[ib++]);
+        } else {
+            const BrainSyncFile *fa = &a->files[ia++];
+            const BrainSyncFile *fb = &b->files[ib++];
+            if (fa->size != fb->size || fa->hash != fb->hash) {
+                diffPut(out, max, n, BRAIN_SYNC_DIFF_CHANGED, name, fa, fb);
+            }
+        }
+    }
+}
+
+int brainSyncManifestDiff(const BrainSyncManifest *a,
+                          const BrainSyncManifest *b,
+                          BrainSyncDiff *out, int max) {
+    int n = 0, i;
+    if (out == NULL || max < 0) max = 0;
+    /* The brains of b, each against the same brain of a; then the brains
+     * of a that b no longer has. */
+    for (i = 0; b != NULL && i < b->brainCount; i++) {
+        const BrainSyncBrain *bb = &b->brains[i];
+        diffBrain(brainSyncFindBrain(a, bb->name), bb, bb->name, out, max, &n);
+    }
+    for (i = 0; a != NULL && i < a->brainCount; i++) {
+        const BrainSyncBrain *ab = &a->brains[i];
+        if (brainSyncFindBrain(b, ab->name) == NULL) {
+            diffBrain(ab, NULL, ab->name, out, max, &n);
+        }
+    }
+    return n;
 }
 
 /* ── Listing a brain's files ───────────────────────────────────────────── */
@@ -391,10 +501,15 @@ static void walk(Collect *c, const char *dir, const char *relDir,
             continue;
         }
         if (info.type == SDL_PATHTYPE_DIRECTORY) {
-            if (recurse) walk(c, dir, rel, true, false, depth + 1);
+            /* A folder the brain writes into while it runs is not part of
+             * it (brainSyncIsRuntimePath). */
+            if (recurse && !runtimeDirName(name, nl)) {
+                walk(c, dir, rel, true, false, depth + 1);
+            }
             continue;
         }
         if (info.type != SDL_PATHTYPE_FILE) continue;
+        if (brainSyncIsRuntimePath(rel)) continue;
         if (skipOptLua && nl > 4 && SDL_strcasecmp(name + nl - 4, ".lua") == 0) {
             char optPath[1024];
             SDL_PathInfo oi;
@@ -972,6 +1087,7 @@ static bool shippedListed(const BrainSyncShippedFile *table, int count,
     char opt[BRAIN_SYNC_PATH_MAX + 8];
     size_t n = strlen(rel);
     if (!brainSyncPathSafe(rel)) return false;
+    if (brainSyncIsRuntimePath(rel)) return false;
     if (!useOpt) return true;
     if (strncmp(rel, "opt/", 4) == 0) return true;
     if (strchr(rel, '/') != NULL) return false;   /* another sub-folder */
