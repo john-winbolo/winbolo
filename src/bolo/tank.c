@@ -254,11 +254,41 @@ static void tankNudgeOtherTanks(GameSim *sim, tank *value) {
   }
 }
 
+/* The tank_collision_mac rule moves a tank in whole pixels of 16 world
+ * units. tankPixelAfter gives the first world unit of the pixel after the
+ * one w is in, tankPixelBefore the last world unit of the pixel before it. */
+static WORLD tankPixelAfter(WORLD w) {
+  return (WORLD)((w + 16) & TANK_GRID_MASK);
+}
+
+static WORLD tankPixelBefore(WORLD w) {
+  return (WORLD)((w - 16) | TANK_GRID_LOW_MASK);
+}
+
 /*********************************************************
- * tankNudgeBuildings - Iteratively nudge tank out of
- * building collisions using the direction-dependent
- * bounding box. Returns accumulated BumpInfo flags.
- *********************************************************/
+*NAME:          tankNudgeBuildingsMac
+*PURPOSE:
+*  The tank_collision_mac rule's way out of a wall. Moves
+*  the tank a pixel at a time until its box is clear of
+*  solid squares, or for maxNudges passes. Returns the
+*  BumpInfo flags gathered on the way.
+*
+*  Each pass looks at the middle of each of the box's four
+*  sides: a solid square there presses on that side. Only
+*  when no side is pressed does it look at the corners,
+*  and a solid square at a corner presses on both sides
+*  that meet there. The tank then moves a pixel away from
+*  every pressed side.
+*
+*  The passes end when the tank has nowhere to go: nothing
+*  presses on it, or each side that is pressed has the
+*  side opposite pressed as well.
+*
+*ARGUMENTS:
+*  sim       - The game
+*  value     - The tank
+*  maxNudges - The most passes to make
+*********************************************************/
 static BumpInfo tankNudgeBuildingsMac(GameSim *sim, tank *value, int maxNudges) {
   /* The tank's box is the opaque area of its land sprite for the way it
    * faces (tank_bbox_land), on a boat as on land.
@@ -276,38 +306,63 @@ static BumpInfo tankNudgeBuildingsMac(GameSim *sim, tank *value, int maxNudges) 
   const int reachDown = (7 - (int)box->bottom) * 16;
   const int reachRight = (7 - (int)box->right) * 16;
   BumpInfo bumptype = BumpInfo_None;
-  WORLD x = (*value)->x, y = (*value)->y;
-  int i;
-  for (i = 0; i < maxNudges; i++) {
-    WORLD top = (WORLD)(y - reachUp);
-    WORLD left = (WORLD)(x - reachLeft);
-    WORLD bottom = (WORLD)(y + reachDown);
-    WORLD right = (WORLD)(x + reachRight);
-    BYTE hits = 0;
-    bool first = i == 0;
-    if (tankBuildingCollision(sim, value, x, top, &bumptype, first)) hits |= 1;
-    if (tankBuildingCollision(sim, value, right, y, &bumptype, first)) hits |= 2;
-    if (tankBuildingCollision(sim, value, x, bottom, &bumptype, first)) hits |= 4;
-    if (tankBuildingCollision(sim, value, left, y, &bumptype, first)) hits |= 8;
-    if (hits == 0) {
-      if (tankBuildingCollision(sim, value, right, top, &bumptype, first)) hits |= 3;
-      if (tankBuildingCollision(sim, value, right, bottom, &bumptype, first)) hits |= 6;
-      if (tankBuildingCollision(sim, value, left, bottom, &bumptype, first)) hits |= 12;
-      if (tankBuildingCollision(sim, value, left, top, &bumptype, first)) hits |= 9;
+  WORLD x = (*value)->x;
+  WORLD y = (*value)->y;
+  int pass;
+
+  for (pass = 0; pass < maxNudges; pass++) {
+    const bool first = (pass == 0);
+    const WORLD top = (WORLD)(y - reachUp);
+    const WORLD left = (WORLD)(x - reachLeft);
+    const WORLD bottom = (WORLD)(y + reachDown);
+    const WORLD right = (WORLD)(x + reachRight);
+    /* Whether a solid square presses on each side of the box */
+    bool above = tankBuildingCollision(sim, value, x, top, &bumptype, first);
+    bool below = tankBuildingCollision(sim, value, x, bottom, &bumptype, first);
+    bool toLeft = tankBuildingCollision(sim, value, left, y, &bumptype, first);
+    bool toRight = tankBuildingCollision(sim, value, right, y, &bumptype, first);
+
+    if (!above && !below && !toLeft && !toRight) {
+      bool northWest = tankBuildingCollision(sim, value, left, top, &bumptype, first);
+      bool northEast = tankBuildingCollision(sim, value, right, top, &bumptype, first);
+      bool southWest = tankBuildingCollision(sim, value, left, bottom, &bumptype, first);
+      bool southEast = tankBuildingCollision(sim, value, right, bottom, &bumptype, first);
+
+      above = northWest || northEast;
+      below = southWest || southEast;
+      toLeft = northWest || southWest;
+      toRight = northEast || southEast;
     }
-    /* Stop before nudging when caught between opposing walls. A corner
-     * pushes on both axes, matching Mac Bolo's movement. */
-    if (hits == 0 || hits == 5 || hits == 10 || hits == 15) break;
-    if (hits & 1) y = (y + 16) & TANK_GRID_MASK;
-    if (hits & 2) x = (x - 16) | TANK_GRID_LOW_MASK;
-    if (hits & 4) y = (y - 16) | TANK_GRID_LOW_MASK;
-    if (hits & 8) x = (x + 16) & TANK_GRID_MASK;
+
+    /* Nowhere to go: neither axis has one side pressed and the other free */
+    if (above == below && toLeft == toRight) {
+      break;
+    }
+
+    /* A pixel away from each pressed side, going round from the top */
+    if (above) {
+      y = tankPixelAfter(y);
+    }
+    if (toRight) {
+      x = tankPixelBefore(x);
+    }
+    if (below) {
+      y = tankPixelBefore(y);
+    }
+    if (toLeft) {
+      x = tankPixelAfter(x);
+    }
   }
   (*value)->x = x;
   (*value)->y = y;
   return bumptype;
 }
 
+/*********************************************************
+ * tankNudgeBuildings - Iteratively nudge tank out of
+ * building collisions using the direction-dependent
+ * bounding box. Returns accumulated BumpInfo flags.
+ *********************************************************/
 static BumpInfo tankNudgeBuildings(GameSim *sim, tank *value, int maxNudges) {
   BumpInfo bumptype = BumpInfo_None;
   bool isFirstBump = TRUE;
