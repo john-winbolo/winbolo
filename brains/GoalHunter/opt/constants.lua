@@ -1200,13 +1200,19 @@ M.PT2_CHAIN_CLAIM = true
 -- (parity test test_gh_pt2_old_parity), only faster. An older exe (Bot Host)
 -- has no gh_pt2_old and runs the Lua. false = always the Lua.
 M.PT2_C_EVAL = true
--- PT2_EVALUATOR (Nov 23, Andrew's design): which pill take evaluator runs.
--- "old" = pilltake_v2_old.lua (rays cast per ring point on every run, the C
--- copy gh_pt2_old.c with PT2_C_EVAL). "shadow" = pilltake_shadow.lua: a
--- fixed grid of tank points (PT2_SHADOW_GRID_WU), each pill's rays to it
--- kept all game, chains found from the kept rays. KEEL: "old". MAST gets
--- "old" from this default; it gets its own row when the default changes.
+-- PT2_EVALUATOR (Nov 23, Andrew's design): which pill take evaluator runs
+-- (pt2_eval.lua picks it). "old" = pilltake_v2_old.lua (rays cast per ring
+-- point on every run, the C copy gh_pt2_old.c with PT2_C_EVAL). "shadow" =
+-- pilltake_shadow.lua: a fixed grid of tank points (PT2_SHADOW_GRID_WU), a
+-- shell walk table by offset shared by every pill, and one map per hostile
+-- pill square of what each shell meets, kept while the pill stays there
+-- and updated only where a square changed. KEEL: "old". MAST gets "old"
+-- from this default; it gets its own row when the default changes.
 M.PT2_EVALUATOR = "old"
+-- PT2_SHADOW_GRID_WU (Nov 23, Andrew's value): the shadow evaluator's tank
+-- point grid step in world units (256 = one square). The points are the
+-- cell centres, k * step + step / 2.
+M.PT2_SHADOW_GRID_WU = 64
 -- PT2_C_STANDABLE (Nov 21, F4): true = the C copy (gh_pt2_old.c) does the
 -- inp.in_map, inp.stay_in, inp.standable and inp.buildable tests itself,
 -- from its terrain and pill caches and the tables world_inp gives once in
