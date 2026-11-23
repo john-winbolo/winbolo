@@ -5308,7 +5308,7 @@ static void botHostTellAll(ServerSim *sim, langid id, int argCount,
 static void botHostOverStep(ServerSim *sim, const BotHostPlaceHost *raw,
                             const BotHostPlaceHost *hosts, bool anyPending) {
     bool hostTakes;
-    int s;
+    int s, h, child = -1, overBots, overSlots;
 
     for (s = 0; s < MAX_TANKS; s++) {
         if (udpServer.botSeats[s].state != BOT_SEAT_LOCAL) continue;
@@ -5325,12 +5325,24 @@ static void botHostOverStep(ServerSim *sim, const BotHostPlaceHost *raw,
                 botHostPlaceGoodHost(hosts, 1 + MAX_BOT_HOSTS,
                                      botHostSmallSlots, botHostSmallBias,
                                      &botHostLag) >= 1;
-    if (botHostOverWarnStep(&botHostOverWarn, raw[0].bots, raw[0].slots,
+    /* With the server's own child linked, raw[0] keeps only the slots the
+     * child does not take: count the server's full slots against the bots
+     * of the server's process plus the child's. */
+    for (h = 0; h < MAX_BOT_HOSTS; h++) {
+        if (udpServer.botHosts[h].connected &&
+            udpServer.botHosts[h].localChild) {
+            child = h + 1;
+            break;
+        }
+    }
+    botHostOverCount(raw, 1 + MAX_BOT_HOSTS, botHostServerSlots(sim), child,
+                     &overBots, &overSlots);
+    if (botHostOverWarnStep(&botHostOverWarn, overBots, overSlots,
                             hostTakes)) {
         char bots[12], slots[12];
         const char *args[4];
-        snprintf(bots, sizeof(bots), "%d", raw[0].bots);
-        snprintf(slots, sizeof(slots), "%d", raw[0].slots);
+        snprintf(bots, sizeof(bots), "%d", overBots);
+        snprintf(slots, sizeof(slots), "%d", overSlots);
         args[0] = "";
         args[1] = "";
         args[2] = bots;
@@ -5338,7 +5350,7 @@ static void botHostOverStep(ServerSim *sim, const BotHostPlaceHost *raw,
         fprintf(stderr, "[bothost] the server runs %d bots for its %d slots "
                         "and no Bot Host has a slot: every bot runs on the "
                         "server, and they may play worse (game tick %u)\n",
-                raw[0].bots, raw[0].slots, (unsigned)serverSimGetTick(sim));
+                overBots, overSlots, (unsigned)serverSimGetTick(sim));
         botHostTellAll(sim, STR_BOTHOST_OVER_SLOTS, 4, args);
     }
 }
@@ -5405,9 +5417,8 @@ static void botHostPlaceStep(ServerSim *sim, ServerState st) {
     hosts[0].open = true;
     hosts[0].unlimited = true;
     /* -bothost-enforce-server-limit: no bot past its slots after all. Not
-     * with the server's own child: the child has the server's slots, and a
-     * bot the child cannot take now runs in the server's process (the DS
-     * rule), never held with its tank standing still. */
+     * with the server's own child linked: then the server's process is not
+     * capped at its slots. */
     hosts[0].capped = botHostEnforceServerLimit && !botHostDsChildLinked();
     hosts[0].lagMs = 0.0;  /* the server's own process */
     /* Dynamic slots: each place's start, ceiling and reserve. */

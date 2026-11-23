@@ -1004,6 +1004,7 @@ int run_bot_host_place_keep_batch_slot_limit(void);
 int run_bot_host_place_keep_batch_cpu_limit(void);
 int run_bot_host_enforce_over_warns(void);
 int run_bot_host_enforce_good_host(void);
+int run_bot_host_enforce_over_child_count(void);
 int run_bot_host_enforce_off_keeps_fall_back(void);
 /* A Bot Host that joins a game in progress (test_bot_host_midgame.c). */
 int run_bot_host_place_keep_lag_join(void);

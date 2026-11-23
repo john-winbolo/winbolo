@@ -6531,6 +6531,7 @@ set(_unit_test_names
     bot_host_place_keep_batch_cpu_limit
     bot_host_enforce_over_warns
     bot_host_enforce_good_host
+    bot_host_enforce_over_child_count
     bot_host_enforce_off_keeps_fall_back
     bot_host_overrun_window_rate
     bot_host_overrun_step_spacing
