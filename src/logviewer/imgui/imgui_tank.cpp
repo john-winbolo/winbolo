@@ -197,6 +197,24 @@ static float tank_builder_dead_w(void) {
     return w;
 }
 
+/* How much wider the time after a dead builder's parachute is now than the
+ * countdown his line is measured with (LV_BUILDER_COUNTDOWN_WIDEST, which is
+ * any time under ten minutes). 0 for a time that fits it, and for a builder
+ * who is alive. A table with a slow parachute can keep a builder hours on
+ * his way, and "~27:46:08" is a good deal wider than "~0:00". timeW, when
+ * given, takes the width of the time as it is now. */
+static float tank_builder_time_more(const LvTankStatus &st, float *timeW) {
+    const float measured = ImGui::CalcTextSize(LV_BUILDER_COUNTDOWN_WIDEST).x;
+    float now = 0.0f;
+    if (st.builderDead) {
+        char back[32];
+        tank_builder_dead_time(st, back, sizeof(back));
+        now = ImGui::CalcTextSize(back).x;
+    }
+    if (timeW != nullptr) *timeW = now;
+    return (now > measured) ? now - measured : 0.0f;
+}
+
 /* The width the builder's line needs, whatever it says at the moment: the
  * widest of the builder's three states. */
 static float tank_builder_w(void) {
@@ -930,10 +948,18 @@ static LvTankRoom tank_room(const LvTankStatus &st, ImVec2 avail) {
     r.gapUnder = style.ItemSpacing.y;
     r.iconsW = 0.0f;
     r.iconsH = 0.0f;
+    /* The widths below count a dead builder's line with a countdown of
+     * under ten minutes, so the layout does not move as the time runs. A
+     * time wider than that is counted as wide as it is, or the layout that
+     * is picked can have too little room for its last digits. */
+    float timeW = 0.0f;
+    const float timeMore = tank_builder_time_more(st, &timeW);
+    const float deadWordsW = tank_builder_dead_w() + timeMore;
     if (st.hasStock) {
         float tw = 0.0f, th = 0.0f;
         float words = tank_words_w(st);
         r.wordsW = (words > otherW) ? words : otherW;
+        if (timeMore > 0.0f && deadWordsW > r.wordsW) r.wordsW = deadWordsW;
         r.wordsH = tank_text_h();
         if (tank_background(&tw, &th) != nullptr) {
             /* With its picture the line for the pillboxes is one of the
@@ -941,7 +967,14 @@ static LvTankRoom tank_room(const LvTankStatus &st, ImVec2 avail) {
              * picture in place of the word. A line that keeps its words (a
              * language with no colon in it) is counted in words. */
             const TankIconMetrics m = tank_icon_metrics(st);
-            const float builder = (m.builderH > 0.0f) ? m.builderLineW : tank_builder_w();
+            float builder = (m.builderH > 0.0f) ? m.builderLineW : tank_builder_w();
+            if (timeMore > 0.0f) {
+                const float dead = (m.builderH > 0.0f)
+                                       ? lvTankBuilderLineW(m.iconW, ImGui::CalcTextSize(":").x,
+                                                            m.gap, timeW)
+                                       : deadWordsW;
+                if (dead > builder) builder = dead;
+            }
             float other = builder;
             if (m.pillSize <= 0.0f && otherW > other) other = otherW;
             r.iconsW = (m.lineW > other) ? m.lineW : other;
@@ -951,7 +984,7 @@ static LvTankRoom tank_room(const LvTankStatus &st, ImVec2 avail) {
         /* One wrapped note in place of the four values, then the two lines. */
         float noteH = ImGui::CalcTextSize(langGetText(STR_LV_TANK_NO_STOCK), nullptr, false,
                                           otherW).y;
-        r.wordsW = otherW;
+        r.wordsW = (timeMore > 0.0f && deadWordsW > otherW) ? deadWordsW : otherW;
         r.wordsH = noteH + style.ItemSpacing.y + tank_lines_h(2);
     }
     return r;
