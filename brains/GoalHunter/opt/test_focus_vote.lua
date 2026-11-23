@@ -216,9 +216,11 @@ do
   -- Early: we hold SW (4), 12 targets, K = 2 -> one quadrant = 4/12 = 33%.
   local w = chew(function(q) return q == "SW" and "friendly" or "neutral" end)
   local P = plan_of(w, 2)
-  check("early: 4 / 12 = 0.33 fails", not P.pass and P.why == "frac" and P.planned == 4 and P.total == 12,
-        P.why .. " " .. P.planned .. "/" .. P.total)
-  check("early: need 2 tiles for the quadrant", P.need == 2, P.need)
+  -- The plan stops after the cover (M.plan early exit): each quadrant needs
+  -- 2 tiles, K 2 takes one quadrant, so planned <= 4 and 4 / 12 < 0.5.
+  check("early: 4 / 12 = 0.33 fails", not P.pass and P.why == "frac" and P.ub == 4 and P.total == 12,
+        P.why .. " " .. tostring(P.ub) .. "/" .. P.total)
+  check("early: stops after the cover (2 tiles a quadrant)", P.early == "cover", P.early)
   -- Top half: they hold NW + NE (8), we hold the bottom half.
   local w2 = chew(function(q) return (q == "NW" or q == "NE") and "hostile" or "friendly" end)
   local P2 = plan_of(w2, 2)
@@ -233,7 +235,8 @@ do
   check("one quadrant: 4 / 4 = 1.0 passes", P3.pass and P3.frac == 1, P3.frac)
   local P3b = plan_of(w3, 1)
   check("one quadrant, K 1: does not fit, fails", not P3b.pass and P3b.planned == 0)
-  check("K 1: the row says no_spare", P3b.rows[1].skip == "no_spare", P3b.rows[1].skip)
+  check("K 1: stops after the cover, no quadrant fits (bound 0)", P3b.early == "cover" and P3b.ub == 0,
+        tostring(P3b.early) .. " " .. tostring(P3b.ub))
   -- Same state, owners change: the clusters are kept (same places), but the
   -- targets follow the new owners (the clusters must not keep old owners).
   local stc = new_state(1000)

@@ -2218,7 +2218,9 @@ do
         end
         out[#out+1] = "},\n"
       end
-      out[#out+1] = "},\n"
+      -- close aims, then the [deg] entry (one brace here left the file
+      -- unloadable, so every brain start computed the stamps again)
+      out[#out+1] = "}},\n"
     end
     out[#out+1] = "}\n"
     return table.concat(out)

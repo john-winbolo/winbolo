@@ -1993,6 +1993,9 @@ function Brain.think(info)
   -- already moved the tank to its respawn start, so info.tankx/y no longer
   -- point at the place it died. Everything written here is a file-level
   -- upvalue read only by the DEATH print2 below.
+  -- U.death_log_observe (util.lua) does both. It also drops the record on a
+  -- slot move and skips a tick with no tank place, so a brain that takes
+  -- over an already dead tank logs no false DEATH at (0,0).
 
   -- Open the optimize.log section timer at the EARLIEST possible point
   -- so prelude work (capacity tier calc, debug-mode viz refresh, the
