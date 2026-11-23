@@ -796,9 +796,9 @@ M.PT2_FINISH_SWERVE_TURN_TICKS = 27
 -- KEEL / MAST: false (old rule: wait for the shell).
 M.PT2_FINISH_CAPTURE_LOCK = true
 -- Armour floor for that lock: carrying no pill, one pill, two or more.
-M.PT2_FINISH_LOCK_FLOOR_NONE = 10
-M.PT2_FINISH_LOCK_FLOOR_ONE  = 15
-M.PT2_FINISH_LOCK_FLOOR_MANY = 20
+M.PT2_FINISH_LOCK_FLOOR_NONE = 10  -- Andrew, 2026-11-17
+M.PT2_FINISH_LOCK_FLOOR_ONE  = 15  -- Andrew, 2026-11-17
+M.PT2_FINISH_LOCK_FLOOR_MANY = 20  -- Andrew, 2026-11-17
 
 -- Attack position planner (pick_attack_standoff in goals.lua)
 M.ATTACK_PLAN_DIRS          = 12   -- candidate directions sampled around the pill
@@ -2327,12 +2327,12 @@ M.HUMAN_YIELD_TRACK_TICKS       = 50    -- 1 s position ring for the heading / c
 M.HUMAN_YIELD_HOLD_TICKS        = 35    -- 0.7 s in the cone before the claim
 M.HUMAN_YIELD_CLOSE_TILES       = 2.5   -- within 2.5 tiles: claim at once
 M.HUMAN_YIELD_AWAY_COS          = 0.3   -- turned away: cos(heading, pill) < 0.3 ...
-M.HUMAN_YIELD_AWAY_TICKS        = 50    -- ... for 1 s (also: not seen for 1 s)
-M.HUMAN_YIELD_STOP_TILES        = 4     -- stopped farther than 4 tiles ...
-M.HUMAN_YIELD_STOP_TICKS        = 150   -- ... for 3 s
-M.HUMAN_YIELD_LIMIT_TICKS       = 750   -- hard limit 15 s ...
-M.HUMAN_YIELD_LIMIT_NEAR_TILES  = 2     -- ... unless within 2 tiles
-M.HUMAN_YIELD_POST_TICKS        = 50    -- still claimed 1 s after the release
+M.HUMAN_YIELD_AWAY_TICKS        = 50    -- ... for 1 s (also: not seen for 1 s) (Andrew, 2026-11-19)
+M.HUMAN_YIELD_STOP_TILES        = 4     -- stopped farther than 4 tiles ... (Andrew, 2026-11-19)
+M.HUMAN_YIELD_STOP_TICKS        = 150   -- ... for 3 s (Andrew, 2026-11-19)
+M.HUMAN_YIELD_LIMIT_TICKS       = 750   -- hard limit 15 s ... (Andrew, 2026-11-19)
+M.HUMAN_YIELD_LIMIT_NEAR_TILES  = 2     -- ... unless within 2 tiles (Andrew, 2026-11-19)
+M.HUMAN_YIELD_POST_TICKS        = 50    -- still claimed 1 s after the release (Andrew, 2026-11-19)
 M.HUMAN_YIELD_ENEMY_RATIO       = 0.7   -- no yield: a seen enemy tank/LGM < 0.7 x the human's distance
 M.GOAL_POOL_COUNT          = 10    -- number of pool evaluators to spread across ticks
 M.GOAL_CANDS_PER_TICK      = 1     -- A* cost_to evaluations per tick (round-robin)
@@ -3896,13 +3896,24 @@ M.CAPTURE_SIGHT_HOLD_MIN_STEPS   = 2
 -- there kills a man within 128 wu, on that square or across its edge, and
 -- not a man in its far corner. Only a LIVE pill (pillsIsPillHit, armour > 0),
 -- a base or a building is solid (same-square-only kill). A shell that HITS a
--- pill is a hit on its square, the shot that kills it included (shells.c
--- outSquareHit): same-square-only, as for any live pill. The brain reads the
+-- pill or a wall is a hit on its square, the shot that kills the pill or
+-- turns the wall to rubble included (shells.c outSquareHit): same-square-only,
+-- as for any live pill. The brain reads the
 -- pill's health from what the player sees (the pill sprite and the pill
 -- status panel both show a dead pill). true = a man on a dead pill is aimed
 -- at with the open-ground rule (init.lua lgm_on_solid). KEEL: false (any
 -- deployed pill, dead or alive, is solid -- the old engine rule).
 M.BLAST_DEAD_PILL_OPEN = true
+-- SHELL_STOPS_ON_FOREST_BOAT (2026-11-07): the engine stops every shell on
+-- the first forest or boat square on its line (mapIsPassable), and always
+-- has. true = the brain's shell model does the same: the builder shell gate
+-- stops a shell there (danger.lua shell_stops_on), and the capture shot at a
+-- builder finds where its own shell stops (danger.lua capture_shot_end and
+-- capture_man_killable). The engine counts that stop as a hit on the
+-- square (shells.c outSquareHit), so the blast kills only a man on that
+-- square. The brain always models that rule: it is not a knob.
+-- KEEL: false (the old brain: a shell flies on over a forest or a boat).
+M.SHELL_STOPS_ON_FOREST_BOAT = true
 -- REFIRE_MAX_MISSES: keep firing at the same man every reload-available tick,
 -- but give up after this many consecutive misses (a shot whose flight completed
 -- with the man still alive).  Counter resets on a kill or a target change, and
@@ -4414,7 +4425,7 @@ M.DEFEND_ALARM_DIJ_STOP_TILES = 9    -- stop summing per-tile Dijkstra cost once
 -- enemy shot the pill dead, the row rejected too_close the whole time.
 -- KEEL / MAST: false / 1.0 (too_close always rejects).
 M.DEFEND_ALARM_CLOSE_INTERRUPT  = true
-M.DEFEND_ALARM_CLOSE_TOTAL_MULT = 0.5
+M.DEFEND_ALARM_CLOSE_TOTAL_MULT = 0.5  -- Andrew, 2026-11-18
 -- ALARM HEAT (Andrew, Nov 18).  While we hold an alarm-mode defend_pill goal
 -- for pill D and enemy tank E is at D, heat a friendly pill with the
 -- attack_tank heat volley (attack.lua defend_heat_steer; same rules as
@@ -4432,8 +4443,8 @@ M.DEFEND_ALARM_CLOSE_TOTAL_MULT = 0.5
 -- KEEL / MAST: false.  The two numeric knobs need no keel / mast entry: the
 -- master is off there, so they are never read.
 M.DEFEND_ALARM_HEAT                = true
-M.DEFEND_HEAT_NEAR_ENEMY_TILES     = 9   -- euclidean tiles, enemy tank -> heated pill
-M.DEFEND_HEAT_NEAR_ENEMY_MAX_SHOTS = 2   -- volley cap while an enemy is that close
+M.DEFEND_HEAT_NEAR_ENEMY_TILES     = 9   -- euclidean tiles, enemy tank -> heated pill (Andrew, 2026-11-18)
+M.DEFEND_HEAT_NEAR_ENEMY_MAX_SHOTS = 2   -- volley cap while an enemy is that close (Andrew, 2026-11-18)
 M.HEAT_REQUIRE_ENEMY_RANGE   = 10    -- heat only with a hostile tank VISIBLE within this
                                      -- euclidean range of the pill (and not actively
                                      -- shelling it ??? taking_damage blocks first).
@@ -4611,8 +4622,8 @@ M.WSIM_DRIVE_WHILE_SLIDING = true
 -- range = pill range in squares (8), rounded half up. Damage 5 gives
 -- 5,5,4,4,3,3,2 at 2..8 squares. Both 0 = the old 1 - dist/range discount
 -- (at least 1 inside half range). A parked tank takes full damage either way.
-M.WSIM_HIT_FULL_DIST = 2
-M.WSIM_HIT_FAR_FRAC  = 0.4
+M.WSIM_HIT_FULL_DIST = 2  -- Andrew, 2026-11-21
+M.WSIM_HIT_FAR_FRAC  = 0.4  -- Andrew, 2026-11-21
 -- WSIM_CAPTURE_EXIT_MAX (C): capture_pill sims (the goal pool sim and the
 -- CAPTURE_ROUTE sim) drive ON to the pill square (the pickup is instant,
 -- no dwell), then back along the incoming path, at most this many squares
@@ -4621,11 +4632,11 @@ M.WSIM_HIT_FAR_FRAC  = 0.4
 -- (at once when none did). A death on the exit leg is still a KILL.
 -- 0 = the old sim (the goal pool to the pill square, CAPTURE_ROUTE to the
 -- square next to it, no exit leg).
-M.WSIM_CAPTURE_EXIT_MAX = 10
+M.WSIM_CAPTURE_EXIT_MAX = 10  -- Andrew, 2026-11-21
 -- WSIM_CAPTURE_EXIT_DMG_WEIGHT: exit leg damage costs this share of
 -- WSIM_DAMAGE_COST_WEIGHT in the goal pool:
 --   extra = (damage - exit_damage) x W + exit_damage x W x this.
-M.WSIM_CAPTURE_EXIT_DMG_WEIGHT = 0.5
+M.WSIM_CAPTURE_EXIT_DMG_WEIGHT = 0.5  -- Andrew, 2026-11-21
 
 -- Dwell: how long the tank has to STAND STILL at the destination once it
 -- gets there. The sim keeps running for this many ticks after arrival, with
@@ -7690,6 +7701,7 @@ M.PRESETS = {
     LGM_KILL_AIM_THROTTLE         = false,      -- refinement never touches the throttle
     LGM_ENGINE_KILL_WU            = 128,        -- engine fact (lgm.c MAP_SQUARE_MIDDLE), overlay only
     BLAST_DEAD_PILL_OPEN          = false,      -- 2026-11-06: a dead pill's square is solid for the builder blast, as the old engine had it
+    SHELL_STOPS_ON_FOREST_BOAT    = false,      -- 2026-11-07: the brain's shells fly on over a forest or a boat, as the old brain had it
     CAPTURE_LGM_HUNT_REFIRE_MAX_MISSES = 0,     -- no capture-target refire (off)
     -- 2026-09-08: a hostile LGM within CAPTURE_LGM_PRIORITY_RADIUS tiles
     -- (Chebyshev) of the pill the capture flow is driving at now gets his

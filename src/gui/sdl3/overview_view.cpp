@@ -79,8 +79,7 @@ extern "C" {
 #include "../lang.h"         /* the camera readout's words */
 #include "../ui_mode.h"      /* uiShouldUseControllerMode — no key hint there */
 }
-#include "sdl3draw_status.h" /* sdl3DrawGetMessageFont, sdl3DrawGetLabelFont,
-                                sdl3DrawGetTinyFont — the main window's faces */
+#include "sdl3draw_status.h" /* sdl3DrawGetMessageFont — the main window's face */
 #include "sdl3draw.h"        /* sdl3DrawGetZoomFactor — the size they are opened at */
 #include "tank_label.h"      /* the cache the shared drawer fills for this view */
 
@@ -307,9 +306,6 @@ struct OverviewView {
      * different text for it — the note in sdl3draw_status.c has the whole
      * story. */
     TankLabelCache pingNameCache;
-    /* The pill and base numbers, on this view's renderer for the same reason
-     * the tank names are: the pop-out has its own. */
-    ItemLabelCache itemLabelCache;
 };
 
 /* Where the camera readout is in its life at `now`: 1 while held solid,
@@ -1063,15 +1059,12 @@ static void overviewViewDrawEntities(OverviewView *v,
         ov.labelFont  = sdl3DrawGetMessageFont();
     }
 
-    /* The pill and base numbers, from the same zoom up, in the main window's
-     * faces scaled the same way as the names. */
+    /* The pill and base numbers, from the same zoom up, in the Log Viewer's
+     * small digits (mapview_overlay.c). */
     ov.itemLabelCount    = overviewViewPickItemLabels(snap, items,
                                                       (int)(MAX_PILLS + MAX_BASES));
     ov.itemLabels        = items;
-    ov.pillFont          = sdl3DrawGetLabelFont();
-    ov.baseFont          = sdl3DrawGetTinyFont();
     ov.itemLabelMinScale = OVERVIEW_LABEL_MIN_ZOOM;
-    ov.itemLabelCache    = &v->itemLabelCache;
 
     ov.clipLeft   = 0.0f;
     ov.clipTop    = 0.0f;
@@ -1099,7 +1092,6 @@ extern "C" void overviewViewDestroy(OverviewView *v) {
     if (!v) return;
     tankLabelCacheFlush(&v->labelCache);
     tankLabelCacheFlush(&v->pingNameCache);
-    itemLabelCacheFlush(&v->itemLabelCache);
     if (v->fog) {
         SDL_DestroyTexture(v->fog);
         v->fog = NULL;

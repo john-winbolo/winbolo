@@ -4116,17 +4116,10 @@ scenario = {
     -- units a frame is most of three minutes across a map, and a round is
     -- only ten minutes by default.
     --
-    -- The tolerance has to go up with the speed. The helicopter steps
-    -- straight at the tank and calls it a landing once both axes are inside
-    -- the tolerance, so a step bigger than that window steps over it and the
-    -- man circles the tank without ever touching down: at 90 against the
-    -- classic 16 he fails to land on more than half the flights. A tolerance
-    -- at or above the step lands every one of them. It costs the outbound
-    -- walk a third of a square of accuracy and nothing else, because the job
-    -- is done on the square that was ordered rather than the one he stopped
-    -- on. The walk back to the tank has a tolerance of its own and is
-    -- untouched.
+    -- lgm_arrive_tolerance stays classic. It used to be raised to 96 here,
+    -- because a step wider than the arrival window stepped over it and the
+    -- man circled his tank without touching down. A step that would carry
+    -- him past the place now lands him on it.
     lgm_helicopter_speed = 90,
-    lgm_arrive_tolerance = 96,
   },
 }
