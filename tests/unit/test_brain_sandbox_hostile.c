@@ -29,6 +29,14 @@
  * run_brain_sandbox_hostile_off_map_terrain
  *      gh_threat's terrain read outside the map's memory is deep sea; a
  *      read one step off a side edge reads the next row as before
+ * run_brain_sandbox_jit_limits
+ *      a brain VM made in the host's order (brainSandboxApply,
+ *      brainSandboxTuneJit, brainSandboxRestrictJit) holds more than 1000
+ *      traces and more than 4096 KB of machine code between two trace
+ *      cache flushes, so maxtrace and maxmcode are above the host's old
+ *      limits of 1000 and 4096; the same work in a VM with LuaJIT's
+ *      defaults flushes. Passes with nothing to check on PUC-Lua or with
+ *      the compiler off.
  */
 
 #include <stdio.h>
@@ -377,5 +385,131 @@ int run_brain_sandbox_hostile_off_map_terrain(void) {
     UT_ASSERT_MSG(naThreatRawTT(vm.L, -1, 5) == 5,
                   "the in-array read one step off the side changed");
     bshVmClose(&vm);
+    return 0;
+}
+
+/* ---- trace compiler limits ---------------------------------------- */
+
+/* The work: 2000 functions, each with one hot loop of 48 statements, all
+ * kept alive (a trace is freed with its function). Each loop compiles to
+ * a trace of about 3 KB, so 2000 traces or more and over 6 MB of machine
+ * code, over both of the host's old limits (1000 traces, 4096 KB). The
+ * tools come in as the chunk's argument, taken before the sandbox removed
+ * them from the brain's view.
+ *
+ * Returns the number of flushes, and the most traces and the most machine
+ * code (KB) the VM held at one time. A flush empties the cache, so both
+ * counts start again from zero after one. The counts are taken this way
+ * because a flush does not always mean a limit was reached: on arm64 all
+ * machine code must lie within 128 MB of itself, LuaJIT first asks for
+ * memory near the program, and when no more is free there it flushes once
+ * and moves to another address. On an Apple silicon Mac that happens after
+ * about 3 MB, with the limits far from reached. */
+static const char *const bshJitWork =
+    "local probe = ...\n"
+    "local flushes, traces, bytes, mostTraces, mostBytes = 0, 0, 0, 0, 0\n"
+    "local function onTrace(what, tr)\n"
+    "  if what == 'stop' then\n"
+    "    traces = traces + 1\n"
+    "    local mc = probe.util.tracemc(tr)\n"
+    "    if mc then bytes = bytes + #mc end\n"
+    "    if traces > mostTraces then mostTraces = traces end\n"
+    "    if bytes > mostBytes then mostBytes = bytes end\n"
+    "  elseif what == 'flush' then\n"
+    "    flushes = flushes + 1\n"
+    "    traces, bytes = 0, 0\n"
+    "  end\n"
+    "end\n"
+    "probe.attach(onTrace, 'trace')\n"
+    "local keep = {}\n"
+    "for k = 1, 2000 do\n"
+    "  local parts = { 'local x, y = 0, 1 for i = 1, 200 do ' }\n"
+    "  for j = 1, 24 do\n"
+    "    parts[#parts + 1] = ('x = x + i * %d - y y = y + x %% %d '):format(k * 13 + j, j + 2)\n"
+    "  end\n"
+    "  parts[#parts + 1] = 'end return x'\n"
+    "  local f = assert(probe.loadstring(table.concat(parts)))\n"
+    "  f()\n"
+    "  keep[k] = f\n"
+    "end\n"
+    "probe.attach(onTrace)\n"
+    "return flushes, mostTraces, mostBytes / 1024\n";
+
+/* Open a plain VM; when host is true, bring it to the state a sandboxed
+ * production host leaves it in. Runs bshJitWork and gives back its three
+ * results. 1 when it ran, 0 on an
+ * error, -1 when the VM has no working trace compiler (PUC-Lua, or LuaJIT
+ * built without it). */
+static int bshJitRun(const char *root, bool host, int *flushes, int *traces,
+                     double *kb) {
+    BshVm vm;
+    int ok = 0;
+    *flushes = *traces = 0;
+    *kb = 0.0;
+    if (!bshVmOpen(&vm, root, false)) return 0;
+    if (luaL_dostring(vm.L,
+            "if not (jit and jit.status and jit.status()) then return nil end\n"
+            "return { attach = jit.attach, util = require('jit.util'), loadstring = loadstring }\n")
+            != LUA_OK) {
+        fprintf(stderr, "  jit probe failed: %s\n", lua_tostring(vm.L, -1));
+        bshVmClose(&vm);
+        return 0;
+    }
+    if (!lua_istable(vm.L, -1)) {
+        bshVmClose(&vm);
+        return -1;
+    }
+    if (host) {
+        brainSandboxApply(vm.L, root);
+        brainSandboxTuneJit(vm.L);
+        brainSandboxRestrictJit(vm.L);
+    }
+    if (luaL_loadstring(vm.L, bshJitWork) == LUA_OK) {
+        lua_insert(vm.L, -2);            /* chunk below the probe */
+        if (lua_pcall(vm.L, 1, 3, 0) == LUA_OK) {
+            *flushes = (int)lua_tointeger(vm.L, -3);
+            *traces = (int)lua_tointeger(vm.L, -2);
+            *kb = (double)lua_tonumber(vm.L, -1);
+            ok = 1;
+        } else {
+            fprintf(stderr, "  jit work failed: %s\n", lua_tostring(vm.L, -1));
+        }
+    }
+    bshVmClose(&vm);
+    return ok;
+}
+
+int run_brain_sandbox_jit_limits(void) {
+    char root[FILENAME_MAX];
+    int flushes, traces, ran;
+    double kb;
+
+    UT_ASSERT(bshBrainDir(root, sizeof(root)));
+
+    ran = bshJitRun(root, true, &flushes, &traces, &kb);
+    if (ran < 0) {
+        printf("  no LuaJIT trace compiler; nothing to check\n");
+        return 0;
+    }
+    UT_ASSERT(ran == 1);
+    printf("  host VM: %d flushes, most held at one time %d traces, "
+           "%.0f KB machine code\n", flushes, traces, kb);
+    /* No check that flushes is 0: see bshJitWork for the arm64 flush that
+     * no limit causes. A VM with a limit of 1000 traces or 4096 KB cannot
+     * hold more than that at one time, so these two checks are enough. */
+    UT_ASSERT_MSG(traces > 1000,
+                  "at most %d traces at one time, so maxtrace is not above 1000",
+                  traces);
+    UT_ASSERT_MSG(kb > 4096.0,
+                  "at most %.0f KB of machine code at one time, so maxmcode "
+                  "is not above 4096", kb);
+
+    /* The same work with LuaJIT's defaults: the work is big enough to
+     * matter. */
+    UT_ASSERT(bshJitRun(root, false, &flushes, &traces, &kb) == 1);
+    printf("  default VM: %d flushes, most held at one time %d traces, "
+           "%.0f KB machine code\n", flushes, traces, kb);
+    UT_ASSERT_MSG(flushes > 0, "the default VM did not flush, so the work is "
+                  "too small to test the limits");
     return 0;
 }
