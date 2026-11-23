@@ -25,7 +25,9 @@
  *  holds its own copy of. Any other brain, or any brain in
  *  debug mode, is every file under its folder. Names that
  *  open with a dot are left out, as are files and folders
- *  the path check refuses.
+ *  the path check refuses, and the files a brain writes
+ *  into its own folder while it runs
+ *  (brainSyncIsRuntimePath).
  *
  *  Paths in a manifest use '/' and are relative to the brain
  *  folder. brainSyncPathSafe refuses anything that could
@@ -132,6 +134,19 @@ void *brainSyncLoadFile(const char *path, size_t *len);
  * extension). */
 bool brainSyncPathSafe(const char *rel);
 
+/* True when rel (a brain-relative '/' path) is a file that a brain writes
+ * into its own folder while it runs, and so is not part of the brain. The
+ * brain list leaves it out, on the server and on the Bot Host, so a brain
+ * that writes a log during a lobby does not make a new generation. The
+ * list is short and exact, so it cannot drop a real brain file:
+ *   - any path inside a folder named fs_events (event files that the
+ *     debug brain appends to);
+ *   - a file whose name ends in .log or .jsonl (any case): print2, logger,
+ *     metrics and the profiling logs, when they are written to ".".
+ * Files a brain writes once and ships, such as shield_stamp_cache.bin and
+ * los_stamp_cache.lua, are brain files and stay in the list. */
+bool brainSyncIsRuntimePath(const char *rel);
+
 /* True when name is one safe path part (a brain name or a version folder). */
 bool brainSyncNameSafe(const char *name);
 
@@ -156,6 +171,33 @@ void brainSyncBuildManifest(BrainSyncManifest *out, bool debugMode,
  * lists. brainSyncCollectBrain and the decoder call this; a test that fills
  * a manifest by hand calls it too. */
 void brainSyncComputeVersions(BrainSyncManifest *m);
+
+/* One file that differs between two manifests. */
+typedef enum {
+    BRAIN_SYNC_DIFF_ADDED,
+    BRAIN_SYNC_DIFF_REMOVED,
+    BRAIN_SYNC_DIFF_CHANGED
+} BrainSyncDiffKind;
+
+typedef struct {
+    BrainSyncDiffKind kind;
+    char     brain[BRAIN_LIST_NAME_LEN];
+    char     path[BRAIN_SYNC_PATH_MAX];
+    uint32_t oldSize, newSize;   /* 0 for the side the file is not on */
+    uint64_t oldHash, newHash;
+} BrainSyncDiff;
+
+/* The files that differ from manifest a (the old one) to manifest b: added,
+ * removed, or with another size or hash. A brain that is on one side only
+ * counts as each of its files. Fills out with the first max of them (in
+ * brain order, then path order) and returns how many there are in all, which
+ * may be more than max. out may be NULL when max is 0. */
+int brainSyncManifestDiff(const BrainSyncManifest *a,
+                          const BrainSyncManifest *b,
+                          BrainSyncDiff *out, int max);
+
+/* "added", "removed" or "changed". */
+const char *brainSyncDiffKindText(BrainSyncDiffKind k);
 
 /* Free the file lists and zero the manifest. */
 void brainSyncFree(BrainSyncManifest *m);

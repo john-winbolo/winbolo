@@ -26,6 +26,10 @@
  *   9. brain_sync_crlf_table_agrees: the C hash of a CRLF file is the one
  *      the build's table gives it (the same values as
  *      tests/cmake/brain_shipped_table_test.cmake).
+ *  10. brain_sync_runtime_skip: files a brain writes while it runs (a folder
+ *      fs_events, .log and .jsonl files) are not in the list, so writing them
+ *      leaves the version (and so the server's generation) as it was; a .lua
+ *      change gives a new version, and the manifest diff names that file.
  */
 
 #include <stdint.h>
@@ -655,5 +659,111 @@ int run_brain_sync_crlf_table_agrees(void) {
 
     free(local.files);
     free(lfBrain.files);
+    return 0;
+}
+
+/* 10. Runtime files are not brain files. The server's generation goes up
+ *     only when the manifest version changes, so the version is the check. */
+int run_brain_sync_runtime_skip(void) {
+    BrainSyncManifest before, after, edited;
+    BrainSyncDiff diff[4];
+    char dir[1024];
+    int n;
+
+    UT_ASSERT(brainSyncIsRuntimePath("fs_events/focus_vote.jsonl"));
+    UT_ASSERT(brainSyncIsRuntimePath("fs_events/x"));
+    UT_ASSERT(brainSyncIsRuntimePath("opt/FS_EVENTS/x.txt"));
+    UT_ASSERT(brainSyncIsRuntimePath("print2_bot1.log"));
+    UT_ASSERT(brainSyncIsRuntimePath("lib/player0.JSONL"));
+    UT_ASSERT(!brainSyncIsRuntimePath("init.lua"));
+    UT_ASSERT(!brainSyncIsRuntimePath("los_stamp_cache.lua"));
+    UT_ASSERT(!brainSyncIsRuntimePath("shield_stamp_cache.bin"));
+    UT_ASSERT(!brainSyncIsRuntimePath("fs_events.lua"));
+    UT_ASSERT(!brainSyncIsRuntimePath("my_fs_events/x.lua"));
+    UT_ASSERT(!brainSyncIsRuntimePath("catalog.logs"));
+    UT_ASSERT(!brainSyncIsRuntimePath("data.json"));
+
+    UT_ASSERT(bs_make_brain("runtime_skip", "return 1\n", &before, dir,
+                            sizeof(dir)) == 0);
+    UT_ASSERT(bs_write(dir, "shield_stamp_cache.bin", "stamps"));
+    brainSyncFree(&before);
+    memset(&before, 0, sizeof(before));
+    before.debugMode = true;
+    UT_ASSERT(brainSyncCollectBrain(&before.brains[0], "TestBrain", dir, true,
+                                    NULL));
+    before.brainCount = 1;
+    brainSyncComputeVersions(&before);
+    UT_ASSERT(bs_file(&before.brains[0], "shield_stamp_cache.bin") != NULL);
+
+    /* The brain writes its event files and logs while it runs. */
+    UT_ASSERT(bs_write(dir, "fs_events/x", "{\"t\":1}\n"));
+    UT_ASSERT(bs_write(dir, "fs_events/deep/y.lua", "return 2\n"));
+    UT_ASSERT(bs_write(dir, "print2_bot1.log", "line\n"));
+    UT_ASSERT(bs_write(dir, "lib/player0.jsonl", "{}\n"));
+    memset(&after, 0, sizeof(after));
+    after.debugMode = true;
+    UT_ASSERT(brainSyncCollectBrain(&after.brains[0], "TestBrain", dir, true,
+                                    &before.brains[0]));
+    after.brainCount = 1;
+    brainSyncComputeVersions(&after);
+    UT_ASSERT_MSG(after.version == before.version,
+                  "a runtime file changed the version");
+    UT_ASSERT(after.brains[0].fileCount == before.brains[0].fileCount);
+    UT_ASSERT(brainSyncManifestDiff(&before, &after, diff, 4) == 0);
+
+    /* The log grows again: still the same. */
+    UT_ASSERT(bs_write(dir, "fs_events/x", "{\"t\":1}\n{\"t\":2}\n"));
+    UT_ASSERT(bs_write(dir, "print2_bot1.log", "line\nline 2\n"));
+    brainSyncFree(&after);
+    after.debugMode = true;
+    UT_ASSERT(brainSyncCollectBrain(&after.brains[0], "TestBrain", dir, true,
+                                    &before.brains[0]));
+    after.brainCount = 1;
+    brainSyncComputeVersions(&after);
+    UT_ASSERT(after.version == before.version);
+
+    /* A .lua change is a new version, and the diff names the file. */
+    UT_ASSERT(bs_write(dir, "lib/util.lua", "return { n = 22 }\n"));
+    memset(&edited, 0, sizeof(edited));
+    edited.debugMode = true;
+    UT_ASSERT(brainSyncCollectBrain(&edited.brains[0], "TestBrain", dir, true,
+                                    NULL));
+    edited.brainCount = 1;
+    brainSyncComputeVersions(&edited);
+    UT_ASSERT(edited.version != before.version);
+    n = brainSyncManifestDiff(&before, &edited, diff, 4);
+    UT_ASSERT_MSG(n == 1, "%d files differ", n);
+    UT_ASSERT(diff[0].kind == BRAIN_SYNC_DIFF_CHANGED);
+    UT_ASSERT(strcmp(diff[0].brain, "TestBrain") == 0);
+    UT_ASSERT(strcmp(diff[0].path, "lib/util.lua") == 0);
+    UT_ASSERT(diff[0].oldSize == 17 && diff[0].newSize == 18);
+    UT_ASSERT(diff[0].oldHash != diff[0].newHash);
+
+    /* Added and removed files, and the count past the cap. */
+    UT_ASSERT(bs_write(dir, "new.lua", "return 3\n"));
+    {
+        char path[1200];
+        SDL_snprintf(path, sizeof(path), "%s/data.bin", dir);
+        UT_ASSERT(SDL_RemovePath(path));
+    }
+    brainSyncFree(&edited);
+    edited.debugMode = true;
+    UT_ASSERT(brainSyncCollectBrain(&edited.brains[0], "TestBrain", dir, true,
+                                    NULL));
+    edited.brainCount = 1;
+    brainSyncComputeVersions(&edited);
+    n = brainSyncManifestDiff(&before, &edited, diff, 1);
+    UT_ASSERT_MSG(n == 3, "%d files differ", n);
+    UT_ASSERT(diff[0].kind == BRAIN_SYNC_DIFF_REMOVED);   /* data.bin */
+    UT_ASSERT(strcmp(diff[0].path, "data.bin") == 0);
+    n = brainSyncManifestDiff(&before, &edited, diff, 4);
+    UT_ASSERT(n == 3);
+    UT_ASSERT(diff[2].kind == BRAIN_SYNC_DIFF_ADDED &&
+              strcmp(diff[2].path, "new.lua") == 0 && diff[2].oldSize == 0);
+    UT_ASSERT(brainSyncManifestDiff(&before, &edited, NULL, 0) == 3);
+
+    brainSyncFree(&before);
+    brainSyncFree(&after);
+    brainSyncFree(&edited);
     return 0;
 }

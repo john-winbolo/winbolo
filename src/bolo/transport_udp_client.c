@@ -2925,14 +2925,26 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
 
             /* Slot-assignment funnel — same function the SP
              * local-transport path calls.  Both transports MUST funnel
-             * here so neither can drift.  clientType/clientFlags are
-             * placeholders; the authoritative values arrive via
-             * CTRL_PLAYER_JOIN during the subscriber's sync replay
-             * (clientSimApplyControl(CTRL_PLAYER_JOIN) writes the
-             * server-authoritative type/flags onto the Players
-             * struct). */
-            clientSimOnAssignedSlot(c->clientSim, c->playerNum,
-                                    c->playerName, 0, 0);
+             * here so neither can drift.  The accept carries no
+             * clientType/clientFlags; the server's values come in a
+             * CTRL_PLAYER_JOIN (clientSimApplyControl writes them onto
+             * the Players struct).
+             *
+             * Pass the values this client already holds for the slot, not
+             * 0. A first join holds none yet, and the sync replay that
+             * follows the accept brings them. But the re-join a lobby map
+             * change sends the client on gets the accept again from the
+             * server's already-connected branch, with no replay after it.
+             * A 0 here then stayed for the rest of the connection in every
+             * bit the snapshot does not carry: PLAYER_FLAG_BOT,
+             * PLAYER_FLAG_ADMIN, PLAYER_FLAG_STEAM_BUILD. A Bot Host bot
+             * stays connected from one round to the next, so after the
+             * return to the lobby its brain lost its own bit in
+             * info.player_bots and took its own markers as a human's. */
+            clientSimOnAssignedSlot(
+                c->clientSim, c->playerNum, c->playerName,
+                playersGetClientType(&c->clientSim->sim.plyrs, assignedSlot),
+                playersGetClientFlags(&c->clientSim->sim.plyrs, assignedSlot));
 
             /* Seed the timing estimator's clock offset from the accept's
              * serverTick (the snapshot-derived estimate refines it shortly).

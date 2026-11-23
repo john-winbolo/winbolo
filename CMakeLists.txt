@@ -5122,6 +5122,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # A Bot Host that joins a game in progress: the lag rule of the keep
     # placement and System Info's hosts with no bot.
     tests/unit/test_bot_host_midgame.c
+    # The lobby's wait for a Bot Host's brain files: no wait with no bot or
+    # 0 slots, and no wait past 10 s with no progress.
+    tests/unit/test_bot_host_sync_wait.c
     # The overrun check of the bot placement, the free CPU percent and the
     # log_BotHostData payload.
     tests/unit/test_bot_host_overrun.c
@@ -5327,6 +5330,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_loopback_quiet_lobby_control_loss.c
     tests/unit/test_loopback_command_liveness.c
     tests/unit/test_loopback_command_rejoin.c
+    tests/unit/test_loopback_rejoin_keeps_flags.c
     tests/unit/test_loopback_channel.c
     # A server hitch and its catch-up burst, over an impaired path: the slot
     # it locks out has to start applying real inputs again and keep doing it.
@@ -6673,6 +6677,7 @@ set(_unit_test_names
     brain_sync_shipped_missing
     brain_sync_crlf_hash
     brain_sync_crlf_table_agrees
+    brain_sync_runtime_skip
     brain_pack_manifest_v2
     brain_pack_all_equal
     brain_pack_one_changed
@@ -6723,6 +6728,14 @@ set(_unit_test_names
     bot_host_place_keep_oil_rig
     bot_host_place_keep_lag_join
     bot_host_sysinfo_empty_hosts
+    bot_host_sync_no_bots
+    bot_host_sync_zero_slots
+    bot_host_sync_stall
+    bot_host_sync_new_gen
+    bot_host_sync_packed_big_file
+    bot_host_sync_slots_flap
+    bot_host_sync_server_step
+    bot_host_sync_late_back
     bot_host_place_keep_scaled_wait
     bot_host_place_keep_step_min_old
     bot_host_place_keep_free_batch
@@ -7635,6 +7648,7 @@ set(_unit_test_names
     loopback_command_liveness
     loopback_command_queued_behind_map_change
     loopback_command_submitted_during_rejoin
+    loopback_map_change_keeps_own_flags
     loopback_channel
     loopback_hitch_recovers
     loopback_quit_keeps_peer
