@@ -4566,6 +4566,9 @@ static bool udpClientTick(void *ctx) {
                 if (c->spectator)              joinFlags |= JOIN_FLAG_SPECTATOR;
                 /* Bot Host bot connection: the token follows the cookie. */
                 if (c->botSlot)                joinFlags |= JOIN_FLAG_BOT_SLOT;
+                /* The frontend can show the rejoin question. */
+                if (clientSimGetAskRejoin(c->clientSim))
+                                               joinFlags |= JOIN_FLAG_ASK_REJOIN;
                 jbuf[joffset++] = joinFlags;
                 jbuf[joffset++] = bolo_detect_client_type();
                 {

@@ -3128,6 +3128,11 @@ int run_gate1_host_noop(void);
 int run_interp_jitter_e2e(void);
 
 int run_join_version_gate(void);
+int run_join_ask_rejoin_live_record_asks(void);
+int run_join_ask_rejoin_without_flag_joins(void);
+int run_join_ask_rejoin_want_rejoin_joins(void);
+int run_join_ask_rejoin_no_record_joins(void);
+int run_join_ask_rejoin_timed_out_joins(void);
 
 /* Per-source-IP JOIN rate limit (test_join_rate_limit.c): a burst of valid
  * JOINs from distinct loopback ephemeral ports (one source IP) draws at most

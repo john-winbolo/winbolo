@@ -274,6 +274,32 @@ bool playersRejoinFind(const char *playerName, BYTE *team, bool *signedIn) {
 }
 
 /*********************************************************
+*NAME:          playersRejoinGetAge
+*PURPOSE:
+* Returns the age (timeOut, in server ticks) of the record
+* for that name, or -1 when there is no record. Leaves the
+* record in place.
+*
+*ARGUMENTS:
+*  playerName - The player name
+*********************************************************/
+int playersRejoinGetAge(const char *playerName) {
+  BYTE count; /* Looping variable */
+
+  if (playerName == NULL) {
+    return -1;
+  }
+  count = 0;
+  while (count < MAX_TANKS) {
+    if (rejoin.item[count].inUse == TRUE && strcmp(rejoin.item[count].playerName, playerName) == 0) {
+      return rejoin.item[count].timeOut;
+    }
+    count++;
+  }
+  return -1;
+}
+
+/*********************************************************
 *NAME:          playersRejoinHeldTeams
 *PURPOSE:
 * For each team number, the age (timeOut) of the oldest

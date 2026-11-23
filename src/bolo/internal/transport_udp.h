@@ -105,6 +105,14 @@ typedef struct {
 #define BOT_HOST_MAX_SLOTS          MAX_TANKS
 /* Most Bot Host control connections one server holds at once. */
 #define MAX_BOT_HOSTS               8
+/* bit 5: this client can show the rejoin question. A Join (no
+ * JOIN_FLAG_WANT_REJOIN) with this bit, while a rejoin record has the
+ * name, is not seated: the server answers with a JOIN_REJECT that carries
+ * STR_REJECT_CAN_REJOIN, and the client sends the JOIN again with
+ * JOIN_FLAG_WANT_REJOIN, or without this bit to join as a new player.
+ * Only the GUI client sets it. Bits 3 and 4 are taken by the Bot Host
+ * joins of another change, so this is bit 5. */
+#define JOIN_FLAG_ASK_REJOIN        0x20
 
 /* JOIN_ACCEPT slot byte the server sends to a tankless spectator in place of a
  * real 0..MAX_TANKS-1 slot — the viewer holds no tank.  A spectator client keys

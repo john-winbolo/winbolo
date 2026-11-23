@@ -52,6 +52,7 @@
 #include "control_event.h"   /* ControlEvent, CTRL_BALANCE_PROPOSAL */
 #include "channel_mux.h"     /* channelMuxInit */
 #include "bulk_transfer.h"   /* bulkSenderInit, bulkReceiverInit */
+#include "playersrejoin.h"   /* playersRejoinGetAge, MAX_REJOIN_TIME */
 #include "playername_validate.h" /* playerNameValidate, playerNameCompare,
                                   * playerNameMakeUnverifiedSuffix */
 #include "../geolookup.h"    /* geoLookupCountry */
@@ -805,12 +806,14 @@ void serverHandleJoinRequest(const uint8_t *buf, int len,
     bool isSpectator = false;
     bool isBotSlot = false;
     bool isBotHost = false;
+    bool askRejoin = false;
     if (len > pos) {
         wantRejoin       = (buf[pos] & JOIN_FLAG_WANT_REJOIN) != 0;
         incomingWillAuth = (buf[pos] & JOIN_FLAG_WILL_AUTHENTICATE) != 0;
         isSpectator      = (buf[pos] & JOIN_FLAG_SPECTATOR) != 0;
         isBotSlot        = (buf[pos] & JOIN_FLAG_BOT_SLOT) != 0;
         isBotHost        = (buf[pos] & JOIN_FLAG_BOT_HOST) != 0;
+        askRejoin        = (buf[pos] & JOIN_FLAG_ASK_REJOIN) != 0;
         pos++;
     }
 
@@ -972,6 +975,40 @@ void serverHandleJoinRequest(const uint8_t *buf, int len,
         serverSimConsoleMessage(consoleMsg);
         serverSendJoinReject(fromAddr, STR_REJECT_GAME_LOCKED, 0, NULL);
         return;
+    }
+
+    /* A Join from a client that can show the rejoin question, while a
+     * rejoin record has the joiner's name: the player is not seated. The
+     * reply asks the client whether to rejoin. It carries the name, the
+     * seconds since the player left and the seconds left on the record.
+     * The client sends the JOIN again, with JOIN_FLAG_WANT_REJOIN to
+     * rejoin, or without JOIN_FLAG_ASK_REJOIN to join as a new player.
+     * This runs before a slot is found or WinBolo.net is asked. */
+    if (askRejoin && !wantRejoin &&
+        serverSimGetState(sim) == serverStateRunning) {
+        int age = playersRejoinGetAge(name);
+        if (age >= 0) {
+            char agoText[12];
+            char leftText[12];
+            char consoleMsg[128];
+            const char *askArgs[4];
+            int left = MAX_REJOIN_TIME - age;
+            if (left < 0) left = 0;
+            snprintf(agoText, sizeof(agoText), "%d",
+                     age / REJOIN_TICKS_PER_SECOND);
+            snprintf(leftText, sizeof(leftText), "%d",
+                     (left + REJOIN_TICKS_PER_SECOND - 1) /
+                         REJOIN_TICKS_PER_SECOND);
+            snprintf(consoleMsg, sizeof(consoleMsg),
+                     "Join of '%s' asked whether to rejoin", name);
+            serverSimConsoleMessage(consoleMsg);
+            askArgs[0] = name;
+            askArgs[1] = "";
+            askArgs[2] = agoText;
+            askArgs[3] = leftText;
+            serverSendJoinReject(fromAddr, STR_REJECT_CAN_REJOIN, 4, askArgs);
+            return;
+        }
     }
 
     /* Find free slot for the incoming player.  Slot allocation moved

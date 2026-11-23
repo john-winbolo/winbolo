@@ -389,6 +389,14 @@ langid clientSimGetConnectErrorLangId(const ClientSim *cs) {
   return cs->connectErrorId;
 }
 
+void clientSimSetAskRejoin(ClientSim *cs, bool ask) {
+  if (cs != NULL) cs->askRejoin = ask;
+}
+
+bool clientSimGetAskRejoin(const ClientSim *cs) {
+  return cs != NULL && cs->askRejoin;
+}
+
 BYTE clientSimGetServerPlayerNum(const ClientSim *cs) {
   if (cs == NULL || !cs->hasTransport) return 0;
   /* The in-process transport learns its slot once, at the join
