@@ -77,24 +77,20 @@
 -- the lobby has no start for is Mac Bolo's. Turn first_start_lobby off
 -- to give the opening tanks the Mac Bolo pick too.
 --
--- The Mac Bolo pick (randstart) looks only at starts on deep sea with no
--- mine, going round them from a random one. It takes the first with
--- nothing near it at all: no tank and no pillbox, whoever owns them. If
--- every start has something near it, it takes one with no enemy tank and no
--- enemy pillbox near it. If none is free of enemies, it takes the first
--- usable start it looked at, or the map's first start if none is usable.
--- The engine then moves the tank off the start to the nearest clear
--- square, as Mac Bolo does.
+-- The Mac Bolo pick looks only at starts on deep sea with no mine, going
+-- round them from a random one. It takes the first with nothing near it at
+-- all: no tank and no pillbox, whoever owns them. If every start has
+-- something near it, it takes one with no enemy tank and no enemy pillbox
+-- near it. If none is free of enemies, it takes the first usable start it
+-- looked at, or the map's first start if none is usable. The engine then
+-- moves the tank off the start to the nearest clear square, like Mac Bolo.
 --
 -- "Near" is Mac Bolo's own distance: under 16 squares for a tank and under
 -- 9 for a pillbox, measured as a circle. A dead tank does not count. A dead
 -- pillbox does; one being carried does not.
 --
 -- "Enemy" is the game's own alliances, including those made and broken in
--- play. A neutral pillbox counts as an enemy one. Mac Bolo judges every
--- pillbox near a start by the owner of the first one (BOLO BUG 3), so a
--- friendly pillbox there hides an enemy one; the mod judges each pillbox
--- by its own owner.
+-- play. A neutral pillbox counts as an enemy one.
 --
 -- Settings. The host turns each part on or off in the lobby's details
 -- dialog (scenario.settings below). Every part is on by default, and plays
@@ -151,7 +147,7 @@ scenario = {
                 "Each part can be turned off in the lobby.",
   api = 1,
   author = "WinBolo",
-  updated = "2026-11-07T12:00Z",
+  updated = "2026-11-23T13:54Z",
   kind = "mod",
   bound = false,
 
