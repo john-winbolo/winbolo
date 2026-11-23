@@ -93,18 +93,6 @@ static int btrWalkFrames(const char *path, uint32_t *ticks, int maxTicks,
     return st == BRAINREC_WALK_EOF ? n : -1;
 }
 
-static uint8_t btrU8(BrainRecIn *g) {
-    uint8_t v = 0;
-    brainRecInRead(g, &v, 1);
-    return v;
-}
-
-static uint16_t btrU16(BrainRecIn *g) {
-    uint16_t v = 0;
-    brainRecInRead(g, &v, 2);
-    return v;
-}
-
 static uint32_t btrU32(BrainRecIn *g) {
     uint32_t v = 0;
     brainRecInRead(g, &v, 4);
@@ -112,13 +100,19 @@ static uint32_t btrU32(BrainRecIn *g) {
 }
 
 /* The walk BrainTest's btPeekSession (deep scan) and btLoadSession do: read
- * the header, then each frame field by field, skipping the bodies with
- * brainRecInSkip. Returns the frame count, or -1. */
+ * the header and skip the legend straight through the container reader,
+ * then step frame by frame, skipping the bodies with brainRecInSkip. Each
+ * frame goes through the shared walker (brainRecWalkFrame, with the version
+ * taken from the header), so this walk follows the frame layout of every
+ * format version and holds no copy of it. Unlike btrWalkFrames it does not
+ * use brainRecWalkPreamble. Returns the frame count, or -1. */
 static int btrPeekWalk(const char *path, uint32_t *ticks, int maxTicks) {
     BrainRecIn *g = brainRecInOpen(path);
     BrainRecHeader hdr;
+    BrainRecReader r;
+    BrainRecFrameInfo fi;
+    BrainRecWalkStatus st;
     uint32_t llen;
-    uint32_t fm;
     int n = 0;
     if (g == NULL) {
         return -1;
@@ -133,58 +127,17 @@ static int btrPeekWalk(const char *path, uint32_t *ticks, int maxTicks) {
         brainRecInClose(g);
         return -1;
     }
-    fm = btrU32(g);
-    while (fm == BRAINREC_FRAME_MAGIC) {
-        uint32_t tick = btrU32(g);
-        uint8_t tc, sc, bc, pc, kf, nbot;
-        int b;
+    brainRecWalkReaderFromIn(&r, g);
+    r.version = hdr.version;
+    while ((st = brainRecWalkFrame(&r, &fi)) == BRAINREC_WALK_OK) {
         if (ticks != NULL && n < maxTicks) {
-            ticks[n] = tick;
-        }
-        tc = btrU8(g); brainRecInSkip(g, (uint64_t)tc * sizeof(TankSnapshot));
-        sc = btrU8(g); brainRecInSkip(g, (uint64_t)sc * sizeof(ShellSnapshot));
-        bc = btrU8(g); brainRecInSkip(g, (uint64_t)bc * sizeof(BaseSnapshot));
-        pc = btrU8(g); brainRecInSkip(g, (uint64_t)pc * sizeof(PillSnapshot));
-        kf = btrU8(g);
-        if (kf) {
-            brainRecInSkip(g, MAP_ARRAY_SIZE * MAP_ARRAY_SIZE);
-        } else {
-            uint32_t nd = btrU32(g);
-            brainRecInSkip(g, (uint64_t)nd * 5);
-        }
-        nbot = btrU8(g);
-        for (b = 0; b < nbot; b++) {
-            uint16_t nc;
-            uint32_t oc, k, pl;
-            (void)btrU8(g);                 /* slot */
-            brainRecInSkip(g, 4);           /* thinkMs */
-            brainRecInSkip(g, 32 + 12 + 32);
-            nc = btrU16(g);
-            brainRecInSkip(g, (uint64_t)nc * sizeof(BrainRecCandidate));
-            oc = btrU32(g);
-            for (k = 0; k < oc; k++) {
-                uint8_t tl;
-                brainRecInSkip(g, 27);
-                tl = btrU8(g);
-                if (tl) {
-                    brainRecInSkip(g, tl);
-                }
-            }
-            pl = btrU32(g);
-            if (pl) {
-                brainRecInSkip(g, pl);
-            }
-        }
-        brainRecInSkip(g, MAX_TANKS * 4);
-        if (hdr.version >= 7u) {
-            brainRecInSkip(g, 8);
-        }
-        if (brainRecInError(g)) {
-            brainRecInClose(g);
-            return -1;
+            ticks[n] = fi.tick;
         }
         n++;
-        fm = btrU32(g);
+    }
+    if (st != BRAINREC_WALK_EOF || brainRecInError(g)) {
+        brainRecInClose(g);
+        return -1;
     }
     brainRecInClose(g);
     return n;
