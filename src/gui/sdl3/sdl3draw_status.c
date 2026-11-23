@@ -39,6 +39,7 @@
 #include <string.h>
 
 #include "sdl3draw_status.h"
+#include "text_cache_pick.h"  /* which slot of the text texture cache */
 #include "../tiles.h"
 #include "../ui_mode.h"
 #include "../positions.h"
@@ -166,28 +167,28 @@ static bool gCachedBaseValid = false;
    renderer. */
 #define TEXT_CACHE_SLOTS 32
 
-typedef struct TextCacheSlot {
-  SDL_Texture  *tex;
-  SDL_Renderer *renderer;
-  TTF_Font     *font;
-  float         fontSize;
-  SDL_Color     fg;
-  char         *str;        /* SDL_strdup'd; NULL when the slot is empty */
-  int           w, h;
-  Uint64        lastUsed;   /* gTextCacheClock at the slot's last draw */
-} TextCacheSlot;
+/* The texture of the slot with the same index in gTextCacheKeys. */
+typedef struct TextCacheTexture {
+  SDL_Texture *tex;
+  int          w, h;
+} TextCacheTexture;
 
-static TextCacheSlot gTextCache[TEXT_CACHE_SLOTS];
-static Uint64        gTextCacheClock = 0;
+/* What each slot was rendered from and when it was last drawn. Which slot a
+   piece of text uses is textCachePick (text_cache_pick.h). key.str is
+   SDL_strdup'd and owned here; NULL when the slot is empty. */
+static TextCacheEntry   gTextCacheKeys[TEXT_CACHE_SLOTS];
+static TextCacheTexture gTextCacheTex[TEXT_CACHE_SLOTS];
+static Uint64           gTextCacheClock = 0;
 
-static void textCacheSlotDrop(TextCacheSlot *s) {
-  if (s->tex) SDL_DestroyTexture(s->tex);
-  SDL_free(s->str);
-  SDL_zerop(s);
+static void textCacheSlotDrop(int i) {
+  if (gTextCacheTex[i].tex) SDL_DestroyTexture(gTextCacheTex[i].tex);
+  SDL_free((void *)gTextCacheKeys[i].key.str);
+  SDL_zero(gTextCacheTex[i]);
+  SDL_zero(gTextCacheKeys[i]);
 }
 
 static void textCacheFlush(void) {
-  for (int i = 0; i < TEXT_CACHE_SLOTS; i++) textCacheSlotDrop(&gTextCache[i]);
+  for (int i = 0; i < TEXT_CACHE_SLOTS; i++) textCacheSlotDrop(i);
   gTextCacheClock = 0;
 }
 
@@ -197,25 +198,21 @@ SDL_Texture *sdl3DrawStatusTextTexture(TTF_Font *font, const char *text,
   if (outH) *outH = 0;
   if (!font || !gRenderer || !text || text[0] == '\0') return NULL;
 
-  float size = TTF_GetFontSize(font);
-  TextCacheSlot *oldest = &gTextCache[0];
-  TextCacheSlot *hit = NULL;
-  for (int i = 0; i < TEXT_CACHE_SLOTS; i++) {
-    TextCacheSlot *s = &gTextCache[i];
-    if (s->str == NULL) {
-      if (oldest->str != NULL) oldest = s;   /* an empty slot is used first */
-      continue;
-    }
-    if (s->renderer == gRenderer && s->font == font && s->fontSize == size &&
-        s->fg.r == fg.r && s->fg.g == fg.g && s->fg.b == fg.b &&
-        s->fg.a == fg.a && SDL_strcmp(s->str, text) == 0) {
-      hit = s;
-      break;
-    }
-    if (oldest->str != NULL && s->lastUsed < oldest->lastUsed) oldest = s;
-  }
+  TextCacheKey want;
+  want.renderer = gRenderer;
+  want.font     = font;
+  want.fontSize = TTF_GetFontSize(font);
+  want.r        = fg.r;
+  want.g        = fg.g;
+  want.b        = fg.b;
+  want.a        = fg.a;
+  want.str      = text;
 
-  if (hit == NULL) {
+  bool hit = false;
+  int  slot = textCachePick(gTextCacheKeys, TEXT_CACHE_SLOTS, &want, &hit);
+  if (slot < 0) return NULL;
+
+  if (!hit) {
     SDL_Surface *surf = TTF_RenderText_Blended(font, text, 0, fg);
     if (!surf) return NULL;
     SDL_Texture *tex = SDL_CreateTextureFromSurface(gRenderer, surf);
@@ -225,23 +222,19 @@ SDL_Texture *sdl3DrawStatusTextTexture(TTF_Font *font, const char *text,
       SDL_DestroySurface(surf);
       return NULL;
     }
-    textCacheSlotDrop(oldest);
-    hit = oldest;
-    hit->tex      = tex;
-    hit->renderer = gRenderer;
-    hit->font     = font;
-    hit->fontSize = size;
-    hit->fg       = fg;
-    hit->str      = copy;
-    hit->w        = surf->w;
-    hit->h        = surf->h;
+    textCacheSlotDrop(slot);
+    want.str                 = copy;
+    gTextCacheKeys[slot].key = want;
+    gTextCacheTex[slot].tex  = tex;
+    gTextCacheTex[slot].w    = surf->w;
+    gTextCacheTex[slot].h    = surf->h;
     SDL_DestroySurface(surf);
   }
 
-  hit->lastUsed = ++gTextCacheClock;
-  if (outW) *outW = hit->w;
-  if (outH) *outH = hit->h;
-  return hit->tex;
+  gTextCacheKeys[slot].lastUsed = ++gTextCacheClock;
+  if (outW) *outW = gTextCacheTex[slot].w;
+  if (outH) *outH = gTextCacheTex[slot].h;
+  return gTextCacheTex[slot].tex;
 }
 
 void sdl3DrawStatusRenderText(TTF_Font *font, const char *text, SDL_Color fg,

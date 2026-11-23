@@ -80,6 +80,7 @@
 #endif
 #include "../winbolo.h"
 #include "sdl3draw.h"
+#include "status_draw_hold.h" /* which status panel draws wait for the frame */
 #include "sdl3imgui.h"
 #include "dialogs/dialog_quit.h"
 #include "../tiles.h"
@@ -200,17 +201,14 @@ static bool drawBusy = FALSE;
    asked for a full redraw of every panel that way. A pass round the loop
    that draws no frame (no tank yet, the round over) draws the panels once
    after it instead. The map overview draws its own way, so while it owns
-   the window the draws go out as asked. */
-static bool statusDrawsHeld      = FALSE;  /* between the tick and the frame */
-static bool statusDrawsPending   = FALSE;  /* one was asked for meanwhile */
-static bool statusFrameRepainted = FALSE;  /* the frame repainted the panels */
+   the window the draws go out as asked. The rules are in
+   status_draw_hold.h. */
+static StatusDrawHold statusHold;
 
 /* Whether a status panel draw asked for now waits for the frame, noting that
    one is owed if so. */
 static bool statusDrawHeld(void) {
-  if (!statusDrawsHeld || sdl3DrawIsOverviewInWindow()) return FALSE;
-  statusDrawsPending = TRUE;
-  return TRUE;
+  return statusDrawHoldAsk(&statusHold, sdl3DrawIsOverviewInWindow());
 }
 
 /* Are we in a menu or not */
@@ -846,18 +844,9 @@ int main(int argc, char *argv[]) {
           gameFrontTickSteamPresenceGame(cs);
         }
 
-        /* Keep in-game rich presence fresh — live player count, and the
-         * host's external connect address once the tracker resolves it.
-         * Throttled internally; gated to the running game so lobby/countdown
-         * frames don't stomp the lobby presence. */
-        if (cs && clientSimGetNetStatus(cs) == netRunning) {
-          gameFrontTickSteamPresenceGame(cs);
-        }
-
         /* Status panel draws wait for the frame from here on (see
-           statusDrawsHeld). */
-        statusDrawsHeld      = TRUE;
-        statusFrameRepainted = FALSE;
+           statusHold). */
+        statusDrawHoldBegin(&statusHold);
 
         /* Run game tick on main thread when timer signals */
         if (SDL_GetAtomicInt(&needsGameTick)) {
@@ -902,12 +891,10 @@ int main(int argc, char *argv[]) {
             clientRenderFrame(cs, redraw);
           }
           clientMutexRelease();
-          /* The panels the frame did not repaint are drawn now, once. */
-          statusDrawsHeld = FALSE;
-          if (statusDrawsPending) {
-            statusDrawsPending = FALSE;
-            if (!statusFrameRepainted) frontEndRedrawAll(cs);
-          }
+          /* The panels the frame did not repaint are drawn now, once. If
+             the game is not running or is in the lobby, frontEndRedrawAll
+             returns and the panels wait for the next frame. */
+          if (statusDrawHoldEnd(&statusHold)) frontEndRedrawAll(cs);
           /* The in-window map overview draws from the snapshot the frame
              above filled, now that the lock is off. */
           sdl3DrawFlushOverviewInWindow();
@@ -946,8 +933,7 @@ int main(int argc, char *argv[]) {
         }
       }
       /* Left mid-pass for the lobby: nothing is held outside the loop. */
-      statusDrawsHeld    = FALSE;
-      statusDrawsPending = FALSE;
+      statusDrawHoldReset(&statusHold);
 
       if (sdlWin) {
         SDL_SetWindowResizable(sdlWin, true);
@@ -2074,7 +2060,7 @@ void frontEndDrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView,
                        NULL, showPillLabels, showBaseLabels,
                        srtDelay, isPillView, edgeX, edgeY,
                        showCursor, cursorX, cursorY);
-    statusFrameRepainted = TRUE;
+    statusDrawHoldRepainted(&statusHold);
   }
 }
 
@@ -2198,7 +2184,7 @@ void frontEndDrawDownload(ClientSim *cs, bool justBlack) {
   if (drawBusy == FALSE) {
     DWORD tick = SDL_GetTicks();
     sdl3DrawDownloadScreen(cs, NULL, justBlack);
-    statusFrameRepainted = TRUE;
+    statusDrawHoldRepainted(&statusHold);
     dwSysFrame += (SDL_GetTicks() - tick);
   }
 }
@@ -2207,7 +2193,7 @@ void frontEndDrawReturningToLobby(ClientSim *cs) {
   if (drawBusy == FALSE) {
     DWORD tick = SDL_GetTicks();
     sdl3DrawReturningToLobby(cs);
-    statusFrameRepainted = TRUE;
+    statusDrawHoldRepainted(&statusHold);
     dwSysFrame += (SDL_GetTicks() - tick);
   }
 }

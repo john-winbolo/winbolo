@@ -1219,6 +1219,8 @@ static const UnitTestEntry s_tests[] = {
     { "fog_road_edges",                          run_fog_road_edges                          },
     { "fog_road_edge_masks",                     run_fog_road_edge_masks                     },
     { "fullscreen_key_action",                   run_fullscreen_key_action                   },
+    { "status_draw_hold",                        run_status_draw_hold                        },
+    { "text_cache_slot_pick",                    run_text_cache_slot_pick                    },
     { "sight",                                   run_sight                                   },
     { "sight_shadow",                            run_sight_shadow                            },
     { "sight_shadow_cost",                       run_sight_shadow_cost                       },

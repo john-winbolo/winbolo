@@ -4671,6 +4671,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # What Alt+Enter does in a game the server keeps in classic mode;
     # header-only logic (fullscreen_key.h).
     tests/unit/test_fullscreen_key.c
+    # Which status panel draws wait for the frame (status_draw_hold.h) and
+    # which slot of the text texture cache a string uses (text_cache_pick.h);
+    # both header-only logic.
+    tests/unit/test_status_draw_hold.c
     tests/unit/test_overview_hud_layout.cpp
     tests/unit/test_newswire_slide.c
     tests/unit/test_sight.c
@@ -6521,6 +6525,8 @@ set(_unit_test_names
     fog_road_edges
     fog_road_edge_masks
     fullscreen_key_action
+    status_draw_hold
+    text_cache_slot_pick
     overview_hud_layout
     newswire_slide
     sight
