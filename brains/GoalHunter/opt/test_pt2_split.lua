@@ -218,6 +218,8 @@ local function count(t, v) local n = 0; for _, x in ipairs(t) do if x == v then 
 
 C.PT2_AFTER_SCAN_SPLIT = true
 C.PT2_AFTER_SCAN_MAX_TICKS = 5
+-- the packed rule first; the PT2_SPLIT_ONE_PART_PER_TICK section turns it on
+C.PT2_SPLIT_ONE_PART_PER_TICK = false
 _G.brain = { targetMs = 0 }        -- no target: every part may run at once
 
 -- ── parity ───────────────────────────────────────────────────────────────
@@ -457,6 +459,50 @@ do
   if LOGS then print("    " .. tostring(find_line("^PT2_SPLIT_GIVEUP", n0))) end
   check("give up, why=drops", PA.last_run and PA.last_run.giveup == "drops", PA.last_run and PA.last_run.giveup)
   check("v1's plan set", res[#res] == "set" and env.goal._shield_scan == env.v1, table.concat(res, ","))
+end
+
+-- ── one heavy part per work tick ─────────────────────────────────────────
+print("== PT2_SPLIT_ONE_PART_PER_TICK")
+do
+  C.PT2_SPLIT_ONE_PART_PER_TICK = true
+  -- the ticks each v2 evaluate (a heavy part) ran on
+  local function per_tick(env)
+    local real, at = V2.evaluate, {}
+    V2.evaluate = function(...)
+      at[env.now] = (at[env.now] or 0) + 1
+      return real(...)
+    end
+    local res = run(env)
+    V2.evaluate = real
+    local most = 0
+    for _, n in pairs(at) do if n > most then most = n end end
+    return res, at, most
+  end
+  for _, tgt in ipairs({ 0, 12 }) do
+    _G.brain = { targetMs = tgt }
+    for _, ng in ipairs({ 0, 3, 6 }) do
+      local env = new_env(ng, 100)
+      local res, at, most = per_tick(env)
+      local name = string.format("target %d, group %d: ", tgt, ng)
+      local parts = PA.last_run and PA.last_run.parts
+      check(name .. "parts", parts == ng + 2, parts)
+      check(name .. "one evaluate a tick at most", most == 1, most)
+      check(name .. "part 0 and part 1 on the first work tick", at[101] == 1, at[101])
+      check(name .. "work ticks = parts - 1", PA.last_run.work == ng + 1, PA.last_run.work)
+      check(name .. "plan tick + work ticks", #res == ng + 2 and res[#res] == "set", table.concat(res, ","))
+      check(name .. "same answer as one go", deep_eq(env.goal._shield_scan, (one_go(ng, 101))), nil)
+    end
+  end
+  -- a kill: the killed part runs again on the next tick, still one a tick
+  _G.brain = { targetMs = 0 }
+  local env = new_env(3, 100)
+  local undo = kill_at(V2, "evaluate", 2)
+  local res = run(env)
+  undo()
+  check("one kill: 4 work ticks, 1 kill", PA.last_run.work == 4 and PA.last_run.kills == 1, PA.last_run.work)
+  check("one kill: 1 more tick", #res == 6 and res[6] == "set", table.concat(res, ","))
+  check("one kill: same answer as one go", deep_eq(env.goal._shield_scan, REF3), nil)
+  C.PT2_SPLIT_ONE_PART_PER_TICK = false
 end
 
 -- ── knob off: split_get finds nothing, after_scan unchanged ──────────────

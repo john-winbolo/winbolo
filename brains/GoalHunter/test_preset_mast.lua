@@ -878,6 +878,7 @@ local R221 = {
   PT2_C_EVAL = false,
   PT2_C_STANDABLE = false,
   PT2_AFTER_SCAN_SPLIT = false,
+  PT2_SPLIT_ONE_PART_PER_TICK = false,
   WSIM_DRIVE_WHILE_SLIDING = false,
   WSIM_HIT_FULL_DIST = 0,
   WSIM_HIT_FAR_FRAC = 0,

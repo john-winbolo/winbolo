@@ -1221,6 +1221,17 @@ M.PT2_AFTER_SCAN_SPLIT = true
 -- fine if it takes up to 5 ticks". A tick killed by the budget is not a
 -- work tick.
 M.PT2_AFTER_SCAN_MAX_TICKS = 5
+-- PT2_SPLIT_ONE_PART_PER_TICK (Nov 23, Andrew's yes): the split v2 run
+-- (PT2_AFTER_SCAN_SPLIT) runs at most one heavy part (a v2 evaluate, part
+-- 1 and on) on each work tick. Part 0 (build_inp, light) may share a tick
+-- with part 1. A run of n parts then takes n - 1 work ticks, and
+-- PT2_AFTER_SCAN_MAX_TICKS does not squeeze the parts left into its last
+-- tick. In a game the 3 heavy parts often ran on one tick (median 6.8 ms,
+-- max 13.5 ms for the tick); one part is median 2.8 ms, max 7.5 ms. The
+-- answer is the same. false = each work tick runs its share of the parts
+-- left and more while the think is under the tick target, and the last
+-- work tick runs all parts left (KEEL, MAST).
+M.PT2_SPLIT_ONE_PART_PER_TICK = true
 -- SHIELD_SCAN_PENDING_SURVIVES_V2 (Nov 22, Andrew: "Fix it"): with
 -- PT2_AFTER_SCAN_SPLIT off, v2 runs in one go on the plan tick. true: keep
 -- goal._shield_scan_pending until goal._shield_scan is set, so a budget kill
@@ -8292,6 +8303,8 @@ M.PRESETS = {
     --   2026-11-21: the C copy calls the Lua square tests.
     PT2_C_STANDABLE = false,
     PT2_AFTER_SCAN_SPLIT = false,
+    --   2026-11-23: the split v2 run packs its parts into few ticks.
+    PT2_SPLIT_ONE_PART_PER_TICK = false,
     --   2026-11-21: the old world sim (no driving while pushed, 1 - d/range
     --   hit discount, capture sim with no exit leg).
     WSIM_DRIVE_WHILE_SLIDING = false,
@@ -8667,6 +8680,7 @@ M.PRESETS.mast = {
   PT2_C_EVAL                        = false,  -- 2.2.1 had no pill take v2
   PT2_C_STANDABLE                   = false,  -- 2.2.1 had no pill take v2
   PT2_AFTER_SCAN_SPLIT              = false,  -- 2.2.1 had no pill take v2
+  PT2_SPLIT_ONE_PART_PER_TICK       = false,  -- 2.2.1 had no pill take v2
   WSIM_DRIVE_WHILE_SLIDING          = false,  -- 2.2.1 world sim: no driving while pushed
   WSIM_HIT_FULL_DIST                = 0,      -- 2.2.1 world sim: 1 - d/range discount
   WSIM_HIT_FAR_FRAC                 = 0,

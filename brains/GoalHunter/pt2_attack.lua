@@ -441,6 +441,8 @@ end
 -- one part's estimate stays under the tick target (pt2_dbl's safety net).
 -- The last work tick runs all parts left. finish() then makes the same
 -- answer as after_scan in one go.
+-- PT2_SPLIT_ONE_PART_PER_TICK: each work tick runs one heavy part (part 1
+-- and on) at most, part 0 with part 1; no work-tick maximum then.
 --
 -- Budget kills, as attack.lua does for v1's shield.scan:
 --   * attack.lua keeps goal._shield_scan_pending until goal._shield_scan is
@@ -626,9 +628,15 @@ function M.split_step(sp, a, key)
       need = math.ceil(V2.group_parts_left(sp.g) / left)
     end
     local st = a.state
-    local ran, done, err = 0, false, nil
+    local one = C.PT2_SPLIT_ONE_PART_PER_TICK
+    local ran, heavy, done, err = 0, 0, false, nil
     repeat
-      if ran >= need and not may_part(st, (st and st._pt2_split_est_ms) or 0) then break end
+      if one then
+        if heavy >= 1 then break end
+      elseif ran >= need and not may_part(st, (st and st._pt2_split_est_ms) or 0) then
+        break
+      end
+      if sp.n >= 1 then heavy = heavy + 1 end
       done, err = run_part(sp, (sp.n == 0) and a or sp.a)
       if err then return giveup(goal, a.pill, sp.sscan, now, "error", sp), true end
       ran = ran + 1
