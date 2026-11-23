@@ -1241,6 +1241,19 @@ M.PT2_AFTER_SCAN_MAX_TICKS = 5
 -- cleared before v2, so a kill there left no plan and the tank drove in
 -- with no walls (20261121_002624 bot1 t=9247) (KEEL, MAST).
 M.SHIELD_SCAN_PENDING_SURVIVES_V2 = true
+-- PT2_V2_FIRST (Nov 23, Andrew's yes): on a protected take with v2 on
+-- (PILLTAKE_V2_EVALUATOR) v2 runs before v1's shield.scan, and the scan runs
+-- only when v2 gives no safe point, errors or gives up. v2 drives most
+-- protected takes, and v1's answer then only fed the side-by-side log, so
+-- the scan's cost on the plan tick is saved. When v2 drives, the plan is
+-- the same as before: v1's standoff, the one part of v1's answer v2's
+-- plan kept, is the goal's own standoff. A debug run with the PT2_CMP log
+-- or a pt2_* BrainTest layer on keeps the old order (both need v1's
+-- answer). The fallback scan runs on the tick v2 gives up (with
+-- PT2_AFTER_SCAN_SPLIT, a few ticks after the plan tick, so on a newer
+-- world) and keeps the scan cache, the budget-kill blacklist and the crash
+-- catch. false = v1's scan first on every take (KEEL, MAST).
+M.PT2_V2_FIRST = true
 -- BLITZ_NO_DOUBLE_TAKE (Nov 22, Andrew: "No blitzes with double takes!
 -- double takes need pills to target specific directions so other players
 -- will throw it off"). true = a take under a double-take plan is never a
@@ -8330,6 +8343,8 @@ M.PRESETS = {
     SHELL_MODEL_RULES_ALL    = false,
     --   2026-11-22: a budget kill in v2 (one go) loses the plan (old rule).
     SHIELD_SCAN_PENDING_SURVIVES_V2 = false,
+    --   2026-11-23: v1's shield scan before v2 on every take (old order).
+    PT2_V2_FIRST = false,
     --   2026-11-22: a double take can still be a blitz (old rule).
     BLITZ_NO_DOUBLE_TAKE = false,
     --   2026-11-22: our own shells at the target refuse the quick repair.
@@ -8698,6 +8713,7 @@ M.PRESETS.mast = {
   DRIVEBY_YIELD_LGM_KILL            = false,  -- 2.2.1: drive-by shots with a man in range
   SHELL_MODEL_RULES_ALL             = false,  -- 2.2.1: other shell sites at 128 * sight
   SHIELD_SCAN_PENDING_SURVIVES_V2   = false,  -- 2.2.1 had no pill take v2
+  PT2_V2_FIRST                      = false,  -- 2.2.1 had no pill take v2
   BLITZ_NO_DOUBLE_TAKE              = false,  -- 2.2.1 had no double takes
   QUICK_REPAIR_SKIP_OWN_FIRE        = false,  -- 2.2.1 had no quick repair
   QUICK_REPAIR_TANK_CLEAR_TICKS     = 0,      -- 2.2.1 had no quick repair

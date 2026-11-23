@@ -283,6 +283,23 @@ local function v2_wanted(goal)
   return true
 end
 
+-- PT2_V2_FIRST: does v2 run before v1's shield.scan on this take? Only
+-- when v2 can drive (master on, a protected take) and nothing needs v1's
+-- answer next to v2's (the PT2_CMP log, a pt2_* BrainTest layer). Then
+-- attack.lua runs the scan only when v2 hands back no plan of its own
+-- (M.v1_needed).
+function M.v2_first(goal)
+  if not (C.PT2_V2_FIRST and C.PILLTAKE_V2_EVALUATOR and goal._is_ppt) then return false end
+  if BRAIN_DEBUG_MODE and ((C.PT2_SIDE_BY_SIDE_LOG and _G._PRINT2_ENABLED) or PV.any_on()) then return false end
+  return true
+end
+
+-- PT2_V2_FIRST: v2's answer is not a plan of its own (no safe point, an
+-- error, a give-up, no input): v1's shield.scan must run.
+function M.v1_needed(sscan)
+  return not (sscan and sscan.pt2)
+end
+
 -- The part of after_scan after the evaluate: inp/res from build_inp and
 -- evaluate_group, cost their time in us. The split run (PT2_AFTER_SCAN_SPLIT)
 -- ends here too, so both give the same answer for the same inp and res.
@@ -577,9 +594,10 @@ function M.split_step(sp, a, key)
     if (goal._pt2_split_drops or 0) >= tries then
       return giveup(goal, a.pill, a.sscan, now, "drops", nil), true
     end
-    -- the plan tick: v1 only
+    -- the plan tick: v1 only (with PT2_V2_FIRST, nothing: v1_later, v1's
+    -- scan runs only if v2 has no plan of its own)
     goal._pt2_split = { key = key, t0 = now, target_id = goal.target_id, owner = a.pill.owner,
-                        sscan = a.sscan, n = 0, ms = {}, us = 0, kills = {}, n_kill = 0, work = 0 }
+                        sscan = a.sscan, v1_later = a.v1_later or nil, n = 0, ms = {}, us = 0, kills = {}, n_kill = 0, work = 0 }
     return nil, false
   end
   local tries = C.SHIELD_SCAN_BLACKLIST_TRIES or 2
