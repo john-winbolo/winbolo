@@ -35,7 +35,7 @@
 #include "server_sim_join.h"        /* the join step-internals, serverSimFindFreeSlot and LocalJoinResult */
 #include "server_sim_lifecycle.h"   /* serverSimSetHostSlot, serverSimLobbyCheckAllReady — the leave path's lobby fixups */
 #include "playername_validate.h"    /* playerNameValidate — the local-join name check */
-#include "playersrejoin.h"          /* playersRejoinAddPlayer, playersRejoinRequest — pill/base ownership across a rejoin */
+#include "playersrejoin.h"          /* playersRejoinAddPlayer, playersRejoinFind, playersRejoinRequest, playersRejoinHeldTeams — the team, pills and bases a rejoiner gets back */
 #include "log.h"                    /* logAddEvent — the .wbv join, leave and alliance records */
 #include "wire_limits.h"            /* PACKET_MAX_PLAYER_NAME — the rename event's name field */
 #include "start_sides.h"            /* startSideBits, startSideEligible, startSideMaskFor — the lobby start pick's side rules */
@@ -193,11 +193,24 @@ void addPlayerInternal(ServerSim *sim, BYTE playerNum, const char *playerName,
 
     /* Attempt to restore ownership of pills/bases from a previous session.
      * The team is read first, because the request clears the record;
-     * serverSimPlaceJoiner and serverSimRestoreRejoinTeam use it. */
+     * serverSimPlaceJoiner and serverSimRestoreRejoinTeam use it. A record
+     * from a player who was signed in to WinBolo.net is not used here,
+     * because the name alone does not show that this is the same person.
+     * The record stays in the table, so its team number stays held, and
+     * serverSimRejoinSignedIn uses it when WinBolo.net confirms the seat
+     * under that name. */
     sim->rejoinTeam[playerNum] = 0;
+    sim->rejoinAwaitSignIn[playerNum] = false;
+    sim->rejoinJoinTeam[playerNum] = 0;
     if (wantRejoin && sim->state == serverStateRunning && playerName != NULL) {
-        sim->rejoinTeam[playerNum] = playersRejoinGetTeam(playerName);
-        playersRejoinRequest(&sim->sim, (char *)playerName, playerNum, &sim->sim.pb);
+        BYTE team;
+        bool signedIn;
+        if (playersRejoinFind(playerName, &team, &signedIn) && signedIn) {
+            sim->rejoinAwaitSignIn[playerNum] = true;
+        } else {
+            sim->rejoinTeam[playerNum] = team;
+            playersRejoinRequest(&sim->sim, (char *)playerName, playerNum, &sim->sim.pb);
+        }
     }
 
     /* Broadcast current skip vote state to the new player — existing votes
@@ -261,20 +274,16 @@ static BYTE rejoinTeammate(const ServerSim *sim, BYTE playerNum) {
     return NEUTRAL;
 }
 
-/* Whether the rules let a rejoiner back onto their old team: the same
-   check a player's own alliance accept makes (server_command_dispatch.c):
-   the script's can_ally is asked with the new member first, as the accept
-   asks it. */
-static bool rejoinMayAlly(ServerSim *sim, BYTE playerNum, BYTE mate) {
-    bool allow;
-    if (sim->scenarioPolicy == NULL || sim->scenarioPolicy->canAlly == NULL) {
-        return TRUE;
+static void freeTeamSetUp(ServerSim *sim, BYTE t);
+
+/* True when a connected seat other than playerNum is on team. */
+static bool rejoinTeamShared(const ServerSim *sim, BYTE playerNum, BYTE team) {
+    BYTE i;
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (i == playerNum || !sim->playerConnected[i]) continue;
+        if (sim->lobbyPlayers[i].teamNumber == team) return true;
     }
-    serverSimScenarioPolicyEnter(sim);
-    allow = sim->scenarioPolicy->canAlly(sim->scenarioPolicy->ctx, playerNum,
-                                         mate);
-    serverSimScenarioPolicyLeave(sim);
-    return allow;
+    return false;
 }
 
 void serverSimPlaceJoiner(ServerSim *sim, BYTE playerNum) {
@@ -286,43 +295,98 @@ void serverSimPlaceJoiner(ServerSim *sim, BYTE playerNum) {
     sim->lobbyPlayers[playerNum].teamNumber = 0;
     /* A rejoiner whose old team still has a player goes back onto it, by
        serverSimRestoreRejoinTeam once their join is out. Until then they
-       are on no team, so no new team is set up only to be left empty. */
+       are on no team, so no new team is set up only to be left empty. A
+       rejoiner whose old team has nobody on it goes straight back onto
+       it: the rejoin record held the number, so nobody else was given
+       it. */
     if (rejoinTeammate(sim, playerNum) == NEUTRAL) {
+        BYTE oldTeam = sim->rejoinTeam[playerNum];
         sim->rejoinTeam[playerNum] = 0;
-        sim->lobbyPlayers[playerNum].teamNumber = serverSimFreeTeam(sim);
+        if (oldTeam > 0 && oldTeam < MAX_TANKS) {
+            freeTeamSetUp(sim, oldTeam);
+            sim->lobbyPlayers[playerNum].teamNumber = oldTeam;
+        } else {
+            sim->lobbyPlayers[playerNum].teamNumber = serverSimFreeTeam(sim);
+        }
     }
+    sim->rejoinJoinTeam[playerNum] = sim->lobbyPlayers[playerNum].teamNumber;
     serverSimPublishLobbySlot(sim, playerNum);
 }
 
 void serverSimRestoreRejoinTeam(ServerSim *sim, BYTE playerNum) {
     BYTE mate;
+    BYTE team;
+    BYTE joinTeam;
     if (sim == NULL || playerNum >= MAX_TANKS) return;
-    /* Only a seat serverSimPlaceJoiner left waiting for its old team, and
-       still on no team: a script that put the seat on a team in
-       on_player_join has the last word. */
+    /* A seat that waits for WinBolo.net stays as it is.
+       serverSimRejoinSignedIn calls this again when the check succeeds. */
+    if (sim->rejoinAwaitSignIn[playerNum]) return;
+    joinTeam = sim->rejoinJoinTeam[playerNum];
+    sim->rejoinJoinTeam[playerNum] = 0;
+    /* Only a seat that is still on the team the join gave it. That is 0
+       for a seat serverSimPlaceJoiner left waiting for its old team, and
+       a team of its own for a seat that waited for WinBolo.net. A script
+       that moved the seat in on_player_join has the last word. A seat
+       that another seat has joined on its own team is left as it is. */
     if (sim->rejoinTeam[playerNum] == 0 || !sim->playerConnected[playerNum] ||
         sim->state != serverStateRunning ||
-        sim->lobbyPlayers[playerNum].teamNumber != 0) {
+        sim->lobbyPlayers[playerNum].teamNumber != joinTeam ||
+        (joinTeam != 0 && rejoinTeamShared(sim, playerNum, joinTeam))) {
         sim->rejoinTeam[playerNum] = 0;
         return;
     }
+    team = sim->rejoinTeam[playerNum];
     mate = rejoinTeammate(sim, playerNum);
     sim->rejoinTeam[playerNum] = 0;
-    if (mate != NEUTRAL && !rejoinMayAlly(sim, playerNum, mate)) {
-        mate = NEUTRAL;
-    }
     if (mate == NEUTRAL) {
-        /* The team lost its last player in the meantime, or the rules
-           refuse the alliance: a side of their own, as any other joiner
-           gets. */
-        sim->lobbyPlayers[playerNum].teamNumber = serverSimFreeTeam(sim);
-        serverSimPublishLobbySlot(sim, playerNum);
+        /* Nobody is on the old team, and nobody else was given its number
+           while a rejoin record held it: the seat goes back onto it,
+           alone. */
+        freeTeamSetUp(sim, team);
+        sim->lobbyPlayers[playerNum].teamNumber = team;
+        if (joinTeam == 0) {
+            serverSimPublishLobbySlot(sim, playerNum);
+        } else {
+            serverSimSeatTeamChanged(sim, playerNum, joinTeam);
+        }
+        return;
+    }
+    if (!serverSimScenarioAllowsAlliance(sim, playerNum, mate)) {
+        /* The rules refuse the alliance. A seat on no team gets a side of
+           its own, as any other joiner gets. A seat on a team of its own
+           stays on it. */
+        if (sim->lobbyPlayers[playerNum].teamNumber == 0) {
+            sim->lobbyPlayers[playerNum].teamNumber = serverSimFreeTeam(sim);
+            serverSimPublishLobbySlot(sim, playerNum);
+        }
         return;
     }
     /* The way back onto the team is the alliance accept a player's own
        request takes: it moves the seat onto the team, rewrites the
        alliance table, tells every client and writes the round log. */
     serverSimAcceptAlliance(sim, mate, playerNum);
+}
+
+void serverSimRejoinSignedIn(ServerSim *sim, BYTE playerNum) {
+    char name[PLAYER_NAME_LEN];
+    BYTE team;
+    bool signedIn;
+    if (sim == NULL || playerNum >= MAX_TANKS) return;
+    if (!sim->rejoinAwaitSignIn[playerNum]) return;
+    sim->rejoinAwaitSignIn[playerNum] = false;
+    if (!sim->playerConnected[playerNum] ||
+        sim->state != serverStateRunning) {
+        return;
+    }
+    /* The record must be under the name WinBolo.net has just confirmed,
+       and it must be from a player who was signed in. A record that has
+       timed out gives nothing back. */
+    playersGetPlayerName(&sim->sim.plyrs, playerNum, name, sizeof(name),
+                         TRUE);
+    if (!playersRejoinFind(name, &team, &signedIn) || !signedIn) return;
+    sim->rejoinTeam[playerNum] = team;
+    playersRejoinRequest(&sim->sim, name, playerNum, &sim->sim.pb);
+    serverSimRestoreRejoinTeam(sim, playerNum);
 }
 
 void serverSimAddPlayer(ServerSim *sim, BYTE playerNum, const char *playerName, bool wantRejoin) {
@@ -657,15 +721,26 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
         }
         {
             BYTE team = 0;
+            /* Whether WinBolo.net has confirmed the leaver's name. A
+               rejoiner under the name of a signed-in leaver gets the
+               record back only when WinBolo.net confirms them too. */
+            bool signedIn =
+                (playersGetClientFlags(&sim->sim.plyrs, playerNum) &
+                 PLAYER_FLAG_WBN_VERIFIED) != 0;
             if (!wasBot && sim->state == serverStateRunning) {
                 team = sim->lobbyPlayers[playerNum].teamNumber;
             }
             if (pName[0] != '\0' &&
                 (pillBits != 0 || baseBits != 0 || team != 0)) {
-                playersRejoinAddPlayer(pName, pillBits, baseBits, team);
+                playersRejoinAddPlayer(pName, pillBits, baseBits, team,
+                                       signedIn);
             }
         }
     }
+    /* A rejoin that still waits for WinBolo.net ends with the seat. */
+    sim->rejoinTeam[playerNum] = 0;
+    sim->rejoinAwaitSignIn[playerNum] = false;
+    sim->rejoinJoinTeam[playerNum] = 0;
 
     /* Migrate or neutralize pillboxes owned by the leaving player */
     {
@@ -1016,9 +1091,45 @@ static uint8_t sidesLeastUsedColour(const ServerSim *sim) {
     return best;
 }
 
+/* Sets up team id t when it is not in use. */
+static void freeTeamSetUp(ServerSim *sim, BYTE t) {
+    /* A team still in use keeps the name, colour and start side the
+       lobby (or the scenario) gave it: those belong to the team id,
+       not to the players who were on it. The seat takes over the team
+       as it was set up. Only an id not in use is set up here. */
+    if (!sim->teams[t].in_use) {
+        char name[LOBBY_TEAM_NAME_LEN];
+        int  len = snprintf(name, sizeof(name), "Team %u", (unsigned)t);
+        if (len < 0) len = 0;
+        if (len >= (int)sizeof(name)) len = (int)sizeof(name) - 1;
+        /* Pool 0 is a request: serverSimSetTeamMeta moves the team to
+           the lowest pool no other team holds. It publishes the team. */
+        serverSimSetTeamMeta(sim, t, sidesLeastUsedColour(sim), 0,
+                             START_SIDE_ANY, (const uint8_t *)name,
+                             (uint8_t)len);
+    }
+}
+
+/* Hands team id t to a seat as a new side, and returns it. */
+static BYTE freeTeamTake(ServerSim *sim, BYTE t) {
+    BYTE i;
+    freeTeamSetUp(sim, t);
+    /* From here on the id is a new side. A rejoin record, or a seat that
+       waits to go back to its old team, that still names this id means
+       the side that had it before. So the id is cleared from them: a
+       rejoiner is never put on a team with players they were never
+       allied with. The pillboxes and bases in those records stay. */
+    playersRejoinClearTeam(t);
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (sim->rejoinTeam[i] == t) sim->rejoinTeam[i] = 0;
+    }
+    return t;
+}
+
 BYTE serverSimFreeTeam(ServerSim *sim) {
     bool held[MAX_TANKS];
-    BYTE i, t;
+    int  recordAge[MAX_TANKS];
+    BYTE i, t, oldest;
     if (sim == NULL) return 0;
     memset(held, 0, sizeof(held));
     for (i = 0; i < MAX_TANKS; i++) {
@@ -1027,24 +1138,23 @@ BYTE serverSimFreeTeam(ServerSim *sim) {
         team = sidesTeamOf(sim, i);
         if (team > 0 && team < MAX_TANKS) held[team] = true;
     }
+    /* A rejoin record holds the team its player left, so the team waits
+       for that player until the record is used or times out. */
+    playersRejoinHeldTeams(recordAge);
     for (t = 1; t < MAX_TANKS; t++) {
-        if (held[t]) continue;
-        /* A team still in use keeps the name, colour and start side the
-           lobby (or the scenario) gave it: those belong to the team id,
-           not to the players who were on it. The seat takes over the team
-           as it was set up. Only an id not in use is set up here. */
-        if (!sim->teams[t].in_use) {
-            char name[LOBBY_TEAM_NAME_LEN];
-            int  len = snprintf(name, sizeof(name), "Team %u", (unsigned)t);
-            if (len < 0) len = 0;
-            if (len >= (int)sizeof(name)) len = (int)sizeof(name) - 1;
-            /* Pool 0 is a request: serverSimSetTeamMeta moves the team to
-               the lowest pool no other team holds. It publishes the team. */
-            serverSimSetTeamMeta(sim, t, sidesLeastUsedColour(sim), 0,
-                                 START_SIDE_ANY, (const uint8_t *)name,
-                                 (uint8_t)len);
-        }
-        return t;
+        if (held[t] || recordAge[t] >= 0) continue;
+        return freeTeamTake(sim, t);
+    }
+    /* Every id has a seat or a rejoin record on it. The id of the oldest
+       record that no seat is on is handed out, and freeTeamTake clears it
+       from every record that holds it. */
+    oldest = 0;
+    for (t = 1; t < MAX_TANKS; t++) {
+        if (held[t] || recordAge[t] < 0) continue;
+        if (oldest == 0 || recordAge[t] > recordAge[oldest]) oldest = t;
+    }
+    if (oldest != 0) {
+        return freeTeamTake(sim, oldest);
     }
     /* Fifteen team ids and sixteen seats: when every id has somebody, the
        seat is put on no team, which is allied with nobody. */

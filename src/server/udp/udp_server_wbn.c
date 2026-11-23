@@ -55,6 +55,7 @@
                               * serverSimSetPlayerName,
                               * serverSimSetPlayerCountry */
 #include "playername_validate.h" /* playerNameCompare */
+#include "server_sim_join.h" /* serverSimRejoinSignedIn */
 #include "../../common/wb_log.h" /* WB_LOG_INFO, WB_LOG_WARN, WB_LOG_CAT_NET */
 #include "../../winbolonet/winbolonet_core.h"   /* winbolonetIsRunning,
                                                  * winboloNetGetServerKey,
@@ -424,6 +425,11 @@ static void udpServerStampReauth(ServerSim *sim, const WbnReauthCtx *rc,
             udpServer.clients[slot].claimPending = false;
             udpServer.clients[slot].claimDesiredName[0] = '\0';
         }
+
+        /* The seat's name is now the one WinBolo.net confirmed. A rejoiner
+         * under the name of a signed-in leaver gets that player's team,
+         * pillboxes and bases back here, not at the join. */
+        serverSimRejoinSignedIn(sim, slot);
     } else if (rc->isWeb && udpServer.clients[slot].wbnWebIdentityCached) {
         /* A web slot whose code verified but resolved to a guest (not logged
          * in) returns false here — that is the expected anonymous case, not a

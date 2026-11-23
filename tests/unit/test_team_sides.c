@@ -67,11 +67,33 @@
  *   rejoin_keeps_team         — a rejoin goes back on its old team when it
  *                               still has a player
  *   rejoin_keeps_team_no_pills — the same for a player who owns nothing
- *   rejoin_empty_team_is_new  — a rejoin whose old team emptied gets a
- *                               free team
+ *   rejoin_solo_keeps_team    — a rejoin whose old team emptied gets that
+ *                               team back
  *   join_without_rejoin_is_new — a join not asking to rejoin is unchanged
  *   rejoin_next_round_is_new  — a rejoin record does not last into the
  *                               next round
+ *   rejoin_can_ally_refused   — a rejoin the script's can_ally refuses gets
+ *                               a free team
+ *   rejoin_ranked_keeps_team  — a ranked rejoin goes back on its old team
+ *   rejoin_full_table_drops_oldest — a full rejoin table drops its oldest
+ *                               record
+ *   rejoin_team_waits_for_rejoiner — a rejoin record holds its team, so a
+ *                               new joiner does not get it
+ *   rejoin_all_numbers_held   — with every team number held, the oldest
+ *                               record gives up its number
+ *   rejoin_timed_out_frees_team — a timed-out record no longer holds its
+ *                               team
+ *   rejoin_unsigned_restores_at_join — a record from a player who was not
+ *                               signed in comes back at the join
+ *   rejoin_signed_in_waits    — a record from a signed-in player does not
+ *                               come back for an unsigned joiner
+ *   rejoin_signed_in_restored — it comes back after the WinBolo.net check
+ *   rejoin_signed_in_solo_keeps_team — the same for a player who was alone
+ *                               on their team
+ *   rejoin_signed_in_moved_seat_kept — a seat moved before the check stays
+ *                               where it was moved
+ *   rejoin_signed_in_leave_clears — a seat that leaves before the check
+ *                               gets nothing back later
  *   joiner_slot_before_join   — a joiner's team goes out before its join
  *   lobby_joiner_keeps_rule   — the lobby keeps the smallest-team pick
  *   lobby_drops_empty_teams   — the next lobby does not list a team the
@@ -110,6 +132,7 @@
 #include "server_sim.h"
 #include "server_sim_internal.h"
 #include "server_sim_lifecycle.h"
+#include "server_sim_join.h"
 #include "server/sim/server_sim_shared.h"
 #include "start_sides.h"
 #include "scenario_host.h"
@@ -1107,9 +1130,9 @@ int run_team_sides_infection_puts_leaver_back(void) {
 
 /* Player 0 on team 1 and player 1 alone on team 3, owning pills 1 and 2. Player 1
    drops, which leaves both pills neutral and team 3 with nobody, and player 0
-   takes pill 2. Player 1 rejoins: it is a joiner (D11), and its old team is
-   empty, so it gets the lowest free team, not team 3, and only the pill
-   that is still neutral comes back. */
+   takes pill 2. Player 1 rejoins: it is a joiner (D11). Its rejoin record
+   held team 3, so it gets team 3 back, and only the pill that is still
+   neutral comes back. */
 int run_team_sides_rejoin_is_a_joiner(void) {
     const BYTE teams[2] = { 1, 3 };
     ServerSim *sim = tsRunningSim(teams, 2);
@@ -1131,7 +1154,7 @@ int run_team_sides_rejoin_is_a_joiner(void) {
 
     serverSimAddPlayer(sim, 1, "P1", true);
     UT_ASSERT(serverSimIsPlayerConnected(sim, 1));
-    UT_ASSERT_MSG(tsTeam(sim, 1) == 2, "the rejoiner is on team %u",
+    UT_ASSERT_MSG(tsTeam(sim, 1) == 3, "the rejoiner is on team %u",
                   (unsigned)tsTeam(sim, 1));
     UT_ASSERT(!tsAllied(sim, 0, 1));
     UT_ASSERT(serverSimSidesAgree(sim));
@@ -1218,16 +1241,16 @@ int run_team_sides_rejoin_keeps_team_no_pills(void) {
 }
 
 /* Player 0 on team 1, player 1 alone on team 4, player 2 on team 2. Player 1 drops,
-   which leaves team 4 with nobody, and rejoins: it gets the lowest free
-   team, team 3, not team 4, and no ally. */
-int run_team_sides_rejoin_empty_team_is_new(void) {
+   which leaves team 4 with nobody, and rejoins: its rejoin record held
+   team 4, so it gets team 4 back, with no ally. */
+int run_team_sides_rejoin_solo_keeps_team(void) {
     const BYTE teams[3] = { 1, 4, 2 };
     ServerSim *sim = tsRunningSim(teams, 3);
 
     UT_ASSERT(sim != NULL);
     serverSimRemovePlayer(sim, 1);
     serverSimAddPlayer(sim, 1, "P1", true);
-    UT_ASSERT_MSG(tsTeam(sim, 1) == 3, "the rejoiner is on team %u",
+    UT_ASSERT_MSG(tsTeam(sim, 1) == 4, "the rejoiner is on team %u",
                   (unsigned)tsTeam(sim, 1));
     UT_ASSERT(!tsAllied(sim, 0, 1) && !tsAllied(sim, 1, 2));
     UT_ASSERT(serverSimSidesAgree(sim));
@@ -1361,12 +1384,12 @@ int run_team_sides_rejoin_full_table_drops_oldest(void) {
     playersRejoinCreate();
     for (i = 0; i < MAX_TANKS; i++) {
         snprintf(name, sizeof(name), "R%d", i);
-        playersRejoinAddPlayer(name, 0, 0, (BYTE)((i % 15) + 1));
+        playersRejoinAddPlayer(name, 0, 0, (BYTE)((i % 15) + 1), FALSE);
         playersRejoinUpdate();
     }
-    playersRejoinAddPlayer("R0", 0, 0, 1);
+    playersRejoinAddPlayer("R0", 0, 0, 1, FALSE);
     playersRejoinUpdate();
-    playersRejoinAddPlayer("New", 0, 0, 7);
+    playersRejoinAddPlayer("New", 0, 0, 7, FALSE);
 
     UT_ASSERT_MSG(playersRejoinGetTeam("New") == 7,
                   "the new record has team %u",
@@ -1381,6 +1404,272 @@ int run_team_sides_rejoin_full_table_drops_oldest(void) {
                       "record %s was lost", name);
     }
     playersRejoinCreate();
+    return 0;
+}
+
+/* Not allied with any of the first n seats, other than itself. */
+static bool tsAlliedWithNobody(ServerSim *sim, BYTE slot, int n) {
+    int i;
+    for (i = 0; i < n; i++) {
+        if (i == slot) continue;
+        if (tsAllied(sim, slot, (BYTE)i) || tsAllied(sim, (BYTE)i, slot)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+/* Three players alone on teams 2, 1 and 3. Player 1 leaves team 1. A new
+   player joins while player 1's rejoin record holds team 1, so the new
+   player gets team 4, not team 1. Player 1 rejoins and gets team 1 back,
+   allied with nobody. */
+int run_team_sides_rejoin_team_waits_for_rejoiner(void) {
+    const BYTE teams[3] = { 2, 1, 3 };
+    ServerSim *sim = tsRunningSim(teams, 3);
+
+    UT_ASSERT(sim != NULL);
+    serverSimRemovePlayer(sim, 1);
+    serverSimAddPlayer(sim, 3, "New", false);
+    UT_ASSERT_MSG(tsTeam(sim, 3) == 4, "the new player is on team %u",
+                  (unsigned)tsTeam(sim, 3));
+    serverSimAddPlayer(sim, 1, "P1", true);
+    UT_ASSERT_MSG(tsTeam(sim, 1) == 1, "the rejoiner is on team %u",
+                  (unsigned)tsTeam(sim, 1));
+    UT_ASSERT(tsAlliedWithNobody(sim, 1, 4));
+    UT_ASSERT(tsAlliedWithNobody(sim, 3, 4));
+    UT_ASSERT(serverSimSidesAgree(sim));
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* Fifteen players alone on teams 1 to 15. Player 1 (team 2) leaves, then
+   player 3 (team 4) leaves later. Thirteen team numbers have a player and
+   the two records hold 2 and 4, so every number is held. A new player
+   gets 2, the number of the oldest record, and that record loses its
+   team. Player 1 then rejoins with no team in its record: the only
+   number left is 4, held by player 3's record, which now loses its team
+   too. Player 1 is not allied with the new player. */
+int run_team_sides_rejoin_all_numbers_held(void) {
+    BYTE teams[15];
+    ServerSim *sim;
+    int i;
+
+    for (i = 0; i < 15; i++) teams[i] = (BYTE)(i + 1);
+    sim = tsRunningSim(teams, 15);
+    UT_ASSERT(sim != NULL);
+    serverSimRemovePlayer(sim, 1);
+    playersRejoinUpdate();
+    playersRejoinUpdate();
+    serverSimRemovePlayer(sim, 3);
+    UT_ASSERT(playersRejoinGetTeam("P1") == 2);
+    UT_ASSERT(playersRejoinGetTeam("P3") == 4);
+
+    serverSimAddPlayer(sim, 15, "New", false);
+    UT_ASSERT_MSG(tsTeam(sim, 15) == 2, "the new player is on team %u",
+                  (unsigned)tsTeam(sim, 15));
+    UT_ASSERT_MSG(playersRejoinGetTeam("P1") == 0,
+                  "the oldest record still has team %u",
+                  (unsigned)playersRejoinGetTeam("P1"));
+    UT_ASSERT(playersRejoinGetTeam("P3") == 4);
+
+    serverSimAddPlayer(sim, 1, "P1", true);
+    UT_ASSERT_MSG(tsTeam(sim, 1) == 4, "the rejoiner is on team %u",
+                  (unsigned)tsTeam(sim, 1));
+    UT_ASSERT(!tsAllied(sim, 1, 15) && !tsAllied(sim, 15, 1));
+    UT_ASSERT(tsAlliedWithNobody(sim, 1, 16));
+    UT_ASSERT(playersRejoinGetTeam("P3") == 0);
+    UT_ASSERT(serverSimSidesAgree(sim));
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* Three players alone on teams 2, 1 and 3. Player 1 leaves team 1 and its
+   record times out. Team 1 is then free: a new player gets it, and player
+   1, rejoining, gets team 4 and no ally. */
+int run_team_sides_rejoin_timed_out_frees_team(void) {
+    const BYTE teams[3] = { 2, 1, 3 };
+    ServerSim *sim = tsRunningSim(teams, 3);
+    BYTE team;
+    bool signedIn;
+    int i;
+
+    UT_ASSERT(sim != NULL);
+    serverSimRemovePlayer(sim, 1);
+    for (i = 0; i < MAX_REJOIN_TIME; i++) playersRejoinUpdate();
+    UT_ASSERT(!playersRejoinFind("P1", &team, &signedIn));
+    serverSimAddPlayer(sim, 3, "New", false);
+    UT_ASSERT_MSG(tsTeam(sim, 3) == 1, "the new player is on team %u",
+                  (unsigned)tsTeam(sim, 3));
+    serverSimAddPlayer(sim, 1, "P1", true);
+    UT_ASSERT_MSG(tsTeam(sim, 1) == 4, "the rejoiner is on team %u",
+                  (unsigned)tsTeam(sim, 1));
+    UT_ASSERT(tsAlliedWithNobody(sim, 1, 4));
+    UT_ASSERT(serverSimSidesAgree(sim));
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* Players 0 and 1 on team 1, player 2 on team 2. Player 1 owns pill 1 and
+   leaves; signedIn says whether WinBolo.net had confirmed player 1. The
+   pill goes to player 0, its ally, and is then put back to neutral, so a
+   restore can give it back. */
+static ServerSim *tsRejoinLeaver(bool signedIn) {
+    const BYTE teams[3] = { 1, 1, 2 };
+    ServerSim *sim = tsRunningSim(teams, 3);
+
+    if (sim == NULL) return NULL;
+    if (pillsGetNumPills(&sim->sim.pb) < 1) {
+        serverSimDestroy(sim);
+        return NULL;
+    }
+    if (signedIn) {
+        playersSetClientFlags(&sim->sim.plyrs, 1, PLAYER_FLAG_WBN_VERIFIED);
+    }
+    sim->sim.pb->item[0].owner = 1;
+    serverSimRemovePlayer(sim, 1);
+    sim->sim.pb->item[0].owner = NEUTRAL;
+    return sim;
+}
+
+/* A record from a player who was not signed in comes back at the join, as
+   before: team 1 with player 0, and the pill. A later WinBolo.net check
+   changes nothing. */
+int run_team_sides_rejoin_unsigned_restores_at_join(void) {
+    ServerSim *sim = tsRejoinLeaver(false);
+    BYTE team;
+    bool signedIn;
+
+    UT_ASSERT(sim != NULL);
+    serverSimAddPlayer(sim, 1, "P1", true);
+    UT_ASSERT_MSG(tsTeam(sim, 1) == 1, "the rejoiner is on team %u",
+                  (unsigned)tsTeam(sim, 1));
+    UT_ASSERT(tsAllied(sim, 0, 1) && tsAllied(sim, 1, 0));
+    UT_ASSERT_MSG(sim->sim.pb->item[0].owner == 1, "the pill went to %u",
+                  (unsigned)sim->sim.pb->item[0].owner);
+    UT_ASSERT(!playersRejoinFind("P1", &team, &signedIn));
+    serverSimRejoinSignedIn(sim, 1);
+    UT_ASSERT(tsTeam(sim, 1) == 1);
+    UT_ASSERT(serverSimSidesAgree(sim));
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* A record from a signed-in player does not come back for a joiner under
+   the same name who is not signed in: the joiner gets team 3, no ally and
+   no pill, and the record stays. */
+int run_team_sides_rejoin_signed_in_waits(void) {
+    ServerSim *sim = tsRejoinLeaver(true);
+    BYTE team;
+    bool signedIn;
+
+    UT_ASSERT(sim != NULL);
+    serverSimAddPlayer(sim, 1, "P1", true);
+    UT_ASSERT_MSG(tsTeam(sim, 1) == 3, "the joiner is on team %u",
+                  (unsigned)tsTeam(sim, 1));
+    UT_ASSERT(tsAlliedWithNobody(sim, 1, 3));
+    UT_ASSERT_MSG(sim->sim.pb->item[0].owner == NEUTRAL,
+                  "the pill went to %u",
+                  (unsigned)sim->sim.pb->item[0].owner);
+    UT_ASSERT(playersRejoinFind("P1", &team, &signedIn));
+    UT_ASSERT(team == 1 && signedIn);
+    UT_ASSERT(serverSimSidesAgree(sim));
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* The same joiner, and then WinBolo.net confirms the name: the seat goes
+   from team 3 back to team 1, allied with player 0, and the pill comes
+   back. The record is used up, so a second check does nothing more. */
+int run_team_sides_rejoin_signed_in_restored(void) {
+    ServerSim *sim = tsRejoinLeaver(true);
+    BYTE team;
+    bool signedIn;
+
+    UT_ASSERT(sim != NULL);
+    serverSimAddPlayer(sim, 1, "P1", true);
+    UT_ASSERT(tsTeam(sim, 1) == 3);
+    playersSetClientFlags(&sim->sim.plyrs, 1, PLAYER_FLAG_WBN_VERIFIED);
+    serverSimRejoinSignedIn(sim, 1);
+    UT_ASSERT_MSG(tsTeam(sim, 1) == 1, "the rejoiner is on team %u",
+                  (unsigned)tsTeam(sim, 1));
+    UT_ASSERT(tsAllied(sim, 0, 1) && tsAllied(sim, 1, 0));
+    UT_ASSERT(!tsAllied(sim, 1, 2));
+    UT_ASSERT_MSG(sim->sim.pb->item[0].owner == 1, "the pill went to %u",
+                  (unsigned)sim->sim.pb->item[0].owner);
+    UT_ASSERT(!playersRejoinFind("P1", &team, &signedIn));
+    serverSimRejoinSignedIn(sim, 1);
+    UT_ASSERT(tsTeam(sim, 1) == 1);
+    UT_ASSERT(serverSimSidesAgree(sim));
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* Player 1 is signed in and alone on team 4, and leaves. The record holds
+   team 4, so a joiner under that name who is not yet signed in gets team
+   3. When WinBolo.net confirms the name, the seat moves to team 4, alone. */
+int run_team_sides_rejoin_signed_in_solo_keeps_team(void) {
+    const BYTE teams[3] = { 1, 4, 2 };
+    ServerSim *sim = tsRunningSim(teams, 3);
+
+    UT_ASSERT(sim != NULL);
+    playersSetClientFlags(&sim->sim.plyrs, 1, PLAYER_FLAG_WBN_VERIFIED);
+    serverSimRemovePlayer(sim, 1);
+    serverSimAddPlayer(sim, 1, "P1", true);
+    UT_ASSERT_MSG(tsTeam(sim, 1) == 3, "the joiner is on team %u",
+                  (unsigned)tsTeam(sim, 1));
+    playersSetClientFlags(&sim->sim.plyrs, 1, PLAYER_FLAG_WBN_VERIFIED);
+    serverSimRejoinSignedIn(sim, 1);
+    UT_ASSERT_MSG(tsTeam(sim, 1) == 4, "the rejoiner is on team %u",
+                  (unsigned)tsTeam(sim, 1));
+    UT_ASSERT(tsAlliedWithNobody(sim, 1, 3));
+    UT_ASSERT(serverSimSidesAgree(sim));
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* The joiner is moved to team 2 before WinBolo.net confirms the name, as a
+   script can do in on_player_join. The check then gives the pill back but
+   leaves the seat on team 2. */
+int run_team_sides_rejoin_signed_in_moved_seat_kept(void) {
+    ServerSim *sim = tsRejoinLeaver(true);
+
+    UT_ASSERT(sim != NULL);
+    serverSimAddPlayer(sim, 1, "P1", true);
+    UT_ASSERT(tsTeam(sim, 1) == 3);
+    serverSimSetTeam(sim, 1, 2);
+    UT_ASSERT(tsTeam(sim, 1) == 2);
+    playersSetClientFlags(&sim->sim.plyrs, 1, PLAYER_FLAG_WBN_VERIFIED);
+    serverSimRejoinSignedIn(sim, 1);
+    UT_ASSERT_MSG(tsTeam(sim, 1) == 2, "the seat is on team %u",
+                  (unsigned)tsTeam(sim, 1));
+    UT_ASSERT(!tsAllied(sim, 0, 1) && tsAllied(sim, 1, 2));
+    UT_ASSERT(sim->sim.pb->item[0].owner == 1);
+    UT_ASSERT(serverSimSidesAgree(sim));
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* The joiner leaves before WinBolo.net answers. The wait ends with the
+   seat: a new player in the same seat gets nothing when a check for that
+   seat succeeds later. */
+int run_team_sides_rejoin_signed_in_leave_clears(void) {
+    ServerSim *sim = tsRejoinLeaver(true);
+
+    UT_ASSERT(sim != NULL);
+    serverSimAddPlayer(sim, 1, "P1", true);
+    UT_ASSERT(sim->rejoinAwaitSignIn[1]);
+    serverSimRemovePlayer(sim, 1);
+    UT_ASSERT(!sim->rejoinAwaitSignIn[1]);
+    sim->sim.pb->item[0].owner = NEUTRAL;
+    serverSimAddPlayer(sim, 1, "Other", false);
+    playersSetClientFlags(&sim->sim.plyrs, 1, PLAYER_FLAG_WBN_VERIFIED);
+    serverSimRejoinSignedIn(sim, 1);
+    UT_ASSERT_MSG(tsTeam(sim, 1) != 1, "the new player is on team %u",
+                  (unsigned)tsTeam(sim, 1));
+    UT_ASSERT(tsAlliedWithNobody(sim, 1, 3));
+    UT_ASSERT(sim->sim.pb->item[0].owner == NEUTRAL);
+    UT_ASSERT(serverSimSidesAgree(sim));
+    serverSimDestroy(sim);
     return 0;
 }
 

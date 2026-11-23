@@ -1444,6 +1444,9 @@ void serverSimResetGameWorld(ServerSim *sim) {
      * next round. The records count down only while a round runs, so
      * without this one could be used in a later round. */
     playersRejoinCreate();
+    memset(sim->rejoinTeam, 0, sizeof(sim->rejoinTeam));
+    memset(sim->rejoinAwaitSignIn, 0, sizeof(sim->rejoinAwaitSignIn));
+    memset(sim->rejoinJoinTeam, 0, sizeof(sim->rejoinJoinTeam));
 
     /* 11. Reset player connection state and per-slot round/world state.
      * Connection identity (name, country, clientType, clientFlags, bot/WBN
