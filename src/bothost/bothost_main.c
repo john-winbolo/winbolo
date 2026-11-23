@@ -451,7 +451,6 @@ typedef struct {
     uint32_t   lastPingMs;
     uint32_t   serverNow;      /* last PONG's server time, echoed back */
     uint16_t   rttMs;
-    uint32_t   muxTick;
     ChannelMux mux;
     /* The slot count last sent in CTRL_BOT_HOST_SLOTS, -1 for none. */
     int        lastSlotsSent;
