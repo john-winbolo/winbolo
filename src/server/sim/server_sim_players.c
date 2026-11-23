@@ -202,7 +202,6 @@ void addPlayerInternal(ServerSim *sim, BYTE playerNum, const char *playerName,
     sim->rejoinTeam[playerNum] = 0;
     sim->rejoinAwaitSignIn[playerNum] = false;
     sim->rejoinJoinTeam[playerNum] = 0;
-    sim->rejoinProvisional[playerNum] = false;
     if (wantRejoin && sim->state == serverStateRunning && playerName != NULL) {
         BYTE team;
         bool signedIn;
@@ -393,25 +392,6 @@ void serverSimRejoinSignedIn(ServerSim *sim, BYTE playerNum) {
 void serverSimSetRejoinAddress(ServerSim *sim, BYTE playerNum, uint32_t ipv4) {
     if (sim == NULL || playerNum >= MAX_TANKS) return;
     sim->rejoinAddr[playerNum] = ipv4;
-}
-
-void serverSimSetRejoinProvisional(ServerSim *sim, BYTE playerNum) {
-    if (sim == NULL || playerNum >= MAX_TANKS) return;
-    sim->rejoinProvisional[playerNum] = true;
-}
-
-void serverSimEndRejoinProvisional(ServerSim *sim, BYTE playerNum,
-                                   bool confirmed) {
-    if (sim == NULL || playerNum >= MAX_TANKS) return;
-    if (!sim->rejoinProvisional[playerNum]) return;
-    if (confirmed) {
-        sim->rejoinProvisional[playerNum] = false;
-        return;
-    }
-    /* The seat is going. It gets nothing from the record, and its leave
-       leaves the record as it is. */
-    sim->rejoinAwaitSignIn[playerNum] = false;
-    sim->rejoinTeam[playerNum] = 0;
 }
 
 void serverSimAddPlayer(ServerSim *sim, BYTE playerNum, const char *playerName, bool wantRejoin) {
@@ -755,10 +735,7 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
             if (!wasBot && sim->state == serverStateRunning) {
                 team = sim->lobbyPlayers[playerNum].teamNumber;
             }
-            /* A seat let into a locked game as a rejoin that WinBolo.net
-               did not confirm has not shown that it is the player the
-               record is for. The record stays as it is, for its owner. */
-            if (pName[0] != '\0' && !sim->rejoinProvisional[playerNum] &&
+            if (pName[0] != '\0' &&
                 (pillBits != 0 || baseBits != 0 || team != 0)) {
                 playersRejoinAddPlayer(pName, pillBits, baseBits, team,
                                        signedIn);
@@ -770,7 +747,6 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
     sim->rejoinTeam[playerNum] = 0;
     sim->rejoinAwaitSignIn[playerNum] = false;
     sim->rejoinJoinTeam[playerNum] = 0;
-    sim->rejoinProvisional[playerNum] = false;
     sim->rejoinAddr[playerNum] = 0;
 
     /* Migrate or neutralize pillboxes owned by the leaving player */

@@ -999,11 +999,6 @@ void transportUdpServerCheckTimeouts(ServerSim *sim) {
                                (BYTE)i, WINBOLO_NET_NO_PLAYER, FALSE, FALSE);
         }
 
-        /* A rejoin let into a locked game that WinBolo.net has not confirmed
-         * within LOCKED_REJOIN_CONFIRM_TICKS is removed with the game-locked
-         * reason. The removal is deferred to the next drain. */
-        udpServerLockedRejoinCheckDeadline(sim, (BYTE)i);
-
         if (udpServer.tickCount - udpServer.clients[i].lastReceivedTick
             > CLIENT_TIMEOUT_TICKS) {
             WB_LOG_WARN(WB_LOG_CAT_NET,

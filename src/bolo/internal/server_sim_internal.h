@@ -944,14 +944,6 @@ struct ServerSim {
      * bots. Cleared when the seat leaves. */
     uint32_t     rejoinAddr[MAX_TANKS];
 
-    /* True for a seat let into a locked game as a rejoin that WinBolo.net
-     * has still to confirm (serverSimSetRejoinProvisional). Nobody has
-     * shown that this seat is the player the rejoin record is for, so when
-     * it leaves, the record is left as it is and is not replaced with this
-     * seat's. Cleared when WinBolo.net confirms the seat, when the seat
-     * leaves and at every round reset. */
-    bool         rejoinProvisional[MAX_TANKS];
-
     /* Bot configuration — cached from CLI args for lobby bot creation */
     char         botBrainPath[260];       /* Brain path for lobby bot creation */
     aiType       botAiType;               /* AI advantage level for bots */

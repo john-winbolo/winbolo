@@ -397,6 +397,14 @@ bool clientSimGetAskRejoin(const ClientSim *cs) {
   return cs != NULL && cs->askRejoin;
 }
 
+void clientSimSetSignInFirst(ClientSim *cs, bool on) {
+  if (cs != NULL) cs->signInFirst = on;
+}
+
+bool clientSimGetSignInFirst(const ClientSim *cs) {
+  return cs != NULL && cs->signInFirst;
+}
+
 BYTE clientSimGetServerPlayerNum(const ClientSim *cs) {
   if (cs == NULL || !cs->hasTransport) return 0;
   /* The in-process transport learns its slot once, at the join

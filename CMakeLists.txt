@@ -6819,10 +6819,11 @@ set(_unit_test_names
     join_ask_rejoin_timed_out_joins
     join_locked_rejoin_address_seats
     join_locked_rejoin_no_match_rejects
-    join_locked_rejoin_wbn_confirm_keeps
-    join_locked_rejoin_wbn_mismatch_removes
-    join_locked_rejoin_wbn_fail_removes
-    join_locked_rejoin_wbn_timeout_removes
+    join_locked_rejoin_wbn_sign_in_not_seated
+    join_locked_rejoin_wbn_verified_seats
+    join_locked_rejoin_wbn_fail_rejects
+    join_locked_rejoin_wbn_other_name_rejects
+    join_locked_rejoin_wbn_timeout_rejects
     join_locked_rejoin_ask_gets_question
     join_locked_rejoin_unlocked_unchanged
     join_rate_limit

@@ -2790,10 +2790,11 @@ int run_join_ask_rejoin_no_record_joins(void);
 int run_join_ask_rejoin_timed_out_joins(void);
 int run_join_locked_rejoin_address_seats(void);
 int run_join_locked_rejoin_no_match_rejects(void);
-int run_join_locked_rejoin_wbn_confirm_keeps(void);
-int run_join_locked_rejoin_wbn_mismatch_removes(void);
-int run_join_locked_rejoin_wbn_fail_removes(void);
-int run_join_locked_rejoin_wbn_timeout_removes(void);
+int run_join_locked_rejoin_wbn_sign_in_not_seated(void);
+int run_join_locked_rejoin_wbn_verified_seats(void);
+int run_join_locked_rejoin_wbn_fail_rejects(void);
+int run_join_locked_rejoin_wbn_other_name_rejects(void);
+int run_join_locked_rejoin_wbn_timeout_rejects(void);
 int run_join_locked_rejoin_ask_gets_question(void);
 int run_join_locked_rejoin_unlocked_unchanged(void);
 

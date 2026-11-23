@@ -279,8 +279,6 @@ void serverDisconnectClient(ServerSim *sim, int idx, bool graceful) {
     udpServer.clients[idx].nameStickySuffix = false;
     udpServer.clients[idx].claimPending = false;
     udpServer.clients[idx].claimDesiredName[0] = '\0';
-    udpServer.clients[idx].lockedRejoinPending = false;
-    udpServer.clients[idx].lockedRejoinName[0] = '\0';
     udpServer.clients[idx].inboundCmdSeq = 0;
     /* Slots are recycled: without this a new occupant would inherit the
      * previous player's mutes. */

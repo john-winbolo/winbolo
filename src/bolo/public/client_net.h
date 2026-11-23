@@ -119,6 +119,11 @@ langid      clientSimGetConnectErrorLangId(const ClientSim *cs);
  * frontend asks the player whether to rejoin. Call it after clientSimCreate
  * and before clientSimConnectUdp. */
 void        clientSimSetAskRejoin(ClientSim *cs, bool ask);
+/* on true makes the next UDP JOIN carry JOIN_FLAG_SIGN_IN_FIRST: this
+ * client can answer PACKET_JOIN_SIGN_IN. A rejoin into a locked game is
+ * then checked with WinBolo.net before the server seats it. Call it after
+ * clientSimCreate and before clientSimConnectUdp. */
+void        clientSimSetSignInFirst(ClientSim *cs, bool on);
 BYTE        clientSimGetServerPlayerNum(const ClientSim *cs);
 const BYTE *clientSimGetServerMapData(const ClientSim *cs, int *outLen);
 /* serverTick of the frame interp is currently displaying (second-newest applied

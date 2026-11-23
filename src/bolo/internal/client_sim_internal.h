@@ -1116,6 +1116,11 @@ struct ClientSim {
      * clientSimConnectUdp; only the GUI client sets it. */
     bool askRejoin;
 
+    /* True when this client can answer PACKET_JOIN_SIGN_IN, so the JOIN
+     * carries JOIN_FLAG_SIGN_IN_FIRST. Set by clientSimSetSignInFirst
+     * before clientSimConnectUdp; only the desktop GUI client sets it. */
+    bool signInFirst;
+
     /* In-process server bound by clientSimConnectLocal{,Passive}. NULL
      * for UDP and disconnected clients. Read by the local-transport
      * branch of CTRL_LOBBY_MAP_CHANGE to fetch the freshly-compressed
@@ -1248,6 +1253,9 @@ void                    clientSimSetConnectErrorReason(ClientSim *cs, const char
 void                    clientSimSetConnectErrorId(ClientSim *cs, unsigned int id);
 /* Whether the JOIN carries JOIN_FLAG_ASK_REJOIN; see clientSimSetAskRejoin. */
 bool                    clientSimGetAskRejoin(const ClientSim *cs);
+/* Whether the JOIN carries JOIN_FLAG_SIGN_IN_FIRST; see
+ * clientSimSetSignInFirst. */
+bool                    clientSimGetSignInFirst(const ClientSim *cs);
 
 /* One bit per player slot: the remote tanks this client currently believes
  * are alive. The client holds no tanks[] object for anyone but itself, so a
