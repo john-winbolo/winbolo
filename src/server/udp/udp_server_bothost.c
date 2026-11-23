@@ -530,10 +530,21 @@ bool serverBotHostIdleReleasable(int h) {
 
 /* ── Brain sync ────────────────────────────────────────────────────────── */
 
-/* A Bot Host's sync time limit: 60 s at 50 ticks a second. A host still
- * downloading after it no longer holds the lobby, and takes no bots for
- * that game. */
-#define BOT_HOST_SYNC_LIMIT_TICKS   3000
+/* The sync limits, BOT_HOST_SYNC_LIMIT_TICKS (60 s) and
+ * BOT_HOST_SYNC_STALL_TICKS (10 s with no progress), are in
+ * bot_host_link.h. Its row states are the lobby's BOT_HOST_SYNC_* states. */
+BOLO_STATIC_ASSERT((int)BOT_HOST_SYNC_ROW_WAITING -
+                       (int)BOT_HOST_SYNC_WAITING == 0,
+                   bot_host_sync_row_waiting_drift);
+BOLO_STATIC_ASSERT((int)BOT_HOST_SYNC_ROW_SYNCING -
+                       (int)BOT_HOST_SYNC_SYNCING == 0,
+                   bot_host_sync_row_syncing_drift);
+BOLO_STATIC_ASSERT((int)BOT_HOST_SYNC_ROW_READY -
+                       (int)BOT_HOST_SYNC_READY == 0,
+                   bot_host_sync_row_ready_drift);
+BOLO_STATIC_ASSERT((int)BOT_HOST_SYNC_ROW_LATE -
+                       (int)BOT_HOST_SYNC_LATE == 0,
+                   bot_host_sync_row_late_drift);
 /* Ticks between looks at the brain files in the lobby, so a file changed
  * there reaches the hosts before the game starts. */
 #define BOT_HOST_MANIFEST_POLL_TICKS 250
@@ -592,6 +603,31 @@ static int botHostEffSlots(int h) {
     return botHostMachineSlots(botHostMachineKnown[h], &botHostMachine[h],
                                botHostSlotsEffective((int)hc->slots,
                                                      hc->slotOvr.override));
+}
+
+/* The bots of the game: the bot seats, fielded or held for the start. */
+static int botHostGameBots(ServerSim *sim) {
+    int s, n = 0;
+    if (sim == NULL) return 0;
+    for (s = 0; s < MAX_TANKS; s++) {
+        if (serverSimIsBot(sim, (BYTE)s)) n++;
+    }
+    return n;
+}
+
+/* Host h needs the brain files before the game can start: the game has a
+ * bot and h offers a slot. With no sim known it does, as before. */
+static bool botHostNeedsFiles(ServerSim *sim, int h) {
+    if (sim == NULL) return true;
+    return botHostSyncNeeded(botHostGameBots(sim), botHostEffSlots(h));
+}
+
+/* Host h was late for the files and sits out this game (or the next one,
+ * when it was late in the lobby). */
+static bool botHostSkipsGame(ServerSim *sim, int h) {
+    const BotHostConn *hc = &udpServer.botHosts[h];
+    return hc->skipGame && sim != NULL &&
+           botManagerGameStarts(sim) <= hc->skipUntilStarts;
 }
 
 /* The server's own IPv4 addresses (network order), for the address check
@@ -1034,7 +1070,11 @@ static void botHostRefreshManifest(ServerSim *sim, const char *why) {
         if (!hc->connected) continue;
         botHostFileReset(hc);
         hc->manifestOwed = true;
-        hc->syncSentTick = udpServer.tickCount;
+        botHostSyncWatchStart(&hc->syncWatch, udpServer.brainManifestGen,
+                              udpServer.tickCount);
+        /* A host that sits out this game for a limit stays out of it
+         * (botHostSkipsGame): the row shows it late, and the lobby does
+         * not wait for it again. */
         hc->syncLate = false;
         hc->syncDone = 0;
         hc->syncTotal = 0;
@@ -1610,12 +1650,29 @@ static void botHostOnControl(int h, const uint8_t *msg, uint16_t len) {
         hc->syncDone = evt.u.botHostSync.done;
         hc->syncTotal = evt.u.botHostSync.total;
         hc->syncReady = evt.u.botHostSync.ready != 0;
+        botHostSyncWatchReport(&hc->syncWatch, hc->syncGen, hc->syncDone,
+                               udpServer.tickCount);
         if (hc->syncReady && !wasReady) {
             fprintf(stderr, "[bothost] Bot Host \"%s\" holds the brain files "
                             "(generation %u, %u bytes downloaded)\n",
                     hc->name, (unsigned)hc->syncGen, (unsigned)hc->syncDone);
         }
     }
+}
+
+int serverBotHostSyncRow(int h, bool needed, bool skipsGame) {
+    const BotHostConn *hc;
+    BotHostSyncRowIn in;
+    if (h < 0 || h >= MAX_BOT_HOSTS) return BOT_HOST_SYNC_ROW_WAITING;
+    hc = &udpServer.botHosts[h];
+    memset(&in, 0, sizeof(in));
+    in.synced = botHostSynced(h);
+    in.sameServer = hc->sameServerSent;
+    in.late = hc->syncLate || skipsGame;
+    in.needed = needed;
+    in.reported = hc->syncGen == udpServer.brainManifestGen &&
+                  udpServer.brainManifestGen != 0;
+    return botHostSyncRowState(&in);
 }
 
 /* The lobby's row for host h. */
@@ -1643,25 +1700,13 @@ static void botHostFillRow(int h, ControlEvent *evt) {
                     &evt->u.botHostStatus.recPercent,
                     &evt->u.botHostStatus.recBotsDone,
                     &evt->u.botHostStatus.recBots);
-    if (botHostSynced(h)) {
-        evt->u.botHostStatus.state = BOT_HOST_SYNC_READY;
+    evt->u.botHostStatus.state = (uint8_t)serverBotHostSyncRow(
+        h, botHostNeedsFiles(botHostSim, h), botHostSkipsGame(botHostSim, h));
+    if (evt->u.botHostStatus.state == BOT_HOST_SYNC_READY) {
         evt->u.botHostStatus.percent = 100;
         return;
     }
-    if (hc->sameServerSent) {
-        /* Stopped on the server's computer: never "syncing", so the
-         * lobby's Ready does not wait for it. */
-        evt->u.botHostStatus.state = BOT_HOST_SYNC_WAITING;
-        return;
-    }
-    if (hc->syncLate) {
-        evt->u.botHostStatus.state = BOT_HOST_SYNC_LATE;
-    } else if (hc->syncGen == udpServer.brainManifestGen &&
-               udpServer.brainManifestGen != 0) {
-        evt->u.botHostStatus.state = BOT_HOST_SYNC_SYNCING;
-    } else {
-        evt->u.botHostStatus.state = BOT_HOST_SYNC_WAITING;
-    }
+    if (hc->sameServerSent) return;
     if (hc->syncGen == udpServer.brainManifestGen && hc->syncTotal > 0) {
         uint64_t pct = (uint64_t)hc->syncDone * 100u / hc->syncTotal;
         evt->u.botHostStatus.percent = (uint8_t)(pct > 99 ? 99 : pct);
@@ -2932,7 +2977,8 @@ accepted:
     {
         BotHostConn *hc = &udpServer.botHosts[freeIdx];
         hc->manifestOwed = true;
-        hc->syncSentTick = udpServer.tickCount;
+        botHostSyncWatchStart(&hc->syncWatch, udpServer.brainManifestGen,
+                              udpServer.tickCount);
         /* A new host sends its caps at once; the list waits for them a
          * little (BRAIN_PACK_CAPS_WAIT_TICKS). */
         hc->joinTick = udpServer.tickCount;
@@ -5541,6 +5587,51 @@ static void botHostPlaceStep(ServerSim *sim, ServerState st) {
     }
 }
 
+BotHostSyncWait serverBotHostSyncStep(int h, bool needed, bool skipsGame) {
+    BotHostConn *hc;
+    BotHostSyncWait wait = BOT_HOST_SYNC_WAIT_ON;
+    if (h < 0 || h >= MAX_BOT_HOSTS) return BOT_HOST_SYNC_WAIT_ON;
+    hc = &udpServer.botHosts[h];
+    if (!hc->connected) return BOT_HOST_SYNC_WAIT_ON;
+    /* The host acks the bulk bytes it gets: progress while a large packed
+     * file keeps its reported bytes flat. An ack proves the bytes reached
+     * the host; a piece that only went out does not (a wide send ring
+     * holds more than a whole large file unacked). */
+    botHostSyncWatchAcked(&hc->syncWatch,
+                          hc->channelMux.ch[CHANNEL_BULK].ackedSeq,
+                          udpServer.tickCount);
+    if (!needed) {
+        /* No bot in the game, or the host offers 0 slots: nothing waits
+         * for its files, and its clocks pause until they are needed. The
+         * time before the pause still counts. The files still go to it. */
+        botHostSyncWatchHold(&hc->syncWatch, udpServer.tickCount);
+        return BOT_HOST_SYNC_WAIT_ON;
+    }
+    botHostSyncWatchResume(&hc->syncWatch, udpServer.tickCount);
+    if (!botHostSynced(h) && !hc->syncLate && !hc->sameServerSent &&
+        !skipsGame) {
+        wait = botHostSyncWatchCheck(&hc->syncWatch, udpServer.tickCount);
+    }
+    if (wait == BOT_HOST_SYNC_WAIT_ON) return wait;
+    hc->syncLate = true;
+    hc->skipGame = true;
+    if (wait == BOT_HOST_SYNC_WAIT_STALLED) {
+        fprintf(stderr, "[bothost] Bot Host \"%s\" made no progress "
+                        "on the brain files for %d s (%u of %u "
+                        "bytes); the lobby does not wait for it and "
+                        "it takes no bots this game\n",
+                hc->name, BOT_HOST_SYNC_STALL_TICKS / 50,
+                (unsigned)hc->syncDone, (unsigned)hc->syncTotal);
+    } else {
+        fprintf(stderr, "[bothost] Bot Host \"%s\" is still getting "
+                        "the brain files after %d s; the lobby does "
+                        "not wait for it and it takes no bots this "
+                        "game\n",
+                hc->name, BOT_HOST_SYNC_LIMIT_TICKS / 50);
+    }
+    return wait;
+}
+
 void serverServiceBotHosts(ServerSim *sim) {
     int h, s;
     ServerState st;
@@ -5757,16 +5848,11 @@ void serverServiceBotHosts(ServerSim *sim) {
     for (h = 0; h < MAX_BOT_HOSTS; h++) {
         BotHostConn *hc = &udpServer.botHosts[h];
         if (!hc->connected) continue;
-        if (!botHostSynced(h) && !hc->syncLate && !hc->sameServerSent &&
-            udpServer.tickCount - hc->syncSentTick > BOT_HOST_SYNC_LIMIT_TICKS) {
-            hc->syncLate = true;
-            hc->skipGame = true;
+        if (serverBotHostSyncStep(h, botHostNeedsFiles(sim, h),
+                                  botHostSkipsGame(sim, h)) !=
+            BOT_HOST_SYNC_WAIT_ON) {
             hc->skipUntilStarts = botManagerGameStarts(sim) +
                 ((st == serverStateLobby || st == serverStateCountdown) ? 1u : 0u);
-            fprintf(stderr, "[bothost] Bot Host \"%s\" is still getting the "
-                            "brain files after %d s; the lobby does not wait "
-                            "for it and it takes no bots this game\n",
-                    hc->name, BOT_HOST_SYNC_LIMIT_TICKS / 50);
         }
         botHostServiceFiles(sim, h);
     }

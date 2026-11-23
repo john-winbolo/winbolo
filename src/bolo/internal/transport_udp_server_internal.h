@@ -324,14 +324,18 @@ typedef struct {
      * manifest is still to be sent. */
     BulkSender bulk;
     bool     manifestOwed;
-    uint32_t syncSentTick;       /* tickCount the current manifest went out */
+    /* The lobby's wait for the files (bot_host_link.h): since the current
+     * manifest went out, or since the files were needed, and since the
+     * downloaded bytes last went up. */
+    BotHostSyncWatch syncWatch;
     uint32_t syncGen;            /* manifest generation the host reported on */
     uint32_t syncDone;           /* bytes the host has downloaded */
     uint32_t syncTotal;          /* bytes it has to download */
     bool     syncReady;          /* it holds every file of syncGen */
-    bool     syncLate;           /* past the sync time limit for this gen */
-    /* After the sync time limit the host takes no bots for that game: not
-     * while botManagerGameStarts is at most skipUntilStarts. */
+    bool     syncLate;           /* past a sync limit for this gen */
+    /* After a sync limit (the time limit, or no progress) the host takes
+     * no bots for that game: not while botManagerGameStarts is at most
+     * skipUntilStarts. A new manifest in that time does not change it. */
     bool     skipGame;
     uint32_t skipUntilStarts;
     /* Files asked for, as (brain << 16) | file, oldest first. */
@@ -970,6 +974,16 @@ bool serverBotHostSendEvent(int h, const ControlEvent *evt);
 /* The wide bulk receive ring of Bot Host h, as an UPLOAD's a field:
  * (segment size << 20) | window, or 0 when h has the built-in ring. */
 uint32_t serverBotHostBulkWide(int h);
+/* One tick of the lobby's wait for Bot Host h's brain files at
+ * udpServer.tickCount. needed: the game has a bot and h offers a slot
+ * (botHostSyncNeeded). skipsGame: h sits out this game. The host's bulk
+ * acks count as progress; while not needed the clocks pause. A host past
+ * a limit is marked late (syncLate, skipGame) and the reason is returned;
+ * the caller sets skipUntilStarts. */
+BotHostSyncWait serverBotHostSyncStep(int h, bool needed, bool skipsGame);
+/* The BOT_HOST_SYNC_ROW_* state of host h's lobby row, with needed and
+ * skipsGame as for serverBotHostSyncStep. */
+int serverBotHostSyncRow(int h, bool needed, bool skipsGame);
 
 /* Bot Host brain recordings (udp_server_botrec.c). */
 /* CTRL_BOT_HOST_REC from host h. */

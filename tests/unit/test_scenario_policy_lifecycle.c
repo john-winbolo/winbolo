@@ -592,7 +592,7 @@ int run_scenario_policy_team_set_extra_teams(void) {
     UT_ASSERT(sim->lobbyPlayers[2].teamNumber == 2);
 
     /* An empty team: refused, and the roster does not move. */
-    UT_ASSERT_MSG(plSetTeam(sim, 2, 5) == CMD_REJECT_INVALID,
+    UT_ASSERT_MSG(plSetTeam(sim, 2, 5) == CMD_REJECT_SCENARIO_TEAM,
                   "a move onto an empty team must be refused");
     UT_ASSERT_MSG(sim->lobbyPlayers[2].teamNumber == 2,
                   "a refused move must leave the slot where it was, is on %u",
@@ -609,7 +609,7 @@ int run_scenario_policy_team_set_extra_teams(void) {
        it is making a team again and is refused. The number of teams in play
        would not rise, which is exactly the edge the slot-excluded count
        decides: the team being moved onto is the one under test. */
-    UT_ASSERT_MSG(plSetTeam(sim, 2, 2) == CMD_REJECT_INVALID,
+    UT_ASSERT_MSG(plSetTeam(sim, 2, 2) == CMD_REJECT_SCENARIO_TEAM,
                   "a team emptied by the move away must be refused on the "
                   "way back");
     UT_ASSERT(sim->lobbyPlayers[2].teamNumber == 1);

@@ -127,9 +127,11 @@ typedef enum {
      * "invalid", which tells a host nothing about a setting that was
      * theirs a map ago. Appended: the values ride the wire. */
     CMD_REJECT_SCENARIO,
-    /* A lobby Add Bot onto a team the map's scenario does not allow: a new
-     * team while the scenario's policy says no extra teams. The whole add
-     * is refused, so no bot is made and no seat is taken. Appended like
+    /* A lobby Add Bot, or a lobby team move, onto a team the map's
+     * scenario does not allow: a new team while the scenario's policy says
+     * no extra teams. A refused Add Bot is refused whole, so no bot is made
+     * and no seat is taken; a refused move leaves the seat where it was.
+     * Appended like
      * the one above. A client older than this value has no line for it
      * and its toast shows the generic "rejected" line. */
     CMD_REJECT_SCENARIO_TEAM
