@@ -4493,8 +4493,8 @@ M.BUILDER_POOL_PATH_DANGER = M.LGM_DANGER_MED   -- lgm_path_safe_enhanced thresh
 M.BUILDER_POOL_SHELL_GATE = true
 -- ENGINE ticks, and the horizon for BOTH halves of the prediction -- the shell
 -- flight and the man's walk. 63 is the longest a shell can live
--- (shells.c shellLifeTicks = 1 + 8 x range - 6, at a pillbox's
--- PILLBOX_FIRE_DISTANCE of 8.5 tiles); a tank's own round lives 51. Past that
+-- (shells.c shellLifeTicks = 1 + 8 x range - 5, at a pillbox's
+-- PILLBOX_FIRE_DISTANCE of 8.375 tiles); a tank's own round lives 52. Past that
 -- there is nothing left to predict, because there is no shell left.
 M.LGM_SHELL_PREDICT_TICKS = 63
 -- The engine's LGM blast radius, in world units: lgm.c lgmDeathCheckAtPosition

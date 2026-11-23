@@ -2890,7 +2890,7 @@ tolerance to match the speed. One that still does keeps working.
 | `pill_range` | 2048 | 0 to 65535 | How far a pillbox looks for a tank to shoot at. |
 | `pill_shell_damage` | 1 | 1 and up, at most `pill_max_armour` | What one shell takes off a pillbox. Setting it to the cap is a pillbox killed by a single hit. |
 | `pill_angry_divisor` | 2 | 1 to 255 | What a pillbox divides its firing interval by each time it is angered, held at `pill_attack_min_ticks`. It applies again on every hit, so at the classic 2 each hit halves the interval again. 1 does not make a pillbox that never gets angry: a hit leaves the interval where it is, but the cooldown still eases it back a step, past `pill_attack_ticks`. A pillbox hit again and again at 1 fires slower and slower. In principle the interval can wrap past 255 and leave it firing every frame, but that takes about 155 hits, each followed by a full cooldown, so a pillbox only gets there if it is repaired between hits or angered by fire on a nearby base. |
-| `pill_fire_length` | 8.5 | 0.5 to 127.0 | How far a pillbox's shell flies, in map squares. It is multiplied by `shell_life` to give the shell's life in ticks, with any fraction dropped, and the shell flies one tick more than that. At the classic `shell_life` and `shell_speed` it lands an eighth of a square past this number, so the classic 8.5 lands 8.625 squares from the middle of the pillbox, and only whole eighths change anything. |
+| `pill_fire_length` | 8.375 | 0.5 to 127.0 | How far a pillbox's shell flies, in map squares. It is multiplied by `shell_life` to give the shell's life in ticks, with any fraction dropped, and the shell flies one tick more than that. At the classic `shell_life` and `shell_speed` it lands an eighth of a square past this number, so the classic 8.375 lands 8.5 squares from the middle of the pillbox, and only whole eighths change anything. WinBolo used to play 8.5, an eighth of a square further; 8.375 is the nearest the rule comes to Mac Bolo's range. |
 | `pill_base_defend_range` | 9 | 0 to 255 | How near a base being shot at has to be to anger an allied pillbox, in map squares. `pill_base_defend_shape` says how it is measured. |
 | `pill_base_defend_shape` | 0 | 0 to 1 | How `pill_base_defend_range` is measured. 0, the classic WinBolo table, is a square: a pillbox up to the range away on each axis is angered, so 0 range is a pillbox that answers only for a base on its own square. 1 is a circle, as Mac Bolo measures it: the range is a radius and a pillbox exactly that far off is not angered, so 0 range is a pillbox that never answers for a base. Mac Bolo plays it as a circle of 7. |
 | `pill_aim_iterations` | 200 | 1 to 65535 | The step budget the aim solver gets to lead a moving target. 1 is a pillbox that never leads and fires at where the target is standing now. |
@@ -3024,7 +3024,7 @@ at the same rate as the search, once a frame for every tank.
   at most 255, so the longest shot's life still fits its byte.
 - `shell_life` times `pill_fire_length`, with any fraction dropped, less
   `shell_start_add`, plus 1, at most 255, so a pillbox's shot fits the same
-  byte. At the classic values that is a `shell_life` of at most 30, or a
+  byte. At the classic values that is a `shell_life` of at most 31, or a
   `pill_fire_length` of at most 32.375.
 
 The detail a refusal carries names both sides with their numbers.
