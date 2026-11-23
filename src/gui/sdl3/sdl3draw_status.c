@@ -70,12 +70,10 @@ static int           gSheetScale    = 1;
 static TTF_Font     *gFontMsg       = NULL;
 static TTF_Font     *gFontKD        = NULL;
 static TTF_Font     *gFontTiny      = NULL;
-static TTF_Font     *gFontLabel     = NULL;
 
 static TTF_Font     *gFallbackFontMsg   = NULL;
 static TTF_Font     *gFallbackFontKD    = NULL;
 static TTF_Font     *gFallbackFontTiny  = NULL;
-static TTF_Font     *gFallbackFontLabel = NULL;
 
 static int           gCurrentEdgeX  = 0;
 static int           gCurrentEdgeY  = 0;
@@ -826,14 +824,6 @@ TankLabelCache *sdl3DrawGetPingNameCache(void) {
   return &gPingNameCache;
 }
 
-TTF_Font *sdl3DrawGetLabelFont(void) {
-  return gFontLabel;
-}
-
-TTF_Font *sdl3DrawGetTinyFont(void) {
-  return gFontTiny;
-}
-
 void sdl3DrawKillsDeaths(int x, int y, int kills, int deaths) {
   (void)x; (void)y;
   /* Cache only — sdl3RenderCachedText() draws these into the next frame. */
@@ -920,11 +910,9 @@ void sdl3DrawStatusInit(SDL_Renderer *renderer,
                         TTF_Font *fontTiny,
                         TTF_Font *fontMsg,
                         TTF_Font *fontKD,
-                        TTF_Font *fontLabel,
                         TTF_Font *fallbackFontTiny,
                         TTF_Font *fallbackFontMsg,
                         TTF_Font *fallbackFontKD,
-                        TTF_Font *fallbackFontLabel,
                         SDL_Texture *tankBarsTex,
                         SDL_Texture *baseBarsTex) {
   gRenderer          = renderer;
@@ -934,11 +922,9 @@ void sdl3DrawStatusInit(SDL_Renderer *renderer,
   gFontTiny          = fontTiny;
   gFontMsg           = fontMsg;
   gFontKD            = fontKD;
-  gFontLabel         = fontLabel;
   gFallbackFontTiny  = fallbackFontTiny;
   gFallbackFontMsg   = fallbackFontMsg;
   gFallbackFontKD    = fallbackFontKD;
-  gFallbackFontLabel = fallbackFontLabel;
   gTankBarsTex       = tankBarsTex;
   gBaseBarsTex       = baseBarsTex;
 }
@@ -953,19 +939,16 @@ void sdl3DrawStatusSetAtlas(SDL_Texture *atlas, int sheetScale) {
 }
 
 void sdl3DrawStatusSetFonts(TTF_Font *fontTiny, TTF_Font *fontMsg,
-                            TTF_Font *fontKD,   TTF_Font *fontLabel,
+                            TTF_Font *fontKD,
                             TTF_Font *fallbackFontTiny,
                             TTF_Font *fallbackFontMsg,
-                            TTF_Font *fallbackFontKD,
-                            TTF_Font *fallbackFontLabel) {
+                            TTF_Font *fallbackFontKD) {
   gFontTiny          = fontTiny;
   gFontMsg           = fontMsg;
   gFontKD            = fontKD;
-  gFontLabel         = fontLabel;
   gFallbackFontTiny  = fallbackFontTiny;
   gFallbackFontMsg   = fallbackFontMsg;
   gFallbackFontKD    = fallbackFontKD;
-  gFallbackFontLabel = fallbackFontLabel;
 }
 
 void sdl3DrawStatusSetEdgeOffset(int edgeX, int edgeY) {
@@ -1005,11 +988,9 @@ void sdl3DrawStatusShutdown(void) {
   gFontTiny          = NULL;
   gFontMsg           = NULL;
   gFontKD            = NULL;
-  gFontLabel         = NULL;
   gFallbackFontTiny  = NULL;
   gFallbackFontMsg   = NULL;
   gFallbackFontKD    = NULL;
-  gFallbackFontLabel = NULL;
   gTankBarsTex       = NULL;
   gBaseBarsTex       = NULL;
 }
