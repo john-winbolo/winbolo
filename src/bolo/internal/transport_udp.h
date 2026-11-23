@@ -98,8 +98,8 @@ typedef struct {
 /* The dedicated server's own Bot Host child (ds_bot_child.h) joins the same
  * way with this mark, a player number it does not use and the 16-byte
  * secret the server gave it on its stdin in place of the ticket. The server
- * takes it only from its own computer's loopback address and only with the
- * secret of the child it started. */
+ * takes it only from its own computer (a loopback address or one of its
+ * own addresses) and only with the secret of the child it started. */
 #define JOIN_BOT_HOST_DS_CHILD_MARK 0x51
 /* Most bot connections one Bot Host may offer. */
 #define BOT_HOST_MAX_SLOTS          MAX_TANKS
@@ -931,10 +931,14 @@ void transportUdpServerSetPlayerBotHosts(struct ServerSim *sim, bool on);
  * makes a new secret of BOT_HOST_TICKET_LEN bytes (the child joins with
  * it, JOIN_BOT_HOST_DS_CHILD_MARK) and turns Bot Host connections on. False when no secret can be made.
  * End forgets the secret and drops the child: its bots come back
- * in-process. Connected: the child is joined now. */
+ * in-process. GiveUp is for a child that will not start again: the server
+ * no longer wants it, so Bot Host connections are on only when the key,
+ * the list or the players' own hosts want them, and the join rate limit
+ * applies to this computer again. Connected: the child is joined now. */
 bool transportUdpServerDsChildBegin(struct ServerSim *sim,
                                     uint8_t *secretOut);
 void transportUdpServerDsChildEnd(struct ServerSim *sim, const char *why);
+void transportUdpServerDsChildGiveUp(struct ServerSim *sim);
 bool transportUdpServerDsChildConnected(void);
 /* Lockstep with the child (bot_host_lockstep.h). After the snapshot send,
  * Arm keeps the input count of each seat the child runs. Before the next

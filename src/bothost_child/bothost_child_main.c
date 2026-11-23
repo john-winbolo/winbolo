@@ -480,19 +480,18 @@ static bool checkSandbox(void) {
 /* A virtual socket's value; no real socket of this process has it (it
  * cannot make any). */
 #define VSOCK_BASE 0x5000
-#define VSOCK_QUEUE_MAX 512
 
-typedef struct RelayPkt {
-    struct RelayPkt   *next;
-    struct sockaddr_in from;
-    int                len;
-    uint8_t            data[1];
-} RelayPkt;
-
+/* A socket's datagrams wait in a fixed ring (BOT_HOST_DGRAM_RING_SLOTS,
+ * BOT_HOST_DGRAM_RING_BYTES): its buffer is made at the socket id's first
+ * use and kept for the id's later sockets, so no datagram takes a heap
+ * call. hookClose clears the ring but keeps the buffer for reuse; the
+ * buffers are freed only when the process exits. That is 16 MiB at most
+ * (BOT_HOST_RELAY_MAX_SOCKS x BOT_HOST_DGRAM_RING_BYTES), and only once
+ * all 64 ids have been used. */
 typedef struct {
-    bool      used;
-    RelayPkt *head, *tail;
-    int       count;
+    bool             used;
+    uint8_t         *bytes;
+    BotHostDgramRing ring;
 } VSock;
 
 #ifdef _WIN32
@@ -567,13 +566,7 @@ static void relaySendFrame(uint8_t type, int id, const struct sockaddr_in *to,
 }
 
 static void vsockDrop(VSock *v) {
-    while (v->head != NULL) {
-        RelayPkt *n = v->head->next;
-        free(v->head);
-        v->head = n;
-    }
-    v->tail = NULL;
-    v->count = 0;
+    botHostDgramRingClear(&v->ring);
 }
 
 static int vsockId(bolo_socket_t s) {
@@ -590,6 +583,15 @@ static bolo_socket_t hookCreate(void) {
         if (!vsocks[k].used) {
             id = k;
             break;
+        }
+    }
+    if (id >= 0 && vsocks[id].bytes == NULL) {
+        vsocks[id].bytes = (uint8_t *)malloc(BOT_HOST_DGRAM_RING_BYTES);
+        if (vsocks[id].bytes == NULL) {
+            id = -1;
+        } else {
+            botHostDgramRingInit(&vsocks[id].ring, vsocks[id].bytes,
+                                 BOT_HOST_DGRAM_RING_BYTES);
         }
     }
     if (id >= 0) {
@@ -616,22 +618,21 @@ static void hookSend(bolo_socket_t s, const uint8_t *buf, int len,
 static int hookRecv(bolo_socket_t s, uint8_t *buf, int maxLen,
                     struct sockaddr_in *from) {
     int id = vsockId(s), len = -1;
-    RelayPkt *pk = NULL;
+    uint32_t ip = 0;
+    uint16_t port = 0;
     if (id < 0) return -1;
     SDL_LockMutex(relayLock);
-    if (vsocks[id].used && vsocks[id].head != NULL) {
-        pk = vsocks[id].head;
-        vsocks[id].head = pk->next;
-        if (vsocks[id].head == NULL) vsocks[id].tail = NULL;
-        vsocks[id].count--;
+    if (vsocks[id].used) {
+        /* A datagram longer than the buffer is cut, as recvfrom would. */
+        len = botHostDgramRingPop(&vsocks[id].ring, buf, maxLen, &ip, &port);
     }
     SDL_UnlockMutex(relayLock);
-    if (pk == NULL) return -1;
-    /* A datagram longer than the buffer is cut, as recvfrom would. */
-    len = pk->len < maxLen ? pk->len : maxLen;
-    memcpy(buf, pk->data, (size_t)len);
-    if (from != NULL) *from = pk->from;
-    free(pk);
+    if (len >= 0 && from != NULL) {
+        memset(from, 0, sizeof(*from));
+        from->sin_family = AF_INET;
+        from->sin_addr.s_addr = ip;
+        from->sin_port = port;
+    }
     return len;
 }
 
@@ -640,6 +641,7 @@ static void hookClose(bolo_socket_t s) {
     if (id < 0) return;
     SDL_LockMutex(relayLock);
     vsocks[id].used = false;
+    /* The ring's buffer stays for the next socket with this id (VSock). */
     vsockDrop(&vsocks[id]);
     SDL_UnlockMutex(relayLock);
     relaySendFrame(BOT_HOST_RELAY_CLOSE, id, NULL, NULL, 0);
@@ -660,7 +662,6 @@ static int SDLCALL relayReaderFn(void *arg) {
         uint16_t port;
         const uint8_t *data;
         size_t n;
-        RelayPkt *pk;
         if (!relayPipeRead(hdr, sizeof(hdr))) break;
         if (!botHostRelayParseHeader(hdr, &type, &id, &blen)) break;
         if (blen > 0 && !relayPipeRead(body, blen)) break;
@@ -668,28 +669,11 @@ static int SDLCALL relayReaderFn(void *arg) {
             !botHostRelayParseBody(body, blen, &ip, &port, &data, &n)) {
             continue;
         }
-        pk = (RelayPkt *)malloc(sizeof(RelayPkt) + n);
-        if (pk == NULL) continue;
-        pk->next = NULL;
-        memset(&pk->from, 0, sizeof(pk->from));
-        pk->from.sin_family = AF_INET;
-        pk->from.sin_addr.s_addr = ip;
-        pk->from.sin_port = port;
-        pk->len = (int)n;
-        memcpy(pk->data, data, n);
         SDL_LockMutex(relayLock);
-        if (!vsocks[id].used || vsocks[id].count >= VSOCK_QUEUE_MAX) {
-            /* A closed socket, or a full queue: dropped, as the system
-             * would drop it. */
-            free(pk);
-        } else {
-            if (vsocks[id].tail != NULL) {
-                vsocks[id].tail->next = pk;
-            } else {
-                vsocks[id].head = pk;
-            }
-            vsocks[id].tail = pk;
-            vsocks[id].count++;
+        /* A closed socket, or a full queue: dropped, as the system would
+         * drop it. */
+        if (vsocks[id].used) {
+            (void)botHostDgramRingPush(&vsocks[id].ring, ip, port, data, n);
         }
         SDL_UnlockMutex(relayLock);
     }
@@ -1240,11 +1224,15 @@ static SDL_AtomicInt  inClosed;
 
 static int SDLCALL stdinThreadFn(void *arg) {
     char line[BOT_HOST_CHILD_LINE_MAX];
+    int got;
     (void)arg;
-    while (fgets(line, sizeof(line), stdin) != NULL) {
-        size_t n = strlen(line);
-        while (n > 0 && (line[n - 1] == '\n' || line[n - 1] == '\r')) {
-            line[--n] = '\0';
+    while ((got = botHostChildGetLine(stdin, line, sizeof(line))) >= 0) {
+        if (got == 0) {
+            /* Read to its newline and dropped: half a line is no line. */
+            fprintf(stderr, "[bothost] a line from the game was longer "
+                            "than %d bytes: it is dropped\n",
+                    BOT_HOST_CHILD_LINE_MAX);
+            continue;
         }
         SDL_LockMutex(inLock);
         if (inCount < CHILD_QUEUE) {

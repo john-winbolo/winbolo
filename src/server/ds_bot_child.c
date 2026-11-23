@@ -27,6 +27,11 @@
 #define DS_CHILD_POLL_MS 20u
 /* How often a start that waits for the sandbox's folders asks again. */
 #define DS_CHILD_PREP_RETRY_MS 100u
+/* After its last stop, the thread waits at most this long for a child that
+ * was killed to end (botHostChildClientPoll reaps it). dsBotChildStop waits
+ * for the thread, so server shutdown can take up to 5 s longer when a child
+ * is stuck and does not end. */
+#define DS_CHILD_REAP_WAIT_MS 5000u
 
 static SDL_Thread *dsThread;
 static SDL_AtomicInt dsStop;
@@ -35,6 +40,8 @@ static DsBotChildConfig dsCfg;
 static char dsBrainName[64];
 static char dsCache[1024];
 static char dsAddr[64];
+/* The child's log; "" when WINBOLO_BOTHOST_CHILD_LOG names one. */
+static char dsLog[1100];
 
 static void dsInProcess(const char *why) {
     fprintf(stderr, "[bothost] the server runs its bots in its own process "
@@ -87,27 +94,22 @@ static void dsCacheDir(void) {
         }
     }
     (void)SDL_CreateDirectory(dsCache);
+    /* Not the player's child's log: a game on this computer keeps its own.
+     * The path goes in the start's parameters, not in the environment:
+     * the server's threads run already. */
     if (SDL_getenv("WINBOLO_BOTHOST_CHILD_LOG") == NULL) {
-        /* Not the player's child's log: a game on this computer keeps its
-         * own. */
-        char log[1100];
-        SDL_snprintf(log, sizeof(log), "%s/bothost-ds-child.log", dsCache);
-        (void)SDL_setenv_unsafe("WINBOLO_BOTHOST_CHILD_LOG", log, 1);
+        SDL_snprintf(dsLog, sizeof(dsLog), "%s/bothost-ds-child.log",
+                     dsCache);
+    } else {
+        dsLog[0] = '\0';
     }
 }
 
-static BotHostChildStart dsStartChild(void) {
+/* One start of the child, with the secret of this start attempt. */
+static BotHostChildStart dsStartChild(const uint8_t *secret) {
     BotHostChildParams p;
     BotHostChildLimits lim;
-    uint8_t secret[BOT_HOST_TICKET_LEN];
     char speedFile[1024];
-    bool ok;
-    BotHostChildStart how;
-
-    threadsWaitForMutex();
-    ok = transportUdpServerDsChildBegin(dsSim, secret);
-    threadsReleaseMutex();
-    if (!ok) return BOT_HOST_CHILD_START_INPROC;
 
     memset(&p, 0, sizeof(p));
     p.serverHost = dsAddr;
@@ -128,19 +130,32 @@ static BotHostChildStart dsStartChild(void) {
     p.luaSeed = dsCfg.luaSeed;
     p.noBudgetKill = dsCfg.noBudgetKill;
     p.brainTier = dsCfg.brainTier;
+    p.logPath = dsLog[0] != '\0' ? dsLog : NULL;
     lim.memMb = BOT_HOST_CHILD_DEFAULT_MEM_MB;
     lim.cpuPct = BOT_HOST_CHILD_DEFAULT_CPU_PCT;
-    how = botHostChildClientStart(&p, secret, sizeof(secret), &lim,
-                                  botHostDsChildMax(), true);
-    SDL_memset(secret, 0, sizeof(secret));
-    return how;
+    return botHostChildClientStart(&p, secret, BOT_HOST_TICKET_LEN, &lim,
+                                   botHostDsChildMax(), true);
 }
 
-/* The child is gone or is to go: the server's process takes its bots. */
-static void dsEndChild(const char *why) {
+/* Waits (on this thread, never the server's tick) for a child that was
+ * killed and has not ended yet. */
+static void dsReapWait(void) {
+    uint32_t waited = 0;
+    while (botHostChildClientReaping() && waited < DS_CHILD_REAP_WAIT_MS) {
+        SDL_Delay(DS_CHILD_POLL_MS);
+        waited += DS_CHILD_POLL_MS;
+        botHostChildClientPoll();
+    }
+}
+
+/* The child will not start again: the server's process takes its bots,
+ * and the server no longer wants the child. */
+static void dsGiveUp(const char *why) {
     threadsWaitForMutex();
     transportUdpServerDsChildEnd(dsSim, why);
+    transportUdpServerDsChildGiveUp(dsSim);
     threadsReleaseMutex();
+    dsReapWait();
 }
 
 static const char *dsEndWhy(BotHostChildEnd e) {
@@ -157,8 +172,10 @@ static const char *dsEndWhy(BotHostChildEnd e) {
 static int SDLCALL dsThreadFn(void *unused) {
     BotHostDsChildIn in;
     BotHostChildRestart restart;
+    uint8_t secret[BOT_HOST_TICKET_LEN];
     uint32_t restartStarts = 0, startMs = 0;
     bool running = false, joined = false, haveStarts = false;
+    bool haveSecret = false;
     const char *why = NULL;
     (void)unused;
 
@@ -172,13 +189,25 @@ static int SDLCALL dsThreadFn(void *unused) {
                 SDL_Delay(DS_CHILD_POLL_MS);
                 continue;
             }
-            in.start = dsStartChild();
+            /* One secret for each start attempt: a start that waits for
+             * the sandbox's folders asks again with the same one. */
+            if (!haveSecret) {
+                threadsWaitForMutex();
+                haveSecret = transportUdpServerDsChildBegin(dsSim, secret);
+                threadsReleaseMutex();
+            }
+            in.start = haveSecret ? dsStartChild(secret)
+                                  : BOT_HOST_CHILD_START_INPROC;
             in.tried = true;
             where = botHostDsChildWhere(&in, &why);
             if (where == BOT_HOST_DS_WAIT) {
                 SDL_Delay(DS_CHILD_PREP_RETRY_MS);
                 continue;
             }
+            /* The child has the secret now, or it will not start: the next
+             * attempt makes a new one. */
+            SDL_memset(secret, 0, sizeof(secret));
+            haveSecret = false;
             if (where == BOT_HOST_DS_INPROC) {
                 const char *detail = botHostChildClientFailWhy();
                 char line[400];
@@ -188,7 +217,7 @@ static int SDLCALL dsThreadFn(void *unused) {
                     SDL_strlcpy(line, why, sizeof(line));
                 }
                 botHostChildClientStop(false);
-                dsEndChild("the server's Bot Host child cannot start");
+                dsGiveUp("the server's Bot Host child cannot start");
                 dsInProcess(line);
                 return 0;
             }
@@ -211,7 +240,7 @@ static int SDLCALL dsThreadFn(void *unused) {
             if (st.running && !joined &&
                 now - startMs >= DS_CHILD_JOIN_WAIT_MS) {
                 botHostChildClientStop(false);
-                dsEndChild("the server's Bot Host child did not join");
+                dsGiveUp("the server's Bot Host child did not join");
                 dsInProcess("the child did not join the server in 30 s");
                 return 0;
             }
@@ -221,7 +250,7 @@ static int SDLCALL dsThreadFn(void *unused) {
                 botHostChildClientStop(false);
                 running = false;
                 if (e != BOT_HOST_CHILD_ENDED_CRASH) {
-                    dsEndChild("the server's Bot Host child ended");
+                    dsGiveUp("the server's Bot Host child ended");
                     dsInProcess(dsEndWhy(e));
                     return 0;
                 }
@@ -239,6 +268,8 @@ static int SDLCALL dsThreadFn(void *unused) {
                 if (!botHostChildRestartAfterExit(&restart, now)) {
                     in.restartLimit = true;
                     (void)botHostDsChildWhere(&in, &why);
+                    dsGiveUp("the server's Bot Host child ended by itself "
+                             "too often");
                     dsInProcess(why);
                     return 0;
                 }
@@ -253,6 +284,8 @@ static int SDLCALL dsThreadFn(void *unused) {
         SDL_Delay(DS_CHILD_POLL_MS);
     }
     if (running) botHostChildClientStop(true);
+    SDL_memset(secret, 0, sizeof(secret));
+    dsReapWait();
     return 0;
 }
 

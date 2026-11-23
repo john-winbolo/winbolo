@@ -98,6 +98,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>   /* FILE, for botHostChildGetLine */
 
 #ifdef __cplusplus
 extern "C" {
@@ -132,14 +133,26 @@ extern "C" {
 /* A child that has not said hello this long after its start is ended
  * (in the sandbox: no bots for this game). The child waits the same time
  * for its ticket: its clock starts after the game's, so the game always
- * gives up first and says why. */
+ * gives up first and says why. The game's clock starts after the spawn
+ * (botHostChildClientStart), so the prepare thread's copy of the program
+ * is not in it. */
 #define BOT_HOST_CHILD_HELLO_WAIT_MS 15000u
+/* How long a kill waits for the child to end. A child that has not ended
+ * by then is reaped later (botHostChildClientPoll), so no caller waits
+ * longer than this for a kill. */
+#define BOT_HOST_CHILD_KILL_WAIT_MS 100u
 /* The "salt" lines one child may send; more are not kept (a child
  * answers one salt for each round of the server's same-computer check). */
 #define BOT_HOST_CHILD_MAX_SALT_LINES 16
 
 /* The longest line either way, with its newline. */
 #define BOT_HOST_CHILD_LINE_MAX 200
+
+/* One line from in into out (outSize bytes, its end included), with no
+ * newline (and no carriage return). Returns 1 for a line, 0 for a line too
+ * long for out (it is read to its newline and dropped, so it does not come
+ * back as two lines), -1 at the end of in. */
+int botHostChildGetLine(FILE *in, char *out, size_t outSize);
 
 /* ---- Arguments ------------------------------------------------------- */
 
@@ -167,6 +180,8 @@ typedef struct {
     long        luaSeed;
     bool        noBudgetKill;     /* --brain-no-budget-kill */
     int         brainTier;        /* --brain-tier N; 0: none */
+    /* Where the child's stderr goes; NULL: botHostChildLogPath. */
+    const char *logPath;
 } BotHostChildParams;
 
 /* Builds the child's argv (argv[0] = exe, NULL at the end) with its strings
@@ -265,6 +280,49 @@ bool botHostRelayParseHeader(const uint8_t *hdr, uint8_t *type,
 bool botHostRelayParseBody(const uint8_t *body, uint16_t bodyLen,
                            uint32_t *ipNet, uint16_t *portNet,
                            const uint8_t **data, size_t *len);
+
+/* ---- The child's datagram queue -------------------------------------- *
+ *
+ * The datagrams the game relays to one of the child's virtual sockets wait
+ * here until the host reads them: a fixed ring of slots over a fixed byte
+ * buffer, so no datagram takes a heap call. A datagram that does not fit
+ * (all slots used, or not enough free bytes) is dropped, as a full system
+ * receive buffer would drop it. The caller locks. */
+#define BOT_HOST_DGRAM_RING_SLOTS 512
+/* Bytes for the datagrams of one socket, about a system receive buffer. */
+#define BOT_HOST_DGRAM_RING_BYTES (256u * 1024u)
+
+typedef struct {
+    uint32_t ipNet;
+    uint16_t portNet;
+    uint16_t len;
+    uint32_t off;   /* where its bytes start in the buffer */
+} BotHostDgramSlot;
+
+typedef struct {
+    BotHostDgramSlot slot[BOT_HOST_DGRAM_RING_SLOTS];
+    uint8_t *bytes;   /* size bytes, the caller's */
+    uint32_t size;
+    int      head;    /* the oldest datagram's slot */
+    int      count;
+    uint32_t end;     /* where the newest datagram's bytes end */
+} BotHostDgramRing;
+
+/* An empty ring over bytes (size bytes). */
+void botHostDgramRingInit(BotHostDgramRing *r, uint8_t *bytes,
+                          uint32_t size);
+/* Empties the ring. */
+void botHostDgramRingClear(BotHostDgramRing *r);
+/* Puts one datagram at the end. False (and nothing changes) when it does
+ * not fit. */
+bool botHostDgramRingPush(BotHostDgramRing *r, uint32_t ipNet,
+                          uint16_t portNet, const uint8_t *data,
+                          size_t len);
+/* Takes the oldest datagram into buf; one longer than maxLen is cut, as
+ * recvfrom cuts it. Returns its length (after the cut), or -1 when the
+ * ring is empty. */
+int botHostDgramRingPop(BotHostDgramRing *r, uint8_t *buf, int maxLen,
+                        uint32_t *ipNet, uint16_t *portNet);
 
 /* ---- The restart counter --------------------------------------------- */
 
@@ -377,9 +435,18 @@ int botHostChildRead(BotHostChildProc *p, char *buf, size_t size);
 bool botHostChildAlive(BotHostChildProc *p, int *exitCode);
 /* Waits up to waitMs for the child to end. True when it ended. */
 bool botHostChildWait(BotHostChildProc *p, uint32_t waitMs, int *exitCode);
-/* Ends the child at once (the job, or SIGKILL to this child only). */
-void botHostChildKill(BotHostChildProc *p);
-/* Frees p; kills the child first if it still runs. */
+/* Ends the child at once (the job, or SIGKILL to this child only), and
+ * waits at most BOT_HOST_CHILD_KILL_WAIT_MS for it to end. True when it
+ * ended; false when it still runs (botHostChildAlive then sees the end,
+ * and on POSIX reaps it). */
+bool botHostChildKill(BotHostChildProc *p);
+/* Kills the child as botHostChildKill does, then waits for its end with
+ * no time limit (on POSIX a blocking waitpid, so it is reaped). Only for a
+ * caller that may wait: a killed child ends at once, unless the system
+ * holds it. botHostChildFree may follow. */
+void botHostChildKillWait(BotHostChildProc *p);
+/* Frees p; kills the child first if it still runs. Call it once the child
+ * ended: on POSIX a child that still runs is not reaped. */
 void botHostChildFree(BotHostChildProc *p);
 /* The child's process id. */
 unsigned long botHostChildPid(const BotHostChildProc *p);
@@ -487,17 +554,29 @@ BotHostDsWhere botHostDsChildWhere(const BotHostDsChildIn *in,
  * would keep every bot in its own process. */
 int botHostDsChildMax(void);
 
-/* Starts the child for one join; sandbox: in the file sandbox. */
+/* Starts the child for one join; sandbox: in the file sandbox. On POSIX
+ * the spawn sets SIGPIPE to SIG_IGN for the whole program, once, when it
+ * was SIG_DFL: a write to a child that ended then fails with EPIPE in
+ * place of ending the game. It is not set back. */
 BotHostChildStart botHostChildClientStart(const BotHostChildParams *p,
                                           const uint8_t *ticket,
                                           size_t ticketLen,
                                           const BotHostChildLimits *lim,
                                           int max, bool sandbox);
-/* Once a frame: reads the child's lines, sees whether it still runs. */
+/* Once a frame: reads the child's lines, sees whether it still runs, and
+ * frees each stopped child that has ended since its kill (the reap).
+ * Call it also when no child runs while botHostChildClientReaping. */
 void botHostChildClientPoll(void);
 /* tellServer: "quit", stdin closed, a short wait, then the kill; false:
- * the kill at once (the server times the host out). */
+ * the kill at once (the server times the host out). A killed child that
+ * has not ended in BOT_HOST_CHILD_KILL_WAIT_MS is kept, with its relay,
+ * until botHostChildClientPoll sees its end. */
 void botHostChildClientStop(bool tellServer);
+/* A stopped child has not ended yet: botHostChildClientPoll reaps it. */
+bool botHostChildClientReaping(void);
+/* For the tests: keep p as a stopped child (no relay) until it ends, as
+ * botHostChildClientStop does. False when the list is full. */
+bool botHostChildClientReapForTest(BotHostChildProc *p);
 /* A child was started and not stopped (it may have ended by itself). */
 bool botHostChildClientActive(void);
 /* The last status the child sent; running is false once it ended. */

@@ -517,6 +517,17 @@ static int botHostUsedSlots(int h) {
     return used;
 }
 
+bool serverBotHostIdleReleasable(int h) {
+    const BotHostConn *hc;
+    if (h < 0 || h >= MAX_BOT_HOSTS) return false;
+    hc = &udpServer.botHosts[h];
+    /* The server's own child stays: it is connected with no bots when the
+     * game has none, and a kick only makes it join again. A host sending
+     * recordings stays until it is done. */
+    if (!hc->connected || hc->playerHost || hc->localChild) return false;
+    return botHostUsedSlots(h) == 0 && !serverBotRecBusy(h);
+}
+
 /* ── Brain sync ────────────────────────────────────────────────────────── */
 
 /* The sync limits, BOT_HOST_SYNC_LIMIT_TICKS (60 s) and
@@ -3640,7 +3651,20 @@ void transportUdpServerDsChildEnd(ServerSim *sim, const char *why) {
                                               "stopped");
         }
     }
-    /* dsChildWanted stays: a restart begins again with a new secret. */
+    /* dsChildWanted stays: a restart begins again with a new secret.
+     * transportUdpServerDsChildGiveUp clears it. */
+}
+
+void transportUdpServerDsChildGiveUp(ServerSim *sim) {
+    udpServer.dsChildWanted = false;
+    if (sim != NULL) botHostApplySettings(sim);
+}
+
+bool serverDsChildJoinSource(const struct sockaddr_in *fromAddr) {
+    if (!udpServer.dsChildWanted || fromAddr == NULL) return false;
+    botHostOwnIpsRefresh();
+    return botHostAddrIsServerMachine(fromAddr->sin_addr.s_addr,
+                                      botHostOwnIp, botHostOwnIpCount);
 }
 
 bool transportUdpServerDsChildConnected(void) {
@@ -5927,12 +5951,7 @@ void serverServiceBotHosts(ServerSim *sim) {
                    BOT_HOST_IDLE_RELEASE_TICKS) {
             for (h = 0; h < MAX_BOT_HOSTS; h++) {
                 uint8_t kbuf[PACKET_HEADER_SIZE];
-                if (!udpServer.botHosts[h].connected ||
-                    udpServer.botHosts[h].playerHost ||
-                    botHostUsedSlots(h) > 0 || serverBotRecBusy(h)) {
-                    /* A host sending recordings stays until it is done. */
-                    continue;
-                }
+                if (!serverBotHostIdleReleasable(h)) continue;
                 packHeader(kbuf, PACKET_KICKED, 0);
                 srvSendTo(kbuf, sizeof(kbuf), &udpServer.botHosts[h].addr);
                 botHostDrop(sim, h, "not needed now: no player and no bot");

@@ -1102,7 +1102,8 @@ void printArgs() {
   fprintf(stderr, "-bots-in-process - run this server's bots in its own process, as before. By default they run in\n");
   fprintf(stderr, "                a sandboxed child WinBoloBotHost next to WinBoloDS (no network, no files past its folder\n");
   fprintf(stderr, "                and its cache). The server falls back to its own process when the child cannot run.\n");
-  fprintf(stderr, "                -brain-debug and -allow-unsafe-brains also keep the bots in the server's process.\n");
+  fprintf(stderr, "                -brain-debug, -allow-unsafe-brains, and -seed with -brain-lua-seed and\n");
+  fprintf(stderr, "                -brain-no-budget-kill (all three) also keep the bots in the server's process.\n");
   fprintf(stderr, "-bothost-child-wait-ms <ms> - each tick the server waits at most ms for the moves of its child's\n");
   fprintf(stderr, "                bots; a later move takes the late-input rule. 0 = no wait (default %d)\n",
           TRANSPORT_UDP_LOCKSTEP_WAIT_MS_DEFAULT);
