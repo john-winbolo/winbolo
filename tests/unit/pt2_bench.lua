@@ -628,6 +628,7 @@ if BOTH then
     .. " lone pill runs %d (points left unplanned %d), wall search nodes %d, nudged %d",
     g("casts"), g("ray_reuse"), g("casts_confirm"), g("planned"), g("confirm_fail"), g("lone"),
     g("plan_skipped"), g("wall_nodes"), g("nudged")))
+  print(fmt("v2 wall search: searches on the slow path (a blocker that adds no cover) %d", g("wall_slow")))
   local tm = B.tm
   local tot = tm.total or 0
   local parts = { "wedges", "masks", "cast", "aim", "walls", "score_fn", "start", "xcover" }

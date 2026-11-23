@@ -586,24 +586,30 @@ local function ray_view(b, extra)
       local blk, n = {}, 0
       local bi = 1
       local link_t = b.link_t
-      local cover, front = 0, 0
-      local function add(e)
-        n = n + 1; blk[n] = e
-        cover = cover + e.shots
-        if not link_t or e.t < link_t then front = front + e.shots end
-      end
+      local cover = 0
+      -- (front is counted below: link_t set, it is counted again there)
       for k = 1, b.n_sq do
         local s, t = sql[k], b.sq_t[k]
         -- blockers of the base ray up to this square's tick
         while bi <= b.n_block and b.block[bi].t <= t do
           local e = b.block[bi]
-          if e.kind == "ally_pill" or not (e.sq == s and extra[s]) then add(e) end
+          if e.kind == "ally_pill" or not (e.sq == s and extra[s]) then
+            n = n + 1; blk[n] = e; cover = cover + e.shots
+          end
           bi = bi + 1
         end
         local x = extra[s]
-        if x then add({ sq = s, shots = x, kind = "planned", t = t }) end
+        if x then
+          n = n + 1; blk[n] = { sq = s, shots = x, kind = "planned", t = t }; cover = cover + x
+        end
       end
-      while bi <= b.n_block do add(b.block[bi]); bi = bi + 1 end
+      while bi <= b.n_block do
+        local e = b.block[bi]
+        n = n + 1; blk[n] = e; cover = cover + e.shots
+        bi = bi + 1
+      end
+      local front = 0
+      if not link_t then front = cover end
       -- a planned blocker on the link's own square comes after the link
       if link_t then
         front = 0
@@ -881,6 +887,125 @@ local function trip(ox, oy, sqs)
 end
 M._trip = trip
 
+-- S4: the search state, made once and used again by every search (no
+-- closure or table per call). WS.C: the candidate squares in index order;
+-- WS.on[j]: path j's existing shots per square; WS.pc[j]: path j's
+-- candidates as indexes into C, in order; WS.rem[j]: path j's shots still
+-- short; WS.used[i]: candidate i is chosen or left out in this branch.
+local WS = { C = {}, mk = {}, on = {}, pc = {}, rem = {}, used = {}, outl = {}, pick = {}, kind = {}, sols = nil,
+             nU = 0, nC = 0, P = 0, W = 0, nodes = 0 }
+
+-- Every set of the candidates with pl pills and wl walls still to place,
+-- on aims mask m: a set that covers every path with no blocker left is a
+-- solution. The branch is on the first path still short: its candidate i
+-- (in index order) goes in, and its candidates before i stay out of that
+-- branch (a set holds a smallest candidate of that path, so each set is
+-- met once). A candidate whose mask ANDs m to 0 stays out too (m only
+-- gets smaller). A path that its free candidates cannot cover cuts the
+-- branch.
+local function ws_enum(pl, wl, m, depth)
+  local S = WS
+  S.nodes = S.nodes + 1
+  local rem, nU = S.rem, S.nU
+  local j = nil
+  for jj = 1, nU do if rem[jj] > 0 then j = jj; break end end
+  if not j then
+    if pl == 0 and wl == 0 then
+      local it = {}
+      for i = 1, depth do it[i] = { sq = S.pick[i], kind = S.kind[i] } end
+      S.sols[#S.sols + 1] = { items = it, mask = m }
+    end
+    return
+  end
+  if pl + wl == 0 then return end
+  local P, W = S.P, S.W
+  local used, pcs = S.used, S.pc
+  for jj = j, nU do
+    local need = rem[jj]
+    if need > 0 then
+      local free = 0
+      for _, i in ipairs(pcs[jj]) do if not used[i] then free = free + 1 end end
+      local np = free < pl and free or pl
+      local nw = free - np
+      if nw > wl then nw = wl end
+      if np * P + nw * W < need then return end
+    end
+  end
+  local C, mk, on = S.C, S.mk, S.on
+  local pc = pcs[j]
+  local n_out = 0
+  local outl = S.outl[depth + 1]
+  if not outl then outl = {}; S.outl[depth + 1] = outl end
+  for _, i in ipairs(pc) do
+    if not used[i] then
+      used[i] = true
+      n_out = n_out + 1
+      outl[n_out] = i
+      local m2 = bband(m, mk[i])
+      if m2 ~= 0 then
+        local s = C[i]
+        for pass = 1, 2 do
+          local kind, shots
+          if pass == 1 and pl > 0 then kind, shots = "pill", P
+          elseif pass == 2 and wl > 0 then kind, shots = "wall", W end
+          if kind then
+            S.pick[depth + 1], S.kind[depth + 1] = s, kind
+            for jj = 1, nU do
+              local e = on[jj][s]
+              if e then rem[jj] = rem[jj] - (shots - e) end
+            end
+            ws_enum(kind == "pill" and pl - 1 or pl, kind == "wall" and wl - 1 or wl, m2, depth + 1)
+            for jj = 1, nU do
+              local e = on[jj][s]
+              if e then rem[jj] = rem[jj] + (shots - e) end
+            end
+          end
+        end
+      end
+    end
+  end
+  for q = 1, n_out do used[outl[q]] = nil end
+end
+
+-- The solutions of size k go to each aim still without one (bit i - 1 of
+-- active) whose mask holds them; returns the aims still without one.
+local function ws_take(found, active, nA, sols, k)
+  local got = 0
+  for i = 1, nA do
+    local bi = blshift(1, i - 1)
+    if bband(active, bi) ~= 0 then
+      local list = nil
+      for _, so in ipairs(sols) do
+        if bband(so.mask, bi) ~= 0 then list = list or {}; list[#list + 1] = so end
+      end
+      if list then found[i] = { k = k, sols = list }; got = bbor(got, bi) end
+    end
+  end
+  return bband(active, bbnot(got))
+end
+
+-- The pick keys of a solution (the same for every aim), once each.
+local function ws_keys(so, inp, rec, U, lr, lon)
+  if so.depth then return end
+  local it = so.items
+  local depth = lr and lr.cover or 0
+  local two = false
+  local sqs = {}
+  for i, e in ipairs(it) do
+    e.shots = e.kind == "pill" and inp.pill_drop_shots or inp.wall_shots
+    if lon[e.sq] then depth = depth + e.shots - lon[e.sq] end
+    local n = 0
+    for _, u in ipairs(U) do if u.on[e.sq] then n = n + 1 end end
+    if n >= 2 then two = true end
+    sqs[i] = e.sq
+  end
+  local tl, order = trip(rec.omx or floor(rec.px / 256), rec.omy or floor(rec.py / 256), sqs)
+  local key = {}
+  for i = 1, #it do key[i] = it[i].sq * 2 + (it[i].kind == "pill" and 1 or 0) end
+  table.sort(key)
+  so.depth, so.two, so.trip, so.order, so.key = depth, two, tl, order, table.concat(key, ",")
+end
+
 -- The wall plans for record rec on each aim of aims (each aim's lane).
 -- Returns { [ai] = the best solution { k, depth, two, trip, ai,
 -- items = { {sq, kind, shots} } in build order } }; an aim with no plan has
@@ -979,103 +1104,150 @@ local function search_walls_all(ctx, rec, aims)
     end
   end
   local npb = inp.num_pill_blockers or 0
-  local sols = nil
-  local rem = {}
-  for j, u in ipairs(U) do rem[j] = u.need end
-  local chosen, kinds = {}, {}
-  local seen = {}
-  local nodes = 0
-  local function dfs(pl, wl, m)
-    nodes = nodes + 1
-    local j = nil
-    for jj = 1, #U do if rem[jj] > 0 then j = jj; break end end
-    if not j then
-      if pl == 0 and wl == 0 then
-        -- a full set: record it once (its mask: the AND of its squares)
-        local ks = {}
-        for i = 1, #chosen do ks[i] = chosen[i] * 2 + (kinds[i] == "pill" and 1 or 0) end
-        table.sort(ks)
-        local key = table.concat(ks, ",")
-        if not seen[key] then
-          seen[key] = true
-          local it = {}
-          for i = 1, #chosen do it[i] = { sq = chosen[i], kind = kinds[i] } end
-          sols[#sols + 1] = { items = it, mask = m }
-        end
-      end
-      return
-    end
-    if pl + wl == 0 then return end
-    -- bound: a path still short gets at most min(free squares, pl) pills
-    -- and walls for the rest; when that is not enough, no set here covers
-    for jj = 1, #U do
-      local need = rem[jj]
-      if need > 0 then
-        local free = 0
-        for _, s in ipairs(U[jj].cand) do
-          local used = false
-          for i = 1, #chosen do if chosen[i] == s then used = true; break end end
-          if not used then free = free + 1 end
-        end
-        local np = min(free, pl)
-        local nw = min(free - np, wl)
-        if np * inp.pill_drop_shots + nw * inp.wall_shots < need then return end
-      end
-    end
-    for _, s in ipairs(U[j].cand) do
-      local m2 = bband(m, maskof[s])
-      local used = m2 == 0
-      if not used then
-        for i = 1, #chosen do if chosen[i] == s then used = true; break end end
-      end
-      if not used then
-        for pass = 1, 2 do
-          local kind, shots
-          if pass == 1 and pl > 0 then kind, shots = "pill", inp.pill_drop_shots
-          elseif pass == 2 and wl > 0 then kind, shots = "wall", inp.wall_shots end
-          if kind then
-            chosen[#chosen + 1] = s; kinds[#kinds + 1] = kind
-            for jj = 1, #U do
-              local e = U[jj].on[s]
-              if e then rem[jj] = rem[jj] - (shots - e) end
-            end
-            dfs(kind == "pill" and pl - 1 or pl, kind == "wall" and wl - 1 or wl, m2)
-            for jj = 1, #U do
-              local e = U[jj].on[s]
-              if e then rem[jj] = rem[jj] + (shots - e) end
-            end
-            chosen[#chosen] = nil; kinds[#kinds] = nil
-          end
-        end
-      end
-    end
+  local nU = #U
+  local P, W = inp.pill_drop_shots, inp.wall_shots
+  -- S4: each path alone first: when its legal squares cannot cover it
+  -- with build_max blockers, no set can
+  local bp = min(npb, inp.build_max)
+  local bw = inp.build_max - bp
+  local slow = P < W
+  for j = 1, nU do
+    local u = U[j]
+    local free = #u.cand
+    local np = min(free, bp)
+    local nw = min(free - np, bw)
+    if np * P + nw * W < u.need then return out end
+    for _, s in ipairs(u.cand) do if u.on[s] >= W then slow = true end end
   end
-  -- the first size where some aim has a solution: only those aims can
-  -- win (plan_point compares the size first)
   local active = blshift(1, nA) - 1
   local found = {}   -- aim index i -> { k, sols }
-  for k = 1, inp.build_max do
-    sols = {}
-    seen = {}
-    local p = min(npb, k)
-    dfs(p, k - p, active)
-    if #sols > 0 then
-      local got = 0
-      for i = 1, nA do
-        local bi = blshift(1, i - 1)
-        if bband(active, bi) ~= 0 then
-          local list = nil
-          for _, so in ipairs(sols) do
-            if bband(so.mask, bi) ~= 0 then list = list or {}; list[#list + 1] = so end
+  if slow then
+    -- a blocker that adds no cover on a path (its square already holds as
+    -- much): the sets are not all smallest, so the S3 search runs
+    ctx.stat.wall_slow = ctx.stat.wall_slow + 1
+    local sols = nil
+    local rem = {}
+    for j, u in ipairs(U) do rem[j] = u.need end
+    local chosen, kinds = {}, {}
+    local seen = {}
+    local nodes = 0
+    local function dfs(pl, wl, m)
+      nodes = nodes + 1
+      local j = nil
+      for jj = 1, #U do if rem[jj] > 0 then j = jj; break end end
+      if not j then
+        if pl == 0 and wl == 0 then
+          -- a full set: record it once (its mask: the AND of its squares)
+          local ks = {}
+          for i = 1, #chosen do ks[i] = chosen[i] * 2 + (kinds[i] == "pill" and 1 or 0) end
+          table.sort(ks)
+          local key = table.concat(ks, ",")
+          if not seen[key] then
+            seen[key] = true
+            local it = {}
+            for i = 1, #chosen do it[i] = { sq = chosen[i], kind = kinds[i] } end
+            sols[#sols + 1] = { items = it, mask = m }
           end
-          if list then found[i] = { k = k, sols = list }; got = bbor(got, bi) end
+        end
+        return
+      end
+      if pl + wl == 0 then return end
+      -- bound: a path still short gets at most min(free squares, pl) pills
+      -- and walls for the rest; when that is not enough, no set here covers
+      for jj = 1, #U do
+        local need = rem[jj]
+        if need > 0 then
+          local free = 0
+          for _, s in ipairs(U[jj].cand) do
+            local used = false
+            for i = 1, #chosen do if chosen[i] == s then used = true; break end end
+            if not used then free = free + 1 end
+          end
+          local np = min(free, pl)
+          local nw = min(free - np, wl)
+          if np * inp.pill_drop_shots + nw * inp.wall_shots < need then return end
         end
       end
-      active = bband(active, bbnot(got))
+      for _, s in ipairs(U[j].cand) do
+        local m2 = bband(m, maskof[s])
+        local used = m2 == 0
+        if not used then
+          for i = 1, #chosen do if chosen[i] == s then used = true; break end end
+        end
+        if not used then
+          for pass = 1, 2 do
+            local kind, shots
+            if pass == 1 and pl > 0 then kind, shots = "pill", inp.pill_drop_shots
+            elseif pass == 2 and wl > 0 then kind, shots = "wall", inp.wall_shots end
+            if kind then
+              chosen[#chosen + 1] = s; kinds[#kinds + 1] = kind
+              for jj = 1, #U do
+                local e = U[jj].on[s]
+                if e then rem[jj] = rem[jj] - (shots - e) end
+              end
+              dfs(kind == "pill" and pl - 1 or pl, kind == "wall" and wl - 1 or wl, m2)
+              for jj = 1, #U do
+                local e = U[jj].on[s]
+                if e then rem[jj] = rem[jj] + (shots - e) end
+              end
+              chosen[#chosen] = nil; kinds[#kinds] = nil
+            end
+          end
+        end
+      end
     end
-    if next(found) then break end
+    -- the first size where some aim has a solution: only those aims can
+    -- win (plan_point compares the size first)
+    for k = 1, inp.build_max do
+      sols = {}
+      seen = {}
+      local p = min(npb, k)
+      dfs(p, k - p, active)
+      if #sols > 0 then active = ws_take(found, active, nA, sols, k) end
+      if next(found) then break end
+    end
+    ctx.stat.wall_nodes = ctx.stat.wall_nodes + nodes
+  else
+    -- every set once, in index order (ws_enum)
+    local S = WS
+    local Cs, mk = S.C, S.mk
+    local gen = (S.gen or 0) + 1
+    S.gen = gen
+    local mark = S.mark or {}
+    S.mark = mark
+    local nC = 0
+    for j = 1, nU do
+      for _, s in ipairs(U[j].cand) do
+        if mark[s] ~= gen then mark[s] = gen; nC = nC + 1; Cs[nC] = s end
+      end
+    end
+    for i = #Cs, nC + 1, -1 do Cs[i] = nil end
+    table.sort(Cs)
+    local idx = S.idx or {}
+    S.idx = idx
+    for i = 1, nC do mk[i] = maskof[Cs[i]]; idx[Cs[i]] = i end
+    for j = 1, nU do
+      S.on[j] = U[j].on
+      local pc = S.pc[j] or {}
+      S.pc[j] = pc
+      local n = 0
+      for _, s in ipairs(U[j].cand) do n = n + 1; pc[n] = idx[s] end
+      for q = #pc, n + 1, -1 do pc[q] = nil end
+      table.sort(pc)
+      S.rem[j] = U[j].need
+    end
+    S.nU, S.nC, S.P, S.W, S.nodes = nU, nC, P, W, 0
+    for k = 1, inp.build_max do
+      S.sols = {}
+      local p = min(npb, k)
+      ws_enum(p, k - p, active, 0)
+      if #S.sols > 0 then active = ws_take(found, active, nA, S.sols, k) end
+      if next(found) then break end
+    end
+    S.sols = nil
+    for j = 1, nU do S.on[j] = nil end
+    ctx.stat.wall_nodes = ctx.stat.wall_nodes + S.nodes
   end
-  ctx.stat.wall_nodes = ctx.stat.wall_nodes + nodes
   if not next(found) then return out end
   -- pick: more depth, then a square on two paths, then the shortest trip
   local last = rec.chain[#rec.chain]
@@ -1089,33 +1261,12 @@ local function search_walls_all(ctx, rec, aims)
     end
     for k = 1, lr.n_sq do lon[lr.sq[k]] = ex[lr.sq[k]] or 0 end
   end
-  -- the pick keys of a solution (the same for every aim), once each
-  local function keys_of(so)
-    if so.depth then return end
-    local it = so.items
-    local depth = lr and lr.cover or 0
-    local two = false
-    local sqs = {}
-    for i, e in ipairs(it) do
-      e.shots = e.kind == "pill" and inp.pill_drop_shots or inp.wall_shots
-      if lon[e.sq] then depth = depth + e.shots - lon[e.sq] end
-      local n = 0
-      for _, u in ipairs(U) do if u.on[e.sq] then n = n + 1 end end
-      if n >= 2 then two = true end
-      sqs[i] = e.sq
-    end
-    local tl, order = trip(rec.omx or floor(rec.px / 256), rec.omy or floor(rec.py / 256), sqs)
-    local key = {}
-    for i = 1, #it do key[i] = it[i].sq * 2 + (it[i].kind == "pill" and 1 or 0) end
-    table.sort(key)
-    so.depth, so.two, so.trip, so.order, so.key = depth, two, tl, order, table.concat(key, ",")
-  end
   for i, ai in ipairs(aims) do
     local f = found[i]
     if f then
       local best = nil
       for _, so in ipairs(f.sols) do
-        keys_of(so)
+        ws_keys(so, inp, rec, U, lr, lon)
         local better = false
         if not best then better = true
         elseif so.depth ~= best.depth then better = so.depth > best.depth
@@ -1333,7 +1484,8 @@ end
 local function new_stat()
   return { sq_reads = 0, casts = 0, casts_confirm = 0, ray_reuse = 0, nudged = 0, planned = 0,
            confirm_fail = 0, wall_nodes = 0, cant = 0, survive = 0, lone = 0, plan_skipped = 0,
-           loss_pass = 0, loss_safe = 0, chain_agree = 0, chain_differ = 0, chain_unsure = 0 }
+           loss_pass = 0, loss_safe = 0, chain_agree = 0, chain_differ = 0, chain_unsure = 0,
+           wall_slow = 0 }
 end
 local function new_tm()
   return { wedges = 0, masks = 0, cast = 0, aim = 0, walls = 0, confirm = 0, leeway = 0,
@@ -1383,6 +1535,24 @@ local function pre_rank(a, b)
   if a.covered ~= b.covered then return a.covered end
   if a.base ~= b.base then return a.base < b.base end
   return (a.deg or 0) < (b.deg or 0)
+end
+
+-- A planned point's rank numbers (S4: a module function, no closure).
+local function score_of(ctx, fin)
+  local inp, clk = ctx.inp, ctx.clk
+  fin.n_built = #fin.plan
+  fin.blk = (inp.own_pill_rank and fin.ally_cover) and 2 or 1
+  fin.score = fin.base + fin.n_built * inp.build_cost
+  if inp.start_while_building and fin.safe then
+    local t3 = clk and clk()
+    start_check(ctx, fin)
+    if t3 then ctx.tm.start = ctx.tm.start + clk() - t3 end
+  end
+end
+-- The point fields a plan's record takes from the point's record.
+local function carry(fin, rec)
+  fin.deg, fin.cx, fin.cy, fin.mx, fin.my, fin.radius = rec.deg, rec.cx, rec.cy, rec.mx, rec.my, rec.radius
+  fin.base = rec.base
 end
 
 function M.evaluate_lua(inp)
@@ -1483,20 +1653,6 @@ function M.evaluate_lua(inp)
     local lone = #cands > 0
     for _, rec in ipairs(cands) do if #rec.T ~= 1 then lone = false; break end end
     local scored = {}
-    local function score_of(fin)
-      fin.n_built = #fin.plan
-      fin.blk = (inp.own_pill_rank and fin.ally_cover) and 2 or 1
-      fin.score = fin.base + fin.n_built * inp.build_cost
-      if inp.start_while_building and fin.safe then
-        local t3 = clk and clk()
-        start_check(ctx, fin)
-        if t3 then tm.start = tm.start + clk() - t3 end
-      end
-    end
-    local function carry(fin, rec)
-      fin.deg, fin.cx, fin.cy, fin.mx, fin.my, fin.radius = rec.deg, rec.cx, rec.cy, rec.mx, rec.my, rec.radius
-      fin.base = rec.base
-    end
     if lone and band and band > 0 then
       st.lone = st.lone + 1
       -- the points that stand covered now need no plan; the others are
@@ -1506,7 +1662,7 @@ function M.evaluate_lua(inp)
       for _, rec in ipairs(cands) do
         if rec.covered then
           rec.plan, rec.extra = {}, {}
-          score_of(rec)
+          score_of(ctx, rec)
           if rec.safe and (not m or rec.score < m) then m = rec.score end
         else
           need[#need + 1] = rec
@@ -1523,7 +1679,7 @@ function M.evaluate_lua(inp)
         if m and rec.base > m + band then break end
         local fin = plan_point(ctx, rec)
         carry(fin, rec)
-        score_of(fin)
+        score_of(ctx, fin)
         done[rec] = fin
         if fin.safe and (not m or fin.score < m) then m = fin.score end
       end
@@ -1532,7 +1688,7 @@ function M.evaluate_lua(inp)
         if not fin then
           fin = rec
           fin.plan, fin.extra, fin.unsearched = {}, {}, true
-          score_of(fin)
+          score_of(ctx, fin)
           st.plan_skipped = st.plan_skipped + 1
         end
         scored[#scored + 1] = fin
@@ -1541,7 +1697,7 @@ function M.evaluate_lua(inp)
       for _, rec in ipairs(cands) do
         local fin = plan_point(ctx, rec)
         carry(fin, rec)
-        score_of(fin)
+        score_of(ctx, fin)
         scored[#scored + 1] = fin
       end
     end
