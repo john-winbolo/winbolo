@@ -45,6 +45,7 @@ bool netImpairParseConfig(const char *spec, NetImpairConfig *out) {
     cfg.lossPercent  = 0;
     cfg.burstLossLen = 1;
     cfg.dupPercent   = 0;
+    cfg.lanOnly      = false;
 
     len = strlen(spec);
     if (len == 0 || len >= sizeof(buf)) {
@@ -115,6 +116,11 @@ bool netImpairParseConfig(const char *spec, NetImpairConfig *out) {
                 val = 100;
             }
             cfg.dupPercent = (uint32_t)val;
+        } else if (strcmp(key, "lanonly") == 0) {
+            if (val > 1) {
+                return false;  /* lanonly is 0 or 1 */
+            }
+            cfg.lanOnly = (val == 1);
         } else {
             return false;  /* unknown key */
         }
@@ -122,6 +128,22 @@ bool netImpairParseConfig(const char *spec, NetImpairConfig *out) {
 
     *out = cfg;
     return true;
+}
+
+bool netImpairAddrIsLan(uint32_t ipHostOrder) {
+    if ((ipHostOrder & 0xFF000000u) == 0x7F000000u) {
+        return true;   /* 127.0.0.0/8 loopback */
+    }
+    if ((ipHostOrder & 0xFF000000u) == 0x0A000000u) {
+        return true;   /* 10.0.0.0/8 */
+    }
+    if ((ipHostOrder & 0xFFF00000u) == 0xAC100000u) {
+        return true;   /* 172.16.0.0/12 */
+    }
+    if ((ipHostOrder & 0xFFFF0000u) == 0xC0A80000u) {
+        return true;   /* 192.168.0.0/16 */
+    }
+    return false;
 }
 
 void netImpairEnable(NetImpair *ni, const NetImpairConfig *cfg) {
