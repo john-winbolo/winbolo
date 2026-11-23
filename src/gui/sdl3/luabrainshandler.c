@@ -815,11 +815,12 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
    * cmake/patches/luajit_fix_osx_hrt_thread_leak.cmake). Fewer, larger
    * areas make that path rare on every platform.
    *
-   * maxtrace=4000, maxmcode=16384: a GoalHunter bot filled the default
-   * trace cache (1000 traces, 4096 KB) about every 40 ticks, and LuaJIT
-   * then threw every trace away and compiled the hot code again inside
-   * the next thinks. DH-Oil Rig, 6 bots, 12000 ticks, seeds 4242 and 777
-   * (flushes are all 6 bots; working set is the whole DS):
+   * maxtrace=4000, maxmcode=16384: with the host's old limits (1000
+   * traces, 4096 KB) a GoalHunter bot filled the trace cache about every
+   * 40 ticks, and LuaJIT then threw every trace away and compiled the hot
+   * code again inside the next thinks. Measured on Windows x64 only:
+   * DH-Oil Rig, 6 bots, 12000 ticks, seeds 4242 and 777 (flushes are all
+   * 6 bots; working set is the whole DS):
    *
    *   maxtrace/maxmcode  mean think ms  flushes  working set
    *   1000/4096 (old)    3.15-3.55      ~1030    ~277 MB
@@ -827,9 +828,13 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
    *   4000/16384         2.33-2.40      ~77      ~322 MB
    *   8000/32768         2.39-2.41      ~25      ~390 MB
    *
-   * 4000/16384 gets the whole gain for about 8 MB more per bot; larger
-   * values are no faster. The trace limits do not change what a brain
-   * decides: a seeded game matched at every 50-tick snapshot.
+   * On Windows x64 4000/16384 gets the whole gain for about 8 MB more per
+   * bot; larger values are no faster. On an Apple silicon Mac the gain is
+   * smaller (6 bots: about 9% less CPU for the whole DS, flushes 1547 to
+   * 829; 16 bots: about 4%, flushes 3059 to 2904), because most flushes
+   * there come from the +/-128MB window described above and not from
+   * these limits. The trace limits do not change what a brain decides: a
+   * seeded game matched at every 50-tick snapshot.
    *
    * The host sets these because a brain cannot: the sandbox takes jit.opt
    * away just below. */
