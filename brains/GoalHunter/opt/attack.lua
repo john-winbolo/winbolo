@@ -6159,6 +6159,7 @@ local function update_attack_substate_body(goal, state, world, info)
                 or M.hd_no_blockers(state, goal))) or nil
         -- PT2_AFTER_SCAN_SPLIT: a new plan starts a new v2 run
         goal._pt2_split = nil
+        goal._pt2_v1_need = nil
       else
         local smx, smy = M.pick_standoff(world, info, pill, state)
         -- C.BLITZ_NOSPOT_RENEGOTIATE: the geometric fallback gets the same
@@ -6272,14 +6273,15 @@ local function update_attack_substate_body(goal, state, world, info)
         _att = nil
         state._shield_scan_attempt = nil
       end
-      if _split then
-        sscan = _split.sscan
-      elseif _sc and _sc.key == _scan_key
-         and (_now - (_sc.tick or -1000000)) < (C.SHIELD_SCAN_CACHE_TICKS or 25) then
-        sscan = _sc.result
-      elseif _att and (_att.count or 0) >= (C.SHIELD_SCAN_BLACKLIST_TRIES or 2) then
-        sscan = nil
-      else
+      -- v1's shield.scan: v1's cache, the budget-kill blacklist, or the scan.
+      -- A local function so PT2_V2_FIRST can run it after v2 (below).
+      local _sc_hit = _sc and _sc.key == _scan_key
+         and (_now - (_sc.tick or -1000000)) < (C.SHIELD_SCAN_CACHE_TICKS or 25)
+      local function _v1_scan()
+        if _sc_hit then return _sc.result end
+        if _att and (_att.count or 0) >= (C.SHIELD_SCAN_BLACKLIST_TRIES or 2) then
+          return nil
+        end
         if _att then
           _att.count = (_att.count or 0) + 1
           _att.tick  = _now
@@ -6311,8 +6313,8 @@ local function update_attack_substate_body(goal, state, world, info)
         end, debug.traceback)
         if _ok then
           state._shield_scan_attempt = nil
-          sscan = sscan_or_err
-          state._shield_scan_cache = { key = _scan_key, result = sscan, tick = _now }
+          state._shield_scan_cache = { key = _scan_key, result = sscan_or_err, tick = _now }
+          return sscan_or_err
         else
           local msg = tostring(sscan_or_err)
           -- Re-raise budget abort so the brain runtime sees its own signal
@@ -6327,24 +6329,42 @@ local function update_attack_substate_body(goal, state, world, info)
           -- budget-kill detector only.
           state._shield_scan_attempt = nil
           print(TAG .. " SHIELD SCAN CRASH:\n" .. msg)
-          sscan = nil
+          return nil
         end
+      end
+      -- PT2_V2_FIRST: v2 runs first and v1's scan only when v2 has no plan of
+      -- its own (pt2_attack.v2_first / v1_needed). _v1_later: v1 is still to
+      -- run. goal._pt2_v1_need: v2 already said no on this scan key, so a
+      -- budget kill in that scan goes straight back to the scan.
+      local _pa = require("pt2_attack")
+      local _v1_only = goal._pt2_v1_need ~= nil and goal._pt2_v1_need == _scan_key
+      local _v1_later = false
+      if _v1_only then
+        sscan = _v1_scan()
+      elseif _split then
+        sscan = _split.sscan
+        _v1_later = _split.v1_later or false
+      elseif not _sc_hit and _pa.v2_first(goal) then
+        _v1_later = true
+      else
+        sscan = _v1_scan()
       end
       -- PT2_AFTER_SCAN_SPLIT and C.SHIELD_SCAN_PENDING_SURVIVES_V2 (v2 in one
       -- go): the flag stays until goal._shield_scan is set below, so a budget
       -- kill in v2 keeps the take in its plan (pt2_attack.one_go).
-      local _keep_pending = require("pt2_attack").keeps_pending(_split_pa)
+      local _keep_pending = require("pt2_attack").keeps_pending(_split_pa) or _v1_later
       if not _keep_pending then goal._shield_scan_pending = nil end
       -- Pill take v2 (pt2_attack.lua). Master off: in a debug run, v2 runs on
       -- the same inputs and logs PT2_CMP; sscan comes back unchanged. Master
       -- on (C.PILLTAKE_V2_EVALUATOR): v2's safe plan replaces v1's.
-      if C.PILLTAKE_V2_EVALUATOR or (BRAIN_DEBUG_MODE and C.PT2_SIDE_BY_SIDE_LOG) then
+      if (C.PILLTAKE_V2_EVALUATOR or (BRAIN_DEBUG_MODE and C.PT2_SIDE_BY_SIDE_LOG)) and not _v1_only then
         local _a = {
           state = state, goal = goal, info = info, world = world, pill = pill,
           sscan = sscan, no_builder = no_builder, npb = _num_pill_blockers,
-          radius = scan_radius, now = now }
+          radius = scan_radius, now = now, v1_later = _v1_later }
         if _split_pa then
-          -- the plan tick runs v1 only; v2's parts run on the next ticks.
+          -- the plan tick runs v1 only (with PT2_V2_FIRST, nothing); v2's
+          -- parts run on the next ticks.
           -- Until the run is done the take waits in its plan, as it does
           -- before v1's answer.
           local _out, _ready = _split_pa.split_step(_split, _a, _scan_key)
@@ -6352,6 +6372,13 @@ local function update_attack_substate_body(goal, state, world, info)
           sscan = _out
         else
           sscan = require("pt2_attack").one_go(_a, _scan_key)
+        end
+        -- PT2_V2_FIRST: v2 found no safe point, erred or gave up: v1's scan
+        -- now, and the take goes on with v1's answer, as in the old order.
+        if _v1_later and _pa.v1_needed(sscan) then
+          if _split_pa then _split_pa.split_done(goal) end
+          goal._pt2_v1_need = _scan_key
+          sscan = _v1_scan()
         end
         -- v2 picked another pill of the target's group to shoot (its chain
         -- kills the target too): this take now aims at that pill.
@@ -6370,6 +6397,7 @@ local function update_attack_substate_body(goal, state, world, info)
         if sscan.num_pill_blockers == nil then sscan.num_pill_blockers = _num_pill_blockers end
       end
       goal._shield_scan = sscan
+      goal._pt2_v1_need = nil
       if _keep_pending then goal._shield_scan_pending = nil end
       if _split_pa then _split_pa.split_done(goal) end
       if sscan and sscan.best then
