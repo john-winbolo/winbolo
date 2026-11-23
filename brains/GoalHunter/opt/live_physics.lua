@@ -51,7 +51,7 @@ local CLASSIC = {
   tank_accel_rate = 0.25, tank_brake_rate = 0.25,
   pill_max_armour = 15, pill_attack_ticks = 100, pill_attack_min_ticks = 6,
   pill_cooldown_ticks = 32, pill_repair_amount = 4, pill_range = 2048,
-  pill_shell_damage = 1, lgm_blast_shape = 0,
+  pill_shell_damage = 1, building_life = 4, lgm_blast_shape = 0,
   base_full_armour = 90, base_capture_armour = 9, base_regen_ticks = 1000,
   lgm_build_ticks = 20, lgm_cost_road = 2, lgm_cost_building = 2,
   lgm_cost_boat = 20, lgm_cost_pill_new = 4, lgm_cost_mine = 1,
@@ -496,6 +496,11 @@ local ENTRIES = {
   { "ATTACK_PILL_UNSAFE_ARMOUR_FLOOR", "ARMOUR", a_full },
   { "ANGER_WAIT_HIGH_ARMOUR_ARM",      "ARMOUR", a_full },
   { "SQUAD_COMMANDER_MIN_ARMOUR",      "ARMOUR", a_full },
+  { "CARRY_APPROACH_MIN_ARMOUR_ONE",   "ARMOUR", a_full },
+  { "CARRY_APPROACH_MIN_ARMOUR_MANY",  "ARMOUR", a_full },
+  { "PT2_FINISH_LOCK_FLOOR_NONE",      "ARMOUR", a_full },
+  { "PT2_FINISH_LOCK_FLOOR_ONE",       "ARMOUR", a_full },
+  { "PT2_FINISH_LOCK_FLOOR_MANY",      "ARMOUR", a_full },
   { "SQUAD_REFUEL_OK_ARMOUR",          "ARMOUR", a_full },
 
   -- Armour lost per pill HP we shoot off (one shell per pill_shell_damage).
@@ -614,6 +619,7 @@ local ENTRIES = {
   -- the rule of the terrain under the tank (see context()).
   { "SWERVE_TURN_TICKS",           "TURN", function(b, x) return scale_turn(b, x, x.turn_rule) end },
   { "SWERVE_DEFENSIVE_TURN_TICKS", "TURN", function(b, x) return scale_turn(b, x, x.turn_rule) end },
+  { "PT2_FINISH_SWERVE_TURN_TICKS", "TURN", function(b, x) return scale_turn(b, x, x.turn_rule) end },
   { "SQUAD_BLITZ_READY_TIMEOUT",   "TURN", function(b, x) return scale_turn(b, x, "turn_swamp") end },
   -- Turn-radius speed caps: speed / turn rate = radius.
   { "NAV_TURN_TOP_SPEED",    "TURN", function(b, x) return scale_turn_speed(b, x, x.turn_rule) end },
@@ -650,6 +656,24 @@ local ENTRIES = {
   -- Step length already follows SHELL_SPEED above.
   { "SHELL_MAX_STEPS",         "SHELL", ratio_int("shell_life"), "LIVE_PHYSICS_SHELL_LIFE" },
   { "LGM_SHELL_PREDICT_TICKS", "SHELL", ratio_int("shell_life"), "LIVE_PHYSICS_SHELL_LIFE" },
+
+  -- Wall shots (src/bolo/building.c buildingAddItem): a full wall falls on
+  -- hit building_life + 1; a half wall has 1..building_life hits left that
+  -- the brain cannot see, so it counts the middle, rounded down. Classic
+  -- building_life 4: 5 and 2, the old constants. The getaway's wall life is
+  -- the rule itself. The C pathfinder's wall shells and cost follow
+  -- WALL_HP_FULL from steering.lua M.steer (M.wall_shoot_cost).
+  { "WALL_HP_FULL", "WALL",
+    function(b, x)
+      if x.building_life == 4 or type(b) ~= "number" then return b end
+      return x.building_life + 1
+    end },
+  { "WALL_HP_HALF", "WALL",
+    function(b, x)
+      if x.building_life == 4 or type(b) ~= "number" then return b end
+      return floor((x.building_life + 1) / 2)
+    end },
+  { "DECOY_GETAWAY_WALL_LIFE", "WALL", direct("building_life") },
 
   -- The builder blast (src/bolo/internal/lgm.h lgmBlastOpenGroundCatches):
   -- the lgm_blast_shape rule's shape, stopped at pill_range. A value outside
@@ -694,7 +718,7 @@ end
 
 local GROUP_KEY = {}
 for _, g in ipairs({ "ARMOUR", "SHELLS", "RELOAD", "PILL", "BASE", "LGM",
-                     "SPEED", "TURN", "ACCEL", "SHELL", "BLAST" }) do
+                     "SPEED", "TURN", "ACCEL", "SHELL", "WALL", "BLAST" }) do
   GROUP_KEY[g] = "LIVE_PHYSICS_" .. g
 end
 
@@ -817,6 +841,15 @@ end
 
 --- C.STEER_TURN_SPEEDUP: the factor (> 1) our turn rate beats our top speed
 --- by this think, or nil (classic rules, a slower turn, or a switch off).
+--- The A* cost of a path through one wall for the C pathfinder:
+--- C.WALL_SHOOT_COST (tuned at 5 shots a wall) scaled by C.WALL_HP_FULL / 5.
+--- Classic rules: C.WALL_SHOOT_COST itself.
+function M.wall_shoot_cost()
+  local full, cost = C.WALL_HP_FULL, C.WALL_SHOOT_COST
+  if full == 5 or type(full) ~= "number" or type(cost) ~= "number" then return cost end
+  return rnd(cost * full / 5)
+end
+
 function M.turn_speedup()
   if C.LIVE_PHYSICS ~= true or C.STEER_TURN_SPEEDUP ~= true
      or not group_on("TURN") then

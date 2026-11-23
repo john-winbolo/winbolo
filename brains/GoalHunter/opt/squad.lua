@@ -197,7 +197,8 @@ end
 -- 2026-09-25). An ally is FREE when it is live (active slot, not dead since
 -- its last broadcast) and in NO blitz. In a blitz means any of:
 --   call   it has an open call of its own (state.blitz_calls[pn])
---   cmdr   it is a commander on a take (broadcast sqst "blitz")
+--   cmdr   it is a commander on a take (broadcast sqst "blitz", or "dbl"
+--          for a double take with no blitz, C.BLITZ_NO_DOUBLE_TAKE)
 --   C<n>   it answers commander n: committed (cmdr set, sqst "join") or
 --          negotiating (cmdr set, sqst "nego" -> shown "nego:C<n>")
 --   bac    a live ally commander lists it in its bac accept list
@@ -233,7 +234,7 @@ function M.free_ally_count(state, now, self_pn)
         local cm = tonumber(h.cmdr or "")
         local st
         if calls and calls[pn] then st = "call"
-        elseif h.sqst == "blitz" then st = "cmdr"
+        elseif h.sqst == "blitz" or h.sqst == "dbl" then st = "cmdr"
         elseif cm and h.sqst == "nego" then st = "nego:C" .. cm
         elseif cm then st = "C" .. cm
         elseif accepted and accepted[pn] then st = "bac:C" .. accepted[pn]
@@ -787,7 +788,13 @@ function M.availability(state, info, help_target_id)
     ok, reason = false, "na"
   else
     local g = state.goal
-    if g and g.kind == "attack_pill" and help_target_id and g.target_id == help_target_id then
+    -- C.BLITZ_NO_DOUBLE_TAKE: our own take on the pill is a double take
+    -- (pt2_dbl.no_blitz; attack.lua latches it every tick of the take).
+    -- No world here: the latch and the take's own plan decide.
+    if C.BLITZ_NO_DOUBLE_TAKE and g and g.kind == "attack_pill"
+       and require("pt2_dbl").no_blitz(state, g, nil, info, state.tick or 0) then
+      ok, reason = false, "dbl"
+    elseif g and g.kind == "attack_pill" and help_target_id and g.target_id == help_target_id then
       ok, reason = true, nil
     else
       ok, reason = false, "bz"
@@ -848,6 +855,7 @@ local _ARB_AIM_Y = { 128, 1, 1, 254, 254 }
 local function blitz_spot_shot_blocked(world, sfx, sfy, pmx, pmy, now, pn, quiet)
   local ox = math.floor(sfx * 256 + 0.5)
   local oy = math.floor(sfy * 256 + 0.5)
+  local omx, omy = bit.rshift(ox, 8), bit.rshift(oy, 8)  -- spot tile: boat or land shot
   local margin = C.BLITZ_SPOT_LOS_MARGIN or 0
   if margin > 0 then
     local idx = SM.clear_aim_margin(ox, oy, pmx, pmy, world, margin,
@@ -865,8 +873,7 @@ local function blitz_spot_shot_blocked(world, sfx, sfy, pmx, pmy, now, pn, quiet
         if t.mx == pmx and t.my == pmy then reached = true; break end
         local tt = U.ttype(t.mx, t.my)
         if tt == C.T_BUILDING or tt == C.T_HALFBUILD then blocked = true; break end
-        local be = world and world.base_at and world.base_at[t.my * 256 + t.mx]
-        if be and be.base then blocked = true; break end
+        if U.base_tile_stops_tank_shell(world, t.mx, t.my, omx, omy) then blocked = true; break end
         if SM.pending_pill_at(world, t.mx, t.my) then blocked = true; break end
         local plist = world and world.pill_at and world.pill_at[t.my * 256 + t.mx]
         if plist then for _, e in ipairs(plist) do local pp = e.id and world.pills[e.id]; if pp and not pp.in_tank and (pp.health or 0) > 0 and pp.mx == t.mx and pp.my == t.my then blocked = true; break end end end
@@ -1794,7 +1801,11 @@ update_body = function(state, info, now, world)
   state._blitz_switch_to = nil
   if role == M.ROLE_COMMANDER and state.goal and state.goal.kind == "attack_pill"
      and (state.goal.substate == "approach" or state.goal.substate == "plan_position")
-     and state.goal.target_id and state.blitz_calls and state.cost_cache then
+     and state.goal.target_id and state.blitz_calls and state.cost_cache
+     -- C.BLITZ_NO_DOUBLE_TAKE: a double take (pt2_dbl.no_blitz) is not
+     -- dropped to help a blitz on another pill.
+     and not (C.BLITZ_NO_DOUBLE_TAKE
+              and require("pt2_dbl").no_blitz(state, state.goal, world, info, now)) then
     local mine = state.cost_cache["6:" .. state.goal.target_id]
     local my_cost = mine and mine.cost
     if my_cost then
@@ -1832,7 +1843,17 @@ update_body = function(state, info, now, world)
     state.squad_status         = "-"
   elseif role == M.ROLE_COMMANDER then
     local g = state.goal
-    if g and g.kind == "attack_pill" and g.target_id then
+    -- C.BLITZ_NO_DOUBLE_TAKE: a take under a double-take plan
+    -- (pt2_dbl.no_blitz) is no blitz. No ask, no call, no roster; the
+    -- status "dbl" tells committed soldiers to leave (soldier branch below).
+    local _dbl = g and C.BLITZ_NO_DOUBLE_TAKE
+                 and require("pt2_dbl").no_blitz(state, g, world, info, now)
+    if _dbl then
+      state.squad_status       = "dbl"
+      state.squad_blitz_roster = nil
+      state.squad_blitz_reject = nil
+      state.squad_blitz_accept = nil
+    elseif g and g.kind == "attack_pill" and g.target_id then
       state.squad_help_target  = g.target_id   -- commander's attack_pill IS the ask
       state.squad_blitz_target = g.target_id
       state.squad_status       = "blitz"
@@ -1922,7 +1943,12 @@ update_body = function(state, info, now, world)
       if bac then for s in tostring(bac):gmatch("%d+") do if tonumber(s) == self_pn then accepts_us = true break end end end
       local goal_ok = cslot and cslot.info
                       and (cslot.info.goal == "attack_pill" or cslot.info.goal == "capture_pill")
-      if cslot and cslot.active and not cdead and (call or accepts_us or goal_ok) then
+      -- C.BLITZ_NO_DOUBLE_TAKE: the commander says "dbl" (its take is a
+      -- double take, no blitz): it does not lead us, whatever else is stale.
+      local cmdr_dbl = C.BLITZ_NO_DOUBLE_TAKE and cslot and cslot.info
+                       and cslot.info.sqst == "dbl"
+      if cslot and cslot.active and not cdead and not cmdr_dbl
+         and (call or accepts_us or goal_ok) then
         -- Commander still leading. But if OUR OWN goal got pulled off the blitz
         -- (a reactive attack_tank, a flee, a refuel, kill_lgm, etc.) we must
         -- LEAVE the squad so the commander stops counting us — clearing
@@ -2110,6 +2136,7 @@ local STATUS_TEXT = {
   blitz = "blitz", join = "joining", free = "free", full = "squad full",
   lh = "no:low_hp", na = "no:no_ammo", bz = "no:busy",
   blitz_negotiating = "negotiating",
+  dbl = "double take",   -- C.BLITZ_NO_DOUBLE_TAKE: own double take, no blitz
 }
 
 -- Right-side roster HUD, grouped into squads. Always-on (raw overlay binding,

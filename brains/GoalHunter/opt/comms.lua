@@ -207,6 +207,15 @@ function M.process_message(sender, text, tick, state)
   -- Shield WALL tiles a commander is building (build_walls only). Blitz soldiers
   -- route their engage spot + aim point around these. Merged via set_handshake;
   -- empty payload clears (commander left build_walls).
+  -- PT2_CHAIN_CLAIM: the other pills of an ally's v2 chain ("<target> <id>
+  -- ..."); empty clears. Kept in pt2_claim (not slot.info, which the ally's
+  -- /info extra evicts); honoured only while the ally's goal is attack_pill
+  -- on <target>.
+  if text:sub(1, 9) == "/info pch" and (#text == 9 or text:sub(10, 10) == " ") then
+    local pl = text:match("^/info pch (.+)$")
+    if state then require("pt2_claim").rx(sender, pl) end
+    return
+  end
   if text:match("^/info bwl") then
     if state then ally_state.set_handshake(sender, tick, "bwl", text:match("^/info bwl (.+)$")) end
     return
@@ -270,6 +279,24 @@ function M.process_message(sender, text, tick, state)
       end
       return
     end
+  end
+
+  -- ── Focused spike vote verbs (fso/fsy/fsn/fsr/fsg/fsa/fsu/fsk/fsc/fsp/fss) ──
+  -- One-shot, queued on state._fs_rx in arrival order; focus_vote.lua parses
+  -- and acts on them in its next update (C.FOCUS_SPIKE_RULE "deny").
+  -- Bug fix: fsk (go with claims), fsc (claim change) and fsp (placed) were
+  -- not in the class, so no teammate got them. test_focus_adaptive.lua
+  -- checks that every verb focus_vote.lua sends is accepted here. fss: the
+  -- picked spike spot (FOCUS_SPIKE_ALL_AGGRO).
+  if text:sub(1, 8) == "/info fs" and text:match("^/info fs[oynrgaukcps] ") then
+    if state then
+      state._fs_rx = state._fs_rx or {}
+      -- Capped: a bot with the vote off never drains the list.
+      if #state._fs_rx < 32 then
+        state._fs_rx[#state._fs_rx + 1] = { from = sender, text = text, tick = tick }
+      end
+    end
+    return
   end
 
   -- ── Bot-command ORDER verbs (obd bid / obc claim / obr release) ─────────

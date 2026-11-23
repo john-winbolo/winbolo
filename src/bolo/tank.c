@@ -1588,22 +1588,13 @@ bool tankShellInHitZone(GameSim *sim, tank *value, WORLD tankX, WORLD tankY,
 		return FALSE;
 	}
 	/* Shell hit-zone test — circle by default (see tank_hit_radius in
-	 * internal/tank.h). The tank's WORLD coordinates are its centre, so a
-	 * hit is a shell centre within tank_hit_radius of it. */
-#ifdef BOLO_LEGACY_SQUARE_COLLISION
-	return (abs(tankX - shellX) < 128 && abs(tankY - shellY) < 128);
-#else
-	int hitDX = (int)tankX - (int)shellX;
-	int hitDY = (int)tankY - (int)shellY;
-	/* Bounding-box pre-test before squaring: every point inside the radius
-	 * circle is also inside this box, so it never rejects a real hit — it
-	 * just bounds hitDX/hitDY to < tank_hit_radius so hitDX*hitDX can't
-	 * overflow int for far-apart shell/tank pairs (the per-shell loop tests
-	 * every tank regardless of distance). */
-	const int hitR = (int) sim->rules.tank_hit_radius;
-	return (abs(hitDX) < hitR && abs(hitDY) < hitR &&
-	        (hitDX * hitDX + hitDY * hitDY) < hitR * hitR);
-#endif
+	 * internal/tank.h), the 128 box under BOLO_LEGACY_SQUARE_COLLISION.
+	 * The tank's WORLD coordinates are its centre, so a hit is a shell
+	 * centre within tank_hit_radius of it. The test itself is
+	 * utilIsTankHit, the one the pill aim prediction and the brain's shot
+	 * simulator use too, so the three cannot drift apart. */
+	return utilIsTankHit(tankX, tankY, 0, shellX, shellY, 0,
+	                     (WORLD) sim->rules.tank_hit_radius);
 }
 
 

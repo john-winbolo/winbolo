@@ -97,7 +97,7 @@ M.IDS = {
   hud_resources      = { short = "HUD: resources",
                          long  = "Shells/Mines/Armour/Trees/Speed/Boat counters" },
   hud_tick_info      = { short = "HUD: tick info (think_ms / phase / goal / capacity tier)",
-                         long  = "Top-left lines under the big TICK box. Brain-side timing via os.clock; color codes the think_ms cell green<5/yellow<10/orange<20/red>=20. Also shows the execution capacity tier (\"capacity: tier N/10\"), color-shifted toward red as the tier drops (red<=3, orange<=5, yellow<=7) so you can filter/search for 'tier' to find it." },
+                         long  = "Top-left lines under the big TICK box. Brain-side timing via clock_us (wall clock); color codes the think_ms cell green<5/yellow<10/orange<20/red>=20. Also shows the execution capacity tier (\"capacity: tier N/10\"), color-shifted toward red as the tier drops (red<=3, orange<=5, yellow<=7) so you can filter/search for 'tier' to find it." },
   hud_replan         = { short = "HUD: replan + phase",
                          long  = "Replan countdown + phase + reason" },
   hud_goal           = { short = "HUD: current goal",
@@ -211,6 +211,34 @@ M.IDS = {
   shield_blocker_union   = { short = "Shield: blockers union (lua version)",
                              long  = "Union across all candidate standoff angles. BLACK = every tile a pillbox bullet crosses (raw, NO gating — was even considered, incl. tiles our own shot crosses). On top: green=actual wall/pill, yellow=potential buildable, grey=LGM-unreachable (these passed every gate). So black-only = on a shot path but REJECTED (too close/behind/unbuildable); no box = never considered. ON forces the slow lua version of shield.scan; OFF uses the fast c version. Default OFF so unattended -braindebug hosts keep the c version.",
                              default_on = false },
+  -- Pill take v2 (pt2_viz.lua). BrainTest V window section "Pill take v2".
+  -- Drawn from v2's own result, kept once per
+  -- evaluation; v2 runs in debug runs with PT2_SIDE_BY_SIDE_LOG, or with the
+  -- master PILLTAKE_V2_EVALUATOR on.
+  pt2_light      = { short = "PT2: pill range",
+                     long  = "Each live pill v2 knows: a circle at its firing range (2048 wu) and a faint circle at its shell reach (start step + 64 steps x 32 wu = 2208 wu). Red hostile, green allied, grey neutral.",
+                     default_on = false },
+  pt2_shadow     = { short = "PT2: shadows",
+                     long  = "64 wu cells over the ring band around the target (inner ring - 1 to ring + 1). A cell is filled in a pill's colour when that pill's shell aimed at the cell centre stops short, or meets cover >= that ray's bar, with v2's planned blockers in place (the same SH.cast test v2 makes). Dark cells are in every pill's shadow. Computed once per evaluation, only while this layer is on.",
+                     default_on = false },
+  pt2_rays       = { short = "PT2: pill shell rays",
+                     long  = "From each pill in range of v2's best point: the engine shell walk to the tank. Red = reaches the tank with cover under the bar, green = covered (ends at the first blocker), grey = dies before the tank. Orange dot = the chain link (a hostile pill the shell passes). Label d=cover/bar.",
+                     default_on = false },
+  pt2_chain      = { short = "PT2: chain",
+                     long  = "v2's chain: number on each chain pill (1 = target), an arrow from each pill to the next link, and HOLD/SINGLE, kills, need and have under the target.",
+                     default_on = false },
+  pt2_candidates = { short = "PT2: candidates",
+                     long  = "Every ring point v2 tried: green safe, yellow not safe, red rejected (no clear shot, target out of range). The best point is the white dot. Click a box (D inspector) for its tier key (safe, kills, blk, capped leeway) and score = base + builds x cost.",
+                     default_on = false },
+  pt2_leeway     = { short = "PT2: leeway",
+                     long  = "The 8 neighbour points (32 wu out) of v2's best point: green when the point is still covered with the same chain, red with the failing test name.",
+                     default_on = false },
+  pt2_blocker    = { short = "PT2: blockers",
+                     long  = "v2's cover for the best point: existing walls (blue) and allied pills (green) as filled squares, squares to build as outlines with build order; a pill drop slot is marked P.",
+                     default_on = false },
+  pt2_compare    = { short = "PT2: v1 vs v2",
+                     long  = "Side by side: v1's standoff (magenta ring) and its blockers (magenta outlines); v2's standoff (cyan dot), its builds and chain links (cyan); a line between the two with the distance in wu and the diff word; why= under v1's point is v2's verdict on it. D inspector entry pt2_cmp holds the whole PT2_CMP line.",
+                     default_on = false },
   shield_scan_trajectory = { short = "Shield: trajectories",
                              long  = "Green circles on outgoing tiles + red squares on return-fire path + colored aim line" },
   shield_scan_legend     = { short = "Shield: legend",
@@ -274,8 +302,19 @@ M.IDS = {
                              long  = "Top-5 reposition candidates as a HUD table: rank, pill #, score (lower = more worth moving), tile, and whether this bot can carry the move out. Table form of 'Reposition scores'." },
   reposition_votes       = { short = "Reposition votes (table)",
                              long  = "Per-ally reposition-vote table: one colored square per ally (yellow = vote ongoing, green = passed, red = failed) plus a notes column — who is INITIATING the vote, who voted YES/NO, and (for this bot) the REASON it voted that way." },
+  -- Focused spike (focus_viz.lua). BrainTest V window section "Focused spike".
+  focused_spike_clusters = { short = "Focused spike: Clusters",
+                             long  = "Each base cluster of this bot's last focused-spike plan, one color per cluster: a line between every two bases within FOCUS_SPIKE_CLUSTER_GAP (euclid, the single-link rule), b<id> ours/target at each base, a green ring on a base within pill range of our live pill, a yellow square on a base within range of a live neutral pill (FOCUS_SPIKE_NEUTRAL_PILL_COVER), and a label: bases (ours/target), need, risk = spot + route + detour + tanks - credit, and rank = bases / (need + W x risk). Changes at the plan rate (about 1/s)." },
+  focused_spike_plan     = { short = "Focused spike: Best plan",
+                             long  = "The best focused-spike plan of this bot: each spike spot (magenta square), its pill-range cover circle, and its stand place (cyan square, with its risk) with a line from the stand place to the spike spot." },
+  focused_spike_votes    = { short = "Focused spike: Votes",
+                             long  = "HUD panel of the focused-spike vote as this bot saw it: plan id, proposer player N, open time, cluster and bases (yellow rings on the map), spike spots, need; each bot's ballot (yes / no and the reason / silent = yes) and pledge (0 with armour under FOCUS_SPIKE_PLEDGE_MIN_ARMOR); the result with yes against more than half the team bots and pledges against need; the go list (spike spot to player N); any abort and its reason; the cooldown left. Kept 10 s after the vote ends." },
+  focused_spike_active   = { short = "Focused spike: Active plan",
+                             long  = "The active focused-spike plan: red double rings on its target bases, and each spike spot with player N and its state (going / placed / dropped / gone)." },
   wounded_pill_marker    = { short = "Wounded pill marker",
                              long  = "Marker on the wounded-pill carryover target" },
+  human_pill_claim       = { short = "Human pill claim",
+                             long  = "HUMAN_PILL_YIELD (human_intent.lua): each allied human this bot sees, with its heading cone (HUMAN_YIELD_CONE_DEG, HUMAN_YIELD_RADIUS_TILES long); its cone candidate pill (yellow ring) with the hold timer; and each claimed dead pill (magenta ring) with the owner player N, how it was claimed (close / shot / cone) and the claim time, or the time left after a release. Grey = the bot does not yield (an enemy is clearly closer, or a person's order is on that pill)." },
   kill_pickup            = { short = "Fresh-kill pickup",
                              long  = "Ring + tank line on the pill we just killed and are committing HARD to grab (yellow=ours, magenta=yielded to a higher-armour blitz ally)" },
   pool6_self_dr          = { short = "self_dr per pool-6 pill",
@@ -427,6 +466,12 @@ M.IDS = {
   kill_lgm_status = { short = "Kill-LGM status",
                       long  = "Per-LGM kill-evaluation labels (dist / aim corr / LOS clear-blocked / would-fire) plus a HUD summary line for the chosen target. Always shows when at least one hostile LGM is in view." },
 
+  capture_lgm_track = { short = "Capture-LGM track radius",
+                      long  = "Faint ring around the tank on every capture-pill LGM hunt tick: the straight-line radius (CAPTURE_LGM_HUNT_TRACK_TILES) inside which a hostile LGM can be the man the hunt tracks, whichever way the nose points. He must also be inside the pill's hunt radius (drawn by kill_lgm_status). Nothing is drawn while C.LGM_KILL_IMPROVED is false, because then admission is the old along-the-heading test and a circle would not be the shape the code uses." },
+
+  capture_lgm_aim_range = { short = "Capture-LGM aim-refinement range",
+                      long  = "Faint amber ring around the tank on every capture-pill LGM hunt tick: LGM_KILL_AIM_TILES, the straight-line distance inside which the quarter-tile aim refinement (LGM_KILL_AIM_WU) is allowed to take the turn and sight keys. A man outside it is still hunted and still shot at -- the sight follows him and the nudge leans the tank -- but the refinement stands down, because that far out the sharper turn bends the approach line to the corpse. Nothing is drawn while C.LGM_KILL_IMPROVED is false (there is no refinement) or while the knob is 0 (no limit, so there is no ring)." },
+
   capture_lgm_misses = { short = "Capture-LGM miss count",
                       long  = "During a capture_pill LGM hunt, a 'misses=N' label over the tank: the running count of consecutive capture-target shots at the current man whose flight completed with him still alive. Resets on a kill/leave (record dropped) or target change. The miss CAP is currently disabled, so this only reports -- it does not stop firing." },
 
@@ -435,10 +480,20 @@ M.IDS = {
                        long  = "The side-quest the LGM is currently out on (builder_pool.lua): a line from the TANK to the target tile, a ring on the target, and a '<type> <phase> eta=Nt' label. The line starts at the tank because the tank is both ends of the trip -- that round trip is what BUILDER_POOL_TRIP_W is charged on. Colour is the phase: pale blue outbound, green working (he is standing on the tile), amber returning. Nothing renders when no job is live." },
 
   builder_pool_leash = { short = "Builder pool: leash",
-                         long  = "The leash circles around the tank, drawn only while a job is live. BLUE is BUILDER_POOL_LEASH (8 tiles), the reach of the FARM row. GREEN is BUILDER_POOL_REPAIR_LEASH (11 tiles), the reach of the rebuild/topup rows under BUILDER_POOL_REPAIR_LINEAR -- only drawn when the two differ, so preset=keel shows the single blue 8 it actually uses. These are the exact radii discover() measures against (MANHATTAN, so the true shape is a diamond): a pill outside the green one is an out_of_leash REJECT row on the BUILDER strip and belongs to the repair_pill tank goal instead." },
+                         long  = "The leash circles around the tank, drawn only while a job is live. BLUE is BUILDER_POOL_LEASH (8 tiles), the reach of the FARM row. GREEN is BUILDER_POOL_REPAIR_LEASH (11 tiles), the reach of the rebuild/topup rows under BUILDER_POOL_REPAIR_LINEAR -- only drawn when the two differ, so preset=keel shows the single blue 8 it actually uses. These are the exact radii discover() measures against (straight line under BUILDER_LEASH_EUCLID, so the circle is the true shape; with the knob off it is Manhattan and the true shape is a diamond): a pill outside the green one is an out_of_leash REJECT row on the BUILDER strip and belongs to the repair_pill tank goal instead." },
 
   builder_pool_shell_gate = { short = "Builder pool: shell gate",
                        long  = "Why the pool refused to send the man THIS tick (danger.lgm_shell_gate). Amber polyline = the man's predicted walk, the exact per-tick positions the gate simulated (cpf_lgm_walk_path), cut off at LGM_SHELL_PREDICT_TICKS (63 ENGINE ticks, the longest a shell can live). Red circle = the predicted impact point with the engine's own LGM blast area, in the lgm_blast_shape rule's shape: by default a circle of MAP_SQUARE_MIDDLE (128 world units, half a tile), a box 128 each way for the Mac Bolo box, or a circle of 144, each stopped at the pill_range rule when that is shorter (a second circle of pill_range on the box); the red line runs from it to where the man is predicted to be standing on that tick, and the label names the shell's source and the tick offset -- the same two facts the `shell_will_hit` reject string carries. Nothing renders unless the gate is refusing right now, and the walk polyline needs a -brain-debug build (that is the only build that copies the walk)." },
+
+  -- The QUICK REPAIR overlays (quick_repair.lua, C.QUICK_REPAIR_ON_TAKE),
+  -- BrainTest category "Quick repair". All ticks are brain ticks (= game
+  -- ticks: shells, the builder and the reload all move once per think).
+  quick_repair_blocker = { short = "Quick repair: blocker",
+                           long  = "The take-blocker pill the quick repair is timing (quick_repair.lua). Chosen from the friendly/allied pills on a blocker tile of this take (p._in_use) with health below max: lowest health first (dead first), then nearest to the tank, then tile key. Tinted square + ring + label 'QR <state> hp=h/15 <detail>'. State: send (green: this tick the pool gets a quick row for it), early (yellow: 'opens in Nt' = T_safe + QUICK_REPAIR_MARGIN_TICKS - T_repair), death (red: danger.lgm_certain_death names the shell, its +t and its ending), nokill (grey: T_kill unknown), wood (brown: trees < the repair's need, shown), man (blue: builder not in the tank, afloat, or out on a pool job), reach (grey: the walk sim cannot get him there)." },
+  quick_repair_kill = { short = "Quick repair: kill + hits",
+                        long  = "The T_kill and T_safe inputs (quick_repair.lua). Orange ring on the target pill with 'kill @+N (src, hp h)'. src inflight: '= shell #h of n in flight' -- our in-flight shells that reach the target tile (update_shot_accounting) sorted by landing tick, the h-th kills it. src predict (QUICK_REPAIR_PREDICT_SHOTS, take in a firing substate): '= n in flight + r to fire: first @+F, every Rt, last @+L, flight Ft' -- r = h - n shots, the first at +1 (gun ready) or +R (reloading), one reload R apart, each landing flight F later (F = ceil((distance - 128 - 5x32) / 32)); kill = max(L + F, last in-flight landing). src dead: the target is at 0, kill = now. Magenta line from each non-friendly shell in the air whose flight reaches the blocker tile (stopped only by a wall or another live pill) to the blocker, labelled '<src> hits blocker +t'. T_safe = max(kill, every +t)." },
+  quick_repair_walk = { short = "Quick repair: walk + window",
+                        long  = "The builder's walk to the blocker (cpf_lgm_walk_path, first 128 ticks) in the state colour, and beside the tank the whole rule with numbers: 'T_repair +N = 1 + walk W (armour on arrival; dwell 20 after) | T_safe +S = max(kill +K, last hostile hit +H) | need T_repair >= T_safe + margin M -> result'. The +1 is the tick he leaves the tank; the armour comes back on the arrival tick (lgm.c lgmMoveAway calls lgmDoWork before the LGM_BUILD_TIME stand), so the dwell is not in T_repair. walk is builder_pool.lgm_trip's out leg (16 next door, else cpf_lgm_travel_ticks_map). A send also needs the builder in the tank, the wood, and no certain death; those show on the blocker label." },
 
   lgm_registry_hud = { short = "HUD: LGM registry",
                        long  = "Right-side HUD table with one row per known player_num's LGM state (status / tile / source / respawn countdown). Sourced from lgm_registry." },
@@ -450,7 +505,13 @@ M.IDS = {
                        long  = "Magenta ring on the chosen engage tile (the closest-reachable in-range boundary tile around the LGM, picked by refresh_kill_lgm) + a line from the tank to that tile. Shows where the bot is driving while out of range." },
 
   kill_lgm_predict = { short = "Kill-LGM lead prediction",
-                       long  = "Ring + line from each visible LGM to the predicted shell-impact tile. Colored by predictor tier: yellow=linear (no straight-line lock yet), cyan=destination-locked engine sim (3-window match active). PRED label shows flight_ticks + tier." },
+                       long  = "Ring + line from each visible LGM to the predicted shell-impact tile. Colored by predictor tier: yellow=linear (no straight-line lock yet), cyan=destination-locked engine sim (3-window match active), magenta=dest_pill (LGM_DEST_AIM: he is on a dead pill's tile at impact, aim at its centre), lilac=dest_pill_lead (walking to that pill at impact; with LGM_DEST_INTERCEPT this is the walk-in shot that meets him before the pill tile, fire allowed), gray=dest_pill_hold (LGM_DEST_HOLD_FIRE: aimed at the pill centre, trigger held because the blast would not go off while he is on its tile). PRED label shows flight_ticks + tier." },
+
+  kill_lgm_dest_pill = { short = "Kill-LGM destination pill",
+                         long  = "LGM_DEST_AIM: the heading kill_lgm.find_dest_pill fitted for each enemy LGM and the hostile pill it locked (dead, or live below full armour with LGM_DEST_LIVE_PILLS). White line = the oldest->newest chord of the fit window (LGM_DEST_WINDOW_TICKS). Thin line = the ray ahead, LGM_DEST_RAY_TILES long. Side lines = the pill-centre tolerance, max(LGM_DEST_PERP_WU, along x tan(LGM_DEST_PERP_DEG)). Magenta tile + dot = the locked pill; its centre is where the aim snaps when the predicted impact falls on that tile (tier dest_pill in Kill-LGM lead prediction). LGM_DEST_HOLD_FIRE line under the pill: 'holding fire (early|late)' or 'FIRE window', with the step the shell goes off and his on-tile window [s_enter, s_arrive + 20 + s_exit]: s_enter = first sim step he is on the pill tile, s_arrive = the step he reaches the centre, 20 = LGM_BUILD_TIME he stands there, s_exit = walk-off steps after the build that still leave him on the tile (sim from the centre toward his tank; exit=tank when it is visible, tank_last = where it was last seen, mirror = no tank position so s_exit = s_arrive - s_enter; 'stalled' = the sim stopped him on the tile). The pill is live after his arrival, so a shell in the tile during the walk-off goes off at the centre and kills him. LGM_DEST_INTERCEPT line instead: 'INTERCEPT walk-in hit step=N on-tile step=M D=..' when the lead point (the sim stops him at the pill centre, never through it) is off the pill tile, within 14*128 wu, and no live pill stops the shell first: the shot meets him on his walk in. LGM_DEST_PASS_THROUGH: gray tile + 'PASSED pill#N' = a pill he walked on more than 16 wu past without stopping (not his job; never locked again until his heading is lost). No lock: the fallback reason under the man (warming, stopped, zigzag, turned_back, sliding, returning, no_pill, ambiguous)." },
+
+  kill_lgm_dest_target = { short = "Kill-LGM predicted pill",
+                           long  = "LGM_DEST_AIM (Hard only): which hostile pill this bot predicts the enemy LGM is walking to -- the same elm.dest_pill the lead aim and the hold-fire gate use. Orange tile with an orange band framed in black + crosshair on the pill centre. Bold orange line + arrow from the enemy LGM to the pill, orange ring on the LGM. White X = the gate's actual aim point this tick. Dashed pale-orange line + ring from THIS bot's tank to the pill, with 'LGM DEST -> pill #N' over the tank, so it is clear which bot made the prediction. Label above the pill: pill id and bot name. Label below: dead / hp N, the state (HOLD FIRE (early|late), FIRE WINDOW, AIM CENTRE, INTERCEPT walk-in hit=<step the shell meets him> on-tile=<step he would step onto the pill tile> (LGM_DEST_INTERCEPT: fire on the walk in, before the pill), LEAD (walking in)); with a hold verdict also 'off=<step the shell goes off> on=[s_enter,s_arrive+20+s_exit]' (20 = LGM_BUILD_TIME, s_exit = walk-off steps still on the tile; a trailing 'm' = mirror, no tank position so s_exit = s_arrive - s_enter) and the kill-LGM gate status. No lock: a small 'no dest: <reason>' under the LGM." },
 
   kill_lgm_sim_path  = { short = "Kill-LGM forward sim path",
                          long  = "Dotted trail of the LGM's projected positions out to shell-impact-ticks, using the engine-faithful sim (terrain v_max, wall sliding, corner blocks). Only drawn when predict_aim picked the dest_lock tier (3 matching 10-tick velocity windows → straight-line walk detected); nothing shown for the linear fallback." },
@@ -625,6 +686,7 @@ M.COLLECT_EXEMPT = {
   label_hud_overlays    = true,
   pill_best_spots_back  = true,
   pill_best_spots_aggro = true,
+  pt2_shadow            = true,   -- about 1400 shell walks per pill per evaluation
 }
 local _collect_exempt = M.COLLECT_EXEMPT
 
@@ -644,6 +706,8 @@ function M.refresh()
   -- Headless host: the recorder drops every RECORD_SKIP id before it writes
   -- the frame and nothing shows it live, so keep those ids off.
   local rec_skip = M._headless and M.RECORD_SKIP or nil
+  -- Headless host: RECORD_ON ids record even with default_on = false.
+  local rec_on = M._headless and M.RECORD_ON or nil
   for id in pairs(M.IDS) do
     if rec_skip and rec_skip[id] then
       _on[id] = false
@@ -659,6 +723,8 @@ function M.refresh()
       local g = _G[gn]
       if g ~= nil then
         _on[id] = g
+      elseif rec_on and rec_on[id] then
+        _on[id] = true
       else
         -- No host toggle pushed (winbolods / release client): honor the
         -- declared default. default_on=false viz (e.g. label_hud_overlays)
@@ -691,6 +757,7 @@ function M.is_on(viz_id)
   end
   local g = _G["_BT_VIZ_" .. viz_id:upper()]
   if g ~= nil then return g end
+  if M._headless and M.RECORD_ON[viz_id] then return true end
   local entry = M.IDS[viz_id]
   if entry and entry.default_on == false then return false end
   return true
@@ -774,6 +841,12 @@ M.RECORD_SKIP = {
   label_overlays = true,
   attack_scan_spots_all_pills = true,
 }
+
+-- Ids a headless debug host (winbolods -brain-debug, no V window) records
+-- although they default off, so a session loaded in BrainTest has them.
+-- Modules add their own ids here at load (pt2_attack.lua adds the pt2_*
+-- layers when PT2_RECORD_LAYERS is on). Drawing only: no decision reads it.
+M.RECORD_ON = {}
 
 -- CSV of viz indices for the RECORD_SKIP categories (resolved via the live
 -- _BT_VIZ_IDS map). The recorder marks these viz_idx values and drops matching

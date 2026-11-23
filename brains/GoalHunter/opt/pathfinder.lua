@@ -102,8 +102,16 @@ function M.pill_shots_clear(spot_wx, spot_wy, pill, world,
         if t.mx == pmx and t.my == pmy then break end
         if not (t.mx == origin_mx and t.my == origin_my) then
           local idx = t.my * 256 + t.mx
-          if world.pill_at and world.pill_at[idx] then
-            blocked = true; break
+          local plist = world.pill_at and world.pill_at[idx]
+          if plist then
+            if not C.SHOT_PATH_SKIP_DEAD_PILLS then
+              blocked = true; break
+            end
+            -- SHOT_PATH_SKIP_DEAD_PILLS: only a live pill stops the shell
+            for _, e in ipairs(plist) do
+              if U.pill_entry_stops_shell(world, e, t.mx, t.my) then blocked = true; break end
+            end
+            if blocked then break end
           end
           local tt = U.ttype(t.mx, t.my)
           if tt == C.T_BUILDING or tt == C.T_HALFBUILD then

@@ -38,6 +38,7 @@
 #endif
 
 #include "global.h"
+#include "pool_render_host.h"  /* poolRenderDupBrainString */
 #include "bolo_map.h"
 #include "pillbox.h"
 #include "bases.h"
@@ -61,6 +62,7 @@
 #include "screenbrainmap.h"
 #include "input_packet.h"
 #include "bot_manager.h"
+#include "brain_gc.h"
 #include "bot_worker_pool.h"
 #include "brain_list.h"    /* brainListLoadModesForPath — the mode/level keys */
 #include "brain_worldsim.h"
@@ -234,6 +236,26 @@ static BotContext *botFromLua(lua_State *L) {
     return slot ? *(BotContext **)slot : NULL;
 }
 
+/* The module name for a kill site: the file name of the chunk, with no
+ * folders. short_src cuts a long chunk name at LUA_IDSIZE from the left,
+ * so a Bot Host brain (chunk "/home/.../bothost_cache/<hash>/goals.lua")
+ * printed as "[string "/home/andrew/winbolo-test/build-bh/bothost_ca..."]"
+ * and the module was lost. A chunk whose source is code, not a name (it
+ * holds a new line), keeps short_src. Returns a pointer into loc. */
+static const char *brainKillSiteName(const lua_Debug *loc) {
+    const char *src = loc->source;
+    const char *base;
+    const char *p;
+    if (src == NULL || src[0] == '\0') return loc->short_src;
+    if (src[0] == '@' || src[0] == '=') src++;
+    if (strchr(src, '\n') != NULL) return loc->short_src;
+    base = src;
+    for (p = src; *p != '\0'; p++) {
+        if (*p == '/' || *p == '\\') base = p + 1;
+    }
+    return base[0] != '\0' ? base : loc->short_src;
+}
+
 /* Lua count hook installed for the duration of brain.think(). Fires
  * every ~1000 VM instructions; checks the per-bot deadline and, on
  * overrun, sets abort_flag and longjmps out via luaL_error. */
@@ -253,7 +275,7 @@ static void brainBudgetHook(lua_State *L, lua_Debug *ar) {
             lua_Debug loc;
             if (lua_getstack(L, 0, &loc) && lua_getinfo(L, "Sl", &loc)) {
                 SDL_snprintf(bot->killSite, sizeof(bot->killSite), "%s:%d",
-                             loc.short_src, loc.currentline);
+                             brainKillSiteName(&loc), loc.currentline);
             } else {
                 bot->killSite[0] = '\0';
             }
@@ -1505,6 +1527,9 @@ void botRunnerPrepareThink(BotContext *bot, GameSim *world,
                                      world->rules.shell_speed,
                                      world->rules.shell_start_add,
                                      world->rules.gunsight_max);
+        brainPathfinderSetShotRules(bot->brain.pathfinder,
+                                    world->rules.pill_fire_length,
+                                    world->rules.tank_hit_radius);
     }
 
     /* NOTE: dead tanks (waiting to respawn) used to skip the think entirely.
@@ -1710,19 +1735,29 @@ static void runBotThinkJob(int botIndex, void *userData) {
      * brain_record in stage 3. */
     if (j->poolJson) { free(j->poolJson); j->poolJson = NULL; }
     if (!j->wasKilled && brainRecordPoolCaptureWanted(sim, bot->playerNum)) {
+        uint64_t _tp0 = SDL_GetPerformanceCounter();
         j->poolJson = botManagerEvalLuaString(sim, bot->playerNum,
-                          "return brain.get_pool_breakdown_json()");
+                          brainRecordPoolExpr());
+        brainRecordAddPoolEvalMs(bot->playerNum,
+            (double)(SDL_GetPerformanceCounter() - _tp0) * 1000.0
+            / (double)SDL_GetPerformanceFrequency());
     }
+
+    botRunnerCollectGarbage(bot);
 
     if (sim->botMgr.preThinkHook) sim->botMgr.preThinkHook(-1);
 }
 
 void botRunnerCollectGarbage(BotContext *bot) {
-    /* The Bot Host calls this after each think and pool capture
-     * (bothost_main.c hostThinkJob). It does nothing on this branch: #664
-     * (bot-improvements-for-2.2.1a) fills it with the Lua collection from
-     * brain_gc.c and calls it from runBotThinkJob too. */
-    (void)bot;
+    /* Lua collection in the time this bot has left before its think
+     * deadline (brain_gc.c), for a brain that asked for it. After the think
+     * and after the pool capture, so it is never in lastThinkMs and never
+     * under the budget hook; it ends BRAIN_GC_MARGIN_MS before the deadline,
+     * so the bot's share of the tick is not made longer. */
+    if (bot->brain.L != NULL && bot->brain.running) {
+        brainGcAfterThink(bot->brain.L, bot->thinkDeadlineCounter,
+                          (int)bot->playerNum, NULL);
+    }
 }
 
 void botManagerTick(ServerSim *sim, aiType ai) {
@@ -2894,12 +2929,12 @@ char *botBrainEvalLuaString(lua_State *L, const char *src) {
     }
     char *result = NULL;
     if (lua_isstring(L, -1)) {
-        const char *s = lua_tostring(L, -1);
-        if (s) {
-            size_t n = strlen(s);
-            result = (char *)malloc(n + 1);
-            if (result) memcpy(result, s, n + 1);
-        }
+        size_t len = 0;
+        const char *s = lua_tolstring(L, -1, &len);
+        /* A raw pool block holds NUL bytes; this escapes them so the C
+         * string keeps the whole block (see pool_render_host.h). Any other
+         * string is copied as before. */
+        if (s) result = poolRenderDupBrainString(s, len);
     }
     lua_pop(L, 1);
     return result;
