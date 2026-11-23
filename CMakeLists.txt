@@ -5007,6 +5007,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # man_dead_pill_terrain_speed: the builder's speed on the square of a
     # dead pillbox.
     tests/unit/test_man_dead_pill_speed.c
+    # lgm_helicopter_speed: the parachute flies the rule's own speed on
+    # every heading, and the rule takes a fraction.
+    tests/unit/test_lgm_parachute_speed.c
     # lgm_blast_shape: the open-ground area round an explosion that kills a
     # builder.
     tests/unit/test_lgm_blast_shape.c
@@ -6696,6 +6699,11 @@ set(_unit_test_names
     man_dead_pill_walk_across_water
     man_dead_pill_lifted_waits_for_tank
     man_dead_pill_brain_walk
+    lgm_parachute_speed_same_on_every_heading
+    lgm_parachute_speed_takes_a_fraction
+    lgm_parachute_wide_step_lands
+    lgm_parachute_moved_in_flight
+    lgm_parachute_put_back_starts_exact
     lgm_blast_shape_half_square
     lgm_blast_shape_mac_box
     lgm_blast_shape_mac_area

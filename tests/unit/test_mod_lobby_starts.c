@@ -381,7 +381,7 @@ static const MlsRule kMlsRules[] = {
     MLS_RULE(pill_attack_min_ticks,        MLS_PART_PILL_ANGER,   5),
     MLS_RULE(big_explosion_threshold,      MLS_PART_SUPERBOOM,    60),
     MLS_RULE_FLT(pill_fire_length,         MLS_PART_PILL_SHELL_RANGE, 8.25f),
-    MLS_RULE(lgm_helicopter_speed,         MLS_PART_PARACHUTE,    2),
+    MLS_RULE_FLT(lgm_helicopter_speed,     MLS_PART_PARACHUTE,    2.0f),
     MLS_RULE(lgm_blast_shape,              MLS_PART_BUILDER_BLAST, 1),
 };
 

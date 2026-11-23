@@ -2863,7 +2863,7 @@ they are impassable by terrain type rather than by having no speed.
 | `lgm_cost_mine` | 1 | 0 and up | Mines the builder spends to lay a mine. |
 | `lgm_pill_repair_load` | 4 | 1 to 255 | Trees the builder takes for one pillbox repair, times `lgm_cost_pill_repair`. Each one is worth `pill_repair_amount` armour at the pillbox. |
 | `lgm_gather_trees` | 4 | 1 to 255 | Trees the builder brings back from one square of forest. The tank holds its trees in a single byte, so keep `tank_full_trees` plus this at most 255: past that, a nearly full tank's trees wrap round and it loses them. |
-| `lgm_helicopter_speed` | 3 | 1 to 255 | How far the builder travels each tick while he parachutes in, so it is also how long he is in the air: the drop is the distance over this. The rule's name is the one the code has always carried for the drop; everything a player meets calls it a parachute, `game.builder_parachute` included. See the note below the table before you raise it. |
+| `lgm_helicopter_speed` | 3 | 0.01 to 255.0 | How far the builder travels each tick while he parachutes in, in world units, so it is also how long he is in the air: the drop is the distance over this. It need not be a whole number, and he flies it on every heading. The rule's name is the one the code has always carried for the drop; everything a player meets calls it a parachute, `game.builder_parachute` included. |
 | `lgm_arrive_tolerance` | 16 | 1 to 255 | How near his goal counts as arrived, as a half-width taken either way round it on both axes. The job itself is done on the square that was ordered, not the one he stopped on. |
 | `lgm_return_tolerance` | 128 | 1 to 65535 | The same, coming back to the tank. |
 | `lgm_pill_drop_search` | 10 | 1 to 255 | Removed, does nothing. The name is still accepted, so a script that sets it still runs. |
@@ -2871,12 +2871,12 @@ they are impassable by terrain type rather than by having no speed.
 | `lgm_boat_return_offset` | 160 | 0 to 255 | The same box for a builder coming back to a tank on a boat, which is how he gets back across the water to it. |
 | `lgm_blast_shape` | 0 | 0 to 2 | The area of open ground round an explosion that kills a builder, measured from the explosion to the builder. 0, "Half-square circle", the classic table, is the WinBolo rule: a circle of radius 128 world units, half a square, edge included. 1, "Mac Bolo box", is the Mac Bolo rule: a box that reaches under 128 from the explosion on each axis, so a builder 127 across and 127 down, about 180 off, dies. 2, "Mac Bolo equivalent area circle", is a circle of radius 144, edge included, about the same area as the box. An explosion on a building, a half building, a pillbox or a base still kills only a builder on that square, whatever the value. Every shape also stops at `pill_range`: a builder further than `pill_range` from the explosion is safe. That changes a shape only when `pill_range` is under its reach (128, about 180 and 144). The Mac Bolo Rules mod sets 1. |
 
-**Raising `lgm_helicopter_speed` means raising `lgm_arrive_tolerance` with
-it.** The drop steps straight at the tank and counts as landed once both axes
-are inside the arrival tolerance, so a step wider than that window steps over
-it and the man circles his tank without ever touching down. At the classic
-tolerance of 16, a speed of 90 fails to land on more than half its flights. A
-tolerance at or above the step lands every one of them.
+**A fast parachute needs no wider `lgm_arrive_tolerance`.** The drop flies
+straight at the tank and counts as landed once both axes are inside the
+arrival tolerance. A step that would carry the builder past the place lands
+him on it, so a step wider than the tolerance still touches down. It did not
+always: such a step used to go over the window, and scripts raised the
+tolerance to match the speed. One that still does keeps working.
 
 **Pillbox.**
 
