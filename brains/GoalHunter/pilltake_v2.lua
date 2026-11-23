@@ -124,6 +124,8 @@ end
 local sqrt, floor, sin, cos, rad, abs, min, max =
   math.sqrt, math.floor, math.sin, math.cos, math.rad, math.abs, math.min, math.max
 local atan2 = math.atan2 or math.atan
+local BIT = require('bitcompat')
+local bband, bbor, bbnot, blshift = BIT.band, BIT.bor, BIT.bnot, BIT.lshift
 local PI, TWO_PI = math.pi, 2 * math.pi
 
 -- Wedge edge margins (wu). A shell path is within a few wu of the straight
@@ -879,16 +881,29 @@ local function trip(ox, oy, sqs)
 end
 M._trip = trip
 
--- The wall plan for record rec on aim ai (lane). Returns the best solution
--- { k, depth, two, trip, items = { {sq, kind, shots} } in build order } or nil.
--- Every set of up to build_max legal squares on the uncovered paths is
--- tried (a DFS on the first path still short of its bar, so each set that
--- covers every path is met); the first size with a solution wins.
-local function search_walls(ctx, rec, ai)
+-- The wall plans for record rec on each aim of aims (each aim's lane).
+-- Returns { [ai] = the best solution { k, depth, two, trip, ai,
+-- items = { {sq, kind, shots} } in build order } }; an aim with no plan has
+-- no entry. Every set of up to build_max legal squares on the uncovered
+-- paths is tried (a DFS on the first path still short of its bar, so each
+-- set that covers every path is met); for each aim the first size with a
+-- solution wins; the search stops at the first size where any aim has
+-- one (plan_point compares the size first).
+-- S3: one DFS for all aims. A square's mask has a bit for each aim whose
+-- lane misses it; a branch whose chosen squares AND to 0 over the aims
+-- still without a plan is cut. A set is a solution of each aim in its
+-- mask, so each aim gets the same sets as a search of its own.
+local function search_walls_all(ctx, rec, aims)
   local inp = ctx.inp
-  local lane = rec.lanes[ai] or {}
-  local lane_set = {}
-  for _, s in ipairs(lane) do lane_set[s] = true end
+  local out = {}
+  local nA = #aims
+  if nA == 0 then return out end
+  local lanesets = {}
+  for i, ai in ipairs(aims) do
+    local ls = {}
+    for _, s in ipairs(rec.lanes[ai] or {}) do ls[s] = true end
+    lanesets[i] = ls
+  end
   -- the same for every aim, kept on the record: the squares in front of a
   -- used chain link (a blocker there cuts the chain), and the uncovered
   -- paths (need, existing shots per square)
@@ -922,22 +937,24 @@ local function search_walls(ctx, rec, ai)
   local U = {}
   for j, ub in ipairs(base.U) do U[j] = { r = ub.r, need = ub.need, on = ub.on, cand = {} } end
   -- legal squares: old's slot rules pass on some uncovered path the
-  -- square is on. All but the lane rule are the same for every aim, so
-  -- they are kept on the record (rec.slot_memo).
+  -- square is on (all but the lane rule are the same for every aim, kept
+  -- on the record: rec.slot_memo), and the lane of some aim misses it
   local memo = rec.slot_memo
   if not memo then memo = {}; rec.slot_memo = memo end
   local nolane = {}
-  local legal = {}
+  local maskof = {}
   for _, u in ipairs(U) do
     local r = u.r
     for k = 1, r.n_sq do
       local s = r.sq[k]
-      local l = legal[s]
-      if l == nil then
-        if lane_set[s] then
-          l = false
-        else
-          l = memo[s]
+      local m = maskof[s]
+      if m == nil then
+        m = 0
+        for i = 1, nA do
+          if not lanesets[i][s] then m = bbor(m, blshift(1, i - 1)) end
+        end
+        if m ~= 0 then
+          local l = memo[s]
           if l == nil then
             l = false
             for _, u2 in ipairs(U) do
@@ -954,10 +971,11 @@ local function search_walls(ctx, rec, ai)
             end
             memo[s] = l
           end
+          if not l then m = 0 end
         end
-        legal[s] = l
+        maskof[s] = m
       end
-      if l then u.cand[#u.cand + 1] = s end
+      if m ~= 0 then u.cand[#u.cand + 1] = s end
     end
   end
   local npb = inp.num_pill_blockers or 0
@@ -967,13 +985,13 @@ local function search_walls(ctx, rec, ai)
   local chosen, kinds = {}, {}
   local seen = {}
   local nodes = 0
-  local function dfs(pl, wl)
+  local function dfs(pl, wl, m)
     nodes = nodes + 1
     local j = nil
     for jj = 1, #U do if rem[jj] > 0 then j = jj; break end end
     if not j then
       if pl == 0 and wl == 0 then
-        -- a full set: record it once
+        -- a full set: record it once (its mask: the AND of its squares)
         local ks = {}
         for i = 1, #chosen do ks[i] = chosen[i] * 2 + (kinds[i] == "pill" and 1 or 0) end
         table.sort(ks)
@@ -982,7 +1000,7 @@ local function search_walls(ctx, rec, ai)
           seen[key] = true
           local it = {}
           for i = 1, #chosen do it[i] = { sq = chosen[i], kind = kinds[i] } end
-          sols[#sols + 1] = it
+          sols[#sols + 1] = { items = it, mask = m }
         end
       end
       return
@@ -1005,8 +1023,11 @@ local function search_walls(ctx, rec, ai)
       end
     end
     for _, s in ipairs(U[j].cand) do
-      local used = false
-      for i = 1, #chosen do if chosen[i] == s then used = true; break end end
+      local m2 = bband(m, maskof[s])
+      local used = m2 == 0
+      if not used then
+        for i = 1, #chosen do if chosen[i] == s then used = true; break end end
+      end
       if not used then
         for pass = 1, 2 do
           local kind, shots
@@ -1018,7 +1039,7 @@ local function search_walls(ctx, rec, ai)
               local e = U[jj].on[s]
               if e then rem[jj] = rem[jj] - (shots - e) end
             end
-            dfs(kind == "pill" and pl - 1 or pl, kind == "wall" and wl - 1 or wl)
+            dfs(kind == "pill" and pl - 1 or pl, kind == "wall" and wl - 1 or wl, m2)
             for jj = 1, #U do
               local e = U[jj].on[s]
               if e then rem[jj] = rem[jj] + (shots - e) end
@@ -1029,15 +1050,33 @@ local function search_walls(ctx, rec, ai)
       end
     end
   end
-  local kfound = nil
+  -- the first size where some aim has a solution: only those aims can
+  -- win (plan_point compares the size first)
+  local active = blshift(1, nA) - 1
+  local found = {}   -- aim index i -> { k, sols }
   for k = 1, inp.build_max do
     sols = {}
+    seen = {}
     local p = min(npb, k)
-    dfs(p, k - p)
-    if #sols > 0 then kfound = k; break end
+    dfs(p, k - p, active)
+    if #sols > 0 then
+      local got = 0
+      for i = 1, nA do
+        local bi = blshift(1, i - 1)
+        if bband(active, bi) ~= 0 then
+          local list = nil
+          for _, so in ipairs(sols) do
+            if bband(so.mask, bi) ~= 0 then list = list or {}; list[#list + 1] = so end
+          end
+          if list then found[i] = { k = k, sols = list }; got = bbor(got, bi) end
+        end
+      end
+      active = bband(active, bbnot(got))
+    end
+    if next(found) then break end
   end
   ctx.stat.wall_nodes = ctx.stat.wall_nodes + nodes
-  if not kfound then return nil end
+  if not next(found) then return out end
   -- pick: more depth, then a square on two paths, then the shortest trip
   local last = rec.chain[#rec.chain]
   local lr = rec.rays[rec.ri[last]]
@@ -1050,8 +1089,10 @@ local function search_walls(ctx, rec, ai)
     end
     for k = 1, lr.n_sq do lon[lr.sq[k]] = ex[lr.sq[k]] or 0 end
   end
-  local best = nil
-  for _, it in ipairs(sols) do
+  -- the pick keys of a solution (the same for every aim), once each
+  local function keys_of(so)
+    if so.depth then return end
+    local it = so.items
     local depth = lr and lr.cover or 0
     local two = false
     local sqs = {}
@@ -1067,23 +1108,35 @@ local function search_walls(ctx, rec, ai)
     local key = {}
     for i = 1, #it do key[i] = it[i].sq * 2 + (it[i].kind == "pill" and 1 or 0) end
     table.sort(key)
-    local cand = { k = kfound, depth = depth, two = two, trip = tl, order = order, items = it,
-                   key = table.concat(key, ",") }
-    local better = false
-    if not best then better = true
-    elseif cand.depth ~= best.depth then better = cand.depth > best.depth
-    elseif cand.two ~= best.two then better = cand.two
-    elseif abs(cand.trip - best.trip) > 1e-9 then better = cand.trip < best.trip
-    else better = cand.key < best.key end
-    if better then best = cand end
+    so.depth, so.two, so.trip, so.order, so.key = depth, two, tl, order, table.concat(key, ",")
   end
-  local items = {}
-  for i, oi in ipairs(best.order) do items[i] = best.items[oi] end
-  best.items = items
-  best.ai = ai
-  return best
+  for i, ai in ipairs(aims) do
+    local f = found[i]
+    if f then
+      local best = nil
+      for _, so in ipairs(f.sols) do
+        keys_of(so)
+        local better = false
+        if not best then better = true
+        elseif so.depth ~= best.depth then better = so.depth > best.depth
+        elseif so.two ~= best.two then better = so.two
+        elseif abs(so.trip - best.trip) > 1e-9 then better = so.trip < best.trip
+        else better = so.key < best.key end
+        if better then best = so end
+      end
+      local items = {}
+      for n, oi in ipairs(best.order) do items[n] = best.items[oi] end
+      out[ai] = { k = f.k, depth = best.depth, two = best.two, trip = best.trip, order = best.order,
+                  items = items, key = best.key, ai = ai }
+    end
+  end
+  return out
+end
+local function search_walls(ctx, rec, ai)
+  return search_walls_all(ctx, rec, { ai })[ai]
 end
 M._search_walls = search_walls
+M._search_walls_all = search_walls_all
 
 -- Plan blockers for rec: every clear aim, the best plan wins (covered,
 -- fewer blockers, more depth, a square on two paths, shorter trip). The
@@ -1210,8 +1263,9 @@ local function plan_point(ctx, rec)
   local aims = clear_aims_of(ctx, rec)
   local t0 = ctx.clk and ctx.clk()
   local best = nil
+  local all = search_walls_all(ctx, rec, aims)
   for _, ai in ipairs(aims) do
-    local s = search_walls(ctx, rec, ai)
+    local s = all[ai]
     if s then
       local b = false
       if not best then b = true
