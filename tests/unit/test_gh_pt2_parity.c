@@ -34,6 +34,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include <lua.h>
 #include <lauxlib.h>
@@ -404,5 +405,53 @@ int run_gh_pt2_parity(void) {
     int rc = pt2e_all();
     rc |= pt2p_run(WB_REPO_ROOT_DIR "/brains/GoalHunter");
     rc |= pt2p_run(WB_REPO_ROOT_DIR "/brains/GoalHunter/opt");
+    return rc;
+}
+
+/* gh_pt2_bench: a speed check of the evaluator on recorded inputs (no pass
+ * or fail of its own). It runs only when WB_PT2_BENCH names a Lua script
+ * (tests/unit/pt2_bench.lua); else it does nothing. WB_PT2_BENCH_BRAIN is
+ * the brain folder (default brains/GoalHunter) and WB_PT2_BENCH_ARGS is
+ * handed to the script as the global PT2_BENCH_ARGS. The script returns
+ * 0 when it ran. */
+/* bench_clock_us(): a wall clock in microseconds for the script (the
+ * test state has no ffi). */
+static int pt2b_clock_us(lua_State *L) {
+    struct timespec ts;
+    timespec_get(&ts, TIME_UTC);
+    lua_pushnumber(L, (double)ts.tv_sec * 1e6 + (double)ts.tv_nsec / 1e3);
+    return 1;
+}
+
+int run_gh_pt2_bench(void) {
+    const char *script = getenv("WB_PT2_BENCH");
+    if (!script || !script[0]) {
+        printf("gh_pt2_bench: WB_PT2_BENCH is not set: skipped\n");
+        return 0;
+    }
+    const char *brainDir = getenv("WB_PT2_BENCH_BRAIN");
+    if (!brainDir || !brainDir[0]) brainDir = WB_REPO_ROOT_DIR "/brains/GoalHunter";
+    const char *args = getenv("WB_PT2_BENCH_ARGS");
+    lua_State *L = luaL_newstate();
+    UT_ASSERT(L != NULL);
+    luaL_openlibs(L);
+    lua_pushboolean(L, 0); lua_setglobal(L, "BRAIN_DEBUG_MODE");
+    lua_pushboolean(L, 0); lua_setglobal(L, "_PRINT2_ENABLED");
+    lua_pushstring(L, brainDir); lua_setglobal(L, "BRAIN_DIR");
+    lua_pushstring(L, args ? args : ""); lua_setglobal(L, "PT2_BENCH_ARGS");
+    lua_pushcfunction(L, pt2b_clock_us); lua_setglobal(L, "bench_clock_us");
+    naPt2Register(L);
+    lua_getglobal(L, "package");
+    lua_pushfstring(L, "%s/?.lua;%s/?/init.lua", brainDir, brainDir);
+    lua_setfield(L, -2, "path");
+    lua_pop(L, 1);
+    int rc = 0;
+    if (luaL_loadfile(L, script) != 0 || lua_pcall(L, 0, 1, 0) != 0) {
+        fprintf(stderr, "FAIL gh_pt2_bench: %s\n", lua_tostring(L, -1));
+        rc = 1;
+    } else if (lua_tointeger(L, -1) != 0) {
+        rc = 1;
+    }
+    lua_close(L);
     return rc;
 }

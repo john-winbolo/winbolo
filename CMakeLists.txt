@@ -6023,6 +6023,7 @@ set(_unit_test_names
     shield_pill_cover_walls
     gh_attack_lane_parity
     gh_pt2_parity
+    gh_pt2_bench
     pf_tail_reaches_radius_and_stops
     pf_tail_blocked_by_wall_and_sea
     pf_tail_neutral_zone_slows

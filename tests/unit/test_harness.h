@@ -701,6 +701,8 @@ int run_gh_attack_lane_parity(void);
 /* Pill take v2 evaluator: gh_pt2.c against pilltake_v2.lua
  * (test_gh_pt2_parity.c). */
 int run_gh_pt2_parity(void);
+/* Speed check of gh_pt2 on recorded inputs; runs only with WB_PT2_BENCH set. */
+int run_gh_pt2_bench(void);
 int run_pf_tail_reaches_radius_and_stops(void);
 int run_pf_tail_blocked_by_wall_and_sea(void);
 int run_pf_tail_neutral_zone_slows(void);
