@@ -2042,37 +2042,10 @@ function Brain.think(info)
   -- already moved the tank to its respawn start, so info.tankx/y no longer
   -- point at the place it died. Everything written here is a file-level
   -- upvalue read only by the DEATH print2 below.
-  if BRAIN_DEBUG_MODE then
-    local _me = info.player_number
-    if info.events and _me ~= nil then
-      for _, _ev in ipairs(info.events) do
-        local _d = _ev.data
-        -- data = [killer, killed, deathCause, carriedPills]
-        if _ev.type == EVENT_TANK_KILLED and _d and _d[2] == _me then
-          _dbg_death.evt_cause  = _d[3]
-          _dbg_death.evt_killer = _d[1]
-          _dbg_death.evt_tick   = now
-          -- 4th data byte = how many pillboxes we were hauling when we died.
-          _dbg_death.evt_carry  = _d[4]
-        end
-      end
-    end
-    if not info.dead then
-      local _arm = info.armour or 0
-      if _dbg_death.alive_armour ~= nil and _arm < _dbg_death.alive_armour then
-        _dbg_death.drop_tick = now
-      end
-      _dbg_death.alive_tick   = now
-      _dbg_death.alive_mx     = bit.rshift((info.tankx or 0), 8)
-      _dbg_death.alive_my     = bit.rshift((info.tanky or 0), 8)
-      _dbg_death.alive_armour = _arm
-      -- Carried pills as of the last ALIVE tick: by the time info.dead is true
-      -- the haul is already on the ground, so this is the only in-brain view of
-      -- what the tank was carrying. The engine's own count rides on the kill
-      -- event (evt_carry) and is preferred when the event landed.
-      _dbg_death.alive_carry  = info.carried_pills or 0
-    end
-  end
+  -- U.death_log_observe (util.lua) does both. It also drops the record on a
+  -- slot move and skips a tick with no tank place, so a brain that takes
+  -- over an already dead tank logs no false DEATH at (0,0).
+  if BRAIN_DEBUG_MODE then U.death_log_observe(_dbg_death, info, now) end
 
   -- Open the optimize.log section timer at the EARLIEST possible point
   -- so prelude work (capacity tier calc, debug-mode viz refresh, the
@@ -2595,8 +2568,15 @@ function Brain.think(info)
     -- One DEATH line per death episode (DEBUG ONLY). First statement in the
     -- block on purpose: the resets below wipe state.goal, and the whole point
     -- of the line is to name the goal we died pursuing.
-    if BRAIN_DEBUG_MODE and not _dbg_death.reported then
+    if BRAIN_DEBUG_MODE and not _dbg_death.reported and not U.death_log_should_report(_dbg_death) then
+      -- This brain never saw its tank alive: it took over a tank that was
+      -- already dead (slot move or Bot Host handover). The old brain logged
+      -- that death; a DEATH line here would name (0,0) and no goal.
       _dbg_death.reported = true
+      print2(string.format("DEAD_AT_START t=%d no alive tick seen by this brain"
+        .. " (slot move or Bot Host handover): no DEATH line", now))
+    end
+    if BRAIN_DEBUG_MODE and not _dbg_death.reported then
       local _cause
       -- Prefer the ENGINE's cause. The event and the dead flag normally land
       -- in the same snapshot; a few ticks of slack covers a snapshot that
@@ -2649,6 +2629,7 @@ function Brain.think(info)
         tostring((_dbg_death.evt_tick ~= nil and (now - _dbg_death.evt_tick) <= 4
                   and _dbg_death.evt_carry) or "n/a"),
         tostring(_dbg_death.evt_killer), tostring(_dbg_death.alive_tick)))
+      U.death_log_reported(_dbg_death)
     end
     state.goal = { kind = "none", mx = 0, my = 0, wx = 0, wy = 0 }
     -- HAND THE CHAT ORDER BACK.  This block returns before ORD.update is ever

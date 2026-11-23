@@ -90,6 +90,74 @@ function M.ttype_peek(mx, my)
   return bit.band(get_terrain(mx, my), TERRAIN_MASK)
 end
 
+-- -------------------------------------------------------------------------
+-- DEATH line record (DEBUG ONLY, observation only). init.lua calls these
+-- from inside `if BRAIN_DEBUG_MODE` blocks; nothing else reads rec, so the
+-- bot plays the same with or without them.
+--
+-- death_log_observe(rec, info, now) runs every think, dead or alive:
+--   * a new player number (a slot move) drops the old tank's record, so
+--     the next death is not reported with another tank's place;
+--   * it latches this tick's EVENT_TANK_KILLED addressed to us;
+--   * on an alive tick it keeps the tank's place, armour and haul, but
+--     only when the tank has a place on the map. The first think after a
+--     Bot Host handover can come before the first real snapshot, with no
+--     tank place (0,0) and default armour; that is not a life.
+--
+-- death_log_should_report(rec) is true when this brain saw its tank alive
+-- since the last death. It is false when the brain took over a tank that
+-- was already dead (a slot move or a Bot Host handover): the old brain
+-- logged that death, and the new one has no place or goal to name.
+-- -------------------------------------------------------------------------
+function M.death_log_observe(rec, info, now)
+  local me = info.player_number
+  if rec.pn ~= me then
+    rec.pn = me
+    rec.alive_tick, rec.alive_mx, rec.alive_my = nil, nil, nil
+    rec.alive_armour, rec.alive_carry, rec.drop_tick = nil, nil, nil
+    rec.evt_tick, rec.evt_cause, rec.evt_killer, rec.evt_carry = nil, nil, nil, nil
+  end
+  if info.events and me ~= nil then
+    for _, ev in ipairs(info.events) do
+      local d = ev.data
+      -- data = [killer, killed, deathCause, carriedPills]
+      if ev.type == EVENT_TANK_KILLED and d and d[2] == me then
+        rec.evt_cause  = d[3]
+        rec.evt_killer = d[1]
+        rec.evt_tick   = now
+        -- 4th data byte = how many pillboxes we were hauling when we died.
+        rec.evt_carry  = d[4]
+      end
+    end
+  end
+  local tx, ty = info.tankx or 0, info.tanky or 0
+  if not info.dead and tx > 0 and ty > 0 then
+    local arm = info.armour or 0
+    if rec.alive_armour ~= nil and arm < rec.alive_armour then
+      rec.drop_tick = now
+    end
+    rec.alive_tick   = now
+    rec.alive_mx     = bit.rshift(tx, 8)
+    rec.alive_my     = bit.rshift(ty, 8)
+    rec.alive_armour = arm
+    -- Carried pills as of the last ALIVE tick: by the time info.dead is true
+    -- the haul is already on the ground, so this is the only in-brain view of
+    -- what the tank was carrying. The engine's own count rides on the kill
+    -- event (evt_carry) and is preferred when the event landed.
+    rec.alive_carry  = info.carried_pills or 0
+  end
+end
+
+function M.death_log_should_report(rec)
+  return rec.alive_tick ~= nil
+end
+
+-- A death closes the life: the next DEATH line needs a new alive tick.
+function M.death_log_reported(rec)
+  rec.reported   = true
+  rec.alive_tick = nil
+end
+
 function M.in_map(mx, my)
   return mx >= 0 and mx <= 255 and my >= 0 and my <= 255
 end
