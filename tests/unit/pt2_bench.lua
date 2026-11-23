@@ -299,6 +299,10 @@ local function run_case(case)
       dec = fmt("%s/%s/%s/%s/%s/%s/%s/%s/p=%s/c=%s", tostring(b.deg), tostring(b.radius), tostring(b.score),
         tostring(b.safe), tostring(b.kills), tostring(b.depth), tostring(b.aim_idx), tostring(b.covered),
         table.concat(pl, ";"), table.concat(ch, ";"))
+      -- the start while the builder builds, and the extra cover walls
+      local xc = {}
+      for i, e in ipairs(b.extra_cover or {}) do xc[i] = tostring(e.sq or (e.my and e.my * 256 + e.mx)) end
+      dec = dec .. fmt("/s=%s/x=%s", tostring(b.start_now), table.concat(xc, ";"))
     end
     -- keep_all=1: every point's decision too (allh)
     if res.all then
@@ -599,7 +603,7 @@ if BOTH then
     g("plan_skipped"), g("wall_nodes"), g("nudged")))
   local tm = B.tm
   local tot = tm.total or 0
-  local parts = { "wedges", "masks", "cast", "aim", "walls", "score_fn" }
+  local parts = { "wedges", "masks", "cast", "aim", "walls", "score_fn", "start", "xcover" }
   local sum = 0
   local out = {}
   for _, k in ipairs(parts) do

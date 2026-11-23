@@ -1205,9 +1205,12 @@ M._extra_cover = extra_cover
 
 local function plan_point(ctx, rec)
   if rec.covered then rec.plan, rec.extra = {}, {}; return rec end
+  -- S1: the clear aims' tank shots count in "aim" only (clear_aims_of has
+  -- its own clock), so the walls clock starts after them
+  local aims = clear_aims_of(ctx, rec)
   local t0 = ctx.clk and ctx.clk()
   local best = nil
-  for _, ai in ipairs(clear_aims_of(ctx, rec)) do
+  for _, ai in ipairs(aims) do
     local s = search_walls(ctx, rec, ai)
     if s then
       local b = false
@@ -1280,7 +1283,7 @@ local function new_stat()
 end
 local function new_tm()
   return { wedges = 0, masks = 0, cast = 0, aim = 0, walls = 0, confirm = 0, leeway = 0,
-           score_fn = 0, total = 0 }
+           score_fn = 0, start = 0, xcover = 0, total = 0 }
 end
 
 -- The job cache: rays and square reads kept for one group run.
@@ -1429,7 +1432,11 @@ function M.evaluate_lua(inp)
       fin.n_built = #fin.plan
       fin.blk = (inp.own_pill_rank and fin.ally_cover) and 2 or 1
       fin.score = fin.base + fin.n_built * inp.build_cost
-      if inp.start_while_building and fin.safe then start_check(ctx, fin) end
+      if inp.start_while_building and fin.safe then
+        local t3 = clk and clk()
+        start_check(ctx, fin)
+        if t3 then tm.start = tm.start + clk() - t3 end
+      end
     end
     local function carry(fin, rec)
       fin.deg, fin.cx, fin.cy, fin.mx, fin.my, fin.radius = rec.deg, rec.cx, rec.cy, rec.mx, rec.my, rec.radius
@@ -1504,7 +1511,9 @@ function M.evaluate_lua(inp)
     best.hold = OLD.hold_point(ctx, best)
   end
   if best and best.safe and (inp.extra_cover_walls or 0) > 0 then
+    local t3 = clk and clk()
     best.extra_cover = extra_cover(ctx, best)
+    if t3 then tm.xcover = tm.xcover + clk() - t3 end
   end
   if T0 then tm.total = clk() - T0 end
   return { best = best, all = inp.keep_all and all or nil, n_eval = n_eval, n_reject = n_reject,
