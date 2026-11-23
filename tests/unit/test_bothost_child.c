@@ -50,6 +50,18 @@
  *  18. bothost_ds_child_first_lines: the dedicated server's first lines
  *      to its own child are "ticket <hex>" and "max -1" (the brain's
  *      answer), never "max 0", which would offer the server 0 slots.
+ *  19. bothost_child_dgram_ring: the child's datagram queue gives the
+ *      datagrams back in order and whole, wraps, refuses one that does not
+ *      fit (by bytes or by slots) and cuts one longer than the reader's
+ *      buffer.
+ *  20. bothost_child_get_line: a line from the game longer than the
+ *      child's buffer is dropped whole, not split in two; a line that just
+ *      fits, a carriage return and a last line with no newline read right.
+ *  21. bothost_child_kill_reap: a kill waits BOT_HOST_CHILD_KILL_WAIT_MS at
+ *      most; a stopped child that still runs is kept until it ended, and
+ *      the poll frees it then.
+ *  22. bothost_child_line_cap (POSIX): a line past PIPE_BUF is not written
+ *      to the child's stdin.
  * Tests 7 to 10 need the sandbox: where this computer has none (Linux with
  * no Landlock, other systems) they pass with a note. WINBOLO_TEST_TMP names
  * the folder for their files (default: TEMP, or /tmp).
@@ -57,6 +69,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifndef _WIN32
+#include <limits.h>   /* PIPE_BUF */
+#endif
 
 #include <SDL3/SDL.h>
 
@@ -1469,7 +1484,8 @@ int run_bothost_child_env_keep(void) {
  * The game's write must then fail at once, not wait for the child: the
  * client ends such a child as a crash (childWrite). */
 int run_bothost_child_stdin_full(void) {
-    char exe[1024], root[1024], log[1200], line[560];
+    /* 499 bytes and the newline: under the smallest PIPE_BUF (512). */
+    char exe[1024], root[1024], log[1200], line[500];
     const char *a[] = { "--test-sleep-ms", "30000", NULL };
     BotHostChildProc *p;
     uint32_t start, took;
@@ -1485,7 +1501,7 @@ int run_bothost_child_stdin_full(void) {
     p = spawnTest(exe, a, NULL, log);
     UT_ASSERT(p != NULL);
     start = (uint32_t)SDL_GetTicks();
-    /* 64 KiB of pipe is about 115 lines; 2000 lines is 1.1 MiB. */
+    /* 64 KiB of pipe is about 130 lines; 2000 lines is 1 MB. */
     while (lines < 2000) {
         if (!botHostChildWriteLine(p, line)) {
             full = true;
@@ -1516,4 +1532,297 @@ int run_bothost_child_stdin_full(void) {
     botHostChildFree(p);
     removeTestDir(root);
     return 0;
+}
+
+/* Fills a datagram with bytes that say which it is. */
+static void ringFill(uint8_t *d, size_t len, int which) {
+    size_t i;
+    for (i = 0; i < len; i++) d[i] = (uint8_t)(which * 7 + (int)i);
+}
+
+static bool ringIs(const uint8_t *d, size_t len, int which) {
+    size_t i;
+    for (i = 0; i < len; i++) {
+        if (d[i] != (uint8_t)(which * 7 + (int)i)) return false;
+    }
+    return true;
+}
+
+int run_bothost_child_dgram_ring(void) {
+    static uint8_t bytes[4096];
+    static uint8_t big[BOT_HOST_DGRAM_RING_BYTES];
+    static BotHostDgramRing r;
+    uint8_t d[2048], out[2048];
+    uint32_t ip = 0;
+    uint16_t port = 0;
+    int i, n;
+
+    /* 1. In order, with the address of each. */
+    botHostDgramRingInit(&r, bytes, (uint32_t)sizeof(bytes));
+    UT_ASSERT(botHostDgramRingPop(&r, out, (int)sizeof(out), &ip, &port) == -1);
+    for (i = 0; i < 3; i++) {
+        ringFill(d, 100, i);
+        UT_ASSERT(botHostDgramRingPush(&r, 0x0100007Fu + (uint32_t)i,
+                                       (uint16_t)(1000 + i), d, 100));
+    }
+    for (i = 0; i < 3; i++) {
+        n = botHostDgramRingPop(&r, out, (int)sizeof(out), &ip, &port);
+        UT_ASSERT_MSG(n == 100, "pop %d gave %d bytes", i, n);
+        UT_ASSERT(ringIs(out, 100, i));
+        UT_ASSERT(ip == 0x0100007Fu + (uint32_t)i);
+        UT_ASSERT(port == (uint16_t)(1000 + i));
+    }
+    UT_ASSERT(r.count == 0);
+
+    /* 2. Full by bytes: 4 of 1000 fit in 4096, a 5th does not, and the
+     * ring is unchanged. */
+    for (i = 0; i < 4; i++) {
+        ringFill(d, 1000, i);
+        UT_ASSERT(botHostDgramRingPush(&r, 1, 2, d, 1000));
+    }
+    ringFill(d, 1000, 9);
+    UT_ASSERT_MSG(!botHostDgramRingPush(&r, 1, 2, d, 1000),
+                  "a 5th datagram of 1000 bytes fit in 4096");
+    UT_ASSERT(r.count == 4);
+
+    /* 3. The wrap: two out, so the room is at the front; the new one goes
+     * there and comes out after the two old ones, whole. */
+    UT_ASSERT(botHostDgramRingPop(&r, out, (int)sizeof(out), NULL, NULL) == 1000);
+    UT_ASSERT(ringIs(out, 1000, 0));
+    UT_ASSERT(botHostDgramRingPop(&r, out, (int)sizeof(out), NULL, NULL) == 1000);
+    UT_ASSERT(ringIs(out, 1000, 1));
+    ringFill(d, 1500, 5);
+    UT_ASSERT_MSG(botHostDgramRingPush(&r, 1, 2, d, 1500),
+                  "1500 bytes did not fit in the 2000 free at the front");
+    ringFill(d, 600, 6);
+    UT_ASSERT_MSG(!botHostDgramRingPush(&r, 1, 2, d, 600),
+                  "600 bytes fit where 500 are free");
+    ringFill(d, 400, 7);
+    UT_ASSERT(botHostDgramRingPush(&r, 1, 2, d, 400));
+    UT_ASSERT(botHostDgramRingPop(&r, out, (int)sizeof(out), NULL, NULL) == 1000);
+    UT_ASSERT(ringIs(out, 1000, 2));
+    UT_ASSERT(botHostDgramRingPop(&r, out, (int)sizeof(out), NULL, NULL) == 1000);
+    UT_ASSERT(ringIs(out, 1000, 3));
+    UT_ASSERT(botHostDgramRingPop(&r, out, (int)sizeof(out), NULL, NULL) == 1500);
+    UT_ASSERT(ringIs(out, 1500, 5));
+    UT_ASSERT(botHostDgramRingPop(&r, out, (int)sizeof(out), NULL, NULL) == 400);
+    UT_ASSERT(ringIs(out, 400, 7));
+    UT_ASSERT(botHostDgramRingPop(&r, out, (int)sizeof(out), NULL, NULL) == -1);
+
+    /* 4. A long datagram is cut to the reader's buffer, as recvfrom cuts
+     * it; an empty one comes out empty; one bigger than the ring never
+     * fits. */
+    ringFill(d, 300, 3);
+    UT_ASSERT(botHostDgramRingPush(&r, 1, 2, d, 300));
+    UT_ASSERT(botHostDgramRingPush(&r, 1, 2, NULL, 0));
+    UT_ASSERT(botHostDgramRingPop(&r, out, 50, NULL, NULL) == 50);
+    UT_ASSERT(ringIs(out, 50, 3));
+    UT_ASSERT(botHostDgramRingPop(&r, out, (int)sizeof(out), NULL, NULL) == 0);
+    UT_ASSERT(!botHostDgramRingPush(&r, 1, 2, big, sizeof(bytes) + 1));
+
+    /* 5. Full by slots: BOT_HOST_DGRAM_RING_SLOTS small datagrams fit in
+     * the real size, one more does not; a clear empties the ring. */
+    botHostDgramRingInit(&r, big, (uint32_t)sizeof(big));
+    for (i = 0; i < BOT_HOST_DGRAM_RING_SLOTS; i++) {
+        ringFill(d, 8, i);
+        UT_ASSERT_MSG(botHostDgramRingPush(&r, 1, 2, d, 8),
+                      "datagram %d of %d did not fit", i,
+                      BOT_HOST_DGRAM_RING_SLOTS);
+    }
+    UT_ASSERT(!botHostDgramRingPush(&r, 1, 2, d, 8));
+    for (i = 0; i < 10; i++) {
+        UT_ASSERT(botHostDgramRingPop(&r, out, (int)sizeof(out), NULL, NULL) == 8);
+        UT_ASSERT(ringIs(out, 8, i));
+    }
+    /* Ten slots free again, in a ring that wraps through the slot list. */
+    for (i = 0; i < 10; i++) {
+        ringFill(d, 8, 1000 + i);
+        UT_ASSERT(botHostDgramRingPush(&r, 1, 2, d, 8));
+    }
+    UT_ASSERT(!botHostDgramRingPush(&r, 1, 2, d, 8));
+    for (i = 10; i < BOT_HOST_DGRAM_RING_SLOTS; i++) {
+        UT_ASSERT(botHostDgramRingPop(&r, out, (int)sizeof(out), NULL, NULL) == 8);
+        UT_ASSERT_MSG(ringIs(out, 8, i), "datagram %d out of order", i);
+    }
+    for (i = 0; i < 10; i++) {
+        UT_ASSERT(botHostDgramRingPop(&r, out, (int)sizeof(out), NULL, NULL) == 8);
+        UT_ASSERT(ringIs(out, 8, 1000 + i));
+    }
+    UT_ASSERT(botHostDgramRingPush(&r, 1, 2, d, 8));
+    botHostDgramRingClear(&r);
+    UT_ASSERT(botHostDgramRingPop(&r, out, (int)sizeof(out), NULL, NULL) == -1);
+
+    /* 6. Many rounds of mixed sizes: what goes in comes out, in order. */
+    botHostDgramRingInit(&r, bytes, (uint32_t)sizeof(bytes));
+    {
+        /* Each datagram's number goes in its address and its bytes. */
+        int pushed = 0, popped = 0, dropped = 0, round;
+        for (round = 0; round < 2000; round++) {
+            size_t len = (size_t)((round * 37) % 900);
+            ringFill(d, len, pushed);
+            if (botHostDgramRingPush(&r, (uint32_t)pushed, 0, d, len)) {
+                pushed++;
+            } else {
+                dropped++;
+            }
+            while (r.count > round % 5 ||
+                   (round == 1999 && r.count > 0)) {
+                n = botHostDgramRingPop(&r, out, (int)sizeof(out), &ip, NULL);
+                UT_ASSERT(n >= 0);
+                UT_ASSERT_MSG(ip == (uint32_t)popped,
+                              "datagram %u came out as number %d",
+                              (unsigned)ip, popped);
+                UT_ASSERT_MSG(ringIs(out, (size_t)n, popped),
+                              "datagram %d came out changed", popped);
+                popped++;
+            }
+        }
+        UT_ASSERT_MSG(pushed == popped, "%d in, %d out", pushed, popped);
+        printf("    %d datagrams through a 4096-byte ring, %d did not "
+               "fit\n", pushed, dropped);
+    }
+    return 0;
+}
+
+int run_bothost_child_get_line(void) {
+    char root[1024], path[1100], line[BOT_HOST_CHILD_LINE_MAX];
+    char text[2000];
+    char exact[BOT_HOST_CHILD_LINE_MAX];
+    size_t at = 0;
+    FILE *f;
+    int i;
+
+    UT_ASSERT(makeTestDir("getline", root, sizeof(root)));
+    SDL_snprintf(path, sizeof(path), "%s/lines.txt", root);
+    /* A short line; a line of 450 bytes (more than two buffers); a line
+     * that just fits (BOT_HOST_CHILD_LINE_MAX with its newline); one with
+     * a carriage return; a last line with no newline. */
+    at += (size_t)SDL_snprintf(text + at, sizeof(text) - at, "ticket ab\n");
+    for (i = 0; i < 450; i++) text[at++] = 'y';
+    text[at++] = '\n';
+    memset(exact, 'z', sizeof(exact) - 1);
+    exact[sizeof(exact) - 1] = '\0';
+    at += (size_t)SDL_snprintf(text + at, sizeof(text) - at, "%s\n", exact);
+    at += (size_t)SDL_snprintf(text + at, sizeof(text) - at,
+                               "max 3\r\nquit");
+    text[at] = '\0';
+    UT_ASSERT(writeFile(path, text));
+
+    f = fopen(path, "rb");
+    UT_ASSERT(f != NULL);
+    UT_ASSERT(botHostChildGetLine(f, line, sizeof(line)) == 1);
+    UT_ASSERT_MSG(strcmp(line, "ticket ab") == 0, "first line '%s'", line);
+    UT_ASSERT_MSG(botHostChildGetLine(f, line, sizeof(line)) == 0,
+                  "a line of 450 bytes was not dropped");
+    UT_ASSERT(botHostChildGetLine(f, line, sizeof(line)) == 1);
+    UT_ASSERT_MSG(strcmp(line, exact) == 0,
+                  "the line that just fits came back as %u bytes",
+                  (unsigned)strlen(line));
+    UT_ASSERT(botHostChildGetLine(f, line, sizeof(line)) == 1);
+    UT_ASSERT_MSG(strcmp(line, "max 3") == 0, "'%s'", line);
+    UT_ASSERT(botHostChildGetLine(f, line, sizeof(line)) == 1);
+    UT_ASSERT_MSG(strcmp(line, "quit") == 0, "'%s'", line);
+    UT_ASSERT(botHostChildGetLine(f, line, sizeof(line)) == -1);
+    fclose(f);
+    removeTestDir(root);
+    return 0;
+}
+
+int run_bothost_child_kill_reap(void) {
+    char exe[1024], root[1024], log[1200];
+    const char *a[] = { "--test-sleep-ms", "30000", NULL };
+    BotHostChildProc *p;
+    uint32_t start, took;
+    int code = 99, polls = 0;
+    bool ended;
+
+    UT_ASSERT_MSG(childExePath(exe, sizeof(exe)),
+                  "no WinBoloBotHost: build it first");
+    UT_ASSERT(makeTestDir("killreap", root, sizeof(root)));
+    SDL_snprintf(log, sizeof(log), "%s/child.log", root);
+
+    /* 1. A kill waits BOT_HOST_CHILD_KILL_WAIT_MS at most, and a child
+     * that is killed ends in that time. */
+    p = spawnTest(exe, a, NULL, log);
+    UT_ASSERT(p != NULL);
+    UT_ASSERT(botHostChildAlive(p, &code));
+    start = (uint32_t)SDL_GetTicks();
+    ended = botHostChildKill(p);
+    took = (uint32_t)SDL_GetTicks() - start;
+    printf("    the kill took %u ms (ended %d)\n", (unsigned)took,
+           (int)ended);
+    UT_ASSERT_MSG(took < BOT_HOST_CHILD_KILL_WAIT_MS + 400,
+                  "the kill waited %u ms", (unsigned)took);
+    UT_ASSERT_MSG(ended, "the killed child did not end in %u ms",
+                  (unsigned)BOT_HOST_CHILD_KILL_WAIT_MS);
+    UT_ASSERT(!botHostChildAlive(p, &code));
+    UT_ASSERT(botHostChildKill(p));   /* a second kill: nothing to do */
+    botHostChildFree(p);
+
+    /* 2. The reap: a stopped child that still runs is kept; the poll keeps
+     * it while it runs and frees it once it ended. */
+    UT_ASSERT(!botHostChildClientReaping());
+    p = spawnTest(exe, a, NULL, log);
+    UT_ASSERT(p != NULL);
+    UT_ASSERT(botHostChildClientReapForTest(p));
+    UT_ASSERT(botHostChildClientReaping());
+    botHostChildClientPoll();
+    UT_ASSERT_MSG(botHostChildClientReaping(),
+                  "the poll freed a child that still runs");
+    /* The list owns p; the kill here stands for one that ends late. */
+    (void)botHostChildKill(p);
+    while (botHostChildClientReaping() && polls < 300) {
+        SDL_Delay(10);
+        botHostChildClientPoll();
+        polls++;
+    }
+    printf("    the stopped child was freed after %d polls\n", polls);
+    UT_ASSERT_MSG(!botHostChildClientReaping(),
+                  "the ended child was not freed in 3 s of polls");
+    removeTestDir(root);
+    return 0;
+}
+
+int run_bothost_child_line_cap(void) {
+#ifdef _WIN32
+    printf("    (PIPE_BUF is a POSIX rule: nothing to test here)\n");
+    return 0;
+#else
+    char exe[1024], root[1024], log[1200];
+    char line[PIPE_BUF + 1];
+    const char *a[] = { "--test-sleep-ms", "30000", NULL };
+    BotHostChildProc *p;
+    int code = 99;
+    bool fitLong, fitMax;
+
+    UT_ASSERT_MSG(childExePath(exe, sizeof(exe)),
+                  "no WinBoloBotHost: build it first");
+    UT_ASSERT(makeTestDir("linecap", root, sizeof(root)));
+    SDL_snprintf(log, sizeof(log), "%s/child.log", root);
+    p = spawnTest(exe, a, NULL, log);
+    UT_ASSERT(p != NULL);
+    /* PIPE_BUF bytes and the newline: one past the cap, not written. */
+    memset(line, 'x', PIPE_BUF);
+    line[PIPE_BUF] = '\0';
+    fitLong = botHostChildWriteLine(p, line);
+    /* PIPE_BUF - 1 bytes and the newline: written, when the buffer holds
+     * it. */
+    line[PIPE_BUF - 1] = '\0';
+    fitMax = botHostChildWriteLine(p, line);
+    printf("    PIPE_BUF %d: a line of PIPE_BUF bytes written %d, one of "
+           "PIPE_BUF - 1 written %d\n", (int)PIPE_BUF, (int)fitLong,
+           (int)fitMax);
+    UT_ASSERT_MSG(!fitLong, "a line past PIPE_BUF was written");
+    /* Where PIPE_BUF is past the 600-byte line buffer (Linux: 4096), the
+     * buffer is the cap and both lines are refused. */
+    if (PIPE_BUF + 1 < 600) {
+        UT_ASSERT_MSG(fitMax, "a line of PIPE_BUF bytes with its newline "
+                              "was refused");
+    }
+    UT_ASSERT_MSG(botHostChildAlive(p, &code), "the child ended (%d)", code);
+    (void)botHostChildKill(p);
+    botHostChildFree(p);
+    removeTestDir(root);
+    return 0;
+#endif
 }

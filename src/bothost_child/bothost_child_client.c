@@ -71,6 +71,16 @@ static bool               childLastSandboxed;
 static bool               childForServer;
 static char               childFailWhy[256];
 
+/* Stopped children that had not ended after their kill: each is freed,
+ * with its relay, once it ended (botHostChildClientPoll), so a stop never
+ * waits on the caller's thread for a kill. */
+#define CHILD_REAP_MAX 4
+typedef struct {
+    BotHostChildProc *proc;
+    BotHostRelay     *relay;
+} ChildReap;
+static ChildReap childReaps[CHILD_REAP_MAX];
+
 bool botHostChildFindExe(char *out, size_t outSize) {
 #ifdef _WIN32
     static const char name[] = "WinBoloBotHost.exe";
@@ -201,6 +211,57 @@ static void childReset(void) {
     childCpuSentMs = 0;
     childStartMs = 0;
     childSaltLines = 0;
+}
+
+/* The relay's counts go to the log, and its threads end (its child ended,
+ * so the relay's reader ends). */
+static void childRelayEnd(BotHostRelay *relay) {
+    unsigned long toServer, fromServer, refused;
+    if (relay == NULL) return;
+    botHostRelayCounts(relay, &toServer, &fromServer, &refused);
+    botHostRelayStop(relay);
+    CHILD_EVENT("[bothost] the relay passed %lu datagrams to the server "
+                "and %lu from it, and refused %lu", toServer, fromServer,
+                refused);
+}
+
+/* A stopped child (killed, or ended): freed now when it ended, else kept
+ * in childReaps until botHostChildClientPoll sees its end. */
+static void childRelease(BotHostChildProc *proc, BotHostRelay *relay) {
+    int i;
+    if (proc != NULL && botHostChildAlive(proc, NULL)) {
+        for (i = 0; i < CHILD_REAP_MAX; i++) {
+            if (childReaps[i].proc == NULL) {
+                childReaps[i].proc = proc;
+                childReaps[i].relay = relay;
+                CHILD_EVENT("[bothost] the Bot Host child (pid %lu) has not "
+                            "ended %u ms after its kill: it is freed when it "
+                            "ends", botHostChildPid(proc),
+                            (unsigned)BOT_HOST_CHILD_KILL_WAIT_MS);
+                return;
+            }
+        }
+        /* No room in the list (several children stuck at once): this one
+         * is waited for here. */
+        (void)botHostChildWait(proc, CHILD_STOP_WAIT_MS, NULL);
+    }
+    childRelayEnd(relay);
+    botHostChildFree(proc);
+}
+
+/* Frees each kept child that ended. */
+static void childReapPoll(void) {
+    int i;
+    for (i = 0; i < CHILD_REAP_MAX; i++) {
+        BotHostChildProc *proc = childReaps[i].proc;
+        if (proc == NULL || botHostChildAlive(proc, NULL)) continue;
+        CHILD_EVENT("[bothost] the stopped Bot Host child (pid %lu) ended",
+                    botHostChildPid(proc));
+        childRelayEnd(childReaps[i].relay);
+        botHostChildFree(proc);
+        childReaps[i].proc = NULL;
+        childReaps[i].relay = NULL;
+    }
 }
 
 /* One line to the child. The write never waits; when it fails and the
@@ -527,7 +588,11 @@ BotHostChildStart botHostChildClientStart(const BotHostChildParams *p,
         return childFail(BOT_HOST_CHILD_FAIL_ARGS, sandbox,
                          "the arguments are too long");
     }
-    botHostChildLogPath(log, sizeof(log));
+    if (p->logPath != NULL && p->logPath[0] != '\0') {
+        SDL_strlcpy(log, p->logPath, sizeof(log));
+    } else {
+        botHostChildLogPath(log, sizeof(log));
+    }
     childRotateLogs(log);
 
     /* The spawn's sandboxFailed is not needed: in the sandbox a failure
@@ -546,8 +611,8 @@ BotHostChildStart botHostChildClientStart(const BotHostChildParams *p,
         childRelay = botHostRelayStart(childProc, p->serverHost,
                                        p->serverPort);
         if (childRelay == NULL) {
-            botHostChildKill(childProc);
-            botHostChildFree(childProc);
+            (void)botHostChildKill(childProc);
+            childRelease(childProc, NULL);
             childProc = NULL;
             childReset();
             return childFail(BOT_HOST_CHILD_FAIL_RELAY, true,
@@ -621,6 +686,7 @@ static void childTakeLine(const char *line) {
 void botHostChildClientPoll(void) {
     char buf[1024];
     int n, guard = 0;
+    childReapPoll();
     if (childProc == NULL || childEnded) return;
     if (childSandboxed &&
         (uint32_t)SDL_GetTicks() - childCpuSentMs >= CHILD_CPU_EVERY_MS) {
@@ -707,27 +773,38 @@ void botHostChildClientStop(bool tellServer) {
             } else {
                 CHILD_EVENT("[bothost] Bot Host child did not stop in %u ms: "
                             "it is ended", (unsigned)CHILD_STOP_WAIT_MS);
-                botHostChildKill(childProc);
+                (void)botHostChildKill(childProc);
             }
         } else {
-            botHostChildKill(childProc);
+            (void)botHostChildKill(childProc);
             CHILD_EVENT("[bothost] Bot Host child ended without a word");
         }
     }
-    if (childRelay != NULL) {
-        unsigned long toServer, fromServer, refused;
-        /* The child is gone, so the relay's reader ends. */
-        botHostChildKill(childProc);
-        botHostRelayCounts(childRelay, &toServer, &fromServer, &refused);
-        botHostRelayStop(childRelay);
-        childRelay = NULL;
-        CHILD_EVENT("[bothost] the relay passed %lu datagrams to the server "
-                    "and %lu from it, and refused %lu", toServer, fromServer,
-                    refused);
-    }
-    botHostChildFree(childProc);
+    childRelease(childProc, childRelay);
+    childRelay = NULL;
     childProc = NULL;
     childReset();
+}
+
+bool botHostChildClientReaping(void) {
+    int i;
+    for (i = 0; i < CHILD_REAP_MAX; i++) {
+        if (childReaps[i].proc != NULL) return true;
+    }
+    return false;
+}
+
+bool botHostChildClientReapForTest(BotHostChildProc *p) {
+    int i;
+    if (p == NULL) return false;
+    for (i = 0; i < CHILD_REAP_MAX; i++) {
+        if (childReaps[i].proc == NULL) {
+            childReaps[i].proc = p;
+            childReaps[i].relay = NULL;
+            return true;
+        }
+    }
+    return false;
 }
 
 bool botHostChildClientActive(void) {

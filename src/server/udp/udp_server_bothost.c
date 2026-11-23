@@ -3547,7 +3547,20 @@ void transportUdpServerDsChildEnd(ServerSim *sim, const char *why) {
                                               "stopped");
         }
     }
-    /* dsChildWanted stays: a restart begins again with a new secret. */
+    /* dsChildWanted stays: a restart begins again with a new secret.
+     * transportUdpServerDsChildGiveUp clears it. */
+}
+
+void transportUdpServerDsChildGiveUp(ServerSim *sim) {
+    udpServer.dsChildWanted = false;
+    if (sim != NULL) botHostApplySettings(sim);
+}
+
+bool serverDsChildJoinSource(const struct sockaddr_in *fromAddr) {
+    if (!udpServer.dsChildWanted || fromAddr == NULL) return false;
+    botHostOwnIpsRefresh();
+    return botHostAddrIsServerMachine(fromAddr->sin_addr.s_addr,
+                                      botHostOwnIp, botHostOwnIpCount);
 }
 
 bool transportUdpServerDsChildConnected(void) {

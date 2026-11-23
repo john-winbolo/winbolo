@@ -905,6 +905,11 @@ void serverDisconnectClient(struct ServerSim *sim, int idx, bool graceful);
  * seat goes back in-process without a word to anyone. */
 bool serverFillRandomBytes(uint8_t *buf, size_t n);
 int  serverFindBotHost(const struct sockaddr_in *addr);
+/* While the server wants its own Bot Host child (ds_bot_child.c), true
+ * for a source on this computer: a loopback address or one of the
+ * server's own addresses, the same test the child's join takes. The join
+ * handler does not rate-limit such a source. */
+bool serverDsChildJoinSource(const struct sockaddr_in *fromAddr);
 void serverSendBotHostAccept(int h, struct ServerSim *sim);
 void serverAcceptBotHost(struct ServerSim *sim,
                          const struct sockaddr_in *fromAddr,

@@ -4981,9 +4981,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     src/bothost/bothost_optout.c
     # The built-in Bot Host as a child process: arguments, the line codec,
     # the restart counter, on Windows the job's limits, and the file
-    # sandbox, the relay and the machine id lines.
+    # sandbox, the relay and the machine id lines, and the game side's
+    # list of stopped children (bothost_child_client.c).
     tests/unit/test_bothost_child.c
-    src/bothost_child/bothost_child.c
+    src/bothost_child/bothost_child.c src/bothost_child/bothost_child_client.c
     src/bothost_child/bothost_child_win.c src/bothost_child/bothost_child_posix.c
     src/bothost_child/bothost_child_relay.c
     tests/unit/test_subscriber_arm_orphans.c
@@ -6486,6 +6487,10 @@ set(_unit_test_names
     bot_host_lockstep
     bothost_child_seccomp
     bothost_child_stdin_full
+    bothost_child_dgram_ring
+    bothost_child_get_line
+    bothost_child_kill_reap
+    bothost_child_line_cap
     bot_host_brain_name_opt
     bot_host_link_announce_codec
     bot_host_link_addr_list
@@ -7402,6 +7407,7 @@ set(_unit_test_names
     interp_jitter_e2e
     join_version_gate
     join_rate_limit
+    join_rate_limit_ds_child
     cookie_handshake
     map_amp_gate
     map_reask_throttle

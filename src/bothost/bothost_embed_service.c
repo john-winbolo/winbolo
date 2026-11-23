@@ -395,6 +395,11 @@ void botHostEmbedService(struct ClientSim *cs) {
     bool haveTicket;
     BotHostEmbedStatus st;
 
+    /* A stopped child that had not ended after its kill is freed once it
+     * ends (botHostChildClientPoll), also while no child runs. */
+    if (embedWhere != EMBED_CHILD && botHostChildClientReaping()) {
+        botHostChildClientPoll();
+    }
     if (cs == NULL) {
         embedStopNow(true, "the player left the game");
         embedRestart.waiting = false;

@@ -972,6 +972,10 @@ int run_bothost_ds_child_first_lines(void);
 int run_bot_host_lockstep(void);
 int run_bothost_child_seccomp(void);
 int run_bothost_child_stdin_full(void);
+int run_bothost_child_dgram_ring(void);
+int run_bothost_child_get_line(void);
+int run_bothost_child_kill_reap(void);
+int run_bothost_child_line_cap(void);
 
 /* Bot Host link: announce, query, invite, lists (test_bot_host_link.c). */
 int run_bot_host_link_announce_codec(void);
@@ -2996,6 +3000,9 @@ int run_join_version_gate(void);
  * JOINs from distinct loopback ephemeral ports (one source IP) draws at most
  * JOIN_RL_BURST accepts, while a JOIN from a distinct source IP is unaffected. */
 int run_join_rate_limit(void);
+/* The server's own Bot Host child joins from this computer with no rate
+ * limit; after a give-up the limit applies again. */
+int run_join_rate_limit_ds_child(void);
 
 /* JOIN address-proof cookie handshake (test_cookie_handshake.c): a cookie-less
  * JOIN draws a PACKET_JOIN_CHALLENGE and no slot; echoing the challenge cookie

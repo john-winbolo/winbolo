@@ -863,14 +863,13 @@ void serverHandleJoinRequest(const uint8_t *buf, int len,
      * than the JOIN, so it can't amplify). */
     if (!serverCookieAccept(fromAddr, joinCookie)) {
         /* The server's own Bot Host child joins through the relay in this
-         * process, from 127.0.0.1: one join per bot at once, more than the
-         * burst. A loopback source cannot come from another computer, and a
+         * process, from a loopback address or from the address the server
+         * gave it (-addr): one join per bot at once, more than the burst.
+         * A source on this computer cannot be another computer's, and a
          * challenge to it reflects nowhere, so it is not rate-limited while
          * the child is wanted. */
-        bool loopbackChild =
-            udpServer.dsChildWanted &&
-            (ntohl(fromAddr->sin_addr.s_addr) >> 24) == 127u;
-        if (!loopbackChild && !serverJoinRateLimitAllow(fromAddr)) {
+        bool ownChild = serverDsChildJoinSource(fromAddr);
+        if (!ownChild && !serverJoinRateLimitAllow(fromAddr)) {
             WB_LOG_DEBUG(WB_LOG_CAT_NET,
                 "join rate-limited from %s:%u",
                 inet_ntoa(fromAddr->sin_addr),

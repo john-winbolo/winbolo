@@ -49,6 +49,7 @@
 #endif
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>  /* PIPE_BUF */
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -987,7 +988,8 @@ BotHostChildProc *botHostChildSpawn(const char *exe, const char *const *argv,
     if (p == NULL) return NULL;
     p->relayW = p->relayR = -1;
 
-    /* A write to a child that ended must not end the game. */
+    /* A write to a child that ended must not end the game. This is for
+     * the whole program, and stays (see botHostChildClientStart). */
     if (sigaction(SIGPIPE, NULL, &old) == 0 && old.sa_handler == SIG_DFL) {
         signal(SIGPIPE, SIG_IGN);
     }
@@ -1134,15 +1136,19 @@ bool botHostChildRelayWrite(BotHostChildProc *p, const void *buf, size_t n) {
     return true;
 }
 
-/* The pipe is non-blocking, and a line is shorter than PIPE_BUF, so the
- * write is all or nothing: a full pipe (EAGAIN) gives false at once. */
+/* The pipe is non-blocking, and a line with its newline is at most
+ * PIPE_BUF bytes (512 on macOS, the smallest POSIX allows), so the write
+ * is all or nothing: a full pipe (EAGAIN) gives false at once. A longer
+ * line is not written. */
 bool botHostChildWriteLine(BotHostChildProc *p, const char *line) {
     char buf[600];
     int n;
     ssize_t w;
     if (p == NULL || p->stdinW < 0 || line == NULL) return false;
     n = snprintf(buf, sizeof(buf), "%s\n", line);
-    if (n <= 0 || (size_t)n >= sizeof(buf)) return false;
+    if (n <= 0 || (size_t)n >= sizeof(buf) || (size_t)n > PIPE_BUF) {
+        return false;
+    }
     do {
         w = write(p->stdinW, buf, (size_t)n);
     } while (w < 0 && errno == EINTR);
@@ -1202,21 +1208,19 @@ bool botHostChildWait(BotHostChildProc *p, uint32_t waitMs, int *exitCode) {
     }
 }
 
-void botHostChildKill(BotHostChildProc *p) {
-    int status;
-    if (p == NULL || p->reaped) return;
+bool botHostChildKill(BotHostChildProc *p) {
+    if (p == NULL || p->reaped) return true;
     /* The child's group first: a process it started (the filter refuses
      * fork, but no filter runs without the sandbox) ends with it. The pid
      * is not reaped yet, so the group id is still the child's own. */
     (void)kill(-p->pid, SIGKILL);
-    if (!botHostChildAlive(p, NULL)) return;
+    if (!botHostChildAlive(p, NULL)) return true;
     /* Only the child this program started, by its own pid. */
     (void)kill(p->pid, SIGKILL);
-    if (waitpid(p->pid, &status, 0) == p->pid) {
-        takeStatus(p, status);
-    } else {
-        p->reaped = true;
-    }
+    /* A short wait only (WNOHANG steps): the caller may be the game's main
+     * thread. A child that has not ended by then is reaped later
+     * (botHostChildClientPoll). */
+    return botHostChildWait(p, BOT_HOST_CHILD_KILL_WAIT_MS, NULL);
 }
 
 void botHostChildFree(BotHostChildProc *p) {

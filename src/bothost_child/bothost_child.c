@@ -380,6 +380,113 @@ bool botHostRelayParseBody(const uint8_t *body, uint16_t bodyLen,
     return true;
 }
 
+/* ---- The child's datagram queue -------------------------------------- */
+
+void botHostDgramRingInit(BotHostDgramRing *r, uint8_t *bytes,
+                          uint32_t size) {
+    if (r == NULL) return;
+    memset(r, 0, sizeof(*r));
+    r->bytes = bytes;
+    r->size = bytes != NULL ? size : 0;
+}
+
+void botHostDgramRingClear(BotHostDgramRing *r) {
+    if (r == NULL) return;
+    r->head = 0;
+    r->count = 0;
+    r->end = 0;
+}
+
+bool botHostDgramRingPush(BotHostDgramRing *r, uint32_t ipNet,
+                          uint16_t portNet, const uint8_t *data,
+                          size_t len) {
+    BotHostDgramSlot *s;
+    uint32_t need, off;
+    if (r == NULL || r->bytes == NULL || len > 0xFFFFu ||
+        (len > 0 && data == NULL)) {
+        return false;
+    }
+    if (r->count >= BOT_HOST_DGRAM_RING_SLOTS) return false;
+    /* An empty datagram takes one byte, so no two start at one place. */
+    need = len > 0 ? (uint32_t)len : 1u;
+    if (need > r->size) return false;
+    if (r->count == 0) {
+        off = 0;
+    } else {
+        uint32_t start = r->slot[r->head].off;  /* the oldest's bytes */
+        if (r->end > start) {
+            /* One run, start to end: the room after it, else the room
+             * before it (the bytes after the end are then not used until
+             * the ring wraps back). */
+            if (r->size - r->end >= need) {
+                off = r->end;
+            } else if (start >= need) {
+                off = 0;
+            } else {
+                return false;
+            }
+        } else if (start - r->end >= need) {
+            /* Wrapped: the free bytes are from the end to the start. */
+            off = r->end;
+        } else {
+            return false;
+        }
+    }
+    s = &r->slot[(r->head + r->count) % BOT_HOST_DGRAM_RING_SLOTS];
+    s->ipNet = ipNet;
+    s->portNet = portNet;
+    s->len = (uint16_t)len;
+    s->off = off;
+    if (len > 0) memcpy(r->bytes + off, data, len);
+    r->end = off + need;
+    r->count++;
+    return true;
+}
+
+int botHostDgramRingPop(BotHostDgramRing *r, uint8_t *buf, int maxLen,
+                        uint32_t *ipNet, uint16_t *portNet) {
+    const BotHostDgramSlot *s;
+    int n;
+    if (r == NULL || r->count <= 0) return -1;
+    s = &r->slot[r->head];
+    n = (int)s->len;
+    if (maxLen < 0) maxLen = 0;
+    if (n > maxLen) n = maxLen;
+    if (n > 0 && buf != NULL) memcpy(buf, r->bytes + s->off, (size_t)n);
+    if (ipNet != NULL) *ipNet = s->ipNet;
+    if (portNet != NULL) *portNet = s->portNet;
+    r->head = (r->head + 1) % BOT_HOST_DGRAM_RING_SLOTS;
+    r->count--;
+    if (r->count == 0) botHostDgramRingClear(r);
+    return n;
+}
+
+/* ---- One line of the game's input ------------------------------------ */
+
+int botHostChildGetLine(FILE *in, char *out, size_t outSize) {
+    size_t n;
+    int c;
+    if (in == NULL || out == NULL || outSize < 2 || outSize > 0x7FFFFFFF) {
+        return -1;
+    }
+    if (fgets(out, (int)outSize, in) == NULL) return -1;
+    n = strlen(out);
+    if ((n == 0 || out[n - 1] != '\n') && n + 1 >= outSize) {
+        /* out is full and the line goes on: a line of exactly the size
+         * ends here; a longer one is read to its newline and dropped. */
+        c = fgetc(in);
+        if (c != '\n' && c != EOF) {
+            while (c != '\n' && c != EOF) c = fgetc(in);
+            out[0] = '\0';
+            return 0;
+        }
+    }
+    while (n > 0 && (out[n - 1] == '\n' || out[n - 1] == '\r')) {
+        out[--n] = '\0';
+    }
+    return 1;
+}
+
 /* ---- The sandbox's paths --------------------------------------------- */
 
 bool botHostChildSandboxAdd(const char **list, int *count, const char *path) {

@@ -801,15 +801,19 @@ bool botHostChildWait(BotHostChildProc *p, uint32_t waitMs, int *exitCode) {
     return true;
 }
 
-void botHostChildKill(BotHostChildProc *p) {
-    if (p == NULL || p->process == NULL) return;
-    if (WaitForSingleObject(p->process, 0) != WAIT_TIMEOUT) return;
+bool botHostChildKill(BotHostChildProc *p) {
+    if (p == NULL || p->process == NULL) return true;
+    if (WaitForSingleObject(p->process, 0) != WAIT_TIMEOUT) return true;
     if (p->job != NULL) {
         TerminateJobObject(p->job, 1);
     } else {
         TerminateProcess(p->process, 1);
     }
-    WaitForSingleObject(p->process, 5000);
+    /* A short wait only: the caller may be the game's main thread. A
+     * child that has not ended by then is freed later (the reap in
+     * botHostChildClientPoll). */
+    return WaitForSingleObject(p->process, BOT_HOST_CHILD_KILL_WAIT_MS) ==
+           WAIT_OBJECT_0;
 }
 
 void botHostChildFree(BotHostChildProc *p) {
