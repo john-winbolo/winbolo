@@ -1,0 +1,505 @@
+-- =========================================================================
+-- test_pt2_v2_strip.lua -- standalone unit tests (2026-11-23) of the strip
+-- pill take evaluator (pilltake_v2.lua):
+--   * a ray with planned blockers made from the plain ray = shadow.cast
+--     with those blockers;
+--   * wedges and masks against exact casts (CANT never removes a point
+--     that has a clear aim; a sure MUST / COVER prediction is what the
+--     exact ray gives), on random maps and on the thin strip double take;
+--   * the chain DFS (max chain, chain_skip, a blocker in front cuts);
+--   * the wall search against a brute force over every set;
+--   * the wedges are kept while nothing changes and made again on a change;
+--   * evaluate runs and its best point passes the exact tests.
+--
+-- Run from this directory with the LuaJIT built beside the game:
+--   ../../build/_deps/luajit_src-src/src/luajit.exe test_pt2_v2_strip.lua
+-- =========================================================================
+
+package.path = "./?.lua;" .. package.path
+
+if math.atan2 then
+  local _atan1, _atan2 = math.atan, math.atan2
+  math.atan = function(y, x) if x == nil then return _atan1(y) else return _atan2(y, x) end end
+end
+
+local C   = require("constants")
+local U   = require("util")
+local cpf = require("cpathfinder")
+local PC  = require("pill_cover")
+local SH  = require("shadow")
+
+_G.print2 = _G.print2 or function() end
+
+local pass, fail = 0, 0
+local function check(name, cond, got)
+  if cond then pass = pass + 1; print("  ok   " .. name)
+  else fail = fail + 1; print(string.format("  FAIL %s   (got %s)", name, tostring(got))) end
+end
+
+local terrain = {}
+local function sq(mx, my) return my * 256 + mx end
+U.ttype      = function(mx, my) return terrain[sq(mx, my)] or C.T_GRASS end
+U.ttype_peek = U.ttype
+U.base_tile_stops_tank_shell = function() return false end
+cpf.lgm_travel_ticks_map = function(omx, omy, mx, my)
+  if U.is_water(U.ttype(mx, my)) then return -1 end
+  return 10
+end
+
+local OLD = require("pilltake_v2_old")
+local V   = require("pilltake_v2")
+
+-- a seeded random (LuaJIT math.random is fine, but keep it ours)
+local seed = 12345
+local function rnd(n)
+  seed = (seed * 1103515245 + 12345) % 2147483648
+  return (seed % n) + 1
+end
+
+local function make_world(pills)
+  local w = { pills = {}, pill_at = {}, bases = {}, base_at = {} }
+  for i, p in ipairs(pills) do
+    w.pills[i] = p
+    w.pill_at[sq(p.mx, p.my)] = { { id = i, pill = p } }
+  end
+  return w
+end
+
+local function make_inp(world, A, npb)
+  local inp = OLD.knob_inp(C, {})
+  inp = OLD.world_inp(world, C, U, PC, cpf, inp, false)
+  inp.A = A
+  inp.radius = C.PPT_STANDOFF or 7.0
+  inp.num_pill_blockers = npb or 0
+  inp.score_fn = function(deg, mx, my, cx, cy)
+    local dx, dy = cx - 128.5, cy - 140.5
+    return math.sqrt(dx * dx + dy * dy)
+  end
+  inp.c_eval = false
+  inp.capture_file = nil
+  return inp
+end
+
+local function clear() for k in pairs(terrain) do terrain[k] = nil end end
+
+-- ── 1. ray with planned blockers = cast with them ─────────────────────────
+print("ray_view with planned blockers = shadow.cast")
+do
+  local bad, n = 0, 0
+  for trial = 1, 60 do
+    clear()
+    local pills = { { mx = 128, my = 120, owner = "hostile", health = 15 } }
+    for _ = 1, 3 do
+      local mx, my = 122 + rnd(12), 114 + rnd(12)
+      if not (mx == 128 and my == 120) then
+        pills[#pills + 1] = { mx = mx, my = my, owner = rnd(2) == 1 and "friendly" or "hostile", health = 5 * rnd(3) }
+      end
+    end
+    for _ = 1, 25 do
+      local t = ({ C.T_BUILDING, C.T_HALFBUILD, C.T_FOREST, C.T_BOAT })[rnd(4)]
+      terrain[sq(120 + rnd(16), 112 + rnd(16))] = t
+    end
+    local world = make_world(pills)
+    local inp = make_inp(world, pills[1])
+    local env = inp.env
+    env.forest_transparent = (trial % 2 == 0)
+    for _ = 1, 20 do
+      local X = pills[rnd(#pills)]
+      if X.owner == "hostile" then
+        local px, py = (121 + rnd(14)) * 256 + rnd(255), (113 + rnd(14)) * 256 + rnd(255)
+        local sx, sy = X.mx * 256 + 128, X.my * 256 + 128
+        local b = SH.cast(env, sx, sy, px, py, SH.PILL_FIRE_LEN, nil)
+        b.X = X
+        local extra = {}
+        for k = 1, b.n_sq do if rnd(4) == 1 then extra[b.sq[k]] = (rnd(2) == 1) and 5 or 15 end end
+        local e = SH.cast(env, sx, sy, px, py, SH.PILL_FIRE_LEN, extra)
+        local v = V._ray_view(b, extra)
+        n = n + 1
+        local same = v.cover == e.cover and v.front == e.front and v.n_block == e.n_block
+          and v.hit == e.hit and v.t == e.t and v.link == e.link
+        if same then
+          for k = 1, e.n_block do
+            if v.block[k].sq ~= e.block[k].sq or v.block[k].shots ~= e.block[k].shots
+               or v.block[k].t ~= e.block[k].t then same = false end
+          end
+        end
+        if not same then bad = bad + 1 end
+      end
+    end
+  end
+  check(string.format("%d rays: the view equals the cast with blockers", n), bad == 0 and n > 100, bad)
+end
+
+-- ── 2. masks against exact casts (random maps) ────────────────────────────
+print("masks against exact casts")
+local function mask_trial(world, A, pills)
+  local inp = make_inp(world, A)
+  local ctx = V._new_ctx(inp, A)
+  local asets = V._aim_wedges(ctx, A)
+  local env = inp.env
+  local st = { cant = 0, cant_bad = 0, pred = 0, pred_sure = 0, pred_bad = 0 }
+  for deg = 0, 359 do
+    for _, R in ipairs({ 7.0, 6.6, 5.0 }) do
+      local cx = A.mx + 0.5 + math.sin(math.rad(deg)) * R
+      local cy = A.my + 0.5 - math.cos(math.rad(deg)) * R
+      local px, py = math.floor(cx * 256), math.floor(cy * 256)
+      env.omx, env.omy = math.floor(cx), math.floor(cy)
+      if V._cant(ctx, asets, px, py) then
+        st.cant = st.cant + 1
+        for _, off in ipairs(OLD.AIMS) do
+          local ok, why = SH.tank_shot(env, px, py, A.mx * 256 + off[1], A.my * 256 + off[2], A.mx, A.my, nil)
+          if ok or why == "short" then st.cant_bad = st.cant_bad + 1; break end
+        end
+      end
+      local on_pill = env.pill_on(math.floor(px / 256), math.floor(py / 256))
+      for _, X in ipairs(pills) do
+        local dxr, dyr = X.mx * 256 + 128 - px, X.my * 256 + 128 - py
+        local in_range = dxr * dxr + dyr * dyr <= (inp.pill_range + inp.range_margin) ^ 2
+        if X.owner == "hostile" and in_range and not on_pill then
+          local set = ctx.cw(X)
+          local pr = V._predict(ctx, set, px, py)
+          st.pred = st.pred + 1
+          if pr.sure then
+            st.pred_sure = st.pred_sure + 1
+            local r = V._ray_view(SH.cast(env, X.mx * 256 + 128, X.my * 256 + 128, px, py, SH.PILL_FIRE_LEN, nil), nil)
+            local used = r.link ~= nil and not r.cut
+            if r.link ~= pr.link or used ~= pr.used or r.cover ~= pr.cover or r.front ~= pr.front
+               or r.hit ~= pr.hit then
+              st.pred_bad = st.pred_bad + 1
+              if st.pred_bad <= 6 and os.getenv("V2DBG") then
+                print(string.format("    miss X=(%d,%d) P=(%d,%d) link %s/%s used %s/%s cover %d/%d front %d/%d hit %s/%s",
+                  X.mx, X.my, px, py, tostring(r.link and r.link.mx), tostring(pr.link and pr.link.mx),
+                  tostring(used), tostring(pr.used), r.cover, pr.cover, r.front, pr.front, r.hit, pr.hit))
+                for k = 1, r.n_block do local e = r.block[k]; print("      blk", e.sq % 256, math.floor(e.sq / 256), e.kind, e.t) end
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+  return st
+end
+do
+  local tot = { cant = 0, cant_bad = 0, pred = 0, pred_sure = 0, pred_bad = 0 }
+  for trial = 1, 30 do
+    clear()
+    local A = { mx = 128, my = 120, owner = "hostile", health = 15 }
+    local pills = { A }
+    for _ = 1, 4 do
+      local mx, my = 120 + rnd(16), 112 + rnd(16)
+      if math.abs(mx - 128) + math.abs(my - 120) > 1 then
+        pills[#pills + 1] = { mx = mx, my = my, owner = rnd(3) == 1 and "friendly" or "hostile", health = 5 * rnd(3) }
+      end
+    end
+    for _ = 1, 20 + rnd(30) do
+      local mx, my = 118 + rnd(20), 110 + rnd(20)
+      if not (mx == 128 and my == 120) then
+        terrain[sq(mx, my)] = ({ C.T_BUILDING, C.T_HALFBUILD, C.T_FOREST, C.T_BOAT, C.T_BUILDING })[rnd(5)]
+      end
+    end
+    local st = mask_trial(make_world(pills), A, pills)
+    for k, v in pairs(st) do tot[k] = tot[k] + v end
+  end
+  print(string.format("    CANT %d points; predictions %d, sure %d (%.0f%%)", tot.cant, tot.pred,
+        tot.pred_sure, 100 * tot.pred_sure / math.max(1, tot.pred)))
+  check("CANT never removes a point with a clear (or short) aim", tot.cant_bad == 0 and tot.cant > 0, tot.cant_bad)
+  check("a sure MUST / COVER prediction is what the exact ray gives", tot.pred_bad == 0 and tot.pred_sure > 0,
+        tot.pred_bad)
+  check("most predictions are sure", tot.pred_sure > tot.pred * 0.7, tot.pred_sure)
+end
+
+-- ── 3. the thin strip double take ─────────────────────────────────────────
+print("thin strip double take")
+do
+  clear()
+  -- Y two squares south of A: A's shell meets Y only on a thin strip of
+  -- tank points south of the pair. Walls beside the strip.
+  local A = { mx = 128, my = 120, owner = "hostile", health = 15 }
+  local Y = { mx = 128, my = 122, owner = "hostile", health = 15 }
+  terrain[sq(126, 123)] = C.T_BUILDING
+  terrain[sq(130, 123)] = C.T_BUILDING
+  local pills = { A, Y }
+  local world = make_world(pills)
+  local st = mask_trial(world, A, pills)
+  check("thin strip: CANT never wrong", st.cant_bad == 0, st.cant_bad)
+  check("thin strip: sure predictions right", st.pred_bad == 0, st.pred_bad)
+  -- DFS chains over the ring: every exact chain {A, Y} point is in the DFS
+  -- chain {A, Y} (or not sure)
+  local inp = make_inp(world, A)
+  local ctx = V._new_ctx(inp, A)
+  local pts = {}
+  for deg = 0, 359 do
+    local cx = A.mx + 0.5 + math.sin(math.rad(deg)) * 7
+    local cy = A.my + 0.5 - math.cos(math.rad(deg)) * 7
+    local px, py = math.floor(cx * 256), math.floor(cy * 256)
+    local T = {}
+    for _, p in ipairs(pills) do T[#T + 1] = p end
+    pts[#pts + 1] = { px = px, py = py, T = T }
+  end
+  local list, at, sure = V._chains_dfs(ctx, pts, A)
+  local n2, agree, unsure = 0, 0, 0
+  for i, P in ipairs(pts) do
+    local rec = V._eval_point(ctx, P.px, P.py, nil, nil, false, false)
+    if rec and #rec.chain == 2 then n2 = n2 + 1 end
+    if not sure[i] then unsure = unsure + 1
+    elseif rec then
+      local mc = list[at[i]].chain
+      if #mc == #rec.chain then agree = agree + 1 end
+    else
+      agree = agree + 1
+    end
+  end
+  print(string.format("    chain {A,Y} at %d of 360 points; DFS sure and same %d, not sure %d", n2, agree, unsure))
+  check("thin strip: some points have the chain {A, Y}", n2 > 0, n2)
+  check("thin strip: every sure DFS chain is the exact chain", agree + unsure == 360, agree + unsure)
+end
+
+-- ── 4. chain rules ────────────────────────────────────────────────────────
+print("chain rules")
+do
+  local n, bad, by_len = 0, 0, { 0, 0, 0, 0 }
+  local found = {}
+  for trial = 1, 120 do
+    clear()
+    local A = { mx = 128, my = 120, owner = "hostile", health = 15 }
+    local pills = { A }
+    for _ = 1, 4 + (trial % 8) do
+      local mx, my = 122 + rnd(12), 114 + rnd(12)
+      if math.abs(mx - 128) + math.abs(my - 120) > 1 then
+        pills[#pills + 1] = { mx = mx, my = my, owner = "hostile", health = 15 }
+      end
+    end
+    for _ = 1, rnd(10) do terrain[sq(120 + rnd(16), 112 + rnd(16))] = C.T_BUILDING end
+    terrain[sq(128, 120)] = nil
+    local world = make_world(pills)
+    local inp = make_inp(world, A)
+    local ctx = V._new_ctx(inp, A)
+    for deg = 0, 359, 3 do
+      local cx = A.mx + 0.5 + math.sin(math.rad(deg)) * 7
+      local cy = A.my + 0.5 - math.cos(math.rad(deg)) * 7
+      local px, py = math.floor(cx * 256), math.floor(cy * 256)
+      local rec = V._eval_point(ctx, px, py, nil, nil, false, false)
+      if rec then
+        n = n + 1
+        by_len[#rec.chain] = by_len[#rec.chain] + 1
+        if #rec.chain > inp.max_chain then bad = bad + 1 end
+        for k = 1, #rec.chain - 1 do
+          local r = rec.rays[rec.ri[rec.chain[k]]]
+          if r.cut or r.link ~= rec.chain[k + 1] then bad = bad + 1 end
+        end
+        if #rec.chain >= 2 and (#found < 40 or (#rec.chain >= 3 and #found < 60)) then
+          found[#found + 1] = { pills = pills, terrain = {}, A = A, px = px, py = py, rec = rec }
+          for k, v in pairs(terrain) do found[#found].terrain[k] = v end
+        end
+      end
+    end
+  end
+  print(string.format("    %d points: chain length 1/2/3 = %d/%d/%d", n, by_len[1], by_len[2], by_len[3]))
+  check("every chain: at most PT2_MAX_CHAIN, each link the uncut first pill", bad == 0 and by_len[2] > 0, bad)
+  local skip_ok, cut_ok, cut_n, max_ok, max_n = 0, 0, 0, 0, 0
+  for _, f in ipairs(found) do
+    clear()
+    for k, v in pairs(f.terrain) do terrain[k] = v end
+    local world = make_world(f.pills)
+    local inp = make_inp(world, f.A)
+    inp.chain_skip = { [f.rec.chain[2]] = true }
+    local r1 = V._eval_point(V._new_ctx(inp, f.A), f.px, f.py, nil, nil, false, false)
+    if r1 and #r1.chain == 1 then skip_ok = skip_ok + 1 end
+    inp.chain_skip = nil
+    if #f.rec.chain >= 3 then
+      max_n = max_n + 1
+      inp.max_chain = 2
+      local r3 = V._eval_point(V._new_ctx(inp, f.A), f.px, f.py, nil, nil, false, false)
+      if r3 and #r3.chain == 2 then max_ok = max_ok + 1 end
+      inp.max_chain = C.PT2_MAX_CHAIN or 3
+    end
+    -- a wall in front of A's link (off the shot lane) cuts the chain there
+    local ra = f.rec.rays[f.rec.ri[f.A]]
+    local lane = {}
+    for _, q in ipairs(f.rec.lanes[f.rec.aim_idx] or {}) do lane[q] = true end
+    for k = 1, ra.n_sq do
+      local q = ra.sq[k]
+      if ra.sq_t[k] < ra.link_t and not lane[q] then
+        terrain[q] = C.T_BUILDING
+        local r2 = V._eval_point(V._new_ctx(make_inp(world, f.A), f.A), f.px, f.py, nil, f.rec.aim_idx, false, false)
+        terrain[q] = f.terrain[q]
+        if r2 then
+          cut_n = cut_n + 1
+          if #r2.chain == 1 and r2.have >= 5 then cut_ok = cut_ok + 1 end
+          break
+        end
+      end
+    end
+  end
+  check(string.format("chain_skip ends the chain (%d points)", #found), skip_ok == #found and #found > 0, skip_ok)
+  check(string.format("PT2_MAX_CHAIN 2 stops a 3 chain (%d points)", max_n), max_ok == max_n, max_ok)
+  check(string.format("a wall in front of the link cuts the chain, and counts as cover (%d points)", cut_n),
+        cut_ok == cut_n and cut_n > 0, cut_ok)
+end
+
+-- ── 5. wall search against brute force ────────────────────────────────────
+print("wall search against brute force")
+do
+  local tried, agree, opt_ok, n_sol = 0, 0, 0, 0
+  for trial = 1, 400 do
+    clear()
+    local A = { mx = 128, my = 120, owner = "hostile", health = 15 }
+    local pills = { A }
+    for _ = 1, rnd(4) do
+      local mx, my = 122 + rnd(12), 114 + rnd(12)
+      if math.abs(mx - 128) + math.abs(my - 120) > 2 then
+        pills[#pills + 1] = { mx = mx, my = my, owner = "hostile", health = 15 }
+      end
+    end
+    for _ = 1, rnd(12) do terrain[sq(120 + rnd(16), 112 + rnd(16))] = C.T_BUILDING end
+    terrain[sq(128, 120)] = nil
+    local world = make_world(pills)
+    local npb = rnd(2) - 1
+    local inp = make_inp(world, A, npb)
+    inp.build_max = 2 + (trial % 2)
+    local ctx = V._new_ctx(inp, A)
+    local deg = rnd(360)
+    local cx = A.mx + 0.5 + math.sin(math.rad(deg)) * 7
+    local cy = A.my + 0.5 - math.cos(math.rad(deg)) * 7
+    local px, py = math.floor(cx * 256), math.floor(cy * 256)
+    local rec = V._eval_point(ctx, px, py, nil, nil, false, false)
+    if rec and not rec.covered then
+      rec.omx = math.floor(cx + math.sin(math.rad(deg)) * 2.25)
+      rec.omy = math.floor(cy - math.cos(math.rad(deg)) * 2.25)
+      tried = tried + 1
+      local aims = V._clear_aims_of(ctx, rec)
+      local ai = aims[rnd(#aims)]
+      local s = V._search_walls(ctx, rec, ai)
+      -- brute force: every legal square of the uncovered rays (the search's
+      -- own legal set: slot rules), every set up to build_max, pills first
+      local cand, seen = {}, {}
+      local lane = {}
+      for _, q in ipairs(rec.lanes[ai] or {}) do lane[q] = true end
+      for _, ui in ipairs(rec.uncovered) do
+        local r = rec.rays[ui]
+        for k = 1, r.n_sq do
+          local q = r.sq[k]
+          if not seen[q] then
+            seen[q] = true
+            local mx, my = q % 256, math.floor(q / 256)
+            local tt = U.ttype(mx, my)
+            if not lane[q] and tt ~= C.T_BUILDING and not inp.env.pill_on(mx, my) then
+              local cxq, cyq = mx * 256 + 128, my * 256 + 128
+              local okd = (cxq - px) ^ 2 + (cyq - py) ^ 2 >= 256 * 256
+              local sx, sy = r.X.mx * 256 + 128, r.X.my * 256 + 128
+              local before = (cxq - sx) ^ 2 + (cyq - sy) ^ 2 < (px - sx) ^ 2 + (py - sy) ^ 2
+              local bl = r.link and r.sq_t[k] <= r.link_t
+              if okd and before and not bl then cand[#cand + 1] = q end
+            end
+          end
+        end
+      end
+      local best_k = nil
+      local function covers(extra)
+        local f = V._eval_point(ctx, px, py, extra, ai, false, true)
+        return f and f.covered and #f.chain == #rec.chain
+      end
+      local nc = #cand
+      for k = 1, inp.build_max do
+        if best_k then break end
+        local p = math.min(npb, k)
+        local idx = {}
+        local function rec_sets(start, depth)
+          if best_k then return end
+          if depth > k then
+            -- kinds: the first p (in every way) pills
+            local function kinds(i, pl, extra)
+              if best_k then return end
+              if i > k then
+                if pl == 0 and covers(extra) then best_k = k end
+                return
+              end
+              local q = cand[idx[i]]
+              if pl > 0 then extra[q] = 15; kinds(i + 1, pl - 1, extra) end
+              if k - i >= pl then extra[q] = 5; kinds(i + 1, pl, extra) end
+              extra[q] = nil
+            end
+            kinds(1, p, {})
+            return
+          end
+          for i = start, nc do idx[depth] = i; rec_sets(i + 1, depth + 1) end
+        end
+        rec_sets(1, 1)
+      end
+      if (s and s.k) == best_k then agree = agree + 1 end
+      if s then
+        n_sol = n_sol + 1
+        local ex = {}
+        for _, e in ipairs(s.items) do ex[e.sq] = e.shots end
+        if covers(ex) then opt_ok = opt_ok + 1 end
+      end
+    end
+  end
+  print(string.format("    %d uncovered points, %d with a plan", tried, n_sol))
+  check("the search finds the fewest blockers the brute force finds", agree == tried and tried > 20, agree)
+  check("every plan covers the point (exact cast)", opt_ok == n_sol, opt_ok)
+end
+
+-- ── 6. wedges kept and made again ─────────────────────────────────────────
+print("wedges kept while nothing changes")
+do
+  clear()
+  V.reset()
+  local A = { mx = 128, my = 120, owner = "hostile", health = 15 }
+  local Y = { mx = 131, my = 124, owner = "hostile", health = 15 }
+  local pills = { A, Y }
+  terrain[sq(127, 124)] = C.T_BUILDING
+  local world = make_world(pills)
+  local inp = make_inp(world, A)
+  local r1 = V.evaluate_lua(inp)
+  local n1 = V.stats.wedge_new
+  local r2 = V.evaluate_lua(inp)
+  check("second run makes no wedge", V.stats.wedge_new == n1 and V.stats.wedge_keep > 0,
+        V.stats.wedge_new - n1)
+  check("second run has the same best", r1.best and r2.best and r1.best.deg == r2.best.deg
+        and r1.best.safe == r2.best.safe, r2.best and r2.best.deg)
+  terrain[sq(129, 123)] = C.T_BUILDING
+  V.evaluate_lua(inp)
+  check("a new wall in range makes the wedges again", V.stats.wedge_new > n1, V.stats.wedge_new - n1)
+  local n3 = V.stats.wedge_new
+  Y.health = 0
+  V.evaluate_lua(inp)
+  check("a dead pill makes the wedges again", V.stats.wedge_new > n3, V.stats.wedge_new - n3)
+end
+
+-- ── 7. evaluate: the best passes the exact tests ──────────────────────────
+print("evaluate: the best passes v2's own exact tests")
+do
+  local n, safe, bad = 0, 0, 0
+  for trial = 1, 20 do
+    clear()
+    V.reset()
+    local A = { mx = 128, my = 120, owner = "hostile", health = 15 }
+    local pills = { A }
+    for _ = 1, rnd(3) do
+      local mx, my = 122 + rnd(12), 114 + rnd(12)
+      if math.abs(mx - 128) + math.abs(my - 120) > 2 then
+        pills[#pills + 1] = { mx = mx, my = my, owner = rnd(4) == 1 and "friendly" or "hostile", health = 15 }
+      end
+    end
+    for _ = 1, rnd(25) do terrain[sq(120 + rnd(16), 112 + rnd(16))] = C.T_BUILDING end
+    terrain[sq(128, 120)] = nil
+    local world = make_world(pills)
+    local inp = make_inp(world, A, rnd(2) - 1)
+    inp.travel_band = (trial % 2 == 0) and 6.25 or 0
+    local res = V.evaluate_lua(inp)
+    n = n + 1
+    local b = res.best
+    if b and b.safe then
+      safe = safe + 1
+      local why = V.judge(inp, b.px, b.py, b.extra, b.aim_idx)
+      if why ~= "-" then bad = bad + 1; print("    judge: " .. tostring(why)) end
+    end
+  end
+  print(string.format("    %d maps, %d safe", n, safe))
+  check("every safe best passes judge", bad == 0 and safe > 0, bad)
+end
+
+print(string.format("%d passed, %d failed", pass, fail))
+os.exit(fail == 0 and 0 or 1)
