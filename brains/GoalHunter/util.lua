@@ -809,4 +809,79 @@ end
 -- through U so Brain.think needs no new upvalue.
 M.live_physics = require("live_physics")
 
+-- ---- The builder blast shape (the lgm_blast_shape rule) -----------------
+-- The area of open ground an explosion kills a builder in (src/bolo/lgm.c
+-- lgmBlastCatches, internal/lgm.h lgmBlastOpenGroundCatches). dx, dy are the
+-- explosion's place less the man's, in world units.
+--   0  "Half-square circle": dx^2 + dy^2 <= 128^2 (LGM_SHELL_KILL_RADIUS_WU).
+--      The classic table, and what the brain modelled before the rule.
+--   1  "Mac Bolo box": |dx| < 128 and |dy| < 128.
+--   2  "Mac Bolo equivalent area circle": dx^2 + dy^2 <= 144^2.
+-- Every shape also stops at the pill_range rule, as the engine's does: a
+-- man further than C.LGM_BLAST_PILL_RANGE_WU from the explosion is safe.
+-- Classic pill_range (2048) is far past every shape.
+-- The shape is C.LGM_BLAST_SHAPE and the limit C.LGM_BLAST_PILL_RANGE_WU,
+-- which live_physics.lua group BLAST sets from info.rules each think. With
+-- C.LIVE_PHYSICS or C.LIVE_PHYSICS_BLAST off (KEEL), or no rule sent, they
+-- keep their base values: shape 0 and 2048, the old model.
+-- A solid square (a wall, a live pill, a base) keeps the square rule, which
+-- this does not cover.
+function M.lgm_blast_shape()
+  local s = C.LGM_BLAST_SHAPE
+  if s == 1 or s == 2 then return s end
+  return 0
+end
+
+-- The pill_range limit, in world units: nil when there is none.
+local function blast_limit()
+  local pr = C.LGM_BLAST_PILL_RANGE_WU
+  if type(pr) ~= "number" then return nil end
+  return pr
+end
+M.lgm_open_blast_limit = blast_limit
+
+-- Whether an open-ground explosion dx, dy from the man kills him.
+function M.lgm_open_blast_catches(dx, dy)
+  local d2 = dx * dx + dy * dy
+  local pr = blast_limit()
+  if pr and (pr < 0 or d2 > pr * pr) then return false end
+  local shape = M.lgm_blast_shape()
+  if shape == 1 then
+    local h = C.LGM_BLAST_MAC_BOX_HALF_WU or 128
+    return dx > -h and dx < h and dy > -h and dy < h
+  end
+  local r = (shape == 2) and (C.LGM_BLAST_MAC_AREA_RADIUS_WU or 144)
+                         or (C.LGM_SHELL_KILL_RADIUS_WU or 128)
+  return d2 <= r * r
+end
+
+-- The same test for a man `perp` world units to the side of a shell's line
+-- (unit heading hx, hy), with the shell landing level with him. The circles
+-- read perp alone, exactly as the old `perp <= 128` did; the box reads the
+-- side offset on each axis. The pill_range limit reads perp, the distance.
+function M.lgm_open_blast_catches_perp(perp, hx, hy)
+  local pr = blast_limit()
+  if pr and (pr < 0 or perp > pr) then return false end
+  local shape = M.lgm_blast_shape()
+  if shape == 1 then
+    return M.lgm_open_blast_catches(-hy * perp, hx * perp)
+  end
+  local r = (shape == 2) and (C.LGM_BLAST_MAC_AREA_RADIUS_WU or 144)
+                         or (C.LGM_SHELL_KILL_RADIUS_WU or 128)
+  return perp <= r
+end
+
+-- How far the shape reaches along an axis, for drawing: the circle's radius,
+-- or the box's half side, cut to the pill_range limit when that is shorter.
+function M.lgm_open_blast_reach()
+  local shape = M.lgm_blast_shape()
+  local r
+  if shape == 1 then r = C.LGM_BLAST_MAC_BOX_HALF_WU or 128
+  elseif shape == 2 then r = C.LGM_BLAST_MAC_AREA_RADIUS_WU or 144
+  else r = C.LGM_SHELL_KILL_RADIUS_WU or 128 end
+  local pr = blast_limit()
+  if pr and pr < r then r = math.max(pr, 0) end
+  return r
+end
+
 return M

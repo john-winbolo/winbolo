@@ -1095,6 +1095,11 @@ SDL_Texture *sdl3DrawGetTilesTexture(void) {
   return gTilesTex;
 }
 
+SDL_Texture *sdl3DrawGetSpritesTexture(const SpriteAtlas **atlas) {
+  if (atlas) *atlas = gSpriteAtlas;
+  return gSpritesTex;
+}
+
 /* The single place the mode is turned on and off, so the pointer the view may
    have switched to the game crosshair is handed back on every way out — the
    menu toggle, the end of a game and teardown all come through here. */
@@ -2135,6 +2140,9 @@ void sdl3DrawCleanup(void) {
 
   /* ImGui cleanup before destroying renderer/window */
   sdl3ImguiCleanup();
+  /* The pop-out windows outlive each game (sdl3ImguiCleanup only hides
+     them) and go here, with the main renderer and window. */
+  sdl3ImguiDestroyPopOuts();
 
 #if !defined(__ANDROID__) && !defined(__IPHONEOS__)
   /* News popup teardown sits in this process-exit hook (not in
@@ -2795,6 +2803,7 @@ void sdl3DrawFlushOverviewInWindow(void) {
   OverviewHudLayout hud = gOverviewPrepHud;
 
   overviewViewRenderOffscreen(gOverviewView, gRenderer, gTilesTex, gSheetScale,
+                              gSpritesTex, gSpriteAtlas,
                               gCrosshairTex, w, h, gOverviewSnapshot, true);
 
   if (drawHud) {

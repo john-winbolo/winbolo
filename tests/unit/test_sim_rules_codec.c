@@ -168,7 +168,7 @@ int run_sim_rules_codec_roundtrip(void) {
                       "the decoder accepted a truncated base body");
         UT_ASSERT(shortOut.u.simRules.building_life ==
                   CTRL_SIM_RULES_BUILDING_LIFE_CLASSIC);
-        UT_ASSERT(!dec(buf, CTRL_SIM_RULES_EXT2_BODY_LEN + 1, &shortOut));
+        UT_ASSERT(!dec(buf, CTRL_SIM_RULES_EXT3_BODY_LEN + 1, &shortOut));
         UT_ASSERT_MSG(!dec(buf, 0, &shortOut),
                       "the decoder accepted an empty body");
     }
@@ -271,6 +271,59 @@ int run_sim_rules_codec_roundtrip(void) {
         UT_ASSERT(bothOut.u.simRules.tank_collision_mac == 1);
         UT_ASSERT(bothOut.u.simRules.tank_deep_sea_safe == 0);
         UT_ASSERT(bothOut.u.simRules.building_life == 255);
+    }
+
+    /* The third tail. An lgm_blast_shape that is not classic (classic is
+       zero) rides after building_life, which comes along at whatever it
+       holds; cut short of it, the body reads the classic shape; and a
+       classic shape sends nothing extra. */
+    {
+        ControlEvent shape, shapeOut;
+        size_t       shapeLen = 0;
+
+        srFillCounted(&shape);
+        shape.u.simRules.building_life   = CTRL_SIM_RULES_BUILDING_LIFE_CLASSIC;
+        shape.u.simRules.lgm_blast_shape = 2;
+        UT_ASSERT(enc(&shape, NULL, buf, sizeof(buf), &shapeLen) == ENCODE_OK);
+        UT_ASSERT_MSG(shapeLen == CTRL_SIM_RULES_EXT3_BODY_LEN,
+                      "an lgm_blast_shape of 2 wrote %u bytes, expected %u",
+                      (unsigned)shapeLen,
+                      (unsigned)CTRL_SIM_RULES_EXT3_BODY_LEN);
+        memset(&shapeOut, 0xAB, sizeof(shapeOut));
+        UT_ASSERT(dec(buf, shapeLen, &shapeOut));
+        UT_ASSERT_MSG(shapeOut.u.simRules.lgm_blast_shape == 2,
+                      "lgm_blast_shape decoded as %ld, expected 2",
+                      (long)shapeOut.u.simRules.lgm_blast_shape);
+        UT_ASSERT(shapeOut.u.simRules.building_life ==
+                  CTRL_SIM_RULES_BUILDING_LIFE_CLASSIC);
+        UT_ASSERT(shapeOut.u.simRules.tank_collision_mac == 0);
+        UT_ASSERT(shapeOut.u.simRules.shell_speed ==
+                  shape.u.simRules.shell_speed);
+
+        /* Cut short of the third tail: the classic shape. */
+        UT_ASSERT(dec(buf, CTRL_SIM_RULES_EXT2_BODY_LEN, &shapeOut));
+        UT_ASSERT(shapeOut.u.simRules.lgm_blast_shape == 0);
+
+        /* With building_life set too, both come through. */
+        shape.u.simRules.building_life   = 255;
+        shape.u.simRules.lgm_blast_shape = 1;
+        UT_ASSERT(enc(&shape, NULL, buf, sizeof(buf), &shapeLen) == ENCODE_OK);
+        UT_ASSERT(shapeLen == CTRL_SIM_RULES_EXT3_BODY_LEN);
+        memset(&shapeOut, 0xAB, sizeof(shapeOut));
+        UT_ASSERT(dec(buf, shapeLen, &shapeOut));
+        UT_ASSERT(shapeOut.u.simRules.lgm_blast_shape == 1);
+        UT_ASSERT(shapeOut.u.simRules.building_life == 255);
+
+        /* A classic shape: building_life alone decides the length. */
+        shape.u.simRules.lgm_blast_shape = 0;
+        UT_ASSERT(enc(&shape, NULL, buf, sizeof(buf), &shapeLen) == ENCODE_OK);
+        UT_ASSERT_MSG(shapeLen == CTRL_SIM_RULES_EXT2_BODY_LEN,
+                      "a classic lgm_blast_shape wrote %u bytes, expected %u",
+                      (unsigned)shapeLen,
+                      (unsigned)CTRL_SIM_RULES_EXT2_BODY_LEN);
+        shape.u.simRules.building_life = CTRL_SIM_RULES_BUILDING_LIFE_CLASSIC;
+        UT_ASSERT(enc(&shape, NULL, buf, sizeof(buf), &shapeLen) == ENCODE_OK);
+        UT_ASSERT(shapeLen == CTRL_SIM_RULES_BASE_BODY_LEN);
     }
 
     /* And a buffer too small to hold the body is refused rather than
