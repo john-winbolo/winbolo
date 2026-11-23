@@ -5954,6 +5954,7 @@ set(_unit_test_names
     brain_sandbox_hostile_astar_log_removed
     brain_sandbox_hostile_file_jail
     brain_sandbox_hostile_off_map_terrain
+    brain_sandbox_jit_limits
     brain_msgh_budget_kill_no_traceback
     brain_msgh_real_error_keeps_traceback
     brain_inbox_push_peek_fifo
@@ -7628,6 +7629,8 @@ set(_unit_test_names
     scenario_validate_trigger_announce_clear
     scenario_validate_trigger_arg_literal
     scenario_validate_rule_pair_key
+    scenario_validate_rule_pair_mended
+    scenario_validate_rule_pair_alone
     scenario_validate_needs_bots_missing
     scenario_validate_needs_bots_declared
     scenario_lua_every_row_answers
