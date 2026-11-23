@@ -699,12 +699,17 @@ void serverSimDestroy(ServerSim *sim) {
     free(sim->botPoolBlob);
     sim->botPoolBlob = NULL;
 
+    /* Each slot is cleared as it is freed. A later tank's destroy puts down
+       the pillboxes it carries, and that search looks at every other tank
+       still in the table (pillsDropTankOn). */
     for (count = 0; count < MAX_TANKS; count++) {
         if (sim->sim.tanks[count] != NULL) {
             tankDestroy(&sim->sim, &sim->sim.tanks[count]);
+            sim->sim.tanks[count] = NULL;
         }
         if (sim->sim.lgmen[count] != NULL) {
             lgmDestroy(&sim->sim.lgmen[count]);
+            sim->sim.lgmen[count] = NULL;
         }
     }
 
