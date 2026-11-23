@@ -796,9 +796,9 @@ M.PT2_FINISH_SWERVE_TURN_TICKS = 27
 -- KEEL / MAST: false (old rule: wait for the shell).
 M.PT2_FINISH_CAPTURE_LOCK = true
 -- Armour floor for that lock: carrying no pill, one pill, two or more.
-M.PT2_FINISH_LOCK_FLOOR_NONE = 10
-M.PT2_FINISH_LOCK_FLOOR_ONE  = 15
-M.PT2_FINISH_LOCK_FLOOR_MANY = 20
+M.PT2_FINISH_LOCK_FLOOR_NONE = 10  -- Andrew, 2026-11-17
+M.PT2_FINISH_LOCK_FLOOR_ONE  = 15  -- Andrew, 2026-11-17
+M.PT2_FINISH_LOCK_FLOOR_MANY = 20  -- Andrew, 2026-11-17
 
 -- Attack position planner (pick_attack_standoff in goals.lua)
 M.ATTACK_PLAN_DIRS          = 12   -- candidate directions sampled around the pill
@@ -2327,12 +2327,12 @@ M.HUMAN_YIELD_TRACK_TICKS       = 50    -- 1 s position ring for the heading / c
 M.HUMAN_YIELD_HOLD_TICKS        = 35    -- 0.7 s in the cone before the claim
 M.HUMAN_YIELD_CLOSE_TILES       = 2.5   -- within 2.5 tiles: claim at once
 M.HUMAN_YIELD_AWAY_COS          = 0.3   -- turned away: cos(heading, pill) < 0.3 ...
-M.HUMAN_YIELD_AWAY_TICKS        = 50    -- ... for 1 s (also: not seen for 1 s)
-M.HUMAN_YIELD_STOP_TILES        = 4     -- stopped farther than 4 tiles ...
-M.HUMAN_YIELD_STOP_TICKS        = 150   -- ... for 3 s
-M.HUMAN_YIELD_LIMIT_TICKS       = 750   -- hard limit 15 s ...
-M.HUMAN_YIELD_LIMIT_NEAR_TILES  = 2     -- ... unless within 2 tiles
-M.HUMAN_YIELD_POST_TICKS        = 50    -- still claimed 1 s after the release
+M.HUMAN_YIELD_AWAY_TICKS        = 50    -- ... for 1 s (also: not seen for 1 s) (Andrew, 2026-11-19)
+M.HUMAN_YIELD_STOP_TILES        = 4     -- stopped farther than 4 tiles ... (Andrew, 2026-11-19)
+M.HUMAN_YIELD_STOP_TICKS        = 150   -- ... for 3 s (Andrew, 2026-11-19)
+M.HUMAN_YIELD_LIMIT_TICKS       = 750   -- hard limit 15 s ... (Andrew, 2026-11-19)
+M.HUMAN_YIELD_LIMIT_NEAR_TILES  = 2     -- ... unless within 2 tiles (Andrew, 2026-11-19)
+M.HUMAN_YIELD_POST_TICKS        = 50    -- still claimed 1 s after the release (Andrew, 2026-11-19)
 M.HUMAN_YIELD_ENEMY_RATIO       = 0.7   -- no yield: a seen enemy tank/LGM < 0.7 x the human's distance
 M.GOAL_POOL_COUNT          = 10    -- number of pool evaluators to spread across ticks
 M.GOAL_CANDS_PER_TICK      = 1     -- A* cost_to evaluations per tick (round-robin)
@@ -4425,7 +4425,7 @@ M.DEFEND_ALARM_DIJ_STOP_TILES = 9    -- stop summing per-tile Dijkstra cost once
 -- enemy shot the pill dead, the row rejected too_close the whole time.
 -- KEEL / MAST: false / 1.0 (too_close always rejects).
 M.DEFEND_ALARM_CLOSE_INTERRUPT  = true
-M.DEFEND_ALARM_CLOSE_TOTAL_MULT = 0.5
+M.DEFEND_ALARM_CLOSE_TOTAL_MULT = 0.5  -- Andrew, 2026-11-18
 -- ALARM HEAT (Andrew, Nov 18).  While we hold an alarm-mode defend_pill goal
 -- for pill D and enemy tank E is at D, heat a friendly pill with the
 -- attack_tank heat volley (attack.lua defend_heat_steer; same rules as
@@ -4443,8 +4443,8 @@ M.DEFEND_ALARM_CLOSE_TOTAL_MULT = 0.5
 -- KEEL / MAST: false.  The two numeric knobs need no keel / mast entry: the
 -- master is off there, so they are never read.
 M.DEFEND_ALARM_HEAT                = true
-M.DEFEND_HEAT_NEAR_ENEMY_TILES     = 9   -- euclidean tiles, enemy tank -> heated pill
-M.DEFEND_HEAT_NEAR_ENEMY_MAX_SHOTS = 2   -- volley cap while an enemy is that close
+M.DEFEND_HEAT_NEAR_ENEMY_TILES     = 9   -- euclidean tiles, enemy tank -> heated pill (Andrew, 2026-11-18)
+M.DEFEND_HEAT_NEAR_ENEMY_MAX_SHOTS = 2   -- volley cap while an enemy is that close (Andrew, 2026-11-18)
 M.HEAT_REQUIRE_ENEMY_RANGE   = 10    -- heat only with a hostile tank VISIBLE within this
                                      -- euclidean range of the pill (and not actively
                                      -- shelling it ??? taking_damage blocks first).
@@ -4622,8 +4622,8 @@ M.WSIM_DRIVE_WHILE_SLIDING = true
 -- range = pill range in squares (8), rounded half up. Damage 5 gives
 -- 5,5,4,4,3,3,2 at 2..8 squares. Both 0 = the old 1 - dist/range discount
 -- (at least 1 inside half range). A parked tank takes full damage either way.
-M.WSIM_HIT_FULL_DIST = 2
-M.WSIM_HIT_FAR_FRAC  = 0.4
+M.WSIM_HIT_FULL_DIST = 2  -- Andrew, 2026-11-21
+M.WSIM_HIT_FAR_FRAC  = 0.4  -- Andrew, 2026-11-21
 -- WSIM_CAPTURE_EXIT_MAX (C): capture_pill sims (the goal pool sim and the
 -- CAPTURE_ROUTE sim) drive ON to the pill square (the pickup is instant,
 -- no dwell), then back along the incoming path, at most this many squares
@@ -4632,11 +4632,11 @@ M.WSIM_HIT_FAR_FRAC  = 0.4
 -- (at once when none did). A death on the exit leg is still a KILL.
 -- 0 = the old sim (the goal pool to the pill square, CAPTURE_ROUTE to the
 -- square next to it, no exit leg).
-M.WSIM_CAPTURE_EXIT_MAX = 10
+M.WSIM_CAPTURE_EXIT_MAX = 10  -- Andrew, 2026-11-21
 -- WSIM_CAPTURE_EXIT_DMG_WEIGHT: exit leg damage costs this share of
 -- WSIM_DAMAGE_COST_WEIGHT in the goal pool:
 --   extra = (damage - exit_damage) x W + exit_damage x W x this.
-M.WSIM_CAPTURE_EXIT_DMG_WEIGHT = 0.5
+M.WSIM_CAPTURE_EXIT_DMG_WEIGHT = 0.5  -- Andrew, 2026-11-21
 
 -- Dwell: how long the tank has to STAND STILL at the destination once it
 -- gets there. The sim keeps running for this many ticks after arrival, with
