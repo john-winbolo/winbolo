@@ -38,7 +38,8 @@
 /*     but traceback and getinfo are removed outright.                 */
 /*   - brainSandboxLoadInitFile loads the init file as source text     */
 /*     only, never bytecode.                                           */
-/*   - brainSandboxRestrictJit, run once the host has made its own     */
+/*   - brainSandboxTuneJit sets the host's trace compiler limits, and  */
+/*     brainSandboxRestrictJit, run once the host has made its own     */
 /*     jit.opt calls, leaves a brain jit.on / off / status and the     */
 /*     version fields. The trace compiler keeps running.               */
 /* The shipped GoalHunter brain needs no changes: its loadfile() of    */
@@ -394,7 +395,7 @@ void brainSandboxApply(lua_State *L, const char *root) {
 
   /* jit.attach hooks the trace compiler's events with brain callbacks that
    * get raw trace and machine-code data. The rest of the table stays for
-   * now: the host calls jit.opt.start after this, and then
+   * now: the host calls brainSandboxTuneJit after this, and then
    * brainSandboxRestrictJit cuts the table down. Nothing to do on PUC-Lua,
    * which has no jit table. */
   lua_getglobal(L, "jit");
@@ -463,6 +464,11 @@ void brainSandboxApply(lua_State *L, const char *root) {
    * from under another bot's thread. cpathfinder.lua checks it exists. */
   lua_pushnil(L);
   lua_setglobal(L, "cpf_astar_log_enable");
+}
+
+void brainSandboxTuneJit(lua_State *L) {
+  (void)luaL_dostring(L,
+    "if jit and jit.opt then jit.opt.start(" BRAIN_SANDBOX_JIT_OPT_ARGS ") end\n");
 }
 
 void brainSandboxRestrictJit(lua_State *L) {
