@@ -818,29 +818,44 @@ local function search_walls(ctx, rec, ai)
   local lane = rec.lanes[ai] or {}
   local lane_set = {}
   for _, s in ipairs(lane) do lane_set[s] = true end
-  -- squares in front of a used chain link (a blocker there cuts the chain)
-  local forbid = {}
-  for i, X in ipairs(rec.T) do
-    local r = rec.rays[i]
-    if rec.in_chain[X] and r.link and not r.cut and rec.in_chain[r.link] then
-      for k = 1, r.n_sq do
-        if r.sq_t[k] <= r.link_t then forbid[r.sq[k]] = true end
+  -- the same for every aim, kept on the record: the squares in front of a
+  -- used chain link (a blocker there cuts the chain), and the uncovered
+  -- paths (need, existing shots per square)
+  local base = rec.wall_base
+  if not base then
+    local forbid = {}
+    for i, X in ipairs(rec.T) do
+      local r = rec.rays[i]
+      if rec.in_chain[X] and r.link and not r.cut and rec.in_chain[r.link] then
+        for k = 1, r.n_sq do
+          if r.sq_t[k] <= r.link_t then forbid[r.sq[k]] = true end
+        end
       end
     end
-  end
-  -- uncovered paths: need, legal squares, existing shots per square
-  local U = {}
-  for _, ui in ipairs(rec.uncovered) do
-    local r = rec.rays[ui]
-    local ex = {}
-    for b = 1, r.n_block do
-      local e = r.block[b]
-      if e.kind ~= "ally_pill" then ex[e.sq] = e.shots end
+    local UB = {}
+    for _, ui in ipairs(rec.uncovered) do
+      local r = rec.rays[ui]
+      local ex = {}
+      for b = 1, r.n_block do
+        local e = r.block[b]
+        if e.kind ~= "ally_pill" then ex[e.sq] = e.shots end
+      end
+      local on = {}
+      for k = 1, r.n_sq do on[r.sq[k]] = ex[r.sq[k]] or 0 end
+      UB[#UB + 1] = { r = r, need = r.bar - r.cover, on = on }
     end
-    local on = {}
-    for k = 1, r.n_sq do on[r.sq[k]] = ex[r.sq[k]] or 0 end
-    U[#U + 1] = { r = r, need = r.bar - r.cover, on = on, cand = {} }
+    base = { forbid = forbid, U = UB }
+    rec.wall_base = base
   end
+  local forbid = base.forbid
+  local U = {}
+  for j, ub in ipairs(base.U) do U[j] = { r = ub.r, need = ub.need, on = ub.on, cand = {} } end
+  -- legal squares: old's slot rules pass on some uncovered path the
+  -- square is on. All but the lane rule are the same for every aim, so
+  -- they are kept on the record (rec.slot_memo).
+  local memo = rec.slot_memo
+  if not memo then memo = {}; rec.slot_memo = memo end
+  local nolane = {}
   local legal = {}
   for _, u in ipairs(U) do
     local r = u.r
@@ -848,19 +863,26 @@ local function search_walls(ctx, rec, ai)
       local s = r.sq[k]
       local l = legal[s]
       if l == nil then
-        l = false
-        -- legal when old's slot rules pass on some uncovered path it is on
-        for _, u2 in ipairs(U) do
-          local r2 = u2.r
-          if u2.on[s] then
-            for k2 = 1, r2.n_sq do
-              if r2.sq[k2] == s then
-                if slot_ok(ctx, rec, r2, k2, lane_set, forbid) then l = true end
-                break
+        if lane_set[s] then
+          l = false
+        else
+          l = memo[s]
+          if l == nil then
+            l = false
+            for _, u2 in ipairs(U) do
+              if u2.on[s] then
+                local r2 = u2.r
+                for k2 = 1, r2.n_sq do
+                  if r2.sq[k2] == s then
+                    if slot_ok(ctx, rec, r2, k2, nolane, forbid) then l = true end
+                    break
+                  end
+                end
               end
+              if l then break end
             end
+            memo[s] = l
           end
-          if l then break end
         end
         legal[s] = l
       end
@@ -895,6 +917,22 @@ local function search_walls(ctx, rec, ai)
       return
     end
     if pl + wl == 0 then return end
+    -- bound: a path still short gets at most min(free squares, pl) pills
+    -- and walls for the rest; when that is not enough, no set here covers
+    for jj = 1, #U do
+      local need = rem[jj]
+      if need > 0 then
+        local free = 0
+        for _, s in ipairs(U[jj].cand) do
+          local used = false
+          for i = 1, #chosen do if chosen[i] == s then used = true; break end end
+          if not used then free = free + 1 end
+        end
+        local np = min(free, pl)
+        local nw = min(free - np, wl)
+        if np * inp.pill_drop_shots + nw * inp.wall_shots < need then return end
+      end
+    end
     for _, s in ipairs(U[j].cand) do
       local used = false
       for i = 1, #chosen do if chosen[i] == s then used = true; break end end

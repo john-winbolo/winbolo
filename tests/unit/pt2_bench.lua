@@ -307,7 +307,12 @@ local B = {
   best_same = 0, best_1deg = 0, best_far = 0,
   kills_same = 0, kills_v2_more = 0, kills_old_more = 0,
   depth_same = 0, depth_v2_more = 0, depth_old_more = 0,
+  walls_same = 0, walls_v2_fewer = 0, walls_old_fewer = 0, walls_old = 0, walls_v2 = 0,
+  st = {}, tm = {},
 }
+local function add_to(dst, src)
+  for k, v in pairs(src or {}) do if type(v) == "number" then dst[k] = (dst[k] or 0) + v end end
+end
 local function median_of(f, reps)
   local t = {}
   for r = 1, reps do
@@ -340,6 +345,20 @@ local function run_both(case)
   end
   B.t_vc[#B.t_vc + 1] = median_of(function() NV.reset(); NV.evaluate_lua(vinp) end, reps)
   B.t_vw[#B.t_vw + 1] = median_of(function() NV.evaluate_lua(vinp) end, reps)
+  -- one more cold v2 run, untimed, with the mask checks and the clock:
+  -- mask losses (points CANT removed that pass the exact tests, and that
+  -- would be safe after walls), the masks' chains against the exact ones,
+  -- and the time split
+  NV.reset()
+  vinp.v2_loss_check, vinp.v2_mask_stats = true, true
+  local rs = NV.evaluate_lua(vinp)
+  vinp.v2_loss_check, vinp.v2_mask_stats = nil, nil
+  add_to(B.st, rs.v2 and rs.v2.stat)
+  NV.reset()
+  vinp.v2_clock = now_us
+  local rt = NV.evaluate_lua(vinp)
+  vinp.v2_clock = nil
+  add_to(B.tm, rt.v2 and rt.v2.tm)
   -- compare
   local bo, bv = ro.best, rv.best
   local so, sv = bo and bo.safe or false, bv and bv.safe or false
@@ -355,6 +374,11 @@ local function run_both(case)
     if bo.kills == bv.kills then B.kills_same = B.kills_same + 1
     elseif bv.kills > bo.kills then B.kills_v2_more = B.kills_v2_more + 1
     else B.kills_old_more = B.kills_old_more + 1 end
+    local wo, wv = bo.plan and #bo.plan or 0, bv.plan and #bv.plan or 0
+    B.walls_old, B.walls_v2 = B.walls_old + wo, B.walls_v2 + wv
+    if wo == wv then B.walls_same = B.walls_same + 1
+    elseif wv < wo then B.walls_v2_fewer = B.walls_v2_fewer + 1
+    else B.walls_old_fewer = B.walls_old_fewer + 1 end
     if bo.depth == bv.depth then B.depth_same = B.depth_same + 1
     elseif bv.depth > bo.depth then B.depth_v2_more = B.depth_v2_more + 1
     else B.depth_old_more = B.depth_old_more + 1 end
@@ -412,6 +436,31 @@ if BOTH then
   print(fmt("best point (both safe): same %d, within 1 deg %d, farther %d", B.best_same, B.best_1deg, B.best_far))
   print(fmt("kills (both safe): same %d, v2 more %d, old more %d", B.kills_same, B.kills_v2_more, B.kills_old_more))
   print(fmt("depth (both safe): same %d, v2 more %d, old more %d", B.depth_same, B.depth_v2_more, B.depth_old_more))
+  print(fmt("walls planned (both safe): same %d, v2 fewer %d, old fewer %d; total old %d v2 %d",
+    B.walls_same, B.walls_v2_fewer, B.walls_old_fewer, B.walls_old, B.walls_v2))
+  local st = B.st
+  local function g(k) return st[k] or 0 end
+  print(fmt("v2 masks: CANT removed %d points, %d of them pass the exact tests, %d of those safe after walls",
+    g("cant"), g("loss_pass"), g("loss_safe")))
+  print(fmt("v2 masks: kept %d points; mask chain = exact chain %d, differs %d, not sure %d",
+    g("survive"), g("chain_agree"), g("chain_differ"), g("chain_unsure")))
+  print(fmt("v2 work: casts %d (kept and used again %d), confirm casts %d, points planned %d, plans not confirmed %d,"
+    .. " lone pill runs %d (points left unplanned %d), wall search nodes %d, nudged %d",
+    g("casts"), g("ray_reuse"), g("casts_confirm"), g("planned"), g("confirm_fail"), g("lone"),
+    g("plan_skipped"), g("wall_nodes"), g("nudged")))
+  local tm = B.tm
+  local tot = tm.total or 0
+  local parts = { "wedges", "masks", "cast", "aim", "walls", "score_fn" }
+  local sum = 0
+  local out = {}
+  for _, k in ipairs(parts) do
+    sum = sum + (tm[k] or 0)
+    out[#out + 1] = fmt("%s %.1f%%", k, 100 * (tm[k] or 0) / math.max(1, tot))
+  end
+  out[#out + 1] = fmt("other %.1f%%", 100 * (tot - sum) / math.max(1, tot))
+  print(fmt("v2 time split (one cold run per case, clock on, total %.1f ms): %s", tot / 1000, table.concat(out, ", ")))
+  print(fmt("  (nested, already in cast and aim: wall plan confirm %.1f%%, leeway %.1f%%)",
+    100 * (tm.confirm or 0) / math.max(1, tot), 100 * (tm.leeway or 0) / math.max(1, tot)))
   return 0
 end
 local tot_us, tot_sp = 0, 0
