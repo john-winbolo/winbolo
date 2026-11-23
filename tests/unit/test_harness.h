@@ -976,6 +976,7 @@ int run_bothost_child_dgram_ring(void);
 int run_bothost_child_get_line(void);
 int run_bothost_child_kill_reap(void);
 int run_bothost_child_line_cap(void);
+int run_bothost_ds_child_idle_keep(void);
 
 /* Bot Host link: announce, query, invite, lists (test_bot_host_link.c). */
 int run_bot_host_link_announce_codec(void);

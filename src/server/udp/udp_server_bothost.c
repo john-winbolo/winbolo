@@ -517,6 +517,17 @@ static int botHostUsedSlots(int h) {
     return used;
 }
 
+bool serverBotHostIdleReleasable(int h) {
+    const BotHostConn *hc;
+    if (h < 0 || h >= MAX_BOT_HOSTS) return false;
+    hc = &udpServer.botHosts[h];
+    /* The server's own child stays: it is connected with no bots when the
+     * game has none, and a kick only makes it join again. A host sending
+     * recordings stays until it is done. */
+    if (!hc->connected || hc->playerHost || hc->localChild) return false;
+    return botHostUsedSlots(h) == 0 && !serverBotRecBusy(h);
+}
+
 /* ── Brain sync ────────────────────────────────────────────────────────── */
 
 /* A Bot Host's sync time limit: 60 s at 50 ticks a second. A host still
@@ -5787,12 +5798,7 @@ void serverServiceBotHosts(ServerSim *sim) {
                    BOT_HOST_IDLE_RELEASE_TICKS) {
             for (h = 0; h < MAX_BOT_HOSTS; h++) {
                 uint8_t kbuf[PACKET_HEADER_SIZE];
-                if (!udpServer.botHosts[h].connected ||
-                    udpServer.botHosts[h].playerHost ||
-                    botHostUsedSlots(h) > 0 || serverBotRecBusy(h)) {
-                    /* A host sending recordings stays until it is done. */
-                    continue;
-                }
+                if (!serverBotHostIdleReleasable(h)) continue;
                 packHeader(kbuf, PACKET_KICKED, 0);
                 srvSendTo(kbuf, sizeof(kbuf), &udpServer.botHosts[h].addr);
                 botHostDrop(sim, h, "not needed now: no player and no bot");

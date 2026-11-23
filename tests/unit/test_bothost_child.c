@@ -62,9 +62,15 @@
  *      the poll frees it then.
  *  22. bothost_child_line_cap (POSIX): a line past PIPE_BUF is not written
  *      to the child's stdin.
+ *  23. bothost_ds_child_idle_keep: the idle release lets an idle standalone
+ *      Bot Host go, but never the dedicated server's own child, a player's
+ *      host, a host with a seat or one that sends a recording.
  * Tests 7 to 10 need the sandbox: where this computer has none (Linux with
  * no Landlock, other systems) they pass with a note. WINBOLO_TEST_TMP names
- * the folder for their files (default: TEMP, or /tmp).
+ * the folder for their files (default: TEMP, or /tmp). It must be outside
+ * the program folder: the sandbox lets the child read the program folder,
+ * so bothost_child_sandbox_files fails at once with a message when the
+ * folder is inside it.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -79,6 +85,7 @@
 #include "../../src/bothost/bothost_optout.h"
 #include "machine_id.h"
 #include "platform_net.h"
+#include "transport_udp_server_internal.h" /* udpServer, serverBotHostIdleReleasable */
 #include "test_harness.h"
 
 static int argIndex(const char *const *argv, int argc, const char *a) {
@@ -538,6 +545,26 @@ static void exeDirOf(const char *exe, char *out, size_t outSize) {
     out[n] = '\0';
 }
 
+/* True when path is dir or inside it. Both are compared as written, with
+ * '\\' and '/' the same (and no case on Windows). */
+static bool pathInside(const char *path, const char *dir) {
+    size_t i, n = strlen(dir);
+    while (n > 0 && (dir[n - 1] == '/' || dir[n - 1] == '\\')) n--;
+    if (n == 0) return false;
+    for (i = 0; i < n; i++) {
+        char a = path[i], b = dir[i];
+        if (a == '\0') return false;
+        if (a == '\\') a = '/';
+        if (b == '\\') b = '/';
+#ifdef _WIN32
+        if (a >= 'A' && a <= 'Z') a = (char)(a - 'A' + 'a');
+        if (b >= 'A' && b <= 'Z') b = (char)(b - 'A' + 'a');
+#endif
+        if (a != b) return false;
+    }
+    return path[n] == '\0' || path[n] == '/' || path[n] == '\\';
+}
+
 /* A new folder for one test: <tmp>/wbsb_<name>_<ticks>. */
 static bool makeTestDir(const char *name, char *out, size_t outSize) {
     const char *tmp = SDL_getenv("WINBOLO_TEST_TMP");
@@ -674,6 +701,14 @@ int run_bothost_child_sandbox_files(void) {
     if (!sandboxHere()) return 0;
     exeDirOf(exe, exeDir, sizeof(exeDir));
     UT_ASSERT(makeTestDir("files", root, sizeof(root)));
+    /* The sandbox lets the child read the program folder, so a test
+     * folder inside it would make "read outside" work. */
+    if (pathInside(root, exeDir)) {
+        removeTestDir(root);
+        UT_FAIL("the test folder %s is inside the program folder %s, which "
+                "the child may read: set WINBOLO_TEST_TMP to a folder "
+                "outside it", root, exeDir);
+    }
     SDL_snprintf(readDir, sizeof(readDir), "%s/read", root);
     SDL_snprintf(cache, sizeof(cache), "%s/cache", root);
     SDL_snprintf(outside, sizeof(outside), "%s/outside", root);
@@ -1825,4 +1860,59 @@ int run_bothost_child_line_cap(void) {
     removeTestDir(root);
     return 0;
 #endif
+}
+
+/* The idle release (serverBotHostIdleReleasable): once no bot has been
+ * wanted for a while, a connected Bot Host with no seat is let go, but
+ * the dedicated server's own child stays. With no bots, the child was
+ * kicked and joined again and again (13 times in 2 minutes). */
+int run_bothost_ds_child_idle_keep(void) {
+    static BotHostConn savedHosts[MAX_BOT_HOSTS];
+    static BotHostSeat savedSeats[MAX_TANKS];
+    bool child, childSeated, other, player, seated, gone, rec, bad;
+
+    memcpy(savedHosts, udpServer.botHosts, sizeof(savedHosts));
+    memcpy(savedSeats, udpServer.botSeats, sizeof(savedSeats));
+    memset(udpServer.botHosts, 0, sizeof(udpServer.botHosts));
+    memset(udpServer.botSeats, 0, sizeof(udpServer.botSeats));
+    /* 0: the server's own child, 1: a standalone host, 2: a player's
+     * host, 3: a standalone host with a seat, 4: not connected, 5: a
+     * standalone host that sends a recording. */
+    udpServer.botHosts[0].connected = true;
+    udpServer.botHosts[0].localChild = true;
+    udpServer.botHosts[1].connected = true;
+    udpServer.botHosts[2].connected = true;
+    udpServer.botHosts[2].playerHost = true;
+    udpServer.botHosts[3].connected = true;
+    udpServer.botHosts[5].connected = true;
+    udpServer.botHosts[5].recMergeWant = true;
+    udpServer.botSeats[0].state = BOT_SEAT_REMOTE;
+    udpServer.botSeats[0].host = 3;
+    child = serverBotHostIdleReleasable(0);
+    other = serverBotHostIdleReleasable(1);
+    player = serverBotHostIdleReleasable(2);
+    seated = serverBotHostIdleReleasable(3);
+    gone = serverBotHostIdleReleasable(4);
+    rec = serverBotHostIdleReleasable(5);
+    bad = serverBotHostIdleReleasable(-1) ||
+          serverBotHostIdleReleasable(MAX_BOT_HOSTS);
+    /* The child with a seat stays too. */
+    udpServer.botSeats[0].host = 0;
+    childSeated = serverBotHostIdleReleasable(0);
+    memcpy(udpServer.botHosts, savedHosts, sizeof(savedHosts));
+    memcpy(udpServer.botSeats, savedSeats, sizeof(savedSeats));
+
+    printf("    let go when idle: child %d, child with a seat %d, "
+           "standalone %d, player's %d, with a seat %d, not connected %d, "
+           "sending a recording %d\n", (int)child, (int)childSeated,
+           (int)other, (int)player, (int)seated, (int)gone, (int)rec);
+    UT_ASSERT_MSG(!child, "the server's own child is let go when idle");
+    UT_ASSERT(!childSeated);
+    UT_ASSERT_MSG(other, "an idle standalone Bot Host is kept");
+    UT_ASSERT(!player);
+    UT_ASSERT(!seated);
+    UT_ASSERT(!gone);
+    UT_ASSERT(!rec);
+    UT_ASSERT(!bad);
+    return 0;
 }

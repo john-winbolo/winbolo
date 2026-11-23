@@ -484,7 +484,10 @@ static bool checkSandbox(void) {
 /* A socket's datagrams wait in a fixed ring (BOT_HOST_DGRAM_RING_SLOTS,
  * BOT_HOST_DGRAM_RING_BYTES): its buffer is made at the socket id's first
  * use and kept for the id's later sockets, so no datagram takes a heap
- * call. */
+ * call. hookClose clears the ring but keeps the buffer for reuse; the
+ * buffers are freed only when the process exits. That is 16 MiB at most
+ * (BOT_HOST_RELAY_MAX_SOCKS x BOT_HOST_DGRAM_RING_BYTES), and only once
+ * all 64 ids have been used. */
 typedef struct {
     bool             used;
     uint8_t         *bytes;
@@ -638,6 +641,7 @@ static void hookClose(bolo_socket_t s) {
     if (id < 0) return;
     SDL_LockMutex(relayLock);
     vsocks[id].used = false;
+    /* The ring's buffer stays for the next socket with this id (VSock). */
     vsockDrop(&vsocks[id]);
     SDL_UnlockMutex(relayLock);
     relaySendFrame(BOT_HOST_RELAY_CLOSE, id, NULL, NULL, 0);

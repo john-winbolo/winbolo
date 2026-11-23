@@ -242,8 +242,16 @@ static void childRelease(BotHostChildProc *proc, BotHostRelay *relay) {
             }
         }
         /* No room in the list (several children stuck at once): this one
-         * is waited for here. */
-        (void)botHostChildWait(proc, CHILD_STOP_WAIT_MS, NULL);
+         * is waited for here. When it still runs after that, it is killed
+         * again and waited for until it ended, so it is not freed while it
+         * runs (on POSIX it is reaped, not left as a zombie). */
+        if (!botHostChildWait(proc, CHILD_STOP_WAIT_MS, NULL)) {
+            CHILD_EVENT("[bothost] the Bot Host child (pid %lu) has not "
+                        "ended %u ms after its kill and the list of "
+                        "stopped children is full: waiting for its end",
+                        botHostChildPid(proc), (unsigned)CHILD_STOP_WAIT_MS);
+            botHostChildKillWait(proc);
+        }
     }
     childRelayEnd(relay);
     botHostChildFree(proc);

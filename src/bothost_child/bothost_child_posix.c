@@ -1223,6 +1223,21 @@ bool botHostChildKill(BotHostChildProc *p) {
     return botHostChildWait(p, BOT_HOST_CHILD_KILL_WAIT_MS, NULL);
 }
 
+void botHostChildKillWait(BotHostChildProc *p) {
+    int status;
+    pid_t r;
+    if (p == NULL || botHostChildKill(p) || p->reaped) return;
+    do {
+        r = waitpid(p->pid, &status, 0);
+    } while (r < 0 && errno == EINTR);
+    if (r == p->pid) {
+        takeStatus(p, status);
+    } else {
+        p->reaped = true;
+        p->exitCode = -1;
+    }
+}
+
 void botHostChildFree(BotHostChildProc *p) {
     if (p == NULL) return;
     botHostChildKill(p);

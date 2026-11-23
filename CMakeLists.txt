@@ -6491,6 +6491,7 @@ set(_unit_test_names
     bothost_child_get_line
     bothost_child_kill_reap
     bothost_child_line_cap
+    bothost_ds_child_idle_keep
     bot_host_brain_name_opt
     bot_host_link_announce_codec
     bot_host_link_addr_list

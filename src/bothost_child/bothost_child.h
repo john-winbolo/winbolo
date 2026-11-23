@@ -440,6 +440,11 @@ bool botHostChildWait(BotHostChildProc *p, uint32_t waitMs, int *exitCode);
  * ended; false when it still runs (botHostChildAlive then sees the end,
  * and on POSIX reaps it). */
 bool botHostChildKill(BotHostChildProc *p);
+/* Kills the child as botHostChildKill does, then waits for its end with
+ * no time limit (on POSIX a blocking waitpid, so it is reaped). Only for a
+ * caller that may wait: a killed child ends at once, unless the system
+ * holds it. botHostChildFree may follow. */
+void botHostChildKillWait(BotHostChildProc *p);
 /* Frees p; kills the child first if it still runs. Call it once the child
  * ended: on POSIX a child that still runs is not reaped. */
 void botHostChildFree(BotHostChildProc *p);

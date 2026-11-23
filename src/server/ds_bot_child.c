@@ -28,7 +28,9 @@
 /* How often a start that waits for the sandbox's folders asks again. */
 #define DS_CHILD_PREP_RETRY_MS 100u
 /* After its last stop, the thread waits at most this long for a child that
- * was killed to end (botHostChildClientPoll reaps it). */
+ * was killed to end (botHostChildClientPoll reaps it). dsBotChildStop waits
+ * for the thread, so server shutdown can take up to 5 s longer when a child
+ * is stuck and does not end. */
 #define DS_CHILD_REAP_WAIT_MS 5000u
 
 static SDL_Thread *dsThread;

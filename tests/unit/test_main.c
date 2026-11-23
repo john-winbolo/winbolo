@@ -665,6 +665,7 @@ static const UnitTestEntry s_tests[] = {
     { "bothost_child_get_line", run_bothost_child_get_line },
     { "bothost_child_kill_reap", run_bothost_child_kill_reap },
     { "bothost_child_line_cap", run_bothost_child_line_cap },
+    { "bothost_ds_child_idle_keep", run_bothost_ds_child_idle_keep },
     { "bot_host_brain_name_opt", run_bot_host_brain_name_opt },
     { "bot_host_link_announce_codec", run_bot_host_link_announce_codec },
     { "bot_host_link_addr_list", run_bot_host_link_addr_list },
