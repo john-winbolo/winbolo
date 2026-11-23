@@ -179,6 +179,21 @@ void simMapChangeCallback(BYTE x, BYTE y, BYTE terrain) {
     }
 }
 
+/* The same record, kept for the next running frame instead (see
+ * pendingMapEvents). For a change made between ticks, where an event put in
+ * mapEvents would be cleared before it is sent. */
+void simMapChangePendingCallback(BYTE x, BYTE y, BYTE terrain) {
+    if (activeSim != NULL && activeSim->pendingMapEventCount < MAX_MAP_EVENTS) {
+        GameEvent *ev = &activeSim->pendingMapEvents[activeSim->pendingMapEventCount];
+        ev->type = EVENT_MAP_CHANGE;
+        memset(ev->data, 0, sizeof(ev->data));
+        ev->data[0] = x;
+        ev->data[1] = y;
+        ev->data[2] = terrain;
+        activeSim->pendingMapEventCount++;
+    }
+}
+
 ServerSim *serverSimGetActive(void) {
     /* A slot armed for a sim that has since been destroyed — necessarily by
      * some other thread, since destroy clears its own — must never be handed
@@ -689,12 +704,17 @@ void serverSimDestroy(ServerSim *sim) {
     free(sim->botPoolBlob);
     sim->botPoolBlob = NULL;
 
+    /* Each slot is cleared as it is freed. A later tank's destroy puts down
+       the pillboxes it carries, and that search looks at every other tank
+       still in the table (pillsDropTankOn). */
     for (count = 0; count < MAX_TANKS; count++) {
         if (sim->sim.tanks[count] != NULL) {
             tankDestroy(&sim->sim, &sim->sim.tanks[count]);
+            sim->sim.tanks[count] = NULL;
         }
         if (sim->sim.lgmen[count] != NULL) {
             lgmDestroy(&sim->sim.lgmen[count]);
+            sim->sim.lgmen[count] = NULL;
         }
     }
 
