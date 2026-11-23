@@ -443,6 +443,34 @@ do
 end
 
 -- ── 5. wall search against brute force ────────────────────────────────────
+print("PT2_PREFER_EXISTING_COVER: fewer planned blockers first in the band")
+do
+  local function pt(score, n_built, depth, leeway)
+    return { safe = true, kills = 2, score = score, tier_min = 10, n_built = n_built,
+             depth = depth, blk = 1, leeway = leeway }
+  end
+  -- both in the band (10 + 5): the deeper point wins with the knob off,
+  -- the point with no planned blocker wins with it on
+  local walls, none = pt(12, 2, 3, 8), pt(14, 0, 2, 8)
+  check("off: depth first", V.better(walls, none, 8, 5, false) == true)
+  check("on: no planned blocker first", V.better(none, walls, 8, 5, true) == true)
+  check("on: the other way round is false", V.better(walls, none, 8, 5, true) == false)
+  -- a dropped pill counts as one planned blocker
+  local one = pt(12, 1, 3, 8)
+  check("on: one planned blocker beats two", V.better(one, walls, 8, 5, true) == true)
+  -- out of the band: the old order (quicker first)
+  local far = pt(20, 0, 3, 8)
+  check("on: out of the band, the band point wins", V.better(walls, far, 8, 5, true) == true)
+  -- safe and kills still come first
+  local unsafe = pt(12, 0, 3, 8); unsafe.safe = false
+  check("on: safe before fewer blockers", V.better(walls, unsafe, 8, 5, true) == true)
+  local single = pt(12, 0, 0, 8); single.kills = 1
+  check("on: kills before fewer blockers", V.better(walls, single, 8, 5, true) == true)
+  -- no band: the knob does nothing
+  check("on, no band: old order", V.better(walls, none, 8, 0, true) == OLD.better(walls, none, 8, 0))
+  check("knob_inp: on by default", V.knob_inp(C, {}).prefer_existing_cover == (C.PT2_PREFER_EXISTING_COVER ~= false))
+end
+
 print("wall search against brute force")
 do
   local tried, agree, opt_ok, n_sol = 0, 0, 0, 0

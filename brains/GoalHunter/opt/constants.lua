@@ -967,6 +967,13 @@ M.PT2_LINK_COVERS_PREV = true
 -- and its C copy gh_pt2_old.c, and v2). false = a link counts with a
 -- blocker in front (old), v2 cuts on any blocker in front. KEEL / MAST: false.
 M.PT2_LINK_CLEAR_FRONT = true
+-- PT2_PREFER_EXISTING_COVER (Nov 23, Andrew's yes, E1): v2 only. Two
+-- points of the same safe and kills, both in the travel band
+-- (PT2_TRAVEL_BAND_TICKS), rank by planned blockers first: fewer walls and
+-- dropped pills win, before depth, own pill cover and leeway. Cover that
+-- stands now beats cover the builder must make. false = the old order.
+-- KEEL / MAST: false.
+M.PT2_PREFER_EXISTING_COVER = true
 -- Longest chain counted, pills. Proposal, awaiting Andrew's value.
 M.PT2_MAX_CHAIN = 3
 -- Ring step around the target, degrees. Andrew approved 1 for HELM (Nov 19):
@@ -8281,6 +8288,7 @@ M.PRESETS = {
     PT2_CHAINS = false,
     PT2_LINK_COVERS_PREV = false,
     PT2_LINK_CLEAR_FRONT = false,
+    PT2_PREFER_EXISTING_COVER = false,
     PT2_LEEWAY = false,
     PT2_OWN_PILL_BONUS = false,
     PT2_AIM_NUDGE = false,
@@ -8672,6 +8680,7 @@ M.PRESETS.mast = {
   PT2_CHAINS                        = false,  -- 2.2.1 had no pill take v2
   PT2_LINK_COVERS_PREV              = false,
   PT2_LINK_CLEAR_FRONT              = false,  -- 2.2.1 had no pill take v2
+  PT2_PREFER_EXISTING_COVER         = false,  -- 2.2.1 had no pill take v2
   PT2_LEEWAY                        = false,
   PT2_OWN_PILL_BONUS                = false,
   PT2_TRAVEL_BAND_TICKS             = 0,

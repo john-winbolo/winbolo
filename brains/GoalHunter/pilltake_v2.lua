@@ -3,7 +3,7 @@
 -- design). PT2_EVALUATOR = "v2" picks it; "old" picks pilltake_v2_old.lua.
 --
 -- The result has the same shape as the old one (evaluate, group_step), and
--- the rank is the old M.better, so pt2_attack, pt2_dbl and the rest only
+-- the rank is the old M.better (plus PT2_PREFER_EXISTING_COVER), so pt2_attack, pt2_dbl and the rest only
 -- choose the evaluator through pt2_eval.lua.
 --
 --  1. Tank points: the old rings (radii_offsets, PT2_ANGLE_STEP_DEG), the
@@ -44,7 +44,8 @@
 --     more depth, then a square on two paths, then the builder's shortest
 --     trip. One exact evaluation with the chosen blockers confirms the plan.
 --     Every point the masks keep gets a plan.
---  8. Rank: the old M.better, travel band and leeway as old.
+--  8. Rank: the old M.better, travel band and leeway as old; with
+--     PT2_PREFER_EXISTING_COVER, fewer planned blockers first in the band.
 --  9. A lone pill (no other hostile pill in range of any point): the points
 --     are planned in travel score order, and planning stops once no point
 --     left can come into the travel band (the best is the same).
@@ -54,9 +55,34 @@ local SH  = require("shadow")
 local OLD = require("pilltake_v2_old")
 
 local M = {}
--- to_scan_result, world_env, world_inp, knob_inp, live_shell, tank_blockers,
--- pill_name, finish_ok, better, set_band, hold_point, AIMS: the old module's.
+-- to_scan_result, world_env, world_inp, live_shell, tank_blockers,
+-- pill_name, finish_ok, set_band, hold_point, AIMS: the old module's.
 setmetatable(M, { __index = OLD })
+
+-- The old knobs plus v2's own.
+function M.knob_inp(C, inp)
+  inp = OLD.knob_inp(C, inp)
+  -- PT2_PREFER_EXISTING_COVER (E1)
+  inp.prefer_existing_cover = C.PT2_PREFER_EXISTING_COVER ~= false
+  return inp
+end
+
+-- The rank: the old better, and PT2_PREFER_EXISTING_COVER (Nov 23,
+-- Andrew's yes, E1). With pec on, two points of the same safe and kills
+-- that are both in the travel band rank by n_built first (fewer planned
+-- blockers win; a dropped pill counts as one), before depth, blk and
+-- leeway. Outside the band, the old order stands.
+function M.better(a, b, cap, band, pec)
+  if pec and band and band > 0 and a.safe == b.safe and a.kills == b.kills then
+    local sa, sb = a.score, b.score
+    local m = math.min(sa, sb, a.tier_min or sa, b.tier_min or sb)
+    if sa <= m + band and sb <= m + band then
+      local na, nb = a.n_built or 0, b.n_built or 0
+      if na ~= nb then return na < nb end
+    end
+  end
+  return OLD.better(a, b, cap, band)
+end
 
 local sqrt, floor, sin, cos, rad, abs, min, max =
   math.sqrt, math.floor, math.sin, math.cos, math.rad, math.abs, math.min, math.max
@@ -1304,7 +1330,7 @@ function M.evaluate_lua(inp)
       end
     end
     OLD.set_band(scored, band)
-    table.sort(scored, function(a, b) return OLD.better(a, b, cap, band) end)
+    table.sort(scored, function(a, b) return M.better(a, b, cap, band, inp.prefer_existing_cover) end)
     if inp.leeway_on then
       for i = 1, min(inp.leeway_top, #scored) do
         local rec = scored[i]
@@ -1314,10 +1340,10 @@ function M.evaluate_lua(inp)
         end
       end
       OLD.set_band(scored, band)
-      table.sort(scored, function(a, b) return OLD.better(a, b, cap, band) end)
+      table.sort(scored, function(a, b) return M.better(a, b, cap, band, inp.prefer_existing_cover) end)
     end
     for _, rec in ipairs(scored) do all[#all + 1] = rec end
-    if scored[1] and (not best or OLD.better(scored[1], best, cap, band)) then best = scored[1] end
+    if scored[1] and (not best or M.better(scored[1], best, cap, band, inp.prefer_existing_cover)) then best = scored[1] end
     if best and best.safe then break end
   end
   if best and best.safe and best.plan and #best.plan > 0 then
@@ -1381,7 +1407,7 @@ function M.group_step(job)
     job.n_eval, job.n_reject = job.n_eval + r.n_eval, job.n_reject + r.n_reject
     local b, res = r.best, job.res
     if b and b.safe and b.chain_mode and b.in_chain and b.in_chain[goalA]
-       and (not res.best or OLD.better(b, res.best, inp.leeway_min, inp.travel_band)) then
+       and (not res.best or M.better(b, res.best, inp.leeway_min, inp.travel_band, inp.prefer_existing_cover)) then
       r.A, r.goal_A = p, goalA
       job.res = r
     end

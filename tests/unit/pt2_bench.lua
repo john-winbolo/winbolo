@@ -457,6 +457,7 @@ local function run_ab(case)
   local ba, bb = ra.best, rb.best
   ab_extra(R.ex_a, ba)
   ab_extra(R.ex_b, bb)
+  if (ia.travel_band or 0) > 0 then R.ex_a.band_cases = (R.ex_a.band_cases or 0) + 1 end
   local sa, sb = ba and ba.safe or false, bb and bb.safe or false
   if sa and sb then R.safe_both = R.safe_both + 1
   elseif sa then R.safe_a_only = R.safe_a_only + 1
