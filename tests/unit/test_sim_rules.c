@@ -256,7 +256,7 @@ int run_sim_rules_classic_defaults(void) {
     SR_EQ(lgm_cost_mine, LGM_COST_MINE);
     SR_EQ(lgm_pill_repair_load, LGM_LOAD_PILLREPAIR);
     SR_EQ(lgm_gather_trees, LGM_GATHER_TREE);
-    SR_EQ(lgm_helicopter_speed, LGM_HELICOPTER_SPEED);
+    SR_FEQ(lgm_helicopter_speed, LGM_HELICOPTER_SPEED);
     SR_EQ(lgm_arrive_tolerance, LGM_MAX_GOAL);
     SR_EQ(lgm_return_tolerance, LGM_RETURN_MAX_GOAL);
     SR_EQ(lgm_pill_drop_search, LGM_PILL_DROP_SEARCH);
@@ -518,6 +518,7 @@ int run_sim_rules_validate_ranges(void) {
     SR_RANGE_FLT(tank_decel_rate, 0.01, 16.0, 0.005);
     SR_RANGE_FLT(tank_brake_rate, 0.01, 16.0, 0.005);
     SR_RANGE_FLT(tank_autoslow_rate, 0.01, 16.0, 0.005);
+    SR_RANGE_FLT(lgm_helicopter_speed, 0.01, 255.0, 0.005);
     /* A tree cannot be worth more than a whole pill, and one load still has
        to finish a pill on nothing — which at the top of the range means a
        tree worth far more than the classic four. The splash a dying tank

@@ -92,8 +92,9 @@ static inline LvBuilderColour lvBuilderEdgeColour(void) {
 #define LV_BUILDER_FLY_SPEED     3
 #define LV_BUILDER_FLY_TOLERANCE 16
 
-/* The longest countdown text: "~99:59" and the end. */
-#define LV_BUILDER_TEXT_MAX 8
+/* The longest countdown text: "~9999:59:59" and the end, with room to
+ * spare. */
+#define LV_BUILDER_TEXT_MAX 16
 
 typedef enum LvBuilderState {
     LV_BUILDER_IN = 0,  /* in the tank: no marker */
@@ -178,21 +179,40 @@ static inline int lvBuilderWorld(int square, int sixteenth) {
     return square * LV_BUILDER_SQUARE_WORLD + sixteenth * LV_BUILDER_STEP_WORLD;
 }
 
+/* Where a builder on the parachute is, in world units, out of the log's
+ * square and sixteenth. For him the log holds where his picture is drawn,
+ * which is half a square up and left of where he is (lgmGetMX and the three
+ * beside it take MAP_SQUARE_MIDDLE off on the parachute frame), so the half
+ * square goes back on. A tank's place and a walking builder's need nothing
+ * added. */
+static inline int lvBuilderFlyingWorld(int square, int sixteenth) {
+    return lvBuilderWorld(square, sixteenth) + LV_BUILDER_SQUARE_WORLD / 2;
+}
+
 /* ── The countdown ─────────────────────────────────────────────────── */
 
-/* The time left as text: "0:07", "1:23". Seconds are rounded up, so "0:00"
- * is shown only when no time is left; a time under zero reads "0:00". An
- * estimate has "~" in front. Minutes stop at 99. Returns the length. */
+/* The time left as text: "0:07", "1:23", and from an hour up "1:02:03".
+ * Seconds are rounded up, so "0:00" is shown only when no time is left; a
+ * time under zero reads "0:00". An estimate has "~" in front. Hours stop at
+ * 9999. Returns the length. */
 static inline int lvBuilderCountdownText(long remainMs, bool approx, char *dest,
                                          size_t size) {
+    const long kMost = 9999L * 3600L + 59L * 60L + 59L;
     long secs;
     int  n;
 
     if (dest == NULL || size == 0) return 0;
     if (remainMs < 0) remainMs = 0;
-    secs = (remainMs + 999) / 1000;
-    if (secs > 99L * 60L + 59L) secs = 99L * 60L + 59L;
-    n = snprintf(dest, size, "%s%ld:%02ld", approx ? "~" : "", secs / 60, secs % 60);
+    /* Not (remainMs + 999) / 1000: the longest time a long holds would go
+       past it. */
+    secs = remainMs / 1000 + ((remainMs % 1000 != 0) ? 1 : 0);
+    if (secs > kMost) secs = kMost;
+    if (secs >= 3600L) {
+        n = snprintf(dest, size, "%s%ld:%02ld:%02ld", approx ? "~" : "",
+                     secs / 3600L, (secs / 60L) % 60L, secs % 60L);
+    } else {
+        n = snprintf(dest, size, "%s%ld:%02ld", approx ? "~" : "", secs / 60, secs % 60);
+    }
     if (n < 0) { dest[0] = '\0'; return 0; }
     if ((size_t)n >= size) n = (int)size - 1;
     return n;
@@ -213,23 +233,50 @@ static inline int lvBuilderDeadText(bool known, long remainMs, bool approx,
 }
 
 /* The countdown a line is measured with, so its width does not move as the
- * time runs: an estimate of under ten minutes. A new builder is never that
- * long on its way. */
+ * time runs: an estimate of under ten minutes. At the game's own rules a
+ * new builder is never that long on its way. A table with a slow parachute
+ * can keep him longer, and his time is then wider than the line was
+ * measured for. */
 #define LV_BUILDER_COUNTDOWN_WIDEST "~0:00"
+
+/* The longest flight lvBuilderFlightMs answers: the most whole ticks whose
+ * milliseconds fit 32 bits, which is what a long is on Windows. About 596
+ * hours. The longest flight the rules allow, corner to corner of the map at
+ * the parachute's slowest 0.01, is under 52 hours, so every flight a game
+ * can have is answered in full. */
+#define LV_BUILDER_FLIGHT_MS_MAX \
+    ((long)(INT32_MAX / LV_BUILDER_TICK_MS) * (long)LV_BUILDER_TICK_MS)
 
 /* How long a new builder still flies, estimated by the game's rule: he
  * moves in a straight line toward his goal at speed world units a tick and
- * has landed when he is within tolerance of it. dx, dy: from him to the
+ * has landed once he is within tolerance of it on both axes. That is a box
+ * round the goal and not a circle, so what he has left to fly is the part
+ * of his line outside the box: the whole line, less the share of it that
+ * the tolerance is of the longer of his two axes. dx, dy: from him to the
  * goal, in world units. For a live feed, where the log does not hold the
- * landing yet. */
-static inline long lvBuilderFlightMs(long dx, long dy, int speed, int tolerance) {
-    double dist, ticks;
+ * landing yet.
+ *
+ * The speed need not be a whole number, and one that is not above zero is
+ * read as the game's own. The answer stops at LV_BUILDER_FLIGHT_MS_MAX,
+ * which no speed the game allows comes near: a recording can hold a speed
+ * as near zero as a double goes, and the ticks that works out to are more
+ * than a long holds. */
+static inline long lvBuilderFlightMs(long dx, long dy, double speed, int tolerance) {
+    double ax, ay, longer, left, ticks;
 
-    if (speed <= 0) speed = LV_BUILDER_FLY_SPEED;
+    /* Written so a NaN lands on the game's own speed too. */
+    if (!(speed > 0.0)) speed = LV_BUILDER_FLY_SPEED;
     if (tolerance < 0) tolerance = 0;
-    dist = sqrt((double)dx * (double)dx + (double)dy * (double)dy) - (double)tolerance;
-    if (dist <= 0.0) return 0;
-    ticks = ceil(dist / (double)speed);
+    ax = fabs((double)dx);
+    ay = fabs((double)dy);
+    longer = (ax > ay) ? ax : ay;
+    if (longer <= (double)tolerance) return 0;
+    left = sqrt(ax * ax + ay * ay) * (longer - (double)tolerance) / longer;
+    ticks = ceil(left / speed);
+    /* Written so an infinity and a NaN land on the longest flight too. */
+    if (!(ticks < (double)(LV_BUILDER_FLIGHT_MS_MAX / LV_BUILDER_TICK_MS))) {
+        return LV_BUILDER_FLIGHT_MS_MAX;
+    }
     return (long)ticks * LV_BUILDER_TICK_MS;
 }
 
@@ -335,8 +382,9 @@ static inline bool lvBuilderTripAway(const LvBuilderTrip *trips, int count,
     return true;
 }
 
-/* The longest text of lvBuilderAwayText: " (99:59)" and the end. */
-#define LV_BUILDER_AWAY_TEXT_MAX 12
+/* The longest text of lvBuilderAwayText: " (596:31:24)" and the end, with
+ * room to spare. */
+#define LV_BUILDER_AWAY_TEXT_MAX 20
 
 /* What goes after the line of a lost builder in the Events panel: a space
  * and, in brackets, how long he was away, " (0:42)", " (1:05)". The time is
@@ -350,8 +398,9 @@ static inline int lvBuilderAwayText(bool known, uint32_t awayMs, char *dest, siz
     if (dest == NULL || size == 0) return 0;
     dest[0] = '\0';
     if (!known) return 0;
-    /* The countdown stops at 99:59; hold the time there so it is a long. */
-    if (awayMs > 5999000u) awayMs = 5999000u;
+    /* Held at what 32 signed bits take, so it is a long on every platform:
+       596:31:24. */
+    if (awayMs > (uint32_t)INT32_MAX) awayMs = (uint32_t)INT32_MAX;
     lvBuilderCountdownText((long)awayMs, false, time, sizeof(time));
     n = snprintf(dest, size, " (%s)", time);
     if (n < 0) { dest[0] = '\0'; return 0; }

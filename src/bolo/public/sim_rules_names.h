@@ -193,7 +193,7 @@ typedef enum {
     X(lgm_cost_mine, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)                \
     X(lgm_pill_repair_load, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)         \
     X(lgm_gather_trees, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)             \
-    X(lgm_helicopter_speed, SIM_RULE_VALUE_INT,                              \
+    X(lgm_helicopter_speed, SIM_RULE_VALUE_FLOAT,                            \
       SIM_RULE_UNIT_SPEED_HIGHER_IS_FASTER)                                  \
     X(lgm_arrive_tolerance, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)         \
     X(lgm_return_tolerance, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)         \

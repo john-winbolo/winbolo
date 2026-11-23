@@ -3185,6 +3185,16 @@ int run_man_dead_pill_walk_ticks(void);
 int run_man_dead_pill_walk_across_water(void);
 int run_man_dead_pill_lifted_waits_for_tank(void);
 int run_man_dead_pill_brain_walk(void);
+/* lgm_helicopter_speed: a parachuting builder flies the rule's own speed on
+ * every heading, the rule takes a fraction, a step wider than the arrival
+ * tolerance still lands, a man moved in flight flies on from where he was
+ * put, and one a script puts back where he is starts from exactly there
+ * (test_lgm_parachute_speed.c). */
+int run_lgm_parachute_speed_same_on_every_heading(void);
+int run_lgm_parachute_speed_takes_a_fraction(void);
+int run_lgm_parachute_wide_step_lands(void);
+int run_lgm_parachute_moved_in_flight(void);
+int run_lgm_parachute_put_back_starts_exact(void);
 /* lgm_blast_shape: the half-square circle, the Mac Bolo box and the Mac
  * Bolo equivalent area circle at 127/128/129 and 143/144/145 across and at
  * 100 and 120 on the diagonal; an explosion on a building still kills only
@@ -3857,6 +3867,13 @@ int run_scenario_flow_end_round_refusals(void);
 int run_scenario_flow_set_game_time(void);
 int run_scenario_flow_set_game_time_refusals(void);
 int run_scenario_flow_arm_records(void);
+
+/* The round's clocks against real time (test_game_time_limit.c): the time
+ * limit and the start delay each lose one a 20 ms frame, so a round set in
+ * minutes lasts that many minutes. */
+int run_game_time_limit_counts_frames(void);
+int run_game_time_start_delay_counts_frames(void);
+int run_game_time_lobby_minutes(void);
 
 /* The rules op (test_scenario_rule_arms.c). The index list against the table
  * it indexes, a rule written and read back, a rate the op's double carries

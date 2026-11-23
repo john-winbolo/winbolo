@@ -4365,6 +4365,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # not do — and the game-time change, the four lengths it refuses, and the
     # new length on the sim, at a subscriber and in a recording.
     tests/unit/test_scenario_flow_arms.c
+    # The round's time limit and start delay against real time: each loses
+    # one a 20 ms frame, so a round set in minutes lasts that many minutes.
+    tests/unit/test_game_time_limit.c
     # The rules op: the index list against the table it indexes, a rule
     # written and read back, a rate the op's double carries and an int32
     # could not, the value outside a row and the value that breaks a pair
@@ -5004,6 +5007,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # man_dead_pill_terrain_speed: the builder's speed on the square of a
     # dead pillbox.
     tests/unit/test_man_dead_pill_speed.c
+    # lgm_helicopter_speed: the parachute flies the rule's own speed on
+    # every heading, and the rule takes a fraction.
+    tests/unit/test_lgm_parachute_speed.c
     # lgm_blast_shape: the open-ground area round an explosion that kills a
     # builder.
     tests/unit/test_lgm_blast_shape.c
@@ -6737,6 +6743,11 @@ set(_unit_test_names
     man_dead_pill_walk_across_water
     man_dead_pill_lifted_waits_for_tank
     man_dead_pill_brain_walk
+    lgm_parachute_speed_same_on_every_heading
+    lgm_parachute_speed_takes_a_fraction
+    lgm_parachute_wide_step_lands
+    lgm_parachute_moved_in_flight
+    lgm_parachute_put_back_starts_exact
     lgm_blast_shape_half_square
     lgm_blast_shape_mac_box
     lgm_blast_shape_mac_area
@@ -7457,6 +7468,9 @@ set(_unit_test_names
     scenario_flow_set_game_time
     scenario_flow_set_game_time_refusals
     scenario_flow_arm_records
+    game_time_limit_counts_frames
+    game_time_start_delay_counts_frames
+    game_time_lobby_minutes
     scenario_rule_index_matches_table
     scenario_rule_set
     scenario_rule_set_float
