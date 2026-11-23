@@ -274,6 +274,7 @@ M.LIVE_PHYSICS_SPEED  = true  -- terrain speed caps / route costs (Lua and the C
 M.LIVE_PHYSICS_TURN   = true  -- turn-time sizing (swerve turn, blitz ready timeout) and turn-radius speed caps
 M.LIVE_PHYSICS_ACCEL  = true  -- brake / look-ahead distances and brake profiles follow our accel + brake rates
 M.LIVE_PHYSICS_SHELL  = true  -- shell speed, gunsight max
+M.LIVE_PHYSICS_BLAST  = true  -- the builder blast model follows the lgm_blast_shape and pill_range rules (LGM_BLAST_SHAPE, LGM_BLAST_PILL_RANGE_WU)
 -- Top-speed caps in info.speed units (engine speed x4): 64 = road top speed,
 -- 48 = the navigation cruise cap. Live rules scale them with the road speed
 -- rule and our speed modifier.
@@ -1615,6 +1616,12 @@ M.ANGRY_REFUEL_THRESHOLD   = 0.6   -- pill anger above which we flee the base
 -- Goal replan scheduling
 -- -------------------------------------------------------------------------
 M.GOAL_REPLAN_INTERVAL     = 50    -- ticks between goal decisions
+-- 2026-11-06: which tick of the GOAL_REPLAN_INTERVAL a bot replans on.
+-- "slot" = game tick phase slot * INTERVAL / 16 (rounded) from the bot's own
+-- player slot, so bots in different slots replan on different ticks.
+-- "random" (KEEL) = one math.random draw at Brain.open; on LuaJIT with no
+-- seed set every bot draws the same value, so all bots replan together.
+M.REPLAN_OFFSET_MODE       = "slot"
 M.WARMUP_CAPTURE_MAX_COST  = 150   -- warm-up exemption: a capture_pill (dead pill pickup) priced at or below this wins even before the pools are warm. ~13 tiles by sea cost 34; a cross-map pickup is far above this. (20260831_173448 bot3: respawned in a boat, cost-34 water pickup lost to the explore fallback, landed, pills unreachable thereafter.)
 M.WARMUP_MIN_REAL_GOALS    = 10   -- the rolling pool-eval warms up over ~14-49 ticks; until this many finite-cost (pickable) candidates exist across all pools the bot rides the explore fallback. Once reached: exit explore immediately (don't wait out GOAL_MIN_COMMIT) and stop showing the warmup reject row in the WINNERS panel.
 M.GOAL_POOL_COUNT          = 10    -- number of pool evaluators to spread across ticks
@@ -2393,13 +2400,26 @@ M.CAPTURE_LGM_HUNT_SWEEP_NUDGE_BRADS = 10
 -- when the predicted shell impact lands within this of the man's predicted
 -- position.  The engine's real LGM splash kill radius is 128 wu (a full tile,
 -- lgm.c), so 100 leaves a margin.  BUT a man standing on a SOLID square (a live
--- pill, a base, or a building) is killed by lgm.c's death check ONLY when the
+-- pill, a base, or a building -- a dead pill is open ground, see
+-- BLAST_DEAD_PILL_OPEN) is killed by lgm.c's death check ONLY when the
 -- shell lands in his EXACT tile (lgmDeathCheckAtPosition: solid square =>
 -- same-square-only, no splash); for those the shot requires impact-tile ==
 -- man-tile instead of this radius.  The SHARED kill_lgm evaluator's ½-tile
 -- (64 wu) gate is UNCHANGED -- only the capture-target man gets this wider gate.
 -- KEEL: 64 (equals the shared gate, so the wider shot can never fire beyond it).
 M.CAPTURE_LGM_HUNT_FIRE_WU       = 100
+-- BLAST_DEAD_PILL_OPEN (2026-11-06): the engine's builder blast test
+-- (lgm.c lgmBlastCatches) counts a DEAD pill's square as open ground: a blast
+-- there kills a man within 128 wu, on that square or across its edge, and
+-- not a man in its far corner. Only a LIVE pill (pillsIsPillHit, armour > 0),
+-- a base or a building is solid (same-square-only kill). A shell that HITS a
+-- pill is a hit on its square, the shot that kills it included (shells.c
+-- outSquareHit): same-square-only, as for any live pill. The brain reads the
+-- pill's health from what the player sees (the pill sprite and the pill
+-- status panel both show a dead pill). true = a man on a dead pill is aimed
+-- at with the open-ground rule (init.lua lgm_on_solid). KEEL: false (any
+-- deployed pill, dead or alive, is solid -- the old engine rule).
+M.BLAST_DEAD_PILL_OPEN = true
 -- REFIRE_MAX_MISSES: keep firing at the same man every reload-available tick,
 -- but give up after this many consecutive misses (a shot whose flight completed
 -- with the man still alive).  Counter resets on a kill or a target change, and
@@ -3138,9 +3158,20 @@ M.CAPACITY_DROP_RATIO       = 1.20  -- drop 1 tier when smoothed ratio > 1.2.
 M.CAPACITY_DROP_BIG_RATIO   = 1.50  -- drop 2 tiers when smoothed ratio > 1.5.
 M.CAPACITY_RAISE_RATIO      = 0.70  -- raise 1 tier (with corroboration) when ratio < 0.7.
 M.CAPACITY_RAISE_FREE_RATIO = 0.40  -- raise 1 tier (skip corroboration) when ratio < 0.4.
-M.CAPACITY_KILLED_CUT       = 3     -- tiers to drop when wasKilled (host force-killed last tick).
+M.CAPACITY_KILLED_CUT       = 1     -- tiers to drop when wasKilled (host force-killed last tick). KEEL 3.
 M.CAPACITY_KILLED_COST_MULT = 1.5   -- a killed tick reports lastThinkMs ??? the budget (the kill fires AT the cap), so both EWMAs would learn "we fit, barely" from a tick that did NOT fit ??? and the per-tier history then corroborates raising straight back into the kill. Charge a kill at least target ?? this instead.
-M.CAPACITY_KILLED_AVOID     = 200   -- ticks to avoid a tier that just got killed at.
+M.CAPACITY_KILLED_AVOID     = 50    -- ticks to avoid a tier that just got killed at. KEEL 200.
+-- 2026-11-06: one kill on its own does not cut tiers. Think cost is almost
+-- the same at every tier, and most kills are a single slow tick (a replan
+-- tick) that ends at 100-104% of the budget, so a cut on every kill only
+-- sends the bot down to tier 1 for no saving. A kill cuts tiers (and marks
+-- the tier for CAPACITY_KILLED_AVOID) only when it is at least the
+-- CAPACITY_KILL_STREAK_N-th kill inside the last CAPACITY_KILL_STREAK_WINDOW
+-- ticks, counting this one. Every kill still feeds the inflated cost
+-- (CAPACITY_KILLED_COST_MULT) into both EWMAs, so a bot that is really too
+-- slow still drops through the ratio test. KEEL 1: every kill cuts.
+M.CAPACITY_KILL_STREAK_N      = 2
+M.CAPACITY_KILL_STREAK_WINDOW = 100   -- ticks
 M.CAPACITY_RAISE_HEADROOM   = 0.90  -- raise only if next-tier history < target * this.
 M.CAPACITY_DEFAULT_TIER     = 10    -- start at full quality; throttle on observed pressure.
 -- Test override: when non-nil, ignore brain.targetMs and pretend this is
@@ -4459,7 +4490,29 @@ M.LGM_SHELL_PREDICT_TICKS = 63
 -- kills the man when the explosion is within MAP_SQUARE_MIDDLE of him (on a
 -- tile that is not solid). global.h MAP_SQUARE_MIDDLE = 128. Not a tunable --
 -- changing it makes the gate disagree with the engine.
+-- This is the radius of the classic lgm_blast_shape (0, "Half-square
+-- circle"); U.lgm_open_blast_catches picks the shape the game plays with.
 M.LGM_SHELL_KILL_RADIUS_WU = 128
+-- The other two lgm_blast_shape values (src/bolo/internal/lgm.h): 1, the
+-- "Mac Bolo box", is |dx| < LGM_BLAST_MAC_BOX_HALF_WU and |dy| < that;
+-- 2, the "Mac Bolo equivalent area circle", has the radius
+-- LGM_BLAST_MAC_AREA_RADIUS_WU (256 / sqrt(pi), about 144.4, the box's
+-- area). Engine facts, not tunables.
+M.LGM_BLAST_MAC_BOX_HALF_WU = 128
+M.LGM_BLAST_MAC_AREA_RADIUS_WU = 144
+-- 2026-11-07: the builder blast shape every builder blast model uses (the
+-- shell gate, the kill-builder aim and the blast check before a shot,
+-- through U.lgm_open_blast_catches): 0 the half-square circle, 1 the Mac
+-- Bolo box, 2 the Mac Bolo equivalent area circle. live_physics.lua group
+-- BLAST (LIVE_PHYSICS_BLAST) sets it from the lgm_blast_shape rule each
+-- think. Under the classic rule (0), or with LIVE_PHYSICS or
+-- LIVE_PHYSICS_BLAST off, it stays 0, the old model.
+M.LGM_BLAST_SHAPE = 0
+-- 2026-11-07: the engine stops every shape at the pill_range rule (lgm.h
+-- lgmBlastOpenGroundCatches): a builder further than this from the
+-- explosion is safe. Classic 2048, far past every shape, so it changes
+-- nothing. live_physics.lua group BLAST sets it from pill_range each think.
+M.LGM_BLAST_PILL_RANGE_WU = 2048
 -- The engine's shell-vs-tank hit zone, in world units: tank.h:102
 -- TANK_HIT_RADIUS = 112 ("one-tile mid-radius (128) - 16 wu"), tested as a
 -- CIRCLE by tankIsTankHitAtPosition. The shell gate uses it for one thing --
@@ -5757,6 +5810,7 @@ M.PRESETS = {
     CAPTURE_LGM_HUNT_SWEEP_FOCUS_RADIUS = 2.5,  -- moot, feature keel-off
     CAPTURE_LGM_HUNT_SWEEP_NUDGE_BRADS = 0,     -- no heading nudge (no-op value)
     CAPTURE_LGM_HUNT_FIRE_WU      = 64,         -- capture fire gate = the shared ½-tile gate (no wider shot)
+    BLAST_DEAD_PILL_OPEN          = false,      -- 2026-11-06: a dead pill's square is solid for the builder blast, as the old engine had it
     CAPTURE_LGM_HUNT_REFIRE_MAX_MISSES = 0,     -- no capture-target refire (off)
     -- 2026-09-08: a hostile LGM within CAPTURE_LGM_PRIORITY_RADIUS tiles
     -- (Chebyshev) of the pill the capture flow is driving at now gets his
@@ -6263,6 +6317,15 @@ M.PRESETS = {
     --   a gun a few brads off the aim line cannot shoot our own pill.  KEEL
     --   checked the aim line only.
     TANK_COMBAT_FIRE_CHECK_HEADING = false,
+    --   2026-11-06: capacity tier after a budget kill.  KEEL cut 3 tiers on
+    --   every kill and avoided that tier for 200 ticks.  STREAK_N 1 makes
+    --   every kill cut, so the window value is not read.
+    CAPACITY_KILLED_CUT           = 3,
+    CAPACITY_KILLED_AVOID         = 200,
+    CAPACITY_KILL_STREAK_N        = 1,
+    --   2026-11-06: replan phase from the bot's player slot.  KEEL used the
+    --   math.random draw (the same value on every bot under LuaJIT).
+    REPLAN_OFFSET_MODE            = "random",
   },
   -- nolgm_off: RUDDER as it stood BEFORE the loaded, builder-less work
   -- (2026-09-08) -- every knob that work added, at its pre-change value, and

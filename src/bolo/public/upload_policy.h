@@ -42,11 +42,12 @@ typedef enum {
 } UploadPolicy;
 
 /* Player scripts have their own policy, separate from the map one.
- * Zero is ALLOW so a zeroed server behaves as it did before the
- * policy existed (upload scripts enabled). */
+ * The values go on the wire, so they stay as they are. Zero is ALLOW
+ * because a server from before the policy existed sends no byte and does
+ * take uploads. A new server starts at OFF (scriptUploadPolicyResolve). */
 typedef enum {
-    SCRIPT_UPLOAD_ALLOW   = 0,  /* default; accept uploads, keep for the session */
-    SCRIPT_UPLOAD_OFF     = 1,  /* refuse script uploads; don't run an uploaded map's script */
+    SCRIPT_UPLOAD_ALLOW   = 0,  /* accept uploads, keep for the session */
+    SCRIPT_UPLOAD_OFF     = 1,  /* default; refuse script uploads; don't run an uploaded map's script */
     SCRIPT_UPLOAD_PERSIST = 2   /* accept uploads and keep them for good */
 } ScriptUploadPolicy;
 

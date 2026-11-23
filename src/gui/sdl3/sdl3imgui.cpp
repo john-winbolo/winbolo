@@ -992,6 +992,12 @@ static int           s_overviewTilesScale    = 0;
    atlas without changing the renderer or the scale, so those two alone
    would keep the pop-out on the old art. */
 static unsigned int  s_overviewTilesGen      = 0;
+/* The padded copy of the moving sprites, off the same sheet and on the same
+   renderer, so the pop-out's tanks do not sample the packed layout either
+   (sprite_atlas.h). Built and dropped with s_overviewTiles; both NULL leaves
+   the sprites drawing from the sheet. */
+static SDL_Texture  *s_overviewSprites       = nullptr;
+static SpriteAtlas  *s_overviewAtlas         = nullptr;
 /* The gunsight sprite, on the pop-out's renderer for the same reason. */
 static SDL_Texture  *s_overviewCrosshair         = nullptr;
 static SDL_Renderer *s_overviewCrosshairRenderer = nullptr;
@@ -1018,6 +1024,17 @@ static int           s_mapOverviewPanelH     = 0;
 static bool          s_gameInputHadFocus     = true;
 static bool          s_focusEventThisPoll    = false;
 
+/* Drops the pop-out's sprite atlas and its texture. Every place that drops
+   s_overviewTiles calls this: the atlas is a copy of that sheet. */
+static void overviewDropSprites(void) {
+    if (s_overviewSprites) {
+        SDL_DestroyTexture(s_overviewSprites);
+        s_overviewSprites = nullptr;
+    }
+    tileLoaderFreeSpriteAtlas(s_overviewAtlas);
+    s_overviewAtlas = nullptr;
+}
+
 static SDL_Texture *overviewEnsureTiles(SDL_Renderer *r) {
     if (!r) return nullptr;
 
@@ -1035,6 +1052,7 @@ static SDL_Texture *overviewEnsureTiles(SDL_Renderer *r) {
         SDL_DestroyTexture(s_overviewTiles);
         s_overviewTiles = nullptr;
     }
+    overviewDropSprites();
     s_overviewTilesRenderer = r;
     s_overviewTilesScale    = want;
     s_overviewTilesGen      = gen;
@@ -1046,11 +1064,32 @@ static SDL_Texture *overviewEnsureTiles(SDL_Renderer *r) {
         return nullptr;
     }
     s_overviewTiles = SDL_CreateTextureFromSurface(r, sheet);
+
+    /* The padded copy, before the sheet goes. Not fatal when it fails: the
+       sprites keep drawing from the sheet. The sampler is re-asserted every
+       frame by overviewViewRenderOffscreen, like the sheet's. */
+    s_overviewAtlas = tileLoaderBuildSpriteAtlas(sheet, want);
+    if (s_overviewAtlas != nullptr) {
+        s_overviewSprites =
+            SDL_CreateTextureFromSurface(r, s_overviewAtlas->surface);
+        tileLoaderSpriteAtlasDropSurface(s_overviewAtlas);
+        if (s_overviewSprites != nullptr) {
+            SDL_SetTextureBlendMode(s_overviewSprites, SDL_BLENDMODE_BLEND);
+        } else {
+            WB_LOG_WARN(WB_LOG_CAT_ASSET,
+                        "[Overview] the sprite atlas would not become a "
+                        "texture (%s); sprites keep drawing from the sheet",
+                        SDL_GetError());
+            tileLoaderFreeSpriteAtlas(s_overviewAtlas);
+            s_overviewAtlas = nullptr;
+        }
+    }
     SDL_DestroySurface(sheet);
     if (!s_overviewTiles) {
         WB_LOG_ERROR(WB_LOG_CAT_ASSET,
                      "[Overview] SDL_CreateTextureFromSurface failed: %s",
                      SDL_GetError());
+        overviewDropSprites();
         return nullptr;
     }
 
@@ -1089,13 +1128,17 @@ static SDL_Texture *overviewEnsureCrosshair(SDL_Renderer *r) {
 
 static bool popOutCreate(PopOutWindow *pw, const char *title, int w, int h, Uint32 flags) {
     /* Re-show an existing pop-out rather than recreating it. We deliberately
-     * keep the SDL_Window + Metal SDL_Renderer alive across closes: destroying
-     * a Metal renderer mid-run releases Metal objects that the Steam overlay
-     * (gameoverlayrenderer.dylib) has cached, and the overlay then messages the
-     * freed object on the next present of the main window -> SIGSEGV. The
-     * renderers are only torn down for real at shutdown (sdl3ImguiCleanup). */
+     * keep the SDL_Window + Metal SDL_Renderer alive across closes and across
+     * games: destroying a Metal renderer mid-run releases Metal objects that
+     * the Steam overlay (gameoverlayrenderer.dylib) has cached, and the overlay
+     * then messages the freed object on the next present of the main window
+     * -> SIGSEGV. The renderers are only torn down for real at process exit
+     * (sdl3ImguiDestroyPopOuts); the end of a game hides them
+     * (sdl3ImguiCleanup). The window may be from an earlier game, so the title
+     * is set again in case the language changed since. */
     if (pw->window) {
         pw->open = true;
+        SDL_SetWindowTitle(pw->window, title);
         SDL_ShowWindow(pw->window);
         SDL_RaiseWindow(pw->window);
         return true;
@@ -1646,29 +1689,54 @@ static void overviewInWindowChoose(bool on) {
  * reach them; those are the panel's real form, not a stand-in, and the rules
  * keyed on this must leave them exactly as they were. False on the tablet /
  * mobile builds for the same reason: they have no pop-outs at all. The web
- * has no pop-outs either, but while its full screen map is up the panels
- * take the same in-window rules the desktop uses. */
+ * has no pop-outs either, so with a keyboard and mouse its in-window panels
+ * are always in the place of the desktop's pop-outs and take their rules, with
+ * or without the full screen map. */
 static bool panelsStandInForPopOuts(void) {
-#if !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
+#if defined(__EMSCRIPTEN__)
+    return !uiModeIsTablet();
+#elif !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
     return !uiModeIsTablet() && sdl3DrawIsOverviewInWindow();
 #else
     return false;
 #endif
 }
 
+/* True when the panels standing in for pop-outs leave the keyboard with the
+ * game. Not with a controller connected: it navigates these panels with the
+ * same stick and buttons that drive the tank, so it needs them to hold focus,
+ * and the Players panel to suspend the game as it always has. */
+static bool panelsShareKeyboard(void) {
+    return panelsStandInForPopOuts() && !inputGamepadIsConnected();
+}
+
 /* -------------------------------------------------------
  * System Info panel
  * ------------------------------------------------------- */
 
-/* Tick / brain timing graph state — only populated while
- * the System Info dialog is open. Sampled once per second
- * to match the ping graph's cadence. */
+/* Tick / brain timing graph state and the server telemetry text — only
+ * populated while the System Info dialog is open. Sampled once per second
+ * to match the ping graph's cadence: the figures change every tick, too fast
+ * to read if they are redrawn as they change. */
 #define SYS_GRAPH_SIZE 120   /* ~2 minutes at 1 sample/sec */
+#define SYS_SAMPLE_PERIOD_MS 1000
 static float    s_tickHistory[SYS_GRAPH_SIZE];
 static float    s_brainHistory[SYS_GRAPH_SIZE];
 static int      s_sysHistoryOffset = 0;
 static int      s_sysHistoryCount  = 0;
 static uint32_t s_sysLastSampleTick = 0;
+
+/* What the panel shows of the local server sim, as of the last sample. */
+typedef struct {
+    bool         valid;          /* holds a read of the current sim */
+    bool         hasBots;
+    BotPoolStats pool;
+    BotInfo      bots[MAX_TANKS];
+    bool         botValid[MAX_TANKS];
+    double       simLast;
+    double       simEwma;
+} SysServerStats;
+static SysServerStats s_sysServer;
 
 /* The Memory block's figures. Read every SYS_MEM_PERIOD_MS while the panel
  * is open and drawn from this cache between reads. The desktop and iOS show
@@ -1685,6 +1753,7 @@ static void sysInfoGraphReset(void) {
     s_sysHistoryOffset = 0;
     s_sysHistoryCount  = 0;
     s_sysLastSampleTick = 0;
+    s_sysServer.valid = false;
     memset(&s_sysMem, 0, sizeof(s_sysMem));
     s_sysMemValid    = false;
     s_sysMemHosting  = false;
@@ -1772,15 +1841,32 @@ static void renderSysInfoMemory(ServerSim *spSim) {
 }
 #endif
 
-/* Sample once per second. tickMs and brainPhaseMs are the
- * "last" values from server_lifecycle / bot_manager — already
+/* Sample once per second, for the graphs and the text together. The
+ * figures are the values from server_lifecycle / bot_manager — already
  * updated each tick by the server timer thread. */
-static void sysInfoGraphSample(double tickMs, double brainPhaseMs) {
-    uint32_t now = SDL_GetTicks();
-    if (now - s_sysLastSampleTick < 1000 && s_sysHistoryCount > 0) return;
+static void sysInfoServerSample(ServerSim *spSim) {
+    uint32_t now = (uint32_t)SDL_GetTicks();
+    if (s_sysServer.valid && now - s_sysLastSampleTick < SYS_SAMPLE_PERIOD_MS) return;
     s_sysLastSampleTick = now;
-    s_tickHistory[s_sysHistoryOffset]  = (float)tickMs;
-    s_brainHistory[s_sysHistoryOffset] = (float)brainPhaseMs;
+
+    double tickLast = 0.0, tickEwma = 0.0;
+
+    /* The server timer thread writes these file-statics every
+     * tick. Take the same mutex serverInstanceTick uses so the
+     * snapshot is consistent. */
+    threadsWaitForMutex();
+    s_sysServer.hasBots = serverSimHasAnyBot(spSim);
+    serverSimGetBotPoolStats(spSim, &s_sysServer.pool);
+    for (int i = 0; i < MAX_TANKS; i++) {
+        s_sysServer.botValid[i] = serverSimGetBotInfo(spSim, (BYTE)i, &s_sysServer.bots[i]);
+    }
+    serverLifecycleGetTickStats(&tickLast, &tickEwma);
+    serverLifecycleGetSimStats(&s_sysServer.simLast, &s_sysServer.simEwma);
+    threadsReleaseMutex();
+    s_sysServer.valid = true;
+
+    s_tickHistory[s_sysHistoryOffset]  = (float)tickLast;
+    s_brainHistory[s_sysHistoryOffset] = (float)s_sysServer.pool.lastBrainPhaseMs;
     s_sysHistoryOffset = (s_sysHistoryOffset + 1) % SYS_GRAPH_SIZE;
     if (s_sysHistoryCount < SYS_GRAPH_SIZE) s_sysHistoryCount++;
 }
@@ -1814,28 +1900,18 @@ static void renderSysInfoContent(void) {
 
     /* Server-side bot/sim telemetry. Only present when a local
      * server sim is ticking (single-player or local listen-server). */
-    if (spSim != NULL) {
-        BotPoolStats ps = {};
-        BotInfo  botInfos[MAX_TANKS] = {};
-        bool     botInfoValid[MAX_TANKS] = {};
-        double tickLast = 0.0, tickEwma = 0.0;
-        double simLast  = 0.0, simEwma  = 0.0;
-        bool   hasBots  = false;
+    if (spSim == NULL) {
+        /* Hosting again starts from a fresh read, not the last game's. */
+        s_sysServer.valid = false;
+    } else {
+        sysInfoServerSample(spSim);
 
-        /* The server timer thread writes these file-statics every
-         * tick. Take the same mutex serverInstanceTick uses so the
-         * snapshot is consistent. Cheap — these are quick reads. */
-        threadsWaitForMutex();
-        hasBots = serverSimHasAnyBot(spSim);
-        serverSimGetBotPoolStats(spSim, &ps);
-        for (int i = 0; i < MAX_TANKS; i++) {
-            botInfoValid[i] = serverSimGetBotInfo(spSim, (BYTE)i, &botInfos[i]);
-        }
-        serverLifecycleGetTickStats(&tickLast, &tickEwma);
-        serverLifecycleGetSimStats(&simLast, &simEwma);
-        threadsReleaseMutex();
-
-        sysInfoGraphSample(tickLast, ps.lastBrainPhaseMs);
+        const BotPoolStats &ps = s_sysServer.pool;
+        const BotInfo *botInfos = s_sysServer.bots;
+        const bool *botInfoValid = s_sysServer.botValid;
+        const double simLast = s_sysServer.simLast;
+        const double simEwma = s_sysServer.simEwma;
+        const bool hasBots = s_sysServer.hasBots;
 
         ImGui::Separator();
         ImGui::TextUnformatted(langGetText(STR_DLGSYSINFO_SERVER));
@@ -2761,10 +2837,15 @@ static void mapOverviewPanelRenderOffscreen(ClientSim *cs) {
     clientMutexWaitFor();
     clientSimFillOverviewSnapshot(cs, s_overviewSnapshot);
     clientMutexRelease();
+    /* The main renderer's padded sprite copy goes with its sheet, as it
+       does for the full screen map. */
+    const SpriteAtlas *ovAtlas = nullptr;
+    SDL_Texture *ovSprites = sdl3DrawGetSpritesTexture(&ovAtlas);
     SDL_Texture *prevTarget = SDL_GetRenderTarget(s_renderer);
     overviewViewRenderOffscreen(s_overviewView, s_renderer,
                                 sdl3DrawGetTilesTexture(),
-                                sdl3DrawGetSheetScale(), ovCross,
+                                sdl3DrawGetSheetScale(),
+                                ovSprites, ovAtlas, ovCross,
                                 s_mapOverviewPanelW, s_mapOverviewPanelH,
                                 s_overviewSnapshot, false);
     SDL_SetRenderTarget(s_renderer, prevTarget);
@@ -6112,7 +6193,8 @@ static void renderScenarioPanelPopOuts(ClientSim *cs) {
 }
 
 /* The pop-outs' textures go before the renderers they were made on, and the
-   views with the game. Called from sdl3ImguiCleanup ahead of popOutDestroy. */
+   views with the game. Called from sdl3ImguiCleanup, which keeps the
+   renderers (see popOutCreate) and lets the textures be made again on them. */
 static void scnPanelViewsCleanup(void) {
     for (int i = 0; i < SCN_POP_OWNERS; i++) {
         ScnPanelPopTex &t = s_scnPopTex[i];
@@ -10605,8 +10687,18 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
        never fires — the release lands with no active id to complete the
        click. An active item also means the player is driving the UI, not the
        tank, so the keyboard isn't being stolen from the game in that instant;
-       the drop resumes the moment the press completes and ActiveId clears. */
-    if (cs && !clientSimIsInLobby(cs) && !sdl3ImguiIsDialogOpen() &&
+       the drop resumes the moment the press completes and ActiveId clears.
+
+       A panel that shares the keyboard counts as no panel here: it is still
+       mouse-driven, since the drop waits for ActiveId, but left focused it
+       would keep the same latch and eat those same keys. Send Message is not
+       among them, because this would pull the focus its text box is asking
+       for on the frames before WantTextInput comes up. */
+    bool onlySharingPanels = panelsShareKeyboard() &&
+        !s_showSendMsg && !s_showSettings && !s_brainSettingsOpen &&
+        !s_allianceVisible && GImGui->OpenPopupStack.Size == 0;
+    if (cs && !clientSimIsInLobby(cs) &&
+        (!sdl3ImguiIsDialogOpen() || onlySharingPanels) &&
         !ImGui::GetIO().WantTextInput &&
         GImGui->ActiveId == 0) {
         ImGui::SetWindowFocus(nullptr);
@@ -11132,7 +11224,9 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
             clientMutexRelease();
             overviewViewRenderOffscreen(s_overviewView,
                                         s_popMapOverview.renderer,
-                                        ovTiles, s_overviewTilesScale, ovCross,
+                                        ovTiles, s_overviewTilesScale,
+                                        s_overviewSprites, s_overviewAtlas,
+                                        ovCross,
                                         s_popMapOverview.width,
                                         s_popMapOverview.height,
                                         s_overviewSnapshot, false);
@@ -11635,7 +11729,7 @@ bool sdl3ImguiWantsKeyboard(void) {
     ImGuiIO &io = ImGui::GetIO();
     ImGuiContext *g = ImGui::GetCurrentContext();
 
-    /* Standing in for a pop-out, these four must not suspend the game: a
+    /* Standing in for a pop-out, these panels must not suspend the game: a
        pop-out is a separate OS window, so the player kept driving with System
        Info up and the OS-focus gate in input.c muted the keys only once the
        pop-out actually took focus. The in-window stand-in has to match, or
@@ -11643,7 +11737,9 @@ bool sdl3ImguiWantsKeyboard(void) {
        on screen saying why. Send Message still suspends while its box holds
        the caret — that is io.WantTextInput above, and clicking back onto the
        map drops the caret and hands the keys back, the way clicking the game
-       window behind the pop-out does.
+       window behind the pop-out does. The Players panel follows them only
+       without a controller, which would steer the tank while navigating its
+       rows (panelsShareKeyboard).
 
        Everywhere else they keep blocking, unchanged: the tablet panels, and
        the same panels opened from Settings > Session on a desktop or a Deck,
@@ -11651,12 +11747,12 @@ bool sdl3ImguiWantsKeyboard(void) {
     bool infoPanelsBlock = !panelsStandInForPopOuts() &&
                            (s_showSysInfo || s_showNetInfo ||
                             s_showGameInfo || s_showSendMsg);
+    bool playersPanelBlocks = s_showPlayersPanel && !panelsShareKeyboard();
 
     InputGateState st;
     st.textInputActive             = io.WantTextInput;
-    st.blockingModalOpen           = infoPanelsBlock ||
-                                     s_showPlayersPanel || s_showSettings ||
-                                     s_brainSettingsOpen;
+    st.blockingModalOpen           = infoPanelsBlock || playersPanelBlocks ||
+                                     s_showSettings || s_brainSettingsOpen;
     /* Every popup currently on the stack is blocking (menu-bar dropdowns and
        the password / change-name / key-setup / pause / quick-chat modals).
        The transient notifications — alliance request and vote widgets — are
@@ -12339,7 +12435,7 @@ void sdl3ImguiCleanup(void) {
         inputTouchSetScrollJoystickZone(0.0f, 0.0f, 0.0f, 0.0f);
         inputTouchSetControlRects(nullptr, 0);
     }
-    /* The five two-form panels go with the game as well. popOutDestroy below
+    /* The five two-form panels go with the game as well. The hide below
        clears the pop-out half, but the in-window half is a plain flag that
        nothing here was resetting, and this path reaches overviewInWindowSet
        directly rather than through overviewInWindowChoose, which is where the
@@ -12354,8 +12450,9 @@ void sdl3ImguiCleanup(void) {
     s_showSendMsg      = false;
     s_showPlayersPanel = false;
     inputGamepadShutdown();
-    /* Before the loop: all of these were made on the Map Overview pop-out's
-       renderer, which popOutDestroy tears down. */
+    /* All of these were made on the Map Overview pop-out's renderer. The
+       renderer is kept for the next game (see popOutCreate), and each is made
+       again on it the first time it is drawn. */
     overviewViewDestroy(s_overviewView);
     s_overviewView = nullptr;
     overviewSnapshotDestroy(s_overviewSnapshot);
@@ -12364,6 +12461,7 @@ void sdl3ImguiCleanup(void) {
         SDL_DestroyTexture(s_overviewTiles);
         s_overviewTiles = nullptr;
     }
+    overviewDropSprites();
     s_overviewTilesRenderer = nullptr;
     s_overviewTilesScale    = 0;
     if (s_overviewCrosshair) {
@@ -12371,9 +12469,9 @@ void sdl3ImguiCleanup(void) {
         s_overviewCrosshair = nullptr;
     }
     s_overviewCrosshairRenderer = nullptr;
-    /* Textures die with the renderer that made them, so the pop-out's copies
-     * and its flag cache go before popOutDestroy takes its renderer down —
-     * SDL_DestroyTexture afterwards would be running against freed state. */
+    /* The pop-out's copies and its flag cache go with the game too. They
+     * are freed here, while the renderer that made them is alive, and loaded
+     * again on the same renderer when the next game draws them. */
     if (s_tilesPopOut) {
         SDL_DestroyTexture(s_tilesPopOut);
         s_tilesPopOut = nullptr;
@@ -12382,7 +12480,13 @@ void sdl3ImguiCleanup(void) {
     scnPanelViewsCleanup();
     destroyIconSlot(ICON_SLOT_POPOUT);
     flagsDestroy();
-    for (int i = 0; i < POPOUT_COUNT; i++) popOutDestroy(s_popOuts[i]);
+    /* Hidden, not destroyed. This runs at the end of every game, and the
+     * main window goes on presenting afterwards (the lobby, the welcome
+     * screen). Destroying a pop-out's Metal renderer here crashed the Steam
+     * overlay on that next present — see popOutCreate. The windows and
+     * renderers are destroyed at process exit, in sdl3ImguiDestroyPopOuts.
+     * Nothing is raised: the player may be leaving for another program. */
+    for (int i = 0; i < POPOUT_COUNT; i++) popOutHideEx(s_popOuts[i], false);
     destroyIconSlot(ICON_SLOT_MAIN);
     /* Renderer-free, so they outlive both slots and are freed once here. */
     if (s_iconBotChipSurfGreen) { SDL_DestroySurface(s_iconBotChipSurfGreen); s_iconBotChipSurfGreen = nullptr; }
@@ -12405,4 +12509,11 @@ void sdl3ImguiCleanup(void) {
     }
     s_window   = nullptr;
     s_renderer = nullptr;
+}
+
+void sdl3ImguiDestroyPopOuts(void) {
+    /* No test of s_window: sdl3ImguiCleanup has normally run already and
+       cleared it, and the pop-outs it hid are still here. Their textures
+       were freed there. */
+    for (int i = 0; i < POPOUT_COUNT; i++) popOutDestroy(s_popOuts[i]);
 }

@@ -263,8 +263,10 @@ turning scripts off altogether:
   one above: Off, Allow this session or Allow and keep. Greyed while scripts
   are off altogether.
 
-All three default to allow, which the desktop calls Allow this session. Off
-refuses every script a player sends, and
+All three default to off, because a script a player sends runs on the server's
+computer: turn it on only for players you trust. A desktop preferences file
+saved before this default changed keeps the value it holds. Off refuses every
+script a player sends, and
 strips the script from an uploaded map: a map whose file sits in the server's
 map uploads directory attaches neither a packed scenario nor a loose script
 beside it, the console names the upload that was turned down, and the map
@@ -289,8 +291,9 @@ one packed into an uploaded map, a mod, and the check `-validate` makes — is
 plain Lua:
 
 - the whole standard library, `io`, `os`, `package` and `require`, `debug`,
-  `load`, `dofile` and `string.dump` included, with `loadstring`, `ffi`,
-  `jit` and `bit` on LuaJIT, where the compiler is on as well;
+  `load`, `dofile` and `string.dump` included, with `loadstring`, `jit` and
+  `bit` on LuaJIT, where the compiler is on as well. `ffi` is not among
+  them: LuaJIT is built without it, so no switch opens it;
 - no memory cap, no instruction budget per call and none per tick;
 - the VM's own `string` functions, patterns, `pcall`, `xpcall` and coroutines,
   with none of the length caps above;
@@ -576,8 +579,8 @@ happens to it:
 
 | Policy | A script a player sends | An uploaded map's own script |
 |---|---|---|
-| off | Refused before any bytes are sent. | Not run. |
-| allow (the default) | Kept for the session, in the Session directory. | Run. |
+| off (the default) | Refused before any bytes are sent. | Not run. |
+| allow | Kept for the session, in the Session directory. | Run. |
 | persist | Kept for good, in the Scripts directory. | Run. |
 
 It is a policy of its own, apart from the one for map uploads.
@@ -2864,6 +2867,7 @@ they are impassable by terrain type rather than by having no speed.
 | `lgm_pill_drop_search` | 10 | 1 to 255 | Removed, does nothing. The name is still accepted, so a script that sets it still runs. |
 | `lgm_boat_leave_offset` | 144 | 0 to 255 | Not a distance he steps. While the tank is on a boat, this is the half-width of a box around it, in world units on each axis. Inside the box a builder setting out ignores the terrain and walks at `man_speed_refuel_base`, which is how he gets off the boat over water. |
 | `lgm_boat_return_offset` | 160 | 0 to 255 | The same box for a builder coming back to a tank on a boat, which is how he gets back across the water to it. |
+| `lgm_blast_shape` | 0 | 0 to 2 | The area of open ground round an explosion that kills a builder, measured from the explosion to the builder. 0, "Half-square circle", the classic table, is the WinBolo rule: a circle of radius 128 world units, half a square, edge included. 1, "Mac Bolo box", is the Mac Bolo rule: a box that reaches under 128 from the explosion on each axis, so a builder 127 across and 127 down, about 180 off, dies. 2, "Mac Bolo equivalent area circle", is a circle of radius 144, edge included, about the same area as the box. An explosion on a building, a half building, a pillbox or a base still kills only a builder on that square, whatever the value. Every shape also stops at `pill_range`: a builder further than `pill_range` from the explosion is safe. That changes a shape only when `pill_range` is under its reach (128, about 180 and 144). The Mac Bolo Rules mod sets 1. |
 
 **Raising `lgm_helicopter_speed` means raising `lgm_arrive_tolerance` with
 it.** The drop steps straight at the tank and counts as landed once both axes

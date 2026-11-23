@@ -107,6 +107,17 @@ void sdl3ImguiSetExtraRenderCallback(sdl3ImguiExtraRenderFn fn);
 void sdl3ImguiCleanup(void);
 
 /*********************************************************
+*NAME:          sdl3ImguiDestroyPopOuts
+*PURPOSE:
+*  Destroy every pop-out window with its renderer and ImGui
+*  context. Process exit only: sdl3ImguiCleanup runs at the
+*  end of every game and only hides them, because destroying
+*  a Metal renderer while the main window is still presenting
+*  crashes the Steam overlay. Call after sdl3ImguiCleanup.
+*********************************************************/
+void sdl3ImguiDestroyPopOuts(void);
+
+/*********************************************************
 *NAME:          sdl3ImguiShowSysInfo / ShowNetInfo / ShowGameInfo
 *PURPOSE:
 *  Open (true) or close (false) the corresponding info
