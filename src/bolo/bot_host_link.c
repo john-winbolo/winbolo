@@ -1815,3 +1815,67 @@ bool botHostNoMoveGiveBack(const BotHostNoMove *nm, bool running, int bots,
     if (botHostNoMoveMayMove(nm, running)) return false;
     return bots > 0 && bots > (slots < 0 ? 0 : slots);
 }
+
+/* ---- The lobby's wait for a Bot Host's brain files --------------------- */
+
+bool botHostSyncNeeded(int bots, int slots) {
+    return bots > 0 && slots > 0;
+}
+
+void botHostSyncWatchStart(BotHostSyncWatch *w, uint32_t gen, uint32_t now) {
+    if (w == NULL) return;
+    w->gen = gen;
+    w->startTick = now;
+    w->progressTick = now;
+    w->lastDone = 0;
+    w->reported = false;
+}
+
+void botHostSyncWatchHold(BotHostSyncWatch *w, uint32_t done, uint32_t now) {
+    if (w == NULL) return;
+    w->startTick = now;
+    w->progressTick = now;
+    w->lastDone = done;
+}
+
+void botHostSyncWatchReport(BotHostSyncWatch *w, uint32_t gen, uint32_t done,
+                            uint32_t now) {
+    if (w == NULL) return;
+    if (gen != w->gen) botHostSyncWatchStart(w, gen, now);
+    if (!w->reported) {
+        /* The first report: the stall clock starts here. */
+        w->reported = true;
+        w->progressTick = now;
+    } else if (done > w->lastDone) {
+        w->progressTick = now;
+    }
+    /* A download that starts again from 0 is no progress, and the next
+     * bytes after it are. */
+    w->lastDone = done;
+}
+
+BotHostSyncWait botHostSyncWatchCheck(const BotHostSyncWatch *w,
+                                      uint32_t now) {
+    if (w == NULL) return BOT_HOST_SYNC_WAIT_ON;
+    if (now - w->startTick > BOT_HOST_SYNC_LIMIT_TICKS) {
+        return BOT_HOST_SYNC_WAIT_LATE;
+    }
+    if (w->reported && now - w->progressTick >= BOT_HOST_SYNC_STALL_TICKS) {
+        return BOT_HOST_SYNC_WAIT_STALLED;
+    }
+    return BOT_HOST_SYNC_WAIT_ON;
+}
+
+int botHostSyncRowState(const BotHostSyncRowIn *in) {
+    if (in == NULL) return BOT_HOST_SYNC_ROW_WAITING;
+    if (in->synced) return BOT_HOST_SYNC_ROW_READY;
+    /* Stopped on the server's computer: never "syncing", so the lobby's
+     * Ready does not wait for it. */
+    if (in->sameServer) return BOT_HOST_SYNC_ROW_WAITING;
+    if (in->late) return BOT_HOST_SYNC_ROW_LATE;
+    /* No bot in the game, or the host offers 0 slots: it needs no files,
+     * and the lobby does not wait for it. */
+    if (!in->needed) return BOT_HOST_SYNC_ROW_WAITING;
+    return in->reported ? BOT_HOST_SYNC_ROW_SYNCING
+                        : BOT_HOST_SYNC_ROW_WAITING;
+}

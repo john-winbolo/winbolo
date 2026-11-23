@@ -319,14 +319,18 @@ typedef struct {
      * manifest is still to be sent. */
     BulkSender bulk;
     bool     manifestOwed;
-    uint32_t syncSentTick;       /* tickCount the current manifest went out */
+    /* The lobby's wait for the files (bot_host_link.h): since the current
+     * manifest went out, or since the files were needed, and since the
+     * downloaded bytes last went up. */
+    BotHostSyncWatch syncWatch;
     uint32_t syncGen;            /* manifest generation the host reported on */
     uint32_t syncDone;           /* bytes the host has downloaded */
     uint32_t syncTotal;          /* bytes it has to download */
     bool     syncReady;          /* it holds every file of syncGen */
-    bool     syncLate;           /* past the sync time limit for this gen */
-    /* After the sync time limit the host takes no bots for that game: not
-     * while botManagerGameStarts is at most skipUntilStarts. */
+    bool     syncLate;           /* past a sync limit for this gen */
+    /* After a sync limit (the time limit, or no progress) the host takes
+     * no bots for that game: not while botManagerGameStarts is at most
+     * skipUntilStarts. A new manifest in that time does not change it. */
     bool     skipGame;
     uint32_t skipUntilStarts;
     /* Files asked for, as (brain << 16) | file, oldest first. */

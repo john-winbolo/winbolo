@@ -116,11 +116,14 @@ typedef struct {
 #define CLIENT_BOT_HOST_ROWS     9
 #define CLIENT_BOT_HOST_SERVER_ROW (CLIENT_BOT_HOST_ROWS - 1)
 /* A Bot Host's brain sync state, as CTRL_BOT_HOST_STATUS carries it.
- *   WAITING - connected, the manifest not yet answered.
+ *   WAITING - connected, the manifest not yet answered, or the game
+ *             needs no files from it (no bot, or the host offers 0
+ *             slots); the lobby does not wait for it.
  *   SYNCING - downloading brain files; the lobby holds Ready.
  *   READY   - holds the server's brain files; it can take bots.
- *   LATE    - still downloading after the sync time limit; the lobby no
- *             longer waits for it, and it takes no bots this game. */
+ *   LATE    - still downloading after the sync time limit, or no
+ *             progress for 10 s; the lobby no longer waits for it, and
+ *             it takes no bots this game. */
 enum {
     BOT_HOST_SYNC_WAITING = 0,
     BOT_HOST_SYNC_SYNCING = 1,

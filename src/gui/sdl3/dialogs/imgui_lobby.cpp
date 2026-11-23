@@ -1633,7 +1633,10 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                 bool rankedBlocksReady = rankedActive && !readyRe.sizesEligible;
                 /* While a Bot Host gets the server's brain files the lobby
                  * waits for it: Ready is off (Unready stays on) until it
-                 * holds them or the server stops waiting after 60 s. */
+                 * holds them or the server stops waiting (after 60 s, or
+                 * 10 s with no progress). The server never shows a host as
+                 * syncing when the game has no bot or the host offers 0
+                 * slots. */
                 int botHostSyncPct = 0;
                 bool botHostBlocksReady = !myReady &&
                     clientSimBotHostSyncing(cs, &botHostSyncPct);
@@ -2447,7 +2450,10 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                 bool rankedBlocksReady = rankedActive && !readyRe.sizesEligible;
                 /* While a Bot Host gets the server's brain files the lobby
                  * waits for it: Ready is off (Unready stays on) until it
-                 * holds them or the server stops waiting after 60 s. */
+                 * holds them or the server stops waiting (after 60 s, or
+                 * 10 s with no progress). The server never shows a host as
+                 * syncing when the game has no bot or the host offers 0
+                 * slots. */
                 int botHostSyncPct = 0;
                 bool botHostBlocksReady = !myReady &&
                     clientSimBotHostSyncing(cs, &botHostSyncPct);

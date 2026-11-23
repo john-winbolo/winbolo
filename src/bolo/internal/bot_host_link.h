@@ -847,4 +847,87 @@ void botHostOverWarnInit(BotHostOverWarn *w);
 bool botHostOverWarnStep(BotHostOverWarn *w, int serverBots, int serverSlots,
                          bool hostTakes);
 
+/* ---- The lobby's wait for a Bot Host's brain files --------------------- */
+
+/* While a Bot Host gets the server's brain files the lobby waits for it
+ * (its Ready is off), but not without end. The host is late, and the
+ * lobby stops waiting for it, when either limit is past:
+ *   BOT_HOST_SYNC_LIMIT_TICKS: 60 s at 50 ticks a second since the wait
+ *     began.
+ *   BOT_HOST_SYNC_STALL_TICKS: 10 s in which the bytes the host has
+ *     downloaded did not go up.
+ * A late host takes no bots for that game. */
+#define BOT_HOST_SYNC_LIMIT_TICKS 3000
+#define BOT_HOST_SYNC_STALL_TICKS 500
+
+/* The host must hold the brain files before the game can start only when
+ * the game has a bot (bots > 0) and the host offers a slot (slots > 0). A
+ * host that does not need them is never waited for. */
+bool botHostSyncNeeded(int bots, int slots);
+
+/* The clocks of one host's wait. gen: the manifest generation watched.
+ * startTick: the wait began (the list went out, the host joined, or the
+ * files were not needed until then). progressTick: the downloaded bytes
+ * last went up, or startTick. lastDone: those bytes at the last report.
+ * reported: the host reported on gen. Only then does its row show
+ * "syncing" and hold Ready, so only then can it stall. */
+typedef struct {
+    uint32_t gen;
+    uint32_t startTick;
+    uint32_t progressTick;
+    uint32_t lastDone;
+    bool     reported;
+} BotHostSyncWatch;
+
+typedef enum {
+    BOT_HOST_SYNC_WAIT_ON = 0,  /* still waited for */
+    BOT_HOST_SYNC_WAIT_STALLED, /* no progress for BOT_HOST_SYNC_STALL_TICKS */
+    BOT_HOST_SYNC_WAIT_LATE     /* past BOT_HOST_SYNC_LIMIT_TICKS */
+} BotHostSyncWait;
+
+/* The wait on generation gen begins at now: a new manifest went out, or
+ * the host joined. No report on it yet. */
+void botHostSyncWatchStart(BotHostSyncWatch *w, uint32_t gen, uint32_t now);
+/* Nothing waits for the files now (botHostSyncNeeded is false): both
+ * clocks start again at now, with done bytes downloaded so far, so the
+ * limits count from when the files are needed. */
+void botHostSyncWatchHold(BotHostSyncWatch *w, uint32_t done, uint32_t now);
+/* The host reports done bytes of generation gen at now. Another generation
+ * than the one watched starts the wait again. done above the last report
+ * is progress: the stall clock starts again. */
+void botHostSyncWatchReport(BotHostSyncWatch *w, uint32_t gen, uint32_t done,
+                            uint32_t now);
+/* The wait at now: LATE past the time limit, else STALLED once the host
+ * reported and then made no progress for BOT_HOST_SYNC_STALL_TICKS, else
+ * ON. */
+BotHostSyncWait botHostSyncWatchCheck(const BotHostSyncWatch *w,
+                                      uint32_t now);
+
+/* What the lobby row of a connected host shows: a BOT_HOST_SYNC_ROW_*
+ * value, the same number as the BOT_HOST_SYNC_* state of client_sim.h
+ * (the server checks this when it builds). The lobby's Ready waits only
+ * for SYNCING.
+ *   synced: it holds every file of the current generation (READY).
+ *   sameServer: a player's host stopped on the server's computer.
+ *   late: past a limit for this generation, or kept out of this game by
+ *     one (LATE).
+ *   needed: botHostSyncNeeded. A host that does not need the files is
+ *     not waited for (WAITING).
+ *   reported: it reported on the current generation (SYNCING), else it
+ *     has not started on it (WAITING). */
+typedef struct {
+    bool synced;
+    bool sameServer;
+    bool late;
+    bool needed;
+    bool reported;
+} BotHostSyncRowIn;
+enum {
+    BOT_HOST_SYNC_ROW_WAITING = 0,
+    BOT_HOST_SYNC_ROW_SYNCING = 1,
+    BOT_HOST_SYNC_ROW_READY   = 2,
+    BOT_HOST_SYNC_ROW_LATE    = 3
+};
+int botHostSyncRowState(const BotHostSyncRowIn *in);
+
 #endif /* BOT_HOST_LINK_H */
