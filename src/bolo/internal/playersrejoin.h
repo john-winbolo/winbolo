@@ -45,6 +45,8 @@ typedef struct {
   char playerName[PLAYER_NAME_LEN]; /* Player name */
   PlayerBitMap pills;               /* pills and base ownership */
   PlayerBitMap bases;
+  BYTE team;                        /* Team the player was on when leaving, 0 for none */
+  bool signedIn;                    /* The player was signed in to WinBolo.net when leaving */
   int timeOut;                     /* Time left */
 } playerRejoinInfo;
 
@@ -105,7 +107,60 @@ void playersRejoinUpdate();
 *ARGUMENTS:
 *
 *********************************************************/
-void playersRejoinAddPlayer(char *playerName, PlayerBitMap pills, PlayerBitMap bases);
+void playersRejoinAddPlayer(char *playerName, PlayerBitMap pills, PlayerBitMap bases, BYTE team, bool signedIn);
+
+/*********************************************************
+*NAME:          playersRejoinGetTeam
+*PURPOSE:
+* Returns the team a rejoining player was on when leaving,
+* or 0 when there is no record for that name (none was
+* kept, or it has timed out). Leaves the record in place.
+*
+*ARGUMENTS:
+*  playerName - The player name requesting the rejoin
+*********************************************************/
+BYTE playersRejoinGetTeam(const char *playerName);
+
+/*********************************************************
+*NAME:          playersRejoinFind
+*PURPOSE:
+* Returns TRUE when there is a record for that name, and
+* puts its team (0 for none) in team and whether the player
+* was signed in to WinBolo.net when leaving in signedIn.
+* Returns FALSE when there is no record. Leaves the record
+* in place.
+*
+*ARGUMENTS:
+*  playerName - The player name requesting the rejoin
+*  team       - Set to the record's team
+*  signedIn   - Set to the record's signed-in state
+*********************************************************/
+bool playersRejoinFind(const char *playerName, BYTE *team, bool *signedIn);
+
+/*********************************************************
+*NAME:          playersRejoinClearTeam
+*PURPOSE:
+* Sets the team to 0 in every record that has that team.
+* Call it when the team number is given to a new side, so
+* that no record puts a rejoiner on a side they were never
+* on.
+*
+*ARGUMENTS:
+*  team - The team number
+*********************************************************/
+void playersRejoinClearTeam(BYTE team);
+
+/*********************************************************
+*NAME:          playersRejoinHeldTeams
+*PURPOSE:
+* For each team number, the age (timeOut) of the oldest
+* record in use that holds it, or -1 when no record holds
+* it. age[0] is always -1.
+*
+*ARGUMENTS:
+*  age - Filled with MAX_TANKS values, one per team number
+*********************************************************/
+void playersRejoinHeldTeams(int age[MAX_TANKS]);
 
 /*********************************************************
 *NAME:          playersRejoinRequest

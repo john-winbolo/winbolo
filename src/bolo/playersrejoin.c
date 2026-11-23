@@ -117,7 +117,7 @@ void playersRejoinUpdate() {
 *ARGUMENTS:
 *
 *********************************************************/
-void playersRejoinAddPlayer(char *playerName, PlayerBitMap pills, PlayerBitMap bases) {
+void playersRejoinAddPlayer(char *playerName, PlayerBitMap pills, PlayerBitMap bases, BYTE team, bool signedIn) {
   BYTE count;    /* Looping variable */
   BYTE best;     /* Best position to add */
   int timeBest;  /* Best time to beat - If we can't find a free spot */
@@ -126,7 +126,19 @@ void playersRejoinAddPlayer(char *playerName, PlayerBitMap pills, PlayerBitMap b
   count = 0;
   done = FALSE;
   best = 0;
-  timeBest = MAX_REJOIN_TIME;
+  /* With every record in use, the oldest one (the largest timeOut) is
+     the one replaced. */
+  timeBest = -1;
+  /* A record already kept under this name is replaced, so a player who
+     leaves twice has one record, the newest. */
+  while (count < MAX_TANKS && done == FALSE) {
+    if (rejoin.item[count].inUse == TRUE && strcmp(rejoin.item[count].playerName, playerName) == 0) {
+      done = TRUE;
+      best = count;
+    }
+    count++;
+  }
+  count = 0;
   while (count < MAX_TANKS && done == FALSE) {
     if (rejoin.item[count].inUse == FALSE) {
       done = TRUE;
@@ -143,6 +155,8 @@ void playersRejoinAddPlayer(char *playerName, PlayerBitMap pills, PlayerBitMap b
   strcpy(rejoin.item[best].playerName, playerName);
   rejoin.item[best].pills = pills;
   rejoin.item[best].bases = bases;
+  rejoin.item[best].team = team;
+  rejoin.item[best].signedIn = signedIn;
   rejoin.item[best].timeOut = 0;
 }
 
@@ -206,3 +220,108 @@ void playersRejoinRequest(GameSim *sim, char *playerName, BYTE playerNum, pillbo
   }
 }
 
+/*********************************************************
+*NAME:          playersRejoinGetTeam
+*PURPOSE:
+* Returns the team a rejoining player was on when leaving,
+* or 0 when there is no record for that name. Leaves the
+* record in place: playersRejoinRequest clears it.
+*
+*ARGUMENTS:
+*  playerName - The player name requesting the rejoin
+*********************************************************/
+BYTE playersRejoinGetTeam(const char *playerName) {
+  BYTE team;      /* The record's team */
+  bool signedIn;  /* The record's signed-in state, not used here */
+
+  if (playersRejoinFind(playerName, &team, &signedIn) == FALSE) {
+    return 0;
+  }
+  return team;
+}
+
+/*********************************************************
+*NAME:          playersRejoinFind
+*PURPOSE:
+* Returns TRUE when there is a record for that name, and
+* puts its team and signed-in state in team and signedIn.
+* Returns FALSE when there is no record. Leaves the record
+* in place.
+*
+*ARGUMENTS:
+*  playerName - The player name requesting the rejoin
+*  team       - Set to the record's team
+*  signedIn   - Set to the record's signed-in state
+*********************************************************/
+bool playersRejoinFind(const char *playerName, BYTE *team, bool *signedIn) {
+  BYTE count; /* Looping variable */
+
+  *team = 0;
+  *signedIn = FALSE;
+  if (playerName == NULL) {
+    return FALSE;
+  }
+  count = 0;
+  while (count < MAX_TANKS) {
+    if (rejoin.item[count].inUse == TRUE && strcmp(rejoin.item[count].playerName, playerName) == 0) {
+      *team = rejoin.item[count].team;
+      *signedIn = rejoin.item[count].signedIn;
+      return TRUE;
+    }
+    count++;
+  }
+  return FALSE;
+}
+
+/*********************************************************
+*NAME:          playersRejoinHeldTeams
+*PURPOSE:
+* For each team number, the age (timeOut) of the oldest
+* record in use that holds it, or -1 when no record holds
+* it.
+*
+*ARGUMENTS:
+*  age - Filled with MAX_TANKS values, one per team number
+*********************************************************/
+void playersRejoinHeldTeams(int age[MAX_TANKS]) {
+  BYTE count; /* Looping variable */
+  BYTE team;  /* The record's team */
+
+  count = 0;
+  while (count < MAX_TANKS) {
+    age[count] = -1;
+    count++;
+  }
+  count = 0;
+  while (count < MAX_TANKS) {
+    team = rejoin.item[count].team;
+    if (rejoin.item[count].inUse == TRUE && team > 0 && team < MAX_TANKS &&
+        rejoin.item[count].timeOut > age[team]) {
+      age[team] = rejoin.item[count].timeOut;
+    }
+    count++;
+  }
+}
+
+/*********************************************************
+*NAME:          playersRejoinClearTeam
+*PURPOSE:
+* Sets the team to 0 in every record that has that team.
+*
+*ARGUMENTS:
+*  team - The team number
+*********************************************************/
+void playersRejoinClearTeam(BYTE team) {
+  BYTE count; /* Looping variable */
+
+  if (team == 0) {
+    return;
+  }
+  count = 0;
+  while (count < MAX_TANKS) {
+    if (rejoin.item[count].inUse == TRUE && rejoin.item[count].team == team) {
+      rejoin.item[count].team = 0;
+    }
+    count++;
+  }
+}

@@ -6932,6 +6932,23 @@ set(_unit_test_names
     team_sides_panels_follow_team
     team_sides_infection_puts_leaver_back
     team_sides_rejoin_is_a_joiner
+    team_sides_rejoin_keeps_team
+    team_sides_rejoin_keeps_team_no_pills
+    team_sides_rejoin_solo_keeps_team
+    team_sides_join_without_rejoin_is_new
+    team_sides_rejoin_next_round_is_new
+    team_sides_rejoin_can_ally_refused
+    team_sides_rejoin_ranked_keeps_team
+    team_sides_rejoin_full_table_drops_oldest
+    team_sides_rejoin_team_waits_for_rejoiner
+    team_sides_rejoin_all_numbers_held
+    team_sides_rejoin_timed_out_frees_team
+    team_sides_rejoin_unsigned_restores_at_join
+    team_sides_rejoin_signed_in_waits
+    team_sides_rejoin_signed_in_restored
+    team_sides_rejoin_signed_in_solo_keeps_team
+    team_sides_rejoin_signed_in_moved_seat_kept
+    team_sides_rejoin_signed_in_leave_clears
     team_sides_joiner_slot_before_join
     team_sides_lobby_joiner_keeps_rule
     team_sides_lobby_drops_empty_teams

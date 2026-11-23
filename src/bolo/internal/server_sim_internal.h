@@ -942,6 +942,25 @@ struct ServerSim {
      * is released (server_sim_players.c). */
     PlayerBitMap pingMuteMask[MAX_TANKS];
 
+    /* The team a rejoining player was on when leaving, read from the rejoin
+     * record when the player joins again (addPlayerInternal) and used once,
+     * by serverSimPlaceJoiner and serverSimRestoreRejoinTeam, to put the
+     * player back on it. 0 when the join is not a rejoin or no team was kept. */
+    BYTE         rejoinTeam[MAX_TANKS];
+
+    /* True for a seat that rejoined under the name of a player who was
+     * signed in to WinBolo.net when leaving. Its team, pillboxes and bases
+     * stay in the rejoin record until WinBolo.net confirms the seat under
+     * that name (serverSimRejoinSignedIn). Cleared when that happens, when
+     * the seat leaves and at every round reset. */
+    bool         rejoinAwaitSignIn[MAX_TANKS];
+
+    /* The team serverSimPlaceJoiner gave a rejoining seat, 0 for none. The
+     * restore puts the seat back on its old team only while it is still
+     * on this team, so a script that moved the seat in on_player_join
+     * keeps its choice. */
+    BYTE         rejoinJoinTeam[MAX_TANKS];
+
     /* Bot configuration — cached from CLI args for lobby bot creation */
     char         botBrainPath[260];       /* Brain path for lobby bot creation */
     aiType       botAiType;               /* AI advantage level for bots */
@@ -1583,6 +1602,16 @@ BOLO_STATIC_ASSERT(offsetof(struct ServerSim, sim) == 0,
  * scenario's. */
 void serverSimScenarioPolicyEnter(ServerSim *sim);
 void serverSimScenarioPolicyLeave(ServerSim *sim);
+
+/* Whether the scenario lets player ally with other: player is the one who
+ * asked, or the one who joins the team, and other is the seat asked. Put to
+ * the policy at a player's alliance request and accept
+ * (server_command_dispatch.c) and when a rejoiner goes back to their old
+ * team (serverSimRestoreRejoinTeam). Alliances a script makes itself
+ * (set_team, spawning a bot onto a team, seating) are not asked. With no
+ * policy, a policy with no opinion, or a seat out of range, the answer is
+ * yes. Defined in server_sim_scenario.c. */
+bool serverSimScenarioAllowsAlliance(ServerSim *sim, BYTE player, BYTE other);
 
 /* Carry a queued fill-rect forward by whatever is left of this tick's
  * tile budget, then hand the budget back for the next tick. serverSimTick
