@@ -1302,11 +1302,12 @@ void clientApplySnapshot(ClientSim *csPtr,
             tankSetFirstLeft(&MY_TANK(csPtr), tanks[i].firstLeft);
             tankSetFirstRight(&MY_TANK(csPtr), tanks[i].firstRight);
             tankSetReload(&MY_TANK(csPtr), tanks[i].reload);
-            /* No snapshot carries the residual speed, so the replay starts
-             * from what this client had after the acknowledged input. */
-            clientStateRestoreResidual(&csPtr->clientState,
-                                       hdr->lastProcessedInput,
-                                       &MY_TANK(csPtr));
+            /* The replay starts from the speed the server's tank had saved
+             * up towards its next move. Left at this client's newest value
+             * instead, a tank slower than tank_min_move replays its moves on
+             * other ticks than the server's and every snapshot shifts it a
+             * tick's travel one way and then back. */
+            tankSetResidualSpeed(&MY_TANK(csPtr), tanks[i].residualSpeed);
 
             /* Replay unacknowledged inputs (suppress sounds/side effects) */
             csPtr->sim.isPredicting = TRUE;
@@ -1361,8 +1362,6 @@ void clientApplySnapshot(ClientSim *csPtr,
                     tankSetShells(&csPtr->sim, &MY_TANK(csPtr), tankGetShells(&MY_TANK(csPtr)) - 1);
                   }
                 }
-                clientStateNoteResidual(&csPtr->clientState, tick,
-                                        &MY_TANK(csPtr));
               }
             }
             csPtr->sim.replayTick = 0;

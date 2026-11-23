@@ -65,15 +65,6 @@ typedef struct {
                                      * outgoing inputs as viewTick for exact lag
                                      * compensation. Zeroed with the rest of the
                                      * connection state by clientStateCreate. */
-    /* The predicted tank's residual speed after each input in history was
-     * applied, in the same slots. A tank under tank_min_move moves only on
-     * the ticks its saved-up speed reaches it, and no snapshot says how much
-     * the server's tank has saved, so a replay starts from what this client
-     * had saved after the input the snapshot acknowledges. Starting it from
-     * the newest tick's value instead put the replayed tank a tick out of
-     * step with the server whenever the tank was moving that slowly: in
-     * swamp and pulling away from rest. */
-    uint8_t residualAfter[CLIENT_INPUT_HISTORY_SIZE];
     bool initialized;
     bool hasPredictedTank;    /* TRUE once we own a separate predicted tank */
 } ClientState;
@@ -166,28 +157,5 @@ void clientStatePredictTick(struct ClientSim *csim, ClientState *cs, const Input
 bool clientStateReconcile(struct ClientSim *csim, ClientState *cs, uint32_t lastProcessedInput,
                           tank *predictedTank, tank serverTank,
                           struct GameSim *sim);
-
-/*********************************************************
- *NAME:          clientStateNoteResidual
- *PURPOSE:
- *  Records the predicted tank's residual speed as it stands
- *  after the input with this tick was applied, predicted or
- *  replayed. Nothing is recorded for a tick history does
- *  not hold.
- *
- *NAME:          clientStateRestoreResidual
- *PURPOSE:
- *  Puts the predicted tank's residual speed back to what
- *  was recorded for this tick, before inputs after it are
- *  replayed. Leaves the tank alone when history no longer
- *  holds the tick.
- *
- *ARGUMENTS:
- *  cs            - Pointer to ClientState
- *  tick          - The input's tick
- *  predictedTank - Pointer to the predicted tank
- *********************************************************/
-void clientStateNoteResidual(ClientState *cs, uint32_t tick, tank *predictedTank);
-void clientStateRestoreResidual(const ClientState *cs, uint32_t tick, tank *predictedTank);
 
 #endif /* CLIENT_STATE_H */

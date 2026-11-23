@@ -19,12 +19,12 @@
  * A tank moving slower than tank_min_move is predicted without corrections.
  *
  * Such a tank does not move every tick: its speed is saved up as residual
- * speed and it moves on the tick the total reaches tank_min_move. No snapshot
- * carries that total. A client that replays its unacknowledged inputs from a
- * snapshot therefore has to start the replay from the total it had after the
- * acknowledged input; started from the total it has now, the replayed tank
- * moves on different ticks from the server's and every snapshot corrects it
- * by a tick's travel one way and then the other.
+ * speed and it moves on the tick the total reaches tank_min_move. A client
+ * that replays its unacknowledged inputs from a snapshot therefore has to
+ * start the replay from the total the server's tank had, which the snapshot
+ * carries to the tank's owner; started from the total the client has now, the
+ * replayed tank moves on different ticks from the server's and every snapshot
+ * corrects it by a tick's travel one way and then the other.
  *
  * Any tank pulling away from rest spends its first two dozen ticks under
  * tank_min_move, so open ground is enough: the client connects over the real
@@ -32,6 +32,10 @@
  * unacknowledged at any moment, then speeds up from rest and brakes to a
  * stop several times. Nothing else on the map touches the tank, so every
  * snapshot must find it where it was predicted.
+ *
+ * Then the client's total is set wrong while the tank stands still, as a lost
+ * input would leave it, and the tank drives again. The first snapshots after
+ * it pulls away correct it, and the cycle after that must be back to none.
  */
 
 #include <stdint.h>
@@ -47,6 +51,7 @@
 #include "client_net.h"            /* clientBuildInputPacket */
 #include "client_connect_state.h"
 #include "client_enums.h"          /* tankButton */
+#include "tank.h"                  /* tankSetResidualSpeed */
 #include "input_packet.h"
 #include "test_harness.h"
 #include "loopback_harness.h"
@@ -60,6 +65,11 @@
  * tank_min_move, and thirty of brake brings it back to rest. */
 #define SLOW_PHASE 30
 #define SLOW_CYCLES 4
+/* A total the server's tank cannot have at rest after the cycles above. */
+#define SLOW_WRONG_RESIDUAL 5
+/* Cycles driven after the total is set wrong: one to be corrected in, one
+ * that must predict cleanly. No more, so the tank stays on open water. */
+#define SLOW_WRONG_CYCLES 2
 
 static uint32_t slowClientTick;
 
@@ -98,7 +108,7 @@ int run_prediction_slow_tank_no_corrections(void) {
     LoopbackHarness h;
     BYTE slot;
     int at, i, cycle;
-    uint32_t before, after;
+    uint32_t before, after, wrongAt;
     WORLD x0, y0, x1, y1;
     WORLD predX, predY, postX, postY;
 
@@ -179,6 +189,45 @@ int run_prediction_slow_tank_no_corrections(void) {
         loopbackHarnessStop(&h);
         UT_FAIL("%u snapshot(s) moved the tank off its predicted position; "
                 "the last from (%u,%u) to (%u,%u)",
+                (unsigned)(after - before), (unsigned)predX, (unsigned)predY,
+                (unsigned)postX, (unsigned)postY);
+    }
+
+    /* The client's total goes wrong while the tank stands still. The drive
+     * that follows is corrected back onto the server's total; the cycle
+     * after it must predict cleanly again. */
+    tankSetResidualSpeed(&MY_TANK(h.cs), SLOW_WRONG_RESIDUAL);
+    wrongAt = clientSimGetPredictionCorrections(h.cs, NULL, NULL, NULL, NULL);
+    for (cycle = 0; cycle < SLOW_WRONG_CYCLES; cycle++) {
+        if (cycle == 1) {
+            before = clientSimGetPredictionCorrections(h.cs, NULL, NULL, NULL, NULL);
+        }
+        for (i = 0; i < SLOW_PHASE; i++) {
+            slowFeedFrame(&h, TACCEL);
+            loopbackHarnessPump(&h);
+        }
+        for (i = 0; i < SLOW_PHASE; i++) {
+            slowFeedFrame(&h, TDECEL);
+            loopbackHarnessPump(&h);
+        }
+    }
+    for (i = 0; i < SLOW_SETTLE; i++) {
+        slowFeedFrame(&h, TNONE);
+        loopbackHarnessPump(&h);
+    }
+    after = clientSimGetPredictionCorrections(h.cs, &predX, &predY, &postX, &postY);
+    fprintf(stderr, "  slow tank: a wrong total cost %u correction(s) in the "
+            "first cycle and %u after it\n", (unsigned)(before - wrongAt),
+            (unsigned)(after - before));
+    if (before == wrongAt) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("the wrong total was never corrected, so it was never tried");
+    }
+    if (after != before) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("%u snapshot(s) still moved the tank off its predicted "
+                "position after its saved-up speed had been corrected; the "
+                "last from (%u,%u) to (%u,%u)",
                 (unsigned)(after - before), (unsigned)predX, (unsigned)predY,
                 (unsigned)postX, (unsigned)postY);
     }

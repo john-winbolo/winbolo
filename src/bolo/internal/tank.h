@@ -1706,8 +1706,9 @@ void tankSetFirstLeft(tank *value, BYTE val);
 void tankSetFirstRight(tank *value, BYTE val);
 
 /* The speed a tank moving slower than tank_min_move has saved up towards its
- * next move. No snapshot carries it, so a client that replays inputs from a
- * snapshot keeps its own record of it (client_state.h). */
+ * next move. The server sends it to the tank's owner in each snapshot
+ * (TankSnapshot.residualSpeed) and the owning client sets it before replaying
+ * its unacknowledged inputs. */
 BYTE tankGetResidualSpeed(tank *value);
 void tankSetResidualSpeed(tank *value, BYTE val);
 
