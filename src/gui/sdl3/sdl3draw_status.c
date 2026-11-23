@@ -39,6 +39,7 @@
 #include <string.h>
 
 #include "sdl3draw_status.h"
+#include "text_cache_pick.h"  /* which slot of the text texture cache */
 #include "../tiles.h"
 #include "../ui_mode.h"
 #include "../positions.h"
@@ -70,12 +71,10 @@ static int           gSheetScale    = 1;
 static TTF_Font     *gFontMsg       = NULL;
 static TTF_Font     *gFontKD        = NULL;
 static TTF_Font     *gFontTiny      = NULL;
-static TTF_Font     *gFontLabel     = NULL;
 
 static TTF_Font     *gFallbackFontMsg   = NULL;
 static TTF_Font     *gFallbackFontKD    = NULL;
 static TTF_Font     *gFallbackFontTiny  = NULL;
-static TTF_Font     *gFallbackFontLabel = NULL;
 
 static int           gCurrentEdgeX  = 0;
 static int           gCurrentEdgeY  = 0;
@@ -152,33 +151,106 @@ static BYTE gCachedBaseFullShells = 90, gCachedBaseFullMines = 90,
             gCachedBaseFullArmour = 90;
 static bool gCachedBaseValid = false;
 
+/* Text drawn through sdl3DrawStatusTextTexture, kept as textures so a string
+   drawn every frame is rasterised and uploaded once instead of every frame:
+   the pill and base numbers in the status panels, the start countdown, the
+   item view's name and the other captions sdl3draw.c draws. Made and
+   destroyed each frame, each one cost a render, a texture and an upload
+   every frame: up to 32 a frame with the pill and base numbers on.
+
+   A slot is kept for the renderer, face, face size and colour it was
+   rendered with, so a new face (a zoom change reopens them) or another
+   renderer never reuses one. The pill and base numbers are the same sixteen
+   strings in one face, so the slots hold them all with room for the
+   captions; when every slot is taken the one drawn longest ago goes. All
+   are dropped by sdl3DrawStatusShutdown, ahead of the fonts and the
+   renderer. */
+#define TEXT_CACHE_SLOTS 32
+
+/* The texture of the slot with the same index in gTextCacheKeys. */
+typedef struct TextCacheTexture {
+  SDL_Texture *tex;
+  int          w, h;
+} TextCacheTexture;
+
+/* What each slot was rendered from and when it was last drawn. Which slot a
+   piece of text uses is textCachePick (text_cache_pick.h). key.str is
+   SDL_strdup'd and owned here; NULL when the slot is empty. */
+static TextCacheEntry   gTextCacheKeys[TEXT_CACHE_SLOTS];
+static TextCacheTexture gTextCacheTex[TEXT_CACHE_SLOTS];
+static Uint64           gTextCacheClock = 0;
+
+static void textCacheSlotDrop(int i) {
+  if (gTextCacheTex[i].tex) SDL_DestroyTexture(gTextCacheTex[i].tex);
+  SDL_free((void *)gTextCacheKeys[i].key.str);
+  SDL_zero(gTextCacheTex[i]);
+  SDL_zero(gTextCacheKeys[i]);
+}
+
+static void textCacheFlush(void) {
+  for (int i = 0; i < TEXT_CACHE_SLOTS; i++) textCacheSlotDrop(i);
+  gTextCacheClock = 0;
+}
+
+SDL_Texture *sdl3DrawStatusTextTexture(TTF_Font *font, const char *text,
+                                       SDL_Color fg, int *outW, int *outH) {
+  if (outW) *outW = 0;
+  if (outH) *outH = 0;
+  if (!font || !gRenderer || !text || text[0] == '\0') return NULL;
+
+  TextCacheKey want;
+  want.renderer = gRenderer;
+  want.font     = font;
+  want.fontSize = TTF_GetFontSize(font);
+  want.r        = fg.r;
+  want.g        = fg.g;
+  want.b        = fg.b;
+  want.a        = fg.a;
+  want.str      = text;
+
+  bool hit = false;
+  int  slot = textCachePick(gTextCacheKeys, TEXT_CACHE_SLOTS, &want, &hit);
+  if (slot < 0) return NULL;
+
+  if (!hit) {
+    SDL_Surface *surf = TTF_RenderText_Blended(font, text, 0, fg);
+    if (!surf) return NULL;
+    SDL_Texture *tex = SDL_CreateTextureFromSurface(gRenderer, surf);
+    char *copy = tex ? SDL_strdup(text) : NULL;
+    if (!copy) {
+      if (tex) SDL_DestroyTexture(tex);
+      SDL_DestroySurface(surf);
+      return NULL;
+    }
+    textCacheSlotDrop(slot);
+    want.str                 = copy;
+    gTextCacheKeys[slot].key = want;
+    gTextCacheTex[slot].tex  = tex;
+    gTextCacheTex[slot].w    = surf->w;
+    gTextCacheTex[slot].h    = surf->h;
+    SDL_DestroySurface(surf);
+  }
+
+  gTextCacheKeys[slot].lastUsed = ++gTextCacheClock;
+  if (outW) *outW = gTextCacheTex[slot].w;
+  if (outH) *outH = gTextCacheTex[slot].h;
+  return gTextCacheTex[slot].tex;
+}
+
+void sdl3DrawStatusRenderText(TTF_Font *font, const char *text, SDL_Color fg,
+                              float x, float y) {
+  int w = 0;
+  int h = 0;
+  SDL_Texture *tex = sdl3DrawStatusTextTexture(font, text, fg, &w, &h);
+  if (tex) {
+    SDL_FRect d = { x, y, (float)w, (float)h };
+    SDL_RenderTexture(gRenderer, tex, NULL, &d);
+  }
+}
+
 /* -----------------------------------------------------------------
  * Local helpers (static — moved verbatim from sdl3draw.c).
- * sdl3RenderText is also kept as a static duplicate in sdl3draw.c
- * because non-moved code in that file (sdl3DrawStartDelay,
- * sdl3DrawNetFailed, sdl3DrawItemInView, sdl3DrawMainScreen) calls
- * it as well.
  * ----------------------------------------------------------------- */
-/*********************************************************
-*NAME:          sdl3RenderText
-*PURPOSE:
-*  Renders a text string with the game font directly onto
-*  the current render target at (x, y) in screen pixels.
-*  No-op if font is NULL or text is NULL/empty.
-*********************************************************/
-static void sdl3RenderText(TTF_Font *font, const char *text, SDL_Color fg, float x, float y) {
-  if (!font || !gRenderer || !text || text[0] == '\0') return;
-
-  SDL_Surface *sSurf = TTF_RenderText_Blended(font, text, 0, fg);
-  if (!sSurf) return;
-  SDL_Texture *tTex = SDL_CreateTextureFromSurface(gRenderer, sSurf);
-  if (tTex) {
-    SDL_FRect d = { x, y, (float)sSurf->w, (float)sSurf->h };
-    SDL_RenderTexture(gRenderer, tTex, NULL, &d);
-    SDL_DestroyTexture(tTex);
-  }
-  SDL_DestroySurface(sSurf);
-}
 
 /*********************************************************
 *NAME:          sdl3UpdateTextCache
@@ -474,7 +546,7 @@ void sdl3DrawStatusBase(BYTE baseNum, baseAlliance ba, bool labels) {
     char str[4];
     SDL_Color white = {200, 200, 200, 255};
     sprintf(str, "%d", baseNum - 1);
-    sdl3RenderText(gFontTiny, str, white, dst.x, dst.y);
+    sdl3DrawStatusRenderText(gFontTiny, str, white, dst.x, dst.y);
   }
 }
 
@@ -563,7 +635,7 @@ void sdl3DrawStatusPillbox(BYTE pillNum, pillAlliance pa, bool labels) {
     char str[4];
     SDL_Color white = {200, 200, 200, 255};
     sprintf(str, "%d", pillNum - 1);
-    sdl3RenderText(gFontTiny, str, white, dst.x, dst.y);
+    sdl3DrawStatusRenderText(gFontTiny, str, white, dst.x, dst.y);
   }
 }
 
@@ -826,14 +898,6 @@ TankLabelCache *sdl3DrawGetPingNameCache(void) {
   return &gPingNameCache;
 }
 
-TTF_Font *sdl3DrawGetLabelFont(void) {
-  return gFontLabel;
-}
-
-TTF_Font *sdl3DrawGetTinyFont(void) {
-  return gFontTiny;
-}
-
 void sdl3DrawKillsDeaths(int x, int y, int kills, int deaths) {
   (void)x; (void)y;
   /* Cache only — sdl3RenderCachedText() draws these into the next frame. */
@@ -920,11 +984,9 @@ void sdl3DrawStatusInit(SDL_Renderer *renderer,
                         TTF_Font *fontTiny,
                         TTF_Font *fontMsg,
                         TTF_Font *fontKD,
-                        TTF_Font *fontLabel,
                         TTF_Font *fallbackFontTiny,
                         TTF_Font *fallbackFontMsg,
                         TTF_Font *fallbackFontKD,
-                        TTF_Font *fallbackFontLabel,
                         SDL_Texture *tankBarsTex,
                         SDL_Texture *baseBarsTex) {
   gRenderer          = renderer;
@@ -934,11 +996,9 @@ void sdl3DrawStatusInit(SDL_Renderer *renderer,
   gFontTiny          = fontTiny;
   gFontMsg           = fontMsg;
   gFontKD            = fontKD;
-  gFontLabel         = fontLabel;
   gFallbackFontTiny  = fallbackFontTiny;
   gFallbackFontMsg   = fallbackFontMsg;
   gFallbackFontKD    = fallbackFontKD;
-  gFallbackFontLabel = fallbackFontLabel;
   gTankBarsTex       = tankBarsTex;
   gBaseBarsTex       = baseBarsTex;
 }
@@ -953,19 +1013,16 @@ void sdl3DrawStatusSetAtlas(SDL_Texture *atlas, int sheetScale) {
 }
 
 void sdl3DrawStatusSetFonts(TTF_Font *fontTiny, TTF_Font *fontMsg,
-                            TTF_Font *fontKD,   TTF_Font *fontLabel,
+                            TTF_Font *fontKD,
                             TTF_Font *fallbackFontTiny,
                             TTF_Font *fallbackFontMsg,
-                            TTF_Font *fallbackFontKD,
-                            TTF_Font *fallbackFontLabel) {
+                            TTF_Font *fallbackFontKD) {
   gFontTiny          = fontTiny;
   gFontMsg           = fontMsg;
   gFontKD            = fontKD;
-  gFontLabel         = fontLabel;
   gFallbackFontTiny  = fallbackFontTiny;
   gFallbackFontMsg   = fallbackFontMsg;
   gFallbackFontKD    = fallbackFontKD;
-  gFallbackFontLabel = fallbackFontLabel;
 }
 
 void sdl3DrawStatusSetEdgeOffset(int edgeX, int edgeY) {
@@ -996,6 +1053,7 @@ void sdl3DrawStatusShutdown(void) {
   if (gTexDeaths) { SDL_DestroyTexture(gTexDeaths); gTexDeaths = NULL; }
   gTexKillsStr[0]  = '\0';
   gTexDeathsStr[0] = '\0';
+  textCacheFlush();
 
   /* Clear (a)-class handles — caller owns them and may destroy
    * them right after this call; null pointers stop us from
@@ -1005,11 +1063,9 @@ void sdl3DrawStatusShutdown(void) {
   gFontTiny          = NULL;
   gFontMsg           = NULL;
   gFontKD            = NULL;
-  gFontLabel         = NULL;
   gFallbackFontTiny  = NULL;
   gFallbackFontMsg   = NULL;
   gFallbackFontKD    = NULL;
-  gFallbackFontLabel = NULL;
   gTankBarsTex       = NULL;
   gBaseBarsTex       = NULL;
 }

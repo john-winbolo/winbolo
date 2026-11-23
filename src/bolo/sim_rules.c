@@ -144,7 +144,7 @@ void simRulesClassic(SimRules *out) {
     out->lgm_cost_mine            = LGM_COST_MINE;
     out->lgm_pill_repair_load     = LGM_LOAD_PILLREPAIR;
     out->lgm_gather_trees         = LGM_GATHER_TREE;
-    out->lgm_helicopter_speed     = LGM_HELICOPTER_SPEED;
+    out->lgm_helicopter_speed     = (float) LGM_HELICOPTER_SPEED;
     out->lgm_arrive_tolerance     = LGM_MAX_GOAL;
     out->lgm_return_tolerance     = LGM_RETURN_MAX_GOAL;
     out->lgm_pill_drop_search     = LGM_PILL_DROP_SEARCH;
@@ -263,6 +263,13 @@ void simRulesClassic(SimRules *out) {
      * road. 1 is the WinBolo 2.1 way: he walks at the speed of the terrain
      * under the pillbox. This rule has no constant of its own. */
     out->man_dead_pill_terrain_speed = 0;
+
+    /* ---- Builder blast shape ---- */
+    /* LGM_BLAST_SHAPE_HALF_SQUARE (0): an explosion on open ground catches
+     * a builder within half a square (128) of it, a circle, the WinBolo
+     * way. LGM_BLAST_SHAPE_MAC_BOX (1) is Mac Bolo's box, and
+     * LGM_BLAST_SHAPE_MAC_AREA (2) a circle of the box's area. */
+    out->lgm_blast_shape = LGM_BLAST_SHAPE_CLASSIC;
 
 }
 
@@ -534,7 +541,10 @@ static void simRulesWhyFloat(char *why, size_t whyLen, const char *field,
     X(lgm_cost_mine,             INTMIN, 0,      INT32_MAX)                  \
     X(lgm_pill_repair_load,      INT,    1,      255)                        \
     X(lgm_gather_trees,          INT,    1,      255)                        \
-    X(lgm_helicopter_speed,      INT,    1,      255)                        \
+    /* World units a tick, and any part of one. The floor is a parachute     \
+       that all but hangs in the air, which is a table worth being able to   \
+       write. */                                                             \
+    X(lgm_helicopter_speed,      FLT,    0.01,   255.0)                      \
     /* The tolerances are half-widths: the test takes each either way round  \
        the goal, which is what the two-signed constants used to spell. */    \
     X(lgm_arrive_tolerance,      INT,    1,      255)                        \
@@ -653,7 +663,9 @@ static void simRulesWhyFloat(char *why, size_t whyLen, const char *field,
     /* Tank hit mines */                                                    \
     X(tank_hit_sets_off_mines,   INT,    0,      1)                          \
     /* Dead pillbox builder speed */                                        \
-    X(man_dead_pill_terrain_speed, INT,  0,      1)
+    X(man_dead_pill_terrain_speed, INT,  0,      1)                         \
+    /* Builder blast shape: one of the three LGM_BLAST_SHAPE_* values. */     \
+    X(lgm_blast_shape,           INT,    0,      2)
 
 /* The rules a single other rule also caps, as the pairs below hold them.
  * Only a direct field against other_field test is here: where a ceiling is
@@ -975,16 +987,29 @@ static const SimRuleValueKind simRuleValueKinds[] = {
 /* The bounds, off the same list the arms are generated from. An INTMIN row
  * carries the ceiling simRulesWhyInt prints and answers hasHi false, since
  * what caps it is another rule or nothing. cappedBy is -1 in every row here
- * and the pair table below is what fills it in. */
+ * and the pair table below is what fills it in.
+ *
+ * A float row's ends go through a float on the way, because that is the
+ * bound RULE_FLT tests against: 0.01 written as a float is a hair under
+ * 0.01 written as a double. A form holds what an author typed in a float
+ * too, so against the double a rule set to its own floor read as below
+ * it, when the check accepts it. */
 #define SIM_RULE_RANGE_HAS_HI_INT    true
 #define SIM_RULE_RANGE_HAS_HI_INTMIN false
 #define SIM_RULE_RANGE_HAS_HI_FLT    true
+#define SIM_RULE_RANGE_END_INT(v)    ((double) (v))
+#define SIM_RULE_RANGE_END_INTMIN(v) ((double) (v))
+#define SIM_RULE_RANGE_END_FLT(v)    ((double) (float) (v))
 #define SIM_RULE_RANGE_ROW(field, shape, lo, hi)                             \
-    { (double) (lo), (double) (hi), SIM_RULE_RANGE_HAS_HI_##shape, -1 },
+    { SIM_RULE_RANGE_END_##shape(lo), SIM_RULE_RANGE_END_##shape(hi),        \
+      SIM_RULE_RANGE_HAS_HI_##shape, -1 },
 static const SimRuleRange simRuleRanges[] = {
     SIM_RULE_BOUND_LIST(SIM_RULE_RANGE_ROW)
 };
 #undef SIM_RULE_RANGE_ROW
+#undef SIM_RULE_RANGE_END_INT
+#undef SIM_RULE_RANGE_END_INTMIN
+#undef SIM_RULE_RANGE_END_FLT
 #undef SIM_RULE_RANGE_HAS_HI_INT
 #undef SIM_RULE_RANGE_HAS_HI_INTMIN
 #undef SIM_RULE_RANGE_HAS_HI_FLT

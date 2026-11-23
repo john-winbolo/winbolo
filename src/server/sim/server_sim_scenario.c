@@ -714,8 +714,11 @@ static ScnOpResult scenarioOpLgmParachute(ServerSim *sim,
         }
     }
 
-    (*l)->x = (WORLD)(((WORLD)ex << TANK_SHIFT_MAPSIZE) + MAP_SQUARE_MIDDLE);
-    (*l)->y = (WORLD)(((WORLD)ey << TANK_SHIFT_MAPSIZE) + MAP_SQUARE_MIDDLE);
+    /* Through lgmFlyFrom, so the part of a world unit his flight had got to
+       goes too: a script that puts him back where he already is, by the
+       whole units, starts him from exactly there. */
+    lgmFlyFrom(l, (WORLD)(((WORLD)ex << TANK_SHIFT_MAPSIZE) + MAP_SQUARE_MIDDLE),
+               (WORLD)(((WORLD)ey << TANK_SHIFT_MAPSIZE) + MAP_SQUARE_MIDDLE));
     (*l)->destX = dx;
     (*l)->destY = dy;
     /* The script moved the builder, so the frames recorded before the move
@@ -2772,7 +2775,9 @@ bool serverSimScenarioHoldsNoBots(const ServerSim *sim) {
    writes one — and is played over whatever game the host set up, so a lobby
    running mods alone stays on the type the host picked and the host may go
    on changing it. keepsWinCondition is the composed list's answer, and it is
-   true only when every script in the list is a mod.
+   true only when every script in the list is a mod. A list of mods that
+   takes a scenario's place — a plain map picked with mods still on — gives
+   the lobby's own type back the way the last script going does.
 
    The game type and ranked are remembered and given back, so a lobby that
    was ranked with no bots is ranked with no bots again once the last script
@@ -2817,9 +2822,16 @@ void serverSimScenarioApplyLobbyRules(ServerSim *sim) {
                 (was == gameScripted) ? gameStrictTournament : was;
             sim->preScenarioRanked   = serverSimGetRanked(sim);
         }
-        if (!sim->scenarioIdentity.keepsWinCondition &&
-            gameTypeGet(&sim->sim.game) != gameScripted) {
-            serverSimSetGameType(sim, gameScripted);
+        if (!sim->scenarioIdentity.keepsWinCondition) {
+            if (typeBefore != gameScripted) {
+                serverSimSetGameType(sim, gameScripted);
+            }
+        } else if (typeBefore == gameScripted) {
+            /* A list of mods alone in place of a scenario — a plain map
+               picked with mods still on. Mods leave the type the host's, so
+               the scenario's scripted type goes and the lobby's own comes
+               back, as it would if the last script had gone. */
+            serverSimSetGameType(sim, sim->preScenarioGameType);
         }
         if (serverSimGetRanked(sim)) {
             serverSimSetRanked(sim, false);
@@ -4386,13 +4398,21 @@ static ScnOpResult scenarioOpEndRound(ServerSim *sim, const ScnOpEndRound *p) {
  * delta on the one it has. The setter is a bare write with no clamp of its
  * own, so every bound the length has is checked here.
  *
+ * Two units meet here. The op carries game.tick()'s units, half-steps, 100 a
+ * second, which is what the API has always documented and what scripts
+ * multiply by. gameLength is in frames, 50 a second, and comes down once a
+ * frame. So the sum is taken in half-steps and the result halved, rounding
+ * up: an odd count gets the extra half-step's frame rather than losing it,
+ * and one half-step is still a round that ends.
+ *
  * The new length reaches a client through the settings event, which carries
  * gameLength out as lobbyTimeLimit, and reaches a replay through the record
  * below — the settings blob is written once at the head of a round and never
  * restated. */
 static ScnOpResult scenarioOpSetGameTime(ServerSim *sim,
                                          const ScnOpSetGameTime *p) {
-    int64_t asked;
+    int64_t asked;       /* half-steps, 100 a second */
+    int64_t frames;      /* what gameLength is written as, 50 a second */
     ScnOpResult r = scenarioRequireRunning(sim);
     if (r != SCN_OP_OK) return r;
 
@@ -4406,7 +4426,7 @@ static ScnOpResult scenarioOpSetGameTime(ServerSim *sim,
         }
         /* Summed at 64 bits so a delta near the end of the range cannot wrap
            past the bounds below and land back inside them. */
-        asked = (int64_t)sim->gameLength + (int64_t)p->ticks;
+        asked = (int64_t)sim->gameLength * 2 + (int64_t)p->ticks;
     } else {
         asked = (int64_t)p->ticks;
     }
@@ -4417,16 +4437,17 @@ static ScnOpResult scenarioOpSetGameTime(ServerSim *sim,
     if (asked < 1) {
         return SCN_OP_RANGE;
     }
+    frames = (asked + 1) / 2;
     /* The field is an int32; a length past the end of it is refused rather
        than truncated into a round of some other length. */
-    if (asked > (int64_t)INT32_MAX) {
+    if (frames > (int64_t)INT32_MAX) {
         return SCN_OP_RANGE;
     }
 
-    serverSimSetGameLength(sim, (int32_t)asked);
+    serverSimSetGameLength(sim, (int32_t)frames);
     logAddEvent(log_GameTimeSet,
-                (BYTE)((asked >> 24) & 0xFF), (BYTE)((asked >> 16) & 0xFF),
-                (BYTE)((asked >> 8) & 0xFF), (BYTE)(asked & 0xFF), 0, NULL);
+                (BYTE)((frames >> 24) & 0xFF), (BYTE)((frames >> 16) & 0xFF),
+                (BYTE)((frames >> 8) & 0xFF), (BYTE)(frames & 0xFF), 0, NULL);
     serverSimPublishLobbySettings(sim);
     return SCN_OP_OK;
 }

@@ -193,7 +193,7 @@ typedef enum {
     X(lgm_cost_mine, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)                \
     X(lgm_pill_repair_load, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)         \
     X(lgm_gather_trees, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)             \
-    X(lgm_helicopter_speed, SIM_RULE_VALUE_INT,                              \
+    X(lgm_helicopter_speed, SIM_RULE_VALUE_FLOAT,                            \
       SIM_RULE_UNIT_SPEED_HIGHER_IS_FASTER)                                  \
     X(lgm_arrive_tolerance, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)         \
     X(lgm_return_tolerance, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)         \
@@ -324,7 +324,11 @@ typedef enum {
     X(tank_hit_sets_off_mines, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_FLAG)      \
     /* Whether a builder on a dead pillbox's square walks at the speed of    \
        the terrain under it. Last for the same reason. */                    \
-    X(man_dead_pill_terrain_speed, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_FLAG)
+    X(man_dead_pill_terrain_speed, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_FLAG)    \
+    /* The shape of open ground an explosion catches a builder in: 0 the     \
+       half-square circle, 1 the Mac Bolo box, 2 the Mac Bolo equivalent     \
+       area circle. Last for the same reason. */                             \
+    X(lgm_blast_shape, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_CONSTANT_BY_DESIGN)
 
 /* One member per rule, in the struct's own field order. SIM_RULE_COUNT is
  * one past the last, and an index at or above it names no rule. A rule's

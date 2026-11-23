@@ -1066,8 +1066,22 @@ function Brain.open(info)
   -- Bit-for-bit unchanged at tick_seed 0, i.e. for every bot created at game
   -- start; only a bot created mid-game (a Survival wave, a scenario spawn_bot)
   -- moves, and it moves back to what it did before the seeding.
-  state.replan_offset     = (math.random(0, C.GOAL_REPLAN_INTERVAL - 1)
-                             - state.tick_seed) % C.GOAL_REPLAN_INTERVAL
+  --
+  -- REPLAN_OFFSET_MODE (2026-11-06). "random" (KEEL) is the draw above. On
+  -- LuaJIT with no seed set, every brain starts math.random from the same
+  -- state, so every bot draws the same offset and all bots replan on the
+  -- same tick; that replan tick is where most budget kills land. "slot" puts
+  -- the replan on game time at slot * INTERVAL / 16 (rounded), so bots in
+  -- different player slots never replan on the same tick. The draw is made
+  -- in both modes, so every later math.random value is the same as before.
+  local replan_draw = math.random(0, C.GOAL_REPLAN_INTERVAL - 1)
+  if C.REPLAN_OFFSET_MODE == "slot" then
+    local slot = info.player_number or 0
+    state.replan_offset = math.floor(slot * C.GOAL_REPLAN_INTERVAL / 16 + 0.5)
+                          % C.GOAL_REPLAN_INTERVAL
+  else
+    state.replan_offset = (replan_draw - state.tick_seed) % C.GOAL_REPLAN_INTERVAL
+  end
   state.goal_set_tick     = state.tick  -- tick when current goal was chosen (for commitment hysteresis). Seeded to birth, not 0: `now - goal_set_tick` is "how long we've held this goal", so a raw 0 would read as "held it forever" on a mid-game bot's first tick and skip the commitment window entirely.
   state.goal_cooldowns    = {}   -- abandoned goals: { [key] = expiry_tick }
   state.goal_history      = {}   -- circular buffer of last N picked goals (oscillation detection)
@@ -2024,9 +2038,12 @@ function Brain.think(info)
   --      long this bot's thinks cost at tier T given current world load.
   --      This corroborates raises: we only raise if next-tier history
   --      shows it actually fits in budget.
-  --   2. If wasKilled: drop CAPACITY_KILLED_CUT tiers and mark the prior
-  --      tier as "burned" for CAPACITY_KILLED_AVOID ticks so the raise
-  --      path doesn't immediately retry it.
+  --   2. If wasKilled and this is at least the CAPACITY_KILL_STREAK_N-th
+  --      kill inside CAPACITY_KILL_STREAK_WINDOW ticks: drop
+  --      CAPACITY_KILLED_CUT tiers and mark the prior tier as "burned" for
+  --      CAPACITY_KILLED_AVOID ticks so the raise path doesn't immediately
+  --      retry it. A kill below the streak count keeps the tier for this
+  --      tick (no cut, no raise); its inflated cost is still in the EWMAs.
   --   3. Otherwise classify smoothed ratio = think_ms / target_ms:
   --        > 1.50 → drop 2 tiers
   --        > 1.20 → drop 1 tier
@@ -2072,10 +2089,37 @@ function Brain.think(info)
                                  + ratio * C.CAPACITY_EWMA_ALPHA
     end
 
-    local cur = prev_tier
+    -- Kill streak: a kill cuts tiers only when it is at least the
+    -- CAPACITY_KILL_STREAK_N-th kill inside the last
+    -- CAPACITY_KILL_STREAK_WINDOW ticks (this one counted). N <= 1 (KEEL)
+    -- cuts on every kill and keeps no list.
+    local kill_cut = false
     if killed then
+      local need = C.CAPACITY_KILL_STREAK_N or 1
+      if need <= 1 then
+        kill_cut = true
+      else
+        local kt = state._capacity_kill_ticks
+        if not kt then kt = {}; state._capacity_kill_ticks = kt end
+        local win = C.CAPACITY_KILL_STREAK_WINDOW or 100
+        local now_t = state.tick
+        local n = 0
+        for i = 1, #kt do
+          if now_t - kt[i] < win then n = n + 1; kt[n] = kt[i] end
+        end
+        for i = #kt, n + 1, -1 do kt[i] = nil end
+        n = n + 1
+        kt[n] = now_t
+        kill_cut = n >= need
+      end
+    end
+
+    local cur = prev_tier
+    if kill_cut then
       cur = math.max(1, prev_tier - C.CAPACITY_KILLED_CUT)
       state._tier_killed[prev_tier] = state.tick
+    elseif killed then
+      -- A kill below the streak count: hold the tier this tick.
     elseif tgt_ms > 0 and last_ms > 0 then
       local sm = state._capacity_ratio_ewma
       if sm > C.CAPACITY_DROP_BIG_RATIO and cur > 1 then
@@ -8448,48 +8492,26 @@ function Brain.think(info)
       return key, 0                                                 -- >1 unit away: HELD
     end
     -- A man is "solid" to lgm.c's death check (in-tile-only kill, no splash) when
-    -- he stands on a building, a half-build, a base, OR ANY DEPLOYED PILL.  The
-    -- engine (pillbox.c pillsScanExistPos) tests DEPLOYMENT, not armour, and the
-    -- dead corpse we're sweeping is still a deployed pill -- so a man on it is
-    -- solid, and only an in-tile hit kills him.  world.lua indexes pill_at only for
-    -- a deployed (not-carried) pill, so ANY pill_at entry means solid regardless of
-    -- health.  (This is a DIFFERENT rule from the shell-collision LOS check, which
-    -- correctly keeps health>0 because shells only collide with LIVE pills.)
+    -- he stands on a building, a half-build, a base, or a LIVE pill.  The engine
+    -- (lgm.c lgmBlastCatches) tests pillsIsPillHit, armour > 0, so the dead
+    -- corpse we're sweeping is open ground: the 128-wu splash reaches a man on
+    -- it.  C.BLAST_DEAD_PILL_OPEN false (KEEL) keeps the old engine rule, where
+    -- ANY deployed pill was solid regardless of health.  world.lua indexes
+    -- pill_at only for a deployed (not-carried) pill, and W.pill_at gives the
+    -- live one there.  A forest is NOT tested here: the engine decides by the
+    -- square where the shell stops, not the man's square, so the forest and
+    -- boat rule is in danger.capture_man_killable / capture_shot_end, which
+    -- trace the shell's line.
     local function lgm_on_solid(mx, my)
       local tt = U.ttype(mx, my)
       if tt == C.T_BUILDING or tt == C.T_HALFBUILD then return true end
-      if world.pill_at and world.pill_at[my * 256 + mx] then return true end
+      if world.pill_at and world.pill_at[my * 256 + mx] then
+        if not C.BLAST_DEAD_PILL_OPEN then return true end
+        if W.pill_at(world, mx, my) then return true end
+      end
       local bentry = world.base_at and world.base_at[my * 256 + mx]
       if bentry and bentry.base then return true end
       return false
-    end
-    -- Does the ray from (ox,oy) along unit (hx,hy), out to maxT wu, cross the
-    -- 256-wu tile box at (mx,my)?  Slab test.  Used for the solid-square kill gate:
-    -- on a solid square only an in-tile hit kills, so the man is a viable target
-    -- only if a shot along the current heading could actually enter his tile.
-    local function ray_crosses_tile(ox, oy, hx, hy, mx, my, maxT)
-      local x0, y0 = mx * 256, my * 256
-      local x1, y1 = x0 + 256, y0 + 256
-      local tmin, tmax = 0, maxT
-      if math.abs(hx) < 1e-9 then
-        if ox < x0 or ox > x1 then return false end
-      else
-        local ta, tb = (x0 - ox) / hx, (x1 - ox) / hx
-        if ta > tb then ta, tb = tb, ta end
-        if ta > tmin then tmin = ta end
-        if tb < tmax then tmax = tb end
-        if tmin > tmax then return false end
-      end
-      if math.abs(hy) < 1e-9 then
-        if oy < y0 or oy > y1 then return false end
-      else
-        local ta, tb = (y0 - oy) / hy, (y1 - oy) / hy
-        if ta > tb then ta, tb = tb, ta end
-        if ta > tmin then tmin = ta end
-        if tb < tmax then tmax = tb end
-        if tmin > tmax then return false end
-      end
-      return tmax >= tmin
     end
     -- Our OWN builder (LGM on foot) is NEVER in info.objects, but capture_pill sent
     -- him to this very pill, so he is the likeliest friendly-fire victim.  Returns
@@ -8555,19 +8577,21 @@ function Brain.think(info)
             end
           end
         end
-        -- KILLABLE from this heading?  Open ground: within 128 wu of the ray
-        -- (splash reaches).  Solid square (live pill/base/building): the ray must
+        -- KILLABLE from this heading?  Open ground (a dead pill too): in the
+        -- lgm_blast_shape rule's area round the ray (0 is within 128 wu; splash
+        -- reaches).  Solid square (live pill/base/building): the ray must
         -- actually cross his tile -- splash won't kill there, only an in-tile hit.
+        -- A forest or a boat on the line stops the shell there, and that stop
+        -- kills only a man on that square (danger.capture_man_killable).
         -- Otherwise fall back to hovering the sight on the pill centre.
         local killable = false
         local cmx, cmy
         if cand then
           cmx, cmy = cand.predicted_mx or cand.mx, cand.predicted_my or cand.my
-          if lgm_on_solid(cmx, cmy) then
-            killable = ray_crosses_tile(info.tankx, info.tanky, hx, hy, cmx, cmy, MAX_ALONG)
-          else
-            killable = (cand_perp <= 128)
-          end
+          killable = danger.capture_man_killable(
+            info.tankx, info.tanky, hx, hy, MAX_ALONG, cmx, cmy,
+            cand.predicted_wx or cand.wx, cand.predicted_wy or cand.wy,
+            cand_perp, cand_along, lgm_on_solid(cmx, cmy))
         end
 
         -- ── STEP 4: sight drive (yield to any earlier range key this think) ─
@@ -8637,10 +8661,15 @@ function Brain.think(info)
           if bit.band(rk, KEY_MORERANGE) ~= 0 then sl_eff = cur_sl + 1
           elseif bit.band(rk, KEY_LESSRANGE) ~= 0 then sl_eff = cur_sl - 1 end
           if sl_eff < 2 then sl_eff = 2 elseif sl_eff > 14 then sl_eff = 14 end
-          local ex_wx = info.tankx + hx * 128 * sl_eff   -- predicted impact this tick
-          local ex_wy = info.tanky + hy * 128 * sl_eff
+          -- Predicted impact this tick: the end of the line, or the middle of
+          -- the first forest or boat square on it, where the shell stops.
+          -- sq_mx/sq_my: that stop is a hit on its square (the square rule).
+          local ex_wx, ex_wy, sq_mx, sq_my = danger.capture_shot_end(
+            info.tankx, info.tanky, hx, hy, 128 * sl_eff)
           local hit
-          if lgm_on_solid(cmx, cmy) then
+          if sq_mx then
+            hit = (sq_mx == cmx and sq_my == cmy)       -- the stop square only
+          elseif lgm_on_solid(cmx, cmy) then
             local imx = bit.rshift(math.floor(ex_wx + 0.5), 8)
             local imy = bit.rshift(math.floor(ex_wy + 0.5), 8)
             hit = (imx == cmx and imy == cmy)           -- exact-tile only
@@ -8691,7 +8720,15 @@ function Brain.think(info)
                    and (bit.band(ob.info, OBJECT_HOSTILE)) == 0
                    and not (ob.type == OBJECT_TANK and ob.idnum == (info.player_number or -1)) then
                   local bdx, bdy = ob.x - ex_wx, ob.y - ex_wy
-                  if bdx * bdx + bdy * bdy <= 128 * 128 then
+                  -- A builder: the lgm_blast_shape rule's area. A tank keeps
+                  -- the 128 circle.
+                  local caught
+                  if ob.type == OBJECT_BUILDMAN then
+                    caught = U.lgm_open_blast_catches(bdx, bdy)
+                  else
+                    caught = bdx * bdx + bdy * bdy <= 128 * 128
+                  end
+                  if caught then
                     blast_ok = false
                     clh.lane_block = "friendly_blast"
                     break
@@ -8703,7 +8740,7 @@ function Brain.think(info)
                 local mmx, mmy = own_man_out_pos()
                 if mmx then
                   local bdx, bdy = mmx - ex_wx, mmy - ex_wy
-                  if bdx * bdx + bdy * bdy <= 128 * 128 then
+                  if U.lgm_open_blast_catches(bdx, bdy) then
                     blast_ok = false
                     clh.lane_block = "own_builder_blast"
                   end
@@ -9336,7 +9373,7 @@ function Brain.think(info)
   -- progress, velocity, linear-extrapolation math).  Click any LGM
   -- tile with the D inspector open to see the panel.  Standalone in
   -- BRAIN_DEBUG_MODE — not gated on any specific viz toggle.
-  if BRAIN_DEBUG_MODE and viz.detail_circle and state.perc and state.perc.enemy_lgms then
+  if BRAIN_DEBUG_MODE and viz.detail_live and state.perc and state.perc.enemy_lgms then
     for _, elm in ipairs(state.perc.enemy_lgms) do
       local idtxt = tostring(elm.idnum or "?")
       local did = "kill_lgm_track_" .. idtxt
@@ -9507,7 +9544,7 @@ function Brain.think(info)
   -- gun) combo with its predicted crosshair-to-LGM euclidean distance.
   if BRAIN_DEBUG_MODE then
     local _ksrch = state._kill_lgm_search
-    if viz.detail_circle and _ksrch and _ksrch.cands then
+    if viz.detail_live and _ksrch and _ksrch.cands then
       local sorted = {}
       for i, c in ipairs(_ksrch.cands) do sorted[i] = c end
       table.sort(sorted, function(a, b) return a.score < b.score end)

@@ -328,13 +328,18 @@ end
 -- reached from shells.c only when a shell EXPLODES -- lines 368 and 452, the
 -- collision path and the end-of-life path). Given the explosion at (wx,wy):
 --
---   solid = the explosion tile is BUILDING / HALFBUILDING / has a pillbox /
---           has a base;
---   not solid -> the man dies if euclidean dist(man, explosion) <=
---           MAP_SQUARE_MIDDLE (128 WU, half a tile);
+--   solid = the explosion tile is BUILDING / HALFBUILDING / has a LIVE
+--           pillbox (pillsIsPillHit, armour > 0) / has a base. A dead pill's
+--           tile is open ground, so a shell that flies over a corpse and ends
+--           there is tested with the open-ground rule, as case 3 below does;
+--   not solid -> the man dies if the explosion is in the lgm_blast_shape
+--           rule's area round him (U.lgm_open_blast_catches): by default
+--           euclidean dist(man, explosion) <= MAP_SQUARE_MIDDLE (128 WU,
+--           half a tile); the Mac Bolo box (|dx|, |dy| < 128) or a 144 WU
+--           circle when the game plays with those;
 --   solid    -> he dies only if his TILE is the explosion tile (he can stand
---           on a base or on the pill he is working on; he can never stand in
---           a wall).
+--           on a base or on a live pill he is repairing; he can never stand
+--           in a wall).
 --
 -- A SHELL FLYING THROUGH THE MAN DOES NOT TOUCH HIM. That single fact is the
 -- shape of this whole function: the question is not "does the shell cross his
@@ -343,9 +348,15 @@ end
 -- So each shell is flown forward and its ENDING is what gets tested, and a
 -- shell has exactly three ways to end (shells.c shellsUpdate/shellsCalcCollision):
 --
---   1. it reaches a solid tile -- a wall, or a LIVE pillbox. The engine
---      recentres the explosion on that tile, so only a man standing ON that
---      tile dies. Stop tracking.
+--   1. it reaches a solid tile -- a wall, or a LIVE pillbox, and with
+--      C.SHELL_STOPS_ON_FOREST_BOAT a forest or a boat. The engine recentres
+--      the explosion on that tile and counts it a hit on the tile
+--      (shells.c outSquareHit), so only a man standing ON that tile dies.
+--      A boat's shell stops on the shore and on a bridge too, with the same
+--      rule, but the brain cannot see which shells a boat fired, so those
+--      fly on here. Every hit on a wall is a hit on its tile, the one that
+--      turns it to rubble included, and the brain cannot see how many hits
+--      a wall has left, so a wall is always this case. Stop tracking.
 --   2. it reaches OUR TANK's hull (within TANK_HIT_RADIUS, tank.h:102 = 112 WU)
 --      and we did not fire it -- a shell never hits its own owner. It explodes
 --      where it is, over open ground, so the 128-WU rule applies. This is the
@@ -434,16 +445,24 @@ end
 
 -- Is (mx,my) a tile a shell explodes ON, in the engine's sense? Two of
 -- shellsCalcCollision's three terrain-ish stoppers:
---   * impassable terrain -- BUILDING / HALFBUILDING (mapIsPassable);
+--   * impassable terrain -- BUILDING / HALFBUILDING (mapIsPassable), and
+--     with C.SHELL_STOPS_ON_FOREST_BOAT FOREST / BOAT, which stop every shell;
 --   * a LIVE pillbox -- pillsIsPillHit requires armour > 0 and inTank == FALSE,
 --     so a CORPSE does not stop a shell (which is exactly the tile the man is
 --     usually walking to) and neither does one riding in somebody's tank.
 -- Bases are left out on purpose -- see the header. Owner does not enter into
 -- the pill test: pillsIsPillHit stops a shell on ANY live pill, including its
 -- own owner's.
+-- Returns true when the shell stops there. Every such stop is a hit on the
+-- square: only a man on it dies.
+local function forest_or_boat_stops(tt)
+  return (tt == C.T_FOREST or tt == C.T_BOAT) and C.SHELL_STOPS_ON_FOREST_BOAT
+end
+
 local function shell_stops_on(world, mx, my)
   local tt = U.ttype(mx, my)
   if tt == C.T_BUILDING or tt == C.T_HALFBUILD then return true end
+  if forest_or_boat_stops(tt) then return true end
   local lst = world and world.pill_at and world.pill_at[my * 256 + mx]
   if lst then
     for i = 1, #lst do
@@ -454,6 +473,97 @@ local function shell_stops_on(world, mx, my)
   return false
 end
 
+-- The first forest or boat square a shell fired from (ox,oy) along the unit
+-- heading (hx,hy) stops on, out to max_t wu. The shell is stepped as the
+-- engine moves it, C.SHELL_SPEED wu a tick, and each step's square is
+-- tested, so a line that only clips the corner of a forest square stops
+-- there too. Returns t (wu along the line), mx, my, or nil when no forest or
+-- boat is on the line or C.SHELL_STOPS_ON_FOREST_BOAT is off. Only forests
+-- and boats: the capture shot's other rules (a man on a wall, a live pill
+-- or a base) stay as they were.
+function M.forest_boat_stop(ox, oy, hx, hy, max_t)
+  if not C.SHELL_STOPS_ON_FOREST_BOAT then return nil end
+  local step = C.SHELL_SPEED or 32
+  local t = step
+  while t <= max_t do
+    local mx = bit.rshift(math.floor(ox + hx * t), 8)
+    local my = bit.rshift(math.floor(oy + hy * t), 8)
+    if forest_or_boat_stops(U.ttype(mx, my)) then return t, mx, my end
+    t = t + step
+  end
+  return nil
+end
+
+-- Where a shell fired from (ox,oy) along (hx,hy) to an impact dist wu away
+-- blows up, and which square that blast is a hit on.
+--   -> ex, ey, sq_mx, sq_my
+-- No forest or boat on the line: ex, ey = the impact point, sq_* nil. A
+-- forest or a boat on it: ex, ey = that square's middle (the engine
+-- recentres the explosion there), and sq_mx, sq_my = that square: the
+-- blast is a hit on it, so only a man on it dies. The square is the one the
+-- shell stops on, not the man's.
+function M.capture_shot_end(ox, oy, hx, hy, dist)
+  local _, smx, smy = M.forest_boat_stop(ox, oy, hx, hy, dist)
+  if smx then
+    return smx * 256 + 128, smy * 256 + 128, smx, smy
+  end
+  return ox + hx * dist, oy + hy * dist
+end
+
+-- Does the 256-wu tile box at (mx,my) meet the ray from (ox,oy) along unit
+-- (hx,hy), out to maxT wu? Slab test.
+function M.ray_crosses_tile(ox, oy, hx, hy, mx, my, maxT)
+  local x0, y0 = mx * 256, my * 256
+  local x1, y1 = x0 + 256, y0 + 256
+  local tmin, tmax = 0, maxT
+  if math.abs(hx) < 1e-9 then
+    if ox < x0 or ox > x1 then return false end
+  else
+    local ta, tb = (x0 - ox) / hx, (x1 - ox) / hx
+    if ta > tb then ta, tb = tb, ta end
+    if ta > tmin then tmin = ta end
+    if tb < tmax then tmax = tb end
+    if tmin > tmax then return false end
+  end
+  if math.abs(hy) < 1e-9 then
+    if oy < y0 or oy > y1 then return false end
+  else
+    local ta, tb = (y0 - oy) / hy, (y1 - oy) / hy
+    if ta > tb then ta, tb = tb, ta end
+    if ta > tmin then tmin = ta end
+    if tb < tmax then tmax = tb end
+    if tmin > tmax then return false end
+  end
+  return tmax >= tmin
+end
+
+-- Can a shot along this heading, at some gun range out to max_t wu, kill a
+-- man on square (cmx,cmy) at world (mwx,mwy)? perp and along are his
+-- distances off and along the line; man_solid is init.lua's lgm_on_solid
+-- for his square (a wall, a live pill, a base: only a hit on that square
+-- kills him).
+-- A forest or a boat on the line stops every shell that would go past it,
+-- so the shot reaches only that far (reach). The stop's blast is a hit on
+-- the stop square: it kills him if he is on that square. Before the stop
+-- the shell can land anywhere, so an open-ground man is in reach if some
+-- point of the line before the stop is in the lgm_blast_shape rule's area
+-- round him (U.lgm_open_blast_catches):
+-- the point level with him, or the stop point when the stop is short of him.
+-- With no forest or boat on the line this is the old test exactly: the ray
+-- crosses his tile (solid), or U.lgm_open_blast_catches_perp (open; 0 is
+-- perp <= 128).
+function M.capture_man_killable(ox, oy, hx, hy, max_t, cmx, cmy, mwx, mwy,
+                                perp, along, man_solid)
+  local st, smx, smy = M.forest_boat_stop(ox, oy, hx, hy, max_t)
+  local reach = st or max_t
+  if smx and smx == cmx and smy == cmy then return true end
+  if man_solid then
+    return M.ray_crosses_tile(ox, oy, hx, hy, cmx, cmy, reach)
+  end
+  if along <= reach then return U.lgm_open_blast_catches_perp(perp, hx, hy) end
+  return U.lgm_open_blast_catches(ox + hx * reach - mwx, oy + hy * reach - mwy)
+end
+
 -- M.lgm_shell_gate(world, info, dest_mx, dest_my)
 --   -> nil                 nothing in the air can reach him
 --   -> hit (table)         REFUSE. Fields, all of which the reason line and
@@ -462,9 +572,9 @@ end
 --        sx, sy  the shell's world position then (the impact point)
 --        lx, ly  the man's predicted world position then
 --        src     "p3" (a player) / "pill" (a NEUTRAL pillbox)
---        how     which of the three endings: "wall" (a wall or live pill),
---                "tank" (our hull), "expiry" (out of life), or the
---                should-not-happen "unknown_life"
+--        how     which of the three endings: "wall" (a wall, a live pill,
+--                a forest or a boat), "tank" (our hull), "expiry" (out of
+--                life), or the should-not-happen "unknown_life"
 --        solid   true when it was the same-tile rule that fired ("wall")
 --        walk_n  how many walk steps were simulated
 function M.lgm_shell_gate(world, info, dest_mx, dest_my)
@@ -483,8 +593,6 @@ function M.lgm_shell_gate(world, info, dest_mx, dest_my)
   if not any then return nil end
 
   local N = C.LGM_SHELL_PREDICT_TICKS or 63
-  local KILL = C.LGM_SHELL_KILL_RADIUS_WU or 128
-  local KILL2 = KILL * KILL
   local TANK_HIT2 = (C.TANK_HIT_RADIUS_WU or 112) ^ 2
   local tmx = bit.rshift(info.tankx, 8)
   local tmy = bit.rshift(info.tanky, 8)
@@ -524,8 +632,9 @@ function M.lgm_shell_gate(world, info, dest_mx, dest_my)
         local smx = bit.rshift(math.floor(sx), 8)
         local smy = bit.rshift(math.floor(sy), 8)
         local lx, ly = man_at(nw, dwell, t, home_x, home_y)
-        -- (1) a wall or a live pill: the engine recentres the explosion on
-        -- that tile, so only a man standing ON it dies.
+        -- (1) a wall, a live pill, or a forest or a boat: the engine
+        -- recentres the explosion on that tile and counts it a hit on the
+        -- square, so only a man standing ON it dies.
         if shell_stops_on(world, smx, smy) then
           if bit.rshift(lx, 8) == smx and bit.rshift(ly, 8) == smy then
             return { t = t, sx = smx * 256 + 128, sy = smy * 256 + 128,
@@ -536,7 +645,9 @@ function M.lgm_shell_gate(world, info, dest_mx, dest_my)
         end
         local dx = sx - lx
         local dy = sy - ly
-        local near_man = (dx * dx + dy * dy) <= KILL2
+        -- The lgm_blast_shape rule's area (0: within
+        -- LGM_SHELL_KILL_RADIUS_WU, 128).
+        local near_man = U.lgm_open_blast_catches(dx, dy)
         -- (2) our own hull. A shell never hits the tank that fired it, so our
         -- own rounds fly straight through.
         if not ours then

@@ -93,8 +93,9 @@ struct GameSim;
    script that names it still runs. */
 #define LGM_PILL_DROP_SEARCH 10
 
-/* Speed the helicpter flys at */
-#define LGM_HELICOPTER_SPEED 3
+/* Speed the parachute flies at, in world units a tick. Not always a whole
+   number: the lgm_helicopter_speed rule is a float. */
+#define LGM_HELICOPTER_SPEED 3.0f
 /* The frame number for the helicopter */
 #define LGM_HELICOPTER_FRAME 3
 
@@ -122,13 +123,81 @@ struct GameSim;
 #define LGM_BRAIN_PARTIAL 1
 #define LGM_BRAIN_TOTAL 2
 
+/* The lgm_blast_shape rule: the area of open ground an explosion catches a
+   builder in. dx and dy are the explosion's place less the builder's, in
+   world units (256 to a square).
+   - LGM_BLAST_SHAPE_HALF_SQUARE: "Half-square circle". A circle of radius
+     MAP_SQUARE_MIDDLE (128), edge included, the WinBolo rule.
+   - LGM_BLAST_SHAPE_MAC_BOX: "Mac Bolo box". |dx| < 128 and |dy| < 128,
+     edge left out. Mac Bolo tests each axis on its own in this way.
+   - LGM_BLAST_SHAPE_MAC_AREA: "Mac Bolo equivalent area circle". A circle
+     of radius LGM_BLAST_MAC_AREA_RADIUS, edge included: 256 / sqrt(pi) is
+     about 144.4, so it covers about the same area as the box.
+   Every shape also stops at the pill_range rule: a builder further than
+   pill_range from the explosion is safe. That limit is the old test's, and
+   it changes a shape only when pill_range is under the shape's reach (128,
+   about 180 and 144). */
+#define LGM_BLAST_SHAPE_HALF_SQUARE 0
+#define LGM_BLAST_SHAPE_MAC_BOX     1
+#define LGM_BLAST_SHAPE_MAC_AREA    2
+#define LGM_BLAST_SHAPE_CLASSIC     LGM_BLAST_SHAPE_HALF_SQUARE
+#define LGM_BLAST_MAC_BOX_HALF      128
+#define LGM_BLAST_MAC_AREA_RADIUS   144
+
+/*********************************************************
+*NAME:          lgmBlastOpenGroundCatches
+*PURPOSE:
+*  Whether an explosion on open ground (not a building, a
+*  half building, a pillbox or a base) catches a builder
+*  dx, dy world units from it, by the lgm_blast_shape
+*  rule. shape is the rule's value; a value outside the
+*  three plays as the half-square circle.
+*
+*  The half-square circle keeps the old test exactly: it
+*  read its distance from utilIsItemInRange with the
+*  pill_range rule as the limit, and past that limit the
+*  distance never passes. So with pill_range under 128 the
+*  circle has radius pill_range. The other two shapes stop
+*  at pill_range the same way: a builder further than
+*  pill_range from the explosion is safe. A pill_range
+*  under 0 catches no builder.
+*
+*ARGUMENTS:
+*  shape     - The lgm_blast_shape rule
+*  pillRange - The pill_range rule
+*  dx        - Explosion X less the builder's X
+*  dy        - Explosion Y less the builder's Y
+*********************************************************/
+static inline bool lgmBlastOpenGroundCatches(int32_t shape, int32_t pillRange,
+                                             long dx, long dy) {
+  long ax = dx < 0 ? -dx : dx;
+  long ay = dy < 0 ? -dy : dy;
+  double d2 = (double) dx * dx + (double) dy * dy;
+
+  /* Every shape: within pill_range, the limit utilIsItemInRange measured
+     the old test against. */
+  if (pillRange < 0 || d2 > (double) pillRange * pillRange) {
+    return false;
+  }
+  if (shape == LGM_BLAST_SHAPE_MAC_BOX) {
+    return ax < LGM_BLAST_MAC_BOX_HALF && ay < LGM_BLAST_MAC_BOX_HALF;
+  }
+  if (shape == LGM_BLAST_SHAPE_MAC_AREA) {
+    return d2 <= (double) LGM_BLAST_MAC_AREA_RADIUS * LGM_BLAST_MAC_AREA_RADIUS;
+  }
+  /* The half-square circle: within MAP_SQUARE_MIDDLE. */
+  return d2 <= (double) MAP_SQUARE_MIDDLE * MAP_SQUARE_MIDDLE;
+}
+
 typedef struct lgmObj *lgm;
 
 struct lgmObj {
   WORLD x;         /* X and Y positions */
   WORLD y;     
   WORLD destX;      /* Where the man is heading */
-  WORLD destY;      
+  WORLD destY;
+  double flyX;     /* His exact place while he parachutes in, parts of a */
+  double flyY;     /* world unit included; see lgmParchutingIn */
   BYTE state;      /* Present state 0 = Idle, 1 = Going to do work, 2 = returning to tank */
   BYTE waitTime;   /* Is it counting down waiting for something? */
   bool inTank;     /* Is the builder in the tank */
@@ -497,6 +566,23 @@ void lgmGetScreenCoords(lgm *lgman, BYTE leftPos, BYTE topPos, BYTE *mx, BYTE *m
 void lgmDeathCheck(struct GameSim *sim, lgm *lgman, WORLD wx, WORLD wy, BYTE owner, BYTE attacker, BYTE cause, BYTE pill, tank *tnk);
 
 /*********************************************************
+*NAME:          lgmDeathCheckSquareHit
+*PURPOSE:
+*  lgmDeathCheck for an explosion that damaged the pillbox
+*  on its square (a tank's explosion,
+*  tkExplosionBigExplosion).
+*
+*ARGUMENTS:
+*  As lgmDeathCheck, and:
+*  squareHit - TRUE when the square held a live pillbox
+*           before the explosion damaged it: the builder
+*           dies only if he is on that square, even when
+*           the damage took the pill's armour to 0. FALSE
+*           is lgmDeathCheck
+*********************************************************/
+void lgmDeathCheckSquareHit(struct GameSim *sim, lgm *lgman, WORLD wx, WORLD wy, BYTE owner, BYTE attacker, BYTE cause, BYTE pill, tank *tnk, bool squareHit);
+
+/*********************************************************
 *NAME:          lgmDeathCheckAtPosition
 *AUTHOR:        John Morrison
 *CREATION DATE: 17/04/26
@@ -521,8 +607,18 @@ void lgmDeathCheck(struct GameSim *sim, lgm *lgman, WORLD wx, WORLD wy, BYTE own
 *  pill   - The pill index whose shell it was, or
 *           DMG_NO_PILL
 *  tnk    - Pointer to the tank
+*  squareHit - TRUE when the explosion is a shell's hit on the
+*           pillbox, the wall or the terrain on its square
+*           (shellsCalcCollision outSquareHit), the shot that
+*           kills the pill or turns the wall to rubble
+*           included: the builder dies only if he is on that
+*           square, as for a hit on a live pill. Also TRUE
+*           for a tank's explosion on a square whose pill
+*           was live before it (lgmDeathCheckSquareHit).
+*           FALSE for every other blast (lgmDeathCheck
+*           passes FALSE)
 *********************************************************/
-void lgmDeathCheckAtPosition(struct GameSim *sim, lgm *lgman, WORLD lgmWorldX, WORLD lgmWorldY, WORLD wx, WORLD wy, BYTE owner, BYTE attacker, BYTE cause, BYTE pill, tank *tnk);
+void lgmDeathCheckAtPosition(struct GameSim *sim, lgm *lgman, WORLD lgmWorldX, WORLD lgmWorldY, WORLD wx, WORLD wy, BYTE owner, BYTE attacker, BYTE cause, BYTE pill, tank *tnk, bool squareHit);
 
 /*********************************************************
 *NAME:          lgmDeathCheckSeenOut
@@ -554,8 +650,9 @@ void lgmDeathCheckAtPosition(struct GameSim *sim, lgm *lgman, WORLD lgmWorldX, W
 *  pill   - The pill index whose shell it was, or
 *           DMG_NO_PILL
 *  tnk    - Pointer to the tank
+*  squareHit - As lgmDeathCheckAtPosition
 *********************************************************/
-void lgmDeathCheckSeenOut(struct GameSim *sim, lgm *lgman, WORLD lgmWorldX, WORLD lgmWorldY, WORLD wx, WORLD wy, BYTE owner, BYTE attacker, BYTE cause, BYTE pill, tank *tnk);
+void lgmDeathCheckSeenOut(struct GameSim *sim, lgm *lgman, WORLD lgmWorldX, WORLD lgmWorldY, WORLD wx, WORLD wy, BYTE owner, BYTE attacker, BYTE cause, BYTE pill, tank *tnk, bool squareHit);
 
 /*********************************************************
 *NAME:          lgmKillInTank
@@ -584,15 +681,42 @@ void lgmDeathCheckSeenOut(struct GameSim *sim, lgm *lgman, WORLD lgmWorldX, WORL
 bool lgmKillInTank(struct GameSim *sim, lgm *lgman, tank *tnk, BYTE owner);
 
 /*********************************************************
+*NAME:          lgmFlyFrom
+*PURPOSE:
+*  Puts a man who is parachuting in at a place, to fly on
+*  from there: the whole world units the rest of the engine
+*  reads, and the exact place lgmParchutingIn steps from,
+*  with no part of a unit left over from wherever he was.
+*  Where he is flying to is not changed.
+*
+*  For whatever starts a flight or moves one. Writing x and
+*  y alone leaves the old part of a unit behind when the new
+*  place has the same whole units as the old one, and the
+*  next step then carries it along.
+*
+*ARGUMENTS:
+*  lgman  - Pointer to the lgm sturcture
+*  x      - World X Co-ordinate
+*  y      - World Y Co-ordinate
+*********************************************************/
+void lgmFlyFrom(lgm *lgman, WORLD x, WORLD y);
+
+/*********************************************************
 *NAME:          lgmParchutingIn
 *AUTHOR:        John Morrison
 *CREATION DATE: 18/1/99
 *LAST MODIFIED: 23/9/00
 *PURPOSE:
-*  Man is parachuting back in.
+*  Man is parachuting back in. One tick of the flight: he
+*  moves lgm_helicopter_speed world units straight at the
+*  place he is flying to, whatever his heading, and lands
+*  once he is within lgm_arrive_tolerance of it on both
+*  axes. A step that would carry him past the place puts
+*  him on it instead.
 *
 *ARGUMENTS:
-*
+*  sim    - Pointer to the game sim structure
+*  lgman  - Pointer to the lgm sturcture
 *********************************************************/
 void lgmParchutingIn(struct GameSim *sim, lgm *lgman);
 

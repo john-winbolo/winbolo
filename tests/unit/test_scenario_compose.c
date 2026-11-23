@@ -3881,6 +3881,42 @@ int run_scenario_compose_fallback_strict(void) {
     scDestroy(sim);
     return 0;
 }
+
+/* A scenario map picked with mods on, then a plain map with the mods still
+   on. The scenario put the lobby on the scripted type; the mods alone that
+   take its place leave the type the host's, so the lobby's own type comes
+   back then, not only once the last mod goes. It used to stay scripted, and
+   the lobby showed a "Scenario" row named after the mod. */
+int run_scenario_compose_mods_after_scenario_type(void) {
+    ServerSim *sim;
+
+    sim = scSim();
+    UT_ASSERT(sim != NULL);
+    serverSimSetGameType(sim, gameTournament);
+    serverSimSetScenarioIdentity(sim, lobbyScenarioMap, "Soccer", "soccer.lua",
+                                 NULL, false, false, false, false, false);
+    serverSimScenarioApplyLobbyRules(sim);
+    UT_ASSERT(serverSimGetGameType(sim) == gameScripted);
+
+    serverSimSetScenarioIdentity(sim, lobbyScenarioMod, "Mac Bolo",
+                                 "macbolo.lua", NULL, false, true, false,
+                                 false, false);
+    serverSimScenarioApplyLobbyRules(sim);
+    UT_ASSERT_MSG(serverSimGetGameType(sim) == gameTournament,
+                  "mods alone after a scenario left type %d, wanted the "
+                  "lobby's own tournament (%d)",
+                  (int)serverSimGetGameType(sim), (int)gameTournament);
+    UT_ASSERT_MSG(!serverSimGetRanked(sim),
+                  "ranked came back on while mods are still attached");
+
+    serverSimSetScenarioIdentity(sim, lobbyScenarioNone, NULL, NULL, NULL,
+                                 false, false, false, false, false);
+    serverSimScenarioApplyLobbyRules(sim);
+    UT_ASSERT(serverSimGetGameType(sim) == gameTournament);
+
+    scDestroy(sim);
+    return 0;
+}
 /* ── needs_bots: any script on the list ──────────────────────────── */
 
 /* Put the lobby on "no computer tanks", the setting a needs_bots list moves
