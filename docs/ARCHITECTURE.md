@@ -200,6 +200,13 @@ is created, so the renderer must not be destroyed and recreated at
 runtime — doing so invalidates the overlay's hook and crashes on some
 macOS versions.
 
+The same holds for the pop-out windows (Players, Map Overview, the info
+windows, scenario panels), each of which has a renderer of its own. A
+pop-out's window and renderer are created the first time it is opened and
+then kept: closing it hides it, and the end of a game (`sdl3ImguiCleanup`)
+hides it and frees only its textures. They are destroyed at process exit by
+`sdl3ImguiDestroyPopOuts`, called from `sdl3DrawCleanup`.
+
 Zoom changes and skin changes therefore reconfigure the existing renderer
 in place rather than recreating it:
 

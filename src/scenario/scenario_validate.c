@@ -591,19 +591,20 @@ static const char *scnNameWholeIn(const char *text, const char *name) {
     return NULL;
 }
 
-/* The rule of the table that a reason names first. simRulesCheck answers a
- * fault and a sentence and nothing else, so which rule broke is read back out
- * of the sentence: a pair states the rule that has to move ahead of the one
- * it is measured against, so the first name in it is the row an author has to
- * go to. -1 where the sentence names none of the table's rules, which leaves
- * the caller to key the report on the table itself. */
-static int scnRuleNamedFirst(const ScenarioManifest *m, const char *why) {
+/* The rule of a set that a reason names first. simRulesCheck answers a fault
+ * and a sentence and nothing else, so which rule broke is read back out of the
+ * sentence: a pair states the rule that has to move ahead of the one it is
+ * measured against, so the first name in it is the row an author has to go
+ * to. -1 where the sentence names none of the set's rules, which leaves the
+ * caller to key the report on the table itself. */
+static int scnRuleNamedFirst(const uint16_t *rules, uint16_t count,
+                             const char *why) {
     const char *first = NULL;
     int         rule  = -1;
     uint16_t    i;
 
-    for (i = 0; i < m->numRules && i < SCN_MANIFEST_RULES_MAX; i++) {
-        const char *name = simRulesRuleName((int)m->rules[i].rule);
+    for (i = 0; i < count; i++) {
+        const char *name = simRulesRuleName((int)rules[i]);
         const char *at;
 
         if (name == NULL || name[0] == '\0') {
@@ -612,57 +613,69 @@ static int scnRuleNamedFirst(const ScenarioManifest *m, const char *why) {
         at = scnNameWholeIn(why, name);
         if (at != NULL && (first == NULL || at < first)) {
             first = at;
-            rule  = (int)m->rules[i].rule;
+            rule  = (int)rules[i];
         }
     }
     return rule;
 }
 
-/* Every rule the table sets, one at a time and then all at once. One at a
- * time says which rule an author has to move; all at once is what finds a
- * pair two of them break between them, where each on its own stands up. */
+/* Every rule the table sets, one at a time and then all at once.
+ *
+ * One at a time is for a value outside its own rule's bounds. That is a fault
+ * of the one row whatever the rest of the table holds, so each is reported
+ * under its own rule and the pass goes on to the next.
+ *
+ * A pair is asked of the whole table and of nothing less. A rule on its own
+ * stands beside the values the round already holds, and the table may set the
+ * other side of the pair as well: tank_full_mines = 0 alone is under the
+ * classic lgm_cost_mine of 1, and a table that takes both to 0 is one the
+ * server plays, because it writes every value before it checks any. So a pair
+ * that one rule breaks alone is not reported from the one-rule pass. The same
+ * fault is still there in the whole table when nothing else in it mends the
+ * pair, and that is where it is reported.
+ *
+ * The whole table here is the rows that are inside their own bounds. A row
+ * that is not has been reported already, and with it left in the check would
+ * stop at that row's bounds and never reach a pair. */
 static void scnCheckRules(const ServerSim *sim, const ScenarioManifest *m,
                           ScnValidateResult *out) {
     uint16_t    rules[SCN_MANIFEST_RULES_MAX];
     double      values[SCN_MANIFEST_RULES_MAX];
     char        why[SCN_VALIDATE_MSG_LEN];
     char        key[SCN_VALIDATE_KEY_LEN];
-    bool        sawPair = false;
+    uint16_t    kept = 0;
     uint16_t    i;
     ScnOpResult r;
 
     for (i = 0; i < m->numRules && i < SCN_MANIFEST_RULES_MAX; i++) {
-        const char *name = simRulesRuleName((int)m->rules[i].rule);
+        const char    *name  = simRulesRuleName((int)m->rules[i].rule);
+        const uint16_t rule  = m->rules[i].rule;
+        const double   value = m->rules[i].value;
 
-        rules[i]  = m->rules[i].rule;
-        values[i] = m->rules[i].value;
-
-        snprintf(key, sizeof(key), "rules.%s", name);
-        r = scnCheckRuleSet(sim, &rules[i], &values[i], 1, why, sizeof(why));
-        if (r == SCN_OP_RANGE || r == SCN_OP_PAIR) {
+        r = scnCheckRuleSet(sim, &rule, &value, 1, why, sizeof(why));
+        if (r == SCN_OP_RANGE) {
+            snprintf(key, sizeof(key), "rules.%s", name);
             if (why[0] != '\0') {
                 scnIssueAdd(out, key, "%s", why);
             } else {
                 /* A value no field can take at all is refused before the
                    check that words a reason. */
                 scnIssueAdd(out, key, "%s is set to %g, which no rule holds",
-                            name, values[i]);
+                            name, value);
             }
-            if (r == SCN_OP_PAIR) {
-                sawPair = true;
-            }
+        } else if (r == SCN_OP_OK || r == SCN_OP_PAIR) {
+            rules[kept]  = rule;
+            values[kept] = value;
+            kept++;
         }
     }
 
-    if (i == 0) {
+    if (kept == 0) {
         return;
     }
-    r = scnCheckRuleSet(sim, rules, values, i, why, sizeof(why));
-    /* Only a pair, and only one the pass above did not already name. A range
-       is stated against the rule that carries it, and saying it again here
-       under the whole table would be the same fault twice. */
-    if (r == SCN_OP_PAIR && !sawPair && why[0] != '\0') {
-        const int named = scnRuleNamedFirst(m, why);
+    r = scnCheckRuleSet(sim, rules, values, kept, why, sizeof(why));
+    if (r == SCN_OP_PAIR && why[0] != '\0') {
+        const int named = scnRuleNamedFirst(rules, kept, why);
 
         /* Under the rule the reason names, so the editor's row for the rule
            that has to move is the row the mark lands on: the form ties a row

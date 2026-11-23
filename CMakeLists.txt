@@ -358,10 +358,11 @@ if(WINBOLO_LUAJIT)
     #    supported path. XCFLAGS=-fPIC so the static lib links into winbolo_gym.
     if(MSVC)
         set(_lj_lib "${_lj_src}/src/lua51.lib")
-        set(_lj_msvc_env "")
+        string(JOIN " " _lj_msvc_cl ${BOLO_LUAJIT_LOCKDOWN_XCFLAGS})
         if(WINBOLO_LUAJIT_DETERMINISTIC)
-            set(_lj_msvc_env "CL=/DLUAJIT_SECURITY_PRNG=0")
+            string(APPEND _lj_msvc_cl " /DLUAJIT_SECURITY_PRNG=0")
         endif()
+        set(_lj_msvc_env "CL=${_lj_msvc_cl}")
         ExternalProject_Add(luajit_ext
             SOURCE_DIR        "${_lj_src}"
             BUILD_IN_SOURCE   TRUE
@@ -375,15 +376,23 @@ if(WINBOLO_LUAJIT)
             # (minilua, buildvm) as bare names too, and those fail the same way
             # -- so unset the variable for the whole build step instead.
             # cl.exe appends the CL environment variable to every compile, so
-            # the determinism define reaches all of msvcbuild.bat's compiles
-            # (the bat never sets CL itself) without patching LuaJIT source.
-            BUILD_COMMAND     ${CMAKE_COMMAND} -E env
+            # the lockdown and determinism defines reach all of msvcbuild.bat's
+            # compiles (the bat never sets CL itself) without patching LuaJIT
+            # source. The one thing CL cannot reach is the `-D FFI` the bat
+            # hands DynASM, which the first command takes out (see the patch
+            # header).
+            BUILD_COMMAND     ${CMAKE_COMMAND} -E chdir "${_lj_src}"
+                              ${CMAKE_COMMAND} -P
+                              "${CMAKE_SOURCE_DIR}/cmake/patches/luajit_msvc_no_ffi.cmake"
+            COMMAND           ${CMAKE_COMMAND} -E env
                               --unset=NoDefaultCurrentDirectoryInExePath
                               ${_lj_msvc_env}
                               ${CMAKE_COMMAND} -E chdir "${_lj_src}/src"
                               cmd /c .\\msvcbuild.bat static
             INSTALL_COMMAND   ""
             BUILD_BYPRODUCTS  "${_lj_lib}")
+        # msvcbuild.bat compiles every file on each run, so no clean is needed.
+        bolo_luajit_rebuild_on_change(luajit_ext "${_lj_msvc_env}")
     elseif(CMAKE_SYSTEM_NAME STREQUAL "iOS")
         # iOS runs LuaJIT's interpreter alone: an App Store app may not write
         # code and then run it, so LUAJIT_DISABLE_JIT leaves the trace
@@ -463,7 +472,7 @@ if(WINBOLO_LUAJIT)
             ARCHES       ${_lj_archs}
             LIB_VAR      _lj_lib)
     else()
-        set(_lj_xcflags "-fPIC")
+        string(JOIN " " _lj_xcflags -fPIC ${BOLO_LUAJIT_LOCKDOWN_XCFLAGS})
         if(WINBOLO_LUAJIT_DETERMINISTIC)
             string(APPEND _lj_xcflags " -DLUAJIT_SECURITY_PRNG=0")
         endif()
@@ -506,6 +515,7 @@ if(WINBOLO_LUAJIT)
                 COMMAND           lipo -create ${_lj_slices} -output "${_lj_lib}"
                 INSTALL_COMMAND   ""
                 BUILD_BYPRODUCTS  "${_lj_lib}")
+            bolo_luajit_rebuild_on_change(luajit_ext "${_lj_xcflags}")
 
             # The build step above runs once and is then held off by its stamp,
             # and everything it produces lives in the shared _deps source tree
@@ -529,13 +539,17 @@ if(WINBOLO_LUAJIT)
                           -P "${CMAKE_SOURCE_DIR}/cmake/luajit_fat_check.cmake")
         else()
             set(_lj_lib "${_lj_src}/src/libluajit.a")
+            # The clean makes a rerun after a change of flags rebuild every
+            # object; make alone would keep the ones it already has.
             ExternalProject_Add(luajit_ext
                 SOURCE_DIR        "${_lj_src}"
                 BUILD_IN_SOURCE   TRUE
                 CONFIGURE_COMMAND ""
-                BUILD_COMMAND     ${_lj_make}
+                BUILD_COMMAND     make -C "${_lj_src}" clean
+                COMMAND           ${_lj_make}
                 INSTALL_COMMAND   ""
                 BUILD_BYPRODUCTS  "${_lj_lib}")
+            bolo_luajit_rebuild_on_change(luajit_ext "${_lj_xcflags}")
         endif()
     endif()
 
@@ -4515,6 +4529,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_wbn_map.c
     tests/unit/test_wbn_map_fetch_policy.c
     tests/unit/test_brain_crash_log.c
+    tests/unit/test_brain_binding_bounds.c
+    tests/unit/test_brain_sandbox_hostile.c
     tests/unit/test_brain_push_rules.c
     tests/unit/test_brain_inbox.c
     tests/unit/test_brain_list_scan.c
@@ -4673,6 +4689,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_lgm_quit_pill.c
     tests/unit/test_lgm_start_offset.c
     tests/unit/test_lgm_absent_on_shooter_screen.c
+    tests/unit/test_lgm_blast_dead_pill.c
     tests/unit/test_braindbg_round_dir.c
     tests/unit/test_jitter_buffer_grow.c
     tests/unit/test_shell_projection.c
@@ -4987,6 +5004,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # man_dead_pill_terrain_speed: the builder's speed on the square of a
     # dead pillbox.
     tests/unit/test_man_dead_pill_speed.c
+    # lgm_blast_shape: the open-ground area round an explosion that kills a
+    # builder.
+    tests/unit/test_lgm_blast_shape.c
     tests/unit/test_teleport_clears_rewind.c
     tests/unit/test_shell_rewind_rules.c
     tests/unit/test_input_gate.c
@@ -5916,6 +5936,28 @@ set(_unit_test_names
     brain_crash_log_writes_file
     brain_crash_log_falls_back_to_luaptr
     brain_push_rules_written_on_change
+    brain_bounds_tail_bad_steps
+    brain_bounds_tail_bad_neutral
+    brain_bounds_think_errors
+    brain_bounds_wrapper_called_from_lua
+    brain_bounds_kill_outside_think
+    brain_bounds_host_globals_raw
+    brain_bounds_on_init_metatable
+    brain_crash_log_outside_think
+    brain_bounds_deserialize_open
+    brain_bounds_next_step_bad_start
+    brain_bounds_shells_at_bad_tile
+    brain_bounds_push_replaced_info
+    brain_bounds_stamps_bad_tables
+    brain_bounds_threat_range
+    brain_crash_log_ignores_brain_globals
+    brain_sandbox_hostile_native_preloads
+    brain_sandbox_hostile_bytecode_init
+    brain_sandbox_hostile_loaders_removed
+    brain_sandbox_hostile_astar_log_removed
+    brain_sandbox_hostile_file_jail
+    brain_sandbox_hostile_off_map_terrain
+    brain_sandbox_jit_limits
     brain_msgh_budget_kill_no_traceback
     brain_msgh_real_error_keeps_traceback
     brain_inbox_push_peek_fifo
@@ -6579,6 +6621,13 @@ set(_unit_test_names
     lgm_kill_seen_out_already_dead
     lgm_kill_seen_out_tank_hit_blast
     lgm_kill_seen_out_dead_tank
+    lgm_blast_dead_pill_edge
+    lgm_blast_dead_pill_far_corner
+    lgm_blast_live_pill_unchanged
+    lgm_blast_pill_kill_shot
+    lgm_blast_shell_runs_out_dead_pill
+    lgm_blast_shell_hits_tank_dead_pill
+    lgm_blast_tank_explosion_kills_pill
     lgm_start_offset
     braindbg_second_round_new_dir
     lgm_draw_own_matches_wire
@@ -6681,6 +6730,12 @@ set(_unit_test_names
     man_dead_pill_walk_across_water
     man_dead_pill_lifted_waits_for_tank
     man_dead_pill_brain_walk
+    lgm_blast_shape_half_square
+    lgm_blast_shape_mac_box
+    lgm_blast_shape_mac_area
+    lgm_blast_shape_solid_square
+    lgm_blast_shape_classic_matches_old
+    lgm_blast_shape_pill_range
     teleport_erases_tank_rewind_record
     teleport_shell_hits_new_place
     teleport_rewind_refills
@@ -7176,6 +7231,9 @@ set(_unit_test_names
     tank_drop_pills_map_edge
     tank_drop_pills_hostile_map
     tank_drop_pills_no_room
+    tank_drop_pills_quit_no_room
+    tank_drop_pills_quit_map_event
+    tank_drop_pills_no_room_other_tank
     lgm_drop_pill_spiral
     lgm_drop_pill_no_room
     util_spiral_north
@@ -7577,6 +7635,8 @@ set(_unit_test_names
     scenario_validate_trigger_announce_clear
     scenario_validate_trigger_arg_literal
     scenario_validate_rule_pair_key
+    scenario_validate_rule_pair_mended
+    scenario_validate_rule_pair_alone
     scenario_validate_needs_bots_missing
     scenario_validate_needs_bots_declared
     scenario_lua_every_row_answers
@@ -7893,6 +7953,7 @@ set(_unit_test_names
     scenario_compose_commit_map_fixed_operator_mod
     scenario_compose_map_kind_cached
     scenario_compose_fallback_strict
+    scenario_compose_mods_after_scenario_type
     scenario_compose_needs_bots_any_mod
     scenario_compose_needs_bots_scenario_and_mod
     scenario_compose_on_tick_bottom_first
@@ -8159,6 +8220,42 @@ set(_unit_test_names
 # wbv_summary_capture is omitted for the same reason: it (re)writes the
 # committed tests/fixtures/wbv/*.summary files that wbv_fixture_summaries
 # compares against, via `WinBoloUnitTests --test wbv_summary_capture`.
+
+# unit_test_names_match: every test registered in tests/unit/test_main.c
+# must be in _unit_test_names, so CTest runs it. Left out on purpose: the
+# fixture writers above (test_main.c s_fixtureWriters) and the netdebug_*
+# tests, which the WB_NETDEBUG block further down registers. A test that is
+# missing stops the configure with its name. The match ends at the comma
+# after the name, so a registration wrapped onto two lines is read too.
+set(_unit_test_on_demand
+    wire_corpus_capture
+    spectator_seed_capture
+    wbv_v2_capture
+    wbv_summary_capture
+)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+             "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/test_main.c")
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/test_main.c"
+     _unit_test_main_lines
+     REGEX "^[ \t]*{[ \t]*\"[^\"]+\"[ \t]*,")
+set(_unit_test_missing "")
+foreach(_line IN LISTS _unit_test_main_lines)
+    string(REGEX REPLACE "^[ \t]*{[ \t]*\"([^\"]+)\".*$" "\\1"
+           _unit_test_main_name "${_line}")
+    if(NOT _unit_test_main_name IN_LIST _unit_test_names
+       AND NOT _unit_test_main_name IN_LIST _unit_test_on_demand
+       AND NOT _unit_test_main_name MATCHES "^netdebug_")
+        list(APPEND _unit_test_missing ${_unit_test_main_name})
+    endif()
+endforeach()
+if(_unit_test_missing)
+    list(JOIN _unit_test_missing ", " _unit_test_missing_text)
+    message(FATAL_ERROR
+            "unit_test_names_match: tests/unit/test_main.c registers tests "
+            "that are not in _unit_test_names: ${_unit_test_missing_text}. "
+            "Add each one to _unit_test_names in CMakeLists.txt.")
+endif()
+
 foreach(_name IN LISTS _unit_test_names)
     add_test(NAME unit.${_name}
              COMMAND $<TARGET_FILE:WinBoloUnitTests> --test ${_name})

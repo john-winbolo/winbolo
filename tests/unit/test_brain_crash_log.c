@@ -110,6 +110,7 @@ static lua_State *new_lua_state_with_globals(int bot_index, int tick,
      * file and the count assertions see 0. */
     lua_pushboolean(L, 1);
     lua_setglobal(L, "BRAIN_DEBUG_MODE");
+    brainCoreSetHostDebugMode(L, true);
 
     /* state = { bot_index = N, tick = T } */
     lua_newtable(L);
@@ -227,6 +228,72 @@ int run_brain_crash_log_writes_file(void) {
     int rc = assert_crash_file_content(body, "think",
                                        "TEST_BRAIN_CRASH_MARKER",
                                        7, 12345);
+    free(body);
+    lua_close(L);
+    cleanup_tempdir(TEMPDIR);
+    return rc;
+}
+
+/* The brain's own globals say debug mode and name a folder. The host has not
+ * said debug mode, so nothing is written: a brain cannot steer a file with
+ * them. */
+int run_brain_crash_log_ignores_brain_globals(void) {
+    static const char *TEMPDIR = "test_brain_crash_tmp_globals";
+    cleanup_tempdir(TEMPDIR);
+    UT_ASSERT_MSG(SDL_CreateDirectory(TEMPDIR),
+                  "failed to create tempdir: %s", SDL_GetError());
+
+    lua_State *L = new_lua_state_with_globals(7, 12345, TEMPDIR);
+    UT_ASSERT(L != NULL);
+    brainCoreSetHostDebugMode(L, false);
+
+    brc_write_crash_log(L, "think", "TEST_BRAIN_CRASH_MARKER");
+
+    CrashFileCollector c;
+    memset(&c, 0, sizeof(c));
+    SDL_EnumerateDirectory(TEMPDIR, collect_crash_files, &c);
+    UT_ASSERT_MSG(c.count == 0,
+                  "a brain's globals alone wrote %d crash files", c.count);
+
+    lua_close(L);
+    cleanup_tempdir(TEMPDIR);
+    return 0;
+}
+
+/* An error outside the brain's own pcall gets the same report as one inside it. */
+int run_brain_crash_log_outside_think(void) {
+    static const char *TEMPDIR = "test_brain_crash_tmp_outside";
+    static BrainInfo info;
+    bool killed = false;
+    cleanup_tempdir(TEMPDIR);
+    UT_ASSERT_MSG(SDL_CreateDirectory(TEMPDIR),
+                  "failed to create tempdir: %s", SDL_GetError());
+
+    lua_State *L = new_lua_state_with_globals(7, 12345, TEMPDIR);
+    UT_ASSERT(L != NULL);
+    memset(&info, 0, sizeof(info));
+    UT_ASSERT_MSG(luaL_dostring(L,
+                  "brain = { think = function()"
+                  "  return setmetatable({}, { __index = function()"
+                  "    error('TEST_OUTSIDE_THINK_MARKER') end })"
+                  "end }") == 0,
+                  "the chunk raised: %s", lua_tostring(L, -1));
+    UT_ASSERT_MSG(!brainCoreCallThink(L, &info, &killed), "the think succeeded");
+    UT_ASSERT_MSG(!killed, "an ordinary error read as a kill");
+
+    CrashFileCollector c;
+    memset(&c, 0, sizeof(c));
+    SDL_EnumerateDirectory(TEMPDIR, collect_crash_files, &c);
+    UT_ASSERT_MSG(c.count == 1, "expected 1 crash file, got %d", c.count);
+
+    char path[FILENAME_MAX];
+    SDL_snprintf(path, sizeof(path), "%s/%s", TEMPDIR, c.found);
+    size_t body_len = 0;
+    char *body = slurp_file(path, &body_len);
+    UT_ASSERT_MSG(body != NULL, "failed to read crash file %s", path);
+    int rc = assert_crash_file_content(body, "think",
+                                       "TEST_OUTSIDE_THINK_MARKER", 7, 12345);
+    UT_ASSERT_MSG(strstr(body, "stack traceback") != NULL, "the report has no traceback");
     free(body);
     lua_close(L);
     cleanup_tempdir(TEMPDIR);

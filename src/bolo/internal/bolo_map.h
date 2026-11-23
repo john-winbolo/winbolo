@@ -352,6 +352,9 @@ void mapSetPos(struct GameSim *sim, map *value, BYTE xValue, BYTE yValue, BYTE t
  * Used by ServerSim to emit EVENT_MAP_CHANGE events. */
 typedef void (*MapChangeCallback)(BYTE x, BYTE y, BYTE terrain);
 void mapSetChangeCallback(MapChangeCallback cb);
+/* The callback installed now, or NULL. A caller that installs its own for a
+ * while reads this first and puts it back after. */
+MapChangeCallback mapGetChangeCallback(void);
 
 /*********************************************************
 *NAME:          mapIsLand
