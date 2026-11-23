@@ -7992,6 +7992,10 @@ local function update_attack_substate_body(goal, state, world, info)
         if idx <= #list then
         end
         idx = #list + 1
+      elseif require("pt2_attack").start_now_check(goal, world, info, now, list) then
+        -- PT2_START_WHILE_BUILDING: the armour holds the shells that get
+        -- through; the builder builds the rest while the take goes on
+        idx = #list + 1
       elseif idx > #list or stalled then
         local abandon, bucket, tries = blocked_line_replan(state, goal, pmx, pmy, now)
         if abandon then

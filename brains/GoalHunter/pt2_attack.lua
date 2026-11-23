@@ -107,6 +107,11 @@ function M.build_inp(state, goal, info, world, pill, no_builder, npb, radius, no
   -- PT2_TANKSHOT_BLOCKERS: boats and the tanks we see stop our own shell
   if C.PT2_TANKSHOT_BLOCKERS then V2.tank_blockers(inp.env, info) end
   inp.anger_of = function(p) return M.anger_now(p, now) end
+  -- PT2_START_WHILE_BUILDING: the pill reload ladder on the live rules
+  if inp.start_while_building then
+    local x = require("live_physics").context(info, {})
+    inp.pill_attack_ticks, inp.pill_attack_min_ticks = x.pill_attack_ticks, x.pill_attack_min_ticks
+  end
   local goalA = inp.A
   local curA = goalA
   inp.banned = function(deg)
@@ -343,6 +348,14 @@ local function finish(a, inp, res, cost)
     goal.mx, goal.my = A.mx, A.my
     out.pt2_retarget = true
   end
+  -- PT2_START_WHILE_BUILDING: v2's answer for this point (start_check);
+  -- the hold point asks again with the live builder (M.start_now_check).
+  -- The background walls (M.bg_wall) start empty on each new plan.
+  goal._pt2_bg = nil
+  if b.start_now ~= nil then
+    goal._pt2.start = { ok = b.start_now, why = b.start_why, pills = b.start_pills,
+                        exposure = b.exposure, shells = b.shells_through }
+  end
   -- hold point: the tank waits here until every planned wall stands
   local h = b.hold
   if h then
@@ -357,6 +370,99 @@ local function finish(a, inp, res, cost)
     h and string.format("(%.2f,%.2f)%s", h.fx, h.fy, h.safe and "" or ":UNSAFE:" .. tostring(h.why)) or "-",
     inp.pen_n or 0, inp.pen_skip_n or 0, noA_n > 0 and 1 or 0, noA_n))
   return out
+end
+
+-- ── PT2_START_WHILE_BUILDING (E4): the hold point check ─────────────────
+-- attack.lua's v2 wall hold calls this while planned walls are missing.
+-- v2 said the point may start (goal._pt2.start.ok); this asks again with
+-- what the bot sees now: the builder's place (on the ground, else the
+-- tank), the missing walls in the hold's build order, the builder's own
+-- trip ticks (cpathfinder.lgm_travel_ticks_map, as LAST_WALL_EARLY), each
+-- start pill's anger now and the cover on its ray that stands now (v2's
+-- cover_now plus the planned walls of that ray already up). On a yes the
+-- missing walls go to goal._pt2_bg: the builder builds them while the take
+-- goes on (M.bg_wall). Asked at most every START_CHECK_TICKS.
+M.START_CHECK_TICKS = 10
+local PS = require("pt2_start")
+
+local function lgm_ticks(ox, oy, mx, my)
+  local t = cpf.lgm_travel_ticks_map(ox, oy, mx, my, mx, my,
+    C.WALL_SHIELD_LGM_MAX_TICKS, C.WALL_SHIELD_LGM_STUCK_TICKS)
+  if t and t > 0 then return t end
+  return nil
+end
+
+local function wall_up(world, mx, my)
+  return PC.slot_cover_shots(world, mx, my, U.ttype(mx, my)) > 0
+end
+
+function M.start_now_check(goal, world, info, now, list)
+  if C.PT2_START_WHILE_BUILDING == false then return false end
+  local st = goal._pt2 and goal._pt2.start
+  if not st or not st.ok then return false end
+  if goal._pt2_start_tick and now - goal._pt2_start_tick < M.START_CHECK_TICKS then return false end
+  goal._pt2_start_tick = now
+  local walls = {}
+  for _, p in ipairs(list) do
+    if not wall_up(world, p.mx, p.my) then walls[#walls + 1] = { mx = p.mx, my = p.my } end
+  end
+  if #walls == 0 then return false end
+  local ox, oy
+  if info.man_status ~= C.LGM_INTANK and info.man_x and info.man_y then
+    ox, oy = bit.rshift(info.man_x, 8), bit.rshift(info.man_y, 8)
+  else
+    ox, oy = bit.rshift(info.tankx or 0, 8), bit.rshift(info.tanky or 0, 8)
+  end
+  local exp = PS.exposure_ticks(ox, oy, walls, lgm_ticks)
+  local x = require("live_physics").context(info, {})
+  local shells = 0
+  for _, sp in ipairs(st.pills or {}) do
+    local p = PC.pill_on_square(world, sp.mx, sp.my)
+    if p and (p.health or 0) > 0 then
+      local cover = sp.cover_now or 0
+      for _, q in ipairs(sp.planned or {}) do
+        if wall_up(world, q.mx, q.my) then cover = cover + (q.shots or 0) end
+      end
+      local iv = PS.pill_interval(M.anger_now(p, now), C.PILL_ANGER_BUMP,
+                                  x.pill_attack_ticks, x.pill_attack_min_ticks)
+      shells = shells + PS.shells_through(exp, iv, cover)
+    end
+  end
+  local armour = info.armour or 0
+  local ok = PS.can_start(armour, shells, C.ATTACK_RUSH_MIN_ARMOUR or 5)
+  print2(string.format("PT2_START t=%d missing=%d from=(%d,%d) exposure=%.0ft shells=%d armour=%d min=%d -> %s",
+    now, #walls, ox, oy, exp, shells, armour, C.ATTACK_RUSH_MIN_ARMOUR or 5, ok and "start" or "wait"))
+  if not ok then return false end
+  local bg = goal._pt2_bg or { walls = {} }
+  local have = {}
+  for _, w in ipairs(bg.walls) do have[w.my * 256 + w.mx] = true end
+  local merged = {}
+  for _, w in ipairs(walls) do merged[#merged + 1] = w end
+  for _, w in ipairs(bg.walls) do
+    local seen = false
+    for _, m in ipairs(walls) do if m.mx == w.mx and m.my == w.my then seen = true end end
+    if not seen then merged[#merged + 1] = w end
+  end
+  bg.walls = merged
+  goal._pt2_bg = bg
+  return true
+end
+
+-- The next background wall for the builder (builder.set_mode), or nil.
+-- Walls that stand leave the list. Only outside the build substates, so
+-- the hold's own wall queue keeps the builder there.
+local BG_SKIP = { build_walls = true, gather_trees = true, ws_prebuild = true,
+                  ws_rebuild = true, ws_prewait = true, ws_advance = true,
+                  ws_engage = true, ws_retreat = true }
+function M.bg_wall(goal, world)
+  local bg = goal and goal._pt2_bg
+  if not bg or BG_SKIP[goal.substate or ""] then return nil end
+  while bg.walls[1] do
+    local w = bg.walls[1]
+    if not wall_up(world, w.mx, w.my) then return w end
+    table.remove(bg.walls, 1)
+  end
+  return nil
 end
 
 function M.after_scan(a)

@@ -53,6 +53,7 @@
 
 local SH  = require("shadow")
 local OLD = require("pilltake_v2_old")
+local PS  = require("pt2_start")
 
 local M = {}
 -- to_scan_result, world_env, world_inp, live_shell, tank_blockers,
@@ -66,6 +67,9 @@ function M.knob_inp(C, inp)
   inp.prefer_existing_cover = C.PT2_PREFER_EXISTING_COVER ~= false
   -- PT2_AIM_POINTS (E3): 9 = M.AIMS9, else the old 5
   inp.aim_points = C.PT2_AIM_POINTS or 5
+  -- PT2_START_WHILE_BUILDING (E4); anger_bump: world.lua's anger per hit
+  inp.start_while_building = C.PT2_START_WHILE_BUILDING ~= false
+  inp.anger_bump = C.PILL_ANGER_BUMP or 0.3333
   return inp
 end
 
@@ -85,13 +89,24 @@ M.AIMS9[9] = { 24, 128 }
 -- that are both in the travel band rank by n_built first (fewer planned
 -- blockers win; a dropped pill counts as one), before depth, blk and
 -- leeway. Outside the band, the old order stands.
-function M.better(a, b, cap, band, pec)
-  if pec and band and band > 0 and a.safe == b.safe and a.kills == b.kills then
+--
+-- PT2_START_WHILE_BUILDING (Nov 23, Andrew's yes, E4): swb on, the same
+-- two points (same safe and kills, both in the band) rank next by
+-- start_now: a point the tank may start while the walls go up ranks above
+-- one where it must wait. After n_built (E1), before depth.
+function M.better(a, b, cap, band, pec, swb)
+  if (pec or swb) and band and band > 0 and a.safe == b.safe and a.kills == b.kills then
     local sa, sb = a.score, b.score
     local m = math.min(sa, sb, a.tier_min or sa, b.tier_min or sb)
     if sa <= m + band and sb <= m + band then
-      local na, nb = a.n_built or 0, b.n_built or 0
-      if na ~= nb then return na < nb end
+      if pec then
+        local na, nb = a.n_built or 0, b.n_built or 0
+        if na ~= nb then return na < nb end
+      end
+      if swb then
+        local ga, gb = a.start_now or false, b.start_now or false
+        if ga ~= gb then return ga end
+      end
     end
   end
   return OLD.better(a, b, cap, band)
@@ -1064,6 +1079,69 @@ M._search_walls = search_walls
 -- Plan blockers for rec: every clear aim, the best plan wins (covered,
 -- fewer blockers, more depth, a square on two paths, shorter trip). The
 -- plan is confirmed with exact casts. Returns the final record.
+-- PT2_START_WHILE_BUILDING (E4, pt2_start.lua has the math): may the
+-- tank start at this point while the builder builds rec.plan? Sets on rec:
+--   start_now      true: start at once (no plan, or the armour holds)
+--   exposure       ticks until the last planned wall stands: the builder
+--                  leaves the tank point and builds rec.plan in its order;
+--                  each trip is inp.lgm_ticks (the builder's own path
+--                  cost) when given, else 16 ticks per square
+--   shells_through the shells summed over each pill whose ray has a
+--                  planned blocker and needs it (a chain pill without its
+--                  link cover); cover_now = the shots on that ray that
+--                  stand now
+--   start_pills    { mx, my, cover_now, planned = { mx, my, shots } } of
+--                  those pills (the caller checks again with its own
+--                  builder, anger and walls at the hold point)
+--   start_why      nil, "bystander" or "armour"
+-- A bystander (a pill not in the chain, its ray not "reach") whose ray has
+-- a planned blocker needs that cover before the start: start_now false.
+local function start_check(ctx, rec)
+  local inp = ctx.inp
+  rec.start_now, rec.exposure, rec.shells_through, rec.start_pills, rec.start_why = true, 0, 0, nil, nil
+  local plan = rec.plan
+  if not plan or #plan == 0 then return end
+  local ox = rec.omx or floor(rec.px / 256)
+  local oy = rec.omy or floor(rec.py / 256)
+  local exp = PS.exposure_ticks(ox, oy, plan, inp.lgm_ticks)
+  local shells, pills = 0, {}
+  for i, X in ipairs(rec.T) do
+    local r = rec.rays[i]
+    local planned, now_sh = nil, 0
+    for k = 1, r.n_block do
+      local e = r.block[k]
+      if e.kind == "planned" then
+        planned = planned or {}
+        planned[#planned + 1] = { mx = e.sq % 256, my = floor(e.sq / 256), shots = e.shots }
+      else
+        now_sh = now_sh + e.shots
+      end
+    end
+    if planned then
+      local ci = rec.in_chain[X]
+      if not ci then
+        if r.hit ~= "reach" then
+          rec.start_now, rec.exposure, rec.start_why = false, exp, "bystander"
+          return
+        end
+      elseif not r.link_cover then
+        local iv
+        if inp.pill_interval then iv = inp.pill_interval(X) end
+        if not iv then
+          local anger = inp.anger_of and inp.anger_of(X) or (X.anger or 0)
+          iv = PS.pill_interval(anger, inp.anger_bump, inp.pill_attack_ticks, inp.pill_attack_min_ticks)
+        end
+        shells = shells + PS.shells_through(exp, iv, now_sh)
+        pills[#pills + 1] = { mx = X.mx, my = X.my, cover_now = now_sh, planned = planned }
+      end
+    end
+  end
+  rec.exposure, rec.shells_through, rec.start_pills = exp, shells, pills
+  rec.start_now = PS.can_start(inp.armour, shells, inp.finish_min_armour)
+  if not rec.start_now then rec.start_why = "armour" end
+end
+M._start_check = start_check
+
 local function plan_point(ctx, rec)
   if rec.covered then rec.plan, rec.extra = {}, {}; return rec end
   local t0 = ctx.clk and ctx.clk()
@@ -1290,6 +1368,7 @@ function M.evaluate_lua(inp)
       fin.n_built = #fin.plan
       fin.blk = (inp.own_pill_rank and fin.ally_cover) and 2 or 1
       fin.score = fin.base + fin.n_built * inp.build_cost
+      if inp.start_while_building and fin.safe then start_check(ctx, fin) end
     end
     local function carry(fin, rec)
       fin.deg, fin.cx, fin.cy, fin.mx, fin.my, fin.radius = rec.deg, rec.cx, rec.cy, rec.mx, rec.my, rec.radius
@@ -1344,7 +1423,7 @@ function M.evaluate_lua(inp)
       end
     end
     OLD.set_band(scored, band)
-    table.sort(scored, function(a, b) return M.better(a, b, cap, band, inp.prefer_existing_cover) end)
+    table.sort(scored, function(a, b) return M.better(a, b, cap, band, inp.prefer_existing_cover, inp.start_while_building) end)
     if inp.leeway_on then
       for i = 1, min(inp.leeway_top, #scored) do
         local rec = scored[i]
@@ -1354,10 +1433,10 @@ function M.evaluate_lua(inp)
         end
       end
       OLD.set_band(scored, band)
-      table.sort(scored, function(a, b) return M.better(a, b, cap, band, inp.prefer_existing_cover) end)
+      table.sort(scored, function(a, b) return M.better(a, b, cap, band, inp.prefer_existing_cover, inp.start_while_building) end)
     end
     for _, rec in ipairs(scored) do all[#all + 1] = rec end
-    if scored[1] and (not best or M.better(scored[1], best, cap, band, inp.prefer_existing_cover)) then best = scored[1] end
+    if scored[1] and (not best or M.better(scored[1], best, cap, band, inp.prefer_existing_cover, inp.start_while_building)) then best = scored[1] end
     if best and best.safe then break end
   end
   if best and best.safe and best.plan and #best.plan > 0 then
@@ -1421,7 +1500,7 @@ function M.group_step(job)
     job.n_eval, job.n_reject = job.n_eval + r.n_eval, job.n_reject + r.n_reject
     local b, res = r.best, job.res
     if b and b.safe and b.chain_mode and b.in_chain and b.in_chain[goalA]
-       and (not res.best or M.better(b, res.best, inp.leeway_min, inp.travel_band, inp.prefer_existing_cover)) then
+       and (not res.best or M.better(b, res.best, inp.leeway_min, inp.travel_band, inp.prefer_existing_cover, inp.start_while_building)) then
       r.A, r.goal_A = p, goalA
       job.res = r
     end

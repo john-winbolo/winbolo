@@ -685,5 +685,71 @@ do
   check("knob_inp: PT2_AIM_POINTS", V.knob_inp(C, {}).aim_points == (C.PT2_AIM_POINTS or 5))
 end
 
+-- ── 9. PT2_START_WHILE_BUILDING ────────────────────────────────────────────
+print("PT2_START_WHILE_BUILDING: start check and rank")
+do
+  local PS = require("pt2_start")
+  local function pt(score, start_now)
+    return { safe = true, kills = 2, score = score, tier_min = 10, n_built = 1,
+             depth = 3, blk = 1, leeway = 8, start_now = start_now }
+  end
+  local go, wait = pt(14, true), pt(12, false)
+  check("swb on: a start-now point ranks first in the band", V.better(go, wait, 8, 5, true, true) == true)
+  check("swb off: the old order", V.better(go, wait, 8, 5, true, false) == OLD.better(go, wait, 8, 5))
+  local far = pt(20, true)
+  check("swb on: out of the band no change", V.better(wait, far, 8, 5, true, true) == true)
+  local n, planned, go_n, wait_n, bys, bad = 0, 0, 0, 0, 0, 0
+  for trial = 1, 30 do
+    clear()
+    V.reset()
+    local A = { mx = 128, my = 120, owner = "hostile", health = 15 }
+    local pills = { A }
+    for _ = 1, rnd(3) do
+      local mx, my = 122 + rnd(12), 114 + rnd(12)
+      if math.abs(mx - 128) + math.abs(my - 120) > 2 then
+        pills[#pills + 1] = { mx = mx, my = my, owner = "hostile", health = 15, anger = (rnd(4) - 1) / 3 }
+      end
+    end
+    for _ = 1, rnd(10) do terrain[sq(120 + rnd(16), 112 + rnd(16))] = C.T_BUILDING end
+    terrain[sq(128, 120)] = nil
+    local world = make_world(pills)
+    local inp = make_inp(world, A, 0)
+    inp.start_while_building = true
+    inp.armour = 40
+    local res = V.evaluate_lua(inp)
+    n = n + 1
+    local b = res.best
+    if b and b.safe and #b.plan > 0 then
+      planned = planned + 1
+      if b.start_why == "bystander" then bys = bys + 1
+      else
+        -- the same answer by hand from pt2_start
+        local shells = 0
+        local ox, oy = b.omx, b.omy
+        local exp = PS.exposure_ticks(ox, oy, b.plan)
+        for _, sp in ipairs(b.start_pills or {}) do
+          local X
+          for _, p in ipairs(pills) do if p.mx == sp.mx and p.my == sp.my then X = p end end
+          shells = shells + PS.shells_through(exp, PS.pill_interval(X.anger or 0, inp.anger_bump), sp.cover_now)
+        end
+        if shells ~= b.shells_through or math.abs(exp - b.exposure) > 1e-6
+           or PS.can_start(40, shells, inp.finish_min_armour) ~= b.start_now then bad = bad + 1 end
+        if b.start_now then go_n = go_n + 1 else wait_n = wait_n + 1 end
+        -- no armour: a point with shells through must wait
+        local inp0 = make_inp(world, A, 0)
+        inp0.start_while_building = true
+        inp0.armour = 0
+        V.reset()
+        local b0 = V.evaluate_lua(inp0).best
+        if b0 and b0.safe and (b0.shells_through or 0) > 0 and b0.start_now then bad = bad + 1 end
+      end
+    elseif b and b.safe and b.start_now ~= true then
+      bad = bad + 1
+    end
+  end
+  print(string.format("    %d maps, %d with a plan: start %d, wait %d, bystander %d", n, planned, go_n, wait_n, bys))
+  check("start check = pt2_start by hand, no plan = start", bad == 0, bad)
+end
+
 print(string.format("%d passed, %d failed", pass, fail))
 os.exit(fail == 0 and 0 or 1)

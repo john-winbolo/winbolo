@@ -981,6 +981,21 @@ M.PT2_PREFER_EXISTING_COVER = true
 -- attack_shield.AIM_OFFSETS_TILE_FIRE9 (fire inset, as the corners).
 -- 5 = the old aims. KEEL / MAST: 5.
 M.PT2_AIM_POINTS = 9
+-- PT2_START_WHILE_BUILDING (Nov 23, Andrew's yes, E4): v2 and its caller.
+-- The take may start while the builder still builds the planned walls when
+-- the armour holds the shells that get through (pt2_start.lua):
+--   exposure = builder trip to the first wall + LGM_BUILD_TIME per wall +
+--              the trips between walls (ticks)
+--   interval = the pill's reload at its anger now (100 halved per landed
+--              hit, floor 6), as the bot sees the anger
+--   shells   = max(0, ceil(exposure / interval) - cover_now_shots), summed
+--   start    when armour - shells * 5 >= ATTACK_RUSH_MIN_ARMOUR
+-- A bystander that needs a planned wall: no start. Inside the travel band,
+-- a point that may start ranks above one that must wait (after E1). The
+-- hold point asks again with the live builder (pt2_attack.start_now_check);
+-- on a yes the builder builds the rest while the take goes on.
+-- false = wait for every wall. KEEL / MAST: false.
+M.PT2_START_WHILE_BUILDING = true
 -- Longest chain counted, pills. Proposal, awaiting Andrew's value.
 M.PT2_MAX_CHAIN = 3
 -- Ring step around the target, degrees. Andrew approved 1 for HELM (Nov 19):
@@ -8297,6 +8312,7 @@ M.PRESETS = {
     PT2_LINK_CLEAR_FRONT = false,
     PT2_PREFER_EXISTING_COVER = false,
     PT2_AIM_POINTS = 5,
+    PT2_START_WHILE_BUILDING = false,
     PT2_LEEWAY = false,
     PT2_OWN_PILL_BONUS = false,
     PT2_AIM_NUDGE = false,
@@ -8690,6 +8706,7 @@ M.PRESETS.mast = {
   PT2_LINK_CLEAR_FRONT              = false,  -- 2.2.1 had no pill take v2
   PT2_PREFER_EXISTING_COVER         = false,  -- 2.2.1 had no pill take v2
   PT2_AIM_POINTS                    = 5,      -- 2.2.1 had no pill take v2
+  PT2_START_WHILE_BUILDING          = false,  -- 2.2.1 had no pill take v2
   PT2_LEEWAY                        = false,
   PT2_OWN_PILL_BONUS                = false,
   PT2_TRAVEL_BAND_TICKS             = 0,

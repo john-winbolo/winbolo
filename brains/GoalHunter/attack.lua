@@ -8714,6 +8714,10 @@ local function update_attack_substate_body(goal, state, world, info)
           print2(string.format("PT2_WALLS_UP t=%d walls=%d idx=%d/%d", now, #list, idx, #list))
         end
         idx = #list + 1
+      elseif require("pt2_attack").start_now_check(goal, world, info, now, list) then
+        -- PT2_START_WHILE_BUILDING: the armour holds the shells that get
+        -- through; the builder builds the rest while the take goes on
+        idx = #list + 1
       elseif idx > #list or stalled then
         local abandon, bucket, tries = blocked_line_replan(state, goal, pmx, pmy, now)
         print2(string.format("PT2_WALLS_MISSING t=%d missing=%d/%d stalled=%s replans=%d -> %s",

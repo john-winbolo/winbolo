@@ -506,6 +506,18 @@ function M.set_mode(state, world, info, goal)
     end
   end
 
+  -- Pill take v2 background walls (PT2_START_WHILE_BUILDING and
+  -- PT2_EXTRA_COVER_WALLS): the builder builds them while the take goes
+  -- on, only when no other wall job holds him. The tank never waits.
+  if kind == "attack_pill" and b.mode ~= "wall_shield" and goal._pt2_bg then
+    local w = require("pt2_attack").bg_wall(goal, world)
+    if w then
+      b.mode = "wall_shield"
+      b.wall_target = { mx = w.mx, my = w.my }
+      b.target_pill = { mx = goal.mx, my = goal.my }
+    end
+  end
+
   -- Pill placement: dispatch LGM to place pill during dispatch substate
   if kind == "pill_place" and goal.place_mx then
     local sub = goal.substate or ""
