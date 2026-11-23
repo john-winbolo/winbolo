@@ -264,6 +264,13 @@ void simRulesClassic(SimRules *out) {
      * under the pillbox. This rule has no constant of its own. */
     out->man_dead_pill_terrain_speed = 0;
 
+    /* ---- Builder blast shape ---- */
+    /* LGM_BLAST_SHAPE_HALF_SQUARE (0): an explosion on open ground catches
+     * a builder within half a square (128) of it, a circle, the WinBolo
+     * way. LGM_BLAST_SHAPE_MAC_BOX (1) is Mac Bolo's box, and
+     * LGM_BLAST_SHAPE_MAC_AREA (2) a circle of the box's area. */
+    out->lgm_blast_shape = LGM_BLAST_SHAPE_CLASSIC;
+
 }
 
 /* ---- Against the classic table -------------------------------------------
@@ -653,7 +660,9 @@ static void simRulesWhyFloat(char *why, size_t whyLen, const char *field,
     /* Tank hit mines */                                                    \
     X(tank_hit_sets_off_mines,   INT,    0,      1)                          \
     /* Dead pillbox builder speed */                                        \
-    X(man_dead_pill_terrain_speed, INT,  0,      1)
+    X(man_dead_pill_terrain_speed, INT,  0,      1)                         \
+    /* Builder blast shape: one of the three LGM_BLAST_SHAPE_* values. */     \
+    X(lgm_blast_shape,           INT,    0,      2)
 
 /* The rules a single other rule also caps, as the pairs below hold them.
  * Only a direct field against other_field test is here: where a ceiling is
