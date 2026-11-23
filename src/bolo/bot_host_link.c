@@ -1829,34 +1829,60 @@ void botHostSyncWatchStart(BotHostSyncWatch *w, uint32_t gen, uint32_t now) {
     w->progressTick = now;
     w->lastDone = 0;
     w->reported = false;
+    /* Paused: the new clocks stand at the pause until it ends. */
+    if (w->held) w->holdTick = now;
 }
 
-void botHostSyncWatchHold(BotHostSyncWatch *w, uint32_t done, uint32_t now) {
-    if (w == NULL) return;
-    w->startTick = now;
-    w->progressTick = now;
-    w->lastDone = done;
+void botHostSyncWatchHold(BotHostSyncWatch *w, uint32_t now) {
+    if (w == NULL || w->held) return;
+    w->held = true;
+    w->holdTick = now;
+}
+
+void botHostSyncWatchResume(BotHostSyncWatch *w, uint32_t now) {
+    uint32_t paused;
+    if (w == NULL || !w->held) return;
+    paused = now - w->holdTick;
+    w->startTick += paused;
+    w->progressTick += paused;
+    w->held = false;
+}
+
+/* The tick that progress at now counts as: the pause's tick while paused,
+ * so the clocks never stand past it. */
+static uint32_t botHostSyncWatchAt(const BotHostSyncWatch *w, uint32_t now) {
+    return w->held ? w->holdTick : now;
 }
 
 void botHostSyncWatchReport(BotHostSyncWatch *w, uint32_t gen, uint32_t done,
                             uint32_t now) {
     if (w == NULL) return;
-    if (gen != w->gen) botHostSyncWatchStart(w, gen, now);
+    /* Only the server starts a generation's wait (botHostSyncWatchStart);
+     * a report cannot start the 60 s clock again. */
+    if (gen != w->gen) return;
     if (!w->reported) {
         /* The first report: the stall clock starts here. */
         w->reported = true;
-        w->progressTick = now;
+        w->progressTick = botHostSyncWatchAt(w, now);
     } else if (done > w->lastDone) {
-        w->progressTick = now;
+        w->progressTick = botHostSyncWatchAt(w, now);
     }
     /* A download that starts again from 0 is no progress, and the next
      * bytes after it are. */
     w->lastDone = done;
 }
 
+void botHostSyncWatchAcked(BotHostSyncWatch *w, uint32_t acked,
+                           uint32_t now) {
+    if (w == NULL || acked == w->lastAcked) return;
+    w->lastAcked = acked;
+    w->progressTick = botHostSyncWatchAt(w, now);
+}
+
 BotHostSyncWait botHostSyncWatchCheck(const BotHostSyncWatch *w,
                                       uint32_t now) {
     if (w == NULL) return BOT_HOST_SYNC_WAIT_ON;
+    now = botHostSyncWatchAt(w, now);
     if (now - w->startTick > BOT_HOST_SYNC_LIMIT_TICKS) {
         return BOT_HOST_SYNC_WAIT_LATE;
     }

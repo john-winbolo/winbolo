@@ -986,6 +986,9 @@ int run_bot_host_sync_no_bots(void);
 int run_bot_host_sync_zero_slots(void);
 int run_bot_host_sync_stall(void);
 int run_bot_host_sync_new_gen(void);
+int run_bot_host_sync_packed_big_file(void);
+int run_bot_host_sync_slots_flap(void);
+int run_bot_host_sync_server_step(void);
 /* The overrun check of the bot placement, the free CPU percent and the
  * log_BotHostData payload (test_bot_host_overrun.c). */
 int run_bot_host_overrun_window_rate(void);

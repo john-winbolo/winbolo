@@ -954,6 +954,16 @@ bool serverBotHostSendEvent(int h, const ControlEvent *evt);
 /* The wide bulk receive ring of Bot Host h, as an UPLOAD's a field:
  * (segment size << 20) | window, or 0 when h has the built-in ring. */
 uint32_t serverBotHostBulkWide(int h);
+/* One tick of the lobby's wait for Bot Host h's brain files at
+ * udpServer.tickCount. needed: the game has a bot and h offers a slot
+ * (botHostSyncNeeded). skipsGame: h sits out this game. The host's bulk
+ * acks count as progress; while not needed the clocks pause. A host past
+ * a limit is marked late (syncLate, skipGame) and the reason is returned;
+ * the caller sets skipUntilStarts. */
+BotHostSyncWait serverBotHostSyncStep(int h, bool needed, bool skipsGame);
+/* The BOT_HOST_SYNC_ROW_* state of host h's lobby row, with needed and
+ * skipsGame as for serverBotHostSyncStep. */
+int serverBotHostSyncRow(int h, bool needed, bool skipsGame);
 
 /* Bot Host brain recordings (udp_server_botrec.c). */
 /* CTRL_BOT_HOST_REC from host h. */

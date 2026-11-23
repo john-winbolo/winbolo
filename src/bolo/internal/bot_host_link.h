@@ -854,9 +854,11 @@ bool botHostOverWarnStep(BotHostOverWarn *w, int serverBots, int serverSlots,
  * lobby stops waiting for it, when either limit is past:
  *   BOT_HOST_SYNC_LIMIT_TICKS: 60 s at 50 ticks a second since the wait
  *     began.
- *   BOT_HOST_SYNC_STALL_TICKS: 10 s in which the bytes the host has
- *     downloaded did not go up.
- * A late host takes no bots for that game. */
+ *   BOT_HOST_SYNC_STALL_TICKS: 10 s with no progress: the bytes the host
+ *     reports did not go up, and the host acked no new bytes of the bulk
+ *     channel.
+ * Time while nothing needs the files (botHostSyncWatchHold) does not
+ * count to either limit. A late host takes no bots for that game. */
 #define BOT_HOST_SYNC_LIMIT_TICKS 3000
 #define BOT_HOST_SYNC_STALL_TICKS 500
 
@@ -866,17 +868,21 @@ bool botHostOverWarnStep(BotHostOverWarn *w, int serverBots, int serverSlots,
 bool botHostSyncNeeded(int bots, int slots);
 
 /* The clocks of one host's wait. gen: the manifest generation watched.
- * startTick: the wait began (the list went out, the host joined, or the
- * files were not needed until then). progressTick: the downloaded bytes
- * last went up, or startTick. lastDone: those bytes at the last report.
- * reported: the host reported on gen. Only then does its row show
- * "syncing" and hold Ready, so only then can it stall. */
+ * startTick: the wait began (the list went out or the host joined),
+ * moved on by each pause. progressTick: the last progress, or startTick.
+ * lastDone: the downloaded bytes at the last report. lastAcked: the bulk
+ * channel's acked sequence at the last look. reported: the host reported
+ * on gen. Only then does its row show "syncing" and hold Ready, so only
+ * then can it stall. held: the clocks are paused since holdTick. */
 typedef struct {
     uint32_t gen;
     uint32_t startTick;
     uint32_t progressTick;
     uint32_t lastDone;
+    uint32_t lastAcked;
     bool     reported;
+    bool     held;
+    uint32_t holdTick;
 } BotHostSyncWatch;
 
 typedef enum {
@@ -886,20 +892,29 @@ typedef enum {
 } BotHostSyncWait;
 
 /* The wait on generation gen begins at now: a new manifest went out, or
- * the host joined. No report on it yet. */
+ * the host joined. No report on it yet. A pause goes on. */
 void botHostSyncWatchStart(BotHostSyncWatch *w, uint32_t gen, uint32_t now);
 /* Nothing waits for the files now (botHostSyncNeeded is false): both
- * clocks start again at now, with done bytes downloaded so far, so the
- * limits count from when the files are needed. */
-void botHostSyncWatchHold(BotHostSyncWatch *w, uint32_t done, uint32_t now);
-/* The host reports done bytes of generation gen at now. Another generation
- * than the one watched starts the wait again. done above the last report
- * is progress: the stall clock starts again. */
+ * clocks pause at now (the first hold of a run of them). The time before
+ * the pause still counts; the time in it does not. */
+void botHostSyncWatchHold(BotHostSyncWatch *w, uint32_t now);
+/* The files are needed again at now: the clocks go on from where the
+ * pause stopped them. Nothing when not paused. */
+void botHostSyncWatchResume(BotHostSyncWatch *w, uint32_t now);
+/* The host reports done bytes of generation gen at now. A report on
+ * another generation than the one watched is ignored. done above the last
+ * report is progress: the stall clock starts again. */
 void botHostSyncWatchReport(BotHostSyncWatch *w, uint32_t gen, uint32_t done,
                             uint32_t now);
-/* The wait at now: LATE past the time limit, else STALLED once the host
- * reported and then made no progress for BOT_HOST_SYNC_STALL_TICKS, else
- * ON. */
+/* The host's acks on the bulk channel at now: acked is the channel's
+ * acked sequence (the host got every segment before it). A change is
+ * progress: the host gets bytes, even when a large file keeps its
+ * reported done flat (a packed file counts only when it is whole). */
+void botHostSyncWatchAcked(BotHostSyncWatch *w, uint32_t acked,
+                           uint32_t now);
+/* The wait at now (at the pause, when paused): LATE past the time limit,
+ * else STALLED once the host reported and then made no progress for
+ * BOT_HOST_SYNC_STALL_TICKS, else ON. */
 BotHostSyncWait botHostSyncWatchCheck(const BotHostSyncWatch *w,
                                       uint32_t now);
 

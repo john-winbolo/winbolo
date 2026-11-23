@@ -6416,6 +6416,9 @@ set(_unit_test_names
     bot_host_sync_zero_slots
     bot_host_sync_stall
     bot_host_sync_new_gen
+    bot_host_sync_packed_big_file
+    bot_host_sync_slots_flap
+    bot_host_sync_server_step
     bot_host_place_keep_scaled_wait
     bot_host_place_keep_step_min_old
     bot_host_place_keep_free_batch

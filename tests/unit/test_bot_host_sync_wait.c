@@ -11,14 +11,26 @@
  *      files. Its row is not "syncing", so Ready never waits for it.
  *   2. bot_host_sync_zero_slots: a host that offers 0 slots never needs
  *      the files and never holds Ready. While nothing needs them its
- *      clocks do not run: the limits count from when they are needed.
+ *      clocks pause: that time does not count to the limits.
  *   3. bot_host_sync_stall: a host whose downloaded bytes do not go up for
  *      BOT_HOST_SYNC_STALL_TICKS is late at that tick, and its row stops
  *      holding Ready. A host whose bytes go up keeps syncing until the
  *      60 s limit. A host that has not reported yet does not stall.
  *   4. bot_host_sync_new_gen: a new manifest generation starts the stall
- *      clock again. A host that is late for this game stays late after a
- *      new generation, so Ready does not wait for it again.
+ *      clock again, and a report on another generation is ignored. A host
+ *      that is late for this game stays late after a new generation, so
+ *      Ready does not wait for it again.
+ *   5. bot_host_sync_packed_big_file: a large packed file keeps the
+ *      reported bytes flat while its pieces arrive. The host's acks on
+ *      the bulk channel are progress, so it does not stall; when the acks
+ *      stop it does.
+ *   6. bot_host_sync_slots_flap: slots that go to 0 and back pause the
+ *      clocks and do not start them again, so a host cannot hold Ready
+ *      past the limits that way.
+ *   7. bot_host_sync_server_step: the server's tick of the wait
+ *      (serverBotHostSyncStep) and its row (serverBotHostSyncRow): the
+ *      pause while not needed, no wait for a host that sits out the game,
+ *      and the late mark on the row.
  */
 
 #include <stdbool.h>
@@ -28,9 +40,11 @@
 
 #include <SDL3/SDL.h>
 
+#include "global.h"
 #include "bot_host_link.h"
 #include "client_sim.h"
 #include "control_event.h"
+#include "transport_udp_server_internal.h" /* udpServer, serverBotHostSync* */
 #include "test_harness.h"
 
 /* Host row idx in the client's lobby with the given sync state, then
@@ -148,10 +162,11 @@ int run_bot_host_sync_zero_slots(void) {
     memset(&w, 0, sizeof(w));
     botHostSyncWatchStart(&w, 7, 1000);
     botHostSyncWatchReport(&w, 7, 0, 1010);
-    for (t = 1010; t <= 1010 + 30000; t++) botHostSyncWatchHold(&w, 0, t);
+    for (t = 1010; t <= 1010 + 30000; t++) botHostSyncWatchHold(&w, t);
     UT_ASSERT(botHostSyncWatchCheck(&w, 31010) == BOT_HOST_SYNC_WAIT_ON);
-    /* The player sets Max slots 2 at tick 31010: the clocks count from
-     * there, so the stall comes 10 s later and not at once. */
+    /* The player sets Max slots 2 at tick 31010: the clocks go on from
+     * the pause, so the stall comes 10 s later and not at once. */
+    botHostSyncWatchResume(&w, 31010);
     UT_ASSERT(botHostSyncWatchCheck(&w, 31010 + BOT_HOST_SYNC_STALL_TICKS - 1)
               == BOT_HOST_SYNC_WAIT_ON);
     UT_ASSERT(botHostSyncWatchCheck(&w, 31010 + BOT_HOST_SYNC_STALL_TICKS)
@@ -179,6 +194,9 @@ int run_bot_host_sync_stall(void) {
     UT_ASSERT(BOT_HOST_SYNC_STALL_TICKS == 500);
     UT_ASSERT(BOT_HOST_SYNC_LIMIT_TICKS == 3000);
 
+    memset(&stuck, 0, sizeof(stuck));
+    memset(&moving, 0, sizeof(moving));
+    memset(&silent, 0, sizeof(silent));
     botHostSyncWatchStart(&stuck, 3, t0);
     botHostSyncWatchStart(&moving, 3, t0);
     botHostSyncWatchStart(&silent, 3, t0);
@@ -228,6 +246,7 @@ int run_bot_host_sync_stall(void) {
      * it are. */
     {
         BotHostSyncWatch w;
+        memset(&w, 0, sizeof(w));
         botHostSyncWatchStart(&w, 4, 100);
         botHostSyncWatchReport(&w, 4, 8000, 110);
         botHostSyncWatchReport(&w, 4, 0, 400);
@@ -277,6 +296,7 @@ int run_bot_host_sync_new_gen(void) {
     const uint32_t t0 = 2000;
     uint32_t t1;
 
+    memset(&w, 0, sizeof(w));
     botHostSyncWatchStart(&w, 5, t0);
     botHostSyncWatchReport(&w, 5, 0, t0 + 10);
     /* 400 ticks with no progress, then the brain files change. */
@@ -302,14 +322,23 @@ int run_bot_host_sync_new_gen(void) {
     UT_ASSERT(botHostSyncWatchCheck(&w, t1 + BOT_HOST_SYNC_LIMIT_TICKS + 1)
               == BOT_HOST_SYNC_WAIT_LATE);
 
-    /* A report on a generation the watch does not know starts it too. */
+    /* A report on a generation the watch does not know is ignored: it
+     * does not start the clocks again and is no progress. */
     botHostSyncWatchStart(&w, 6, 100);
     botHostSyncWatchReport(&w, 6, 0, 110);
-    botHostSyncWatchReport(&w, 7, 0, 590);
-    UT_ASSERT(w.gen == 7 && w.reported && w.startTick == 590);
-    UT_ASSERT(botHostSyncWatchCheck(&w, 610) == BOT_HOST_SYNC_WAIT_ON);
-    UT_ASSERT(botHostSyncWatchCheck(&w, 590 + BOT_HOST_SYNC_STALL_TICKS)
+    botHostSyncWatchReport(&w, 7, 9000, 590);
+    UT_ASSERT(w.gen == 6 && w.reported && w.startTick == 100);
+    UT_ASSERT(w.lastDone == 0 && w.progressTick == 110);
+    UT_ASSERT(botHostSyncWatchCheck(&w, 609) == BOT_HOST_SYNC_WAIT_ON);
+    UT_ASSERT(botHostSyncWatchCheck(&w, 110 + BOT_HOST_SYNC_STALL_TICKS)
               == BOT_HOST_SYNC_WAIT_STALLED);
+    /* A report on another generation before any report on this one does
+     * not count as the first report either. */
+    botHostSyncWatchStart(&w, 6, 100);
+    botHostSyncWatchReport(&w, 5, 0, 110);
+    UT_ASSERT(!w.reported);
+    UT_ASSERT(botHostSyncWatchCheck(&w, 110 + BOT_HOST_SYNC_STALL_TICKS)
+              == BOT_HOST_SYNC_WAIT_ON);
 
     /* A host late for this game, then a new generation: the server keeps
      * it out of the game (late), so its row does not go back to
@@ -322,5 +351,272 @@ int run_bot_host_sync_new_gen(void) {
     /* It finishes the new files: ready (it still sits out the game). */
     in.synced = true;
     UT_ASSERT(botHostSyncRowState(&in) == BOT_HOST_SYNC_READY);
+    return 0;
+}
+
+/* ================================================================
+ * 5. A large packed file: the reported bytes stay flat
+ * ================================================================ */
+int run_bot_host_sync_packed_big_file(void) {
+    BotHostSyncWatch w, noAcks;
+    const uint32_t t0 = 8000;
+    uint32_t t, acked = 0, lateAt = 0;
+    const uint32_t done = 40000;   /* the small files before the big one */
+
+    /* shield_stamp_cache.bin: about 1.1 MB packed. At about 30 KB/s for
+     * this host it takes about 37 s; the host reports each piece of 128
+     * KiB (about every 4.4 s) with the same done, since a packed file
+     * counts only when it is whole. Its acks go up each tick a segment
+     * arrives. */
+    memset(&w, 0, sizeof(w));
+    memset(&noAcks, 0, sizeof(noAcks));
+    botHostSyncWatchStart(&w, 9, t0);
+    botHostSyncWatchStart(&noAcks, 9, t0);
+    botHostSyncWatchReport(&w, 9, done, t0 + 20);
+    botHostSyncWatchReport(&noAcks, 9, done, t0 + 20);
+    for (t = t0 + 21; t <= t0 + 20 + 1850; t++) {
+        if (t % 2 == 0) acked++;   /* one 640-byte segment per 2 ticks */
+        botHostSyncWatchAcked(&w, acked, t);
+        if ((t - t0) % 220 == 0) {
+            botHostSyncWatchReport(&w, 9, done, t);
+            botHostSyncWatchReport(&noAcks, 9, done, t);
+        }
+        UT_ASSERT_MSG(botHostSyncWatchCheck(&w, t) == BOT_HOST_SYNC_WAIT_ON,
+                      "a moving packed file stalled at +%u",
+                      (unsigned)(t - t0));
+        if (lateAt == 0 && botHostSyncWatchCheck(&noAcks, t) ==
+                               BOT_HOST_SYNC_WAIT_STALLED) {
+            lateAt = t;
+        }
+    }
+    /* With the same reports and no acks the host stalls at 10 s. */
+    UT_ASSERT_MSG(lateAt == t0 + 20 + BOT_HOST_SYNC_STALL_TICKS,
+                  "no acks: late at %u", (unsigned)lateAt);
+    printf("  packed file, flat done, acks moving: no stall for %u ticks\n",
+           1850u);
+
+    /* The acks stop (the link died): the stall comes 10 s after the
+     * last one, though the server may still send. */
+    {
+        uint32_t last = t - 1;
+        for (; t < last + BOT_HOST_SYNC_STALL_TICKS; t++) {
+            botHostSyncWatchAcked(&w, acked, t);
+            UT_ASSERT(botHostSyncWatchCheck(&w, t) == BOT_HOST_SYNC_WAIT_ON);
+        }
+        botHostSyncWatchAcked(&w, acked, t);
+        UT_ASSERT_MSG(botHostSyncWatchCheck(&w, last + BOT_HOST_SYNC_STALL_TICKS)
+                      == BOT_HOST_SYNC_WAIT_STALLED, "no stall after acks stop");
+    }
+
+    /* The acks do not move the 60 s limit. */
+    botHostSyncWatchStart(&w, 9, t0);
+    botHostSyncWatchReport(&w, 9, done, t0 + 20);
+    for (t = t0 + 21, acked = 0; t <= t0 + BOT_HOST_SYNC_LIMIT_TICKS; t++) {
+        botHostSyncWatchAcked(&w, ++acked, t);
+        UT_ASSERT(botHostSyncWatchCheck(&w, t) == BOT_HOST_SYNC_WAIT_ON);
+    }
+    botHostSyncWatchAcked(&w, ++acked, t);
+    UT_ASSERT(botHostSyncWatchCheck(&w, t) == BOT_HOST_SYNC_WAIT_LATE);
+    return 0;
+}
+
+/* ================================================================
+ * 6. Slots that go to 0 and back
+ * ================================================================ */
+int run_bot_host_sync_slots_flap(void) {
+    BotHostSyncWatch stuck, moving;
+    const uint32_t t0 = 3000;
+    uint32_t t, needed = 0, stuckAt = 0, lateAt = 0, done = 0;
+
+    /* The host offers 0 slots for one tick each 9 s (450 ticks). Before,
+     * each such tick started both clocks again, so a host stuck at 0%
+     * held Ready with no end. */
+    memset(&stuck, 0, sizeof(stuck));
+    memset(&moving, 0, sizeof(moving));
+    botHostSyncWatchStart(&stuck, 2, t0);
+    botHostSyncWatchStart(&moving, 2, t0);
+    botHostSyncWatchReport(&stuck, 2, 0, t0 + 10);
+    botHostSyncWatchReport(&moving, 2, 0, t0 + 10);
+    for (t = t0 + 11; t <= t0 + 20000; t++) {
+        bool zeroSlots = (t - t0) % 450 == 0;
+        if ((t - t0) % 100 == 0) {
+            done += 1000;
+            botHostSyncWatchReport(&moving, 2, done, t);
+        }
+        if (zeroSlots) {
+            botHostSyncWatchHold(&stuck, t);
+            botHostSyncWatchHold(&moving, t);
+            continue;
+        }
+        botHostSyncWatchResume(&stuck, t);
+        botHostSyncWatchResume(&moving, t);
+        needed++;
+        if (stuckAt == 0 &&
+            botHostSyncWatchCheck(&stuck, t) == BOT_HOST_SYNC_WAIT_STALLED) {
+            stuckAt = t;
+        }
+        if (lateAt == 0 &&
+            botHostSyncWatchCheck(&moving, t) == BOT_HOST_SYNC_WAIT_LATE) {
+            lateAt = t;
+        }
+    }
+    printf("  slots flap: stuck host stalls at +%u, moving host late at "
+           "+%u\n", (unsigned)(stuckAt - t0), (unsigned)(lateAt - t0));
+    /* The stuck host stalls after 500 needed ticks from its report: the
+     * one paused tick in that run adds one. */
+    UT_ASSERT_MSG(stuckAt != 0, "the stuck host never stalled");
+    UT_ASSERT_MSG(stuckAt == t0 + 10 + BOT_HOST_SYNC_STALL_TICKS + 1,
+                  "stuck host late at +%u", (unsigned)(stuckAt - t0));
+    /* The moving host is late after 60 s of needed time: the paused
+     * ticks (one each 450) are not counted, and nothing else is added. */
+    UT_ASSERT_MSG(lateAt != 0, "the moving host never got late");
+    {
+        uint32_t paused = (lateAt - t0) / 450;
+        UT_ASSERT_MSG(lateAt == t0 + BOT_HOST_SYNC_LIMIT_TICKS + 1 + paused,
+                      "moving host late at +%u (paused %u)",
+                      (unsigned)(lateAt - t0), (unsigned)paused);
+    }
+
+    /* Time before a pause still counts: 400 ticks of no progress, a long
+     * pause, then 100 more ticks stall it. */
+    botHostSyncWatchStart(&stuck, 2, t0);
+    botHostSyncWatchReport(&stuck, 2, 0, t0);
+    for (t = t0 + 400; t < t0 + 400 + 5000; t++) botHostSyncWatchHold(&stuck, t);
+    UT_ASSERT(botHostSyncWatchCheck(&stuck, t) == BOT_HOST_SYNC_WAIT_ON);
+    botHostSyncWatchResume(&stuck, t);
+    UT_ASSERT(botHostSyncWatchCheck(&stuck, t + 99) == BOT_HOST_SYNC_WAIT_ON);
+    UT_ASSERT(botHostSyncWatchCheck(&stuck, t + 100) ==
+              BOT_HOST_SYNC_WAIT_STALLED);
+
+    /* Progress while paused counts at the pause, so the clocks never
+     * stand past now when the pause ends. */
+    botHostSyncWatchStart(&stuck, 2, t0);
+    botHostSyncWatchReport(&stuck, 2, 0, t0);
+    botHostSyncWatchHold(&stuck, t0 + 300);
+    botHostSyncWatchReport(&stuck, 2, 5000, t0 + 2000);
+    botHostSyncWatchAcked(&stuck, 77, t0 + 2500);
+    botHostSyncWatchResume(&stuck, t0 + 4000);
+    UT_ASSERT(stuck.progressTick == t0 + 4000);
+    UT_ASSERT(stuck.startTick == t0 + 3700);
+    UT_ASSERT(botHostSyncWatchCheck(&stuck, t0 + 4000 +
+                                    BOT_HOST_SYNC_STALL_TICKS - 1) ==
+              BOT_HOST_SYNC_WAIT_ON);
+    /* A new generation while paused starts its clocks at the pause's end. */
+    botHostSyncWatchHold(&stuck, t0 + 5000);
+    botHostSyncWatchStart(&stuck, 3, t0 + 6000);
+    botHostSyncWatchResume(&stuck, t0 + 9000);
+    UT_ASSERT(stuck.startTick == t0 + 9000);
+    UT_ASSERT(botHostSyncWatchCheck(&stuck, t0 + 9000 +
+                                    BOT_HOST_SYNC_LIMIT_TICKS) ==
+              BOT_HOST_SYNC_WAIT_ON);
+    return 0;
+}
+
+/* ================================================================
+ * 7. The server's tick of the wait and its row
+ * ================================================================ */
+int run_bot_host_sync_server_step(void) {
+    static BotHostConn saved;
+    BotHostConn *hc = &udpServer.botHosts[0];
+    const uint32_t savedTick = udpServer.tickCount;
+    const uint32_t savedGen = udpServer.brainManifestGen;
+    const uint32_t t0 = 60000;
+    uint32_t t;
+    int rowNotNeeded, rowSkips, rowSyncing, rowLate, rowSkipsLate;
+    BotHostSyncWait stepSkips = BOT_HOST_SYNC_WAIT_ON, stepPaused;
+    BotHostSyncWait stepAcked = BOT_HOST_SYNC_WAIT_ON, stepStall;
+    bool markedLate, markedSkip, outLate, outSkip;
+    uint32_t stallAfter = 0;
+
+    saved = *hc;
+    memset(hc, 0, sizeof(*hc));
+    SDL_strlcpy(hc->name, "ut652host", sizeof(hc->name));
+    hc->connected = true;
+    udpServer.brainManifestGen = 12;
+    udpServer.tickCount = t0;
+    botHostSyncWatchStart(&hc->syncWatch, 12, t0);
+    hc->syncGen = 12;
+    hc->syncDone = 1000;
+    hc->syncTotal = 2000000;
+    botHostSyncWatchReport(&hc->syncWatch, 12, hc->syncDone, t0);
+
+    /* Not needed (no bot, or 0 slots): the row waits, Ready is free, and
+     * ten minutes of it are no stall. */
+    rowNotNeeded = serverBotHostSyncRow(0, false, false);
+    for (t = t0; t < t0 + 30000; t++) {
+        udpServer.tickCount = t;
+        (void)serverBotHostSyncStep(0, false, false);
+    }
+    stepPaused = serverBotHostSyncStep(0, true, false);
+    rowSyncing = serverBotHostSyncRow(0, true, false);
+
+    /* Sits out this game (botHostSkipsGame): never checked, never marked,
+     * however long; its row shows late. */
+    for (t = udpServer.tickCount; t < t0 + 30000 + 4000; t++) {
+        BotHostSyncWait w;
+        udpServer.tickCount = t;
+        w = serverBotHostSyncStep(0, true, true);
+        if (w != BOT_HOST_SYNC_WAIT_ON) stepSkips = w;
+    }
+    rowSkips = serverBotHostSyncRow(0, true, true);
+    outLate = hc->syncLate;
+    outSkip = hc->skipGame;
+
+    /* Needed again with the bulk acks moving and done flat: no stall. */
+    t = udpServer.tickCount;
+    botHostSyncWatchStart(&hc->syncWatch, 12, t);
+    botHostSyncWatchReport(&hc->syncWatch, 12, hc->syncDone, t);
+    {
+        const uint32_t end = t + 1500;
+        for (; t < end; t++) {
+            BotHostSyncWait w;
+            hc->channelMux.ch[CHANNEL_BULK].ackedSeq++;
+            udpServer.tickCount = t;
+            w = serverBotHostSyncStep(0, true, false);
+            if (w != BOT_HOST_SYNC_WAIT_ON) stepAcked = w;
+        }
+    }
+    /* The acks stop: STALLED 10 s after the last one, and the host is
+     * marked late. */
+    stepStall = BOT_HOST_SYNC_WAIT_ON;
+    {
+        const uint32_t lastAck = t - 1;
+        for (; t <= lastAck + BOT_HOST_SYNC_STALL_TICKS; t++) {
+            udpServer.tickCount = t;
+            stepStall = serverBotHostSyncStep(0, true, false);
+            if (stepStall != BOT_HOST_SYNC_WAIT_ON) break;
+        }
+        stallAfter = t - lastAck;
+    }
+    markedLate = hc->syncLate;
+    markedSkip = hc->skipGame;
+    rowLate = serverBotHostSyncRow(0, true, false);
+    /* A late host's row stays late with the files not needed. */
+    rowSkipsLate = serverBotHostSyncRow(0, false, false);
+
+    *hc = saved;
+    udpServer.tickCount = savedTick;
+    udpServer.brainManifestGen = savedGen;
+
+    UT_ASSERT_MSG(rowNotNeeded == BOT_HOST_SYNC_ROW_WAITING, "row %d",
+                  rowNotNeeded);
+    UT_ASSERT_MSG(stepPaused == BOT_HOST_SYNC_WAIT_ON, "after pause %d",
+                  (int)stepPaused);
+    UT_ASSERT_MSG(rowSyncing == BOT_HOST_SYNC_ROW_SYNCING, "row %d",
+                  rowSyncing);
+    UT_ASSERT_MSG(stepSkips == BOT_HOST_SYNC_WAIT_ON, "skips %d",
+                  (int)stepSkips);
+    UT_ASSERT(!outLate && !outSkip);
+    UT_ASSERT_MSG(rowSkips == BOT_HOST_SYNC_ROW_LATE, "row %d", rowSkips);
+    UT_ASSERT_MSG(stepAcked == BOT_HOST_SYNC_WAIT_ON, "acked %d",
+                  (int)stepAcked);
+    UT_ASSERT_MSG(stepStall == BOT_HOST_SYNC_WAIT_STALLED, "stall %d",
+                  (int)stepStall);
+    UT_ASSERT_MSG(stallAfter == BOT_HOST_SYNC_STALL_TICKS,
+                  "stalled %u ticks after the last ack", (unsigned)stallAfter);
+    UT_ASSERT(markedLate && markedSkip);
+    UT_ASSERT_MSG(rowLate == BOT_HOST_SYNC_ROW_LATE, "row %d", rowLate);
+    UT_ASSERT_MSG(rowSkipsLate == BOT_HOST_SYNC_ROW_LATE, "row %d",
+                  rowSkipsLate);
     return 0;
 }
