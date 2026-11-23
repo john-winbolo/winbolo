@@ -244,11 +244,27 @@ do
     check("no-wall ray reaches the tank (lit)", r.hit == "tank" and r.cover == 0, r.hit)
   end
   PV.draw(goal)
-  for _, id in ipairs(PV.LAYERS) do
-    check("layer " .. id .. " drew shapes", (shapes[id] or 0) > 0, shapes[id])
+  -- the opt/ copy has its draw calls stripped (lua_strip "viz."): the
+  -- shape checks only run where pt2_viz.lua still draws
+  local stripped = false
+  do
+    local src = debug.getinfo(PV.draw, "S").source:gsub("^@", "")
+    local f = io.open(src, "rb")
+    if f then
+      local t = f:read("*a")
+      f:close()
+      stripped = not t:find("viz.line(", 1, true)
+    end
+  end
+  if stripped then
+    print("  skip layer shape checks: the draw calls are stripped in this copy")
+  else
+    for _, id in ipairs(PV.LAYERS) do
+      check("layer " .. id .. " drew shapes", (shapes[id] or 0) > 0, shapes[id])
+    end
+    check("candidate detail entries", #details > 100, #details)
   end
   check("no shape tagged with another layer", shapes.other == nil, shapes.other)
-  check("candidate detail entries", #details > 100, #details)
   -- another pill: nothing drawn
   shapes = {}
   goal.mx = PMX + 5
