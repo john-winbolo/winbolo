@@ -465,13 +465,11 @@ static DWORD g_dwFrameTotal = 0;
 static TTF_Font    *gFontMsg  = NULL;
 static TTF_Font    *gFontKD   = NULL;
 static TTF_Font    *gFontTiny  = NULL;  /* tiny font for pill/base status panel labels */
-static TTF_Font    *gFontLabel = NULL;  /* larger font for pill/base labels in main view */
 /* SarasaMonoK chained via TTF_AddFallbackFont so hangul renders when
  * the primary is J/SC/TC. Owned here; closed alongside the primaries. */
 static TTF_Font    *gFallbackFontMsg   = NULL;
 static TTF_Font    *gFallbackFontKD    = NULL;
 static TTF_Font    *gFallbackFontTiny  = NULL;
-static TTF_Font    *gFallbackFontLabel = NULL;
 
 /* Last scroll offsets used when rendering tank labels (set each frame).
    Tank-label cache (gLabelTex/gLabelStr) moved to sdl3draw_status.c. */
@@ -1784,7 +1782,6 @@ static void openInGameFonts(void) {
   gFontMsg   = TTF_OpenFont(sarasaPath, 13 * gZoomFactor);
   gFontKD    = TTF_OpenFont(sarasaPath, 13 * gZoomFactor);
   gFontTiny  = TTF_OpenFont(sarasaPath,  8 * gZoomFactor);
-  gFontLabel = TTF_OpenFont(sarasaPath, 10 * gZoomFactor);
   if (!gFontMsg) {
     WB_LOG_ERROR(WB_LOG_CAT_ASSET, "openInGameFonts: failed to open primary %s — text will not render",
             sarasaPath);
@@ -1795,11 +1792,9 @@ static void openInGameFonts(void) {
     gFallbackFontMsg   = TTF_OpenFont(sarasaKPath, 13 * gZoomFactor);
     gFallbackFontKD    = TTF_OpenFont(sarasaKPath, 13 * gZoomFactor);
     gFallbackFontTiny  = TTF_OpenFont(sarasaKPath,  8 * gZoomFactor);
-    gFallbackFontLabel = TTF_OpenFont(sarasaKPath, 10 * gZoomFactor);
     if (gFontMsg   && gFallbackFontMsg)   TTF_AddFallbackFont(gFontMsg,   gFallbackFontMsg);
     if (gFontKD    && gFallbackFontKD)    TTF_AddFallbackFont(gFontKD,    gFallbackFontKD);
     if (gFontTiny  && gFallbackFontTiny)  TTF_AddFallbackFont(gFontTiny,  gFallbackFontTiny);
-    if (gFontLabel && gFallbackFontLabel) TTF_AddFallbackFont(gFontLabel, gFallbackFontLabel);
     if (!gFallbackFontMsg) {
       WB_LOG_WARN(WB_LOG_CAT_ASSET, "openInGameFonts: failed to open SlabK fallback %s — hangul will tofu",
               sarasaKPath);
@@ -1812,9 +1807,9 @@ static void openInGameFonts(void) {
   /* Push the new font handles into sdl3draw_status's private copies
      (covers both the initial sdl3DrawSetup path and the
      sdl3DrawAdaptRenderTarget reload path). */
-  sdl3DrawStatusSetFonts(gFontTiny, gFontMsg, gFontKD, gFontLabel,
+  sdl3DrawStatusSetFonts(gFontTiny, gFontMsg, gFontKD,
                          gFallbackFontTiny, gFallbackFontMsg,
-                         gFallbackFontKD, gFallbackFontLabel);
+                         gFallbackFontKD);
 }
 
 /* The touch layout's newswire: the face it is drawn in, opened at the size
@@ -2098,9 +2093,9 @@ bool sdl3DrawSetup(int zoomFactor) {
      sdl3LoadTiles above already pushed fonts and atlas individually;
      Init covers the gRenderer and bar textures and re-asserts the rest. */
   sdl3DrawStatusInit(gRenderer, gTilesTex, gSheetScale, gZoomFactor,
-                     gFontTiny, gFontMsg, gFontKD, gFontLabel,
+                     gFontTiny, gFontMsg, gFontKD,
                      gFallbackFontTiny, gFallbackFontMsg,
-                     gFallbackFontKD, gFallbackFontLabel,
+                     gFallbackFontKD,
                      gTankBarsTex, gBaseBarsTex);
 
   /* Desktop, wasm and the mobile tablets' desktop layout: create a render
@@ -2162,11 +2157,9 @@ void sdl3DrawCleanup(void) {
   closeTabletNewswireFont();
   if (gFontKD)   { TTF_CloseFont(gFontKD);   gFontKD   = NULL; }
   if (gFontTiny)  { TTF_CloseFont(gFontTiny);  gFontTiny  = NULL; }
-  if (gFontLabel) { TTF_CloseFont(gFontLabel); gFontLabel = NULL; }
   if (gFallbackFontMsg)   { TTF_CloseFont(gFallbackFontMsg);   gFallbackFontMsg   = NULL; }
   if (gFallbackFontKD)    { TTF_CloseFont(gFallbackFontKD);    gFallbackFontKD    = NULL; }
   if (gFallbackFontTiny)  { TTF_CloseFont(gFallbackFontTiny);  gFallbackFontTiny  = NULL; }
-  if (gFallbackFontLabel) { TTF_CloseFont(gFallbackFontLabel); gFallbackFontLabel = NULL; }
   TTF_Quit();
 
   /* Glyph cache textures must be destroyed before the renderer. */
@@ -2283,11 +2276,9 @@ void sdl3DrawReconfigureZoom(int explicitZoom) {
   closeTabletNewswireFont();
   if (gFontKD)    { TTF_CloseFont(gFontKD);    gFontKD    = NULL; }
   if (gFontTiny)  { TTF_CloseFont(gFontTiny);  gFontTiny  = NULL; }
-  if (gFontLabel) { TTF_CloseFont(gFontLabel); gFontLabel = NULL; }
   if (gFallbackFontMsg)   { TTF_CloseFont(gFallbackFontMsg);   gFallbackFontMsg   = NULL; }
   if (gFallbackFontKD)    { TTF_CloseFont(gFallbackFontKD);    gFallbackFontKD    = NULL; }
   if (gFallbackFontTiny)  { TTF_CloseFont(gFallbackFontTiny);  gFallbackFontTiny  = NULL; }
-  if (gFallbackFontLabel) { TTF_CloseFont(gFallbackFontLabel); gFallbackFontLabel = NULL; }
 
   /* Update zoom factor */
   gZoomFactor = needZoom;
@@ -2301,9 +2292,9 @@ void sdl3DrawReconfigureZoom(int explicitZoom) {
      after Shutdown nulled them out. (gTilesTex is reloaded lazily by
      sdl3LoadTiles, which calls SetAtlas.) */
   sdl3DrawStatusInit(gRenderer, gTilesTex, gSheetScale, gZoomFactor,
-                     gFontTiny, gFontMsg, gFontKD, gFontLabel,
+                     gFontTiny, gFontMsg, gFontKD,
                      gFallbackFontTiny, gFallbackFontMsg,
-                     gFallbackFontKD, gFallbackFontLabel,
+                     gFallbackFontKD,
                      gTankBarsTex, gBaseBarsTex);
 
   /* Tiles will be reloaded lazily by sdl3LoadTiles() at new gZoomFactor */

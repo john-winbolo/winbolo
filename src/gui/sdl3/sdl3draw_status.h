@@ -63,11 +63,9 @@ void sdl3DrawStatusInit(SDL_Renderer *renderer,
                         TTF_Font *fontTiny,
                         TTF_Font *fontMsg,
                         TTF_Font *fontKD,
-                        TTF_Font *fontLabel,
                         TTF_Font *fallbackFontTiny,
                         TTF_Font *fallbackFontMsg,
                         TTF_Font *fallbackFontKD,
-                        TTF_Font *fallbackFontLabel,
                         SDL_Texture *tankBarsTex,
                         SDL_Texture *baseBarsTex);
 
@@ -76,11 +74,10 @@ void sdl3DrawStatusSetZoom(int zoomFactor);
 void sdl3DrawStatusSetAtlas(SDL_Texture *atlas, int sheetScale);
 
 void sdl3DrawStatusSetFonts(TTF_Font *fontTiny, TTF_Font *fontMsg,
-                            TTF_Font *fontKD,   TTF_Font *fontLabel,
+                            TTF_Font *fontKD,
                             TTF_Font *fallbackFontTiny,
                             TTF_Font *fallbackFontMsg,
-                            TTF_Font *fallbackFontKD,
-                            TTF_Font *fallbackFontLabel);
+                            TTF_Font *fallbackFontKD);
 
 void sdl3DrawStatusSetEdgeOffset(int edgeX, int edgeY);
 
@@ -161,12 +158,6 @@ struct TankLabelCache *sdl3DrawGetTankLabelCache(void);
    cache rather than the one above because both are keyed on the player slot
    and the two hold different text for it — see the note by the definition. */
 struct TankLabelCache *sdl3DrawGetPingNameCache(void);
-/* The faces the pill and base numbers are drawn in — the label font for
-   pills, the tiny font for bases — opened at the main window's zoom. The
-   overview reads them through here and scales what they render to its own
-   zoom. */
-TTF_Font *sdl3DrawGetLabelFont(void);
-TTF_Font *sdl3DrawGetTinyFont(void);
 /* When the newswire text last changed (SDL_GetTicks ms), 0 for never since
    the last reset. The full screen map uses it to slide its newswire strip
    on and off; the classic frame ignores it. */
