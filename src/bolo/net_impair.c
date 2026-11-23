@@ -143,6 +143,9 @@ bool netImpairAddrIsLan(uint32_t ipHostOrder) {
     if ((ipHostOrder & 0xFFFF0000u) == 0xC0A80000u) {
         return true;   /* 192.168.0.0/16 */
     }
+    if ((ipHostOrder & 0xFFFF0000u) == 0xA9FE0000u) {
+        return true;   /* 169.254.0.0/16 link-local (a LAN with no DHCP) */
+    }
     return false;
 }
 

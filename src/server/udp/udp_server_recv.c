@@ -172,7 +172,12 @@ bool srvImpairPeer(const NetImpair *ni, const struct sockaddr_in *addr) {
         return false;  /* an internet peer already has its own lag */
     }
 #ifdef BOT_HOST_LINK_H
-    /* Builds with Bot Host support (bot_host_link.h comes in through
+    /* Needs Bot Host support from #652 (client-bot-hosts): bot_host_link.h,
+     * udpServer.botHostAllow and udpServer.botHostAllowCount come with it.
+     * Until that lands this block is not compiled, so a -bothosts address
+     * gets the same lag as any other LAN peer.
+     *
+     * Builds with Bot Host support (bot_host_link.h comes in through
      * transport_udp_server_internal.h) keep the -bothosts list in
      * udpServer.botHostAllow, IPv4 in network order. A listed host is on
      * the LAN, but its bots must not get the extra lag. Any port matches:

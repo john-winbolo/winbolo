@@ -114,6 +114,14 @@ static int lan_addr_test(void) {
     UT_ASSERT(netImpairAddrIsLan(IP4(192, 168, 255, 255)));
     UT_ASSERT(!netImpairAddrIsLan(IP4(192, 169, 0, 1)));
     UT_ASSERT(!netImpairAddrIsLan(IP4(192, 167, 255, 255)));
+    /* 169.254.0.0/16 link-local. */
+    UT_ASSERT(netImpairAddrIsLan(IP4(169, 254, 0, 0)));
+    UT_ASSERT(netImpairAddrIsLan(IP4(169, 254, 255, 255)));
+    UT_ASSERT(!netImpairAddrIsLan(IP4(169, 253, 255, 255)));
+    UT_ASSERT(!netImpairAddrIsLan(IP4(169, 255, 0, 0)));
+    /* Carrier NAT 100.64.0.0/10 is not the LAN. */
+    UT_ASSERT(!netImpairAddrIsLan(IP4(100, 64, 0, 1)));
+    UT_ASSERT(!netImpairAddrIsLan(IP4(100, 127, 255, 255)));
     /* Internet peers. */
     UT_ASSERT(!netImpairAddrIsLan(IP4(1, 1, 1, 1)));
     UT_ASSERT(!netImpairAddrIsLan(IP4(203, 0, 113, 7)));
