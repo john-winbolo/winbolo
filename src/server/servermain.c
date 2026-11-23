@@ -1008,7 +1008,7 @@ void printArgs() {
   fprintf(stderr, "                link-local peers (127/8, 10/8, 172.16/12, 192.168/16,\n");
   fprintf(stderr, "                169.254/16); internet peers pass with no delay or loss.\n");
 #ifdef BOT_HOST_LINK_H
-  /* -bothosts comes with Bot Host support (#652, client-bot-hosts). */
+  /* -bothosts comes with Bot Host support. */
   fprintf(stderr, "                A -bothosts address is never impaired.\n");
 #endif
   fprintf(stderr, "                Combine with -seed for a reproducible impaired run.\n");
