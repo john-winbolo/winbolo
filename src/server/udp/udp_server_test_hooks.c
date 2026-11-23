@@ -32,6 +32,7 @@
 #include "transport_control_codec.h"       /* transportControlCodecBodyDecoder */
 #include "bolo_map.h"                      /* mapSetPos */
 #include "server_sim_internal.h"           /* serverSimShadowApply */
+#include "server_sim_join.h"               /* serverSimRejoinSignedIn */
 #include "../threads.h"                    /* threadsCreate, threadsWaitForMutex,
                                               threadsReleaseMutex */
 
@@ -526,3 +527,25 @@ void transportUdpServerFuzzProcessPacket(ServerSim *sim,
     free(buf);
 }
 #endif /* WB_FUZZ */
+
+bool transportUdpServerLockedRejoinPendingForTest(BYTE playerNum) {
+    if (playerNum >= MAX_TANKS) return false;
+    return udpServer.clients[playerNum].connected &&
+           udpServer.clients[playerNum].lockedRejoinPending;
+}
+
+void transportUdpServerLockedRejoinVerifyForTest(struct ServerSim *sim,
+                                                 BYTE playerNum, bool ok,
+                                                 const char *confirmedName) {
+    if (playerNum >= MAX_TANKS) return;
+    /* The same two steps the re-authentication result takes. */
+    if (udpServerLockedRejoinVerified(sim, playerNum, ok, confirmedName) &&
+        ok) {
+        serverSimRejoinSignedIn(sim, playerNum);
+    }
+}
+
+void transportUdpServerExpireLockedRejoinForTest(BYTE playerNum) {
+    if (playerNum >= MAX_TANKS) return;
+    udpServer.clients[playerNum].lockedRejoinUntilTick = udpServer.tickCount;
+}

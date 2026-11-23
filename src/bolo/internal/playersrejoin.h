@@ -52,6 +52,8 @@ typedef struct {
   PlayerBitMap bases;
   BYTE team;                        /* Team the player was on when leaving, 0 for none */
   bool signedIn;                    /* The player was signed in to WinBolo.net when leaving */
+  uint32_t ipv4;                    /* The player's IPv4 address when leaving, in network
+                                       byte order, 0 when not known. No port. */
   int timeOut;                     /* Time left */
 } playerRejoinInfo;
 
@@ -113,6 +115,32 @@ void playersRejoinUpdate();
 *
 *********************************************************/
 void playersRejoinAddPlayer(char *playerName, PlayerBitMap pills, PlayerBitMap bases, BYTE team, bool signedIn);
+
+/*********************************************************
+*NAME:          playersRejoinSetAddress
+*PURPOSE:
+* Puts the IPv4 address the player had when leaving (network
+* byte order, no port) in the record for that name. Does
+* nothing when there is no record. playersRejoinAddPlayer
+* sets the address to 0, so call this after it.
+*
+*ARGUMENTS:
+*  playerName - The player name
+*  ipv4       - The address, 0 for not known
+*********************************************************/
+void playersRejoinSetAddress(const char *playerName, uint32_t ipv4);
+
+/*********************************************************
+*NAME:          playersRejoinGetAddress
+*PURPOSE:
+* Returns the IPv4 address (network byte order) kept in the
+* record for that name, or 0 when there is no record or no
+* address was kept. Leaves the record in place.
+*
+*ARGUMENTS:
+*  playerName - The player name
+*********************************************************/
+uint32_t playersRejoinGetAddress(const char *playerName);
 
 /*********************************************************
 *NAME:          playersRejoinGetTeam

@@ -65,6 +65,14 @@
  * at all. */
 #define WBN_REAUTH_HOLD_TICKS 1750
 
+/* How long a rejoin let into a locked game waits for WinBolo.net to confirm
+ * the player, counted from the join. The confirm needs the rekey and the
+ * re-authentication that follow the join, which the anonymous PLAYER_JOIN
+ * fallback waits WBN_JOIN_REGISTER_GRACE_TICKS for, and then the verify,
+ * which the reauth hold waits WBN_REAUTH_HOLD_TICKS for. Past both, the
+ * seat is removed with the game-locked reason. 2000 ticks, 40 s @ 50 Hz. */
+#define LOCKED_REJOIN_CONFIRM_TICKS     (WBN_JOIN_REGISTER_GRACE_TICKS + WBN_REAUTH_HOLD_TICKS)
+
 /* Standalone PACKET_CHANNEL frames a downloading client gets per tick while
  * snapshots are gated (no snapshot trailer to carry the bulk stream). One
  * frame carries ~5 segments under the datagram budget, so this clears a full
@@ -595,6 +603,21 @@ void     serverPreemptRename(struct ServerSim *sim, int victimSlot,
                              const char *incomingCountry);
 bool     serverChooseUnverifiedSuffix(const char *baseName, int excludeSlot,
                                       char *out, size_t outLen);
+
+/* A rejoin let into a locked game that waits for WinBolo.net
+ * (UdpServerClient.lockedRejoinPending). udpServerLockedRejoinVerified is
+ * called by the re-authentication result: ok with the name WinBolo.net
+ * confirmed, or a failure. It returns true when the seat stays: it was not
+ * waiting, or WinBolo.net confirmed it as the record's player. It returns
+ * false when the seat is being removed with the game-locked reason; the
+ * caller must then give the seat nothing from the rejoin record.
+ * udpServerLockedRejoinCheckDeadline removes a seat whose confirm has not
+ * come within LOCKED_REJOIN_CONFIRM_TICKS; the timeout sweep calls it.
+ * Removal is deferred to transportUdpServerDrainPendingRemovals, and the
+ * rejoin record stays as it is, for its owner. */
+bool     udpServerLockedRejoinVerified(struct ServerSim *sim, BYTE slot,
+                                       bool ok, const char *confirmedName);
+void     udpServerLockedRejoinCheckDeadline(struct ServerSim *sim, BYTE slot);
 
 /* What a host or a console does to a connected player, as opposed to the
  * per-tick flow: tearing one client down and draining the removals other paths

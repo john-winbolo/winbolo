@@ -426,6 +426,18 @@ static void udpServerStampReauth(ServerSim *sim, const WbnReauthCtx *rc,
             udpServer.clients[slot].claimDesiredName[0] = '\0';
         }
 
+        /* A rejoin let into a locked game stays only when WinBolo.net has
+         * confirmed it as the player the rejoin record is for: the name it
+         * verified under (a web slot's is the name WinBolo.net gave it).
+         * Otherwise the seat is being removed, and gets nothing from the
+         * record. */
+        if (!udpServerLockedRejoinVerified(
+                sim, slot, true,
+                rc->isWeb ? udpServer.clients[slot].wbnWebName
+                          : rc->verifyName)) {
+            return;
+        }
+
         /* The seat's name is now the one WinBolo.net confirmed. A rejoiner
          * under the name of a signed-in leaver gets that player's team,
          * pillboxes and bases back here, not at the join. */
@@ -437,9 +449,13 @@ static void udpServerStampReauth(ServerSim *sim, const WbnReauthCtx *rc,
         WB_LOG_INFO(WB_LOG_CAT_NET,
                     "[WBN] Player %d web slot resolved as guest (anonymous)",
                     (int)slot);
+        /* A guest is not the signed-in player a locked-game rejoin needs. */
+        (void)udpServerLockedRejoinVerified(sim, slot, false, NULL);
     } else {
         WB_LOG_WARN(WB_LOG_CAT_NET,
                     "[WBN] Player %d re-auth failed: %s", (int)slot, errorMsg);
+        /* A locked-game rejoin that WinBolo.net turned down is removed. */
+        (void)udpServerLockedRejoinVerified(sim, slot, false, NULL);
     }
 }
 

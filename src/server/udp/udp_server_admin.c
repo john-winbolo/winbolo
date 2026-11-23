@@ -198,6 +198,11 @@ void serverDisconnectClient(ServerSim *sim, int idx, bool graceful) {
      * clear the flag so the drain can't later tear down a fresh occupant that
      * reused the slot after this teardown frees it. */
     udpServer.pendingSimRemove[idx] = false;
+    /* The address the player has now, which a NAT rebind may have moved
+     * since the join. The rejoin record serverSimRemovePlayer makes next
+     * keeps it, for a rejoin on a locked game. */
+    serverSimSetRejoinAddress(sim, (BYTE)idx,
+                              (uint32_t)udpServer.clients[idx].addr.sin_addr.s_addr);
 
     {
         UdpServerClient *c = &udpServer.clients[idx];
@@ -274,6 +279,8 @@ void serverDisconnectClient(ServerSim *sim, int idx, bool graceful) {
     udpServer.clients[idx].nameStickySuffix = false;
     udpServer.clients[idx].claimPending = false;
     udpServer.clients[idx].claimDesiredName[0] = '\0';
+    udpServer.clients[idx].lockedRejoinPending = false;
+    udpServer.clients[idx].lockedRejoinName[0] = '\0';
     udpServer.clients[idx].inboundCmdSeq = 0;
     /* Slots are recycled: without this a new occupant would inherit the
      * previous player's mutes. */

@@ -1447,6 +1447,7 @@ void serverSimResetGameWorld(ServerSim *sim) {
     memset(sim->rejoinTeam, 0, sizeof(sim->rejoinTeam));
     memset(sim->rejoinAwaitSignIn, 0, sizeof(sim->rejoinAwaitSignIn));
     memset(sim->rejoinJoinTeam, 0, sizeof(sim->rejoinJoinTeam));
+    memset(sim->rejoinProvisional, 0, sizeof(sim->rejoinProvisional));
 
     /* 11. Reset player connection state and per-slot round/world state.
      * Connection identity (name, country, clientType, clientFlags, bot/WBN

@@ -4797,6 +4797,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_interp_jitter_e2e.c
     tests/unit/test_join_version_gate.c
     tests/unit/test_join_ask_rejoin.c
+    tests/unit/test_join_locked_rejoin.c
     tests/unit/test_join_rate_limit.c
     # A password-protected server: the INFO ping flag, the incorrect-password
     # reject's langid at the client, and a join with the right password.
@@ -6816,6 +6817,14 @@ set(_unit_test_names
     join_ask_rejoin_want_rejoin_joins
     join_ask_rejoin_no_record_joins
     join_ask_rejoin_timed_out_joins
+    join_locked_rejoin_address_seats
+    join_locked_rejoin_no_match_rejects
+    join_locked_rejoin_wbn_confirm_keeps
+    join_locked_rejoin_wbn_mismatch_removes
+    join_locked_rejoin_wbn_fail_removes
+    join_locked_rejoin_wbn_timeout_removes
+    join_locked_rejoin_ask_gets_question
+    join_locked_rejoin_unlocked_unchanged
     join_rate_limit
     cookie_handshake
     map_amp_gate

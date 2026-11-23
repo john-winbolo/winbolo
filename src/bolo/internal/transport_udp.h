@@ -580,6 +580,17 @@ typedef struct UdpServerClient {
      * disconnect/slot-reset. */
     bool claimPending;
     char claimDesiredName[PACKET_MAX_PLAYER_NAME];
+    /* Locked-game rejoin bookkeeping: set when this seat was let into a
+     * locked game as a rejoin because the rejoin record is from a player
+     * who was signed in to WinBolo.net and this joiner said it will
+     * authenticate. The seat stays only when WinBolo.net confirms it as
+     * lockedRejoinName before lockedRejoinUntilTick
+     * (udpServerLockedRejoinVerified, udpServerLockedRejoinCheckDeadline);
+     * otherwise it is removed with the game-locked reason. Cleared on
+     * confirm, on removal and on disconnect/slot-reset. */
+    bool     lockedRejoinPending;
+    uint32_t lockedRejoinUntilTick;
+    char     lockedRejoinName[PACKET_MAX_PLAYER_NAME];
     /* Set once at JOIN_REQUEST and not refreshed mid-connection.  Server does
      * not push updates if e.g. a Steam Deck docks mid-game; this is
      * intentional, not a bug. */
@@ -715,6 +726,26 @@ void transportUdpServerSetClientPingForTest(BYTE playerNum, uint16_t pingMs);
  * this tick, so the sweep stops deferring to it. Lets a case reach the
  * lapsed-hold path without running WBN_REAUTH_HOLD_TICKS ticks of clock. */
 void transportUdpServerExpireReauthHoldForTest(BYTE playerNum);
+
+/* Test seam: makes a locked-game rejoin treat WinBolo.net as running, so a
+ * case can seat a rejoiner that waits for WinBolo.net without a WinBolo.net
+ * server. Reset it to false at the end of the case. */
+void transportUdpServerSetLockedRejoinWbnForTest(bool on);
+
+/* Test seam: true while slot is a locked-game rejoin that WinBolo.net has
+ * still to confirm. */
+bool transportUdpServerLockedRejoinPendingForTest(BYTE playerNum);
+
+/* Test seam: gives a locked-game rejoin in slot the outcome a WinBolo.net
+ * verify would give it: ok with the confirmed name, or a failure. Takes the
+ * same path the re-authentication result takes. */
+void transportUdpServerLockedRejoinVerifyForTest(struct ServerSim *sim,
+                                                 BYTE playerNum, bool ok,
+                                                 const char *confirmedName);
+
+/* Test seam: moves a locked-game rejoin's deadline to this tick, so the
+ * next timeout sweep removes it without running the whole wait. */
+void transportUdpServerExpireLockedRejoinForTest(BYTE playerNum);
 
 /* Test seam: read a slot's high-ping enforcement tally. Deliberately NOT gated
  * on the slot being connected — the thing worth asserting is that a freed slot

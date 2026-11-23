@@ -157,7 +157,59 @@ void playersRejoinAddPlayer(char *playerName, PlayerBitMap pills, PlayerBitMap b
   rejoin.item[best].bases = bases;
   rejoin.item[best].team = team;
   rejoin.item[best].signedIn = signedIn;
+  rejoin.item[best].ipv4 = 0;
   rejoin.item[best].timeOut = 0;
+}
+
+/*********************************************************
+*NAME:          playersRejoinSetAddress
+*PURPOSE:
+* Puts the IPv4 address the player had when leaving in the
+* record for that name. Does nothing when there is no record.
+*
+*ARGUMENTS:
+*  playerName - The player name
+*  ipv4       - The address (network byte order), 0 for none
+*********************************************************/
+void playersRejoinSetAddress(const char *playerName, uint32_t ipv4) {
+  BYTE count; /* Looping variable */
+
+  if (playerName == NULL) {
+    return;
+  }
+  count = 0;
+  while (count < MAX_TANKS) {
+    if (rejoin.item[count].inUse == TRUE && strcmp(rejoin.item[count].playerName, playerName) == 0) {
+      rejoin.item[count].ipv4 = ipv4;
+      return;
+    }
+    count++;
+  }
+}
+
+/*********************************************************
+*NAME:          playersRejoinGetAddress
+*PURPOSE:
+* Returns the IPv4 address kept in the record for that name,
+* or 0 when there is no record or no address was kept.
+*
+*ARGUMENTS:
+*  playerName - The player name
+*********************************************************/
+uint32_t playersRejoinGetAddress(const char *playerName) {
+  BYTE count; /* Looping variable */
+
+  if (playerName == NULL) {
+    return 0;
+  }
+  count = 0;
+  while (count < MAX_TANKS) {
+    if (rejoin.item[count].inUse == TRUE && strcmp(rejoin.item[count].playerName, playerName) == 0) {
+      return rejoin.item[count].ipv4;
+    }
+    count++;
+  }
+  return 0;
 }
 
 /*********************************************************

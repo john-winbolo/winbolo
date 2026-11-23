@@ -2788,6 +2788,14 @@ int run_join_ask_rejoin_without_flag_joins(void);
 int run_join_ask_rejoin_want_rejoin_joins(void);
 int run_join_ask_rejoin_no_record_joins(void);
 int run_join_ask_rejoin_timed_out_joins(void);
+int run_join_locked_rejoin_address_seats(void);
+int run_join_locked_rejoin_no_match_rejects(void);
+int run_join_locked_rejoin_wbn_confirm_keeps(void);
+int run_join_locked_rejoin_wbn_mismatch_removes(void);
+int run_join_locked_rejoin_wbn_fail_removes(void);
+int run_join_locked_rejoin_wbn_timeout_removes(void);
+int run_join_locked_rejoin_ask_gets_question(void);
+int run_join_locked_rejoin_unlocked_unchanged(void);
 
 /* Per-source-IP JOIN rate limit (test_join_rate_limit.c): a burst of valid
  * JOINs from distinct loopback ephemeral ports (one source IP) draws at most

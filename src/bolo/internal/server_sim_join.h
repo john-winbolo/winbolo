@@ -81,6 +81,29 @@ void serverSimRestoreRejoinTeam(ServerSim *sim, BYTE slot);
  * server_sim_players.c. */
 void serverSimRejoinSignedIn(ServerSim *sim, BYTE slot);
 
+/* Gives the sim the IPv4 address (network byte order, no port) of the
+ * person in slot. The rejoin record made when the seat leaves keeps it.
+ * The transport calls it at the join and again just before the seat is
+ * removed, so the record has the address the player had when leaving.
+ * Defined in server_sim_players.c. */
+void serverSimSetRejoinAddress(ServerSim *sim, BYTE slot, uint32_t ipv4);
+
+/* Marks slot as a rejoin let into a locked game that WinBolo.net has still
+ * to confirm. While it is marked, the seat leaving does not change the
+ * rejoin record. Call it after the seat is added. Defined in
+ * server_sim_players.c. */
+void serverSimSetRejoinProvisional(ServerSim *sim, BYTE slot);
+
+/* Ends the mark serverSimSetRejoinProvisional made. With confirmed true,
+ * WinBolo.net has confirmed the seat as the player the record is for: the
+ * mark goes, and serverSimRejoinSignedIn gives the record back as for any
+ * signed-in rejoin. With confirmed false, the seat is about to be removed:
+ * the mark stays, so its leave leaves the record as it is, and the wait
+ * for WinBolo.net ends, so serverSimRejoinSignedIn gives this seat
+ * nothing. The real owner can then still rejoin. Defined in
+ * server_sim_players.c. */
+void serverSimEndRejoinProvisional(ServerSim *sim, BYTE slot, bool confirmed);
+
 /* Gives the lobby host role to a person who has just joined, when
  * -firstjoinhost is on and the slot holding the role holds a bot or holds
  * nobody. Call it from a human join path once the slot's name, flags and

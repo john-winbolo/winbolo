@@ -657,6 +657,112 @@ bool serverChooseUnverifiedSuffix(const char *baseName,
     return false;
 }
 
+/* How a rejoin may get past the game lock. */
+typedef enum {
+    LOCKED_REJOIN_NONE = 0,  /* no: the joiner gets the game-locked reject */
+    LOCKED_REJOIN_ADDRESS,   /* the joiner's IPv4 address is the leaver's */
+    LOCKED_REJOIN_WBN        /* the leaver was signed in to WinBolo.net and the
+                              * joiner will authenticate: WinBolo.net must
+                              * confirm the seat */
+} LockedRejoinMatch;
+
+/* Test seam: transportUdpServerSetLockedRejoinWbnForTest. */
+static bool s_lockedRejoinWbnForTest = false;
+
+void transportUdpServerSetLockedRejoinWbnForTest(bool on) {
+    s_lockedRejoinWbnForTest = on;
+}
+
+/* Whether a joiner under name, from fromAddr, may rejoin a locked game. Only
+ * while a round runs, and only with a live rejoin record under that name.
+ * The address match compares the IPv4 address only, never the port. */
+static LockedRejoinMatch serverLockedRejoinMatch(ServerSim *sim,
+                                                 const char *name,
+                                                 const struct sockaddr_in *fromAddr,
+                                                 bool willAuth) {
+    BYTE team;
+    bool signedIn;
+    uint32_t recordAddr;
+
+    if (serverSimGetState(sim) != serverStateRunning) return LOCKED_REJOIN_NONE;
+    if (!playersRejoinFind(name, &team, &signedIn)) return LOCKED_REJOIN_NONE;
+    recordAddr = playersRejoinGetAddress(name);
+    if (recordAddr != 0 &&
+        recordAddr == (uint32_t)fromAddr->sin_addr.s_addr) {
+        return LOCKED_REJOIN_ADDRESS;
+    }
+    if (signedIn && willAuth &&
+        (winbolonetIsRunning() || s_lockedRejoinWbnForTest)) {
+        return LOCKED_REJOIN_WBN;
+    }
+    return LOCKED_REJOIN_NONE;
+}
+
+/* Removes a locked-game rejoin that WinBolo.net did not confirm. The client
+ * is told the game is locked, and then that the server has ended its
+ * session, so it stops whether it is still joining or already playing. The
+ * removal itself is deferred to transportUdpServerDrainPendingRemovals, as
+ * the high-ping kick does it, because this can run mid-tick. */
+static void serverLockedRejoinRemove(ServerSim *sim, BYTE slot,
+                                     const char *why) {
+    UdpServerClient *c = &udpServer.clients[slot];
+    char consoleMsg[200];
+    uint8_t sbuf[PACKET_HEADER_SIZE];
+
+    c->lockedRejoinPending = false;
+    snprintf(consoleMsg, sizeof(consoleMsg),
+             "Rejoin of '%s' removed: %s. Game is locked", c->lockedRejoinName,
+             why);
+    serverSimConsoleMessage(consoleMsg);
+    fprintf(stderr, "[UDP SERVER] %s\n", consoleMsg);
+    /* The seat gets nothing from the rejoin record, and its leave leaves
+     * the record as it is, so the real owner can still rejoin. */
+    serverSimEndRejoinProvisional(sim, slot, false);
+    serverSendJoinReject(&c->addr, STR_REJECT_GAME_LOCKED, 0, NULL);
+    packHeader(sbuf, PACKET_SERVER_SHUTDOWN, 0);
+    srvSendTo(sbuf, (int)sizeof(sbuf), &c->addr);
+    udpServer.pendingSimRemove[slot] = true;
+}
+
+bool udpServerLockedRejoinVerified(ServerSim *sim, BYTE slot, bool ok,
+                                   const char *confirmedName) {
+    UdpServerClient *c;
+    char consoleMsg[200];
+
+    if (slot >= MAX_TANKS) return true;
+    c = &udpServer.clients[slot];
+    if (!c->connected || !c->lockedRejoinPending) return true;
+    if (!ok) {
+        serverLockedRejoinRemove(sim, slot, "WinBolo.net did not confirm");
+        return false;
+    }
+    if (confirmedName == NULL ||
+        strcmp(confirmedName, c->lockedRejoinName) != 0) {
+        serverLockedRejoinRemove(sim, slot,
+                                 "WinBolo.net confirmed another player");
+        return false;
+    }
+    c->lockedRejoinPending = false;
+    serverSimEndRejoinProvisional(sim, slot, true);
+    snprintf(consoleMsg, sizeof(consoleMsg),
+             "Rejoin of '%s' on the locked game confirmed by WinBolo.net",
+             c->lockedRejoinName);
+    serverSimConsoleMessage(consoleMsg);
+    return true;
+}
+
+void udpServerLockedRejoinCheckDeadline(ServerSim *sim, BYTE slot) {
+    UdpServerClient *c;
+    if (slot >= MAX_TANKS) return;
+    c = &udpServer.clients[slot];
+    if (!c->connected || !c->lockedRejoinPending) return;
+    if (udpServer.pendingSimRemove[slot]) return;
+    /* Wrap-safe compare, as wbnJoinOnTick does it. */
+    if ((int32_t)(udpServer.tickCount - c->lockedRejoinUntilTick) < 0) return;
+    serverLockedRejoinRemove(sim, slot,
+                             "WinBolo.net did not confirm in time");
+}
+
 /* Handle a join request from a new client */
 void serverHandleJoinRequest(const uint8_t *buf, int len,
                              const struct sockaddr_in *fromAddr,
@@ -931,14 +1037,49 @@ void serverHandleJoinRequest(const uint8_t *buf, int len,
     }
 
     /* Check game lock: server admin command OR host toggled
-     * "Allow New Players: Now" off (mirrored as !sim->allowNewPlayers). */
+     * "Allow New Players: Now" off (mirrored as !sim->allowNewPlayers).
+     *
+     * A rejoin gets past the lock when a live rejoin record has the
+     * joiner's name and either the joiner's IPv4 address is the one the
+     * player had when leaving, or the player was signed in to WinBolo.net
+     * when leaving and the joiner will authenticate. In the second case the
+     * seat is provisional: WinBolo.net must confirm it under the record's
+     * name within LOCKED_REJOIN_CONFIRM_TICKS, or it is removed with the
+     * game-locked reason. A Join that asks the rejoin question, with such a
+     * match, goes on to the question below; its "Join as new" answer comes
+     * back without the ask flag and gets the reject here. */
+    bool lockedRejoinWbn = false;
+    char lockedRejoinName[PACKET_MAX_PLAYER_NAME];
+    lockedRejoinName[0] = '\0';
     if (udpServer.gameLocked || !serverSimIsAcceptingJoins(sim)) {
-        char consoleMsg[128];
-        snprintf(consoleMsg, sizeof(consoleMsg),
-                 "Join rejected for '%s': Game is locked", name);
-        serverSimConsoleMessage(consoleMsg);
-        serverSendJoinReject(fromAddr, STR_REJECT_GAME_LOCKED, 0, NULL);
-        return;
+        LockedRejoinMatch match = LOCKED_REJOIN_NONE;
+        if (wantRejoin || askRejoin) {
+            match = serverLockedRejoinMatch(sim, name, fromAddr,
+                                            incomingWillAuth);
+        }
+        if (match == LOCKED_REJOIN_NONE) {
+            char consoleMsg[128];
+            snprintf(consoleMsg, sizeof(consoleMsg),
+                     "Join rejected for '%s': Game is locked", name);
+            serverSimConsoleMessage(consoleMsg);
+            serverSendJoinReject(fromAddr, STR_REJECT_GAME_LOCKED, 0, NULL);
+            return;
+        }
+        if (wantRejoin) {
+            char consoleMsg[160];
+            snprintf(consoleMsg, sizeof(consoleMsg),
+                     match == LOCKED_REJOIN_ADDRESS
+                         ? "Rejoin allowed for '%s' on the locked game: "
+                           "same address as when the player left"
+                         : "Rejoin allowed for '%s' on the locked game: "
+                           "waiting for WinBolo.net to confirm the player",
+                     name);
+            serverSimConsoleMessage(consoleMsg);
+            lockedRejoinWbn = (match == LOCKED_REJOIN_WBN);
+            snprintf(lockedRejoinName, sizeof(lockedRejoinName), "%s", name);
+        }
+        /* Else the Join asks the rejoin question. The record that matched
+         * is live and the round runs, so the question below answers it. */
     }
 
     /* A Join from a client that can show the rejoin question, while a
@@ -993,6 +1134,8 @@ void serverHandleJoinRequest(const uint8_t *buf, int len,
      * persist and mis-route the next reuser's reauth. */
     udpServer.clients[slot].claimPending = false;
     udpServer.clients[slot].claimDesiredName[0] = '\0';
+    udpServer.clients[slot].lockedRejoinPending = false;
+    udpServer.clients[slot].lockedRejoinName[0] = '\0';
 
     /* Country resolution for the incoming player.  Done early so the
      * preempt path can include it in the rename newswire. Uniform
@@ -1217,6 +1360,22 @@ void serverHandleJoinRequest(const uint8_t *buf, int len,
                           udpServer.clients[slot].playerName,
                           udpServer.clients[slot].countryCode,
                           udpServer.clients[slot].wantRejoin);
+        /* The rejoin record made when this seat leaves keeps the address,
+         * so a later rejoin on a locked game can be matched by it. */
+        serverSimSetRejoinAddress(sim, (BYTE)slot,
+                                  (uint32_t)fromAddr->sin_addr.s_addr);
+        /* A locked-game rejoin that waits for WinBolo.net. Marked here,
+         * right after the add, so that any removal from now on leaves the
+         * rejoin record as it is. */
+        if (lockedRejoinWbn) {
+            serverSimSetRejoinProvisional(sim, (BYTE)slot);
+            udpServer.clients[slot].lockedRejoinPending = true;
+            udpServer.clients[slot].lockedRejoinUntilTick =
+                udpServer.tickCount + LOCKED_REJOIN_CONFIRM_TICKS;
+            snprintf(udpServer.clients[slot].lockedRejoinName,
+                     sizeof(udpServer.clients[slot].lockedRejoinName), "%s",
+                     lockedRejoinName);
+        }
         setClientTypeFlagsInternal(sim, (BYTE)slot, clientType, flags);
         serverSimPlaceJoiner(sim, (BYTE)slot);
         fillAndPublishPlayerJoin(sim, (BYTE)slot);
