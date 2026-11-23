@@ -140,6 +140,19 @@ do
     { f,        1.0 - f  },
     { 1.0 - f,  1.0 - f  },
   }
+  -- PT2_AIM_POINTS = 9 (E3): the 5 above, then the edge midpoints (top,
+  -- right, bottom, left) at the same fire inset. Only the pill take v2 picks
+  -- aim 6..9 (pilltake_v2.AIMS9); the 5-aim loops keep the table above.
+  M.AIM_OFFSETS_TILE_FIRE9 = {}
+  for i, o in ipairs(M.AIM_OFFSETS_TILE_FIRE) do M.AIM_OFFSETS_TILE_FIRE9[i] = o end
+  M.AIM_OFFSETS_TILE_FIRE9[6] = { 0.5,      f        }
+  M.AIM_OFFSETS_TILE_FIRE9[7] = { 1.0 - f,  0.5      }
+  M.AIM_OFFSETS_TILE_FIRE9[8] = { 0.5,      1.0 - f  }
+  M.AIM_OFFSETS_TILE_FIRE9[9] = { f,        0.5      }
+end
+-- The fire offset of aim i (1..9), else the centre.
+function M.fire_aim(i)
+  return (i and M.AIM_OFFSETS_TILE_FIRE9[i]) or M.AIM_OFFSETS_TILE_FIRE[1]
 end
 M.AIM_NAMES = { "center", "TL", "TR", "BL", "BR" }
 -- Distinct colors for each aim (used by draw_overlay).

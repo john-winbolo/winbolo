@@ -974,6 +974,13 @@ M.PT2_LINK_CLEAR_FRONT = true
 -- stands now beats cover the builder must make. false = the old order.
 -- KEEL / MAST: false.
 M.PT2_PREFER_EXISTING_COVER = true
+-- PT2_AIM_POINTS (Nov 23, Andrew's yes, E3): v2 only. 9 = the 5 aims
+-- (centre and corners) plus the 4 edge midpoints of the pill's square at
+-- inset 24 (pilltake_v2.AIMS9); the tank_shot tests and the CANT masks use
+-- the list. The caller fires at the midpoints through
+-- attack_shield.AIM_OFFSETS_TILE_FIRE9 (fire inset, as the corners).
+-- 5 = the old aims. KEEL / MAST: 5.
+M.PT2_AIM_POINTS = 9
 -- Longest chain counted, pills. Proposal, awaiting Andrew's value.
 M.PT2_MAX_CHAIN = 3
 -- Ring step around the target, degrees. Andrew approved 1 for HELM (Nov 19):
@@ -8289,6 +8296,7 @@ M.PRESETS = {
     PT2_LINK_COVERS_PREV = false,
     PT2_LINK_CLEAR_FRONT = false,
     PT2_PREFER_EXISTING_COVER = false,
+    PT2_AIM_POINTS = 5,
     PT2_LEEWAY = false,
     PT2_OWN_PILL_BONUS = false,
     PT2_AIM_NUDGE = false,
@@ -8681,6 +8689,7 @@ M.PRESETS.mast = {
   PT2_LINK_COVERS_PREV              = false,
   PT2_LINK_CLEAR_FRONT              = false,  -- 2.2.1 had no pill take v2
   PT2_PREFER_EXISTING_COVER         = false,  -- 2.2.1 had no pill take v2
+  PT2_AIM_POINTS                    = 5,      -- 2.2.1 had no pill take v2
   PT2_LEEWAY                        = false,
   PT2_OWN_PILL_BONUS                = false,
   PT2_TRAVEL_BAND_TICKS             = 0,

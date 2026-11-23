@@ -36,6 +36,9 @@ if not ok_shield then
     AIM_OFFSETS_TILE_FIRE = { { 0.5, 0.5 }, { f, f }, { 1 - f, f }, { f, 1 - f }, { 1 - f, 1 - f } },
     AIM_NAMES = { "center", "TL", "TR", "BL", "BR" },
   }
+  shield.fire_aim = function(i)
+    return (i and shield.AIM_OFFSETS_TILE_FIRE[i]) or shield.AIM_OFFSETS_TILE_FIRE[1]
+  end
   package.loaded["attack_shield"] = shield
 end
 

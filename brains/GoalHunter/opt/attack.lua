@@ -843,8 +843,7 @@ local function standoff_shot_obstacle(goal, pill, world)
     target_wx, target_wy = goal.aim_wx, goal.aim_wy
   elseif goal._shield_scan and goal._shield_scan.best then
     local w   = goal._shield_scan.best
-    local off = shield.AIM_OFFSETS_TILE_FIRE[w.best_aim_idx or 1]
-                or shield.AIM_OFFSETS_TILE_FIRE[1]
+    local off = shield.fire_aim(w.best_aim_idx or 1)
     target_wx = (bit.lshift(pmx, 8)) + math.floor(off[1] * 256)
     target_wy = (bit.lshift(pmy, 8)) + math.floor(off[2] * 256)
   else
@@ -2712,7 +2711,7 @@ local function clear_aim_from_world(ox, oy, pmx, pmy, world, prefer_idx, min_lan
     end
     return trees, awx, awy
   end
-  if prefer_idx and shield.AIM_OFFSETS_TILE_FIRE[prefer_idx] then
+  if prefer_idx and shield.AIM_OFFSETS_TILE_FIRE9[prefer_idx] then
     local trees, awx, awy = line(prefer_idx)
     if trees then return prefer_idx, awx, awy, trees end
   end
@@ -2771,7 +2770,7 @@ end
 -- charge / aim / engage read aim_wx/aim_wy through planned_aim_tile — set only
 -- half and the gun keeps turning onto the line we just rejected.
 local function set_goal_aim(goal, pmx, pmy, idx, awx, awy)
-  local off = shield.AIM_OFFSETS_TILE_FIRE[idx] or shield.AIM_OFFSETS_TILE_FIRE[1]
+  local off = shield.fire_aim(idx)
   goal.aim_idx = idx
   goal.aim_wx  = awx
   goal.aim_wy  = awy
@@ -6441,8 +6440,7 @@ local function update_attack_substate_body(goal, state, world, info)
           goal.approach_mx = U.mclamp(math.floor(goal.approach_fx))
           goal.approach_my = U.mclamp(math.floor(goal.approach_fy))
         end
-        local off = shield.AIM_OFFSETS_TILE_FIRE[w.best_aim_idx or 1]
-                    or shield.AIM_OFFSETS_TILE_FIRE[1]
+        local off = shield.fire_aim(w.best_aim_idx or 1)
         goal.aim_mx = pmx + off[1]
         goal.aim_my = pmy + off[2]
         -- The shield scan moved the standoff, so the spot scan's aim is stale.
@@ -7477,8 +7475,7 @@ local function update_attack_substate_body(goal, state, world, info)
             -- charge/aim/engage to all use. (Done unconditionally here
             -- in case the standoff itself ends up being target_for_build
             -- — the original best-only path doesn't set aim_mx/my then.)
-            local off = shield.AIM_OFFSETS_TILE_FIRE[target_for_build.best_aim_idx]
-                        or shield.AIM_OFFSETS_TILE_FIRE[1]
+            local off = shield.fire_aim(target_for_build.best_aim_idx)
             goal.aim_mx = pmx + off[1]
             goal.aim_my = pmy + off[2]
             -- Same aim in world units, for the GO gate / steering / sanity check.

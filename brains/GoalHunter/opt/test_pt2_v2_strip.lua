@@ -633,5 +633,57 @@ do
   check("every safe best passes judge", bad == 0 and safe > 0, bad)
 end
 
+-- ── 8. PT2_AIM_POINTS = 9: the edge midpoints ────────────────────────────
+print("PT2_AIM_POINTS: 9 aims")
+do
+  check("AIMS9 has 9 aims", #V.AIMS9 == 9, #V.AIMS9)
+  local same = true
+  for i = 1, 5 do if V.AIMS9[i] ~= OLD.AIMS[i] then same = false end end
+  check("AIMS9 starts with the old 5", same)
+  local mids = { { 128, 24 }, { 231, 128 }, { 128, 231 }, { 24, 128 } }
+  local ok = true
+  for i = 1, 4 do
+    local a = V.AIMS9[5 + i]
+    if a[1] ~= mids[i][1] or a[2] ~= mids[i][2] then ok = false end
+  end
+  check("AIMS9 6..9 are the edge midpoints at inset 24", ok)
+  local n, safe5, safe9, bad, mid = 0, 0, 0, 0, 0
+  for trial = 1, 20 do
+    clear()
+    V.reset()
+    local A = { mx = 128, my = 120, owner = "hostile", health = 15 }
+    local pills = { A }
+    for _ = 1, rnd(3) do
+      local mx, my = 122 + rnd(12), 114 + rnd(12)
+      if math.abs(mx - 128) + math.abs(my - 120) > 2 then
+        pills[#pills + 1] = { mx = mx, my = my, owner = "hostile", health = 15 }
+      end
+    end
+    for _ = 1, 20 + rnd(25) do terrain[sq(120 + rnd(16), 112 + rnd(16))] = C.T_BUILDING end
+    terrain[sq(128, 120)] = nil
+    local world = make_world(pills)
+    local inp5 = make_inp(world, A, 0)
+    inp5.aim_points = 5
+    local r5 = V.evaluate_lua(inp5)
+    V.reset()
+    local inp9 = make_inp(world, A, 0)
+    inp9.aim_points = 9
+    local r9 = V.evaluate_lua(inp9)
+    n = n + 1
+    if r5.best and r5.best.safe then safe5 = safe5 + 1 end
+    local b = r9.best
+    if b and b.safe then
+      safe9 = safe9 + 1
+      if b.aim_idx > 5 then mid = mid + 1 end
+      local why = V.judge(inp9, b.px, b.py, b.extra, b.aim_idx)
+      if why ~= "-" then bad = bad + 1; print("    judge: " .. tostring(why)) end
+    end
+  end
+  print(string.format("    %d maps: safe with 5 aims %d, with 9 aims %d (a midpoint aim %d)", n, safe5, safe9, mid))
+  check("9 aims: never fewer safe takes than 5", safe9 >= safe5, safe9 - safe5)
+  check("9 aims: every safe best passes judge", bad == 0, bad)
+  check("knob_inp: PT2_AIM_POINTS", V.knob_inp(C, {}).aim_points == (C.PT2_AIM_POINTS or 5))
+end
+
 print(string.format("%d passed, %d failed", pass, fail))
 os.exit(fail == 0 and 0 or 1)

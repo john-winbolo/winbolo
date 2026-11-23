@@ -64,8 +64,21 @@ function M.knob_inp(C, inp)
   inp = OLD.knob_inp(C, inp)
   -- PT2_PREFER_EXISTING_COVER (E1)
   inp.prefer_existing_cover = C.PT2_PREFER_EXISTING_COVER ~= false
+  -- PT2_AIM_POINTS (E3): 9 = M.AIMS9, else the old 5
+  inp.aim_points = C.PT2_AIM_POINTS or 5
   return inp
 end
+
+-- PT2_AIM_POINTS = 9 (Nov 23, Andrew's yes, E3): the old 5 aims (centre,
+-- then the corners at inset 24) and the 4 edge midpoints at inset 24, in
+-- the order top, right, bottom, left. The tank_shot tests and the CANT
+-- masks go through this list (ctx.aims); aim_idx 6..9 are the midpoints.
+M.AIMS9 = {}
+for i, a in ipairs(OLD.AIMS) do M.AIMS9[i] = a end
+M.AIMS9[6] = { 128, 24 }
+M.AIMS9[7] = { 231, 128 }
+M.AIMS9[8] = { 128, 231 }
+M.AIMS9[9] = { 24, 128 }
 
 -- The rank: the old better, and PT2_PREFER_EXISTING_COVER (Nov 23,
 -- Andrew's yes, E1). With pec on, two points of the same safe and kills
@@ -1137,7 +1150,8 @@ local function new_cache() return { rays = {}, sqm = {} } end
 local function new_ctx(inp, A)
   local cache = inp._v2_cache or new_cache()
   local ctx = { inp = inp, A = A, env = inp.env, reach_cache = {}, hostile = {},
-                rays = cache.rays, sqm = cache.sqm, aims = M.AIMS,
+                rays = cache.rays, sqm = cache.sqm,
+                aims = (inp.aim_points == 9) and M.AIMS9 or M.AIMS,
                 stat = new_stat(), tm = new_tm(), clk = inp.v2_clock }
   for _, p in ipairs(inp.pills) do
     if alive(p) and not inp.env.is_ally(p) then ctx.hostile[#ctx.hostile + 1] = p end
