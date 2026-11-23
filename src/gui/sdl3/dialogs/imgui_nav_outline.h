@@ -27,8 +27,35 @@ extern "C" {
 /* Draw a clean nav-cursor outline for the currently-focused item.
  * Safe to call in any context — does nothing if there is no NavId,
  * no NavWindow, or the cursor is not visible.  Intended to be called
- * once per frame, just before ImGui::Render(). */
+ * once per frame, just before ImGui::Render().  The outline shows only
+ * after a Tab or pad button press (a mouse button click hides it
+ * again; a mouse move or the wheel does not), or while
+ * dialogNavOutlineSetControllerInUse says so.  An item that a dialog
+ * focuses from code (SetKeyboardFocusHere) shows it at once, until a
+ * mouse button click or until the focus leaves it.  While the outline
+ * is hidden, the first press of a key that moves or presses the focused
+ * item (Tab, Enter, keypad Enter, Space, the arrow keys, the d-pad or
+ * the pad's activate button) only shows the outline on the focused item;
+ * the next press acts.  This call claims those keys for the next frame
+ * to do that, so call it each frame before ImGui::Render(). */
 void dialogDrawNavOutline(void);
+
+/* Call just before or after SetKeyboardFocusHere() when that focus from
+ * code must not show the outline at once (the lobby's Ready button at
+ * open).  The outline then stays hidden, and the first Enter only shows
+ * it on the focused item.  It applies to the current context's next
+ * focus from code only. */
+void dialogNavOutlineQuietCodeFocus(void);
+
+/* True when the outline shows in the current context this frame (if
+ * ImGui has a live focused item to draw it on).  For tests. */
+bool dialogNavOutlineIsShown(void);
+
+/* Tell the outline that a controller is the device in use, so it shows
+ * without a Tab press.  The game calls this each frame from its input
+ * tracking; a program that never calls it shows the outline only after
+ * a Tab or pad button press. */
+void dialogNavOutlineSetControllerInUse(bool inUse);
 
 /* True when ImGui's nav focus is inside a sub-region (child window
  * or BeginTable scroll child) of its top-level window.  Used by

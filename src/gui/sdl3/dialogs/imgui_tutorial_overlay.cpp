@@ -114,14 +114,19 @@ void tutorialOverlayRender(struct ClientSim *cs) {
     if (dialogW < minW) dialogW = minW;
     if (dialogW > maxW) dialogW = maxW;
     if (dialogW > vp->Size.x * 0.92f) dialogW = vp->Size.x * 0.92f;
+    /* Centred when it opens, and then left where the player drags it by its
+       title bar, so it can be moved off the part of the map it covers. Each
+       message is a new popup (a message is shown only after the one before
+       it is closed), so every message opens centred again. The width is
+       still set every frame, so a window resize changes it as before; ImGui
+       keeps a corner of a moved window inside the main window. */
     ImGui::SetNextWindowPos(ImVec2(vp->Pos.x + vp->Size.x * 0.5f,
                                    vp->Pos.y + vp->Size.y * 0.5f),
-                            ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+                            ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSizeConstraints(ImVec2(dialogW, 0),
                                         ImVec2(dialogW, FLT_MAX));
 
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoResize |
-                             ImGuiWindowFlags_NoMove |
                              ImGuiWindowFlags_AlwaysAutoResize;
 
     if (ImGui::BeginPopupModal(TUTORIAL_POPUP_ID,

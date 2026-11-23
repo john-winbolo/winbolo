@@ -211,9 +211,11 @@ static void lobbyFrameInitState(ClientSim *cs) {
      * Ready. Escape still leaves, which is the pair it belongs in.
      *
      * Applied once, on the first frame Ready is actually enabled — see the two
-     * sites that consume this. SetKeyboardFocusHere carries
-     * ImGuiNavMoveFlags_NoSetNavCursorVisible, so this seeds what Enter hits
-     * without lighting a focus ring the player did not ask for. */
+     * sites that consume this. The seed is a quiet focus
+     * (dialogNavOutlineQuietCodeFocus), so the lobby opens with no focus
+     * outline, as before. While the outline is hidden, the first Enter only
+     * shows it on Ready, and the next Enter presses Ready
+     * (imgui_nav_outline.cpp). */
     s_lf.focusReadyPending = true;
     s_lf.prevCountdown     = clientSimGetCountdownSeconds(cs);
 }
@@ -252,12 +254,11 @@ extern "C" void imguiLobbyFrameReset(void) {
     lobbyReelEnd();
 #endif
 #if BOLO_RECAP_CLIP_GIF
-    /* A clip export waiting on its save picker holds the whole encoded GIF,
-     * and nothing polls it once the lobby is gone. Deliberately not folded
-     * into lobbyReelEnd above: that also runs mid-session when the countdown
-     * clears the summary, which must not throw away a clip the player is
-     * still naming. */
-    lobbyClipGifSaveAbandon();
+    /* The gallery's preview holds decoded frames and a texture, and nothing
+     * polls it once the lobby is gone. Not folded into lobbyReelEnd above:
+     * that also runs mid-session when the countdown clears the summary, and
+     * the gallery window can stay open past that. */
+    lobbyClipGifShutdown();
 #endif
 #if BOLO_RECAP_WBN_RATING
     /* Release the rating fetch and everything it filled in. The star textures
@@ -1658,7 +1659,11 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                      * down. Their choice wins, and the seed is dropped rather
                      * than held, so it cannot yank the caret out of a
                      * half-typed line the moment they pause. */
-                    if (!ImGui::GetIO().WantTextInput) ImGui::SetKeyboardFocusHere();
+                    if (!ImGui::GetIO().WantTextInput) {
+                        ImGui::SetKeyboardFocusHere();
+                        /* Seed what Enter hits, with no outline. */
+                        dialogNavOutlineQuietCodeFocus();
+                    }
                     focusReadyPending = false;
                 }
                 if (ImGui::Button(readyLabel, ImVec2(100 * s, 0))) {
@@ -2437,7 +2442,11 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                      * down. Their choice wins, and the seed is dropped rather
                      * than held, so it cannot yank the caret out of a
                      * half-typed line the moment they pause. */
-                    if (!ImGui::GetIO().WantTextInput) ImGui::SetKeyboardFocusHere();
+                    if (!ImGui::GetIO().WantTextInput) {
+                        ImGui::SetKeyboardFocusHere();
+                        /* Seed what Enter hits, with no outline. */
+                        dialogNavOutlineQuietCodeFocus();
+                    }
                     focusReadyPending = false;
                 }
                 if (ImGui::Button(readyLabel, ImVec2(-1, 0))) {
@@ -3027,13 +3036,10 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
 #endif
 
 #if BOLO_RECAP_CLIP_GIF
-        /* Write out a clip export whose save picker has been answered. Here
-         * rather than in the recap that started it: the picker is asynchronous
-         * so this loop keeps ticking the transport underneath it, and a player
-         * who switches away from the recap while it is open must still get
-         * their file. Outside the ImGui frame, because a failed write puts up
-         * a message box that runs a loop of its own. */
-        lobbyClipGifSavePoll();
+        /* Lets the gallery free its preview when the recap that draws it is
+         * no longer on screen. Here rather than in the recap, because the
+         * recap is not drawn then. */
+        lobbyClipGifPoll();
 #endif
 
         /* Check for game start */

@@ -1453,10 +1453,7 @@ uint64_t    clientSimGetLobbyScenarioListWorkshopId(const ClientSim *cs,
                                                     int idx);
 /* Who wrote the row and when it last changed (scenario_identity.h): the
  * author already cleaned and the time as "YYYY-MM-DDTHH:MMZ", each "" for
- * not stated. IdentityKnown is false for a row from a server that sends
- * neither, and for idx out of range, where the two strings are "". */
-bool        clientSimGetLobbyScenarioListIdentityKnown(const ClientSim *cs,
-                                                       int idx);
+ * not stated and for idx out of range. */
 const char *clientSimGetLobbyScenarioListAuthor(const ClientSim *cs, int idx);
 const char *clientSimGetLobbyScenarioListUpdated(const ClientSim *cs,
                                                  int idx);
@@ -1545,9 +1542,9 @@ ClientScnDetailsState clientSimGetLobbyScenarioDetails(const ClientSim *cs,
  * Put stores it on the slot the details were put on, so it goes after
  * clientSimLobbyScenarioDetailsPut with found true; a blob that does not
  * read is stored as no settings. Get answers false while no block is known
- * for file (no answer yet, or a server that does not send settings), and
- * true with *bytes and *len otherwise, which is 0 bytes for a file that
- * declares none. The bytes stay good until the next Want, Put or Forget. */
+ * for file (no answer yet), and true with *bytes and *len otherwise, which
+ * is 0 bytes for a file that declares none. The bytes stay good until the
+ * next Want, Put or Forget. */
 void clientSimLobbyScenarioSettingsPut(ClientSim *cs, const char *file,
                                        const uint8_t *bytes, size_t len);
 bool clientSimGetLobbyScenarioSettings(const ClientSim *cs, const char *file,
@@ -1557,10 +1554,9 @@ bool clientSimGetLobbyScenarioSettings(const ClientSim *cs, const char *file,
  * its details. Put stores the pair on the slot the details were put on, so
  * it goes after clientSimLobbyScenarioDetailsPut with found true; the author
  * is cleaned and an updated not in the one form is stored as "". Get answers
- * false while the pair is not known for file (no answer yet, or a server
- * that does not send it), and true otherwise with *author and *updated,
- * each "" for not stated. The strings stay good until the next Want, Put or
- * Forget. */
+ * false while the pair is not known for file (no answer yet), and true
+ * otherwise with *author and *updated, each "" for not stated. The strings
+ * stay good until the next Want, Put or Forget. */
 void clientSimLobbyScenarioIdentityPut(ClientSim *cs, const char *file,
                                        const char *author,
                                        const char *updated);

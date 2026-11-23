@@ -15,7 +15,9 @@
 #include "imgui_logviewer_menu.h"
 #include "imgui_main_menu.h"
 #include "imgui_dialogs.h"
+#include "imgui_clip_gif.h"
 #include "../../gui/lang.h"
+#include "../../gui/sdl3/dialogs/clip_gif_controls.h"  /* clipGifPushLatched */
 #include <SDL3/SDL.h>
 
 extern "C" {
@@ -116,6 +118,32 @@ void lvMenuRender(struct LogViewerState *lv) {
             }
             if (!live && ImGui::Button("View Comments", btnSize)) {
                 s_activePanel = LV_PANEL_COMMENTS;
+                ImGui::CloseCurrentPopup();
+                s_open = false;
+            }
+            ImGui::Separator();
+        }
+
+        /* Recording mode, and the GIFs made here and in the game
+         * (imgui_clip_gif.h). The recording mode button stays pressed while
+         * the GIF window is open, as the movie camera on the Controls panel
+         * does. */
+        if (lv_clip_gif_available()) {
+            if (!live) {
+                const bool on = lv_clip_gif_tools_shown();
+                ImGui::BeginDisabled(!lv_clip_gif_can_toggle_mode());
+                clipGifPushLatched(on);
+                const bool pressed = ImGui::Button(langGetText(STR_LV_RECORD_MODE), btnSize);
+                clipGifPopLatched(on);
+                ImGui::EndDisabled();
+                if (pressed) {
+                    lv_clip_gif_toggle_mode();
+                    ImGui::CloseCurrentPopup();
+                    s_open = false;
+                }
+            }
+            if (ImGui::Button(langGetText(STR_LV_WIN_CLIPS), btnSize)) {
+                lv_clip_gif_toggle_gallery();
                 ImGui::CloseCurrentPopup();
                 s_open = false;
             }

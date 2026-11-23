@@ -69,9 +69,9 @@ typedef struct {
     char     file[SCN_DIR_FILE_LEN];
     uint16_t len;                      /* 0 = the file declares nothing */
     uint8_t  bytes[SCN_DETAILS_MAX];
-    /* The file's settings block (scenario_settings.h), which travels apart
-       from the details because an older client would refuse a details blob
-       with more bytes on the end. 0 = the file declares no setting. */
+    /* The file's settings block (scenario_settings.h), which the details
+       reply carries behind the details with a length of its own. 0 = the
+       file declares no setting. */
     uint16_t settingsLen;
     uint8_t  settings[SCN_SETTINGS_BLOB_MAX];
 } ScnDirDetails;

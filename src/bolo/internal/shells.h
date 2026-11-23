@@ -346,8 +346,14 @@ void shellsCalcScreenBullets(shells *value, screenBullets *sBullets, BYTE leftPo
 *             builder test uses, and only that. The same as
 *             xValue. Untouched when no collision occurs.
 *  outSeenY - Y, as outSeenX
+*  outSquareHit - NULL-tolerant out-param; TRUE when the shell
+*             hit a pillbox (a live one, the shot that kills
+*             it included), FALSE for any other hit and for no
+*             hit. The builder test uses it: such a hit is a
+*             hit on its square, whatever armour the hit has
+*             left the pill.
 *********************************************************/
-bool shellsCalcCollision(struct GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, shells shell, BYTE numTanks, uint8_t *outOutcome, WORLD *outSeenX, WORLD *outSeenY);
+bool shellsCalcCollision(struct GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, shells shell, BYTE numTanks, uint8_t *outOutcome, WORLD *outSeenX, WORLD *outSeenY, bool *outSquareHit);
 
 /*********************************************************
 *NAME:          shellsCheckRoad
@@ -368,6 +374,18 @@ bool shellsCalcCollision(struct GameSim *sim, tank *tk, WORLD *xValue, WORLD *yV
 *  angle - The angle the shell is travelling
 *********************************************************/
 BYTE shellsCheckRoad(struct GameSim *sim, BYTE mapX, BYTE mapY, TURNTYPE dir);
+
+/*********************************************************
+*NAME:          shellsRoadShotAway
+*PURPOSE:
+*  True when a shell from a boat, moving at dir, that hits
+*  the road at (mapX, mapY) shoots it away to river: the
+*  square past the road in that direction is not land. This
+*  is the test shellsCheckRoad makes, with no sound and no
+*  change, so the client can tell which sound the server
+*  plays (the early own shell blast, client_sim.c).
+*********************************************************/
+bool shellsRoadShotAway(struct GameSim *sim, BYTE mapX, BYTE mapY, TURNTYPE dir);
 
 /*********************************************************
 *NAME:          shellsNetMake

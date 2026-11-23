@@ -153,6 +153,20 @@ bool transportUdpServerTestDownloadComplete(int slot) {
     return udpServer.mapDownload[slot].downloadComplete;
 }
 
+void transportUdpServerTestVoiceSlotStats(int slot, uint32_t *outAccepted,
+                                          uint32_t *outDropPerTickCap,
+                                          uint32_t *outForwarded) {
+    uint32_t accepted = 0, capDrops = 0, forwarded = 0;
+    if (slot >= 0 && slot < MAX_TANKS) {
+        accepted  = udpServer.voiceSlot[slot].accepted;
+        capDrops  = udpServer.voiceSlot[slot].dropPerTickCap;
+        forwarded = udpServer.voiceSlot[slot].forwarded;
+    }
+    if (outAccepted)       *outAccepted       = accepted;
+    if (outDropPerTickCap) *outDropPerTickCap = capDrops;
+    if (outForwarded)      *outForwarded      = forwarded;
+}
+
 uint32_t transportUdpServerGetMapEventDrops(int slot) {
     if (slot < 0 || slot >= MAX_TANKS) return 0;
     return udpServer.mapEventQueueDrops[slot];

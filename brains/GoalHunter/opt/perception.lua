@@ -562,8 +562,12 @@ function M.update(state, world, info)
   -- PURE TERRAIN — it carries no pill/base overlay — so the LGM travel sim
   -- can't see either on its own, and the bot would march its LGM straight into
   -- one and the build never starts. Mirror the engine's mapGetManSpeed here:
-  --   * LIVE pills of ANY owner block (MAP_MANSPEED_TPILLBOX = 0); dead/carried
-  --     pills don't (dead = passable rubble, carried = off-map).
+  --   * LIVE pills of ANY owner block (MAP_MANSPEED_TPILLBOX = 0); carried
+  --     pills are off the map.
+  --   * DEAD pills walk at road speed whatever the terrain under them, water
+  --     included (mapGetManSpeed with man_dead_pill_terrain_speed 0, the
+  --     classic table, as in Mac Bolo). The brain cannot read that rule (it
+  --     is not sent to clients), so it plays the classic value.
   --   * Enemy bases block (basesCantDrive: non-ally, non-neutral, armour above
   --     capture). The brain only sees hostile-base armour fogged to 1 alive / 0
   --     capturable, so health>0 = "above capture". Alliance-checked off
@@ -573,9 +577,14 @@ function M.update(state, world, info)
     local allies  = info.allies or 0
     local self_pn = info.player_number
     local blocked = {}
+    local road = {}
     for _, p in pairs(world.pills) do
-      if (p.health or 0) > 0 and not p.in_tank then
-        blocked[#blocked + 1] = { p.mx, p.my }
+      if not p.in_tank then
+        if (p.health or 0) > 0 then
+          blocked[#blocked + 1] = { p.mx, p.my }
+        else
+          road[#road + 1] = { p.mx, p.my }
+        end
       end
     end
     for _, b in pairs(world.bases) do
@@ -586,7 +595,7 @@ function M.update(state, world, info)
         blocked[#blocked + 1] = { b.mx, b.my }
       end
     end
-    cpf.set_lgm_blocked(blocked)
+    cpf.set_lgm_blocked(blocked, road)
   end
 
   -- Friendly-fire repair guard: stamp any friendly pill a friendly shot (own OR

@@ -44,6 +44,7 @@
 #include "server_sim.h"
 #include "pillbox.h"
 #include "bolo_map.h"
+#include "building.h"
 #include "game_sim.h"
 #include "client_sim.h"
 #include "client_sim_internal.h"
@@ -459,81 +460,65 @@ bool pillsDropCanLand(GameSim *sim, int mx, int my) {
 }
 
 /*********************************************************
+*NAME:          pillsDropTankOn
+*PURPOSE:
+*  Whether a live tank other than the dropper's is on a
+*  square. The second pass of the drop search leaves such
+*  a square alone: turning a boat to river under a tank
+*  would leave that tank marked as on a boat.
+*
+*ARGUMENTS:
+*  sim     - The game
+*  dropper - Player whose tank is dropping, or NEUTRAL
+*  x       - X map square
+*  y       - Y map square
+*********************************************************/
+static bool pillsDropTankOn(GameSim *sim, BYTE dropper, BYTE x, BYTE y) {
+  BYTE i;
+  WORLD wx;
+  WORLD wy;
+
+  for (i = 0; i < MAX_TANKS; i++) {
+    if (i == dropper || sim->tanks[i] == NULL ||
+        tankIsDestroyed(&sim->tanks[i])) {
+      continue;
+    }
+    tankGetWorld(&sim->tanks[i], &wx, &wy);
+    if ((BYTE) (wx >> TANK_SHIFT_MAPSIZE) == x &&
+        (BYTE) (wy >> TANK_SHIFT_MAPSIZE) == y) {
+      return TRUE;
+    }
+  }
+  return FALSE;
+}
+
+/*********************************************************
 *NAME:          pillsDropSpiralStart
 *PURPOSE:
 *  Starts a drop search with its cursor on the centre.
 *
 *ARGUMENTS:
-*  s  - The search
-*  cx - X map square to search round
-*  cy - Y map square to search round
+*  s       - The search
+*  cx      - X map square to search round
+*  cy      - Y map square to search round
+*  dropper - The player whose tank drops the pills, or
+*            NEUTRAL
 *********************************************************/
-void pillsDropSpiralStart(pillsDropSpiral *s, BYTE cx, BYTE cy) {
-  s->cx = cx;
-  s->cy = cy;
-  s->x = cx;
-  s->y = cy;
+void pillsDropSpiralStart(pillsDropSpiral *s, BYTE cx, BYTE cy, BYTE dropper) {
+  utilSpiralStart(&s->cursor, cx, cy, UTIL_SPIRAL_NORTH);
+  s->pass = 0;
+  s->dropper = dropper;
   /* The farthest the minable area reaches from the centre along
      either axis. Every ring beyond it is off the area entirely. */
-  s->maxRing = s->cx - (MAP_MINE_EDGE_LEFT + 1);
-  if ((MAP_MINE_EDGE_RIGHT - 1) - s->cx > s->maxRing) {
-    s->maxRing = (MAP_MINE_EDGE_RIGHT - 1) - s->cx;
+  s->maxRing = cx - (MAP_MINE_EDGE_LEFT + 1);
+  if ((MAP_MINE_EDGE_RIGHT - 1) - cx > s->maxRing) {
+    s->maxRing = (MAP_MINE_EDGE_RIGHT - 1) - cx;
   }
-  if (s->cy - (MAP_MINE_EDGE_TOP + 1) > s->maxRing) {
-    s->maxRing = s->cy - (MAP_MINE_EDGE_TOP + 1);
+  if (cy - (MAP_MINE_EDGE_TOP + 1) > s->maxRing) {
+    s->maxRing = cy - (MAP_MINE_EDGE_TOP + 1);
   }
-  if ((MAP_MINE_EDGE_BOTTOM - 1) - s->cy > s->maxRing) {
-    s->maxRing = (MAP_MINE_EDGE_BOTTOM - 1) - s->cy;
-  }
-}
-
-/*********************************************************
-*NAME:          pillsDropSpiralRing
-*PURPOSE:
-*  Which ring of its spiral the cursor is on.
-*
-*ARGUMENTS:
-*  s - The search
-*********************************************************/
-static int pillsDropSpiralRing(const pillsDropSpiral *s) {
-  int dx = abs(s->x - s->cx);
-  int dy = abs(s->y - s->cy);
-  return dx > dy ? dx : dy;
-}
-
-/*********************************************************
-*NAME:          pillsDropSpiralStep
-*PURPOSE:
-*  Moves the cursor to the next square of the spiral. Mac
-*  Bolo's gen_scatter in int: from the centre to due north
-*  of it, along a ring clockwise, and from the square just
-*  west of due north round to due north of the next ring.
-*
-*ARGUMENTS:
-*  s - The search
-*********************************************************/
-static void pillsDropSpiralStep(pillsDropSpiral *s) {
-  int dx = s->x - s->cx;
-  int dy = s->y - s->cy;
-  int ring = pillsDropSpiralRing(s);
-
-  if (ring == 0) {
-    s->y--;
-  } else if (dy == -ring && dx < 0) {
-    /* East along the top, short of due north: the last stretch of a ring.
-       Reaching due north steps out to the start of the next one. */
-    s->x++;
-    if (s->x == s->cx) {
-      s->y--;
-    }
-  } else if (dx == -ring) {
-    s->y--;       /* North up the west side */
-  } else if (dy == ring) {
-    s->x--;       /* West along the bottom */
-  } else if (dx == ring) {
-    s->y++;       /* South down the east side */
-  } else {
-    s->x++;       /* East along the top, from due north */
+  if ((MAP_MINE_EDGE_BOTTOM - 1) - cy > s->maxRing) {
+    s->maxRing = (MAP_MINE_EDGE_BOTTOM - 1) - cy;
   }
 }
 
@@ -542,8 +527,18 @@ static void pillsDropSpiralStep(pillsDropSpiral *s) {
 *PURPOSE:
 *  Moves the cursor on to the first square from where it
 *  is, that one included, that a pillbox may land on, and
-*  answers it. Answers FALSE once the spiral has walked
-*  past the minable area without finding one.
+*  answers it.
+*
+*  If the spiral walks past the minable area without
+*  finding one, the search starts again from the centre
+*  in a second pass. The second pass takes the first
+*  square in the minable area with no pill, no base and
+*  no live tank other than the dropper's on it. A
+*  building or half-building there turns to rubble and a
+*  boat turns to river, so the pill can land. Answers
+*  FALSE only if every square in the minable area has a
+*  pill, a base or a tank on it, which a map of at most
+*  16 pills, 16 bases and 16 tanks never has.
 *
 *ARGUMENTS:
 *  sim - The game
@@ -552,13 +547,47 @@ static void pillsDropSpiralStep(pillsDropSpiral *s) {
 *  my  - Receives the Y map square
 *********************************************************/
 bool pillsDropSpiralFind(GameSim *sim, pillsDropSpiral *s, BYTE *mx, BYTE *my) {
-  while (pillsDropSpiralRing(s) <= s->maxRing) {
-    if (pillsDropCanLand(sim, s->x, s->y)) {
-      *mx = (BYTE) s->x;
-      *my = (BYTE) s->y;
-      return TRUE;
+  BYTE x;
+  BYTE y;
+  BYTE pos;
+
+  while (utilSpiralRing(&s->cursor) <= s->maxRing) {
+    if (s->pass == 0) {
+      if (pillsDropCanLand(sim, s->cursor.x, s->cursor.y)) {
+        *mx = (BYTE) s->cursor.x;
+        *my = (BYTE) s->cursor.y;
+        return TRUE;
+      }
+    } else if (s->cursor.x > MAP_MINE_EDGE_LEFT &&
+               s->cursor.x < MAP_MINE_EDGE_RIGHT &&
+               s->cursor.y > MAP_MINE_EDGE_TOP &&
+               s->cursor.y < MAP_MINE_EDGE_BOTTOM) {
+      x = (BYTE) s->cursor.x;
+      y = (BYTE) s->cursor.y;
+      if (pillsExistPos(&sim->pb, x, y) == FALSE &&
+          basesExistPos(&sim->bs, x, y) == FALSE &&
+          pillsDropTankOn(sim, s->dropper, x, y) == FALSE) {
+        /* Clear the square so pillsDropCanLand accepts it. */
+        pos = mapGetPos(&sim->mp, x, y);
+        if (pos == BUILDING || pos == HALFBUILDING) {
+          buildingRemovePos(&sim->blds, x, y);
+          mapSetPos(sim, &sim->mp, x, y, RUBBLE, TRUE, FALSE);
+        } else if (pos == BOAT) {
+          mapSetPos(sim, &sim->mp, x, y, RIVER, TRUE, FALSE);
+        }
+        *mx = x;
+        *my = y;
+        return TRUE;
+      }
     }
-    pillsDropSpiralStep(s);
+    utilSpiralStep(&s->cursor);
+    if (s->pass == 0 && utilSpiralRing(&s->cursor) > s->maxRing) {
+      /* No square will hold a pill as it is. Start again from the centre
+         and clear one. */
+      s->pass = 1;
+      utilSpiralStart(&s->cursor, s->cursor.cx, s->cursor.cy,
+                      UTIL_SPIRAL_NORTH);
+    }
   }
   return FALSE;
 }
@@ -729,7 +758,6 @@ void pillsUpdate(GameSim *sim, tank tanks[], bool *connected, BYTE numTanks) {
       bestTank = NULL;
       bestTankNum = NEUTRAL;
       foundTarget = FALSE;
-      heldByCap = FALSE;
       bestTankX = 0;
       bestTankY = 0;
       bestTankDir = 0;
@@ -762,39 +790,22 @@ void pillsUpdate(GameSim *sim, tank tanks[], bool *connected, BYTE numTanks) {
         }
 
         if ((utilIsItemInRange(x, y, tankX, tankY, (WORLD) sim->rules.pill_range, &amount)) == TRUE) {
-          /* A tank with as many pill shells coming as the rule allows is
-           * passed over for the next nearest. Checked only once the tank
-           * has passed every other test, so heldByCap means a target the
-           * pill could otherwise shoot: one that leaves range, hides or
-           * dies clears justSeen below the same as it always has. */
-          const bool capHeld = shellCapOn && t < MAX_TANKS &&
-              shellsAtTank[t] >= sim->rules.pill_max_shells_at_tank;
-
           /* can_target: the scenario may have this pill pass over this tank
            * as if it were not there. Asked last, of a tank that has passed
            * every other test, and only where the answer changes something:
-           * the tank is nearer than the best so far, or the shell cap would
-           * hold the pill for it. A refused tank sets neither the target nor
-           * heldByCap, so a pill with nobody else in range clears justSeen
+           * the tank is nearer than the best so far. A refused tank is not
+           * the target, so a pill with nobody else in range clears justSeen
            * the same as it does for an empty field. No scenario, no
            * question: the helper answers TRUE without a call. */
-          if ((capHeld || amount < bestDist) &&
+          if (amount < bestDist &&
               gameSimCanTarget(sim, count, t) == FALSE) {
-            continue;
-          }
-          if (capHeld) {
-            heldByCap = TRUE;
             continue;
           }
           if (amount < bestDist) {
             bestDist = amount;
             bestTankX = tankX;
             bestTankY = tankY;
-            /* Let the Mac solver round the original heading itself.
-             * WinBolo's travel-angle helper rounds half-sectors downward,
-             * so pre-rounding here changes Mac aim at 8, 24, ... 248. */
-            bestTankDir = sim->rules.pill_aim_mac ? tankGet256Dir(&tanks[t]) :
-                tankGetTravelAngel(&tanks[t]);
+            bestTankDir = tankGetTravelAngel(&tanks[t]);
             bestTankSpeed = tankGetSpeed(&tanks[t]);
             bestTank = &tanks[t];
             bestTankNum = t;
@@ -803,9 +814,19 @@ void pillsUpdate(GameSim *sim, tank tanks[], bool *connected, BYTE numTanks) {
         }
       }
 
+      /* pill_shell_cap: the nearest tank already has as many pill shells
+       * coming as the rule allows. Mac Bolo's pill fires only from the
+       * nearest tank's own machine, out of the 12 slots it keeps for pill
+       * shells; with none free the shot is lost and the pill reloads. */
+      heldByCap = foundTarget && shellCapOn && bestTankNum < MAX_TANKS &&
+          shellsAtTank[bestTankNum] >= sim->rules.pill_max_shells_at_tank;
+
       if (foundTarget) {
-        /* Fire at closest enemy tank */
-        if ((*value)->item[count].justSeen == TRUE) {
+        if ((*value)->item[count].justSeen == TRUE && heldByCap) {
+          /* No shell free for the closest enemy tank: the shot is lost */
+          (*value)->item[count].reload = 0;
+        } else if ((*value)->item[count].justSeen == TRUE) {
+          /* Fire at closest enemy tank */
           dir = pillsTargetTank(sim, mp, value, bs, x, y, bestTankX, bestTankY, (TURNTYPE) bestTankDir, bestTankSpeed, (tankIsOnBoat(bestTank)), tankBoatExitSpeed(sim, *bestTank), tankIsObstructed(bestTank));
           shellsAddItem(sim, shs, x, y, dir, sim->rules.pill_fire_length, NEUTRAL, bestTankNum, count, FALSE);
           if (shellCapOn && bestTankNum < MAX_TANKS) {
@@ -818,11 +839,9 @@ void pillsUpdate(GameSim *sim, tank tanks[], bool *connected, BYTE numTanks) {
           (*value)->item[count].justSeen = TRUE;
           (*value)->item[count].reload = 0;
         }
-      } else if (heldByCap == FALSE) {
+      } else {
         (*value)->item[count].justSeen = FALSE;
       }
-      /* Held only by the cap: justSeen and the full reload are kept, so the
-       * pill fires on the first update a shell at its target comes free. */
     }
   }
 }
@@ -1147,7 +1166,9 @@ static TURNTYPE pillsMacAim(int32_t x, int32_t y) {
 static TURNTYPE pillsTargetTankMac(WORLD px, WORLD py, WORLD tx, WORLD ty,
                                   TURNTYPE heading, BYTE speed, bool obstructed) {
   int distance = pillsMacRange(px, py, tx, ty);
-  int direction = ((int)(heading + 8) & 255) & 240;
+  /* Mac Bolo rounds a heading exactly halfway between two sectors up; this
+   * rounds it down, the way the tank drives. */
+  int direction = utilGet16Dir(heading);
   /* WinBolo moves speed WU per 20 ms; Mac moves speed*127/256 WU
    * per 40 ms. Its road speed 64 corresponds to WinBolo's 16. Preserve
    * the Mac byte's range for scenarios with unusually high speeds. */
@@ -1253,7 +1274,9 @@ TURNTYPE pillsTargetTank(GameSim *sim, map *mp, pillboxes *pb, bases *bs, WORLD 
 TURNTYPE pillsTargetTankMove(GameSim *sim, map *mp, pillboxes *pb, bases *bs, WORLD xValue, WORLD yValue, WORLD tankX, WORLD tankY, TURNTYPE angle, BYTE speed, bool onBoat, BYTE boatExitSpeed) {
   TURNTYPE returnValue; /* Value to return */
   TURNTYPE estimate;    /* Current Estimate */
-  BYTE count;           /* Looping Variable */
+  int count;            /* Looping Variable: an int, as pill_aim_iterations
+                           goes past what a BYTE holds and a BYTE counter
+                           wrapped, so the budget was never reached */
   bool found;           /* Finished looping */
   int tankAddX;         /* Tank add X */
   int tankAddY;         /* Tank add Y */
@@ -1274,13 +1297,14 @@ TURNTYPE pillsTargetTankMove(GameSim *sim, map *mp, pillboxes *pb, bases *bs, WO
   shellX = xValue;
   shellY = yValue;
 
-  returnValue = 0;
-
   /* Get tank Add amounts */
   utilCalcDistance(&tankAddX, &tankAddY, angle, speed);
-    
+
   /* Get initial estimate */
   estimate = utilCalcAngle(xValue, yValue, tankX,tankY);
+  /* A budget too small to run the loop fires at where the tank is now,
+     not at bearing 0 */
+  returnValue = estimate;
   /* Calculate distance */
   utilCalcDistance(&shellAddX, &shellAddY, estimate, sim->rules.shell_speed);
   shellX = (WORLD) (xValue + shellAddX);
@@ -1332,8 +1356,10 @@ TURNTYPE pillsTargetTankMove(GameSim *sim, map *mp, pillboxes *pb, bases *bs, WO
     
     estimate = utilCalcAngle(xValue, yValue, tankX,tankY);
     utilCalcDistance(&shellAddX, &shellAddY, estimate, sim->rules.shell_speed);    
-    shellX = (WORLD) (xValue + ((count+  5) * shellAddX));
-    shellY = (WORLD) (yValue + ((count +  5) * shellAddY));
+    /* The shell starts shell_start_add steps out (shellApplyStartOffset),
+       so that is where the count steps it has flown are counted from */
+    shellX = (WORLD) (xValue + ((count + sim->rules.shell_start_add) * shellAddX));
+    shellY = (WORLD) (yValue + ((count + sim->rules.shell_start_add) * shellAddY));
     /* Set it anyway */
     returnValue = estimate;
   }
@@ -2280,41 +2306,6 @@ BYTE pillsGetPillNetData(pillboxes *value, BYTE *buff) {
 
 
 /*********************************************************
-*NAME:          pillsDropSetNeutralOwner
-*AUTHOR:        John Morrison
-*CREATION DATE: 1/11/99
-*LAST MODIFIED: 1/11/99
-*PURPOSE:
-*  Changes all pills of owner owner back to neutral. Also
-*  if they are inside a tank it drops them.
-*
-*ARGUMENTS:
-*  value - Pointer to the pillbox structure
-*  owner - Owner to set back to neutral
-*********************************************************/
-void pillsDropSetNeutralOwner(GameSim *sim, BYTE owner) {
-	pillboxes *value = &sim->pb;
-	BYTE count;       /* Looping Variable */
-
-	count = 0;
-	while (count < ((*value)->numPills)) {
-		/* Pills owner is the same owner that has quit the game */
-		if ((*value)->active[count] != FALSE && ((*value)->item[count].owner) == owner) {
-			(*value)->item[count].owner = NEUTRAL;
-			/* A 'neutral' tank captures the pill instantly */
-			/* The tank was carrying pills */
-			if (((*value)->item[count].inTank) == TRUE) {
-				(*value)->item[count].inTank = FALSE;
-				/* Send a message that all the pills in the tank are now dead and belong to a 'neutral' player */
-        logAddEvent(log_PillSetInTank, utilPutNibble(count, FALSE), 0, 0, 0, 0, NULL);
-        logAddEvent(log_PillSetOwner, count, NEUTRAL, FALSE, 0, 0, NULL);
-			}
-		}
-		count++;
-	}
-}
-
-/*********************************************************
 *NAME:          pillsMigrate
 *AUTHOR:        John Morrison
 *CREATION DATE: 1/11/99
@@ -2416,36 +2407,6 @@ bool pillsIsCapturable(pillboxes *value, BYTE xValue, BYTE yValue) {
 
 
 /*********************************************************
-*NAME:          pillsExplicitDrop
-*AUTHOR:        John Morrison
-*CREATION DATE: 10/11/99
-*LAST MODIFIED: 10/11/99
-*PURPOSE:
-*  Drops all pills of owner owner
-*
-*
-*ARGUMENTS:
-*  value - Pointer to the pillbox structure
-*  owner - Owner to set back to neutral
-*********************************************************/
-void pillsExplicitDrop(GameSim *sim, BYTE owner) {
-  pillboxes *value = &sim->pb;
-  BYTE count;       /* Looping Variable */
-
-  count = 0;
-  while (count < ((*value)->numPills)) {
-    if ((*value)->active[count] != FALSE && ((*value)->item[count].owner) == owner) {
-      if (((*value)->item[count].inTank) == TRUE) {
-        (*value)->item[count].inTank = FALSE;
-        logAddEvent(log_PillSetInTank, utilPutNibble(count, FALSE), 0, 0, 0, 0, NULL);
-        logAddEvent(log_PillSetPlace, count, (*value)->item[count].x, (*value)->item[count].y, 0, 0, NULL);
-      }
-    }
-    count++;
-  }
-}
-
-/*********************************************************
 *NAME:          pillsGetBrainPillsInRect
 *AUTHOR:        John Morrison
 *CREATION DATE: 26/11/99
@@ -2488,7 +2449,11 @@ void pillsGetBrainPillsInRect(ClientSim *cs, GameSim *sim, pillboxes *value, BYT
     if ((*value)->item[count].owner != NEUTRAL) {
       isAllie = playersIsAllie(&sim->plyrs, playerNum, (*value)->item[count].owner);
     }
-    if ((*value)->active[count] != FALSE && ((((*value)->item[count].x) >= leftPos && ((*value)->item[count].x) <= rightPos && ((*value)->item[count].y) >= top && ((*value)->item[count].y) <= bottom) || isAllie == TRUE) && ((*value)->item[count].inTank == FALSE)) {
+    /* A moved square is where the pill was picked up from, not where it is, so
+       it is left out even for an ally: a server bot is only told an allied
+       pill's square while the pill is in its view. */
+    if ((*value)->active[count] != FALSE && ((((*value)->item[count].x) >= leftPos && ((*value)->item[count].x) <= rightPos && ((*value)->item[count].y) >= top && ((*value)->item[count].y) <= bottom) || isAllie == TRUE) && ((*value)->item[count].inTank == FALSE)
+        && ((*value)->posStale[count]) != PILL_SQUARE_MOVED) {
       /* In the rectangle */
       wx = (*value)->item[count].x;
       wx <<= TANK_SHIFT_MAPSIZE;

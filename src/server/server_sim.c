@@ -179,6 +179,21 @@ void simMapChangeCallback(BYTE x, BYTE y, BYTE terrain) {
     }
 }
 
+/* The same record, kept for the next running frame instead (see
+ * pendingMapEvents). For a change made between ticks, where an event put in
+ * mapEvents would be cleared before it is sent. */
+void simMapChangePendingCallback(BYTE x, BYTE y, BYTE terrain) {
+    if (activeSim != NULL && activeSim->pendingMapEventCount < MAX_MAP_EVENTS) {
+        GameEvent *ev = &activeSim->pendingMapEvents[activeSim->pendingMapEventCount];
+        ev->type = EVENT_MAP_CHANGE;
+        memset(ev->data, 0, sizeof(ev->data));
+        ev->data[0] = x;
+        ev->data[1] = y;
+        ev->data[2] = terrain;
+        activeSim->pendingMapEventCount++;
+    }
+}
+
 ServerSim *serverSimGetActive(void) {
     /* A slot armed for a sim that has since been destroyed — necessarily by
      * some other thread, since destroy clears its own — must never be handed
@@ -312,6 +327,7 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     SDL_strlcpy(sim->teams[2].name, "Team 2", LOBBY_TEAM_NAME_LEN);
 
     sim->openHost            = FALSE;
+    sim->scriptUploadPolicy  = SCRIPT_UPLOAD_OFF;
     sim->allowNewPlayers     = TRUE;   /* lobby starts open */
     sim->autoLockOnGameStart = FALSE;
     sim->savedAllowNewPlayers = TRUE;
@@ -683,12 +699,17 @@ void serverSimDestroy(ServerSim *sim) {
     free(sim->botPoolBlob);
     sim->botPoolBlob = NULL;
 
+    /* Each slot is cleared as it is freed. A later tank's destroy puts down
+       the pillboxes it carries, and that search looks at every other tank
+       still in the table (pillsDropTankOn). */
     for (count = 0; count < MAX_TANKS; count++) {
         if (sim->sim.tanks[count] != NULL) {
             tankDestroy(&sim->sim, &sim->sim.tanks[count]);
+            sim->sim.tanks[count] = NULL;
         }
         if (sim->sim.lgmen[count] != NULL) {
             lgmDestroy(&sim->sim.lgmen[count]);
+            sim->sim.lgmen[count] = NULL;
         }
     }
 
@@ -818,9 +839,16 @@ void serverSimBuildRoundStatsSummary(ServerSim *sim, RoundStatsSummary *out) {
     computeTerritoryShifts(sim->trackBuf, sim->trackLen, sim->trackIdentity,
                            MAX_TANKS, shifts, &shiftCount, TERRITORY_SHIFTS_MAX);
 
+    /* The round's changes of team, so each highlight judges a seat by the
+     * team it was on at the time and not the team it ended on. */
+    TeamChange teamChanges[TEAM_CHANGES_MAX];
+    int teamChangeCount = roundStatsCollectTeamChanges(
+        sim->trackBuf, sim->trackLen, teamChanges, TEAM_CHANGES_MAX);
+
     int hlCount = 0;
     computeHighlights(sim->notableEvents, sim->notableEventCount,
-                      sim->roundStats, team, out->awards, (int)out->awardCount,
+                      sim->roundStats, team, teamChanges, teamChangeCount,
+                      out->awards, (int)out->awardCount,
                       shifts, shiftCount, out->highlights, &hlCount,
                       ROUND_STATS_HIGHLIGHTS_WIRE_MAX);
     out->highlightCount = (uint8_t)hlCount;

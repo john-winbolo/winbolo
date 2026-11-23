@@ -1305,6 +1305,19 @@ static void simRunHalfStep(ServerSim *sim) {
     sim->tick++;
 }
 
+/* Moves the map changes made between ticks into the frame's map events, which
+ * serverSimTick has just cleared. Both buffers hold MAX_MAP_EVENTS, so all of
+ * them fit. */
+static void serverSimFlushPendingMapEvents(ServerSim *sim) {
+    uint16_t i;
+
+    for (i = 0; i < sim->pendingMapEventCount &&
+                sim->mapEventCount < MAX_MAP_EVENTS; i++) {
+        sim->mapEvents[sim->mapEventCount++] = sim->pendingMapEvents[i];
+    }
+    sim->pendingMapEventCount = 0;
+}
+
 /* Advance the sim by one 20ms frame.  In the running state this runs
  * two half-steps (the keys/game alternation that matches the client's
  * 100Hz input rate), with event buffers cleared once at the top so
@@ -1318,6 +1331,9 @@ void serverSimTick(ServerSim *sim) {
     if (sim->state == serverStateRunning) {
         sim->eventCount = 0;
         sim->mapEventCount = 0;
+        /* Map changes made between ticks (see pendingMapEvents) go in first,
+         * because they happened before anything this frame does. */
+        serverSimFlushPendingMapEvents(sim);
         /* Buffer pings accepted during this frame's packet receive: the
          * command-dispatch path runs before this clear, so it records the ping
          * rather than buffering it (anything buffered there would be wiped
@@ -1360,6 +1376,11 @@ void serverSimTick(ServerSim *sim) {
          * events (the change callback is only installed for a running tick),
          * so there is nothing to apply on that branch. */
         serverSimShadowTick(sim);
+        /* The two records of sides agree at the end of every running tick
+           (#424): two connected seats are allied exactly when they are on
+           the same nonzero team. Every build checks. A break is logged
+           once, with the first pair, and the round goes on. */
+        serverSimSidesCheck(sim);
     } else {
         /* No map event is recorded on this branch, but the fill drain below
            reads the count as a bound, so it starts each tick at zero here as

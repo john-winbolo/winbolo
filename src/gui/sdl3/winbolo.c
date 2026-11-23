@@ -1236,13 +1236,15 @@ void windowDeckPause(ClientSim *cs, bool active) {
   }
 }
 
-/* Tutorial message overlay opened/closed.  Solo only (the tutorial is always
-   single-player): freeze the client and server sim while a message is up and
-   rebase the catch-up wallclock on close, mirroring windowDeckPause.  Driven
-   by the overlay's open/close edge in the render path.  Rebasing on close is
-   what keeps a held turn or dismissing fire press from carrying into the game:
-   the next game tick is one tick out, by which point a tapped button has lifted
-   and the input gate has already swallowed everything while the message was up. */
+/* Tutorial message overlay opened/closed. Only in a shipped tutorial, which is
+   always single-player (clientFrontPopupPausesGame); a scenario popup in any
+   other game leaves it running: freeze the client and server sim while a
+   message is up and rebase the catch-up wallclock on close, mirroring
+   windowDeckPause. Driven by the overlay's open/close edge in the render path.
+   Rebasing on close is what keeps a held turn or dismissing fire press from
+   carrying into the game: the next game tick is one tick out, by which point a
+   tapped button has lifted and the input gate has already swallowed everything
+   while the message was up. */
 void windowTutorialPause(ClientSim *cs, bool active) {
   if (clientFrontSoloPause(cs, CLIENT_FRONT_PAUSE_TUTORIAL, active)) {
     oldTick = SDL_GetTicks();

@@ -127,6 +127,12 @@ bool serverSimAnnounce(ServerSim *sim, BYTE kind, BYTE subject, BYTE actor);
  * the per-round buffer; the record callbacks above and serverSimAddEvent in
  * server_sim_control.c both feed it. */
 void serverSimTrackAppend(ServerSim *sim, const void *rec, size_t n);
+/* ATTR_REC_TEAM records (#424): one of slot's current team; one for every
+ * connected seat at the round start; and one of slot's team when it is not
+ * the team last written for it. Each does nothing unless a round is running. */
+void serverSimTrackTeam(ServerSim *sim, BYTE slot);
+void serverSimTrackStartTeams(ServerSim *sim);
+void serverSimTrackTeamIfChanged(ServerSim *sim, BYTE slot);
 
 /* Defined in server_sim_snapshot.c — the base and pill collectors. They fill
  * the snapshot's periodic full sync, and the tick core in server_sim_tick.c reads
@@ -330,6 +336,42 @@ typedef struct {
 const BrainModes *serverSimBrainModesCached(BrainModesCache *cache,
                                             const char *brainPath);
 
+/* Defined in server_sim_players.c. Sides during a round (#424).
+ *
+ * On the server, a seat's lobby team is the only record of its side. The
+ * alliance bitmap in players is a copy written from it, and every pair of
+ * connected seats i != j must hold
+ *
+ *     playersIsAllie(i, j) == (team[i] != 0 && team[i] == team[j])
+ *
+ * Accept, leave, a join, set_team and a bot added to a round all write the
+ * team first. The bitmap is then written from the teams by
+ * serverSimReapplyTeamAlliances, which is the one server-side write of
+ * alliance bits during a round: nothing edits a pair at a time. The one
+ * other touch is the leave's handover of what the leaver owns to its first
+ * ally, which clears the leaver's bits on its way, and the rebuild follows
+ * it. */
+
+/* True if the rule above holds for every pair of connected seats. */
+bool serverSimSidesAgree(const ServerSim *sim);
+
+/* The check the running tick makes, in every build. When the rule breaks it
+ * logs the first pair once, and not again until the two agree and break
+ * again. It changes nothing. */
+void serverSimSidesCheck(ServerSim *sim);
+
+/* The lowest team id in 1..MAX_TANKS-1 that no connected seat is on, or 0
+ * when every id has somebody. A team not in use is set up first: named
+ * "Team N", on no start side, with the colour the fewest teams in use have
+ * (the lowest on a tie), and published. A team still in use (a lobby or
+ * scenario team that emptied) keeps its name, colour and start side. */
+BYTE serverSimFreeTeam(ServerSim *sim);
+
+/* Tell everyone that seat slot's team changed from oldTeam: publish its
+ * lobby slot and, during a round, send the seat the scenario panels its new
+ * team gives it. Call it after the alliance bitmap has its new value. */
+void serverSimSeatTeamChanged(ServerSim *sim, BYTE slot, BYTE oldTeam);
+
 /* Defined in server_sim.c — the entries owned by the parent rather than by a
  * source in this directory. */
 
@@ -347,5 +389,12 @@ void serverSimSetActive(ServerSim *sim);
  * directly, which is why it stays beside that slot in server_sim.c rather than
  * travelling with its caller. */
 void simMapChangeCallback(BYTE x, BYTE y, BYTE terrain);
+
+/* Records a terrain change into the active sim's pendingMapEvents, for a
+ * change made while a running round is between ticks. serverSimTick moves
+ * them into mapEvents at the top of the next running frame, after it clears
+ * that buffer. serverSimRemovePlayer installs it around the drops a leaving
+ * player makes. */
+void simMapChangePendingCallback(BYTE x, BYTE y, BYTE terrain);
 
 #endif

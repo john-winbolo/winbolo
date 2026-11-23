@@ -58,6 +58,12 @@ typedef struct {
   int      ping;      /* the kind of ping the line is, or -1 */
   int      player;    /* the player the line is about, or -1 */
   bool     awayAdded; /* a lost builder's time away is on the text */
+  /* A chat line's parts for the Chat panel (lvEventListSetChat), NULL for
+     any other line: who sent it, a note on who it went to ("(team)",
+     "(to Bob)") or NULL for a line to everyone, and the words typed. */
+  char    *chatFrom;
+  char    *chatNote;
+  char    *chatText;
 } LvEvent;
 
 /* Drop every line. */
@@ -73,6 +79,12 @@ LvEvent *lvEventListAdd(const char *text, uint32_t timeMs, bool showTime);
    Returns the new line as lvEventListAdd does. */
 LvEvent *lvEventListAddPinned(const char *text, bool seekable, uint32_t seekMs,
                               int mapX, int mapY);
+
+/* Make e a chat line with these parts (see LvEvent). note may be NULL.
+   Returns false, with e as it was, when from or text is NULL or there is no
+   memory. */
+bool lvEventListSetChat(LvEvent *e, const char *from, const char *note,
+                        const char *text);
 
 /* Put suffix on the end of line i's text. Returns false, with the line as it
    was, when i is not a line or there is no memory. */

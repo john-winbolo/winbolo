@@ -11,9 +11,10 @@
  * count pillsUpdate takes is exactly the one each case set up.
  *
  *   1. The switch off is no limit: a pill fires however many are coming.
- *   2. A tank at the cap is passed over for the next nearest one.
- *   3. With no other target the pill holds its shot, keeps justSeen and a
- *      full reload, and fires on the first update a shell comes free.
+ *   2. A nearest tank at the cap stays the target: no tank further off is
+ *      shot instead, as in Mac Bolo.
+ *   3. The pill loses the shot at a capped tank: it keeps justSeen but
+ *      reloads, and fires again only once reloaded with a shell free.
  *   4. A capped tank that leaves range clears justSeen as any other does.
  *   5. Shots fired in the same update count against the cap.
  *   6. A tank's own shells are not pill shells and do not count.
@@ -81,6 +82,11 @@ static void psc_arm_pill(PscFixture *f, BYTE num) {
     f->gs->pb->active[num]        = TRUE;
 }
 
+/* Finish pill num's reload without touching justSeen. */
+static void psc_reload(PscFixture *f, BYTE num) {
+    f->gs->pb->item[num].reload = f->gs->pb->item[num].speed;
+}
+
 /* Stand tank t squares map squares east of pill num, or west of it on the
  * east half of the map, so the spot stays on the map. */
 static void psc_place_tank(PscFixture *f, BYTE t, BYTE num, int squares) {
@@ -142,7 +148,7 @@ int run_pill_shell_cap_off_is_no_limit(void) {
     return 0;
 }
 
-int run_pill_shell_cap_retargets_next_nearest(void) {
+int run_pill_shell_cap_does_not_retarget(void) {
     PscFixture f;
     int        before;
 
@@ -160,20 +166,20 @@ int run_pill_shell_cap_retargets_next_nearest(void) {
                   "one under the cap the pill fired at %d, not the nearest",
                   f.gs->shs->target);
 
-    /* That shot made twelve, so the next one goes to the tank further off. */
+    /* That shot made twelve. The tank further off is in range and has
+       nothing coming, but the nearest is still the target. */
     psc_arm_pill(&f, PSC_PILL);
     before = psc_count(&f);
     psc_update(&f, true, true);
-    UT_ASSERT(psc_count(&f) == before + 1);
-    UT_ASSERT_MSG(f.gs->shs->target == PSC_FAR,
-                  "at the cap the pill fired at %d, not the next nearest",
+    UT_ASSERT_MSG(psc_count(&f) == before,
+                  "at the cap the pill fired at %d instead of holding",
                   f.gs->shs->target);
 
     serverSimDestroy(f.sim);
     return 0;
 }
 
-int run_pill_shell_cap_holds_then_fires_when_freed(void) {
+int run_pill_shell_cap_loses_shot_and_reloads(void) {
     PscFixture f;
     int        before;
     BYTE       speed;
@@ -190,18 +196,24 @@ int run_pill_shell_cap_holds_then_fires_when_freed(void) {
     UT_ASSERT_MSG(psc_count(&f) == before,
                   "the pill fired at a tank already at the cap");
     UT_ASSERT_MSG(f.gs->pb->item[PSC_PILL].justSeen == TRUE,
-                  "holding for the cap cleared justSeen");
-    UT_ASSERT_MSG(f.gs->pb->item[PSC_PILL].reload >= speed,
-                  "holding for the cap reset the reload to %d",
+                  "losing a shot to the cap cleared justSeen");
+    UT_ASSERT_MSG(f.gs->pb->item[PSC_PILL].reload < speed,
+                  "losing a shot to the cap kept the full reload of %d",
                   f.gs->pb->item[PSC_PILL].reload);
 
     /* A shell lands. The list keeps it until the next shellsUpdate, but a
-       dead shell is no longer coming, so the pill fires straight away. */
+       dead shell is no longer coming. The pill is still reloading, so it
+       does not fire on the update the shell comes free. */
     f.gs->shs->shellDead = TRUE;
     psc_update(&f, true, false);
+    UT_ASSERT_MSG(psc_count(&f) == before,
+                  "the pill fired before its reload after losing a shot");
 
+    /* Reloaded, with a shell free: it fires without seeing the tank again. */
+    psc_reload(&f, PSC_PILL);
+    psc_update(&f, true, false);
     UT_ASSERT_MSG(psc_count(&f) == before + 1,
-                  "the pill did not fire on the update a shell came free");
+                  "the reloaded pill did not fire once a shell came free");
     UT_ASSERT(f.gs->shs->target == PSC_NEAR);
 
     serverSimDestroy(f.sim);
@@ -223,6 +235,7 @@ int run_pill_shell_cap_out_of_range_clears_just_seen(void) {
     /* Twenty squares is well past the classic range of eight. */
     UT_ASSERT(f.gs->rules.pill_range < (20 << TANK_SHIFT_MAPSIZE));
     psc_place_tank(&f, PSC_NEAR, PSC_PILL, 20);
+    psc_reload(&f, PSC_PILL);
     psc_update(&f, true, false);
     UT_ASSERT_MSG(f.gs->pb->item[PSC_PILL].justSeen == FALSE,
                   "a capped tank that left range kept justSeen set");
@@ -231,6 +244,7 @@ int run_pill_shell_cap_out_of_range_clears_just_seen(void) {
        the same as a tank that had never been capped. */
     f.gs->shs->shellDead = TRUE;
     psc_place_tank(&f, PSC_NEAR, PSC_PILL, 1);
+    psc_reload(&f, PSC_PILL);
     before = psc_count(&f);
     psc_update(&f, true, false);
     UT_ASSERT_MSG(psc_count(&f) == before,
@@ -262,6 +276,8 @@ int run_pill_shell_cap_counts_same_update_shots(void) {
                   psc_count(&f) - before);
     UT_ASSERT_MSG(f.gs->pb->item[second].justSeen == TRUE,
                   "the pill held back in the same update lost justSeen");
+    UT_ASSERT_MSG(f.gs->pb->item[second].reload < f.gs->pb->item[second].speed,
+                  "the pill held back in the same update kept its reload");
 
     serverSimDestroy(f.sim);
     return 0;

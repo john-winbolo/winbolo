@@ -787,6 +787,11 @@ uint8_t clientSimGetLobbyMapUploadProgressPercent(const ClientSim *cs) {
       (Transport *)&cs->transport);
 }
 
+bool clientSimNetLobbyMapChangeBusy(const ClientSim *cs) {
+  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return false;
+  return transportUdpClientMapChangeBusy((Transport *)&cs->transport);
+}
+
 /* === Last completed round's replay log === */
 
 int clientSimGetRoundLogState(const ClientSim *cs) {

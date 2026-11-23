@@ -61,20 +61,23 @@
 #include "imgui/imgui_hud.h"
 #include "imgui/imgui_overview.h"
 #include "imgui/imgui_tank.h"
+#include "imgui/imgui_chat.h"
 #include "imgui/imgui_comments.h"
+#include "imgui/imgui_clip_gif.h"
 #include "imgui/imgui_dialogs.h"
 #include "imgui/imgui_game_viewport.h"
 #include "imgui/imgui_scenario_panel.h"
 #include "imgui/imgui_dock.h"
 #include "lv_dock_fit.h"
-#include "lv_dock_clear.h"
 #include "lv_fullscreen_key.h"
 #include "lv_save_name.h"   /* the file name Save Log File offers */
 #include "lv_utf8_path.h"   /* lvFopenUtf8: the dialogs' paths are UTF-8 */
-#include "lv_first_view.h"  /* where the map is when a log is first shown */
 #include "lv_jump_anim.h"   /* the animation of Rewind and Fast Forward */
 #include "lv_panel_set.h"   /* the panels a frame of the overview draws */
+#include "lv_host_dock.h"   /* the map beside the sidebars, and the first view */
 #include "lv_fullscreen_game.h"
+#include "lv_window_size.h" /* -size: a window of a fixed size in pixels */
+#include "../common/wb_log.h"
 #include "imgui/imgui_game_view.h"
 #include "imgui/imgui_logviewer_menu.h"
 #include "game_view.h"
@@ -279,55 +282,6 @@ void lv_windowSeekToHighlight(uint32_t ms, int mapX, int mapY) {
  * show the place, the ring is an arrow at the view's edge.
  * Any other event moves only the playhead and leaves the view where the user
  * put it. */
-/* The part of the map's view no solid sidebar hides, each way: where it
- * starts, in points from the view's own start on the screen, and how long
- * it is. It is the window less the menu bar and the solid sidebars; a
- * sidebar whose unused part is clear counts as map. When the middle of that
- * is under a panel of a clear sidebar, the answer is the part no sidebar is
- * on at all, clear or solid. */
-static void lvHostVisibleMap(float *startX, float *startY, float *lenX, float *lenY) {
-    LvDockMargins open = { 0, 0, 0, 0 };
-    LvDockMargins view = { 0, 0, 0, 0 };
-    int winW = 0, winH = 0;
-    int menuH = (int)lv_imgui_get_menu_bar_height();
-
-    SDL_GetWindowSize(g_lv->window, &winW, &winH);
-    /* Where the view starts on the screen. */
-    lv_imgui_dock_map_margins(&view.left, &view.top, &view.right, &view.bottom);
-    lv_imgui_dock_open_margins(&open.left, &open.top, &open.right, &open.bottom);
-    if (!lv_imgui_dock_point_on_map(
-            (float)open.left + (float)(winW - open.left - open.right) * 0.5f,
-            (float)(menuH + open.top) + (float)(winH - menuH - open.top - open.bottom) * 0.5f)) {
-        lv_imgui_dock_margins(&open.left, &open.top, &open.right, &open.bottom);
-    }
-    *startX = (float)(open.left - view.left);
-    *startY = (float)(open.top - view.top);
-    *lenX = (float)(winW - open.left - open.right);
-    *lenY = (float)(winH - menuH - open.top - open.bottom);
-    if (*startX < 0.0f) *startX = 0.0f;
-    if (*startY < 0.0f) *startY = 0.0f;
-    if (*lenX < 1.0f) *lenX = 1.0f;
-    if (*lenY < 1.0f) *lenY = 1.0f;
-}
-
-/* The part of the window the map shows in, in window pixels: below the menu
- * bar and inside the sidebars that are open. The spectator's badge and its
- * "connection lost" message go here, so no sidebar is over them. */
-static void lvHostMapArea(float *x, float *y, float *w, float *h) {
-    LvDockMargins open = { 0, 0, 0, 0 };
-    int winW = 0, winH = 0;
-    int menuH = (int)lv_imgui_get_menu_bar_height();
-
-    SDL_GetWindowSize(g_lv->window, &winW, &winH);
-    lv_imgui_dock_open_margins(&open.left, &open.top, &open.right, &open.bottom);
-    *x = (float)open.left;
-    *y = (float)(menuH + open.top);
-    *w = (float)(winW - open.left - open.right);
-    *h = (float)(winH - menuH - open.top - open.bottom);
-    if (*w < 1.0f) *w = 1.0f;
-    if (*h < 1.0f) *h = 1.0f;
-}
-
 /* What a jump does to the view when the event has a place. */
 typedef enum {
     LV_JUMP_VIEW_KEEP = 0, /* the view stays; the ring (or its edge arrow) shows the place */
@@ -714,6 +668,10 @@ static void lvHostLoadBegin(void) {
     char memoryBuff[32];
     bool begun;
 
+    if (s_pendingOpen || s_pendingZipData != NULL) {
+        /* A GIF being made is of the log that closes now. */
+        lv_clip_gif_cancel();
+    }
     if (s_pendingOpen) {
         s_pendingOpen = FALSE;
         lv_platform_config_get_string("LOGVIEWER", "Memory Buffer", "4",
@@ -1304,17 +1262,24 @@ static void loadPreferences(void) {
     lv_platform_config_get_string("LOGVIEWER", "Use Team Colours", "Yes", line, sizeof(line));
     g_lv->useTeamColours = (line[0] == '\0' || tolower((unsigned char)line[0]) == 'y') ? TRUE : FALSE;
 
-    /* Team colours */
-    count = 0;
-    while (count < MAX_TANKS) {
-        snprintf(line, sizeof(line), "Team Colour %d", count + 1);
-        getDef(def, count);
-        lv_platform_config_get_string("LOGVIEWER", line, def, val, sizeof(val));
-        g_lv->tc[count] = lvTeamColourPref(count, atoi(val));
-        count++;
+    /* Team colours. A stored old default with no mark reads as the new
+       default (lvTeamColourStoredPref). */
+    {
+        int marked;
+        lv_platform_config_get_string("LOGVIEWER", LV_TEAM_COLOUR_MARK_KEY, "", val, sizeof(val));
+        marked = lvTeamColourMarked(val);
+        count = 0;
+        while (count < MAX_TANKS) {
+            snprintf(line, sizeof(line), "Team Colour %d", count + 1);
+            getDef(def, count);
+            lv_platform_config_get_string("LOGVIEWER", line, def, val, sizeof(val));
+            g_lv->tc[count] = lvTeamColourStoredPref(count, atoi(val), marked);
+            count++;
+        }
+        snprintf(def, 12, "%d", (int)lvTeamColourDefault(LV_TEAM_COLOUR_NEUTRAL));
+        lv_platform_config_get_string("LOGVIEWER", LV_TEAM_COLOUR_NEUTRAL_KEY, def, val, sizeof(val));
+        g_lv->tc[16] = lvTeamColourStoredPref(LV_TEAM_COLOUR_NEUTRAL, atoi(val), marked);
     }
-    lv_platform_config_get_string("LOGVIEWER", "Neutral Colour", "10", val, sizeof(val));
-    g_lv->tc[16] = lvTeamColourPref(LV_TEAM_COLOUR_NEUTRAL, atoi(val));
 
     /* The simplified view, from the game's own [SETTINGS] section rather than
        a key of this viewer's. Both read the same preferences document, and a
@@ -1337,6 +1302,37 @@ static void loadPreferences(void) {
 }
 
 bool lv_windowCanFullScreen(void);
+
+/* The drawing area the command line asked for with -size, in pixels, or 0
+ * for none (logViewerSetWindowSizeText). While one is set the window stays
+ * that size: it is not snapped to whole squares, cannot be resized by hand,
+ * and neither its size nor its place is saved, so the next run without -size
+ * opens as the last one without it closed. */
+static int  s_fixedWindowW = 0;
+static int  s_fixedWindowH = 0;
+/* The text after -size was not a size (lvHostWarnFixedWindowSize). */
+static bool s_fixedWindowRefused = false;
+/* The size the window came out at, in pixels, once it was applied. */
+static int  s_fixedWindowGotW = 0;
+static int  s_fixedWindowGotH = 0;
+
+void logViewerSetWindowSizeText(const char *text) {
+    int w = 0, h = 0;
+
+    if (text != NULL && lvWindowSizeParse(text, &w, &h)) {
+        s_fixedWindowW = w;
+        s_fixedWindowH = h;
+        s_fixedWindowRefused = false;
+    } else {
+        s_fixedWindowW = 0;
+        s_fixedWindowH = 0;
+        s_fixedWindowRefused = true;
+    }
+}
+
+static bool lvHostFixedWindowSize(void) {
+    return s_fixedWindowW > 0 && s_fixedWindowH > 0 && g_lv != NULL && g_lv->ownsWindow;
+}
 
 static void savePreferences(void) {
     char line[256];
@@ -1374,9 +1370,10 @@ static void savePreferences(void) {
     {
         SDL_WindowFlags wflags = SDL_GetWindowFlags(g_lv->window);
         bool big = (wflags & (SDL_WINDOW_MAXIMIZED | SDL_WINDOW_FULLSCREEN)) != 0;
-        bool placed = g_lv->ownsWindow && !big && !(wflags & SDL_WINDOW_MINIMIZED);
+        bool fixed = lvHostFixedWindowSize();
+        bool placed = g_lv->ownsWindow && !big && !fixed && !(wflags & SDL_WINDOW_MINIMIZED);
 
-        if (g_lv->ownsWindow && !big) {
+        if (g_lv->ownsWindow && !big && !fixed) {
             /* The next launch makes the window sizeX * TILE_SIZE_X points
              * wide (draw.c), at zoom 1, so the count saved is the window's
              * in whole squares at zoom 1. The grid itself
@@ -1407,7 +1404,7 @@ static void savePreferences(void) {
          * FullScreen there), so the viewer opens the way it was closed.
          * While the window is full screen "maximized" is left as it was
          * saved: that is the state the window goes back to. */
-        if (g_lv->ownsWindow) {
+        if (g_lv->ownsWindow && !fixed) {
             if (!(wflags & SDL_WINDOW_FULLSCREEN)) {
                 lv_platform_config_set_string("LOGVIEWER", "Window.Maximized",
                                               (wflags & SDL_WINDOW_MAXIMIZED) ? "Yes" : "No");
@@ -1437,7 +1434,8 @@ static void savePreferences(void) {
         count++;
     }
     snprintf(val, sizeof(val), "%d", g_lv->tc[16]);
-    lv_platform_config_set_string("LOGVIEWER", "Neutral Colour", val);
+    lv_platform_config_set_string("LOGVIEWER", LV_TEAM_COLOUR_NEUTRAL_KEY, val);
+    lv_platform_config_set_string("LOGVIEWER", LV_TEAM_COLOUR_MARK_KEY, LV_TEAM_COLOUR_MARK);
 
     /* Playback speed */
     snprintf(val, sizeof(val), "%d", g_lv->speed);
@@ -1447,16 +1445,63 @@ static void savePreferences(void) {
     lv_platform_config_save();
 }
 
-/* What the sidebars took the last time the map's tile counts were fitted
- * beside them. lvHostDockSync refits when their answer differs from this. */
-static LvDockMargins s_lvDockApplied = { 0, 0, 0, 0 };
-/* What the sidebars took of the window when the map was last fitted, clear
- * ones too. The same now with s_lvDockApplied different says a sidebar's
- * option "Make unused sidebar portions transparent" was turned on or off. */
-static LvDockMargins s_lvDockFull = { 0, 0, 0, 0 };
-
 /* Stands for "no value saved": no window is ever placed here. */
 #define LV_WINDOW_PLACE_NONE (-1000000)
+
+/* --------------------------------------------------------------------------
+ * lvHostApplyFixedWindowSize -- Give the window the size -size asked for.
+ *
+ * The size is in pixels, but SDL sizes a window in its own units, which are
+ * pixels divided by the pixel density; the density is only certain once the
+ * window is on its display, so the size is set, read back in pixels, and set
+ * once more if it came out wrong. The window is centred on its display and
+ * opens neither maximized nor full screen, whatever the last run saved.
+ * -------------------------------------------------------------------------- */
+static void lvHostApplyFixedWindowSize(void) {
+    int pw = 0, ph = 0, i;
+
+    SDL_SetWindowResizable(g_lv->window, false);
+    for (i = 0; i < 2; i++) {
+        float density = SDL_GetWindowPixelDensity(g_lv->window);
+        int unitsW = lvWindowSizeUnits(s_fixedWindowW, density);
+        int unitsH = lvWindowSizeUnits(s_fixedWindowH, density);
+        SDL_SetWindowSize(g_lv->window, unitsW, unitsH);
+        SDL_SetWindowPosition(g_lv->window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
+        SDL_SyncWindow(g_lv->window);
+        SDL_GetWindowSizeInPixels(g_lv->window, &pw, &ph);
+        if (pw == s_fixedWindowW && ph == s_fixedWindowH) {
+            break;
+        }
+    }
+    s_fixedWindowGotW = pw;
+    s_fixedWindowGotH = ph;
+    SDL_LogInfo(WB_LOG_CAT_LOGVIEWER, "-size %dx%d: the window is %dx%d pixels",
+                s_fixedWindowW, s_fixedWindowH, pw, ph);
+}
+
+/* --------------------------------------------------------------------------
+ * lvHostWarnFixedWindowSize -- Tell the user when -size did not get its way.
+ *
+ * Either the text after -size was not a size, so the window opened at its
+ * usual size, or the window could not be made the size asked for, as when
+ * the display is too small to hold it, and the recording would come out at
+ * another size. Shown once the window is up, after lvHostRestoreWindowPlace,
+ * so the text comes from the language loaded.
+ * -------------------------------------------------------------------------- */
+static void lvHostWarnFixedWindowSize(void) {
+    if (g_lv == NULL || !g_lv->ownsWindow) {
+        return;
+    }
+    if (s_fixedWindowRefused) {
+        lv_platform_dialog_message(DIALOG_BOX_TITLE, langGetText(STR_LV_SIZE_ARG_BAD));
+    } else if (lvHostFixedWindowSize() &&
+               (s_fixedWindowGotW != s_fixedWindowW || s_fixedWindowGotH != s_fixedWindowH)) {
+        MessageArgs args = {0};
+        SDL_snprintf(args.string1, sizeof(args.string1), "%dx%d", s_fixedWindowW, s_fixedWindowH);
+        SDL_snprintf(args.string2, sizeof(args.string2), "%dx%d", s_fixedWindowGotW, s_fixedWindowGotH);
+        lv_platform_dialog_message(DIALOG_BOX_TITLE, langGetTextFmt(STR_LV_SIZE_NOT_MET, &args));
+    }
+}
 
 /* --------------------------------------------------------------------------
  * lvHostRestoreWindowPlace -- Put the viewer's own window back where it was.
@@ -1474,6 +1519,10 @@ static void lvHostRestoreWindowPlace(void) {
     bool placed = FALSE;
 
     if (g_lv == NULL || !g_lv->ownsWindow || g_lv->window == NULL) {
+        return;
+    }
+    if (lvHostFixedWindowSize()) {
+        lvHostApplyFixedWindowSize();
         return;
     }
     x = lv_platform_config_get_int("LOGVIEWER", "Window.X", LV_WINDOW_PLACE_NONE);
@@ -1543,8 +1592,7 @@ static int lvHostSetup(SDL_Window *window, SDL_Renderer *renderer,
         return FALSE;
     }
     lv_imgui_main_menu_init(g_lv);
-    memset(&s_lvDockApplied, 0, sizeof(s_lvDockApplied));
-    memset(&s_lvDockFull, 0, sizeof(s_lvDockFull));
+    lvHostDockReset();
 #ifdef __APPLE__
     /* Install the native NSMenu after ImGui + window are up. The shim's
      * save-on-install / restore-on-uninstall stack swaps WinBolo's menu
@@ -1559,6 +1607,8 @@ static int lvHostSetup(SDL_Window *window, SDL_Renderer *renderer,
     lv_imgui_comments_init();
     lv_imgui_dialogs_init(g_lv);
     lv_imgui_game_viewport_init(g_lv);
+    /* No GIF from a viewer before, and the Clips window starts closed. */
+    lv_clip_gif_session_end();
 
     /* Sound (non-fatal if it fails) */
     if (lv_soundSetup() == FALSE) {
@@ -1609,6 +1659,9 @@ static int lvHostSetup(SDL_Window *window, SDL_Renderer *renderer,
  * active game view and saves preferences first.
  * -------------------------------------------------------------------------- */
 static void lvHostTeardown(void) {
+    /* Drops a GIF being made and the Clips window's textures, which are made
+     * on this renderer. */
+    lv_clip_gif_session_end();
     lvHostTeardownCommon(true);
     free(g_lv);
     g_lv = NULL;
@@ -1749,6 +1802,11 @@ static void lvHostHandleFullScreenChange(const SDL_Event *e) {
  * file can. */
 static bool lvHostHandleGameViewKey(SDL_Event sdlEvent, bool allowToggle,
                                     bool allowSeek) {
+    /* While a GIF is made, the view stays as it was when it started: the
+     * keys go to its progress window, where Esc cancels it. */
+    if (lv_clip_gif_active()) {
+        return FALSE;
+    }
     /* Game-view-mode toggle. Must run BEFORE ImGui sees the event so
      * ImGui doesn't swallow the backtick keypress. Default zoom 3×.
      * Allowed in both the standalone viewer and the embedded
@@ -1864,15 +1922,16 @@ static bool lvHostHandleGameViewKey(SDL_Event sdlEvent, bool allowToggle,
     }
 
     /* ',' steps one tick back and '.' one tick forward; with Shift ('<' and
-     * '>') they jump 10 s. A tick is 20 ms of log, the smallest step the
-     * decoder takes. A step leaves playback paused, so the moment stepped to
-     * stays on the screen; a jump carries on playing if it was.
+     * '>') they jump 10 s, and with Ctrl 1 s. A tick is 20 ms of log, the
+     * smallest step the decoder takes. A step leaves playback paused, so the
+     * moment stepped to stays on the screen; a jump carries on playing if it
+     * was.
      *
      * The keys are matched by scancode, the place of the key on the
      * keyboard, so the two keys right of M on a US keyboard do this on
      * every layout, also where those places give other characters. Shift
-     * on either one is the jump. A text box that has the keyboard keeps
-     * the key.
+     * or Ctrl on either one is a jump; Ctrl and Shift together is the 1 s
+     * one. A text box that has the keyboard keeps the key.
      *
      * In game view a jump re-centres the camera, because 10 s can leave the
      * followed tank far outside the viewport and the dead-zone tracker
@@ -1881,14 +1940,16 @@ static bool lvHostHandleGameViewKey(SDL_Event sdlEvent, bool allowToggle,
      * seek bar does. */
     if (allowSeek && sdlEvent.type == SDL_EVENT_KEY_DOWN &&
         g_lv->isLoaded && !lv_imgui_want_text_input() &&
-        (sdlEvent.key.mod & (SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_GUI)) == 0 &&
+        (sdlEvent.key.mod & (SDL_KMOD_ALT | SDL_KMOD_GUI)) == 0 &&
         (sdlEvent.key.scancode == SDL_SCANCODE_COMMA ||
          sdlEvent.key.scancode == SDL_SCANCODE_PERIOD)) {
         const uint32_t kTickMs = 20;
         const uint32_t kJumpMs = 10000;
+        const uint32_t kShortJumpMs = 1000;
         bool back = (sdlEvent.key.scancode == SDL_SCANCODE_COMMA);
-        bool jump = ((sdlEvent.key.mod & SDL_KMOD_SHIFT) != 0);
-        uint32_t stepMs = jump ? kJumpMs : kTickMs;
+        bool shortJump = ((sdlEvent.key.mod & SDL_KMOD_CTRL) != 0);
+        bool jump = shortJump || ((sdlEvent.key.mod & SDL_KMOD_SHIFT) != 0);
+        uint32_t stepMs = shortJump ? kShortJumpMs : (jump ? kJumpMs : kTickMs);
         /* Absolute log time: a 20 ms step is too fine to send through the
          * slider's 0..1 ratio. lv_screenSeekToTimeMs clamps to the log. */
         uint32_t nowMs = lv_screenGetTimeRunning();
@@ -1957,8 +2018,10 @@ static void lvHostHandleResize(const SDL_Event *e) {
      * state, fit the tile counts to the actual window (the event's data1/data2
      * are the real maximized dimensions) and leave the window alone. A normal
      * windowed resize still snaps to a clean tile boundary. */
+    /* A window -size fixed is not snapped either: it must stay the size
+     * asked for, so it is fitted as a maximized one is. */
     SDL_WindowFlags wflags = SDL_GetWindowFlags(g_lv->window);
-    if (!(wflags & (SDL_WINDOW_MAXIMIZED | SDL_WINDOW_FULLSCREEN))) {
+    if (!lvHostFixedWindowSize() && !(wflags & (SDL_WINDOW_MAXIMIZED | SDL_WINDOW_FULLSCREEN))) {
         int snappedW = (int)(newTilesX * tilePxX + 0.5f);
         int snappedH = (int)(newTilesY * tilePxY + 0.5f);
         SDL_SetWindowSize(g_lv->window, snappedW + reservedX,
@@ -1971,9 +2034,7 @@ static void lvHostHandleResize(const SDL_Event *e) {
         if (reservedX > 0) newTilesX = lvFitTilesCover(w - reservedX, tilePxX);
         if (reservedY > 0) newTilesY = lvFitTilesCover(h - menuH - reservedY, tilePxY);
     }
-    s_lvDockApplied = dock;
-    lv_imgui_dock_margins(&s_lvDockFull.left, &s_lvDockFull.top, &s_lvDockFull.right,
-                          &s_lvDockFull.bottom);
+    lvHostDockNoteFitted(&dock);
     lv_screenSetSizeX((BYTE)newTilesX);
     lv_screenSetSizeY((BYTE)newTilesY);
     /* The size setters keep the offset inside the map for the new grid. The
@@ -1982,201 +2043,6 @@ static void lvHostHandleResize(const SDL_Event *e) {
     lv_screenSetSubOffset(0, 0);
     lv_drawResizeRenderTarget();
     lv_drawDirtyScreen();
-    g_lv->wantScreenUpdate = TRUE;
-}
-
-/* --------------------------------------------------------------------------
- * lvHostDockSync -- Keep the map's size in step with the sidebars.
- *
- * Runs first thing each frame, before the map is drawn. It lets each sidebar
- * come in or go out for the frame, then, when what the sidebars take has
- * changed (one turned on or off, or its edge dragged), refits the number of
- * map squares across and down to the rest of the window. Everything that
- * places the map -- the centring, the pan limits, centre-on-click, the
- * mouse-to-square sum -- works from those numbers, so nothing of the map is
- * lost behind a sidebar.
- *
- * The window itself is left alone here (the user did not resize it), so the
- * fit rounds up: the last square may run under a sidebar's edge by less than
- * a square. The live spectator has the same sidebars as the viewer, so this
- * runs for both.
- *
- * A sidebar whose unused part is clear takes nothing from the map: the map
- * is fitted as if that sidebar were not there and is drawn under it. How
- * much of the view is under one is told to the screen each frame
- * (lv_screenSetViewInset), so the middle of the view stays the middle of
- * the map that shows. When the option is turned on or off the map's corner
- * moves on the screen; the scroll position is moved the other way by as
- * much, so the map itself stays where it is.
- *
- * Game view sets its own fixed size and puts the overview's
- * back when it ends; it is left alone, and the comparison catches up
- * afterwards.
- *
- * On a live feed the timer thread decodes into the same screen, so the
- * view inset and the grid size are changed under the client mutex. The
- * lock is held only for these few calls, and most frames change nothing.
- * -------------------------------------------------------------------------- */
-static void lvHostDockSyncLocked(void);
-
-static void lvHostDockSync(void) {
-    lv_imgui_dock_pre_frame();
-    lv_clientMutexWaitFor();
-    lvHostDockSyncLocked();
-    lv_clientMutexRelease();
-}
-
-static void lvHostDockSyncLocked(void) {
-    LvDockMargins dock = { 0, 0, 0, 0 };
-    LvDockMargins full = { 0, 0, 0, 0 };
-    LvDockMargins was;
-    int winW = 0, winH = 0, menuH;
-    bool acrossChanged, downChanged, resized = FALSE, optionOnly;
-    BYTE oldOffX = 0, oldOffY = 0;
-    int oldSubX = 0, oldSubY = 0;
-    float zoom;
-
-    if (g_lv->gameView) {
-        lv_screenSetViewInset(0, 0, 0, 0);
-        return;
-    }
-    lv_imgui_dock_margins(&full.left, &full.top, &full.right, &full.bottom);
-    lv_imgui_dock_map_margins(&dock.left, &dock.top, &dock.right, &dock.bottom);
-    zoom = lv_drawGetZoomLevel();
-    if (zoom <= 0.0f) zoom = 1.0f;
-    lv_screenSetViewInset((int)((float)(full.left - dock.left) / zoom + 0.5f),
-                          (int)((float)(full.top - dock.top) / zoom + 0.5f),
-                          (int)((float)(full.right - dock.right) / zoom + 0.5f),
-                          (int)((float)(full.bottom - dock.bottom) / zoom + 0.5f));
-    optionOnly = full.left == s_lvDockFull.left && full.top == s_lvDockFull.top &&
-                 full.right == s_lvDockFull.right && full.bottom == s_lvDockFull.bottom;
-    s_lvDockFull = full;
-    if (dock.left == s_lvDockApplied.left && dock.top == s_lvDockApplied.top &&
-        dock.right == s_lvDockApplied.right && dock.bottom == s_lvDockApplied.bottom) {
-        return;
-    }
-    was = s_lvDockApplied;
-    if (g_lv->logLoaded) {
-        lv_screenGetOffsets(&oldOffX, &oldOffY);
-        lv_screenGetSubOffset(&oldSubX, &oldSubY);
-    }
-    /* Each way is refitted only when its own sidebars changed, so a viewer
-     * with none is never touched here, as it never was. */
-    acrossChanged = (dock.left + dock.right) !=
-                    (s_lvDockApplied.left + s_lvDockApplied.right);
-    downChanged = (dock.top + dock.bottom) !=
-                  (s_lvDockApplied.top + s_lvDockApplied.bottom);
-    s_lvDockApplied = dock;
-
-    SDL_GetWindowSize(g_lv->window, &winW, &winH);
-    if (winW <= 0 || winH <= 0) {
-        return;
-    }
-    menuH = (int)lv_imgui_get_menu_bar_height();
-    if (acrossChanged) {
-        int newTilesX = lvFitTilesBesideDock(winW, dock.left + dock.right,
-                                             (float)TILE_SIZE_X * zoom);
-        if ((BYTE)newTilesX != lv_screenGetSizeX()) {
-            lv_screenSetSizeX((BYTE)newTilesX);
-            resized = TRUE;
-        }
-    }
-    if (downChanged) {
-        int newTilesY = lvFitTilesBesideDock(winH - menuH, dock.top + dock.bottom,
-                                             (float)TILE_SIZE_Y * zoom);
-        if ((BYTE)newTilesY != lv_screenGetSizeY()) {
-            lv_screenSetSizeY((BYTE)newTilesY);
-            resized = TRUE;
-        }
-    }
-    if (resized) {
-        lv_screenSetSubOffset(0, 0);
-        lv_drawResizeRenderTarget();
-    }
-    if (optionOnly && g_lv->logLoaded) {
-        /* Only the option changed: the map's corner moved on the screen, so
-         * the scroll position goes the other way and the map stays put. */
-        lv_screenPanToTotalPixels(
-            (int)oldOffX * TILE_SIZE_X + oldSubX +
-                lvDockClearScrollShift(was.left, dock.left, zoom),
-            (int)oldOffY * TILE_SIZE_Y + oldSubY +
-                lvDockClearScrollShift(was.top, dock.top, zoom));
-    }
-    /* A sidebar that only moved the map (the left one growing as the right
-     * one shrinks) still needs the whole window drawn again. */
-    lv_drawDirtyScreen();
-    g_lv->wantScreenUpdate = TRUE;
-}
-
-/* TRUE in the hosts that place the first view of a log: the log viewer's own
- * run (logViewerRun) and the live spectator (spectatorRun). The reel in the
- * game keeps the view the load gave it. */
-static bool s_lvFirstViewHost = FALSE;
-
-/* --------------------------------------------------------------------------
- * lvHostFirstView -- Put the map where the first look at a log is worth it.
- *
- * A load opens the view with its corner at square 127,127, which is the
- * middle of the world: the land of a map is round that square, so three
- * quarters of it were off the view. Once for each load this puts the middle
- * of the box round everything that is not deep sea (lv_screenLandBox) in the
- * middle of the map that shows (lvHostVisibleMap), and zooms out when the
- * box does not go in at the zoom the viewer has (lvFirstViewZoomStep).
- *
- * It waits for a frame, so the sidebars are in place, and for a map: a log
- * that opens in the lobby has none until the round starts. Anything that
- * moves the view before then ends the wait (lv_screenFirstViewCancel), so
- * the view is never taken from the user. With "Tank Centred" on the zoom is
- * left alone and the view goes back to the tank on the next tick.
- * -------------------------------------------------------------------------- */
-static void lvHostFirstView(void) {
-    int x0 = 0, y0 = 0, x1 = 0, y1 = 0;
-    int has;
-    float startX, startY, lenX, lenY;
-
-    if (!s_lvFirstViewHost || g_lv->isLoaded == FALSE) {
-        return;
-    }
-    if (g_lv->gameView) {
-        lv_screenFirstViewCancel();
-        return;
-    }
-    if (!lv_screenFirstViewDue()) {
-        return;
-    }
-    lv_clientMutexWaitFor();
-    has = lv_screenLandBox(&x0, &y0, &x1, &y1);
-    lv_clientMutexRelease();
-    if (!has) {
-        return;
-    }
-    lv_screenFirstViewCancel();
-    lvHostVisibleMap(&startX, &startY, &lenX, &lenY);
-    if (g_lv->centredTank == FALSE) {
-        float steps[32];
-        int count = lv_drawGetZoomStepCount();
-        int current = lv_drawGetZoomStepIndex();
-        int i, step;
-        if (count > (int)(sizeof(steps) / sizeof(steps[0]))) {
-            count = (int)(sizeof(steps) / sizeof(steps[0]));
-        }
-        for (i = 0; i < count; i++) {
-            steps[i] = lv_drawGetZoomStepValue(i);
-        }
-        step = lvFirstViewZoomStep(steps, count, current, x1 - x0 + 1, y1 - y0 + 1,
-                                   lenX, lenY, TILE_SIZE_X);
-        if (step != current) {
-            int winW = 0, winH = 0;
-            SDL_GetWindowSize(g_lv->window, &winW, &winH);
-            lv_drawSetZoomStep(step, winW / 2, winH / 2);
-        }
-    }
-    lv_clientMutexWaitFor();
-    lv_drawDirtyScreen();
-    lv_screenCentrePxIn(lvLandBoxMidPx(x0, x1, TILE_SIZE_X), lvLandBoxMidPx(y0, y1, TILE_SIZE_Y),
-                        startX, startY, lenX, lenY, lv_drawGetZoomLevel());
-    lv_clientMutexRelease();
-    lv_windowNeedRedraw();
     g_lv->wantScreenUpdate = TRUE;
 }
 
@@ -2278,6 +2144,11 @@ static void lvHostRenderFrame(const char *overlay) {
         }
     }
 
+    /* This frame's share of a GIF being made (the GIF button of recording mode): the log
+     * moves on and the map is drawn into its render target for each frame of
+     * the GIF. After the map above and before the ImGui frame. */
+    lv_clip_gif_capture_step();
+
     /* Render ImGui UI */
     lv_imgui_context_newframe();
 #ifdef __APPLE__
@@ -2308,6 +2179,7 @@ static void lvHostRenderFrame(const char *overlay) {
         lvms.showHud          = lv_g_show_hud_window;
         lvms.showOverview     = lv_g_show_overview_window;
         lvms.showTank         = lv_g_show_tank_window;
+        lvms.showChat         = lv_g_show_chat_window;
         lvms.tankBars         = lv_drawGetTankBars() ? true : false;
         lvms.builderStatus    = lv_drawGetBuilderStatus() ? true : false;
         lvms.pillNumbers      = lv_drawGetPillNumbers() ? true : false;
@@ -2321,6 +2193,10 @@ static void lvHostRenderFrame(const char *overlay) {
         lvms.fullScreen       = lv_windowIsFullScreen() ? true : false;
         lvms.canFullScreen    = lv_windowCanFullScreen() ? true : false;
         lvms.live             = lv_screenSpecIsLiveMode() ? true : false;
+        lvms.gifAvailable     = lv_clip_gif_available() ? true : false;
+        lvms.recordMode       = lv_clip_gif_tools_shown() ? true : false;
+        lvms.canToggleRecordMode = lv_clip_gif_can_toggle_mode() ? true : false;
+        lvms.showClips        = lv_clip_gif_gallery_is_open() ? true : false;
         lv_mac_menubar_refresh(&lvms);
     }
 #endif
@@ -2346,6 +2222,10 @@ static void lvHostRenderFrame(const char *overlay) {
             lv_imgui_controls_window();
             lv_g_show_controls_window = save_ctrl;
             lv_imgui_spectator_badge(g_lv->gamePhase);
+        } else {
+            /* No Controls panel for the GIF window to go over; this also
+             * gives it View > Reset Window Positions. */
+            lv_clip_gif_set_anchor(false, 0.0f, 0.0f, 0.0f, 0.0f);
         }
         lv_g_reset_window_positions = false;
         if (overlay != NULL) {
@@ -2353,6 +2233,8 @@ static void lvHostRenderFrame(const char *overlay) {
         }
         lv_imgui_zoom_label();
         lvHostDrawLoadProgress();
+        /* The Clips window stays open in the game view. */
+        lv_clip_gif_render();
         lv_imgui_dialogs_render();
         lv_imgui_context_render();
     } else {
@@ -2424,6 +2306,9 @@ static void lvHostRenderFrame(const char *overlay) {
             lv_imgui_tank_window();
             lv_imgui_game_info_window();
             lv_imgui_events_window();
+            if (panels & LV_PANEL_SET_CHAT) {
+                lv_imgui_chat_window();
+            }
             lv_imgui_item_info_window();
             if (panels & LV_PANEL_SET_COMMENTS) {
                 lv_imgui_comments_window();
@@ -2455,8 +2340,12 @@ static void lvHostRenderFrame(const char *overlay) {
             lvMenuRender(g_lv);
         }
         lv_imgui_zoom_label();
+        lv_imgui_game_viewport_draw_marks();
         lv_imgui_game_viewport_hover();
         lvHostDrawLoadProgress();
+        /* Recording mode's crop frame, a GIF's progress and the Clips
+         * window. */
+        lv_clip_gif_render();
         lv_imgui_dialogs_render();
         lv_imgui_context_render();
 
@@ -2554,10 +2443,11 @@ void logViewerRun(SDL_Window *window, SDL_Renderer *renderer,
      * layout. */
     lv_imgui_dock_set_standalone(1);
     lv_imgui_main_menu_standalone_defaults();
-    s_lvFirstViewHost = TRUE;
+    lvHostFirstViewSetHost(TRUE);
     s_lvJump.active = FALSE;
     s_lvJumpHost = TRUE;
     lvHostRestoreWindowPlace();
+    lvHostWarnFixedWindowSize();
 
     /* Open file from command line / caller if provided. Like a pending
      * memory buffer from logViewerRunFromMemory, it opens on the first frame. */
@@ -2616,7 +2506,8 @@ void logViewerRun(SDL_Window *window, SDL_Renderer *renderer,
                  * game-view mode — the trailer window size is fixed and
                  * mouse-wheel zoom would invalidate the saved teardown
                  * dimensions. */
-                if (!lv_imgui_want_capture_mouse() && !g_lv->gameView) {
+                if (!lv_imgui_want_capture_mouse() && !g_lv->gameView &&
+                    !lv_clip_gif_active()) {
                     int mx = (int)sdlEvent.wheel.mouse_x;
                     int my = (int)sdlEvent.wheel.mouse_y;
                     if (sdlEvent.wheel.y > 0.0f) {
@@ -2640,7 +2531,7 @@ void logViewerRun(SDL_Window *window, SDL_Renderer *renderer,
 
         /* Trackpad pinch-to-zoom (macOS) — anchor on current mouse position.
          * Suppressed in game-view mode; trailer window is fixed-size. */
-        if (!g_lv->gameView) {
+        if (!g_lv->gameView && !lv_clip_gif_active()) {
             float pinch = macOSPinchZoomConsume();
             if (pinch != 0.0f) {
                 static float pinchAccum = 0.0f;
@@ -2793,7 +2684,7 @@ bool spectatorRun(SDL_Window *window, SDL_Renderer *renderer, void *cs,
      * layout. The window is the game's, so its place is not restored. */
     lv_imgui_dock_set_standalone(1);
     lv_imgui_main_menu_standalone_defaults();
-    s_lvFirstViewHost = TRUE;
+    lvHostFirstViewSetHost(TRUE);
     s_lvJump.active = FALSE;
     s_lvJumpHost = TRUE;
 
@@ -2980,7 +2871,8 @@ bool spectatorRun(SDL_Window *window, SDL_Renderer *renderer, void *cs,
              * (cursor over a panel) and in game view (fixed size; 1-4 keys
              * zoom there). */
             if (sdlEvent.type == SDL_EVENT_MOUSE_WHEEL) {
-                if (!lv_imgui_want_capture_mouse() && !g_lv->gameView) {
+                if (!lv_imgui_want_capture_mouse() && !g_lv->gameView &&
+                    !lv_clip_gif_active()) {
                     int mx = (int)sdlEvent.wheel.mouse_x;
                     int my = (int)sdlEvent.wheel.mouse_y;
                     if (sdlEvent.wheel.y > 0.0f) {

@@ -12,6 +12,9 @@
 #include <stdlib.h>
 #include <sentry.h>
 #include <SDL3/SDL.h>
+#ifdef HAVE_SENTRY_NSEXCEPTION
+#include "sentry_nsexception.h"
+#endif
 
 #ifdef SENTRY_DSN
 static int hasArg(int argc, char *argv[], const char *flag) {
@@ -60,9 +63,18 @@ int sentryInit(const char *executable_name, int argc, char *argv[]) {
         SDL_free(base);
     }
 
+#ifdef HAVE_SENTRY_NSEXCEPTION
+    /* Name uncaught NSExceptions in the crash event; the inproc backend
+     * otherwise reports them as a bare SIGABRT. */
+    sentryNSExceptionAttach(options);
+#endif
+
     int rv = sentry_init(options);
     if (rv == 0) {
         sentry_set_tag("executable", executable_name);
+#ifdef HAVE_SENTRY_NSEXCEPTION
+        sentryNSExceptionInstall();
+#endif
     }
     return rv;
 #endif

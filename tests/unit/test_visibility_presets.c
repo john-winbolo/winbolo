@@ -142,6 +142,35 @@ int run_visibility_preset_custom(void) {
     return 0;
 }
 
+int run_visibility_preset_ignores_classic_mode(void) {
+    VisibilitySettings v;
+    int p;
+
+    /* Classic's seven with the flag off: a server started that way, or a
+     * lobby whose settings were set one at a time, plays exactly as
+     * Classic does and must not read as Custom. */
+    fill_classic(&v);
+    v.classicMode = false;
+    UT_ASSERT_MSG(visibilityPresetMatch(&v) == visibilityPresetClassic,
+                  "Classic with the flag off read back as %d",
+                  (int)visibilityPresetMatch(&v));
+
+    /* And the flag never moves any preset onto another row. */
+    for (p = 0; p < (int)VISIBILITY_PRESET_COUNT; p++) {
+        UT_ASSERT(visibilityPresetSettings((VisibilityPreset)p, &v));
+        v.classicMode = !v.classicMode;
+        UT_ASSERT_MSG(visibilityPresetMatch(&v) == (VisibilityPreset)p,
+                      "preset %d read back as %d with classic mode flipped",
+                      p, (int)visibilityPresetMatch(&v));
+    }
+
+    /* Picking Classic still means classic mode: the table keeps the flag
+     * even though the match does not read it. */
+    UT_ASSERT(visibilityPresetSettings(visibilityPresetClassic, &v));
+    UT_ASSERT(v.classicMode);
+    return 0;
+}
+
 int run_visibility_preset_ignores_decay(void) {
     VisibilitySettings v;
     int p;

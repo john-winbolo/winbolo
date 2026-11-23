@@ -24,7 +24,8 @@
 #include "tutorial_text.h"  /* tutorialInputNow */
 #include "clientmutex.h"
 #include "server_sim.h"      /* serverSimTakeTutorialDone */
-#include "tutorial_maps.h"  /* tutorialMapsIsShippedTutorial */
+#include "tutorial_maps.h"  /* tutorialMapsPopupPauses */
+#include "../scenario/scenario_host.h" /* scenarioHostScriptIsShippedTutorial */
 #include "dialogs/imgui_messagebox.h"
 #include "../gui/sound.h"   /* soundIsMuted / soundSetMuted — the pause freezes */
 #include <stdio.h>
@@ -259,6 +260,22 @@ void frontEndGameOver(ClientSim *cs) {
   windowGameOverLeave();
 }
 
+bool clientFrontPopupPausesGame(ClientSim *cs) {
+  bool pauses;
+  if (cs == NULL) return false;
+  /* The script path is read under the client mutex (gamefront.h). The
+     mutex can be taken again by a thread that holds it already. */
+  clientMutexWaitFor();
+  /* The same test that gives a script game.popup: the running map's own
+     script directly in the shipped tutorials folder under the data folder.
+     Asked once, when the popup opens. */
+  pauses = tutorialMapsPopupPauses(
+      clientSimIsSinglePlayer(cs), gameFrontGetServerSim() != NULL,
+      scenarioHostScriptIsShippedTutorial(gameFrontScenarioMapScriptPath()));
+  clientMutexRelease();
+  return pauses;
+}
+
 #if !defined(__EMSCRIPTEN__)
 /* -------------------------------------------------------
  * Solo-game freezes and the background suspend
@@ -299,6 +316,11 @@ bool clientFrontSoloPause(ClientSim *cs, ClientFrontPause which, bool active) {
   if (active) {
     /* Only a solo session pauses; multiplayer keeps running. */
     if (!clientFrontIsSoloSession(cs)) return false;
+    /* A scenario popup pauses only the shipped tutorials. */
+    if (which == CLIENT_FRONT_PAUSE_TUTORIAL &&
+        !clientFrontPopupPausesGame(cs)) {
+      return false;
+    }
     if (s_pauseOn[which]) return false;          /* idempotent */
     s_pauseOn[which] = true;
     clientFrontUpdateServerPause(cs);
@@ -399,7 +421,11 @@ void clientFrontPollScenarioPlayer(void) {
     }
     done = serverSimTakeTutorialDone(srv, seat);
     if (done) {
-      shipped = tutorialMapsIsShippedTutorial(gameFrontScenarioMapScriptPath());
+      /* Only the shipped tutorials, by the test that gives game.popup: a
+         map script in a maps/tutorials folder of the player's own does not
+         hide the button. */
+      shipped = scenarioHostScriptIsShippedTutorial(
+          gameFrontScenarioMapScriptPath());
     }
   }
   clientMutexRelease();

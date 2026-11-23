@@ -3,7 +3,7 @@
  *
  * ScriptUploadPolicy is set from a word — -scriptuploads on the dedicated
  * server, --scriptuploads on the headless runner, "Script Upload Policy" in
- * the desktop's preferences — and is allow when no word is given. It goes out
+ * the desktop's preferences — and is off when no word is given. It goes out
  * to every client on the lobby-settings event, one byte directly after the
  * map upload policy.
  *
@@ -74,14 +74,16 @@ int run_script_upload_policy_resolve(void) {
     UT_ASSERT_MSG(scriptUploadPolicyResolve("Persist") == SCRIPT_UPLOAD_PERSIST,
                   "\"Persist\" did not resolve to persist");
 
-    /* A word nobody knows is allow, which is what a server with no word at
-       all does, rather than a refusal the operator did not ask for. */
-    UT_ASSERT_MSG(scriptUploadPolicyResolve("sometimes") == SCRIPT_UPLOAD_ALLOW,
-                  "an unknown word did not resolve to allow");
+    /* A word nobody knows is off, which is what a server with no word at
+       all does: a mistyped word must not let players' scripts in. */
+    UT_ASSERT_MSG(scriptUploadPolicyResolve("sometimes") == SCRIPT_UPLOAD_OFF,
+                  "an unknown word did not resolve to off");
 
-    /* No word is allow. */
-    UT_ASSERT_MSG(scriptUploadPolicyResolve(NULL) == SCRIPT_UPLOAD_ALLOW,
-                  "no word did not resolve to allow");
+    /* No word is off. */
+    UT_ASSERT_MSG(scriptUploadPolicyResolve(NULL) == SCRIPT_UPLOAD_OFF,
+                  "no word did not resolve to off");
+    UT_ASSERT_MSG(scriptUploadPolicyResolve("") == SCRIPT_UPLOAD_OFF,
+                  "an empty word did not resolve to off");
     return 0;
 }
 
@@ -91,8 +93,8 @@ int run_script_upload_policy_word(void) {
     UT_ASSERT(strcmp(scriptUploadPolicyWord(SCRIPT_UPLOAD_PERSIST),
                      "Persist") == 0);
     UT_ASSERT_MSG(strcmp(scriptUploadPolicyWord((ScriptUploadPolicy)7),
-                         "Allow") == 0,
-                  "an out-of-range policy did not read as Allow");
+                         "Off") == 0,
+                  "an out-of-range policy did not read as Off");
 
     /* And each word goes back to the value it came from, which is what a
        preference written and read again depends on. */
@@ -174,11 +176,11 @@ int run_script_upload_policy_event(void) {
     UT_ASSERT(sim != NULL);
     serverSimSetLobbyEnabled(sim, true);
 
-    /* A new sim is allow, as is a NULL one. */
-    UT_ASSERT_MSG(serverSimGetScriptUploadPolicy(sim) == SCRIPT_UPLOAD_ALLOW,
-                  "a new sim's script upload policy is %d, not allow",
+    /* A new sim is off, as is a NULL one. */
+    UT_ASSERT_MSG(serverSimGetScriptUploadPolicy(sim) == SCRIPT_UPLOAD_OFF,
+                  "a new sim's script upload policy is %d, not off",
                   (int)serverSimGetScriptUploadPolicy(sim));
-    UT_ASSERT(serverSimGetScriptUploadPolicy(NULL) == SCRIPT_UPLOAD_ALLOW);
+    UT_ASSERT(serverSimGetScriptUploadPolicy(NULL) == SCRIPT_UPLOAD_OFF);
     serverSimSetScriptUploadPolicy(NULL, SCRIPT_UPLOAD_OFF);  /* NULL-safe */
 
     serverSimSetScriptUploadPolicy(sim, SCRIPT_UPLOAD_PERSIST);

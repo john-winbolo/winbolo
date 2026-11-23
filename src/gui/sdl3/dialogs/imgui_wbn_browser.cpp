@@ -56,6 +56,7 @@ extern "C" {
 #include "../../lang.h"
 #include "../../../winbolonet/http.h"
 #include "../../../winbolonet/winbolonet_client.h"
+#include "../../../winbolonet/winbolonet_core.h"   /* winbolonetKeyIsValid — the key is pasted into a request path and a file name */
 #include "../../../bolo/public/wire_limits.h"  /* ROUND_LOG_MAX_BYTES */
 #include "../../../winbolonet/wbn_comments.h"
 #include "cJSON.h"
@@ -227,6 +228,28 @@ static LogEntry parseLogEntry(cJSON *obj) {
     return e;
 }
 
+/* ---- Query values ---- */
+/* Percent-encodes a value for a query string: everything but letters,
+ * digits and "-._~". A map or player name can have spaces, which curl
+ * refuses in a URL, and "&" or "=", which would end the value early. */
+static std::string queryEncode(const char *value) {
+    std::string enc;
+    enc.reserve(strlen(value) * 3);
+    for (const unsigned char *p = (const unsigned char *)value; *p != '\0'; p++) {
+        unsigned char c = *p;
+        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+            (c >= '0' && c <= '9') || c == '-' || c == '_' ||
+            c == '.' || c == '~') {
+            enc.push_back((char)c);
+        } else {
+            char hex[4];
+            SDL_snprintf(hex, sizeof(hex), "%%%02X", c);
+            enc.append(hex);
+        }
+    }
+    return enc;
+}
+
 /* ---- Format duration ---- */
 static void formatDuration(int seconds, char *buf, size_t bufSize) {
     int h = seconds / 3600;
@@ -333,7 +356,14 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
     float s = dialogComputeScale(screenW, screenH);
 
 #if !BOLO_MOBILE
-    dialogSetWindowSize(window, DIALOG_W, DIALOG_H);
+    /* The browser lays itself out to the window each frame, so a window
+     * that already has room for it is left at its size and place. The
+     * game's main menu window is exactly this size, so nothing changes
+     * there; the standalone Log Viewer's window is usually larger, and used
+     * to shrink to this size, and move, every time the browser opened. */
+    if (screenW < DIALOG_W || screenH < DIALOG_H) {
+        dialogSetWindowSize(window, DIALOG_W, DIALOG_H);
+    }
     dialogSetWindowTitle(window, langGetText(STR_DLGWBN_WINTITLE));
     SDL_SetWindowResizable(window, true);
 #endif
@@ -495,14 +525,14 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
                     SDL_snprintf(path, sizeof(path), "logs/most-downloaded?page=%d&limit=20", req.page);
                     break;
                 case TAB_SEARCH: {
-                    char params[256] = {};
-                    int off = 0;
-                    off += SDL_snprintf(params + off, sizeof(params) - off, "page=%d&limit=20", req.page);
+                    /* Each name is up to 63 bytes, so encoded up to 189:
+                     * the whole query fits in path. */
+                    std::string params = "page=" + std::to_string(req.page) + "&limit=20";
                     if (req.player[0])
-                        off += SDL_snprintf(params + off, sizeof(params) - off, "&player=%s", req.player);
+                        params += "&player=" + queryEncode(req.player);
                     if (req.mapFilter[0])
-                        off += SDL_snprintf(params + off, sizeof(params) - off, "&map=%s", req.mapFilter);
-                    SDL_snprintf(path, sizeof(path), "logs/search?%s", params);
+                        params += "&map=" + queryEncode(req.mapFilter);
+                    SDL_snprintf(path, sizeof(path), "logs/search?%s", params.c_str());
                     break;
                 }
                 default:
@@ -519,7 +549,12 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
                     if (logsArr && cJSON_IsArray(logsArr)) {
                         int n = cJSON_GetArraySize(logsArr);
                         for (int i = 0; i < n; i++) {
-                            res.logs.push_back(parseLogEntry(cJSON_GetArrayItem(logsArr, i)));
+                            LogEntry e = parseLogEntry(cJSON_GetArrayItem(logsArr, i));
+                            /* The key goes into "logs/<key>", "logs/<key>/download"
+                             * and the downloaded file's name, so a log whose key
+                             * is not 32 hex digits is left out of the list. */
+                            if (!winbolonetKeyIsValid(e.key)) continue;
+                            res.logs.push_back(std::move(e));
                         }
                     }
                     cJSON *v;
@@ -827,6 +862,11 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
 
         int winW, winH;
         SDL_GetWindowSize(window, &winW, &winH);
+        /* The window was resized to DIALOG_W x DIALOG_H after the
+         * presentation was first set above, and the player can resize it
+         * again, so the point-space presentation is set at the size the
+         * frame is laid out at. */
+        dialogApplyLogicalPresentation(renderer);
 
         ImGui_ImplSDLRenderer3_NewFrame();
         ImGui_ImplSDL3_NewFrame();
@@ -980,15 +1020,22 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
         if (currentTab == TAB_SEARCH) {
             ImGui::TextUnformatted(langGetText(STR_DLGWBN_SEARCHFILTERS));
             ImGui::SameLine();
+            /* Enter in either box searches, as the Search button does. */
+            bool enterPressed = false;
             ImGui::SetNextItemWidth(120 * s);
-            ImGui::InputTextWithHint("##player", langGetText(STR_DLGWBN_HINT_PLAYER), searchPlayer, sizeof(searchPlayer));
+            enterPressed |= ImGui::InputTextWithHint("##player", langGetText(STR_DLGWBN_HINT_PLAYER),
+                                                     searchPlayer, sizeof(searchPlayer),
+                                                     ImGuiInputTextFlags_EnterReturnsTrue);
             ImGui::SameLine();
             ImGui::SetNextItemWidth(120 * s);
-            ImGui::InputTextWithHint("##map", langGetText(STR_DLGWBN_HINT_MAP), searchMap, sizeof(searchMap));
+            enterPressed |= ImGui::InputTextWithHint("##map", langGetText(STR_DLGWBN_HINT_MAP),
+                                                     searchMap, sizeof(searchMap),
+                                                     ImGuiInputTextFlags_EnterReturnsTrue);
             ImGui::SameLine();
             bool isSearchFetching = tabs[TAB_SEARCH].fetching;
             if (isSearchFetching) ImGui::BeginDisabled();
-            if (ImGui::Button(langGetText(STR_DLGWBN_SEARCH_BTN))) {
+            if (ImGui::Button(langGetText(STR_DLGWBN_SEARCH_BTN)) ||
+                (enterPressed && !isSearchFetching)) {
                 tabs[TAB_SEARCH].fetched = false;
                 triggerFetch(TAB_SEARCH, 1);
             }

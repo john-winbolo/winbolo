@@ -1728,8 +1728,9 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
     }
 #endif
 
-    /* Handle file dialog result */
-    if (state->fileDialogGotResult) {
+    /* Handle file dialog result, unless the owner holds picks for now
+       (holdPicks), in which case it waits here, untouched, for a later frame. */
+    if (state->fileDialogGotResult && !state->holdPicks) {
         state->fileDialogGotResult = false;
         if (state->fileDialogResult[0] != '\0') {
             state->selectedIdx = -1; /* custom file, not in list */
@@ -1804,7 +1805,11 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
         }
     }
 
-    /* Left panel */
+    /* Left panel. Everything that picks a map is in here, so while the owner
+       holds picks (holdPicks) it is greyed and takes no clicks or keys. The
+       preview to its right stays as it is: it picks nothing, and can still be
+       panned and zoomed. */
+    ImGui::BeginDisabled(state->holdPicks);
     ImGui::BeginChild("##MapLeft", ImVec2(leftPanelW, height), ImGuiChildFlags_Borders);
 
     if (state->randomMapSelected || state->randomTabOnly) {
@@ -2920,6 +2925,7 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
     }
 
     ImGui::EndChild(); /* ##MapLeft */
+    ImGui::EndDisabled();
 
     /* Draggable splitter between the list and the preview. We render
      * an InvisibleButton at the column boundary, set a horizontal-

@@ -75,9 +75,13 @@ BIN_DS="${2:-$BIN_DS_DEFAULT}"
 # execs the harness away — the scenario then "passes" with whatever status
 # the binary exits with, no diff ever runs, and the DS a single-client UDP
 # scenario started is orphaned. $BASH_SUBSHELL has been in bash since 3.0.
+#
+# -notracker goes on every DS the same way. A server notifies the public
+# tracker unless told not to, a few seconds after it starts, and a test
+# server has no business on the public game list.
 ds_bin() {
-  if [ "${BASH_SUBSHELL:-0}" -gt 0 ]; then exec "$BIN_DS" "$@" -nocrashreporting; fi
-  "$BIN_DS" "$@" -nocrashreporting
+  if [ "${BASH_SUBSHELL:-0}" -gt 0 ]; then exec "$BIN_DS" "$@" -nocrashreporting -notracker; fi
+  "$BIN_DS" "$@" -nocrashreporting -notracker
 }
 headless_bin() {
   if [ "${BASH_SUBSHELL:-0}" -gt 0 ]; then exec "$BIN" "$@" -nocrashreporting; fi
@@ -1473,15 +1477,16 @@ dispatch_scenario() {
     # and the only thing that moves in the whole run is one square of the
     # plain turning to forest. treeGrowUpdate runs once per tank per world
     # update: it samples one map square and takes one off the TREEGROW_TIME
-    # countdown of 3000. The fast loop runs a server frame on its keys pass as
-    # well as its game pass, so two of those updates land on every tick the
-    # log counts and the countdown is 1500 ticks rather than 3000. The budget
-    # covers the growth, the tick after it where the terrain field is gone
-    # again, and a margin past that. The terrain flag is what makes the run
+    # countdown of 1150. One of those updates lands on every tick the log
+    # counts, and the countdown starts again at each better square found in
+    # the first few ticks, so the tree grows at tick 1167. The budget covers
+    # the growth, the tick after it where the terrain field is gone again, and
+    # a margin past that, short of the second tree a further 1150 ticks on.
+    # The terrain flag is what makes the run
     # legible: a grown tree is a map square and nothing else, and the forest
     # count beside it only says how many there are.
     grass_flat_growth)
-      run_changes "$name" "$GRASS_FLAT_MAP" "$BRAINS/idle.lua" open 3040 "" terrain ;;
+      run_changes "$name" "$GRASS_FLAT_MAP" "$BRAINS/idle.lua" open 1190 "" terrain ;;
 
     # The scenario beside Wave Defense.map, played to the end it writes for
     # itself. The lobby holds six seats for the raiders, the command stream

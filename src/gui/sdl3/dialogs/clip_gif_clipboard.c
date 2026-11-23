@@ -16,7 +16,8 @@
  */
 
 /*
- * A GIF file on the system clipboard. See clip_gif_clipboard.h.
+ * A GIF file on the system clipboard, and a GIF shown in its folder. See
+ * clip_gif_clipboard.h.
  */
 
 #include "clip_gif_clipboard.h"
@@ -30,6 +31,7 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <shlobj.h>   /* DROPFILES */
+#include <shellapi.h> /* ShellExecuteW */
 
 /* Another program can hold the clipboard open for a moment, so the open is
  * tried a few times before giving up. */
@@ -43,9 +45,9 @@ static bool clipOpen(HWND hwnd) {
     return false;
 }
 
-/* The file as a CF_HDROP block: a DROPFILES header and then the one wide
- * path, ended by two NULs. NULL on failure. */
-static HGLOBAL clipMakeDrop(const char *gifPath) {
+/* gifPath as a full wide path with backslashes, which is what Explorer
+ * wants. SDL_malloc'd; NULL on failure. */
+static WCHAR *clipFullWidePath(const char *gifPath) {
     int wlen = MultiByteToWideChar(CP_UTF8, 0, gifPath, -1, NULL, 0);
     if (wlen <= 1) {
         return NULL;
@@ -60,7 +62,6 @@ static HGLOBAL clipMakeDrop(const char *gifPath) {
             wpath[i] = L'\\';
         }
     }
-    /* Explorer wants a full path. */
     DWORD fullLen = GetFullPathNameW(wpath, 0, NULL, NULL);
     WCHAR *full = NULL;
     if (fullLen > 0) {
@@ -71,7 +72,20 @@ static HGLOBAL clipMakeDrop(const char *gifPath) {
             full = NULL;
         }
     }
-    const WCHAR *use = (full != NULL) ? full : wpath;
+    if (full == NULL) {
+        return wpath;
+    }
+    SDL_free(wpath);
+    return full;
+}
+
+/* The file as a CF_HDROP block: a DROPFILES header and then the one wide
+ * path, ended by two NULs. NULL on failure. */
+static HGLOBAL clipMakeDrop(const char *gifPath) {
+    WCHAR *use = clipFullWidePath(gifPath);
+    if (use == NULL) {
+        return NULL;
+    }
     size_t useLen = wcslen(use);
 
     SIZE_T bytes = sizeof(DROPFILES) + (useLen + 2) * sizeof(WCHAR);
@@ -90,8 +104,7 @@ static HGLOBAL clipMakeDrop(const char *gifPath) {
             h = NULL;
         }
     }
-    SDL_free(full);
-    SDL_free(wpath);
+    SDL_free(use);
     return h;
 }
 
@@ -152,6 +165,48 @@ bool clipGifCopyFileToClipboard(const char *gifPath, void *window) {
         }
     }
     CloseClipboard();
+    return ok;
+}
+
+bool clipGifShowFileInFolder(const char *gifPath) {
+    if (gifPath == NULL || gifPath[0] == '\0') {
+        return false;
+    }
+    WCHAR *full = clipFullWidePath(gifPath);
+    if (full == NULL) {
+        return false;
+    }
+    /* explorer /select,"<path>" opens the folder with the file selected. */
+    size_t fullLen = wcslen(full);
+    static const WCHAR prefix[] = L"/select,\"";
+    size_t prefixLen = (sizeof(prefix) / sizeof(prefix[0])) - 1;
+    WCHAR *args =
+        (WCHAR *)SDL_malloc((prefixLen + fullLen + 2) * sizeof(WCHAR));
+    bool ok = false;
+    if (args != NULL) {
+        SDL_memcpy(args, prefix, prefixLen * sizeof(WCHAR));
+        SDL_memcpy(args + prefixLen, full, fullLen * sizeof(WCHAR));
+        args[prefixLen + fullLen] = L'"';
+        args[prefixLen + fullLen + 1] = L'\0';
+        HINSTANCE r = ShellExecuteW(NULL, L"open", L"explorer.exe", args,
+                                    NULL, SW_SHOWNORMAL);
+        ok = ((INT_PTR)r > 32);
+        SDL_free(args);
+    }
+    if (!ok) {
+        /* Explorer did not start with the file selected: open the folder
+         * itself, which SDL hands to the shell. */
+        WCHAR *cut = wcsrchr(full, L'\\');
+        if (cut != NULL) {
+            *cut = L'\0';
+            char *folder = SDL_iconv_wchar_utf8(full);
+            if (folder != NULL) {
+                ok = SDL_OpenURL(folder);
+                SDL_free(folder);
+            }
+        }
+    }
+    SDL_free(full);
     return ok;
 }
 
@@ -300,6 +355,37 @@ bool clipGifCopyFileToClipboard(const char *gifPath, void *window) {
      * is not freed here on failure. */
     return SDL_SetClipboardData(clipDataCallback, clipCleanupCallback, d,
                                 mimes, mimeCount);
+}
+
+bool clipGifShowFileInFolder(const char *gifPath) {
+    if (gifPath == NULL || gifPath[0] == '\0') {
+        return false;
+    }
+    /* The folder is the path up to its last '/'. */
+    const char *cut = SDL_strrchr(gifPath, '/');
+    if (cut == NULL || cut == gifPath) {
+        return false;
+    }
+    size_t folderLen = (size_t)(cut - gifPath);
+    char *folder = (char *)SDL_malloc(folderLen + 1);
+    if (folder == NULL) {
+        return false;
+    }
+    SDL_memcpy(folder, gifPath, folderLen);
+    folder[folderLen] = '\0';
+    char *uri = clipFileUri(folder);
+    SDL_free(folder);
+    if (uri == NULL) {
+        return false;
+    }
+    /* clipFileUri ends the address with the uri-list's CRLF; a URL has none. */
+    size_t uriLen = SDL_strlen(uri);
+    if (uriLen >= 2) {
+        uri[uriLen - 2] = '\0';
+    }
+    bool ok = SDL_OpenURL(uri);
+    SDL_free(uri);
+    return ok;
 }
 
 #endif /* _WIN32 */
