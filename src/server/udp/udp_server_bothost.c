@@ -5390,6 +5390,24 @@ BotHostSyncWait serverBotHostSyncStep(int h, bool needed, bool skipsGame) {
     return wait;
 }
 
+bool serverBotHostLateBack(int h, bool inLobby) {
+    BotHostConn *hc;
+    if (h < 0 || h >= MAX_BOT_HOSTS) return false;
+    hc = &udpServer.botHosts[h];
+    /* Only in the lobby, before the game starts: once it runs, a late host
+     * stays out of it. Only with every file of the current generation. */
+    if (!inLobby || !hc->connected) return false;
+    if (!hc->syncLate && !hc->skipGame) return false;
+    if (!botHostSynced(h)) return false;
+    hc->syncLate = false;
+    hc->skipGame = false;
+    hc->skipUntilStarts = 0;
+    fprintf(stderr, "[bothost] host \"%s\" synced late, bots back "
+                    "(generation %u)\n",
+            hc->name, (unsigned)hc->syncGen);
+    return true;
+}
+
 void serverServiceBotHosts(ServerSim *sim) {
     int h, s;
     ServerState st;
@@ -5601,6 +5619,8 @@ void serverServiceBotHosts(ServerSim *sim) {
     for (h = 0; h < MAX_BOT_HOSTS; h++) {
         BotHostConn *hc = &udpServer.botHosts[h];
         if (!hc->connected) continue;
+        /* A late host that now holds every file may take bots after all. */
+        (void)serverBotHostLateBack(h, st == serverStateLobby);
         if (serverBotHostSyncStep(h, botHostNeedsFiles(sim, h),
                                   botHostSkipsGame(sim, h)) !=
             BOT_HOST_SYNC_WAIT_ON) {

@@ -664,6 +664,7 @@ static const UnitTestEntry s_tests[] = {
     { "bot_host_sync_packed_big_file", run_bot_host_sync_packed_big_file },
     { "bot_host_sync_slots_flap", run_bot_host_sync_slots_flap },
     { "bot_host_sync_server_step", run_bot_host_sync_server_step },
+    { "bot_host_sync_late_back", run_bot_host_sync_late_back },
     { "bot_host_place_keep_scaled_wait", run_bot_host_place_keep_scaled_wait },
     { "bot_host_place_keep_step_min_old",
       run_bot_host_place_keep_step_min_old },
