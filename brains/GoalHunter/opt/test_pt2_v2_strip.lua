@@ -751,5 +751,59 @@ do
   check("start check = pt2_start by hand, no plan = start", bad == 0, bad)
 end
 
+-- ── 10. PT2_EXTRA_COVER_WALLS ─────────────────────────────────────────────
+print("PT2_EXTRA_COVER_WALLS: extra walls after the rank")
+do
+  local n, with, bad, same = 0, 0, 0, 0
+  for trial = 1, 30 do
+    clear()
+    V.reset()
+    local A = { mx = 128, my = 120, owner = "hostile", health = 15 }
+    local pills = { A }
+    for _ = 1, rnd(3) do
+      local mx, my = 122 + rnd(12), 114 + rnd(12)
+      if math.abs(mx - 128) + math.abs(my - 120) > 2 then
+        pills[#pills + 1] = { mx = mx, my = my, owner = "hostile", health = 15 }
+      end
+    end
+    for _ = 1, rnd(20) do terrain[sq(120 + rnd(16), 112 + rnd(16))] = C.T_BUILDING end
+    terrain[sq(128, 120)] = nil
+    local world = make_world(pills)
+    local i0 = make_inp(world, A, 0)
+    i0.extra_cover_walls = 0
+    -- room under PT2_BUILD_MAX for the extra wall: a bar of 10 (two walls)
+    -- leaves one square of the three on a plain line
+    i0.bar_single, i0.bar_chain = 10, 10
+    local b0 = V.evaluate_lua(i0).best
+    V.reset()
+    local i1 = make_inp(world, A, 0)
+    i1.extra_cover_walls = 1
+    i1.bar_single, i1.bar_chain = 10, 10
+    local b1 = V.evaluate_lua(i1).best
+    n = n + 1
+    if b0 and b1 and b0.px == b1.px and b0.py == b1.py and b0.aim_idx == b1.aim_idx then same = same + 1 end
+    if b0 and b0.extra_cover then bad = bad + 1 end
+    if b1 and b1.safe and b1.extra_cover then
+      with = with + 1
+      local e = b1.extra_cover
+      if #e > 1 or #b1.plan + #e > i1.build_max then bad = bad + 1 end
+      -- on the last chain pill's ray, not on the plan, the point still passes judge
+      local last = b1.chain[#b1.chain]
+      local r = b1.rays[b1.ri[last]]
+      local on = false
+      for k = 1, r.n_sq do if r.sq[k] == e[1].sq then on = true end end
+      for _, q in ipairs(b1.plan) do if q.sq == e[1].sq then on = false end end
+      if not on then bad = bad + 1 end
+      local ex = {}
+      for q, v in pairs(b1.extra) do ex[q] = v end
+      ex[e[1].sq] = e[1].shots
+      if V.judge(i1, b1.px, b1.py, ex, b1.aim_idx) ~= "-" then bad = bad + 1 end
+    end
+  end
+  print(string.format("    %d maps: best the same %d, an extra wall %d", n, same, with))
+  check("the rank does not see the extra wall", same == n, n - same)
+  check("extra walls legal, on the last chain ray, judge passes", bad == 0 and with > 0, bad)
+end
+
 print(string.format("%d passed, %d failed", pass, fail))
 os.exit(fail == 0 and 0 or 1)

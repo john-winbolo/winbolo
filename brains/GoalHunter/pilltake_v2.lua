@@ -70,6 +70,8 @@ function M.knob_inp(C, inp)
   -- PT2_START_WHILE_BUILDING (E4); anger_bump: world.lua's anger per hit
   inp.start_while_building = C.PT2_START_WHILE_BUILDING ~= false
   inp.anger_bump = C.PILL_ANGER_BUMP or 0.3333
+  -- PT2_EXTRA_COVER_WALLS (E5): 0 = off
+  inp.extra_cover_walls = C.PT2_EXTRA_COVER_WALLS or 1
   return inp
 end
 
@@ -1142,6 +1144,58 @@ local function start_check(ctx, rec)
 end
 M._start_check = start_check
 
+-- PT2_EXTRA_COVER_WALLS (Nov 23, Andrew's yes, E5): a safe point gets up
+-- to inp.extra_cover_walls more walls on the ray of the last chain pill
+-- (a single take: A), after the rank (the rank never sees them). A square
+-- is legal by the wall search's own rules (slot_ok with the aim's lane and
+-- the squares in front of a used link), not on the plan, and the plan plus
+-- the extra walls never pass PT2_BUILD_MAX. Of the legal squares the one
+-- nearest the tank's approach square goes first (the shortest builder
+-- trip). Returns { { sq, mx, my, shots, kind = "wall" } } or nil.
+local function extra_cover(ctx, rec)
+  local inp = ctx.inp
+  local n = min(inp.extra_cover_walls or 0, inp.build_max - #(rec.plan or {}))
+  if n <= 0 or not rec.chain or not rec.ri then return nil end
+  local last = rec.chain[#rec.chain]
+  local r = rec.rays[rec.ri[last]]
+  if not r then return nil end
+  local lane_set = {}
+  for _, q in ipairs((rec.lanes and rec.lanes[rec.aim_idx]) or {}) do lane_set[q] = true end
+  local forbid = {}
+  for i, X in ipairs(rec.T) do
+    local ry = rec.rays[i]
+    if rec.in_chain[X] and ry.link and not ry.cut and rec.in_chain[ry.link] then
+      for k = 1, ry.n_sq do
+        if ry.sq_t[k] <= ry.link_t then forbid[ry.sq[k]] = true end
+      end
+    end
+  end
+  local used = {}
+  for _, q in ipairs(rec.plan or {}) do used[q.sq] = true end
+  local ox = rec.omx or floor(rec.px / 256)
+  local oy = rec.omy or floor(rec.py / 256)
+  local cands = {}
+  for k = 1, r.n_sq do
+    local q = r.sq[k]
+    if not used[q] and slot_ok(ctx, rec, r, k, lane_set, forbid) then
+      local mx, my = q % 256, floor(q / 256)
+      cands[#cands + 1] = { sq = q, mx = mx, my = my, d = (mx - ox) ^ 2 + (my - oy) ^ 2 }
+    end
+  end
+  if #cands == 0 then return nil end
+  table.sort(cands, function(a, b)
+    if a.d ~= b.d then return a.d < b.d end
+    return a.sq < b.sq
+  end)
+  local out = {}
+  for i = 1, min(n, #cands) do
+    local c = cands[i]
+    out[i] = { sq = c.sq, mx = c.mx, my = c.my, shots = inp.wall_shots, kind = "wall" }
+  end
+  return out
+end
+M._extra_cover = extra_cover
+
 local function plan_point(ctx, rec)
   if rec.covered then rec.plan, rec.extra = {}, {}; return rec end
   local t0 = ctx.clk and ctx.clk()
@@ -1441,6 +1495,9 @@ function M.evaluate_lua(inp)
   end
   if best and best.safe and best.plan and #best.plan > 0 then
     best.hold = OLD.hold_point(ctx, best)
+  end
+  if best and best.safe and (inp.extra_cover_walls or 0) > 0 then
+    best.extra_cover = extra_cover(ctx, best)
   end
   if T0 then tm.total = clk() - T0 end
   return { best = best, all = inp.keep_all and all or nil, n_eval = n_eval, n_reject = n_reject,

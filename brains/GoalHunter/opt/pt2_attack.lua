@@ -349,6 +349,15 @@ local function finish(a, inp, res, cost)
     goal._pt2.start = { ok = b.start_now, why = b.start_why, pills = b.start_pills,
                         exposure = b.exposure, shells = b.shells_through }
   end
+  -- PT2_EXTRA_COVER_WALLS: v2's extra walls for a safe point (after the
+  -- rank). The builder builds them while the take goes on, only when he
+  -- is free (builder.set_mode, M.bg_wall); the tank never waits for them.
+  if b.extra_cover and #b.extra_cover > 0 then
+    local walls = {}
+    for i, w in ipairs(b.extra_cover) do walls[i] = { mx = w.mx, my = w.my } end
+    goal._pt2_bg = { walls = walls }
+    goal._pt2.extra_cover = walls
+  end
   -- hold point: the tank waits here until every planned wall stands
   local h = b.hold
   if h then

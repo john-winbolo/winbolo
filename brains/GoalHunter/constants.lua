@@ -996,6 +996,14 @@ M.PT2_AIM_POINTS = 9
 -- on a yes the builder builds the rest while the take goes on.
 -- false = wait for every wall. KEEL / MAST: false.
 M.PT2_START_WHILE_BUILDING = true
+-- PT2_EXTRA_COVER_WALLS (Nov 23, Andrew's yes, E5): v2 and its caller. A
+-- safe point gets up to this many extra walls on the ray of the last chain
+-- pill (a single take: A), decided after the rank. Each on a legal square
+-- (the wall search's rules), the plan plus the extra walls never past
+-- PT2_BUILD_MAX; the square nearest the tank's approach square first. The
+-- builder builds them while the take goes on, only when he is free; the
+-- tank never waits. 0 = none. KEEL / MAST: 0.
+M.PT2_EXTRA_COVER_WALLS = 1
 -- Longest chain counted, pills. Proposal, awaiting Andrew's value.
 M.PT2_MAX_CHAIN = 3
 -- Ring step around the target, degrees. Andrew approved 1 for HELM (Nov 19):
@@ -8313,6 +8321,7 @@ M.PRESETS = {
     PT2_PREFER_EXISTING_COVER = false,
     PT2_AIM_POINTS = 5,
     PT2_START_WHILE_BUILDING = false,
+    PT2_EXTRA_COVER_WALLS = 0,
     PT2_LEEWAY = false,
     PT2_OWN_PILL_BONUS = false,
     PT2_AIM_NUDGE = false,
@@ -8707,6 +8716,7 @@ M.PRESETS.mast = {
   PT2_PREFER_EXISTING_COVER         = false,  -- 2.2.1 had no pill take v2
   PT2_AIM_POINTS                    = 5,      -- 2.2.1 had no pill take v2
   PT2_START_WHILE_BUILDING          = false,  -- 2.2.1 had no pill take v2
+  PT2_EXTRA_COVER_WALLS             = 0,      -- 2.2.1 had no pill take v2
   PT2_LEEWAY                        = false,
   PT2_OWN_PILL_BONUS                = false,
   PT2_TRAVEL_BAND_TICKS             = 0,
