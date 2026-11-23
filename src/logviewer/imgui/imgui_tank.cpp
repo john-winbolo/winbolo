@@ -27,8 +27,10 @@
  * line with the game's picture of a builder. While
  * the builder is dead his line has the parachute the new one flies in on and
  * the time until he is in the tank, in words and in pictures alike; no line
- * says "dead". A panel with no room for all of the text shows
- * none of it, only the gauges (lvTankLayoutPick has the rule). Nothing is
+ * says "dead". A panel with no room for all of the text tries
+ * it once more at nine tenths of the font's size (TANK_SMALL_TEXT); with no
+ * room for it at that size either, it shows none of it, only the gauges
+ * (lvTankLayoutPick has the rule). Nothing is
  * ever cut off, so the panel does not scroll.
  *
  * Under them is the base the player's own screen showed the stock of: the
@@ -109,6 +111,9 @@ extern "C" {
  * opens at 2, the scale the HUD panel opens at. */
 #define TANK_DEFAULT_SCALE 2
 #define TANK_MAX_SCALE     4
+/* The text's size, as a part of the panel's font, when it fits only at a
+ * smaller size than the panel's font. */
+#define TANK_SMALL_TEXT    0.9f
 
 /* The floating window's default width: room for the numbers beside the
  * gauges. */
@@ -1196,18 +1201,45 @@ void lv_imgui_tank_window(void) {
              * well, so the width can hold the gauges back too. With the row
              * turned off (Windows > Tank: Base Resources) the gauges have
              * the room alone. */
-            LvTankRoom room = tank_room(st, avail);
-            LvTankLayout lay = {};
-            if (!lv_g_tank_show_base) {
-                lay = lvTankLayoutPick(&room);
+            /* The row's height at each scale is taken at the panel's own
+             * font, as the row is always drawn at it. */
+            float baseH[TANK_MAX_SCALE + 1] = {};
+            for (int sc = 1; sc <= TANK_MAX_SCALE; sc++) {
+                baseH[sc] = tank_base_h_at((float)sc);
             }
-            for (int sc = TANK_MAX_SCALE; lv_g_tank_show_base && sc >= 1; sc--) {
-                room.availH = avail.y - tank_base_h_at((float)sc);
-                room.maxScale = sc;
-                lay = lvTankLayoutPick(&room);
-                if (lay.scale >= (float)sc &&
-                    avail.x >= (float)(sc * TANK_BASE_SLICE_W) + 2.0f) {
-                    break;
+            auto pick = [&](LvTankRoom &rm) -> LvTankLayout {
+                if (!lv_g_tank_show_base) {
+                    return lvTankLayoutPick(&rm);
+                }
+                LvTankLayout l = {};
+                for (int sc = TANK_MAX_SCALE; sc >= 1; sc--) {
+                    rm.availH = avail.y - baseH[sc];
+                    rm.maxScale = sc;
+                    l = lvTankLayoutPick(&rm);
+                    if (l.scale >= (float)sc &&
+                        avail.x >= (float)(sc * TANK_BASE_SLICE_W) + 2.0f) {
+                        break;
+                    }
+                }
+                return l;
+            };
+            LvTankRoom room = tank_room(st, avail);
+            LvTankLayout lay = pick(room);
+            /* No room for the text at the panel's font: measure it again at
+             * TANK_SMALL_TEXT of that size, and show it at that size where
+             * it then fits. Only the text is smaller; the gauges and the
+             * base row keep their size. */
+            const float smallFont = ImGui::GetStyle().FontSizeBase * TANK_SMALL_TEXT;
+            bool smallText = false;
+            if (lay.text == LV_TANK_TEXT_NONE) {
+                ImGui::PushFont(nullptr, smallFont);
+                LvTankRoom smallRoom = tank_room(st, avail);
+                const LvTankLayout smallLay = pick(smallRoom);
+                ImGui::PopFont();
+                if (smallLay.text != LV_TANK_TEXT_NONE) {
+                    room = smallRoom;
+                    lay = smallLay;
+                    smallText = true;
                 }
             }
             const bool icons = (lay.text == LV_TANK_TEXT_ICONS);
@@ -1217,13 +1249,17 @@ void lv_imgui_tank_window(void) {
             if (lay.text == LV_TANK_TEXT_NONE) {
                 /* No room for all of the text: none of it. It comes back
                  * when the panel is large enough again. */
-            } else if (lay.beside) {
-                ImGui::SameLine(0.0f, room.gapBeside);
-                ImGui::BeginGroup();
-                tank_text(st, icons);
-                ImGui::EndGroup();
             } else {
-                tank_text(st, icons);
+                if (smallText) ImGui::PushFont(nullptr, smallFont);
+                if (lay.beside) {
+                    ImGui::SameLine(0.0f, room.gapBeside);
+                    ImGui::BeginGroup();
+                    tank_text(st, icons);
+                    ImGui::EndGroup();
+                } else {
+                    tank_text(st, icons);
+                }
+                if (smallText) ImGui::PopFont();
             }
             if (lv_g_tank_show_base) {
                 tank_base_row(st, (lay.scale < 1.0f) ? lay.scale : floorf(lay.scale));
