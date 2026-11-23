@@ -1592,7 +1592,9 @@ bool tankShellInHitZone(GameSim *sim, tank *value, WORLD tankX, WORLD tankY,
 	 * The tank's WORLD coordinates are its centre, so a hit is a shell
 	 * centre within tank_hit_radius of it. The test itself is
 	 * utilIsTankHit, the one the pill aim prediction and the brain's shot
-	 * simulator use too, so the three cannot drift apart. */
+	 * simulator use too. It calls hitRulesTankShellInZone (hit_rules.h),
+	 * the rule the Log Viewer draws its hit boxes from, so none of them
+	 * can drift apart. */
 	return utilIsTankHit(tankX, tankY, 0, shellX, shellY, 0,
 	                     (WORLD) sim->rules.tank_hit_radius);
 }
