@@ -340,6 +340,7 @@ typedef struct {
     double radius, angle_step, approach_offset, num_pill_blockers, pill_drop_shots;
     double wall_shots, build_max, build_cost, bar_single, bar_chain, bar_other;
     int    chains, link_covers, leeway_on, own_pill_rank, orth_only, aim_nudge, keep_all;
+    int    link_clear_front;   /* PT2_LINK_CLEAR_FRONT */
     double max_chain, leeway_ring_wu, leeway_top, search_top, pill_range, range_margin;
     double blocker_min_dist, nudge_step_wu, nudge_max_steps;
     int    has_leeway_min; double leeway_min;
@@ -1470,6 +1471,9 @@ static Rec *eval_point(Ev *e, double px, double py, Extra *extra, int aim_fixed,
             Ray *r = NULL;
             for (int i = 0; i < T->n; i++) if (T->v[i] == cur) r = rays->v[i];
             int nxt = r ? r->link : 0;
+            /* PT2_LINK_CLEAR_FRONT: a blocker in front of the link ends the
+               chain here (pilltake_v2_old.lua eval_point) */
+            if (nxt && e->link_clear_front && r->front > 0) nxt = 0;
             if (!nxt || in_chain(chain, nxt) || chain_skip(e, nxt)) break;
             plist_push(e, chain, nxt);
             chain_mode = 1;
@@ -1759,7 +1763,8 @@ static int hold_safe(Ev *e, Rec *b, double hx, double hy, int *why_pill) {
             else bar = e->bar_other;
             Ray *r; PTIME(e, P_CAST, r = cast(e, sx, sy, hx, hy, e->pill_len, NULL, 0, &scratch));
             int linked = e->link_covers && ci && r->link != 0 && ci < b->chain->n
-                         && r->link == b->chain->v[ci];
+                         && r->link == b->chain->v[ci]
+                         && !(e->link_clear_front && r->front > 0);
             if (r->tank && !linked && r->cover < bar) { *why_pill = p; return 0; }
         }
     }
@@ -2374,6 +2379,7 @@ static int l_evaluate(lua_State *L) {
     }
     e->chains = getbool(L, S_INP, "chains");
     e->link_covers = getbool(L, S_INP, "link_covers");
+    e->link_clear_front = getbool(L, S_INP, "link_clear_front");
     e->leeway_on = getbool(L, S_INP, "leeway_on");
     e->own_pill_rank = getbool(L, S_INP, "own_pill_rank");
     e->orth_only = getbool(L, S_INP, "orth_only");

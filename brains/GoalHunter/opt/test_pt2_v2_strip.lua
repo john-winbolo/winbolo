@@ -162,7 +162,9 @@ local function mask_trial(world, A, pills)
           if pr.sure then
             st.pred_sure = st.pred_sure + 1
             local r = V._ray_view(SH.cast(env, X.mx * 256 + 128, X.my * 256 + 128, px, py, SH.PILL_FIRE_LEN, nil), nil)
-            local used = r.link ~= nil and not r.cut
+            local cut = r.cut
+            if ctx.inp.link_clear_front then cut = r.cut_front end
+            local used = r.link ~= nil and not cut
             if r.link ~= pr.link or used ~= pr.used or r.cover ~= pr.cover or r.front ~= pr.front
                or r.hit ~= pr.hit then
               st.pred_bad = st.pred_bad + 1
@@ -336,6 +338,108 @@ do
   check(string.format("PT2_MAX_CHAIN 2 stops a 3 chain (%d points)", max_n), max_ok == max_n, max_ok)
   check(string.format("a wall in front of the link cuts the chain, and counts as cover (%d points)", cut_n),
         cut_ok == cut_n and cut_n > 0, cut_ok)
+end
+
+-- ── 4b. PT2_LINK_CLEAR_FRONT: v2's chains = the old evaluator's ──────────
+print("PT2_LINK_CLEAR_FRONT: v2 and old agree on the chain")
+do
+  local function old_ctx(inp, A)
+    local ctx = { inp = inp, A = A, env = inp.env, reach_cache = {}, hostile = {} }
+    for _, p in ipairs(inp.pills) do
+      if (p.health or 0) > 0 and not p.in_tank and not inp.env.is_ally(p) then ctx.hostile[#ctx.hostile + 1] = p end
+    end
+    ctx.finish = OLD.finish_ok(inp, A)
+    return ctx
+  end
+  local res = {}
+  for _, on in ipairs({ true, false }) do
+    local n, same, blocked = 0, 0, 0
+    for trial = 1, 80 do
+      clear()
+      local A = { mx = 128, my = 120, owner = "hostile", health = 15 }
+      local pills = { A }
+      for _ = 1, 4 + (trial % 8) do
+        local mx, my = 122 + rnd(12), 114 + rnd(12)
+        if math.abs(mx - 128) + math.abs(my - 120) > 1 then
+          pills[#pills + 1] = { mx = mx, my = my, owner = "hostile", health = 15 }
+        end
+      end
+      for _ = 1, 4 + rnd(12) do terrain[sq(120 + rnd(16), 112 + rnd(16))] = C.T_BUILDING end
+      terrain[sq(128, 120)] = nil
+      local world = make_world(pills)
+      local inp = make_inp(world, A)
+      inp.link_clear_front = on
+      local vctx, octx = V._new_ctx(inp, A), old_ctx(inp, A)
+      for deg = 0, 359, 3 do
+        local cx = A.mx + 0.5 + math.sin(math.rad(deg)) * 7
+        local cy = A.my + 0.5 - math.cos(math.rad(deg)) * 7
+        local px, py = math.floor(cx * 256), math.floor(cy * 256)
+        local rv = V._eval_point(vctx, px, py, nil, nil, false, false)
+        inp.env.omx, inp.env.omy = math.floor(cx), math.floor(cy)
+        local ro = OLD._eval_point(octx, px, py, nil, nil, nil, nil, false)
+        if rv and ro then
+          n = n + 1
+          local eq = #rv.chain == #ro.chain
+          if eq then for k = 1, #rv.chain do if rv.chain[k] ~= ro.chain[k] then eq = false end end end
+          if eq then same = same + 1 end
+          for k = 1, #rv.rays do
+            local r = rv.rays[k]
+            if r.link and r.front > 0 then blocked = blocked + 1; break end
+          end
+        end
+      end
+    end
+    res[on] = { n = n, same = same, blocked = blocked }
+    print(string.format("    knob %s: %d points, same chain %d, points with a blocked link %d",
+      tostring(on), n, same, blocked))
+  end
+  check("knob on: every point has old's chain", res[true].n > 0 and res[true].same == res[true].n,
+    res[true].n - res[true].same)
+  -- the thin strip, with a planned wall on A's shell path in front of Y:
+  -- knob on, the chain ends at A in both; knob off, old keeps {A, Y}
+  clear()
+  local A = { mx = 128, my = 120, owner = "hostile", health = 15 }
+  local Y = { mx = 128, my = 122, owner = "hostile", health = 15 }
+  terrain[sq(126, 123)] = C.T_BUILDING
+  terrain[sq(130, 123)] = C.T_BUILDING
+  local pills = { A, Y }
+  local world = make_world(pills)
+  local cnt = { [true] = { n = 0, same = 0, cut = 0 }, [false] = { n = 0, same = 0, cut = 0 } }
+  for _, on in ipairs({ true, false }) do
+    local inp = make_inp(world, A)
+    inp.link_clear_front = on
+    local vctx, octx = V._new_ctx(inp, A), old_ctx(inp, A)
+    for deg = 0, 359 do
+      local cx = A.mx + 0.5 + math.sin(math.rad(deg)) * 7
+      local cy = A.my + 0.5 - math.cos(math.rad(deg)) * 7
+      local px, py = math.floor(cx * 256), math.floor(cy * 256)
+      local r0 = V._eval_point(vctx, px, py, nil, nil, false, false)
+      if r0 and #r0.chain == 2 then
+        local ra = r0.rays[r0.ri[A]]
+        for k = 1, ra.n_sq do
+          local s = ra.sq[k]
+          if ra.sq_t[k] < ra.link_t and s ~= sq(A.mx, A.my) then
+            local extra = { [s] = 5 }
+            local rv = V._eval_point(vctx, px, py, extra, nil, false, false)
+            inp.env.omx, inp.env.omy = math.floor(cx), math.floor(cy)
+            local ro = OLD._eval_point(octx, px, py, extra, nil, nil, nil, false)
+            if rv and ro then
+              local c = cnt[on]
+              c.n = c.n + 1
+              if #rv.chain == #ro.chain then c.same = c.same + 1 end
+              if #ro.chain == 1 then c.cut = c.cut + 1 end
+            end
+          end
+        end
+      end
+    end
+  end
+  print(string.format("    thin strip, a planned wall in front of Y: knob on %d points (old chain cut %d, v2 same %d);"
+    .. " knob off %d points (old chain cut %d)", cnt[true].n, cnt[true].cut, cnt[true].same, cnt[false].n, cnt[false].cut))
+  check("knob on: a wall in front of the link ends old's chain at A", cnt[true].n > 0 and cnt[true].cut == cnt[true].n,
+    cnt[true].n - cnt[true].cut)
+  check("knob on: v2 agrees", cnt[true].same == cnt[true].n, cnt[true].n - cnt[true].same)
+  check("knob off: old keeps the link", cnt[false].n > 0 and cnt[false].cut == 0, cnt[false].cut)
 end
 
 -- ── 5. wall search against brute force ────────────────────────────────────

@@ -418,7 +418,10 @@ local function predict(ctx, set, px, py)
     if w.kind ~= K_HOST then
       cover = cover + w.shots
       if link then
-        if w.far < link.near then front = front + w.shots; infront = true
+        if w.far < link.near then
+          front = front + w.shots
+          -- PT2_LINK_CLEAR_FRONT: only cover (shots > 0) cuts the link
+          if w.shots > 0 or not ctx.inp.link_clear_front then infront = true end
         elseif w.near <= link.far then out.sure = false end
       else
         front = front + w.shots
@@ -547,13 +550,17 @@ local function ray_view(b, extra)
       v.block, v.n_block, v.cover, v.front = blk, n, cover, front
     end
   end
-  -- a blocker in front of the link cuts it (the link is not used)
+  -- a blocker in front of the link cuts it (the link is not used).
+  -- PT2_LINK_CLEAR_FRONT (inp.link_clear_front): only cover in front cuts
+  -- it, the old evaluator's test res.front > 0 (eval_point picks v.cut)
   local cut = false
   if v.link then
     for i = 1, v.n_block do
       if v.block[i].t < v.link_t then cut = true; break end
     end
   end
+  v.cut_blk = cut
+  v.cut_front = (v.link ~= nil and v.front > 0) or false
   v.cut = cut
   return v
 end
@@ -660,6 +667,7 @@ local function eval_point(ctx, px, py, extra, aim_fixed, nudge, exact)
     else
       v = ray_view(base_ray(ctx, X, px, py), extra)
     end
+    if inp.link_clear_front then v.cut = v.cut_front end
     rays[i] = v
   end
   local ri = {}

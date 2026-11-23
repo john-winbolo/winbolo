@@ -268,6 +268,10 @@ local function eval_point(ctx, px, py, extra, aim_fixed, prev, new_sq, nudge)
       local nxt
       if r then
         nxt = r.link
+        -- PT2_LINK_CLEAR_FRONT: a blocker in front of the link (res.front,
+        -- planned blockers too) stops this pill's shells first, so the link
+        -- is not there: the chain ends here and the blocker is its cover
+        if nxt and inp.link_clear_front and r.front > 0 then nxt = nil end
       else
         -- a chain pill out of range of P: its shells do not come at us,
         -- but they still go where its last target was. Not followed.
@@ -526,6 +530,7 @@ local function hold_safe(ctx, b, hx, hy)
       local r = SH.cast(env, sx, sy, hx, hy, env.pill_fire_len or SH.PILL_FIRE_LEN, nil)
       local ci = b.in_chain and b.in_chain[p]
       local linked = inp.link_covers and ci and r.link ~= nil and r.link == b.chain[ci + 1]
+                     and not (inp.link_clear_front and r.front > 0)
       if r.hit == "tank" and not linked and r.cover < bar then return false, M.pill_name(inp, p) end
     end
   end
@@ -977,6 +982,7 @@ function M.knob_inp(C, inp)
   inp.finish_min_armour = C.ATTACK_RUSH_MIN_ARMOUR or 5
   inp.chains           = C.PT2_CHAINS ~= false
   inp.link_covers      = C.PT2_LINK_COVERS_PREV ~= false
+  inp.link_clear_front = C.PT2_LINK_CLEAR_FRONT ~= false
   inp.max_chain        = C.PT2_MAX_CHAIN or 3
   inp.leeway_on        = C.PT2_LEEWAY ~= false
   inp.leeway_ring_wu   = 32               -- proposal, awaiting Andrew's value

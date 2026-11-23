@@ -960,6 +960,13 @@ M.PT2_CHAIN_BLOCKER_MIN_SHOTS = 10
 -- (Andrew, Nov 17). Off: every chain pill needs that cover behind its link.
 -- KEEL / MAST: false.
 M.PT2_LINK_COVERS_PREV = true
+-- PT2_LINK_CLEAR_FRONT (Nov 23, Andrew's yes, E2): a link counts only when
+-- no cover stands in front of it (the ray's res.front == 0, planned
+-- blockers too). A blocked link stops the pill's shells first: the chain
+-- ends at that pill, and the blocker is its cover. Both evaluators (old Lua
+-- and its C copy gh_pt2_old.c, and v2). false = a link counts with a
+-- blocker in front (old), v2 cuts on any blocker in front. KEEL / MAST: false.
+M.PT2_LINK_CLEAR_FRONT = true
 -- Longest chain counted, pills. Proposal, awaiting Andrew's value.
 M.PT2_MAX_CHAIN = 3
 -- Ring step around the target, degrees. Andrew approved 1 for HELM (Nov 19):
@@ -8273,6 +8280,7 @@ M.PRESETS = {
     PILLTAKE_V2_EVALUATOR = false,
     PT2_CHAINS = false,
     PT2_LINK_COVERS_PREV = false,
+    PT2_LINK_CLEAR_FRONT = false,
     PT2_LEEWAY = false,
     PT2_OWN_PILL_BONUS = false,
     PT2_AIM_NUDGE = false,
@@ -8663,6 +8671,7 @@ M.PRESETS.mast = {
   PILLTAKE_V2_EVALUATOR             = false,  -- 2.2.1 had no pill take v2
   PT2_CHAINS                        = false,  -- 2.2.1 had no pill take v2
   PT2_LINK_COVERS_PREV              = false,
+  PT2_LINK_CLEAR_FRONT              = false,  -- 2.2.1 had no pill take v2
   PT2_LEEWAY                        = false,
   PT2_OWN_PILL_BONUS                = false,
   PT2_TRAVEL_BAND_TICKS             = 0,

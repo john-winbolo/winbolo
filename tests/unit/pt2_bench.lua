@@ -20,6 +20,12 @@
 --                             cold: dropped before each run; warm=1 keeps them)
 --   eval=both                 old (C and Lua) and v2 on each case: costs, safe
 --                             takes each finds, best points, kills and depth
+--   set=<k>:<v>[,<k>:<v>...]  set these inp fields on every case (v: true,
+--                             false, a number, else a string)
+--   eval=ab ev=<old|oldlua|v2> a=<k>:<v>,... b=<k>:<v>,...
+--                             one evaluator, two inp field sets (a knob off
+--                             and on): safe takes, kills, depth, walls, best
+--                             points, cost, and the knob's own counts
 --
 -- The recorded case answers questions from its record only. Here each case
 -- gets a world built from that record, with callbacks shaped like the
@@ -47,6 +53,18 @@ local G   = rawget(_G, "gh_pt2_old")
 local args = {}
 for k, v in tostring(rawget(_G, "PT2_BENCH_ARGS") or ""):gmatch("([%w_]+)=(%S+)") do args[k] = v end
 local MAX = tonumber(args.max or "") or math.huge
+-- k:v,k:v -> { k = v }
+local function kv_list(s)
+  local t = {}
+  for k, v in tostring(s or ""):gmatch("([%w_]+):([^,]+)") do
+    if v == "true" then t[k] = true
+    elseif v == "false" then t[k] = false
+    elseif tonumber(v) then t[k] = tonumber(v)
+    else t[k] = v end
+  end
+  return t
+end
+local SET = kv_list(args.set)
 local REPS = tonumber(args.reps or "") or 5
 local USE_LUA = args.lua == "1"
 if not G and not USE_LUA then
@@ -180,6 +198,7 @@ local function game_inp(case)
   soft("banned", function() return false end)
   soft("anger_of", function() return nil end)
   inp.keep_all = args.keep_all == "1" or nil
+  for k, v in pairs(SET) do inp[k] = v end
   return inp, pills
 end
 
@@ -389,6 +408,82 @@ if BOTH then
   run_case = run_both
 end
 
+-- ── eval=ab: one evaluator, a knob off (a) and on (b) ──────────────────
+local AB = EVAL == "ab"
+local AB_EV = args.ev or "v2"
+local SA, SB = kv_list(args.a), kv_list(args.b)
+local R = {
+  t_a = {}, t_b = {}, n = 0, err = 0,
+  safe_both = 0, safe_a_only = 0, safe_b_only = 0, safe_none = 0,
+  best_same = 0, best_far = 0,
+  kills_same = 0, kills_b_more = 0, kills_a_more = 0,
+  depth_same = 0, depth_b_more = 0, depth_a_more = 0,
+  walls_same = 0, walls_b_fewer = 0, walls_a_fewer = 0, walls_a = 0, walls_b = 0,
+  ex_a = {}, ex_b = {},
+}
+local function ab_eval(inp)
+  inp.env.omx, inp.env.omy = nil, nil
+  if AB_EV == "v2" then NV.reset(); return NV.evaluate_lua(inp) end
+  if AB_EV == "oldlua" then return V2.evaluate_lua(inp) end
+  return G.evaluate(inp, V2)
+end
+-- the knob's own counts on the best point (summed over cases)
+local function ab_extra(dst, b)
+  if not b then return end
+  local function add(k, v) dst[k] = (dst[k] or 0) + v end
+  if b.safe then add("safe", 1) end
+  if b.start_now then add("start_now", 1) end
+  if b.extra_cover and #b.extra_cover > 0 then add("extra_cover_points", 1); add("extra_cover_walls", #b.extra_cover) end
+  if b.aim_idx and b.aim_idx > 5 then add("aim_6_to_9", 1) end
+  if b.shells_through then add("shells_through", b.shells_through) end
+end
+local function run_ab(case)
+  n_case = n_case + 1
+  R.n = R.n + 1
+  local reps = math.max(1, REPS)
+  local ia = game_inp(case)
+  for k, v in pairs(SA) do ia[k] = v end
+  local ok, ra = pcall(ab_eval, ia)
+  local ib = game_inp(case)
+  for k, v in pairs(SB) do ib[k] = v end
+  local ok2, rb = pcall(ab_eval, ib)
+  if not ok or not ok2 then
+    R.err = R.err + 1
+    io.stderr:write(fmt("pt2_bench: ab error case %d: %s\n", n_case, tostring(ok and rb or ra)))
+    return
+  end
+  R.t_a[#R.t_a + 1] = median_of(function() ab_eval(ia) end, reps)
+  R.t_b[#R.t_b + 1] = median_of(function() ab_eval(ib) end, reps)
+  local ba, bb = ra.best, rb.best
+  ab_extra(R.ex_a, ba)
+  ab_extra(R.ex_b, bb)
+  local sa, sb = ba and ba.safe or false, bb and bb.safe or false
+  if sa and sb then R.safe_both = R.safe_both + 1
+  elseif sa then R.safe_a_only = R.safe_a_only + 1
+  elseif sb then R.safe_b_only = R.safe_b_only + 1
+  else R.safe_none = R.safe_none + 1 end
+  if sa and sb then
+    if ba.deg == bb.deg and ba.radius == bb.radius then R.best_same = R.best_same + 1
+    else R.best_far = R.best_far + 1 end
+    if ba.kills == bb.kills then R.kills_same = R.kills_same + 1
+    elseif bb.kills > ba.kills then R.kills_b_more = R.kills_b_more + 1
+    else R.kills_a_more = R.kills_a_more + 1 end
+    if (ba.depth or 0) == (bb.depth or 0) then R.depth_same = R.depth_same + 1
+    elseif (bb.depth or 0) > (ba.depth or 0) then R.depth_b_more = R.depth_b_more + 1
+    else R.depth_a_more = R.depth_a_more + 1 end
+    local wa, wb = ba.plan and #ba.plan or 0, bb.plan and #bb.plan or 0
+    R.walls_a, R.walls_b = R.walls_a + wa, R.walls_b + wb
+    if wa == wb then R.walls_same = R.walls_same + 1
+    elseif wb < wa then R.walls_b_fewer = R.walls_b_fewer + 1
+    else R.walls_a_fewer = R.walls_a_fewer + 1 end
+  end
+end
+if AB then
+  if AB_EV == "old" and not G then print("pt2_bench: ev=old needs gh_pt2_old"); return 1 end
+  NV = NV or require("pilltake_v2")
+  run_case = run_ab
+end
+
 local files = {}
 for f in tostring(args.cases or ""):gmatch("[^;]+") do files[#files + 1] = f end
 if #files == 0 then
@@ -420,6 +515,33 @@ local function q(t, p)
   return s[math.max(1, math.ceil(p * #s))] or 0
 end
 
+if AB then
+  local function row(name, t)
+    print(fmt("  %-34s median %8.3f  p90 %8.3f  max %9.3f ms  (n %d)", name, q(t, 0.5) / 1000, q(t, 0.9) / 1000,
+      q(t, 1) / 1000, #t))
+  end
+  print(fmt("pt2_bench ab: ev=%s a=%s b=%s: %d cases, errors %d, reps %d", AB_EV, tostring(args.a),
+    tostring(args.b), R.n, R.err, math.max(1, REPS)))
+  print("cost per evaluate:")
+  row("a", R.t_a)
+  row("b", R.t_b)
+  print(fmt("safe take: both %d, a only %d, b only %d, neither %d", R.safe_both, R.safe_a_only, R.safe_b_only, R.safe_none))
+  print(fmt("best point (both safe): same %d, other %d", R.best_same, R.best_far))
+  print(fmt("kills (both safe): same %d, b more %d, a more %d", R.kills_same, R.kills_b_more, R.kills_a_more))
+  print(fmt("depth (both safe): same %d, b more %d, a more %d", R.depth_same, R.depth_b_more, R.depth_a_more))
+  print(fmt("walls planned (both safe): same %d, b fewer %d, a fewer %d; total a %d b %d",
+    R.walls_same, R.walls_b_fewer, R.walls_a_fewer, R.walls_a, R.walls_b))
+  local function ex(t)
+    local ks, o = {}, {}
+    for k in pairs(t) do ks[#ks + 1] = k end
+    table.sort(ks)
+    for _, k in ipairs(ks) do o[#o + 1] = fmt("%s %s", k, tostring(t[k])) end
+    return table.concat(o, ", ")
+  end
+  print("best point counts a: " .. ex(R.ex_a))
+  print("best point counts b: " .. ex(R.ex_b))
+  return 0
+end
 if BOTH then
   local function row(name, t)
     print(fmt("  %-34s median %8.3f  p90 %8.3f  max %9.3f ms  (n %d)", name, q(t, 0.5) / 1000, q(t, 0.9) / 1000,
