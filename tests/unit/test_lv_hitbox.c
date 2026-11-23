@@ -12,8 +12,11 @@
  *       miss; that the builder's catch distance is 128, or pill_range when
  *       that is less; and that the builder test catches an explosion on
  *       open ground no more than that far from him, an explosion on a
- *       building, a half building, a pillbox or a base only on his own
- *       square, and nothing off the 3 by 3 squares round his.
+ *       building, a half building, a live pillbox or a base only on his own
+ *       square, and nothing off the 3 by 3 squares round his. A dead
+ *       pillbox's square is open ground (lvHitboxPillSolid). A square a
+ *       shell's hit changed on this frame is solid (lvHitboxSquareSolid)
+ *       in a game that plays the square-hit rule.
  *       It also checks the places the circles go round: the middle of the
  *       art pixel a recording holds, with the builder's 1 and 2 put back,
  *       and the offsets the game draws the tank and builder pictures at.
@@ -32,6 +35,14 @@
  *   lv_hitbox_outline - that every line of a builder's outline is on the
  *       border of his area, and that the outline stops exactly where the
  *       circle meets the edge of a building.
+ *
+ *   lv_hitbox_square_hit_by_version - that the square a shell's hit changed
+ *       on this frame is solid only in a recording of 2.2.2 or later
+ *       (lvHitboxSquareHitForVersion). In a 2.2.1 recording it is
+ *       open ground, as the hit box drew it before that rule: only a wall
+ *       is solid.
+ *       A pillbox the same way: in 2.2.1 every pill on the map is solid,
+ *       dead or alive; in 2.2.2 a dead pill's square is open ground.
  *
  *   The tank test is also checked for the square of games before the
  *   circle, and against the size the outline is drawn at.
@@ -199,6 +210,68 @@ int run_lv_hitbox_sums(void) {
                   "the open square above, inside the circle");
     UT_ASSERT_MSG(!lvHitboxBuilderCaught(128.0, -1.0, 128.0, 128.0, SQ(1, 1), 128),
                   "the open square above, outside the circle");
+
+    /* Which pillboxes make a square solid: only a live one on the map. */
+    UT_ASSERT_MSG(lvHitboxPillSolid(true, false, 15, false, true), "a live pill is solid");
+    UT_ASSERT_MSG(lvHitboxPillSolid(true, false, 1, false, true), "armour 1 is solid");
+    UT_ASSERT_MSG(!lvHitboxPillSolid(true, false, 0, false, true), "a dead pill is open ground");
+    UT_ASSERT_MSG(lvHitboxPillSolid(true, false, 0, true, true),
+                  "the frame of the hit that killed a pill: its square is solid");
+    UT_ASSERT_MSG(!lvHitboxPillSolid(true, true, 15, false, true), "a pill in a tank is not there");
+    UT_ASSERT_MSG(!lvHitboxPillSolid(false, false, 15, false, true), "a removed pill is not there");
+
+    /* A dead pill to his right is open ground: an explosion just across the
+       edge, 10 from him, catches him; the same explosion with a live pill
+       there does not. */
+    {
+        unsigned deadMask = lvHitboxPillSolid(true, false, 0, false, true) ? SQ(2, 1) : 0;
+        unsigned liveMask = lvHitboxPillSolid(true, false, 15, false, true) ? SQ(2, 1) : 0;
+        UT_ASSERT_MSG(lvHitboxBuilderCaught(260.0, 128.0, 250.0, 128.0, deadMask, 128),
+                      "a dead pill's square next to him catches across the edge");
+        UT_ASSERT_MSG(!lvHitboxBuilderCaught(260.0, 128.0, 250.0, 128.0, liveMask, 128),
+                      "a live pill's square next to him does not");
+    }
+
+    /* The shot that kills a pill on his own square: the blast at the square's
+       middle catches him in its far corner, 178 away, because the pill was
+       hit on this frame. A dead pill there with no hit this frame is open
+       ground and the same blast misses him. */
+    {
+        unsigned hitMask  = lvHitboxPillSolid(true, false, 0, true, true) ? SQ(1, 1) : 0;
+        unsigned deadMask = lvHitboxPillSolid(true, false, 0, false, true) ? SQ(1, 1) : 0;
+        UT_ASSERT_MSG(lvHitboxBuilderCaught(128.0, 128.0, 2.0, 2.0, hitMask, 128),
+                      "the killing shot catches him in the far corner of the pill's square");
+        UT_ASSERT_MSG(!lvHitboxBuilderCaught(128.0, 128.0, 2.0, 2.0, deadMask, 128),
+                      "a blast on a dead pill's square with no hit misses him there");
+    }
+
+    /* Which terrain makes a square solid: a building or a half building,
+       and a square a shell's hit changed on this frame (a wall to rubble on
+       its last hit, a forest to grass, a boat to river, the shore or a
+       bridge a boat's shell hit). */
+    UT_ASSERT_MSG(lvHitboxSquareSolid(true, false, true), "a wall is solid");
+    UT_ASSERT_MSG(lvHitboxSquareSolid(false, true, true),
+                  "the frame of a shell's hit that changed the square: it is solid");
+    UT_ASSERT_MSG(!lvHitboxSquareSolid(false, false, true),
+                  "rubble, grass or river with no hit this frame is open ground");
+
+    /* The shot that turns a wall to rubble, on the square to his left: the
+       blast at that square's middle, 128 from him on the first world unit of
+       his own square, does not catch him, as
+       for any hit on a wall. The same blast on rubble with no hit this frame
+       does. And the same shot on his own square catches him in its far
+       corner, 178 away. */
+    {
+        unsigned leftHit   = lvHitboxSquareSolid(false, true, true) ? SQ(0, 1) : 0;
+        unsigned leftOpen  = lvHitboxSquareSolid(false, false, true) ? SQ(0, 1) : 0;
+        unsigned ownHit    = lvHitboxSquareSolid(false, true, true) ? SQ(1, 1) : 0;
+        UT_ASSERT_MSG(!lvHitboxBuilderCaught(-128.0, 128.0, 0.0, 128.0, leftHit, 128),
+                      "the rubble shot on the next square misses him 128 away");
+        UT_ASSERT_MSG(lvHitboxBuilderCaught(-128.0, 128.0, 0.0, 128.0, leftOpen, 128),
+                      "a blast on rubble with no hit catches him 128 away");
+        UT_ASSERT_MSG(lvHitboxBuilderCaught(128.0, 128.0, 2.0, 2.0, ownHit, 128),
+                      "the rubble shot catches him in the far corner of its square");
+    }
 
     /* A short pill range. */
     UT_ASSERT_MSG(lvHitboxBuilderCaught(228.0, 128.0, 128.0, 128.0, 0, 100), "100 away");
@@ -557,6 +630,94 @@ int run_lv_hitbox_outline(void) {
         /* With the cut on the wrong axis the run went on to y = 192. */
         UT_ASSERT_MSG(!outlineHasPoint(&o, 256.0, 192.0),
                       "the edge x = 256 runs past the box's bottom side");
+    }
+    return 0;
+}
+
+/* The square-hit rule by the recording's version: 2.2.1 and older play the
+   open-ground rule on a square a shell's hit changed, 2.2.2 and later the
+   square rule. draw.c asks lvHitboxSquareHitForVersion for the recording's
+   header version. */
+int run_lv_hitbox_square_hit_by_version(void) {
+    bool oldRule = lvHitboxSquareHitForVersion(2, 2, 1);
+    bool newRule = lvHitboxSquareHitForVersion(2, 2, 2);
+    bool olderRule = lvHitboxSquareHitForVersion(1, 17, 0);
+    bool laterRule = lvHitboxSquareHitForVersion(2, 3, 0);
+
+    UT_ASSERT_MSG(!oldRule, "2.2.1 plays the open-ground rule");
+    UT_ASSERT_MSG(newRule, "2.2.2 plays the square rule");
+    UT_ASSERT_MSG(!olderRule, "1.17 plays the open-ground rule");
+    UT_ASSERT_MSG(laterRule, "2.3.0 plays the square rule");
+
+    /* A wall is solid in both, with or without a hit this frame. */
+    UT_ASSERT_MSG(lvHitboxSquareSolid(true, false, oldRule), "2.2.1: a wall is solid");
+    UT_ASSERT_MSG(lvHitboxSquareSolid(true, true, oldRule),
+                  "2.2.1: a wall a shell hit and left a wall is solid");
+    UT_ASSERT_MSG(lvHitboxSquareSolid(true, false, newRule), "2.2.2: a wall is solid");
+    UT_ASSERT_MSG(lvHitboxSquareSolid(true, true, newRule),
+                  "2.2.2: a wall a shell hit and left a wall is solid");
+
+    /* The frame of a shell's hit that changed the square (a wall to rubble,
+       a forest to grass, a boat to river, the shore, a bridge): open ground
+       in 2.2.1, solid in 2.2.2. */
+    UT_ASSERT_MSG(!lvHitboxSquareSolid(false, true, oldRule),
+                  "2.2.1: the square a shell's hit changed this frame is open ground");
+    UT_ASSERT_MSG(lvHitboxSquareSolid(false, true, newRule),
+                  "2.2.2: the square a shell's hit changed this frame is solid");
+
+    /* No hit this frame: open ground in both. */
+    UT_ASSERT_MSG(!lvHitboxSquareSolid(false, false, oldRule),
+                  "2.2.1: rubble with no hit this frame is open ground");
+    UT_ASSERT_MSG(!lvHitboxSquareSolid(false, false, newRule),
+                  "2.2.2: rubble with no hit this frame is open ground");
+
+    /* The rubble shot on the square to his left, 128 from him on the first
+       world unit of his own square: in 2.2.1 it catches him, as any blast
+       on open ground 128 away does; in 2.2.2 it misses him, as a hit on a
+       wall does. The same shot on his own square, 178 from him in its far
+       corner: in 2.2.2 it catches him, as a hit on his square does; in
+       2.2.1 that is past 128 on open ground, so it misses him. */
+    {
+        unsigned leftOld = lvHitboxSquareSolid(false, true, oldRule) ? SQ(0, 1) : 0;
+        unsigned leftNew = lvHitboxSquareSolid(false, true, newRule) ? SQ(0, 1) : 0;
+        unsigned ownOld  = lvHitboxSquareSolid(false, true, oldRule) ? SQ(1, 1) : 0;
+        unsigned ownNew  = lvHitboxSquareSolid(false, true, newRule) ? SQ(1, 1) : 0;
+        UT_ASSERT_MSG(lvHitboxBuilderCaught(-128.0, 128.0, 0.0, 128.0, leftOld, 128),
+                      "2.2.1: the rubble shot on the next square catches him 128 away");
+        UT_ASSERT_MSG(!lvHitboxBuilderCaught(-128.0, 128.0, 0.0, 128.0, leftNew, 128),
+                      "2.2.2: the rubble shot on the next square misses him 128 away");
+        UT_ASSERT_MSG(!lvHitboxBuilderCaught(128.0, 128.0, 2.0, 2.0, ownOld, 128),
+                      "2.2.1: the rubble shot misses him in the far corner of its square");
+        UT_ASSERT_MSG(lvHitboxBuilderCaught(128.0, 128.0, 2.0, 2.0, ownNew, 128),
+                      "2.2.2: the rubble shot catches him in the far corner of its square");
+    }
+
+    /* A pillbox by version: in 2.2.1 every pill on the map makes its square
+       solid, dead or alive; in 2.2.2 a dead pill's square is open ground
+       except on the frame of the hit that killed it. A pill in a tank or
+       off the map is not there in either. */
+    UT_ASSERT_MSG(lvHitboxPillSolid(true, false, 15, false, oldRule), "2.2.1: a live pill is solid");
+    UT_ASSERT_MSG(lvHitboxPillSolid(true, false, 0, false, oldRule), "2.2.1: a dead pill is solid");
+    UT_ASSERT_MSG(lvHitboxPillSolid(true, false, 0, true, oldRule),
+                  "2.2.1: the frame of the hit that killed a pill is solid");
+    UT_ASSERT_MSG(!lvHitboxPillSolid(true, true, 15, false, oldRule), "2.2.1: a pill in a tank is not there");
+    UT_ASSERT_MSG(!lvHitboxPillSolid(false, false, 15, false, oldRule), "2.2.1: a removed pill is not there");
+    UT_ASSERT_MSG(lvHitboxPillSolid(true, false, 15, false, newRule), "2.2.2: a live pill is solid");
+    UT_ASSERT_MSG(!lvHitboxPillSolid(true, false, 0, false, newRule), "2.2.2: a dead pill is open ground");
+    UT_ASSERT_MSG(lvHitboxPillSolid(true, false, 0, true, newRule),
+                  "2.2.2: the frame of the hit that killed a pill is solid");
+    UT_ASSERT_MSG(!lvHitboxPillSolid(true, true, 15, false, newRule), "2.2.2: a pill in a tank is not there");
+
+    /* A dead pill to his right, an explosion just across the edge, 10 from
+       him: in 2.2.1 the square is solid, so it misses him; in 2.2.2 it is
+       open ground, so it catches him. */
+    {
+        unsigned deadOld = lvHitboxPillSolid(true, false, 0, false, oldRule) ? SQ(2, 1) : 0;
+        unsigned deadNew = lvHitboxPillSolid(true, false, 0, false, newRule) ? SQ(2, 1) : 0;
+        UT_ASSERT_MSG(!lvHitboxBuilderCaught(260.0, 128.0, 250.0, 128.0, deadOld, 128),
+                      "2.2.1: a dead pill's square next to him does not catch across the edge");
+        UT_ASSERT_MSG(lvHitboxBuilderCaught(260.0, 128.0, 250.0, 128.0, deadNew, 128),
+                      "2.2.2: a dead pill's square next to him catches across the edge");
     }
     return 0;
 }

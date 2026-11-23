@@ -1406,8 +1406,8 @@
 #define STR_LV_LAG_MENU                     3119
 #define STR_LV_LAG_MENU_TIP                 3120
 #define STR_LV_LAG_LINE_BOT                 3121
-/* The lag view's shell toggles in the Options menu. Toggle Screen-True Own
-   Shells (lv_shell_owner.h) and its tooltip. Toggle Screen-True Local
+/* The lag view's shell toggles in the Options menu. Screen-True Own
+   Shells (lv_shell_owner.h) and its tooltip. Screen-True Local
    Explosions (lv_early_blast.h): its name, its tooltip, and the tooltip
    while it is off because the first toggle is off. */
 #define STR_LV_SCREEN_TRUE_SHELLS           3472
@@ -1467,17 +1467,27 @@
 #define STR_LV_ZOOM_TIP                     2851
 /* Log viewer Options menu: Rewind and Fast Forward go to the new place in a short animation, not a jump */
 #define STR_LV_JUMP_ANIM                    2852
+/* Log viewer Options menu: a seek of the seek bar goes to the new place in the same short animation */
+#define STR_LV_SEEK_ANIM                    2853
 /* Log viewer: the number of each pillbox on the map (Options), the list of
    pillbox numbers in a tooltip (string1, "1, 4, 7"), and the Events panel's
    lines for a pillbox taken, with its number (number) */
 #define STR_LV_PILL_NUMBERS                 2866
 #define STR_LV_PILL_NUMBERS_TIP             2867
 #define STR_LV_PILL_NUMBERS_LIST            2868
+/* Options > Base Numbers: the number of each base on the map, and its
+   tooltip. */
+#define STR_LV_BASE_NUMBERS                 3483
+#define STR_LV_BASE_NUMBERS_TIP             3484
 #define STR_LV_MSG_PILL_CAPTURED            2869
 #define STR_LV_MSG_PILL_STOLEN              2870
 /* Log viewer: the hit area round each tank and builder on the map (Options) */
 #define STR_LV_HIT_BOXES                    3470
 #define STR_LV_HIT_BOXES_TIP                3471
+/* Log viewer Tank panel: the line beside the empty base bars when no base is near enough */
+#define STR_LV_TANK_BASE_NONE               3480
+#define STR_LV_TANK_SHOW_BASE               3481
+#define STR_LV_TANK_SHOW_LAG                3482
 
 /* Log viewer dialogs */
 #define STR_LV_ASSIGN_COLOURS_HINT          1128

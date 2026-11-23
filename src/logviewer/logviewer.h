@@ -119,6 +119,9 @@ typedef struct {
   /* lgm_blast_shape: the shape of the builder's open-ground area, 0 to 2
      (LV_HITBOX_BUILDER_SHAPE_* in lv_hitbox.h). */
   int  lgmBlastShape;
+  /* base_status_range: how near a base has to be for the game to show its
+     stock, in world units (the Tank panel's near base, lv_base_near.h). */
+  int  baseStatusRange;
   /* The tank's hit zone, LV_HITBOX_TANK_* (lv_hitbox.h): the circle, the
      square of games before it, or none when the file cannot tell. */
   int  tankHitZone;
@@ -372,6 +375,19 @@ void lv_decoderDestroy(LogViewerState *lv);
 /* State accessors used by screen.c and other modules */
 void lv_screenSetState(LogViewerState *lv);
 LogViewerState *lv_screenGetState(void);
+
+/* Whether pill `pill` (0 based) lost its last armour on the frame now shown:
+   a recorded health event took it from above 0 to 0 on this frame. That is a
+   hit on the pill, so the builder hit box draws its square as solid for this
+   frame (lgmBlastCatches: the shot that kills a pill is a hit on its square). */
+bool lv_screenPillHitNow(BYTE pill);
+
+/* Whether a recorded map change on the frame now shown is a shell's hit on
+   square (x, y): a wall to rubble, a forest to grass, a boat to river, or a
+   boat's shell on the shore or a bridge. Such a hit is a hit on the square,
+   so the builder hit box draws the square as solid for this frame
+   (lgmBlastCatches, squareHit). */
+bool lv_screenSquareHitNow(BYTE x, BYTE y);
 
 /* Accessor functions for sounddist.c (replaces extern globals) */
 BYTE lv_screenGetXOffset(void);

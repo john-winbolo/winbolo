@@ -1638,6 +1638,13 @@ int run_server_overrun_stats_due(void);
 int run_lv_player_lag_read(void);
 int run_lv_lag_track(void);
 int run_lv_lag_ring(void);
+/* The lag view's pillboxes and map, one round trip back (lv_lag.h). */
+int run_lv_lag_rtt_back(void);
+int run_lv_lag_ring_back(void);
+int run_lv_lag_map_undo(void);
+int run_lv_lag_view_map(void);
+/* Options > Base Numbers: the bases in the view (test_lv_calibration.c). */
+int run_lv_base_spots(void);
 int run_lv_lag_view_toggle(void);
 int run_lv_lag_feature_default_off(void);
 int run_lv_lag_view_draw(void);
@@ -5127,6 +5134,7 @@ int run_lv_hitbox_sums(void);
 int run_lv_hitbox_lgm_fit(void);
 int run_lv_hitbox_lgm_pick(void);
 int run_lv_hitbox_outline(void);
+int run_lv_hitbox_square_hit_by_version(void);
 /* The tank's hit zone from a recording's version (test_lv_calibration.c). */
 int run_lv_hitbox_zone_from_version(void);
 /* The hit rules the engine and the log viewer share (test_hit_rules.c):
@@ -5150,6 +5158,8 @@ int run_lv_dock_clear_layout(void);
 int run_lv_dock_clear_rects(void);
 int run_lv_dock_clear_map(void);
 int run_lv_dock_clear_prefs(void);
+/* The Tank panel's length there follows its lag section. */
+int run_lv_dock_clear_room_len(void);
 /* The arrangement of the sidebars a new user starts with
  * (test_lv_dock_clear.c, lv_dock_default.h). */
 int run_lv_dock_default_layout(void);
@@ -5273,6 +5283,11 @@ int run_lv_jump_targets(void);
 int run_lv_jump_anim_lands(void);
 int run_lv_jump_anim_steps(void);
 int run_lv_jump_anim_time(void);
+int run_lv_jump_anim_retarget(void);
+int run_lv_base_near_pick(void);
+int run_lv_base_near_range(void);
+int run_lv_base_near_bars(void);
+int run_lv_base_near_game_screen(void);
 
 /* The four presentation control events (test_scenario_presentation_codec.c):
  * their body codecs against hand-written bytes, the refusals a short or

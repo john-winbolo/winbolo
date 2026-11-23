@@ -8,7 +8,7 @@
  *Filename:      lv_hitbox.h
  *Purpose:
  *  The areas the Log Viewer draws round each tank and each
- *  builder on the map (Options > Toggle Hit Boxes; draw.c
+ *  builder on the map (Options > Hit Boxes; draw.c
  *  draws them). They are the engine's own tests, from the
  *  header the engine uses too (src/bolo/public/hit_rules.h),
  *  put in the viewer's terms:
@@ -22,10 +22,22 @@
  *
  *  - A builder: lgmBlastCatches (src/bolo/lgm.c). An
  *    explosion catches a builder when it is on a square that
- *    is not a building, a half building, a pillbox or a base,
- *    and no more than half a square (128) from him. On one of
- *    those squares it catches him only when it is on his own
- *    square. The distance comes from utilIsItemInRange with
+ *    is not a building, a half building, a live pillbox or a
+ *    base, and no more than half a square (128) from him. A
+ *    dead pillbox's square is open ground (pillsIsPillHit,
+ *    armour above 0; lvHitboxPillSolid), except on the frame
+ *    of the hit that killed it: that shot is a hit on the
+ *    pill's square. A square that the frame's shot changed
+ *    (a wall to rubble, a forest to grass, a boat to river,
+ *    the shore or a bridge a boat's shell hit) is solid on
+ *    that frame too (lvHitboxSquareSolid): that shot was a
+ *    hit on the square. That terrain rule is only in games of
+ *    after 2.2.1 (lvHitboxSquareHitForVersion, from
+ *    the recording's version); in an older game the changed
+ *    square is open ground on that frame, as the recording
+ *    has it. On
+ *    one of those squares it catches him only when it is on
+ *    his own square. The distance comes from utilIsItemInRange with
  *    the pill_range rule as its limit, so when pill_range is
  *    under 128 the circle is pill_range across, not 128.
  *    The lgm_blast_shape rule changes the open-ground area: 0
@@ -266,6 +278,25 @@ static inline int lvHitboxTankZoneFor(int major, int minor, int revision, bool h
 #endif
 }
 
+/* Whether a recorded game counts a shell's hit that changes its square (the
+   last hit on a wall, a forest, a boat, the shore, a bridge) as a hit on that
+   square for the builder blast, from the version bytes of the recording's
+   header. 2.2.1 (the Steam release) played the open-ground rule there: a
+   builder within 128 of the square's middle dies. Every later version plays
+   the square rule: only a builder on that square dies. The engine has no
+   version check (it always plays the square rule); this is only so the
+   viewer draws an older recording as it was played. A development build
+   between 2.2.1 and the next release also reports 2.2.1, so its recordings
+   draw with the open-ground rule. */
+#define LV_HITBOX_SQUARE_HIT_MAJOR    2
+#define LV_HITBOX_SQUARE_HIT_MINOR    2
+#define LV_HITBOX_SQUARE_HIT_REVISION 2
+static inline bool lvHitboxSquareHitForVersion(int major, int minor, int revision) {
+    if (major != LV_HITBOX_SQUARE_HIT_MAJOR) return major > LV_HITBOX_SQUARE_HIT_MAJOR;
+    if (minor != LV_HITBOX_SQUARE_HIT_MINOR) return minor > LV_HITBOX_SQUARE_HIT_MINOR;
+    return revision >= LV_HITBOX_SQUARE_HIT_REVISION;
+}
+
 /* The tank test, as tankShellInHitZone makes it, for the zone: the shell's
    centre less than radius from the tank's centre for the circle, less than
    128 on both axes for the square, and never for NONE. dx and dy are the
@@ -311,6 +342,39 @@ static inline int lvHitboxBuilderReach(int pillRange) {
     return pillRange < LV_HITBOX_BUILDER_REACH ? pillRange : LV_HITBOX_BUILDER_REACH;
 }
 
+/* Whether a pillbox makes its square solid for the builder test: it is on
+   the map, not in a tank, and alive (armour above 0), as pillsIsPillHit
+   asks in lgmBlastCatches. A dead pillbox's square is open ground. armour is
+   the pill's armour as the recording has it. hitNow: the pill lost its last
+   armour on this frame. That was a hit on the pill, and a shell's hit on a
+   pill is a hit on its square whatever armour it leaves (shells.c
+   outSquareHit), so the square stays solid on that frame. deadPillOpen: the
+   game plays the dead-pill rule (2.2.2 and later, the same version as the
+   square-hit rule below). When it is false (an older game) armour and
+   hitNow are not read: every pillbox on the map, dead or alive, makes its
+   square solid, as those games played. */
+static inline bool lvHitboxPillSolid(bool onMap, bool inTank, unsigned armour,
+                                     bool hitNow, bool deadPillOpen) {
+    if (!onMap || inTank) return false;
+    return !deadPillOpen || armour > 0 || hitNow;
+}
+
+/* Whether a square's terrain makes it solid for the builder test. wall: the
+   square is a building or a half building as the recording has it.
+   hitNow: a shell's hit on this square changed it on this frame: a wall to
+   rubble (its last hit), a forest to grass, a boat to river, or a boat's
+   shell on the shore or a bridge. Each is a hit on the square (shells.c
+   outSquareHit), so the square is solid on that frame although the
+   recording already has it as open ground. squareHitRule: the game plays
+   that rule, lvHitboxSquareHitForVersion for the recording's
+   version (after 2.2.1). When it is false (an older game) hitNow is
+   not read: the square is solid only when it is a wall, the open-ground
+   rule those games played. */
+static inline bool lvHitboxSquareSolid(bool wall, bool hitNow,
+                                       bool squareHitRule) {
+    return wall || (squareHitRule && hitNow);
+}
+
 /* The builder test, as lgmBlastCatches makes it, for an explosion at (x, y)
    and a builder at (bx, by), both in world units measured from the top left
    corner of the square the builder is on. So the builder's square is the one
@@ -318,7 +382,8 @@ static inline int lvHitboxBuilderReach(int pillRange) {
    by 256 (rounding down). solid is a mask of the 3 by 3 squares round the
    builder's: bit (row * 3 + col), with col and row 0, 1 or 2 and the
    builder's own square at col 1, row 1. A set bit is a building, a half
-   building, a pillbox or a base.
+   building, a live pillbox (lvHitboxPillSolid), a square the frame's shot
+   hit (lvHitboxSquareSolid) or a base.
 
    shape is the lgm_blast_shape rule and pillRange the pill_range rule, as
    hitRulesBuilderCaughtShape (hit_rules.h, the engine's own rule) takes

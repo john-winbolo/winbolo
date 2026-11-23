@@ -128,6 +128,8 @@ bool lv_g_show_scenario_panel_window = true;
 bool lv_g_show_hud_window = true;
 bool lv_g_show_overview_window = true;
 bool lv_g_show_tank_window = true;
+bool lv_g_tank_show_base = true;
+bool lv_g_tank_show_lag = true;
 bool lv_g_show_chat_window = true;
 /* Off until asked for: the bot placement graphs are for looking into how the
    server placed its bots, and most recordings have no data for them. */
@@ -141,6 +143,9 @@ bool lv_g_show_regions = false;
 static bool s_tank_centred = false;
 /* Options > Animate Rewind and Fast Forward (lv_jump_anim.h). */
 static bool s_jump_anim = true;
+/* Options > Animate Seek: a seek of the seek bar is made with the same
+ * animation (lv_windowSeekToMs). */
+static bool s_seek_anim = true;
 static bool s_dns_lookups = false;
 static bool s_mode_information = true;  /* true = Information, false = Select Team */
 
@@ -195,6 +200,11 @@ void lv_imgui_main_menu_init(struct LogViewerState *lv) {
 
     lv_platform_config_get_string("LOGVIEWER", "Window.Tank.Visible", "Yes", val, sizeof(val));
     lv_g_show_tank_window = (val[0] == 'Y' || val[0] == 'y');
+    /* The Tank panel's base row and lag section: on until turned off. */
+    lv_platform_config_get_string("LOGVIEWER", "Window.Tank.Base", "Yes", val, sizeof(val));
+    lv_g_tank_show_base = !(val[0] == 'N' || val[0] == 'n');
+    lv_platform_config_get_string("LOGVIEWER", "Window.Tank.Lag", "Yes", val, sizeof(val));
+    lv_g_tank_show_lag = !(val[0] == 'N' || val[0] == 'n');
 
     lv_platform_config_get_string("LOGVIEWER", "Window.Chat.Visible", "Yes", val, sizeof(val));
     lv_g_show_chat_window = (val[0] == 'Y' || val[0] == 'y');
@@ -225,17 +235,23 @@ void lv_imgui_main_menu_init(struct LogViewerState *lv) {
     /* On until turned off: a number is small and hides nothing. */
     lv_platform_config_get_string("LOGVIEWER", "Pillbox Numbers", "Yes", val, sizeof(val));
     lv_drawSetPillNumbers((val[0] == 'N' || val[0] == 'n') ? 0 : 1);
+    /* Off until asked for. */
+    lv_platform_config_get_string("LOGVIEWER", "Base Numbers", "No", val, sizeof(val));
+    lv_drawSetBaseNumbers((val[0] == 'Y' || val[0] == 'y') ? 1 : 0);
     /* Off until asked for: the lines sit over the map. */
     lv_platform_config_get_string("LOGVIEWER", "Hit Boxes", "No", val, sizeof(val));
     lv_drawSetHitBoxes((val[0] == 'Y' || val[0] == 'y') ? 1 : 0);
     /* On until turned off. */
     lv_platform_config_get_string("LOGVIEWER", "Animate Jumps", "Yes", val, sizeof(val));
     s_jump_anim = !(val[0] == 'N' || val[0] == 'n');
-    /* Toggle Screen-True Own Shells (lv_shell_owner.h): on until turned off. */
+    /* On until turned off. */
+    lv_platform_config_get_string("LOGVIEWER", "Animate Seek", "Yes", val, sizeof(val));
+    s_seek_anim = !(val[0] == 'N' || val[0] == 'n');
+    /* Screen-True Own Shells (lv_shell_owner.h): on until turned off. */
     lv_platform_config_get_string("LOGVIEWER", "Lag View Own Shells At Present", "Yes", val,
                                   sizeof(val));
     lv_screenSetScreenTrueShells(!(val[0] == 'N' || val[0] == 'n') ? 1 : 0);
-    /* Toggle Screen-True Local Explosions (lv_early_blast.h): off until
+    /* Screen-True Local Explosions (lv_early_blast.h): off until
        turned on. */
     lv_platform_config_get_string("LOGVIEWER", "Screen-True Local Explosions", "No", val,
                                   sizeof(val));
@@ -278,6 +294,8 @@ void lv_imgui_main_menu_save(void) {
     lv_platform_config_set_string("LOGVIEWER", "Window.HUD.Visible", lv_g_show_hud_window ? "Yes" : "No");
     lv_platform_config_set_string("LOGVIEWER", "Window.Overview.Visible", lv_g_show_overview_window ? "Yes" : "No");
     lv_platform_config_set_string("LOGVIEWER", "Window.Tank.Visible", lv_g_show_tank_window ? "Yes" : "No");
+    lv_platform_config_set_string("LOGVIEWER", "Window.Tank.Base", lv_g_tank_show_base ? "Yes" : "No");
+    lv_platform_config_set_string("LOGVIEWER", "Window.Tank.Lag", lv_g_tank_show_lag ? "Yes" : "No");
     lv_platform_config_set_string("LOGVIEWER", "Window.Chat.Visible", lv_g_show_chat_window ? "Yes" : "No");
     lv_platform_config_set_string("LOGVIEWER", "Window.BotHosts.Visible", lv_g_show_bot_hosts_window ? "Yes" : "No");
     {
@@ -291,9 +309,12 @@ void lv_imgui_main_menu_save(void) {
                                   lv_drawGetBuilderStatus() ? "Yes" : "No");
     lv_platform_config_set_string("LOGVIEWER", "Pillbox Numbers",
                                   lv_drawGetPillNumbers() ? "Yes" : "No");
+    lv_platform_config_set_string("LOGVIEWER", "Base Numbers",
+                                  lv_drawGetBaseNumbers() ? "Yes" : "No");
     lv_platform_config_set_string("LOGVIEWER", "Hit Boxes",
                                   lv_drawGetHitBoxes() ? "Yes" : "No");
     lv_platform_config_set_string("LOGVIEWER", "Animate Jumps", s_jump_anim ? "Yes" : "No");
+    lv_platform_config_set_string("LOGVIEWER", "Animate Seek", s_seek_anim ? "Yes" : "No");
     lv_platform_config_set_string("LOGVIEWER", LV_LAG_PREF_KEY,
                                   lv_screenGetLagFeature() ? "Yes" : "No");
     lv_platform_config_set_string("LOGVIEWER", "Lag View Own Shells At Present",
@@ -301,6 +322,24 @@ void lv_imgui_main_menu_save(void) {
     lv_platform_config_set_string("LOGVIEWER", "Screen-True Local Explosions",
                                   lv_screenGetScreenTrueExplosions() ? "Yes" : "No");
 }
+
+/* The separators of a menu whose items are in groups (the Options menu).
+ * Call item() just before each item that is shown, and end() at the end of
+ * each group. A separator goes in before an item only when a group with an
+ * item shown has ended since the last item, so there is never a separator
+ * at the top, at the bottom, or two in a row, whichever groups show none. */
+struct LvMenuGroups {
+    bool any = false;  /* an item is shown above */
+    bool due = false;  /* a group with an item shown has ended since */
+    void item() {
+        if (due) ImGui::Separator();
+        due = false;
+        any = true;
+    }
+    void end() {
+        if (any) due = true;
+    }
+};
 
 static void zoom_at_center(int stepIndex) {
     int w = 0, h = 0;
@@ -384,6 +423,10 @@ int lv_imgui_get_jump_anim(void) { return s_jump_anim ? 1 : 0; }
 
 void lv_imgui_toggle_jump_anim(void) { s_jump_anim = !s_jump_anim; }
 
+int lv_imgui_get_seek_anim(void) { return s_seek_anim ? 1 : 0; }
+
+void lv_imgui_toggle_seek_anim(void) { s_seek_anim = !s_seek_anim; }
+
 /* Sets it, so the menu's tick and the screen's flag stay the same thing. */
 void lv_imgui_set_tank_centred(int on) {
     s_tank_centred = on ? true : false;
@@ -462,8 +505,16 @@ static void handle_keyboard_shortcuts(int *clicked) {
 
     ImGuiIO& io = ImGui::GetIO();
 
-    /* Zoom shortcuts: +/= to zoom in, - to zoom out (no modifier required) */
+    /* Zoom shortcuts: +/= to zoom in, - to zoom out, with no modifier or
+     * with Ctrl (Ctrl and plus / Ctrl and minus is the zoom key most programs
+     * use). Not with Alt. On macOS Cmd+plus / Cmd+minus are the native menu
+     * bar's Zoom In / Zoom Out (mac_menubar.mm), which has acted already, so
+     * here the key counts only without Cmd (io.KeyCtrl is Cmd there). */
+#ifdef __APPLE__
     if (!io.KeyCtrl && !io.KeyAlt) {
+#else
+    if (!io.KeyAlt) {
+#endif
         if (ImGui::IsKeyPressed(ImGuiKey_Equal, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadAdd, false)) {
             zoom_at_center(lv_drawGetZoomStepIndex() + 1);
             *clicked = 1;
@@ -544,6 +595,13 @@ static void handle_keyboard_shortcuts(int *clicked) {
     }
     if (!live && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_G, false)) {
         if (lv_clip_gif_can_toggle_mode()) { lv_clip_gif_toggle_mode(); *clicked = 1; }
+    }
+    if (io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_B, false)) {
+        /* Ctrl+Shift+B: Options > Base Numbers, beside Ctrl+Shift+P's
+           Pillbox Numbers. */
+        lv_drawSetBaseNumbers(lv_drawGetBaseNumbers() ? 0 : 1);
+        lv_windowNeedRedraw();
+        *clicked = 1;
     }
 
     /* Options */
@@ -717,6 +775,13 @@ int lv_imgui_main_menu_bar(void) {
 
         /* Options Menu */
         if (ImGui::BeginMenu(langGetText(STR_MAPEDIT_MENU_OPTIONS))) {
+            /* The items in groups, with a separator between two groups.
+             * A group can have no item shown (the lag items without the
+             * lag display, Hide Lobby in a live game), so a separator is
+             * put in only before the next item shown after a group ends:
+             * never two in a row, never at the top or the bottom. */
+            LvMenuGroups sep;
+            sep.item();
             /* Zoom submenu */
             if (ImGui::BeginMenu(langGetText(STR_LV_ZOOM))) {
                 int curStep = lv_drawGetZoomStepIndex();
@@ -753,7 +818,7 @@ int lv_imgui_main_menu_bar(void) {
                 }
                 ImGui::EndMenu();
             }
-            ImGui::Separator();
+            sep.item();
             /* Mode submenu */
             if (ImGui::BeginMenu(langGetText(STR_LV_MODE))) {
                 if (ImGui::MenuItem(langGetText(STR_LV_MODE_INFO), "Ctrl+I", s_mode_information)) {
@@ -766,52 +831,21 @@ int lv_imgui_main_menu_bar(void) {
                 }
                 ImGui::EndMenu();
             }
-
+            sep.item();
+            if (ImGui::MenuItem(langGetText(STR_LV_TANK_CENTRED), "Ctrl+T", s_tank_centred)) {
+                s_tank_centred = !s_tank_centred;
+                lv_screenTankCentred(s_tank_centred ? 1 : 0);
+                clicked = 1;
+            }
+            sep.end();
+            sep.item();
             if (ImGui::MenuItem(langGetText(STR_LV_USE_TEAM_COLOURS), NULL,
                                 s_lv->useTeamColours != 0,
                                 !s_lv->gameView)) {
                 s_lv->useTeamColours = s_lv->useTeamColours ? 0 : 1;
                 clicked = 1;
             }
-            if (ImGui::MenuItem(langGetText(STR_LV_TANK_CENTRED), "Ctrl+T", s_tank_centred)) {
-                s_tank_centred = !s_tank_centred;
-                lv_screenTankCentred(s_tank_centred ? 1 : 0);
-                clicked = 1;
-            }
-            if (!live && ImGui::MenuItem(langGetText(STR_LV_HIDE_LOBBY), NULL,
-                                         lv_screenGetHideLobby() != 0)) {
-                lv_imgui_toggle_hide_lobby();
-                clicked = 1;
-            }
-            if (ImGui::MenuItem(langGetText(STR_MAPEDIT_SCENARIO_REGIONS), NULL,
-                                lv_g_show_regions,
-                                lv_imgui_has_regions() != 0)) {
-                lv_imgui_toggle_regions();
-                clicked = 1;
-            }
-            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-                ImGui::SetTooltip("%s", langGetText(STR_LV_REGIONS_TIP));
-            }
-            if (ImGui::MenuItem(langGetText(STR_LV_TANK_BARS), NULL, lv_drawGetTankBars() != 0)) {
-                /* Drawn over the map each time it is put on the screen, so
-                 * the frame is asked for now rather than at the next tick of
-                 * a paused replay. */
-                lv_drawSetTankBars(lv_drawGetTankBars() ? 0 : 1);
-                lv_windowNeedRedraw();
-                clicked = 1;
-            }
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("%s", langGetText(STR_LV_TANK_BARS_TIP));
-            }
-            if (ImGui::MenuItem(langGetText(STR_LV_BUILDER_STATUS), NULL,
-                                lv_drawGetBuilderStatus() != 0)) {
-                lv_drawSetBuilderStatus(lv_drawGetBuilderStatus() ? 0 : 1);
-                lv_windowNeedRedraw();
-                clicked = 1;
-            }
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("%s", langGetText(STR_LV_BUILDER_STATUS_TIP));
-            }
+            sep.item();
             if (ImGui::MenuItem(langGetText(STR_LV_PILL_NUMBERS), "Ctrl+Shift+P",
                                 lv_drawGetPillNumbers() != 0)) {
                 lv_drawSetPillNumbers(lv_drawGetPillNumbers() ? 0 : 1);
@@ -821,6 +855,27 @@ int lv_imgui_main_menu_bar(void) {
             if (ImGui::IsItemHovered()) {
                 ImGui::SetTooltip("%s", langGetText(STR_LV_PILL_NUMBERS_TIP));
             }
+            sep.item();
+            if (ImGui::MenuItem(langGetText(STR_LV_BASE_NUMBERS), "Ctrl+Shift+B",
+                                lv_drawGetBaseNumbers() != 0)) {
+                lv_drawSetBaseNumbers(lv_drawGetBaseNumbers() ? 0 : 1);
+                lv_windowNeedRedraw();
+                clicked = 1;
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("%s", langGetText(STR_LV_BASE_NUMBERS_TIP));
+            }
+            sep.item();
+            if (ImGui::MenuItem(langGetText(STR_MAPEDIT_SCENARIO_REGIONS), NULL,
+                                lv_g_show_regions,
+                                lv_imgui_has_regions() != 0)) {
+                lv_imgui_toggle_regions();
+                clicked = 1;
+            }
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                ImGui::SetTooltip("%s", langGetText(STR_LV_REGIONS_TIP));
+            }
+            sep.item();
             if (ImGui::MenuItem(langGetText(STR_LV_HIT_BOXES), NULL,
                                 lv_drawGetHitBoxes() != 0)) {
                 /* Drawn over the map each time it is put on the screen, as
@@ -832,6 +887,30 @@ int lv_imgui_main_menu_bar(void) {
             if (ImGui::IsItemHovered()) {
                 ImGui::SetTooltip("%s", langGetText(STR_LV_HIT_BOXES_TIP));
             }
+            sep.end();
+            sep.item();
+            if (ImGui::MenuItem(langGetText(STR_LV_TANK_BARS), NULL, lv_drawGetTankBars() != 0)) {
+                /* Drawn over the map each time it is put on the screen, so
+                 * the frame is asked for now rather than at the next tick of
+                 * a paused replay. */
+                lv_drawSetTankBars(lv_drawGetTankBars() ? 0 : 1);
+                lv_windowNeedRedraw();
+                clicked = 1;
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("%s", langGetText(STR_LV_TANK_BARS_TIP));
+            }
+            sep.item();
+            if (ImGui::MenuItem(langGetText(STR_LV_BUILDER_STATUS), NULL,
+                                lv_drawGetBuilderStatus() != 0)) {
+                lv_drawSetBuilderStatus(lv_drawGetBuilderStatus() ? 0 : 1);
+                lv_windowNeedRedraw();
+                clicked = 1;
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("%s", langGetText(STR_LV_BUILDER_STATUS_TIP));
+            }
+            sep.end();
             if (lv_screenGetLagFeature()) {
                 /* The lag view for the selected tank's player: ticked while
                  * it is that player's. A click turns it on for the selected
@@ -844,6 +923,7 @@ int lv_imgui_main_menu_bar(void) {
                  * the same (handle_keyboard_shortcuts). */
                 bool on = false;
                 const int target = lag_view_toggle_target(&on);
+                sep.item();
                 if (ImGui::MenuItem(langGetText(STR_LV_LAG_MENU), "Ctrl+L", on,
                                     target != LV_LAG_TOGGLE_NONE)) {
                     lag_view_apply(target);
@@ -856,6 +936,7 @@ int lv_imgui_main_menu_bar(void) {
                  * the present frame, as that player's own screen drew them
                  * (lv_shell_owner.h). Off draws them at the old time. */
                 const bool ownShells = lv_screenGetScreenTrueShells() != 0;
+                sep.item();
                 if (ImGui::MenuItem(langGetText(STR_LV_SCREEN_TRUE_SHELLS), NULL, ownShells)) {
                     lv_screenSetScreenTrueShells(ownShells ? 0 : 1);
                     lv_windowNeedRedraw();
@@ -864,15 +945,16 @@ int lv_imgui_main_menu_bar(void) {
                 if (ImGui::IsItemHovered()) {
                     ImGui::SetTooltip("%s", langGetText(STR_LV_SCREEN_TRUE_SHELLS_TIP));
                 }
-                /* Toggle Screen-True Local Explosions (lv_early_blast.h): in
+                /* Screen-True Local Explosions (lv_early_blast.h): in
                  * the lag view, the chosen player's own shells explode at once
                  * where they end, and the server's later explosion of each
                  * is hidden.
-                 * It works only with Toggle Screen-True Own Shells on
+                 * It works only with Screen-True Own Shells on
                  * (lv_earlyBlastOn), so the item is off and greyed until
                  * that one is on. The saved choice is kept meanwhile. */
                 const bool explOn = lv_earlyBlastOn(lv_screenGetScreenTrueShells() != 0,
                                                     lv_screenGetScreenTrueExplosions() != 0);
+                sep.item();
                 if (ImGui::MenuItem(langGetText(STR_LV_SCREEN_TRUE_EXPL), NULL, explOn,
                                     lv_screenGetScreenTrueShells() != 0)) {
                     lv_screenSetScreenTrueExplosions(explOn ? 0 : 1);
@@ -885,14 +967,22 @@ int lv_imgui_main_menu_bar(void) {
                                                             : STR_LV_SCREEN_TRUE_EXPL_OFF_TIP));
                 }
             }
+            sep.end();
 #ifndef __EMSCRIPTEN__
             /* The browser build's Rewind and Fast Forward jump: it has no
-             * animation to turn off. */
+             * animation to turn off. Its seek bar jumps too. */
+            sep.item();
             if (ImGui::MenuItem(langGetText(STR_LV_JUMP_ANIM), NULL, s_jump_anim)) {
                 s_jump_anim = !s_jump_anim;
                 clicked = 1;
             }
+            sep.item();
+            if (ImGui::MenuItem(langGetText(STR_LV_SEEK_ANIM), NULL, s_seek_anim)) {
+                s_seek_anim = !s_seek_anim;
+                clicked = 1;
+            }
 #endif
+            sep.item();
             if (ImGui::MenuItem(langGetText(STR_MENU_SOUND_EFFECTS), NULL, s_lv->isSoundsPlaying != 0)) {
                 s_lv->isSoundsPlaying = s_lv->isSoundsPlaying ? 0 : 1;
                 clicked = 1;
@@ -911,6 +1001,14 @@ int lv_imgui_main_menu_bar(void) {
                     clicked = 1;
                 }
             }
+            sep.end();
+            if (!live) sep.item();
+            if (!live && ImGui::MenuItem(langGetText(STR_LV_HIDE_LOBBY), NULL,
+                                         lv_screenGetHideLobby() != 0)) {
+                lv_imgui_toggle_hide_lobby();
+                clicked = 1;
+            }
+            sep.item();
             if (ImGui::MenuItem(langGetText(STR_LV_DNS_LOOKUPS), NULL, s_dns_lookups)) {
                 s_dns_lookups = !s_dns_lookups;
                 if (s_dns_lookups) {
@@ -920,9 +1018,8 @@ int lv_imgui_main_menu_bar(void) {
                 }
                 clicked = 1;
             }
-
-            ImGui::Separator();
-
+            sep.end();
+            sep.item();
             if (ImGui::MenuItem(langGetText(STR_LV_TEAM_COLOURS))) {
                 show_team_colours_dialog();
                 clicked = 1;
@@ -964,6 +1061,15 @@ int lv_imgui_main_menu_bar(void) {
             }
             if (ImGui::MenuItem(langGetText(STR_LV_WIN_TANK), "Ctrl+8", lv_g_show_tank_window)) {
                 lv_g_show_tank_window = !lv_g_show_tank_window;
+                clicked = 1;
+            }
+            /* What the Tank panel shows under its gauges. */
+            if (ImGui::MenuItem(langGetText(STR_LV_TANK_SHOW_BASE), NULL, lv_g_tank_show_base)) {
+                lv_g_tank_show_base = !lv_g_tank_show_base;
+                clicked = 1;
+            }
+            if (ImGui::MenuItem(langGetText(STR_LV_TANK_SHOW_LAG), NULL, lv_g_tank_show_lag)) {
+                lv_g_tank_show_lag = !lv_g_tank_show_lag;
                 clicked = 1;
             }
             if (ImGui::MenuItem(langGetText(STR_LV_WIN_CHAT), "Ctrl+9", lv_g_show_chat_window)) {

@@ -29,6 +29,9 @@ extern bool lv_g_show_scenario_panel_window;
 extern bool lv_g_show_hud_window;
 extern bool lv_g_show_overview_window;
 extern bool lv_g_show_tank_window;
+/* Whether the Tank panel shows the near base's row and the lag section. */
+extern bool lv_g_tank_show_base;
+extern bool lv_g_tank_show_lag;
 extern bool lv_g_show_chat_window;
 extern bool lv_g_show_bot_hosts_window;
 extern bool lv_g_reset_window_positions;
@@ -76,6 +79,9 @@ void lv_imgui_set_tank_centred(int on);
 /* 1 when Options > Animate Rewind and Fast Forward is ticked. */
 int  lv_imgui_get_jump_anim(void);
 void lv_imgui_toggle_jump_anim(void);
+/* 1 when Options > Animate Seek is ticked (lv_windowSeekToMs). */
+int  lv_imgui_get_seek_anim(void);
+void lv_imgui_toggle_seek_anim(void);
 void lv_imgui_toggle_hide_lobby(void);
 /* Whether the loaded recording declares any region, which is when the
    Regions item is enabled; and the item's flip, which repaints the map. */

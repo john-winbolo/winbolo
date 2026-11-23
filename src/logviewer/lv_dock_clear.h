@@ -127,6 +127,28 @@ static inline int lvDockClearSnapLen(int current, int content, int min) {
     return len;
 }
 
+/* A panel with a section that it shows only some of the time (the Tank
+ * panel's lag section, which only a recording with lag records has). Its
+ * length counts the room of that section: room is the part of len that is
+ * for the section, now the room the section takes this frame (0 when it is
+ * not shown). The length grows or shrinks by the difference, so the rest of
+ * the panel keeps the length the user gave it and no empty room is left.
+ *
+ * room < 0: the length was saved before the room was kept with it. It is
+ * then taken to hold no room for the section, so a panel opened with no
+ * section in view keeps the length it had. From then on the room is kept,
+ * and the length follows the section. len <= 0 (no length yet) stays as it
+ * is: the first length counts the section already (lvDockClearFirstLen).
+ * Never less than min. */
+static inline int lvDockClearRoomLen(int len, int room, int now, int min) {
+    if (len <= 0) return len;
+    if (room < 0) room = 0;
+    len += now - room;
+    if (len < min) len = min;
+    if (len > LV_DOCK_CLEAR_LEN_MAX) len = LV_DOCK_CLEAR_LEN_MAX;
+    return len;
+}
+
 /* ---- Where the panels go --------------------------------------------------- */
 
 /* The panels along a sidebar: where each starts and how long it is, measured

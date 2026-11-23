@@ -5759,6 +5759,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # how many steps, the log time of each and which is due when
     # (lv_jump_anim.h, header only).
     tests/unit/test_lv_jump_anim.c
+    # The base the viewer's Tank panel shows under the gauges: picked as
+    # the game picks it, and its bars (lv_base_near.h, header only).
+    tests/unit/test_lv_base_near.c
     # The builder marker over each tank on the viewer's map: where it goes,
     # the arrow's direction, the countdown and the table of the times a
     # builder was away (lv_builder_status.h, header only).
@@ -6708,11 +6711,16 @@ set(_unit_test_names
     lv_player_lag_read
     lv_lag_track
     lv_lag_ring
+    lv_lag_rtt_back
+    lv_lag_ring_back
+    lv_lag_map_undo
     lv_lag_view_toggle
     lv_lag_feature_default_off
     lv_lag_view_draw
     lv_lag_view_own_shells
     lv_lag_view_lost_owner
+    lv_lag_view_map
+    lv_base_spots
     lv_shell_owner_recording
     lv_shell_owner_rules
     lv_shell_owner_real_flight
@@ -8760,6 +8768,7 @@ set(_unit_test_names
     lv_hitbox_lgm_fit
     lv_hitbox_lgm_pick
     lv_hitbox_outline
+    lv_hitbox_square_hit_by_version
     lv_hitbox_zone_from_version
     hit_rules_builder_matches_engine
     hit_rules_tank_matches_engine
@@ -8772,6 +8781,7 @@ set(_unit_test_names
     lv_dock_clear_rects
     lv_dock_clear_map
     lv_dock_clear_prefs
+    lv_dock_clear_room_len
     lv_dock_default_layout
     lv_dump_recorded_round
     lv_spmap_owner_table
@@ -8850,6 +8860,11 @@ set(_unit_test_names
     lv_jump_anim_lands
     lv_jump_anim_steps
     lv_jump_anim_time
+    lv_jump_anim_retarget
+    lv_base_near_pick
+    lv_base_near_range
+    lv_base_near_bars
+    lv_base_near_game_screen
     scn_presentation_codec_bodies
     scn_presentation_codec_refuses_short
     scn_presentation_decoder_sets_broadcast
