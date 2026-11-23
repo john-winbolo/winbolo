@@ -2320,13 +2320,12 @@ BYTE lv_drawGetPillNumbers(void) {
    under the client mutex. */
 static void lvDrawPillNumbersOverBlit(const SDL_FRect *src, const SDL_FRect *dst) {
     LvPillSpot spots[MAX_PILLS];
+    LvBuilderNumber nums[MAX_PILLS];
     float scale, tilePx, pxScale, edge;
-    int n, i, pass;
+    int n, i, count = 0;
     BYTE zf;
     SDL_Rect clip, oldClip;
     bool hadClip;
-    SDL_BlendMode oldBlend = SDL_BLENDMODE_NONE;
-    Uint8 oldR, oldG, oldB, oldA;
 
     if (!s_pillNumbers) return;
     if (src->w <= 0.0f || src->h <= 0.0f) return;
@@ -2341,6 +2340,23 @@ static void lvDrawPillNumbersOverBlit(const SDL_FRect *src, const SDL_FRect *dst
     pxScale = lvDrawPixelScale();
     edge = lvTankBarPointsToPixels(LV_BUILDER_EDGE_POINTS, pxScale);
 
+    /* The place of each number once, for both passes. */
+    for (i = 0; i < n; i++) {
+        LvBuilderNumber *num = &nums[count];
+        LvPillLabelLayout l;
+        float left = dst->x + ((float)(spots[i].viewX * zf * TILE_SIZE_X) - src->x) * scale;
+        float top = dst->y + ((float)(spots[i].viewY * zf * TILE_SIZE_Y) - src->y) * scale;
+
+        if (lvPillNumberText(spots[i].number, num->text, LV_PILL_NUMBER_TEXT_MAX) == 0) continue;
+        l = lvPillLabelLayout(left, top, tilePx, pxScale, lvBuilderTextCells(num->text));
+        if (!l.visible) continue;
+        num->x = l.x;
+        num->y = l.y;
+        num->cell = l.cell;
+        count++;
+    }
+    if (count <= 0) return;
+
     hadClip = SDL_RenderClipEnabled(sdlRenderer);
     SDL_GetRenderClipRect(sdlRenderer, &oldClip);
     clip.x = (int)dst->x;
@@ -2348,31 +2364,13 @@ static void lvDrawPillNumbersOverBlit(const SDL_FRect *src, const SDL_FRect *dst
     clip.w = (int)dst->w;
     clip.h = (int)dst->h;
     SDL_SetRenderClipRect(sdlRenderer, &clip);
-    SDL_GetRenderDrawBlendMode(sdlRenderer, &oldBlend);
-    SDL_GetRenderDrawColor(sdlRenderer, &oldR, &oldG, &oldB, &oldA);
-    SDL_SetRenderDrawBlendMode(sdlRenderer, SDL_BLENDMODE_BLEND);
 
     /* Every edge first, then every white over them, so the edge of one
-       number never covers the digits of a number beside it. */
-    for (pass = 0; pass < 2; pass++) {
-        LvBuilderColour c = (pass == 0) ? lvBuilderEdgeColour()
-                                        : lvBuilderMarkColour(false, 0);
-        SDL_SetRenderDrawColorFloat(sdlRenderer, c.r, c.g, c.b, c.a);
-        for (i = 0; i < n; i++) {
-            char text[LV_PILL_NUMBER_TEXT_MAX];
-            LvPillLabelLayout l;
-            float left = dst->x + ((float)(spots[i].viewX * zf * TILE_SIZE_X) - src->x) * scale;
-            float top = dst->y + ((float)(spots[i].viewY * zf * TILE_SIZE_Y) - src->y) * scale;
+       number never covers the digits of a number beside it. One fill call
+       a pass (lvBuilderDrawNumbers), the same code the game draws its
+       pillbox and base numbers with. */
+    lvBuilderDrawNumbers(sdlRenderer, nums, count, edge);
 
-            if (lvPillNumberText(spots[i].number, text, sizeof(text)) == 0) continue;
-            l = lvPillLabelLayout(left, top, tilePx, pxScale, lvBuilderTextCells(text));
-            if (!l.visible) continue;
-            lvDrawBuilderText(text, l.x, l.y, l.cell, (pass == 0) ? edge : 0.0f);
-        }
-    }
-
-    SDL_SetRenderDrawColor(sdlRenderer, oldR, oldG, oldB, oldA);
-    SDL_SetRenderDrawBlendMode(sdlRenderer, oldBlend);
     SDL_SetRenderClipRect(sdlRenderer, hadClip ? &oldClip : NULL);
 }
 

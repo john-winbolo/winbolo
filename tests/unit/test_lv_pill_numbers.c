@@ -14,6 +14,9 @@
  *       when there is no room.
  *   lv_pill_numbers_layout — where the number goes beside its pillbox at
  *       small, usual and large zooms and on a display of twice the density.
+ *   lv_pill_numbers_batched — the pass that draws a list of numbers with
+ *       one fill call a pass (lv_builder_draw.h) gives the same squares, in
+ *       the same order, and the same pixels as one call for each square.
  *   lv_pill_numbers_overview — the Overview panel notes the number of each
  *       pillbox in the row it counts it in (lv_overview.h).
  */
@@ -21,8 +24,12 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 
+#include <SDL3/SDL.h>
+
+#include "lv_builder_draw.h"
 #include "lv_overview.h"
 #include "lv_pill_numbers.h"
 #include "test_harness.h"
@@ -202,5 +209,148 @@ int run_lv_pill_numbers_overview(void) {
     /* Bases have no numbers to note. */
     lvOverviewCount(&o, true, true, 2);
     UT_ASSERT(o.rows[0].bases == 1 && o.rows[0].pillNumbers == (lvPillNumberBit(1) | lvPillNumberBit(7)));
+    return 0;
+}
+
+/* The squares of one text as lvBuilderDrawText fills them, one at a time:
+   character by character, row by row, column by column. */
+static int pn_text_rects(const char *text, float x, float y, float cell, float grow,
+                         SDL_FRect *out, int cap) {
+    int n = 0;
+    for (; *text != '\0'; text++) {
+        const LvBuilderGlyph *g = lvBuilderChar(*text);
+        int row, col;
+        if (g == NULL) continue;
+        for (row = 0; row < g->height; row++) {
+            for (col = 0; col < g->width; col++) {
+                if (!lvBuilderGlyphCell(g, col, row) || n >= cap) continue;
+                out[n].x = x + (float)col * cell - grow;
+                out[n].y = y + (float)row * cell - grow;
+                out[n].w = cell + grow * 2.0f;
+                out[n].h = cell + grow * 2.0f;
+                n++;
+            }
+        }
+        x += (float)(g->width + 1) * cell;
+    }
+    return n;
+}
+
+static void pn_set_number(LvBuilderNumber *num, const char *text, float x, float y, float cell) {
+    memset(num, 0, sizeof(*num));
+    snprintf(num->text, sizeof(num->text), "%s", text);
+    num->x = x;
+    num->y = y;
+    num->cell = cell;
+}
+
+int run_lv_pill_numbers_batched(void) {
+    static SDL_FRect batched[LV_BUILDER_PASS_RECTS];
+    static SDL_FRect single[LV_BUILDER_PASS_RECTS];
+    LvBuilderNumber nums[4];
+    float edge = lvTankBarPointsToPixels(LV_BUILDER_EDGE_POINTS, 1.0f);
+    int count = 4, pass, i, next, n, want;
+
+    /* Two numbers side by side, so the edge of one runs over the other, a
+       number at two pixels a cell, and "0", the number of the first base. */
+    pn_set_number(&nums[0], "7", 13.0f, 12.0f, 1.0f);
+    pn_set_number(&nums[1], "8", 15.0f, 12.0f, 1.0f);
+    pn_set_number(&nums[2], "16", 20.0f, 30.0f, 2.0f);
+    pn_set_number(&nums[3], "0", 50.0f, 50.0f, 1.0f);
+
+    /* The batched list is the squares of each number, in turn, as the old
+       one call for each square made them. */
+    for (pass = 0; pass < 2; pass++) {
+        float grow = (pass == 0) ? edge : 0.0f;
+        next = 0;
+        n = lvBuilderNumbersRects(nums, count, &next, grow, batched, LV_BUILDER_PASS_RECTS);
+        UT_ASSERT(next == count);
+        want = 0;
+        for (i = 0; i < count; i++) {
+            want += pn_text_rects(nums[i].text, nums[i].x, nums[i].y, nums[i].cell, grow,
+                                  &single[want], LV_BUILDER_PASS_RECTS - want);
+        }
+        UT_ASSERT_MSG(n == want && n > 0, "pass %d: %d squares, want %d", pass, n, want);
+        for (i = 0; i < n; i++) {
+            UT_ASSERT_MSG(pn_close(batched[i].x, single[i].x) && pn_close(batched[i].y, single[i].y)
+                              && pn_close(batched[i].w, single[i].w)
+                              && pn_close(batched[i].h, single[i].h),
+                          "pass %d square %d: %g,%g %gx%g, want %g,%g %gx%g", pass, i,
+                          batched[i].x, batched[i].y, batched[i].w, batched[i].h, single[i].x,
+                          single[i].y, single[i].w, single[i].h);
+        }
+    }
+    for (i = 0; i < count; i++) {
+        UT_ASSERT(lvBuilderNumberCells(&nums[i])
+                  == pn_text_rects(nums[i].text, 0.0f, 0.0f, 1.0f, 0.0f, single,
+                                   LV_BUILDER_PASS_RECTS));
+    }
+
+    /* With room for only the first number, the list stops after it, and a
+       list with no room takes nothing. */
+    next = 0;
+    want = lvBuilderNumberCells(&nums[0]);
+    n = lvBuilderNumbersRects(nums, count, &next, 0.0f, batched, want + 1);
+    UT_ASSERT_MSG(n == want && next == 1, "first only: %d squares, next %d", n, next);
+    n = lvBuilderNumbersRects(nums, count, &next, 0.0f, batched, 0);
+    UT_ASSERT(n == 0 && next == 1);
+
+    /* Drawn, the batched pass gives the same pixels as the old one call for
+       each square, and puts the blend mode and colour back. */
+    {
+        SDL_Surface  *a = SDL_CreateSurface(64, 64, SDL_PIXELFORMAT_ARGB8888);
+        SDL_Surface  *b = SDL_CreateSurface(64, 64, SDL_PIXELFORMAT_ARGB8888);
+        SDL_Renderer *ra = a ? SDL_CreateSoftwareRenderer(a) : NULL;
+        SDL_Renderer *rb = b ? SDL_CreateSoftwareRenderer(b) : NULL;
+        SDL_BlendMode blend = SDL_BLENDMODE_BLEND;
+        Uint8 cr = 0, cg = 0, cb = 0, ca = 0;
+        Uint32 bg = 0, mid = 0;
+        int same = 1, row;
+
+        UT_ASSERT_MSG(ra != NULL && rb != NULL, "software renderer: %s", SDL_GetError());
+        SDL_SetRenderDrawColor(ra, 90, 120, 60, 255);
+        SDL_RenderClear(ra);
+        SDL_SetRenderDrawColor(rb, 90, 120, 60, 255);
+        SDL_RenderClear(rb);
+
+        SDL_SetRenderDrawBlendMode(ra, SDL_BLENDMODE_BLEND);
+        for (pass = 0; pass < 2; pass++) {
+            LvBuilderColour c = (pass == 0) ? lvBuilderEdgeColour() : lvBuilderMarkColour(false, 0);
+            SDL_SetRenderDrawColorFloat(ra, c.r, c.g, c.b, c.a);
+            for (i = 0; i < count; i++) {
+                lvBuilderDrawText(ra, nums[i].text, nums[i].x, nums[i].y, nums[i].cell,
+                                  (pass == 0) ? edge : 0.0f);
+            }
+        }
+
+        SDL_SetRenderDrawBlendMode(rb, SDL_BLENDMODE_NONE);
+        SDL_SetRenderDrawColor(rb, 10, 20, 30, 40);
+        lvBuilderDrawNumbers(rb, nums, count, edge);
+        SDL_GetRenderDrawBlendMode(rb, &blend);
+        SDL_GetRenderDrawColor(rb, &cr, &cg, &cb, &ca);
+
+        SDL_FlushRenderer(ra);
+        SDL_FlushRenderer(rb);
+        for (row = 0; row < 64; row++) {
+            const Uint8 *pa = (const Uint8 *)a->pixels + (size_t)row * (size_t)a->pitch;
+            const Uint8 *pb = (const Uint8 *)b->pixels + (size_t)row * (size_t)b->pitch;
+            if (memcmp(pa, pb, 64 * 4) != 0) {
+                same = 0;
+                break;
+            }
+        }
+        /* Something was drawn: the "7"'s top bar is no longer the ground. */
+        bg = ((const Uint32 *)b->pixels)[0];
+        mid = ((const Uint32 *)((const Uint8 *)b->pixels + 12 * b->pitch))[14];
+
+        SDL_DestroyRenderer(ra);
+        SDL_DestroyRenderer(rb);
+        SDL_DestroySurface(a);
+        SDL_DestroySurface(b);
+        UT_ASSERT_MSG(same, "pixels differ from row %d", row);
+        UT_ASSERT_MSG(mid != bg, "nothing drawn: %08x", (unsigned)mid);
+        UT_ASSERT(blend == SDL_BLENDMODE_NONE);
+        UT_ASSERT(cr == 10 && cg == 20 && cb == 30 && ca == 40);
+    }
     return 0;
 }
