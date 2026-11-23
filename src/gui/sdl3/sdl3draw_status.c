@@ -152,33 +152,114 @@ static BYTE gCachedBaseFullShells = 90, gCachedBaseFullMines = 90,
             gCachedBaseFullArmour = 90;
 static bool gCachedBaseValid = false;
 
+/* Text drawn through sdl3DrawStatusTextTexture, kept as textures so a string
+   drawn every frame is rasterised and uploaded once instead of every frame:
+   the pill and base numbers in the status panels, the start countdown, the
+   item view's name and the other captions sdl3draw.c draws. Made and
+   destroyed each frame, each one cost a render, a texture and an upload
+   every frame: up to 32 a frame with the pill and base numbers on.
+
+   A slot is kept for the renderer, face, face size and colour it was
+   rendered with, so a new face (a zoom change reopens them) or another
+   renderer never reuses one. The pill and base numbers are the same sixteen
+   strings in one face, so the slots hold them all with room for the
+   captions; when every slot is taken the one drawn longest ago goes. All
+   are dropped by sdl3DrawStatusShutdown, ahead of the fonts and the
+   renderer. */
+#define TEXT_CACHE_SLOTS 32
+
+typedef struct TextCacheSlot {
+  SDL_Texture  *tex;
+  SDL_Renderer *renderer;
+  TTF_Font     *font;
+  float         fontSize;
+  SDL_Color     fg;
+  char         *str;        /* SDL_strdup'd; NULL when the slot is empty */
+  int           w, h;
+  Uint64        lastUsed;   /* gTextCacheClock at the slot's last draw */
+} TextCacheSlot;
+
+static TextCacheSlot gTextCache[TEXT_CACHE_SLOTS];
+static Uint64        gTextCacheClock = 0;
+
+static void textCacheSlotDrop(TextCacheSlot *s) {
+  if (s->tex) SDL_DestroyTexture(s->tex);
+  SDL_free(s->str);
+  SDL_zerop(s);
+}
+
+static void textCacheFlush(void) {
+  for (int i = 0; i < TEXT_CACHE_SLOTS; i++) textCacheSlotDrop(&gTextCache[i]);
+  gTextCacheClock = 0;
+}
+
+SDL_Texture *sdl3DrawStatusTextTexture(TTF_Font *font, const char *text,
+                                       SDL_Color fg, int *outW, int *outH) {
+  if (outW) *outW = 0;
+  if (outH) *outH = 0;
+  if (!font || !gRenderer || !text || text[0] == '\0') return NULL;
+
+  float size = TTF_GetFontSize(font);
+  TextCacheSlot *oldest = &gTextCache[0];
+  TextCacheSlot *hit = NULL;
+  for (int i = 0; i < TEXT_CACHE_SLOTS; i++) {
+    TextCacheSlot *s = &gTextCache[i];
+    if (s->str == NULL) {
+      if (oldest->str != NULL) oldest = s;   /* an empty slot is used first */
+      continue;
+    }
+    if (s->renderer == gRenderer && s->font == font && s->fontSize == size &&
+        s->fg.r == fg.r && s->fg.g == fg.g && s->fg.b == fg.b &&
+        s->fg.a == fg.a && SDL_strcmp(s->str, text) == 0) {
+      hit = s;
+      break;
+    }
+    if (oldest->str != NULL && s->lastUsed < oldest->lastUsed) oldest = s;
+  }
+
+  if (hit == NULL) {
+    SDL_Surface *surf = TTF_RenderText_Blended(font, text, 0, fg);
+    if (!surf) return NULL;
+    SDL_Texture *tex = SDL_CreateTextureFromSurface(gRenderer, surf);
+    char *copy = tex ? SDL_strdup(text) : NULL;
+    if (!copy) {
+      if (tex) SDL_DestroyTexture(tex);
+      SDL_DestroySurface(surf);
+      return NULL;
+    }
+    textCacheSlotDrop(oldest);
+    hit = oldest;
+    hit->tex      = tex;
+    hit->renderer = gRenderer;
+    hit->font     = font;
+    hit->fontSize = size;
+    hit->fg       = fg;
+    hit->str      = copy;
+    hit->w        = surf->w;
+    hit->h        = surf->h;
+    SDL_DestroySurface(surf);
+  }
+
+  hit->lastUsed = ++gTextCacheClock;
+  if (outW) *outW = hit->w;
+  if (outH) *outH = hit->h;
+  return hit->tex;
+}
+
+void sdl3DrawStatusRenderText(TTF_Font *font, const char *text, SDL_Color fg,
+                              float x, float y) {
+  int w = 0;
+  int h = 0;
+  SDL_Texture *tex = sdl3DrawStatusTextTexture(font, text, fg, &w, &h);
+  if (tex) {
+    SDL_FRect d = { x, y, (float)w, (float)h };
+    SDL_RenderTexture(gRenderer, tex, NULL, &d);
+  }
+}
+
 /* -----------------------------------------------------------------
  * Local helpers (static — moved verbatim from sdl3draw.c).
- * sdl3RenderText is also kept as a static duplicate in sdl3draw.c
- * because non-moved code in that file (sdl3DrawStartDelay,
- * sdl3DrawNetFailed, sdl3DrawItemInView, sdl3DrawMainScreen) calls
- * it as well.
  * ----------------------------------------------------------------- */
-/*********************************************************
-*NAME:          sdl3RenderText
-*PURPOSE:
-*  Renders a text string with the game font directly onto
-*  the current render target at (x, y) in screen pixels.
-*  No-op if font is NULL or text is NULL/empty.
-*********************************************************/
-static void sdl3RenderText(TTF_Font *font, const char *text, SDL_Color fg, float x, float y) {
-  if (!font || !gRenderer || !text || text[0] == '\0') return;
-
-  SDL_Surface *sSurf = TTF_RenderText_Blended(font, text, 0, fg);
-  if (!sSurf) return;
-  SDL_Texture *tTex = SDL_CreateTextureFromSurface(gRenderer, sSurf);
-  if (tTex) {
-    SDL_FRect d = { x, y, (float)sSurf->w, (float)sSurf->h };
-    SDL_RenderTexture(gRenderer, tTex, NULL, &d);
-    SDL_DestroyTexture(tTex);
-  }
-  SDL_DestroySurface(sSurf);
-}
 
 /*********************************************************
 *NAME:          sdl3UpdateTextCache
@@ -474,7 +555,7 @@ void sdl3DrawStatusBase(BYTE baseNum, baseAlliance ba, bool labels) {
     char str[4];
     SDL_Color white = {200, 200, 200, 255};
     sprintf(str, "%d", baseNum - 1);
-    sdl3RenderText(gFontTiny, str, white, dst.x, dst.y);
+    sdl3DrawStatusRenderText(gFontTiny, str, white, dst.x, dst.y);
   }
 }
 
@@ -563,7 +644,7 @@ void sdl3DrawStatusPillbox(BYTE pillNum, pillAlliance pa, bool labels) {
     char str[4];
     SDL_Color white = {200, 200, 200, 255};
     sprintf(str, "%d", pillNum - 1);
-    sdl3RenderText(gFontTiny, str, white, dst.x, dst.y);
+    sdl3DrawStatusRenderText(gFontTiny, str, white, dst.x, dst.y);
   }
 }
 
@@ -996,6 +1077,7 @@ void sdl3DrawStatusShutdown(void) {
   if (gTexDeaths) { SDL_DestroyTexture(gTexDeaths); gTexDeaths = NULL; }
   gTexKillsStr[0]  = '\0';
   gTexDeathsStr[0] = '\0';
+  textCacheFlush();
 
   /* Clear (a)-class handles — caller owns them and may destroy
    * them right after this call; null pointers stop us from

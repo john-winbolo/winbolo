@@ -192,6 +192,27 @@ keyItems keys;
 /* Fix for breaking draw code with scrolling messages */
 static bool drawBusy = FALSE;
 
+/* Status panel draws asked for by the game tick are held until the frame is
+   drawn. Each game loop frame repaints the whole window from the sim, status
+   panels included (sdl3DrawMainScreen, or the download or returning-to-lobby
+   screen), so a panel drawn earlier in the same pass round the loop is
+   painted over before anyone sees it: each player arriving as a game starts
+   asked for a full redraw of every panel that way. A pass round the loop
+   that draws no frame (no tank yet, the round over) draws the panels once
+   after it instead. The map overview draws its own way, so while it owns
+   the window the draws go out as asked. */
+static bool statusDrawsHeld      = FALSE;  /* between the tick and the frame */
+static bool statusDrawsPending   = FALSE;  /* one was asked for meanwhile */
+static bool statusFrameRepainted = FALSE;  /* the frame repainted the panels */
+
+/* Whether a status panel draw asked for now waits for the frame, noting that
+   one is owed if so. */
+static bool statusDrawHeld(void) {
+  if (!statusDrawsHeld || sdl3DrawIsOverviewInWindow()) return FALSE;
+  statusDrawsPending = TRUE;
+  return TRUE;
+}
+
 /* Are we in a menu or not */
 bool isInMenu = FALSE;
 
@@ -833,6 +854,11 @@ int main(int argc, char *argv[]) {
           gameFrontTickSteamPresenceGame(cs);
         }
 
+        /* Status panel draws wait for the frame from here on (see
+           statusDrawsHeld). */
+        statusDrawsHeld      = TRUE;
+        statusFrameRepainted = FALSE;
+
         /* Run game tick on main thread when timer signals */
         if (SDL_GetAtomicInt(&needsGameTick)) {
           SDL_SetAtomicInt(&needsGameTick, 0);
@@ -876,6 +902,12 @@ int main(int argc, char *argv[]) {
             clientRenderFrame(cs, redraw);
           }
           clientMutexRelease();
+          /* The panels the frame did not repaint are drawn now, once. */
+          statusDrawsHeld = FALSE;
+          if (statusDrawsPending) {
+            statusDrawsPending = FALSE;
+            if (!statusFrameRepainted) frontEndRedrawAll(cs);
+          }
           /* The in-window map overview draws from the snapshot the frame
              above filled, now that the lock is off. */
           sdl3DrawFlushOverviewInWindow();
@@ -913,6 +945,9 @@ int main(int argc, char *argv[]) {
           done = TRUE;
         }
       }
+      /* Left mid-pass for the lobby: nothing is held outside the loop. */
+      statusDrawsHeld    = FALSE;
+      statusDrawsPending = FALSE;
 
       if (sdlWin) {
         SDL_SetWindowResizable(sdlWin, true);
@@ -1825,6 +1860,7 @@ bool windowGetBackgroundSound(void) {
 }
 
 void windowRedrawAll(ClientSim *cs) {
+  if (statusDrawHeld()) return;
   clientMutexWaitFor();
   sdl3DrawRedrawAll(cs, clientSimGetCurrentBuildSelect(cs), NULL, showPillLabels, showBaseLabels);
   clientMutexRelease();
@@ -2038,6 +2074,7 @@ void frontEndDrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView,
                        NULL, showPillLabels, showBaseLabels,
                        srtDelay, isPillView, edgeX, edgeY,
                        showCursor, cursorX, cursorY);
+    statusFrameRepainted = TRUE;
   }
 }
 
@@ -2082,6 +2119,7 @@ void frontEndStatusPillbox(ClientSim *cs, BYTE pillNum, pillAlliance pb) {
      also fires on the server-tick thread, where touching the renderer races
      the main-thread present, so defer to the next frame when off it. */
   if (!sdl3DrawOnRenderThread()) return;
+  if (statusDrawHeld()) return;
   sdl3DrawStatusPillbox(pillNum, pb, showPillLabels);
   sdl3DrawCopyPillsStatus(0, 0);
 }
@@ -2091,6 +2129,7 @@ void frontEndStatusTank(ClientSim *cs, BYTE tankNum, tankAlliance ts) {
   /* See frontEndStatusPillbox — repainted every frame from sim state; skip
      the direct draw when off the render thread. */
   if (!sdl3DrawOnRenderThread()) return;
+  if (statusDrawHeld()) return;
   sdl3DrawStatusTank(tankNum, ts);
   sdl3DrawCopyTanksStatus(0, 0);
 }
@@ -2121,6 +2160,7 @@ void frontEndStatusBase(ClientSim *cs, BYTE baseNum, baseAlliance bs) {
      applied during serverInstanceTick) where touching the renderer races the
      main-thread present — the crash in issue. Defer to the next frame. */
   if (!sdl3DrawOnRenderThread()) return;
+  if (statusDrawHeld()) return;
   sdl3DrawStatusBase(baseNum, bs, showBaseLabels);
   sdl3DrawCopyBasesStatus(0, 0);
 }
@@ -2158,6 +2198,7 @@ void frontEndDrawDownload(ClientSim *cs, bool justBlack) {
   if (drawBusy == FALSE) {
     DWORD tick = SDL_GetTicks();
     sdl3DrawDownloadScreen(cs, NULL, justBlack);
+    statusFrameRepainted = TRUE;
     dwSysFrame += (SDL_GetTicks() - tick);
   }
 }
@@ -2166,6 +2207,7 @@ void frontEndDrawReturningToLobby(ClientSim *cs) {
   if (drawBusy == FALSE) {
     DWORD tick = SDL_GetTicks();
     sdl3DrawReturningToLobby(cs);
+    statusFrameRepainted = TRUE;
     dwSysFrame += (SDL_GetTicks() - tick);
   }
 }

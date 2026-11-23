@@ -182,6 +182,17 @@ void sdl3DrawNewswireStrip(TTF_Font *font, float x, float y, float w,
                            float edge, float slide, Uint8 textAlpha,
                            Uint8 backAlpha);
 void sdl3DrawKillsDeaths(int x, int y, int kills, int deaths);
+/* The texture for text in font and colour on the main window's renderer,
+   from a small cache this module keeps, rendered only the first time it is
+   asked for; *outW and *outH get its size in pixels. The cache owns the
+   texture: use it this frame and do not destroy it. NULL, with a size of 0,
+   for no font, no renderer, empty text or a failed render. */
+SDL_Texture *sdl3DrawStatusTextTexture(TTF_Font *font, const char *text,
+                                       SDL_Color fg, int *outW, int *outH);
+/* Draws text with its top-left at (x, y) on the current render target, at
+   the size the face renders it, through the cache above. */
+void sdl3DrawStatusRenderText(TTF_Font *font, const char *text, SDL_Color fg,
+                              float x, float y);
 void sdl3DrawTankLabel(char *str, BYTE playerNum,
                        BYTE mx, BYTE my, BYTE px, BYTE py);
 

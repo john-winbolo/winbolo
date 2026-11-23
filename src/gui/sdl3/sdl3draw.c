@@ -718,26 +718,8 @@ static void sdl3DrawFitSafeArea(float menuBarHeight, float aspect,
 /* SDL3_SCREEN_W / SDL3_SCREEN_H are defined in sdl3draw.h */
 
 
-/*********************************************************
-*NAME:          sdl3RenderText
-*PURPOSE:
-*  Renders a text string with the game font directly onto
-*  the current render target at (x, y) in screen pixels.
-*  No-op if font is NULL or text is NULL/empty.
-*********************************************************/
-static void sdl3RenderText(TTF_Font *font, const char *text, SDL_Color fg, float x, float y) {
-  if (!font || !gRenderer || !text || text[0] == '\0') return;
-
-  SDL_Surface *sSurf = TTF_RenderText_Blended(font, text, 0, fg);
-  if (!sSurf) return;
-  SDL_Texture *tTex = SDL_CreateTextureFromSurface(gRenderer, sSurf);
-  if (tTex) {
-    SDL_FRect d = { x, y, (float)sSurf->w, (float)sSurf->h };
-    SDL_RenderTexture(gRenderer, tTex, NULL, &d);
-    SDL_DestroyTexture(tTex);
-  }
-  SDL_DestroySurface(sSurf);
-}
+/* Text goes through sdl3DrawStatusRenderText (sdl3draw_status.c), which keeps
+   each string's texture rather than making one every frame. */
 
 /* sdl3UpdateTextCache moved to sdl3draw_status.c (private helper for
    sdl3RenderCachedText). */
@@ -3099,7 +3081,7 @@ void sdl3DrawFlushOverviewInWindow(void) {
       SDL_SetRenderDrawBlendMode(gRenderer, SDL_BLENDMODE_NONE);
 
       SDL_Color white = {200, 200, 200, 255};
-      sdl3RenderText(gFontMsg, label, white, tx, ty);
+      sdl3DrawStatusRenderText(gFontMsg, label, white, tx, ty);
     }
   }
 
@@ -3341,12 +3323,17 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
         long secs = srtDelay / GAME_NUMGAMETICKS_SEC;
         snprintf(str, sizeof(str), "Game Starts in %ld", secs);
         SDL_Color white = {200, 200, 200, 255};
-        SDL_Surface *sMeasure = TTF_RenderText_Blended(gFontMsg, str, 0, white);
-        if (sMeasure) {
-          float tx = (float)originX + ((float)gameW - (float)sMeasure->w) * 0.5f;
-          float ty = (float)originY + ((float)gameH - (float)sMeasure->h) * 0.5f;
-          SDL_DestroySurface(sMeasure);
-          sdl3RenderText(gFontMsg, str, white, tx, ty);
+        int textW = 0;
+        int textH = 0;
+        SDL_Texture *tex = sdl3DrawStatusTextTexture(gFontMsg, str, white,
+                                                     &textW, &textH);
+        if (tex) {
+          SDL_FRect d = {
+            (float)originX + ((float)gameW - (float)textW) * 0.5f,
+            (float)originY + ((float)gameH - (float)textH) * 0.5f,
+            (float)textW, (float)textH
+          };
+          SDL_RenderTexture(gRenderer, tex, NULL, &d);
         }
       }
     } else if (!isItemView && clientSimGetMyTankDeathWait(cs) != 0 &&
@@ -4138,9 +4125,9 @@ void sdl3DrawReturningToLobby(ClientSim *cs) {
          there is nothing to centre on and the caption waits a frame. */
       if (gOverviewRect.w > 0.0f && gOverviewRect.h > 0.0f) {
         SDL_Color white = {200, 200, 200, 255};
-        sdl3RenderText(gFontMsg, caption, white,
-                       gOverviewRect.x + (gOverviewRect.w - (float)textW) * 0.5f,
-                       gOverviewRect.y + (gOverviewRect.h - (float)textH) * 0.5f);
+        sdl3DrawStatusRenderText(gFontMsg, caption, white,
+            gOverviewRect.x + (gOverviewRect.w - (float)textW) * 0.5f,
+            gOverviewRect.y + (gOverviewRect.h - (float)textH) * 0.5f);
       }
     }
     return;
@@ -4173,7 +4160,7 @@ void sdl3DrawReturningToLobby(ClientSim *cs) {
       float tx = (float)(originX + (playfieldW - textW) / 2);
       float ty = (float)(originY + (playfieldH - textH) / 2);
       SDL_Color white = {200, 200, 200, 255};
-      sdl3RenderText(gFontMsg, caption, white, tx, ty);
+      sdl3DrawStatusRenderText(gFontMsg, caption, white, tx, ty);
     }
   }
 
@@ -4423,13 +4410,17 @@ void sdl3DrawStartDelay(RECT *rcWindow, int32_t srtDelay) {
     long secs = srtDelay / GAME_NUMGAMETICKS_SEC;
     snprintf(str, sizeof(str), "Game Starts in %ld", secs);
     SDL_Color white = {200, 200, 200, 255};
-    /* Measure text width to centre it */
-    SDL_Surface *sMeasure = TTF_RenderText_Blended(gFontMsg, str, 0, white);
-    if (sMeasure) {
-      float tx = (float)originX + ((float)areaW - (float)sMeasure->w) * 0.5f;
-      float ty = (float)originY + ((float)areaH - (float)sMeasure->h) * 0.5f;
-      SDL_DestroySurface(sMeasure);
-      sdl3RenderText(gFontMsg, str, white, tx, ty);
+    int textW = 0;
+    int textH = 0;
+    SDL_Texture *tex = sdl3DrawStatusTextTexture(gFontMsg, str, white,
+                                                 &textW, &textH);
+    if (tex) {
+      SDL_FRect d = {
+        (float)originX + ((float)areaW - (float)textW) * 0.5f,
+        (float)originY + ((float)areaH - (float)textH) * 0.5f,
+        (float)textW, (float)textH
+      };
+      SDL_RenderTexture(gRenderer, tex, NULL, &d);
     }
   }
 }
@@ -4445,7 +4436,7 @@ void sdl3DrawNetFailed(void) {
   int originY = MAIN_OFFSET_Y * gZoomFactor;
   float tx = (float)(originX + 3 * TILE_SIZE_X * gZoomFactor);
   float ty = (float)(originY + 8 * TILE_SIZE_Y * gZoomFactor);
-  sdl3RenderText(gFontMsg, "Network Failed - Resyncing", white, tx, ty);
+  sdl3DrawStatusRenderText(gFontMsg, "Network Failed - Resyncing", white, tx, ty);
 }
 
 /* The one place the three view names are spelled. The classic corner label
@@ -4489,7 +4480,7 @@ void sdl3DrawItemInView(ClientSim *cs) {
   int fontH = 13 * gZoomFactor;
   float tx = (float)(originX + 2 * gZoomFactor);
   float ty = (float)(originY + MAIN_SCREEN_SIZE_Y * TILE_SIZE_Y * gZoomFactor - fontH - 2 * gZoomFactor);
-  sdl3RenderText(gFontMsg, label, white, tx, ty);
+  sdl3DrawStatusRenderText(gFontMsg, label, white, tx, ty);
 }
 
 /* sdl3DrawResetCachedText, sdl3DrawMessages, sdl3DrawGetCachedMessages,
