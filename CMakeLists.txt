@@ -5101,6 +5101,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_client_frontend_tick.c
     tests/unit/test_await_join.c
     tests/unit/test_net_impair.c
+    tests/unit/test_srv_impair_peer.c
     tests/unit/test_lobby_runtime_fixes.c
     tests/unit/test_bot_chat_routing.c
     tests/unit/test_bot_ping.c
@@ -7917,6 +7918,7 @@ set(_unit_test_names
     md5_block_boundaries
     md5_streaming_matches_oneshot
     net_impair
+    srv_impair_peer_lanonly
     lobby_time_minutes_valid
     lobby_time_limit_reaches_round
     lobby_time_limit_removed_reaches_round

@@ -94,10 +94,12 @@ void netImpairInit(NetImpair *ni);
  * minimum of 1; lanonly must be 0 or 1. */
 bool netImpairParseConfig(const char *spec, NetImpairConfig *out);
 
-/* True when an IPv4 address (host byte order) is loopback (127.0.0.0/8)
- * or private (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16).  With lanonly=1
- * the server impairs only peers for which this is true.  The transport is
- * IPv4 only, so there is no IPv6 form. */
+/* True when an IPv4 address (host byte order) is loopback (127.0.0.0/8),
+ * private (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16) or link-local
+ * (169.254.0.0/16).  With lanonly=1 the server impairs only peers for
+ * which this is true.  Carrier NAT (100.64.0.0/10) is left out on
+ * purpose: those peers are on the internet side of the ISP, not on the
+ * LAN.  The transport is IPv4 only, so there is no IPv6 form. */
 bool netImpairAddrIsLan(uint32_t ipHostOrder);
 
 /* Enable with the given config (re-initialises queue state). */

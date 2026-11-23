@@ -836,8 +836,10 @@ extern NetImpair srvImpairIn;
 extern NetImpair srvImpairOut;
 
 /* True when a datagram to or from addr goes through the impairment layer
- * ni. Always true unless the spec has lanonly=1; then only loopback and
- * private IPv4 peers are impaired, and never a -bothosts address. */
+ * ni. Always true unless the spec has lanonly=1; then only loopback,
+ * private and link-local IPv4 peers are impaired (netImpairAddrIsLan).
+ * In a build with Bot Host support (#652) a -bothosts address is never
+ * impaired. */
 bool srvImpairPeer(const NetImpair *ni, const struct sockaddr_in *addr);
 
 /* Recv-thread lifecycle. The thread, its SPSC ring and the drop counter are

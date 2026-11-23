@@ -728,6 +728,8 @@ int run_loadbrowser_rename_applies(void);
 int run_session_name_natural_sort(void);
 
 int run_net_impair(void);
+/* srvImpairPeer with lanonly on and off (test_srv_impair_peer.c). */
+int run_srv_impair_peer_lanonly(void);
 
 /* ChannelMux reliability primitive (test_channel_mux.c): the full
  * off-socket loss/reorder/dup/window/boundary matrix over two ChannelMux

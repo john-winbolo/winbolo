@@ -559,6 +559,7 @@ static const UnitTestEntry s_tests[] = {
     { "loadbrowser_rename_applies",              run_loadbrowser_rename_applies              },
     { "session_name_natural_sort",               run_session_name_natural_sort               },
     { "net_impair",                              run_net_impair                              },
+    { "srv_impair_peer_lanonly",                 run_srv_impair_peer_lanonly                 },
     { "channel_mux",                             run_channel_mux                             },
     { "channel_mux_control_queues_past_window",  run_channel_mux_control_queues_past_window  },
     { "channel_mux_control_backlog_delivers_in_order",
