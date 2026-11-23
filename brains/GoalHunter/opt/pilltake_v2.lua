@@ -1327,7 +1327,8 @@ local function pre_rank(a, b)
   local ka, kb = a.kills, b.kills
   if ka ~= kb then return ka > kb end
   if a.covered ~= b.covered then return a.covered end
-  return a.base < b.base
+  if a.base ~= b.base then return a.base < b.base end
+  return (a.deg or 0) < (b.deg or 0)
 end
 
 function M.evaluate_lua(inp)

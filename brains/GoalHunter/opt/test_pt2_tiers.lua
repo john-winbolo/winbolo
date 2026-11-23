@@ -709,5 +709,26 @@ do
   cpf.simulate_shot = save_sim
 end
 
+-- -- pilltake_v2.better: the last tie-break (smaller angle, larger radius) --
+do
+  print("\n[v2 better: the last tie-break]")
+  local NV = require("pilltake_v2")
+  local function pt(deg, radius)
+    return { safe = true, kills = 1, score = 10, blk = 1, leeway = 8, depth = 0, deg = deg, radius = radius }
+  end
+  local a, b = pt(30, 7), pt(40, 7)
+  check("smaller angle wins (a, b)", NV.better(a, b, 8, 0) == true)
+  check("smaller angle wins (b, a)", NV.better(b, a, 8, 0) == false)
+  local c, d = pt(30, 8), pt(30, 7)
+  check("same angle: larger radius wins (c, d)", NV.better(c, d, 8, 0) == true)
+  check("same angle: larger radius wins (d, c)", NV.better(d, c, 8, 0) == false)
+  local e, f = pt(30, 7), pt(30, 7)
+  check("identical points: neither wins", NV.better(e, f, 8, 0) == false and NV.better(f, e, 8, 0) == false)
+  -- an earlier key still comes first: the lower score wins over the angle
+  local g, h = pt(40, 7), pt(30, 7)
+  g.score = 5
+  check("an earlier key comes before the angle", NV.better(g, h, 8, 0) == true and NV.better(h, g, 8, 0) == false)
+end
+
 print(string.format("\n%d passed, %d failed", pass, fail))
 os.exit(fail == 0 and 0 or 1)

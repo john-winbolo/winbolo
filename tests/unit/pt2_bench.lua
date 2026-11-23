@@ -302,7 +302,10 @@ local function run_case(case)
       -- the start while the builder builds, and the extra cover walls
       local xc = {}
       for i, e in ipairs(b.extra_cover or {}) do xc[i] = tostring(e.sq or (e.my and e.my * 256 + e.mx)) end
-      dec = dec .. fmt("/s=%s/x=%s", tostring(b.start_now), table.concat(xc, ";"))
+      local h = b.hold
+      dec = dec .. fmt("/s=%s/x=%s/st=%s/lw=%s/h=%s", tostring(b.start_now), table.concat(xc, ";"),
+        tostring(b.shells_through), tostring(b.leeway),
+        h and fmt("%.4f,%.4f,%s", h.fx or 0, h.fy or 0, tostring(h.safe)) or "-")
     end
     -- keep_all=1: every point's decision too (allh)
     if res.all then
