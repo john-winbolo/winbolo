@@ -307,6 +307,12 @@ int run_lv_pill_numbers_batched(void) {
         Uint32 bg = 0, mid = 0;
         int same = 1, row;
 
+        if (ra == NULL || rb == NULL) {
+            if (ra) SDL_DestroyRenderer(ra);
+            if (rb) SDL_DestroyRenderer(rb);
+            SDL_DestroySurface(a);
+            SDL_DestroySurface(b);
+        }
         UT_ASSERT_MSG(ra != NULL && rb != NULL, "software renderer: %s", SDL_GetError());
         SDL_SetRenderDrawColor(ra, 90, 120, 60, 255);
         SDL_RenderClear(ra);

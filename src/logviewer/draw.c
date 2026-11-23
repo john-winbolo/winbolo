@@ -2347,7 +2347,7 @@ static void lvDrawPillNumbersOverBlit(const SDL_FRect *src, const SDL_FRect *dst
         float left = dst->x + ((float)(spots[i].viewX * zf * TILE_SIZE_X) - src->x) * scale;
         float top = dst->y + ((float)(spots[i].viewY * zf * TILE_SIZE_Y) - src->y) * scale;
 
-        if (lvPillNumberText(spots[i].number, num->text, LV_PILL_NUMBER_TEXT_MAX) == 0) continue;
+        if (lvPillNumberText(spots[i].number, num->text, sizeof(num->text)) == 0) continue;
         l = lvPillLabelLayout(left, top, tilePx, pxScale, lvBuilderTextCells(num->text));
         if (!l.visible) continue;
         num->x = l.x;
