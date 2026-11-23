@@ -7225,6 +7225,7 @@ set(_unit_test_names
     lgm_drop_pill_no_room
     util_spiral_north
     util_spiral_north_west
+    util_spiral_rings
     scenario_lgm_dispatch
     scenario_lgm_recall
     scenario_lgm_kill
