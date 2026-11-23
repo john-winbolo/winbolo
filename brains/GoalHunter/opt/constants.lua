@@ -1206,8 +1206,11 @@ M.PT2_C_EVAL = true
 -- pilltake_v2.lua (Andrew's strip design): the same ring points, but
 -- angle masks from each pill's blocker wedges drop the points that cannot
 -- pass before any shell is cast, and the walls are searched over every
--- set. KEEL / MAST: "old".
-M.PT2_EVALUATOR = "old"
+-- set. Default "v2" from the bench (pt2_bench eval=both, 1399 cases): v2
+-- finds a safe take in 105 cases where old finds none, old finds none that
+-- v2 misses, and where both are safe the kills and the depth are the same.
+-- KEEL / MAST: "old".
+M.PT2_EVALUATOR = "v2"
 -- PT2_C_STANDABLE (Nov 21, F4): true = the C copy (gh_pt2_old.c) does the
 -- inp.in_map, inp.stay_in, inp.standable and inp.buildable tests itself,
 -- from its terrain and pill caches and the tables world_inp gives once in
@@ -8691,6 +8694,7 @@ M.PRESETS.mast = {
   PT2_C_STANDABLE                   = false,  -- 2.2.1 had no pill take v2
   PT2_AFTER_SCAN_SPLIT              = false,  -- 2.2.1 had no pill take v2
   PT2_SPLIT_ONE_PART_PER_TICK       = false,  -- 2.2.1 had no pill take v2
+  PT2_EVALUATOR                     = "old",  -- 2.2.1 had no pill take v2
   WSIM_DRIVE_WHILE_SLIDING          = false,  -- 2.2.1 world sim: no driving while pushed
   WSIM_HIT_FULL_DIST                = 0,      -- 2.2.1 world sim: 1 - d/range discount
   WSIM_HIT_FAR_FRAC                 = 0,

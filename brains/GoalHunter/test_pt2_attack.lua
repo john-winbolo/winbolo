@@ -24,6 +24,8 @@ if math.atan2 then
 end
 
 local C   = require("constants")
+-- these tests stub pilltake_v2_old: run the old evaluator (pt2_eval)
+C.PT2_EVALUATOR = "old"
 local U   = require("util")
 local cpf = require("cpathfinder")
 local PC  = require("pill_cover")

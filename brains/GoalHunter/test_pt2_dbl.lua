@@ -19,6 +19,8 @@
 package.path = "./?.lua;" .. package.path
 
 local C = require("constants")
+-- these tests stub pilltake_v2_old: run the old evaluator (pt2_eval)
+C.PT2_EVALUATOR = "old"
 
 local pass, fail = 0, 0
 local function check(name, cond, got)
