@@ -352,15 +352,11 @@ end
 --      C.SHELL_STOPS_ON_FOREST_BOAT a forest or a boat. The engine recentres
 --      the explosion on that tile and counts it a hit on the tile
 --      (shells.c outSquareHit), so only a man standing ON that tile dies.
---      For a forest or a boat that is C.LGM_BLAST_TERRAIN_SQUARE_HIT, which
---      the game's version sets (2.2.2 and later); in older games the blast
---      on the tile's middle is open ground (the 128-WU rule). A boat's
---      shell stops on the shore and on a bridge too, with the same rule, but
---      the brain cannot see which shells a boat fired, so those fly on here.
---      Every hit on a wall is a hit on its tile, the one that turns it to
---      rubble included (shells.c
---      outSquareHit), and the brain cannot see how many hits a wall has
---      left, so a wall is always this case. Stop tracking.
+--      A boat's shell stops on the shore and on a bridge too, with the same
+--      rule, but the brain cannot see which shells a boat fired, so those
+--      fly on here. Every hit on a wall is a hit on its tile, the one that
+--      turns it to rubble included, and the brain cannot see how many hits
+--      a wall has left, so a wall is always this case. Stop tracking.
 --   2. it reaches OUR TANK's hull (within TANK_HIT_RADIUS, tank.h:102 = 112 WU)
 --      and we did not fire it -- a shell never hits its own owner. It explodes
 --      where it is, over open ground, so the 128-WU rule applies. This is the
@@ -457,29 +453,24 @@ end
 -- Bases are left out on purpose -- see the header. Owner does not enter into
 -- the pill test: pillsIsPillHit stops a shell on ANY live pill, including its
 -- own owner's.
--- Returns two values: whether the shell stops there, and whether that stop
--- is a hit on the square (only a man on it dies). A wall and a live pill
--- always are; a forest or a boat is when C.LGM_BLAST_TERRAIN_SQUARE_HIT
--- (the game's version), and otherwise its blast on the tile's middle is
--- open ground.
+-- Returns true when the shell stops there. Every such stop is a hit on the
+-- square: only a man on it dies.
 local function forest_or_boat_stops(tt)
   return (tt == C.T_FOREST or tt == C.T_BOAT) and C.SHELL_STOPS_ON_FOREST_BOAT
 end
 
 local function shell_stops_on(world, mx, my)
   local tt = U.ttype(mx, my)
-  if tt == C.T_BUILDING or tt == C.T_HALFBUILD then return true, true end
-  if forest_or_boat_stops(tt) then
-    return true, C.LGM_BLAST_TERRAIN_SQUARE_HIT and true or false
-  end
+  if tt == C.T_BUILDING or tt == C.T_HALFBUILD then return true end
+  if forest_or_boat_stops(tt) then return true end
   local lst = world and world.pill_at and world.pill_at[my * 256 + mx]
   if lst then
     for i = 1, #lst do
       local p = lst[i].pill
-      if p and (p.health or 0) > 0 and not p.in_tank then return true, true end
+      if p and (p.health or 0) > 0 and not p.in_tank then return true end
     end
   end
-  return false, false
+  return false
 end
 
 -- The first forest or boat square a shell fired from (ox,oy) along the unit
@@ -508,16 +499,13 @@ end
 --   -> ex, ey, sq_mx, sq_my
 -- No forest or boat on the line: ex, ey = the impact point, sq_* nil. A
 -- forest or a boat on it: ex, ey = that square's middle (the engine
--- recentres the explosion there), and sq_mx, sq_my = that square when
--- C.LGM_BLAST_TERRAIN_SQUARE_HIT (only a man on it dies), else nil (the
--- blast is open ground). The square is the one the shell stops on, not the
--- man's.
+-- recentres the explosion there), and sq_mx, sq_my = that square: the
+-- blast is a hit on it, so only a man on it dies. The square is the one the
+-- shell stops on, not the man's.
 function M.capture_shot_end(ox, oy, hx, hy, dist)
   local _, smx, smy = M.forest_boat_stop(ox, oy, hx, hy, dist)
   if smx then
-    local cx, cy = smx * 256 + 128, smy * 256 + 128
-    if C.LGM_BLAST_TERRAIN_SQUARE_HIT then return cx, cy, smx, smy end
-    return cx, cy
+    return smx * 256 + 128, smy * 256 + 128, smx, smy
   end
   return ox + hx * dist, oy + hy * dist
 end
@@ -556,11 +544,10 @@ end
 -- kills him).
 -- A forest or a boat on the line stops every shell that would go past it,
 -- so the shot reaches only that far (reach). The stop's blast is a hit on
--- the stop square when C.LGM_BLAST_TERRAIN_SQUARE_HIT (the game's version):
--- it kills him if he is on that square. Otherwise it is open ground on the
--- square's middle. Before the stop the shell can land anywhere, so an
--- open-ground man is in reach if some point of the line before the stop is
--- in the lgm_blast_shape rule's area round him (U.lgm_open_blast_catches):
+-- the stop square: it kills him if he is on that square. Before the stop
+-- the shell can land anywhere, so an open-ground man is in reach if some
+-- point of the line before the stop is in the lgm_blast_shape rule's area
+-- round him (U.lgm_open_blast_catches):
 -- the point level with him, or the stop point when the stop is short of him.
 -- With no forest or boat on the line this is the old test exactly: the ray
 -- crosses his tile (solid), or U.lgm_open_blast_catches_perp (open; 0 is
@@ -569,15 +556,7 @@ function M.capture_man_killable(ox, oy, hx, hy, max_t, cmx, cmy, mwx, mwy,
                                 perp, along, man_solid)
   local st, smx, smy = M.forest_boat_stop(ox, oy, hx, hy, max_t)
   local reach = st or max_t
-  if smx then
-    if C.LGM_BLAST_TERRAIN_SQUARE_HIT then
-      if smx == cmx and smy == cmy then return true end
-    elseif not man_solid then
-      if U.lgm_open_blast_catches(smx * 256 + 128 - mwx, smy * 256 + 128 - mwy) then
-        return true
-      end
-    end
-  end
+  if smx and smx == cmx and smy == cmy then return true end
   if man_solid then
     return M.ray_crosses_tile(ox, oy, hx, hy, cmx, cmy, reach)
   end
@@ -594,10 +573,7 @@ end
 --        lx, ly  the man's predicted world position then
 --        src     "p3" (a player) / "pill" (a NEUTRAL pillbox)
 --        how     which of the three endings: "wall" (a wall, a live pill,
---                or with C.LGM_BLAST_TERRAIN_SQUARE_HIT a forest or a
---                boat),
---                "terrain" (a forest or a boat without it: open ground on
---                the tile's middle), "tank" (our hull), "expiry" (out of
+--                a forest or a boat), "tank" (our hull), "expiry" (out of
 --                life), or the should-not-happen "unknown_life"
 --        solid   true when it was the same-tile rule that fired ("wall")
 --        walk_n  how many walk steps were simulated
@@ -657,24 +633,13 @@ function M.lgm_shell_gate(world, info, dest_mx, dest_my)
         local smy = bit.rshift(math.floor(sy), 8)
         local lx, ly = man_at(nw, dwell, t, home_x, home_y)
         -- (1) a wall, a live pill, or a forest or a boat: the engine
-        -- recentres the explosion on that tile. A hit on the square kills
-        -- only a man standing ON it; a forest or a boat without
-        -- C.LGM_BLAST_TERRAIN_SQUARE_HIT is open ground on the tile's middle.
-        local stops, square = shell_stops_on(world, smx, smy)
-        if stops then
-          local cx, cy = smx * 256 + 128, smy * 256 + 128
-          if square then
-            if bit.rshift(lx, 8) == smx and bit.rshift(ly, 8) == smy then
-              return { t = t, sx = cx, sy = cy,
-                       lx = lx, ly = ly, src = shell_src(ob), how = "wall",
-                       solid = true, walk_n = nw }
-            end
-          else
-            if U.lgm_open_blast_catches(cx - lx, cy - ly) then
-              return { t = t, sx = cx, sy = cy,
-                       lx = lx, ly = ly, src = shell_src(ob), how = "terrain",
-                       solid = false, walk_n = nw }
-            end
+        -- recentres the explosion on that tile and counts it a hit on the
+        -- square, so only a man standing ON it dies.
+        if shell_stops_on(world, smx, smy) then
+          if bit.rshift(lx, 8) == smx and bit.rshift(ly, 8) == smy then
+            return { t = t, sx = smx * 256 + 128, sy = smy * 256 + 128,
+                     lx = lx, ly = ly, src = shell_src(ob), how = "wall",
+                     solid = true, walk_n = nw }
           end
           break
         end

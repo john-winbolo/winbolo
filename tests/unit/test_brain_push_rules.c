@@ -11,11 +11,6 @@
  *     test puts in info.rules between the first two pushes stays, which
  *     shows the second push did not write the table. The third push
  *     writes the changed value. mods and reload_ticks follow every push.
- *
- *   brain_push_terrain_square_hit:
- *     info.terrain_square_hit is a boolean that follows every push: false
- *     for 0 (the old open-ground rule), true for non-zero (the square-hit
- *     rule of 2.2.2 and later), and back to false.
  */
 
 #include <string.h>
@@ -95,38 +90,6 @@ int run_brain_push_rules_written_on_change(void) {
                   "changed pill_range was not written");
     UT_ASSERT_MSG(push_and_read(L, &info, "rules", "tank_full_shells") == 40,
                   "rewrite did not put back tank_full_shells");
-
-    UT_ASSERT_MSG(lua_gettop(L) == 0, "stack not balanced: %d", lua_gettop(L));
-    lua_close(L);
-    return 0;
-}
-
-/* Push info and read info.terrain_square_hit. Leaves the stack as it was.
- * Returns -1 when the field is not a boolean. */
-static int push_and_read_square_hit(lua_State *L, const BrainInfo *info) {
-    int v;
-    brainCorePushInfo(L, info);
-    lua_getfield(L, -1, "terrain_square_hit");
-    v = lua_isboolean(L, -1) ? lua_toboolean(L, -1) : -1;
-    lua_pop(L, 2);
-    return v;
-}
-
-int run_brain_push_terrain_square_hit(void) {
-    static BrainInfo info;
-    lua_State *L = luaL_newstate();
-    UT_ASSERT_MSG(L != NULL, "luaL_newstate failed");
-    luaL_openlibs(L);
-
-    memset(&info, 0, sizeof(info));
-    UT_ASSERT_MSG(push_and_read_square_hit(L, &info) == 0,
-                  "terrain_square_hit 0 did not push false");
-    info.terrain_square_hit = 1;
-    UT_ASSERT_MSG(push_and_read_square_hit(L, &info) == 1,
-                  "terrain_square_hit 1 did not push true");
-    info.terrain_square_hit = 0;
-    UT_ASSERT_MSG(push_and_read_square_hit(L, &info) == 0,
-                  "terrain_square_hit back to 0 did not push false");
 
     UT_ASSERT_MSG(lua_gettop(L) == 0, "stack not balanced: %d", lua_gettop(L));
     lua_close(L);

@@ -32,7 +32,7 @@
  *    the shore or a bridge a boat's shell hit) is solid on
  *    that frame too (lvHitboxSquareSolid): that shot was a
  *    hit on the square. That terrain rule is only in games of
- *    2.2.2 and later (simRulesTerrainSquareHitForVersion, from
+ *    after 2.2.1 (lvHitboxSquareHitForVersion, from
  *    the recording's version); in an older game the changed
  *    square is open ground on that frame, as the recording
  *    has it. On
@@ -263,6 +263,25 @@ static inline int lvHitboxTankZoneFor(int major, int minor, int revision, bool h
 #endif
 }
 
+/* Whether a recorded game counts a shell's hit that changes its square (the
+   last hit on a wall, a forest, a boat, the shore, a bridge) as a hit on that
+   square for the builder blast, from the version bytes of the recording's
+   header. 2.2.1 (the Steam release) played the open-ground rule there: a
+   builder within 128 of the square's middle dies. Every later version plays
+   the square rule: only a builder on that square dies. The engine has no
+   version check (it always plays the square rule); this is only so the
+   viewer draws an older recording as it was played. A development build
+   between 2.2.1 and the next release also reports 2.2.1, so its recordings
+   draw with the open-ground rule. */
+#define LV_HITBOX_SQUARE_HIT_MAJOR    2
+#define LV_HITBOX_SQUARE_HIT_MINOR    2
+#define LV_HITBOX_SQUARE_HIT_REVISION 2
+static inline bool lvHitboxSquareHitForVersion(int major, int minor, int revision) {
+    if (major != LV_HITBOX_SQUARE_HIT_MAJOR) return major > LV_HITBOX_SQUARE_HIT_MAJOR;
+    if (minor != LV_HITBOX_SQUARE_HIT_MINOR) return minor > LV_HITBOX_SQUARE_HIT_MINOR;
+    return revision >= LV_HITBOX_SQUARE_HIT_REVISION;
+}
+
 /* The tank test, as tankShellInHitZone makes it, for the zone: the shell's
    centre less than radius from the tank's centre for the circle, less than
    128 on both axes for the square, and never for NONE. dx and dy are the
@@ -332,8 +351,8 @@ static inline bool lvHitboxPillSolid(bool onMap, bool inTank, unsigned armour,
    shell on the shore or a bridge. Each is a hit on the square (shells.c
    outSquareHit), so the square is solid on that frame although the
    recording already has it as open ground. squareHitRule: the game plays
-   that rule, simRulesTerrainSquareHitForVersion for the recording's
-   version (2.2.2 and later). When it is false (an older game) hitNow is
+   that rule, lvHitboxSquareHitForVersion for the recording's
+   version (after 2.2.1). When it is false (an older game) hitNow is
    not read: the square is solid only when it is a wall, the open-ground
    rule those games played. */
 static inline bool lvHitboxSquareSolid(bool wall, bool hitNow,

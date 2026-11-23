@@ -274,7 +274,7 @@ M.LIVE_PHYSICS_SPEED  = true  -- terrain speed caps / route costs (Lua and the C
 M.LIVE_PHYSICS_TURN   = true  -- turn-time sizing (swerve turn, blitz ready timeout) and turn-radius speed caps
 M.LIVE_PHYSICS_ACCEL  = true  -- brake / look-ahead distances and brake profiles follow our accel + brake rates
 M.LIVE_PHYSICS_SHELL  = true  -- shell speed, gunsight max
-M.LIVE_PHYSICS_BLAST  = true  -- the builder blast model follows the lgm_blast_shape and pill_range rules (LGM_BLAST_SHAPE, LGM_BLAST_PILL_RANGE_WU) and the game version's square-hit rule (LGM_BLAST_TERRAIN_SQUARE_HIT)
+M.LIVE_PHYSICS_BLAST  = true  -- the builder blast model follows the lgm_blast_shape and pill_range rules (LGM_BLAST_SHAPE, LGM_BLAST_PILL_RANGE_WU)
 -- Top-speed caps in info.speed units (engine speed x4): 64 = road top speed,
 -- 48 = the navigation cruise cap. Live rules scale them with the road speed
 -- rule and our speed modifier.
@@ -2426,10 +2426,10 @@ M.BLAST_DEAD_PILL_OPEN = true
 -- has. true = the brain's shell model does the same: the builder shell gate
 -- stops a shell there (danger.lua shell_stops_on), and the capture shot at a
 -- builder finds where its own shell stops (danger.lua capture_shot_end and
--- capture_man_killable). How that stop kills is LGM_BLAST_TERRAIN_SQUARE_HIT,
--- which the game's version decides (not a knob).
--- KEEL / MAST: false (the old brain: a shell flies on over a forest or a
--- boat).
+-- capture_man_killable). The engine counts that stop as a hit on the
+-- square (shells.c outSquareHit), so the blast kills only a man on that
+-- square. The brain always models that rule: it is not a knob.
+-- KEEL: false (the old brain: a shell flies on over a forest or a boat).
 M.SHELL_STOPS_ON_FOREST_BOAT = true
 -- REFIRE_MAX_MISSES: keep firing at the same man every reload-available tick,
 -- but give up after this many consecutive misses (a shot whose flight completed
@@ -4524,20 +4524,6 @@ M.LGM_BLAST_SHAPE = 0
 -- explosion is safe. Classic 2048, far past every shape, so it changes
 -- nothing. live_physics.lua group BLAST sets it from pill_range each think.
 M.LGM_BLAST_PILL_RANGE_WU = 2048
--- 2026-11-22: NOT A KNOB, and not in PRESETS. Games of version 2.2.2 and
--- later count a shell's hit on a forest or a boat as a hit on its square
--- (shells.c outSquareHit): the blast kills a man only on that square.
--- Older games used the open-ground rule there: a man within 128 wu of that
--- square's middle dies. live_physics.lua group BLAST sets this from
--- info.terrain_square_hit each think (the engine works it out from the
--- version, simRulesTerrainSquareHitForVersion). true = where the brain's
--- model stops a shell on a forest or a boat (SHELL_STOPS_ON_FOREST_BOAT),
--- only a man on that square dies; false = the open-ground rule. A missing
--- info field, or LIVE_PHYSICS or LIVE_PHYSICS_BLAST off, leaves it false.
--- The square is the one where the shell stops, not the man's own square. A
--- boat's shell on the shore or a bridge is a hit on its square too, but the
--- brain cannot see which shells a boat fired, so it does not model those.
-M.LGM_BLAST_TERRAIN_SQUARE_HIT = false
 -- The engine's shell-vs-tank hit zone, in world units: tank.h:102
 -- TANK_HIT_RADIUS = 112 ("one-tile mid-radius (128) - 16 wu"), tested as a
 -- CIRCLE by tankIsTankHitAtPosition. The shell gate uses it for one thing --

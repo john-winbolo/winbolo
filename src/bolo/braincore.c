@@ -977,12 +977,6 @@ void brainCorePushInfo(lua_State *L, const BrainInfo *info) {
     lua_setfield(L, -2, "reload_ticks");
   }
 
-  /* info.terrain_square_hit: true when the game's version counts a shell's
-   * hit that changes its square as a hit on that square for the builder
-   * blast (brain.h). A version, not a rule, so it is not in info.rules. */
-  lua_pushboolean(L, info->terrain_square_hit != 0);
-  lua_setfield(L, -2, "terrain_square_hit");
-
   /* Game events — persistent array; each element holds a persistent nested
    * data array. Overwrite type and data[1..dlen] in place, nil each data tail
    * (dlen varies by event type) and the events tail. */

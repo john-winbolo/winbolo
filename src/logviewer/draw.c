@@ -1884,9 +1884,9 @@ static void lvDrawNoteLgmHit(BYTE mx, BYTE my, BYTE px, BYTE py, BYTE slot, BYTE
        as a hit on that square (2.2.2 and later), from the recording's
        version, as the engine decides it. The same version also has a dead
        pill's square as open ground (lvDrawPillSolidAt). */
-    squareHitRule = simRulesTerrainSquareHitForVersion(
-                        lv->versionMajor, lv->versionMinor,
-                        lv->versionRevision) != 0;
+    squareHitRule = lvHitboxSquareHitForVersion(
+                        (int)lv->versionMajor, (int)lv->versionMinor,
+                        (int)lv->versionRevision);
     /* His place. A recording holds it to the art pixel, so the closest guess
        is from the line his last recorded pixels walk along
        (lv_playersLgmPlace). With no notes for that pixel it is the middle of

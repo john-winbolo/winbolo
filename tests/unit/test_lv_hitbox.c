@@ -38,7 +38,7 @@
  *
  *   lv_hitbox_square_hit_by_version - that the square a shell's hit changed
  *       on this frame is solid only in a recording of 2.2.2 or later
- *       (simRulesTerrainSquareHitForVersion). In a 2.2.1 recording it is
+ *       (lvHitboxSquareHitForVersion). In a 2.2.1 recording it is
  *       open ground, as the hit box drew it before that rule: only a wall
  *       is solid.
  *       A pillbox the same way: in 2.2.1 every pill on the map is solid,
@@ -55,7 +55,6 @@
 #include <math.h>
 
 #include "lv_hitbox.h"
-#include "sim_rules_names.h"   /* simRulesTerrainSquareHitForVersion */
 #include "test_harness.h"
 
 /* The bit of a square in the 3 by 3 mask, with his own square at 1, 1. */
@@ -525,13 +524,13 @@ int run_lv_hitbox_outline(void) {
 
 /* The square-hit rule by the recording's version: 2.2.1 and older play the
    open-ground rule on a square a shell's hit changed, 2.2.2 and later the
-   square rule. The rule comes from the engine's own helper, as draw.c asks
-   it for the recording's header version. */
+   square rule. draw.c asks lvHitboxSquareHitForVersion for the recording's
+   header version. */
 int run_lv_hitbox_square_hit_by_version(void) {
-    bool oldRule = simRulesTerrainSquareHitForVersion(2, 2, 1) != 0;
-    bool newRule = simRulesTerrainSquareHitForVersion(2, 2, 2) != 0;
-    bool olderRule = simRulesTerrainSquareHitForVersion(1, 17, 0) != 0;
-    bool laterRule = simRulesTerrainSquareHitForVersion(2, 3, 0) != 0;
+    bool oldRule = lvHitboxSquareHitForVersion(2, 2, 1);
+    bool newRule = lvHitboxSquareHitForVersion(2, 2, 2);
+    bool olderRule = lvHitboxSquareHitForVersion(1, 17, 0);
+    bool laterRule = lvHitboxSquareHitForVersion(2, 3, 0);
 
     UT_ASSERT_MSG(!oldRule, "2.2.1 plays the open-ground rule");
     UT_ASSERT_MSG(newRule, "2.2.2 plays the square rule");

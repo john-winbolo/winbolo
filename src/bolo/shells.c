@@ -1142,11 +1142,10 @@ bool shellsCalcCollision(GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, s
 				{
 					/* A bridge (water past the road on the shell's line, so
 					 * the shot takes it away: shellsRoadShotAway) is a hit on
-					 * its square, a mined one too: Mac Bolo shoots a mined
-					 * bridge away as it does any other, as it ignores the
-					 * mine when it tests for a bridge. Here
-					 * the mine goes off and the road stays, but the hit is
-					 * still on the square. Any other road keeps the
+					 * its square. A mined bridge is too: in Mac Bolo a mined
+					 * bridge is shot away like any other. Here the mine goes
+					 * off and the road stays, but the hit is still on the
+					 * square. Any other road keeps the
 					 * open-ground rule: in Mac Bolo the shell falls there
 					 * with no hit. */
 					bool shotAway = shellsRoadShotAway(sim, mapX, mapY, angle);

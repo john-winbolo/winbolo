@@ -7149,9 +7149,8 @@ function Brain.think(info)
         -- lgm_blast_shape rule's area round the ray (0 is within 128 wu; splash
         -- reaches).  Solid square (live pill/base/building): the ray must
         -- actually cross his tile -- splash won't kill there, only an in-tile hit.
-        -- A forest or a boat on the line stops the shell there; with
-        -- C.LGM_BLAST_TERRAIN_SQUARE_HIT that stop kills only a man on that square
-        -- (danger.capture_man_killable).
+        -- A forest or a boat on the line stops the shell there, and that stop
+        -- kills only a man on that square (danger.capture_man_killable).
         -- Otherwise fall back to hovering the sight on the pill centre.
         local killable = false
         local cmx, cmy
