@@ -55,11 +55,10 @@
 -- big_explosion_threshold to 60.
 --
 -- Parachute speed. A builder who dies parachutes back in, flying straight
--- at his tank. Mac Bolo moves him every other tick by its trig table
--- shifted down, so his speed depends on his heading: 1.41 to 2.5 world
--- units a tick, 1.92 on average. WinBolo moves him lgm_helicopter_speed a
--- tick on every heading, 3 by default. This part sets 2, which may be
--- marginally fast: a little above Mac Bolo's average.
+-- at his tank. In Mac Bolo his speed depends on his heading: 1.41 to 2.5
+-- world units a tick, 1.92 on average. WinBolo moves him
+-- lgm_helicopter_speed a tick on every heading, 3 by default. This part
+-- sets 2, which may be marginally fast: a little above Mac Bolo's average.
 --
 -- Builder blast. A shell or mine that goes off on open ground kills a
 -- builder near it. WinBolo counts "near" as a circle of radius 128 world
