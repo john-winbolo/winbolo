@@ -38,6 +38,8 @@
                                     * in setup (see CMakeLists.txt). */
 #include "../../server/server_lifecycle.h"
 #include "../../server/threads.h"   /* threadsWaitForMutex / threadsReleaseMutex */
+#include "../frame_limit.h"          /* the Frame Rate choice (#312) */
+#include "dialogs/imgui_settings.h" /* IMGUI_FRAME_LIMIT_UI */
 
 #include <stdio.h>
 #include <string.h>
@@ -701,14 +703,22 @@ static Sint64 bgFrameRefreshNs(SDL_Renderer *renderer) {
     return (Sint64)(1000000000.0 / (double)hz);
 }
 
-/* Redraw the menu game every n refreshes. Held at 1, every refresh, until
- * the Frame Rate setting means what it says (#312): its FRAME_RATE_* labels
- * are not rates, and at the default "30" the game itself runs at about 60,
- * so reading the label as Hz halved the menu game's rate. The n >= 2 paths
- * below stay for that setting to use. */
+/* The Frame Rate choice, a FrameLimit; defined by each frontend. */
+extern int frameRate;
+
+/* Redraw the menu game every n refreshes, by the Frame Rate choice (#312):
+ * a fixed limit below the refresh rate redraws the scene on every n-th
+ * refresh, the nearest whole number to the limit. Match display and
+ * Unlimited redraw every refresh: the menu screens always draw with vsync,
+ * so Unlimited is no faster here. Only desktop builds show the choice;
+ * the others always draw every refresh. */
 static int bgFrameEveryN(Sint64 periodNs) {
+#if IMGUI_FRAME_LIMIT_UI
+    return frameLimitRefreshesPerFrame(frameRate, (long long)periodNs);
+#else
     (void)periodNs;
     return 1;
+#endif
 }
 
 /* How far this draw is between the last two ticks: 0 = the tick before,
