@@ -1623,7 +1623,7 @@ int run_sim_rules_pill_aim_mac(void) {
      * by four. The first three rows cover moving, stopped and obstructed
      * tanks at close range. The rest cover
      * the asymmetric pixel boundary, all 16 headings, diagonal distance,
-     * slow motion and normal leading out to eight squares. Row 3 is 18
+     * slow motion and normal leading out to eight squares. The fourth row is 18
      * pixels out, two past one square, so its lead is 32 and the shot goes
      * 16 world units ahead of the tank. */
     static const struct {

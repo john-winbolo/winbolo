@@ -1105,20 +1105,15 @@ BYTE pillsGetScreenHealth(GameSim *sim, pillboxes *value, BYTE xValue, BYTE yVal
   return returnValue;
 }
 
-/*
-Mac Bolo 0.99.7's quarter-wave table: trunc(128*sin(b*pi/128)),
-clipped to 127. Used by both its lead vector and its integer aim search.
-
-How this was determined: several hundred Mac Bolo logs were examined,
-looking at shots from pillboxes (which have an exact known position)
-to find all 4224 coordinates that shots fired from those pillboxes could
-actually exist at. Claude then examined those coordinates to find the
-exact shot movement algorithm.
-
-github.com/rooklift/ancient_bolo_parser/blob/main/docs/pillbox-shell-orbits-compact.json
-github.com/rooklift/ancient_bolo_parser/blob/main/docs/pillbox_shell_algorithm.md
-*/
-
+/* A quarter of a sine wave: 128 * sin(b * pi / 128) for b from 0 to 64,
+ * rounded down and no more than 127. The pill_aim_mac rule reads it for
+ * the tank's facing and for the tangents it aims by.
+ *
+ * The values were worked out from the positions of pillbox shells in
+ * several hundred recorded Mac Bolo games: a pillbox's position is known
+ * exactly, and these are the only values that give every shell's path.
+ * The last value is 127 and not 128 because a shell fired due north or
+ * due west moves 63 world units an update in those games, not 64. */
 static const BYTE pillMacSine[65] = {
   0, 3, 6, 9, 12, 15, 18, 21, 24, 28, 31, 34, 37, 40, 43, 46,
   48, 51, 54, 57, 60, 63, 65, 68, 71, 73, 76, 78, 81, 83, 85, 88,
@@ -1222,12 +1217,13 @@ static int32_t pillsMacCeil256(int32_t value) {
 *  The pillbox aims at a point ahead of the tank, along
 *  the way it faces. How far ahead is the lead: the tank's
 *  distance past one square (16 pixels), times its speed,
-*  a quarter of that, kept in 16 bits. A tank that is
-*  stopped, or was obstructed on its last move, has no
-*  lead. A moving tank less than one square away has a
-*  distance past one square below zero, which in 16 bits
-*  is a very long lead: the pillbox fires far ahead along
-*  the tank's facing and misses, the pill massage.
+*  a quarter of that. A tank that is stopped, or was
+*  obstructed on its last move, has no lead. A moving tank
+*  less than one square away is missed: the pillbox aims
+*  about 32 squares ahead of it along the way it faces,
+*  the pill massage. That comes from working the lead out
+*  as a 16-bit number with no sign, in which a distance
+*  short of one square reads as a very long one.
 *
 *ARGUMENTS:
 *  px         - X position of the pillbox
@@ -1241,15 +1237,15 @@ static int32_t pillsMacCeil256(int32_t value) {
 static TURNTYPE pillsTargetTankMac(WORLD px, WORLD py, WORLD tx, WORLD ty,
                                   TURNTYPE heading, BYTE speed, bool obstructed) {
   const int distance = pillsMacRange(px, py, tx, ty);
-  /* Mac Bolo rounds a heading exactly halfway between two sectors up; this
-   * rounds it down, the way the tank drives. */
+  /* A heading exactly halfway between two of the sixteen directions counts
+   * as the lower one, the way the tank drives. */
   const int direction = utilGet16Dir(heading);
   /* The tank's facing, as its east and south parts out of 128 */
   const int east = pillsMacSin(direction);
   const int south = -pillsMacSin(direction + 64);
-  /* The lead takes the speed on Mac Bolo's scale, four times WinBolo's (its
-   * road speed is 64 to WinBolo's 16), and no more than a byte holds, so a
-   * scenario with unusually high speeds still gets one. */
+  /* The lead takes four times the tank's speed, so road speed, 16, counts
+   * as 64. It stops at 255, so a scenario with unusually high speeds still
+   * gets a lead. */
   const int macSpeed = speed > 63 ? 255 : speed * 4;
   unsigned int lead = 0;
   int32_t aimX;
@@ -1258,10 +1254,9 @@ static TURNTYPE pillsTargetTankMac(WORLD px, WORLD py, WORLD tx, WORLD ty,
   if (!obstructed) {
     lead = ((unsigned int)((distance - 16) * macSpeed) & 0xFFFFu) / 4;
   }
-  /* Only the lead is kept to 16 bits. The point aimed at is worked out
-   * wider than a WORLD, so one past the edge of the map stays past it
-   * and does not come back on the far side, which would turn the shot
-   * round. */
+  /* The point aimed at is worked out wider than a WORLD, so one past the
+   * edge of the map stays past it and does not come back on the far side,
+   * which would turn the shot round. */
   aimX = (int32_t)tx + pillsMacCeil256((int32_t)lead * east);
   aimY = (int32_t)ty + pillsMacCeil256((int32_t)lead * south);
   return pillsMacAim(aimX - (int32_t)px, aimY - (int32_t)py);

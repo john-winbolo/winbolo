@@ -834,8 +834,9 @@ BYTE mapGetManSpeed(GameSim *sim, map *value, pillboxes *pb, bases *bs, BYTE xVa
       done = TRUE;
     } else if (sim->rules.man_dead_pill_terrain_speed == 0) {
       /* A dead pillbox's square walks as fast as a road, whatever terrain
-         the pillbox stands on. However, man_dead_pill_terrain_speed 1 is
-         the WinBolo 2.1 way, which falls through to the terrain under it. */
+         the pillbox stands on. That also lets the man onto a dead pillbox
+         on water. man_dead_pill_terrain_speed 1 is the WinBolo 2.1 way,
+         which falls through to the terrain under it. */
       returnValue = (BYTE) sim->rules.man_speed_road;
       done = TRUE;
     }
