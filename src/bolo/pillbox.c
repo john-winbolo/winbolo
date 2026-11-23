@@ -1157,22 +1157,64 @@ static int pillsMacRange(WORLD px, WORLD py, WORLD tx, WORLD ty) {
   return (int)sqrt((double)((squared >> 4) * 256)) / 4;
 }
 
+/*********************************************************
+*NAME:          pillsMacAim
+*PURPOSE:
+*  The direction a pillbox fires in, under the pill_aim_mac
+*  rule, at a point x east and y south of it.
+*
+*  A Mac Bolo pillbox fires in the 128 odd directions only
+*  (1, 3 ... 255 of the 256 in a turn). Fold the point into
+*  one quarter, so it is some way across (east or west) and
+*  some way along (north or south). The answer is then one
+*  of the 32 odd angles 1 to 63 from the north-south line,
+*  and between each two of them is an even angle, 2 to 62.
+*  The point is past an even angle when its across is more
+*  than its along times that angle's tangent, which
+*  pillMacSine gives as sine over cosine. The diagonal, 32,
+*  is judged on the two distances alone, and a point on it
+*  counts as past it.
+*
+*ARGUMENTS:
+*  x - How far east of the pillbox the point is
+*  y - How far south of the pillbox the point is
+*********************************************************/
 static TURNTYPE pillsMacAim(int32_t x, int32_t y) {
-  bool negativeX = x < 0, negativeY = y < 0;
-  int angle, delta;
-  if (negativeX) x = -x;
-  if (negativeY) y = -y;
-  angle = x < y ? 16 : 48;
-  for (delta = 8; delta != 0; delta >>= 1) {
-    if (y * pillMacSine[angle] - x * pillMacSine[64 - angle] < 0) {
-      angle += delta;
+  const bool west = x < 0;
+  const bool north = y < 0;
+  const int32_t across = west ? -x : x;
+  const int32_t along = north ? -y : y;
+  /* The point is past this many of the 31 even angles, somewhere from low
+   * to high. The diagonal is the 16th of them. */
+  int low = 0;
+  int high = 15;
+  int angle;
+  int bearing;
+
+  if (across >= along) {
+    low = 16;
+    high = 31;
+  }
+  /* Halve what is left until one count remains */
+  while (low < high) {
+    int middle = (low + high + 1) / 2;
+
+    angle = 2 * middle;
+    if (across * pillMacSine[64 - angle] > along * pillMacSine[angle]) {
+      low = middle;
     } else {
-      angle -= delta;
+      high = middle - 1;
     }
   }
-  if (!negativeY) angle = -128 - angle;
-  if (negativeX) angle = -angle;
-  return (TURNTYPE)(uint8_t)angle;
+
+  /* The odd angle just past the last even one, and from that the bearing:
+   * 0 is north, 64 east, 128 south and 192 west */
+  angle = 2 * low + 1;
+  bearing = north ? angle : 128 - angle;
+  if (west) {
+    bearing = 256 - bearing;
+  }
+  return (TURNTYPE)bearing;
 }
 
 static TURNTYPE pillsTargetTankMac(WORLD px, WORLD py, WORLD tx, WORLD ty,
