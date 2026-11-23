@@ -2672,8 +2672,9 @@ bool tankDropPillAt(GameSim *sim, tank *value, BYTE pillNum, BYTE mx, BYTE my) {
 * square straight north of the tank and going clockwise.
 * The pill at the head of the carry list (the last one
 * picked up) goes on the first square that will hold it,
-* the next pill on the next, and so on. A pill the search
-* finds no room for stays on the tank.
+* the next pill on the next, and so on. On a map where no
+* square will hold a pill, the search clears a square for
+* each one (see pillsDropSpiralFind).
 *
 *ARGUMENTS:
 *  sim    - The game the tank belongs to
@@ -2699,7 +2700,7 @@ void tankDropPills(GameSim *sim, tank *value) {
   conv >>= TANK_SHIFT_MAPSIZE;
   ty = (BYTE) conv;
 
-  pillsDropSpiralStart(&spiral, tx, ty);
+  pillsDropSpiralStart(&spiral, tx, ty, gameSimGetTankPlayer(sim, value));
   while (NonEmpty((*value)->carryPills) &&
          pillsDropSpiralFind(sim, &spiral, &mx, &my)) {
     /* The search and the drop make the same square test, so this only
