@@ -951,6 +951,28 @@ int run_brain_capacity_memory_limit(void);
 int run_bot_host_reset_limit(void);
 int run_bot_host_brain_name_opt(void);
 
+/* The built-in Bot Host as a child process (test_bothost_child.c). */
+int run_bothost_child_args(void);
+int run_bothost_child_quote(void);
+int run_bothost_child_codec(void);
+int run_bothost_child_restart(void);
+int run_bothost_child_job_limits(void);
+int run_bothost_child_relay_codec(void);
+int run_bothost_child_sandbox_files(void);
+int run_bothost_child_sandbox_net(void);
+int run_bothost_child_relay(void);
+int run_bothost_child_machine_id(void);
+int run_bothost_child_no_unsafe(void);
+int run_bothost_child_copy_tree(void);
+int run_bothost_child_fail_rule(void);
+int run_bothost_child_copy_wanted(void);
+int run_bothost_child_env_keep(void);
+int run_bothost_ds_child_where(void);
+int run_bothost_ds_child_first_lines(void);
+int run_bot_host_lockstep(void);
+int run_bothost_child_seccomp(void);
+int run_bothost_child_stdin_full(void);
+
 /* Bot Host link: announce, query, invite, lists (test_bot_host_link.c). */
 int run_bot_host_link_announce_codec(void);
 int run_bot_host_link_addr_list(void);

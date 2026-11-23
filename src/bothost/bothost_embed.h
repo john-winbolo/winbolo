@@ -94,8 +94,44 @@ void botHostEmbedSetRecord(bool on);
 /* True when this client was built with WINBOLO_BOTHOST_OFFICIAL_ONLY: its
  * host runs only the brains of its own install. */
 bool botHostEmbedOfficialOnly(void);
+/* True when this program has the shipped-brain table compiled in
+ * (WINBOLO_BRAIN_SHIPPED_TABLE: an official-only build). */
+bool botHostEmbedShippedTable(void);
 /* The slots offered before the brain's own answer is known. */
 int botHostEmbedDefaultSlots(void);
+
+/* ---- The host on a thread of this program (bothost_main.c) ------------
+ *
+ * The functions above that start, stop, read or tell the host choose
+ * between a child process (WinBoloBotHost --embed-child, see
+ * src/bothost_child/bothost_child.h) and the host on a thread of this
+ * program. These are the thread's. The child runs them too, in its own
+ * process. */
+bool botHostInprocStart(const BotHostEmbedConfig *cfg);
+void botHostInprocStop(bool tellServer);
+bool botHostInprocRunning(void);
+void botHostInprocGetStatus(BotHostEmbedStatus *out);
+void botHostInprocSetMax(int max);
+void botHostInprocConsentAnswer(bool yes);
+void botHostInprocSetRecord(bool on);
+/* on: run only the install's brains, as a client built with
+ * WINBOLO_BOTHOST_OFFICIAL_ONLY does (the child's --official-only). It can
+ * only add the rule. Before the host starts. */
+void botHostInprocSetOfficialOnly(bool on);
+/* on (--ds-child): the dedicated server's own child. It joins with the
+ * server's secret (JOIN_BOT_HOST_DS_CHILD_MARK; the ticket bytes), takes
+ * the server's brain code with no question, and has no player's limits
+ * (the init token list, the full-map rule). Before the host starts. */
+void botHostInprocSetDsChild(bool on);
+/* on (--lockstep): the brains think once for each new snapshot from the
+ * server, so the server can wait for their moves each tick. Off: a think
+ * every 20 ms by the clock. Before the host starts. */
+void botHostInprocSetLockstep(bool on);
+/* The server's own brain options, passed on to its child: the brain
+ * threads (0: the default), the Lua seed, no budget kill (the 1000 ms
+ * budget) and the tier pin (0: none). Before the brain threads start. */
+void botHostInprocSetBrainOptions(int threads, bool haveLuaSeed, long luaSeed,
+                                  bool noBudgetKill, int brainTier);
 
 /* ---- The clients' side (bothost_embed_service.c) ---------------------- */
 
@@ -103,9 +139,31 @@ typedef struct {
     bool        disabled;    /* never host (a test option) */
     int         slots;       /* > 0: a fixed slot count (a test option) */
     const char *cacheDir;    /* NULL: the default under the prefs folder */
+    /* Run the host on a thread of this program, not as a child process
+     * (WinBoloBotHost --embed-child). Off by default: the child runs, and
+     * the thread is used only when the child cannot start. */
+    bool        inProcess;
+    /* The child's limits (bothost_child.h): < 0 the default, 0 off. */
+    int         childMemMb;
+    int         childCpuPct; /* Windows only */
+    /* Run the child with no file sandbox and with its own network (the
+     * config's "Child File Sandbox" = No, --bothost-no-sandbox). Off by
+     * default: in the sandbox, and with no sandbox no bots. */
+    bool        childNoSandbox;
 } BotHostEmbedSettings;
 
+/* Settings with every default: hosting on, as a child, default limits. */
+void botHostEmbedSettingsDefaults(BotHostEmbedSettings *settings);
 void botHostEmbedSetSettings(const BotHostEmbedSettings *settings);
+/* The game's config file keys (section "BOT HOST"):
+ *   "Run As Child Process"     Yes (default) / No
+ *   "Child Memory Limit MiB"   4096 (default); 0 off
+ *   "Child CPU Limit Percent"  75 (default), a part of the whole machine,
+ *                              Windows only; 0 or 100 off
+ *   "Child File Sandbox"       Yes (default) / No: the child's OS file
+ *                              sandbox and no network (bothost_child.h)
+ * Read once, after the prefs file is open. */
+void botHostEmbedLoadPrefs(void);
 
 /* Once a frame on the main thread, with the player's ClientSim of a
  * network game, or NULL when there is none (the menu, a local game). It

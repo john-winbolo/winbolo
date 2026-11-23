@@ -56,12 +56,23 @@ bool botHostEmbedOfficialOnly(void) {
     return true;
 }
 
+bool botHostEmbedShippedTable(void) {
+    return false;
+}
+
 int botHostEmbedDefaultSlots(void) {
     return 0;
 }
 
+void botHostEmbedSettingsDefaults(BotHostEmbedSettings *settings) {
+    if (settings != NULL) memset(settings, 0, sizeof(*settings));
+}
+
 void botHostEmbedSetSettings(const BotHostEmbedSettings *settings) {
     (void)settings;
+}
+
+void botHostEmbedLoadPrefs(void) {
 }
 
 void botHostEmbedService(struct ClientSim *cs) {
