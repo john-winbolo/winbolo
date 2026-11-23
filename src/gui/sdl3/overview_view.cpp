@@ -1059,8 +1059,8 @@ static void overviewViewDrawEntities(OverviewView *v,
         ov.labelFont  = sdl3DrawGetMessageFont();
     }
 
-    /* The pill and base numbers, from the same zoom up, in the main window's
-     * faces scaled the same way as the names. */
+    /* The pill and base numbers, from the same zoom up, in the Log Viewer's
+     * small digits (mapview_overlay.c). */
     ov.itemLabelCount    = overviewViewPickItemLabels(snap, items,
                                                       (int)(MAX_PILLS + MAX_BASES));
     ov.itemLabels        = items;

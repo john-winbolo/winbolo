@@ -148,47 +148,46 @@ static void overlayDrawTankLabels(MapViewCtx *ctx, const MapViewOverlay *ov,
    (lvDrawPillNumbersOverBlit in logviewer/draw.c): the builder marker's small
    digits, one pixel a cell and two from LV_BUILDER_BIG_TILE pixels to a
    square, at the bottom right corner of the square (lvPillLabelLayout), in
-   white over a black edge one pixel wide. Every edge goes first and every
-   white after, so the edge of one number never covers the digits of a
-   number beside it. The game's drawing is in its own pixels, so the scale
-   of a pixel is 1. */
+   white over a black edge one pixel wide. The place of each number is worked
+   out once, then lvBuilderDrawNumbers draws every edge first and every white
+   after, one fill call a pass, so the edge of one number never covers the
+   digits of a number beside it. The game's drawing is in its own pixels, so
+   the scale of a pixel is 1. */
 static void overlayDrawItemLabels(MapViewCtx *ctx, const MapViewOverlay *ov,
                                   float baseX, float baseY,
                                   float tileW, float tileH) {
-  OverlayClip   clip;
-  SDL_BlendMode oldBlend = SDL_BLENDMODE_NONE;
-  Uint8         oldR, oldG, oldB, oldA;
-  float         edge = lvTankBarPointsToPixels(LV_BUILDER_EDGE_POINTS, 1.0f);
-  int           pass, i;
+  OverlayClip     clip;
+  LvBuilderNumber nums[MAX_PILLS + MAX_BASES];
+  float           edge = lvTankBarPointsToPixels(LV_BUILDER_EDGE_POINTS, 1.0f);
+  int             count = 0, total, i;
 
   (void)tileH;
   if (ov->itemLabels == NULL || ov->itemLabelCount <= 0) return;
   if (!spritePositionItemLabelShown(ctx->scale, ov->itemLabelMinScale)) return;
 
-  overlayClipBegin(ctx, ov, &clip);
-  SDL_GetRenderDrawBlendMode(ctx->renderer, &oldBlend);
-  SDL_GetRenderDrawColor(ctx->renderer, &oldR, &oldG, &oldB, &oldA);
-  SDL_SetRenderDrawBlendMode(ctx->renderer, SDL_BLENDMODE_BLEND);
-  for (pass = 0; pass < 2; pass++) {
-    LvBuilderColour c = (pass == 0) ? lvBuilderEdgeColour()
-                                    : lvBuilderMarkColour(false, 0);
-    SDL_SetRenderDrawColorFloat(ctx->renderer, c.r, c.g, c.b, c.a);
-    for (i = 0; i < ov->itemLabelCount; i++) {
-      const OverviewItemLabel *l = &ov->itemLabels[i];
-      char               text[8];
-      LvPillLabelLayout  lay;
-      float              left = spritePositionSquare(baseX, ctx->scale, (int)l->mapX);
-      float              top  = spritePositionSquare(baseY, ctx->scale, (int)l->mapY);
+  /* Both lists (the main view's and the overview's) hold no more than one
+     number for each pillbox and base. */
+  total = ov->itemLabelCount;
+  if (total > (int)(MAX_PILLS + MAX_BASES)) total = (int)(MAX_PILLS + MAX_BASES);
+  for (i = 0; i < total; i++) {
+    const OverviewItemLabel *l = &ov->itemLabels[i];
+    LvBuilderNumber   *num = &nums[count];
+    LvPillLabelLayout  lay;
+    float              left = spritePositionSquare(baseX, ctx->scale, (int)l->mapX);
+    float              top  = spritePositionSquare(baseY, ctx->scale, (int)l->mapY);
 
-      snprintf(text, sizeof(text), "%d", (int)l->number);
-      lay = lvPillLabelLayout(left, top, tileW, 1.0f, lvBuilderTextCells(text));
-      if (!lay.visible) continue;
-      lvBuilderDrawText(ctx->renderer, text, lay.x, lay.y, lay.cell,
-                        (pass == 0) ? edge : 0.0f);
-    }
+    snprintf(num->text, sizeof(num->text), "%d", (int)l->number);
+    lay = lvPillLabelLayout(left, top, tileW, 1.0f, lvBuilderTextCells(num->text));
+    if (!lay.visible) continue;
+    num->x    = lay.x;
+    num->y    = lay.y;
+    num->cell = lay.cell;
+    count++;
   }
-  SDL_SetRenderDrawColor(ctx->renderer, oldR, oldG, oldB, oldA);
-  SDL_SetRenderDrawBlendMode(ctx->renderer, oldBlend);
+  if (count <= 0) return;
+
+  overlayClipBegin(ctx, ov, &clip);
+  lvBuilderDrawNumbers(ctx->renderer, nums, count, edge);
   overlayClipEnd(ctx, &clip);
 }
 

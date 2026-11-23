@@ -9031,6 +9031,7 @@ set(_unit_test_names
     lv_pill_numbers_list
     lv_pill_numbers_layout
     lv_pill_numbers_overview
+    lv_pill_numbers_batched
     lv_controls_top_row
     lv_controls_bottom_row
     lv_controls_wheel_step

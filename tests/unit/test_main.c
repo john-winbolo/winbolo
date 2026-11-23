@@ -3188,6 +3188,7 @@ static const UnitTestEntry s_tests[] = {
     { "lv_pill_numbers_list",                            run_lv_pill_numbers_list                            },
     { "lv_pill_numbers_layout",                          run_lv_pill_numbers_layout                          },
     { "lv_pill_numbers_overview",                        run_lv_pill_numbers_overview                        },
+    { "lv_pill_numbers_batched",                         run_lv_pill_numbers_batched                         },
     { "lv_controls_top_row",                             run_lv_controls_top_row                             },
     { "lv_controls_bottom_row",                          run_lv_controls_bottom_row                          },
     { "lv_controls_wheel_step",                          run_lv_controls_wheel_step                          },
