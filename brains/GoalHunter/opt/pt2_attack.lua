@@ -134,9 +134,19 @@ function M.build_inp(state, goal, info, world, pill, no_builder, npb, radius, no
   inp.pen_n, inp.pen_skip_n, inp.noA_n = 0, 0, 0
   local th = package.loaded["threat"]
   local contrib_A, contrib_of = nil, nil
+  -- nearest_spot per angle (the scan spots do not change) and finish_ok
+  -- once per A: asked again when A changes, so a later group part (a
+  -- later tick) reads the pill's health and anger again
+  local spot_of, fin_A, fin_v = {}, nil, false
   inp.score_fn = function(deg, mx, my, cx, cy)
-    local s = (curA == goalA) and nearest_spot(spots, deg) or nil
-    local fin = V2.finish_ok(inp, curA)
+    local s = nil
+    if curA == goalA then
+      s = spot_of[deg]
+      if s == nil then s = nearest_spot(spots, deg) or false; spot_of[deg] = s end
+      s = s or nil
+    end
+    if fin_A ~= curA then fin_A, fin_v = curA, V2.finish_ok(inp, curA) or false end
+    local fin = fin_v
     if s and not greens[s] then
       if fin then
         inp.pen_skip_n = inp.pen_skip_n + 1

@@ -196,6 +196,30 @@ local function game_inp(case)
   end
   soft("score_fn", function(deg, mx, my) return (deg % 37) + mx * 0.01 + my * 0.001 end)
   soft("banned", function() return false end)
+  do   -- the same answers on number keys: no pcall or string key on a repeat
+    local f = inp.score_fn
+    if f then
+      local memo = {}
+      inp.score_fn = function(deg, mx, my, cx, cy)
+        local a = memo[deg]
+        if not a then a = {}; memo[deg] = a end
+        local b = a[cx]
+        if not b then b = {}; a[cx] = b end
+        local v = b[cy]
+        if v == nil then v = f(deg, mx, my, cx, cy); b[cy] = v end
+        return v
+      end
+    end
+    local g = inp.banned
+    if g then
+      local memo = {}
+      inp.banned = function(deg)
+        local v = memo[deg]
+        if v == nil then v = g(deg) and true or false; memo[deg] = v end
+        return v
+      end
+    end
+  end
   soft("anger_of", function() return nil end)
   inp.keep_all = args.keep_all == "1" or nil
   for k, v in pairs(SET) do inp[k] = v end
