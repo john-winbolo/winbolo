@@ -707,6 +707,24 @@ static int lv_rulesClampInt(double v, int lo, int hi) {
   return (int)v;
 }
 
+/* A rule's value held inside the rule's own range (simRulesRuleRange). The
+ * game refuses a value outside it, but a recording is a file and can hold
+ * anything. A NaN is handed back as it is, for the caller to answer. */
+static double lv_rulesClampToRange(int rule, double v) {
+  SimRuleRange range;
+
+  if (!simRulesRuleRange(rule, &range)) {
+    return v;
+  }
+  if (v < range.lo) {
+    return range.lo;
+  }
+  if (range.hasHi && v > range.hi) {
+    return range.hi;
+  }
+  return v;
+}
+
 /* Fill g_lv->rules with every rule's value at the playhead. Run wherever the
  * playhead moves without passing each record in between: at the end of a
  * load, after a snapshot restore and at the end of a seek. Playback passing
@@ -2537,13 +2555,28 @@ int lv_screenBuilderReturn(int slot, long *remainMs, int *approx) {
     BYTE lx = 0, ly = 0, lpx = 0, lpy = 0, lframe = 0;
     BYTE tx = 0, ty = 0, tpx = 0, tpy = 0, tframe = 0;
     bool onBoat = FALSE;
+    long manX, manY;
     lv_playersGetLgmDetails((BYTE) slot, &lx, &ly, &lpx, &lpy, &lframe);
     lv_playersGetTankDetails((BYTE) slot, &tx, &ty, &tpx, &tpy, &tframe, &onBoat);
+    /* On the parachute frame the log holds where his picture is drawn, half
+       a square up and left of him. In the tick of the death the place is
+       still the one he walked to, which needs nothing added. */
+    if (lframe == LGM_HELICOPTER_FRAME) {
+      manX = (long) lvBuilderFlyingWorld(lx, lpx);
+      manY = (long) lvBuilderFlyingWorld(ly, lpy);
+    } else {
+      manX = (long) lvBuilderWorld(lx, lpx);
+      manY = (long) lvBuilderWorld(ly, lpy);
+    }
     remain = lvBuilderFlightMs(
-        (long) lvBuilderWorld(tx, tpx) - (long) lvBuilderWorld(lx, lpx),
-        (long) lvBuilderWorld(ty, tpy) - (long) lvBuilderWorld(ly, lpy),
-        lv_rulesClampInt(lv_screenRuleValueAt(SIM_RULE_lgm_helicopter_speed,
-                                              g_lv->timeRunning), 1, 4096),
+        (long) lvBuilderWorld(tx, tpx) - manX,
+        (long) lvBuilderWorld(ty, tpy) - manY,
+        /* Not made a whole number: the rule is a float. Held inside the
+           rule's range, so a speed the game would never have run on is not
+           divided by. */
+        lv_rulesClampToRange(SIM_RULE_lgm_helicopter_speed,
+                             lv_screenRuleValueAt(SIM_RULE_lgm_helicopter_speed,
+                                                  g_lv->timeRunning)),
         lv_rulesClampInt(lv_screenRuleValueAt(SIM_RULE_lgm_arrive_tolerance,
                                               g_lv->timeRunning), 0, 4096));
     if (remainMs != NULL) *remainMs = remain;
@@ -3028,10 +3061,11 @@ void lv_screenProcessLog(unsigned short numEvents) {
       }
       break;
     case log_GameTimeSet:
-      /* The round's game time, as a big-endian int32 of ticks. The viewer
-         counts gmeLength down a tick at a time the way the server does, so
-         adopting the recorded value keeps a replay's clock on the round's own
-         remaining time instead of the length the round opened with. */
+      /* The round's game time, as a big-endian int32 of 20 ms frames. The
+         viewer counts gmeLength down a frame at a time, one per log entry,
+         the way the server does, so adopting the recorded value keeps a
+         replay's clock on the round's own remaining time instead of the
+         length the round opened with. */
       logReadBytes(&opt1, 1);
       logReadBytes(&opt2, 1);
       logReadBytes(&opt3, 1);

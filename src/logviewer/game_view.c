@@ -632,9 +632,9 @@ void lv_drawGameViewSetup(int zoomFactor) {
                      /* tiny  */ s_fonts[0],
                      /* msg   */ s_fonts[1],
                      /* kd    */ s_fonts[2],
-                     /* label */ s_fonts[3],
-                     /* fallbacks */
-                     s_fonts[4], s_fonts[5], s_fonts[6], s_fonts[7],
+                     /* fallbacks; the label face (s_fonts[3] and [7]) is
+                        the region names', not the status panel's */
+                     s_fonts[4], s_fonts[5], s_fonts[6],
                      s_tankBarsTex,
                      s_baseBarsTex);
 

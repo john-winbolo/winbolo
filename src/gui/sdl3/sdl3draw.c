@@ -360,13 +360,6 @@ static void micIndicatorDraw(float x, float y, int px,
 }
 #endif
 
-/* The classic view's pill and base numbers, kept between frames. On this
-   window's renderer, so it is this file's rather than the overview's — that
-   one may be drawing on the pop-out's. Emptied in sdl3DrawCleanup ahead of
-   the renderer, and by the draw itself when a zoom change reopens the
-   faces. */
-static ItemLabelCache     gItemLabelCache;
-
 /* The HUD geometry the last frame blitted, kept so the ImGui side hit-tests
    the panels on exactly the rectangles that were drawn. Only meaningful while
    the flag is set: a frame that drew no HUD clears it. */
@@ -472,13 +465,11 @@ static DWORD g_dwFrameTotal = 0;
 static TTF_Font    *gFontMsg  = NULL;
 static TTF_Font    *gFontKD   = NULL;
 static TTF_Font    *gFontTiny  = NULL;  /* tiny font for pill/base status panel labels */
-static TTF_Font    *gFontLabel = NULL;  /* larger font for pill/base labels in main view */
 /* SarasaMonoK chained via TTF_AddFallbackFont so hangul renders when
  * the primary is J/SC/TC. Owned here; closed alongside the primaries. */
 static TTF_Font    *gFallbackFontMsg   = NULL;
 static TTF_Font    *gFallbackFontKD    = NULL;
 static TTF_Font    *gFallbackFontTiny  = NULL;
-static TTF_Font    *gFallbackFontLabel = NULL;
 
 /* Last scroll offsets used when rendering tank labels (set each frame).
    Tank-label cache (gLabelTex/gLabelStr) moved to sdl3draw_status.c. */
@@ -718,26 +709,8 @@ static void sdl3DrawFitSafeArea(float menuBarHeight, float aspect,
 /* SDL3_SCREEN_W / SDL3_SCREEN_H are defined in sdl3draw.h */
 
 
-/*********************************************************
-*NAME:          sdl3RenderText
-*PURPOSE:
-*  Renders a text string with the game font directly onto
-*  the current render target at (x, y) in screen pixels.
-*  No-op if font is NULL or text is NULL/empty.
-*********************************************************/
-static void sdl3RenderText(TTF_Font *font, const char *text, SDL_Color fg, float x, float y) {
-  if (!font || !gRenderer || !text || text[0] == '\0') return;
-
-  SDL_Surface *sSurf = TTF_RenderText_Blended(font, text, 0, fg);
-  if (!sSurf) return;
-  SDL_Texture *tTex = SDL_CreateTextureFromSurface(gRenderer, sSurf);
-  if (tTex) {
-    SDL_FRect d = { x, y, (float)sSurf->w, (float)sSurf->h };
-    SDL_RenderTexture(gRenderer, tTex, NULL, &d);
-    SDL_DestroyTexture(tTex);
-  }
-  SDL_DestroySurface(sSurf);
-}
+/* Text goes through sdl3DrawStatusRenderText (sdl3draw_status.c), which keeps
+   each string's texture rather than making one every frame. */
 
 /* sdl3UpdateTextCache moved to sdl3draw_status.c (private helper for
    sdl3RenderCachedText). */
@@ -1791,7 +1764,6 @@ static void openInGameFonts(void) {
   gFontMsg   = TTF_OpenFont(sarasaPath, 13 * gZoomFactor);
   gFontKD    = TTF_OpenFont(sarasaPath, 13 * gZoomFactor);
   gFontTiny  = TTF_OpenFont(sarasaPath,  8 * gZoomFactor);
-  gFontLabel = TTF_OpenFont(sarasaPath, 10 * gZoomFactor);
   if (!gFontMsg) {
     WB_LOG_ERROR(WB_LOG_CAT_ASSET, "openInGameFonts: failed to open primary %s — text will not render",
             sarasaPath);
@@ -1802,11 +1774,9 @@ static void openInGameFonts(void) {
     gFallbackFontMsg   = TTF_OpenFont(sarasaKPath, 13 * gZoomFactor);
     gFallbackFontKD    = TTF_OpenFont(sarasaKPath, 13 * gZoomFactor);
     gFallbackFontTiny  = TTF_OpenFont(sarasaKPath,  8 * gZoomFactor);
-    gFallbackFontLabel = TTF_OpenFont(sarasaKPath, 10 * gZoomFactor);
     if (gFontMsg   && gFallbackFontMsg)   TTF_AddFallbackFont(gFontMsg,   gFallbackFontMsg);
     if (gFontKD    && gFallbackFontKD)    TTF_AddFallbackFont(gFontKD,    gFallbackFontKD);
     if (gFontTiny  && gFallbackFontTiny)  TTF_AddFallbackFont(gFontTiny,  gFallbackFontTiny);
-    if (gFontLabel && gFallbackFontLabel) TTF_AddFallbackFont(gFontLabel, gFallbackFontLabel);
     if (!gFallbackFontMsg) {
       WB_LOG_WARN(WB_LOG_CAT_ASSET, "openInGameFonts: failed to open SlabK fallback %s — hangul will tofu",
               sarasaKPath);
@@ -1819,9 +1789,9 @@ static void openInGameFonts(void) {
   /* Push the new font handles into sdl3draw_status's private copies
      (covers both the initial sdl3DrawSetup path and the
      sdl3DrawAdaptRenderTarget reload path). */
-  sdl3DrawStatusSetFonts(gFontTiny, gFontMsg, gFontKD, gFontLabel,
+  sdl3DrawStatusSetFonts(gFontTiny, gFontMsg, gFontKD,
                          gFallbackFontTiny, gFallbackFontMsg,
-                         gFallbackFontKD, gFallbackFontLabel);
+                         gFallbackFontKD);
 }
 
 /* The touch layout's newswire: the face it is drawn in, opened at the size
@@ -2105,9 +2075,9 @@ bool sdl3DrawSetup(int zoomFactor) {
      sdl3LoadTiles above already pushed fonts and atlas individually;
      Init covers the gRenderer and bar textures and re-asserts the rest. */
   sdl3DrawStatusInit(gRenderer, gTilesTex, gSheetScale, gZoomFactor,
-                     gFontTiny, gFontMsg, gFontKD, gFontLabel,
+                     gFontTiny, gFontMsg, gFontKD,
                      gFallbackFontTiny, gFallbackFontMsg,
-                     gFallbackFontKD, gFallbackFontLabel,
+                     gFallbackFontKD,
                      gTankBarsTex, gBaseBarsTex);
 
   /* Desktop, wasm and the mobile tablets' desktop layout: create a render
@@ -2169,11 +2139,9 @@ void sdl3DrawCleanup(void) {
   closeTabletNewswireFont();
   if (gFontKD)   { TTF_CloseFont(gFontKD);   gFontKD   = NULL; }
   if (gFontTiny)  { TTF_CloseFont(gFontTiny);  gFontTiny  = NULL; }
-  if (gFontLabel) { TTF_CloseFont(gFontLabel); gFontLabel = NULL; }
   if (gFallbackFontMsg)   { TTF_CloseFont(gFallbackFontMsg);   gFallbackFontMsg   = NULL; }
   if (gFallbackFontKD)    { TTF_CloseFont(gFallbackFontKD);    gFallbackFontKD    = NULL; }
   if (gFallbackFontTiny)  { TTF_CloseFont(gFallbackFontTiny);  gFallbackFontTiny  = NULL; }
-  if (gFallbackFontLabel) { TTF_CloseFont(gFallbackFontLabel); gFallbackFontLabel = NULL; }
   TTF_Quit();
 
   /* Glyph cache textures must be destroyed before the renderer. */
@@ -2212,7 +2180,6 @@ void sdl3DrawCleanup(void) {
   overviewSnapshotDestroy(gOverviewSnapshot);
   gOverviewSnapshot    = NULL;
   gOverviewPrepPending = FALSE;
-  itemLabelCacheFlush(&gItemLabelCache);
   if (gRenderer) {
     SDL_DestroyRenderer(gRenderer);
     gRenderer = NULL;
@@ -2291,11 +2258,9 @@ void sdl3DrawReconfigureZoom(int explicitZoom) {
   closeTabletNewswireFont();
   if (gFontKD)    { TTF_CloseFont(gFontKD);    gFontKD    = NULL; }
   if (gFontTiny)  { TTF_CloseFont(gFontTiny);  gFontTiny  = NULL; }
-  if (gFontLabel) { TTF_CloseFont(gFontLabel); gFontLabel = NULL; }
   if (gFallbackFontMsg)   { TTF_CloseFont(gFallbackFontMsg);   gFallbackFontMsg   = NULL; }
   if (gFallbackFontKD)    { TTF_CloseFont(gFallbackFontKD);    gFallbackFontKD    = NULL; }
   if (gFallbackFontTiny)  { TTF_CloseFont(gFallbackFontTiny);  gFallbackFontTiny  = NULL; }
-  if (gFallbackFontLabel) { TTF_CloseFont(gFallbackFontLabel); gFallbackFontLabel = NULL; }
 
   /* Update zoom factor */
   gZoomFactor = needZoom;
@@ -2309,9 +2274,9 @@ void sdl3DrawReconfigureZoom(int explicitZoom) {
      after Shutdown nulled them out. (gTilesTex is reloaded lazily by
      sdl3LoadTiles, which calls SetAtlas.) */
   sdl3DrawStatusInit(gRenderer, gTilesTex, gSheetScale, gZoomFactor,
-                     gFontTiny, gFontMsg, gFontKD, gFontLabel,
+                     gFontTiny, gFontMsg, gFontKD,
                      gFallbackFontTiny, gFallbackFontMsg,
-                     gFallbackFontKD, gFallbackFontLabel,
+                     gFallbackFontKD,
                      gTankBarsTex, gBaseBarsTex);
 
   /* Tiles will be reloaded lazily by sdl3LoadTiles() at new gZoomFactor */
@@ -3099,7 +3064,7 @@ void sdl3DrawFlushOverviewInWindow(void) {
       SDL_SetRenderDrawBlendMode(gRenderer, SDL_BLENDMODE_NONE);
 
       SDL_Color white = {200, 200, 200, 255};
-      sdl3RenderText(gFontMsg, label, white, tx, ty);
+      sdl3DrawStatusRenderText(gFontMsg, label, white, tx, ty);
     }
   }
 
@@ -3341,12 +3306,17 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
         long secs = srtDelay / GAME_NUMGAMETICKS_SEC;
         snprintf(str, sizeof(str), "Game Starts in %ld", secs);
         SDL_Color white = {200, 200, 200, 255};
-        SDL_Surface *sMeasure = TTF_RenderText_Blended(gFontMsg, str, 0, white);
-        if (sMeasure) {
-          float tx = (float)originX + ((float)gameW - (float)sMeasure->w) * 0.5f;
-          float ty = (float)originY + ((float)gameH - (float)sMeasure->h) * 0.5f;
-          SDL_DestroySurface(sMeasure);
-          sdl3RenderText(gFontMsg, str, white, tx, ty);
+        int textW = 0;
+        int textH = 0;
+        SDL_Texture *tex = sdl3DrawStatusTextTexture(gFontMsg, str, white,
+                                                     &textW, &textH);
+        if (tex) {
+          SDL_FRect d = {
+            (float)originX + ((float)gameW - (float)textW) * 0.5f,
+            (float)originY + ((float)gameH - (float)textH) * 0.5f,
+            (float)textW, (float)textH
+          };
+          SDL_RenderTexture(gRenderer, tex, NULL, &d);
         }
       }
     } else if (!isItemView && clientSimGetMyTankDeathWait(cs) != 0 &&
@@ -3493,10 +3463,11 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
 
       /* The pill and base numbers, from the 17x17 screen buffer: a square
          showing a pill or base tile asks the sim which one it is. The
-         shared pass below draws them. */
+         shared pass below draws them, in the Log Viewer's small digits, so
+         no font is needed. */
       OverviewItemLabel itemLabels[MAX_PILLS + MAX_BASES];
       int itemLabelCount = 0;
-      if (gFontLabel) {
+      {
         BYTE lx = 0, ly = 0;
         bool lDone = FALSE;
         while (!lDone) {
@@ -3591,10 +3562,7 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
       ov.labelDisplayScale = 1.0f;
       ov.itemLabels        = itemLabels;
       ov.itemLabelCount    = itemLabelCount;
-      ov.pillFont          = gFontLabel;
-      ov.baseFont          = gFontTiny;
       ov.itemLabelMinScale = 1.0f;
-      ov.itemLabelCache    = &gItemLabelCache;
       ov.clipLeft          = (float)originX;
       ov.clipTop           = (float)originY;
       ov.clipRight         = (float)(originX + gameW);
@@ -4138,9 +4106,9 @@ void sdl3DrawReturningToLobby(ClientSim *cs) {
          there is nothing to centre on and the caption waits a frame. */
       if (gOverviewRect.w > 0.0f && gOverviewRect.h > 0.0f) {
         SDL_Color white = {200, 200, 200, 255};
-        sdl3RenderText(gFontMsg, caption, white,
-                       gOverviewRect.x + (gOverviewRect.w - (float)textW) * 0.5f,
-                       gOverviewRect.y + (gOverviewRect.h - (float)textH) * 0.5f);
+        sdl3DrawStatusRenderText(gFontMsg, caption, white,
+            gOverviewRect.x + (gOverviewRect.w - (float)textW) * 0.5f,
+            gOverviewRect.y + (gOverviewRect.h - (float)textH) * 0.5f);
       }
     }
     return;
@@ -4173,7 +4141,7 @@ void sdl3DrawReturningToLobby(ClientSim *cs) {
       float tx = (float)(originX + (playfieldW - textW) / 2);
       float ty = (float)(originY + (playfieldH - textH) / 2);
       SDL_Color white = {200, 200, 200, 255};
-      sdl3RenderText(gFontMsg, caption, white, tx, ty);
+      sdl3DrawStatusRenderText(gFontMsg, caption, white, tx, ty);
     }
   }
 
@@ -4423,13 +4391,17 @@ void sdl3DrawStartDelay(RECT *rcWindow, int32_t srtDelay) {
     long secs = srtDelay / GAME_NUMGAMETICKS_SEC;
     snprintf(str, sizeof(str), "Game Starts in %ld", secs);
     SDL_Color white = {200, 200, 200, 255};
-    /* Measure text width to centre it */
-    SDL_Surface *sMeasure = TTF_RenderText_Blended(gFontMsg, str, 0, white);
-    if (sMeasure) {
-      float tx = (float)originX + ((float)areaW - (float)sMeasure->w) * 0.5f;
-      float ty = (float)originY + ((float)areaH - (float)sMeasure->h) * 0.5f;
-      SDL_DestroySurface(sMeasure);
-      sdl3RenderText(gFontMsg, str, white, tx, ty);
+    int textW = 0;
+    int textH = 0;
+    SDL_Texture *tex = sdl3DrawStatusTextTexture(gFontMsg, str, white,
+                                                 &textW, &textH);
+    if (tex) {
+      SDL_FRect d = {
+        (float)originX + ((float)areaW - (float)textW) * 0.5f,
+        (float)originY + ((float)areaH - (float)textH) * 0.5f,
+        (float)textW, (float)textH
+      };
+      SDL_RenderTexture(gRenderer, tex, NULL, &d);
     }
   }
 }
@@ -4445,7 +4417,7 @@ void sdl3DrawNetFailed(void) {
   int originY = MAIN_OFFSET_Y * gZoomFactor;
   float tx = (float)(originX + 3 * TILE_SIZE_X * gZoomFactor);
   float ty = (float)(originY + 8 * TILE_SIZE_Y * gZoomFactor);
-  sdl3RenderText(gFontMsg, "Network Failed - Resyncing", white, tx, ty);
+  sdl3DrawStatusRenderText(gFontMsg, "Network Failed - Resyncing", white, tx, ty);
 }
 
 /* The one place the three view names are spelled. The classic corner label
@@ -4489,7 +4461,7 @@ void sdl3DrawItemInView(ClientSim *cs) {
   int fontH = 13 * gZoomFactor;
   float tx = (float)(originX + 2 * gZoomFactor);
   float ty = (float)(originY + MAIN_SCREEN_SIZE_Y * TILE_SIZE_Y * gZoomFactor - fontH - 2 * gZoomFactor);
-  sdl3RenderText(gFontMsg, label, white, tx, ty);
+  sdl3DrawStatusRenderText(gFontMsg, label, white, tx, ty);
 }
 
 /* sdl3DrawResetCachedText, sdl3DrawMessages, sdl3DrawGetCachedMessages,
