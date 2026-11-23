@@ -8816,7 +8816,10 @@ function Brain.think(info)
     -- it.  C.BLAST_DEAD_PILL_OPEN false (KEEL) keeps the old engine rule, where
     -- ANY deployed pill was solid regardless of health.  world.lua indexes
     -- pill_at only for a deployed (not-carried) pill, and W.pill_at gives the
-    -- live one there.
+    -- live one there.  A forest is NOT tested here: the engine decides by the
+    -- square where the shell stops, not the man's square, so the forest and
+    -- boat rule is in danger.capture_man_killable / capture_shot_end, which
+    -- trace the shell's line.
     local function lgm_on_solid(mx, my)
       local tt = U.ttype(mx, my)
       if tt == C.T_BUILDING or tt == C.T_HALFBUILD then return true end
@@ -8827,34 +8830,6 @@ function Brain.think(info)
       local bentry = world.base_at and world.base_at[my * 256 + mx]
       if bentry and bentry.base then return true end
       return false
-    end
-    -- Does the ray from (ox,oy) along unit (hx,hy), out to maxT wu, cross the
-    -- 256-wu tile box at (mx,my)?  Slab test.  Used for the solid-square kill gate:
-    -- on a solid square only an in-tile hit kills, so the man is a viable target
-    -- only if a shot along the current heading could actually enter his tile.
-    local function ray_crosses_tile(ox, oy, hx, hy, mx, my, maxT)
-      local x0, y0 = mx * 256, my * 256
-      local x1, y1 = x0 + 256, y0 + 256
-      local tmin, tmax = 0, maxT
-      if math.abs(hx) < 1e-9 then
-        if ox < x0 or ox > x1 then return false end
-      else
-        local ta, tb = (x0 - ox) / hx, (x1 - ox) / hx
-        if ta > tb then ta, tb = tb, ta end
-        if ta > tmin then tmin = ta end
-        if tb < tmax then tmax = tb end
-        if tmin > tmax then return false end
-      end
-      if math.abs(hy) < 1e-9 then
-        if oy < y0 or oy > y1 then return false end
-      else
-        local ta, tb = (y0 - oy) / hy, (y1 - oy) / hy
-        if ta > tb then ta, tb = tb, ta end
-        if ta > tmin then tmin = ta end
-        if tb < tmax then tmax = tb end
-        if tmin > tmax then return false end
-      end
-      return tmax >= tmin
     end
     -- Our OWN builder (LGM on foot) is NEVER in info.objects, but capture_pill sent
     -- him to this very pill, so he is the likeliest friendly-fire victim.  Returns
@@ -8965,24 +8940,19 @@ function Brain.think(info)
         end
         -- KILLABLE from this heading?  Open ground (a dead pill too): in the
         -- lgm_blast_shape rule's area round the ray (0 is within 128 wu; splash
-        -- reaches), and with the package on and a fire check wider than 128,
-        -- within KT.perp_wu of the ray, so this test can never refuse a shot
-        -- the fire check would take.  Solid square (live pill/base/building):
-        -- the ray must actually cross his tile -- splash won't kill there, only
-        -- an in-tile hit.  This decides the SHOT, not the tracking.
+        -- reaches).  Solid square (live pill/base/building): the ray must
+        -- actually cross his tile -- splash won't kill there, only an in-tile hit.
+        -- A forest or a boat on the line stops the shell there, and that stop
+        -- kills only a man on that square (danger.capture_man_killable).
+        -- Otherwise fall back to hovering the sight on the pill centre.
         local killable = false
         local cmx, cmy
         if cand then
           cmx, cmy = cand.predicted_mx or cand.mx, cand.predicted_my or cand.my
-          if lgm_on_solid(cmx, cmy) then
-            killable = ray_crosses_tile(info.tankx, info.tanky, hx, hy, cmx, cmy, MAX_ALONG)
-          else
-            -- The lgm_blast_shape rule's area; 0 is the old perp <= 128.  A
-            -- wider fire check (KT.perp_wu > 128) opens it to match.
-            local wide = KT.perp_wu or 128
-            killable = U.lgm_open_blast_catches_perp(cand_perp, hx, hy)
-                       or (wide > 128 and cand_perp <= wide)
-          end
+          killable = danger.capture_man_killable(
+            info.tankx, info.tanky, hx, hy, MAX_ALONG, cmx, cmy,
+            cand.predicted_wx or cand.wx, cand.predicted_wy or cand.wy,
+            cand_perp, cand_along, lgm_on_solid(cmx, cmy))
         end
 
         -- ── STEP 4: sight drive (yield to any earlier range key this think) ─
@@ -9238,10 +9208,15 @@ function Brain.think(info)
           if sl_eff < 2 then sl_eff = 2 elseif sl_eff > sl_hi5 then sl_eff = sl_hi5 end
           -- C.LGM_SHELL_MODEL_RULES: the engine burst (else 128 * sight).
           local tr_eff = kill_lgm.shell_travel(sl_eff)
-          local ex_wx = info.tankx + hx * tr_eff   -- predicted impact this tick
-          local ex_wy = info.tanky + hy * tr_eff
+          -- Predicted impact this tick: the end of the line, or the middle of
+          -- the first forest or boat square on it, where the shell stops.
+          -- sq_mx/sq_my: that stop is a hit on its square (the square rule).
+          local ex_wx, ex_wy, sq_mx, sq_my = danger.capture_shot_end(
+            info.tankx, info.tanky, hx, hy, tr_eff)
           local hit
-          if lgm_on_solid(cmx, cmy) then
+          if sq_mx then
+            hit = (sq_mx == cmx and sq_my == cmy)       -- the stop square only
+          elseif lgm_on_solid(cmx, cmy) then
             local imx = bit.rshift(math.floor(ex_wx + 0.5), 8)
             local imy = bit.rshift(math.floor(ex_wy + 0.5), 8)
             hit = (imx == cmx and imy == cmy)           -- exact-tile only
