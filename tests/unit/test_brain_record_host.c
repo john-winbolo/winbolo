@@ -731,6 +731,79 @@ int run_brainrec_print2_zst_round_trip(void) {
     return 0;
 }
 
+/* ================================================================
+ * The print2 merge reads a line of at most BRAINREC_PRINT2_LINE_MAX
+ * bytes. A longer host line (zstd or gzip, with or without a line end)
+ * stops that merge with no output file; a long line under the limit
+ * still merges.
+ * ================================================================ */
+int run_brainrec_print2_line_cap(void) {
+    char dir[1024], a[1100], b[1100], out[1100];
+    const size_t over = (size_t)BRAINREC_PRINT2_LINE_MAX + 16;
+    const char *head = "===TICK 2===\n";
+    size_t headLen = strlen(head);
+    char *big = (char *)malloc(over + 2);
+    SDL_PathInfo pi;
+    int pass;
+
+    UT_ASSERT(big != NULL);
+    UT_ASSERT(utScratchPath(dir, sizeof(dir), "p2cap"));
+    UT_ASSERT(SDL_CreateDirectory(dir));
+    snprintf(a, sizeof(a), "%s/print2_bot1.log", dir);
+    snprintf(out, sizeof(out), "%s/merged.log", dir);
+    UT_ASSERT(tbrWriteText(a, "===TICK 1===\ns1\n===TICK 3===\ns3\n", false));
+
+    /* pass 0: zstd, no line end; 1: gzip, no line end; 2: gzip with a
+     * line end. */
+    for (pass = 0; pass < 3; pass++) {
+        size_t n = over;
+        memcpy(big, head, headLen);
+        memset(big + headLen, 'x', n - headLen);
+        if (pass == 2) big[n++] = '\n';
+        big[n] = '\0';
+        snprintf(b, sizeof(b), "%s/host%d.log%s", dir, pass,
+                 pass == 0 ? ".zst" : ".gz");
+        UT_ASSERT(pass == 0 ? tbrWriteZst(b, big) : tbrWriteText(b, big, true));
+        UT_ASSERT_MSG(!brainRecMergePrint2(a, b, out, BRAINLOG_PLAIN),
+                      "pass %d: a line over the limit merged", pass);
+        UT_ASSERT_MSG(!SDL_GetPathInfo(out, &pi),
+                      "pass %d: the output file was kept", pass);
+        (void)SDL_RemovePath(b);
+    }
+
+    /* A 1 MB line (under the limit) merges in tick order. */
+    {
+        const size_t longLen = 1u << 20;
+        char text[64];
+        BrainRecIn *in;
+        size_t got;
+        char *back = (char *)malloc(longLen + 256);
+        UT_ASSERT(back != NULL);
+        memcpy(big, head, headLen);
+        memset(big + headLen, 'y', longLen);
+        big[headLen + longLen] = '\n';
+        big[headLen + longLen + 1] = '\0';
+        snprintf(b, sizeof(b), "%s/hostlong.log.zst", dir);
+        UT_ASSERT(tbrWriteZst(b, big));
+        UT_ASSERT(brainRecMergePrint2(a, b, out, BRAINLOG_PLAIN));
+        in = brainRecInOpen(out);
+        UT_ASSERT(in != NULL);
+        got = brainRecInRead(in, back, longLen + 256);
+        UT_ASSERT(!brainRecInError(in));
+        brainRecInClose(in);
+        UT_ASSERT_MSG(got == 16 + headLen + longLen + 1 + 16,
+                      "merged %u bytes", (unsigned)got);
+        UT_ASSERT(memcmp(back, "===TICK 1===\ns1\n", 16) == 0);
+        UT_ASSERT(memcmp(back + 16, big, headLen + longLen + 1) == 0);
+        memcpy(text, back + 16 + headLen + longLen + 1, 16);
+        text[16] = '\0';
+        UT_ASSERT(strcmp(text, "===TICK 3===\ns3\n") == 0);
+        free(back);
+    }
+    free(big);
+    return 0;
+}
+
 int run_brainrec_host_print2_gz(void) {
     char sess[1024], host[1024], a[1100], b[1100], other[1100], text[512];
     SDL_PathInfo pi;

@@ -6594,6 +6594,7 @@ set(_unit_test_names
     brainrec_host_make_absolute
     brainrec_host_print2_gz
     brainrec_print2_zst_round_trip
+    brainrec_print2_line_cap
     brainrec_host_rec_codec
     brainrec_host_legend_unclosed
     brainrec_host_upload_no_session

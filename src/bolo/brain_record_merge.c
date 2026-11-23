@@ -588,6 +588,8 @@ typedef struct {
     size_t cap;
     size_t len;
     bool   have;
+    bool   failed;   /* out of memory, or a line past the limit */
+    bool   tooLong;  /* a line past BRAINREC_PRINT2_LINE_MAX */
 } LineIn;
 
 #define LINEIN_BUF (1u << 16)
@@ -603,7 +605,10 @@ static bool lineNext(LineIn *in) {
             }
             if (in->buf == NULL) {
                 in->buf = (char *)malloc(LINEIN_BUF);
-                if (in->buf == NULL) return false;
+                if (in->buf == NULL) {
+                    in->failed = true;
+                    return false;
+                }
             }
             in->bufLen = brainRecInRead(in->f, in->buf, LINEIN_BUF);
             in->bufPos = 0;
@@ -614,11 +619,21 @@ static bool lineNext(LineIn *in) {
         size_t avail = in->bufLen - in->bufPos;
         const char *nl = (const char *)memchr(p, '\n', avail);
         size_t take = nl ? (size_t)(nl - p) + 1 : avail;
+        if (take > BRAINREC_PRINT2_LINE_MAX - in->len) {
+            in->failed = true;
+            in->tooLong = true;
+            in->len = 0;
+            return false;
+        }
         if (in->cap - in->len < take + 1) {
             size_t cap = in->cap ? in->cap : 8192;
             while (cap - in->len < take + 1) cap *= 2;
             char *d = (char *)realloc(in->line, cap);
-            if (d == NULL) return false;
+            if (d == NULL) {
+                in->failed = true;
+                in->len = 0;
+                return false;
+            }
             in->line = d;
             in->cap = cap;
         }
@@ -684,7 +699,7 @@ bool brainRecMergePrint2(const char *a, const char *b, const char *outPath,
     lineNext(&ib);
     /* Lines before the first block: a's, then b's. */
     ok = copyUntilTick(&ia, &out, false) && copyUntilTick(&ib, &out, false);
-    while (ok && (ia.have || ib.have)) {
+    while (ok && !ia.failed && !ib.failed && (ia.have || ib.have)) {
         long long ta = 0, tb = 0;
         bool ha = isTickLine(&ia, &ta), hb = isTickLine(&ib, &tb);
         if (ha && (!hb || ta <= tb)) ok = copyUntilTick(&ia, &out, true);
@@ -693,6 +708,12 @@ bool brainRecMergePrint2(const char *a, const char *b, const char *outPath,
     }
     if (ia.f && brainRecInError(ia.f)) ok = false;
     if (ib.f && brainRecInError(ib.f)) ok = false;
+    if (ia.failed || ib.failed) ok = false;
+    if (ia.tooLong || ib.tooLong) {
+        fprintf(stderr, "brain_record_merge: %s has a line longer than %u "
+                "bytes; the merge of that log stopped\n",
+                ia.tooLong ? a : b, (unsigned)BRAINREC_PRINT2_LINE_MAX);
+    }
 done:
     if (ia.f) brainRecInClose(ia.f);
     if (ib.f) brainRecInClose(ib.f);

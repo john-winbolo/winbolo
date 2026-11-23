@@ -203,11 +203,18 @@ bool brainRecMergeFiles(const char *btrPath, const char *const *hostFiles,
 char *brainRecLegendAddSlot(const char *legend, int slot,
                             const char *slotLegend);
 
+/* The longest print2 log line the merge reads, its line end included.
+ * A real line is a few hundred bytes (one print2 call of a bot); the
+ * limit only stops a bad host file, for example a small zstd file that
+ * expands to one line with no line end. */
+#define BRAINREC_PRINT2_LINE_MAX (16u << 20)
+
 /* Merge print2 logs: both files are runs of "===TICK n===" blocks (any
  * lines before the first block are kept at the top). The blocks of both
  * are written to outPath in tick order, a's first on equal ticks. Each
  * input may be plain, gzip or zstd (brainRecInOpen detects it); outFmt
- * is the form of outPath. */
+ * is the form of outPath. A line longer than BRAINREC_PRINT2_LINE_MAX
+ * stops the merge: false, a line on stderr, and no outPath. */
 bool brainRecMergePrint2(const char *a, const char *b, const char *outPath,
                          BrainLogFormat outFmt);
 
