@@ -297,8 +297,8 @@ int roundDouble(double number);
 /* Where each ring of a utilSpiralCursor begins. Both orders go clockwise and
    grow one ring at a time; they differ only in the first square of a ring. */
 typedef enum {
-  /* The square due north of the centre: Mac Bolo's gen_scatter order, used
-     to put down a carried pillbox. */
+  /* The square due north of the centre: the order Mac Bolo searches in,
+     used to put down a carried pillbox. */
   UTIL_SPIRAL_NORTH,
   /* The ring's north-west corner, then east along the top: the order the
      start scatter search uses. */
