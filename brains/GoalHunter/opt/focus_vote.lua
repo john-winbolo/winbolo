@@ -901,6 +901,31 @@ local function before(a, b)
 end
 M.before = before
 
+-- Upper bound on the target bases the deny plan's greedy can take. items:
+-- { nb (target bases), need (tiles, or a lower bound on them) } per row that
+-- may still be taken; cap: the tiles the greedy may use, min(K, MAX_TILES).
+-- A row of need 0 counts in full; the others fill cap by nb per tile, the
+-- last one in part (a fractional knapsack, never below the best whole
+-- choice). Answers a whole number (planned is one).
+function M.plan_ub(items, cap)
+  local ub, rest = 0, {}
+  for _, it in ipairs(items) do
+    if it.need <= 0 then ub = ub + it.nb
+    elseif it.need <= cap then rest[#rest + 1] = it end
+  end
+  table.sort(rest, function(a, b) return a.nb * b.need > b.nb * a.need end)
+  local left = cap
+  for _, it in ipairs(rest) do
+    if left <= 0 then break end
+    if it.need <= left then
+      ub, left = ub + it.nb, left - it.need
+    else
+      ub, left = ub + it.nb * left / it.need, 0
+    end
+  end
+  return math.floor(ub + 1e-6)
+end
+
 -- ── The deny plan ───────────────────────────────────────────────────────
 -- Answers a plan table:
 --   pass, why ("ok", "no_targets", "no_spare", "frac", "nothing_to_place"),
@@ -908,6 +933,22 @@ M.before = before
 --   frac, K (spare pills), need (tiles to place), tiles, chosen, rows (every
 --   cluster with its numbers and why it was taken or skipped), label.
 -- Peek reads only: never writes pill roles.
+--
+-- Early exit (2026-11-23, same answer): most plans fail on "frac", and the
+-- cover greedy and the defense routes cost the most. The plan stops as soon
+-- as an upper bound on planned shows the fraction cannot reach
+-- FOCUS_SPIKE_DENY_FRAC, or at once on "no_targets" / "no_spare". pass and
+-- why are the same as a full plan's; an early answer has planned 0, no
+-- tiles and no chosen rows, rows = the rows made so far (the clusters, then
+-- their cover and defense as far as the plan got), early = the step it
+-- stopped at and ub = the bound (nil at "start": no bound is made). The bound (M.plan_ub): the greedy below
+-- takes rows whose needs sum to at most min(K, FOCUS_SPIKE_MAX_TILES), and
+-- a row of need 0 costs nothing. Steps: "start" (no target base, or K <= 0),
+-- "bases" (before the cover: a cluster with a base our pills do not cover
+-- needs 1 tile or more), "cover" (the real needs, uncoverable clusters
+-- out), "defense" (each defended cluster out, checked after each defense).
+-- The defense routes of an early plan are not run, so the route cache is
+-- not refreshed by it.
 function M.plan(state, world, info, now)
   if cluster_rule() then return M.plan_cluster(state, world, info, now) end
   local list, total, nopos = M.bases(world)
@@ -931,14 +972,26 @@ function M.plan(state, world, info, now)
     F.route_cache = {}
     M.log_clusters(F, info, now)
   end
+  local rows = {}
+  local function early(why, step, ub)
+    return { ncov = ncov, pass = false, why = why, total = total, nopos = nopos,
+             planned = 0, frac = 0, K = K, team = team, ftgt = ftgt,
+             need = 0, tiles = {}, chosen = {}, rows = rows,
+             label = "shallow", t = now, early = step, ub = ub }
+  end
+  if total == 0 then return early("no_targets", "start", nil) end
+  if K <= 0 then return early("no_spare", "start", nil) end
+  local cap = math.min(K, C.FOCUS_SPIKE_MAX_TILES)
+  local function cannot(ub) return ub / total < C.FOCUS_SPIKE_DENY_FRAC end
   -- Our nearest base (for the tie-break).
   local obases = {}
   for _, b in ipairs(list) do if not b.target then obases[#obases + 1] = b end end
-  local rows = {}
   -- The clusters keep the base list of the plan that built them, so read
   -- each base's owner from this plan's list (owners change, places do not).
   local cur = {}
   for _, b in ipairs(list) do cur[b.id] = b end
+  local R = C.PILL_FIRE_RANGE
+  local lb, anchor = {}, {}
   for _, cl0 in ipairs(F.clusters) do
     local targets = {}
     for _, b0 in ipairs(cl0.bases) do
@@ -959,22 +1012,54 @@ function M.plan(state, world, info, now)
           if dd < best then best, ax, ay = dd, b.mx, b.my end
         end
       end
-      local tiles = M.cover(world, targets, hp, cvp, ax, ay)
       local row = { id = cl.id, key = key, nb = #targets, nall = #cl.bases,
                     home = home, cl = cl }
-      if not tiles then
-        row.skip = "uncoverable"
-        row.need = -1
-        row.def = { total = 0, label = "shallow" }
-        row.rank = 0
-      else
-        row.tiles = tiles
-        row.need = #tiles
-        row.def = M.defense(state, world, info, cl, tiles, hp, op, now)
-        row.rank = #targets / (row.need + C.FOCUS_SPIKE_DEFENSE_WEIGHT * row.def.total)
-        if row.def.total >= C.FOCUS_SPIKE_DEFENSE_MAX then row.skip = "defended" end
-      end
       rows[#rows + 1] = row
+      -- need lower bound before the cover: 0 only when our pills cover all
+      local n0 = 0
+      for _, b in ipairs(targets) do
+        if not covered_by(cvp, b.mx, b.my, R) then n0 = 1; break end
+      end
+      lb[#lb + 1] = { nb = #targets, need = n0 }
+      anchor[#rows] = { ax, ay }
+    end
+  end
+  local ub = M.plan_ub(lb, cap)
+  if cannot(ub) then return early("frac", "bases", ub) end
+  -- The cover of every cluster (the same calls, in the same order).
+  for i, row in ipairs(rows) do
+    local tiles = M.cover(world, row.cl.targets, hp, cvp, anchor[i][1], anchor[i][2])
+    if not tiles then
+      row.skip = "uncoverable"
+      row.need = -1
+      row.def = { total = 0, label = "shallow" }
+      row.rank = 0
+    else
+      row.tiles = tiles
+      row.need = #tiles
+    end
+  end
+  local function bound()
+    local it = {}
+    for _, row in ipairs(rows) do
+      if row.tiles and row.skip ~= "defended" then
+        it[#it + 1] = { nb = row.nb, need = row.need }
+      end
+    end
+    return M.plan_ub(it, cap)
+  end
+  ub = bound()
+  if cannot(ub) then return early("frac", "cover", ub) end
+  -- The defense of each coverable cluster, in cluster order.
+  for _, row in ipairs(rows) do
+    if row.tiles then
+      row.def = M.defense(state, world, info, row.cl, row.tiles, hp, op, now)
+      row.rank = row.nb / (row.need + C.FOCUS_SPIKE_DEFENSE_WEIGHT * row.def.total)
+      if row.def.total >= C.FOCUS_SPIKE_DEFENSE_MAX then
+        row.skip = "defended"
+        ub = bound()
+        if cannot(ub) then return early("frac", "defense", ub) end
+      end
     end
   end
   -- Insertion sort (the order rule is not a strict weak order for
@@ -1148,6 +1233,15 @@ M.plan_line_cluster = plan_line_cluster
 
 local function plan_line(now, P)
   if cluster_rule() then return plan_line_cluster(now, P) end
+  if P.early then
+    -- early exit (M.plan): the bound, not the planned count
+    return string.format(
+      "FOCUS_SPIKE_PLAN t=%d result=%s why=%s planned <= %s / %d target bases = %s (need >= %.2f; %d have no known position) spare K = team pills %d - normal front target %d = %d early=true step=%s",
+      now, P.pass and "pass" or "fail", P.why, P.ub and tostring(P.ub) or "-", P.total,
+      (P.ub and P.total > 0) and string.format("%.2f", P.ub / P.total) or "-",
+      C.FOCUS_SPIKE_DENY_FRAC, P.nopos,
+      P.team, P.ftgt, P.K, tostring(P.early))
+  end
   local parts = {}
   for _, r in ipairs(P.rows) do
     local d = r.def
@@ -3299,8 +3393,8 @@ function M.update(state, world, info, now, care_tag)
   if F.active or F.open or F.voting or now < F.cool_until then return end
   local P = M.plan(state, world, info, now)
   F.plan = P
-  local key = string.format("%s:%s:%d:%d:%d:%s", P.why, P.label, P.planned, P.total, P.need,
-                            enc_tiles(P.tiles))
+  local key = string.format("%s:%s:%d:%d:%d:%s:%s", P.why, P.label, P.planned, P.total, P.need,
+                            enc_tiles(P.tiles), tostring(P.ub))
   if F.plan_key ~= key then
     F.plan_key = key
   end
