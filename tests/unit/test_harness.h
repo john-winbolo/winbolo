@@ -4868,6 +4868,7 @@ int run_lv_pill_numbers_sums(void);
 int run_lv_pill_numbers_list(void);
 int run_lv_pill_numbers_layout(void);
 int run_lv_pill_numbers_overview(void);
+int run_lv_pill_numbers_batched(void);
 /* Where the items of the log viewer's Controls panel go
  * (test_lv_controls_layout.c). */
 int run_lv_controls_top_row(void);
