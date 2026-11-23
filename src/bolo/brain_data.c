@@ -78,7 +78,6 @@
 #include "client_sim_internal.h"
 #include "server_sim.h"
 #include "bot_manager.h"
-#include "sim_rules_names.h" /* simRulesTerrainSquareHitForVersion */
 #include "../steam/steam_wrapper.h"
 
 /*********************************************************
@@ -373,13 +372,6 @@ void brainDataMakeInfo(ClientSim *csPtr, BrainInfo *value, bool first, aiType ai
     value->mods.taken  = (u_short) tankModPct(mods.taken);
     value->reload_ticks = tankReloadTicks(gs, MY_TANK(csPtr));
   }
-
-  /* The builder blast's square-hit rule comes with the game's version, not
-     with a rule. A brain runs only in a live game (or a local one), and the
-     server refuses a client of another version, so this build's version is
-     the game's. */
-  value->terrain_square_hit = (BYTE) simRulesTerrainSquareHitForVersion(
-      BOLO_VERSION_MAJOR, BOLO_VERSION_MINOR, BOLO_VERSION_REVISION);
 
 
   /* Count carried pills from pillbox state (server syncs inTank via snapshots/events) */
