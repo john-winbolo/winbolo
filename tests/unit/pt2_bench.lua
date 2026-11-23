@@ -286,9 +286,35 @@ local function run_case(case)
     local d = digest(res, inp, pills) .. "|reads=" .. W.n .. "|changes=" .. table.concat(W.changes, ",")
       .. "|seen=" .. table.concat(ks, ",") .. "|om=" .. tostring(inp.env.omx) .. "," .. tostring(inp.env.omy)
     local b = res.best
-    dumpf:write(fmt("%d n_eval=%d n_reject=%d best=%s len=%d h=%s\n", n_case, res.n_eval, res.n_reject,
+    -- dec: the decision only (best point, radius, score, safe, kills,
+    -- depth, aim, covered, the plan's squares and the chain), to compare
+    -- two builds whose work counts differ
+    local dec = "-"
+    if b then
+      local pl, ch = {}, {}
+      for i, e in ipairs(b.plan or {}) do pl[i] = tostring(e.sq or (e.my and e.my * 256 + e.mx)) end
+      for i, X in ipairs(b.chain or {}) do
+        ch[i] = type(X) == "table" and fmt("%s,%s", tostring(X.mx), tostring(X.my)) or tostring(X)
+      end
+      dec = fmt("%s/%s/%s/%s/%s/%s/%s/%s/p=%s/c=%s", tostring(b.deg), tostring(b.radius), tostring(b.score),
+        tostring(b.safe), tostring(b.kills), tostring(b.depth), tostring(b.aim_idx), tostring(b.covered),
+        table.concat(pl, ";"), table.concat(ch, ";"))
+    end
+    -- keep_all=1: every point's decision too (allh)
+    if res.all then
+      local pts = {}
+      for i, r in ipairs(res.all) do
+        local pl = {}
+        for k, e in ipairs(r.plan or {}) do pl[k] = tostring(e.sq or (e.my and e.my * 256 + e.mx)) end
+        pts[i] = fmt("%s/%s/%s/%s/%s/%s/%s/%s/%s", tostring(r.deg), tostring(r.radius), tostring(r.score),
+          tostring(r.safe), tostring(r.kills), tostring(r.depth), tostring(r.aim_idx), tostring(r.rejected),
+          table.concat(pl, ";"))
+      end
+      dec = dec .. "/allh=" .. fnv(table.concat(pts, "|")) .. "/alln=" .. #pts
+    end
+    dumpf:write(fmt("%d n_eval=%d n_reject=%d best=%s len=%d h=%s dec=%s\n", n_case, res.n_eval, res.n_reject,
       b and fmt("%s/%s/%s/%s/%s", tostring(b.deg), tostring(b.score), tostring(b.safe), tostring(b.kills),
-        tostring(b.plan and #b.plan)) or "-", #d, fnv(d)))
+        tostring(b.plan and #b.plan)) or "-", #d, fnv(d), dec))
   end
   if REPS > 0 then
     local t = {}

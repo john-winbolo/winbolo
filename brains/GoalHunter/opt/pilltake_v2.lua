@@ -111,7 +111,14 @@ function M.better(a, b, cap, band, pec, swb)
       end
     end
   end
-  return OLD.better(a, b, cap, band)
+  if OLD.better(a, b, cap, band) then return true end
+  if OLD.better(b, a, cap, band) then return false end
+  -- S0: a last tie-break after every key above, so the winner never
+  -- depends on the order table.sort leaves equal points in: the smaller
+  -- angle, then the larger radius
+  local da, db = a.deg or 0, b.deg or 0
+  if da ~= db then return da < db end
+  return (a.radius or 0) > (b.radius or 0)
 end
 
 local sqrt, floor, sin, cos, rad, abs, min, max =
