@@ -75,9 +75,13 @@ BIN_DS="${2:-$BIN_DS_DEFAULT}"
 # execs the harness away — the scenario then "passes" with whatever status
 # the binary exits with, no diff ever runs, and the DS a single-client UDP
 # scenario started is orphaned. $BASH_SUBSHELL has been in bash since 3.0.
+#
+# -notracker goes on every DS the same way. A server notifies the public
+# tracker unless told not to, a few seconds after it starts, and a test
+# server has no business on the public game list.
 ds_bin() {
-  if [ "${BASH_SUBSHELL:-0}" -gt 0 ]; then exec "$BIN_DS" "$@" -nocrashreporting; fi
-  "$BIN_DS" "$@" -nocrashreporting
+  if [ "${BASH_SUBSHELL:-0}" -gt 0 ]; then exec "$BIN_DS" "$@" -nocrashreporting -notracker; fi
+  "$BIN_DS" "$@" -nocrashreporting -notracker
 }
 headless_bin() {
   if [ "${BASH_SUBSHELL:-0}" -gt 0 ]; then exec "$BIN" "$@" -nocrashreporting; fi

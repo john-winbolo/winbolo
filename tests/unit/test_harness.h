@@ -612,6 +612,7 @@ int run_brain_sandbox_hostile_loaders_removed(void);
 int run_brain_sandbox_hostile_astar_log_removed(void);
 int run_brain_sandbox_hostile_file_jail(void);
 int run_brain_sandbox_hostile_off_map_terrain(void);
+int run_brain_sandbox_jit_limits(void);
 int run_brain_msgh_budget_kill_no_traceback(void);
 int run_brain_msgh_real_error_keeps_traceback(void);
 int run_brain_inbox_push_peek_fifo(void);
@@ -2449,6 +2450,18 @@ int run_lgm_kill_seen_out_already_dead(void);
 int run_lgm_kill_seen_out_tank_hit_blast(void);
 int run_lgm_kill_seen_out_dead_tank(void);
 
+/* A blast on a pillbox's square against a builder (test_lgm_blast_dead_pill.c):
+ * a dead pill's square is open ground, so the blast kills within half a
+ * square across its edge and not in its far corner; a live pill's square is
+ * still solid. The shot that kills a pill is a hit on its square. */
+int run_lgm_blast_dead_pill_edge(void);
+int run_lgm_blast_dead_pill_far_corner(void);
+int run_lgm_blast_live_pill_unchanged(void);
+int run_lgm_blast_pill_kill_shot(void);
+int run_lgm_blast_shell_runs_out_dead_pill(void);
+int run_lgm_blast_shell_hits_tank_dead_pill(void);
+int run_lgm_blast_tank_explosion_kills_pill(void);
+
 /* A -braindebug server records each round into its own session dir
  * (test_braindbg_round_dir.c): the dir it named is cleared at game over, so
  * round 2 does not record over round 1. */
@@ -3136,6 +3149,16 @@ int run_man_dead_pill_walk_ticks(void);
 int run_man_dead_pill_walk_across_water(void);
 int run_man_dead_pill_lifted_waits_for_tank(void);
 int run_man_dead_pill_brain_walk(void);
+/* lgm_blast_shape: the half-square circle, the Mac Bolo box and the Mac
+ * Bolo equivalent area circle at 127/128/129 and 143/144/145 across and at
+ * 100 and 120 on the diagonal; an explosion on a building still kills only
+ * a builder on its square (test_lgm_blast_shape.c). */
+int run_lgm_blast_shape_half_square(void);
+int run_lgm_blast_shape_mac_box(void);
+int run_lgm_blast_shape_mac_area(void);
+int run_lgm_blast_shape_solid_square(void);
+int run_lgm_blast_shape_classic_matches_old(void);
+int run_lgm_blast_shape_pill_range(void);
 int run_teleport_erases_tank_rewind_record(void);
 int run_teleport_shell_hits_new_place(void);
 int run_teleport_rewind_refills(void);
@@ -3458,6 +3481,9 @@ int run_tank_drop_pills_blocked(void);
 int run_tank_drop_pills_map_edge(void);
 int run_tank_drop_pills_hostile_map(void);
 int run_tank_drop_pills_no_room(void);
+int run_tank_drop_pills_quit_no_room(void);
+int run_tank_drop_pills_quit_map_event(void);
+int run_tank_drop_pills_no_room_other_tank(void);
 int run_lgm_drop_pill_spiral(void);
 int run_lgm_drop_pill_no_room(void);
 int run_util_spiral_north(void);
@@ -4076,6 +4102,8 @@ int run_scenario_validate_trigger_field_team(void);
 int run_scenario_validate_trigger_announce_clear(void);
 int run_scenario_validate_trigger_arg_literal(void);
 int run_scenario_validate_rule_pair_key(void);
+int run_scenario_validate_rule_pair_mended(void);
+int run_scenario_validate_rule_pair_alone(void);
 int run_scenario_validate_needs_bots_missing(void);
 int run_scenario_validate_needs_bots_declared(void);
 
