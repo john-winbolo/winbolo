@@ -27,7 +27,7 @@
 --      a tick, so it reaches the engine burst after L steps.
 --   7. shadow.shell_points (the v2 ray points, BrainTest ray layer): the
 --      shell starts, steps and lives by the env's live rules
---      (pilltake_v2.live_shell), classic when a rule is missing.
+--      (pilltake_v2_old.live_shell), classic when a rule is missing.
 --
 -- Run from this directory with the LuaJIT built beside the game:
 --   ../../build/_deps/luajit_src-src/src/luajit.exe test_shell_model_all.lua
@@ -234,7 +234,7 @@ for _, rs in ipairs(TRACK_RULES) do
 end
 
 -- ── 7. v2 ray points (shadow.shell_points, the BrainTest ray layer) ──────
--- The env is the one pilltake_v2.live_shell fills from info.rules. Nose
+-- The env is the one pilltake_v2_old.live_shell fills from info.rules. Nose
 -- north (angle 0 brad points up the map, -y): the first point is
 -- shell_start_add steps of shell_speed out plus one step, and the last of
 -- the 1 + life * len - add points is speed * (add + n) wu out. A missing
@@ -242,7 +242,7 @@ end
 print("7. v2 ray points (shadow.shell_points)")
 do
   local SH = require("shadow")
-  local V2 = require("pilltake_v2")
+  local V2 = require("pilltake_v2_old")
   local PRULES = {}
   for _, rs in ipairs(RULES) do PRULES[#PRULES + 1] = rs end
   PRULES[#PRULES + 1] = { name = "out of range (speed 0, add -1): classic",

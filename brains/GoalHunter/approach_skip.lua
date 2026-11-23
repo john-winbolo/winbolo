@@ -22,7 +22,7 @@
 -- shot_ok: the shell sim reaches the pill and nothing is in the way, our
 -- blocker pill included). With C.APPROACH_SKIP_RUNUP_SHIELD_CHECK (Nov 22,
 -- Andrew) the take's own cover test must pass here too (M.shield_check:
--- pilltake_v2.judge at the tank's place with the take's plan). Then the
+-- pilltake_v2_old.judge at the tank's place with the take's plan). Then the
 -- standoff and the run-up point both move to where the tank is, so the
 -- take fires from here. When a test fails, nothing changes (the old way).
 -- While the tank still moves on the lane, the run-up point is held on the
@@ -71,7 +71,7 @@ end
 -- at (tx, ty), its place past the standoff? Andrew: "can the tank hit the
 -- pill in a corner or its center aim WHILE still not hitting any of the
 -- blockers AND the pill hitting those blockers as it shoots at the tank".
--- This is the take's own test, pilltake_v2.judge, run at the tank's place:
+-- This is the take's own test, pilltake_v2_old.judge, run at the tank's place:
 --   * inp: pt2_attack.build_inp (knob_inp + world_inp, the same inp the
 --     take's plan was made with), so only what this bot sees;
 --   * extra: the take's planned blockers (pt2_attack.v1_view of the take's
@@ -93,7 +93,7 @@ function M.shield_check(state, goal, info, world, now, tx, ty)
   local sscan = goal._shield_scan
   if not (sscan and sscan.best) then return "-", nil, clock_us() - t0, "no_plan" end
   local PA = require("pt2_attack")
-  local V2 = require("pilltake_v2")
+  local V2 = require("pilltake_v2_old")
   local pill = (goal.target_id and world.pills and world.pills[goal.target_id])
                or { mx = goal.mx, my = goal.my }
   local npb = sscan.num_pill_blockers or 0

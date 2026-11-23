@@ -101,7 +101,7 @@ end
 _G.gh_shield = nil
 package.loaded["attack_shield"] = nil
 local S   = require("attack_shield")
-local V2  = require("pilltake_v2")
+local V2  = require("pilltake_v2_old")
 local PA  = require("pt2_attack")
 
 local PMX, PMY = 128, 120

@@ -182,9 +182,9 @@ end
 
 -- The shadow run in one go. Returns the entry (always, a no-chain answer too).
 local function run(state, world, info, id, pill, now)
-  local V2 = require("pilltake_v2")
+  local V2 = require("pilltake_v2_old")
   -- debug profile (C.PT2_PROF_LOG, PT2_DBL_PROF line): the parts of one run, in us
-  local G = BRAIN_DEBUG_MODE and C.PT2_PROF_LOG and rawget(_G, "gh_pt2")
+  local G = BRAIN_DEBUG_MODE and C.PT2_PROF_LOG and rawget(_G, "gh_pt2_old")
   local prof = G and G.prof_take and {}
   if prof then G.prof(true); G.prof_take() end
   local t0 = prof and clock_us()
@@ -207,7 +207,7 @@ end
 -- Part 1 builds the inputs (a snapshot: the pill list, our tank, armour,
 -- anger and banned angles at the start tick) and runs v2 on the target;
 -- each later part runs v2 with one more pill of the group as A
--- (pilltake_v2.group_step). One part = one whole v2 evaluate. The parts are
+-- (pilltake_v2_old.group_step). One part = one whole v2 evaluate. The parts are
 -- spread evenly over dbl_spread ticks (PT2_DBL_SPREAD_TICKS): part k of n
 -- (k from 0) is due on tick t0 + floor(k * spread / n). A due part also
 -- waits while this think so far plus its estimated cost would reach the
@@ -298,7 +298,7 @@ M._part_due = part_due
 
 -- Run one part of the job. Stores the entry when the job is done.
 local function job_part(s, state, job, now)
-  local V2 = require("pilltake_v2")
+  local V2 = require("pilltake_v2_old")
   local t0 = clock_us()
   local ok, done = pcall(V2.group_step, job.g)
   local us = clock_us() - t0
@@ -356,7 +356,7 @@ end
 -- PT2_DBL_SPLIT: open a job on pill id and run its first part. Returns the
 -- entry when the job is done at once, else nil.
 local function start_job(s, state, world, info, id, pill, now)
-  local V2 = require("pilltake_v2")
+  local V2 = require("pilltake_v2_old")
   local t0 = clock_us()
   local inp = make_inp(state, world, info, pill, now)
   local e = new_entry(info, id, pill, now)

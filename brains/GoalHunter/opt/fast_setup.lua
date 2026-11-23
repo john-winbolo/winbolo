@@ -166,7 +166,7 @@ function M.setup_t(fx, fy, ux, uy, pills, R)
   return t
 end
 
--- The 8 leeway neighbours (pilltake_v2.lua NB): unit directions.
+-- The 8 leeway neighbours (pilltake_v2_old.lua NB): unit directions.
 local NB = {}
 for k = 0, 7 do
   local a = k * math.pi / 4
@@ -298,7 +298,7 @@ local function plan_from_world(stage, goal, info, world, now, obs_fn)
   local axw = goal.aim_wx or floor((goal.aim_mx or (goal.mx + 0.5)) * 256 + 0.5)
   local ayw = goal.aim_wy or floor((goal.aim_my or (goal.my + 0.5)) * 256 + 0.5)
   local env = M.world_env(info, goal, world, obs_fn, C.GUNSIGHT_MAX)
-  local V2 = require("pilltake_v2")
+  local V2 = require("pilltake_v2_old")
   local SH = require("shadow")
   local inp = {
     fx = fx, fy = fy,

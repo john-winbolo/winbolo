@@ -4565,7 +4565,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     # GoalHunter clear-aim test with the minimum clear lane, C next to Lua.
     tests/unit/test_gh_attack_lane_parity.c
     # GoalHunter pill take v2 evaluator, C copy next to the Lua copy.
-    tests/unit/test_gh_pt2_parity.c
+    tests/unit/test_gh_pt2_old_parity.c
     # BrainTest Load Session next/prev-segment lookup. The finder is plain C
     # and ImGui-free precisely so it can be linked here; the rest of the
     # browser (braintest_loadbrowser.cpp) is not part of this target.
@@ -6022,7 +6022,7 @@ set(_unit_test_names
     shield_outgoing_pill_blocks
     shield_pill_cover_walls
     gh_attack_lane_parity
-    gh_pt2_parity
+    gh_pt2_old_parity
     gh_pt2_bench
     pf_tail_reaches_radius_and_stops
     pf_tail_blocked_by_wall_and_sea

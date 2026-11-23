@@ -1,6 +1,6 @@
 -- =========================================================================
 -- test_pt2_tiers.lua -- standalone unit tests (2026-11-16) for the pill
--- take v2 rank (pilltake_v2.lua):
+-- take v2 rank (pilltake_v2_old.lua):
 --   1. the rank order: safe, then chain length, then an allied pill in the
 --      cover above walls only, then leeway (up to PT2_LEEWAY_MIN), then the
 --      travel score;
@@ -25,7 +25,7 @@ local U   = require("util")
 local cpf = require("cpathfinder")
 local PC  = require("pill_cover")
 _G.print2 = _G.print2 or function() end
-local V2  = require("pilltake_v2")
+local V2  = require("pilltake_v2_old")
 
 local pass, fail = 0, 0
 local function check(name, cond, got)

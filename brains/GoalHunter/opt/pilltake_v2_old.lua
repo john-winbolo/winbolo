@@ -1,5 +1,5 @@
 -- =========================================================================
--- pilltake_v2.lua -- the pill take v2 evaluator (2026-11-16)
+-- pilltake_v2_old.lua -- the pill take v2 evaluator (2026-11-16)
 --
 -- For a target pill A, v2 tries tank points P on a ring around A. At each P:
 --   T(P)   = every live pill that is not ours and can target P
@@ -633,19 +633,19 @@ end
 --   c_eval                (optional, PT2_C_EVAL) run the C copy when the exe has it
 --   capture_file          (optional, PT2_CAPTURE_FILE) log the case for the parity test
 --
--- M.evaluate picks the copy: the C one (gh_pt2.evaluate, gh_pt2.c) when
+-- M.evaluate picks the copy: the C one (gh_pt2_old.evaluate, gh_pt2_old.c) when
 -- inp.c_eval is on and the exe registered it, else M.evaluate_lua. Both give
--- the same result (test_gh_pt2_parity). An old exe has no gh_pt2: Lua runs.
+-- the same result (test_gh_pt2_old_parity). An old exe has no gh_pt2_old: Lua runs.
 function M.evaluate(inp)
   local cf = inp.capture_file
   if cf and cf ~= "" then return require("pt2_capture").evaluate(M, inp, cf) end
-  local g = inp.c_eval and rawget(_G, "gh_pt2")
+  local g = inp.c_eval and rawget(_G, "gh_pt2_old")
   if g then return g.evaluate(inp, M) end
   if inp.c_eval and not M._warned_no_c then
-    -- Log only, once per brain: an exe built before gh_pt2.c (a stale Bot
+    -- Log only, once per brain: an exe built before gh_pt2_old.c (a stale Bot
     -- Host) runs the Lua copy, about 7x slower, and budget-kills ticks.
     M._warned_no_c = true
-    print("[pilltake_v2] PT2_C_EVAL is on but this exe has no gh_pt2:"
+    print("[pilltake_v2_old] PT2_C_EVAL is on but this exe has no gh_pt2_old:"
       .. " the Lua evaluator runs. Rebuild the exe.")
   end
   return M.evaluate_lua(inp)
@@ -914,7 +914,7 @@ function M.world_env(world, C, U, PC)
   env.base_stops = function(mx, my)
     return U.base_tile_stops_tank_shell(world, mx, my, env.omx or mx, env.omy or my)
   end
-  -- For the C copy (gh_pt2.c): base_stops is false on a square with no
+  -- For the C copy (gh_pt2_old.c): base_stops is false on a square with no
   -- base_at entry, so the C skips the call there. The C reads each
   -- square's terrain once per evaluate; count_reads(n) adds the reads it
   -- took from its cache to U.ttype's counter.
@@ -924,7 +924,7 @@ function M.world_env(world, C, U, PC)
 end
 
 -- PT2_LIVE_SHELL: the live shell rules (info.rules) into the shadow env,
--- where shadow.lua and gh_pt2.c read them. A rule not sent (an older exe)
+-- where shadow.lua and gh_pt2_old.c read them. A rule not sent (an older exe)
 -- or out of range stays nil: the walk then uses the classic number.
 function M.live_shell(env, r)
   if type(env) ~= "table" or type(r) ~= "table" then return env end
@@ -1028,7 +1028,7 @@ function M.world_inp(world, C, U, PC, cpf, inp, no_builder)
            tt ~= C.T_PILLBOX and tt ~= C.T_REFBASE and tt ~= C.T_BOAT
   end
   -- PT2_C_STANDABLE: the tables for the C copy of the four square tests
-  -- above (gh_pt2.c). The C does a test itself only while inp's function is
+  -- above (gh_pt2_old.c). The C does a test itself only while inp's function is
   -- the one named here; a function put in its place later stays Lua. An
   -- older exe skips inp.c_std. standable and buildable read U.ttype as
   -- env.ttype, so only when the two are the same.

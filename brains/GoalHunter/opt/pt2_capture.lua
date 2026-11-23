@@ -9,7 +9,7 @@
 --   CASES[#CASES + 1] = { ... }
 -- replay(case) builds an inp that answers from the record only (an
 -- unrecorded question is an error), so the Lua and the C copy can be run
--- on it without the game (test_pt2_c_parity.lua).
+-- on it without the game (test_pt2_old_c_parity.lua).
 --
 -- The game result does not change: the wrapped Lua copy runs, and every
 -- side effect (U.ttype's change list, env.omx / env.omy) still happens.

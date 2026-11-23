@@ -1,6 +1,6 @@
 -- =========================================================================
 -- pt2_bench.lua -- speed check of the pill take v2 evaluator on recorded
--- inputs. Run by the unit test gh_pt2_bench (test_gh_pt2_parity.c), which
+-- inputs. Run by the unit test gh_pt2_bench (test_gh_pt2_old_parity.c), which
 -- runs it only when WB_PT2_BENCH is this file's path. It is not a pass or
 -- fail test: it prints times, and `dump` writes one line per case so two
 -- builds can be compared (the lines must be the same).
@@ -11,15 +11,15 @@
 --   max=<n>                   at most n cases (default all)
 --   reps=<n>                  timed runs per case (default 5; the median
 --                             is the case's time)
---   prof=1                    also run once per case with gh_pt2.prof on
+--   prof=1                    also run once per case with gh_pt2_old.prof on
 --                             and print the C part / callback breakdown
 --   dump=<file>               write each case's result digest to the file
 --   keep_all=1                inp.keep_all on (every spot in the result)
---   lua=1                     run pilltake_v2.evaluate_lua, not the C
+--   lua=1                     run pilltake_v2_old.evaluate_lua, not the C
 --
 -- The recorded case answers questions from its record only. Here each case
 -- gets a world built from that record, with callbacks shaped like the
--- game's (pilltake_v2.world_env / world_inp): a terrain array read through
+-- game's (pilltake_v2_old.world_env / world_inp): a terrain array read through
 -- a U.ttype-like reader (counter, mask, change list), a pill_at table, the
 -- C square tests (inp.c_std), env.ts_boats. A square the record has no
 -- terrain for is grass (not standable when the record says so: deep sea).
@@ -35,10 +35,10 @@ end
 _G.print2 = _G.print2 or function() end
 
 local C   = require("constants")
-local V2  = require("pilltake_v2")
+local V2  = require("pilltake_v2_old")
 local CAP = require("pt2_capture")
 local bit = require("bit")
-local G   = rawget(_G, "gh_pt2")
+local G   = rawget(_G, "gh_pt2_old")
 
 local args = {}
 for k, v in tostring(rawget(_G, "PT2_BENCH_ARGS") or ""):gmatch("([%w_]+)=(%S+)") do args[k] = v end
@@ -46,7 +46,7 @@ local MAX = tonumber(args.max or "") or math.huge
 local REPS = tonumber(args.reps or "") or 5
 local USE_LUA = args.lua == "1"
 if not G and not USE_LUA then
-  print("pt2_bench: no gh_pt2 global")
+  print("pt2_bench: no gh_pt2_old global")
   return 1
 end
 
@@ -312,7 +312,7 @@ if next(prof) then
   local rows = {}
   for k, v in pairs(prof) do rows[#rows + 1] = { k, v } end
   table.sort(rows, function(a, b) return a[2].us > b[2].us end)
-  print(fmt("pt2_bench prof (gh_pt2.prof on, inclusive us; total %.1f ms):", tot / 1000))
+  print(fmt("pt2_bench prof (gh_pt2_old.prof on, inclusive us; total %.1f ms):", tot / 1000))
   for _, r in ipairs(rows) do
     print(fmt("  %-22s n=%-9d us=%-10.1f %5.1f%%  %.3f us/call", r[1], r[2].n, r[2].us,
       tot > 0 and 100 * r[2].us / tot or 0, r[2].n > 0 and r[2].us / r[2].n or 0))

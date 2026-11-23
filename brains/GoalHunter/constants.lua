@@ -924,7 +924,7 @@ M.PILL_COVER_BY_HEALTH = true
 M.PPT_COVER_TARGET_SHOTS = 15  -- build phase ends once shield cover reaches this many shots-to-break (friendly pill = PILLS_MAX_HEALTH 15, wall = SHIELD_WALL_COVER_SHOTS 5). 15 = one pill OR three walls. Independent of the blitz gate.
 M.PPT_PILL_WALL_EQUIV = 3.0    -- a dropped/standing friendly pillbox blocker is worth this many WALLS of shield cover (PILLS_MAX_HEALTH 15 / SHIELD_WALL_COVER_SHOTS 5 = 3). The C combo scorer (gh_shield_stamp) weights a pill-filled slot accordingly, so one carried pill stands in for a 3-wall shield.
 M.PPT_PILL_BLOCKERS_MAX = 2    -- cap on how many carried pillboxes the shield planner assumes it can drop onto buildable slots (matches builder.lua's PILLBOX_BLOCKERS_MAX). num_pill_blockers passed to the scorer = min(carried_pills, this).
--- ── Pill take v2 (2026-11-16; pilltake_v2.lua) ──
+-- ── Pill take v2 (2026-11-16; pilltake_v2_old.lua) ──
 -- Master knob. On: the v2 evaluator picks the take's standoff, its blockers
 -- (built by build_walls) and, with PT2_CHAINS, a chain of pills that shoot
 -- each other. On by default since 2026-11-18 (Andrew: HELM uses v2). Off:
@@ -1042,7 +1042,7 @@ M.APPROACH_SKIP_RUNUP_MAX_PAST_WU  = 256  -- 1 tile (Nov 22, Andrew: yes)
 M.APPROACH_SKIP_RUNUP_STOP_SPEED   = 4    -- the approach step's own SPEED_TOL
 -- APPROACH_SKIP_RUNUP_SHIELD_CHECK (Nov 22, Andrew): past the standoff, the
 -- run-up skip fires from where the tank is only when the take's own cover
--- test passes there too: pilltake_v2.judge at the tank's place with the
+-- test passes there too: pilltake_v2_old.judge at the tank's place with the
 -- take's plan (approach_skip.shield_check). A clear shot alone is not
 -- enough: one square past the standoff, the pill's ray can go round the
 -- blockers. When the test fails, the tank drives back (the old way).
@@ -1131,7 +1131,7 @@ M.PT2_DBL_SPLIT = true
 -- when this think so far + the part's estimate + the EWMA of the rest of
 -- the think after the shadow pump (the pool queue and everything after it,
 -- parts taken off) stays under the tick target. Without it a 16 ms part on
--- an 18 ms target ran over on every part (Bot Host with no gh_pt2, game
+-- an 18 ms target ran over on every part (Bot Host with no gh_pt2_old, game
 -- 20261119_122256). EWMA weight: CAPACITY_EWMA_ALPHA. KEEL / MAST: false.
 M.PT2_DBL_PART_LEAVE_REST = true
 -- Ticks one split job is spread over, brain ticks: part k of n (k from 0,
@@ -1159,7 +1159,7 @@ M.PT2_DBL_EVENT_FILE = ""
 M.PT2_DBL_CAN_WIN = true
 -- PT2_LIVE_SHELL (Nov 18, Andrew: rays must follow the engine's shell
 -- exactly): the v2 shadow's shell walks (shadow.lua cast / tank_shot and
--- gh_pt2.c) use the live rules from info.rules (shell_speed,
+-- gh_pt2_old.c) use the live rules from info.rules (shell_speed,
 -- shell_start_add, shell_life, tank_hit_radius, pill_fire_length), as the
 -- engine's shell and the shot simulator do. A rule the exe does not send
 -- stays classic. Under classic rules nothing changes. false = the classic
@@ -1195,15 +1195,22 @@ M.PT2_TANKSHOT_BLOCKERS = true
 -- false = claims name the target only.
 M.PT2_CHAIN_CLAIM = true
 -- PT2_C_EVAL (Nov 18, Andrew: "we need a C port of pill take v2"): true =
--- pilltake_v2.evaluate runs the C copy (brains/GoalHunter/c/gh_pt2.c) when
--- the exe has it (global gh_pt2). The C gives the same result as the Lua
--- (parity test test_gh_pt2_parity), only faster. An older exe (Bot Host)
--- has no gh_pt2 and runs the Lua. false = always the Lua.
+-- pilltake_v2_old.evaluate runs the C copy (brains/GoalHunter/c/gh_pt2_old.c) when
+-- the exe has it (global gh_pt2_old). The C gives the same result as the Lua
+-- (parity test test_gh_pt2_old_parity), only faster. An older exe (Bot Host)
+-- has no gh_pt2_old and runs the Lua. false = always the Lua.
 M.PT2_C_EVAL = true
--- PT2_C_STANDABLE (Nov 21, F4): true = the C copy (gh_pt2.c) does the
+-- PT2_EVALUATOR (Nov 23, Andrew's design): which pill take evaluator runs.
+-- "old" = pilltake_v2_old.lua (rays cast per ring point on every run, the C
+-- copy gh_pt2_old.c with PT2_C_EVAL). "shadow" = pilltake_shadow.lua: a
+-- fixed grid of tank points (PT2_SHADOW_GRID_WU), each pill's rays to it
+-- kept all game, chains found from the kept rays. KEEL: "old". MAST gets
+-- "old" from this default; it gets its own row when the default changes.
+M.PT2_EVALUATOR = "old"
+-- PT2_C_STANDABLE (Nov 21, F4): true = the C copy (gh_pt2_old.c) does the
 -- inp.in_map, inp.stay_in, inp.standable and inp.buildable tests itself,
 -- from its terrain and pill caches and the tables world_inp gives once in
--- inp.c_std. Same answers as the Lua functions (test_gh_pt2_parity), no
+-- inp.c_std. Same answers as the Lua functions (test_gh_pt2_old_parity), no
 -- Lua call per square. An older exe skips inp.c_std and calls the Lua
 -- functions. false = the C calls the Lua functions (KEEL, MAST).
 M.PT2_C_STANDABLE = true
@@ -8305,6 +8312,8 @@ M.PRESETS = {
     PT2_AFTER_SCAN_SPLIT = false,
     --   2026-11-23: the split v2 run packs its parts into few ticks.
     PT2_SPLIT_ONE_PART_PER_TICK = false,
+    --   2026-11-23: the old pill take evaluator (no shadow map).
+    PT2_EVALUATOR = "old",
     --   2026-11-21: the old world sim (no driving while pushed, 1 - d/range
     --   hit discount, capture sim with no exit leg).
     WSIM_DRIVE_WHILE_SLIDING = false,

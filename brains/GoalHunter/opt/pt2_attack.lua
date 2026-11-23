@@ -21,7 +21,7 @@ local C      = require("constants")
 local U      = require("util")
 local cpf    = require("cpathfinder")
 local PC     = require("pill_cover")
-local V2     = require("pilltake_v2")
+local V2     = require("pilltake_v2_old")
 local shield = require("attack_shield")
 local print2 = require("print2")
 local PV     = require("pt2_viz")
@@ -418,7 +418,7 @@ end
 -- The plan tick (attack.lua's deferred shield scan) runs only v1's
 -- shield.scan. v2 runs on the next brain ticks, in parts: part 0 is
 -- build_inp, part 1 is v2 on the target, each later part is v2 with one
--- more pill of the group as A (pilltake_v2.group_step). The parts are
+-- more pill of the group as A (pilltake_v2_old.group_step). The parts are
 -- spread over at most PT2_AFTER_SCAN_MAX_TICKS work ticks: each work tick
 -- runs its share of the parts left, and more while this think so far plus
 -- one part's estimate stays under the tick target (pt2_dbl's safety net).
