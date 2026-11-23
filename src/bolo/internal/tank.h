@@ -1771,32 +1771,4 @@ int tankCalcCRCSetup(tank *value);
  *********************************************************/
 tank tankDeepCopy(tank src);
 
-/*********************************************************
- *NAME:          tankSnapToServer
- *PURPOSE:
- *  Copies all state from a server-authoritative tank into
- *  the predicted tank. Preserves client-only settings
- *  (autoSlowdown, autoHideGunsight, sightLen, showSight).
- *  Deep-copies the carried pills linked list.
- *
- *ARGUMENTS:
- *  dst - The predicted tank (destination)
- *  src - The server's authoritative tank (source)
- *********************************************************/
-void tankSnapToServer(tank dst, tank src);
-
-/*********************************************************
- *NAME:          tankSyncResources
- *PURPOSE:
- *  Copies server-authoritative resource and status fields
- *  (armour, shells, mines, trees, kills, deaths, etc.)
- *  into the predicted tank without touching position or
- *  physics state.
- *
- *ARGUMENTS:
- *  dst - The predicted tank (destination)
- *  src - The server's authoritative tank (source)
- *********************************************************/
-void tankSyncResources(tank dst, tank src);
-
 #endif
