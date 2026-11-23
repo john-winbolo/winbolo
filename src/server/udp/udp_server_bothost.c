@@ -976,16 +976,22 @@ int serverBotHostSetSlotOverride(ServerSim *sim, int row, int value,
     return BOT_HOST_SLOT_SET_OK;
 }
 
+/* The most files botHostRefreshManifest names for one new generation. */
+#define BOT_HOST_DIFF_LINES 5
+
 /* Make the brain manifest again from the brain folders. When it differs
  * from the one the hosts have, it gets the next generation and every
  * connected host is sent it. */
 static void botHostRefreshManifest(ServerSim *sim, const char *why) {
     BrainSyncManifest next;
+    BrainSyncDiff diff[BOT_HOST_DIFF_LINES];
     uint8_t *blob, *blob2;
     size_t blobLen = 0, blob2Len = 0;
     uint32_t files = 0, bytes = 0;
     char hex[17];
-    int b, h;
+    int b, h, diffCount = 0;
+    bool hadGen = udpServer.brainManifestGen != 0;
+    bool modeChanged = false;
 
     brainSyncBuildManifest(&next, botManagerDefaultDebugMode(sim),
                            &udpServer.brainManifest);
@@ -1011,6 +1017,14 @@ static void botHostRefreshManifest(ServerSim *sim, const char *why) {
         brainSyncFree(&next);
         return;
     }
+    /* What made the new generation, against the list the hosts have. The
+     * first generation has no list before it. */
+    if (hadGen) {
+        diffCount = brainSyncManifestDiff(&udpServer.brainManifest, &next,
+                                          diff, BOT_HOST_DIFF_LINES);
+        modeChanged = next.noCode != udpServer.brainManifest.noCode ||
+                      next.debugMode != udpServer.brainManifest.debugMode;
+    }
     brainSyncFree(&udpServer.brainManifest);
     udpServer.brainManifest = next;
     free(udpServer.brainManifestBlob);
@@ -1030,6 +1044,39 @@ static void botHostRefreshManifest(ServerSim *sim, const char *why) {
                     "bytes, version %s, generation %u\n",
             why, next.brainCount, (unsigned)files, (unsigned)bytes, hex,
             (unsigned)udpServer.brainManifestGen);
+    for (b = 0; b < diffCount && b < BOT_HOST_DIFF_LINES; b++) {
+        const BrainSyncDiff *d = &diff[b];
+        char oldHex[17], newHex[17];
+        brainSyncVersionHex(d->oldHash, oldHex);
+        brainSyncVersionHex(d->newHash, newHex);
+        if (d->kind == BRAIN_SYNC_DIFF_ADDED) {
+            fprintf(stderr, "[bothost]   generation %u: \"%s/%s\" added "
+                            "(%u bytes, hash %s)\n",
+                    (unsigned)udpServer.brainManifestGen, d->brain, d->path,
+                    (unsigned)d->newSize, newHex);
+        } else if (d->kind == BRAIN_SYNC_DIFF_REMOVED) {
+            fprintf(stderr, "[bothost]   generation %u: \"%s/%s\" removed "
+                            "(was %u bytes, hash %s)\n",
+                    (unsigned)udpServer.brainManifestGen, d->brain, d->path,
+                    (unsigned)d->oldSize, oldHex);
+        } else {
+            fprintf(stderr, "[bothost]   generation %u: \"%s/%s\" changed "
+                            "(%u bytes, hash %s -> %u bytes, hash %s)\n",
+                    (unsigned)udpServer.brainManifestGen, d->brain, d->path,
+                    (unsigned)d->oldSize, oldHex, (unsigned)d->newSize,
+                    newHex);
+        }
+    }
+    if (diffCount > BOT_HOST_DIFF_LINES) {
+        fprintf(stderr, "[bothost]   generation %u: and %d more files\n",
+                (unsigned)udpServer.brainManifestGen,
+                diffCount - BOT_HOST_DIFF_LINES);
+    }
+    if (hadGen && modeChanged) {
+        fprintf(stderr, "[bothost]   generation %u: the brain debug mode or "
+                        "-bothost-code changed\n",
+                (unsigned)udpServer.brainManifestGen);
+    }
     for (b = 0; b < next.brainCount; b++) {
         brainSyncVersionHex(next.brains[b].version, hex);
         fprintf(stderr, "[bothost]   brain \"%s\": %d files, %u bytes, "

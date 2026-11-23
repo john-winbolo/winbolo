@@ -626,6 +626,7 @@ static const UnitTestEntry s_tests[] = {
     { "brain_sync_shipped_missing", run_brain_sync_shipped_missing },
     { "brain_sync_crlf_hash", run_brain_sync_crlf_hash },
     { "brain_sync_crlf_table_agrees", run_brain_sync_crlf_table_agrees },
+    { "brain_sync_runtime_skip", run_brain_sync_runtime_skip },
     { "brain_pack_manifest_v2", run_brain_pack_manifest_v2 },
     { "brain_pack_all_equal", run_brain_pack_all_equal },
     { "brain_pack_one_changed", run_brain_pack_one_changed },
