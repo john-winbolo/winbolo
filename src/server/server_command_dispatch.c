@@ -240,11 +240,11 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
         }
         /* A scenario that has laid out its teams can refuse the lobby a new
            one. Nothing has been written yet, so the move is turned down
-           outright and the sender hears it, the way this arm answers every
-           other refusal. */
+           outright and the sender hears why: the same line as an Add Bot
+           onto that team. */
         if (!scenarioAllowsExtraTeams(sim, cmd->u.teamSet.slot,
                                       cmd->u.teamSet.team)) {
-            return CMD_REJECT_INVALID;
+            return CMD_REJECT_SCENARIO_TEAM;
         }
         {
             const LobbyPlayer *was = serverSimGetLobbyPlayer(sim,
