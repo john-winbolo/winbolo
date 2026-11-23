@@ -1619,18 +1619,20 @@ int run_sim_rules_tank_deep_sea_safe(void) {
 }
 
 int run_sim_rules_pill_aim_mac(void) {
-    /* Mac Bolo reference shell directions, with WinBolo speeds multiplied
+    /* Shell directions under pill_aim_mac, with WinBolo speeds multiplied
      * by four. The first three rows cover moving, stopped and obstructed
      * tanks at close range. The rest cover
      * the asymmetric pixel boundary, all 16 headings, diagonal distance,
-     * slow motion and normal leading out to eight squares. */
+     * slow motion and normal leading out to eight squares. Row 3 is 18
+     * pixels out, two past one square, so its lead is 32 and the shot goes
+     * 16 world units ahead of the tank. */
     static const struct {
         int dx, dy, heading, speed, obstructed, expected;
     } cases[] = {
         {0, -200, 64, 4, 0, 63},
         {0, -200, 64, 0, 0, 1},
         {0, -200, 64, 4, 1, 1},
-        {0, -300, 64, 16, 0, 1},
+        {0, -300, 64, 16, 0, 3},
         {0, -256, 64, 16, 0, 1},
         {0, -255, 64, 16, 0, 63},
         {0, 255, 64, 16, 0, 127},

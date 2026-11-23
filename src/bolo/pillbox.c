@@ -1133,28 +1133,19 @@ static int pillsMacSin(int angle) {
   return (angle & 128) ? -value : value;
 }
 
-/* Arithmetic right shift, including floor rounding for negative products. */
-static int32_t pillsMacShift(int32_t value, int bits) {
-  int32_t divisor = (int32_t)1 << bits;
-  return value >= 0 ? value / divisor : -((-value + divisor - 1) / divisor);
+/* How many whole pixels (16 world units) a is past b, rounded down */
+static int32_t pillsMacPixelsPast(WORLD a, WORLD b) {
+  int32_t units = (int32_t)a - (int32_t)b;
+
+  return units >= 0 ? units / 16 : -((15 - units) / 16);
 }
 
-static int32_t pillsMacPixelDelta(WORLD a, WORLD b) {
-  int32_t delta = (uint16_t)(a - b);
-  if (delta >= 32768) delta -= 65536;
-  return pillsMacShift(delta, 4);
-}
-
+/* The distance between a pillbox and a tank in whole pixels, rounded down */
 static int pillsMacRange(WORLD px, WORLD py, WORLD tx, WORLD ty) {
-  int32_t dx = pillsMacPixelDelta(px, tx);
-  int32_t dy = pillsMacPixelDelta(py, ty);
-  int32_t squared = dx * dx + dy * dy;
-  /* Equivalent to Mac's floor(sqrt(256*i)) lookup table and its three
-   * buckets. The input to sqrt is an exact integer no larger than 65280. */
-  if (squared > 0xFFFFF) return 0x7FFF;
-  if (squared > 0xFFFF) return (int)sqrt((double)((squared >> 12) * 256)) * 4;
-  if (squared > 0xFFF) return (int)sqrt((double)((squared >> 8) * 256));
-  return (int)sqrt((double)((squared >> 4) * 256)) / 4;
+  int32_t dx = pillsMacPixelsPast(px, tx);
+  int32_t dy = pillsMacPixelsPast(py, ty);
+
+  return (int)sqrt((double)(dx * dx + dy * dy));
 }
 
 /*********************************************************
