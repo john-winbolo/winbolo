@@ -106,6 +106,13 @@ void serverHandleInput(const uint8_t *buf, int len,
         return;
     }
 
+    /* A Bot Host bot's input drives the tank only once the seat's brain has
+     * moved to the host; the first one is what moves it. */
+    if (udpServer.clients[clientIdx].botSlot &&
+        !serverBotSlotOnInput(sim, clientIdx)) {
+        return;
+    }
+
     if (len < pos + 1) return;
     inputCount = buf[pos++];
     if (inputCount > INPUT_REDUNDANCY_COUNT) inputCount = INPUT_REDUNDANCY_COUNT;

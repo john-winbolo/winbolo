@@ -262,6 +262,7 @@ void lobbyRenderRejectToast(ClientSim *cs, float s) {
         case 14: reason = langGetText(STR_DLGSETNAME_INUSE_ERR);           break;  /* CMD_REJECT_NAME_TAKEN */
         case 15: reason = langGetText(STR_DLGLOBBY_REJECT_BOT_LIMIT);      break;  /* CMD_REJECT_BOT_LIMIT */
         case 16: reason = langGetText(STR_DLGLOBBY_REJECT_SCENARIO);       break;  /* CMD_REJECT_SCENARIO */
+        case 17: reason = langGetText(STR_DLGLOBBY_REJECT_SCENARIO_TEAM);  break;  /* CMD_REJECT_SCENARIO_TEAM */
         default: break;
     }
     ImGui::PushStyleColor(ImGuiCol_Text, wbThemeColor(g_theme->lockBadge));

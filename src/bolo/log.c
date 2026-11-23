@@ -47,6 +47,7 @@
 #include "attribution_track.h"
 #include "scripts_record.h"
 #include "overrun_record.h"  /* OVERRUN_RECORD_MAX_BYTES — log_OverrunStats' payload */
+#include "bothost_record.h"  /* BOTHOST_RECORD_MAX_BYTES — log_BotHostData's payload */
 #include "log_internal.h"
 #include "byte_order.h"
 #include "../winbolonet/winbolonet_core.h"
@@ -1094,6 +1095,20 @@ static int logSerializeEvent(logitem itemNum, BYTE opt1, BYTE opt2, BYTE opt3, B
     wordsLen = short1;
     if (wordsLen > OVERRUN_RECORD_MAX_BYTES) {
       wordsLen = OVERRUN_RECORD_MAX_BYTES;
+    }
+    if (wordsLen > 0 && words != NULL) {
+      memcpy(out + off, words, wordsLen);
+      off += wordsLen;
+    }
+    break;
+  case log_BotHostData:
+    /* One bot placement record: short1 bytes that botHostRecordEncode
+       wrote (bothost_record.h), copied as they are. A reader that does not
+       know the record skips it by the framed length. */
+    out[off++] = log_BotHostData;
+    wordsLen = short1;
+    if (wordsLen > BOTHOST_RECORD_MAX_BYTES) {
+      wordsLen = BOTHOST_RECORD_MAX_BYTES;
     }
     if (wordsLen > 0 && words != NULL) {
       memcpy(out + off, words, wordsLen);

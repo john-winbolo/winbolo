@@ -258,6 +258,26 @@ bool serverSimIsTerminalGameOver(const ServerSim *sim) {
  * against thinkCount so a cumulative count can't masquerade as "spiking right
  * now". Shared by the info command and the periodic overrun lines. */
 static void serverSimPrintBotTiming(const BotInfo *bi) {
+    if (bi->remote) {
+        /* The brain runs on a Bot Host: its numbers are the host's last
+         * report, about once a second. */
+        double rate = bi->thinkCount > 0
+            ? (double)bi->overrunCount * 100.0 / (double)bi->thinkCount
+            : 0.0;
+        fprintf(stdout,
+                "    [BOT] brain=%s host=\"%s\" last=%.1fms avg=%.1fms peak=%.1fms target=%.1fms overruns=%u/%u (%.2f%%) kills=%u tier=%u\n",
+                bi->brainName,
+                bi->hostName[0] != '\0' ? bi->hostName : "?",
+                bi->lastThinkMs, bi->avgThinkMs, bi->maxThinkMs,
+                bi->targetMs, bi->overrunCount, bi->thinkCount, rate,
+                bi->killCount, (unsigned)bi->tier);
+        return;
+    }
+    if (bi->held) {
+        fprintf(stdout,
+                "    [BOT] held: back from a Bot Host, no brain until the next round\n");
+        return;
+    }
     if (bi->hasBrain) {
         if (bi->overrunCount == 0) {
             fprintf(stdout,
@@ -466,6 +486,9 @@ void serverSimInformation(ServerSim *sim, bool locked) {
         }
     }
 
+    /* The Bot Hosts, for the operator only. Prints nothing without one. */
+    transportUdpServerPrintBotHosts();
+
     serverSimPrintTiming(sim);
 
     fprintf(stdout, "\n");
@@ -497,23 +520,26 @@ void serverSimPrintOverrunStats(ServerSim *sim, uint32_t roundSeconds) {
     fflush(stdout);
 }
 
-void serverSimLogOverrunStats(ServerSim *sim, uint32_t roundFrames, bool roundEnd) {
+void serverSimFillOverrunRecord(ServerSim *sim, uint32_t roundFrames, bool roundEnd,
+                                OverrunRecord *out) {
     OverrunRecord rec;
-    BYTE payload[OVERRUN_RECORD_MAX_BYTES];
-    int len;
     BYTE count;
     double tickLast = 0.0, tickEwma = 0.0;
     double simLast = 0.0, simEwma = 0.0;
     double tickPeak = 0.0;
     unsigned int tickOverBudget = 0;
 
-    if (sim == NULL || !logIsRecording()) {
+    if (out == NULL) {
         return;
     }
     memset(&rec, 0, sizeof(rec));
     rec.version = OVERRUN_RECORD_VERSION;
     rec.flags = roundEnd ? OVERRUN_RECORD_FLAG_ROUND_END : 0;
     rec.roundFrames = roundFrames;
+    if (sim == NULL) {
+        *out = rec;
+        return;
+    }
 
     /* The same reads serverSimPrintTiming makes. */
     serverLifecycleGetTickStats(&tickLast, &tickEwma);
@@ -553,6 +579,10 @@ void serverSimLogOverrunStats(ServerSim *sim, uint32_t roundFrames, bool roundEn
         }
         b = &rec.bots[rec.botCount++];
         b->player = count;
+        /* Where the brain ran: the server's own process, or a Bot Host by
+           the name the lobby's rows show. */
+        b->host = bi.remote ? overrunRecordHostPlace(&rec, bi.hostName)
+                            : (uint8_t) OVERRUN_RECORD_HOST_SERVER;
         if (bi.hasBrain) {
             b->last = overrunRecordTenths(bi.lastThinkMs);
             b->peak = overrunRecordTenths(bi.maxThinkMs);
@@ -560,7 +590,18 @@ void serverSimLogOverrunStats(ServerSim *sim, uint32_t roundFrames, bool roundEn
             b->thinks = bi.thinkCount;
         }
     }
+    *out = rec;
+}
 
+void serverSimLogOverrunStats(ServerSim *sim, uint32_t roundFrames, bool roundEnd) {
+    OverrunRecord rec;
+    BYTE payload[OVERRUN_RECORD_MAX_BYTES];
+    int len;
+
+    if (sim == NULL || !logIsRecording()) {
+        return;
+    }
+    serverSimFillOverrunRecord(sim, roundFrames, roundEnd, &rec);
     len = overrunRecordEncode(&rec, payload, (int) sizeof(payload));
     if (len > 0) {
         logAddEvent(log_OverrunStats, 0, 0, 0, 0, (unsigned short) len, (char *) payload);

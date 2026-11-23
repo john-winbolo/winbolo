@@ -93,6 +93,10 @@ static struct {
     BotWorker    *workers;
     int           workerCount;
     SDL_AtomicInt quit;
+    /* One producer at a time. A client that runs a Bot Host inside the
+     * program has two: the host's thread and the program's own bots. The
+     * second waits for the first batch to finish. */
+    SDL_Mutex    *runLock;
 } g_pool;
 
 static int workerThreadFn(void *data) {
@@ -145,6 +149,10 @@ static void poolTeardown(int threadsCreated) {
     SDL_free(g_pool.workers);
     g_pool.workers = NULL;
     g_pool.workerCount = 0;
+    if (g_pool.runLock != NULL) {
+        SDL_DestroyMutex(g_pool.runLock);
+        g_pool.runLock = NULL;
+    }
     SDL_SetAtomicInt(&g_pool.quit, 0);
 }
 
@@ -172,6 +180,13 @@ bool botWorkerPoolCreate(int workerCount) {
     }
     g_pool.workerCount = workerCount;
     SDL_SetAtomicInt(&g_pool.quit, 0);
+    g_pool.runLock = SDL_CreateMutex();
+    if (g_pool.runLock == NULL) {
+        WB_LOG_ERROR(WB_LOG_CAT_PLATFORM,
+                     "bot worker pool: run lock create failed");
+        poolTeardown(0);
+        return false;
+    }
 
     /* Allocate every semaphore first; on failure poolTeardown can wipe
      * them in one pass without needing to know which were created. */
@@ -227,6 +242,7 @@ void botWorkerPoolRun(const int *botIndices, int count,
         return;
     }
 
+    SDL_LockMutex(g_pool.runLock);
     const int N = g_pool.workerCount;
     const int toDispatch = count - 1;
 
@@ -258,6 +274,7 @@ void botWorkerPoolRun(const int *botIndices, int count,
     for (int i = 0; i < outstanding; i++) {
         SDL_WaitSemaphore(g_pool.workers[i].done);
     }
+    SDL_UnlockMutex(g_pool.runLock);
 }
 
 int botWorkerPoolGetSize(void) {

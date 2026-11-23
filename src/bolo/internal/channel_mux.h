@@ -106,6 +106,28 @@ enum {
  * receive buffer that fits a segment from any channel. */
 #define CHANNEL_MAX_SEG 1024
 
+/* A wide bulk ring: a larger CHANNEL_BULK window, for a link that moves a
+ * lot of data (a Bot Host's recording upload). The built-in ring holds 96
+ * segments of 256 bytes (24 KB in flight), which at one ack per 20 ms tick
+ * caps the channel near 1.2 MB/s. A wide ring holds CHANNEL_BULK_WIDE_WINDOW
+ * segments of CHANNEL_BULK_WIDE_SEG bytes (1.25 MiB in flight); two of its
+ * segments fill one datagram.
+ *
+ * The caller owns the storage (channelBulkWideSendBytes /
+ * channelBulkWideRecvBytes bytes) and attaches it with channelBulkUseWideSend
+ * or channelBulkUseWideRecv. channelMuxInit goes back to the built-in rings
+ * and never frees the storage. Only the receive side decides how much a
+ * peer may send, so a sender attaches a wide send ring only after the peer
+ * said that its receive ring is wide (and how wide). */
+#define CHANNEL_BULK_WIDE_WINDOW 2048
+#define CHANNEL_BULK_WIDE_SEG     640
+
+/* With a wide send ring, a reported gap or a retransmit timeout resends at
+ * most this many segments from the first one missing, not the whole unacked
+ * tail: the tail can be 2048 segments, and the receiver keeps every segment
+ * past the gap that arrived. */
+#define CHANNEL_BULK_WIDE_RESEND 256
+
 /* Capacity of the stream channel's pending-byte staging buffer. Bytes
  * handed to channelStreamSend wait here until the window has room to turn
  * them into segments. */
@@ -151,8 +173,11 @@ enum {
  * and the five ring pointers below at it. A ring entry's payload starts at
  * (sendData + idx * segSize); sendLen[idx] gives its length. */
 typedef struct {
-    uint32_t window;       /* this channel's ring depth                */
-    uint32_t segSize;      /* this channel's max segment payload        */
+    uint32_t window;       /* this channel's send ring depth           */
+    uint32_t segSize;      /* this channel's max send segment payload   */
+    uint32_t recvWindow;   /* this channel's receive ring depth: equal to
+                            * window except with a wide bulk ring        */
+    uint32_t recvSegSize;  /* this channel's max receive segment payload */
     bool     bestEffort;   /* signals the frame builder/applier to skip
                             * acks, RTO, and reorder-hold for this channel */
 
@@ -188,6 +213,13 @@ typedef struct {
     bool     nakIssued;    /* a fast-retransmit fired for the current stall;
                             * cleared when the cumulative ack advances, so each
                             * distinct gap rewinds the tail at most once     */
+
+    /* Range resend (a wide send ring only). A gap or a retransmit timeout
+     * resends [retxNext, retxEnd) ahead of new segments, instead of
+     * rewinding txNext to ackedSeq. */
+    bool     rangeResend;
+    uint32_t retxNext;
+    uint32_t retxEnd;
 } ChannelState;
 
 typedef struct ChannelMux {
@@ -266,6 +298,36 @@ typedef struct ChannelMux {
  * each channel's ring pointers at that channel's storage with its window /
  * segSize. */
 void channelMuxInit(ChannelMux *m);
+
+/* Bytes of caller storage a wide bulk send / receive ring of window segments
+ * of segSize bytes takes. */
+size_t channelBulkWideSendBytes(uint32_t window, uint32_t segSize);
+size_t channelBulkWideRecvBytes(uint32_t window, uint32_t segSize);
+
+/* Move CHANNEL_BULK's send side to a wide ring in storage (at least
+ * channelBulkWideSendBytes bytes, suitably aligned, e.g. from malloc).
+ * Only while nothing is unacked on the send side; returns false (nothing
+ * changed) otherwise, or for a bad size (segSize over CHANNEL_MAX_SEG,
+ * window under the built-in one). Bytes waiting in the stream buffer stay
+ * and are cut to the new segment size. Turns on the range resend. */
+bool channelBulkUseWideSend(ChannelMux *m, void *storage, uint32_t window,
+                            uint32_t segSize);
+
+/* Move CHANNEL_BULK's receive side to a wide ring in storage (at least
+ * channelBulkWideRecvBytes bytes, suitably aligned). Only while no segment
+ * waits in the receive ring; returns false (nothing changed) otherwise, or
+ * for a bad size. A peer whose send ring is the built-in one still works:
+ * its segments and window are smaller. */
+bool channelBulkUseWideRecv(ChannelMux *m, void *storage, uint32_t window,
+                            uint32_t segSize);
+
+/* The CHANNEL_BULK send / receive window in segments (96 until a wide ring
+ * is attached). */
+uint32_t channelBulkSendWindow(const ChannelMux *m);
+uint32_t channelBulkRecvWindow(const ChannelMux *m);
+
+/* True when nothing is waiting or unacked on CHANNEL_BULK's send side. */
+bool channelBulkSendIdle(const ChannelMux *m);
 
 /* Queue one whole message on a message-flavor channel (0-2). Returns
  * false on a usage error (stream channel, oversized message, bad id) or

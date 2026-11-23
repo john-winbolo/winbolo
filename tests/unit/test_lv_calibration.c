@@ -2052,10 +2052,11 @@ int run_lv_overrun_read(void) {
   zeroVersion[0] = 0;
   lastLen = overrunTestPayload(last, (int)sizeof(last), 3100u,
                                OVERRUN_RECORD_FLAG_BOTS | OVERRUN_RECORD_FLAG_ROUND_END, 77);
-  UT_ASSERT(firstLen == OVERRUN_RECORD_HEAD_BYTES + 2 * OVERRUN_RECORD_BOT_BYTES);
+  /* Version 2: the bots, a host byte each and an empty host table. */
+  UT_ASSERT(firstLen == OVERRUN_RECORD_HEAD_BYTES + 2 * OVERRUN_RECORD_BOT_BYTES + 2 + 1);
   UT_ASSERT(zeroLen == firstLen && lastLen == firstLen);
   /* A later version: its own version byte and four bytes after the bots. */
-  last[0] = 2;
+  last[0] = OVERRUN_RECORD_VERSION + 1;
   memset(last + lastLen, 0xEE, 4);
   lastLen += 4;
 
@@ -2109,7 +2110,10 @@ int run_lv_overrun_read(void) {
   UT_ASSERT_MSG(now.has && now.rec.roundFrames == 3100u && now.rec.tickLast == 77,
                 "after the last record: frames %u tick %u (want 3100, 77)",
                 (unsigned)now.rec.roundFrames, (unsigned)now.rec.tickLast);
-  UT_ASSERT(now.rec.version == 2);
+  UT_ASSERT(now.rec.version == OVERRUN_RECORD_VERSION + 1);
+  /* A later version still reads the version 2 hosts before its own bytes. */
+  UT_ASSERT(overrunRecordBotOnServer(&now.rec.bots[0]) &&
+            overrunRecordBotOnServer(&now.rec.bots[1]));
   UT_ASSERT(now.rec.flags & OVERRUN_RECORD_FLAG_ROUND_END);
   UT_ASSERT(now.rec.botCount == 2 && now.rec.bots[1].peak == 160);
 
@@ -2141,6 +2145,227 @@ int run_lv_overrun_read(void) {
   UT_ASSERT_MSG(lv != NULL, "synthetic plain log failed to build/load");
   lv_screenOverrunNow(&now);
   UT_ASSERT_MSG(!now.recorded && !now.has, "a file with no record has one");
+  lv_decoderDestroy(lv);
+  remove(path);
+  return 0;
+}
+
+/* One log_BotHostData payload for the viewer test, encoded as the server
+ * writes it. Returns its length. */
+static int botHostTestPayload(const BotHostRecord *rec, uint8_t *out, int cap) {
+  return botHostRecordEncode(rec, out, cap);
+}
+
+/* The viewer reads log_BotHostData records (bothost_record.h) into its bot
+ * host track at load, in time order, for every host: the HOST records' names
+ * and players, each probe, reading and decision with every number. A record
+ * too short to read, one of version 0 and one of a kind the viewer does not
+ * know are consumed and ignored. Playback and a seek back read the records
+ * again and add none twice. A file with no record has an empty track. */
+int run_lv_bothost_read(void) {
+  const char *path = "lv_bothost_read.wbv";
+  uint8_t hostServer[BOTHOST_RECORD_MAX_BYTES];
+  uint8_t hostAlice[BOTHOST_RECORD_MAX_BYTES];
+  uint8_t probe1[BOTHOST_RECORD_MAX_BYTES];
+  uint8_t reading1[BOTHOST_RECORD_MAX_BYTES];
+  uint8_t decision1[BOTHOST_RECORD_MAX_BYTES];
+  uint8_t probe0[BOTHOST_RECORD_MAX_BYTES];
+  uint8_t zeroVersion[BOTHOST_RECORD_MAX_BYTES];
+  static const uint8_t shortRec[2] = {1, BOTHOST_RECORD_PROBE};
+  static const uint8_t unknownKind[6] = {1, 9, 1, 0, 0, 0};
+  int nServer, nAlice, nProbe1, nReading1, nDecision1, nProbe0, nZero;
+  BotHostRecord rec;
+  LogBuf b;
+  LogViewerState *lv;
+  const LvBotHostTrack *t;
+  bool seen[LV_BOTHOST_HOSTS];
+  uint8_t player;
+  char name[BOTHOST_RECORD_NAME_LEN];
+  int i, k;
+
+  memset(&rec, 0, sizeof(rec));
+  rec.kind = BOTHOST_RECORD_HOST;
+  rec.host = 0;
+  rec.player = BOTHOST_RECORD_NONE;
+  strcpy(rec.name, "Server");
+  nServer = botHostTestPayload(&rec, hostServer, (int)sizeof(hostServer));
+
+  memset(&rec, 0, sizeof(rec));
+  rec.kind = BOTHOST_RECORD_HOST;
+  rec.host = 1;
+  rec.player = 2;
+  strcpy(rec.name, "Alice");
+  nAlice = botHostTestPayload(&rec, hostAlice, (int)sizeof(hostAlice));
+
+  memset(&rec, 0, sizeof(rec));
+  rec.kind = BOTHOST_RECORD_PROBE;
+  rec.host = 1;
+  rec.bots = 3;
+  rec.slots = 4;
+  rec.limit = BOTHOST_RECORD_NONE;
+  rec.thinks = 500;
+  rec.overruns = 10;
+  rec.flags = BOTHOST_RECORD_PROBE_BAD;
+  rec.badProbes = 24;
+  rec.probes = 30;
+  nProbe1 = botHostTestPayload(&rec, probe1, (int)sizeof(probe1));
+
+  memset(&rec, 0, sizeof(rec));
+  rec.kind = BOTHOST_RECORD_READING;
+  rec.host = 1;
+  rec.freePct = 37;
+  rec.botCpu = 40;
+  rec.bots = 3;
+  rec.flags = BOTHOST_RECORD_READING_RAN | BOTHOST_RECORD_READING_BAD;
+  nReading1 = botHostTestPayload(&rec, reading1, (int)sizeof(reading1));
+
+  memset(&rec, 0, sizeof(rec));
+  rec.kind = BOTHOST_RECORD_DECISION;
+  rec.host = 1;
+  rec.decision = BOTHOST_DECISION_CUT;
+  rec.limitBefore = BOTHOST_RECORD_NONE;
+  rec.limitAfter = 2;
+  rec.badProbes = 24;
+  rec.probes = 30;
+  rec.flags = BOTHOST_RECORD_DEC_COST | BOTHOST_RECORD_DEC_FREE;
+  rec.predictedTenths = -15;
+  rec.costTenths = 133;
+  rec.freeAvgTenths = 118;
+  rec.lowestClean = 45;
+  rec.highestBad = 37;
+  rec.seat = 5;
+  rec.toHost = 0;
+  strcpy(rec.reason, "overruns");
+  nDecision1 = botHostTestPayload(&rec, decision1, (int)sizeof(decision1));
+
+  memset(&rec, 0, sizeof(rec));
+  rec.kind = BOTHOST_RECORD_PROBE;
+  rec.host = 0;
+  rec.bots = 4;
+  rec.slots = 254;
+  rec.limit = BOTHOST_RECORD_NONE;
+  rec.thinks = 800;
+  rec.overruns = 0;
+  rec.badProbes = 0;
+  rec.probes = 30;
+  nProbe0 = botHostTestPayload(&rec, probe0, (int)sizeof(probe0));
+  memcpy(zeroVersion, probe0, (size_t)nProbe0);
+  zeroVersion[0] = 0;
+  nZero = nProbe0;
+
+  UT_ASSERT(nServer == 3 + 1 + 1 + 6 && nAlice == 3 + 1 + 1 + 5);
+  UT_ASSERT(nProbe1 == 17 && nReading1 == 7 && nProbe0 == 17);
+  UT_ASSERT(nDecision1 == 3 + 16 + 1 + 8 + 10);
+
+  b.len = 0;
+  putHeader(&b);
+  putSnapshot(&b, true);
+  putEventFrame(&b, log_BotHostData, hostServer, (uint16_t)nServer);
+  putEventFrame(&b, log_BotHostData, hostAlice, (uint16_t)nAlice);
+  putNoEvents(&b, 50);
+  putEventFrame(&b, log_BotHostData, probe1, (uint16_t)nProbe1);
+  putEventFrame(&b, log_BotHostData, reading1, (uint16_t)nReading1);
+  putEventFrame(&b, log_BotHostData, shortRec, (uint16_t)sizeof(shortRec));
+  putEventFrame(&b, log_BotHostData, zeroVersion, (uint16_t)nZero);
+  putEventFrame(&b, log_BotHostData, unknownKind, (uint16_t)sizeof(unknownKind));
+  putNoEvents(&b, 50);
+  putEventFrame(&b, log_BotHostData, decision1, (uint16_t)nDecision1);
+  putEventFrame(&b, log_BotHostData, probe0, (uint16_t)nProbe0);
+  putNoEvents(&b, 50);
+  putU8(&b, LOG_QUIT);
+
+  lv = loadSynthetic(&b, path);
+  UT_ASSERT_MSG(lv != NULL, "synthetic bot host log failed to build/load");
+
+  /* The load's walk read every record before playback. */
+  t = lv_screenBotHostTrack();
+  UT_ASSERT(t != NULL);
+  UT_ASSERT_MSG(t->count == 6, "%d records after the load (want 6)", t->count);
+  for (i = 1; i < t->count; i++) {
+    UT_ASSERT_MSG(t->items[i - 1].ms <= t->items[i].ms, "the records are not in time order");
+  }
+  UT_ASSERT_MSG(lv_botHostTrackHosts(t, seen) == 2 && seen[0] && seen[1],
+                "the hosts are not the server and host 1");
+
+  UT_ASSERT(lv_botHostTrackInfo(t, 1, UINT32_MAX, &player, name, sizeof(name)));
+  UT_ASSERT_MSG(player == 2 && strcmp(name, "Alice") == 0,
+                "host 1 is player %u \"%s\" (want 2, Alice)", (unsigned)player, name);
+  UT_ASSERT(lv_botHostTrackInfo(t, 0, UINT32_MAX, &player, name, sizeof(name)));
+  UT_ASSERT(player == BOTHOST_RECORD_NONE && strcmp(name, "Server") == 0);
+  UT_ASSERT(!lv_botHostTrackInfo(t, 7, UINT32_MAX, &player, name, sizeof(name)));
+  UT_ASSERT(player == BOTHOST_RECORD_NONE && name[0] == '\0');
+
+  /* Host 1's probe. */
+  k = lv_botHostTrackNext(t, 1, BOTHOST_RECORD_PROBE, 0);
+  UT_ASSERT_MSG(k >= 0, "no probe for host 1");
+  {
+    const BotHostRecord *r = &t->items[k].rec;
+    UT_ASSERT(r->bots == 3 && r->slots == 4 && r->limit == BOTHOST_RECORD_NONE);
+    UT_ASSERT(r->thinks == 500 && r->overruns == 10);
+    UT_ASSERT((r->flags & BOTHOST_RECORD_PROBE_BAD) && r->badProbes == 24 && r->probes == 30);
+    UT_ASSERT_MSG(lv_botHostProbeRate(r) > 1.99 && lv_botHostProbeRate(r) < 2.01,
+                  "probe rate %.3f (want 2.0)", lv_botHostProbeRate(r));
+    UT_ASSERT(lv_botHostTrackNext(t, 1, BOTHOST_RECORD_PROBE, k + 1) < 0);
+  }
+  /* Its reading. */
+  k = lv_botHostTrackNext(t, 1, BOTHOST_RECORD_READING, 0);
+  UT_ASSERT_MSG(k >= 0, "no reading for host 1");
+  {
+    const BotHostRecord *r = &t->items[k].rec;
+    UT_ASSERT(r->freePct == 37 && r->botCpu == 40 && r->bots == 3);
+    UT_ASSERT((r->flags & BOTHOST_RECORD_READING_RAN) && (r->flags & BOTHOST_RECORD_READING_BAD));
+  }
+  /* Its decision, a second after the probe, with every number. */
+  k = lv_botHostTrackNext(t, 1, BOTHOST_RECORD_DECISION, 0);
+  UT_ASSERT_MSG(k >= 0, "no decision for host 1");
+  {
+    const LvBotHostEntry *e = &t->items[k];
+    const BotHostRecord *r = &e->rec;
+    const int p = lv_botHostTrackNext(t, 1, BOTHOST_RECORD_PROBE, 0);
+    UT_ASSERT_MSG(e->ms > t->items[p].ms + 500u,
+                  "decision at %u ms, probe at %u ms (want about a second later)",
+                  (unsigned)e->ms, (unsigned)t->items[p].ms);
+    UT_ASSERT(r->decision == BOTHOST_DECISION_CUT);
+    UT_ASSERT(r->limitBefore == BOTHOST_RECORD_NONE && r->limitAfter == 2);
+    UT_ASSERT(r->badProbes == 24 && r->probes == 30);
+    UT_ASSERT((r->flags & BOTHOST_RECORD_DEC_COST) && (r->flags & BOTHOST_RECORD_DEC_FREE));
+    UT_ASSERT_MSG(r->predictedTenths == -15 && r->costTenths == 133 && r->freeAvgTenths == 118,
+                  "predicted %d cost %u average %u (want -15, 133, 118)",
+                  (int)r->predictedTenths, (unsigned)r->costTenths, (unsigned)r->freeAvgTenths);
+    UT_ASSERT(r->lowestClean == 45 && r->highestBad == 37);
+    UT_ASSERT(r->seat == 5 && r->toHost == 0);
+    UT_ASSERT_MSG(strcmp(r->reason, "overruns") == 0, "reason \"%s\"", r->reason);
+  }
+  /* The server's probe. */
+  k = lv_botHostTrackNext(t, 0, BOTHOST_RECORD_PROBE, 0);
+  UT_ASSERT(k >= 0 && t->items[k].rec.bots == 4 && t->items[k].rec.thinks == 800);
+  UT_ASSERT(lv_botHostProbeRate(&t->items[k].rec) == 0.0);
+
+  /* Playback reads them again: none is added twice. */
+  for (i = 0; i < 200; i++) {
+    lv_screenLogTick();
+  }
+  t = lv_screenBotHostTrack();
+  UT_ASSERT_MSG(t->count == 6, "%d records after playback (want 6)", t->count);
+  lv_screenSeekToTimeMs(500);
+  for (i = 0; i < 200; i++) {
+    lv_screenLogTick();
+  }
+  t = lv_screenBotHostTrack();
+  UT_ASSERT_MSG(t->count == 6, "%d records after a seek back and playback (want 6)", t->count);
+
+  lv_decoderDestroy(lv);
+  remove(path);
+
+  /* A file with no record. */
+  b.len = 0;
+  putHeader(&b);
+  putSnapshot(&b, true);
+  putNoEvents(&b, 50);
+  putU8(&b, LOG_QUIT);
+  lv = loadSynthetic(&b, path);
+  UT_ASSERT_MSG(lv != NULL, "synthetic plain log failed to build/load");
+  UT_ASSERT_MSG(lv_screenBotHostTrack()->count == 0, "a file with no record has one");
   lv_decoderDestroy(lv);
   remove(path);
   return 0;

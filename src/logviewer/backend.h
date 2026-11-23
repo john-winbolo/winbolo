@@ -40,6 +40,7 @@
 #include "lv_ping_view.h"   /* LvPingShown */
 #include "lv_lag.h"         /* LvPlayerLag */
 #include "lv_overrun.h"     /* LvOverrunNow */
+#include "lv_bothost.h"     /* LvBotHostTrack */
 
 /* Defines */
 
@@ -842,6 +843,13 @@ void lv_screenPlayerLagSnapshot(int slot, LvPlayerLag *out);
  * part of the lag view, so the "Player Lag View" preference does not hide it.
  * Hold the client mutex. */
 void lv_screenOverrunNow(LvOverrunNow *out);
+
+/* The recording's log_BotHostData records (bothost_record.h), all of them in
+ * time order: what the server's bot placement measured and chose for each
+ * host. Empty for a recording made without -record-bothost-data. Hold the
+ * client mutex while reading it: a live feed adds records on the timer
+ * thread. Never NULL. */
+const LvBotHostTrack *lv_screenBotHostTrack(void);
 
 /* The lag view ("see what this player saw"): the map draws the other tanks,
  * the builders and the shells as far behind as slot's player's screen was,

@@ -220,7 +220,7 @@ static bool serverJoinRateLimitAllow(const struct sockaddr_in *fromAddr) {
 /* Fill buf with n bytes from the OS cryptographic RNG. Returns true on
  * success. Deliberately NOT the project's randombytes() (a no-op tweetnacl
  * linkage stub) — the cookie secret must come from a real CSPRNG. */
-static bool serverFillRandomBytes(uint8_t *buf, size_t n) {
+bool serverFillRandomBytes(uint8_t *buf, size_t n) {
 #if defined(_WIN32)
     /* STATUS_SUCCESS == 0. */
     return BCryptGenRandom(NULL, buf, (ULONG)n,
@@ -640,6 +640,9 @@ bool serverChooseUnverifiedSuffix(const char *baseName,
         int k;
         for (k = 0; k < MAX_TANKS; k++) {
             if (!udpServer.clients[k].connected) continue;
+            /* A Bot Host bot's name counts no more than an in-process
+             * bot's does. */
+            if (udpServer.clients[k].botSlot) continue;
             if (k == excludeSlot) continue;
             if (playerNameCompare(udpServer.clients[k].playerName,
                                   candidate) == 0) {
@@ -689,6 +692,15 @@ void serverHandleJoinRequest(const uint8_t *buf, int len,
                 joinReqMin, len);
 #endif
         return; /* Malformed */
+    }
+
+    /* A Bot Host already connected from this address missed its accept. */
+    {
+        int h = serverFindBotHost(fromAddr);
+        if (h >= 0) {
+            serverSendBotHostAccept(h, sim);
+            return;
+        }
     }
 
     /* Already connected from this address? */
@@ -791,10 +803,14 @@ void serverHandleJoinRequest(const uint8_t *buf, int len,
     bool wantRejoin = false;
     bool incomingWillAuth = false;
     bool isSpectator = false;
+    bool isBotSlot = false;
+    bool isBotHost = false;
     if (len > pos) {
         wantRejoin       = (buf[pos] & JOIN_FLAG_WANT_REJOIN) != 0;
         incomingWillAuth = (buf[pos] & JOIN_FLAG_WILL_AUTHENTICATE) != 0;
         isSpectator      = (buf[pos] & JOIN_FLAG_SPECTATOR) != 0;
+        isBotSlot        = (buf[pos] & JOIN_FLAG_BOT_SLOT) != 0;
+        isBotHost        = (buf[pos] & JOIN_FLAG_BOT_HOST) != 0;
         pos++;
     }
 
@@ -854,6 +870,18 @@ void serverHandleJoinRequest(const uint8_t *buf, int len,
             return;
         }
         serverSendJoinChallenge(fromAddr);
+        return;
+    }
+
+    /* Bot Host joins. Both carry their own proof (the host key, or the
+     * one-time token the server handed the host), so neither takes the game
+     * password, the game lock or a free seat. */
+    if (isBotHost) {
+        serverAcceptBotHost(sim, fromAddr, name, buf + pos, len - pos);
+        return;
+    }
+    if (isBotSlot) {
+        serverBindBotSlot(sim, fromAddr, buf + pos, len - pos, clientType);
         return;
     }
 
@@ -1034,6 +1062,9 @@ void serverHandleJoinRequest(const uint8_t *buf, int len,
         int i;
         for (i = 0; i < MAX_TANKS; i++) {
             if (!udpServer.clients[i].connected) continue;
+            /* Never rename a bot: a Bot Host bot is passed over as an
+             * in-process bot is. */
+            if (udpServer.clients[i].botSlot) continue;
             if (i == slot) continue; /* slot is unconnected; defensive */
             if (playerNameCompare(udpServer.clients[i].playerName, name) != 0)
                 continue;

@@ -463,7 +463,7 @@ static void serverSimApplyOneInput(ServerSim *sim, BYTE count,
             sim->sim.lagCompTicks = 0;
         } else {
             uint8_t compTicks = serverSimComputeLagCompTicks(
-                sim->tick, applied.viewTick, sim->playerPing[count]);
+                sim->tick, applied.viewTick, sim->lagCompPingMs[count]);
             sim->sim.lagCompTicks = compTicks;
             sim->statLastRewindTicks[count] = compTicks;
         }
@@ -1498,6 +1498,7 @@ void serverSimApplyInput(ServerSim *sim, const InputPacket *input) {
     sim->inputQueue[p][head & (SERVER_INPUT_QUEUE_SIZE - 1)] = sanitized;
     sim->inputQueueHead[p] = head + 1;
     sim->playerPing[p] = transportUdpServerGetClientPing(p);
+    sim->lagCompPingMs[p] = transportUdpServerGetLagCompPingMs(p);
 }
 
 #ifdef WB_NETDEBUG

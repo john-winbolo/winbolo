@@ -3058,19 +3058,19 @@ static ScnOpResult scenarioOpRosterSetTeam(ServerSim *sim,
 }
 
 /* Add a bot to the lobby. CMD_LOBBY_ADD_BOT's own checks in order — the
- * operator's bot cap, the name, a free seat — and then the same add.
+ * name, a free seat — and then the same add. The game bot limit does not
+ * apply: scenario bots are not capped by it, but they count.
  *
  * fielded false asks for the seat without the bot: the roster gains the
  * entry, the host can see and trim it, and no brain loads until a spawn
- * names the seat. Nothing else about the add changes — the cap counts it,
- * the name is checked the same way — except the brain, which such a seat has
- * no use for yet. */
+ * names the seat. Nothing else about the add changes — the bot count
+ * includes it, the name is checked the same way — except the brain, which
+ * such a seat has no use for yet. */
 static ScnOpResult scenarioOpLobbyAddBot(ServerSim *sim,
                                          const ScnOpLobbyAddBot *p,
                                          ScnOpOut *out) {
     const char *brain = NULL;
     char name[PLAYER_NAME_LEN];
-    BYTE maxBots;
     BYTE slot = 0;
     ScnOpResult r;
 
@@ -3081,10 +3081,6 @@ static ScnOpResult scenarioOpLobbyAddBot(ServerSim *sim,
     }
     if (p->team >= MAX_TANKS) {
         return SCN_OP_RANGE;
-    }
-    maxBots = serverSimGetMaxBots(sim);
-    if (maxBots > 0 && serverSimGetLobbyBotCount(sim) >= maxBots) {
-        return SCN_OP_FULL;
     }
     /* The name before the seat, which is the order the command arm asks in,
        so an op that is wrong about both hears about the same one a host

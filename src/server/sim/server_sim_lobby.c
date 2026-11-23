@@ -42,7 +42,6 @@
 
 void serverSimApplyInstanceConfig(ServerSim *sim, const ServerInstanceConfig *cfg) {
   sim->sim.viewPlayer = cfg->viewPlayer;
-  sim->maxBots        = cfg->maxBots;
   sim->maxSpectators  = cfg->maxSpectators;
   sim->specDelayTicks = (uint32_t)cfg->specDelaySeconds * 50u;   /* 50 ticks/s */
 
@@ -1050,6 +1049,10 @@ void serverSimPublishLobbySettings(ServerSim *sim) {
     if (!sim) return;
     memset(&evt, 0, sizeof(evt));
     serverSimFillLobbySettingsEvent(sim, &evt);
+    serverSimPublishControl(sim, &evt);
+    /* The Server bot slots with every settings publish: its value in use
+     * follows the host bot capacity, which publishes through here. */
+    serverSimFillServerBotSlotsEvent(sim, &evt);
     serverSimPublishControl(sim, &evt);
 }
 

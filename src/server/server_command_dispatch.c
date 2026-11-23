@@ -89,6 +89,10 @@ static int lobbyTeamMemberCount(const ServerSim *sim, BYTE team,
  *   - a re-send of the team the slot already holds, which moves nothing;
  *   - a move onto a team another connected slot is already on.
  *
+ * The add-bot arm asks before it seats the bot, so it passes MAX_TANKS
+ * for the slot: no slot holds the team already and nobody is left out of
+ * the count.
+ *
  * The moving slot is left out of the count because it is the one being
  * placed: the question is whether the team it is going to exists without
  * it. So the sole member of a team moving off it and onto an empty one is
@@ -453,12 +457,51 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
         return CMD_OK;
     }
     case CMD_LOBBY_SETTING: {
+        const CmdLobbySetting *p = &cmd->u.lobbySetting;
+        /* The Server bot slots: in the lobby and while a game runs, by the
+           players who may change the other settings. It is about the
+           server, so it leaves the ready marks alone. A lower value during
+           a game moves only bots that may move (and none with
+           -bothost-nomove): the placement reads the new value. */
+        /* A Bot Host row's slot override: only a player's own host, by
+           that player (serverBotHostSetSlotOverride). */
+        if (p->settingType == LST_BOT_HOST_SLOTS &&
+            serverSimIsLobbyEnabled(sim)) {
+            if (p->valueLen != 2) return CMD_REJECT_INVALID;
+            switch (serverBotHostSetSlotOverride(sim, (int)p->value[0],
+                                                 (int)p->value[1],
+                                                 (int)senderSlot)) {
+            case BOT_HOST_SLOT_SET_OK:        return CMD_OK;
+            case BOT_HOST_SLOT_SET_LOCKED:    return CMD_REJECT_LOCKED;
+            case BOT_HOST_SLOT_SET_NOT_OWNER: return CMD_REJECT_NOT_HOST;
+            default:                          return CMD_REJECT_INVALID;
+            }
+        }
+        if (p->settingType == LST_SERVER_BOT_SLOTS &&
+            serverSimIsLobbyEnabled(sim)) {
+            if (!lobbyClientMayEdit(sim, senderSlot)) return CMD_REJECT_NOT_HOST;
+            if (serverSimIsServerBotSlotsLocked(sim)) {
+                fprintf(stderr, "Server bot slots: change refused "
+                        "(set by -botcapacity)\n");
+                return CMD_REJECT_LOCKED;
+            }
+            if (p->valueLen != 1 || p->value[0] > MAX_TANKS) {
+                return CMD_REJECT_INVALID;
+            }
+            if (serverSimGetServerBotSlots(sim) != (int)p->value[0]) {
+                fprintf(stderr, "Server bot slots: %d (player %d; the CPU "
+                        "test recommends %d)\n", (int)p->value[0],
+                        (int)senderSlot + 1,
+                        serverSimGetHostBotCapacityRecommended(sim));
+            }
+            (void)serverSimSetServerBotSlots(sim, (int)p->value[0]);
+            return CMD_OK;
+        }
         if (!serverSimIsLobbyEnabled(sim) ||
             serverSimGetState(sim) != serverStateLobby) {
             return CMD_REJECT_BAD_STATE;
         }
         if (!lobbyClientMayEdit(sim, senderSlot)) return CMD_REJECT_NOT_HOST;
-        const CmdLobbySetting *p = &cmd->u.lobbySetting;
         if (p->valueLen > 32) return CMD_REJECT_INVALID;
         uint32_t lockBit = serverSimGetSettingLockBit(p->settingType);
         if (lockBit == 0xFFFFFFFFu) {
@@ -867,12 +910,23 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
             fprintf(stderr, "ADD_BOT reject NOT_HOST: senderSlot=%d\n", (int)senderSlot);
             return CMD_REJECT_NOT_HOST;
         }
-        /* Enforce the operator-configured -maxbots cap (0 = no cap). */
-        BYTE maxBots = serverSimGetMaxBots(sim);
-        if (maxBots > 0 && serverSimGetLobbyBotCount(sim) >= maxBots) {
-            fprintf(stderr, "ADD_BOT reject BOT_LIMIT: count=%d max=%d\n",
-                    (int)serverSimGetLobbyBotCount(sim), (int)maxBots);
-            return CMD_REJECT_BOT_LIMIT;
+        /* The game bot limit: the bots this server runs in its own
+         * process (the CPU speed test, -botcapacity or the lobby's Server
+         * bot slots) plus the slots of each Bot Host that runs bots. It
+         * holds every add while the test runs and no host has a slot. The
+         * client greys its button on the same number, from the lobby
+         * settings; this is for a client that has not heard it yet.
+         * Scenario adds do not come through here. */
+        {
+            int hostCap = serverSimGetGameBotLimit(sim);
+            int lobbyBots = (int)serverSimGetLobbyBotCount(sim);
+            if (!serverSimHostBotCapacityAllowsAdd(hostCap, lobbyBots)) {
+                fprintf(stderr, "ADD_BOT reject BOT_LIMIT: count=%d "
+                        "capacity=%d%s\n", lobbyBots, hostCap,
+                        hostCap == SERVER_HOST_BOT_CAPACITY_MEASURING
+                            ? " (CPU speed test running)" : "");
+                return CMD_REJECT_BOT_LIMIT;
+            }
         }
         const CmdLobbyAddBot *p = &cmd->u.lobbyAddBot;
         char validatedName[PACKET_MAX_PLAYER_NAME];
@@ -888,6 +942,20 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
                 fprintf(stderr, "ADD_BOT reject INVALID: bot name not acceptable ('%s')\n", rawName);
                 return CMD_REJECT_INVALID;
             }
+        }
+        /* The same question the team-set arm asks, put before anything is
+           made: a host's Add Bot onto a team the scenario does not allow (a
+           new team while it says no extra teams) is refused whole, so no bot
+           is made and no seat is taken. MAX_TANKS stands for the bot not yet
+           seated: no slot holds the team already and nobody is left out of
+           the member count. Team 0 (the join rule's team) and a number past
+           the end are not asked, as in the helper. Only this host path asks;
+           a script spawning or seating a bot, or set_team, does not. */
+        if (!scenarioAllowsExtraTeams(sim, (BYTE)MAX_TANKS, p->teamNumber)) {
+            fprintf(stderr, "ADD_BOT reject SCENARIO_TEAM: team %d is a new "
+                    "team and the scenario allows no extra teams\n",
+                    (int)p->teamNumber);
+            return CMD_REJECT_SCENARIO_TEAM;
         }
         BYTE slot;
         /* The one seat rule a bot has, shared with the scenario's spawn and
@@ -906,24 +974,21 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
             snprintf(botName, sizeof(botName), "Bot %d", slot + 1);
         }
         /* A lobby Add Bot carries no configuration: NULL init, so the
-         * brain sees an empty BRAIN_INIT. The team stays out of the add
-         * and is written below, which is where this arm has always put
-         * it. */
+         * brain sees an empty BRAIN_INIT. The add gives the bot the join
+         * rule's team, so a plain Add Bot (team 0 from the client) is on a
+         * team from the start; a team the client names is written below. */
         if (!botManagerAddBot(sim, slot, serverSimGetBotBrainPath(sim), botName,
                               serverSimGetBotAiType(sim),
                               gameTypeGet(&serverSimGetGameSim(sim)->game),
-                              serverSimGetGameSim(sim)->hiddenMines, 0, NULL)) {
+                              serverSimGetGameSim(sim)->hiddenMines,
+                              SERVER_SIM_BOT_TEAM_DEFAULT, NULL)) {
             fprintf(stderr, "ADD_BOT reject INVALID: botManagerAddBot failed (slot=%d name='%s' brain='%s')\n",
                     (int)slot, botName, serverSimGetBotBrainPath(sim));
             return CMD_REJECT_INVALID;
         }
         transportUdpServerSetBotName(slot, botName);
-        /* The same question the team-set arm asks. The bot is already seated
-           by here, so unlike that arm the refusal cannot be a return code:
-           it is the team write, and the bot lands unassigned where the
-           roster shows it. */
-        if (p->teamNumber > 0 && p->teamNumber < MAX_TANKS &&
-            scenarioAllowsExtraTeams(sim, slot, p->teamNumber)) {
+        /* The team the client named, already let through above. */
+        if (p->teamNumber > 0 && p->teamNumber < MAX_TANKS) {
             serverSimSetTeam(sim, slot, p->teamNumber);
         }
         /* The new bot's brain mode and difficulty (serverSimResolveNewBotConfig):

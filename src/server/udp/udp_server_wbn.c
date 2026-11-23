@@ -146,7 +146,9 @@ void transportUdpServerBroadcastWbnRekey(ServerSim *sim) {
     if (!winbolonetIsRunning()) return;
     for (i = 0; i < MAX_TANKS; i++) {
         bool wasVerified = udpServer.clients[i].wbnWasVerified;
-        if (!wbnRekeyTargetSelected(udpServer.clients[i].connected, wasVerified))
+        if (!wbnRekeyTargetSelected(udpServer.clients[i].connected &&
+                                    !udpServer.clients[i].botSlot,
+                                    wasVerified))
             continue;
         if (udpServer.clients[i].clientType == CLIENT_TYPE_WEB) {
             /* A web slot can't mint a fresh player_key and won't re-present its
@@ -364,6 +366,7 @@ static void udpServerStampReauth(ServerSim *sim, const WbnReauthCtx *rc,
             for (s = 0; s < MAX_TANKS; s++) {
                 if (s == (int)slot) continue;
                 if (!udpServer.clients[s].connected) continue;
+                if (udpServer.clients[s].botSlot) continue;
                 if (playerNameCompare(udpServer.clients[s].playerName,
                                       desired) == 0) {
                     holder = s;
