@@ -42,11 +42,10 @@
  *
  *    [authorLen 1][author][updatedLen 1][updated]
  *
- *  It travels behind a script's details in the details
- *  reply (BULK_SCN_DETAILS_FOUND_V3) and once per row in the
- *  trailer of a scenario-list chunk. A reader takes what it
- *  knows and ignores bytes after the pair, so a later field
- *  can follow without an older reader refusing the blob.
+ *  It travels behind a script's details and settings in the
+ *  details reply (bulk_transfer.h) and at the end of each
+ *  row of a scenario-list chunk (netpacks.h). A reader takes
+ *  the pair and leaves the bytes after it to the caller.
  *
  *  Here in public/ for the reason scenario_callbacks.h is:
  *  the manifest readers, the server's UDP layer, the client
@@ -73,12 +72,6 @@
 
 /* The blob at its largest: both length bytes and both strings full. */
 #define SCN_IDENTITY_BLOB_MAX (2 + (SCN_AUTHOR_LEN - 1) + SCN_UPDATED_CHARS)
-
-/* The byte ahead of the identity trailer in a scenario-list chunk: after the
- * last row comes this tag and then one blob per row, in row order. A chunk
- * from an older server ends at its last row, so a reader that finds no tag
- * there knows the rows carry no identity. */
-#define SCN_LIST_IDENTITY_TAG 0x49 /* 'I' */
 
 /* How many bytes the UTF-8 sequence at s[0..n) takes when it is whole and
  * well formed, or 0 when it is not: a stray continuation byte, a lead byte no

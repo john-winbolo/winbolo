@@ -280,7 +280,7 @@ int            gameFrontHostingUploadMaxStorage = 8;
 /* Persist upload dir. Empty until gameFrontGetPrefs seeds the default
  * (<prefs path>uploads) or the user picks one. */
 char           gameFrontHostingUploadDir[FILENAME_MAX] = "";
-int            gameFrontHostingScriptUploadPolicy     = SCRIPT_UPLOAD_ALLOW;
+int            gameFrontHostingScriptUploadPolicy     = SCRIPT_UPLOAD_OFF;
 bool           gameFrontHostingShareScripts           = TRUE;
 int            gameFrontHostingScriptUploadMaxFiles   = 32;
 int            gameFrontHostingScriptUploadMaxStorage = 64;
@@ -426,6 +426,8 @@ int   gameFrontScnTextPopX = -1;
 int   gameFrontScnTextPopY = -1;
 int   gameFrontScnTextPopW = SCN_TEXT_POPOUT_DEFAULT_W;
 int   gameFrontScnTextPopH = SCN_TEXT_POPOUT_DEFAULT_H;
+int   gameFrontGifWinX = -1;
+int   gameFrontGifWinY = -1;
 float gameFrontOverviewZoom = 2.0f;
 bool  gameFrontOverviewFollow = TRUE;
 bool  gameFrontShowMapOverview = FALSE;
@@ -4510,7 +4512,7 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   gameFrontHostingAllowSpec = YESNO_TO_TRUEFALSE(buff[0]);
   prefsGetString("HOSTING", "Run Map Scripts", "Yes", buff, FILENAME_MAX);
   gameFrontHostingScripts = YESNO_TO_TRUEFALSE(buff[0]);
-  prefsGetString("HOSTING", "Script Upload Policy", "Allow", buff, FILENAME_MAX);
+  prefsGetString("HOSTING", "Script Upload Policy", "Off", buff, FILENAME_MAX);
   gameFrontHostingScriptUploadPolicy = scriptUploadPolicyResolve(buff);
   prefsGetString("HOSTING", "Share Scripts", "Yes", buff, FILENAME_MAX);
   gameFrontHostingShareScripts = YESNO_TO_TRUEFALSE(buff[0]);
@@ -5471,6 +5473,15 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
     gameFrontScnTextPopW   = pop.w;
     gameFrontScnTextPopH   = pop.h;
   }
+  /* The replay's GIF window: a value below 0 is read as never moved. */
+  prefsGetString("WINDOW", "GIF Window X", "-1", buff, FILENAME_MAX);
+  gameFrontGifWinX = atoi(buff);
+  prefsGetString("WINDOW", "GIF Window Y", "-1", buff, FILENAME_MAX);
+  gameFrontGifWinY = atoi(buff);
+  if (gameFrontGifWinX < 0 || gameFrontGifWinY < 0) {
+    gameFrontGifWinX = -1;
+    gameFrontGifWinY = -1;
+  }
 
   prefsGetString("MENU", "Message Label Size", "1", buff, FILENAME_MAX);
   labelMsg = atoi(buff);
@@ -6003,6 +6014,11 @@ void gameFrontFlushWindowSettings(void) {
     scnPanelPopoutFormat(&pop, buff, sizeof(buff));
     prefsSetString("WINDOW", SCN_TEXT_PREFS_POPOUT_KEY, buff);
   }
+
+  intToStr(gameFrontGifWinX, buff, sizeof(buff));
+  prefsSetString("WINDOW", "GIF Window X", buff);
+  intToStr(gameFrontGifWinY, buff, sizeof(buff));
+  prefsSetString("WINDOW", "GIF Window Y", buff);
 
   s_windowSettingsDirty = false;
 }

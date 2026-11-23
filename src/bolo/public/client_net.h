@@ -301,6 +301,15 @@ bool clientSimNetSendLobbyScriptUpload(ClientSim *cs, const char *localFilePath)
  * when no upload is in flight. Serves a map or a script upload. */
 uint8_t clientSimGetLobbyMapUploadProgressPercent(const ClientSim *cs);
 
+/* True while a lobby map change of this client's is still under way on a
+ * network server: a map pick, random map, Use This Map or cancel the server
+ * has not yet acked, the re-join a map change sends the client on, or an
+ * upload of either kind not yet over. The map chooser greys its picks,
+ * Use This Map and its cancels while it holds. Never latched: it ends when
+ * the work does, when a watchdog gives up on it, or with the connection.
+ * Always false in single player and on the in-process host. */
+bool clientSimNetLobbyMapChangeBusy(const ClientSim *cs);
+
 /* Pre-upload optimisation: if the server already has the same file
  * (matching MD5) at relPath under its data/maps/, it installs that
  * file directly and replies MAP_UPLOAD_DONE — no chunk transfer

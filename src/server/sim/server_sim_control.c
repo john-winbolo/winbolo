@@ -46,12 +46,11 @@
 
 /* A ping is a team signal. The sender always sees its own (its client draws
  * nothing until the server echoes it back, so this is the only copy it gets);
- * everyone on the sender's lobby team, and anyone allied with the sender,
- * sees it too. Team 0 means "unassigned" rather than "team zero", so a
- * teamless sender pings for itself alone. */
+ * everyone allied with the sender sees it too. During a round the alliances
+ * are written from the lobby teams (#424), so allied is the same as on one
+ * team, and a seat on team 0 is allied with nobody and pings for itself
+ * alone. */
 bool serverSimPingReachesClient(ServerSim *sim, BYTE recipient, BYTE sender) {
-    const LobbyPlayer *sLp;
-    const LobbyPlayer *rLp;
     if (sim == NULL) return false;
     if (recipient >= MAX_TANKS || sender >= MAX_TANKS) return false;
     if (recipient == sender) return true;
@@ -64,12 +63,7 @@ bool serverSimPingReachesClient(ServerSim *sim, BYTE recipient, BYTE sender) {
     if ((sim->pingMuteMask[recipient] & ((PlayerBitMap)1u << sender)) != 0) {
         return false;
     }
-    if (playersIsAllie(&sim->sim.plyrs, recipient, sender)) return true;
-    sLp = serverSimGetLobbyPlayer(sim, sender);
-    rLp = serverSimGetLobbyPlayer(sim, recipient);
-    if (sLp == NULL || rLp == NULL) return false;
-    if (sLp->teamNumber == 0) return false;
-    return sLp->teamNumber == rLp->teamNumber;
+    return playersIsAllie(&sim->sim.plyrs, recipient, sender) == TRUE;
 }
 
 void serverSimSetPingMute(ServerSim *sim, BYTE muterSlot, BYTE targetPlayer,

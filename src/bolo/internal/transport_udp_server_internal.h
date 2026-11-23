@@ -419,17 +419,17 @@ typedef struct UdpServerState {
     /* The same traffic again, per slot and with the drop reasons apart. The
      * totals above answer "is this server dropping voice"; these answer
      * "whose, and why", which is the question a player reporting that nobody
-     * could hear them actually asks. The five reasons share one counter above
-     * and mean five different things: a server with voice off, a sender past
-     * the per-tick cap, a sender still taking the map, a malformed segment,
-     * and a repack that failed — the last being the only one that means the
-     * server itself is at fault. forwarded and capped count this slot as a
-     * recipient rather than a sender. Cleared when the slot disconnects. */
+     * could hear them actually asks. The four reasons share one counter above
+     * and mean four different things: a server with voice off, a sender past
+     * the per-tick cap, a malformed segment, and a repack that failed — the
+     * last being the only one that means the server itself is at fault. A
+     * slot's map download is not one of them: voice is carried for every
+     * connected slot, map or no map. forwarded and capped count this slot as
+     * a recipient rather than a sender. Cleared when the slot disconnects. */
     struct {
         uint32_t accepted;
         uint32_t dropVoiceOff;
         uint32_t dropPerTickCap;
-        uint32_t dropNotInGame;
         uint32_t dropUnpack;
         uint32_t dropRepack;
         uint32_t forwarded;
@@ -619,9 +619,8 @@ void serverSendServerMessage(struct ServerSim *sim, langid id, int argCount,
  * src/server/udp/udp_server_join.c hands udpClientDeliverControl to
  * serverSimRegisterSubscriber and flushes the replay burst that follows;
  * src/server/udp/udp_server_spectator.c calls udpClientDeliverControl to
- * deliver a player-addressed event, and its own deliver callback logs through
- * mpDiagCtrlName. */
-const char *mpDiagCtrlName(int type);
+ * deliver a player-addressed event. Both log event names through
+ * controlEventDiagName (control_event.h). */
 void transportUdpServerFlushChannel(int clientIdx);
 void udpClientDeliverControl(void *ctx, const ControlEvent *evt);
 

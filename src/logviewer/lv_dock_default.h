@@ -11,7 +11,8 @@
  *  - the left sidebar, 209 points wide: the HUD panel, the Tank panel under
  *    it. Its unused part is clear, so the map shows below the Tank panel;
  *  - the right sidebar, 407 points wide: Game Information, the Scenario
- *    panel, Overview, Item Information, Events and Comments, top to bottom.
+ *    panel, Overview, Item Information, Events, Chat and Comments, top to
+ *    bottom.
  *    Events takes what the others leave, now and whenever the window
  *    changes height;
  *  - the bottom sidebar, 161 points high: the Controls panel;
@@ -58,6 +59,7 @@ static const LvDockDefaultSlot lvDockDefaultRight[] = {
     { "###overview",     0, 0 },
     { "###iteminfo",     0, 0 },
     { "###events",       0, 1 },
+    { "###chat",         0, 0 },
     { "###comments",   158, 0 },
 };
 

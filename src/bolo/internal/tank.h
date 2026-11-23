@@ -1251,7 +1251,8 @@ void tankMineDamage(struct GameSim *sim, tank *value, BYTE mx, BYTE my, BYTE own
 *  sim   - Game simulation
 *  mx    - Map X Co-ordinate
 *  my    - Map Y Co-ordinate
-*  dir   - Tank facing direction (0-15)
+*  dir   - Tank facing angle in bradians (0-255). The
+*          top four bits pick one of the 16 directions.
 *********************************************************/
 void tankNearMines(struct GameSim *sim, BYTE mx, BYTE my, BYTE dir);
 

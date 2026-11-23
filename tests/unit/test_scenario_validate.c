@@ -118,6 +118,15 @@
  *                                          and break the pair between them
  *                                          are reported against the rule that
  *                                          has to move, not against the table
+ * run_scenario_validate_rule_pair_mended — a rule that breaks a pair on its
+ *                                          own, in a table that sets the other
+ *                                          side as well and so holds the pair,
+ *                                          is accepted with nothing reported
+ * run_scenario_validate_rule_pair_alone  — a rule that breaks a pair on its
+ *                                          own, in a table that does not mend
+ *                                          it, is still reported, once, and
+ *                                          beside a value out of its bounds
+ *                                          as well
  * run_scenario_validate_trigger_call_no_name
  *                                        — a call whose first argument is an
  *                                          empty name is refused the way one
@@ -2680,6 +2689,147 @@ int run_scenario_validate_needs_bots_declared(void) {
     if (rc == 0 && !r->manifest.needsBots) {
         fprintf(stderr, "FAIL %s:%d: needs_bots came back false\n", __FILE__,
                 __LINE__);
+        rc = 1;
+    }
+
+    free(r);
+    return rc;
+}
+
+/* ── 35. A pair the table itself mends ────────────────────────────── */
+
+/* lgm_cost_mine <= tank_full_mines, and the classic table plays them at 1 and
+   40. A table that wants tanks to carry no mines has to take both to 0: the
+   ceiling alone is under the classic cost of 1. The server writes every value
+   of a table before it checks any, so it takes this one, and the validator
+   has to agree. It used to ask the pair of each rule on its own, beside the
+   classic value of the other, and report tank_full_mines against a table the
+   server plays.
+
+   Asked both ways the validator is reached: with no sim, as the map editor
+   and a mod named to -validate ask it, and against a round's own table. Both
+   orders of the two rows, since the answer may not hang on which is read
+   first. */
+int run_scenario_validate_rule_pair_mended(void) {
+    static const char *const kName = "untitled.scenario.lua";
+    static const char *const kLua[2] = {
+        "scenario = {\n"
+        "  api = 1,\n"
+        "  rules = { tank_full_mines = 0, lgm_cost_mine = 0 },\n"
+        "}\n",
+        "scenario = {\n"
+        "  api = 1,\n"
+        "  rules = { lgm_cost_mine = 0, tank_full_mines = 0 },\n"
+        "}\n",
+    };
+    ScnValidateResult *r;
+    ServerSim         *sim;
+    int                rc = 0;
+    int                i;
+    int                withSim;
+
+    r = (ScnValidateResult *)malloc(sizeof(*r));
+    if (r == NULL) {
+        UT_FAIL("out of memory for the result");
+    }
+    sim = svSim();
+    if (sim == NULL) {
+        free(r);
+        UT_FAIL("the sim would not build");
+    }
+
+    for (i = 0; i < 2 && rc == 0; i++) {
+        for (withSim = 0; withSim < 2 && rc == 0; withSim++) {
+            bool ok = scenarioValidateSource(withSim ? sim : NULL, kLua[i],
+                                             strlen(kLua[i]), kName, NULL, r);
+            if (!ok || r->count != 0) {
+                char seen[1024];
+                svList(r, seen, sizeof(seen));
+                fprintf(stderr, "FAIL %s:%d: table %d, %s, holds its pair and "
+                                "was refused: %s\n",
+                        __FILE__, __LINE__, i,
+                        withSim ? "against a sim" : "with no sim", seen);
+                rc = 1;
+            }
+        }
+    }
+
+    serverSimDestroy(sim);
+    free(r);
+    return rc;
+}
+
+/* ── 36. A pair one rule breaks alone ─────────────────────────────── */
+
+/* The other half of the case above: the same ceiling with nothing beside it
+   to mend the pair. The one-rule pass no longer reports a pair, so this is
+   the whole table's to find, and it has to — the server refuses this table.
+   It is keyed on the rule the table sets, which is the only one of the two
+   with a row to mark, and said once.
+
+   Then the same rule beside one outside its own bounds. The row out of its
+   bounds is reported under its own key, and the pair is still found: the
+   check of the whole table stops at the first fault, bounds before pairs, so
+   with that row left in the pair would never be reached. */
+int run_scenario_validate_rule_pair_alone(void) {
+    static const char *const kName = "untitled.scenario.lua";
+    static const char *const kAlone =
+        "scenario = {\n"
+        "  api = 1,\n"
+        "  rules = { tank_full_mines = 0 },\n"
+        "}\n";
+    static const char *const kBeside =
+        "scenario = {\n"
+        "  api = 1,\n"
+        "  rules = { tank_reload_ticks = 999, tank_full_mines = 0 },\n"
+        "}\n";
+    ScnValidateResult *r;
+    int                rc = 0;
+
+    r = (ScnValidateResult *)malloc(sizeof(*r));
+    if (r == NULL) {
+        UT_FAIL("out of memory for the result");
+    }
+
+    if (scenarioValidateSource(NULL, kAlone, strlen(kAlone), kName, NULL, r)) {
+        fprintf(stderr, "FAIL %s:%d: a ceiling under the classic cost, with "
+                        "nothing to mend it, was accepted\n",
+                __FILE__, __LINE__);
+        rc = 1;
+    }
+    if (rc == 0 && !SV_SAYS(r, "rules.tank_full_mines", "lgm_cost_mine")) {
+        rc = 1;
+    }
+    if (rc == 0 && !SV_SILENT(r, "rules")) {
+        rc = 1;
+    }
+    if (rc == 0 && r->count != 1) {
+        char seen[1024];
+        svList(r, seen, sizeof(seen));
+        fprintf(stderr, "FAIL %s:%d: %u issues against one broken pair: %s\n",
+                __FILE__, __LINE__, (unsigned)r->count, seen);
+        rc = 1;
+    }
+
+    if (rc == 0 &&
+        scenarioValidateSource(NULL, kBeside, strlen(kBeside), kName, NULL,
+                               r)) {
+        fprintf(stderr, "FAIL %s:%d: a value out of its bounds beside a "
+                        "broken pair was accepted\n", __FILE__, __LINE__);
+        rc = 1;
+    }
+    if (rc == 0 && !SV_SAYS(r, "rules.tank_reload_ticks", "999")) {
+        rc = 1;
+    }
+    if (rc == 0 && !SV_SAYS(r, "rules.tank_full_mines", "lgm_cost_mine")) {
+        rc = 1;
+    }
+    if (rc == 0 && r->count != 2) {
+        char seen[1024];
+        svList(r, seen, sizeof(seen));
+        fprintf(stderr, "FAIL %s:%d: %u issues against one value out of its "
+                        "bounds and one broken pair: %s\n",
+                __FILE__, __LINE__, (unsigned)r->count, seen);
         rc = 1;
     }
 

@@ -89,6 +89,18 @@ void minesDestroy(mines *visMines);
 bool minesGetAllowHiddenMines(mines *visMines);
 
 /*********************************************************
+*NAME:          minesSetAllowHiddenMines
+*PURPOSE:
+*  Sets whether hidden mines are allowed, keeping the
+*  mines already marked as seen
+*
+*ARGUMENTS:
+*  visMines - Pointer to the mines structure
+*  allow    - TRUE if hidden mines are allowed
+*********************************************************/
+void minesSetAllowHiddenMines(mines *visMines, bool allow);
+
+/*********************************************************
 *NAME:          minesAddItem
 *AUTHOR:        John Morrison
 *CREATION DATE: 29/1/99

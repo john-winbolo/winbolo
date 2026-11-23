@@ -126,6 +126,22 @@ void interpUpdate(InterpContext *ctx, BYTE playerNum,
     return;
   }
 
+  /* First snapshot after a gap long enough to freeze the player (out of our
+   * view, a slot handed to a new player, a long stall): curr and pending
+   * still hold where the tank was before the gap.  Shifting the new sample in
+   * behind them would draw the tank at that old spot for a snapshot before it
+   * jumped to where it really is, so start the pipeline over from this one. */
+  if (p->missedTicks > INTERP_MAX_MISSED_TICKS) {
+    p->curr = *snap;
+    p->hasPrev = FALSE;
+    p->hasPending = FALSE;
+    p->snapshotTick = tick;
+    p->currArrivalMs = nowMs;
+    p->prevArrivalMs = nowMs;
+    p->missedTicks = 0;
+    return;
+  }
+
   if (p->hasPending) {
     /* Shift: curr → prev, pending → curr, new → pending */
     p->prev = p->curr;

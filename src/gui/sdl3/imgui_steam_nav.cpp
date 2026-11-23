@@ -19,6 +19,7 @@ extern "C" {
 #include "input_gamepad.h"   /* native pad: left-stick -> menu nav */
 #include "input_source.h"    /* track active device for controller-mode UI */
 #include "dialogs/imgui_keyboard.h"  /* keyboardIsOpen: our OSK owns the pad */
+#include "dialogs/imgui_nav_outline.h"  /* dialogNavOutlineSetControllerInUse */
 #include "workshop_sync.h"   /* workshopSyncPoll: the installed-item edge */
 /* While the Set Keys dialog is capturing a controller binding, the held
    button must reach the capture intercept as a raw button — not be injected
@@ -135,6 +136,8 @@ extern "C" void imguiSteamNavFeedCurrentContext(void) {
             if (io.MouseDown[b]) kbmUse = true;
         if (kbmUse) inputSourceNoteKeyboard();
     }
+    /* The focus outline shows for a controller user without a Tab press. */
+    dialogNavOutlineSetControllerInUse(inputSourceCurrent() == INPUT_SOURCE_GAMEPAD);
 
     /* Don't inject any nav while a controller binding is being captured — the
        raw button press belongs to the capture, not to menu activation. */

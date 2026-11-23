@@ -160,6 +160,8 @@ void roundStatsApplyRecord(PlayerRoundStats stats[MAX_TANKS],
                       0, 0, 0);
         break;
     }
+    case ATTR_REC_TEAM:
+        break;   /* a change of team counts for nobody and is not notable */
     default:
         break;   /* unknown tag: ignore */
     }
@@ -167,6 +169,45 @@ void roundStatsApplyRecord(PlayerRoundStats stats[MAX_TANKS],
 
 size_t roundStatsRecordSize(uint8_t recordType) {
     return attrTrackRecordSize(recordType);   /* 0 for an unknown tag: caller stops */
+}
+
+int roundStatsCollectTeamChanges(const uint8_t *records, size_t len,
+                                 TeamChange *out, int maxOut) {
+    size_t off = 0;
+    int    count = 0;
+
+    if (records == NULL || out == NULL || maxOut <= 0) return 0;
+    while (off < len && count < maxOut) {
+        uint8_t tag = records[off];
+        size_t  sz = roundStatsRecordSize(tag);
+        if (sz == 0 || off + sz > len) break;
+        if (tag == ATTR_REC_TEAM) {
+            AttrTeamRecord r;
+            memcpy(&r, records + off, sizeof r);
+            out[count].tick = r.tick;
+            out[count].slot = r.slot;
+            out[count].team = r.team;
+            count++;
+        }
+        off += sz;
+    }
+    return count;
+}
+
+uint8_t roundStatsTeamAt(const TeamChange *changes, int n, uint8_t headerTeam,
+                         uint8_t slot, uint32_t tick) {
+    int first = -1;
+    int last = -1;
+
+    if (changes == NULL) return headerTeam;
+    for (int i = 0; i < n; i++) {
+        if (changes[i].slot != slot) continue;
+        if (first < 0) first = i;
+        if (changes[i].tick <= tick) last = i;
+    }
+    if (last >= 0) return changes[last].team;
+    if (first >= 0) return changes[first].team;
+    return headerTeam;
 }
 
 /* A single slot's standing for one award. `key` is the (possibly signed,
@@ -654,11 +695,25 @@ static uint16_t terrDmgSum(const TerrDmgRing *ring, uint32_t tick, uint8_t x,
     return (uint16_t)(total > 65535u ? 65535u : total);
 }
 
-/* Team of an owner slot; NEUTRAL for unowned or an out-of-range slot. */
-static uint8_t terrTeamOfSlot(const AttrSlotIdentity *slots, int slotCount,
-                              uint8_t slot) {
-    if ((int)slot >= slotCount || slot >= MAX_TANKS) return NEUTRAL;
-    return slots[slot].team;
+/* Team of an owner slot as the walk has it at this record; NEUTRAL for
+ * unowned or an out-of-range slot. */
+static uint8_t terrTeamOfSlot(const uint8_t seatTeam[MAX_TANKS], uint8_t slot) {
+    if (slot >= MAX_TANKS) return NEUTRAL;
+    return seatTeam[slot];
+}
+
+/* The most team ids one walk gives a grid: every header team and every team
+ * a record names. Real rounds use well under MAX_TANKS. A crafted stream that
+ * names more gets no grid for the extra ids, so objects on them count for
+ * nobody, the same as an object on no team. */
+#define TERR_TEAM_IDS_MAX (2 * MAX_TANKS)
+
+/* Add team to the list of ids that get a grid, when it is not there and
+ * there is room. */
+static void terrAddTeam(uint8_t *teamIds, int *teamCount, uint8_t team) {
+    for (int k = 0; k < *teamCount; k++)
+        if (teamIds[k] == team) return;
+    if (*teamCount < TERR_TEAM_IDS_MAX) teamIds[(*teamCount)++] = team;
 }
 
 /* Position of a team id in the compacted team list, or -1 when absent. */
@@ -719,13 +774,11 @@ static void terrStamp(int32_t *grids, int teamCount, int ti, int cx, int cy,
  * change of owner stays balanced whichever side of it is the blank one. */
 static void terrApplyObject(int32_t *grids, int teamCount, const uint8_t *teamIds,
                             const TerrObject *o, int radius, int strength,
-                            const AttrSlotIdentity *slots, int slotCount,
-                            int sign) {
+                            const uint8_t seatTeam[MAX_TANKS], int sign) {
     int ti;
 
     if (!o->known || o->owner == NEUTRAL) return;
-    ti = terrTeamIndex(teamIds, teamCount,
-                       terrTeamOfSlot(slots, slotCount, o->owner));
+    ti = terrTeamIndex(teamIds, teamCount, terrTeamOfSlot(seatTeam, o->owner));
     if (ti < 0) return;
     terrStamp(grids, teamCount, ti, o->mapX, o->mapY, radius, strength, sign);
 }
@@ -786,11 +839,56 @@ static uint32_t terrDiffControlBox(const int32_t *grids, int teamCount,
     return terrDiffControl(grids, teamCount, control, x0, y0, x1, y1);
 }
 
+/* A seat moved to another team (v3+). Its pills and bases go with it: each one
+ * is taken off the old team's grid, the seat's team changes, and each is laid
+ * on the new team's grid with control re-derived around it. The cells that
+ * change hands are not counted, because nobody fought for them. Returns false
+ * once the walk's ceiling on objective changes is passed, as the caller's
+ * own count does. */
+static bool terrMoveSeat(int32_t *grids, int teamCount, const uint8_t *teamIds,
+                         uint8_t *control, TerrObject *pills, TerrObject *bases,
+                         uint8_t seatTeam[MAX_TANKS], uint8_t slot, uint8_t team,
+                         long *terrEvents) {
+    for (int i = 0; i < HL_TERR_OBJ_MAX; i++) {
+        if (pills[i].known && pills[i].owner == slot) {
+            if (++*terrEvents > HL_TERR_EVENT_MAX) return false;
+            terrApplyObject(grids, teamCount, teamIds, &pills[i],
+                            HL_INF_PILL_RADIUS, HL_INF_PILL_STRENGTH,
+                            seatTeam, -1);
+        }
+        if (bases[i].known && bases[i].owner == slot) {
+            if (++*terrEvents > HL_TERR_EVENT_MAX) return false;
+            terrApplyObject(grids, teamCount, teamIds, &bases[i],
+                            HL_INF_BASE_RADIUS, HL_INF_BASE_STRENGTH,
+                            seatTeam, -1);
+        }
+    }
+    seatTeam[slot] = team;
+    for (int i = 0; i < HL_TERR_OBJ_MAX; i++) {
+        if (pills[i].known && pills[i].owner == slot) {
+            terrApplyObject(grids, teamCount, teamIds, &pills[i],
+                            HL_INF_PILL_RADIUS, HL_INF_PILL_STRENGTH,
+                            seatTeam, +1);
+            (void)terrDiffControlBox(grids, teamCount, control, pills[i].mapX,
+                                     pills[i].mapY, HL_INF_PILL_RADIUS);
+        }
+        if (bases[i].known && bases[i].owner == slot) {
+            terrApplyObject(grids, teamCount, teamIds, &bases[i],
+                            HL_INF_BASE_RADIUS, HL_INF_BASE_STRENGTH,
+                            seatTeam, +1);
+            (void)terrDiffControlBox(grids, teamCount, control, bases[i].mapX,
+                                     bases[i].mapY, HL_INF_BASE_RADIUS);
+        }
+    }
+    return true;
+}
+
 void computeTerritoryShifts(const uint8_t *records, size_t len,
                             const AttrSlotIdentity slots[MAX_TANKS],
                             int slotCount,
                             TerritoryShift *out, int *outCount, int maxOut) {
-    uint8_t teamIds[MAX_TANKS];
+    uint8_t teamIds[TERR_TEAM_IDS_MAX];
+    uint8_t seatTeam[MAX_TANKS];
     int teamCount = 0;
     int32_t *grids = NULL;
     uint8_t *control = NULL;
@@ -812,11 +910,26 @@ void computeTerritoryShifts(const uint8_t *records, size_t len,
     if (slotCount <= 0) return;
 
     /* Only the team ids actually present get a grid — a round is usually two or
-     * three sided, and the ids are not guaranteed to be small or contiguous. */
-    for (int s = 0; s < slotCount; s++) {
-        if (terrTeamIndex(teamIds, teamCount, slots[s].team) < 0)
-            teamIds[teamCount++] = slots[s].team;
+     * three sided, and the ids are not guaranteed to be small or contiguous.
+     * Present means in the header, or named by a team record (v3+): the header
+     * holds each seat's last team, and a seat may have played on others. */
+    for (int s = 0; s < MAX_TANKS; s++) {
+        seatTeam[s] = (s < slotCount) ? slots[s].team : NEUTRAL;
     }
+    for (int s = 0; s < slotCount; s++) {
+        terrAddTeam(teamIds, &teamCount, slots[s].team);
+    }
+    while (off < len) {
+        size_t sz = roundStatsRecordSize(records[off]);
+        if (sz == 0 || off + sz > len) break;
+        if (records[off] == ATTR_REC_TEAM) {
+            AttrTeamRecord r;
+            memcpy(&r, records + off, sizeof r);
+            terrAddTeam(teamIds, &teamCount, r.team);
+        }
+        off += sz;
+    }
+    off = 0;
     if (teamCount <= 0) return;
 
     grids = (int32_t *)calloc((size_t)teamCount * HL_MAP_CELLS, sizeof(int32_t));
@@ -864,13 +977,13 @@ void computeTerritoryShifts(const uint8_t *records, size_t len,
             evY = r->mapY;
             /* The losing side is whoever we had holding it, not the record's
              * prevOwner: our tables are what the grids were stamped from. */
-            loseTeam = terrTeamOfSlot(slots, slotCount, obj->owner);
-            gainTeam = terrTeamOfSlot(slots, slotCount, r->newOwner);
+            loseTeam = terrTeamOfSlot(seatTeam, obj->owner);
+            gainTeam = terrTeamOfSlot(seatTeam, r->newOwner);
             oldX = obj->mapX; oldY = obj->mapY; oldKnown = obj->known;
             /* Off the grid it is on now, before the tables stop saying where
              * that was; the matching add goes on below, past the guards. */
             terrApplyObject(grids, teamCount, teamIds, obj, radius, strength,
-                            slots, slotCount, -1);
+                            seatTeam, -1);
             obj->owner = r->newOwner;
             obj->mapX = r->mapX;
             obj->mapY = r->mapY;
@@ -890,15 +1003,23 @@ void computeTerritoryShifts(const uint8_t *records, size_t len,
                 evTick = r->tick;
                 evX = r->mapX;
                 evY = r->mapY;
-                loseTeam = terrTeamOfSlot(slots, slotCount, obj->owner);
+                loseTeam = terrTeamOfSlot(seatTeam, obj->owner);
                 gainTeam = NEUTRAL;
                 oldX = obj->mapX; oldY = obj->mapY; oldKnown = obj->known;
                 terrApplyObject(grids, teamCount, teamIds, obj, radius, strength,
-                                slots, slotCount, -1);
+                                seatTeam, -1);
                 obj->owner = NEUTRAL;
                 obj->mapX = r->mapX;
                 obj->mapY = r->mapY;
                 obj->known = 1;
+            }
+        } else if (tag == ATTR_REC_TEAM) {
+            AttrTeamRecord r;
+            memcpy(&r, records + off, sizeof r);
+            if (r.slot < MAX_TANKS && seatTeam[r.slot] != r.team &&
+                !terrMoveSeat(grids, teamCount, teamIds, control, pills, bases,
+                              seatTeam, r.slot, r.team, &terrEvents)) {
+                break;
             }
         }
 
@@ -916,7 +1037,7 @@ void computeTerritoryShifts(const uint8_t *records, size_t len,
 
         /* And back on, at wherever the record just put it. */
         terrApplyObject(grids, teamCount, teamIds, obj, radius, strength,
-                        slots, slotCount, +1);
+                        seatTeam, +1);
 
         /* Control can only have moved within the object's reach — around where it
          * sits now, and around where it sat before if a carried pill was replaced
@@ -1026,6 +1147,15 @@ typedef struct {
     uint32_t value;
     uint32_t score;
 } HlCand;
+
+/* Seat slot's team at tick, for the highlight passes: the header team moved
+ * on by the round's team changes. 0 for a seat out of range. */
+static int hlTeamAt(const uint8_t *team, const TeamChange *changes,
+                    int changeCount, uint8_t slot, uint32_t tick) {
+    if (slot >= MAX_TANKS) return 0;
+    return roundStatsTeamAt(changes, changeCount,
+                            team != NULL ? team[slot] : 0, slot, tick);
+}
 
 /* Chebyshev tile distance, so a square radius reads as one threshold. */
 static int hlTileDist(uint8_t ax, uint8_t ay, uint8_t bx, uint8_t by) {
@@ -1214,6 +1344,7 @@ static int hlBucket(uint32_t startTick, uint32_t firstTick, uint32_t span) {
 void computeHighlights(const NotableEvent *timeline, int timelineCount,
                        const PlayerRoundStats stats[MAX_TANKS],
                        const uint8_t team[MAX_TANKS],
+                       const TeamChange *changes, int changeCount,
                        const AwardResult *awards, int awardCount,
                        const TerritoryShift *shifts, int shiftCount,
                        HighlightWindow *out, int *outCount, int maxOut) {
@@ -1224,6 +1355,8 @@ void computeHighlights(const NotableEvent *timeline, int timelineCount,
     int turnIdx = -1;
     uint32_t firstTick, lastTick;
     HighlightWindow tmp[HIGHLIGHTS_MAX];
+    /* Whether there is any record of teams to judge by. */
+    const bool haveTeams = (team != NULL || (changes != NULL && changeCount > 0));
 
     (void)stats;   /* reserved for later signal passes */
 
@@ -1278,7 +1411,7 @@ void computeHighlights(const NotableEvent *timeline, int timelineCount,
             uint32_t lastEvTick = timeline[i].tick;
             uint16_t killerFreq[MAX_TANKS];
             int teamOfFirst = -1;
-            bool sameTeam = (team != NULL);
+            bool sameTeam = haveTeams;
             int count = 0;
             HlCand c;
 
@@ -1293,9 +1426,11 @@ void computeHighlights(const NotableEvent *timeline, int timelineCount,
                 count++;
                 if (timeline[j].tick > lastEvTick) lastEvTick = timeline[j].tick;
                 if (timeline[j].actorA < MAX_TANKS) killerFreq[timeline[j].actorA]++;
-                if (team != NULL) {
+                if (haveTeams) {
+                    /* The victim's team when it died, not at the round end. */
                     if (timeline[j].actorB < MAX_TANKS) {
-                        int t = team[timeline[j].actorB];
+                        int t = hlTeamAt(team, changes, changeCount,
+                                         timeline[j].actorB, timeline[j].tick);
                         if (teamOfFirst < 0) teamOfFirst = t;
                         else if (t != teamOfFirst) sameTeam = false;
                     } else {
@@ -1660,11 +1795,16 @@ void computeHighlights(const NotableEvent *timeline, int timelineCount,
         if (bestDom >= 0) {
             HlCand c;
             uint8_t rep = NEUTRAL;
-            /* Name the swing after the lowest slot on the gaining team; a team
-             * with nobody on it (or no roster at all) stays anonymous. */
-            if (team != NULL) {
+            /* Name the swing after the lowest slot on the gaining team at the
+             * tick of its biggest flip; a team with nobody on it (or no roster
+             * at all) stays anonymous. */
+            if (haveTeams) {
                 for (int s = 0; s < MAX_TANKS; s++)
-                    if (team[s] == bestTeam) { rep = (uint8_t)s; break; }
+                    if (hlTeamAt(team, changes, changeCount, (uint8_t)s,
+                                 shifts[bestDom].tick) == bestTeam) {
+                        rep = (uint8_t)s;
+                        break;
+                    }
             }
             c.anchorIdx = -1;
             c.startTick = shifts[bestFirst].tick;
@@ -1722,9 +1862,13 @@ void computeHighlights(const NotableEvent *timeline, int timelineCount,
 
             {
                 uint8_t rep = NEUTRAL;
-                if (team != NULL) {
+                if (haveTeams) {
                     for (int s = 0; s < MAX_TANKS; s++)
-                        if (team[s] == gTeam) { rep = (uint8_t)s; break; }
+                        if (hlTeamAt(team, changes, changeCount, (uint8_t)s,
+                                     shifts[domIdx].tick) == gTeam) {
+                            rep = (uint8_t)s;
+                            break;
+                        }
                 }
                 c.anchorIdx = -1;
                 c.startTick = shifts[i].tick;

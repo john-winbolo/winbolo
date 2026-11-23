@@ -66,6 +66,10 @@
 #include "scenario_lua.h"
 #include "sim_rules_names.h"      /* simRulesRuleName — a rule in a reason */
 #include "scenario_validate.h"
+/* TUTORIAL_MAPS_SCRIPT_POPUPS and tutorialMapsScriptHasPopup: which scripts
+ * get game.popup. The path test is scenarioHostScriptIsShippedTutorial, in
+ * scenario_host.h above. */
+#include "tutorial_scripts.h"
 
 /* One line from the parse or from Lua, before it becomes an issue. Lua's own
  * messages carry the file path and the line ahead of the text, so this is
@@ -120,8 +124,12 @@ static int scnStubSetting(lua_State *L) {
 
 /* The shape of the game table with none of its substance. The names come off
  * the registry the real table is built from, so a row added to the surface is
- * on this table too with no second edit. */
-static void scnInstallStubGame(lua_State *L) {
+ * on this table too with no second edit.
+ *
+ * popup false leaves game.popup off, as the host does for every script that
+ * is not a shipped tutorial while TUTORIAL_MAPS_SCRIPT_POPUPS is 0, so a top
+ * level that calls it fails here as it would in a round. */
+static void scnInstallStubGame(lua_State *L, bool popup) {
     const ScnLuaRow       *rows;
     const ScnLuaConst     *consts;
     const ScnLuaTerrain   *terrain;
@@ -133,6 +141,9 @@ static void scnInstallStubGame(lua_State *L) {
 
     rows = scenarioLuaRows(&n);
     for (i = 0; i < n; i++) {
+        if (!popup && strcmp(rows[i].name, "popup") == 0) {
+            continue;
+        }
         lua_pushcclosure(L, strcmp(rows[i].name, "setting") == 0
                                 ? scnStubSetting
                                 : scnStubRow,
@@ -580,19 +591,20 @@ static const char *scnNameWholeIn(const char *text, const char *name) {
     return NULL;
 }
 
-/* The rule of the table that a reason names first. simRulesCheck answers a
- * fault and a sentence and nothing else, so which rule broke is read back out
- * of the sentence: a pair states the rule that has to move ahead of the one
- * it is measured against, so the first name in it is the row an author has to
- * go to. -1 where the sentence names none of the table's rules, which leaves
- * the caller to key the report on the table itself. */
-static int scnRuleNamedFirst(const ScenarioManifest *m, const char *why) {
+/* The rule of a set that a reason names first. simRulesCheck answers a fault
+ * and a sentence and nothing else, so which rule broke is read back out of the
+ * sentence: a pair states the rule that has to move ahead of the one it is
+ * measured against, so the first name in it is the row an author has to go
+ * to. -1 where the sentence names none of the set's rules, which leaves the
+ * caller to key the report on the table itself. */
+static int scnRuleNamedFirst(const uint16_t *rules, uint16_t count,
+                             const char *why) {
     const char *first = NULL;
     int         rule  = -1;
     uint16_t    i;
 
-    for (i = 0; i < m->numRules && i < SCN_MANIFEST_RULES_MAX; i++) {
-        const char *name = simRulesRuleName((int)m->rules[i].rule);
+    for (i = 0; i < count; i++) {
+        const char *name = simRulesRuleName((int)rules[i]);
         const char *at;
 
         if (name == NULL || name[0] == '\0') {
@@ -601,57 +613,69 @@ static int scnRuleNamedFirst(const ScenarioManifest *m, const char *why) {
         at = scnNameWholeIn(why, name);
         if (at != NULL && (first == NULL || at < first)) {
             first = at;
-            rule  = (int)m->rules[i].rule;
+            rule  = (int)rules[i];
         }
     }
     return rule;
 }
 
-/* Every rule the table sets, one at a time and then all at once. One at a
- * time says which rule an author has to move; all at once is what finds a
- * pair two of them break between them, where each on its own stands up. */
+/* Every rule the table sets, one at a time and then all at once.
+ *
+ * One at a time is for a value outside its own rule's bounds. That is a fault
+ * of the one row whatever the rest of the table holds, so each is reported
+ * under its own rule and the pass goes on to the next.
+ *
+ * A pair is asked of the whole table and of nothing less. A rule on its own
+ * stands beside the values the round already holds, and the table may set the
+ * other side of the pair as well: tank_full_mines = 0 alone is under the
+ * classic lgm_cost_mine of 1, and a table that takes both to 0 is one the
+ * server plays, because it writes every value before it checks any. So a pair
+ * that one rule breaks alone is not reported from the one-rule pass. The same
+ * fault is still there in the whole table when nothing else in it mends the
+ * pair, and that is where it is reported.
+ *
+ * The whole table here is the rows that are inside their own bounds. A row
+ * that is not has been reported already, and with it left in the check would
+ * stop at that row's bounds and never reach a pair. */
 static void scnCheckRules(const ServerSim *sim, const ScenarioManifest *m,
                           ScnValidateResult *out) {
     uint16_t    rules[SCN_MANIFEST_RULES_MAX];
     double      values[SCN_MANIFEST_RULES_MAX];
     char        why[SCN_VALIDATE_MSG_LEN];
     char        key[SCN_VALIDATE_KEY_LEN];
-    bool        sawPair = false;
+    uint16_t    kept = 0;
     uint16_t    i;
     ScnOpResult r;
 
     for (i = 0; i < m->numRules && i < SCN_MANIFEST_RULES_MAX; i++) {
-        const char *name = simRulesRuleName((int)m->rules[i].rule);
+        const char    *name  = simRulesRuleName((int)m->rules[i].rule);
+        const uint16_t rule  = m->rules[i].rule;
+        const double   value = m->rules[i].value;
 
-        rules[i]  = m->rules[i].rule;
-        values[i] = m->rules[i].value;
-
-        snprintf(key, sizeof(key), "rules.%s", name);
-        r = scnCheckRuleSet(sim, &rules[i], &values[i], 1, why, sizeof(why));
-        if (r == SCN_OP_RANGE || r == SCN_OP_PAIR) {
+        r = scnCheckRuleSet(sim, &rule, &value, 1, why, sizeof(why));
+        if (r == SCN_OP_RANGE) {
+            snprintf(key, sizeof(key), "rules.%s", name);
             if (why[0] != '\0') {
                 scnIssueAdd(out, key, "%s", why);
             } else {
                 /* A value no field can take at all is refused before the
                    check that words a reason. */
                 scnIssueAdd(out, key, "%s is set to %g, which no rule holds",
-                            name, values[i]);
+                            name, value);
             }
-            if (r == SCN_OP_PAIR) {
-                sawPair = true;
-            }
+        } else if (r == SCN_OP_OK || r == SCN_OP_PAIR) {
+            rules[kept]  = rule;
+            values[kept] = value;
+            kept++;
         }
     }
 
-    if (i == 0) {
+    if (kept == 0) {
         return;
     }
-    r = scnCheckRuleSet(sim, rules, values, i, why, sizeof(why));
-    /* Only a pair, and only one the pass above did not already name. A range
-       is stated against the rule that carries it, and saying it again here
-       under the whole table would be the same fault twice. */
-    if (r == SCN_OP_PAIR && !sawPair && why[0] != '\0') {
-        const int named = scnRuleNamedFirst(m, why);
+    r = scnCheckRuleSet(sim, rules, values, kept, why, sizeof(why));
+    if (r == SCN_OP_PAIR && why[0] != '\0') {
+        const int named = scnRuleNamedFirst(rules, kept, why);
 
         /* Under the rule the reason names, so the editor's row for the rule
            that has to move is the row the mark lands on: the form ties a row
@@ -1345,7 +1369,7 @@ static void scnCheckTrigActArgs(const ScnTrigAct *a,
  * hook is one the surface has not got. */
 static void scnCheckTrigAct(const ScnTrigAct *a, const ScnTrigFields *fields,
                             const char *when, unsigned trig, unsigned at,
-                            ScnValidateResult *out) {
+                            bool popup, ScnValidateResult *out) {
     const ScnLuaRow *op;
     char             key[SCN_VALIDATE_KEY_LEN];
     size_t           required = 0;
@@ -1393,6 +1417,13 @@ static void scnCheckTrigAct(const ScnTrigAct *a, const ScnTrigFields *fields,
     if (op == NULL) {
         scnIssueAdd(out, key, "'%s' is no op the game table carries, so this "
                               "action does nothing", a->op);
+        return;
+    }
+    /* The host takes popup off this script's game table, and the router
+       finds nothing to run. */
+    if (!popup && strcmp(op->name, "popup") == 0) {
+        scnIssueAdd(out, key, "popup is only on the game table of a built-in "
+                              "tutorial, so this action does nothing");
         return;
     }
     if (!scenarioLuaOpIsScalar(op)) {
@@ -1462,7 +1493,7 @@ static void scnCheckTrigAct(const ScnTrigAct *a, const ScnTrigFields *fields,
  * holding a script and no map is told what a server would tell it. A
  * trigger has no name, so the key is its position, counted from zero as the
  * two readers count it. */
-static void scnCheckTriggers(const ScenarioManifest *m,
+static void scnCheckTriggers(const ScenarioManifest *m, bool popup,
                              ScnValidateResult *out) {
     uint8_t i;
 
@@ -1511,7 +1542,7 @@ static void scnCheckTriggers(const ScenarioManifest *m,
         for (j = 0; j < t->numActions; j++) {
             scnCheckTrigAct(&t->actions[j], (fn != NULL) ? &fields : NULL,
                             (fn != NULL) ? t->when : NULL, (unsigned)i,
-                            (unsigned)j, out);
+                            (unsigned)j, popup, out);
         }
     }
 }
@@ -1538,13 +1569,22 @@ static bool scnValidateSource(const ServerSim *sim, const char *src,
     lua_State     *L;
     ScnParseReport rep;
     size_t         before;
+    /* Whether this script has game.popup. A check does not know whether the
+       file is a map's script or a mod, so it is read as a map's: a file
+       directly in the shipped tutorials folder under the data folder keeps
+       the call (scenarioHostScriptIsShippedTutorial). name is the path the
+       caller gave; a bare file name is read against the working directory,
+       as the host reads it. */
+    const bool     popup = tutorialMapsScriptHasPopup(
+        TUTORIAL_MAPS_SCRIPT_POPUPS != 0, true,
+        scenarioHostScriptIsShippedTutorial(name));
 
     L = scnNewVm();
     if (L == NULL) {
         scnIssueAdd(out, "", "no memory for a Lua state to check %s", name);
         return false;
     }
-    scnInstallStubGame(L);
+    scnInstallStubGame(L, popup);
 
     /* The manifest the caller holds, before the chunk, exactly where the host
        puts it. A script that declares no table of its own then reads back this
@@ -1608,7 +1648,7 @@ static bool scnValidateSource(const ServerSim *sim, const char *src,
        table of 64 triggers can report several faults apiece, and the list
        holds 64 in all — anything after this could be pushed off the end by
        a trigger table nobody has fixed yet. */
-    scnCheckTriggers(&out->manifest, out);
+    scnCheckTriggers(&out->manifest, popup, out);
 
     scnAttributeLines(out, src, srcLen);
 

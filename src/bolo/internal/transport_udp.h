@@ -382,6 +382,11 @@ bool transportUdpClientStartLobbyScriptUpload(Transport *t,
 /* Current upload progress as 0..100 (bytesSent / fileLen * 100). */
 uint8_t transportUdpClientGetLobbyMapUploadProgressPercent(Transport *t);
 
+/* True while a lobby map change of this client's is under way: a map command
+ * not yet acked, a re-join after a map change, or an upload not yet over.
+ * Never latched; see the definition for how each part ends. */
+bool transportUdpClientMapChangeBusy(Transport *t);
+
 /* Server-side: validates a length-prefixed upload filename against the
  * reserved-name / control-char / suffix-cap rules for the upload's kind
  * (UPLOAD_KIND_MAP: .map; UPLOAD_KIND_SCRIPT: .scenario or .lua).
@@ -992,6 +997,13 @@ uint32_t transportUdpServerTestLastReceivedTick(int slot);
  * that drives the real game-event producer must wait on this, not just on the
  * client's connect state, or the producer skips the slot as still-downloading. */
 bool transportUdpServerTestDownloadComplete(int slot);
+/* Read a slot's own voice counters: segments it sent that the pump accepted,
+ * segments it sent that the per-tick credit dropped, and frames forwarded to
+ * it as a recipient. Any out-param may be NULL; all read 0 for an
+ * out-of-range slot. */
+void transportUdpServerTestVoiceSlotStats(int slot, uint32_t *outAccepted,
+                                          uint32_t *outDropPerTickCap,
+                                          uint32_t *outForwarded);
 /* Stage one terrain change for a slot as a real tick does: mutate the live
  * server map, write the tile into every slot's copy of the terrain (so the
  * checksum each client is sent tracks the change), and enqueue an

@@ -753,6 +753,16 @@ struct ServerSim {
     GameEvent    mapEvents[MAX_MAP_EVENTS];
     uint16_t     mapEventCount;
 
+    /* Map changes made while a running round is between ticks: a player who
+     * quits, is kicked or times out is removed during packet receive, and the
+     * pills his tank drops can clear a square (pillsDropSpiralFind). Those
+     * changes cannot go in mapEvents, because serverSimTick clears it at the
+     * top of the next frame, before anything sends it. They wait here and
+     * serverSimTick copies them in right after that clear, so clients and
+     * the shadow maps get them with the next frame. */
+    GameEvent    pendingMapEvents[MAX_MAP_EVENTS];
+    uint16_t     pendingMapEventCount;
+
     /* What each connected client's copy of the terrain looks like: every
      * tile the server has actually sent it. Identical to the real map for a
      * slot that is handed every map event, and behind it by whatever a culled
@@ -1142,6 +1152,11 @@ struct ServerSim {
     uint32_t         trackRecordCount; /* records appended this round */
     bool             trackTruncated;   /* set once ATTRIBUTION_TRACK_CAP_BYTES is hit */
     AttrSlotIdentity trackIdentity[MAX_TANKS]; /* snapshot at game-over freeze */
+    uint8_t          trackTeam[MAX_TANKS];     /* each seat's last ATTR_REC_TEAM
+                                                  team; 0xFF before the first */
+    bool             sidesMismatchLogged;      /* the running tick's sides
+                                                  check has logged the break
+                                                  it is seeing (#424) */
 
     /* In-process control event subscribers (bot ClientSims, SP humanSim,
      * and live-lobby spectators). */
@@ -1635,6 +1650,16 @@ void serverSimScenarioReplayPanels(
     void (*deliver)(void *, const struct ControlEvent *),
     void *ctx,
     bool withTargeted);
+
+/* Seat slot has moved from oldTeam to the team it is on now during a round.
+ * For each panel and script where the old or the new team has a list, send
+ * the seat the list a joiner on its new team would keep: the seat's own
+ * list, else the new team's, else the everyone list, else an empty list.
+ * Each goes as one CTRL_SCN_PANEL addressed to the seat alone. The store is
+ * not written and nothing is recorded: the seat's view changes, the lists do
+ * not. */
+void serverSimScenarioResendPanelsForSeat(ServerSim *sim, BYTE slot,
+                                          BYTE oldTeam);
 
 /* Hand the markers up and the score rows set to a joining subscriber's
  * callback, as the events that published them: one CTRL_SCN_MARKER per

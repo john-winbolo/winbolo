@@ -29,6 +29,11 @@
  * self: a tank on its own mine names itself, the shape the drown arm uses for
  *       a death with nobody else in it, and the derivation counts it as a mine
  *       death rather than as a kill for anyone.
+ * size: the wreck a mine kill leaves goes up big only when the tank carried
+ *       more than big_explosion_threshold shells and mines. The mine arm used
+ *       to pass TH_KILL_BIG / TH_KILL_SMALL (3 / 2) as the explosion type,
+ *       and tkExplosionUpdate tests for TK_SMALL_EXPLOSION (0) alone, so
+ *       every mine kill went up big whatever the tank held.
  */
 
 #include <string.h>
@@ -42,6 +47,7 @@
 #include "mines.h"
 #include "minesexp.h"
 #include "tank.h"
+#include "tankexp.h"
 #include "everard_map.h"
 #include "test_harness.h"
 
@@ -307,5 +313,68 @@ int run_mine_kill_own_mine_names_self(void) {
                   (unsigned)serverSimGetRoundStats(sim, 0)->kills);
 
     serverSimDestroy(sim);
+    return 0;
+}
+
+/* A mine kill queues one wreck, and its size follows the stores the tank
+ * held against big_explosion_threshold, the strict "more than" the shell arm
+ * uses. The 60 rows are the Mac Bolo Rules mod's threshold, so the mine arm
+ * is shown reading the rule rather than a fixed 20. */
+int run_mine_kill_explosion_size(void) {
+    static const struct {
+        BYTE    shells;
+        BYTE    mines;
+        int32_t threshold;
+        BYTE    want;
+    } cases[] = {
+        { 0,  0,  20, TK_SMALL_EXPLOSION },
+        { 20, 0,  20, TK_SMALL_EXPLOSION },
+        { 11, 10, 20, TK_LARGE_EXPLOSION },
+        { 40, 40, 20, TK_LARGE_EXPLOSION },
+        { 40, 20, 60, TK_SMALL_EXPLOSION },
+        { 40, 21, 60, TK_LARGE_EXPLOSION },
+    };
+    size_t i;
+
+    for (i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        ServerSim *sim = mk_sim_two_players();
+        GameSim *gs;
+        tkExplosion wreck;
+        BYTE mx;
+        BYTE my;
+
+        UT_ASSERT_MSG(sim != NULL, "mk_sim_two_players returned NULL");
+        gs = serverSimGetGameSim(sim);
+        UT_ASSERT_MSG(gs != NULL && gs->tanks[0] != NULL,
+                      "no game or no slot-0 tank");
+        UT_ASSERT_MSG(gs->tankExplosions == NULL,
+                      "a wreck was queued before the mine went off");
+
+        gs->rules.big_explosion_threshold = cases[i].threshold;
+        mx = tankGetMX(&gs->tanks[0]);
+        my = tankGetMY(&gs->tanks[0]);
+        mk_lay_mine(gs, mx, my, 1);
+        mk_arm_victim(gs, FALSE);
+        tankSetShells(gs, &gs->tanks[0], cases[i].shells);
+        tankSetMines(gs, &gs->tanks[0], cases[i].mines);
+
+        mk_detonate(sim, gs, mx, my);
+
+        UT_ASSERT_MSG(tankIsDestroyed(&gs->tanks[0]) == TRUE,
+                      "case %u: the mine did not destroy the tank",
+                      (unsigned)i);
+        wreck = gs->tankExplosions;
+        UT_ASSERT_MSG(wreck != NULL && wreck->next == NULL,
+                      "case %u: a mine kill should queue exactly one wreck",
+                      (unsigned)i);
+        UT_ASSERT_MSG(wreck->explodeType == cases[i].want,
+                      "case %u: %u shells and %u mines over a threshold of %d "
+                      "queued explosion type %u, wanted %u", (unsigned)i,
+                      (unsigned)cases[i].shells, (unsigned)cases[i].mines,
+                      (int)cases[i].threshold, (unsigned)wreck->explodeType,
+                      (unsigned)cases[i].want);
+
+        serverSimDestroy(sim);
+    }
     return 0;
 }
