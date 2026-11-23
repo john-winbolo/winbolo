@@ -3699,8 +3699,8 @@
 /* The question a Join gets when a player of that name left the game a
  * short time ago: {player} is the name, {string1} the seconds since the
  * player left, {string2} the seconds left to rejoin */
-#define STR_REJECT_CAN_REJOIN                    3479
-#define STR_JOIN_AS_NEW                          3480
+#define STR_REJECT_CAN_REJOIN                    3945
+#define STR_JOIN_AS_NEW                          3946
 
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
