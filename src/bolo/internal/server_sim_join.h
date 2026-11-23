@@ -81,6 +81,13 @@ void serverSimRestoreRejoinTeam(ServerSim *sim, BYTE slot);
  * server_sim_players.c. */
 void serverSimRejoinSignedIn(ServerSim *sim, BYTE slot);
 
+/* Gives the sim the IPv4 address (network byte order, no port) of the
+ * person in slot. The rejoin record made when the seat leaves keeps it.
+ * The transport calls it at the join and again just before the seat is
+ * removed, so the record has the address the player had when leaving.
+ * Defined in server_sim_players.c. */
+void serverSimSetRejoinAddress(ServerSim *sim, BYTE slot, uint32_t ipv4);
+
 /* Gives the lobby host role to a person who has just joined, when
  * -firstjoinhost is on and the slot holding the role holds a bot or holds
  * nobody. Call it from a human join path once the slot's name, flags and

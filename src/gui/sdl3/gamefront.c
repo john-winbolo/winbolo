@@ -1941,6 +1941,10 @@ static void gameFrontJoinStartClient(void) {
    * joining its own server. */
   clientSimSetAskRejoin(humanSim, !spServerSimActive && !wantRejoin &&
                         s_joinRejoinAnswer == JOIN_REJOIN_NOT_ASKED);
+  /* A rejoin into another player's locked game may be checked with
+   * WinBolo.net first. The client answers that itself, while the join
+   * screen waits. */
+  clientSimSetSignInFirst(humanSim, !spServerSimActive);
   fprintf(stderr, "[gameFront] openUdpJoin: addr=%s port=%u myPort=%u\n",
           gameFrontUdpAddress, (unsigned)gameFrontTargetUdp, (unsigned)gameFrontMyUdp);
   fflush(stderr);

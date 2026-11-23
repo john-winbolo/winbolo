@@ -961,6 +961,13 @@ struct ServerSim {
      * keeps its choice. */
     BYTE         rejoinJoinTeam[MAX_TANKS];
 
+    /* The IPv4 address (network byte order, no port) of the person in each
+     * seat, given by the transport (serverSimSetRejoinAddress). The rejoin
+     * record made when the seat leaves keeps it, so that a rejoin on a
+     * locked game can be matched by address. 0 when not known, and for
+     * bots. Cleared when the seat leaves. */
+    uint32_t     rejoinAddr[MAX_TANKS];
+
     /* Bot configuration — cached from CLI args for lobby bot creation */
     char         botBrainPath[260];       /* Brain path for lobby bot creation */
     aiType       botAiType;               /* AI advantage level for bots */

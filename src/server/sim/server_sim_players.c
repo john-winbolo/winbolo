@@ -35,7 +35,7 @@
 #include "server_sim_join.h"        /* the join step-internals, serverSimFindFreeSlot and LocalJoinResult */
 #include "server_sim_lifecycle.h"   /* serverSimSetHostSlot, serverSimLobbyCheckAllReady — the leave path's lobby fixups */
 #include "playername_validate.h"    /* playerNameValidate — the local-join name check */
-#include "playersrejoin.h"          /* playersRejoinAddPlayer, playersRejoinFind, playersRejoinRequest, playersRejoinHeldTeams — the team, pills and bases a rejoiner gets back */
+#include "playersrejoin.h"          /* playersRejoinAddPlayer, playersRejoinSetAddress, playersRejoinFind, playersRejoinRequest, playersRejoinHeldTeams — the team, pills and bases a rejoiner gets back */
 #include "log.h"                    /* logAddEvent — the .wbv join, leave and alliance records */
 #include "wire_limits.h"            /* PACKET_MAX_PLAYER_NAME — the rename event's name field */
 #include "start_sides.h"            /* startSideBits, startSideEligible, startSideMaskFor — the lobby start pick's side rules */
@@ -389,6 +389,11 @@ void serverSimRejoinSignedIn(ServerSim *sim, BYTE playerNum) {
     serverSimRestoreRejoinTeam(sim, playerNum);
 }
 
+void serverSimSetRejoinAddress(ServerSim *sim, BYTE playerNum, uint32_t ipv4) {
+    if (sim == NULL || playerNum >= MAX_TANKS) return;
+    sim->rejoinAddr[playerNum] = ipv4;
+}
+
 void serverSimAddPlayer(ServerSim *sim, BYTE playerNum, const char *playerName, bool wantRejoin) {
     addPlayerInternal(sim, playerNum, playerName, NULL, wantRejoin);
     serverSimPlaceJoiner(sim, playerNum);
@@ -735,6 +740,7 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
                 (pillBits != 0 || baseBits != 0 || team != 0)) {
                 playersRejoinAddPlayer(pName, pillBits, baseBits, team,
                                        signedIn);
+                playersRejoinSetAddress(pName, sim->rejoinAddr[playerNum]);
             }
         }
     }
@@ -742,6 +748,7 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
     sim->rejoinTeam[playerNum] = 0;
     sim->rejoinAwaitSignIn[playerNum] = false;
     sim->rejoinJoinTeam[playerNum] = 0;
+    sim->rejoinAddr[playerNum] = 0;
 
     /* Migrate or neutralize pillboxes owned by the leaving player */
     {
