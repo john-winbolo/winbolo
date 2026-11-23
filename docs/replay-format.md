@@ -156,7 +156,7 @@ Selected event types (see the `logitem` enum for the complete list):
 | 57 | `log_EntityChange` | One pillbox, base or start joined the map or left it (below) |
 | 58 | `log_EntityMasks` | Which pillboxes, bases and starts are on the map (below) |
 | 59 | `log_ServerText` | A server line a scenario wrote: `destTeam:u8` (0 = everyone), `destPlayer:u8` (0xFF = everyone), Pascal text |
-| 60 | `log_GameTimeSet` | The round's game time after a scenario changed it: `frames:i32` big-endian, 20 ms each, the unit of the snapshot's game length |
+| 60 | `log_GameTimeSet` | The round's game time after a scenario changed it: `frames:i32` big-endian, 20 ms each, the unit of the snapshot's game length. A recording made before this record carried frames holds 10 ms ticks here, twice the number, and nothing in the record tells the two apart, so a viewer shows double the time left for it |
 | 61 | `log_RuleSet` | One simulation rule a scenario changed (below) |
 | 62 | `log_ScnPanel` | One scenario panel's display list (below) |
 | 63 | `log_ScnScore` | A scenario's score for one player or one team (below) |

@@ -2145,7 +2145,7 @@ to escort a person stays where it is.
 | `game.input(p)` | What seat `p`'s player plays with: `"keyboard"`, `"touch"` or `"controller"`. `"keyboard"` whenever the server does not know. See [Text for the player's input](#text-for-the-players-input). |
 | `game.end_round([text[, winner_team]])` | Ends the round now, with the line the lobby shows and the team that won it. |
 | `game.set_game_time(ticks)` | How long the round has left, in `game.tick()`'s own units: 100 a second, so a minute is 6000. The clock runs in frames of two ticks, so an odd number rounds up by one tick. |
-| `game.add_game_time(ticks)` | Adds to what the round has left, or takes away with a negative, in the same units. A round with no time limit has nothing to add to, so give it a length first. |
+| `game.add_game_time(ticks)` | Adds to what the round has left, or takes away with a negative, in the same units. The sum rounds up to a whole frame of two ticks, so adding 1 adds two ticks and taking away 1 takes away nothing. A round with no time limit has nothing to add to, so give it a length first. |
 | `game.tutorial_done(p)` | Says that seat `p`'s player has finished a tutorial. In a single-player game of a map in the shipped `data/maps/tutorials` folder, the main menu stops showing its Tutorial button. Anywhere else it changes nothing. See [Finishing a tutorial](#finishing-a-tutorial). |
 
 `message` and `say` are two different voices, and the difference decides

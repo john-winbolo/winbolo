@@ -24,7 +24,6 @@
 
 #include "global.h"
 #include "server_sim.h"
-#include "server_sim_internal.h"   /* gameLength, startDelay */
 #include "server_sim_lifecycle.h"  /* serverSimStartGame */
 #include "wire_limits.h"           /* LST_TIME_LIMIT, LST_TIME_MINUTES */
 #include "game_sim.h"              /* GAME_NUMGAMETICKS_SEC */
