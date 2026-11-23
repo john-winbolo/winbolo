@@ -2839,6 +2839,9 @@ int run_loopback_quiet_lobby_control_loss(void);
 int run_loopback_command_liveness(void);
 int run_loopback_command_queued_behind_map_change(void);
 int run_loopback_command_submitted_during_rejoin(void);
+/* A lobby map change re-sends JOIN_ACCEPT with no roster replay after it: the
+ * client keeps its own slot's flags (PLAYER_FLAG_BOT for a Bot Host bot). */
+int run_loopback_map_change_keeps_own_flags(void);
 /* Parallel channel layer over the loopback transport: empty-flow inertness
  * plus a synthetic message round-trip under loss + jitter + dup. */
 int run_loopback_channel(void);

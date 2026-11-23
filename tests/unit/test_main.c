@@ -1548,6 +1548,7 @@ static const UnitTestEntry s_tests[] = {
     { "loopback_command_liveness",               run_loopback_command_liveness               },
     { "loopback_command_queued_behind_map_change", run_loopback_command_queued_behind_map_change },
     { "loopback_command_submitted_during_rejoin", run_loopback_command_submitted_during_rejoin },
+    { "loopback_map_change_keeps_own_flags",     run_loopback_map_change_keeps_own_flags     },
     { "loopback_channel",                        run_loopback_channel                        },
     { "loopback_hitch_recovers",                 run_loopback_hitch_recovers                 },
     { "loopback_quit_keeps_peer",                run_loopback_quit_keeps_peer                },
