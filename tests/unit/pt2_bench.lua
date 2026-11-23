@@ -16,18 +16,10 @@
 --   dump=<file>               write each case's result digest to the file
 --   keep_all=1                inp.keep_all on (every spot in the result)
 --   lua=1                     run pilltake_v2_old.evaluate_lua, not the C
---   eval=shadow               time pilltake_shadow.evaluate_lua instead (maps
---                             cold: dropped before each case)
---   eval=both                 old (C) and shadow on each case: costs (old C,
---                             old Lua, shadow cold / warm / warm without the
---                             nudge), safe takes each finds, best points,
---                             kills and depth, the map build time per pill,
---                             and a second pass in file order with the maps
---                             kept (map builds, drops and updates in a game)
---
--- The shadow evaluator asks score_fn and banned about points the record
--- does not have (grid points, not ring points). It gets the score of the
--- nearest recorded point, and the ban of the recorded 5 degree bucket.
+--   eval=v2                   time pilltake_v2.evaluate_lua instead (wedges
+--                             cold: dropped before each run; warm=1 keeps them)
+--   eval=both                 old (C and Lua) and v2 on each case: costs, safe
+--                             takes each finds, best points, kills and depth
 --
 -- The recorded case answers questions from its record only. Here each case
 -- gets a world built from that record, with callbacks shaped like the
@@ -246,43 +238,10 @@ end
 -- ── run ─────────────────────────────────────────────────────────────────
 local dumpf = args.dump and assert(io.open(args.dump, "w"))
 local EVAL = args.eval or "old"
-local SM = (EVAL ~= "old") and require("pilltake_shadow") or nil
-
--- score_fn and banned for points the record does not have (see the top)
-local function shadow_inp(inp, case)
-  local rec = case.rec
-  local pts = {}
-  for k, v in pairs(rec.score_fn) do
-    local _, _, _, cx, cy = k:match("^([^,]+),([^,]+),([^,]+),([^,]+),([^,]+)$")
-    pts[#pts + 1] = { tonumber(cx), tonumber(cy), v }
-  end
-  local ban = {}
-  for k, v in pairs(rec.banned) do
-    local b = math.floor((tonumber(k) % 360) / 5) * 5
-    ban[b] = ban[b] or v
-  end
-  local memo = {}
-  inp.score_fn = function(deg, mx, my, cx, cy)
-    local key = cx .. "," .. cy
-    local m = memo[key]
-    if m then return m end
-    local best, bd = nil, math.huge
-    for _, q in ipairs(pts) do
-      local dx, dy = q[1] - cx, q[2] - cy
-      local d = dx * dx + dy * dy
-      if d < bd then bd, best = d, q[3] end
-    end
-    m = best or ((deg % 37) + mx * 0.01 + my * 0.001)
-    memo[key] = m
-    return m
-  end
-  inp.banned = function(deg) return ban[math.floor((deg % 360) / 5) * 5] or false end
-  inp.shadow_grid_wu = inp.shadow_grid_wu or 64
-  return inp
-end
+local NV = (EVAL ~= "old") and require("pilltake_v2") or nil
 
 local function evaluate(inp)
-  if EVAL == "shadow" then return SM.evaluate_lua(inp) end
+  if EVAL == "v2" then return NV.evaluate_lua(inp) end
   if USE_LUA then return V2.evaluate_lua(inp) end
   return G.evaluate(inp, V2)
 end
@@ -291,7 +250,7 @@ local times, spots, n_case, prof, n_err = {}, {}, 0, {}, 0
 local function run_case(case)
   n_case = n_case + 1
   local inp, pills = game_inp(case)
-  if EVAL == "shadow" then shadow_inp(inp, case); SM.reset(true) end
+  if EVAL == "v2" then NV.reset() end
   -- the digest run (also the first, untimed, run)
   inp.env.omx, inp.env.omy = nil, nil
   local ok, res = pcall(evaluate, inp)
@@ -316,7 +275,7 @@ local function run_case(case)
     local t = {}
     for r = 1, REPS do
       inp.env.omx, inp.env.omy = nil, nil
-      if EVAL == "shadow" and args.warm ~= "1" then SM.reset(true) end
+      if EVAL == "v2" and args.warm ~= "1" then NV.reset() end
       local t0 = now_us()
       evaluate(inp)
       t[r] = now_us() - t0
@@ -339,21 +298,15 @@ local function run_case(case)
   end
 end
 
--- ── eval=both: old and shadow side by side ──────────────────────────────
+-- ── eval=both: old and v2 side by side ──────────────────────────────────
 local BOTH = EVAL == "both"
 local B = {
-  t_oc = {}, t_ol = {}, t_oln = {}, t_scg = {}, t_sc = {}, t_sw = {}, t_swn = {},
-  map_cold = {}, map_warm = {}, map_pts = 0,
-  n = 0, err_o = 0, err_s = 0,
-  safe_both = 0, safe_old_only = 0, safe_sh_only = 0, safe_none = 0,
-  best_cell = 0, best_step = 0, best_far = 0,
-  kills_same = 0, kills_sh_more = 0, kills_old_more = 0,
-  depth_same = 0, depth_sh_more = 0, depth_old_more = 0,
-  old_chain_reach = 0, old_chain_reach_sh_unsafe = 0,
-  old_nudged = 0, old_nudged_grid_fail = 0, old_nudged_safe = 0,
-  sh_nudged = 0, sh_nudged_safe = 0,
-  l32_both = 0, l32_old_only = 0, l32_sh_only = 0, l32_kills_same = 0, l32_kills_sh_more = 0,
-  l32_kills_old_more = 0, l32_best_step = 0,
+  t_oc = {}, t_ol = {}, t_vc = {}, t_vw = {},
+  n = 0, err_o = 0, err_v = 0,
+  safe_both = 0, safe_old_only = 0, safe_v2_only = 0, safe_none = 0,
+  best_same = 0, best_1deg = 0, best_far = 0,
+  kills_same = 0, kills_v2_more = 0, kills_old_more = 0,
+  depth_same = 0, depth_v2_more = 0, depth_old_more = 0,
 }
 local function median_of(f, reps)
   local t = {}
@@ -364,31 +317,6 @@ local function median_of(f, reps)
   end
   table.sort(t)
   return t[math.ceil(#t / 2)]
-end
-local function hostile_near(inp)
-  local A, out = inp.A, {}
-  for _, p in ipairs(inp.pills) do
-    if (p.health or 0) > 0 and not p.in_tank and not inp.env.is_ally(p)
-       and math.abs(p.mx - A.mx) <= 12 and math.abs(p.my - A.my) <= 12 then
-      out[#out + 1] = p
-    end
-  end
-  return out
-end
--- old safe best that needed "reach" on a chain pill's ray
-local function old_chain_reach(b, inp)
-  for i, X in ipairs(b.T) do
-    local r = b.rays[i]
-    local bar = (X == inp.A and b.finish) and 0 or (b.chain_mode and inp.bar_chain or inp.bar_single)
-    if args.why == "1" and b.in_chain[X] then
-      print(fmt("WHYRAY chain pill %d hit=%s cover=%s bar=%s link_cover=%s", b.in_chain[X], tostring(r.hit),
-        tostring(r.cover), tostring(r.bar), tostring(r.link_cover)))
-    end
-    if b.in_chain[X] and r.hit == "reach" and not r.link_cover and r.cover < bar then
-      return true
-    end
-  end
-  return false
 end
 local function run_both(case)
   n_case = n_case + 1
@@ -401,133 +329,36 @@ local function run_both(case)
   if not ok then B.err_o = B.err_o + 1; return end
   B.t_oc[#B.t_oc + 1] = median_of(function() oinp.env.omx, oinp.env.omy = nil, nil; G.evaluate(oinp, V2) end, reps)
   B.t_ol[#B.t_ol + 1] = median_of(function() oinp.env.omx, oinp.env.omy = nil, nil; V2.evaluate_lua(oinp) end, reps)
-  oinp.aim_nudge = false
-  B.t_oln[#B.t_oln + 1] = median_of(function() oinp.env.omx, oinp.env.omy = nil, nil; V2.evaluate_lua(oinp) end, reps)
-  oinp.aim_nudge = true
-  -- shadow
-  local sinp = shadow_inp(game_inp(case), case)
-  SM.reset(false)
-  local t0 = now_us()
-  local ok2, rs = pcall(SM.evaluate_lua, sinp)
-  B.t_scg[#B.t_scg + 1] = now_us() - t0
+  -- v2
+  local vinp = game_inp(case)
+  NV.reset()
+  local ok2, rv = pcall(NV.evaluate_lua, vinp)
   if not ok2 then
-    B.err_s = B.err_s + 1
-    io.stderr:write(fmt("pt2_bench: shadow error case %d: %s\n", n_case, tostring(rs)))
+    B.err_v = B.err_v + 1
+    io.stderr:write(fmt("pt2_bench: v2 error case %d: %s\n", n_case, tostring(rv)))
     return
   end
-  B.t_sc[#B.t_sc + 1] = median_of(function() SM.reset(true); SM.evaluate_lua(sinp) end, reps)
-  B.t_sw[#B.t_sw + 1] = median_of(function() SM.evaluate_lua(sinp) end, reps)
-  sinp.aim_nudge = false
-  B.t_swn[#B.t_swn + 1] = median_of(function() SM.evaluate_lua(sinp) end, reps)
-  sinp.aim_nudge = true
-  -- the map build time per pill (cold: no offset table; warm: table kept)
-  for _, X in ipairs(hostile_near(sinp)) do
-    SM.reset(false)
-    local a0 = now_us()
-    local npt = SM.build_full_map(sinp, X)
-    B.map_cold[#B.map_cold + 1] = now_us() - a0
-    SM.reset(true)
-    a0 = now_us()
-    SM.build_full_map(sinp, X)
-    B.map_warm[#B.map_warm + 1] = now_us() - a0
-    B.map_pts = B.map_pts + npt
-  end
+  B.t_vc[#B.t_vc + 1] = median_of(function() NV.reset(); NV.evaluate_lua(vinp) end, reps)
+  B.t_vw[#B.t_vw + 1] = median_of(function() NV.evaluate_lua(vinp) end, reps)
   -- compare
-  local bo, bs = ro.best, rs.best
-  local so, ss = bo and bo.safe or false, bs and bs.safe or false
-  if so and ss then B.safe_both = B.safe_both + 1
+  local bo, bv = ro.best, rv.best
+  local so, sv = bo and bo.safe or false, bv and bv.safe or false
+  if so and sv then B.safe_both = B.safe_both + 1
   elseif so then B.safe_old_only = B.safe_old_only + 1
-  elseif ss then B.safe_sh_only = B.safe_sh_only + 1
+  elseif sv then B.safe_v2_only = B.safe_v2_only + 1
   else B.safe_none = B.safe_none + 1 end
-  if so and ss then
-    local d = math.max(math.abs(bo.px - bs.px), math.abs(bo.py - bs.py))
-    if d <= 32 then B.best_cell = B.best_cell + 1
-    elseif d <= 64 then B.best_step = B.best_step + 1
+  if so and sv then
+    local dd = math.abs(((bo.deg - bv.deg) + 180) % 360 - 180)
+    if dd == 0 and bo.radius == bv.radius then B.best_same = B.best_same + 1
+    elseif dd <= 1 then B.best_1deg = B.best_1deg + 1
     else B.best_far = B.best_far + 1 end
-    if args.why == "1" and (bo.kills ~= bs.kills or d > 64) then
-      local function sh(b) return fmt("(%d,%d) deg=%s kills=%d depth=%s plan=%d score=%s lee=%s", b.px, b.py,
-        tostring(b.deg), b.kills, tostring(b.depth), #b.plan, tostring(b.score), tostring(b.leeway)) end
-      print(fmt("WHY case %d A=(%d,%d) R=%s old %s | shadow %s", n_case, sinp.A.mx, sinp.A.my,
-        tostring(sinp.radius), sh(bo), sh(bs)))
-      for dx = -1, 1 do for dy = -1, 1 do
-        local gx, gy = math.floor(bo.px / 64) * 64 + 32 + dx * 64, math.floor(bo.py / 64) * 64 + 32 + dy * 64
-        local okp, pass, why = pcall(SM.set_test_at, sinp, gx, gy)
-        local hit = nil
-        for _, r in ipairs(rs.all or {}) do if r.px == gx and r.py == gy then hit = r end end
-        print(fmt("WHYPT (%d,%d) set=%s %s in_all=%s %s", gx, gy, tostring(pass), tostring(why), tostring(hit ~= nil),
-          hit and fmt("safe=%s kills=%d plan=%d why=%s covered=%s lee=%s unc=%s rule=%s", tostring(hit.safe), hit.kills,
-            hit.plan and #hit.plan or -1, tostring(hit.why), tostring(hit.covered), tostring(hit.leeway),
-            tostring(hit.uncovered and #hit.uncovered), tostring(hit.reject or hit.leeway_fail)) or ""))
-        if hit and hit.leeway_pts then
-          for _, q in ipairs(hit.leeway_pts) do io.write(fmt(" [%d,%d %s %s]", q.x, q.y, tostring(q.ok), tostring(q.why))) end
-          print()
-        end
-      end end
-    end
-    if bo.kills == bs.kills then B.kills_same = B.kills_same + 1
-    elseif bs.kills > bo.kills then B.kills_sh_more = B.kills_sh_more + 1
+    if bo.kills == bv.kills then B.kills_same = B.kills_same + 1
+    elseif bv.kills > bo.kills then B.kills_v2_more = B.kills_v2_more + 1
     else B.kills_old_more = B.kills_old_more + 1 end
-    if bo.depth == bs.depth then B.depth_same = B.depth_same + 1
-    elseif bs.depth > bo.depth then B.depth_sh_more = B.depth_sh_more + 1
+    if bo.depth == bv.depth then B.depth_same = B.depth_same + 1
+    elseif bv.depth > bo.depth then B.depth_v2_more = B.depth_v2_more + 1
     else B.depth_old_more = B.depth_old_more + 1 end
   end
-  if so and old_chain_reach(bo, oinp) then
-    B.old_chain_reach = B.old_chain_reach + 1
-    if not ss then B.old_chain_reach_sh_unsafe = B.old_chain_reach_sh_unsafe + 1 end
-  end
-  if bo and (bo.nudge_wu or 0) > 0 then
-    B.old_nudged = B.old_nudged + 1
-    if so then B.old_nudged_safe = B.old_nudged_safe + 1 end
-    local A = sinp.A
-    local R = bo.radius or sinp.radius
-    local px0 = math.floor((A.mx + 0.5 + math.sin(math.rad(bo.deg)) * R) * 256)
-    local py0 = math.floor((A.my + 0.5 - math.cos(math.rad(bo.deg)) * R) * 256)
-    local gx, gy = math.floor(px0 / 64) * 64 + 32, math.floor(py0 / 64) * 64 + 32
-    local okp, pass = pcall(SM.set_test_at, sinp, gx, gy)
-    if not okp or not pass then B.old_nudged_grid_fail = B.old_nudged_grid_fail + 1 end
-  end
-  if bs and (bs.nudge_wu or 0) > 0 then
-    B.sh_nudged = B.sh_nudged + 1
-    if ss then B.sh_nudged_safe = B.sh_nudged_safe + 1 end
-  end
-  -- shadow with the old leeway distance (32 wu neighbours, cast exactly)
-  sinp.shadow_leeway_wu = 32
-  local ok3, r32 = pcall(SM.evaluate_lua, sinp)
-  sinp.shadow_leeway_wu = nil
-  if ok3 then
-    local b3 = r32.best
-    local s3 = b3 and b3.safe or false
-    if so and s3 then B.l32_both = B.l32_both + 1
-    elseif so then B.l32_old_only = B.l32_old_only + 1
-    elseif s3 then B.l32_sh_only = B.l32_sh_only + 1 end
-    if so and s3 then
-      if bo.kills == b3.kills then B.l32_kills_same = B.l32_kills_same + 1
-      elseif b3.kills > bo.kills then B.l32_kills_sh_more = B.l32_kills_sh_more + 1
-      else B.l32_kills_old_more = B.l32_kills_old_more + 1 end
-      local d = math.max(math.abs(bo.px - b3.px), math.abs(bo.py - b3.py))
-      if d <= 64 then B.l32_best_step = B.l32_best_step + 1 end
-    end
-  end
-end
-
--- the second pass (file order, maps kept as in a game)
-local G2 = { n = 0, t = {}, map_new = 0, map_drop = 0, pt_new = 0, pt_upd = 0, cases_new = 0, cases_upd = 0 }
-local function run_kept(case)
-  local sinp = shadow_inp(game_inp(case), case)
-  local st = SM.stats
-  local mn, md, pn, pu = st.map_new, st.map_drop, st.pt_new, st.pt_upd
-  local t0 = now_us()
-  local ok = pcall(SM.evaluate_lua, sinp)
-  local us = now_us() - t0
-  if not ok then return end
-  G2.n = G2.n + 1
-  G2.t[#G2.t + 1] = us
-  G2.map_new = G2.map_new + st.map_new - mn
-  G2.map_drop = G2.map_drop + st.map_drop - md
-  G2.pt_new = G2.pt_new + st.pt_new - pn
-  G2.pt_upd = G2.pt_upd + st.pt_upd - pu
-  if st.map_new > mn then G2.cases_new = G2.cases_new + 1 end
-  if st.pt_upd > pu then G2.cases_upd = G2.cases_upd + 1 end
 end
 if BOTH then
   if not G then print("pt2_bench: eval=both needs gh_pt2_old (run from WinBoloUnitTests)"); return 1 end
@@ -566,58 +397,21 @@ local function q(t, p)
 end
 
 if BOTH then
-  -- the second pass: file order, maps kept
-  SM.reset(false)
-  local n2 = 0
-  for _, path in ipairs(files) do
-    if n2 >= MAX then break end
-    for line in io.lines(path) do
-      if n2 >= MAX then break end
-      if line:find("^CASES") then
-        env.CASES = {}
-        local chunk = assert(loadstring(line))
-        setfenv(chunk, env)
-        chunk()
-        local case = env.CASES[1]
-        if case then n2 = n2 + 1; run_kept(case) end
-        if n2 % 100 == 0 then io.stderr:write(fmt("pt2_bench: kept pass %d cases\n", n2)) end
-      end
-    end
-  end
   local function row(name, t)
     print(fmt("  %-34s median %8.3f  p90 %8.3f  max %9.3f ms  (n %d)", name, q(t, 0.5) / 1000, q(t, 0.9) / 1000,
       q(t, 1) / 1000, #t))
   end
-  print(fmt("pt2_bench both: %d cases, errors old %d shadow %d, reps %d", B.n, B.err_o, B.err_s, math.max(1, REPS)))
+  print(fmt("pt2_bench both: %d cases, errors old %d v2 %d, reps %d", B.n, B.err_o, B.err_v, math.max(1, REPS)))
   print("cost per evaluate:")
   row("old C", B.t_oc)
   row("old Lua", B.t_ol)
-  row("old Lua, no nudge", B.t_oln)
-  row("shadow cold (no table, no maps)", B.t_scg)
-  row("shadow cold maps (table kept)", B.t_sc)
-  row("shadow warm", B.t_sw)
-  row("shadow warm, no nudge", B.t_swn)
-  row("shadow kept maps, file order", G2.t)
-  print("map build per pill (all grid points in range):")
-  row("cold (no offset table)", B.map_cold)
-  row("warm (offset table kept)", B.map_warm)
-  print(fmt("  points per map: %.0f", #B.map_warm > 0 and B.map_pts / #B.map_warm or 0))
-  print(fmt("safe take: both %d, old only %d, shadow only %d, neither %d",
-    B.safe_both, B.safe_old_only, B.safe_sh_only, B.safe_none))
-  print(fmt("best point (both safe): same grid cell %d, within one step %d, farther %d",
-    B.best_cell, B.best_step, B.best_far))
-  print(fmt("kills (both safe): same %d, shadow more %d, old more %d", B.kills_same, B.kills_sh_more, B.kills_old_more))
-  print(fmt("depth (both safe): same %d, shadow more %d, old more %d", B.depth_same, B.depth_sh_more, B.depth_old_more))
-  print(fmt("old safe bests that needed a chain pill's reach: %d (shadow not safe there: %d)",
-    B.old_chain_reach, B.old_chain_reach_sh_unsafe))
-  print(fmt("old nudged bests: %d (safe %d); grid point fails the set test: %d",
-    B.old_nudged, B.old_nudged_safe, B.old_nudged_grid_fail))
-  print(fmt("shadow nudged bests: %d (safe %d)", B.sh_nudged, B.sh_nudged_safe))
-  print(fmt("shadow, leeway at 32 wu: safe both %d, old only %d, shadow only %d; kills same %d, shadow more %d,"
-    .. " old more %d; best within one step %d", B.l32_both, B.l32_old_only, B.l32_sh_only, B.l32_kills_same,
-    B.l32_kills_sh_more, B.l32_kills_old_more, B.l32_best_step))
-  print(fmt("kept pass: %d cases; maps built %d (in %d cases), dropped %d; points walked new %d, walked again %d (in %d cases)",
-    G2.n, G2.map_new, G2.cases_new, G2.map_drop, G2.pt_new, G2.pt_upd, G2.cases_upd))
+  row("v2 Lua, cold", B.t_vc)
+  row("v2 Lua, warm", B.t_vw)
+  print(fmt("safe take: both %d, old only %d, v2 only %d, neither %d",
+    B.safe_both, B.safe_old_only, B.safe_v2_only, B.safe_none))
+  print(fmt("best point (both safe): same %d, within 1 deg %d, farther %d", B.best_same, B.best_1deg, B.best_far))
+  print(fmt("kills (both safe): same %d, v2 more %d, old more %d", B.kills_same, B.kills_v2_more, B.kills_old_more))
+  print(fmt("depth (both safe): same %d, v2 more %d, old more %d", B.depth_same, B.depth_v2_more, B.depth_old_more))
   return 0
 end
 local tot_us, tot_sp = 0, 0
