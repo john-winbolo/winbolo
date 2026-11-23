@@ -1217,22 +1217,63 @@ static TURNTYPE pillsMacAim(int32_t x, int32_t y) {
   return (TURNTYPE)bearing;
 }
 
+/* value / 256, rounded up whatever its sign */
+static int32_t pillsMacCeil256(int32_t value) {
+  return value >= 0 ? (value + 255) / 256 : -((-value) / 256);
+}
+
+/*********************************************************
+*NAME:          pillsTargetTankMac
+*PURPOSE:
+*  The direction a pillbox fires in at a tank, under the
+*  pill_aim_mac rule.
+*
+*  The pillbox aims at a point ahead of the tank, along
+*  the way it faces. How far ahead is the lead: the tank's
+*  distance past one square (16 pixels), times its speed,
+*  a quarter of that, kept in 16 bits. A tank that is
+*  stopped, or was obstructed on its last move, has no
+*  lead. A moving tank less than one square away has a
+*  distance past one square below zero, which in 16 bits
+*  is a very long lead: the pillbox fires far ahead along
+*  the tank's facing and misses, the pill massage.
+*
+*ARGUMENTS:
+*  px         - X position of the pillbox
+*  py         - Y position of the pillbox
+*  tx         - X position of the tank
+*  ty         - Y position of the tank
+*  heading    - The way the tank faces
+*  speed      - The tank's speed
+*  obstructed - Whether the tank's last move was blocked
+*********************************************************/
 static TURNTYPE pillsTargetTankMac(WORLD px, WORLD py, WORLD tx, WORLD ty,
                                   TURNTYPE heading, BYTE speed, bool obstructed) {
-  int distance = pillsMacRange(px, py, tx, ty);
+  const int distance = pillsMacRange(px, py, tx, ty);
   /* Mac Bolo rounds a heading exactly halfway between two sectors up; this
    * rounds it down, the way the tank drives. */
-  int direction = utilGet16Dir(heading);
-  /* WinBolo moves speed WU per 20 ms; Mac moves speed*127/256 WU
-   * per 40 ms. Its road speed 64 corresponds to WinBolo's 16. Preserve
-   * the Mac byte's range for scenarios with unusually high speeds. */
-  int macSpeed = speed > 63 ? 255 : speed * 4;
-  uint16_t lead = obstructed ? 0 : (uint16_t)((distance - 16) * macSpeed) >> 2;
-  /* Keep these signed and wider than WORLD: wrapping the distant aim point
-   * at a map edge would reverse shots. The original only wraps the lead. */
-  int32_t x = (int32_t)tx - pillsMacShift(lead * -pillsMacSin(direction), 8) - px;
-  int32_t y = (int32_t)ty - pillsMacShift(lead * pillsMacSin(direction + 64), 8) - py;
-  return pillsMacAim(x, y);
+  const int direction = utilGet16Dir(heading);
+  /* The tank's facing, as its east and south parts out of 128 */
+  const int east = pillsMacSin(direction);
+  const int south = -pillsMacSin(direction + 64);
+  /* The lead takes the speed on Mac Bolo's scale, four times WinBolo's (its
+   * road speed is 64 to WinBolo's 16), and no more than a byte holds, so a
+   * scenario with unusually high speeds still gets one. */
+  const int macSpeed = speed > 63 ? 255 : speed * 4;
+  unsigned int lead = 0;
+  int32_t aimX;
+  int32_t aimY;
+
+  if (!obstructed) {
+    lead = ((unsigned int)((distance - 16) * macSpeed) & 0xFFFFu) / 4;
+  }
+  /* Only the lead is kept to 16 bits. The point aimed at is worked out
+   * wider than a WORLD, so one past the edge of the map stays past it
+   * and does not come back on the far side, which would turn the shot
+   * round. */
+  aimX = (int32_t)tx + pillsMacCeil256((int32_t)lead * east);
+  aimY = (int32_t)ty + pillsMacCeil256((int32_t)lead * south);
+  return pillsMacAim(aimX - (int32_t)px, aimY - (int32_t)py);
 }
 
 /*********************************************************
