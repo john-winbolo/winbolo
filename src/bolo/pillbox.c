@@ -1105,8 +1105,20 @@ BYTE pillsGetScreenHealth(GameSim *sim, pillboxes *value, BYTE xValue, BYTE yVal
   return returnValue;
 }
 
-/* Mac Bolo 0.99.7's quarter-wave table: trunc(128*sin(b*pi/128)),
- * clipped to 127. Used by both its lead vector and its integer aim search. */
+/*
+Mac Bolo 0.99.7's quarter-wave table: trunc(128*sin(b*pi/128)),
+clipped to 127. Used by both its lead vector and its integer aim search.
+
+How this was determined: several hundred Mac Bolo logs were examined,
+looking at shots from pillboxes (which have an exact known position)
+to find all 4224 coordinates that shots fired from those pillboxes could
+actually exist at. Claude then examined those coordinates to find the
+exact shot movement algorithm.
+
+github.com/rooklift/ancient_bolo_parser/blob/main/docs/pillbox-shell-orbits-compact.json
+github.com/rooklift/ancient_bolo_parser/blob/main/docs/pillbox_shell_algorithm.md
+*/
+
 static const BYTE pillMacSine[65] = {
   0, 3, 6, 9, 12, 15, 18, 21, 24, 28, 31, 34, 37, 40, 43, 46,
   48, 51, 54, 57, 60, 63, 65, 68, 71, 73, 76, 78, 81, 83, 85, 88,
