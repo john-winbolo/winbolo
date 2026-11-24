@@ -2673,11 +2673,23 @@ static HostTickStats tickStats;
 #define BOT_HOST_TICK_STATS_TICKS 3000   /* one line a minute */
 static int    jobIndices[BOT_HOST_MAX_SLOTS];
 
+/* The client's main-thread game and drawing time a frame, in us: the
+ * average botHostEmbedSetClientFrameMs keeps. Only the Bot Host inside a
+ * client sets it. */
+static SDL_AtomicInt hostClientFrameUs;
+
 /* The per-bot budget for `bots` bots, by the formula --budget-legacy
- * picks. */
+ * picks. Inside a client the budget keeps one runner and the client's
+ * frame time for the client itself. */
 static double hostTargetMs(int runners, int bots) {
     if (optBudgetLegacy) {
         return botRunnerTargetMs(serialMsEwma, runners, bots);
+    }
+    if (HOST_EMBED) {
+        double clientMs = SDL_GetAtomicInt(&hostClientFrameUs) / 1000.0;
+        return botRunnerTargetMsReserve(serialMsEwma, clientMs,
+                                        botRunnerRunnersKeepOne(runners),
+                                        bots);
     }
     return botRunnerTargetMsReserve(serialMsEwma, 0.0, runners, bots);
 }
@@ -2687,6 +2699,15 @@ static void hostThinkJob(int index, void *userData) {
     GameSim *gs = clientSimGetGameSim(hs->cs);
     TankModifiers mods;
     (void)userData;
+
+    /* Inside a client the brains think at low OS priority, so the client's
+     * game and drawing come first. Set for this job only, and put back at
+     * its end: the pool's threads also run the single player and server
+     * bots, which keep normal priority. No pool thread sets any other
+     * priority, so normal is the one to put back. */
+    if (HOST_EMBED) {
+        (void)SDL_SetCurrentThreadPriority(SDL_THREAD_PRIORITY_LOW);
+    }
 
     memset(&mods, 0, sizeof(mods));
     if (MY_TANK(hs->cs) != NULL) {
@@ -2722,6 +2743,9 @@ static void hostThinkJob(int index, void *userData) {
      * pool capture, outside lastThinkMs, ending 2 ms before the deadline. */
     if (!hs->job.needRemove) {
         botRunnerCollectGarbage(&hs->bot);
+    }
+    if (HOST_EMBED) {
+        (void)SDL_SetCurrentThreadPriority(SDL_THREAD_PRIORITY_NORMAL);
     }
 }
 
@@ -3027,8 +3051,7 @@ static void hostTick(uint32_t startLate) {
         double serialMs = (double)(brainStart - setupStart);
         if (optBudgetLegacy) serialMs += (double)(sendEnd - brainEnd);
         serialMs = serialMs * 1000.0 / freq;
-        if (serialMsEwma <= 0.0) serialMsEwma = serialMs;
-        else serialMsEwma = 0.1 * serialMs + 0.9 * serialMsEwma;
+        serialMsEwma = botRunnerEwma(serialMsEwma, serialMs);
     }
 }
 
@@ -3696,6 +3719,13 @@ void botHostEmbedSetMax(int max) {
 
 int botHostEmbedGetMax(void) {
     return SDL_GetAtomicInt(&embedMaxPlus1) - 1;
+}
+
+void botHostEmbedSetClientFrameMs(double ms) {
+    static double ewma = 0.0;   /* main thread only */
+    if (ms < 0.0) ms = 0.0;
+    ewma = botRunnerEwma(ewma, ms);
+    SDL_SetAtomicInt(&hostClientFrameUs, (int)(ewma * 1000.0 + 0.5));
 }
 
 void botHostEmbedGetStatus(BotHostEmbedStatus *out) {

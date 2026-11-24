@@ -616,6 +616,7 @@ static const UnitTestEntry s_tests[] = {
     { "bot_host_remote_seat_stays_bot", run_bot_host_remote_seat_stays_bot },
     { "bot_host_info_host_name", run_bot_host_info_host_name },
     { "bot_host_target_ms", run_bot_host_target_ms },
+    { "bot_host_embed_budget", run_bot_host_embed_budget },
     { "bot_host_sync_codec", run_bot_host_sync_codec },
     { "brain_sync_path_check", run_brain_sync_path_check },
     { "brain_sync_manifest_codec", run_brain_sync_manifest_codec },

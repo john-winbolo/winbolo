@@ -85,6 +85,11 @@ void botHostEmbedGetStatus(BotHostEmbedStatus *out);
  * only. */
 void botHostEmbedSetMax(int max);
 int  botHostEmbedGetMax(void);
+/* The client's main-thread game tick and drawing time of one frame, in ms
+ * (not the wait for the frame rate). Once a frame on the main thread. The
+ * host keeps its moving average (the weight of its own tick average) and
+ * leaves that much of each tick for the client in the bots' budget. */
+void botHostEmbedSetClientFrameMs(double ms);
 /* The player's answer while BotHostEmbedStatus.consentAsking: yes, the
  * host takes the server's code for this join; no, it offers 0 slots for
  * this join. Main thread. */

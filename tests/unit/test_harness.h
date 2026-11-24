@@ -920,6 +920,7 @@ int run_bot_host_remote_seat_stays_bot(void);
 /* A Bot Host seat's info names its host as the lobby rows do. */
 int run_bot_host_info_host_name(void);
 int run_bot_host_target_ms(void);
+int run_bot_host_embed_budget(void);
 int run_bot_host_sync_codec(void);
 
 /* Bot Host brain sync (test_brain_sync.c). */
