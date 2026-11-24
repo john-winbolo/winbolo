@@ -319,8 +319,17 @@ end
 -- side, or the side of a swerve that is running) once the swerve starts
 -- (now when it runs, else from T_kill). It CONFLICTS when its ray passes
 -- the grown blocker square and reaches the pill-blocker distance at a tick
--- inside the errand, or comes within half a tile + margin of the builder on
--- his walk (a straight walk at the walk-sim pace). A pill whose wedge on
+-- inside the errand, or EXPLODES where it would kill the builder. A shell
+-- kills a builder only where it explodes (shells.c shellsUpdate calls
+-- shellsBlastTestBuilder only on a hit or when the shell runs out; lgm.c
+-- lgmBlastCatches): on the very square for a hit on a pill, wall or other
+-- solid square, else inside the lgm_blast_shape area round the explosion
+-- (half a tile in the classic table, U.lgm_open_blast_catches). A pill's
+-- shell that misses the blocker explodes on the tank it is aimed at, or at
+-- the end of its flight when the tank is out of range. The builder conflicts
+-- when he is inside that area at that tick: on his walk (a straight walk at
+-- the walk-sim pace) or on the blocker square while he builds. A shell that
+-- only passes over or near him on its flight is no conflict. A pill whose wedge on
 -- the swerve side is clean does not conflict. Send only with no conflict;
 -- while the builder is out on a quick repair, the same test runs every
 -- tick from where he stands (QUICK_REPAIR_ABORT why=pill_fire_predict).
@@ -464,7 +473,7 @@ end
 function M.side_eval(world, info, rb, pmx, pmy, haz)
   local x = LP.context(info, LPX) or {}
   local range = (x.pill_range or 2048) / 256
-  local m = C.REPAIR_FIRE_LANE_MARGIN_TILES or 0.25
+  local m = C.REPAIR_FIRE_LANE_MARGIN_TILES or 0
   local tx, ty = info.tankx / 256.0, info.tanky / 256.0
   local pcx, pcy = pmx + 0.5, pmy + 0.5
   local guns = M.guns(world, info, range)
@@ -614,8 +623,7 @@ end
 function M.fire_conflict(world, info, now, goal, k, rb, bx0, by0, t0, t_arr, sd, swerving)
   local x = LP.context(info, LPX) or {}
   local range = (x.pill_range or 2048) / 256
-  local m = C.REPAIR_FIRE_LANE_MARGIN_TILES or 0.25
-  local reach = 0.5 + m
+  local m = C.REPAIR_FIRE_LANE_MARGIN_TILES or 0
   local spd = (C.SHELL_SPEED or 32) / 256          -- tiles a tick
   local t_end = t_arr + (C.LGM_BUILD_TIME or 20)
   local tx, ty = info.tankx / 256.0, info.tanky / 256.0
@@ -624,7 +632,6 @@ function M.fire_conflict(world, info, now, goal, k, rb, bx0, by0, t0, t_arr, sd,
   local bcx, bcy = rb.mx + 0.5, rb.my + 0.5
   local walk = math.max(1, t_arr - t0)
   local kt = k and k.t
-  local life = math.floor(range / spd)
   for gi = 1, #guns do
     local g = guns[gi]
     local is_target = (g.p.mx == goal.mx and g.p.my == goal.my)
@@ -662,16 +669,31 @@ function M.fire_conflict(world, info, now, goal, k, rb, bx0, by0, t0, t_arr, sd,
               return { pill = g.id, target = is_target, fire = f, at = at, how = "blocker" }
             end
           end
-          -- The builder on his walk: shell and man at the same tick.
-          local a = math.max(f, t0)
-          local b = math.min(f + life, t_arr)
-          for t = a, b do
-            local s = (t - f) * spd
-            local w = (t - t0) / walk
-            local ddx = g.gx + ux * s - (bx0 + (bcx - bx0) * w)
-            local ddy = g.gy + uy * s - (by0 + (bcy - by0) * w)
-            if ddx * ddx + ddy * ddy <= reach * reach then
-              return { pill = g.id, target = is_target, fire = f, at = t, how = "builder" }
+          -- The builder where the shell explodes. It missed the blocker
+          -- (else the check above), so it ends on the tank it is aimed at,
+          -- or at the end of its flight when the tank is out of range. The
+          -- engine tests the builder only there and then (lgmBlastCatches).
+          local land = math.min(al, range)
+          local at = f + math.floor(land / spd + 0.5)
+          if at >= t0 and at <= t_end then
+            local mx_, my_
+            if at >= t_arr then
+              mx_, my_ = bcx, bcy                -- building on the blocker
+            else
+              local w = (at - t0) / walk
+              mx_ = bx0 + (bcx - bx0) * w
+              my_ = by0 + (bcy - by0) * w
+            end
+            local ex, ey = g.gx + ux * land, g.gy + uy * land
+            local dx, dy = (ex - mx_) * 256, (ey - my_) * 256
+            -- The margin pulls the explosion that much nearer to him.
+            if m > 0 then
+              local d = math.sqrt(dx * dx + dy * dy)
+              local k2 = d > 0 and math.max(0, d - m * 256) / d or 0
+              dx, dy = dx * k2, dy * k2
+            end
+            if U.lgm_open_blast_catches(dx, dy) then
+              return { pill = g.id, target = is_target, fire = f, at = at, how = "builder" }
             end
           end
         end

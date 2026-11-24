@@ -6561,11 +6561,12 @@ M.SWERVE_AVOID_REPAIR_SIDE = true
 -- false = old rule (only the take target's kill and the shells in the
 -- air). KEEL / MAST: false.
 M.QUICK_REPAIR_WAIT_ALL_PILLS = true
--- How far (tiles) past the blocker's square (and the builder's) a shell's
--- ray may pass and still count as a hit, for both rules above. A pill leads
--- the moving tank, so its shells do not run exactly on the line to the
--- tank's centre. New number (Nov 24), awaits Andrew's yes.
-M.REPAIR_FIRE_LANE_MARGIN_TILES = 0.25
+-- How far (tiles) past the blocker's square a shell's ray may pass and
+-- still count as a hit, for both rules above; for the builder, how much
+-- nearer to him a shell's explosion counts (the engine's blast area is used
+-- as is at 0). Andrew Nov 24 set 0.0: the squares and the blast area exactly
+-- as the engine has them.
+M.REPAIR_FIRE_LANE_MARGIN_TILES = 0.0
 -- The take substates in which the tank is shooting the target pill: the
 -- firing run that QUICK_REPAIR_PREDICT_SHOTS needs.
 M.QUICK_REPAIR_FIRE_SUBSTATES = {

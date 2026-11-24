@@ -13,7 +13,10 @@
 --      no clean side -> wait:other_pill (no send); knobs off -> send.
 --   4. outbound: the builder is out and the second pill's shots meet him ->
 --      QUICK_REPAIR_ABORT why=pill_fire_predict; no second pill -> none.
---   5. presets: KEEL and MAST false, defaults true.
+--   5. presets: KEEL and MAST false, defaults true; margin 0.0.
+--   6. the builder walk: a shell that only flies over him is no conflict;
+--      a shell that explodes on the tank while he is still beside it is
+--      one (the engine kills a builder only where a shell explodes).
 -- No engine: terrain and the walk sim are stubs.
 --
 -- Run from this directory with the LuaJIT built beside the game:
@@ -109,6 +112,7 @@ local function mk(opts)
   opts = opts or {}
   local bmx, bmy = 101, 102
   if opts.blocker == "a" then bmx, bmy = 102, 102 end
+  if opts.bmx then bmx, bmy = opts.bmx, opts.bmy end
   local pills = {
     [3] = pill(106, 100, 2, "neutral"),
     [8] = pill(bmx, bmy, 0, "friendly", true),
@@ -311,6 +315,43 @@ do
   check("Rule 2 off: no outbound check", qr and qr.outbound == nil, qr and qr.outbound)
 end
 
+-- ── 6. the builder walk ─────────────────────────────────────────────────
+print("6. builder walk")
+do
+  -- The take target at (106,100) shoots the tank at (100,100) along the
+  -- row y = 100.5; its shells explode on the tank, 6 tiles from the pill.
+  -- The blocker squares below are off that row, so no shell hits them.
+  reset()
+  local st, w, inf = mk({ bmx = 103, bmy = 102 })
+  local rb = { mx = 103, my = 102 }
+  local k = { t = NOW + 300 }
+  -- He stands on the row at (103.5, 100.5) and creeps south to the
+  -- blocker: the shells fly right over him for many ticks, but explode on
+  -- the tank 3 tiles away.
+  local cf = QR.fire_conflict(w, inf, NOW, st.goal, k, rb, 103.5, 100.5,
+                              NOW, NOW + 200, nil, false)
+  check("shells fly over his walk, explode on the tank: no conflict", cf == nil,
+        cf and (cf.how .. "@" .. tostring(cf.at)))
+
+  st, w, inf = mk({ bmx = 100, bmy = 103 })
+  rb = { mx = 100, my = 103 }
+  -- He leaves the tank and creeps south: the next shell explodes on the
+  -- tank while he is still within half a tile of it.
+  cf = QR.fire_conflict(w, inf, NOW, st.goal, k, rb, 100.5, 100.5,
+                        NOW + 1, NOW + 400, nil, false)
+  check("shell explodes on the tank beside him: builder conflict",
+        cf and cf.how == "builder" and cf.pill == 3, cf and cf.how)
+  check("the conflict tick is the explosion (fire + 48)",
+        cf and cf.at == cf.fire + 48, cf and (tostring(cf.at) .. "/" .. tostring(cf.fire)))
+
+  -- The same walk, fast: he is 1 tile or more from the tank when the
+  -- shells land there.
+  cf = QR.fire_conflict(w, inf, NOW, st.goal, k, rb, 100.5, 100.5,
+                        NOW + 1, NOW + 40, nil, false)
+  check("he is clear of the tank when the shells land: no conflict", cf == nil,
+        cf and (cf.how .. "@" .. tostring(cf.at)))
+end
+
 -- ── 5. presets ───────────────────────────────────────────────────────────
 print("5. presets")
 do
@@ -321,7 +362,7 @@ do
   check("keel: QUICK_REPAIR_WAIT_ALL_PILLS false", keel.QUICK_REPAIR_WAIT_ALL_PILLS == false)
   check("mast: SWERVE_AVOID_REPAIR_SIDE false", mast.SWERVE_AVOID_REPAIR_SIDE == false)
   check("mast: QUICK_REPAIR_WAIT_ALL_PILLS false", mast.QUICK_REPAIR_WAIT_ALL_PILLS == false)
-  check("margin 0.25", C.REPAIR_FIRE_LANE_MARGIN_TILES == 0.25, C.REPAIR_FIRE_LANE_MARGIN_TILES)
+  check("margin 0.0 (Andrew Nov 24)", C.REPAIR_FIRE_LANE_MARGIN_TILES == 0, C.REPAIR_FIRE_LANE_MARGIN_TILES)
 end
 
 print(string.format("\n%d passed, %d failed", pass, fail))
