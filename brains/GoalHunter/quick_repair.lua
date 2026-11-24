@@ -1126,7 +1126,9 @@ function M.evaluate(state, world, info, now)
   state._quick_repair = qr
 
   if BRAIN_DEBUG_MODE then
-    local key = string.format("%d:%d:%s:%s", p.mx, p.my, result, tostring(k.src))
+    -- run_c7: the blocker's hp is in the key, so its death gets a line
+    -- (c6 beside_e: it died at 637 and the "wait:early" line of 474 stood).
+    local key = string.format("%d:%d:%d:%s:%s", p.mx, p.my, qr.hp, result, tostring(k.src))
     if state._qr_log_key ~= key then
       state._qr_log_key = key
       print2(string.format(

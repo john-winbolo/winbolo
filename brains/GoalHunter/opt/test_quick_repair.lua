@@ -422,6 +422,27 @@ if HAS_LOGS then
   QR.evaluate(st, w, inf, NOW)
   check("log: result changes, new line", #LOG == n1 + 1 and LOG[#LOG]:find("-> send", 1, true) ~= nil,
         LOG[#LOG])
+  -- run_c7: the blocker's death is a new line even when the result stands.
+  reset(true, true)
+  st, w, inf = mk({ blocker_hp = 5, land = { NOW + 80, NOW + 70 } })
+  QR.evaluate(st, w, inf, NOW)
+  n1 = #LOG
+  w.pills[8].health = 0
+  QR.evaluate(st, w, inf, NOW)
+  check("log: the blocker dies, new line (same result)",
+        #LOG == n1 + 1 and LOG[#LOG]:find("hp=0", 1, true) ~= nil, LOG[#LOG])
+  -- run_c7 (Andrew, Nov 24): a send on a PREDICTED kill says so. Target hp
+  -- 3, two of our shells in the air, the third one predicted.
+  reset(true, true)
+  st, w, inf = mk({ bx = 106, target_hp = 3, land = { NOW + 10, NOW + 20 } })
+  local _, cmd = run_pool(st, w, inf)
+  local sl
+  for i = 1, #LOG do if LOG[i]:find("^QUICK_REPAIR_SEND") then sl = LOG[i] end end
+  check("predicted kill: the builder is sent", cmd and cmd.x == 106 and cmd.y == 100,
+        st._quick_repair and st._quick_repair.result)
+  check("predicted kill: the send line names it",
+        sl and sl:find("kill=predict T_kill=", 1, true) ~= nil
+        and sl:find("(predicted kill: target still alive)", 1, true) ~= nil, sl)
   _G.BRAIN_DEBUG_MODE = nil
 end
 
