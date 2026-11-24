@@ -2113,7 +2113,8 @@ function M.evaluate_lua(inp)
     if inp.v2_confirm_check then confirm_exact(ctx, best) end
     best.hold = OLD.hold_point(ctx, best)
   end
-  if best and best.safe and (inp.extra_cover_walls or 0) > 0 then
+  -- E5-13: a group run asks for the extra walls once, on its final result
+  if best and best.safe and (inp.extra_cover_walls or 0) > 0 and not inp._xcover_later then
     local t3 = clk and clk()
     best.extra_cover = extra_cover(ctx, best)
     if t3 then tm.xcover = tm.xcover + clk() - t3 end
@@ -2140,12 +2141,44 @@ function M.group_parts_left(job)
 end
 
 local function eval_in_job(job, inp)
-  local old = inp._v2_cache
-  inp._v2_cache = job.cache
+  local old, oldx = inp._v2_cache, inp._xcover_later
+  inp._v2_cache, inp._xcover_later = job.cache, true
   local ok, r = pcall(M.evaluate, inp)
-  inp._v2_cache = old
+  inp._v2_cache, inp._xcover_later = old, oldx
   if not ok then error(r, 0) end
   return r
+end
+
+-- E5-13: the extra walls of the group's final result, with the result's
+-- A (as its own run had it) and the job's cache.
+local function job_done(job)
+  local inp, res = job.inp, job.res
+  res.n_eval, res.n_reject = job.n_eval, job.n_reject
+  local b = res.best
+  if not (b and b.safe and (inp.extra_cover_walls or 0) > 0) then return end
+  local A, goalA = res.A or job.goalA, job.goalA
+  local clk = inp.v2_clock
+  local t3 = clk and clk()
+  local old = inp._v2_cache
+  inp._v2_cache = job.cache
+  if A ~= goalA then
+    inp.A = A
+    if inp.set_A then inp.set_A(A) end
+  end
+  local ok, r = pcall(function() return extra_cover(new_ctx(inp, A), b) end)
+  inp._v2_cache = old
+  if A ~= goalA then
+    inp.A = goalA
+    if inp.set_A then inp.set_A(goalA) end
+  end
+  if not ok then error(r, 0) end
+  b.extra_cover = r
+  local tm = res.v2 and res.v2.tm
+  if t3 and tm then
+    local d = clk() - t3
+    tm.xcover = (tm.xcover or 0) + d
+    if tm.total then tm.total = tm.total + d end
+  end
 end
 
 function M.group_step(job)
@@ -2155,7 +2188,7 @@ function M.group_step(job)
     res.A, res.goal_A = goalA, goalA
     job.res, job.n_eval, job.n_reject = res, res.n_eval, res.n_reject
     job.list = {}
-    if not inp.chains then return true end
+    if not inp.chains then job_done(job); return true end
     local pr = inp.pill_range + inp.range_margin
     for _, p in ipairs(res.hostile) do
       local dx, dy = (p.mx - goalA.mx) * 256, (p.my - goalA.my) * 256
@@ -2186,7 +2219,7 @@ function M.group_step(job)
     end
   end
   if job.i > #job.list then
-    job.res.n_eval, job.res.n_reject = job.n_eval, job.n_reject
+    job_done(job)
     return true
   end
   return false

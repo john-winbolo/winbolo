@@ -828,5 +828,49 @@ do
     tostring(r2.start_why))
 end
 
+print("E5-13: a group run's extra walls, once on the final result")
+do
+  local n, same, with = 0, 0, 0
+  local function xs(b)
+    local o = {}
+    for i, e in ipairs((b and b.extra_cover) or {}) do o[i] = tostring(e.sq) end
+    return table.concat(o, ",")
+  end
+  for trial = 1, 30 do
+    clear()
+    V.reset()
+    local A = { mx = 128, my = 120, owner = "hostile", health = 15 }
+    local pills = { A }
+    for _ = 1, 1 + rnd(3) do
+      local mx, my = 122 + rnd(12), 114 + rnd(12)
+      if math.abs(mx - 128) + math.abs(my - 120) > 2 then
+        pills[#pills + 1] = { mx = mx, my = my, owner = "hostile", health = 15 }
+      end
+    end
+    for _ = 1, rnd(20) do terrain[sq(120 + rnd(16), 112 + rnd(16))] = C.T_BUILDING end
+    terrain[sq(128, 120)] = nil
+    local world = make_world(pills)
+    local inp = make_inp(world, A, 0)
+    inp.extra_cover_walls, inp.chains = 1, true
+    inp.bar_single, inp.bar_chain = 10, 10
+    local res = V.evaluate_group(inp)
+    -- the result's own run, alone: its extra walls as before E5-13
+    V.reset()
+    local i2 = make_inp(world, res.A or A, 0)
+    i2.extra_cover_walls = 1
+    i2.bar_single, i2.bar_chain = 10, 10
+    i2.chains_only = (res.A and res.A ~= A) and i2.chains_only_runs or nil
+    local b2 = V.evaluate_lua(i2).best
+    n = n + 1
+    local b = res.best
+    if b and b.extra_cover then with = with + 1 end
+    if (not b and not b2) or (b and b2 and b.px == b2.px and b.py == b2.py and xs(b) == xs(b2)) then
+      same = same + 1
+    end
+  end
+  print(string.format("    %d maps: same extra walls %d, with extra walls %d", n, same, with))
+  check("the group's extra walls = the result run's own", same == n and with > 0, n - same)
+end
+
 print(string.format("%d passed, %d failed", pass, fail))
 os.exit(fail == 0 and 0 or 1)
