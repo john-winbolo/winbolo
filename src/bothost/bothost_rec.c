@@ -102,6 +102,11 @@ typedef struct {
 
     /* Uploads. */
     bool       want;
+    /* A game runs on the server (HOLD): no piece goes and no upload
+     * starts. An upload under way keeps its place (file and offset) and
+     * goes on from there at the next UPLOAD. The ACK wait stops too: the
+     * server merges only between games. */
+    bool       held;
     uint32_t   retryAtMs;
     bool       active;
     char       upBlock[BOT_HOST_REC_BLOCK_LEN];
@@ -990,6 +995,7 @@ void hostRecServerUp(int srv, const char *label) {
     sv->open = false;
     sv->lowDisk = false;
     sv->want = false;
+    sv->held = false;
     sv->fails = 0;
     sv->skipCount = 0;
     sv->stateSent = false;
@@ -1007,6 +1013,7 @@ void hostRecServerDown(int srv) {
     sv->up = false;
     sv->open = false;
     sv->want = false;
+    sv->held = false;
 }
 
 void hostRecOnEvent(int srv, const ControlEvent *evt) {
@@ -1016,14 +1023,38 @@ void hostRecOnEvent(int srv, const ControlEvent *evt) {
         case BOT_HOST_REC_OP_OPEN:  srvOpen(srv, evt); break;
         case BOT_HOST_REC_OP_CLOSE: srvClose(srv); break;
         case BOT_HOST_REC_OP_UPLOAD:
-            /* An older server's BOT_HOST_REC_F_PACED is not obeyed: the
-             * upload goes at full speed. */
             sv->want = true;
             sv->retryAtMs = 0;
             if (s_io.bulkWide != NULL) s_io.bulkWide(srv, evt->u.botHostRec.a);
+            if (evt->u.botHostRec.flags & BOT_HOST_REC_F_PACED) {
+                /* An older server's "send slowly, a game runs": this host
+                 * sends nothing during a game, so it waits for an UPLOAD
+                 * without the flag (the older server's lobby). */
+                sv->held = true;
+                break;
+            }
+            if (sv->held) {
+                sv->held = false;
+                if (sv->active) {
+                    fprintf(stderr, "[bothost] %s: the game is over; block "
+                                    "%s goes on\n", sv->key, sv->upBlock);
+                }
+                /* The ACK wait starts again: the server merged nothing
+                 * during the game. */
+                if (sv->waitAck) {
+                    sv->ackDeadline = (uint32_t)SDL_GetTicks() + REC_ACK_WAIT_MS;
+                }
+            }
             break;
         case BOT_HOST_REC_OP_HOLD:
-            /* An older server's "slow down while a game runs": ignored. */
+            /* A game starts: send nothing until the next UPLOAD. A newer
+             * server sends HOLD at each game start. (An older server sent
+             * it to slow the upload down; this host stops it.) */
+            if (!sv->held && sv->active) {
+                fprintf(stderr, "[bothost] %s: a game starts; block %s "
+                                "waits for its end\n", sv->key, sv->upBlock);
+            }
+            sv->held = true;
             break;
         case BOT_HOST_REC_OP_CLEAR: srvClear(srv); break;
         case BOT_HOST_REC_OP_ACK:   srvAck(srv, evt); break;
@@ -1095,11 +1126,11 @@ void hostRecService(uint32_t nowMs) {
     for (srv = 0; srv < REC_MAX_SERVERS; srv++) {
         RecSrv *sv = &s_srv[srv];
         if (!sv->up) continue;
-        if (sv->want && !sv->active &&
+        if (sv->want && !sv->active && !sv->held &&
             (sv->retryAtMs == 0 || (int32_t)(nowMs - sv->retryAtMs) >= 0)) {
             if (!upStart(srv)) sv->want = false;
         }
-        if (sv->active && sv->waitAck) {
+        if (sv->active && sv->waitAck && !sv->held) {
             if ((int32_t)(nowMs - sv->ackDeadline) >= 0) {
                 fprintf(stderr, "[bothost] %s did not answer for block %s; it "
                                 "is sent again later\n", sv->key, sv->upBlock);
@@ -1118,9 +1149,10 @@ void hostRecPumpUploads(void) {
     for (srv = 0; srv < REC_MAX_SERVERS; srv++) {
         RecSrv *sv = &s_srv[srv];
         int n;
-        if (!sv->up || !sv->active) continue;
+        if (!sv->up || !sv->active || sv->held) continue;
         /* As fast as the bulk channel takes it: a piece goes when the bulk
-         * sender has handed the last one to the channel. */
+         * sender has handed the last one to the channel. Nothing while a
+         * game runs (held); the pieces already queued still go. */
         for (n = 0; n < 4 && sv->active && !sv->waitAck; n++) {
             if (s_io.bulkIdle != NULL && !s_io.bulkIdle(srv)) break;
             upPiece(srv);

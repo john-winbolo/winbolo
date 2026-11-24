@@ -5764,7 +5764,9 @@ void serverServiceBotHosts(ServerSim *sim) {
                     botHostSlotOverrideNewLobby(&udpServer.botHosts[h].slotOvr);
                 }
             }
-            /* The hosts send their recordings of it now, at full speed. */
+            /* The hosts send their recordings of it now, at full speed.
+             * (Game over asked already; this asks a host that joined in
+             * the game, or one whose upload failed.) */
             if (udpServer.botHostLastState != -1) serverBotRecOnLobby();
             /* The players are sent their tickets again. */
             for (s = 0; s < MAX_TANKS; s++) {
@@ -5774,7 +5776,9 @@ void serverServiceBotHosts(ServerSim *sim) {
         if (st == serverStateRunning &&
             (udpServer.botHostLastState == (int)serverStateLobby ||
              udpServer.botHostLastState == (int)serverStateCountdown)) {
-            /* A game starts: a host still sending goes on slowly. */
+            /* A game starts: a host still sending stops (HOLD) and goes
+             * on after the game. A map rotation (Running on both sides)
+             * needs no HOLD: no UPLOAD goes out while a game runs. */
             serverBotRecOnGameStart();
         }
         if (udpServer.botHostEnabled &&
@@ -5934,7 +5938,9 @@ void serverServiceBotHosts(ServerSim *sim) {
         }
         botHostServiceFiles(sim, h);
     }
-    serverBotRecService(sim, st == serverStateLobby);
+    /* Uploads and merges only between games: game over and the lobby. */
+    serverBotRecService(sim, st == serverStateLobby ||
+                                 st == serverStateGameOver);
     botHostBroadcastRows();
 
     /* Finding hosts: ask the listed ones for free slots when the first

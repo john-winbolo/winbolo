@@ -34,6 +34,7 @@
 #include "transport_control_codec.h"
 #include "bulk_transfer.h"
 #include "transport_udp_server_internal.h" /* serverBotRecPiece, udpServer */
+#include "channel_mux.h"     /* channelMuxInit, CHANNEL_CONTROL */
 #include "input_packet.h"   /* TankSnapshot ... PillSnapshot sizes */
 #include "test_harness.h"
 
@@ -1614,5 +1615,97 @@ int run_brainrec_host_upload_file_cap(void) {
     UT_ASSERT(bad);
     UT_ASSERT(openedAtCap == 4096u);
     UT_ASSERT(!madeAtCap);
+    return 0;
+}
+
+/* The BOT_HOST_REC ops queued on host h's control channel, in order. */
+static int tbrRecOps(int h, uint8_t *ops, int max) {
+    const ChannelState *c = &udpServer.botHosts[h].channelMux.ch[CHANNEL_CONTROL];
+    uint32_t seq;
+    int n = 0;
+    for (seq = c->ackedSeq; seq < c->nextSeq && n < max; seq++) {
+        uint32_t idx = seq % c->window;
+        const uint8_t *msg = c->sendData + (size_t)idx * c->segSize;
+        if (c->sendLen[idx] > 3 && msg[0] == (uint8_t)CTRL_BOT_HOST_REC) {
+            ops[n++] = msg[3];
+        }
+    }
+    return n;
+}
+
+static int tbrRecOpCount(const uint8_t *ops, int n, uint8_t op) {
+    int i, k = 0;
+    for (i = 0; i < n; i++) {
+        if (ops[i] == op) k++;
+    }
+    return k;
+}
+
+/* No upload while a game runs. The 15-minute block roll inside a game
+ * asks no UPLOAD and starts no merge; game over asks it; each game start
+ * says HOLD to stop an upload under way. */
+int run_brainrec_host_upload_waits_for_game_end(void) {
+    static BotHostConn saved;
+    BotHostConn *hc = &udpServer.botHosts[0];
+    uint8_t ops[64];
+    int n, holdAtStart, uploadInRoll, openInRoll, uploadAtEnd, closeAtEnd;
+    int holdNext;
+    bool owedInGame, owedAfter, mergeKept, busyInGame;
+
+    saved = *hc;
+    memset(hc, 0, sizeof(*hc));
+    channelMuxInit(&hc->channelMux);
+    SDL_strlcpy(hc->name, "ut-hold-host", sizeof(hc->name));
+    hc->connected = true;
+    hc->connId = 21;
+
+    /* The game starts: block 1 opens, and the host is told to HOLD. */
+    transportUdpServerRecOpen("debug_sessions/ut652_hold_1", 0);
+    serverBotRecOnGameStart();
+    serverBotRecService(NULL, false);
+    n = tbrRecOps(0, ops, 64);
+    holdAtStart = tbrRecOpCount(ops, n, BOT_HOST_REC_OP_HOLD);
+
+    /* The 15-minute roll, inside the game: block 1 closes and block 2
+     * opens. No UPLOAD goes out; the ask waits. A whole upload that came
+     * in during the game is not merged. */
+    transportUdpServerRecClose();
+    transportUdpServerRecOpen("debug_sessions/ut652_hold_2", 45000);
+    hc->recMergeWant = true;
+    serverBotRecService(NULL, false);
+    serverBotRecService(NULL, false);
+    n = tbrRecOps(0, ops, 64);
+    uploadInRoll = tbrRecOpCount(ops, n, BOT_HOST_REC_OP_UPLOAD);
+    openInRoll = tbrRecOpCount(ops, n, BOT_HOST_REC_OP_OPEN);
+    owedInGame = hc->recUploadOwed;
+    mergeKept = hc->recMergeWant;
+    busyInGame = serverBotRecBusy(0);
+    hc->recMergeWant = false;   /* no real upload to merge here */
+
+    /* Game over: block 2 closes and, between games, the UPLOAD goes. */
+    transportUdpServerRecClose();
+    serverBotRecService(NULL, true);
+    n = tbrRecOps(0, ops, 64);
+    uploadAtEnd = tbrRecOpCount(ops, n, BOT_HOST_REC_OP_UPLOAD);
+    closeAtEnd = tbrRecOpCount(ops, n, BOT_HOST_REC_OP_CLOSE);
+    owedAfter = hc->recUploadOwed;
+
+    /* The next game starts while the host sends: HOLD again. */
+    serverBotRecOnGameStart();
+    n = tbrRecOps(0, ops, 64);
+    holdNext = tbrRecOpCount(ops, n, BOT_HOST_REC_OP_HOLD);
+
+    *hc = saved;
+    UT_ASSERT_MSG(holdAtStart == 1, "HOLD at game start %d", holdAtStart);
+    UT_ASSERT_MSG(openInRoll == 2, "OPEN count after the roll %d", openInRoll);
+    UT_ASSERT_MSG(uploadInRoll == 0, "UPLOAD during the game %d",
+                  uploadInRoll);
+    UT_ASSERT(owedInGame);
+    UT_ASSERT(mergeKept);
+    UT_ASSERT(busyInGame);
+    UT_ASSERT_MSG(closeAtEnd >= 1, "CLOSE at game over %d", closeAtEnd);
+    UT_ASSERT_MSG(uploadAtEnd == 1, "UPLOAD at game over %d", uploadAtEnd);
+    UT_ASSERT(!owedAfter);
+    UT_ASSERT_MSG(holdNext == 2, "HOLD at the next game start %d", holdNext);
     return 0;
 }

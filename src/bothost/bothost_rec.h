@@ -8,9 +8,11 @@
  * (CTRL_BOT_HOST_REC). The host records each such bot into
  * <cache>/recordings/<server>/<block>/: one .hbr file per seat (the same
  * per-bot entries the server would write, keyed by the bot's input
- * sequence) and the bot's print2 log. When the server asks (back in its
- * lobby, or slowly during a game) the host sends a copy of each finished
- * block over the control connection's bulk channel. When the server
+ * sequence) and the bot's print2 log. When the server asks (only between
+ * games: at game over and in its lobby) the host sends a copy of each
+ * finished block over the control connection's bulk channel. At a game
+ * start the server says HOLD: the upload stops where it is and goes on
+ * from there at the next ask. When the server
  * answers MERGED the block gets an "uploaded" marker and is not sent
  * again; when it answers FAILED (with the reason) the block is sent again
  * later. The files stay here: only the server's cleardebug deletes them,
