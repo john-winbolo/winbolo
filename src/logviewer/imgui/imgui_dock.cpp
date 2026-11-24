@@ -1349,6 +1349,9 @@ static void draw_side(int side, ImVec2 pos, ImVec2 size, int other, int extent) 
             const ImGuiID id = outer->GetID("##lv_slot_grip");
             ImGui::PopID();
 
+            /* A length the user sets keeps no amount held back before
+             * (lvDockClearUserLen). */
+            const bool hasRoom = p >= 0 && wide && k_panels[p].roomFor != nullptr;
             bool held = g.ActiveId == id;
             bool hot = p >= 0 && overHost && box.Contains(g.IO.MousePos) &&
                        (g.ActiveId == 0 || held) && (g.HoveredId == 0 || g.HoveredId == id) &&
@@ -1361,6 +1364,11 @@ static void draw_side(int side, ImVec2 pos, ImVec2 size, int other, int extent) 
                     s_len[side][p] = lvDockClearSnapLen((int)(n->Size[axis] + 0.5f), content, mins[i]);
                     s_len[side][p] = lvDockClearDragLen(&plan, mins, i, s_len[side][p], stripLen,
                                                         LV_DOCK_CLEAR_GRIP);
+                    if (hasRoom) {
+                        s_len[side][p] = lvDockClearUserLen(
+                            s_len[side][p], &s_room[side][p],
+                            (int)ceilf(k_panels[p].roomFor(false)));
+                    }
                 } else if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
                     ImGui::SetActiveID(id, outer);
                     s_slot_grab = g.IO.MousePos[axis] - farEdge;
@@ -1373,6 +1381,11 @@ static void draw_side(int side, ImVec2 pos, ImVec2 size, int other, int extent) 
                     float len = g.IO.MousePos[axis] - s_slot_grab - n->Pos[axis];
                     s_len[side][p] = lvDockClearDragLen(&plan, mins, i, (int)(len + 0.5f),
                                                         stripLen, LV_DOCK_CLEAR_GRIP);
+                    if (hasRoom) {
+                        s_len[side][p] = lvDockClearUserLen(
+                            s_len[side][p], &s_room[side][p],
+                            (int)ceilf(k_panels[p].roomFor(false)));
+                    }
                     slotDrag = true;
                 } else {
                     ImGui::ClearActiveID();

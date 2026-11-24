@@ -162,6 +162,17 @@ static inline int lvDockClearRoomLen(int len, int *room, int now, int min) {
     return got;
 }
 
+/* A length the user sets (a drag or a double click on the grip) is his own:
+ * it holds the sections' room as they are now, and no amount that min or
+ * LV_DOCK_CLEAR_LEN_MAX held back before is kept. So the next frame
+ * (lvDockClearRoomLen) shows the length he set: 100 goes to 48 with 46
+ * kept, the user sets 270, and it stays 270, not 224. now is the room the
+ * sections take this frame. Returns len. */
+static inline int lvDockClearUserLen(int len, int *room, int now) {
+    *room = (now < 0) ? 0 : now;
+    return len;
+}
+
 /* ---- Where the panels go --------------------------------------------------- */
 
 /* The panels along a sidebar: where each starts and how long it is, measured

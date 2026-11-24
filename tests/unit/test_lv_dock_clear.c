@@ -418,6 +418,28 @@ int run_lv_dock_clear_room_len(void) {
     UT_ASSERT_MSG(len == 438 && keep == 138, "both sections: %d, %d", len, keep);
     len = lvDockClearRoomLen(len, &keep, 98, 48);       /* the base row off */
     UT_ASSERT_MSG(len == 398 && keep == 98, "the base row off: %d, %d", len, keep);
+    /* A length the user sets is his own (lvDockClearUserLen): the amount
+       min held back is not kept, so the next frame shows what he set. */
+    keep = 98;
+    len = lvDockClearRoomLen(100, &keep, 0, 48);
+    UT_ASSERT_MSG(len == 48 && keep == 46, "held back: %d, %d", len, keep);
+    len = lvDockClearUserLen(270, &keep, 0);                /* the user snaps to 270 */
+    UT_ASSERT_MSG(len == 270 && keep == 0, "the user's length: %d, %d", len, keep);
+    len = lvDockClearRoomLen(len, &keep, 0, 48);            /* the next frame */
+    UT_ASSERT_MSG(len == 270 && keep == 0, "the next frame keeps 270: %d, %d", len, keep);
+    len = lvDockClearRoomLen(len, &keep, 98, 48);           /* lag records come back */
+    UT_ASSERT_MSG(len == 368 && keep == 98, "the section comes back: %d, %d", len, keep);
+    /* Set with the section in view: the room shown now is in his length. */
+    len = lvDockClearUserLen(300, &keep, 98);
+    len = lvDockClearRoomLen(len, &keep, 98, 48);
+    UT_ASSERT_MSG(len == 300 && keep == 98, "set with the section shown: %d, %d", len, keep);
+    len = lvDockClearRoomLen(len, &keep, 0, 48);
+    UT_ASSERT_MSG(len == 202 && keep == 0, "then the section goes: %d, %d", len, keep);
+    /* A length saved before the room was kept (-1): the user's length
+       still keeps the room as it is now. */
+    keep = -1;
+    len = lvDockClearUserLen(250, &keep, 0);
+    UT_ASSERT_MSG(len == 250 && keep == 0, "an old length, then the user's: %d, %d", len, keep);
     return 0;
 }
 
