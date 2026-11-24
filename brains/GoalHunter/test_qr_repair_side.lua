@@ -10,17 +10,21 @@
 --      the job.
 --   3. send: a clean side -> send and commit side R; a second live pill
 --      (not the take target) whose shots cross the blocker on both sides ->
---      no clean side -> wait:other_pill (no send); knobs off -> send.
+--      no clean side -> wait:other_pill (no send) when a shot meets the
+--      blocker inside the stay window (arrival .. build end), send when the
+--      shots cross only while he walks; knobs off -> send.
 --   4. outbound: the builder is out and the second pill's shots meet him ->
 --      QUICK_REPAIR_ABORT why=pill_fire_predict; no second pill -> none.
 --   5. presets: KEEL and MAST false, defaults true; margin 0.0.
 --   6. the builder walk: a shell that only flies over him is no conflict;
---      a shell that explodes on the tank while he is still beside it is
---      one (the engine kills a builder only where a shell explodes).
+--      since the stay window a shell that explodes on the tank while he is
+--      still beside it is no conflict here either (lgm_certain_death and
+--      tank_clear test his walk).
 --   7. send then outbound: a send at t, the same world at t+1 with the
 --      builder just out -> no QUICK_REPAIR_ABORT (not swerving, and with
 --      the running swerve on the clean side); a running swerve on the dirty
---      side -> wait, nothing committed.
+--      side whose shot crosses the blocker while he walks -> send, nothing
+--      committed.
 -- No engine: terrain and the walk sim are stubs.
 --
 -- Run from this directory with the LuaJIT built beside the game:
@@ -69,8 +73,10 @@ U.ttype = function(mx, my)
 end
 U.ttype_peek = U.ttype
 cpf.SHOT_TANK = cpf.SHOT_TANK or 0
+-- The walk stub: WALK_PER_TILE ticks a tile, Manhattan.
+local WALK_PER_TILE = 16
 _G.cpf_lgm_travel_ticks_map = function(fx, fy, tx, ty)
-  return (math.abs(fx - tx) + math.abs(fy - ty)) * 16
+  return (math.abs(fx - tx) + math.abs(fy - ty)) * WALK_PER_TILE
 end
 danger.update_fire_clock      = function() end
 danger.tank_fire_age          = function() return nil end
@@ -91,6 +97,10 @@ local function check(name, cond, got)
     fail = fail + 1
     print(string.format("  FAIL %s   (got %s)", name, tostring(got)))
   end
+end
+local function M_fire(qr)
+  local f = qr and qr.fire
+  return f and string.format(" #%s %s@%d", tostring(f.pill), f.how, f.at) or ""
 end
 local function logged(pat)
   for i = 1, #LOG do if LOG[i]:find(pat) then return LOG[i] end end
@@ -150,6 +160,7 @@ local function reset()
   C.SWERVE_AVOID_REPAIR_SIDE = true
   C.QUICK_REPAIR_WAIT_ALL_PILLS = true
   DEEP_ABOVE = nil
+  WALK_PER_TILE = 16
   for i = #LOG, 1, -1 do LOG[i] = nil end
 end
 -- enter_swerve with the cover pick cached as `cover` (1 = L).
@@ -254,17 +265,45 @@ do
   local d = swerve(st, w, inf, 1)
   check("swerve on the send tick: committed R", d == -1, d)
 
+  -- Pill A (reload 100) fires at NOW+1 and NOW+101; its shots meet the
+  -- blocker 29 ticks later (NOW+30, NOW+130). The stay window (2026-11-24)
+  -- counts only the shots that meet the blocker while he is on it.
   reset()
+  WALK_PER_TILE = 30                -- walk 120: stay NOW+121 .. NOW+141
   st, w, inf = mk({ pill_a = true, blocker = "a" })
+  _G.BRAIN_DEBUG_MODE = true
   qr = QR.evaluate(st, w, inf, NOW)
+  _G.BRAIN_DEBUG_MODE = nil
   check("pill A across the blocker: no clean side",
         qr and qr.side and qr.side.dir == nil and qr.side.why == "both_dirty",
         qr and qr.side and qr.side.why)
-  check("no clean side, A's shots cross it: wait:other_pill (no send)",
+  check("no clean side, A's shot meets it in the stay: wait:other_pill (no send)",
         qr and qr.result == "wait:other_pill", qr and qr.result)
   check("the conflict is pill A's", qr and qr.fire and qr.fire.pill == 5,
         qr and qr.fire and qr.fire.pill)
+  check("the conflict tick is inside the stay window",
+        qr and qr.fire and qr.window and qr.fire.at >= qr.window[1]
+        and qr.fire.at <= qr.window[2],
+        qr and qr.fire and (tostring(qr.fire.at) .. " in "
+                            .. tostring(qr.window and qr.window[1]) .. ".."
+                            .. tostring(qr.window and qr.window[2])))
+  check("window = arrive .. arrive + LGM_BUILD_TIME",
+        qr and qr.window and qr.window[1] == NOW + 121
+        and qr.window[2] == NOW + 121 + (C.LGM_BUILD_TIME or 20),
+        qr and qr.window and (qr.window[1] .. ".." .. qr.window[2]))
+  check("QUICK_REPAIR line logs window=1121..1141", not HAS_LOGS
+        or (logged("QUICK_REPAIR t=") or ""):find("window=1121%.%.1141"),
+        logged("QUICK_REPAIR t="))
   check("no side committed", st.goal._repair_swerve_dir == nil, st.goal._repair_swerve_dir)
+
+  -- The same pill with walk 64 (stay NOW+65 .. NOW+85): A's shot crosses
+  -- the dead blocker at NOW+30 while he walks; the next one fires after he
+  -- is done. None meets him on the square: send.
+  reset()
+  st, w, inf = mk({ pill_a = true, blocker = "a" })
+  qr = QR.evaluate(st, w, inf, NOW)
+  check("A's shots cross only while he walks or after: send",
+        qr and qr.result == "send", qr and (qr.result .. M_fire(qr)))
 
   reset()
   C.QUICK_REPAIR_WAIT_ALL_PILLS = false
@@ -340,13 +379,13 @@ do
   st, w, inf = mk({ bmx = 100, bmy = 103 })
   rb = { mx = 100, my = 103 }
   -- He leaves the tank and creeps south: the next shell explodes on the
-  -- tank while he is still within half a tile of it.
+  -- tank while he is still within half a tile of it. Since the stay window
+  -- (2026-11-24) his walk is not tested here: danger.lgm_certain_death and
+  -- tank_clear test it.
   cf = QR.fire_conflict(w, inf, NOW, st.goal, k, rb, 100.5, 100.5,
                         NOW + 1, NOW + 400, nil, false)
-  check("shell explodes on the tank beside him: builder conflict",
-        cf and cf.how == "builder" and cf.pill == 3, cf and cf.how)
-  check("the conflict tick is the explosion (fire + 48)",
-        cf and cf.at == cf.fire + 48, cf and (tostring(cf.at) .. "/" .. tostring(cf.fire)))
+  check("shell explodes on the tank beside him on his walk: no conflict here",
+        cf == nil, cf and cf.how)
 
   -- The same walk, fast: he is 1 tile or more from the tank when the
   -- shells land there.
@@ -403,9 +442,11 @@ do
         or (logged("SWERVE_REPAIR_SIDE") or ""):find("chosen=R why=committed"),
         logged("SWERVE_REPAIR_SIDE"))
 
+  -- The dirty side's shot meets the dead blocker at NOW+44, while he walks
+  -- (stay NOW+49 .. NOW+69): the shell flies over it, so it does not count.
   qr, qr2, st = send_then_out("swerve", 1)
-  check("running swerve on dirty L: wait (its shots cross the blocker)",
-        qr and qr.result == "wait:fire_predict", qr and qr.result)
+  check("running swerve on dirty L: send (its shot crosses while he walks)",
+        qr and qr.result == "send", qr and (qr.result .. M_fire(qr)))
   check("running swerve on dirty L: nothing committed", st.goal._repair_swerve_dir == nil,
         st.goal._repair_swerve_dir)
 end

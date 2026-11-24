@@ -8,6 +8,9 @@
 --   3. the builder pool: our shell at the target lets the quick row send;
 --      an ally shell, our shell aimed away, or the knob off refuse it
 --      (friendly_fire).
+--   3b. the stay window (2026-11-24): a DEAD blocker's friendly-fire stamp
+--      (from before it died) refuses the row only while its hold still
+--      runs when the builder arrives; a live blocker keeps the plain rule.
 --   4. the presets: KEEL, MAST and the R221 table keep the old rule.
 -- No engine: terrain, the walk sim and the shell death check are stubs.
 --
@@ -250,6 +253,51 @@ do
   st, w, inf = mk({})
   bp, cmd = run_pool(st, w, inf)
   check("no shells: builder sent (control)", sent(cmd), cmd_s(cmd))
+end
+
+-- ── 3b. Dead blocker: the friendly-fire hold against his arrival ────────
+-- run_c8 beside_e: the blocker died at 637 with a stamp of 636; the hold
+-- ran to 686 (REPAIR_FRIENDLY_FIRE_REJECT_TICKS 50) and held the pool,
+-- though the builder (walk 85) would arrive at 723.
+print("3b. dead blocker stay window")
+do
+  local RJ = C.REPAIR_FRIENDLY_FIRE_REJECT_TICKS or 50
+  local function dead(bmx, stamp_age, quick_on, hp)
+    reset(true)
+    C.QUICK_REPAIR_ON_TAKE = quick_on
+    local st, w, inf = mk({})
+    local b = w.pills[8]
+    w.pill_at[b.my * 256 + b.mx] = nil
+    b.mx = bmx
+    b.health = hp or 0
+    if hp then b._in_use = nil end        -- a live take blocker is refused take_blocker first
+    w.pill_at[b.my * 256 + b.mx] = { { pill = b, id = 8 } }
+    b._friendly_shot_tick = NOW - stamp_age
+    b._friendly_shot_other_tick = NOW - stamp_age
+    local bp, cmd = run_pool(st, w, inf)
+    return row_at(bp, bmx, 100), cmd
+  end
+  local function ff(r) return r and tostring(r.reject):find("friendly_fire", 1, true) ~= nil end
+  -- (104,100): walk 4 tiles x 16 = 64, arrive NOW+65 > hold end NOW+49.
+  local r = dead(104, 1, false)
+  check("discovery row, dead blocker, hold ends before he arrives: not refused friendly_fire",
+        r and not ff(r), r and tostring(r.reject))
+  r = dead(104, 1, true)
+  check("quick row, dead blocker, hold ends before he arrives: not refused friendly_fire",
+        r and not ff(r), r and tostring(r.reject))
+  -- (101,100): next to the tank, walk 16, arrive NOW+17 <= hold end NOW+49.
+  r = dead(101, 1, false)
+  check("discovery row, dead blocker, hold runs when he arrives: refused friendly_fire",
+        ff(r), r and tostring(r.reject))
+  -- The hold end equal to the arrival still holds: NOW-(RJ-65) + RJ = NOW+65.
+  r = dead(104, RJ - 65, false)
+  check("hold end == arrival: refused friendly_fire", ff(r), r and tostring(r.reject))
+  r = dead(104, RJ - 64, false)
+  check("hold end one tick before arrival: not refused", r and not ff(r), r and tostring(r.reject))
+  -- A live pill keeps the plain rule (the team shoots it to move it).
+  r = dead(104, 1, false, 5)
+  check("live pill: refused friendly_fire (plain rule)", ff(r),
+        r and tostring(r.reject))
 end
 
 -- ── 4. Presets ───────────────────────────────────────────────────────────

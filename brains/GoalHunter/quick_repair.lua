@@ -384,7 +384,14 @@ end
 -- side, or the side of a swerve that is running) once the swerve starts
 -- (now when it runs, else from T_kill). It CONFLICTS when its ray passes
 -- the grown blocker square and reaches the pill-blocker distance at a tick
--- inside the errand, or EXPLODES where it would kill the builder. A shell
+-- inside the STAY WINDOW, or EXPLODES where it would kill the builder while
+-- he is on the blocker square. The stay window (2026-11-24, Andrew: "push
+-- the limit") runs from his arrival (send + walk) to his build end (arrival
+-- + LGM_BUILD_TIME). A crossing while he still walks does not count: the
+-- blocker is a dead pill (hp 0) or a damaged one he is not on yet, and the
+-- shell flies over a dead pill. His walk has its own tests:
+-- danger.lgm_certain_death (the shells in flight on his path) and
+-- tank_clear (the next shot on the tank he leaves). A shell
 -- kills a builder only where it explodes (shells.c shellsUpdate calls
 -- shellsBlastTestBuilder only on a hit or when the shell runs out; lgm.c
 -- lgmBlastCatches): on the very square for a hit on a pill, wall or other
@@ -392,8 +399,8 @@ end
 -- (half a tile in the classic table, U.lgm_open_blast_catches). A pill's
 -- shell that misses the blocker explodes on the tank it is aimed at, or at
 -- the end of its flight when the tank is out of range. The builder conflicts
--- when he is inside that area at that tick: on his walk (a straight walk at
--- the walk-sim pace) or on the blocker square while he builds. A shell that
+-- when he is inside that area at that tick on the blocker square while he
+-- builds (inside the stay window). A shell that
 -- only passes over or near him on its flight is no conflict. A pill whose wedge on
 -- the swerve side is clean does not conflict. Send only with no conflict;
 -- while the builder is out on a quick repair, the same test runs every
@@ -726,8 +733,10 @@ end
 --   rb        the repair blocker ({mx, my}, man_mx/man_my while out).
 --   bx0, by0  where the builder starts (tiles: the tank, or the man now).
 --   t0        the tick he leaves (now + 1), or now when he is out.
---   t_arr     the tick he reaches the blocker; the errand ends at
---             t_arr + LGM_BUILD_TIME.
+--             bx0, by0 and t0 are not read since the stay window
+--             (2026-11-24): his walk is not tested here.
+--   t_arr     the tick he reaches the blocker; the stay window is
+--             t_arr .. t_arr + LGM_BUILD_TIME (M.stay_window).
 --   k         quick_repair kill_tick record of the take target (T_kill).
 --   sd        the swerve side the shots go into once the swerve starts, or nil.
 --   swerving  true when that swerve is running now.
@@ -737,19 +746,23 @@ end
 --             tank where it is now.
 -- Returns { pill = id, target = bool, fire = tick, at = tick,
 -- how = "blocker" | "builder" | "side" } or nil.
+-- The builder's stay on the blocker square: arrival .. build end.
+function M.stay_window(t_arr)
+  return t_arr, t_arr + (C.LGM_BUILD_TIME or 20)
+end
+
 function M.fire_conflict(world, info, now, goal, k, rb, bx0, by0, t0, t_arr, sd, swerving, org)
   local x = LP.context(info, LPX) or {}
   local range = (x.pill_range or 2048) / 256
   local m = C.REPAIR_FIRE_LANE_MARGIN_TILES or 0
   local spd = (C.SHELL_SPEED or 32) / 256          -- tiles a tick
-  local t_end = t_arr + (C.LGM_BUILD_TIME or 20)
+  local _, t_end = M.stay_window(t_arr)
   local tx, ty = info.tankx / 256.0, info.tanky / 256.0
   local guns = M.guns(world, info, range, rb.mx, rb.my)
   local ox, oy = tx, ty
   if org then ox, oy = org.x, org.y end
   local verts = sd and M.swerve_verts(ox, oy, goal.mx + 0.5, goal.my + 0.5, sd) or nil
   local bcx, bcy = rb.mx + 0.5, rb.my + 0.5
-  local walk = math.max(1, t_arr - t0)
   local kt = k and k.t
   for gi = 1, #guns do
     local g = guns[gi]
@@ -777,14 +790,14 @@ function M.fire_conflict(world, info, now, goal, k, rb, bx0, by0, t0, t_arr, sd,
         if into_side then
           if sdirty then
             local at = f + at_d
-            if at >= t0 and at <= t_end then
+            if at >= t_arr and at <= t_end then
               return { pill = g.id, target = is_target, fire = f, at = at, how = "side" }
             end
           end
         elseif al > 0.01 then
           if lane then
             local at = f + at_d
-            if at >= t0 and at <= t_end then
+            if at >= t_arr and at <= t_end then
               return { pill = g.id, target = is_target, fire = f, at = at, how = "blocker" }
             end
           end
@@ -792,17 +805,12 @@ function M.fire_conflict(world, info, now, goal, k, rb, bx0, by0, t0, t_arr, sd,
           -- (else the check above), so it ends on the tank it is aimed at,
           -- or at the end of its flight when the tank is out of range. The
           -- engine tests the builder only there and then (lgmBlastCatches).
+          -- Only while he is on the blocker square (the stay window): on
+          -- his walk, danger.lgm_certain_death and tank_clear test him.
           local land = math.min(al, range)
           local at = f + math.floor(land / spd + 0.5)
-          if at >= t0 and at <= t_end then
-            local mx_, my_
-            if at >= t_arr then
-              mx_, my_ = bcx, bcy                -- building on the blocker
-            else
-              local w = (at - t0) / walk
-              mx_ = bx0 + (bcx - bx0) * w
-              my_ = by0 + (bcy - by0) * w
-            end
+          if at >= t_arr and at <= t_end then
+            local mx_, my_ = bcx, bcy            -- building on the blocker
             local ex, ey = g.gx + ux * land, g.gy + uy * land
             local dx, dy = (ex - mx_) * 256, (ey - my_) * 256
             -- The margin pulls the explosion that much nearer to him.
@@ -1012,6 +1020,8 @@ function M.side_and_fire(state, world, info, now, goal, k, p, qr)
     else
       sd, sw, org = shot_side(state, goal, now)
     end
+    local wa, wb = M.stay_window(qr.t_repair)
+    qr.window = { wa, wb }
     local cf = M.fire_conflict(world, info, now, goal, k, rb,
                                info.tankx / 256.0, info.tanky / 256.0,
                                now + 1, qr.t_repair, sd, sw, org)
@@ -1050,17 +1060,19 @@ function M.outbound_check(state, world, info, now, goal, k, qr)
   local rb = { mx = job.mx, my = job.my,
                man_mx = bit.rshift(info.man_x, 8), man_my = bit.rshift(info.man_y, 8) }
   local sd, sw, org = shot_side(state, goal, now)
+  local t_arr = math.max(now, job.arrive_tick or now)
+  local wa, wb = M.stay_window(t_arr)
   local cf = M.fire_conflict(world, info, now, goal, k, rb,
                              info.man_x / 256.0, info.man_y / 256.0,
-                             now, math.max(now, job.arrive_tick or now), sd, sw, org)
+                             now, t_arr, sd, sw, org)
   qr.outbound = cf
   if cf and not job._qr_abort then
     job._qr_abort = { tick = now, pill = cf.pill, how = cf.how }
     print2(string.format(
       "QUICK_REPAIR_ABORT t=%d pill=(%d,%d) why=pill_fire_predict gun=#%s%s shot at %+dt"
-      .. " meets the %s at %+dt (arrive %+dt, side=%s%s) recall=none",
+      .. " meets the %s at %+dt (arrive %+dt, window=%d..%d, side=%s%s) recall=none",
       now, job.mx, job.my, tostring(cf.pill), cf.target and "(target)" or "",
-      cf.fire - now, cf.how, cf.at - now, (job.arrive_tick or now) - now,
+      cf.fire - now, cf.how, cf.at - now, (job.arrive_tick or now) - now, wa, wb,
       sd and (sd > 0 and "L" or "R") or "-", sw and " swerving" or ""))
   end
 end
@@ -1184,6 +1196,9 @@ function M.fire_txt(qr, now)
   if f then
     t = string.format(" (pill #%s%s shot at %+dt meets the %s at %+dt)", tostring(f.pill),
                       f.target and "(target)" or "", f.fire - now, f.how, f.at - now)
+  end
+  if qr.window then
+    t = t .. string.format(" window=%d..%d", qr.window[1], qr.window[2])
   end
   local rs = qr.side
   if rs then

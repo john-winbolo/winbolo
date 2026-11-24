@@ -865,7 +865,31 @@ end
 -- rows: the panel should show that we can SEE the job and say why the man is
 -- not going (the tank goal repair_pill is what relocates for those).
 -- -------------------------------------------------------------------------
-local function pill_blocked(state, p, skip_take)
+-- The friendly_fire refusal's stay window (2026-11-24, Andrew: "push the
+-- limit"; the same rule as quick_repair's Rule 2). The refusal holds for
+-- REPAIR_FRIENDLY_FIRE_REJECT_TICKS after the last friendly shell seen near
+-- the pill. For a DEAD pill it counts only when that hold still runs when the
+-- builder arrives (send + walk): shells fly over a dead pill, so the shells
+-- seen while he still walks do not meet him on the square. perception.lua
+-- stamps only live pills, so a dead pill's stamp is from before it died. A
+-- live pill keeps the plain refusal (the team shoots it to move it).
+-- run_c8 beside_e: the blocker died at 637 with a stamp of 636; the hold ran
+-- to 686, and the walk was 85 ticks, so the builder would arrive at 723.
+-- walk: the walk ticks when the caller has them, else QR.walk_ticks.
+-- Returns the reason, or nil; the second value is the waive record.
+local function friendly_fire_hold(state, info, p, fs_tick, walk)
+  local now = state.tick or 0
+  local hold_end = fs_tick + (C.REPAIR_FRIENDLY_FIRE_REJECT_TICKS or 50)
+  if now >= hold_end then return nil end
+  if (p.health or 0) > 0 or not info then return "friendly_fire" end
+  walk = walk or QR.walk_ticks(info, p.mx, p.my)
+  if not walk then return "friendly_fire" end
+  local wa, wb = QR.stay_window(now + 1 + walk)
+  if hold_end >= wa then return "friendly_fire" end
+  return nil, { stamp = fs_tick, hold_end = hold_end, wa = wa, wb = wb }
+end
+
+local function pill_blocked(state, p, skip_take, info, walk)
   if state.blocked then
     local bk = U.mkey(p.mx, p.my)
     if state.blocked[bk] and (state.tick or 0) < state.blocked[bk] then return "blocked" end
@@ -888,10 +912,16 @@ local function pill_blocked(state, p, skip_take)
   -- (perception.lua). Ally shells and our other shells still count.
   local fs_tick = p._friendly_shot_tick
   if skip_take and C.QUICK_REPAIR_SKIP_OWN_FIRE then fs_tick = p._friendly_shot_other_tick end
-  if fs_tick
-     and ((state.tick or 0) - fs_tick)
-         < (C.REPAIR_FRIENDLY_FIRE_REJECT_TICKS or 50) then
-    return "friendly_fire"
+  if fs_tick then
+    local ff, waive = friendly_fire_hold(state, info, p, fs_tick, walk)
+    if ff then return ff end
+    if waive and BRAIN_DEBUG_MODE then
+      local key = string.format("%d:%d:%d", p.mx, p.my, fs_tick)
+      state._bp_ff_waive_log = state._bp_ff_waive_log or {}
+      if state._bp_ff_waive_log[skip_take and 1 or 0] ~= key then
+        state._bp_ff_waive_log[skip_take and 1 or 0] = key
+      end
+    end
   end
   local g = state.goal
   if g and (g.kind == "capture_pill" or g.kind == "pill_place")
@@ -948,7 +978,7 @@ function M.discover(state, world, info)
                         math.ceil((maxhp - hp) / (C.PILL_REPAIR_AMOUNT or 4)))
         end
         if kind then
-          local blk = pill_blocked(state, p)
+          local blk = pill_blocked(state, p, nil, info)
           out[#out + 1] = {
             type = kind, id = pid, mx = p.mx, my = p.my,
             dist = d, hp = hp, missing = maxhp - hp, own = p.owner,
@@ -2072,7 +2102,7 @@ function M.update(state, world, info, now)
       -- and the leash are waived for this row on this tick. pill_blocked's
       -- other reasons (blocked, repos, friendly_fire, our_target) still hold.
       row.quick = true
-      row.hard = pill_blocked(state, quick_pill, true)
+      row.hard = pill_blocked(state, quick_pill, true, info, quick.walk)
       row.out_of_leash = nil
       quick_seen = true
       rctx = quick_ctx
@@ -2115,7 +2145,7 @@ function M.update(state, world, info, now)
                      quick.mx, quick.my),
       hp = quick.hp, missing = maxhp - quick.hp, own = "friendly",
       trees_need = quick.trees_need, quick = true,
-      hard = pill_blocked(state, quick_pill, true),
+      hard = pill_blocked(state, quick_pill, true, info, quick.walk),
     }
     M.score_row(state, world, info, now, row, quick_ctx)
     rows[#rows + 1] = row
