@@ -24,6 +24,17 @@
         return 1;                                                           \
     } while (0)
 
+/* A test that has nothing to check here (an input it needs is not given)
+ * returns UT_SKIP_RC through UT_SKIP. The runner prints SKIP for it, it is
+ * not a failure, and CTest shows it as skipped for a test with
+ * SKIP_RETURN_CODE set to this value in CMakeLists.txt. */
+#define UT_SKIP_RC 77
+#define UT_SKIP(fmt, ...)                                                   \
+    do {                                                                    \
+        fprintf(stderr, "  skipped: " fmt "\n", ##__VA_ARGS__);             \
+        return UT_SKIP_RC;                                                  \
+    } while (0)
+
 #define UT_ASSERT(cond)                                                     \
     do {                                                                    \
         if (!(cond)) {                                                      \

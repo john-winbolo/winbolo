@@ -8298,6 +8298,9 @@ endforeach()
 # A 4 MiB package over the loopback bulk channel is a few thousand pumps of
 # at least a millisecond each; give it room on a loaded machine.
 set_tests_properties(unit.loopback_script_upload_at_cap PROPERTIES TIMEOUT 180)
+# A test that needs an input given on ask returns UT_SKIP_RC (test_harness.h)
+# without it, which CTest then shows as skipped.
+set_tests_properties(unit.lv_shell_owner_recording PROPERTIES SKIP_RETURN_CODE 77)
 
 # ---------------------------------------------------------------------------
 # WinBoloWbnTests -- the WinBolo.net HTTP layer against a local TCP listener.

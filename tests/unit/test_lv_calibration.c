@@ -2730,7 +2730,7 @@ int run_lv_lag_view_shell_snapshot(void) {
  * side, is 15 when not set). It prints the matcher's counts for the window
  * and for the whole log, and at each step of the window the present shells
  * and where the lag view for that player draws them. With no file set it
- * passes at once.
+ * skips (UT_SKIP), so CTest shows it as skipped, not passed.
  */
 int run_lv_shell_owner_recording(void) {
   const char *path = getenv("WB_LV_OWNER_WBV");
@@ -2750,8 +2750,7 @@ int run_lv_shell_owner_recording(void) {
   memset(&atStart, 0, sizeof(atStart));
   memset(&atEnd, 0, sizeof(atEnd));
   if (path == NULL || path[0] == '\0') {
-    printf("  (WB_LV_OWNER_WBV not set: nothing to check)\n");
-    return 0;
+    UT_SKIP("WB_LV_OWNER_WBV not set: nothing to check");
   }
   tick = (tickText != NULL) ? (uint32_t)strtoul(tickText, NULL, 10) : 0;
   span = (spanText != NULL) ? (uint32_t)strtoul(spanText, NULL, 10) : 15;
