@@ -29,6 +29,10 @@ void botHostMaxFormat(int max, char *out, size_t outSize) {
     }
 }
 
+bool botHostMaxRunsHost(int max) {
+    return max != 0;
+}
+
 int botHostMaxCeiling(int max, int capacity) {
     int c = max >= 0 ? max : capacity;
     if (c < 0) c = 0;

@@ -1055,6 +1055,7 @@ int run_bot_host_same_server_stop(void);
 int run_bot_host_optout_slots_codec(void);
 int run_bot_host_optout_give_back(void);
 int run_bot_host_max_saved(void);
+int run_bot_host_max_zero_no_host(void);
 int run_bot_host_dyn_raise_rule(void);
 int run_bot_host_dyn_under_reserve(void);
 int run_bot_host_dyn_carry(void);

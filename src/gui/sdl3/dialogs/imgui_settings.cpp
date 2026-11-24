@@ -67,6 +67,9 @@ extern "C" {
 #include "imgui_keysetup.h"
 #include "imgui_winbolonet.h"
 #include "imgui_news.h"
+#include "../../../bothost/bothost_embed.h"  /* botHostEmbedGet/SetMax — the Bot Host Max slots row */
+#include "../../../bothost/bothost_optout.h" /* BOT_HOST_MAX_*, botHostMaxFormat */
+#include "../../../common/prefs.h"           /* prefsSetString — the saved Max slots */
 #if defined(WINBOLO_VOICE)
 #include "../../voice.h"
 #include "voice_core.h"  /* VOICE_DEVICE_NAME_MAX — the device name buffers */
@@ -2872,6 +2875,60 @@ static void settingsShowLoop(bool inEditor) {
                         newsPrefSetAutoShow(b ? "show" : "dontShow");
                     }
                 }
+#if !BOLO_MOBILE && !defined(WINBOLO_HIDE_LOBBY_BOT_HOSTS)
+                /* This computer's Bot Host Max slots, before a join: the
+                 * same saved setting as the lobby's Max slots box (Auto,
+                 * 0 to 16). 0 runs no Bot Host here at all. */
+                {
+                    const int max = botHostEmbedGetMax();
+                    char preview[32];
+                    if (max < 0) {
+                        SDL_strlcpy(preview,
+                                    langGetText(STR_DLGSETTINGS_BOTHOST_MAX_AUTO),
+                                    sizeof(preview));
+                    } else {
+                        SDL_snprintf(preview, sizeof(preview), "%d", max);
+                    }
+                    ImGui::AlignTextToFramePadding();
+                    ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_BOTHOST_MAX));
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("%s", langGetText(STR_DLGSETTINGS_BOTHOST_MAX_TIP));
+                    }
+                    ImGui::SameLine();
+                    const ImGuiStyle &st = ImGui::GetStyle();
+                    ImGui::SetNextItemWidth(
+                        SDL_max(ImGui::CalcTextSize("00").x,
+                              ImGui::CalcTextSize(preview).x)
+                        + st.FramePadding.x * 2.0f + ImGui::GetFrameHeight());
+                    int picked = max;
+                    if (ImGui::BeginCombo("##bothostmax", preview)) {
+                        for (int v = BOT_HOST_MAX_AUTO; v <= BOT_HOST_MAX_TOP; v++) {
+                            char item[32];
+                            if (v < 0) {
+                                SDL_strlcpy(item,
+                                            langGetText(STR_DLGSETTINGS_BOTHOST_MAX_AUTO),
+                                            sizeof(item));
+                            } else {
+                                SDL_snprintf(item, sizeof(item), "%d", v);
+                            }
+                            ImGui::PushID(v + 1);
+                            if (ImGui::Selectable(item, v == max)) picked = v;
+                            if (v == max) ImGui::SetItemDefaultFocus();
+                            ImGui::PopID();
+                        }
+                        ImGui::EndCombo();
+                    } else if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("%s", langGetText(STR_DLGSETTINGS_BOTHOST_MAX_TIP));
+                    }
+                    if (picked != max) {
+                        char text[16];
+                        botHostMaxFormat(picked, text, sizeof(text));
+                        prefsSetString(BOT_HOST_MAX_PREFS_SECTION,
+                                       BOT_HOST_MAX_PREFS_KEY, text);
+                        botHostEmbedSetMax(picked);
+                    }
+                }
+#endif
                 ImGui::EndChild();
                 ImGui::EndTabItem();
             }

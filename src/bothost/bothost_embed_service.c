@@ -12,7 +12,10 @@
  * server makes for each new connection (a rejoin).
  *
  * The player's Max slots (bothost_optout.h) is the host's own setting
- * (botHostEmbedSetMax); Max 0 offers the server 0 slots.
+ * (botHostEmbedSetMax). Max 0 (botHostMaxRunsHost) means "I host no bots
+ * here": the host does not start, and a running one stops the normal way,
+ * so the server takes its bots back. The ticket is not blocked: set back
+ * to Auto or a number, the host starts with it on the next call.
  */
 #include <stdio.h>
 #include <string.h>
@@ -20,6 +23,7 @@
 #include <SDL3/SDL.h>
 
 #include "bothost_embed.h"
+#include "bothost_optout.h" /* botHostMaxRunsHost */
 #include "client_sim.h"     /* clientSimGetBotHostTicket, the server address */
 #include "control_event.h"  /* BOT_HOST_TICKET_LEN, BOT_HOST_BRAIN_NAME_LEN */
 #include "platform_types.h" /* BOLO_STATIC_ASSERT */
@@ -126,6 +130,13 @@ void botHostEmbedService(struct ClientSim *cs) {
         return;
     }
     if (embedSettings.disabled) return;
+    if (!botHostMaxRunsHost(botHostEmbedGetMax())) {
+        /* Max slots 0: no host. The ticket stays usable for a later
+         * Auto or number. */
+        embedStopNow(true, "the player set Max slots 0");
+        embedHaveTicket = false;
+        return;
+    }
     {
         /* Once a run: session folders a crash left. */
         static bool swept = false;

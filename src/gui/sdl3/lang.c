@@ -1489,6 +1489,9 @@ static const LangEntry langTable[] = {
     {3944, "The map's scenario does not allow new teams"},
     {3945, "How many bots this computer runs. Its CPU test recommends {number}."},
     {3946, "More than the {number} slots this computer's CPU test recommends. Bots may think slower and play worse."},
+    {3947, "Bot Host max slots"},
+    {3948, "The most of a server's bots this computer runs while you play on it. Auto: the bot brain's answer for this computer. 0: this computer hosts no bots, and its Bot Host does not start. The same setting as the lobby's Max slots box."},
+    {3949, "Auto"},
     {3925, "Player {number}"},
     {3926, "Bot Host"},
     /* The Log Viewer's Chat panel */

@@ -2192,6 +2192,14 @@ static void onTeamMsg(HostServer *sv, const ControlEvent *evt) {
  * program answered before gets no answer. */
 static void onMachineSalt(HostServer *sv, const ControlEvent *evt) {
     ControlEvent a;
+    if (HOST_EMBED &&
+        !botHostMaxRunsHost(SDL_GetAtomicInt(&embedMaxPlus1) - 1)) {
+        /* Max slots 0: the host stops on the client's next frame
+         * (bothost_embed_service.c); until then it gives no hash. */
+        fprintf(stderr, "[bothost] %s: Max slots 0; no same-computer "
+                        "answer\n", sv->label);
+        return;
+    }
     if (!botHostSaltLimitTake(&sv->saltLimit, nowMs())) {
         /* Too many, or too soon after the last: a server gets few hashes
          * of this computer (bot_host_guard.h). */
@@ -3676,7 +3684,7 @@ void botHostEmbedSetMax(int max) {
     if (embedThread == NULL) return;
     if (max == 0) {
         HOST_EVENT("[bothost] Bot Host \"%s\": the player set Max slots 0; "
-                   "it offers 0 slots", optName);
+                   "it offers 0 slots and stops", optName);
     } else if (max < 0) {
         HOST_EVENT("[bothost] Bot Host \"%s\": the player set Max slots to "
                    "the brain's answer", optName);

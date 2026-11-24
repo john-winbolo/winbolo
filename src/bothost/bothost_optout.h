@@ -4,8 +4,9 @@
  * on the server's own computer.
  *
  * Max slots is the lobby's "Max slots" box on the player's own Bot Host
- * row, saved in the client config ("BOT HOST", "Max Slots"). 0 runs no
- * bot on this computer (it replaces the old one-game opt-out); 1 to 16 is
+ * row, and the Settings dialog's "Bot Host max slots" row, saved in the
+ * client config ("BOT HOST", "Max Slots"). 0 runs no Bot Host on this
+ * computer at all (botHostMaxRunsHost); 1 to 16 is
  * the most bots; "Auto" (BOT_HOST_MAX_AUTO) is the bot brain's own answer
  * for this computer. With dynamic slots the server starts the host at a
  * few bots and raises it up to Max while the computer has free CPU.
@@ -38,6 +39,11 @@ extern "C" {
 int  botHostMaxParse(const char *text);
 /* Its saved text: "Auto" or the number. */
 void botHostMaxFormat(int max, char *out, size_t outSize);
+/* Whether the Bot Host inside a client runs at all: false for Max slots
+ * 0 ("I host no bots here"). Then it does not start: no thread, no join, no
+ * ticket use, no salt answer, no recording and no download. A running one
+ * stops, and its bots go back to the server. Auto and 1 to 16: true. */
+bool botHostMaxRunsHost(int max);
 /* The most bots the host runs (its ceiling): max, or capacity (the
  * brain's answer) for BOT_HOST_MAX_AUTO; 0 to BOT_HOST_MAX_TOP. */
 int  botHostMaxCeiling(int max, int capacity);
