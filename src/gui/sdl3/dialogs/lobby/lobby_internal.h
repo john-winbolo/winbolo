@@ -506,6 +506,11 @@ int lobbyLocalBotCapacity(ClientSim *cs, bool *measuringOut);
  * when not single player. The brain's answer is the recommendation. */
 bool lobbyLocalBotSlots(ClientSim *cs, ClientServerBotSlots *out);
 void lobbySetLocalBotSlots(ClientSim *cs, int slots);
+/* Saves a Server bot slots pick in the client config, so the next game
+ * this computer runs the server for starts there (gamefront.c applies it):
+ * the single player key, or the hosted game key. Only for a server on this
+ * computer: single player, or a hosted game (gameFrontHasLocalServer). */
+void lobbySaveServerBotSlots(bool singlePlayer, int slots);
 /* After an Add Bot button: shows reason (when not NULL) on mouse-over,
  * the button being off. */
 void lobbyAddBotOffTooltip(const char *reason);

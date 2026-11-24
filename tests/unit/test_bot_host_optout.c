@@ -45,6 +45,10 @@
  *      stop that or ask for an overrun move, and the under-reserve rule
  *      and the row's fit work. With dynamic slots off too (KEEL) the probe
  *      does nothing, as before.
+ *  14. bot_host_server_slots_saved: the lobby's Server bot slots from and
+ *      to its saved text ("Auto" is no pick, a number above 16 is 16), and
+ *      the client config keeps the single player key and the hosted game
+ *      key apart, in the section that does not go to WinBolo.net.
  */
 
 #include <stdint.h>
@@ -385,6 +389,95 @@ int run_bot_host_max_saved(void) {
     UT_ASSERT_MSG(botHostMaxParse(buf) == 3, "saved Max slots read '%s'",
                   buf);
     printf("  Max slots 3 saved and read back\n");
+    return 0;
+}
+
+/* 14. The lobby's Server bot slots, saved. */
+int run_bot_host_server_slots_saved(void) {
+    char path[1024], buf[32], sp[32], mp[32];
+    char *body;
+    PrefsDoc *up;
+
+    /* From its saved text: a number, else no pick; above 16 is 16. */
+    UT_ASSERT(serverBotSlotsParse(NULL) == SERVER_BOT_SLOTS_AUTO);
+    UT_ASSERT(serverBotSlotsParse("") == SERVER_BOT_SLOTS_AUTO);
+    UT_ASSERT(serverBotSlotsParse("Auto") == SERVER_BOT_SLOTS_AUTO);
+    UT_ASSERT(serverBotSlotsParse("-2") == SERVER_BOT_SLOTS_AUTO);
+    UT_ASSERT(serverBotSlotsParse("3x") == SERVER_BOT_SLOTS_AUTO);
+    UT_ASSERT(serverBotSlotsParse("0") == 0);
+    UT_ASSERT(serverBotSlotsParse("9") == 9);
+    UT_ASSERT(serverBotSlotsParse("16") == SERVER_BOT_SLOTS_TOP);
+    UT_ASSERT(serverBotSlotsParse("17") == SERVER_BOT_SLOTS_TOP);
+    UT_ASSERT(serverBotSlotsParse("99999") == SERVER_BOT_SLOTS_TOP);
+    /* To its saved text, and back. */
+    serverBotSlotsFormat(SERVER_BOT_SLOTS_AUTO, buf, sizeof(buf));
+    UT_ASSERT(strcmp(buf, "Auto") == 0);
+    UT_ASSERT(serverBotSlotsParse(buf) == SERVER_BOT_SLOTS_AUTO);
+    serverBotSlotsFormat(0, buf, sizeof(buf));
+    UT_ASSERT(strcmp(buf, "0") == 0 && serverBotSlotsParse(buf) == 0);
+    serverBotSlotsFormat(12, buf, sizeof(buf));
+    UT_ASSERT(strcmp(buf, "12") == 0 && serverBotSlotsParse(buf) == 12);
+    serverBotSlotsFormat(40, buf, sizeof(buf));
+    UT_ASSERT(strcmp(buf, "16") == 0);
+    /* The two keys are not the same. */
+    UT_ASSERT(strcmp(SERVER_BOT_SLOTS_PREFS_KEY,
+                     SERVER_BOT_SLOTS_SP_PREFS_KEY) != 0);
+
+    /* The client config keeps both for later games, each on its own. */
+    UT_ASSERT(utScratchPath(path, sizeof(path), "server_bot_slots_prefs.json"));
+    remove(path);
+    prefsInit(path);
+    serverBotSlotsFormat(2, buf, sizeof(buf));
+    UT_ASSERT(prefsSetString(BOT_HOST_MAX_PREFS_SECTION,
+                             SERVER_BOT_SLOTS_SP_PREFS_KEY, buf));
+    serverBotSlotsFormat(0, buf, sizeof(buf));
+    UT_ASSERT(prefsSetString(BOT_HOST_MAX_PREFS_SECTION,
+                             SERVER_BOT_SLOTS_PREFS_KEY, buf));
+    /* It fits this computer only: it does not go to WinBolo.net. */
+    body = prefsSerializeForUpload();
+    UT_ASSERT(body != NULL);
+    up = prefsDocParseJson(body);
+    free(body);
+    UT_ASSERT(up != NULL);
+    prefsDocGetString(up, BOT_HOST_MAX_PREFS_SECTION,
+                      SERVER_BOT_SLOTS_PREFS_KEY, "<absent>", buf, sizeof(buf));
+    prefsDocGetString(up, BOT_HOST_MAX_PREFS_SECTION,
+                      SERVER_BOT_SLOTS_SP_PREFS_KEY, "<absent>", sp,
+                      sizeof(sp));
+    prefsDocFree(up);
+    UT_ASSERT_MSG(strcmp(buf, "<absent>") == 0 && strcmp(sp, "<absent>") == 0,
+                  "Server bot slots went into the upload body: '%s' '%s'",
+                  buf, sp);
+    prefsShutdown();
+    prefsInit(path);
+    prefsGetString(BOT_HOST_MAX_PREFS_SECTION, SERVER_BOT_SLOTS_SP_PREFS_KEY,
+                   "Auto", sp, sizeof(sp));
+    prefsGetString(BOT_HOST_MAX_PREFS_SECTION, SERVER_BOT_SLOTS_PREFS_KEY,
+                   "Auto", mp, sizeof(mp));
+    /* A hand-edited value above the range reads back as 16. */
+    UT_ASSERT(prefsSetString(BOT_HOST_MAX_PREFS_SECTION,
+                             SERVER_BOT_SLOTS_PREFS_KEY, "40"));
+    prefsShutdown();
+    prefsInit(path);
+    prefsGetString(BOT_HOST_MAX_PREFS_SECTION, SERVER_BOT_SLOTS_PREFS_KEY,
+                   "Auto", buf, sizeof(buf));
+    prefsShutdown();
+    remove(path);
+    UT_ASSERT_MSG(serverBotSlotsParse(sp) == 2,
+                  "saved single player slots read '%s'", sp);
+    UT_ASSERT_MSG(serverBotSlotsParse(mp) == 0,
+                  "saved hosted game slots read '%s'", mp);
+    UT_ASSERT_MSG(serverBotSlotsParse(buf) == SERVER_BOT_SLOTS_TOP,
+                  "out of range slots read '%s'", buf);
+    /* No key at all: no pick. */
+    prefsInit(path);
+    prefsGetString(BOT_HOST_MAX_PREFS_SECTION, SERVER_BOT_SLOTS_PREFS_KEY,
+                   "Auto", buf, sizeof(buf));
+    prefsShutdown();
+    remove(path);
+    UT_ASSERT(serverBotSlotsParse(buf) == SERVER_BOT_SLOTS_AUTO);
+    printf("  Server bot slots 2 (single player) and 0 (hosted) saved and "
+           "read back\n");
     return 0;
 }
 

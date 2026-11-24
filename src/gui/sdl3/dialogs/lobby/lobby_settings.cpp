@@ -1478,6 +1478,10 @@ static void lobbyRenderServerBotSlotsRow(ClientSim *cs, bool mayEdit) {
         } else {
             uint8_t b = (uint8_t)v;
             lobbySendSetting(cs, LST_SERVER_BOT_SLOTS, &b, 1);
+            /* Saved only when this computer runs the server (a game
+             * hosted here): a pick on another server is not this
+             * player's own default. */
+            if (gameFrontHasLocalServer()) lobbySaveServerBotSlots(false, v);
         }
     }
 }

@@ -765,6 +765,8 @@ void gameFrontTickSteamPresenceGame(ClientSim *cs) {
  * openTutorial case and read where the single-player path builds the
  * server. */
 static bool isScenarioTutorial = FALSE;
+static void gameFrontApplySavedServerBotSlots(ServerSim *sim,
+                                              const char *key);
 
 /* Used to set the preferences — defined in winbolo.c */
 extern int frameRate;
@@ -2808,6 +2810,10 @@ bool gameFrontSetDlgState(openingStates newState) {
               clientSimSetInLobby(humanSim, true);
               clientSimSetNetStatus(humanSim, netLobby);
               clientSimSetMapDownloadComplete(humanSim, true);
+              /* The lobby's Server bot slots box opens on the player's
+               * last single player pick. */
+              gameFrontApplySavedServerBotSlots(spServerSim,
+                                                SERVER_BOT_SLOTS_SP_PREFS_KEY);
             } else {
               /* No lobby, but a single-player game all the same: the
                * scenario's popups pause it, as a solo session's do. */
@@ -4250,6 +4256,28 @@ static bool gameFrontStartServerSim(ServerSim *sim,
  * ServerVoiceMode would turn all three into off with no line changing. */
 BOLO_STATIC_ASSERT(serverVoiceOn == 0, server_voice_default_is_on);
 
+BOLO_STATIC_ASSERT(SERVER_BOT_SLOTS_TOP == MAX_TANKS,
+                   server_bot_slots_top_is_max_tanks);
+
+/* The player's last Server bot slots pick (key: SERVER_BOT_SLOTS_PREFS_KEY
+ * for a hosted game, SERVER_BOT_SLOTS_SP_PREFS_KEY for single player) on
+ * the server this process just started. Only this computer's own server
+ * gets it: a join to another server never comes here. No pick ("Auto")
+ * leaves the CPU test's answer. Under the mutex: the host timer already
+ * ticks the sim. */
+static void gameFrontApplySavedServerBotSlots(ServerSim *sim,
+                                              const char *key) {
+  char text[16];
+  int slots;
+  if (sim == NULL) return;
+  prefsGetString(BOT_HOST_MAX_PREFS_SECTION, key, "Auto", text, sizeof(text));
+  slots = serverBotSlotsParse(text);
+  if (slots < 0) return;
+  threadsWaitForMutex();
+  (void)serverSimSetServerBotSlots(sim, slots);
+  threadsReleaseMutex();
+}
+
 bool gameFrontSetupServer(void) {
   ServerInstanceConfig cfg;
   char scriptSessionDir[FILENAME_MAX];
@@ -4480,6 +4508,8 @@ bool gameFrontSetupServer(void) {
     serverSimScenarioApplyLobbyRules(spServerSim);
     threadsReleaseMutex();
   }
+  /* The host's last Server bot slots pick for a hosted game. */
+  gameFrontApplySavedServerBotSlots(spServerSim, SERVER_BOT_SLOTS_PREFS_KEY);
 
   /* The host-side flags previously set by gameFrontFinishLobbyHost
    * after the startup call. The lobby state itself is now driven by

@@ -34,6 +34,25 @@ extern "C" {
 #define BOT_HOST_MAX_PREFS_SECTION "BOT HOST"
 #define BOT_HOST_MAX_PREFS_KEY     "Max Slots"
 
+/* The lobby's Server bot slots, saved in the same section so the next
+ * game starts at the player's last pick. Two keys, as the two mean other
+ * things: single player's value is a warning only, for this computer's own
+ * bots; a hosted game's value splits the bots between the server and the
+ * Bot Hosts. Only the computer that runs the server reads or writes them
+ * (gamefront.c, the lobby's Server bot slots row); a joined player's pick
+ * on another server is not saved. A missing key, or "Auto", is no pick:
+ * the server stays on its CPU test's answer. */
+#define SERVER_BOT_SLOTS_AUTO           (-1)
+#define SERVER_BOT_SLOTS_TOP            16   /* == MAX_TANKS */
+#define SERVER_BOT_SLOTS_PREFS_KEY      "Server Bot Slots"
+#define SERVER_BOT_SLOTS_SP_PREFS_KEY   "Single Player Bot Slots"
+/* From its saved text: "0" to "16" (a larger number is 16), else
+ * SERVER_BOT_SLOTS_AUTO (NULL, "", "Auto" or any other text). */
+int  serverBotSlotsParse(const char *text);
+/* Its saved text: "Auto" for a value below 0, else the number (at most
+ * 16). */
+void serverBotSlotsFormat(int slots, char *out, size_t outSize);
+
 /* Max slots from its saved text: "0" to "16" (a larger number is 16), and
  * BOT_HOST_MAX_AUTO for NULL, "", "Auto" or any other text. */
 int  botHostMaxParse(const char *text);

@@ -56,6 +56,8 @@ extern "C" {
 #include "../../../lang.h"       /* langGetText / langGetTextFmt / MessageArgs / STR_DLGLOBBY_* */
 #include "brain_capacity.h"   /* brainCapacityLookupName / AddState / NameFromPath */
 #include "../../../../common/wb_log.h"  /* WB_LOG_INFO — the CPU speed test's lines */
+#include "../../../../common/prefs.h"   /* prefsSetString — the saved Server bot slots */
+#include "../../../../bothost/bothost_optout.h"  /* SERVER_BOT_SLOTS_* — its saved text */
 #ifdef WINBOLO_CPU_SPEED_TEST
 #include "cpu_speed_store.h"     /* cpuSpeedBackground* — the lobby's speed test */
 #include "cpu_speed_capacity.h"  /* cpuSpeedApplyStoredToBrains */
@@ -830,8 +832,18 @@ void lobbySetLocalBotSlots(ClientSim *cs, int slots) {
     ServerSim *sim = gameFrontGetSinglePlayerServerSim();
     if (!sim) return;
     threadsWaitForMutex();
-    (void)serverSimSetServerBotSlots(sim, slots);
+    const bool set = serverSimSetServerBotSlots(sim, slots);
     threadsReleaseMutex();
+    if (set) lobbySaveServerBotSlots(true, slots);
+}
+
+void lobbySaveServerBotSlots(bool singlePlayer, int slots) {
+    char text[16];
+    serverBotSlotsFormat(slots, text, sizeof(text));
+    prefsSetString(BOT_HOST_MAX_PREFS_SECTION,
+                   singlePlayer ? SERVER_BOT_SLOTS_SP_PREFS_KEY
+                                : SERVER_BOT_SLOTS_PREFS_KEY,
+                   text);
 }
 
 const char *lobbyAddBotOffReason(ClientSim *cs) {
