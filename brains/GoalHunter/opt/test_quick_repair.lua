@@ -371,7 +371,17 @@ do
                  [8] = pill(100, 104, 0, "friendly", true) })
   qr = QR.evaluate(st, w, inf, NOW)
   check("predict near: T_kill = +1 + flight 15", qr and qr.t_kill == NOW + 16, qr and qr.t_kill)
-  check("predict near: send", qr and qr.result == "send", qr and qr.result)
+  -- The pill 3 tiles off fires at +1 and its shell reaches the tank tile
+  -- 15 ticks later (6 steps out at the fire tick): inside the tank-clear
+  -- 16 ticks, so the tank check holds him.
+  check("predict near: wait:tank (its next shell lands at +16)",
+        qr and qr.result == "wait:tank" and qr.tank and qr.tank.t == 16,
+        qr and (qr.result .. " " .. tostring(qr.tank and qr.tank.t) .. " fl=" .. tostring(qr.tank and qr.tank.flight) .. " last=" .. tostring(qr.tank and qr.tank.last)))
+  local W0 = C.QUICK_REPAIR_TANK_CLEAR_TICKS
+  C.QUICK_REPAIR_TANK_CLEAR_TICKS = 0
+  qr = QR.evaluate(st, w, inf, NOW)
+  C.QUICK_REPAIR_TANK_CLEAR_TICKS = W0
+  check("predict near, tank check off: send", qr and qr.result == "send", qr and qr.result)
 
   -- Predict knob off: in-flight shells short of hp -> nokill.
   reset(true, false)

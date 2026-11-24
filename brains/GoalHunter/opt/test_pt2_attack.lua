@@ -418,10 +418,11 @@ do
   C.PT2_START_BUILDER_SAFE = true
 
   -- The wall (33,40) is on the pill's row: it is up from +10, and the shell
-  -- fired at +1 stops on it at +22 while he still builds there.
+  -- fired at +1 stops on it at +16 while he still builds there (6 steps
+  -- out at its fire tick, QR.shell_lead, and 15 ticks to the wall).
   local hit = PA.builder_trip_hit(g(), world, info, 1000, { on_line }, 30, 40, x)
   check("wall on the shell's row: the shell hits his wall while he builds",
-        hit and hit.id == 5 and hit.sq_mx == 33 and hit.sq_my == 40 and hit.t == 22, txt(hit))
+        hit and hit.id == 5 and hit.sq_mx == 33 and hit.sq_my == 40 and hit.t == 16, txt(hit))
   local goal = g()
   local r = PA.start_now_check(goal, world, info, 1000, { on_line })
   check("builder unsafe: no early start", r == false, r)
@@ -763,7 +764,7 @@ do
   H._tank_seen_since = 905
   hit = PA.builder_trip_hit(g(), world, inf(), 1000, { on_line }, 30, 40, x)
   check("pill saw us 95 ticks ago: its shell at +5 hits his wall",
-        hit and hit.sq_mx == 33 and hit.sq_my == 40 and hit.t == 26, hit and tostring(hit.t))
+        hit and hit.sq_mx == 33 and hit.sq_my == 40 and hit.t == 20, hit and tostring(hit.t))
   -- It saw us 250 ticks ago: it fired at 950 + 100 k, the last at 900+100.
   H._tank_seen_since = 750
   hit = PA.builder_trip_hit(g(), world, inf(), 1000, { on_line }, 30, 40, x)
@@ -773,7 +774,7 @@ do
   H._tank_seen_since = nil
   hit = PA.builder_trip_hit(g(), world, inf(), 1000, { on_line }, 30, 40, x)
   check("no sight tick: the shell at +1 hits his wall (as before)",
-        hit and hit.t == 22, hit and tostring(hit.t))
+        hit and hit.t == 16, hit and tostring(hit.t))
 
   -- A1: a pill shell inside (33,40) flying west; his wall there goes up at
   -- +3, before the shell leaves the square. It stops on the wall.
@@ -1066,9 +1067,10 @@ do
   check("cross: A's shells do not stop on X", #none == 0, #none)
   check("cross: a horizon before the hit gives none",
         #QR.cross_pill_hits(world, info, guns, fires, ga, 30.5, 40.5, 8, 1000, 1) == 0)
-  -- fire_ticks: A's shell 40 moves out (last fire 960); calm reload 100.
+  -- fire_ticks: A's shell 46 steps out, fired 40 ticks ago (6 steps out at
+  -- its fire tick, QR.shell_lead): last fire 960; calm reload 100.
   info.objects = { { type = OBJECT_SHOT, owner = 255, info = 2, angle = 192,
-                     x = 34 * 256 + 128 - 40 * C.SHELL_SPEED, y = 40 * 256 + 128, life = 1 } }
+                     x = 34 * 256 + 128 - 46 * C.SHELL_SPEED, y = 40 * 256 + 128, life = 1 } }
   local calm = QR.fire_ticks(A, info, 1000, x, 100)
   check("fire_ticks: calm, next at last + 100", calm[1] == 1060, tostring(calm[1]))
   local hot = QR.fire_ticks(A, info, 1000, x, 100, { 1020 })

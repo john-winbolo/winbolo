@@ -281,8 +281,9 @@ do
         qr and qr.result == "wait:other_pill", qr and qr.result)
   check("the conflict is pill A's", qr and qr.fire and qr.fire.pill == 5,
         qr and qr.fire and qr.fire.pill)
+  -- From one tick before T_repair: he arrives on now + walk in most runs.
   check("the conflict tick is inside the stay window",
-        qr and qr.fire and qr.window and qr.fire.at >= qr.window[1]
+        qr and qr.fire and qr.window and qr.fire.at >= qr.window[1] - 1
         and qr.fire.at <= qr.window[2],
         qr and qr.fire and (tostring(qr.fire.at) .. " in "
                             .. tostring(qr.window and qr.window[1]) .. ".."
@@ -504,8 +505,10 @@ do
                flight = 49, land = { 794, 807, 820, 833 }, n_inflight = 4 }
   local cf0 = QR.fire_conflict(w, inf, T, goal, k0, { mx = 124, my = 118 }, 119.5, 116.5,
                                T + 1, 869, nil, false)
-  check("heard at 782: the shot at 854 meets the blocker at 870: wait",
-        cf0 ~= nil and cf0.target and cf0.fire == 854 and cf0.at == 870,
+  -- Its shell is on the blocker 861 .. 868 (6 steps out at 854, then one
+  -- a tick); he arrives at 868, one tick before T_repair: wait.
+  check("heard at 782: the shot at 854 is on the blocker when he arrives (868): wait",
+        cf0 ~= nil and cf0.target and cf0.fire == 854 and cf0.at == 868,
         cf0 and (tostring(cf0.how) .. " fire=" .. tostring(cf0.fire) .. " at=" .. tostring(cf0.at)) or "nil")
   tp._heard_fire = nil
   local k = { t = 858, src = "predict", first = 796, reload = 13, remaining = 2,
@@ -513,9 +516,23 @@ do
   local rb = { mx = 124, my = 118 }
   local cf = QR.fire_conflict(w, inf, T, goal, k, rb, 119.5, 116.5, T + 1, 869, nil, false)
   check("a shot late in the unknown phase meets the blocker in the stay: wait",
-        cf ~= nil and cf.target and cf.at >= 869 and cf.fire < 858,
+        cf ~= nil and cf.target and cf.at >= 868 and cf.fire < 858,
         cf and (tostring(cf.how) .. " fire=" .. tostring(cf.fire) .. " at=" .. tostring(cf.at)) or "nil")
   check("helper exists", type(QR.any_phase) == "function")
+  -- The shell's ticks on the squares, from the real dump: the target
+  -- (126,118) fires west; 6 steps out at the fire tick, one a tick.
+  local a, b = QR.shell_on_square(126.5, 118.5, -1, 0, 124, 118, 0, 8, QR.shell_lead(inf))
+  check("shell on the blocker (124,118) fire+7 .. fire+14", a == 7 and b == 14,
+        tostring(a) .. ".." .. tostring(b))
+  a, b = QR.shell_on_square(126.5, 118.5, -1, 0, 125, 118, 0, 8, QR.shell_lead(inf))
+  check("shell on (125,118) fire+0 .. fire+6", a == 0 and b == 6,
+        tostring(a) .. ".." .. tostring(b))
+  -- The line to the tank at 785 crosses only a corner of the blocker.
+  local ddx, ddy = 119.58 - 126.5, 116.52 - 118.5
+  local dl = math.sqrt(ddx * ddx + ddy * ddy)
+  a, b = QR.shell_on_square(126.5, 118.5, ddx / dl, ddy / dl, 124, 118, 0, 8, QR.shell_lead(inf))
+  check("line to the tank at 785: on the blocker 2 ticks only", a and b - a <= 2,
+        tostring(a) .. ".." .. tostring(b))
   if type(QR.any_phase) == "function" then
     local f = QR.any_phase(tp, inf, T, x, 120, 858, { 786, 792, 852 })
     check("any_phase: every tick from the first shot to the kill",

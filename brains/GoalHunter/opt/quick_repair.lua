@@ -242,7 +242,8 @@ end
 -- A pill's next fire tick (tank_clear (b) below, and
 -- QUICK_REPAIR_WAIT_ALL_PILLS): the later of now + 1 and (last fire +
 -- reload). last fire = from its youngest visible shell whose line runs back
--- to the pill tile: its distance from the pill centre / SHELL_SPEED moves ago,
+-- to the pill tile: its distance from the pill centre / SHELL_SPEED, less
+-- M.shell_lead (the steps it was out at the end of its fire tick), ticks ago,
 -- or the tick we last heard it fire (p._heard_fire, world.lua
 -- EVENT_SOUND_SHOOT), whichever is later (neither = no last fire). reload = pt2_kill_lock.pill_reload (the
 -- engine's halving ladder at the pill's anger). x = live_physics.context.
@@ -258,10 +259,11 @@ function M.pill_next_fire(p, info, now, x)
       local vx =  U.bsin_f(ob.angle or 0) * C.SHELL_SPEED
       local vy = -U.bcos_f(ob.angle or 0) * C.SHELL_SPEED
       if M.ticks_to_tile(ob.x + 0.0, ob.y + 0.0, -vx, -vy, p.mx, p.my, N) then
-        -- Its line runs back to this pill: it left the pill centre this
-        -- many moves ago.
+        -- Its line runs back to this pill: it is this many steps out, and
+        -- it was M.shell_lead steps out at the end of its fire tick.
         local ddx, ddy = ob.x - (p.mx * 256 + 128), ob.y - (p.my * 256 + 128)
         local k = math.floor(math.sqrt(ddx * ddx + ddy * ddy) / C.SHELL_SPEED + 0.5)
+        k = math.max(0, k - M.shell_lead(info))
         if not last or now - k > last then last = now - k end
       end
     end
@@ -297,7 +299,7 @@ function M.cross_pill_hits(world, info, guns, fires, gi, tx, ty, range, now, hor
   for gj = 1, #guns do
     local h = guns[gj]
     if gj ~= gi and fires[gj] and #fires[gj] > 0 then
-      local e = M.shell_end(world, h, tx, ty, range)
+      local e = M.shell_end(world, h, tx, ty, range, nil, info)
       if e.how == "square" and e.sq_mx == pmx and e.sq_my == pmy then
         for _, f in ipairs(fires[gj]) do
           local at = f + e.t
@@ -426,6 +428,8 @@ function M.tank_clear(world, info, now)
     if d > 0 then
       flight = M.ticks_to_tile(px, py, dx / d * C.SHELL_SPEED, dy / d * C.SHELL_SPEED,
                                tmx, tmy, N)
+      -- From the fire tick: the shell is M.shell_lead steps out at its end.
+      if flight then flight = math.max(0, flight - M.shell_lead(info)) end
     end
     if flight then
       local land = nxt + flight - now
@@ -733,6 +737,47 @@ function M.swerve_repair_side(state, world, info, goal, pmx, pmy, haz, old_dir, 
   return rec.dir
 end
 
+-- How many SHELL_SPEED steps a pill's shell is from the pill centre at the
+-- end of the tick it is fired on. shells.c shellsAddItem puts it
+-- shell_start_add (classic 5) steps out, and shellsUpdate runs after
+-- pillsUpdate in the same tick (server_sim_tick.c), so it moves once more.
+-- On tick f + n it is (lead + n) steps out. run_c15 beside_n: the target
+-- (126,118) fired at 854; its shell was on (125,118) at 854 and on the
+-- blocker (124,118) from 861 to 868 (lead 6).
+function M.shell_lead(info)
+  local add = 5
+  local r = info and info.rules
+  if C.SHELL_MODEL_RULES_ALL and r and type(r.shell_start_add) == "number"
+     and r.shell_start_add >= 0 then
+    add = r.shell_start_add
+  end
+  return add + 1
+end
+
+-- The ticks after its fire tick that a pill's shell from (gx, gy) flying
+-- along the unit vector (ux, uy) is on tile (mx, my) grown by m (tiles),
+-- within `range` tiles of the pill: first, last (n of M.shell_lead), or
+-- nil when it is never on it.
+function M.shell_on_square(gx, gy, ux, uy, mx, my, m, range, lead)
+  local spd = (C.SHELL_SPEED or 32) / 256
+  local x0, x1 = mx - (m or 0), mx + 1 + (m or 0)
+  local y0, y1 = my - (m or 0), my + 1 + (m or 0)
+  local a, b
+  local n = 0
+  while (lead + n) * spd <= range do
+    local d = (lead + n) * spd
+    local px, py = gx + ux * d, gy + uy * d
+    if px >= x0 and px < x1 and py >= y0 and py < y1 then
+      if not a then a = n end
+      b = n
+    elseif a then
+      break
+    end
+    n = n + 1
+  end
+  return a, b
+end
+
 -- Where a pill's shell aimed at a tank at (tx, ty) explodes (tiles), and
 -- after how many ticks of flight. The engine's three endings (shells.c
 -- shellsUpdate / shellsCalcCollision):
@@ -744,27 +789,30 @@ end
 --   * the tank: the open-ground blast area round the tank.
 --   * the end of its range: the open-ground blast area there.
 -- The pill's own square never stops it. g = { gx, gy } (pill centre).
+-- Flight ticks count from the fire tick: the shell is M.shell_lead steps
+-- out at the end of it, and solid_at gets those ticks too.
 -- Returns { t = flight ticks, ex, ey, sq_mx, sq_my (nil unless a square
 -- hit), how = "square" | "tank" | "range" }.
-function M.shell_end(world, g, tx, ty, range, solid_at)
+function M.shell_end(world, g, tx, ty, range, solid_at, info)
   local spd = (C.SHELL_SPEED or 32) / 256
+  local lead = M.shell_lead(info)
   local ax, ay = tx - g.gx, ty - g.gy
   local al = math.sqrt(ax * ax + ay * ay)
   local ux, uy = 0, 0
   if al > 0.01 then ux, uy = ax / al, ay / al end
   local land = math.min(al, range)
   local pmx, pmy = math.floor(g.gx), math.floor(g.gy)
-  local k = 1
+  local k = lead
   while k * spd < land do
     local d = k * spd
     local mx, my = math.floor(g.gx + ux * d), math.floor(g.gy + uy * d)
     if not (mx == pmx and my == pmy)
-       and (danger.shell_stops_on(world, mx, my) or (solid_at and solid_at(mx, my, k))) then
-      return { t = k, ex = mx + 0.5, ey = my + 0.5, sq_mx = mx, sq_my = my, how = "square" }
+       and (danger.shell_stops_on(world, mx, my) or (solid_at and solid_at(mx, my, k - lead))) then
+      return { t = k - lead, ex = mx + 0.5, ey = my + 0.5, sq_mx = mx, sq_my = my, how = "square" }
     end
     k = k + 1
   end
-  return { t = math.max(1, math.floor(land / spd + 0.5)),
+  return { t = math.max(0, math.floor(land / spd + 0.5) - lead),
            ex = g.gx + ux * land, ey = g.gy + uy * land,
            how = (al <= range) and "tank" or "range" }
 end
@@ -777,33 +825,6 @@ function M.blast_catches_man(e, lx, ly)
     return math.floor(lx) == e.sq_mx and math.floor(ly) == e.sq_my
   end
   return U.lgm_open_blast_catches((e.ex - lx) * 256, (e.ey - ly) * 256)
-end
-
--- Does the segment (ax, ay)-(bx, by) cross tile (mx, my) grown by m?
-local function seg_square(ax, ay, bx, by, mx, my, m)
-  local h = 0.5 + m
-  local x0, x1 = mx + 0.5 - h, mx + 0.5 + h
-  local y0, y1 = my + 0.5 - h, my + 0.5 + h
-  local dx, dy = bx - ax, by - ay
-  local t0, t1 = 0, 1
-  local ps = { -dx, dx, -dy, dy }
-  local qs = { ax - x0, x1 - ax, ay - y0, y1 - ay }
-  for i = 1, 4 do
-    local p, q = ps[i], qs[i]
-    if p == 0 then
-      if q < 0 then return false end
-    else
-      local r = q / p
-      if p < 0 then
-        if r > t1 then return false end
-        if r > t0 then t0 = r end
-      else
-        if r < t0 then return false end
-        if r < t1 then t1 = r end
-      end
-    end
-  end
-  return true
 end
 
 -- Rule 2: the first conflicting predicted shot, or nil.
@@ -821,6 +842,14 @@ end
 --             committed side keeps the tank's place at the send, so the
 --             send and every outbound check test the same wedge. nil = the
 --             tank where it is now.
+-- A shot conflicts when the ticks its shell is on the blocker square
+-- (M.shell_on_square: fire + 7 .. fire + 14 for a pill 2 tiles off) meet
+-- the stay window, from one tick before t_arr: the builder rebuilds the
+-- pill the tick he arrives (lgm.c lgmDoWork), and a shell then on the
+-- square hits it and kills him. In run_c15 he arrived on now + walk in 9
+-- of 13 arena runs, one tick before T_repair (now + 1 + walk). run_c15
+-- beside_n: the shell fired at 854 was on the blocker 861 .. 868, he
+-- arrived at 868 (T_repair 869), and it killed him.
 -- Returns { pill = id, target = bool, fire = tick, at = tick,
 -- how = "blocker" | "builder" | "side" } or nil.
 -- The builder's stay on the blocker square: arrival .. build end.
@@ -888,6 +917,8 @@ function M.fire_conflict(world, info, now, goal, k, rb, bx0, by0, t0, t_arr, sd,
   local m = C.REPAIR_FIRE_LANE_MARGIN_TILES or 0
   local spd = (C.SHELL_SPEED or 32) / 256          -- tiles a tick
   local _, t_end = M.stay_window(t_arr)
+  local t_lo = t_arr - 1
+  local lead = M.shell_lead(info)
   local tx, ty = info.tankx / 256.0, info.tanky / 256.0
   local guns = M.guns(world, info, range, rb.mx, rb.my)
   local ox, oy = tx, ty
@@ -919,31 +950,41 @@ function M.fire_conflict(world, info, now, goal, k, rb, bx0, by0, t0, t_arr, sd,
       if is_target then M.own_hits(k, now, horizon, extra) end
       if #extra > 0 then fires = M.fire_ticks(g.p, info, now, x, horizon, extra, death) end
       if is_target then fires = M.any_phase(g.p, info, now, x, horizon, death, fires) end
+      -- The ticks (after its fire tick) a shell is on the blocker square:
+      -- along the line to the blocker centre (a shot into the swerve side),
+      -- and along the line to the tank grown by the lane margin. A shot on
+      -- that lane counts the ticks of both lines: the tank moves before
+      -- the pill fires, so its later shots can fly nearer the centre line.
+      -- run_c15 beside_n: the line to the tank at 785 crossed a corner of
+      -- the blocker for 2 ticks; the shot at 854, at the tank where it was
+      -- then, was on the square for 8 (861 .. 868).
       local dbx, dby = bcx - g.gx, bcy - g.gy
       local D = math.sqrt(dbx * dbx + dby * dby)
-      local at_d = math.floor(D / spd + 0.5)
+      local sa, sb
+      if D > 0.01 then
+        sa, sb = M.shell_on_square(g.gx, g.gy, dbx / D, dby / D, rb.mx, rb.my, 0, range, lead)
+      end
       local ax, ay = tx - g.gx, ty - g.gy
       local al = math.sqrt(ax * ax + ay * ay)
       local ux, uy = 0, 0
       if al > 0.01 then ux, uy = ax / al, ay / al end
-      local lane = al > 0.01 and seg_square(g.gx, g.gy, g.gx + ux * range,
-                                            g.gy + uy * range, rb.mx, rb.my, m)
+      local la, lb
+      if al > 0.01 then
+        la, lb = M.shell_on_square(g.gx, g.gy, ux, uy, rb.mx, rb.my, m, range, lead)
+        if la and sa then la, lb = math.min(la, sa), math.max(lb, sb) end
+      end
       for fi = 1, #fires do
         local f = fires[fi]
         local into_side = verts and (swerving or (kt and f >= kt))
         if into_side then
-          if sdirty then
-            local at = f + at_d
-            if at >= t_arr and at <= t_end then
-              return { pill = g.id, target = is_target, fire = f, at = at, how = "side" }
-            end
+          if sdirty and sa and f + sa <= t_end and f + sb >= t_lo then
+            return { pill = g.id, target = is_target, fire = f,
+                     at = math.max(f + sa, t_lo), how = "side" }
           end
         elseif al > 0.01 then
-          if lane then
-            local at = f + at_d
-            if at >= t_arr and at <= t_end then
-              return { pill = g.id, target = is_target, fire = f, at = at, how = "blocker" }
-            end
+          if la and f + la <= t_end and f + lb >= t_lo then
+            return { pill = g.id, target = is_target, fire = f,
+                     at = math.max(f + la, t_lo), how = "blocker" }
           end
           -- The builder where the shell explodes. It missed the blocker
           -- (else the check above), so it ends on the tank it is aimed at,
@@ -952,8 +993,8 @@ function M.fire_conflict(world, info, now, goal, k, rb, bx0, by0, t0, t_arr, sd,
           -- Only while he is on the blocker square (the stay window): on
           -- his walk, danger.lgm_certain_death and tank_clear test him.
           local land = math.min(al, range)
-          local at = f + math.floor(land / spd + 0.5)
-          if at >= t_arr and at <= t_end then
+          local at = f + math.max(0, math.floor(land / spd + 0.5) - lead)
+          if at >= t_lo and at <= t_end then
             local mx_, my_ = bcx, bcy            -- building on the blocker
             local ex, ey = g.gx + ux * land, g.gy + uy * land
             local dx, dy = (ex - mx_) * 256, (ey - my_) * 256
