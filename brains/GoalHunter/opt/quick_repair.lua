@@ -825,6 +825,29 @@ function M.stay_window(t_arr)
   return t_arr, t_arr + (C.LGM_BUILD_TIME or 20)
 end
 
+-- Our take's own hits on the target, appended to `out` (absolute ticks,
+-- now < t <= now + horizon): the shells in flight (k.land) and, for a
+-- predicted kill, the shots still to fire (k.first + i * k.reload +
+-- k.flight, i = 0 .. k.remaining - 1). Each hit makes the target angrier,
+-- which cuts its reload (pt2_start.engine_reload). run_c14 beside_n /
+-- beside_s: without them the fire check saw the target's last shots on the
+-- old reload, missed the faster one after our next hit, and sent the
+-- builder into it.
+function M.own_hits(k, now, horizon, out)
+  if not k then return out end
+  local t_end = now + horizon
+  for _, t in ipairs(k.land or {}) do
+    if t > now and t <= t_end then out[#out + 1] = t end
+  end
+  if k.src == "predict" and k.first and k.reload and k.flight then
+    for i = 0, (k.remaining or 0) - 1 do
+      local t = k.first + i * k.reload + k.flight
+      if t > now and t <= t_end then out[#out + 1] = t end
+    end
+  end
+  return out
+end
+
 function M.fire_conflict(world, info, now, goal, k, rb, bx0, by0, t0, t_arr, sd, swerving, org)
   local x = LP.context(info, LPX) or {}
   local range = (x.pill_range or 2048) / 256
@@ -859,6 +882,7 @@ function M.fire_conflict(world, info, now, goal, k, rb, bx0, by0, t0, t_arr, sd,
     if not (all_side and not sdirty) then
       local fires = fires0[gi]
       local extra = M.cross_pill_hits(world, info, guns, fires0, gi, tx, ty, range, now, horizon)
+      if is_target then M.own_hits(k, now, horizon, extra) end
       if #extra > 0 then fires = M.fire_ticks(g.p, info, now, x, horizon, extra, death) end
       local dbx, dby = bcx - g.gx, bcy - g.gy
       local D = math.sqrt(dbx * dbx + dby * dby)
@@ -1011,9 +1035,24 @@ function M.walk_ticks(info, mx, my)
   local tmy = bit.rshift(info.tanky, 8)
   local near = C.BUILDER_POOL_GRASS_TICKS_PER_TILE or 16
   if math.abs(mx - tmx) + math.abs(my - tmy) <= 1 then return near end
-  local out = cpf_lgm_travel_ticks_map(tmx, tmy, mx, my, mx, my,
-                                       C.BUILDER_POOL_LGM_MAX_TICKS or 2000,
-                                       C.BUILDER_POOL_LGM_STUCK_TICKS or 150)
+  local out
+  -- run_c14 beside_n / beside_s: the walk from the tank square's centre
+  -- came out 2 to 3 ticks longer than the real one, so the stay window
+  -- started after the pill shell that killed him on the blocker. The
+  -- engine puts him down on the tank's own place, moved LGM_START_OFFSET
+  -- towards the target (danger.lgm_start_pos): walk from there, in world
+  -- units, when the world form of the walk sim is there.
+  if type(cpf_lgm_travel_ticks) == "function" then
+    local sx, sy = danger.lgm_start_pos(info, mx, my)
+    out = cpf_lgm_travel_ticks(math.floor(sx), math.floor(sy),
+                               mx * 256 + 128, my * 256 + 128, mx, my,
+                               C.BUILDER_POOL_LGM_MAX_TICKS or 2000,
+                               C.BUILDER_POOL_LGM_STUCK_TICKS or 150)
+  else
+    out = cpf_lgm_travel_ticks_map(tmx, tmy, mx, my, mx, my,
+                                   C.BUILDER_POOL_LGM_MAX_TICKS or 2000,
+                                   C.BUILDER_POOL_LGM_STUCK_TICKS or 150)
+  end
   if out == nil or out < 0 then return nil end
   if out == 0 then out = near end
   return out
