@@ -222,6 +222,15 @@ local function game_inp(case)
   end
   soft("anger_of", function() return nil end)
   inp.keep_all = args.keep_all == "1" or nil
+  -- drop1=1: the first confirm at each point fails (tests the S6 retry)
+  if args.drop1 == "1" then
+    local seen = setmetatable({}, { __mode = "k" })
+    inp.v2_confirm_drop = function(rec)
+      if seen[rec] then return false end
+      seen[rec] = true
+      return true
+    end
+  end
   for k, v in pairs(SET) do inp[k] = v end
   return inp, pills
 end
@@ -691,6 +700,8 @@ if BOTH then
     g("plan_skipped"), g("wall_nodes"), g("nudged")))
   print(fmt("v2 confirm: view confirms checked %d, winner exact confirms %d, mismatches %d",
     g("confirm_checked"), g("confirm_winner"), g("confirm_mismatch")))
+  print(fmt("v2 confirm fail: other solutions tried %d, plans found that way %d",
+    g("confirm_retry"), g("confirm_rescued")))
   print(fmt("v2 wall search: searches on the slow path (a blocker that adds no cover) %d", g("wall_slow")))
   local wk = B.wk
   local function pc(a, n) return 100 * a / math.max(1, n) end

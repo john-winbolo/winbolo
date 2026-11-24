@@ -1339,7 +1339,7 @@ local function search_walls_all(ctx, rec, aims)
       local items = {}
       for n, oi in ipairs(best.order) do items[n] = best.items[oi] end
       out[ai] = { k = f.k, depth = best.depth, two = best.two, trip = best.trip, order = best.order,
-                  items = items, key = best.key, ai = ai }
+                  items = items, key = best.key, ai = ai, sols = f.sols }
     end
   end
   return out
@@ -1497,6 +1497,42 @@ local function confirm_exact(ctx, rec)
   if not ok then ctx.stat.confirm_mismatch = ctx.stat.confirm_mismatch + 1 end
 end
 
+-- The confirm of one plan (items in build order) on aim ai at rec's
+-- point: the record with the plan when it stands covered with the same
+-- chain, else nil.
+local S6_TRIES = 32
+local function confirm_plan(ctx, rec, ai, items)
+  local extra, plan = {}, {}
+  for i, e in ipairs(items) do
+    extra[e.sq] = e.shots
+    plan[i] = { sq = e.sq, mx = e.sq % 256, my = floor(e.sq / 256), shots = e.shots, kind = e.kind }
+  end
+  local t1 = ctx.clk and ctx.clk()
+  -- S5: the confirm reads the plain rays (kept, ray_view with the plan);
+  -- only the winner gets exact casts (confirm_exact)
+  local f = eval_point(ctx, rec.px, rec.py, extra, ai, false, false)
+  if t1 then ctx.tm.confirm = ctx.tm.confirm + ctx.clk() - t1 end
+  if ctx.inp.v2_confirm_check then
+    -- the bench: the exact confirm too; any answer that differs counts
+    local fx = eval_point(ctx, rec.px, rec.py, extra, ai, false, true)
+    ctx.stat.confirm_checked = ctx.stat.confirm_checked + 1
+    if not same_confirm(f, fx) then ctx.stat.confirm_mismatch = ctx.stat.confirm_mismatch + 1 end
+  end
+  local same = f and #f.chain == #rec.chain
+  if same then for i = 1, #f.chain do if f.chain[i] ~= rec.chain[i] then same = false end end end
+  -- the bench can fail a confirm on purpose (inp.v2_confirm_drop) to test S6
+  local drop = ctx.inp.v2_confirm_drop
+  if drop and drop(rec, ai, items) then same = false end
+  if f and f.covered and same then
+    f.nudge_wu = rec.nudge_wu
+    f.plan, f.extra = plan, extra
+    f.omx, f.omy = rec.omx, rec.omy
+    f.clear_aims, f.lanes = rec.clear_aims, rec.lanes
+    return f
+  end
+  return nil
+end
+
 local function plan_point(ctx, rec)
   if rec.covered then rec.plan, rec.extra = {}, {}; return rec end
   -- S1: the clear aims' tank shots count in "aim" only (clear_aims_of has
@@ -1520,32 +1556,39 @@ local function plan_point(ctx, rec)
   if t0 then ctx.tm.walls = ctx.tm.walls + ctx.clk() - t0 end
   ctx.stat.planned = ctx.stat.planned + 1
   if best then
-    local extra, plan = {}, {}
-    for i, e in ipairs(best.items) do
-      extra[e.sq] = e.shots
-      plan[i] = { sq = e.sq, mx = e.sq % 256, my = floor(e.sq / 256), shots = e.shots, kind = e.kind }
-    end
-    local t1 = ctx.clk and ctx.clk()
-    -- S5: the confirm reads the plain rays (kept, ray_view with the plan);
-    -- only the winner gets exact casts (confirm_exact)
-    local f = eval_point(ctx, rec.px, rec.py, extra, best.ai, false, false)
-    if t1 then ctx.tm.confirm = ctx.tm.confirm + ctx.clk() - t1 end
-    if ctx.inp.v2_confirm_check then
-      -- the bench: the exact confirm too; any answer that differs counts
-      local fx = eval_point(ctx, rec.px, rec.py, extra, best.ai, false, true)
-      ctx.stat.confirm_checked = ctx.stat.confirm_checked + 1
-      if not same_confirm(f, fx) then ctx.stat.confirm_mismatch = ctx.stat.confirm_mismatch + 1 end
-    end
-    local same = f and #f.chain == #rec.chain
-    if same then for i = 1, #f.chain do if f.chain[i] ~= rec.chain[i] then same = false end end end
-    if f and f.covered and same then
-      f.nudge_wu = rec.nudge_wu
-      f.plan, f.extra = plan, extra
-      f.omx, f.omy = rec.omx, rec.omy
-      f.clear_aims, f.lanes = rec.clear_aims, rec.lanes
-      return f
-    end
+    local f = confirm_plan(ctx, rec, best.ai, best.items)
+    if f then return f end
     ctx.stat.confirm_fail = ctx.stat.confirm_fail + 1
+    -- S6: the plan failed its confirm: the other solutions of the same
+    -- size, of every aim, in the pick order (more depth, a square on two
+    -- paths, the shorter trip, the earlier aim, the key); the first of
+    -- them is the plan that failed. At most S6_TRIES confirms in all.
+    local pairs_ = {}
+    for n, ai in ipairs(aims) do
+      local a = all[ai]
+      if a and a.k == best.k then
+        for _, so in ipairs(a.sols) do pairs_[#pairs_ + 1] = { so = so, ai = ai, n = n } end
+      end
+    end
+    table.sort(pairs_, function(x, y)
+      local a, b = x.so, y.so
+      if a.depth ~= b.depth then return a.depth > b.depth end
+      if a.two ~= b.two then return a.two end
+      if abs(a.trip - b.trip) > 1e-9 then return a.trip < b.trip end
+      if x.n ~= y.n then return x.n < y.n end
+      return a.key < b.key
+    end)
+    local tries = 1
+    for i = 2, #pairs_ do
+      if tries >= S6_TRIES then break end
+      local q = pairs_[i]
+      local items = {}
+      for m, oi in ipairs(q.so.order) do items[m] = q.so.items[oi] end
+      tries = tries + 1
+      ctx.stat.confirm_retry = ctx.stat.confirm_retry + 1
+      f = confirm_plan(ctx, rec, q.ai, items)
+      if f then ctx.stat.confirm_rescued = ctx.stat.confirm_rescued + 1; return f end
+    end
   end
   rec.plan, rec.extra = {}, {}
   return rec
@@ -1584,7 +1627,8 @@ local function new_stat()
            confirm_fail = 0, wall_nodes = 0, cant = 0, survive = 0, lone = 0, plan_skipped = 0,
            loss_pass = 0, loss_safe = 0, chain_agree = 0, chain_differ = 0, chain_unsure = 0,
            wall_slow = 0,
-           confirm_checked = 0, confirm_mismatch = 0, confirm_winner = 0 }
+           confirm_checked = 0, confirm_mismatch = 0, confirm_winner = 0,
+           confirm_retry = 0, confirm_rescued = 0 }
 end
 local function new_tm()
   return { wedges = 0, masks = 0, cast = 0, aim = 0, walls = 0, confirm = 0, leeway = 0,
