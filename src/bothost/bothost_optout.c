@@ -29,6 +29,23 @@ void botHostMaxFormat(int max, char *out, size_t outSize) {
     }
 }
 
+int serverBotSlotsParse(const char *text) {
+    /* The same text rule as Max slots, with no pick for "Auto". */
+    int v = botHostMaxParse(text);
+    if (v < 0) return SERVER_BOT_SLOTS_AUTO;
+    return v > SERVER_BOT_SLOTS_TOP ? SERVER_BOT_SLOTS_TOP : v;
+}
+
+void serverBotSlotsFormat(int slots, char *out, size_t outSize) {
+    if (out == NULL || outSize == 0) return;
+    if (slots < 0) {
+        snprintf(out, outSize, "Auto");
+    } else {
+        snprintf(out, outSize, "%d", slots > SERVER_BOT_SLOTS_TOP
+                                         ? SERVER_BOT_SLOTS_TOP : slots);
+    }
+}
+
 bool botHostMaxRunsHost(int max) {
     return max != 0;
 }
