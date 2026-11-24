@@ -524,6 +524,7 @@ function M.update(world, info, tick)
   end
   -- Last, so nothing above can bring a removed item's record back.
   purge_removed(world)
+  if C.PT2_START_BUILDER_SAFE then M.track_tank_sight(world, info, tick) end
   local t1 = clock_us()
 
   metrics.set("us_world_update_objects", t1 - t0)
@@ -838,6 +839,50 @@ function M.pill_at(world, mx, my)
     if e.pill.health > 0 then return e.pill end
   end
   return nil
+end
+
+-- The engine's utilIsTankInTrees for our tank at world (wx, wy): its own
+-- square and the square beside it on each axis (the side of the square
+-- centre it is on) are forest with no pill or base on them.
+local function tank_in_trees(world, wx, wy)
+  local mx, my = bit.rshift(wx, 8), bit.rshift(wy, 8)
+  local nx = (wx % 256) >= 128 and mx + 1 or mx - 1
+  local ny = (wy % 256) >= 128 and my + 1 or my - 1
+  for _, q in ipairs({ { mx, my }, { nx, my }, { mx, ny } }) do
+    if U.ttype(q[1], q[2]) ~= C.T_FOREST then return false end
+    if M.pill_at(world, q[1], q[2]) or M.base_at(world, q[1], q[2]) then return false end
+  end
+  return true
+end
+
+-- PT2_START_BUILDER_SAFE (run_c6): the tick each pill first saw our tank
+-- in the sight run going on now (p._tank_seen_since; nil when it does not
+-- see us). The engine (pillbox.c) sets justSeen and reload = 0 on that
+-- tick and fires one reload later, so this tick stands in for a last fire
+-- when no shell of the pill has been seen since. It sees us while we are
+-- alive, within pill_range of its centre (utilIsItemInRange) and not hidden
+-- in trees beyond tree_hide_distance on either axis. Other tanks the pill
+-- may see are not counted.
+function M.track_tank_sight(world, info, tick)
+  local r = info.rules
+  local R = r and type(r.pill_range) == "number" and r.pill_range or 2048
+  local H = r and type(r.tree_hide_distance) == "number" and r.tree_hide_distance or 768
+  local tx, ty = info.tankx, info.tanky
+  local ok = tx and ty and not info.dead
+  local trees = ok and tank_in_trees(world, tx, ty)
+  for _, p in pairs(world.pills) do
+    local sees = false
+    if ok and not p.in_tank and (p.health or 0) > 0 then
+      local dx = math.abs(tx - (p.mx * 256 + 128))
+      local dy = math.abs(ty - (p.my * 256 + 128))
+      sees = dx * dx + dy * dy <= R * R and not (trees and (dx >= H or dy >= H))
+    end
+    if not sees then
+      p._tank_seen_since = nil
+    elseif not p._tank_seen_since then
+      p._tank_seen_since = tick
+    end
+  end
 end
 
 -- Lookup: return the base entry at (mx, my), or nil.

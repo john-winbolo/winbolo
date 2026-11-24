@@ -696,5 +696,122 @@ do
   PC.slot_cover_shots = saved
 end
 
+-- Nov 24 (run_c6): three model fixes, all under PT2_START_BUILDER_SAFE.
+--  B  the pill's first shot comes one reload after it first saw our tank
+--     (pillbox.c justSeen), not at now + 1 (diag_s, gap_sw, gap_n, gap_nw);
+--  A1 a shell in the square of a trip wall that goes up later stops on it
+--     (diag_s t=422: "safe -> go", the wall went up 3 ticks later);
+--  A2 the wall goes up when he is in the engine's goal box, not when he
+--     enters the square.
+-- Same fixture: tank (30.5, 40.5), hostile pill at (36,40) on the row.
+print("PT2_START_BUILDER_SAFE: pill sight, start-square wall, goal box")
+do
+  local saved = PC.slot_cover_shots
+  PC.slot_cover_shots = function() return 0 end
+  local W = require("world")
+  local H = { mx = 36, my = 40, health = 8, owner = "hostile", anger = 0, anger_tick = 0 }
+  local world = { pills = { [5] = H }, pill_at = { [sq(36, 40)] = { { id = 5, pill = H } } },
+                  base_at = {} }
+  local function inf(objs)
+    return { armour = 40, tankx = 30 * 256 + 128, tanky = 40 * 256 + 128,
+             man_status = C.LGM_INTANK, player_number = 0, objects = objs or {} }
+  end
+  local x = require("live_physics").context(inf(), {})
+  local function g()
+    return { substate = "build_walls",
+             _pt2 = { start = { ok = true, pills = {}, cx = 30.5, cy = 40.5 } } }
+  end
+  local on_line = { mx = 33, my = 40, kind = "empty", pt2_kind = "wall" }
+  local K = C.PT2_START_BUILDER_SAFE
+  C.PT2_START_BUILDER_SAFE = true
+
+  -- The tracker: in range from the first tick seen, cleared out of range.
+  local rt = U.ttype
+  U.ttype = function() return C.T_GRASS end
+  H._tank_seen_since = nil
+  W.track_tank_sight(world, inf(), 950)
+  W.track_tank_sight(world, inf(), 951)
+  check("sight tracker: the first tick in range is kept", H._tank_seen_since == 950,
+        tostring(H._tank_seen_since))
+  local far = inf(); far.tankx = 10 * 256
+  W.track_tank_sight(world, far, 952)
+  check("sight tracker: out of range clears it", H._tank_seen_since == nil,
+        tostring(H._tank_seen_since))
+  -- In deep forest beyond tree_hide_distance the pill does not see us.
+  U.ttype = function() return C.T_FOREST end
+  W.track_tank_sight(world, inf(), 953)
+  check("sight tracker: hidden in trees, not seen", H._tank_seen_since == nil,
+        tostring(H._tank_seen_since))
+  U.ttype = rt
+
+  -- B: the pill saw us 50 ticks ago (reload 100): its first shell leaves
+  -- at +50, after he is home (+40). The old now + 1 shell hits his wall.
+  H._tank_seen_since = 950
+  local hit = PA.builder_trip_hit(g(), world, inf(), 1000, { on_line }, 30, 40, x)
+  check("pill saw us 50 ticks ago: its first shell is after he is home", hit == nil,
+        hit and tostring(hit.t))
+  -- It saw us 95 ticks ago: the shell leaves at +5 and stops on his wall.
+  H._tank_seen_since = 905
+  hit = PA.builder_trip_hit(g(), world, inf(), 1000, { on_line }, 30, 40, x)
+  check("pill saw us 95 ticks ago: its shell at +5 hits his wall",
+        hit and hit.sq_mx == 33 and hit.sq_my == 40 and hit.t == 26, hit and tostring(hit.t))
+  -- It saw us 250 ticks ago: it fired at 950 + 100 k, the last at 900+100.
+  H._tank_seen_since = 750
+  hit = PA.builder_trip_hit(g(), world, inf(), 1000, { on_line }, 30, 40, x)
+  check("pill saw us 250 ticks ago: next shell at +50, safe", hit == nil,
+        hit and tostring(hit.t))
+  -- No sight tick (the pill does not see us now): the old now + 1 shell.
+  H._tank_seen_since = nil
+  hit = PA.builder_trip_hit(g(), world, inf(), 1000, { on_line }, 30, 40, x)
+  check("no sight tick: the shell at +1 hits his wall (as before)",
+        hit and hit.t == 22, hit and tostring(hit.t))
+
+  -- A1: a pill shell inside (33,40) flying west; his wall there goes up at
+  -- +3, before the shell leaves the square. It stops on the wall.
+  local legs = {
+    { t0 = 0, t1 = 3, x0 = 32.8, y0 = 40.5, x1 = 33.5, y1 = 40.5, kind = "out", i = 1 },
+    { t0 = 3, t1 = 23, x0 = 33.5, y0 = 40.5, x1 = 33.5, y1 = 40.5, kind = "build", i = 1 },
+    { t0 = 23, t1 = 33, x0 = 33.5, y0 = 40.5, x1 = 30.5, y1 = 40.5, kind = "back", i = 1 },
+  }
+  local west = { type = 1, owner = 255, info = 2, x = 33 * 256 + 250, y = 40 * 256 + 128,
+                 angle = 192, life = 40 }
+  local up_at = { [sq(33, 40)] = 3 }
+  hit = PA.inflight_hit(world, inf({ west }), legs, 33, up_at)
+  check("shell in the square of a wall that goes up later: stops on it",
+        hit ~= nil and hit.sq_mx == 33 and hit.sq_my == 40 and hit.t == 3,
+        hit and string.format("+%d (%s,%s)", hit.t, tostring(hit.sq_mx), tostring(hit.sq_my)))
+  -- A wall up now (t = 0) in its square: the shell is flying out of it.
+  hit = PA.inflight_hit(world, inf({ west }), legs, 33, { [sq(33, 40)] = 0 })
+  check("shell in the square of a wall up now: flies on", hit == nil or hit.sq_mx ~= 33,
+        hit and tostring(hit.sq_mx))
+
+  -- A2: the brain's own timeline walks him east from (32.5, 40.5) at
+  -- 1/16 square a tick. He enters (33,40) at +8 and is in the goal box
+  -- (16 wu from the centre) at +15: the wall goes up at +15.
+  local D = require("danger")
+  local otl = D.own_builder_timeline
+  D.own_builder_timeline = function()
+    local out = {}
+    for t = 0, 40 do
+      local px = 32.5 + math.min(t, 16) / 16
+      out[t] = { px, 40.5 }
+    end
+    return out
+  end
+  local man = inf(); man.man_status = C.LGM_MOVING
+  man.man_x, man.man_y = 32 * 256 + 128, 40 * 256 + 128
+  local st = { _wall_shield_dispatch = { tick = 990, wx = 33, wy = 40, action = "BUILD" } }
+  local gg = { kind = "attack_pill", mx = 36, my = 40 }
+  local tl = PA.current_trip(st, gg, world, man, 1000)
+  local b0
+  for _, L in ipairs(tl or {}) do if L.kind == "build" then b0 = L.t0 end end
+  check("real trip: the wall goes up in the goal box (+15), not on entering (+8)",
+        b0 == 15, tostring(b0))
+  D.own_builder_timeline = otl
+
+  C.PT2_START_BUILDER_SAFE = K
+  PC.slot_cover_shots = saved
+end
+
 print(string.format("\n%d passed, %d failed", pass, fail))
 os.exit(fail == 0 and 0 or 1)

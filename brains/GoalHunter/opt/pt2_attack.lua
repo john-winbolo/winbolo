@@ -561,8 +561,13 @@ function M.inflight_hit(world, info, legs, home, up_at)
         sx, sy = sx + vx, sy + vy
         local mx, my = floor(sx), floor(sy)
         local t = up_at[my * 256 + mx]
-        if not (mx == smx0 and my == smy0)
-           and (danger.shell_stops_on(world, mx, my) or (t ~= nil and k >= t)) then
+        -- The square the shell is in now is skipped for what stops shells
+        -- now (it is flying out of it), but not for a trip wall that goes
+        -- up later (run_c6 diag_s: the wall went up 3 ticks after the
+        -- check with the shell still in its square, and killed him).
+        local start = mx == smx0 and my == smy0
+        if (not start and danger.shell_stops_on(world, mx, my))
+           or (t ~= nil and k >= t and (not start or t >= 1)) then
           e = { t = k, ex = mx + 0.5, ey = my + 0.5, sq_mx = mx, sq_my = my, how = "square" }
           break
         end
@@ -641,6 +646,16 @@ function M.builder_trip_hit(goal, world, info, now, walls, ox, oy, x, opts)
       while t - now <= home and t - prev < iv_at(t - now) do t = t + 1 end
       return t
     end
+    -- run_c6 (pillbox.c justSeen): when no shell of this pill was seen
+    -- since it first saw our tank, its reload started from 0 on that tick
+    -- and it fires once a reload from then. Its last fire is the latest
+    -- such tick at or before now (the sight tick itself before the first).
+    local since = g.p._tank_seen_since
+    if since and since <= now and (not last or since > last) then
+      local iv0 = iv_at(0)
+      last = since + floor((now - since) / iv0) * iv0
+      nxt = nil
+    end
     local f = next_fire(now + 1, last)
     if nxt and nxt < f then f = nxt end
     while f - now <= home do
@@ -687,7 +702,9 @@ function M.current_trip(state, goal, world, info, now)
   -- (danger.own_builder_timeline: his real arrival, the rest of his stay,
   -- the engine's own walk home) that is his trip, up to
   -- BUILDER_POOL_LGM_STUCK_TICKS ahead. The wall goes up the first tick he
-  -- is on its square while it is not up yet.
+  -- is inside the engine's goal box (LGM_MIN_GOAL .. LGM_MAX_GOAL, 16 WU
+  -- on each axis from the square centre) while it is not up yet; entering
+  -- the square is not enough (run_c6 diag_s).
   if now then
     local cap = C.BUILDER_POOL_LGM_STUCK_TICKS or 150
     local tl = require("danger").own_builder_timeline(state, info, now, cap)
@@ -696,7 +713,8 @@ function M.current_trip(state, goal, world, info, now)
       for t = 0, cap - 1 do
         local a, b = tl[t], tl[t + 1]
         if not a then home = t; break end
-        if not built and floor(a[1]) == d.wx and floor(a[2]) == d.wy then
+        if not built and math.abs(a[1] - (d.wx + 0.5)) * 256 <= 16
+           and math.abs(a[2] - (d.wy + 0.5)) * 256 <= 16 then
           built = true
           legs[#legs + 1] = { t0 = t, t1 = t, x0 = d.wx + 0.5, y0 = d.wy + 0.5,
                               x1 = d.wx + 0.5, y1 = d.wy + 0.5, kind = "build", i = 1 }
