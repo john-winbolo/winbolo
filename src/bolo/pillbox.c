@@ -1225,6 +1225,8 @@ static int32_t pillsMacCeil256(int32_t value) {
 *  as a 16-bit number with no sign, in which a distance
 *  short of one square reads as a very long one.
 *
+*  The lead was worked out from recorded Mac Bolo games.
+*
 *ARGUMENTS:
 *  px         - X position of the pillbox
 *  py         - Y position of the pillbox
