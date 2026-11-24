@@ -4662,7 +4662,12 @@ local function update_shot_accounting(goal, world, now)
   local hit_tol_wu = 384        -- death within 1.5 tiles counts as a hit
   local hit2 = hit_tol_wu * hit_tol_wu
   local fired, on_target_fired, on_target_in_flight, misses = 0, 0, 0, 0
+  local last_fire_tick = nil
   for _, s in ipairs(shot_tracker.shots) do
+    -- The gun's reload runs from our newest shot, in this attack or not.
+    if not last_fire_tick or s.fire_tick > last_fire_tick then
+      last_fire_tick = s.fire_tick
+    end
     if s.fire_tick >= goal._attack_start_tick then
       -- Total shots fired during this attack (any direction).
       fired = fired + 1
@@ -4762,6 +4767,9 @@ local function update_shot_accounting(goal, world, now)
   goal._on_target_misses    = misses
   goal._on_target_land      = land
   goal._on_target_land_tick = now
+  -- run_c9: the tick of our newest shot, for the reload already counted down
+  -- in quick_repair.kill_tick.
+  goal._last_fire_tick      = last_fire_tick
   goal._on_target_shells      = kl_shells
   goal._on_target_shells_tick = kl_shells and now or nil
 end

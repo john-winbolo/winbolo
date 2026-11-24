@@ -967,6 +967,22 @@ do
   A._update_shot_accounting(goal, { pills = {}, pill_at = {} }, 675)
   check("accounting: not seen this tick, the old sim (misses)",
         goal._on_target_in_flight == 0, goal._on_target_in_flight)
+  -- run_c9: the newest shot's tick, for the reload quick_repair.kill_tick
+  -- counts from. A shot from before the attack counts too (it is the gun's
+  -- reload, not the attack's).
+  check("accounting: last fire tick = newest shot", goal._last_fire_tick == 660,
+        tostring(goal._last_fire_tick))
+  local old_shot = { fire_tick = 590, fire_fx = 33000, fire_fy = 30000,
+                     step_x = 0, step_y = -32, status = "dead",
+                     dead_fx = 33000, dead_fy = 29000 }
+  ST.shots = { old_shot }
+  A._update_shot_accounting(goal, { pills = {}, pill_at = {} }, 675)
+  check("accounting: last fire tick from a shot before the attack",
+        goal._last_fire_tick == 590, tostring(goal._last_fire_tick))
+  ST.shots = {}
+  A._update_shot_accounting(goal, { pills = {}, pill_at = {} }, 675)
+  check("accounting: no shots, no last fire tick", goal._last_fire_tick == nil,
+        tostring(goal._last_fire_tick))
   ST.shots = saved_shots
   cpf.simulate_shot = ss
   U.ttype = rt

@@ -109,7 +109,8 @@ local function mk(opts)
              substate = opts.substate or "engage",
              _attack_start_tick = NOW - 50,
              _on_target_land = opts.land,
-             _on_target_land_tick = opts.land_tick or NOW },
+             _on_target_land_tick = opts.land_tick or NOW,
+             _last_fire_tick = opts.last_fire },
   }
   local info = { tankx = 100 * 256 + 128, tanky = 100 * 256 + 128,
                  trees = opts.trees or 10, man_status = C.LGM_INTANK,
@@ -310,12 +311,51 @@ do
   check("predict: T_kill = +14 + 71 = +85", qr and qr.t_kill == NOW + 85, qr and qr.t_kill)
   check("predict: wait:early (+65 < +87)", qr and qr.result == "wait:early", qr and qr.result)
 
-  -- Gun reloading: the first shot waits one full reload.
+  -- Gun reloading, last shot not known: the first shot waits one full reload.
   reset(true, true)
   st, w, inf = mk({ target_hp = 3, land = { NOW + 4 }, reloading = true })
   qr = QR.evaluate(st, w, inf, NOW)
   check("predict reloading: T_kill = +13 + 13 + 71 = +97",
         qr and qr.t_kill == NOW + 97, qr and qr.t_kill)
+
+  -- run_c9: gun reloading, our last shot 9 ticks ago: the reload has 4 ticks
+  -- left, so the first shot is at +4 (last + 13), not +13.
+  reset(true, true)
+  st, w, inf = mk({ target_hp = 3, land = { NOW + 4 }, reloading = true,
+                    last_fire = NOW - 9 })
+  qr = QR.evaluate(st, w, inf, NOW)
+  k = qr and qr.kill
+  check("predict reloading, fired at -9: first = +4", k and k.first == NOW + 4,
+        k and tostring(k.first))
+  check("predict reloading, fired at -9: T_kill = +4 + 13 + 71 = +88",
+        qr and qr.t_kill == NOW + 88, qr and qr.t_kill)
+
+  -- run_c9: the last shot is a full reload ago but the gun still shows
+  -- reloading (one tick late): the first shot is never before +1.
+  reset(true, true)
+  st, w, inf = mk({ target_hp = 3, land = { NOW + 4 }, reloading = true,
+                    last_fire = NOW - 20 })
+  qr = QR.evaluate(st, w, inf, NOW)
+  k = qr and qr.kill
+  check("predict reloading, fired at -20: first = +1", k and k.first == NOW + 1,
+        k and tostring(k.first))
+
+  -- run_c9: a last-shot tick from an older accounting pass is not used.
+  reset(true, true)
+  st, w, inf = mk({ target_hp = 3, land = { NOW + 4 }, reloading = true,
+                    last_fire = NOW - 9, land_tick = NOW - 1 })
+  qr = QR.evaluate(st, w, inf, NOW)
+  k = qr and qr.kill
+  check("predict reloading, stale accounting: first = +13",
+        k and k.first == NOW + 13, k and tostring(k.first))
+
+  -- run_c9: gun ready: the last shot does not matter, first at +1.
+  reset(true, true)
+  st, w, inf = mk({ target_hp = 3, land = { NOW + 4 }, last_fire = NOW - 2 })
+  qr = QR.evaluate(st, w, inf, NOW)
+  k = qr and qr.kill
+  check("predict ready, fired at -2: first = +1", k and k.first == NOW + 1,
+        k and tostring(k.first))
 
   -- The reload figure comes from the engine (info.reload_ticks).
   reset(true, true)

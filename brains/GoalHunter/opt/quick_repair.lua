@@ -19,7 +19,8 @@ local bit = require('bitcompat')
 --              predict (C.QUICK_REPAIR_PREDICT_SHOTS, only in the take's
 --                firing run): the shells still needed (hp - in flight) are
 --                fired one reload apart, the first one now + 1 when the gun
---                is ready or now + reload when it is reloading, and each
+--                is ready, else our last shot + reload (now + reload when
+--                the last shot is not known), and each
 --                flies the tank's current distance to the target tile.
 --              Otherwise unknown -> wait:nokill.
 --   T_safe   = max(T_kill, landing tick of every non-friendly shell in the
@@ -862,7 +863,19 @@ function M.kill_tick(goal, target, info, now)
     return k
   end
   local R = M.reload_ticks(info)
-  local first = info.reload and (now + R) or (now + 1)
+  -- run_c9: while the gun reloads, the next shot comes R ticks after our
+  -- last shot (tank.c: reload counts down once a tick and the gun fires on
+  -- the tick it reaches 0), not R ticks from now. A full R from now is only
+  -- the answer when the last shot is not known.
+  local first = now + 1
+  if info.reload then
+    local lf = goal._on_target_land_tick == now and goal._last_fire_tick or nil
+    if lf then
+      first = math.max(now + 1, lf + R)
+    else
+      first = now + R
+    end
+  end
   local remaining = hp - #land
   local flight = M.flight_ticks(info, goal.mx, goal.my)
   local last_fire = first + (remaining - 1) * R
