@@ -66,11 +66,16 @@ local BLITZ_EARLY_GO_ENROUTE_SUBS = {
 -- -1=RIGHT-sample) and goal._swerve_viz for the HUD overlay.
 -- Called from BOTH the legacy aim->swerve path AND PPT shoot_pill->
 -- swerve so PPT doesn't fall back to a random direction.
-local function compute_best_swerve_dir(goal, world, pmx, pmy, tmx, tmy)
+-- swerve_side_scores: the two sides' scores, with the hazards apart from
+-- the cover (C.SWERVE_AVOID_REPAIR_SIDE reads a side as terrain-blocked when
+-- it has a hazard: a -10 out-of-range tile on its sample line, or the deep-
+-- water retreat penalty). The sums are exactly the old scores. nil when the
+-- tank sits on the pill. quick_repair.side_scores is this function.
+local function swerve_side_scores(world, pmx, pmy, tmx, tmy, is_ppt)
   local dx = pmx - tmx
   local dy = pmy - tmy
   local len = math.sqrt(dx * dx + dy * dy)
-  if len <= 0.01 then return end
+  if len <= 0.01 then return nil end
   local ux, uy = dx / len, dy / len
   local tcx, tcy = tmx + 0.5, tmy + 0.5
   local pcx, pcy = pmx + 0.5, pmy + 0.5
@@ -104,6 +109,7 @@ local function compute_best_swerve_dir(goal, world, pmx, pmy, tmx, tmy)
   end
   local function count_cover(fx0, fy0)
     local n = 0
+    local hz = 0
     U.line_walk(fx0, fy0, pcx, pcy, function(bx, by)
       if not U.in_map(bx, by) then return end
       local tt = U.ttype(bx, by)
@@ -132,23 +138,23 @@ local function compute_best_swerve_dir(goal, world, pmx, pmy, tmx, tmy)
         if tt == C.T_BUILDING or tt == C.T_HALFBUILD
            or tt == C.T_RIVER  or tt == C.T_DEEPSEA
            or tt == C.T_SWAMP  or tt == C.T_RUBBLE then
-          n = n - 10
+          n = n - 10; hz = hz + 1
         end
-        if friendly_pill then n = n - 10 end
-        if enemy_base then n = n - 10 end
+        if friendly_pill then n = n - 10; hz = hz + 1 end
+        if enemy_base then n = n - 10; hz = hz + 1 end
       end
     end)
-    return n
+    return n, hz
   end
 
-  local left_cover  = count_cover(lfx, lfy)
-  local right_cover = count_cover(rfx, rfy)
+  local left_cover,  left_hz  = count_cover(lfx, lfy)
+  local right_cover, right_hz = count_cover(rfx, rfy)
 
   -- Deep-water penalty on the swerve retreat path. The tank swerves
   -- perpendicular then retreats outward from standoff to the setup
   -- circle. Check each side's retreat line (from standoff radius to
   -- approach radius along the swerve direction) for deep water.
-  local standoff_r = goal._is_ppt and C.PPT_STANDOFF or C.ATTACK_PILL_STANDOFF
+  local standoff_r = is_ppt and C.PPT_STANDOFF or C.ATTACK_PILL_STANDOFF
   local setup_r    = standoff_r + C.ATTACK_APPROACH_OFFSET
   local DEEP_WATER_PENALTY = -50
   local function check_retreat_deepsea(perp_x, perp_y)
@@ -171,15 +177,30 @@ local function compute_best_swerve_dir(goal, world, pmx, pmy, tmx, tmy)
     return penalty
   end
 
-  left_cover  = left_cover  + check_retreat_deepsea(-uy, ux)
-  right_cover = right_cover + check_retreat_deepsea(uy, -ux)
+  local left_deep  = check_retreat_deepsea(-uy, ux)
+  local right_deep = check_retreat_deepsea(uy, -ux)
+  left_cover  = left_cover  + left_deep
+  right_cover = right_cover + right_deep
 
-  goal._best_swerve_dir = left_cover >= right_cover and 1 or -1
-  goal._swerve_viz = {
+  return {
     lfx = lfx, lfy = lfy, left_cover = left_cover,
     rfx = rfx, rfy = rfy, right_cover = right_cover,
-    chosen = goal._best_swerve_dir,
+    left_hazard  = left_hz > 0 or left_deep < 0,
+    right_hazard = right_hz > 0 or right_deep < 0,
     pcx = pcx, pcy = pcy,
+  }
+end
+QR.side_scores = swerve_side_scores
+
+local function compute_best_swerve_dir(goal, world, pmx, pmy, tmx, tmy)
+  local sc = swerve_side_scores(world, pmx, pmy, tmx, tmy, goal._is_ppt)
+  if not sc then return end
+  goal._best_swerve_dir = sc.left_cover >= sc.right_cover and 1 or -1
+  goal._swerve_viz = {
+    lfx = sc.lfx, lfy = sc.lfy, left_cover = sc.left_cover,
+    rfx = sc.rfx, rfy = sc.rfy, right_cover = sc.right_cover,
+    chosen = goal._best_swerve_dir,
+    pcx = sc.pcx, pcy = sc.pcy,
   }
 end
 
@@ -246,6 +267,18 @@ local function enter_swerve(goal, world, state, info, pmx, pmy, mode)
     compute_best_swerve_dir(goal, world, pmx, pmy, tmx, tmy)
   end
   goal._swerve_dir = goal._best_swerve_dir or ((now % 2 == 0) and 1 or -1)
+  -- C.SWERVE_AVOID_REPAIR_SIDE: the side committed at the quick repair's
+  -- send while that repair runs, else the one clean unblocked side when a
+  -- take blocker is damaged; nil keeps the cover pick
+  -- (quick_repair.swerve_repair_side, which logs SWERVE_REPAIR_SIDE). The
+  -- terrain is read fresh here, where the swerve starts.
+  if C.SWERVE_AVOID_REPAIR_SIDE then
+    local sc = swerve_side_scores(world, pmx, pmy, tmx, tmy, goal._is_ppt)
+    local haz = sc and { left = sc.left_hazard, right = sc.right_hazard } or nil
+    local d = QR.swerve_repair_side(state, world, info, goal, pmx, pmy, haz,
+                                    goal._swerve_dir, now)
+    if d then goal._swerve_dir = d end
+  end
   goal._engage_hits = nil
   -- Re-baseline the charge defensive-swerve counters so a charge RESUMED after
   -- this swerve starts fresh (no instant re-swerve from the old accumulated hits).

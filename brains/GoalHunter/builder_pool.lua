@@ -2619,9 +2619,12 @@ function M.rung(state, world, info, now)
   -- blocker (C.QUICK_REPAIR_ON_TAKE) actually sends the builder.
   if row.quick then
     print2(string.format(
-      "QUICK_REPAIR_SEND t=%d pill=(%d,%d) hp=%d job=%s out=%s trees=%d-%d goal=%s",
+      "QUICK_REPAIR_SEND t=%d pill=(%d,%d) hp=%d job=%s out=%s trees=%d-%d goal=%s side=%s",
       now, row.mx, row.my, row.hp or 0, row.type, tostring(row.out_ticks or "-"),
-      info.trees or 0, row.trees_need or 0, (state.goal and state.goal.kind) or "?"))
+      info.trees or 0, row.trees_need or 0, (state.goal and state.goal.kind) or "?",
+      (state.goal and state.goal._repair_swerve_dir
+       and state.goal._repair_swerve_dir.mx == row.mx and state.goal._repair_swerve_dir.my == row.my)
+        and (state.goal._repair_swerve_dir.dir > 0 and "L" or "R") or "-"))
   end
   -- BP_PRED: the ROUTE the return leg was priced against, tile by tile, on the
   -- one tick it actually decided something. The trip on the dispatch line is

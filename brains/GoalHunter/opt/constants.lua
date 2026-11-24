@@ -6518,6 +6518,54 @@ M.QUICK_REPAIR_SKIP_OWN_FIRE = true
 -- pill's next shot (its last fire + its reload, the flight to the tank) can
 -- land within it (quick_repair.tank_clear). 0 = off. KEEL / MAST: 0.
 M.QUICK_REPAIR_TANK_CLEAR_TICKS = 16
+-- SWERVE_AVOID_REPAIR_SIDE (Nov 24, Andrew). In a double take the builder
+-- died on 6 of 12 quick repairs: the swerve picked the side with the most
+-- cover, and a friendly pill in fire range is +3 cover, so it chose the
+-- blocker's side and steered the pill shots (aimed at the swerving tank)
+-- through the repair. Andrew: "trace the path of the pill to our tank,
+-- that's the dividing line. if we swerve all pill shots will flow in one
+-- side of that line or the other" and "we'll need to pick a side BEFORE the
+-- builder goes out". true => at the quick repair's send, the swerve side
+-- whose shot fan (rays from each live non-friendly pill that can shoot our
+-- tank to the swerve's points, quick_repair.lua "The repair-side rules")
+-- misses the blocker, and that has no terrain hazard on attack.lua's side
+-- score (deep-water retreat, -10 out-of-range tile), is committed on the
+-- goal; every swerve that starts while that repair runs takes it. A swerve
+-- with a damaged blocker and no repair out takes the one clean unblocked
+-- side too. No such side: the old cover pick (and the send waits for
+-- QUICK_REPAIR_WAIT_ALL_PILLS).
+-- Log effect: SWERVE_REPAIR_SIDE t=.. blocker=(x,y) left=clean|dirty|blocked
+-- right=.. chosen=L|R why=clean_side|clean_unblocked|committed|cover:<why>;
+-- the QUICK_REPAIR line gets side=L|R|-(why L=.. R=..), QUICK_REPAIR_SEND
+-- gets side=L|R|-.
+-- false = old rule (the cover pick always). KEEL / MAST: false.
+M.SWERVE_AVOID_REPAIR_SIDE = true
+-- QUICK_REPAIR_WAIT_ALL_PILLS (Nov 24, Andrew: "look forward to predict if
+-- lgm will repair while shots from the pill could still be <= D away ...
+-- simulating new shots as well until the ticks where the pill will die").
+-- true => before the send, every live non-friendly pill whose range covers
+-- the blocker and our tank fires its future shots (next fire, then one a
+-- reload, until it dies: T_kill for the take target, never for the
+-- others), aimed at the tank, or into the swerve side once the swerve
+-- starts. The send waits while one of them crosses the blocker during the
+-- builder's errand (out, arrival, LGM_BUILD_TIME dwell) or meets him on his
+-- walk. A pill whose fan on the committed (or running) swerve side is
+-- clean does not count. While he is out on a quick repair the test runs
+-- every tick from where he stands; a conflict prints QUICK_REPAIR_ABORT
+-- why=pill_fire_predict (a player brain cannot call him back, so it is a
+-- log only).
+-- Log effect: QUICK_REPAIR ... -> wait:fire_predict (the take target's
+-- shot) | wait:other_pill (another pill's shot) (pill #id shot at +Nt
+-- meets the blocker|builder|side at +Nt); QUICK_REPAIR_ABORT
+-- why=pill_fire_predict.
+-- false = old rule (only the take target's kill and the shells in the
+-- air). KEEL / MAST: false.
+M.QUICK_REPAIR_WAIT_ALL_PILLS = true
+-- How far (tiles) past the blocker's square (and the builder's) a shell's
+-- ray may pass and still count as a hit, for both rules above. A pill leads
+-- the moving tank, so its shells do not run exactly on the line to the
+-- tank's centre. New number (Nov 24), awaits Andrew's yes.
+M.REPAIR_FIRE_LANE_MARGIN_TILES = 0.25
 -- The take substates in which the tank is shooting the target pill: the
 -- firing run that QUICK_REPAIR_PREDICT_SHOTS needs.
 M.QUICK_REPAIR_FIRE_SUBSTATES = {
@@ -8514,6 +8562,10 @@ M.PRESETS = {
     QUICK_REPAIR_SKIP_OWN_FIRE = false,
     --   2026-11-22: the quick repair does not wait for the tank to be clear.
     QUICK_REPAIR_TANK_CLEAR_TICKS = 0,
+    --   2026-11-24: the swerve side is the cover pick; the quick repair
+    --   does not wait for other pills' predicted shots.
+    SWERVE_AVOID_REPAIR_SIDE = false,
+    QUICK_REPAIR_WAIT_ALL_PILLS = false,
     --   2026-11-17: hold 15 ticks with no goal after a kill (old rule).
     POST_KILL_WAIT_TICKS = 15,
     --   2026-11-17: carrying-pill approach floor 30 (old rule).
@@ -8894,6 +8946,8 @@ M.PRESETS.mast = {
   BLITZ_NO_DOUBLE_TAKE              = false,  -- 2.2.1 had no double takes
   QUICK_REPAIR_SKIP_OWN_FIRE        = false,  -- 2.2.1 had no quick repair
   QUICK_REPAIR_TANK_CLEAR_TICKS     = 0,      -- 2.2.1 had no quick repair
+  SWERVE_AVOID_REPAIR_SIDE          = false,  -- 2.2.1: the cover pick always
+  QUICK_REPAIR_WAIT_ALL_PILLS       = false,  -- 2.2.1 had no quick repair
   POST_KILL_WAIT_TICKS              = 15,
   CARRY_APPROACH_MIN_ARMOUR_ONE     = 30,
   CARRY_APPROACH_MIN_ARMOUR_MANY    = 30,

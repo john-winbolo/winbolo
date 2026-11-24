@@ -122,6 +122,10 @@ local function reset(w)
   C.QUICK_REPAIR_MARGIN_TICKS = 2
   C.QUICK_REPAIR_SKIP_OWN_FIRE = true
   C.QUICK_REPAIR_TANK_CLEAR_TICKS = w
+  -- The fixture's blocker sits on the target's own line to the tank, so
+  -- QUICK_REPAIR_WAIT_ALL_PILLS (test_qr_repair_side.lua) would wait on
+  -- every case; this file tests the tank-clear rule alone.
+  C.QUICK_REPAIR_WAIT_ALL_PILLS = false
 end
 local function eval(opts)
   local st, w, inf = mk(opts)
