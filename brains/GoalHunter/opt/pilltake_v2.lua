@@ -1468,6 +1468,35 @@ local function extra_cover(ctx, rec)
 end
 M._extra_cover = extra_cover
 
+-- S5: two confirms of one plan give the same answer: both nil, or the
+-- same aim, cover, chain and, per ray, cover, hit, link and cut.
+local function same_confirm(a, b)
+  if not a or not b then return a == b end
+  if a.covered ~= b.covered or a.aim_idx ~= b.aim_idx or #a.chain ~= #b.chain or #a.T ~= #b.T then
+    return false
+  end
+  for i = 1, #a.chain do if a.chain[i] ~= b.chain[i] then return false end end
+  for i = 1, #a.T do
+    local x, y = a.rays[i], b.rays[i]
+    if x.cover ~= y.cover or x.hit ~= y.hit or x.link ~= y.link or x.cut ~= y.cut or x.ok ~= y.ok then
+      return false
+    end
+  end
+  return true
+end
+
+-- S5: the winner's plan, confirmed again with exact casts (the bench
+-- check, inp.v2_confirm_check). The answer must be the one ray_view gave
+-- (stat.confirm_mismatch counts any other).
+local function confirm_exact(ctx, rec)
+  if not rec.plan or #rec.plan == 0 then return end
+  local fx = eval_point(ctx, rec.px, rec.py, rec.extra, rec.aim_idx, false, true)
+  ctx.stat.confirm_winner = ctx.stat.confirm_winner + 1
+  local ok = fx and fx.covered and #fx.chain == #rec.chain
+  if ok then for i = 1, #fx.chain do if fx.chain[i] ~= rec.chain[i] then ok = false end end end
+  if not ok then ctx.stat.confirm_mismatch = ctx.stat.confirm_mismatch + 1 end
+end
+
 local function plan_point(ctx, rec)
   if rec.covered then rec.plan, rec.extra = {}, {}; return rec end
   -- S1: the clear aims' tank shots count in "aim" only (clear_aims_of has
@@ -1497,8 +1526,16 @@ local function plan_point(ctx, rec)
       plan[i] = { sq = e.sq, mx = e.sq % 256, my = floor(e.sq / 256), shots = e.shots, kind = e.kind }
     end
     local t1 = ctx.clk and ctx.clk()
-    local f = eval_point(ctx, rec.px, rec.py, extra, best.ai, false, true)
+    -- S5: the confirm reads the plain rays (kept, ray_view with the plan);
+    -- only the winner gets exact casts (confirm_exact)
+    local f = eval_point(ctx, rec.px, rec.py, extra, best.ai, false, false)
     if t1 then ctx.tm.confirm = ctx.tm.confirm + ctx.clk() - t1 end
+    if ctx.inp.v2_confirm_check then
+      -- the bench: the exact confirm too; any answer that differs counts
+      local fx = eval_point(ctx, rec.px, rec.py, extra, best.ai, false, true)
+      ctx.stat.confirm_checked = ctx.stat.confirm_checked + 1
+      if not same_confirm(f, fx) then ctx.stat.confirm_mismatch = ctx.stat.confirm_mismatch + 1 end
+    end
     local same = f and #f.chain == #rec.chain
     if same then for i = 1, #f.chain do if f.chain[i] ~= rec.chain[i] then same = false end end end
     if f and f.covered and same then
@@ -1546,7 +1583,8 @@ local function new_stat()
   return { sq_reads = 0, casts = 0, casts_confirm = 0, ray_reuse = 0, nudged = 0, planned = 0,
            confirm_fail = 0, wall_nodes = 0, cant = 0, survive = 0, lone = 0, plan_skipped = 0,
            loss_pass = 0, loss_safe = 0, chain_agree = 0, chain_differ = 0, chain_unsure = 0,
-           wall_slow = 0 }
+           wall_slow = 0,
+           confirm_checked = 0, confirm_mismatch = 0, confirm_winner = 0 }
 end
 local function new_tm()
   return { wedges = 0, masks = 0, cast = 0, aim = 0, walls = 0, confirm = 0, leeway = 0,
@@ -1788,6 +1826,7 @@ function M.evaluate_lua(inp)
     if best and best.safe then break end
   end
   if best and best.safe and best.plan and #best.plan > 0 then
+    if inp.v2_confirm_check then confirm_exact(ctx, best) end
     best.hold = OLD.hold_point(ctx, best)
   end
   if best and best.safe and (inp.extra_cover_walls or 0) > 0 then

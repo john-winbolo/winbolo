@@ -467,9 +467,9 @@ local function run_both(case)
     else WK.gkeys[k] = 1; WK.unique_group = WK.unique_group + 1 end
   end
   NV.reset()
-  vinp.v2_loss_check, vinp.v2_mask_stats = true, true
+  vinp.v2_loss_check, vinp.v2_mask_stats, vinp.v2_confirm_check = true, true, true
   local rs = NV.evaluate_lua(vinp)
-  vinp.v2_loss_check, vinp.v2_mask_stats = nil, nil
+  vinp.v2_loss_check, vinp.v2_mask_stats, vinp.v2_confirm_check = nil, nil, nil
   vinp.v2_wkey = nil
   add_to(B.st, rs.v2 and rs.v2.stat)
   NV.reset()
@@ -689,6 +689,8 @@ if BOTH then
     .. " lone pill runs %d (points left unplanned %d), wall search nodes %d, nudged %d",
     g("casts"), g("ray_reuse"), g("casts_confirm"), g("planned"), g("confirm_fail"), g("lone"),
     g("plan_skipped"), g("wall_nodes"), g("nudged")))
+  print(fmt("v2 confirm: view confirms checked %d, winner exact confirms %d, mismatches %d",
+    g("confirm_checked"), g("confirm_winner"), g("confirm_mismatch")))
   print(fmt("v2 wall search: searches on the slow path (a blocker that adds no cover) %d", g("wall_slow")))
   local wk = B.wk
   local function pc(a, n) return 100 * a / math.max(1, n) end
