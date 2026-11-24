@@ -3826,8 +3826,8 @@
 /* The single player lobby's Server bot slots box (the bots of this
  * computer): its mouse-over line ({number} = the brain's answer) and the
  * line for a value above that answer */
-#define STR_DLGLOBBY_LOCAL_BOT_SLOTS_TIP         3945
-#define STR_DLGLOBBY_LOCAL_BOT_SLOTS_OVER        3946
+#define STR_DLGLOBBY_LOCAL_BOT_SLOTS_TIP         3950
+#define STR_DLGLOBBY_LOCAL_BOT_SLOTS_OVER        3951
 
 /* The Settings dialog's Network tab: the Bot Host Max slots row (the same
  * setting as the lobby's Max slots box), its mouse-over line and its
