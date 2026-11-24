@@ -698,6 +698,8 @@ if BOTH then
     .. " lone pill runs %d (points left unplanned %d), wall search nodes %d, nudged %d",
     g("casts"), g("ray_reuse"), g("casts_confirm"), g("planned"), g("confirm_fail"), g("lone"),
     g("plan_skipped"), g("wall_nodes"), g("nudged")))
+  print(fmt("v2 lazy single takes: stubs %d, not planned (out of the band) %d, planned with no search"
+    .. " (the fewest blockers cannot reach the band) %d", g("lazy"), g("plan_skipped"), g("plan_cut")))
   print(fmt("v2 confirm: view confirms checked %d, winner exact confirms %d, mismatches %d",
     g("confirm_checked"), g("confirm_winner"), g("confirm_mismatch")))
   print(fmt("v2 leeway: chains tested (X and its tier's lowest score chain) %d, of them failed %d;"

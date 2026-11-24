@@ -691,7 +691,7 @@ end
 -- aim_fixed: only that aim. nudge: PT2_AIM_NUDGE may move the point.
 -- exact: cast every ray with extra (no kept ray). Returns a record in the
 -- old shape, or nil, why.
-local function eval_point(ctx, px, py, extra, aim_fixed, nudge, exact)
+local function eval_point(ctx, px, py, extra, aim_fixed, nudge, exact, lazy)
   local inp, A, env = ctx.inp, ctx.A, ctx.env
   local clk = ctx.clk
   local tp = clk and clk()
@@ -731,6 +731,22 @@ local function eval_point(ctx, px, py, extra, aim_fixed, nudge, exact)
   -- the clock of the rest (rays, chain, bars, the record), less its casts
   local tb = clk and clk()
   local cast0 = ctx.tm.cast
+  -- S9 lazy: A's ray only. With no link the chain can use, the point is a
+  -- single take: a stub (its point, nudge, aim and A's shortfall). The
+  -- caller judges it in full (aim_fixed, no nudge) only when its plan
+  -- can still reach the travel band.
+  if lazy then
+    local vA = ray_view(base_ray(ctx, A, px, py), extra)
+    if inp.link_clear_front then vA.cut = vA.cut_front end
+    local nxt = (inp.chains and inp.max_chain >= 2 and not vA.cut) and vA.link or nil
+    if not nxt or nxt == A or (inp.chain_skip and inp.chain_skip[nxt]) then
+      local bar = ctx.finish and 0 or inp.bar_single
+      ctx.stat.lazy = ctx.stat.lazy + 1
+      if tb then ctx.tm.evb = ctx.tm.evb + (clk() - tb) - (ctx.tm.cast - cast0) end
+      return { lazy = true, px = px, py = py, nudge_wu = nudge_wu, T = T, aim_idx = aim_idx,
+               chain = { A }, kills = 1, a_need = bar - vA.cover }
+    end
+  end
   -- rays
   local rays = {}
   for i, X in ipairs(T) do
@@ -1181,8 +1197,13 @@ local function search_walls_all(ctx, rec, aims)
   local P, W = inp.pill_drop_shots, inp.wall_shots
   -- S4: each path alone first: when its legal squares cannot cover it
   -- with build_max blockers, no set can
-  local bp = min(npb, inp.build_max)
-  local bw = inp.build_max - bp
+  -- S9: rec.kmax caps the size (a plan with more blockers cannot reach
+  -- the travel band)
+  local kcap = inp.build_max
+  if rec.kmax and rec.kmax < kcap then kcap = rec.kmax end
+  if kcap < 1 then return out end
+  local bp = min(npb, kcap)
+  local bw = kcap - bp
   local slow = P < W
   for j = 1, nU do
     local u = U[j]
@@ -1271,7 +1292,7 @@ local function search_walls_all(ctx, rec, aims)
     end
     -- the first size where some aim has a solution: only those aims can
     -- win (plan_point compares the size first)
-    for k = 1, inp.build_max do
+    for k = 1, kcap do
       sols = {}
       seen = {}
       local p = min(npb, k)
@@ -1310,7 +1331,7 @@ local function search_walls_all(ctx, rec, aims)
       S.rem[j] = U[j].need
     end
     S.nU, S.nC, S.P, S.W, S.nodes = nU, nC, P, W, 0
-    for k = 1, inp.build_max do
+    for k = 1, kcap do
       S.sols = {}
       local p = min(npb, k)
       ws_enum(p, k - p, active, 0)
@@ -1636,7 +1657,7 @@ end
 -- ── evaluate ──────────────────────────────────────────────────────────────
 local function new_stat()
   return { sq_reads = 0, casts = 0, casts_confirm = 0, ray_reuse = 0, nudged = 0, planned = 0,
-           confirm_fail = 0, wall_nodes = 0, cant = 0, survive = 0, lone = 0, plan_skipped = 0,
+           confirm_fail = 0, wall_nodes = 0, cant = 0, survive = 0, lone = 0, plan_skipped = 0, lazy = 0, plan_cut = 0,
            loss_pass = 0, loss_safe = 0, chain_agree = 0, chain_differ = 0, chain_unsure = 0,
            wall_slow = 0,
            confirm_checked = 0, confirm_mismatch = 0, confirm_winner = 0,
@@ -1725,6 +1746,9 @@ function M.evaluate_lua(inp)
   local asets = aim_wedges(ctx, A)
   if t0 then tm.wedges = tm.wedges + clk() - t0 end
   local cap, band = inp.leeway_min, inp.travel_band
+  -- S9: lazy single takes (not with keep_all: every point is in the result
+  -- then; not without a travel band: nothing to stop at)
+  local lazy = (not inp.keep_all) and band and band > 0 or false
   for _, roff in ipairs(inp.radii_offsets) do
     local R = inp.radius + roff
     local cands = {}
@@ -1762,7 +1786,7 @@ function M.evaluate_lua(inp)
               end
             else
               st.survive = st.survive + 1
-              rec, why = eval_point(ctx, px, py, nil, nil, true, false)
+              rec, why = eval_point(ctx, px, py, nil, nil, true, false, lazy)
               if rec then mpts[#mpts + 1] = { px = px, py = py, T = T, rec = rec } end
             end
           end
@@ -1807,13 +1831,75 @@ function M.evaluate_lua(inp)
       if t1 then tm.masks = tm.masks + clk() - t1 end
     end
     local ts = clk and clk()
-    table.sort(cands, pre_rank)
+    if not lazy then table.sort(cands, pre_rank) end
     if ts then tm.sort = tm.sort + clk() - ts end
     -- lone pill: no other hostile pill in range of any point
     local lone = #cands > 0
     for _, rec in ipairs(cands) do if #rec.T ~= 1 then lone = false; break end end
     local scored = {}
-    if lone and band and band > 0 then
+    if lazy then
+      -- S9: the chain points are planned first. The single takes then go in
+      -- order of the least score they can have (base + build_cost * the
+      -- fewest blockers A's ray needs) and stop above m + band, m the least
+      -- score of a safe single take so far: a single take that is not
+      -- planned cannot be in the band of m. A plan is capped at the size
+      -- that can still reach the band.
+      local singles = {}
+      for _, rec in ipairs(cands) do
+        if rec.lazy then singles[#singles + 1] = rec
+        else
+          local fin = plan_point(ctx, rec)
+          carry(fin, rec)
+          score_of(ctx, fin)
+          scored[#scored + 1] = fin
+        end
+      end
+      local bc = inp.build_cost
+      local sb = inp.wall_shots
+      if (inp.num_pill_blockers or 0) > 0 and inp.pill_drop_shots > sb then sb = inp.pill_drop_shots end
+      local function kmin_of(need)
+        if need <= 0 then return 0 end
+        return math.ceil(need / sb)
+      end
+      for _, q in ipairs(singles) do q.lb = q.base + kmin_of(q.a_need) * bc end
+      table.sort(singles, function(a, b)
+        if a.lb ~= b.lb then return a.lb < b.lb end
+        return a.deg < b.deg
+      end)
+      local m = nil
+      for i, q in ipairs(singles) do
+        if m and q.lb > m + band then
+          st.plan_skipped = st.plan_skipped + (#singles - i + 1)
+          break
+        end
+        local full = eval_point(ctx, q.px, q.py, nil, q.aim_idx, false, false)
+        full.nudge_wu = q.nudge_wu
+        full.deg, full.cx, full.cy, full.mx, full.my, full.radius = q.deg, q.cx, q.cy, q.mx, q.my, q.radius
+        full.base, full.omx, full.omy = q.base, q.omx, q.omy
+        local fin = nil
+        if not full.covered and m and bc > 0 then
+          local kmax = floor((m + band - full.base) / bc + 1e-9)
+          local km = 0
+          for _, ui in ipairs(full.uncovered) do
+            local r = full.rays[ui]
+            local k = kmin_of(r.bar - r.cover)
+            if k > km then km = k end
+          end
+          if km > kmax then
+            full.plan, full.extra = {}, {}
+            st.plan_cut = st.plan_cut + 1
+            fin = full
+          else
+            full.kmax = kmax
+          end
+        end
+        if not fin then fin = plan_point(ctx, full) end
+        carry(fin, full)
+        score_of(ctx, fin)
+        scored[#scored + 1] = fin
+        if fin.safe and fin.kills == 1 and (not m or fin.score < m) then m = fin.score end
+      end
+    elseif lone and band and band > 0 then
       st.lone = st.lone + 1
       -- the points that stand covered now need no plan; the others are
       -- planned in base order until none left can reach the travel band
