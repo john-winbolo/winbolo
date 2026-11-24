@@ -861,6 +861,11 @@ bool lv_screenPlayerLagNow(int slot, int *rttMs, int *behindMs);
 void lv_screenSetLagFeature(int enabled);
 int  lv_screenGetLagFeature(void);
 bool lv_screenLagShown(void);
+/* Whether slot's tank was alive at the time the map draws it: in the lag
+ * view the time of its frame for every tank but the chosen player's, else
+ * the present. The hit boxes draw a tank's circle only while this is TRUE.
+ * Hold the client mutex. */
+bool lv_screenTankShownAlive(int slot);
 void lv_screenPlayerLagSnapshot(int slot, LvPlayerLag *out);
 
 /* The server's timing and each bot's overruns, from the recording's

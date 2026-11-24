@@ -132,8 +132,7 @@ LogViewerState *lv_screenGetState(void) { return g_lv; }
  * ring (lv_screenSeekToAbsoluteMs). Where the ring has no frame for the
  * time, the map draws the present and the banner says so.
  *
- * Memory: a frame is 2652 bytes (2296 before the pillboxes and the map
- * squares were kept), so the ring of 32 is 84,872 bytes (73,480 before).
+ * Memory: a frame is 2668 bytes, so the ring of 32 is 85,384 bytes.
  * The map at the frame before (s_lagMapPrev) and the drawing copy
  * (s_lagMapDraw) are 65,536 bytes each. */
 #define LV_LAG_HISTORY_MS ((uint32_t) LV_LAG_FRAMES * LV_LAG_ENTRY_MS)
@@ -488,8 +487,12 @@ static void lv_lagFindShellOwners(LvLagFrame *f) {
 static void lv_lagCaptureTick(void) {
   LvLagFrame *f = lv_lagRingPush(&s_lagRing, g_lv->timeRunning);
   shells q;
+  int i;
 
   lv_playersLagCapture(f);
+  for (i = 0; i < LV_LAG_SLOTS && i < MAX_TANKS; i++) {
+    f->tank[i].alive = g_lv->gameViewHud[i].alive;
+  }
   if (g_lv->pb != NULL) {
     BYTE count;
     BYTE total = g_lv->pb->numPills;
@@ -692,6 +695,20 @@ void lv_screenSetLagFeature(int enabled) {
 }
 
 int lv_screenGetLagFeature(void) { return s_lagFeature ? 1 : 0; }
+
+bool lv_screenTankShownAlive(int slot) {
+  const LvLagFrame *f;
+  if (g_lv == NULL || slot < 0 || slot >= MAX_TANKS) {
+    return FALSE;
+  }
+  /* The lag view draws every tank but the chosen player's from its frame
+     (lv_playersSetLagFrame), so the hit box goes by that time too. */
+  f = lv_lagViewFrame(NULL, NULL);
+  if (f != NULL && slot != s_lagViewSlot && slot < LV_LAG_SLOTS) {
+    return f->tank[slot].alive;
+  }
+  return g_lv->gameViewHud[slot].alive;
+}
 
 bool lv_screenLagShown(void) {
   return s_lagFeature && s_lagAny;

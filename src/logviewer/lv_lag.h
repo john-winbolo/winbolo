@@ -193,6 +193,7 @@ typedef struct {
     bool    onBoat;
     uint8_t shells;  /* its shell stock, as the recording states it */
     bool    fired;   /* the stock went down at this entry */
+    bool    alive;   /* the tank was alive (gameViewHud alive), for the hit box */
 } LvLagTank;
 
 /* Where one builder was drawn at one entry. out is false when he was in

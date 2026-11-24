@@ -2533,7 +2533,7 @@ static void lvDrawHitBoxesOverBlit(const SDL_FRect *src, const SDL_FRect *dst) {
     /* What playback writes, copied out under its mutex, as the bars do. */
     lv_clientMutexWaitFor();
     for (i = 0; i < MAX_TANKS; i++) {
-        alive[i] = lv->gameViewHud[i].alive;
+        alive[i] = lv_screenTankShownAlive(i);
     }
     tankZone = lv->rules.tankHitZone;
     tankSize = lvHitboxTankZoneSize(tankZone, lv->rules.tankHitRadius);
