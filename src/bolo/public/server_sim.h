@@ -2436,9 +2436,9 @@ int           serverSimGetGameBotLimit(const ServerSim *sim);
 /* set false: follow the server's own again. Publishes the lobby settings
  * when the value changes. */
 void          serverSimSetGameBotLimit(ServerSim *sim, int limit, bool set);
-/* Whether a lobby Add Bot fits under the host bot capacity: false while
- * the test runs, and false when lobbyBots (the bots in the lobby now) has
- * reached a capacity of 0..16. True when there is no cap. */
+/* Whether a lobby Add Bot may go on: false only while the CPU test runs.
+ * A capacity of 0..16 is a warning only: lobbyBots (the bots in the lobby
+ * now) past it is still true. */
 bool          serverSimHostBotCapacityAllowsAdd(int capacity, int lobbyBots);
 /* Cap on spectator connections; 0 = spectating disabled (no MAX_TANKS fallback). */
 BYTE          serverSimGetMaxSpectators(const ServerSim *sim);

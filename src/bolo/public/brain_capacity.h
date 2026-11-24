@@ -222,6 +222,10 @@ typedef enum {
    or Bot Host); this machine's numbers then do not apply. */
 BrainCapacityAddState brainCapacityAddState(bool measuring, int botsHere,
                                             int capacity, bool botsRunHere);
+/* Whether a state stops Add Bot: only MEASURING (the CPU speed test runs;
+   setting the lobby's Server bot slots ends the wait). FULL is a warning
+   only, on the Server bot slots box: the player may add past it. */
+bool brainCapacityAddBlocks(BrainCapacityAddState state);
 
 #ifdef __cplusplus
 }

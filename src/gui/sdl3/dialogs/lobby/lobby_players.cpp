@@ -1455,7 +1455,8 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
             bool addBtnClicked = false;
             ImVec2 addBtnPos = ImGui::GetCursorScreenPos();
             /* Off, with the reason on mouse-over, while the CPU speed test
-             * runs or once this machine runs as many bots as it can. */
+             * runs. Past the capacity it stays on: the warning is on the
+             * Server bot slots box. */
             const char *addBtnOffReason = lobbyAddBotOffReason(cs);
             bool addBtnPending = lobbyAddBotPending(cs) || addBtnOffReason != NULL;
             if (botsAllowed) {

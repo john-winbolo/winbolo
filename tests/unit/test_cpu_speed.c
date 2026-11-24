@@ -430,6 +430,12 @@ int run_brain_capacity_add_state(void) {
   UT_ASSERT(brainCapacityAddState(true, 9, 5, false) == BRAIN_CAPACITY_ADD_OK);
   UT_ASSERT(brainCapacityAddState(false, 9, 5, false) ==
             BRAIN_CAPACITY_ADD_OK);
+  /* Only the CPU test's wait stops Add Bot; FULL is a warning only. */
+  UT_ASSERT(!brainCapacityAddBlocks(BRAIN_CAPACITY_ADD_FULL));
+  UT_ASSERT(!brainCapacityAddBlocks(BRAIN_CAPACITY_ADD_OK));
+  UT_ASSERT(brainCapacityAddBlocks(BRAIN_CAPACITY_ADD_MEASURING));
+  UT_ASSERT(!brainCapacityAddBlocks(
+      brainCapacityAddState(false, 9, 5, true)));
   return 0;
 }
 
@@ -480,10 +486,11 @@ int run_host_bot_capacity(void) {
                                               15));
   UT_ASSERT(!serverSimHostBotCapacityAllowsAdd(
       SERVER_HOST_BOT_CAPACITY_MEASURING, 0));
-  UT_ASSERT(!serverSimHostBotCapacityAllowsAdd(0, 0));
+  /* At or past the capacity is a warning only: the add goes on. */
+  UT_ASSERT(serverSimHostBotCapacityAllowsAdd(0, 0));
   UT_ASSERT(serverSimHostBotCapacityAllowsAdd(3, 2));
-  UT_ASSERT(!serverSimHostBotCapacityAllowsAdd(3, 3));
-  UT_ASSERT(!serverSimHostBotCapacityAllowsAdd(3, 4));
+  UT_ASSERT(serverSimHostBotCapacityAllowsAdd(3, 3));
+  UT_ASSERT(serverSimHostBotCapacityAllowsAdd(3, 4));
 
   /* The setter's clamp, and what the lobby sends. */
   UT_ASSERT(serverSimGetHostBotCapacity(NULL) == SERVER_HOST_BOT_CAPACITY_NONE);

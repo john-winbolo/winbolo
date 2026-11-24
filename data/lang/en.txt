@@ -3151,6 +3151,10 @@ STR_BOTHOST_OVER_SLOTS=The server is running {string1} bots but has only {string
 # The lobby reject toast's line for an Add Bot onto a new team that the
 # map's scenario does not allow
 STR_DLGLOBBY_REJECT_SCENARIO_TEAM=The map's scenario does not allow new teams
+# The single player lobby's Server bot slots box (the bots of this
+# computer): its mouse-over line and the line above the recommendation
+STR_DLGLOBBY_LOCAL_BOT_SLOTS_TIP=How many bots this computer runs. Its CPU test recommends {number}.
+STR_DLGLOBBY_LOCAL_BOT_SLOTS_OVER=More than the {number} slots this computer's CPU test recommends. Bots may think slower and play worse.
 # The lobby's Bot Host row of a player's computer when the server sent no
 # name: the player's number, or a plain name when that is not known
 STR_DLGLOBBY_BOTHOST_PLAYER_NAME=Player {number}

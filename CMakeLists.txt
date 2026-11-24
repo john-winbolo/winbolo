@@ -7582,7 +7582,7 @@ set(_unit_test_names
     server_text_codec_via_chat_wire
     vote_surrender_blocked_without_lobby
     vote_back_to_lobby_blocked_without_lobby
-    lobby_add_bot_rejects_at_host_capacity
+    lobby_add_bot_past_host_capacity
     server_bot_slots_codec
     server_bot_slots_setting
     server_bot_slots_locked

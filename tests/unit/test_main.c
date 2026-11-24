@@ -172,7 +172,7 @@ static const UnitTestEntry s_tests[] = {
     { "lobby_add_bot_rejects_not_in_lobby",       run_lobby_add_bot_rejects_not_in_lobby       },
     { "lobby_add_bot_rejects_non_host_sender",    run_lobby_add_bot_rejects_non_host_sender    },
     { "lobby_bot_count_counts_only_connected_bots", run_lobby_bot_count_counts_only_connected_bots },
-    { "lobby_add_bot_rejects_at_host_capacity",   run_lobby_add_bot_rejects_at_host_capacity   },
+    { "lobby_add_bot_past_host_capacity",   run_lobby_add_bot_past_host_capacity   },
     { "server_bot_slots_codec", run_server_bot_slots_codec },
     { "server_bot_slots_setting", run_server_bot_slots_setting },
     { "server_bot_slots_locked", run_server_bot_slots_locked },
