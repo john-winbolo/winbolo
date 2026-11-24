@@ -296,10 +296,11 @@ end
 -- pushed SWERVE_COVER_EXTEND_TILES further out from the target pill, then
 -- the retreat ATTACK_APPROACH_OFFSET tiles straight back from the pill. The
 -- wedge's angle comes from those points: about 18 degrees at a 6-tile
--- range. A side is DIRTY for a pill when the blocker square (and the
--- builder's own square while he is out), grown by
+-- range. A side is DIRTY for a pill when the blocker square, grown by
 -- REPAIR_FIRE_LANE_MARGIN_TILES on each side, lies partly inside the
--- wedge, no farther from the pill than its range.
+-- wedge, no farther from the pill than its range. The builder's own square
+-- is not part of this test: a shell that flies over him does not kill him
+-- (Rule 2's explosion test below covers him).
 --
 -- Rule 1. A side is CLEAN when it is not dirty for any live non-friendly
 -- pill whose range reaches our tank. A side is BLOCKED by terrain when
@@ -451,17 +452,15 @@ function M.fan_hits_square(gx, gy, a0, lo, hi, mx, my, m, range)
   return shi > lo and slo < hi
 end
 
--- Is side verts dirty for gun g? (the blocker square, and his square when
--- he is out)
+-- Is side verts dirty for gun g? Only the blocker square counts. The
+-- builder's square does not: the engine kills him only where a shell
+-- explodes (lgm.c lgmBlastCatches), never where it only flies over him, and
+-- a shell into the swerve side explodes on the tank. (Nov 24: the man's
+-- square here made the outbound check abort one tick after every send,
+-- because he stands on the tank's square, on the wedge's edge, as he leaves.)
 local function side_dirty(g, tx, ty, verts, rb, m, range)
   local lo, hi, a0 = M.fan(g.gx, g.gy, tx, ty, verts)
-  if M.fan_hits_square(g.gx, g.gy, a0, lo, hi, rb.mx, rb.my, m, range) then
-    return true
-  end
-  if rb.man_mx and M.fan_hits_square(g.gx, g.gy, a0, lo, hi, rb.man_mx, rb.man_my, m, range) then
-    return true
-  end
-  return false
+  return M.fan_hits_square(g.gx, g.gy, a0, lo, hi, rb.mx, rb.my, m, range)
 end
 
 -- Rule 1 for one moment: both sides' state for the repair blocker rb, the
@@ -618,9 +617,13 @@ end
 --   k         quick_repair kill_tick record of the take target (T_kill).
 --   sd        the swerve side the shots go into once the swerve starts, or nil.
 --   swerving  true when that swerve is running now.
+--   org       { x, y } (tiles): where that side's swerve starts. The
+--             committed side keeps the tank's place at the send, so the
+--             send and every outbound check test the same wedge. nil = the
+--             tank where it is now.
 -- Returns { pill = id, target = bool, fire = tick, at = tick,
 -- how = "blocker" | "builder" | "side" } or nil.
-function M.fire_conflict(world, info, now, goal, k, rb, bx0, by0, t0, t_arr, sd, swerving)
+function M.fire_conflict(world, info, now, goal, k, rb, bx0, by0, t0, t_arr, sd, swerving, org)
   local x = LP.context(info, LPX) or {}
   local range = (x.pill_range or 2048) / 256
   local m = C.REPAIR_FIRE_LANE_MARGIN_TILES or 0
@@ -628,7 +631,9 @@ function M.fire_conflict(world, info, now, goal, k, rb, bx0, by0, t0, t_arr, sd,
   local t_end = t_arr + (C.LGM_BUILD_TIME or 20)
   local tx, ty = info.tankx / 256.0, info.tanky / 256.0
   local guns = M.guns(world, info, range, rb.mx, rb.my)
-  local verts = sd and M.swerve_verts(tx, ty, goal.mx + 0.5, goal.my + 0.5, sd) or nil
+  local ox, oy = tx, ty
+  if org then ox, oy = org.x, org.y end
+  local verts = sd and M.swerve_verts(ox, oy, goal.mx + 0.5, goal.my + 0.5, sd) or nil
   local bcx, bcy = rb.mx + 0.5, rb.my + 0.5
   local walk = math.max(1, t_arr - t0)
   local kt = k and k.t
@@ -636,7 +641,7 @@ function M.fire_conflict(world, info, now, goal, k, rb, bx0, by0, t0, t_arr, sd,
     local g = guns[gi]
     local is_target = (g.p.mx == goal.mx and g.p.my == goal.my)
     local death = is_target and kt or nil
-    local sdirty = verts and side_dirty(g, tx, ty, verts, rb, m, range) or false
+    local sdirty = verts and side_dirty(g, ox, oy, verts, rb, m, range) or false
     -- A pill whose shots all flow on a clean swerve side does not conflict:
     -- the swerve runs now, or it is a pill that outlives the kill (its
     -- shots after T_kill go into the side).
@@ -836,7 +841,10 @@ end
 -- side of a swerve that is running. Returns side, swerving.
 local function shot_side(state, goal, now)
   local sw = goal.substate == "swerve"
-  if M.commit_active(state, goal, now) then return goal._repair_swerve_dir.dir, sw end
+  if M.commit_active(state, goal, now) then
+    local c = goal._repair_swerve_dir
+    return c.dir, sw, c.ox and { x = c.ox, y = c.oy } or nil
+  end
   if sw and goal._swerve_dir then return goal._swerve_dir, true end
   return nil, false
 end
@@ -853,22 +861,51 @@ function M.side_and_fire(state, world, info, now, goal, k, p, qr)
     rs = M.side_eval(world, info, rb, goal.mx, goal.my, M.side_hazards(world, info, goal))
     qr.side = rs
   end
+  -- The side to commit. A swerve that runs now keeps its own side to its
+  -- end (enter_swerve picks a side only when a swerve starts), so its shots
+  -- go into that side: commit it when it is clean (its terrain no longer
+  -- matters, the tank is on it), else nothing is committed and Rule 2 tests
+  -- the shots into the dirty running side. With no swerve running, the one
+  -- clean unblocked side.
+  local cdir, cwhy = nil, nil
+  local swerving = goal.substate == "swerve" and goal._swerve_dir ~= nil
+  if rs then
+    if swerving then
+      local s = rs.side[goal._swerve_dir]
+      if s and not s.dirty then cdir, cwhy = goal._swerve_dir, "running_clean" end
+    elseif rs.dir then
+      cdir, cwhy = rs.dir, rs.why
+    end
+  end
+  qr.side_dir, qr.side_why = cdir, cwhy or (rs and rs.why)
   if C.QUICK_REPAIR_WAIT_ALL_PILLS then
-    local sd, sw
-    if rs and rs.dir then sd, sw = rs.dir, goal.substate == "swerve"
-    else sd, sw = shot_side(state, goal, now) end
+    local sd, sw, org
+    if cdir then
+      sd, sw = cdir, swerving
+      org = { x = info.tankx / 256.0, y = info.tanky / 256.0 }
+    else
+      sd, sw, org = shot_side(state, goal, now)
+    end
     local cf = M.fire_conflict(world, info, now, goal, k, rb,
                                info.tankx / 256.0, info.tanky / 256.0,
-                               now + 1, qr.t_repair, sd, sw)
+                               now + 1, qr.t_repair, sd, sw, org)
     if cf then
       qr.fire = cf
       return cf.target and "wait:fire_predict" or "wait:other_pill"
     end
   end
-  if rs and rs.dir then
-    goal._repair_swerve_dir = { dir = rs.dir, mx = p.mx, my = p.my, tick = now,
+  if cdir then
+    goal._repair_swerve_dir = { dir = cdir, mx = p.mx, my = p.my, tick = now,
+                                ox = info.tankx / 256.0, oy = info.tanky / 256.0,
                                 left = M.side_txt(rs.side[1]),
-                                right = M.side_txt(rs.side[-1]), why = rs.why }
+                                right = M.side_txt(rs.side[-1]), why = cwhy }
+    if BRAIN_DEBUG_MODE and swerving then
+      print2(string.format(
+        "SWERVE_REPAIR_SIDE t=%d blocker=(%d,%d) left=%s right=%s chosen=%s why=committed"
+        .. " (running swerve's side, clean; at send)",
+        now, p.mx, p.my, M.side_txt(rs.side[1]), M.side_txt(rs.side[-1]),
+        cdir > 0 and "L" or "R"))
+    end
   end
   return "send"
 end
@@ -886,10 +923,10 @@ function M.outbound_check(state, world, info, now, goal, k, qr)
           and info.man_x and info.man_y) then return end
   local rb = { mx = job.mx, my = job.my,
                man_mx = bit.rshift(info.man_x, 8), man_my = bit.rshift(info.man_y, 8) }
-  local sd, sw = shot_side(state, goal, now)
+  local sd, sw, org = shot_side(state, goal, now)
   local cf = M.fire_conflict(world, info, now, goal, k, rb,
                              info.man_x / 256.0, info.man_y / 256.0,
-                             now, math.max(now, job.arrive_tick or now), sd, sw)
+                             now, math.max(now, job.arrive_tick or now), sd, sw, org)
   qr.outbound = cf
   if cf and not job._qr_abort then
     job._qr_abort = { tick = now, pill = cf.pill, how = cf.how }
@@ -1023,7 +1060,8 @@ function M.fire_txt(qr, now)
   local rs = qr.side
   if rs then
     t = t .. string.format(" side=%s(%s L=%s R=%s)",
-                           rs.dir and (rs.dir > 0 and "L" or "R") or "-", rs.why,
+                           qr.side_dir and (qr.side_dir > 0 and "L" or "R") or "-",
+                           tostring(qr.side_why or rs.why),
                            M.side_txt(rs.side[1]), M.side_txt(rs.side[-1]))
   end
   return t

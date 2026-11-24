@@ -17,6 +17,10 @@
 --   6. the builder walk: a shell that only flies over him is no conflict;
 --      a shell that explodes on the tank while he is still beside it is
 --      one (the engine kills a builder only where a shell explodes).
+--   7. send then outbound: a send at t, the same world at t+1 with the
+--      builder just out -> no QUICK_REPAIR_ABORT (not swerving, and with
+--      the running swerve on the clean side); a running swerve on the dirty
+--      side -> wait, nothing committed.
 -- No engine: terrain and the walk sim are stubs.
 --
 -- Run from this directory with the LuaJIT built beside the game:
@@ -350,6 +354,60 @@ do
                         NOW + 1, NOW + 40, nil, false)
   check("he is clear of the tank when the shells land: no conflict", cf == nil,
         cf and (cf.how .. "@" .. tostring(cf.at)))
+end
+
+-- ── 7. send, then the same world one tick later ─────────────────────────
+print("7. send then outbound")
+do
+  -- Send at NOW, then at NOW+1 the builder pool's job is out and the man
+  -- stands on the tank; nothing else changes.
+  local function send_then_out(substate, swerve_dir)
+    reset()
+    local st, w, inf = mk()
+    if substate then st.goal.substate = substate end
+    st.goal._swerve_dir = swerve_dir
+    _G.BRAIN_DEBUG_MODE = true
+    local qr = QR.evaluate(st, w, inf, NOW)
+    _G.BRAIN_DEBUG_MODE = nil
+    if not (qr and qr.result == "send") then return qr, nil, st end
+    st._bp_job = { type = "rebuild", quick = true, mx = 101, my = 102,
+                   phase = "outbound", dispatch_tick = NOW,
+                   arrive_tick = qr.t_repair }
+    st.tick = NOW + 1
+    inf.man_status = C.LGM_MOVING
+    inf.man_x, inf.man_y = inf.tankx, inf.tanky
+    _G.BRAIN_DEBUG_MODE = true
+    local qr2 = QR.evaluate(st, w, inf, NOW + 1)
+    _G.BRAIN_DEBUG_MODE = nil
+    return qr, qr2, st
+  end
+  local qr, qr2, st = send_then_out(nil, nil)
+  check("engage: send at t", qr and qr.result == "send", qr and qr.result)
+  check("engage: t+1 outbound, no conflict", qr2 and qr2.outbound == nil,
+        qr2 and qr2.outbound and (qr2.outbound.how .. "@" .. tostring(qr2.outbound.at)))
+  check("engage: no abort", st._bp_job and st._bp_job._qr_abort == nil
+        and not logged("QUICK_REPAIR_ABORT"), logged("QUICK_REPAIR_ABORT"))
+  local c = st.goal._repair_swerve_dir
+  check("engage: the commit keeps the send's swerve start", c and c.ox == 100.5 and c.oy == 100.5,
+        c and c.ox)
+
+  qr, qr2, st = send_then_out("swerve", -1)
+  check("running swerve on clean R: send", qr and qr.result == "send", qr and qr.result)
+  c = st.goal._repair_swerve_dir
+  check("running swerve on clean R: R committed", c and c.dir == -1 and c.why == "running_clean",
+        c and c.why)
+  check("running swerve: t+1 outbound, no conflict", qr2 and qr2.outbound == nil,
+        qr2 and qr2.outbound and (qr2.outbound.how .. "@" .. tostring(qr2.outbound.at)))
+  check("running swerve: no abort", not logged("QUICK_REPAIR_ABORT"), logged("QUICK_REPAIR_ABORT"))
+  check("running swerve: SWERVE_REPAIR_SIDE why=committed at the send", not HAS_LOGS
+        or (logged("SWERVE_REPAIR_SIDE") or ""):find("chosen=R why=committed"),
+        logged("SWERVE_REPAIR_SIDE"))
+
+  qr, qr2, st = send_then_out("swerve", 1)
+  check("running swerve on dirty L: wait (its shots cross the blocker)",
+        qr and qr.result == "wait:fire_predict", qr and qr.result)
+  check("running swerve on dirty L: nothing committed", st.goal._repair_swerve_dir == nil,
+        st.goal._repair_swerve_dir)
 end
 
 -- ── 5. presets ───────────────────────────────────────────────────────────
