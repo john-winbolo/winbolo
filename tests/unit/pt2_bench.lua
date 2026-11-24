@@ -547,7 +547,36 @@ local R = {
   depth_same = 0, depth_b_more = 0, depth_a_more = 0,
   walls_same = 0, walls_b_fewer = 0, walls_a_fewer = 0, walls_a = 0, walls_b = 0,
   ex_a = {}, ex_b = {},
+  -- co=1 (b has chains_only): the chains-only check
+  co_same = 0, co_differ = 0, co_chain_cases = 0, co_nochain = 0, st_a = {}, st_b = {}, dbl = {},
 }
+-- co=1: the answer a chains-only run must give. a's best is a safe chain:
+-- the same point, aim, plan squares, start and extra cover; else no safe
+-- chain. Returns the key (nil: no safe chain).
+local function co_key(b, inp)
+  if not (b and b.safe and b.chain_mode) then return nil end
+  local plan = {}
+  for i, q in ipairs(b.plan or {}) do plan[i] = fmt("%s:%s:%s", tostring(q.kind), tostring(q.mx), tostring(q.my)) end
+  local xc = {}
+  for i, q in ipairs(b.extra_cover or {}) do xc[i] = fmt("%s:%s", tostring(q.mx), tostring(q.my)) end
+  local ch = {}
+  for i, p in ipairs(b.chain or {}) do ch[i] = fmt("%s,%s", tostring(p.mx), tostring(p.my)) end
+  return fmt("%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s", tostring(b.deg), tostring(b.radius), tostring(b.px), tostring(b.py),
+    tostring(b.nudge_wu), tostring(b.aim_idx), table.concat(plan, ";"), tostring(b.start_now),
+    table.concat(xc, ";"), table.concat(ch, ";"), tostring(b.kills), fmt("%.9g", b.score or 0))
+end
+-- co=1: the pt2_dbl entry fields of a result (fill_entry)
+local function dbl_fields(b)
+  local e = { safe = false, kills = 0, have = 0, need = 0, walls = 0, pills = 0, ids = 1 }
+  if not b then return e end
+  e.safe = b.safe and b.chain_mode and true or false
+  e.kills, e.have, e.need = b.kills or 0, b.have or 0, b.need or 0
+  for _, q in ipairs(b.plan or {}) do
+    if q.kind == "wall" then e.walls = e.walls + 1 elseif q.kind == "pill" then e.pills = e.pills + 1 end
+  end
+  e.ids = math.max(1, #(b.chain or {}))
+  return e
+end
 local function ab_eval(inp)
   inp.env.omx, inp.env.omy = nil, nil
   if AB_EV == "v2" then NV.reset(); return NV.evaluate_lua(inp) end
@@ -582,6 +611,28 @@ local function run_ab(case)
   R.t_a[#R.t_a + 1] = median_of(function() ab_eval(ia) end, reps)
   R.t_b[#R.t_b + 1] = median_of(function() ab_eval(ib) end, reps)
   local ba, bb = ra.best, rb.best
+  if args.co == "1" then
+    local ka, kb = co_key(ba, ia), co_key(bb, ib)
+    if ka then R.co_chain_cases = R.co_chain_cases + 1 end
+    if rb.no_chain then R.co_nochain = R.co_nochain + 1 end
+    if ka == kb then R.co_same = R.co_same + 1
+    else
+      R.co_differ = R.co_differ + 1
+      io.stderr:write(fmt("pt2_bench: co differs case %d: a=%s b=%s\n", n_case, tostring(ka), tostring(kb)))
+    end
+    -- the pt2_dbl entry: today (a, the chain's ids) vs chains only (b)
+    local ea, eb = dbl_fields(ba), dbl_fields(bb)
+    for k, v in pairs(ea) do
+      if eb[k] ~= v then R.dbl[k] = (R.dbl[k] or 0) + 1 end
+    end
+    -- the counts, one run each with the mask stats on
+    ia.v2_mask_stats, ib.v2_mask_stats = true, true
+    local sa2 = ab_eval(ia)
+    local sb2 = ab_eval(ib)
+    ia.v2_mask_stats, ib.v2_mask_stats = nil, nil
+    add_to(R.st_a, sa2.v2 and sa2.v2.stat)
+    add_to(R.st_b, sb2.v2 and sb2.v2.stat)
+  end
   ab_extra(R.ex_a, ba)
   ab_extra(R.ex_b, bb)
   if (ia.travel_band or 0) > 0 then R.ex_a.band_cases = (R.ex_a.band_cases or 0) + 1 end
@@ -668,6 +719,20 @@ if AB then
   end
   print("best point counts a: " .. ex(R.ex_a))
   print("best point counts b: " .. ex(R.ex_b))
+  if args.co == "1" then
+    local function g(t, k) return t[k] or 0 end
+    print(fmt("chains only: answer same %d, differs %d (a has a safe chain in %d cases; b stopped with no chain %d)",
+      R.co_same, R.co_differ, R.co_chain_cases, R.co_nochain))
+    print(fmt("chains only: mask chain = exact chain (a, full run) %d, differs %d, not sure %d",
+      g(R.st_a, "chain_agree"), g(R.st_a, "chain_differ"), g(R.st_a, "chain_unsure")))
+    print(fmt("chains only: MUST mask cuts %d, wrong %d; ring stops %d, single takes judged for the stop %d;"
+      .. " points planned a %d b %d", g(R.st_b, "must_cut"), g(R.st_b, "must_cut_wrong"), g(R.st_b, "co_stop"),
+      g(R.st_b, "co_single_eval"), g(R.st_a, "planned"), g(R.st_b, "planned")))
+    local ks = {}
+    for k in pairs(R.dbl) do ks[#ks + 1] = fmt("%s %d", k, R.dbl[k]) end
+    table.sort(ks)
+    print("chains only: pt2_dbl entry fields that change (cases): " .. (#ks > 0 and table.concat(ks, ", ") or "none"))
+  end
   return 0
 end
 if BOTH then

@@ -72,6 +72,9 @@ function M.knob_inp(C, inp)
   inp.anger_bump = C.PILL_ANGER_BUMP or 0.3333
   -- PT2_EXTRA_COVER_WALLS (E5): 0 = off
   inp.extra_cover_walls = C.PT2_EXTRA_COVER_WALLS or 1
+  -- PT2_CHAINS_ONLY (S10): the runs that only a safe chain can use (a
+  -- non-goal A in group_step, the pt2_dbl shadow runs) plan no single take
+  inp.chains_only_runs = C.PT2_CHAINS_ONLY ~= false
   return inp
 end
 
@@ -736,11 +739,32 @@ local function eval_point(ctx, px, py, extra, aim_fixed, nudge, exact, lazy)
   -- caller judges it in full (aim_fixed, no nudge) only when its plan
   -- can still reach the travel band.
   if lazy then
+    local bar = ctx.finish and 0 or inp.bar_single
+    -- S10 chains only: a sure MUST mask at the final point (after the
+    -- nudge) with no link the chain can use is a single take without a
+    -- cast (a_need is found later, only when needed)
+    if ctx.chains_only then
+      local pr = predict(ctx, ctx.cw(A), px, py)
+      local Y = pr.link
+      if pr.sure and not (Y and pr.used and Y ~= A and not (inp.chain_skip and inp.chain_skip[Y])) then
+        ctx.stat.must_cut = ctx.stat.must_cut + 1
+        if inp.v2_mask_stats then
+          local v = ray_view(base_ray(ctx, A, px, py), extra)
+          if inp.link_clear_front then v.cut = v.cut_front end
+          local n2 = (not v.cut) and v.link or nil
+          if n2 and n2 ~= A and not (inp.chain_skip and inp.chain_skip[n2]) then
+            ctx.stat.must_cut_wrong = ctx.stat.must_cut_wrong + 1
+          end
+        end
+        if tb then ctx.tm.evb = ctx.tm.evb + (clk() - tb) - (ctx.tm.cast - cast0) end
+        return { lazy = true, px = px, py = py, nudge_wu = nudge_wu, T = T, aim_idx = aim_idx,
+                 chain = { A }, kills = 1, a_need = nil, a_bar = bar }
+      end
+    end
     local vA = ray_view(base_ray(ctx, A, px, py), extra)
     if inp.link_clear_front then vA.cut = vA.cut_front end
     local nxt = (inp.chains and inp.max_chain >= 2 and not vA.cut) and vA.link or nil
     if not nxt or nxt == A or (inp.chain_skip and inp.chain_skip[nxt]) then
-      local bar = ctx.finish and 0 or inp.bar_single
       ctx.stat.lazy = ctx.stat.lazy + 1
       if tb then ctx.tm.evb = ctx.tm.evb + (clk() - tb) - (ctx.tm.cast - cast0) end
       return { lazy = true, px = px, py = py, nudge_wu = nudge_wu, T = T, aim_idx = aim_idx,
@@ -1658,6 +1682,7 @@ end
 local function new_stat()
   return { sq_reads = 0, casts = 0, casts_confirm = 0, ray_reuse = 0, nudged = 0, planned = 0,
            confirm_fail = 0, wall_nodes = 0, cant = 0, survive = 0, lone = 0, plan_skipped = 0, lazy = 0, plan_cut = 0,
+           must_cut = 0, must_cut_wrong = 0, co_stop = 0, co_single_eval = 0,
            loss_pass = 0, loss_safe = 0, chain_agree = 0, chain_differ = 0, chain_unsure = 0,
            wall_slow = 0,
            confirm_checked = 0, confirm_mismatch = 0, confirm_winner = 0,
@@ -1749,6 +1774,13 @@ function M.evaluate_lua(inp)
   -- S9: lazy single takes (not with keep_all: every point is in the result
   -- then; not without a travel band: nothing to stop at)
   local lazy = (not inp.keep_all) and band and band > 0 or false
+  -- S10 chains only: a run whose result counts only as a safe chain.
+  -- Single takes get no plan; a ring with no safe chain stops the run
+  -- ("no chain") when it has a safe single take (that take would win).
+  local co = inp.chains_only and true or false
+  ctx.chains_only = co
+  if co then lazy = true end
+  local no_chain = nil
   for _, roff in ipairs(inp.radii_offsets) do
     local R = inp.radius + roff
     local cands = {}
@@ -1837,6 +1869,7 @@ function M.evaluate_lua(inp)
     local lone = #cands > 0
     for _, rec in ipairs(cands) do if #rec.T ~= 1 then lone = false; break end end
     local scored = {}
+    local singles_co, kmin_co = nil, nil
     if lazy then
       -- S9: the chain points are planned first. The single takes then go in
       -- order of the least score they can have (base + build_cost * the
@@ -1856,18 +1889,20 @@ function M.evaluate_lua(inp)
       end
       local bc = inp.build_cost
       local sb = inp.wall_shots
+      if co then singles_co = singles end
       if (inp.num_pill_blockers or 0) > 0 and inp.pill_drop_shots > sb then sb = inp.pill_drop_shots end
       local function kmin_of(need)
         if need <= 0 then return 0 end
         return math.ceil(need / sb)
       end
-      for _, q in ipairs(singles) do q.lb = q.base + kmin_of(q.a_need) * bc end
+      if co then kmin_co = kmin_of end
+      for _, q in ipairs(co and {} or singles) do q.lb = q.base + kmin_of(q.a_need) * bc end
       table.sort(singles, function(a, b)
         if a.lb ~= b.lb then return a.lb < b.lb end
         return a.deg < b.deg
       end)
       local m = nil
-      for i, q in ipairs(singles) do
+      for i, q in ipairs(co and {} or singles) do
         if m and q.lb > m + band then
           st.plan_skipped = st.plan_skipped + (#singles - i + 1)
           break
@@ -2009,6 +2044,42 @@ function M.evaluate_lua(inp)
         if any then rerank() end
       end
     end
+    -- S10 ring stop: no safe chain in this ring. A safe single take here
+    -- would win the full run, so the run stops with no chain. The single
+    -- takes are judged covered now first (no plan), then in S9 order
+    -- (base + build_cost * kmin) until the first safe one.
+    if co and singles_co and #singles_co > 0 then
+      local has_chain = false
+      for _, r in ipairs(scored) do
+        if r.safe and r.kills >= 2 then has_chain = true; break end
+      end
+      if not has_chain then
+        local bc = inp.build_cost
+        for _, q in ipairs(singles_co) do
+          if q.a_need == nil then
+            q.a_need = q.a_bar - ray_view(base_ray(ctx, A, q.px, q.py), nil).cover
+          end
+          q.kmin = kmin_co(q.a_need)
+          q.lb = q.base + q.kmin * bc
+        end
+        table.sort(singles_co, function(a, b)
+          if (a.kmin == 0) ~= (b.kmin == 0) then return a.kmin == 0 end
+          if a.lb ~= b.lb then return a.lb < b.lb end
+          return a.deg < b.deg
+        end)
+        for _, q in ipairs(singles_co) do
+          st.co_single_eval = st.co_single_eval + 1
+          local full = eval_point(ctx, q.px, q.py, nil, q.aim_idx, false, false)
+          full.nudge_wu = q.nudge_wu
+          full.deg, full.cx, full.cy, full.mx, full.my, full.radius = q.deg, q.cx, q.cy, q.mx, q.my, q.radius
+          full.base, full.omx, full.omy = q.base, q.omx, q.omy
+          local fin = plan_point(ctx, full)
+          carry(fin, full)
+          if fin.safe then no_chain = "single"; break end
+        end
+      end
+    end
+    if no_chain then st.co_stop = st.co_stop + 1; best = nil; break end
     for _, rec in ipairs(scored) do all[#all + 1] = rec end
     if scored[1] and (not best or M.better(scored[1], best, cap, band, inp.prefer_existing_cover, inp.start_while_building)) then best = scored[1] end
     if best and best.safe then break end
@@ -2024,7 +2095,7 @@ function M.evaluate_lua(inp)
   end
   if T0 then tm.total = clk() - T0 end
   return { best = best, all = inp.keep_all and all or nil, n_eval = n_eval, n_reject = n_reject,
-           hostile = ctx.hostile, inp = inp, v2 = { stat = st, tm = tm } }
+           hostile = ctx.hostile, inp = inp, no_chain = no_chain, v2 = { stat = st, tm = tm } }
 end
 
 -- ── evaluate_group (as the old one; rays and square reads kept per job) ──
@@ -2073,7 +2144,11 @@ function M.group_step(job)
     job.i = job.i + 1
     inp.A = p
     if inp.set_A then inp.set_A(p) end
+    -- S10: only a safe chain of this run counts (below)
+    local co0 = inp.chains_only
+    if inp.chains_only_runs then inp.chains_only = true end
     local ok, r = pcall(eval_in_job, job, inp)
+    inp.chains_only = co0
     inp.A = goalA
     if inp.set_A then inp.set_A(goalA) end
     if not ok then error(r, 0) end

@@ -974,6 +974,13 @@ M.PT2_LINK_CLEAR_FRONT = true
 -- stands now beats cover the builder must make. false = the old order.
 -- KEEL / MAST: false.
 M.PT2_PREFER_EXISTING_COVER = true
+-- PT2_CHAINS_ONLY (S10, speed): the v2 runs whose answer counts only as a
+-- safe chain (a non-goal A in group_step, the pt2_dbl shadow runs) plan no
+-- single take. A ring with no safe chain stops the run ("no chain") when
+-- it has a safe single take; a sure MUST mask with no usable link skips
+-- the point's cast. Same decisions. false = plan every point as a full
+-- run does.
+M.PT2_CHAINS_ONLY = true
 -- PT2_AIM_POINTS (Nov 23, Andrew's yes, E3): v2 only. 9 = the 5 aims
 -- (centre and corners) plus the 4 edge midpoints of the pill's square at
 -- inset 24 (pilltake_v2.AIMS9); the tank_shot tests and the CANT masks use
@@ -8331,6 +8338,7 @@ M.PRESETS = {
     PT2_LINK_COVERS_PREV = false,
     PT2_LINK_CLEAR_FRONT = false,
     PT2_PREFER_EXISTING_COVER = false,
+    PT2_CHAINS_ONLY = false,
     PT2_AIM_POINTS = 5,
     PT2_START_WHILE_BUILDING = false,
     PT2_EXTRA_COVER_WALLS = 0,
@@ -8726,6 +8734,7 @@ M.PRESETS.mast = {
   PT2_LINK_COVERS_PREV              = false,
   PT2_LINK_CLEAR_FRONT              = false,  -- 2.2.1 had no pill take v2
   PT2_PREFER_EXISTING_COVER         = false,  -- 2.2.1 had no pill take v2
+  PT2_CHAINS_ONLY                   = false,  -- 2.2.1 had no pill take v2
   PT2_AIM_POINTS                    = 5,      -- 2.2.1 had no pill take v2
   PT2_START_WHILE_BUILDING          = false,  -- 2.2.1 had no pill take v2
   PT2_EXTRA_COVER_WALLS             = 0,      -- 2.2.1 had no pill take v2

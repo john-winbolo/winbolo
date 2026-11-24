@@ -152,7 +152,11 @@ local function make_inp(state, world, info, pill, now)
   local PA = require("pt2_attack")
   local no_builder = info.man_status == C.LGM_DEAD
   local npb = math.min(info.carried_pills or 0, C.PPT_PILL_BLOCKERS_MAX or 2)
-  return PA.build_inp(state, {}, info, world, pill, no_builder, npb, C.PPT_STANDOFF, now)
+  local inp = PA.build_inp(state, {}, info, world, pill, no_builder, npb, C.PPT_STANDOFF, now)
+  -- PT2_CHAINS_ONLY (S10): the entry counts only as a safe chain, so v2
+  -- plans no single take here (the old evaluator ignores the field)
+  if inp and inp.chains_only_runs then inp.chains_only = true end
+  return inp
 end
 
 -- Fill entry e from v2's group result.
@@ -167,7 +171,8 @@ local function fill_entry(e, res, inp, id)
     elseif s.kind == "pill" then e.pills = e.pills + 1 end
   end
   e.trees_need = e.walls * (C.WALL_SHIELD_BUILD_COST or 2)
-  -- the chain's pills, the target first
+  -- the chain's pills, the target first (an unsafe chain too: the entry
+  -- goes stale when one of them changes)
   local ids = inp.ids or {}
   for _, p in ipairs(b.chain or {}) do
     local pid = ids[p]
