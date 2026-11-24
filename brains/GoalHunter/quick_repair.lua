@@ -275,6 +275,80 @@ function M.pill_next_fire(p, info, now, x)
   return nxt, reload, last
 end
 
+-- The predicted hits on gun guns[gi] by the shells of the OTHER guns
+-- (run_c12 gap_n, a double take: the take target X shoots at our tank, and
+-- its shells hit the other pill A on the way). Each hit makes A angry on
+-- the engine's ladder (pt2_start.engine_reload): its speed halves, and a
+-- pill whose reload count has passed the new speed fires on the next tick
+-- (pillbox.c: it fires when reload >= speed). fires[gj] is the list of
+-- gun gj's fire ticks (absolute); its shell aimed at the tank at (tx, ty)
+-- ends on A's square when A is the first square that stops it
+-- (M.shell_end). Also every non-friendly shell in the air now that reaches
+-- A's square (M.shells_on_blocker), except A's own (they start on it).
+-- Returns the absolute hit ticks up to now + horizon (not sorted).
+function M.cross_pill_hits(world, info, guns, fires, gi, tx, ty, range, now, horizon)
+  local g = guns[gi]
+  local out = {}
+  if not g then return out end
+  local pmx, pmy = g.p.mx, g.p.my
+  for gj = 1, #guns do
+    local h = guns[gj]
+    if gj ~= gi and fires[gj] and #fires[gj] > 0 then
+      local e = M.shell_end(world, h, tx, ty, range)
+      if e.how == "square" and e.sq_mx == pmx and e.sq_my == pmy then
+        for _, f in ipairs(fires[gj]) do
+          local at = f + e.t
+          if at <= now + horizon then out[#out + 1] = at end
+        end
+      end
+    end
+  end
+  local hs = M.shells_on_blocker(world, info, pmx, pmy)
+  for i = 1, #hs do
+    local hx, hy = bit.rshift(math.floor(hs[i].x), 8), bit.rshift(math.floor(hs[i].y), 8)
+    if not (hx == pmx and hy == pmy) and now + hs[i].t <= now + horizon then
+      out[#out + 1] = now + hs[i].t
+    end
+  end
+  return out
+end
+
+-- The fire ticks of pill p from now to now + horizon (absolute), before
+-- `death` when given. With no extra hits: pill_next_fire, then one reload
+-- apart (its reload now). With extra hits (`more`, absolute ticks): the
+-- engine's ladder from the hits seen (p._eng_hits, or none) and those, one
+-- tick at a time, so a hit that cuts the reload makes it fire at once.
+function M.fire_ticks(p, info, now, x, horizon, more, death)
+  local nxt, reload, last = M.pill_next_fire(p, info, now, x)
+  if reload < 1 then reload = 1 end
+  local t_end = now + horizon
+  local function ok(f) return f <= t_end and (not death or f < death) end
+  local out = {}
+  if not (more and #more > 0) then
+    local f = nxt
+    while ok(f) do out[#out + 1] = f; f = f + reload end
+    return out
+  end
+  local PS = require("pt2_start")
+  local eh = p._eng_hits or {}
+  local function iv(t)
+    local v = PS.engine_reload(eh, t, x, more)
+    return (v and v >= 1) and v or 1
+  end
+  local f = nxt
+  if last then
+    f = now + 1
+    while ok(f) and f - last < iv(f) do f = f + 1 end
+  end
+  while ok(f) do
+    out[#out + 1] = f
+    local t = f + 1
+    while ok(t) and t - f < iv(t) do t = t + 1 end
+    f = t
+  end
+  return out
+end
+
 -- C.QUICK_REPAIR_TANK_CLEAR_TICKS (W, Nov 22, Andrew): the tank must be
 -- clear of pill fire for W ticks. A pill that shoots at the tank shoots
 -- along the line the builder walks out on (the blocker sits between the tank
@@ -321,10 +395,27 @@ function M.tank_clear(world, info, now)
     end
   end
   local N = C.LGM_SHELL_PREDICT_TICKS or 63
+  -- run_c12 gap_n: a hit by another pill's shell can make a pill fire at
+  -- once (M.cross_pill_hits / M.fire_ticks).
+  local cg = M.guns(world, info, pr / 256)
+  local cgi, cf0 = {}, {}
+  for i = 1, #cg do
+    cgi[cg[i].id] = i
+    cf0[i] = M.fire_ticks(cg[i].p, info, now, x, W)
+  end
   for gi = 1, #guns do
     local id = guns[gi]
     local p = world.pills[id]
     local nxt, reload, last = M.pill_next_fire(p, info, now, x)
+    local ci = cgi[id]
+    if ci then
+      local extra = M.cross_pill_hits(world, info, cg, cf0, ci, info.tankx / 256.0,
+                                      info.tanky / 256.0, pr / 256, now, W)
+      if #extra > 0 then
+        local fl = M.fire_ticks(p, info, now, x, W, extra)
+        if fl[1] and fl[1] < nxt then nxt = fl[1] end
+      end
+    end
     local px, py = p.mx * 256 + 128, p.my * 256 + 128
     local dx, dy = info.tankx - px, info.tanky - py
     local d = math.sqrt(dx * dx + dy * dy)
@@ -764,6 +855,15 @@ function M.fire_conflict(world, info, now, goal, k, rb, bx0, by0, t0, t_arr, sd,
   local verts = sd and M.swerve_verts(ox, oy, goal.mx + 0.5, goal.my + 0.5, sd) or nil
   local bcx, bcy = rb.mx + 0.5, rb.my + 0.5
   local kt = k and k.t
+  -- run_c12 gap_n: each gun's fire ticks count the other guns' shells that
+  -- hit it (M.cross_pill_hits): first without them, then with them.
+  local horizon = math.max(0, t_end - now)
+  local fires0 = {}
+  for gi = 1, #guns do
+    local g = guns[gi]
+    local d0 = (g.p.mx == goal.mx and g.p.my == goal.my) and kt or nil
+    fires0[gi] = M.fire_ticks(g.p, info, now, x, horizon, nil, d0)
+  end
   for gi = 1, #guns do
     local g = guns[gi]
     local is_target = (g.p.mx == goal.mx and g.p.my == goal.my)
@@ -774,8 +874,9 @@ function M.fire_conflict(world, info, now, goal, k, rb, bx0, by0, t0, t_arr, sd,
     -- shots after T_kill go into the side).
     local all_side = verts and (swerving or not death)
     if not (all_side and not sdirty) then
-      local f, reload = M.pill_next_fire(g.p, info, now, x)
-      if reload < 1 then reload = 1 end
+      local fires = fires0[gi]
+      local extra = M.cross_pill_hits(world, info, guns, fires0, gi, tx, ty, range, now, horizon)
+      if #extra > 0 then fires = M.fire_ticks(g.p, info, now, x, horizon, extra, death) end
       local dbx, dby = bcx - g.gx, bcy - g.gy
       local D = math.sqrt(dbx * dbx + dby * dby)
       local at_d = math.floor(D / spd + 0.5)
@@ -785,7 +886,8 @@ function M.fire_conflict(world, info, now, goal, k, rb, bx0, by0, t0, t_arr, sd,
       if al > 0.01 then ux, uy = ax / al, ay / al end
       local lane = al > 0.01 and seg_square(g.gx, g.gy, g.gx + ux * range,
                                             g.gy + uy * range, rb.mx, rb.my, m)
-      while f <= t_end and (not death or f < death) do
+      for fi = 1, #fires do
+        local f = fires[fi]
         local into_side = verts and (swerving or (kt and f >= kt))
         if into_side then
           if sdirty then
@@ -824,7 +926,6 @@ function M.fire_conflict(world, info, now, goal, k, rb, bx0, by0, t0, t_arr, sd,
             end
           end
         end
-        f = f + reload
       end
     end
   end

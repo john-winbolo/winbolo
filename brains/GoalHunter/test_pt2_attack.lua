@@ -866,6 +866,11 @@ do
   check("hit list: both hits kept", P._eng_hits and #P._eng_hits == 2)
   W.note_eng_hit(P, { rules = {} }, 20 + 100 * 32 + 1)
   check("hit list: starts over once calm", #P._eng_hits == 1)
+  local P3 = {}
+  W.note_eng_hit(P3, { rules = {} }, 10, 2)
+  check("hit list: two armour lost in one tick = two hits (run_c12)", P3._eng_hits and #P3._eng_hits == 2)
+  W.note_eng_hit(P3, { rules = { pill_shell_damage = 2 } }, 11, 2)
+  check("hit list: shell damage 2, two armour = one hit", #P3._eng_hits == 3)
   C.PT2_START_BUILDER_SAFE = false
   local P2 = {}
   W.note_eng_hit(P2, { rules = {} }, 10)
@@ -1019,6 +1024,84 @@ do
   U.ttype = rt
   C.QUICK_REPAIR_ON_TAKE = QK
   C.PT2_START_BUILDER_SAFE = K
+end
+
+-- run_c12 gap_n (Nov 24): a double take. The take target X (36,40)
+-- shoots at our tank (30.5, 40.5); its shells stop on the other pill A
+-- (34,40) on the way. Each hit halves A's speed (pillbox.c), and A, whose
+-- reload count is past the new speed, fires at once. Without the cross
+-- hits, A's calm reload (last fire 40 ticks ago, reload 100) fires after
+-- the builder's trip is over.
+print("run_c12: another pill's shells on a pill (cross hits)")
+do
+  local saved = PC.slot_cover_shots
+  PC.slot_cover_shots = function() return 0 end
+  local K = C.PT2_START_BUILDER_SAFE
+  C.PT2_START_BUILDER_SAFE = true
+  local OS0 = _G.OBJECT_SHOT
+  _G.OBJECT_SHOT = OS0 or 1
+  local QR = require("quick_repair")
+  local X = { mx = 36, my = 40, health = 8, owner = "hostile", anger = 0, anger_tick = 0 }
+  local A = { mx = 34, my = 40, health = 8, owner = "hostile", anger = 0, anger_tick = 0 }
+  local world = { pills = { [1] = X, [2] = A },
+                  pill_at = { [sq(36, 40)] = { { id = 1, pill = X } },
+                              [sq(34, 40)] = { { id = 2, pill = A } } },
+                  base_at = {} }
+  local info = { armour = 40, tankx = 30 * 256 + 128, tanky = 40 * 256 + 128,
+                 man_status = C.LGM_INTANK, player_number = 0, objects = {} }
+  local x = require("live_physics").context(info, {})
+  local guns = QR.guns_at(world, 30.5, 40.5, 8)
+  check("cross: two guns", #guns == 2, #guns)
+  local gx, ga
+  for i = 1, #guns do if guns[i].p == X then gx = i else ga = i end end
+  local e = QR.shell_end(world, guns[gx], 30.5, 40.5, 8)
+  check("cross: X's shell at the tank stops on A's square",
+        e.how == "square" and e.sq_mx == 34 and e.sq_my == 40,
+        tostring(e.how) .. " " .. tostring(e.sq_mx) .. "," .. tostring(e.sq_my))
+  local fires = { [gx] = { 1001, 1030 }, [ga] = {} }
+  local ch = QR.cross_pill_hits(world, info, guns, fires, ga, 30.5, 40.5, 8, 1000, 100)
+  check("cross: one hit on A per X shell", #ch == 2 and ch[1] == 1001 + e.t
+        and ch[2] == 1030 + e.t, #ch .. " " .. tostring(ch[1]))
+  local none = QR.cross_pill_hits(world, info, guns, fires, gx, 30.5, 40.5, 8, 1000, 100)
+  check("cross: A's shells do not stop on X", #none == 0, #none)
+  check("cross: a horizon before the hit gives none",
+        #QR.cross_pill_hits(world, info, guns, fires, ga, 30.5, 40.5, 8, 1000, 1) == 0)
+  -- fire_ticks: A's shell 40 moves out (last fire 960); calm reload 100.
+  info.objects = { { type = OBJECT_SHOT, owner = 255, info = 2, angle = 192,
+                     x = 34 * 256 + 128 - 40 * C.SHELL_SPEED, y = 40 * 256 + 128, life = 1 } }
+  local calm = QR.fire_ticks(A, info, 1000, x, 100)
+  check("fire_ticks: calm, next at last + 100", calm[1] == 1060, tostring(calm[1]))
+  local hot = QR.fire_ticks(A, info, 1000, x, 100, { 1020 })
+  check("fire_ticks: a hit at 1020 (speed 50, count 60): fires at once",
+        hot[1] == 1020, tostring(hot[1]))
+  check("fire_ticks: then one engine reload later (51 from 1052)", hot[2] == 1071, tostring(hot[2]))
+  local early = QR.fire_ticks(A, info, 1000, x, 100, { 1001 })
+  check("fire_ticks: a hit at 1001 (count 41 < 50): fires at 1010",
+        early[1] == 1010, tostring(early[1]))
+  info.objects = {}
+  -- The trip: A alone (X dead) keeps its calm reload, he is safe. With X
+  -- shooting at us, X's shells hit A, and A fires at once at the tank; its
+  -- shell stops on his wall (33,40) while he builds there.
+  local function g()
+    return { substate = "build_walls", mx = 36, my = 40,
+             _pt2 = { start = { ok = true, pills = {}, cx = 30.5, cy = 40.5 } } }
+  end
+  local wall = { mx = 33, my = 40, kind = "empty", pt2_kind = "wall" }
+  X.health = 0
+  A._tank_seen_since = 960
+  local hit = PA.builder_trip_hit(g(), world, info, 1000, { wall }, 30, 40, x)
+  check("trip, A alone (calm, next shell at +60): safe", hit == nil,
+        hit and (tostring(hit.id) .. " +" .. tostring(hit.t)))
+  X.health = 8
+  hit = PA.builder_trip_hit(g(), world, info, 1000, { wall }, 30, 40, x)
+  check("trip, X's shells on A: A fires at once and catches him",
+        hit ~= nil and hit.id == 2 and hit.cross ~= nil,
+        hit and (tostring(hit.id) .. " +" .. tostring(hit.t) .. " " .. tostring(hit.how)
+                 .. " cross=" .. tostring(hit.cross)))
+  A._tank_seen_since = nil
+  _G.OBJECT_SHOT = OS0
+  C.PT2_START_BUILDER_SAFE = K
+  PC.slot_cover_shots = saved
 end
 
 print(string.format("\n%d passed, %d failed", pass, fail))

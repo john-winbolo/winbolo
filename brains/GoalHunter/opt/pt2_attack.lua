@@ -656,20 +656,29 @@ function M.builder_trip_hit(goal, world, info, now, walls, ox, oy, x, opts)
   local fl = M.inflight_hit(world, info, legs, home, up_at)
   if fl then return fl end
   local guns = QR.guns_at(world, tx, ty, range)
-  for gi = 1, #guns do
-    local g = guns[gi]
+  -- The fire ticks of gun g in the trip (absolute, f - now <= home).
+  -- extra: the predicted hits on g by the other guns' shells
+  -- (QR.cross_pill_hits), or nil.
+  local function gun_fires(g, extra)
     local nxt, _, last = QR.pill_next_fire(g.p, info, now, x)
     local a0 = M.anger_now(g.p, now)
     local shot_at = hit_flight and g.p.mx == goal.mx and g.p.my == goal.my
     -- run_c7: with the pill's hits seen (world.lua _eng_hits), its reload
     -- is the engine's ladder (pt2_start.engine_reload) from those hits plus
     -- the tank's shells that land in the trip, not the brain's anger.
+    -- run_c12 gap_n: and plus the other pills' shells that hit it (a double
+    -- take: the take target's shells at the tank hit the other pill). With
+    -- such hits and none seen, the ladder starts calm.
     local eh = g.p._eng_hits
+    if not eh and extra and #extra > 0 then eh = {} end
     local more
-    if eh and shot_at then
+    if eh and (shot_at or extra) then
       more = {}
-      local h = now + 1 + hit_flight
-      while h <= now + home do more[#more + 1] = h; h = h + hit_reload end
+      if shot_at then
+        local h = now + 1 + hit_flight
+        while h <= now + home do more[#more + 1] = h; h = h + hit_reload end
+      end
+      for i = 1, #(extra or {}) do more[#more + 1] = extra[i] end
     end
     -- this pill's reload at tick t (ticks from now)
     local function iv_at(t)
@@ -711,7 +720,22 @@ function M.builder_trip_hit(goal, world, info, now, walls, ox, oy, x, opts)
     end
     local f = next_fire(now + 1, last)
     if nxt and nxt < f then f = nxt end
+    local out = {}
     while f - now <= home do
+      out[#out + 1] = f
+      f = next_fire(f + 1, f)
+    end
+    return out
+  end
+  local fires0 = {}
+  for gi = 1, #guns do fires0[gi] = gun_fires(guns[gi], nil) end
+  for gi = 1, #guns do
+    local g = guns[gi]
+    local fires = fires0[gi]
+    local extra = QR.cross_pill_hits(world, info, guns, fires0, gi, tx, ty, range, now, home)
+    if #extra > 0 then fires = gun_fires(g, extra) end
+    for fi = 1, #fires do
+      local f = fires[fi]
       local f0 = f - now
       local e = QR.shell_end(world, g, tx, ty, range, function(mx, my, k)
         local t = up_at[my * 256 + mx]
@@ -722,10 +746,10 @@ function M.builder_trip_hit(goal, world, info, now, walls, ox, oy, x, opts)
         local lx, ly = PS.man_at(legs, at)
         if lx and QR.blast_catches_man(e, lx, ly) then
           return { id = g.id, t = at, sq_mx = e.sq_mx, sq_my = e.sq_my,
-                   ex = e.ex, ey = e.ey, lx = lx, ly = ly, how = e.how }
+                   ex = e.ex, ey = e.ey, lx = lx, ly = ly, how = e.how,
+                   cross = (#extra > 0) and #extra or nil }
         end
       end
-      f = next_fire(f + 1, f)
     end
   end
   return nil

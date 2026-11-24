@@ -292,15 +292,23 @@ end
 -- PT2_START_BUILDER_SAFE (run_c7): the hit ticks for the engine's reload
 -- ladder (pt2_start.engine_reload). The list starts over once the pill has
 -- had time to come back to its calm reload from any level
--- (pill_attack_ticks steps of pill_cooldown_ticks).
-local function note_eng_hit(p, info, tick)
+-- (pill_attack_ticks steps of pill_cooldown_ticks). Every hit counts,
+-- whoever fired the shell: our own, an ally's, an enemy's, or another
+-- pill's (run_c12 gap_n: in a double take the take target's shells hit the
+-- other pill, and each one halves its speed). lost: the armour lost this
+-- tick; one hit per pill_shell_damage of it (pillbox.c takes that much a
+-- shell), at least one.
+local function note_eng_hit(p, info, tick, lost)
   if not C.PT2_START_BUILDER_SAFE then return end
   local r = info and info.rules
   local A = r and type(r.pill_attack_ticks) == "number" and r.pill_attack_ticks or 100
   local cd = r and type(r.pill_cooldown_ticks) == "number" and r.pill_cooldown_ticks or 32
+  local dmg = r and type(r.pill_shell_damage) == "number" and r.pill_shell_damage or 1
+  if dmg < 1 then dmg = 1 end
+  local n = math.max(1, math.floor((lost or 1) / dmg))
   local h = p._eng_hits
   if not h or (h[#h] and tick - h[#h] > A * cd) then h = {} end
-  h[#h + 1] = tick
+  for _ = 1, n do h[#h + 1] = tick end
   p._eng_hits = h
 end
 M.note_eng_hit = note_eng_hit   -- unit tests
@@ -423,7 +431,7 @@ function M.update(world, info, tick)
           p.anger      = math.min(1.0, (p.anger or 0) + C.PILL_ANGER_BUMP)
           p.anger_tick = tick
           p.last_hit_tick = tick   -- only on REAL damage (never on decay)
-          note_eng_hit(p, info, tick)
+          note_eng_hit(p, info, tick, old_health - new_health)
           -- Short hit history (last 8 hit ticks): defend_pill measures the
           -- live damage rate from it (hits inside DEFEND_ACTIVE_WINDOW).
           p.hit_log = p.hit_log or {}
@@ -663,7 +671,7 @@ function M.process_events(world, info, state)
             p.anger      = math.min(1.0, (p.anger or 0) + C.PILL_ANGER_BUMP)
             p.anger_tick = tick
             p.last_hit_tick = tick   -- only on REAL damage (never on decay)
-            note_eng_hit(p, info, tick)
+            note_eng_hit(p, info, tick, old_health - new_health)
             p.hit_log = p.hit_log or {}
             p.hit_log[#p.hit_log + 1] = tick
             if #p.hit_log > 8 then table.remove(p.hit_log, 1) end
