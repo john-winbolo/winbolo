@@ -1087,6 +1087,8 @@ void printArgs() {
   fprintf(stderr, "                host only when the host's own install holds its brain, file for file. custom: hosts\n");
   fprintf(stderr, "                download this server's brain files (a player's built-in host built to run only\n");
   fprintf(stderr, "                official brains still takes none) (default official)\n");
+  fprintf(stderr, "-bothost-stale-keys-ms <ms> - a Bot Host bot with no input for ms lets go of its keys (its tank stops\n");
+  fprintf(stderr, "                turning and driving) until input comes again; 0 = off (default 500)\n");
   fprintf(stderr, "-bothost-nomove - no bot moves between the server and the Bot Hosts while a game runs: each bot is placed\n");
   fprintf(stderr, "                once and stays there (a fall-back to the server still happens). For brain-debug games.\n");
   fprintf(stderr, "-bothost-slots <name>=<n> - give Bot Host <name> (its listed name, or the player's name for a\n");
@@ -3501,6 +3503,12 @@ int main(int argc, char **argv) {
           argExist(argc, argv, "record-bothost-data"));
       transportUdpServerSetBotHostNoMove(
           argExist(argc, argv, "bothost-nomove"));
+      {
+        int a = findArg(argc, argv, "bothost-stale-keys-ms");
+        if (a != ARG_NOT_FOUND && a < argc) {
+          serverSimSetBotHostStaleKeysMs(atoi(argv[a]));
+        }
+      }
       transportUdpServerSetBotHostSpreadEven(
           argExist(argc, argv, "bothost-spread-even"));
       {

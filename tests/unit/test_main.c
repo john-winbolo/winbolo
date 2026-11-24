@@ -1464,6 +1464,7 @@ static const UnitTestEntry s_tests[] = {
     { "map_colours_team",                        run_map_colours_team                        },
     { "map_markers_tank_reach",                  run_map_markers_tank_reach                  },
     { "stall_advances_processed_tick",           run_stall_advances_processed_tick           },
+    { "stall_bothost_stale_keys",                run_stall_bothost_stale_keys                },
     { "turn_release_no_overshoot",               run_turn_release_no_overshoot               },
     { "turn_gap_preserves_ramp",                 run_turn_gap_preserves_ramp                 },
     { "turn_long_gap_no_duplicate",              run_turn_long_gap_no_duplicate              },

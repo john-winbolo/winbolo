@@ -117,6 +117,9 @@
 /* Ticks without a datagram from a Bot Host before it is dropped. The host
  * pings every 500 ms. */
 #define BOT_HOST_TIMEOUT_TICKS   250
+/* A log line that may repeat (a row's CPU estimate, a host's slot count):
+ * at most one each 500 ticks (10 s) for each host. */
+#define BOT_HOST_CPU_LOG_TICKS 500
 /* Ticks a seat waits for its bot connection after the assign. */
 /* The pending timeout: botHostPendingExpired (bot_host_lockstep.h). */
 /* Ticks between checks of a remote seat's brain, AI level, team and init
@@ -1632,9 +1635,30 @@ static void botHostOnControl(int h, const uint8_t *msg, uint16_t len) {
     if (evt.type == CTRL_BOT_HOST_SLOTS) {
         uint8_t rs = evt.u.botHostSlots.refuseSeat;
         if (evt.u.botHostSlots.slots != hc->slots) {
-            fprintf(stderr, "[bothost] Bot Host \"%s\" now offers this server "
-                            "%u slots\n", hc->name,
-                    (unsigned)evt.u.botHostSlots.slots);
+            /* A change only, and at most one line each
+             * BOT_HOST_CPU_LOG_TICKS (10 s) for each host, so a host whose
+             * slots go up and down does not fill the log. The next line
+             * counts the changes it left out. */
+            if (hc->slotsLogged &&
+                udpServer.tickCount - hc->slotsLogTick <
+                    BOT_HOST_CPU_LOG_TICKS) {
+                hc->slotsUnlogged++;
+            } else if (hc->slotsUnlogged > 0) {
+                fprintf(stderr, "[bothost] Bot Host \"%s\" now offers this "
+                                "server %u slots (%u changes before this "
+                                "one not logged)\n", hc->name,
+                        (unsigned)evt.u.botHostSlots.slots,
+                        (unsigned)hc->slotsUnlogged);
+                hc->slotsUnlogged = 0;
+                hc->slotsLogged = true;
+                hc->slotsLogTick = udpServer.tickCount;
+            } else {
+                fprintf(stderr, "[bothost] Bot Host \"%s\" now offers this "
+                                "server %u slots\n", hc->name,
+                        (unsigned)evt.u.botHostSlots.slots);
+                hc->slotsLogged = true;
+                hc->slotsLogTick = udpServer.tickCount;
+            }
         }
         hc->slots = evt.u.botHostSlots.slots;
         {
@@ -2000,8 +2024,8 @@ static uint8_t  botHostCpuBotOwnerSent[MAX_BOT_HOSTS + 1];
 static uint8_t  botHostCpuBotSrcSent[MAX_BOT_HOSTS + 1];
 
 /* The log line for a row's CPU estimate: the first one, then a change at
- * most each BOT_HOST_CPU_LOG_TICKS, so the log does not fill. */
-#define BOT_HOST_CPU_LOG_TICKS 500
+ * most each BOT_HOST_CPU_LOG_TICKS (defined at the top of this file), so
+ * the log does not fill. */
 static uint32_t botHostCpuLogTick[MAX_BOT_HOSTS + 1];
 static bool     botHostCpuLogged[MAX_BOT_HOSTS + 1];
 
@@ -5467,8 +5491,11 @@ static void botHostPlaceStep(ServerSim *sim, ServerState st) {
      * map or carry tokens off the list) takes none. The bots already on a
      * Bot Host count too (their slot holds the bot connection, not a
      * player): a host that joins while every bot runs on other hosts may
-     * take them by the lag rule. */
-    {
+     * take them by the lag rule. With no open host (none connected) this
+     * is skipped: it would build every bot's init argument and leave
+     * anyHost false. The early return stays below botHostOverStep, so with
+     * no Bot Host a held bot still gets its brain on the server again. */
+    if (anyHost) {
         BotSeatFitInfo fitInfo[MAX_TANKS];
         bool fitHave[MAX_TANKS];
         for (s = 0; s < MAX_TANKS; s++) {

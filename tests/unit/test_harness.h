@@ -2601,6 +2601,7 @@ int run_map_colours_team(void);
 int run_map_markers_tank_reach(void);
 
 int run_stall_advances_processed_tick(void);
+int run_stall_bothost_stale_keys(void);
 int run_turn_release_no_overshoot(void);
 int run_turn_gap_preserves_ramp(void);
 int run_turn_long_gap_no_duplicate(void);

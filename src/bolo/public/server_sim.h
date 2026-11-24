@@ -2423,6 +2423,15 @@ bool          serverSimIsServerBotSlotsLocked(const ServerSim *sim);
 bool          serverSimSetServerBotSlots(ServerSim *sim, int slots);
 /* -botcapacity N: the choice is N and no player may change it. */
 void          serverSimLockServerBotSlots(ServerSim *sim, int slots);
+
+/* -bothost-stale-keys-ms: when a Bot Host sends no input for a bot it
+ * runs for this many ms, the server clears that bot's keys (the tank stops
+ * turning and driving; a stall input never fires) until input comes again.
+ * 0 is off. Default BOT_HOST_STALE_KEYS_MS_DEFAULT. One value for the
+ * process. */
+#define BOT_HOST_STALE_KEYS_MS_DEFAULT 500   /* Andrew approved Nov 9 */
+void          serverSimSetBotHostStaleKeysMs(int ms);
+int           serverSimGetBotHostStaleKeysMs(void);
 /* The CTRL_SERVER_BOT_SLOTS event for the value now. */
 void          serverSimFillServerBotSlotsEvent(const ServerSim *sim,
                                                struct ControlEvent *evt);
