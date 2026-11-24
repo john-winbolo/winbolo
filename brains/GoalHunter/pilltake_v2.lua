@@ -7,7 +7,9 @@
 -- choose the evaluator through pt2_eval.lua.
 --
 --  1. Tank points: the old rings (radii_offsets, PT2_ANGLE_STEP_DEG), the
---     old in_map / stay_in / standable / banned filters. PT2_AIM_NUDGE
+--     old in_map / stay_in / standable / banned filters; with
+--     PT2_FARTHEST_RING every ring of ring_radii, the farther ring first
+--     in the rank after safe, kills and the aim rule. PT2_AIM_NUDGE
 --     moves only a point whose aims are all short (no wall, pill or base
 --     stops them); the nudged point is judged again with exact casts.
 --  2. Wedges, kept between runs (module state, rebuilt only when the bot's
@@ -62,6 +64,11 @@ local M = {}
 -- pill_name, finish_ok, set_band, hold_point, AIMS: the old module's.
 setmetatable(M, { __index = OLD })
 
+-- PT2_FARTHEST_RING: is it on for this inp (the flag and a ring list)?
+function M.far_on(inp)
+  return (inp.farthest_ring and inp.ring_radii and #inp.ring_radii > 0) and true or false
+end
+
 -- The old knobs plus v2's own.
 function M.knob_inp(C, inp)
   inp = OLD.knob_inp(C, inp)
@@ -71,6 +78,12 @@ function M.knob_inp(C, inp)
   inp.aim_points = C.PT2_AIM_POINTS or 5
   -- PT2_AIM_AVOID_CHAIN_NEIGHBOUR (Nov 24): an aim beside a chain member last
   inp.aim_avoid_nb = C.PT2_AIM_AVOID_CHAIN_NEIGHBOUR ~= false
+  -- PT2_FARTHEST_RING (Nov 24): every ring of ring_radii (absolute, far
+  -- to near), the farther ring first in the rank
+  inp.farthest_ring = C.PT2_FARTHEST_RING ~= false
+  local rr = C.PT2_FARTHEST_RING_RADII or { 7.4, 7.2, 7.0, 6.6 }
+  inp.ring_radii = {}
+  for i, r in ipairs(rr) do inp.ring_radii[i] = r end
   -- PT2_START_WHILE_BUILDING (E4); anger_bump: world.lua's anger per hit
   inp.start_while_building = C.PT2_START_WHILE_BUILDING ~= false
   inp.anger_bump = C.PILL_ANGER_BUMP or 0.3333
@@ -119,14 +132,23 @@ M.AIMS9[9] = { 24, 128 }
 -- with every point beside, the best of them still wins. aimnb is nil with
 -- the knob off (the old order).
 --
+-- PT2_FARTHEST_RING (Nov 24, Andrew's yes): far on (M.far_on: the knob
+-- and a ring_radii list), two points of the same safe and kills (and
+-- aimnb) rank next by ring: the farther ring wins. Before E1, E4 and the
+-- travel band. A farther ring never beats more kills or a safe point.
+--
 -- no_s0: skip the S0 tie-break; a full tie is then false (b stays). The
 -- group step passes it (Nov 23, Andrew approved Nov 23): on a full tie
 -- between plans with different first pills, the plan it has (the goal
 -- pill's own, run first) wins, as before S0.
-function M.better(a, b, cap, band, pec, swb, no_s0)
+function M.better(a, b, cap, band, pec, swb, no_s0, far)
   if a.safe == b.safe and a.kills == b.kills then
     local na, nb = a.aimnb or false, b.aimnb or false
     if na ~= nb then return nb end
+    if far then
+      local ra, rb = a.radius or 0, b.radius or 0
+      if ra ~= rb then return ra > rb end
+    end
   end
   if (pec or swb) and band and band > 0 and a.safe == b.safe and a.kills == b.kills then
     local sa, sb = a.score, b.score
@@ -2211,8 +2233,20 @@ function M.evaluate_lua(inp)
   ctx.chains_only = co
   if co then lazy = true end
   local no_chain = nil
-  for _, roff in ipairs(inp.radii_offsets) do
-    local R = inp.radius + roff
+  -- PT2_FARTHEST_RING: the rings are ring_radii (absolute, far to near),
+  -- every one runs; else the old rings (radius + radii_offsets), an inner
+  -- one only when the ones before found nothing safe
+  local far = M.far_on(inp)
+  local rings = {}
+  if far then
+    for i, r in ipairs(inp.ring_radii) do rings[i] = r end
+  else
+    for i, roff in ipairs(inp.radii_offsets) do rings[i] = inp.radius + roff end
+  end
+  -- far: a ring stopped "no chain" (a safe single take, no safe chain);
+  -- the run goes on, a nearer ring may have a safe chain
+  local far_single = false
+  for _, R in ipairs(rings) do
     local cands = {}
     local mpts = {}
     local nsteps = floor(360 / inp.angle_step + 0.5)
@@ -2442,7 +2476,7 @@ function M.evaluate_lua(inp)
     end
     ts = clk and clk()
     OLD.set_band(scored, band)
-    table.sort(scored, function(a, b) return M.better(a, b, cap, band, inp.prefer_existing_cover, inp.start_while_building) end)
+    table.sort(scored, function(a, b) return M.better(a, b, cap, band, inp.prefer_existing_cover, inp.start_while_building, false, far) end)
     if ts then tm.sort = tm.sort + clk() - ts end
     if inp.leeway_on then
       -- the first leeway_top points of this rank (the single takes among
@@ -2457,7 +2491,7 @@ function M.evaluate_lua(inp)
       local function rerank()
         local t2 = clk and clk()
         OLD.set_band(scored, band)
-        table.sort(scored, function(a, b) return M.better(a, b, cap, band, inp.prefer_existing_cover, inp.start_while_building) end)
+        table.sort(scored, function(a, b) return M.better(a, b, cap, band, inp.prefer_existing_cover, inp.start_while_building, false, far) end)
         if t2 then tm.sort = tm.sort + clk() - t2 end
       end
       local X = nil
@@ -2507,7 +2541,7 @@ function M.evaluate_lua(inp)
     -- would win the full run, so the run stops with no chain. The single
     -- takes are judged covered now first (no plan), then in S9 order
     -- (base + build_cost * kmin) until the first safe one.
-    if co and singles_co and #singles_co > 0 then
+    if co and singles_co and #singles_co > 0 and not (far and (far_single or (best and best.safe and best.kills >= 2))) then
       local has_chain = false
       for _, r in ipairs(scored) do
         if r.safe and r.kills >= 2 then has_chain = true; break end
@@ -2539,10 +2573,23 @@ function M.evaluate_lua(inp)
         end
       end
     end
-    if no_chain then st.co_stop = st.co_stop + 1; best = nil; break end
-    for _, rec in ipairs(scored) do all[#all + 1] = rec end
-    if scored[1] and (not best or M.better(scored[1], best, cap, band, inp.prefer_existing_cover, inp.start_while_building)) then best = scored[1] end
-    if best and best.safe then break end
+    if no_chain and far then
+      far_single, no_chain = true, nil
+    elseif no_chain then st.co_stop = st.co_stop + 1; best = nil; break
+    else
+      for _, rec in ipairs(scored) do all[#all + 1] = rec end
+      if scored[1] and (not best or M.better(scored[1], best, cap, band, inp.prefer_existing_cover,
+                                             inp.start_while_building, false, far)) then
+        best = scored[1]
+      end
+      -- PT2_FARTHEST_RING: every ring runs (a nearer one may have more kills)
+      if best and best.safe and not far then break end
+    end
+  end
+  if far_single and not (best and best.safe and best.kills >= 2) then
+    no_chain = "single"
+    st.co_stop = st.co_stop + 1
+    best = nil
   end
   if best and best.safe and best.plan and #best.plan > 0 then
     if inp.v2_confirm_check then confirm_exact(ctx, best) end
@@ -2628,7 +2675,7 @@ end
 function M.group_takes(inp, goalA, b, best)
   return (b and b.safe and b.chain_mode and b.in_chain and b.in_chain[goalA]
           and (not best or M.better(b, best, inp.leeway_min, inp.travel_band, inp.prefer_existing_cover,
-                                    inp.start_while_building, true))) and true or false
+                                    inp.start_while_building, true, M.far_on(inp)))) and true or false
 end
 
 function M.group_step(job)

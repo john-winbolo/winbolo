@@ -278,7 +278,7 @@ local function cmp_line(now, pill, inp, res, v1, cost_us, drive, do_print)
   end
   local line = string.format(
     "PT2_CMP t=%d pill=(%d,%d) hp=%d | v1: so=%s deg=%s aim=%s act=%s pot=%s cover=%s"
-    .. " | v2: so=%s deg=%s aim=%s aimnb=%s chain=%s mode=%s kills=%s need=%s have=%s safe=%s lee=%s plan=%s"
+    .. " | v2: so=%s deg=%s R=%s aim=%s aimnb=%s chain=%s mode=%s kills=%s need=%s have=%s safe=%s lee=%s plan=%s"
     .. " | diff=%s d_wu=%s why=%s drive=%s cost_us=%d evals=%d green_pen=%d green_pen_skip=%d travel_noA=%d noA_pts=%d v1_score=%s v2_score=%s",
     now, pill.mx, pill.my, pill.health or 0,
     v1 and string.format("(%.2f,%.2f)", v1.cx, v1.cy) or "-",
@@ -288,6 +288,7 @@ local function cmp_line(now, pill, inp, res, v1, cost_us, drive, do_print)
     v1 and tostring(v1.cover) or "-",
     b and string.format("(%.2f,%.2f)", b.cx, b.cy) or "-",
     b and string.format("%.1f", b.deg) or "-",
+    b and string.format("%.2f", b.radius or 0) or "-",
     b and tostring(b.aim_idx) or "-",
     b and b.aimnb ~= nil and (b.aimnb and "1" or "0") or "-",
     chain, mode_of(b),

@@ -583,6 +583,9 @@ struct St {
     Rec   *best;
     AllE  *all; int nall, capall;
     int    nradii; double radii[PT2_MAXRADII];
+    /* PT2_FARTHEST_RING: far = inp.farthest_ring and a ring_radii list;
+     * far_single: a ring stopped "no chain", the run goes on */
+    int    far, far_single, nring; double ring[PT2_MAXRADII];
     int    ri;                  /* ring index */
     double R;
     double nsteps;
@@ -3599,6 +3602,10 @@ static int better(Ev *e, const Rec *a, const Rec *b, int no_s0) {
     if (a->safe == b->safe && a->kills == b->kills) {
         int na = (a->flags & RF_AIMNB) ? a->aimnb : 0, nb = (b->flags & RF_AIMNB) ? b->aimnb : 0;
         if (na != nb) return nb;
+        if (e->far) {
+            double ra = (a->flags & RF_POS) ? a->radius : 0, rb = (b->flags & RF_POS) ? b->radius : 0;
+            if (ra != rb) return ra > rb;
+        }
     }
     if ((e->pec || e->swb) && e->has_band && e->band > 0 && a->safe == b->safe && a->kills == b->kills) {
         double sa = a->score, sb = b->score;
@@ -4385,6 +4392,19 @@ static void ev_read_inp(Ev *e) {
         e->ts_nt = nn / 2;
     }
     lua_pop(L, 1);
+    lua_getfield(L, S_INP, "ring_radii");
+    e->nring = 0;
+    if (lua_istable(L, -1)) {
+        for (int i = 1;; i++) {
+            lua_rawgeti(L, -1, i);
+            if (lua_isnil(L, -1)) { lua_pop(L, 1); break; }
+            if (e->nring >= PT2_MAXRADII) luaL_error(L, "gh_pt2_v2: over %d ring radii", PT2_MAXRADII);
+            e->ring[e->nring++] = lua_tonumber(L, -1);
+            lua_pop(L, 1);
+        }
+    }
+    lua_pop(L, 1);
+    e->far = getbool(L, S_INP, "farthest_ring") && e->nring > 0;
     lua_getfield(L, S_INP, "radii_offsets");
     e->nradii = 0;
     if (lua_istable(L, -1)) {
@@ -4593,8 +4613,10 @@ static int ev_run(Ev *e) {
     Rec *rec, *fin;
     switch (e->pc) {
     case 0:
-        for (e->ri = 0; e->ri < e->nradii; e->ri++) {
-            e->R = e->radius + e->radii[e->ri];
+        /* PT2_FARTHEST_RING: the rings are ring_radii (absolute, far to
+         * near), every one runs; else radius + radii_offsets */
+        for (e->ri = 0; e->ri < (e->far ? e->nring : e->nradii); e->ri++) {
+            e->R = e->far ? e->ring[e->ri] : e->radius + e->radii[e->ri];
             e->ncands = 0;
             points_of_ring(e);
             if (!e->has_surv1) {
@@ -4765,7 +4787,8 @@ static int ev_run(Ev *e) {
                     if (any) rerank(e);
                 }
             }
-            if (e->co && e->has_singles_co && e->nsingles > 0) {
+            if (e->co && e->has_singles_co && e->nsingles > 0
+                && !(e->far && (e->far_single || (e->best && e->best->safe && e->best->kills >= 2)))) {
                 int has_chain = 0;
                 for (int i = 1; i <= e->nscored; i++) {
                     Rec *r = e->scored[i];
@@ -4796,10 +4819,18 @@ static int ev_run(Ev *e) {
                     }
                 }
             }
-            if (e->no_chain) { e->co_stop += 1; e->best = NULL; break; }
-            for (int i = 1; i <= e->nscored; i++) all_push(e, e->scored[i], NULL);
-            if (e->nscored >= 1 && (!e->best || better(e, e->scored[1], e->best, 0))) e->best = e->scored[1];
-            if (e->best && e->best->safe) break;
+            if (e->no_chain && e->far) { e->far_single = 1; e->no_chain = 0; }
+            else if (e->no_chain) { e->co_stop += 1; e->best = NULL; break; }
+            else {
+                for (int i = 1; i <= e->nscored; i++) all_push(e, e->scored[i], NULL);
+                if (e->nscored >= 1 && (!e->best || better(e, e->scored[1], e->best, 0))) e->best = e->scored[1];
+                if (e->best && e->best->safe && !e->far) break;
+            }
+        }
+        if (e->far_single && !(e->best && e->best->safe && e->best->kills >= 2)) {
+            e->no_chain = 1;
+            e->co_stop += 1;
+            e->best = NULL;
         }
         if (e->best && e->best->safe && (e->best->flags & RF_PLAN) && e->best->plan->n > 0) {
             e->best->hold = hold_point(e, e->best);

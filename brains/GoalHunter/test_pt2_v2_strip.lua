@@ -1096,5 +1096,74 @@ do
   clear(); V.reset()
 end
 
+-- ── 12. PT2_FARTHEST_RING ─────────────────────────────────────────────────
+print("PT2_FARTHEST_RING: the farthest ring that works")
+do
+  local function pt(radius, kills, safe, score)
+    return { safe = safe, kills = kills, score = score, tier_min = 10, n_built = 1,
+             depth = 3, blk = 1, leeway = 8, deg = 0, radius = radius }
+  end
+  local far, near = pt(7.4, 1, true, 14), pt(7.0, 1, true, 10)
+  check("rank: the farther ring wins (same safe and kills)",
+        V.better(far, near, 8, 5, true, true, false, true) == true
+        and V.better(near, far, 8, 5, true, true, false, true) == false)
+  check("rank: far off = the old order (travel first)",
+        V.better(near, far, 8, 0, true, true, false, false) == OLD.better(near, far, 8, 0))
+  local near2 = pt(7.0, 2, true, 10)
+  check("rank: a nearer ring with more kills wins", V.better(near2, far, 8, 5, true, true, false, true) == true)
+  local far_un = pt(7.4, 2, false, 10)
+  check("rank: a safe nearer point beats an unsafe farther one",
+        V.better(near2, far_un, 8, 5, true, true, false, true) == true)
+  local fb, nb = pt(7.4, 1, true, 10), pt(7.0, 1, true, 10)
+  fb.aimnb, nb.aimnb = true, false
+  check("rank: the aim rule comes before the ring", V.better(nb, fb, 8, 5, true, true, false, true) == true)
+  -- evaluate: one pill on open grass, walls planned; with far on the
+  -- best is on the 7.4 ring with the same kills as the old 7.0 ring
+  local function run(far_on, rr)
+    clear(); V.reset()
+    local A = { mx = 128, my = 120, owner = "hostile", health = 15 }
+    local inp = make_inp(make_world({ A }), A, 0)
+    inp.radius = 7.0
+    inp.farthest_ring = far_on
+    inp.ring_radii = rr or { 7.4, 7.2, 7.0, 6.6 }
+    return V.evaluate_lua(inp).best
+  end
+  local off, on = run(false), run(true)
+  check("knob off: the old ring (7.0)", off and off.safe and off.radius == 7.0, off and off.radius)
+  check("knob on: the 7.4 ring wins, same kills", on and on.safe and on.radius == 7.4
+        and off and on.kills == off.kills, on and on.radius)
+  local e = run(true, {})
+  check("an empty ring list: the old rings", e and e.radius == 7.0, e and e.radius)
+  check("far_on needs the flag and a list", V.far_on({ farthest_ring = true, ring_radii = { 7 } })
+        and not V.far_on({ farthest_ring = true, ring_radii = {} })
+        and not V.far_on({ farthest_ring = false, ring_radii = { 7 } }))
+  check("knob_inp: PT2_FARTHEST_RING", V.knob_inp(C, {}).farthest_ring == (C.PT2_FARTHEST_RING ~= false)
+        and #V.knob_inp(C, {}).ring_radii == #(C.PT2_FARTHEST_RING_RADII or { 1, 2, 3, 4 }))
+  -- two pills, P at (126,119): the 7.4 ring has safe single takes but no
+  -- safe chain; a nearer ring's chain (2 kills) wins
+  do
+    clear(); V.reset()
+    local A = { mx = 128, my = 120, owner = "hostile", health = 15 }
+    local P = { mx = 126, my = 119, owner = "hostile", health = 15 }
+    local inp = make_inp(make_world({ A, P }), A, 0)
+    inp.radius = 7.0
+    inp.farthest_ring = true
+    inp.ring_radii = { 7.4, 7.2, 7.0, 6.6 }
+    inp.keep_all = true
+    local r = V.evaluate_lua(inp)
+    local single74, chain74 = false, false
+    for _, x in ipairs(r.all or {}) do
+      if x.safe and x.radius == 7.4 then
+        if x.kills == 1 then single74 = true else chain74 = true end
+      end
+    end
+    local b = r.best
+    check("the 7.4 ring: a safe single take, no safe chain", single74 and not chain74)
+    check("a nearer ring with more kills wins", b and b.safe and b.kills == 2 and b.radius < 7.4,
+          b and string.format("%s/%s", tostring(b.radius), tostring(b.kills)))
+  end
+  clear()
+end
+
 print(string.format("%d passed, %d failed", pass, fail))
 os.exit(fail == 0 and 0 or 1)

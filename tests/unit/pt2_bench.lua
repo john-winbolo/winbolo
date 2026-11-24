@@ -49,6 +49,8 @@
 --                             the full ties and the groups whose pick differs
 --   set=<k>:<v>[,<k>:<v>...]  set these inp fields on every case (v: true,
 --                             false, a number, else a string)
+--   rings=<r>,<r>,...         inp.ring_radii (PT2_FARTHEST_RING, with
+--                             set=farthest_ring:true)
 --   eval=ab ev=<old|oldlua|v2> a=<k>:<v>,... b=<k>:<v>,...
 --                             one evaluator, two inp field sets (a knob off
 --                             and on): safe takes, kills, depth, walls, best
@@ -265,6 +267,11 @@ local function game_inp(case)
     end
   end
   for k, v in pairs(SET) do inp[k] = v end
+  -- rings=<r>,<r>,...: inp.ring_radii (PT2_FARTHEST_RING)
+  if args.rings then
+    inp.ring_radii = {}
+    for r in args.rings:gmatch("[^,]+") do inp.ring_radii[#inp.ring_radii + 1] = tonumber(r) end
+  end
   return inp, pills
 end
 

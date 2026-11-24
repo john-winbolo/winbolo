@@ -191,6 +191,8 @@ function M.evaluate(V2, inp, path)
     if tv == "number" or tv == "boolean" or tv == "string" then case.inp[k] = v end
   end
   case.inp.radii_offsets = inp.radii_offsets
+  -- PT2_FARTHEST_RING: the absolute ring radii
+  case.inp.ring_radii = inp.ring_radii
   for _, k in ipairs(ENV_FIELDS) do case.env[k] = env[k] end
   for k, p in ipairs(plist) do
     local q = {}

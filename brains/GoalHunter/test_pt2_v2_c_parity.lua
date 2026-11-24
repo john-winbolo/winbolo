@@ -10,7 +10,7 @@
 --   * N_RANDOM random small worlds (as test_pt2_old_c_parity.lua) with
 --     random v2 knobs (aim points, prefer existing cover, start while
 --     building, anger rise, extra cover walls, chains only, wall memo,
---     aim avoid chain neighbour);
+--     aim avoid chain neighbour, farthest ring and its ring radii);
 --   * N_LIVE random worlds with non-classic shell rules in env;
 --   * N_BLOCK random worlds with env.ts_boats and env.ts_tanks;
 --   * the cases in PT2_CASES_FILE (when set), recorded by pt2_capture.lua.
@@ -212,7 +212,7 @@ local cov = { cases = 0, best = 0, safe = 0, chain = 0, plan = 0, nudge = 0, hol
               hold_unsafe = 0, leeway = 0, reject = 0, finish = 0, why_unsafe = 0,
               ally_cover = 0, unsearched = 0, std_on = 0, start = 0, xcover = 0, no_chain = 0,
               memo = 0, memo_hits = 0, split = 0, split_yields = 0, group = 0, aim9 = 0,
-              aimnb = 0, aimnb_moved = 0 }
+              aimnb = 0, aimnb_moved = 0, far = 0, far_near = 0 }
 
 local function coverage(res)
   local b = res.best
@@ -233,6 +233,11 @@ local function coverage(res)
   local beside = false
   for _, r in ipairs(res.all or {}) do if r.aimnb then beside = true end end
   if beside then cov.aimnb = cov.aimnb + 1 end
+  local inp = res.inp
+  if inp and V2.far_on(inp) and b then
+    cov.far = cov.far + 1
+    if b.radius and b.radius < inp.ring_radii[1] then cov.far_near = cov.far_near + 1 end
+  end
   local st = res.v2 and res.v2.stat
   if st and (st.aimnb_moved or 0) > 0 then cov.aimnb_moved = cov.aimnb_moved + 1 end
   if res.no_chain then cov.no_chain = cov.no_chain + 1 end
@@ -517,6 +522,9 @@ local function random_case(ci)
   inp.chains_only_runs = rnd(3) ~= 0
   inp.wall_memo = rnd(4) == 0
   inp.aim_avoid_nb = rnd(3) ~= 0
+  inp.farthest_ring = rnd(2) == 0
+  inp.ring_radii = ({ { 7.4, 7.2, 7.0, 6.6 }, { 7.4, 7.0 }, { 6.6 }, { 7.8, 7.4, 6.2 } })[1 + rnd(4)]
+  if rnd(8) == 0 then inp.ring_radii = {} end
   if rnd(6) == 0 then inp._xcover_later = true end
   local hx, hy = cx + 0.5 - 6 + rnd(13), cy + 0.5 + 8
   inp.score_fn = function(deg, mx, my, x, y)
@@ -608,7 +616,7 @@ local cv = {}
 for _, k in ipairs({ "cases", "best", "safe", "chain", "plan", "nudge", "hold", "hold_unsafe",
                      "leeway", "reject", "finish", "why_unsafe", "ally_cover", "unsearched", "std_on",
                      "start", "xcover", "no_chain", "memo", "memo_hits", "split", "split_yields",
-                     "group", "aim9", "aimnb", "aimnb_moved" }) do
+                     "group", "aim9", "aimnb", "aimnb_moved", "far", "far_near" }) do
   cv[#cv + 1] = k .. "=" .. cov[k]
 end
 local cvs = string.format("%d random + %d live shell + %d tank shot blockers + %d recorded; %s",

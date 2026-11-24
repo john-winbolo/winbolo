@@ -1009,6 +1009,18 @@ M.PT2_AIM_POINTS = 9
 -- never a ban. Log: aimnb= on PT2_CMP and PT2_DRIVE. false = the old aims
 -- and rank. KEEL / MAST: false.
 M.PT2_AIM_AVOID_CHAIN_NEIGHBOUR = true
+-- PT2_FARTHEST_RING (Nov 24, Andrew's yes): v2 only. Prefer the farthest
+-- standoff ring that works. v2 tries every ring of PT2_FARTHEST_RING_RADII
+-- (absolute radii in squares, far to near, PPT and other takes alike), not
+-- the old radius + {0, -0.4} with an inner ring only when nothing was
+-- safe. Rank: safe, kills, the aim rule above, then the farther ring, then
+-- the rest (fewer walls, depth, own pill cover, leeway). A farther ring
+-- never beats more kills or a safe point; a ring too far fails the shot
+-- test on its own. No builder rule: the attack builder goal drives in
+-- the little more it needs. Log: R= on PT2_CMP and PT2_DRIVE.
+-- false = the old rings. KEEL / MAST: false.
+M.PT2_FARTHEST_RING = true
+M.PT2_FARTHEST_RING_RADII = { 7.4, 7.2, 7.0, 6.6 }
 -- PT2_START_WHILE_BUILDING (Nov 23, Andrew's yes, E4): v2 and its caller.
 -- The take may start while the builder still builds the planned walls when
 -- the armour holds the shells that get through (pt2_start.lua):
@@ -8415,6 +8427,7 @@ M.PRESETS = {
     PT2_CHAINS_ONLY = false,
     PT2_AIM_POINTS = 5,
     PT2_AIM_AVOID_CHAIN_NEIGHBOUR = false,
+    PT2_FARTHEST_RING = false,
     PT2_START_WHILE_BUILDING = false,
     PT2_START_ANGER_RISE = false,
     PT2_EXTRA_COVER_WALLS = 0,
@@ -8817,6 +8830,7 @@ M.PRESETS.mast = {
   PT2_CHAINS_ONLY                   = false,  -- 2.2.1 had no pill take v2
   PT2_AIM_POINTS                    = 5,      -- 2.2.1 had no pill take v2
   PT2_AIM_AVOID_CHAIN_NEIGHBOUR     = false,  -- 2.2.1 had no pill take v2
+  PT2_FARTHEST_RING                 = false,  -- 2.2.1 had no pill take v2
   PT2_START_WHILE_BUILDING          = false,  -- 2.2.1 had no pill take v2
   PT2_START_ANGER_RISE              = false,  -- 2.2.1 counted round(anger / bump) hits
   PT2_EXTRA_COVER_WALLS             = 0,      -- 2.2.1 had no pill take v2
