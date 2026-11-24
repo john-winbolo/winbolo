@@ -640,5 +640,61 @@ do
 end
 
 C.PILLTAKE_V2_EVALUATOR = false
+-- Nov 24 (c5 beside_n, Andrew's option a): the take's own wall_shield
+-- wall. The builder died on (122,116) at t=511, before the tank's first
+-- shot at t=513: the pill fired at the tank by itself. Same fixture: tank
+-- (30.5, 40.5) in range of the hostile pill at (36,40), which shoots along
+-- the row y = 40.5. No start check passed, so no tank fire is counted.
+print("PT2_START_BUILDER_SAFE: the take's own wall trips")
+do
+  local saved = PC.slot_cover_shots
+  PC.slot_cover_shots = function() return 0 end
+  local H = { mx = 36, my = 40, health = 8, owner = "hostile", anger = 0, anger_tick = 0 }
+  local world = { pills = { [5] = H }, pill_at = { [sq(36, 40)] = { { id = 5, pill = H } } } }
+  local info = { armour = 40, tankx = 30 * 256 + 128, tanky = 40 * 256 + 128,
+                 man_status = C.LGM_INTANK, player_number = 0, objects = {} }
+  local list = { { mx = 33, my = 40 }, { mx = 31, my = 42 } }
+  local function g()
+    return { kind = "attack_pill", mx = 36, my = 40, substate = "build_walls", _pt2 = {},
+             _wall_build_list = list, wall_shield = true, wall_mx = 33, wall_my = 40 }
+  end
+  local K = C.PT2_START_BUILDER_SAFE
+  C.PT2_START_BUILDER_SAFE = true
+  local goal = g()
+  check("wall on the pill's shell row, no tank fire: not sent",
+        PA.shield_wall_ok({}, goal, world, info, 1000, { mx = 33, my = 40 }) == false)
+  check("that wall is dropped from the take's list",
+        PA.shield_wall_skipped(goal, 33, 40) == true and PA.shield_wall_skipped(goal, 31, 42) == false)
+  check("logged once as a skip",
+        goal._pt2_bsafe_shield ~= nil and goal._pt2_bsafe_shield:find("^shield_wall=%(33,40%)|5:33:40") ~= nil,
+        goal._pt2_bsafe_shield)
+  check("a dropped wall stays dropped (no new trip check)",
+        PA.shield_wall_ok({}, goal, world, info, 1001, { mx = 33, my = 40 }) == false)
+  check("wall off the row: sent",
+        PA.shield_wall_ok({}, goal, world, info, 1000, { mx = 31, my = 42 }) == true)
+  goal._wall_build_list = { { mx = 33, my = 40 } }
+  check("a new wall list: the wall is checked again",
+        PA.shield_wall_skipped(goal, 33, 40) == false)
+  -- builder.set_mode: no wall_shield dispatch for the unsafe wall
+  local B = require("builder")
+  local state = { builder = {}, tick = 1000 }
+  goal = g()
+  B.set_mode(state, world, info, goal)
+  check("builder: the unsafe wall is not dispatched", state.builder.mode ~= "wall_shield"
+        and PA.shield_wall_skipped(goal, 33, 40), state.builder.mode)
+  goal = g(); goal.wall_mx, goal.wall_my = 31, 42
+  B.set_mode(state, world, info, goal)
+  check("builder: the safe wall is dispatched", state.builder.mode == "wall_shield"
+        and state.builder.wall_target and state.builder.wall_target.mx == 31, state.builder.mode)
+  C.PT2_START_BUILDER_SAFE = false
+  goal = g()
+  check("knob off: the wall on the row is sent (the old result)",
+        PA.shield_wall_ok({}, goal, world, info, 1000, { mx = 33, my = 40 }) == true)
+  B.set_mode(state, world, info, goal)
+  check("knob off: builder dispatches it", state.builder.mode == "wall_shield", state.builder.mode)
+  C.PT2_START_BUILDER_SAFE = K
+  PC.slot_cover_shots = saved
+end
+
 print(string.format("\n%d passed, %d failed", pass, fail))
 os.exit(fail == 0 and 0 or 1)

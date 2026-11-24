@@ -1075,10 +1075,18 @@ M.PT2_START_WHILE_BUILDING = true
 -- brain tracks the builder, his trip is what it sees of him: his real
 -- arrival, the rest of his stay, the engine's own walk home
 -- (danger.own_builder_timeline); else the walk estimate.
+-- The take's own walls (Nov 24, Andrew's option a): before the builder
+-- goes out from the tank to a v2 take's wall_shield wall, his trip gets
+-- the same check, with every pill in range of the tank firing at it by
+-- itself (the tank's fire counts only after the start check passed).
+-- Unsafe: he stays in, that wall is dropped from the take's wall list (not
+-- waited for, not missing) and the take goes on with its other blockers.
+-- A new wall list (a new plan) checks it again (pt2_attack.shield_wall_ok).
 -- Log effect: PT2_START ... builder unsafe (pill #id shell at +Nt hits (x,y)
 -- builder at (x,y)) -> wait; after the hold "PT2_START t=.. fire builder
 -- unsafe (...)" or "bg_wall=(x,y) builder unsafe (...)", once per change,
--- then "... builder safe -> go".
+-- then "... builder safe -> go"; a take wall: "PT2_START t=.. shield_wall=
+-- (x,y) builder unsafe (...) -> skip".
 -- false = old rule (the tank's armour only). KEEL / MAST: false.
 M.PT2_START_BUILDER_SAFE = true
 -- PT2_START_ANGER_RISE (Nov 23, Andrew's spec): the start check above

@@ -749,23 +749,25 @@ function M.current_trip(state, goal, world, info, now)
 end
 
 -- Log a builder-safety answer once per change. what: "fire" (the fire
--- hold) or "bg_wall=(x,y)" (a background wall trip).
-local function bsafe_log(goal, now, what, hit)
+-- hold), "bg_wall=(x,y)" (a background wall trip) or "shield_wall=(x,y)"
+-- (a take wall trip). act: the unsafe answer's action ("wait" if nil).
+local function bsafe_log(goal, now, what, hit, act)
   local key = ""
   if hit then
     key = string.format("%s:%s:%s", tostring(hit.id), tostring(hit.sq_mx or floor(hit.ex)),
                         tostring(hit.sq_my or floor(hit.ey)))
   end
   local tag = what .. "|" .. key
-  local field = what == "fire" and "_pt2_bsafe_fire" or "_pt2_bsafe_bg"
+  local field = what == "fire" and "_pt2_bsafe_fire"
+    or (what:sub(1, 12) == "shield_wall=" and "_pt2_bsafe_shield" or "_pt2_bsafe_bg")
   local was = goal[field]
   if was == tag then return end
   goal[field] = tag
   if hit then
     print2(string.format("PT2_START t=%d %s builder unsafe (pill #%s shell at %+dt hits (%d,%d)"
-      .. " builder at (%d,%d)) -> wait",
+      .. " builder at (%d,%d)) -> %s",
       now, what, tostring(hit.id), hit.t, hit.sq_mx or floor(hit.ex), hit.sq_my or floor(hit.ey),
-      floor(hit.lx), floor(hit.ly)))
+      floor(hit.lx), floor(hit.ly), act or "wait"))
   elseif was and was:sub(-1) ~= "|" then
     print2(string.format("PT2_START t=%d %s builder safe -> go", now, what))
   end
@@ -802,6 +804,41 @@ function M.bg_trip_ok(state, goal, world, info, now, w)
   local hit = M.builder_trip_hit(goal, world, info, now, { w }, tmx, tmy, x, { fire = true })
   bsafe_log(goal, now, string.format("bg_wall=(%d,%d)", w.mx, w.my), hit)
   return hit == nil
+end
+
+-- PT2_START_BUILDER_SAFE (Nov 24, Andrew's option a): may the builder go
+-- out from the tank to the take's own wall w (a v2 take's wall_shield wall)
+-- now? His trip (tank square to w, build, home) is judged as a background
+-- wall's: pill shells in flight, and every pill in range of the tank firing
+-- at it by itself (no tank fire needed); the tank's own fire counts only
+-- when the take may start while he builds (the start check passed). Unsafe:
+-- he stays in and w is dropped from the take's wall list (not waited for);
+-- the take goes on with its other blockers. A dropped wall stays dropped
+-- for that wall list; a new plan (a new list) checks it again.
+function M.shield_wall_ok(state, goal, world, info, now, w)
+  if not C.PT2_START_BUILDER_SAFE then return true end
+  if M.shield_wall_skipped(goal, w.mx, w.my) then return false end
+  local x = require("live_physics").context(info, {})
+  local tmx, tmy = bit.rshift(info.tankx or 0, 8), bit.rshift(info.tanky or 0, 8)
+  local st = goal._pt2 and goal._pt2.start
+  local hit = M.builder_trip_hit(goal, world, info, now, { { mx = w.mx, my = w.my } }, tmx, tmy, x,
+    { fire = (st and st.ok) and true or false,
+      tx = (info.tankx or 0) / 256.0, ty = (info.tanky or 0) / 256.0 })
+  if not hit then return true end
+  local sk = goal._pt2_shield_skip
+  if not sk or sk.list ~= goal._wall_build_list then
+    sk = { list = goal._wall_build_list, sq = {} }
+    goal._pt2_shield_skip = sk
+  end
+  sk.sq[w.my * 256 + w.mx] = true
+  bsafe_log(goal, now, string.format("shield_wall=(%d,%d)", w.mx, w.my), hit, "skip")
+  return false
+end
+
+-- Was the take wall (mx, my) dropped from this wall list (shield_wall_ok)?
+function M.shield_wall_skipped(goal, mx, my)
+  local sk = goal._pt2_shield_skip
+  return (sk and sk.list == goal._wall_build_list and sk.sq[my * 256 + mx]) and true or false
 end
 
 function M.start_now_check(goal, world, info, now, list)

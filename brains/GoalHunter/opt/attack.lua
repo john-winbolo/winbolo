@@ -7815,7 +7815,13 @@ local function update_attack_substate_body(goal, state, world, info)
       -- (140,127), "0 built" after 250 ticks, replan). Any pill counts here,
       -- whatever its owner or health: no wall can go on it. Its cover is
       -- counted below (5 * floor(health / 5) shots for a friendly pill).
-      if PC.slot_done(world, target.mx, target.my, tt) then
+      -- PT2_START_BUILDER_SAFE: a take wall dropped for the builder's
+      -- safety (pt2_attack.shield_wall_ok) is passed over too.
+      if goal._pt2 and require("pt2_attack").shield_wall_skipped(goal, target.mx, target.my) then
+        idx = idx + 1
+        goal._wall_build_last_progress = now
+        goal._wall_idx_started = nil
+      elseif PC.slot_done(world, target.mx, target.my, tt) then
         if tt ~= C.T_BUILDING and tt ~= C.T_HALFBUILD and tt ~= C.T_PILLBOX then
           local sp = PC.pill_on_square(world, target.mx, target.my)
         end
@@ -8016,8 +8022,18 @@ local function update_attack_substate_body(goal, state, world, info)
     -- queue ends or stalls with a wall missing, ban this angle and plan
     -- again (blocked_line_replan; SANITY_PILL_REPLANS_MAX gives up).
     if goal._pt2 and not goal._charge_now then
+      -- PT2_START_BUILDER_SAFE: the walls dropped for the builder's safety
+      -- are not missing; the take goes on with the rest
+      local PA = require("pt2_attack")
+      local live = list
+      if goal._pt2_shield_skip then
+        live = {}
+        for _, p in ipairs(list) do
+          if not PA.shield_wall_skipped(goal, p.mx, p.my) then live[#live + 1] = p end
+        end
+      end
       local missing = 0
-      for _, p in ipairs(list) do
+      for _, p in ipairs(live) do
         if PC.slot_cover_shots(world, p.mx, p.my, U.ttype(p.mx, p.my)) <= 0 then missing = missing + 1 end
       end
       built_enough, cover_enough = false, false
@@ -8026,7 +8042,7 @@ local function update_attack_substate_body(goal, state, world, info)
         if idx <= #list then
         end
         idx = #list + 1
-      elseif require("pt2_attack").start_now_check(goal, world, info, now, list) then
+      elseif PA.start_now_check(goal, world, info, now, live) then
         -- PT2_START_WHILE_BUILDING: the armour holds the shells that get
         -- through; the builder builds the rest while the take goes on
         idx = #list + 1

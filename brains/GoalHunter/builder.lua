@@ -500,6 +500,15 @@ function M.set_mode(state, world, info, goal)
       b.mode = "wall_shield"
       b.wall_target = { mx = goal.wall_mx, my = goal.wall_my }
       b.target_pill = { mx = goal.mx, my = goal.my }  -- exclude from angry check
+      -- PT2_START_BUILDER_SAFE: a v2 take's wall trip that a pill shell
+      -- would end is not sent; the wall is dropped from the take's list
+      -- (pt2_attack.shield_wall_ok) and he stays in.
+      if goal._pt2 and info.man_status == C.LGM_INTANK
+         and not require("pt2_attack").shield_wall_ok(state, goal, world, info, state.tick or 0,
+                                                      b.wall_target) then
+        b.mode = "suppressed"
+        b.wall_target, b.target_pill = nil, nil
+      end
     elseif sub == "ws_prewait" or sub == "ws_advance" or sub == "ws_engage"
            or sub == "ws_retreat" then
       -- Wall is up / LGM returning / retreating — suppress building
