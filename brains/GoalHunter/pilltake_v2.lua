@@ -864,10 +864,22 @@ local function slot_ok(ctx, rec, r, k, lane_set, forbid)
   local d2 = (rec.px - sx) ^ 2 + (rec.py - sy) ^ 2
   if d1 >= d2 then return false, "behind_tank" end
   if f ~= true then return false, f end
-  local rc = ctx.reach_cache[sq]
+  -- S7: the answer depends on the builder's start (rec.omx, omy) too, so
+  -- the cache key is (start, square)
+  local rk = ((rec.omx or 0) * 256 + (rec.omy or 0)) * 65536 + sq
+  local rc = ctx.reach_cache[rk]
   if rc == nil then
     rc = inp.lgm_reach(rec.omx, rec.omy, mx, my) and true or false
-    ctx.reach_cache[sq] = rc
+    ctx.reach_cache[rk] = rc
+    ctx.stat.reach_calls = ctx.stat.reach_calls + 1
+    if inp.v2_confirm_check then
+      -- the bench: the answer the square-only key gave (its first answer)
+      local q = ctx.reach_sq
+      if not q then q = {}; ctx.reach_sq = q end
+      local old = q[sq]
+      if old == nil then q[sq] = rc; ctx.stat.reach_sq_calls = ctx.stat.reach_sq_calls + 1
+      elseif old ~= rc then ctx.stat.reach_differs = ctx.stat.reach_differs + 1 end
+    end
   end
   if not rc then return false, "lgm_unreachable" end
   return true
@@ -1628,7 +1640,7 @@ local function new_stat()
            loss_pass = 0, loss_safe = 0, chain_agree = 0, chain_differ = 0, chain_unsure = 0,
            wall_slow = 0,
            confirm_checked = 0, confirm_mismatch = 0, confirm_winner = 0,
-           confirm_retry = 0, confirm_rescued = 0 }
+           confirm_retry = 0, confirm_rescued = 0, reach_calls = 0, reach_sq_calls = 0, reach_differs = 0 }
 end
 local function new_tm()
   return { wedges = 0, masks = 0, cast = 0, aim = 0, walls = 0, confirm = 0, leeway = 0,

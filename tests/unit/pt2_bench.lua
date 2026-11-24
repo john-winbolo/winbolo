@@ -702,6 +702,8 @@ if BOTH then
     g("confirm_checked"), g("confirm_winner"), g("confirm_mismatch")))
   print(fmt("v2 confirm fail: other solutions tried %d, plans found that way %d",
     g("confirm_retry"), g("confirm_rescued")))
+  print(fmt("v2 builder reach: lgm_reach calls %d (a square-only key: %d), answers the square-only key got"
+    .. " wrong %d", g("reach_calls"), g("reach_sq_calls"), g("reach_differs")))
   print(fmt("v2 wall search: searches on the slow path (a blocker that adds no cover) %d", g("wall_slow")))
   local wk = B.wk
   local function pc(a, n) return 100 * a / math.max(1, n) end
