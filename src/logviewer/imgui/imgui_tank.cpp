@@ -1211,17 +1211,28 @@ void lv_imgui_tank_window(void) {
                 if (!lv_g_tank_show_base) {
                     return lvTankLayoutPick(&rm);
                 }
+                /* The largest scale that fits and has room for the text;
+                 * when none has, the largest that fits. A smaller scale
+                 * can leave room for the text a larger one has none for. */
                 LvTankLayout l = {};
+                LvTankLayout fits = {};
+                bool haveFits = false;
                 for (int sc = TANK_MAX_SCALE; sc >= 1; sc--) {
                     rm.availH = avail.y - baseH[sc];
                     rm.maxScale = sc;
                     l = lvTankLayoutPick(&rm);
                     if (l.scale >= (float)sc &&
                         avail.x >= (float)(sc * TANK_BASE_SLICE_W) + 2.0f) {
-                        break;
+                        if (l.text != LV_TANK_TEXT_NONE) {
+                            return l;
+                        }
+                        if (!haveFits) {
+                            fits = l;
+                            haveFits = true;
+                        }
                     }
                 }
-                return l;
+                return haveFits ? fits : l;
             };
             LvTankRoom room = tank_room(st, avail);
             LvTankLayout lay = pick(room);
