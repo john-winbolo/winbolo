@@ -513,9 +513,13 @@ function M.set_mode(state, world, info, goal)
   -- the tank, on no task (the take's own no-job mode "suppressed"), not
   -- on a place trip. E5-10: b.bg_wall keeps decide's angry-pill and
   -- path-danger checks on and places no carried pill.
+  -- PT2_START_BUILDER_SAFE: not on a trip that a pill shell would end, with
+  -- the take firing (pt2_attack.bg_trip_ok); he stays in, the take goes on.
   if kind == "attack_pill" and goal._pt2_bg and b.mode == "suppressed"
      and info.man_status == C.LGM_INTANK and not state._place_trip then
-    local w = require("pt2_attack").bg_wall(goal, world)
+    local PA = require("pt2_attack")
+    local w = PA.bg_wall(goal, world)
+    if w and not PA.bg_trip_ok(state, goal, world, info, state.tick or 0, w) then w = nil end
     if w then
       b.mode = "wall_shield"
       b.bg_wall = true

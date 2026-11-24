@@ -1048,8 +1048,17 @@ M.PT2_START_WHILE_BUILDING = true
 -- (quick_repair.shell_end / blast_catches_man; pt2_attack.builder_trip_hit).
 -- A kill: no early start; the take waits for the walls and the builder, or
 -- starts later when the trips are clear.
+-- After the hold (pt2_attack.builder_fire_hold / bg_trip_ok), with the
+-- tank firing at the target pill (its reload falls one step per landed
+-- tank shell): a take does not open fire (finetune to shoot_pill, the fast
+-- setup stop, aim to charge) while the builder is out on a take wall and
+-- the rest of his trip is not safe; it asks again each tick. A background
+-- wall is not sent when its trip is not safe; the builder stays in and the
+-- take goes on (the tank never waits for a background wall).
 -- Log effect: PT2_START ... builder unsafe (pill #id shell at +Nt hits (x,y)
--- builder at (x,y)) -> wait.
+-- builder at (x,y)) -> wait; after the hold "PT2_START t=.. fire builder
+-- unsafe (...)" or "bg_wall=(x,y) builder unsafe (...)", once per change,
+-- then "... builder safe -> go".
 -- false = old rule (the tank's armour only). KEEL / MAST: false.
 M.PT2_START_BUILDER_SAFE = true
 -- PT2_START_ANGER_RISE (Nov 23, Andrew's spec): the start check above

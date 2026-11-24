@@ -527,6 +527,11 @@ function M.attack_tick(state, goal, info, world, now, obs_fn)
     print2(string.format("PT2_FAST_SETUP_STOP t=%d pill=(%d,%d) err_wu=%d rem=%.0f run_ticks=%d shots=%d shot_here=%s -> %s",
       now, goal.mx, goal.my, err, rem, now - (fs.run_t0 or now), fs.shots or 0,
       tostring(here_ok), here_ok and "shoot_pill" or ("OLD:" .. tostring(here_why))))
+    -- PT2_START_BUILDER_SAFE: no fire while it would kill the builder out
+    -- on a take wall; stay stopped on F and ask again next tick.
+    if here_ok and require("pt2_attack").builder_fire_hold(state, goal, world, info, now) then
+      return true
+    end
     goal._fs = nil
     if here_ok then
       to_shoot_pill(goal, info, now)

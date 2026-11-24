@@ -514,32 +514,73 @@ end
 -- (quick_repair.blast_catches_man: on that square for a square hit, else
 -- in the blast area). Returns nil (safe) or
 -- { id, t (ticks from now), sq_mx, sq_my, ex, ey, lx, ly }.
-function M.builder_trip_hit(goal, world, info, now, walls, ox, oy, x)
+-- opts (all optional):
+--   legs, home: the builder's timeline (pt2_start.trip_timeline's form)
+--     in place of the trips to `walls` from (ox, oy);
+--   tx, ty: the tank's point (tiles) in place of the start record's;
+--   fire = true: the tank shoots the target pill (goal.mx, goal.my) from
+--     the next tick. Each tank shell lands after its flight
+--     (pt2_start.flight_ticks) and one tank reload (x.reload) after the
+--     one before; each landed shell is one more hit on that pill, so its
+--     reload is pt2_start.pill_interval at its anger now plus one
+--     PILL_ANGER_BUMP per landed hit (the same ladder as rise_shells).
+--     The pill fires when the ticks since its last shot reach the reload
+--     of that tick.
+function M.builder_trip_hit(goal, world, info, now, walls, ox, oy, x, opts)
+  opts = opts or {}
   local QR = require("quick_repair")
   local tmx, tmy = bit.rshift(info.tankx or 0, 8), bit.rshift(info.tanky or 0, 8)
-  local legs, home = PS.trip_timeline(ox, oy, walls, lgm_ticks, nil, tmx, tmy)
-  if not legs or home <= 0 then return nil end
+  local legs, home = opts.legs, opts.home
+  if not legs then
+    legs, home = PS.trip_timeline(ox, oy, walls, lgm_ticks, nil, tmx, tmy)
+  end
+  if not legs or not home or home <= 0 then return nil end
   local st = goal._pt2 and goal._pt2.start
   local tx, ty = (info.tankx or 0) / 256.0, (info.tanky or 0) / 256.0
-  if st and st.cx and st.cy then tx, ty = st.cx, st.cy end
+  if opts.tx and opts.ty then tx, ty = opts.tx, opts.ty
+  elseif st and st.cx and st.cy then tx, ty = st.cx, st.cy end
   local range = (x.pill_range or 2048) / 256
+  local bump = C.PILL_ANGER_BUMP
+  -- the tank's shells on the target pill (opts.fire)
+  local hit_flight, hit_reload
+  if opts.fire and goal.mx and goal.my then
+    hit_flight = PS.flight_ticks(info.tankx or 0, info.tanky or 0, goal.mx, goal.my,
+                                 x.shell_speed) or 0
+    hit_reload = x.reload or 13
+    if hit_reload < 1 then hit_reload = 1 end
+  end
   -- the tick each missing wall goes up (arrival)
   local up_at = {}
   for _, L in ipairs(legs) do
     if L.kind == "build" then
-      local w = walls[L.i]
-      up_at[w.my * 256 + w.mx] = L.t0
+      up_at[floor(L.y0) * 256 + floor(L.x0)] = L.t0
     end
   end
   local guns = QR.guns_at(world, tx, ty, range)
   for gi = 1, #guns do
     local g = guns[gi]
     local nxt, _, last = QR.pill_next_fire(g.p, info, now, x)
-    local iv = PS.pill_interval(M.anger_now(g.p, now), C.PILL_ANGER_BUMP,
-      x.pill_attack_ticks, x.pill_attack_min_ticks, x.pill_angry_divisor)
-    if not iv or iv < 1 then iv = 1 end
-    local f = now + 1
-    if last and last + iv > f then f = last + iv end
+    local a0 = M.anger_now(g.p, now)
+    local shot_at = hit_flight and g.p.mx == goal.mx and g.p.my == goal.my
+    -- this pill's reload at tick t (ticks from now)
+    local function iv_at(t)
+      local a = a0
+      if shot_at and t >= 1 + hit_flight then
+        a = a + bump * (floor((t - 1 - hit_flight) / hit_reload) + 1)
+      end
+      local iv = PS.pill_interval(a, bump, x.pill_attack_ticks,
+        x.pill_attack_min_ticks, x.pill_angry_divisor)
+      if not iv or iv < 1 then iv = 1 end
+      return iv
+    end
+    -- its first fire tick at or after `from` (absolute), its last at `prev`
+    local function next_fire(from, prev)
+      if not prev then return from end
+      local t = from
+      while t - now <= home and t - prev < iv_at(t - now) do t = t + 1 end
+      return t
+    end
+    local f = next_fire(now + 1, last)
     if nxt and nxt < f then f = nxt end
     while f - now <= home do
       local f0 = f - now
@@ -555,10 +596,95 @@ function M.builder_trip_hit(goal, world, info, now, walls, ox, oy, x)
                    ex = e.ex, ey = e.ey, lx = lx, ly = ly, how = e.how }
         end
       end
-      f = f + iv
+      f = next_fire(f + 1, f)
     end
   end
   return nil
+end
+
+-- PT2_START_BUILDER_SAFE once the hold is over (run_c3_beside_e): the
+-- builder's current take trip. When he is out (LGM_MOVING) on a take wall
+-- (state._wall_shield_dispatch: a background wall, a wall_shield wall or a
+-- planned wall), the rest of his trip from where he is now: out to the
+-- wall, build, home (the wall is not up yet); build, home (he is on it);
+-- or home (the wall stands and he is off it). A build under way counts as
+-- a whole LGM_BUILD_TIME. Returns legs, home (pt2_start.trip_timeline's
+-- form) or nil.
+function M.current_trip(state, goal, world, info)
+  if info.man_status ~= C.LGM_MOVING then return nil end
+  local d = state and state._wall_shield_dispatch
+  if not d or not d.wx or goal.kind ~= "attack_pill" then return nil end
+  local mx, my = bit.rshift(info.man_x or 0, 8), bit.rshift(info.man_y or 0, 8)
+  local tmx, tmy = bit.rshift(info.tankx or 0, 8), bit.rshift(info.tanky or 0, 8)
+  local up = wall_up(world, d.wx, d.wy)
+  local on = mx == d.wx and my == d.wy
+  if not up and not on then
+    return PS.trip_timeline(mx, my, { { mx = d.wx, my = d.wy } }, lgm_ticks, nil, tmx, tmy)
+  end
+  local lx, ly = (info.man_x or 0) / 256.0, (info.man_y or 0) / 256.0
+  local legs, t = {}, 0
+  if on then
+    legs[1] = { t0 = 0, t1 = PS.LGM_BUILD_TIME, x0 = d.wx + 0.5, y0 = d.wy + 0.5,
+                x1 = d.wx + 0.5, y1 = d.wy + 0.5, kind = "build", i = 1 }
+    t = PS.LGM_BUILD_TIME
+    lx, ly = d.wx + 0.5, d.wy + 0.5
+  end
+  local back = PS.trip_ticks(mx, my, tmx, tmy, lgm_ticks, mx, my)
+  if not back then return nil end
+  legs[#legs + 1] = { t0 = t, t1 = t + back, x0 = lx, y0 = ly,
+                      x1 = tmx + 0.5, y1 = tmy + 0.5, kind = "back", i = 1 }
+  return legs, t + back
+end
+
+-- Log a builder-safety answer once per change. what: "fire" (the fire
+-- hold) or "bg_wall=(x,y)" (a background wall trip).
+local function bsafe_log(goal, now, what, hit)
+  local key = ""
+  if hit then
+    key = string.format("%s:%s:%s", tostring(hit.id), tostring(hit.sq_mx or floor(hit.ex)),
+                        tostring(hit.sq_my or floor(hit.ey)))
+  end
+  local tag = what .. "|" .. key
+  local field = what == "fire" and "_pt2_bsafe_fire" or "_pt2_bsafe_bg"
+  local was = goal[field]
+  if was == tag then return end
+  goal[field] = tag
+  if hit then
+  elseif was and was:sub(-1) ~= "|" then
+  end
+end
+
+-- PT2_START_BUILDER_SAFE: hold the take's fire? True when the builder is
+-- out on a take wall (M.current_trip) and a pill shell kills him on the rest
+-- of his trip with the tank firing at the target pill (builder_trip_hit,
+-- fire = true). The caller stays in its pre-fire substate and asks again
+-- next tick.
+function M.builder_fire_hold(state, goal, world, info, now)
+  if not C.PT2_START_BUILDER_SAFE then return false end
+  local legs, home = M.current_trip(state, goal, world, info)
+  local hit
+  if legs then
+    local x = require("live_physics").context(info, {})
+    hit = M.builder_trip_hit(goal, world, info, now, {}, 0, 0, x,
+      { legs = legs, home = home, fire = true,
+        tx = (info.tankx or 0) / 256.0, ty = (info.tanky or 0) / 256.0 })
+  end
+  bsafe_log(goal, now, "fire", hit)
+  return hit ~= nil
+end
+
+-- PT2_START_BUILDER_SAFE: may the builder go out to background wall w
+-- (M.bg_wall) now? The take fires during his trip, or soon, so the trip
+-- (tank square to w, build, home) is judged with the tank firing at the
+-- target pill. False = keep him in this tick. The tank never waits for a
+-- background wall, so the take goes on without it.
+function M.bg_trip_ok(state, goal, world, info, now, w)
+  if not C.PT2_START_BUILDER_SAFE then return true end
+  local x = require("live_physics").context(info, {})
+  local tmx, tmy = bit.rshift(info.tankx or 0, 8), bit.rshift(info.tanky or 0, 8)
+  local hit = M.builder_trip_hit(goal, world, info, now, { w }, tmx, tmy, x, { fire = true })
+  bsafe_log(goal, now, string.format("bg_wall=(%d,%d)", w.mx, w.my), hit)
+  return hit == nil
 end
 
 function M.start_now_check(goal, world, info, now, list)

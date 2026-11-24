@@ -447,6 +447,83 @@ do
   PC.slot_cover_shots = saved
 end
 
+-- Nov 24 (run_c3_beside_e): the hold is over (no missing planned walls) and
+-- the builder is out on a background wall on the pill's shell row. The
+-- take must not fire, and a new background wall trip there is not sent.
+-- Same fixture as above: tank (30.5, 40.5), hostile pill at (36,40), the
+-- take's target pill is that pill.
+print("PT2_START_BUILDER_SAFE: after the hold (fire hold, background walls)")
+do
+  local saved = PC.slot_cover_shots
+  PC.slot_cover_shots = function() return 0 end
+  local H = { mx = 36, my = 40, health = 8, owner = "hostile", anger = 0, anger_tick = 0 }
+  local world = { pills = { [5] = H }, pill_at = { [sq(36, 40)] = { { id = 5, pill = H } } } }
+  local function inf(out)
+    local i = { armour = 40, tankx = 30 * 256 + 128, tanky = 40 * 256 + 128,
+                man_status = C.LGM_INTANK, player_number = 0, objects = {} }
+    if out then
+      i.man_status = C.LGM_MOVING
+      i.man_x, i.man_y = 32 * 256 + 128, 40 * 256 + 128
+    end
+    return i
+  end
+  local x = require("live_physics").context(inf(), {})
+  local function g()
+    return { kind = "attack_pill", mx = 36, my = 40, substate = "in_range_aim",
+             _pt2 = { start = { ok = true, pills = {}, cx = 30.5, cy = 40.5 } } }
+  end
+  local K = C.PT2_START_BUILDER_SAFE
+  C.PT2_START_BUILDER_SAFE = true
+
+  -- He walks out from (32,40) to the background wall (33,40): it is up
+  -- from +10, the pill's shell fired at +1 stops on it at +22.
+  local state = { _wall_shield_dispatch = { tick = 990, wx = 33, wy = 40, action = "BUILD" } }
+  local goal = g()
+  check("out on a background wall on the shell row: hold the fire",
+        PA.builder_fire_hold(state, goal, world, inf(true), 1000) == true)
+  check("fire hold: logged once (the answer is kept)",
+        goal._pt2_bsafe_fire ~= nil and goal._pt2_bsafe_fire:find("^fire|5:33:40") ~= nil,
+        goal._pt2_bsafe_fire)
+  check("builder in the tank: no fire hold",
+        PA.builder_fire_hold(state, goal, world, inf(false), 1001) == false)
+  check("fire hold cleared after the builder is safe", goal._pt2_bsafe_fire == "fire|",
+        goal._pt2_bsafe_fire)
+
+  -- The dispatch side: from the tank, a background wall on the row is not
+  -- sent; one off the row is.
+  check("background wall on the shell row: not sent",
+        PA.bg_trip_ok(state, g(), world, inf(false), 1000, { mx = 33, my = 40 }) == false)
+  check("background wall off the row: sent",
+        PA.bg_trip_ok(state, g(), world, inf(false), 1000, { mx = 31, my = 42 }) == true)
+
+  -- The tank's fire makes the target pill angrier. He stands on the wall
+  -- (33,40) from +40 to +80 and is home at +90. Calm: the shell at +1 is
+  -- past before the wall is up (+22), and the next comes after he is home.
+  -- Firing: the tank's first shell lands, the reload halves, and the next
+  -- pill shell stops on his wall while he is on it.
+  local legs = {
+    { t0 = 30, t1 = 40, x0 = 30.5, y0 = 40.5, x1 = 33.5, y1 = 40.5, kind = "out", i = 1 },
+    { t0 = 40, t1 = 80, x0 = 33.5, y0 = 40.5, x1 = 33.5, y1 = 40.5, kind = "build", i = 1 },
+    { t0 = 80, t1 = 90, x0 = 33.5, y0 = 40.5, x1 = 30.5, y1 = 40.5, kind = "back", i = 1 },
+  }
+  local hit = PA.builder_trip_hit(g(), world, inf(false), 1000, {}, 0, 0, x,
+                                  { legs = legs, home = 90 })
+  check("calm pill: safe", hit == nil, hit and tostring(hit.t))
+  hit = PA.builder_trip_hit(g(), world, inf(false), 1000, {}, 0, 0, x,
+                            { legs = legs, home = 90, fire = true })
+  check("tank firing: the angrier pill's shell hits his wall",
+        hit ~= nil and hit.sq_mx == 33 and hit.sq_my == 40 and hit.t > 40 and hit.t <= 80,
+        hit and string.format("+%d (%s,%s)", hit.t, tostring(hit.sq_mx), tostring(hit.sq_my)))
+
+  C.PT2_START_BUILDER_SAFE = false
+  check("knob off: no fire hold (the old result)",
+        PA.builder_fire_hold(state, g(), world, inf(true), 1000) == false)
+  check("knob off: the background wall is sent (the old result)",
+        PA.bg_trip_ok(state, g(), world, inf(false), 1000, { mx = 33, my = 40 }) == true)
+  C.PT2_START_BUILDER_SAFE = K
+  PC.slot_cover_shots = saved
+end
+
 C.PILLTAKE_V2_EVALUATOR = false
 print(string.format("\n%d passed, %d failed", pass, fail))
 os.exit(fail == 0 and 0 or 1)

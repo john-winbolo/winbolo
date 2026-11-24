@@ -504,6 +504,11 @@ function M.attack_tick(state, goal, info, world, now, obs_fn)
     local err = U.wdist(info.tankx, info.tanky, floor(fs.fx + 0.5), floor(fs.fy + 0.5))
     local env = M.world_env(info, goal, world, obs_fn, info.gunrange or 14)
     local here_ok, here_why = M.shot_ok(env, info.tankx, info.tanky, ang)
+    -- PT2_START_BUILDER_SAFE: no fire while it would kill the builder out
+    -- on a take wall; stay stopped on F and ask again next tick.
+    if here_ok and require("pt2_attack").builder_fire_hold(state, goal, world, info, now) then
+      return true
+    end
     goal._fs = nil
     if here_ok then
       to_shoot_pill(goal, info, now)

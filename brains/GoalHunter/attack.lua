@@ -9253,6 +9253,11 @@ local function update_attack_substate_body(goal, state, world, info)
           clear_attack_goal(state, "abort@charge_entry — " .. unsafe)
           return
         end
+        -- PT2_START_BUILDER_SAFE: no charge while the take's fire would
+        -- kill the builder out on a take wall; stay in aim, ask next tick.
+        if require("pt2_attack").builder_fire_hold(state, goal, world, info, now) then
+          return
+        end
         goal.substate = "charge"
         goal._aim_locked = nil
         goal._charge_braking = nil
@@ -9598,7 +9603,13 @@ local function update_attack_substate_body(goal, state, world, info)
         _ti_extra, _ti_raw, 2 * CLEAR_TURN_IN_TAPS, tostring(_ti_give_up)))
     end
 
-    if on_pill and _fine_clear then
+    if on_pill and _fine_clear
+       and require("pt2_attack").builder_fire_hold(state, goal, world, info, now) then
+      -- PT2_START_BUILDER_SAFE: the builder is out on a take wall and the
+      -- take's fire would get him killed (a pill shell on his trip). Hold
+      -- the verified aim; ask again next tick. The finetune clock waits too.
+      goal._finetune_start = (goal._finetune_start or now) + 1
+    elseif on_pill and _fine_clear then
       -- Lock the verified angle as the new aim point so shoot_pill's
       -- corner-correction tap (steering.lua's shoot_pill block) doesn't
       -- pull the angle back toward the original shield-scan corner —
