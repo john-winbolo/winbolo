@@ -405,11 +405,14 @@ end
 M.START_CHECK_TICKS = 10
 local PS = require("pt2_start")
 
-local function lgm_ticks(ox, oy, mx, my)
-  local t = cpf.lgm_travel_ticks_map(ox, oy, mx, my, mx, my,
+-- The builder's own trip ticks (pt2_start.trip_ticks): -1 when he cannot
+-- get there (E4-4: no start), nil when there is no answer.
+local function lgm_ticks(ox, oy, mx, my, bmx, bmy)
+  local t = cpf.lgm_travel_ticks_map(ox, oy, mx, my, bmx or mx, bmy or my,
     C.WALL_SHIELD_LGM_MAX_TICKS, C.WALL_SHIELD_LGM_STUCK_TICKS)
-  if t and t > 0 then return t end
-  return nil
+  if not t then return nil end
+  if t < 0 then return -1 end
+  return t
 end
 
 local function wall_up(world, mx, my)
@@ -436,6 +439,10 @@ function M.start_now_check(goal, world, info, now, list)
   -- E4-1: each later wall's order starts at the tank
   local exp = PS.exposure_ticks(ox, oy, walls, lgm_ticks, nil,
     bit.rshift(info.tankx or 0, 8), bit.rshift(info.tanky or 0, 8))
+  if not exp then
+    print2(string.format("PT2_START t=%d missing=%d from=(%d,%d) a trip cannot be made -> wait", now, #walls, ox, oy))
+    return false
+  end
   local x = require("live_physics").context(info, {})
   local shells = 0
   for _, sp in ipairs(st.pills or {}) do

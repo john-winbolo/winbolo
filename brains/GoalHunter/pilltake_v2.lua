@@ -1425,7 +1425,8 @@ M._search_walls_all = search_walls_all
 --   start_pills    { mx, my, cover_now, planned = { mx, my, shots } } of
 --                  those pills (the caller checks again with its own
 --                  builder, anger and walls at the hold point)
---   start_why      nil, "bystander" or "armour"
+--   start_why      nil, "bystander", "armour" or "unreachable" (a trip
+--                  cannot be made; exposure -1)
 -- A bystander (a pill not in the chain, its ray not "reach") whose ray has
 -- a planned blocker needs that cover before the start: start_now false.
 local function start_check(ctx, rec)
@@ -1436,6 +1437,11 @@ local function start_check(ctx, rec)
   local ox = rec.omx or floor(rec.px / 256)
   local oy = rec.omy or floor(rec.py / 256)
   local exp = PS.exposure_ticks(ox, oy, plan, inp.lgm_ticks)
+  -- E4-4: the builder cannot get to a wall: no start
+  if not exp then
+    rec.start_now, rec.exposure, rec.start_why = false, -1, "unreachable"
+    return
+  end
   local shells, pills = 0, {}
   for i, X in ipairs(rec.T) do
     local r = rec.rays[i]

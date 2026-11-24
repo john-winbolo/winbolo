@@ -53,9 +53,21 @@ do
   -- the builder starts away from the tank: later orders start at the tank
   local e5 = S.exposure_ticks(12, 10, { { mx = 13, my = 10 }, { mx = 13, my = 14 } }, nil, nil, 10, 10)
   check("from (12,10), tank (10,10): 16 + 20 + 48 + 80 = 164", e5 == 164, e5)
-  -- an unreachable answer (-1) falls back to the straight line
+  -- an unreachable answer (-1): no exposure (E4-4: no start)
   local e4 = S.exposure_ticks(10, 10, { { mx = 13, my = 10 } }, function() return -1 end)
-  check("lgm_ticks -1: the straight line", e4 == 48, e4)
+  check("lgm_ticks -1: nil", e4 == nil, e4)
+  local e6 = S.exposure_ticks(10, 10, { { mx = 13, my = 10 }, { mx = 13, my = 14 } },
+    function(ox, oy, mx, my) if mx == 13 and my == 14 then return -1 end return 7 end)
+  check("the second wall unreachable: nil", e6 == nil, e6)
+  -- no answer (nil): the straight line
+  local e7 = S.exposure_ticks(10, 10, { { mx = 13, my = 10 } }, function() return nil end)
+  check("lgm_ticks nil: the straight line", e7 == 48, e7)
+  -- the walk back is blessed on the wall he leaves
+  local bl = {}
+  S.exposure_ticks(10, 10, { { mx = 13, my = 10 }, { mx = 13, my = 14 } },
+    function(ox, oy, mx, my, bx, by) bl[#bl + 1] = string.format("%d,%d", bx, by); return 7 end)
+  check("bless: the wall, the wall he leaves, the next wall", table.concat(bl, " ") == "13,10 13,10 13,14",
+    table.concat(bl, " "))
   check("no walls: 0", S.exposure_ticks(10, 10, {}) == 0, S.exposure_ticks(10, 10, {}))
 end
 

@@ -56,11 +56,18 @@ function M.pill_interval(anger, bump, attack_ticks, min_ticks)
   return r
 end
 
--- Builder trip ticks between two squares.
-function M.trip_ticks(ox, oy, mx, my, lgm_ticks)
+-- Builder trip ticks between two squares, or nil when the builder
+-- cannot get there (E4-4: lgm_ticks says -1). (bmx, bmy): the square the
+-- walk may enter although it blocks him (the wall he leaves, the wall he
+-- builds); default the destination. lgm_ticks nil or no answer: the
+-- straight line.
+function M.trip_ticks(ox, oy, mx, my, lgm_ticks, bmx, bmy)
   if lgm_ticks then
-    local t = lgm_ticks(ox, oy, mx, my)
-    if t and t >= 0 then return t end
+    local t = lgm_ticks(ox, oy, mx, my, bmx or mx, bmy or my)
+    if t then
+      if t < 0 then return nil end
+      return t
+    end
   end
   local dx, dy = mx - ox, my - oy
   return sqrt(dx * dx + dy * dy) * M.LGM_TICKS_PER_SQ
@@ -69,6 +76,7 @@ end
 -- Ticks from the builder leaving at (ox, oy) to the last wall of `walls`
 -- ({ mx, my } in build order) standing (E4-1: Tn above). (tx, ty): the
 -- tank's square, where each later order starts; default (ox, oy).
+-- nil when a trip cannot be made (E4-4: then the take does not start).
 function M.exposure_ticks(ox, oy, walls, lgm_ticks, build_time, tx, ty)
   build_time = build_time or M.LGM_BUILD_TIME
   tx, ty = tx or ox, ty or oy
@@ -76,10 +84,14 @@ function M.exposure_ticks(ox, oy, walls, lgm_ticks, build_time, tx, ty)
   for i, w in ipairs(walls) do
     if i == 1 then
       t = M.trip_ticks(ox, oy, w.mx, w.my, lgm_ticks)
+      if not t then return nil end
     else
       local p = walls[i - 1]
-      t = t + build_time + M.trip_ticks(p.mx, p.my, tx, ty, lgm_ticks)
-            + M.trip_ticks(tx, ty, w.mx, w.my, lgm_ticks)
+      -- the walk back starts on the wall he built
+      local back = M.trip_ticks(p.mx, p.my, tx, ty, lgm_ticks, p.mx, p.my)
+      local out = back and M.trip_ticks(tx, ty, w.mx, w.my, lgm_ticks)
+      if not out then return nil end
+      t = t + build_time + back + out
     end
   end
   return t
