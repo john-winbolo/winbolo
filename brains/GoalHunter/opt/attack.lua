@@ -4445,11 +4445,17 @@ local function update_shot_accounting(goal, world, now)
         -- (125,119), so the three shells that killed it were not counted.
         local path = s.status == "in_flight" and s.real_tick == now
                      and QR.shell_real_walk(s) or nil
+        real = path
+        -- run_c9 (diag_se t=698): a shell not matched this tick flies from
+        -- the tank at the exact (float) fire angle, as the engine fires it.
+        -- The byte direction counted a shell at 209.6 as on target, the kill
+        -- lock swerved on it, and it missed by one square.
+        if not path and s.tank_fx and s.tank_fy and s.angle and cpf.simulate_shot_angle then
+          path = cpf.simulate_shot_angle(s.tank_fx, s.tank_fy, s.angle, cpf.SHOT_TANK, 14)
+        end
         if not path then
           path = cpf.simulate_shot(s.fire_fx, s.fire_fy, tx_w, ty_w,
                                    cpf.SHOT_TANK, 14)
-        else
-          real = path
         end
         if path then
           local o_mx = math.floor(s.fire_fx / 256)

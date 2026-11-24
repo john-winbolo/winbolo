@@ -764,6 +764,15 @@ function M.current_trip(state, goal, world, info, now)
   if info.man_status ~= C.LGM_MOVING then return nil end
   local d = state and state._wall_shield_dispatch
   if not d or not d.wx or goal.kind ~= "attack_pill" then return nil end
+  -- run_c9 (all five diag runs): a builder pool job sent after that wall
+  -- order (a quick repair of a blocker) is his trip now, not the wall. The
+  -- old wall order stays on state, so without this test his repair trip was
+  -- judged as a take wall trip and the take held its fire for about 50 ticks
+  -- one shell short of the kill. The quick repair judged that trip itself.
+  local job = state._bp_job
+  if job and job.dispatch_tick and job.dispatch_tick >= (d.tick or 0) then
+    return nil
+  end
   local mx, my = bit.rshift(info.man_x or 0, 8), bit.rshift(info.man_y or 0, 8)
   local tmx, tmy = bit.rshift(info.tankx or 0, 8), bit.rshift(info.tanky or 0, 8)
   local up = wall_up(world, d.wx, d.wy)

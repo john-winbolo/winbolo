@@ -488,6 +488,15 @@ do
         PA.builder_fire_hold(state, goal, world, inf(false), 1001) == false)
   check("fire hold cleared after the builder is safe", goal._pt2_bsafe_fire == "fire|",
         goal._pt2_bsafe_fire)
+  -- run_c9: a builder pool job (a quick repair) sent after the wall order is
+  -- his trip now: no fire hold for the old wall order.
+  local qs = { _wall_shield_dispatch = { tick = 990, wx = 33, wy = 40, action = "BUILD" },
+               _bp_job = { type = "rebuild", mx = 50, my = 50, dispatch_tick = 995, quick = true } }
+  check("run_c9: out on a quick repair sent after the wall: no fire hold",
+        PA.builder_fire_hold(qs, g(), world, inf(true), 1000) == false)
+  qs._bp_job.dispatch_tick = 980
+  check("run_c9: a pool job older than the wall order: still the wall trip",
+        PA.builder_fire_hold(qs, g(), world, inf(true), 1000) == true)
 
   -- The dispatch side: from the tank, a background wall on the row is not
   -- sent; one off the row is.
@@ -970,6 +979,28 @@ do
   -- run_c9: the newest shot's tick, for the reload quick_repair.kill_tick
   -- counts from. A shot from before the attack counts too (it is the gun's
   -- reload, not the attack's).
+  -- run_c9: not seen this tick, but the tank's place and float angle are
+  -- known: the shell flies at the float angle (cpf.simulate_shot_angle),
+  -- not the byte direction.
+  local ssa = cpf.simulate_shot_angle
+  local got
+  cpf.simulate_shot_angle = function(ox, oy, a)
+    got = { ox, oy, a }
+    return { { mx = 132, my = 120 }, { mx = 125, my = 119 }, { mx = 125, my = 118 } }
+  end
+  shot.tank_fx, shot.tank_fy = 33958, 30854
+  A._update_shot_accounting(goal, { pills = {}, pill_at = {} }, 675)
+  check("accounting: float angle from the tank counts the shell",
+        goal._on_target_in_flight == 1 and got and got[1] == 33958 and got[3] == 200.875,
+        tostring(goal._on_target_in_flight))
+  cpf.simulate_shot_angle = function()
+    return { { mx = 132, my = 120 }, { mx = 126, my = 117 } }
+  end
+  A._update_shot_accounting(goal, { pills = {}, pill_at = {} }, 675)
+  check("accounting: float angle misses, the shell is not counted",
+        goal._on_target_in_flight == 0, tostring(goal._on_target_in_flight))
+  cpf.simulate_shot_angle = ssa
+  shot.tank_fx, shot.tank_fy = nil, nil
   check("accounting: last fire tick = newest shot", goal._last_fire_tick == 660,
         tostring(goal._last_fire_tick))
   local old_shot = { fire_tick = 590, fire_fx = 33000, fire_fy = 30000,
