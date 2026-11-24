@@ -1640,7 +1640,8 @@ local function new_stat()
            loss_pass = 0, loss_safe = 0, chain_agree = 0, chain_differ = 0, chain_unsure = 0,
            wall_slow = 0,
            confirm_checked = 0, confirm_mismatch = 0, confirm_winner = 0,
-           confirm_retry = 0, confirm_rescued = 0, reach_calls = 0, reach_sq_calls = 0, reach_differs = 0 }
+           confirm_retry = 0, confirm_rescued = 0, reach_calls = 0, reach_sq_calls = 0, reach_differs = 0,
+           leeway_more = 0, leeway_more_fail = 0, leeway_single = 0 }
 end
 local function new_tm()
   return { wedges = 0, masks = 0, cast = 0, aim = 0, walls = 0, confirm = 0, leeway = 0,
@@ -1865,17 +1866,62 @@ function M.evaluate_lua(inp)
     table.sort(scored, function(a, b) return M.better(a, b, cap, band, inp.prefer_existing_cover, inp.start_while_building) end)
     if ts then tm.sort = tm.sort + clk() - ts end
     if inp.leeway_on then
-      for i = 1, min(inp.leeway_top, #scored) do
-        local rec = scored[i]
-        rec.leeway, rec.leeway_pts = leeway(ctx, rec, inp.leeway_ring_wu)
-        if rec.safe and rec.kills >= 2 and rec.leeway < inp.leeway_min then
-          rec.safe, rec.why_unsafe = false, "LEEWAY"
+      -- the first leeway_top points of this rank (the single takes among
+      -- them get leeway below when no safe chain is left)
+      local top = {}
+      for i = 1, min(inp.leeway_top, #scored) do top[i] = scored[i] end
+      -- S8: a chain never wins untested. X is the first safe chain; when X
+      -- has no leeway yet, test it. X passes: the lowest score safe chain
+      -- of X's tier (it sets the tier's band) is tested too. A chain that
+      -- fails is unsafe and the rank runs again. Only these chains are
+      -- tested (no fixed top leeway_top).
+      local function rerank()
+        local t2 = clk and clk()
+        OLD.set_band(scored, band)
+        table.sort(scored, function(a, b) return M.better(a, b, cap, band, inp.prefer_existing_cover, inp.start_while_building) end)
+        if t2 then tm.sort = tm.sort + clk() - t2 end
+      end
+      local X = nil
+      local again = true
+      while again do
+        again = false
+        X = nil
+        for _, r in ipairs(scored) do
+          if r.safe and r.kills >= 2 then X = r; break end
+        end
+        if X then
+          local L = X
+          if X.leeway ~= nil then
+            for _, r in ipairs(scored) do
+              if r.safe and r.kills == X.kills and r.score < L.score then L = r end
+            end
+          end
+          if L.leeway == nil then
+            L.leeway, L.leeway_pts = leeway(ctx, L, inp.leeway_ring_wu)
+            st.leeway_more = st.leeway_more + 1
+            if L.leeway < inp.leeway_min then
+              L.safe, L.why_unsafe = false, "LEEWAY"
+              st.leeway_more_fail = st.leeway_more_fail + 1
+            end
+            again = true
+            rerank()
+          end
         end
       end
-      ts = clk and clk()
-      OLD.set_band(scored, band)
-      table.sort(scored, function(a, b) return M.better(a, b, cap, band, inp.prefer_existing_cover, inp.start_while_building) end)
-      if ts then tm.sort = tm.sort + clk() - ts end
+      -- no safe chain: a single take wins. Leeway never makes one unsafe,
+      -- but it ranks them: the single takes of the first rank's top get it,
+      -- as before.
+      if not X then
+        local any = false
+        for _, rec in ipairs(top) do
+          if rec.kills < 2 and rec.leeway == nil then
+            rec.leeway, rec.leeway_pts = leeway(ctx, rec, inp.leeway_ring_wu)
+            st.leeway_single = st.leeway_single + 1
+            any = true
+          end
+        end
+        if any then rerank() end
+      end
     end
     for _, rec in ipairs(scored) do all[#all + 1] = rec end
     if scored[1] and (not best or M.better(scored[1], best, cap, band, inp.prefer_existing_cover, inp.start_while_building)) then best = scored[1] end

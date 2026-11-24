@@ -700,6 +700,8 @@ if BOTH then
     g("plan_skipped"), g("wall_nodes"), g("nudged")))
   print(fmt("v2 confirm: view confirms checked %d, winner exact confirms %d, mismatches %d",
     g("confirm_checked"), g("confirm_winner"), g("confirm_mismatch")))
+  print(fmt("v2 leeway: chains tested (X and its tier's lowest score chain) %d, of them failed %d;"
+    .. " single takes tested (no safe chain left) %d", g("leeway_more"), g("leeway_more_fail"), g("leeway_single")))
   print(fmt("v2 confirm fail: other solutions tried %d, plans found that way %d",
     g("confirm_retry"), g("confirm_rescued")))
   print(fmt("v2 builder reach: lgm_reach calls %d (a square-only key: %d), answers the square-only key got"
