@@ -534,6 +534,8 @@ struct St {
     int    pec, swb, rise, chains_only, xcover_later, has_cache;
     int    aim_nb_on;
     int    fbp_on; double carried_pills;
+    int    qsf;                    /* PT2_QUICK_SIDE_FIRST */
+    int    mtie, has_tank; double tank_wx, tank_wy;   /* PT2_MIRROR_SAFE_TIE */
     double extra_cover_walls, anger_bump;
     int    xcover_skip_pill_line;
     double min_lane_brad;          /* BLOCKER_MIN_LANE_BRAD: aim_wide, 0 = off */
@@ -3711,9 +3713,21 @@ static int old_better(Ev *e, const Rec *a, const Rec *b) {
     return a->score < b->score;
 }
 
-/* M.better(a, b, cap, band, pec, swb, no_s0) */
+/* M.better(a, b, cap, band, pec, swb, no_s0, far, inp) */
 static int better(Ev *e, const Rec *a, const Rec *b, int no_s0) {
-    if (a->safe == b->safe && a->kills == b->kills) {
+    int keys = a->safe == b->safe && a->kills == b->kills;
+    /* PT2_QUICK_SIDE_FIRST: the place keys only when both are in the band */
+    if (keys && e->qsf && e->has_band && e->band > 0) {
+        double sa = a->score, sb = b->score;
+        double m = sa;
+        if (sb < m) m = sb;
+        double ta = (a->flags & RF_BAND) ? a->tier_min : sa;
+        double tb = (b->flags & RF_BAND) ? b->tier_min : sb;
+        if (ta < m) m = ta;
+        if (tb < m) m = tb;
+        keys = sa <= m + e->band && sb <= m + e->band;
+    }
+    if (keys) {
         double ta = (a->flags & RF_FBP) ? a->bp_tier : 0, tb = (b->flags & RF_FBP) ? b->bp_tier : 0;
         if (ta != tb) return ta < tb;
         double wa = (a->flags & RF_FBP) ? a->wall_far : 0, wb = (b->flags & RF_FBP) ? b->wall_far : 0;
@@ -3747,6 +3761,16 @@ static int better(Ev *e, const Rec *a, const Rec *b, int no_s0) {
     if (old_better(e, a, b)) return 1;
     if (old_better(e, b, a)) return 0;
     if (no_s0) return 0;
+    /* PT2_MIRROR_SAFE_TIE: nearer the tank, then north (smaller py) */
+    if (e->mtie) {   /* px, py: every record has them (push_rec) */
+        if (e->has_tank) {
+            double ax = a->px - e->tank_wx, ay = a->py - e->tank_wy;
+            double bx = b->px - e->tank_wx, by = b->py - e->tank_wy;
+            double d2a = ax * ax + ay * ay, d2b = bx * bx + by * by;
+            if (d2a != d2b) return d2a < d2b;
+        }
+        if (a->py != b->py) return a->py < b->py;
+    }
     double da = (a->flags & RF_POS) ? a->deg : 0, db = (b->flags & RF_POS) ? b->deg : 0;
     if (da != db) return da < db;
     return ((a->flags & RF_POS) ? a->radius : 0) > ((b->flags & RF_POS) ? b->radius : 0);
@@ -4450,6 +4474,14 @@ static void ev_read_inp(Ev *e) {
     e->swb = getbool(L, S_INP, "start_while_building");
     e->aim_nb_on = getbool(L, S_INP, "aim_avoid_nb");
     e->fbp_on = getbool(L, S_INP, "favor_blocker_place");
+    e->qsf = getbool(L, S_INP, "quick_side_first");
+    e->mtie = getbool(L, S_INP, "mirror_tie");
+    {
+        int hx, hy;
+        e->tank_wx = getnum(L, S_INP, "tank_wx", 0, &hx);
+        e->tank_wy = getnum(L, S_INP, "tank_wy", 0, &hy);
+        e->has_tank = hx && hy;
+    }
     e->carried_pills = getnum(L, S_INP, "carried_pills", 0, NULL);
     e->chains_only = getbool(L, S_INP, "chains_only");
     e->xcover_later = getbool(L, S_INP, "_xcover_later");

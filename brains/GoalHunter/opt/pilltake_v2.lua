@@ -99,6 +99,11 @@ function M.knob_inp(C, inp)
   inp.xcover_skip_pill_line = C.PT2_EXTRA_COVER_SKIP_PILL_LINE ~= false
   -- BLOCKER_MIN_LANE_BRAD: attack.lua's shield lane check (aim_wide)
   inp.min_lane_brad = C.BLOCKER_MIN_LANE_BRAD or 0
+  -- PT2_QUICK_SIDE_FIRST (Nov 24): the place keys only inside the travel band
+  inp.quick_side_first = C.PT2_QUICK_SIDE_FIRST ~= false
+  -- PT2_MIRROR_SAFE_TIE (Nov 24): S0 nearer the tank, then north, then angle
+  -- (inp.tank_wx, inp.tank_wy: build_inp)
+  inp.mirror_tie = C.PT2_MIRROR_SAFE_TIE ~= false
   -- PT2_CHAINS_ONLY (S10): the runs that only a safe chain can use (a
   -- non-goal A in group_step, the pt2_dbl shadow runs) plan no single take
   inp.chains_only_runs = C.PT2_CHAINS_ONLY ~= false
@@ -154,8 +159,31 @@ M.AIMS9[9] = { 24, 128 }
 -- group step passes it (Nov 23, Andrew approved Nov 23): on a full tie
 -- between plans with different first pills, the plan it has (the goal
 -- pill's own, run first) wins, as before S0.
-function M.better(a, b, cap, band, pec, swb, no_s0, far)
-  if a.safe == b.safe and a.kills == b.kills then
+--
+-- opt: the inp (or nil), for the two knobs below.
+--
+-- PT2_QUICK_SIDE_FIRST (Nov 24, Andrew: "don't drive all the way over,
+-- it's a waste of time"): opt.quick_side_first on and a travel band, the
+-- keys above (blocker tier, walls, aimnb, ring) rank two points of the
+-- same safe and kills only when both are in the travel band (as E1 and
+-- E4 below). A slower plan (a far side after a ban or a lane fail) wins
+-- only on travel: when its travel and build score is lower.
+--
+-- PT2_MIRROR_SAFE_TIE (Nov 24, Andrew: a mirrored setup gives a mirrored
+-- plan): opt.mirror_tie on, S0 ranks first by the distance from the tank
+-- (opt.tank_wx, opt.tank_wy) to the point (nearer wins), then by py
+-- (smaller wins: north first), and only then by the angle. Distance and
+-- py stay the same when the map is mirrored east to west; the angle does
+-- not (the smaller angle is north of the pills on the east side, south
+-- of them on the west side).
+function M.better(a, b, cap, band, pec, swb, no_s0, far, opt)
+  local keys = a.safe == b.safe and a.kills == b.kills
+  if keys and opt and opt.quick_side_first and band and band > 0 then
+    local sa, sb = a.score, b.score
+    local m = math.min(sa, sb, a.tier_min or sa, b.tier_min or sb)
+    keys = sa <= m + band and sb <= m + band
+  end
+  if keys then
     -- PT2_FAVOR_BLOCKER_PLACE: the lower blocker pill tier, then the
     -- nearer walls (nil with the knob off: the old order)
     local ta, tb = a.bp_tier or 0, b.bp_tier or 0
@@ -188,7 +216,17 @@ function M.better(a, b, cap, band, pec, swb, no_s0, far)
   if no_s0 then return false end
   -- S0: a last tie-break after every key above, so the winner never
   -- depends on the order table.sort leaves equal points in: the smaller
-  -- angle, then the larger radius
+  -- angle, then the larger radius (PT2_MIRROR_SAFE_TIE: first the
+  -- distance from the tank, then py)
+  if opt and opt.mirror_tie and a.px and b.px then
+    local tx, ty = opt.tank_wx, opt.tank_wy
+    if tx and ty then
+      local ax, ay, bx, by = a.px - tx, a.py - ty, b.px - tx, b.py - ty
+      local d2a, d2b = ax * ax + ay * ay, bx * bx + by * by
+      if d2a ~= d2b then return d2a < d2b end
+    end
+    if a.py ~= b.py then return a.py < b.py end
+  end
   local da, db = a.deg or 0, b.deg or 0
   if da ~= db then return da < db end
   return (a.radius or 0) > (b.radius or 0)
@@ -2598,7 +2636,7 @@ function M.evaluate_lua(inp)
     end
     ts = clk and clk()
     OLD.set_band(scored, band)
-    table.sort(scored, function(a, b) return M.better(a, b, cap, band, inp.prefer_existing_cover, inp.start_while_building, false, far) end)
+    table.sort(scored, function(a, b) return M.better(a, b, cap, band, inp.prefer_existing_cover, inp.start_while_building, false, far, inp) end)
     if ts then tm.sort = tm.sort + clk() - ts end
     if inp.leeway_on then
       -- the first leeway_top points of this rank (the single takes among
@@ -2613,7 +2651,7 @@ function M.evaluate_lua(inp)
       local function rerank()
         local t2 = clk and clk()
         OLD.set_band(scored, band)
-        table.sort(scored, function(a, b) return M.better(a, b, cap, band, inp.prefer_existing_cover, inp.start_while_building, false, far) end)
+        table.sort(scored, function(a, b) return M.better(a, b, cap, band, inp.prefer_existing_cover, inp.start_while_building, false, far, inp) end)
         if t2 then tm.sort = tm.sort + clk() - t2 end
       end
       local X = nil
@@ -2701,7 +2739,7 @@ function M.evaluate_lua(inp)
     else
       for _, rec in ipairs(scored) do all[#all + 1] = rec end
       if scored[1] and (not best or M.better(scored[1], best, cap, band, inp.prefer_existing_cover,
-                                             inp.start_while_building, false, far)) then
+                                             inp.start_while_building, false, far, inp)) then
         best = scored[1]
       end
       -- PT2_FARTHEST_RING: every ring runs (a nearer one may have more kills)
@@ -2797,7 +2835,7 @@ end
 function M.group_takes(inp, goalA, b, best)
   return (b and b.safe and b.chain_mode and b.in_chain and b.in_chain[goalA]
           and (not best or M.better(b, best, inp.leeway_min, inp.travel_band, inp.prefer_existing_cover,
-                                    inp.start_while_building, true, M.far_on(inp)))) and true or false
+                                    inp.start_while_building, true, M.far_on(inp), inp))) and true or false
 end
 
 function M.group_step(job)

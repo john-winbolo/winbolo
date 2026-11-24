@@ -1331,5 +1331,98 @@ do
   clear()
 end
 
+-- ── 15. PT2_MIRROR_SAFE_TIE and PT2_QUICK_SIDE_FIRST ─────────────────────
+-- c14 gap_e / gap_w (Nov 24): two pills (124,118) and (126,118), the tank
+-- east or west of them on the mirror square. With the same travel on both
+-- sides of the pill line, the old S0 (smaller angle) picks north of the
+-- pills from the east but south of them from the west. With
+-- PT2_MIRROR_SAFE_TIE the east angle and the west angle add up to 360.
+print("PT2_MIRROR_SAFE_TIE / PT2_QUICK_SIDE_FIRST")
+do
+  clear()
+  local function group(tx, ty, knobs, ban)
+    local P1 = { mx = 124, my = 118, owner = "hostile", health = 15 }
+    local P2 = { mx = 126, my = 118, owner = "hostile", health = 15 }
+    local goal = tx > 125 and P2 or P1      -- the near pill is the goal
+    local inp = make_inp(make_world({ P1, P2 }), goal, 1)
+    inp.carried_pills = 1
+    inp.aim_points = 9
+    inp.prefer_existing_cover, inp.start_while_building = true, true
+    inp.quick_side_first, inp.mirror_tie = knobs, knobs
+    inp.tank_wx, inp.tank_wy = math.floor((tx + 0.5) * 256), math.floor((ty + 0.5) * 256)
+    local function set_A(A)
+      inp.banned = (ban and A.mx == ban.mx) and function(d) return d >= ban.lo and d <= ban.hi end or nil
+    end
+    inp.set_A = set_A
+    set_A(goal)
+    -- octile travel from the tank square, the same on both sides
+    inp.score_fn = function(deg, mx, my)
+      local dx, dy = math.abs(mx - tx), math.abs(my - ty)
+      local mn, mxv = math.min(dx, dy), math.max(dx, dy)
+      return 4 * ((mxv - mn) + mn * math.sqrt(2))
+    end
+    V.reset()
+    local r = V.evaluate_group(inp)
+    return r.best, r.A
+  end
+  local be, Ae = group(138, 118, true)
+  local bw, Aw = group(112, 118, true)
+  print(string.format("    on: east A=(%d,%d) deg %s, west A=(%d,%d) deg %s",
+    Ae.mx, Ae.my, tostring(be and be.deg), Aw.mx, Aw.my, tostring(bw and bw.deg)))
+  check("on: east hits the west pill first", be and be.safe and Ae.mx == 124, Ae.mx)
+  check("on: west hits the east pill first", bw and bw.safe and Aw.mx == 126, Aw.mx)
+  check("on: east deg + west deg = 360 (mirror plans)", be and bw and be.deg + bw.deg == 360,
+    be and bw and (be.deg + bw.deg))
+  local oe = group(138, 118, false)
+  local ow = group(112, 118, false)
+  print(string.format("    off: east deg %s, west deg %s", tostring(oe and oe.deg), tostring(ow and ow.deg)))
+  check("off: the old S0 gives plans that are not mirrors", oe and ow and oe.deg + ow.deg ~= 360,
+    oe and ow and (oe.deg .. "/" .. ow.deg))
+
+  -- c13 gap_e (Nov 24): the tank east (139,118), goal (126,118). The plan
+  -- at deg 99 on (124,118) failed its lane check, so 90..100 is banned on
+  -- (124,118). The replan must stay east (a double take from the east on
+  -- the west pill), not drive all the way to the west side.
+  for _, knobs in ipairs({ true, false }) do
+    local b, A = group(139, 118, knobs, { mx = 124, lo = 90, hi = 100 })
+    local tag = knobs and "on" or "off"
+    print(string.format("    c13 %s: A=(%d,%d) deg %s", tag, A.mx, A.my, tostring(b and b.deg)))
+    check("c13 " .. tag .. ": replan hits the west pill (124,118) first", b and b.safe and A.mx == 124, A.mx)
+    check("c13 " .. tag .. ": replan stays east, off the banned 90..100",
+      b and b.deg and b.deg > 45 and b.deg < 135 and not (b.deg >= 90 and b.deg <= 100), b and b.deg)
+  end
+
+  -- PT2_QUICK_SIDE_FIRST: a plan with a lower blocker pill tier but far
+  -- slower travel (out of the band) no longer wins on the tier alone.
+  local function plan(score, tier, deg)
+    return { safe = true, kills = 2, score = score, tier_min = 39, n_built = 1, depth = 15, blk = 1,
+             leeway = 8, deg = deg, radius = 7.4, bp_tier = tier, wall_far = 0, aimnb = false,
+             px = 0, py = 0 }
+  end
+  local near_side = plan(40, 2, 83)
+  local far_side = plan(88, 1, 259)
+  local band = 6.25
+  check("off: the far side wins on blocker tier", V.better(far_side, near_side, 8, band, true, true, false, false) == true)
+  check("on: the near side wins on travel (far side out of the band)",
+    V.better(near_side, far_side, 8, band, true, true, false, false, { quick_side_first = true }) == true
+    and V.better(far_side, near_side, 8, band, true, true, false, false, { quick_side_first = true }) == false)
+  local close_side = plan(44, 1, 259)
+  check("on: inside the band the tier still ranks first",
+    V.better(close_side, near_side, 8, band, true, true, false, false, { quick_side_first = true }) == true)
+  local ginp = { leeway_min = 8, travel_band = band, prefer_existing_cover = true, start_while_building = true,
+                 quick_side_first = true }
+  local G = { mx = 126, my = 118 }
+  near_side.chain_mode, near_side.in_chain = true, { [G] = true }
+  far_side.chain_mode, far_side.in_chain = true, { [G] = true }
+  check("on: group step keeps the near side plan", V.group_takes(ginp, G, far_side, near_side) == false)
+  ginp.quick_side_first = false
+  check("off: group step takes the far side plan", V.group_takes(ginp, G, far_side, near_side) == true)
+
+  local k = V.knob_inp(C, {})
+  check("knob_inp: PT2_QUICK_SIDE_FIRST", k.quick_side_first == (C.PT2_QUICK_SIDE_FIRST ~= false))
+  check("knob_inp: PT2_MIRROR_SAFE_TIE", k.mirror_tie == (C.PT2_MIRROR_SAFE_TIE ~= false))
+  clear()
+end
+
 print(string.format("%d passed, %d failed", pass, fail))
 os.exit(fail == 0 and 0 or 1)

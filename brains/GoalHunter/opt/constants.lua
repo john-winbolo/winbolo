@@ -1120,6 +1120,24 @@ M.PT2_EXTRA_COVER_WALLS = 1
 -- square (the short builder trip). false = the old extra walls. MAST:
 -- false.
 M.PT2_EXTRA_COVER_SKIP_PILL_LINE = true
+-- PT2_QUICK_SIDE_FIRST (Nov 24, Andrew, run_c13 gap_e: "do a double take
+-- originating east hitting the west most pill, don't drive all the way
+-- over, it's a waste of time"): v2 and its C port. The place keys that
+-- rank before travel (PT2_FAVOR_BLOCKER_PLACE tier and walls,
+-- PT2_AIM_AVOID_CHAIN_NEIGHBOUR, PT2_FARTHEST_RING) rank two points of the
+-- same safe and kills only when both are inside the travel band
+-- (PT2_TRAVEL_BAND_TICKS). A slower plan, such as the far side of the
+-- pills after a lane fail or a ban near the tank, wins only on its travel
+-- and build score. The same rank picks between the group runs (a plan for
+-- another first pill). No new value. false = the old rank. MAST: false.
+M.PT2_QUICK_SIDE_FIRST = true
+-- PT2_MIRROR_SAFE_TIE (Nov 24, Andrew: a mirrored setup gives a mirrored
+-- plan): v2 and its C port. On a full tie (S0), the point nearer the tank
+-- wins, then the point further north (smaller y), and only then the
+-- smaller angle as before. The old angle rule picks north of the pills on
+-- the east side but south of them on the west side. No new value.
+-- false = the old S0. MAST: false.
+M.PT2_MIRROR_SAFE_TIE = true
 -- Longest chain counted, pills. Proposal, awaiting Andrew's value.
 M.PT2_MAX_CHAIN = 3
 -- Ring step around the target, degrees. Andrew approved 1 for HELM (Nov 19):
@@ -8546,6 +8564,8 @@ M.PRESETS = {
     PT2_START_ANGER_RISE = false,
     PT2_EXTRA_COVER_WALLS = 0,
     PT2_EXTRA_COVER_SKIP_PILL_LINE = false,
+    PT2_QUICK_SIDE_FIRST = false,
+    PT2_MIRROR_SAFE_TIE = false,
     PT2_LEEWAY = false,
     PT2_OWN_PILL_BONUS = false,
     PT2_AIM_NUDGE = false,
@@ -8957,6 +8977,8 @@ M.PRESETS.mast = {
   PT2_START_ANGER_RISE              = false,  -- 2.2.1 counted round(anger / bump) hits
   PT2_EXTRA_COVER_WALLS             = 0,      -- 2.2.1 had no pill take v2
   PT2_EXTRA_COVER_SKIP_PILL_LINE    = false,  -- 2.2.1 had no pill take v2
+  PT2_QUICK_SIDE_FIRST              = false,  -- 2.2.1 had no pill take v2
+  PT2_MIRROR_SAFE_TIE               = false,  -- 2.2.1 had no pill take v2
   PT2_LEEWAY                        = false,
   PT2_OWN_PILL_BONUS                = false,
   PT2_TRAVEL_BAND_TICKS             = 0,

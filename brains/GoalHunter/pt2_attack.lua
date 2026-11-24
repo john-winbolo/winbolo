@@ -118,6 +118,8 @@ function M.build_inp(state, goal, info, world, pill, no_builder, npb, radius, no
   inp.carried_pills = info.carried_pills or 0
   -- PT2_FINISH_NO_COVER_MAX_ANGER: our armour and each pill's anger now
   inp.armour = info.armour or 0
+  -- PT2_MIRROR_SAFE_TIE: the tank's place for S0 (nearer the tank wins)
+  inp.tank_wx, inp.tank_wy = info.tankx, info.tanky
   -- PT2_LIVE_SHELL: the shadow's shells walk the live rules
   if C.PT2_LIVE_SHELL then V2.live_shell(inp.env, info.rules) end
   -- PT2_TANKSHOT_BLOCKERS: boats and the tanks we see stop our own shell

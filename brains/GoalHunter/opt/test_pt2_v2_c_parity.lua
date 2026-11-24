@@ -547,6 +547,9 @@ local function random_case(ci)
     local dx, dy = x - hx, y - hy
     return math.sqrt(dx * dx + dy * dy) + (mx % 3) * 0.125
   end
+  inp.quick_side_first = rnd(3) ~= 0
+  inp.mirror_tie = rnd(3) ~= 0
+  if rnd(5) ~= 0 then inp.tank_wx, inp.tank_wy = math.floor(hx * 256), math.floor(hy * 256) end
   instrument(inp)
   return inp, pills
 end
