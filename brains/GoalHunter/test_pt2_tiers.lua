@@ -95,7 +95,7 @@ for t = 1, 10 do
   check("tier " .. t .. " no goal fields", row and row.dbl_goal == nil and row.dbl_margin == nil)
 end
 -- P2: the tier row's pt2_eval picks the evaluator (pt2_eval.lua). The
--- values are a proposal, awaiting Andrew's value: 10-7 "v2", 6-1 "old".
+-- values are Andrew's, approved Nov 23: 10-7 "v2", 6-1 "old".
 do
   local E = require("pt2_eval")
   local NEW, OLD = require("pilltake_v2"), require("pilltake_v2_old")

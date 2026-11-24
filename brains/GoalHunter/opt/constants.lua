@@ -1275,7 +1275,7 @@ M.PT2_C_EVAL = true
 -- KEEL / MAST: "old".
 M.PT2_EVALUATOR = "v2"
 -- PT2_EVAL_BY_TIER (Nov 23, P2): the capacity tier row's pt2_eval wins over
--- PT2_EVALUATOR (BRAIN_CAPACITY_LEVELS). Proposal, awaiting Andrew's value.
+-- PT2_EVALUATOR (BRAIN_CAPACITY_LEVELS). Andrew approved Nov 23.
 -- false = PT2_EVALUATOR at every tier (KEEL, MAST: there it is "old").
 M.PT2_EVAL_BY_TIER = true
 -- PT2_C_STANDABLE (Nov 21, F4): true = the C copy (gh_pt2_old.c) does the
@@ -4739,7 +4739,7 @@ M.WSIM_TRUNCATED_COST       = 25
 --                up to 25 (tier 1); cap = 2 x spread.
 --   pt2_eval   : the pill take evaluator of this tier, "v2" or "old"; it
 --                wins over PT2_EVALUATOR when PT2_EVAL_BY_TIER is on
---                (pt2_eval.lua). Proposal, awaiting Andrew's value: tiers
+--                (pt2_eval.lua). Andrew approved Nov 23: tiers
 --                10-7 "v2", 6 and below "old" (old is cheaper: bench median
 --                old Lua 10.9 ms, v2 Lua 15.5 ms, old C 0.43 ms).
 --   sb_positions / sb_step : shield-blocker ring scan density.
