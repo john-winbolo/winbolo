@@ -141,6 +141,10 @@ extern "C" {
  * by then is reaped later (botHostChildClientPoll), so no caller waits
  * longer than this for a kill. */
 #define BOT_HOST_CHILD_KILL_WAIT_MS 100u
+/* The longest botHostChildKillWait waits for a killed child to end, so a
+ * child the system holds cannot freeze the dedicated server. Andrew
+ * approved Nov 24. */
+#define BOT_HOST_CHILD_KILL_WAIT_MAX_MS 5000u
 /* The "salt" lines one child may send; more are not kept (a child
  * answers one salt for each round of the server's same-computer check). */
 #define BOT_HOST_CHILD_MAX_SALT_LINES 16
@@ -440,11 +444,13 @@ bool botHostChildWait(BotHostChildProc *p, uint32_t waitMs, int *exitCode);
  * ended; false when it still runs (botHostChildAlive then sees the end,
  * and on POSIX reaps it). */
 bool botHostChildKill(BotHostChildProc *p);
-/* Kills the child as botHostChildKill does, then waits for its end with
- * no time limit (on POSIX a blocking waitpid, so it is reaped). Only for a
- * caller that may wait: a killed child ends at once, unless the system
- * holds it. botHostChildFree may follow. */
-void botHostChildKillWait(BotHostChildProc *p);
+/* Kills the child as botHostChildKill does, then waits at most
+ * BOT_HOST_CHILD_KILL_WAIT_MAX_MS for its end (on POSIX it is reaped).
+ * Only for a caller that may wait: a killed child ends at once, unless the
+ * system holds it. True when it ended, and botHostChildFree may follow;
+ * false when it still runs: do not free it then (botHostChildAlive sees
+ * its end later, and on POSIX reaps it). */
+bool botHostChildKillWait(BotHostChildProc *p);
 /* Frees p; kills the child first if it still runs. Call it once the child
  * ended: on POSIX a child that still runs is not reaped. */
 void botHostChildFree(BotHostChildProc *p);
@@ -577,6 +583,10 @@ bool botHostChildClientReaping(void);
 /* For the tests: keep p as a stopped child (no relay) until it ends, as
  * botHostChildClientStop does. False when the list is full. */
 bool botHostChildClientReapForTest(BotHostChildProc *p);
+/* For the tests: keep p as a lost child, as a stop does when the list
+ * above is full and p has not ended BOT_HOST_CHILD_KILL_WAIT_MAX_MS after
+ * its kill. botHostChildClientPoll frees it once it ended. */
+void botHostChildClientLoseForTest(BotHostChildProc *p);
 /* A child was started and not stopped (it may have ended by itself). */
 bool botHostChildClientActive(void);
 /* The last status the child sent; running is false once it ended. */

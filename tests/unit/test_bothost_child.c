@@ -1814,6 +1814,42 @@ int run_bothost_child_kill_reap(void) {
     printf("    the stopped child was freed after %d polls\n", polls);
     UT_ASSERT_MSG(!botHostChildClientReaping(),
                   "the ended child was not freed in 3 s of polls");
+
+    /* 3. The kill and wait of a full list has a time limit: a child that
+     * is killed ends well inside BOT_HOST_CHILD_KILL_WAIT_MAX_MS. */
+    p = spawnTest(exe, a, NULL, log);
+    UT_ASSERT(p != NULL);
+    start = (uint32_t)SDL_GetTicks();
+    ended = botHostChildKillWait(p);
+    took = (uint32_t)SDL_GetTicks() - start;
+    UT_ASSERT_MSG(ended, "the killed child did not end in %u ms",
+                  (unsigned)BOT_HOST_CHILD_KILL_WAIT_MAX_MS);
+    UT_ASSERT_MSG(took < BOT_HOST_CHILD_KILL_WAIT_MAX_MS,
+                  "the kill and wait took %u ms", (unsigned)took);
+    UT_ASSERT(!botHostChildAlive(p, &code));
+    botHostChildFree(p);
+
+    /* 4. A lost child (it still ran after that limit): kept while it runs,
+     * not freed, and freed by the poll once it ended. A child that the
+     * system holds past a kill cannot be made here, so the test puts a
+     * running child in the lost list and kills it later. */
+    p = spawnTest(exe, a, NULL, log);
+    UT_ASSERT(p != NULL);
+    botHostChildClientLoseForTest(p);
+    UT_ASSERT(botHostChildClientReaping());
+    botHostChildClientPoll();
+    UT_ASSERT_MSG(botHostChildClientReaping(),
+                  "the poll freed a lost child that still runs");
+    UT_ASSERT(botHostChildAlive(p, NULL));
+    (void)botHostChildKill(p);
+    polls = 0;
+    while (botHostChildClientReaping() && polls < 300) {
+        SDL_Delay(10);
+        botHostChildClientPoll();
+        polls++;
+    }
+    UT_ASSERT_MSG(!botHostChildClientReaping(),
+                  "the lost child was not freed in 3 s of polls");
     removeTestDir(root);
     return 0;
 }
