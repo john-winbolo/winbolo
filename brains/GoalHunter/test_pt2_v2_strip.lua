@@ -1340,7 +1340,7 @@ end
 print("PT2_MIRROR_SAFE_TIE / PT2_QUICK_SIDE_FIRST")
 do
   clear()
-  local function group(tx, ty, knobs, ban)
+  local function group(tx, ty, knobs, ban, opts)
     local P1 = { mx = 124, my = 118, owner = "hostile", health = 15 }
     local P2 = { mx = 126, my = 118, owner = "hostile", health = 15 }
     local goal = tx > 125 and P2 or P1      -- the near pill is the goal
@@ -1350,6 +1350,14 @@ do
     inp.prefer_existing_cover, inp.start_while_building = true, true
     inp.quick_side_first, inp.mirror_tie = knobs, knobs
     inp.tank_wx, inp.tank_wy = math.floor((tx + 0.5) * 256), math.floor((ty + 0.5) * 256)
+    if opts and opts.far then
+      inp.farthest_ring, inp.ring_radii = true, { 7.4, 7.2, 7.0, 6.6 }
+    end
+    if opts and opts.block_x then
+      local st0 = inp.standable
+      inp.standable = function(mx, my) return mx ~= opts.block_x and st0(mx, my) end
+    end
+    if opts and opts.prev then inp.prev_px, inp.prev_py = opts.prev.px, opts.prev.py end
     local function set_A(A)
       inp.banned = (ban and A.mx == ban.mx) and function(d) return d >= ban.lo and d <= ban.hi end or nil
     end
@@ -1390,6 +1398,70 @@ do
     check("c13 " .. tag .. ": replan hits the west pill (124,118) first", b and b.safe and A.mx == 124, A.mx)
     check("c13 " .. tag .. ": replan stays east, off the banned 90..100",
       b and b.deg and b.deg > 45 and b.deg < 135 and not (b.deg >= 90 and b.deg <= 100), b and b.deg)
+  end
+
+  -- A layout where the knobs change the side: column x=131 east of the
+  -- pills can not be stood on, so from the east only the 6.6 ring has a
+  -- double take. Knobs off: the farther ring (7.4) ranks before travel,
+  -- the tank drives all the way to the west side. Knobs on: the near
+  -- side's 6.6 point is far quicker (out of the travel band), it wins.
+  do
+    local bo, Ao = group(139, 118, false, nil, { far = true, block_x = 131 })
+    local bn, An = group(139, 118, true, nil, { far = true, block_x = 131 })
+    print(string.format("    x=131 blocked: off A=(%d,%d) deg %s R %s; on A=(%d,%d) deg %s R %s",
+      Ao.mx, Ao.my, tostring(bo and bo.deg), tostring(bo and bo.radius),
+      An.mx, An.my, tostring(bn and bn.deg), tostring(bn and bn.radius)))
+    check("x=131 blocked, off: the far (west) side", bo and bo.safe and Ao.mx == 126 and bo.deg > 180, bo and bo.deg)
+    check("x=131 blocked, on: the near (east) side", bn and bn.safe and An.mx == 124 and bn.deg < 180, bn and bn.deg)
+    check("x=131 blocked, on: quicker than off", bn and bo and bn.score < bo.score,
+      bn and bo and (bn.score .. "/" .. bo.score))
+    -- the last plan's point wins a tie: keep 79 (knobs on picks 83 alone)
+    local b83 = group(138, 118, true, nil, { far = true })
+    local b79 = group(138, 118, false, nil, { far = true })
+    if b83 and b79 and b83.deg ~= b79.deg then
+      local bk = group(138, 118, true, nil, { far = true, prev = { px = b79.px, py = b79.py } })
+      check("last plan's point kept in the tie", bk and bk.deg == b79.deg, bk and bk.deg)
+    else
+      check("probe: on and off pick different points", false, b83 and b83.deg)
+    end
+  end
+
+  -- floor: three lists, each one band above the one before. G (40, tier
+  -- 2), then P (45, tier 1), then Q (51, tier 0). Without the floor Q wins
+  -- (its band is measured from P), though G beats Q directly.
+  do
+    local G0 = { mx = 126, my = 118 }
+    local function gp(score, tier)
+      return { safe = true, kills = 2, score = score, tier_min = score, n_built = 1, depth = 15, blk = 1,
+               leeway = 8, deg = 90, radius = 7.4, bp_tier = tier, wall_far = 0, aimnb = false,
+               px = 0, py = 0, chain_mode = true, in_chain = { [G0] = true } }
+    end
+    local ginp = { leeway_min = 8, travel_band = 6.25, prefer_existing_cover = true, start_while_building = true,
+                   quick_side_first = true }
+    local g, pp, q = gp(40, 2), gp(45, 1), gp(51, 0)
+    check("G beats Q directly", V.group_takes(ginp, G0, q, g) == false)
+    local function walk(use_floor)
+      local floor, best = use_floor and {} or nil, nil
+      for _, r in ipairs({ g, pp, q }) do
+        if floor then V.qsf_note(floor, { r }) end
+        if V.group_takes(ginp, G0, r, best, floor) then best = r end
+      end
+      return best
+    end
+    check("no floor: Q wins by drift (the bug)", walk(false) == q)
+    check("floor: Q never wins (P, inside G's band, wins on tier)", walk(true) == pp)
+  end
+
+  -- min(deg, 360 - deg): two points at the same distance from the tank and
+  -- the same py (the tank due south of the pill) rank by min(deg, 360 - deg)
+  do
+    local function pt(deg, px)
+      return { safe = true, kills = 2, score = 10, tier_min = 10, n_built = 1, depth = 15, blk = 1,
+               leeway = 8, deg = deg, radius = 7.4, px = px, py = 100 }
+    end
+    local o = { mirror_tie = true, tank_wx = 1000, tank_wy = 5000 }
+    check("min(deg, 360 - deg): 350 (10) beats 20", V.better(pt(350, 900), pt(20, 1100), 8, 0, false, false, false, false, o) == true)
+    check("min(deg, 360 - deg) off: 20 beats 350", V.better(pt(20, 1100), pt(350, 900), 8, 0, false, false, false, false, nil) == true)
   end
 
   -- PT2_QUICK_SIDE_FIRST: a plan with a lower blocker pill tier but far

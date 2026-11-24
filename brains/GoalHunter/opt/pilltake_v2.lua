@@ -176,11 +176,35 @@ M.AIMS9[9] = { 24, 128 }
 -- py stay the same when the map is mirrored east to west; the angle does
 -- not (the smaller angle is north of the pills on the east side, south
 -- of them on the west side).
-function M.better(a, b, cap, band, pec, swb, no_s0, far, opt)
+--
+-- floor (PT2_QUICK_SIDE_FIRST, Nov 24 review): the lowest score seen so
+-- far for a's safe and kills, over every list compared before (the rings
+-- of one run, the runs of a group). The band is measured from it too, so
+-- a plan can not move up one band per ring or per first pill.
+--
+-- PT2_MIRROR_SAFE_TIE, more (Nov 24 review):
+--   * the point of the last plan (opt.prev_px, opt.prev_py) wins first,
+--     so a replan in the same tie does not move the point as the tank
+--     moves (many ring points share one travel score per square);
+--   * after py, the smaller min(deg, 360 - deg) (the same for a point
+--     and its east-west mirror), and only then the smaller deg.
+function M.qsf_key(r) return (r.safe and 1000 or 0) + (r.kills or 0) end
+
+-- PT2_QUICK_SIDE_FIRST: note each record's score in floor (per key)
+function M.qsf_note(floor, list)
+  for _, r in ipairs(list) do
+    local k = M.qsf_key(r)
+    local f = floor[k]
+    if r.score and (not f or r.score < f) then floor[k] = r.score end
+  end
+end
+
+function M.better(a, b, cap, band, pec, swb, no_s0, far, opt, floor)
   local keys = a.safe == b.safe and a.kills == b.kills
   if keys and opt and opt.quick_side_first and band and band > 0 then
     local sa, sb = a.score, b.score
     local m = math.min(sa, sb, a.tier_min or sa, b.tier_min or sb)
+    if floor and floor < m then m = floor end
     keys = sa <= m + band and sb <= m + band
   end
   if keys then
@@ -219,6 +243,11 @@ function M.better(a, b, cap, band, pec, swb, no_s0, far, opt)
   -- angle, then the larger radius (PT2_MIRROR_SAFE_TIE: first the
   -- distance from the tank, then py)
   if opt and opt.mirror_tie and a.px and b.px then
+    local qx, qy = opt.prev_px, opt.prev_py
+    if qx and qy then
+      local pa, pb = a.px == qx and a.py == qy, b.px == qx and b.py == qy
+      if pa ~= pb then return pa end
+    end
     local tx, ty = opt.tank_wx, opt.tank_wy
     if tx and ty then
       local ax, ay, bx, by = a.px - tx, a.py - ty, b.px - tx, b.py - ty
@@ -226,6 +255,9 @@ function M.better(a, b, cap, band, pec, swb, no_s0, far, opt)
       if d2a ~= d2b then return d2a < d2b end
     end
     if a.py ~= b.py then return a.py < b.py end
+    local da, db = a.deg or 0, b.deg or 0
+    local ma, mb = math.min(da, 360 - da), math.min(db, 360 - db)
+    if ma ~= mb then return ma < mb end
   end
   local da, db = a.deg or 0, b.deg or 0
   if da ~= db then return da < db end
@@ -2406,6 +2438,8 @@ function M.evaluate_lua(inp)
   -- far: a ring stopped "no chain" (a safe single take, no safe chain);
   -- the run goes on, a nearer ring may have a safe chain
   local far_single = false
+  -- PT2_QUICK_SIDE_FIRST: the lowest score per safe and kills over the rings
+  local qfloor = (inp.quick_side_first and band and band > 0) and {} or nil
   for _, R in ipairs(rings) do
     local cands = {}
     local mpts = {}
@@ -2738,8 +2772,10 @@ function M.evaluate_lua(inp)
     elseif no_chain then st.co_stop = st.co_stop + 1; best = nil; break
     else
       for _, rec in ipairs(scored) do all[#all + 1] = rec end
+      if qfloor then M.qsf_note(qfloor, scored) end
       if scored[1] and (not best or M.better(scored[1], best, cap, band, inp.prefer_existing_cover,
-                                             inp.start_while_building, false, far, inp)) then
+                                             inp.start_while_building, false, far, inp,
+                                             qfloor and qfloor[M.qsf_key(scored[1])])) then
         best = scored[1]
       end
       -- PT2_FARTHEST_RING: every ring runs (a nearer one may have more kills)
@@ -2767,7 +2803,8 @@ function M.evaluate_lua(inp)
                   nodes = st.wall_nodes, points = n_eval, cant = st.cant, survive = st.survive,
                   planned = st.planned, surv1 = surv1 }
   return { best = best, all = inp.keep_all and all or nil, n_eval = n_eval, n_reject = n_reject,
-           hostile = ctx.hostile, inp = inp, no_chain = no_chain, v2 = { stat = st, tm = tm } }
+           hostile = ctx.hostile, inp = inp, no_chain = no_chain, qsf_floor = qfloor,
+           v2 = { stat = st, tm = tm } }
 end
 
 -- ── evaluate_group (as the old one; rays and square reads kept per job) ──
@@ -2832,10 +2869,24 @@ end
 -- best? A safe chain plan that holds the goal pill, ranked by M.better
 -- with no S0 (Nov 23, Andrew approved Nov 23): on a full tie the plan
 -- the group has (the goal pill's own, run first) stays.
-function M.group_takes(inp, goalA, b, best)
+--
+-- floor (PT2_QUICK_SIDE_FIRST): the job's lowest score per safe and
+-- kills over the runs so far (M.better).
+function M.group_takes(inp, goalA, b, best, floor)
   return (b and b.safe and b.chain_mode and b.in_chain and b.in_chain[goalA]
           and (not best or M.better(b, best, inp.leeway_min, inp.travel_band, inp.prefer_existing_cover,
-                                    inp.start_while_building, true, M.far_on(inp), inp))) and true or false
+                                    inp.start_while_building, true, M.far_on(inp), inp,
+                                    floor and floor[M.qsf_key(b)]))) and true or false
+end
+
+-- PT2_QUICK_SIDE_FIRST: a run's lowest scores into the job's
+local function job_floor(job, r)
+  local f = r and r.qsf_floor
+  if not f then return end
+  job.qfloor = job.qfloor or {}
+  for k, v in pairs(f) do
+    if not job.qfloor[k] or v < job.qfloor[k] then job.qfloor[k] = v end
+  end
 end
 
 function M.group_step(job)
@@ -2843,6 +2894,7 @@ function M.group_step(job)
   if not job.list then
     local res = eval_in_job(job, inp)
     res.A, res.goal_A = goalA, goalA
+    job_floor(job, res)
     job.res, job.n_eval, job.n_reject = res, res.n_eval, res.n_reject
     job.list = {}
     if not inp.chains then job_done(job); return true end
@@ -2869,7 +2921,8 @@ function M.group_step(job)
     if not ok then error(r, 0) end
     job.n_eval, job.n_reject = job.n_eval + r.n_eval, job.n_reject + r.n_reject
     local b, res = r.best, job.res
-    if M.group_takes(inp, goalA, b, res.best) then
+    job_floor(job, r)
+    if M.group_takes(inp, goalA, b, res.best, job.qfloor) then
       r.A, r.goal_A = p, goalA
       job.res = r
     end

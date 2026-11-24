@@ -536,6 +536,11 @@ struct St {
     int    fbp_on; double carried_pills;
     int    qsf;                    /* PT2_QUICK_SIDE_FIRST */
     int    mtie, has_tank; double tank_wx, tank_wy;   /* PT2_MIRROR_SAFE_TIE */
+    int    has_prev; double prev_px, prev_py;          /* the last plan's point */
+    /* PT2_QUICK_SIDE_FIRST: the lowest score per M.qsf_key over the rings
+     * (qsf_floor), and the floor of the compare now (has_cmpf) */
+    int    nqf; double qf_key[64], qf_min[64];
+    int    has_cmpf; double cmpf;
     double extra_cover_walls, anger_bump;
     int    xcover_skip_pill_line;
     double min_lane_brad;          /* BLOCKER_MIN_LANE_BRAD: aim_wide, 0 = off */
@@ -3725,6 +3730,7 @@ static int better(Ev *e, const Rec *a, const Rec *b, int no_s0) {
         double tb = (b->flags & RF_BAND) ? b->tier_min : sb;
         if (ta < m) m = ta;
         if (tb < m) m = tb;
+        if (e->has_cmpf && e->cmpf < m) m = e->cmpf;
         keys = sa <= m + e->band && sb <= m + e->band;
     }
     if (keys) {
@@ -3763,6 +3769,11 @@ static int better(Ev *e, const Rec *a, const Rec *b, int no_s0) {
     if (no_s0) return 0;
     /* PT2_MIRROR_SAFE_TIE: nearer the tank, then north (smaller py) */
     if (e->mtie) {   /* px, py: every record has them (push_rec) */
+        if (e->has_prev) {
+            int pa = a->px == e->prev_px && a->py == e->prev_py;
+            int pb = b->px == e->prev_px && b->py == e->prev_py;
+            if (pa != pb) return pa;
+        }
         if (e->has_tank) {
             double ax = a->px - e->tank_wx, ay = a->py - e->tank_wy;
             double bx = b->px - e->tank_wx, by = b->py - e->tank_wy;
@@ -3770,6 +3781,9 @@ static int better(Ev *e, const Rec *a, const Rec *b, int no_s0) {
             if (d2a != d2b) return d2a < d2b;
         }
         if (a->py != b->py) return a->py < b->py;
+        double ga = (a->flags & RF_POS) ? a->deg : 0, gb = (b->flags & RF_POS) ? b->deg : 0;
+        double ma = ga < 360 - ga ? ga : 360 - ga, mb = gb < 360 - gb ? gb : 360 - gb;
+        if (ma != mb) return ma < mb;
     }
     double da = (a->flags & RF_POS) ? a->deg : 0, db = (b->flags & RF_POS) ? b->deg : 0;
     if (da != db) return da < db;
@@ -4481,6 +4495,9 @@ static void ev_read_inp(Ev *e) {
         e->tank_wx = getnum(L, S_INP, "tank_wx", 0, &hx);
         e->tank_wy = getnum(L, S_INP, "tank_wy", 0, &hy);
         e->has_tank = hx && hy;
+        e->prev_px = getnum(L, S_INP, "prev_px", 0, &hx);
+        e->prev_py = getnum(L, S_INP, "prev_py", 0, &hy);
+        e->has_prev = hx && hy;
     }
     e->carried_pills = getnum(L, S_INP, "carried_pills", 0, NULL);
     e->chains_only = getbool(L, S_INP, "chains_only");
@@ -4761,6 +4778,23 @@ static Rec *full_of(Ev *e, Rec *q) {
     return full;
 }
 
+static double qsf_key(const Rec *r) { return (r->safe ? 1000 : 0) + r->kills; }
+static int qsf_on(Ev *e) { return e->qsf && e->has_band && e->band > 0; }
+
+/* M.qsf_note: each scored record's score into the floor */
+static void qsf_note(Ev *e) {
+    for (int i = 1; i <= e->nscored; i++) {
+        Rec *r = e->scored[i];
+        double k = qsf_key(r);
+        int j;
+        for (j = 0; j < e->nqf; j++) if (e->qf_key[j] == k) break;
+        if (j == e->nqf) {
+            if (e->nqf >= 64) luaL_error(e->L, "gh_pt2_v2: too many floor keys");
+            e->qf_key[j] = k; e->qf_min[j] = r->score; e->nqf++;
+        } else if (r->score < e->qf_min[j]) e->qf_min[j] = r->score;
+    }
+}
+
 static void scored_push(Ev *e, Rec *r) { vec_push(e, &e->scored, &e->nscored, &e->cap_scored, r); }
 
 /* evaluate_lua as a resumable step: 0 = stopped for a yield, 1 = done */
@@ -4978,7 +5012,16 @@ static int ev_run(Ev *e) {
             else if (e->no_chain) { e->co_stop += 1; e->best = NULL; break; }
             else {
                 for (int i = 1; i <= e->nscored; i++) all_push(e, e->scored[i], NULL);
+                if (qsf_on(e)) {
+                    qsf_note(e);
+                    if (e->nscored >= 1) {
+                        double k = qsf_key(e->scored[1]);
+                        for (int j = 0; j < e->nqf; j++)
+                            if (e->qf_key[j] == k) { e->has_cmpf = 1; e->cmpf = e->qf_min[j]; break; }
+                    }
+                }
                 if (e->nscored >= 1 && (!e->best || better(e, e->scored[1], e->best, 0))) e->best = e->scored[1];
+                e->has_cmpf = 0;
                 if (e->best && e->best->safe && !e->far) break;
             }
         }
@@ -5042,6 +5085,13 @@ static void push_result(Ev *e) {
     push_plist(e, e->hostile); lua_setfield(L, res, "hostile");
     lua_pushvalue(L, S_INP); lua_setfield(L, res, "inp");
     if (e->no_chain) { lua_pushstring(L, "single"); lua_setfield(L, res, "no_chain"); }
+    if (qsf_on(e)) {
+        lua_createtable(L, 0, e->nqf);
+        for (int j = 0; j < e->nqf; j++) {
+            lua_pushnumber(L, e->qf_key[j]); lua_pushnumber(L, e->qf_min[j]); lua_settable(L, -3);
+        }
+        lua_setfield(L, res, "qsf_floor");
+    }
     lua_createtable(L, 0, 2);
     lua_createtable(L, 0, 40);
     stat_put(L, "sq_reads", e->sq_reads); stat_put(L, "casts", e->casts);

@@ -114,6 +114,9 @@ function M.build_inp(state, goal, info, world, pill, no_builder, npb, radius, no
   inp.armour = info.armour or 0
   -- PT2_MIRROR_SAFE_TIE: the tank's place for S0 (nearer the tank wins)
   inp.tank_wx, inp.tank_wy = info.tankx, info.tanky
+  -- and the point of the last plan: a replan in the same tie keeps it
+  local lp = goal and goal._pt2 and goal._pt2.pt
+  if lp then inp.prev_px, inp.prev_py = lp.px, lp.py end
   -- PT2_LIVE_SHELL: the shadow's shells walk the live rules
   if C.PT2_LIVE_SHELL then V2.live_shell(inp.env, info.rules) end
   -- PT2_TANKSHOT_BLOCKERS: boats and the tanks we see stop our own shell
@@ -370,6 +373,8 @@ local function finish(a, inp, res, cost)
   out.pill_wall_equiv = C.PPT_PILL_WALL_EQUIV or 3.0
   goal._pt2 = out.chain
   goal._pt2.tick = a.now
+  -- PT2_MIRROR_SAFE_TIE: this plan's point, kept by the next replan's tie
+  goal._pt2.pt = b and b.px and { px = b.px, py = b.py } or nil
   -- id: blocked_line_replan gives a retargeted take back its goal pill
   goal._pt2.goal_target = { mx = pill.mx, my = pill.my, id = goal.target_id }
   if A ~= pill then

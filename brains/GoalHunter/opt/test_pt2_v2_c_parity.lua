@@ -550,6 +550,14 @@ local function random_case(ci)
   inp.quick_side_first = rnd(3) ~= 0
   inp.mirror_tie = rnd(3) ~= 0
   if rnd(5) ~= 0 then inp.tank_wx, inp.tank_wy = math.floor(hx * 256), math.floor(hy * 256) end
+  if rnd(3) == 0 then
+    -- the last plan's point: a ring point (it may be nudged or banned)
+    local R = (inp.farthest_ring and inp.ring_radii and inp.ring_radii[1]) or inp.radius
+    local deg = rnd(math.floor(360 / inp.angle_step)) * inp.angle_step
+    local cx = inp.A.mx + 0.5 + math.sin(math.rad(deg)) * R
+    local cy = inp.A.my + 0.5 - math.cos(math.rad(deg)) * R
+    inp.prev_px, inp.prev_py = math.floor(cx * 256), math.floor(cy * 256)
+  end
   instrument(inp)
   return inp, pills
 end
