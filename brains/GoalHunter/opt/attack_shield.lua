@@ -132,6 +132,12 @@ do
     { t,        1.0 - t  },
     { 1.0 - t,  1.0 - t  },
   }
+  -- E3-15: v2's aims 6..9 (PT2_AIM_POINTS = 9, pilltake_v2.AIMS9: the
+  -- edge midpoints at 24 and 255 - 24 wu) for the overlay
+  M.AIM_OFFSETS_TILE[6] = { 0.5, M.AIM_INSET / 256.0 }
+  M.AIM_OFFSETS_TILE[7] = { (255 - M.AIM_INSET) / 256.0, 0.5 }
+  M.AIM_OFFSETS_TILE[8] = { 0.5, (255 - M.AIM_INSET) / 256.0 }
+  M.AIM_OFFSETS_TILE[9] = { M.AIM_INSET / 256.0, 0.5 }
   local f = M.AIM_INSET_FIRE / 256.0
   M.AIM_OFFSETS_TILE_FIRE = {
     { 0.5, 0.5 },
@@ -162,7 +168,17 @@ M.AIM_COLORS = {
   {  90, 230,  90, 220 },  -- 3: green
   { 110, 170, 255, 220 },  -- 4: blue
   { 230, 110, 230, 220 },  -- 5: magenta
+  -- E3-15: v2's aims 6..9 (top, right, bottom, left edge)
+  {  80, 220, 220, 220 },  -- 6: cyan
+  { 255, 160,  60, 220 },  -- 7: orange
+  { 200, 200, 200, 220 },  -- 8: grey
+  { 160, 120, 255, 220 },  -- 9: violet
 }
+-- v2's aim names 6..9, for the overlay only (AIM_NAMES stays 1..5)
+M.AIM_NAMES9 = { "center", "TL", "TR", "BL", "BR", "T", "R", "B", "L" }
+-- The highest aim index a scan may hold (v1: 5; v2: up to 9). The aims
+-- table of a v2 result holds only its best aim, so # is no length.
+M.AIM_MAX = 9
 
 -- ── Shield stamp cache — must be declared before score_aim/score_candidate ───
 -- Precomputed shot-path tile offsets (relative to pill) for every 0.25°
@@ -1791,13 +1807,15 @@ function M.draw_overlay(scan, now_tick)
           elseif r:find("off map") then return "m"
           else return "?" end
         end
-        for ai2 = 1, #c.aims do
+        for ai2 = 1, M.AIM_MAX do
           local a2 = c.aims[ai2]
-          local nm = M.AIM_NAMES[ai2] or tostring(ai2)
-          local win = (ai2 == c.best_aim_idx) and "*" or " "
-          local parts = {}
-          for _, t in ipairs(a2.debug_tiles or {}) do
-            parts[#parts + 1] = string.format("(%d,%d)%s", t.mx, t.my, fate_code(t))
+          if a2 then
+            local nm = M.AIM_NAMES9[ai2] or tostring(ai2)
+            local win = (ai2 == c.best_aim_idx) and "*" or " "
+            local parts = {}
+            for _, t in ipairs(a2.debug_tiles or {}) do
+              parts[#parts + 1] = string.format("(%d,%d)%s", t.mx, t.my, fate_code(t))
+            end
           end
         end
       end
@@ -1882,7 +1900,7 @@ function M.draw_overlay(scan, now_tick)
     -- top of black. grey=unreachable, yellow=potential, green=actual.
     for _, c in ipairs(cand_list) do
       if c and c.aims then
-        for ai = 1, #c.aims do
+        for ai = 1, M.AIM_MAX do
           local a = c.aims[ai]
           if a then
             for _, b in ipairs(a.blockers or {}) do mark(b.mx, b.my, 3) end
@@ -1979,6 +1997,7 @@ function M.draw_overlay(scan, now_tick)
     -- always sees the AIM THAT WON, not just an arbitrary one.
     local pmx = scan.pill and scan.pill.mx or 0
     local pmy = scan.pill and scan.pill.my or 0
+    -- E3-15: v2's aims 6..9 draw at their own points and colours
     local show_idx = viz_target.best_aim_idx
                   or (viz_target.aims[1] and not viz_target.aims[1].blocked and 1)
                   or 1
@@ -2004,7 +2023,7 @@ function M.draw_overlay(scan, now_tick)
     -- so they read as a "found a real blocker here" emphasis.
     do
       local seen = {}
-      for ai = 1, #viz_target.aims do
+      for ai = 1, M.AIM_MAX do
         local a = viz_target.aims[ai]
         if a and a.blockers then
           for _, b in ipairs(a.blockers) do
@@ -2023,7 +2042,7 @@ function M.draw_overlay(scan, now_tick)
     -- a thin hollow border in the aim's color — these are the tiles
     -- where building a wall would actually help.
     local border_inset_step = 0.05
-    for ai = 1, #viz_target.aims do
+    for ai = 1, M.AIM_MAX do
       local a = viz_target.aims[ai]
       if a then
         local col = M.AIM_COLORS[ai]
@@ -2059,11 +2078,14 @@ function M.draw_overlay(scan, now_tick)
     -- spot still tells you how many slots could be filled.
     local lx = viz_target.cx + 0.6
     local ly = viz_target.cy - 0.5
-    for ai = 1, #M.AIM_NAMES do
+    -- E3-15: v1's five rows; a v2 aim 6..9 gets its row too
+    for ai = 1, M.AIM_MAX do
       local col = M.AIM_COLORS[ai]
       local a = viz_target.aims[ai]
-      local n_act = (a and a.blockers) and #a.blockers or 0
-      local n_pot = (a and a.potential_blockers) and #a.potential_blockers or 0
+      if ai <= #M.AIM_NAMES or a then
+        local n_act = (a and a.blockers) and #a.blockers or 0
+        local n_pot = (a and a.potential_blockers) and #a.potential_blockers or 0
+      end
     end
 
     -- Build-queue highlight: thick orange outline + 1-based build order
