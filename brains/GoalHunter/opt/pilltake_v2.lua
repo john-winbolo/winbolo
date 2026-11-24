@@ -839,7 +839,23 @@ local function slot_ok(ctx, rec, r, k, lane_set, forbid)
   if forbid[sq] then return false, "before_link" end
   if r.link and r.link_t and r.sq_t[k] <= r.link_t then return false, "before_link" end
   if inp.orth_only and X == ctx.A and abs(mx - X.mx) + abs(my - X.my) ~= 1 then return false, "not_orth" end
-  if not inp.in_map(mx, my) or not inp.stay_in(mx, my) then return false, "area" end
+  -- S4b: the square's own facts (the same for every pill and point), read
+  -- once per group run like the square reads (ctx.sqf, the job's table):
+  -- true, or the first rule of area, pill, wall, not_buildable it fails
+  local f = ctx.sqf[sq]
+  if f == nil then
+    local env = ctx.env
+    if not inp.in_map(mx, my) or not inp.stay_in(mx, my) then f = "area"
+    elseif env.pill_on(mx, my) then f = "pill"
+    else
+      local tt = env.ttype(mx, my)
+      if tt == env.T_BUILDING or tt == env.T_HALFBUILD then f = "wall"
+      elseif not inp.buildable(mx, my) then f = "not_buildable"
+      else f = true end
+    end
+    ctx.sqf[sq] = f
+  end
+  if f == "area" then return false, "area" end
   local cx, cy = mx * 256 + 128, my * 256 + 128
   local dxp, dyp = cx - rec.px, cy - rec.py
   if dxp * dxp + dyp * dyp < (inp.blocker_min_dist * 256) ^ 2 then return false, "near_tank" end
@@ -847,10 +863,7 @@ local function slot_ok(ctx, rec, r, k, lane_set, forbid)
   local d1 = (cx - sx) ^ 2 + (cy - sy) ^ 2
   local d2 = (rec.px - sx) ^ 2 + (rec.py - sy) ^ 2
   if d1 >= d2 then return false, "behind_tank" end
-  if ctx.env.pill_on(mx, my) then return false, "pill" end
-  local tt = ctx.env.ttype(mx, my)
-  if tt == ctx.env.T_BUILDING or tt == ctx.env.T_HALFBUILD then return false, "wall" end
-  if not inp.buildable(mx, my) then return false, "not_buildable" end
+  if f ~= true then return false, f end
   local rc = ctx.reach_cache[sq]
   if rc == nil then
     rc = inp.lgm_reach(rec.omx, rec.omy, mx, my) and true or false
@@ -1542,12 +1555,12 @@ local function new_tm()
 end
 
 -- The job cache: rays and square reads kept for one group run.
-local function new_cache() return { rays = {}, sqm = {} } end
+local function new_cache() return { rays = {}, sqm = {}, sqf = {} } end
 
 local function new_ctx(inp, A)
   local cache = inp._v2_cache or new_cache()
   local ctx = { inp = inp, A = A, env = inp.env, reach_cache = {}, hostile = {},
-                rays = cache.rays, sqm = cache.sqm,
+                rays = cache.rays, sqm = cache.sqm, sqf = cache.sqf or {},
                 aims = (inp.aim_points == 9) and M.AIMS9 or M.AIMS,
                 stat = new_stat(), tm = new_tm(), clk = inp.v2_clock }
   for _, p in ipairs(inp.pills) do
