@@ -740,6 +740,7 @@ static const UnitTestEntry s_tests[] = {
     { "bot_host_optout_slots_codec", run_bot_host_optout_slots_codec },
     { "bot_host_optout_give_back", run_bot_host_optout_give_back },
     { "bot_host_max_saved", run_bot_host_max_saved },
+    { "bot_host_server_slots_saved", run_bot_host_server_slots_saved },
     { "bot_host_max_zero_no_host", run_bot_host_max_zero_no_host },
     { "bot_host_dyn_raise_rule", run_bot_host_dyn_raise_rule },
     { "bot_host_dyn_under_reserve", run_bot_host_dyn_under_reserve },
