@@ -305,6 +305,16 @@ float lv_imgui_tank_dock_lag_room(bool full) {
     return tank_lag_h(true);
 }
 
+float lv_imgui_tank_dock_room(bool full) {
+    float h = lv_imgui_tank_dock_lag_room(full);
+    /* The base row at the scale the dock is sized for, so the room does not
+     * change with the scale the panel then picks for its gauges. */
+    if (lv_g_tank_show_base) {
+        h += tank_base_h_at((float)TANK_DEFAULT_SCALE);
+    }
+    return h;
+}
+
 float lv_imgui_tank_dock_height(float dockWidth) {
     const ImGuiStyle &style = ImGui::GetStyle();
     float availW = dockWidth - style.WindowPadding.x * 2.0f;

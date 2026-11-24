@@ -84,7 +84,7 @@ static const LvDockPanel k_panels[] = {
     { "###controls",   &lv_g_show_controls_window,       0.0f,               0.0f, false, lv_imgui_controls_dock_height, nullptr },
     { "###hud",        &lv_g_show_hud_window,            0.0f,               0.0f, false, lv_imgui_hud_dock_height, nullptr },
     { "###overview",   &lv_g_show_overview_window,       0.0f,               0.0f, false, lv_imgui_overview_dock_height, nullptr },
-    { "###tank",       &lv_g_show_tank_window,           0.0f,               0.0f, false, lv_imgui_tank_dock_height, lv_imgui_tank_dock_lag_room },
+    { "###tank",       &lv_g_show_tank_window,           0.0f,               0.0f, false, lv_imgui_tank_dock_height, lv_imgui_tank_dock_room },
     { "###gameinfo",   &lv_g_show_game_info_window,      0.0f,               3.0f, false, nullptr, nullptr },
     { "###lvscnpanel", &lv_g_show_scenario_panel_window, 0.0f,               3.0f, false, nullptr, nullptr },
     { "###iteminfo",   &lv_g_show_item_info_window,      0.0f,               2.0f, false, nullptr, nullptr },
@@ -1166,11 +1166,11 @@ static void draw_side(int side, ImVec2 pos, ImVec2 size, int other, int extent) 
             if (wide && k_panels[p].roomFor != nullptr) {
                 /* A section the panel shows only some of the time came or
                  * went (the Tank panel's lag section, with a recording that
-                 * has lag records or not): the length follows it. The room
+                 * has lag records or not, and its base row): the length
+                 * follows it. The room
                  * is a height, so only a left or right sidebar's length. */
                 const int now = (int)ceilf(k_panels[p].roomFor(false));
-                s_len[side][p] = lvDockClearRoomLen(s_len[side][p], s_room[side][p], now, minLen);
-                s_room[side][p] = now;
+                s_len[side][p] = lvDockClearRoomLen(s_len[side][p], &s_room[side][p], now, minLen);
             }
             if (s_len[side][p] <= 0 && cur > 0) {
                 /* The first time the panel is here: its content's length,

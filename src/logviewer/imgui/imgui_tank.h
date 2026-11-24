@@ -34,6 +34,13 @@ float lv_imgui_tank_dock_height(float dockWidth);
  * ImGui context. */
 float lv_imgui_tank_dock_lag_room(bool full);
 
+/* The room the sections the Tank panel shows only some of the time take in
+ * the dock: the lag section (lv_imgui_tank_dock_lag_room) and the near
+ * base's row while Windows > Tank: Base Resources is on. A clear sidebar
+ * grows and shrinks the panel's length with it (lvDockClearRoomLen). Needs
+ * the ImGui context. */
+float lv_imgui_tank_dock_room(bool full);
+
 /* The banner over the map while the lag view ("see what this player saw")
  * is on: whose screen the map shows, how far behind the present it is, and
  * the button that turns the view off. x, y and w are the map's left, top
