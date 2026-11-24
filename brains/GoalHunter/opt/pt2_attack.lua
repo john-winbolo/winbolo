@@ -740,13 +740,61 @@ local function may_part(state, est_ms)
   return (clock_us() - t0) / 1000 + est_ms + rest < tgt
 end
 
--- Run part sp.n. Returns true when the run is done. A budget kill is passed
--- on with sp.in_part still set.
+-- PT2_V2_SPLIT (P1): a heavy part (one v2 evaluate, group_step) runs in a
+-- coroutine over up to PT2_V2_SPLIT_TICKS work ticks: pilltake_v2.slicer
+-- yields when the tick's budget of points is used, and the next work tick
+-- resumes it. The answer is the same as the part in one call. A budget
+-- kill inside a slice kills the coroutine: the part's mark stays, and the
+-- next tick puts its inputs back and runs it again from its start
+-- (restore), as before. The drop rules (split_get) are the same.
+-- Only a job of an evaluator with a slicer (pilltake_v2; the old one has
+-- none) is sliced.
+local function v2_split_on(g)
+  return C.PT2_V2_SPLIT and coroutine ~= nil and g and g.ev and g.ev.slicer and true or false
+end
+
+-- Run part sp.n. Returns true when the run is done; (false, nil, true)
+-- when a sliced part yielded (it goes on next tick). A budget kill is
+-- passed on with sp.in_part still set.
 local function run_part(sp, a)
   local k = sp.n
   local ok, r
   sp.in_part = k
   local t0 = clock_us()
+  if k >= 1 and (sp.co or v2_split_on(sp.g)) then
+    local inp, g = sp.inp, sp.g
+    if not sp.co then
+      sp.save = { g.i, inp.pen_n, inp.pen_skip_n, inp.noA_n }
+      sp.co = coroutine.create(function() return V2.group_step(g) end)
+      local sl = g.ev.slicer(inp, C.PT2_V2_SPLIT_TICKS or 5, coroutine.yield)
+      sp.slicer = sl
+      inp.v2_slice = sl.fn
+    end
+    ok, r = coroutine.resume(sp.co)
+    local us = clock_us() - t0
+    sp.us = sp.us + us
+    -- the cost estimate is the cost of one tick's slice
+    local st = a and a.state
+    if ok and st then
+      local al = C.CAPACITY_EWMA_ALPHA or 0.2
+      st._pt2_split_est_ms = st._pt2_split_est_ms and (st._pt2_split_est_ms * (1 - al) + (us / 1000) * al) or us / 1000
+    end
+    if ok and coroutine.status(sp.co) ~= "dead" then
+      sp.in_part = nil
+      return false, nil, true
+    end
+    sp.co, sp.slicer, inp.v2_slice = nil, nil, nil
+    if not ok then
+      local msg = tostring(r)
+      if msg:find("tick_budget_exceeded", 1, true) then error(r, 0) end
+      sp.in_part = nil
+      print("[pt2] evaluator error, v1 kept: " .. msg)
+      return nil, msg
+    end
+    sp.in_part = nil
+    sp.n = k + 1
+    return r
+  end
   if k == 0 then
     ok, r = pcall(function()
       local i = M.build_inp(a.state, a.goal, a.info, a.world, a.pill, a.no_builder, a.npb, a.radius, a.now)
@@ -783,6 +831,9 @@ end
 -- part changed before its evaluate came back.
 local function restore(sp)
   local inp, g, sv = sp.inp, sp.g, sp.save
+  -- PT2_V2_SPLIT: the killed coroutine is not resumed; the part runs again
+  sp.co, sp.slicer = nil, nil
+  if inp then inp.v2_slice = nil end
   if not (inp and g and sv) then return end
   g.i, inp.pen_n, inp.pen_skip_n, inp.noA_n = sv[1], sv[2], sv[3], sv[4]
   inp.A = g.goalA
@@ -839,9 +890,12 @@ function M.split_step(sp, a, key)
         break
       end
       if sp.n >= 1 then heavy = heavy + 1 end
-      done, err = run_part(sp, (sp.n == 0) and a or sp.a)
+      local yielded
+      done, err, yielded = run_part(sp, (sp.n == 0) and a or sp.a)
       if err then return giveup(goal, a.pill, sp.sscan, now, "error", sp), true end
       ran = ran + 1
+      -- PT2_V2_SPLIT: a sliced part used this tick's budget
+      if yielded then break end
     until done
     sp.work = sp.work + 1
     if not done then return nil, false end

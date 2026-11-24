@@ -21,6 +21,10 @@
 --   eval=both                 old (C and Lua) and v2 on each case: costs, safe
 --                             takes each finds, best points, kills and depth
 --   anger=<v>                 every pill's anger is v (0..1, the angry cases)
+--   slice=<n>                 with eval=v2: each evaluate runs in a coroutine
+--                             over up to n slices (PT2_V2_SPLIT, the slicer of
+--                             pilltake_v2); prints the cost per slice (the
+--                             work of one tick) and the slices per evaluate
 --   set=<k>:<v>[,<k>:<v>...]  set these inp fields on every case (v: true,
 --                             false, a number, else a string)
 --   eval=ab ev=<old|oldlua|v2> a=<k>:<v>,... b=<k>:<v>,...
@@ -299,7 +303,28 @@ local dumpf = args.dump and assert(io.open(args.dump, "w"))
 local EVAL = args.eval or "old"
 local NV = (EVAL ~= "old") and require("pilltake_v2") or nil
 
+-- slice=<n>: the cost of each slice (us) and the slices of each evaluate
+local SLICE = tonumber(args.slice or "")
+local slice_us, slice_n = {}, {}
+local function sliced(inp)
+  local co = coroutine.create(function() return NV.evaluate_lua(inp) end)
+  local sl = NV.slicer(inp, SLICE, coroutine.yield)
+  inp.v2_slice = sl.fn
+  local res
+  while true do
+    local t0 = now_us()
+    local ok, r = coroutine.resume(co)
+    slice_us[#slice_us + 1] = now_us() - t0
+    if not ok then inp.v2_slice = nil; error(r, 0) end
+    if coroutine.status(co) == "dead" then res = r; break end
+  end
+  inp.v2_slice = nil
+  slice_n[#slice_n + 1] = sl.slices
+  return res
+end
+
 local function evaluate(inp)
+  if EVAL == "v2" and SLICE then return sliced(inp) end
   if EVAL == "v2" then return NV.evaluate_lua(inp) end
   if USE_LUA then return V2.evaluate_lua(inp) end
   return G.evaluate(inp, V2)
@@ -822,6 +847,15 @@ if BOTH then
       return 100 * (a - c) / math.max(1, a)
     end)()))
   return 0
+end
+if SLICE then
+  local hist = {}
+  for _, n in ipairs(slice_n) do hist[n] = (hist[n] or 0) + 1 end
+  local hs = {}
+  for n = 1, SLICE do hs[#hs + 1] = fmt("%d:%d", n, hist[n] or 0) end
+  print(fmt("pt2_bench slice=%d: per slice (one work tick) ms median %.3f p90 %.3f max %.3f (n %d);"
+    .. " slices per evaluate %s", SLICE, q(slice_us, 0.5) / 1000, q(slice_us, 0.9) / 1000,
+    q(slice_us, 1) / 1000, #slice_us, table.concat(hs, " ")))
 end
 local tot_us, tot_sp = 0, 0
 for i, v in ipairs(times) do tot_us = tot_us + v; tot_sp = tot_sp + spots[i] end

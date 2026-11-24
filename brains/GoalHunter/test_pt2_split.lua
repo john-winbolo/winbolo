@@ -507,6 +507,62 @@ do
   C.PT2_SPLIT_ONE_PART_PER_TICK = false
 end
 
+-- ── PT2_V2_SPLIT: one v2 evaluate over up to PT2_V2_SPLIT_TICKS ticks ───
+print("== PT2_V2_SPLIT")
+do
+  local NV = require("pilltake_v2")
+  C.PT2_EVALUATOR = "v2"
+  C.PT2_SPLIT_ONE_PART_PER_TICK = true
+  _G.brain = { targetMs = 0 }
+  -- the slicer with a small budget, so each evaluate takes several slices
+  local real_slicer = NV.slicer
+  local slices, kill_unit = 0, nil
+  NV.slicer = function(inp, ticks, yield)
+    local s = real_slicer(inp, ticks, yield)
+    s.budget = 3
+    local units, fn = 0, s.fn
+    s.fn = function()
+      units = units + 1
+      if kill_unit and units == kill_unit then kill_unit = nil; error("tick_budget_exceeded (slice)", 0) end
+      local before = s.slices
+      local r = fn()
+      if s.slices ~= before then slices = slices + 1 end
+      return r
+    end
+    return s
+  end
+  for _, ng in ipairs({ 0, 3 }) do
+    C.PT2_V2_SPLIT = false
+    local env0 = new_env(ng, 100)
+    local res0 = run(env0)
+    local work0 = PA.last_run and PA.last_run.work
+    C.PT2_V2_SPLIT = true
+    slices = 0
+    local env = new_env(ng, 100)
+    local res = run(env)
+    local name = string.format("v2, group %d: ", ng)
+    check(name .. "set", res[#res] == "set", table.concat(res, ","))
+    check(name .. "v2 answer (pt2)", env.goal._shield_scan and env.goal._shield_scan.pt2 == true, nil)
+    check(name .. "same answer as the evaluate in one tick", deep_eq(env.goal._shield_scan, env0.goal._shield_scan), nil)
+    check(name .. "same goal._pt2", deep_eq(env.goal._pt2, env0.goal._pt2), nil)
+    check(name .. "the evaluates were sliced", slices > 0, slices)
+    check(name .. "more work ticks than one part a tick", PA.last_run.work > work0, PA.last_run.work)
+    check(name .. "at most 5 ticks a part", PA.last_run.work <= 5 * (PA.last_run.parts - 1), PA.last_run.work)
+    -- a budget kill in a later slice: the part runs again from its start
+    kill_unit = 5
+    local envk = new_env(ng, 100)
+    local resk = run(envk)
+    check(name .. "kill in a slice: set", resk[#resk] == "set", table.concat(resk, ","))
+    check(name .. "kill in a slice: 1 kill", PA.last_run.kills == 1, PA.last_run.kills)
+    check(name .. "kill in a slice: same answer", deep_eq(envk.goal._shield_scan, env0.goal._shield_scan), nil)
+    kill_unit = nil
+  end
+  NV.slicer = real_slicer
+  C.PT2_V2_SPLIT = true
+  C.PT2_SPLIT_ONE_PART_PER_TICK = false
+  C.PT2_EVALUATOR = "old"
+end
+
 -- ── knob off: split_get finds nothing, after_scan unchanged ──────────────
 print("== knob off")
 do

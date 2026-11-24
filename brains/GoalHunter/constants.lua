@@ -1306,6 +1306,16 @@ M.PT2_AFTER_SCAN_MAX_TICKS = 5
 -- left and more while the think is under the tick target, and the last
 -- work tick runs all parts left (KEEL, MAST).
 M.PT2_SPLIT_ONE_PART_PER_TICK = true
+-- PT2_V2_SPLIT (Nov 23, Andrew's spec, P1): each heavy part of the split
+-- run (one v2 evaluate) runs over up to PT2_V2_SPLIT_TICKS work ticks. The
+-- evaluate keeps its state between ticks (a coroutine) and uses a work
+-- budget per tick in points: ceil(2 x angle steps x rings / ticks); the
+-- last tick runs what is left (pilltake_v2.slicer). The answer is the same
+-- as the evaluate in one call; the drop and restart rules
+-- (PT2_SPLIT_DROP, budget kills) are the same. Needs PT2_AFTER_SCAN_SPLIT.
+-- false = each heavy part in one tick (KEEL, MAST).
+M.PT2_V2_SPLIT = true
+M.PT2_V2_SPLIT_TICKS = 5
 -- SHIELD_SCAN_PENDING_SURVIVES_V2 (Nov 22, Andrew: "Fix it"): with
 -- PT2_AFTER_SCAN_SPLIT off, v2 runs in one go on the plan tick. true: keep
 -- goal._shield_scan_pending until goal._shield_scan is set, so a budget kill
@@ -8398,6 +8408,7 @@ M.PRESETS = {
     PT2_AFTER_SCAN_SPLIT = false,
     --   2026-11-23: the split v2 run packs its parts into few ticks.
     PT2_SPLIT_ONE_PART_PER_TICK = false,
+    PT2_V2_SPLIT = false,
     --   2026-11-23: the old pill take evaluator (no shadow map).
     PT2_EVALUATOR = "old",
     --   2026-11-21: the old world sim (no driving while pushed, 1 - d/range
@@ -8783,6 +8794,7 @@ M.PRESETS.mast = {
   PT2_C_STANDABLE                   = false,  -- 2.2.1 had no pill take v2
   PT2_AFTER_SCAN_SPLIT              = false,  -- 2.2.1 had no pill take v2
   PT2_SPLIT_ONE_PART_PER_TICK       = false,  -- 2.2.1 had no pill take v2
+  PT2_V2_SPLIT                      = false,  -- 2.2.1 had no pill take v2
   PT2_EVALUATOR                     = "old",  -- 2.2.1 had no pill take v2
   WSIM_DRIVE_WHILE_SLIDING          = false,  -- 2.2.1 world sim: no driving while pushed
   WSIM_HIT_FULL_DIST                = 0,      -- 2.2.1 world sim: 1 - d/range discount

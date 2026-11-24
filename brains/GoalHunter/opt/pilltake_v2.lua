@@ -1838,11 +1838,46 @@ local function carry(fin, rec)
   fin.base = rec.base
 end
 
+-- PT2_V2_SPLIT (P1): one evaluate over up to PT2_V2_SPLIT_TICKS work ticks.
+-- The caller runs the evaluate in a coroutine and sets inp.v2_slice
+-- (M.slicer). The evaluate calls it after each unit of work: a point of the
+-- ring loop, a plan, a leeway test. The slicer counts the units and yields
+-- when the tick's budget is used; the next tick resumes the same run, so
+-- the answer is the one of the run in one call. The time between a yield
+-- and its resume is taken off tm.total (the slicer returns it).
+-- Budget (points, not measured us: the same split on every machine and in
+-- the bench): ceil(2 x angle steps x rings / ticks) units per tick (the ring
+-- loop's points and about as many plans); the last tick runs what is left.
+function M.slicer(inp, ticks, yield)
+  ticks = ticks or 5
+  local steps = floor(360 / (inp.angle_step or 5) + 0.5)
+  local budget = math.ceil(2 * steps * #(inp.radii_offsets or { 0 }) / math.max(1, ticks))
+  if budget < 1 then budget = 1 end
+  local used, slices = 0, 1
+  local clk = inp.v2_clock
+  local s = { budget = budget, slices = 1 }
+  s.fn = function()
+    used = used + 1
+    if used < s.budget or slices >= ticks then return 0 end
+    used, slices = 0, slices + 1
+    s.slices = slices
+    local t = clk and clk()
+    yield()
+    return t and (clk() - t) or 0
+  end
+  return s
+end
+
 function M.evaluate_lua(inp)
   local A = inp.A
   local ctx = new_ctx(inp, A)
   local clk = ctx.clk
   local T0 = clk and clk()
+  -- PT2_V2_SPLIT: the slicer (see M.slicer); paused: the time between ticks
+  local slice_fn, paused = inp.v2_slice, 0
+  local function unit()
+    if slice_fn then paused = paused + (slice_fn() or 0) end
+  end
   local pcx, pcy = A.mx + 0.5, A.my + 0.5
   local all, best = {}, nil
   local n_eval, n_reject = 0, 0
@@ -1921,6 +1956,7 @@ function M.evaluate_lua(inp)
               all[#all + 1] = { deg = deg, cx = cx, cy = cy, mx = mx, my = my, rejected = why }
             end
           end
+          unit()
         end
       end
     end
@@ -1965,6 +2001,7 @@ function M.evaluate_lua(inp)
           carry(fin, rec)
           score_of(ctx, fin)
           scored[#scored + 1] = fin
+          unit()
         end
       end
       local bc = inp.build_cost
@@ -2013,6 +2050,7 @@ function M.evaluate_lua(inp)
         score_of(ctx, fin)
         scored[#scored + 1] = fin
         if fin.safe and fin.kills == 1 and (not m or fin.score < m) then m = fin.score end
+        unit()
       end
     elseif lone and band and band > 0 then
       st.lone = st.lone + 1
@@ -2043,6 +2081,7 @@ function M.evaluate_lua(inp)
         score_of(ctx, fin)
         done[rec] = fin
         if fin.safe and (not m or fin.score < m) then m = fin.score end
+        unit()
       end
       for _, rec in ipairs(cands) do
         local fin = rec.covered and rec or done[rec]
@@ -2060,6 +2099,7 @@ function M.evaluate_lua(inp)
         carry(fin, rec)
         score_of(ctx, fin)
         scored[#scored + 1] = fin
+        unit()
       end
     end
     ts = clk and clk()
@@ -2098,6 +2138,7 @@ function M.evaluate_lua(inp)
             end
           end
           if L.leeway == nil then
+            unit()
             L.leeway, L.leeway_pts = leeway(ctx, L, inp.leeway_ring_wu)
             st.leeway_more = st.leeway_more + 1
             if L.leeway < inp.leeway_min then
@@ -2156,6 +2197,7 @@ function M.evaluate_lua(inp)
           local fin = plan_point(ctx, full)
           carry(fin, full)
           if fin.safe then no_chain = "single"; break end
+          unit()
         end
       end
     end
@@ -2174,7 +2216,7 @@ function M.evaluate_lua(inp)
     best.extra_cover = extra_cover(ctx, best)
     if t3 then tm.xcover = tm.xcover + clk() - t3 end
   end
-  if T0 then tm.total = clk() - T0 end
+  if T0 then tm.total = clk() - T0 - paused end
   return { best = best, all = inp.keep_all and all or nil, n_eval = n_eval, n_reject = n_reject,
            hostile = ctx.hostile, inp = inp, no_chain = no_chain, v2 = { stat = st, tm = tm } }
 end
