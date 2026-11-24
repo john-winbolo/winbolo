@@ -4740,6 +4740,7 @@ int run_lv_rule_changes_hostile(void);
 int run_lv_rule_changes_live_feed(void);
 int run_lv_rule_changes_armour_levels(void);
 int run_lv_rule_changes_live_same_tick(void);
+int run_lv_rule_changes_lgm_blast_shape_outside(void);
 /* The log viewer's scenario panels, scores, announcement and markers at the
  * playhead (test_lv_presentation.c, with the presentation round recorded by
  * lv_scripts_fixture.c): a hand-written log played through and seeked both

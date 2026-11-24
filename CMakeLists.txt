@@ -8037,6 +8037,7 @@ set(_unit_test_names
     lv_rule_changes_live_feed
     lv_rule_changes_armour_levels
     lv_rule_changes_live_same_tick
+    lv_rule_changes_lgm_blast_shape_outside
     lv_presentation_seek
     lv_presentation_hostile
     lv_presentation_scripted_round

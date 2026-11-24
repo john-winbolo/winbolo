@@ -1161,8 +1161,15 @@ static void lv_rulesRefresh(void) {
       lv_screenRuleValueAt(SIM_RULE_tank_hit_radius, t), 1, 255);
   g_lv->rules.pillRange      = lv_rulesClampInt(
       lv_screenRuleValueAt(SIM_RULE_pill_range, t), 0, 65535);
-  g_lv->rules.lgmBlastShape  = lv_rulesClampInt(
-      lv_screenRuleValueAt(SIM_RULE_lgm_blast_shape, t), 0, 2);
+  /* The engine plays a value outside the three shapes as the half-square
+     circle (lgmBlastOpenGroundCatches), so the viewer does too. A NaN is
+     outside them. */
+  {
+    double shape = lv_screenRuleValueAt(SIM_RULE_lgm_blast_shape, t);
+    g_lv->rules.lgmBlastShape =
+        (shape >= LGM_BLAST_SHAPE_HALF_SQUARE && shape <= LGM_BLAST_SHAPE_MAC_AREA)
+            ? (int)shape : LGM_BLAST_SHAPE_CLASSIC;
+  }
   g_lv->rules.baseStatusRange = lv_rulesClampInt(
       lv_screenRuleValueAt(SIM_RULE_base_status_range, t), 0, 65535);
   /* The tank's hit zone: the circle, or the square of games from before it
