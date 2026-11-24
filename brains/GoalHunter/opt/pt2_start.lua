@@ -2,9 +2,16 @@
 -- pt2_start.lua -- PT2_START_WHILE_BUILDING (Andrew's yes, Nov 23, E4):
 -- may the take start while the builder still builds the planned walls?
 --
---   exposure_ticks = builder trip to the first wall
---                    + LGM_BUILD_TIME per wall
---                    + the trips between the walls (in build order)
+--   exposure_ticks = the tick the last planned wall stands (E4-1, the
+--                    engine's builder, src/bolo/lgm.c): the builder
+--                    builds on arrival (lgmMoveAway: lgmDoWork puts the
+--                    wall on the map when he arrives), waits LGM_BUILD_TIME
+--                    there, walks back, and the next order starts in the
+--                    tank (attack.lua dispatches each wall from the tank:
+--                    LAST_WALL_EARLY's to_wall + build + back).
+--                      T1 = trip(start, w1)
+--                      Ti = T(i-1) + build + trip(w(i-1), tank) + trip(tank, wi)
+--                      exposure = Tn
 --   interval       = the pill's reload ticks at its anger now, as the bot
 --                    sees it (world.lua's anger proxy): PILLBOX_ATTACK_NORMAL
 --                    (100) halved once per landed hit, floored at
@@ -60,13 +67,20 @@ function M.trip_ticks(ox, oy, mx, my, lgm_ticks)
 end
 
 -- Ticks from the builder leaving at (ox, oy) to the last wall of `walls`
--- ({ mx, my } in build order) standing.
-function M.exposure_ticks(ox, oy, walls, lgm_ticks, build_time)
+-- ({ mx, my } in build order) standing (E4-1: Tn above). (tx, ty): the
+-- tank's square, where each later order starts; default (ox, oy).
+function M.exposure_ticks(ox, oy, walls, lgm_ticks, build_time, tx, ty)
   build_time = build_time or M.LGM_BUILD_TIME
-  local t, x, y = 0, ox, oy
-  for _, w in ipairs(walls) do
-    t = t + M.trip_ticks(x, y, w.mx, w.my, lgm_ticks) + build_time
-    x, y = w.mx, w.my
+  tx, ty = tx or ox, ty or oy
+  local t = 0
+  for i, w in ipairs(walls) do
+    if i == 1 then
+      t = M.trip_ticks(ox, oy, w.mx, w.my, lgm_ticks)
+    else
+      local p = walls[i - 1]
+      t = t + build_time + M.trip_ticks(p.mx, p.my, tx, ty, lgm_ticks)
+            + M.trip_ticks(tx, ty, w.mx, w.my, lgm_ticks)
+    end
   end
   return t
 end

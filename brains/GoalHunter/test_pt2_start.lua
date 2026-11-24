@@ -39,19 +39,23 @@ end
 
 print("exposure ticks")
 do
-  -- straight line: 3 squares = 48 ticks, then 20 to build
+  -- straight line: 3 squares = 48 ticks; the wall stands on arrival
   local e = S.exposure_ticks(10, 10, { { mx = 13, my = 10 } })
-  check("one wall 3 squares off: 3*16 + 20 = 68", e == 68, e)
-  -- two walls: 3 squares, build, 4 squares, build
+  check("one wall 3 squares off: 3*16 = 48", e == 48, e)
+  -- two walls: 3 squares, build, back to the tank (3), out to the second
+  -- wall (5 squares: (13,14) is 3,4 off the tank)
   local e2 = S.exposure_ticks(10, 10, { { mx = 13, my = 10 }, { mx = 13, my = 14 } })
-  check("two walls: 48 + 20 + 64 + 20 = 152", e2 == 152, e2)
+  check("two walls: 48 + 20 + 48 + 80 = 196", e2 == 196, e2)
   -- the builder's own trip cost wins when given
   local fn = function(ox, oy, mx, my) return 7 end
   local e3 = S.exposure_ticks(10, 10, { { mx = 13, my = 10 }, { mx = 13, my = 14 } }, fn)
-  check("lgm_ticks given: 7 + 20 + 7 + 20 = 54", e3 == 54, e3)
+  check("lgm_ticks given: 7 + 20 + 7 + 7 = 41", e3 == 41, e3)
+  -- the builder starts away from the tank: later orders start at the tank
+  local e5 = S.exposure_ticks(12, 10, { { mx = 13, my = 10 }, { mx = 13, my = 14 } }, nil, nil, 10, 10)
+  check("from (12,10), tank (10,10): 16 + 20 + 48 + 80 = 164", e5 == 164, e5)
   -- an unreachable answer (-1) falls back to the straight line
   local e4 = S.exposure_ticks(10, 10, { { mx = 13, my = 10 } }, function() return -1 end)
-  check("lgm_ticks -1: the straight line", e4 == 68, e4)
+  check("lgm_ticks -1: the straight line", e4 == 48, e4)
   check("no walls: 0", S.exposure_ticks(10, 10, {}) == 0, S.exposure_ticks(10, 10, {}))
 end
 

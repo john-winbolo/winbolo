@@ -433,7 +433,9 @@ function M.start_now_check(goal, world, info, now, list)
   else
     ox, oy = bit.rshift(info.tankx or 0, 8), bit.rshift(info.tanky or 0, 8)
   end
-  local exp = PS.exposure_ticks(ox, oy, walls, lgm_ticks)
+  -- E4-1: each later wall's order starts at the tank
+  local exp = PS.exposure_ticks(ox, oy, walls, lgm_ticks, nil,
+    bit.rshift(info.tankx or 0, 8), bit.rshift(info.tanky or 0, 8))
   local x = require("live_physics").context(info, {})
   local shells = 0
   for _, sp in ipairs(st.pills or {}) do

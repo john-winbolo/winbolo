@@ -1414,7 +1414,8 @@ M._search_walls_all = search_walls_all
 -- tank start at this point while the builder builds rec.plan? Sets on rec:
 --   start_now      true: start at once (no plan, or the armour holds)
 --   exposure       ticks until the last planned wall stands: the builder
---                  leaves the tank point and builds rec.plan in its order;
+--                  leaves the tank point and builds rec.plan in its order,
+--                  back to the tank between walls (E4-1, pt2_start);
 --                  each trip is inp.lgm_ticks (the builder's own path
 --                  cost) when given, else 16 ticks per square
 --   shells_through the shells summed over each pill whose ray has a
