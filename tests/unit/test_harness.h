@@ -1637,10 +1637,12 @@ int run_brainrec_host_merge_verdict(void);
 int run_brainrec_host_merge_again_acks_merged(void);
 int run_brainrec_host_merge_replace_waits(void);
 int run_brainrec_host_ack_target_rejoined(void);
+int run_brainrec_host_upload_waits_for_game_end(void);
 /* The Bot Host's recorder keeps its blocks (test_bothost_rec.c). */
 int run_bothost_rec_upload_keeps_files(void);
 int run_bothost_rec_lowdisk_keeps_files(void);
 int run_bothost_rec_pool_raw_flag(void);
+int run_bothost_rec_hold_keeps_place(void);
 int run_brainrec_host_path_checks(void);
 int run_brainrec_dir_lock_orders_merge_and_gzip(void);
 int run_brainrec_host_make_absolute(void);

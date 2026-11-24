@@ -87,8 +87,10 @@
 /* CTRL_BOT_HOST_REC ops. Server to host: */
 #define BOT_HOST_REC_OP_OPEN     1  /* a block opened: record into it */
 #define BOT_HOST_REC_OP_CLOSE    2  /* the block closed: finish its files */
-#define BOT_HOST_REC_OP_UPLOAD   3  /* send the finished blocks now */
-#define BOT_HOST_REC_OP_HOLD     4  /* a game runs: stop sending */
+#define BOT_HOST_REC_OP_UPLOAD   3  /* send the finished blocks now (sent
+                                     * only between games) */
+#define BOT_HOST_REC_OP_HOLD     4  /* a game starts: stop sending, keep
+                                     * the place, go on at the next UPLOAD */
 #define BOT_HOST_REC_OP_CLEAR    5  /* delete this server's recordings */
 #define BOT_HOST_REC_OP_ACK      6  /* a block upload was taken (state) */
 /* Host to server: */
@@ -108,7 +110,8 @@
  * OPEN, the host records JSON, which every reader accepts. A server whose
  * reader takes only JSON never sets it. 0x10 is LOWDISK; keep them apart. */
 #define BOT_HOST_REC_F_POOL_RAW  0x20u
-/* UPLOAD flag: send slowly, a game may start any time (map rotation). */
+/* UPLOAD flag, from older servers only: "send slowly, a game runs". A
+ * newer host sends nothing then and waits for an UPLOAD without it. */
 #define BOT_HOST_REC_F_PACED     0x01u
 /* DONE and STATE flag: the host stopped recording for low disk. */
 #define BOT_HOST_REC_F_LOWDISK   0x10u

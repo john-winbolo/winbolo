@@ -393,7 +393,7 @@ typedef struct {
     /* Brain recordings of the host's bots (udp_server_botrec.c). */
     uint32_t recSentSeq;      /* the block state last told to the host */
     uint32_t recClearSent;    /* the cleardebug count last told to it */
-    bool     recUploadOwed;   /* an UPLOAD is to be sent */
+    bool     recUploadOwed;   /* an UPLOAD is to be sent (between games) */
     uint8_t  recState;        /* BOT_HOST_REC_STATE_* the host reported */
     uint8_t  recPercent;
     uint8_t  recBotsDone;     /* UPLOADING: bots whose files are sent */
@@ -977,11 +977,12 @@ void serverBotRecOnControl(int h, const ControlEvent *evt);
 /* Drain host h's CHANNEL_BULK: its recording pieces. */
 void serverBotRecDrainBulk(int h);
 /* Per tick, under the tick mutex: tell the hosts the block state, run and
- * finish merges. inLobby: the server is in its lobby now. */
-void serverBotRecService(struct ServerSim *sim, bool inLobby);
+ * finish merges. betweenGames: the server is in its lobby or at game over;
+ * only then are hosts asked to UPLOAD and merges started. */
+void serverBotRecService(struct ServerSim *sim, bool betweenGames);
 /* The server went back to its lobby: hosts send their finished blocks. */
 void serverBotRecOnLobby(void);
-/* A game started: uploads go on slowly. */
+/* A game started: each host is told to HOLD (stop an upload under way). */
 void serverBotRecOnGameStart(void);
 /* Host h connected (inLobby: the server is in its lobby) or is going. */
 void serverBotRecHostConnected(int h, bool inLobby);

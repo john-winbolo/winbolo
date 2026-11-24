@@ -16,6 +16,7 @@
  */
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <SDL3/SDL.h>
 
@@ -28,6 +29,10 @@ static char s_tbhDoneBlock[BOT_HOST_REC_BLOCK_LEN];
 static int  s_tbhCleared;         /* CLEARED events seen */
 static int  s_tbhUpStates;        /* STATE UPLOADING events seen */
 static bool s_tbhUpBytesBad;      /* one had no total, or sent above it */
+static int  s_tbhPieces;          /* bulk pieces sent */
+static int  s_tbhBigStarts;       /* pieces at offset 0 of TBH_BIG_FILE */
+static uint64_t s_tbhBigBytes;    /* bytes of TBH_BIG_FILE sent */
+#define TBH_BIG_FILE "bot1_g1.hbr"
 
 static void tbhSendEvent(int srv, const ControlEvent *evt) {
     (void)srv;
@@ -56,9 +61,14 @@ static bool tbhBulkIdle(int srv) {
 static bool tbhBulkSend(int srv, const BulkStreamHeader *h,
                         const uint8_t *blob, uint32_t len) {
     (void)srv;
-    (void)h;
     (void)blob;
-    (void)len;
+    s_tbhPieces++;
+    if (strstr(h->path, "/" TBH_BIG_FILE "/") != NULL) {
+        s_tbhBigBytes += len;
+        /* The offsets have no leading zero: only offset 0 ends in "/0". */
+        size_t n = strlen(h->path);
+        if (n >= 2 && strcmp(h->path + n - 2, "/0") == 0) s_tbhBigStarts++;
+    }
     return true;
 }
 
@@ -73,6 +83,9 @@ static void tbhStart(const char *cache, double minFreeGb) {
     s_tbhCleared = 0;
     s_tbhUpStates = 0;
     s_tbhUpBytesBad = false;
+    s_tbhPieces = 0;
+    s_tbhBigStarts = 0;
+    s_tbhBigBytes = 0;
     hostRecInit(cache, "testhost", minFreeGb, &io);
     hostRecServerUp(0, "127.0.0.1:27680");
 }
@@ -266,5 +279,96 @@ int run_bothost_rec_pool_raw_flag(void) {
     UT_ASSERT((BOT_HOST_REC_F_POOL_RAW &
                (BOT_HOST_REC_F_VIZ | BOT_HOST_REC_F_PRINT2 | BOT_HOST_REC_F_JSONL |
                 BOT_HOST_REC_F_POOL | BOT_HOST_REC_F_LOWDISK)) == 0);
+    return 0;
+}
+
+static void tbhUpload(uint8_t flags) {
+    ControlEvent evt;
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_BOT_HOST_REC;
+    evt.u.botHostRec.op = BOT_HOST_REC_OP_UPLOAD;
+    evt.u.botHostRec.flags = flags;
+    hostRecOnEvent(0, &evt);
+}
+
+/* HOLD (a game starts) stops an upload under way where it is: no piece and
+ * no DONE until the next UPLOAD, which goes on from the same place (the
+ * big file's first piece goes once, and its bytes once). An older
+ * server's UPLOAD with BOT_HOST_REC_F_PACED (an ask during a game) sends
+ * nothing either. */
+int run_bothost_rec_hold_keeps_place(void) {
+    char cache[1024], root[1100], p[1300];
+    const uint32_t bigSize = 20u * 64u * 1024u;   /* 20 pieces */
+    int i, piecesAtHold, piecesHeld;
+    uint8_t *junk;
+    FILE *f;
+
+    UT_ASSERT(utScratchPath(cache, sizeof(cache), "bhhold"));
+    UT_ASSERT(SDL_CreateDirectory(cache));
+    tbhStart(cache, 0.0);
+    snprintf(root, sizeof(root), "%s/recordings/127.0.0.1_27680", cache);
+    UT_ASSERT(SDL_CreateDirectory(root));
+    UT_ASSERT(tbhBlock(root, TBH_A));
+    snprintf(p, sizeof(p), "%s/%s/" TBH_BIG_FILE, root, TBH_A);
+    junk = (uint8_t *)malloc(bigSize);
+    UT_ASSERT(junk != NULL);
+    memset(junk, 0x3C, bigSize);
+    f = fopen(p, "wb");
+    UT_ASSERT(f != NULL);
+    UT_ASSERT(fwrite(junk, 1, bigSize, f) == bigSize);
+    UT_ASSERT(fclose(f) == 0);
+    free(junk);
+
+    /* The upload starts; stop it after the big file's first pieces. */
+    tbhUpload(0);
+    for (i = 0; i < 400 && s_tbhBigBytes == 0; i++) {
+        hostRecService((uint32_t)SDL_GetTicks());
+        if (s_tbhBigBytes == 0) SDL_Delay(5);
+    }
+    UT_ASSERT_MSG(s_tbhBigBytes > 0 && s_tbhBigBytes < bigSize,
+                  "big file bytes %llu before HOLD",
+                  (unsigned long long)s_tbhBigBytes);
+    UT_ASSERT(s_tbhDone == 0);
+
+    /* A game starts. */
+    tbhEvent(BOT_HOST_REC_OP_HOLD, 0, 0, NULL);
+    piecesAtHold = s_tbhPieces;
+    for (i = 0; i < 40; i++) {
+        hostRecService((uint32_t)SDL_GetTicks() + 30000u);
+        hostRecPumpUploads();
+    }
+    piecesHeld = s_tbhPieces - piecesAtHold;
+    UT_ASSERT_MSG(piecesHeld == 0, "%d pieces sent while held", piecesHeld);
+    UT_ASSERT(s_tbhDone == 0);
+
+    /* The game is over: the upload goes on from where it stopped. */
+    tbhUpload(0);
+    tbhPump(0, 1, 400);
+    UT_ASSERT_MSG(s_tbhDone == 1, "DONE count %d", s_tbhDone);
+    UT_ASSERT(strcmp(s_tbhDoneBlock, TBH_A) == 0);
+    UT_ASSERT_MSG(s_tbhBigStarts == 1, "big file started %d times",
+                  s_tbhBigStarts);
+    UT_ASSERT_MSG(s_tbhBigBytes == bigSize, "big file bytes %llu of %u",
+                  (unsigned long long)s_tbhBigBytes, (unsigned)bigSize);
+    tbhEvent(BOT_HOST_REC_OP_ACK, BOT_HOST_REC_ACK_MERGED,
+             BOT_HOST_REC_FAIL_NONE, TBH_A);
+    UT_ASSERT(tbhMarked(root, TBH_A));
+
+    /* An older server's ask during a game (PACED): nothing goes ... */
+    UT_ASSERT(tbhBlock(root, TBH_B));
+    piecesAtHold = s_tbhPieces;
+    tbhUpload(BOT_HOST_REC_F_PACED);
+    tbhPump(5000, 2, 40);
+    UT_ASSERT_MSG(s_tbhPieces == piecesAtHold, "%d pieces on a PACED ask",
+                  s_tbhPieces - piecesAtHold);
+    UT_ASSERT(s_tbhDone == 1);
+    /* ... until its lobby asks without the flag. */
+    tbhUpload(0);
+    tbhPump(5000, 2, 400);
+    UT_ASSERT_MSG(s_tbhDone == 2, "DONE count %d", s_tbhDone);
+    UT_ASSERT(strcmp(s_tbhDoneBlock, TBH_B) == 0);
+
+    tbhEvent(BOT_HOST_REC_OP_CLEAR, 0, 0, NULL);
+    hostRecShutdown();
     return 0;
 }
