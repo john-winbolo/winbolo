@@ -434,6 +434,11 @@ function M.start_now_check(goal, world, info, now, list)
     if not wall_up(world, p.mx, p.my) then walls[#walls + 1] = { mx = p.mx, my = p.my } end
   end
   if #walls == 0 then return false end
+  -- E4-6: a dead builder builds no wall: no start
+  if info.man_status == C.LGM_DEAD then
+    print2(string.format("PT2_START t=%d missing=%d builder dead -> wait", now, #walls))
+    return false
+  end
   local ox, oy
   if info.man_status ~= C.LGM_INTANK and info.man_x and info.man_y then
     ox, oy = bit.rshift(info.man_x, 8), bit.rshift(info.man_y, 8)
