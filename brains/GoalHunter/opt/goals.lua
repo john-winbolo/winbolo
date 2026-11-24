@@ -13763,25 +13763,6 @@ local WSIM_SIM_KINDS = { capture_base=true, capture_pill=true,
                          attack_tank=true, kill_lgm=true,
                          place_pill_strategic=true }
 
--- M.wsim_locked_reposition(cur_goal, cand_goal) -> bool
---   True when the pool row cand_goal IS the reposition we are committed to:
---   the current goal is a reposition capture_pill on the same pill, and the
---   row is priced at the lock (awaiting_vote false: locked or vote-approved,
---   see eval_reposition_pill). eval_reposition_pill holds that row at
---   PILL_REPOSITION_LOCK_COST "so nothing steals it mid-swap"; the wsim pass
---   must not add its damage cost on top, or the swap is dropped with our own
---   pill half shot (20261124 a1_noc_diag_sw brain t=400: lock 30 x inf 0.50
---   = 15, + wsim 110 = 125, lost to attack_pill 122 at pill 10/15 hp). A
---   predicted DEATH still rejects the row: only the extra cost is dropped.
-function M.wsim_locked_reposition(cur_goal, cand_goal)
-  if not (cur_goal and cand_goal) then return false end
-  if cur_goal.kind ~= "capture_pill" or not cur_goal.reposition then return false end
-  if cand_goal.kind ~= "capture_pill" or not cand_goal.reposition then return false end
-  if cand_goal.awaiting_vote then return false end
-  if cur_goal.target_id == nil or cand_goal.target_id ~= cur_goal.target_id then return false end
-  return true
-end
-
 -- panel_refresh: the pool-grid JSON builder re-runs this sweep every time the
 -- panel is read, which happens from Brain.get_pool_breakdown_json -- OUTSIDE
 -- Brain.think, after print2.flush() has already run. Anything print2'd there
@@ -18829,11 +18810,6 @@ local function goal_selection(state, world, info, quiet)
             end
           end
           local extra, killed, sdesc, wsim_path, wsim_result = wsim_evaluate_goal(M.wsim_goal(c.goal), world, info, attack_id, spot_x, spot_y)
-          -- Committed reposition: the lock cost stands (see
-          -- M.wsim_locked_reposition). A predicted death still rejects below.
-          if extra > 0 and not killed and M.wsim_locked_reposition(state.goal, c.goal) then
-            extra = 0
-          end
           -- Fresh-kill sweep: damp the wsim DANGER penalty (not the KILL reject)
           -- for capturing a pill WE just killed, within SWEEP_KILL_WINDOW, so a
           -- neighbouring pill's predicted fire doesn't scare us off the sweep.
