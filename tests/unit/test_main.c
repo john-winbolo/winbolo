@@ -708,6 +708,7 @@ static const UnitTestEntry s_tests[] = {
     { "bot_host_enforce_over_warns", run_bot_host_enforce_over_warns },
     { "bot_host_enforce_good_host", run_bot_host_enforce_good_host },
     { "bot_host_enforce_over_child_count", run_bot_host_enforce_over_child_count },
+    { "bot_host_child_slots_cap", run_bot_host_child_slots_cap },
     { "bot_host_enforce_off_keeps_fall_back",
       run_bot_host_enforce_off_keeps_fall_back },
     { "bot_host_overrun_window_rate", run_bot_host_overrun_window_rate },

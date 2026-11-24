@@ -536,6 +536,12 @@ bool botHostOverWarnStep(BotHostOverWarn *w, int serverBots, int serverSlots,
     return true;
 }
 
+int botHostChildSlots(int offered, int serverSlots) {
+    if (offered < 0) offered = 0;
+    if (serverSlots < 0) return offered;   /* not known yet */
+    return offered < serverSlots ? offered : serverSlots;
+}
+
 void botHostOverCount(const BotHostPlaceHost *raw, int n, int serverSlots,
                       int child, int *bots, int *slots) {
     int b = 0;

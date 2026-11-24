@@ -856,6 +856,12 @@ bool botHostOverWarnStep(BotHostOverWarn *w, int serverBots, int serverSlots,
  * always serverSlots. */
 void botHostOverCount(const BotHostPlaceHost *raw, int n, int serverSlots,
                       int child, int *bots, int *slots);
+/* ChildSlots: the slots the server's own child Bot Host may be given. The
+ * lobby's Server bot slots count the bots on the server's computer, the
+ * server's process and the child together, so the child gets what it
+ * offers but never more than serverSlots (4 slots and a child that offers
+ * 11: 4). serverSlots < 0 (not known yet): what it offers. */
+int botHostChildSlots(int offered, int serverSlots);
 
 /* ---- The lobby's wait for a Bot Host's brain files --------------------- */
 

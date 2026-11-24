@@ -596,13 +596,22 @@ static bool botHostSendEvent(int h, const ControlEvent *evt);
 
 /* The slots host h may be given: what it offers, lowered by its row's
  * override, and 0 when another host on its computer (or the server, for a
- * player's host) has them. */
+ * player's host) has them. The server's own child is also capped at the
+ * server's slots (botHostChildSlots): those count the server's process and
+ * the child together. */
 static int botHostEffSlots(int h) {
     const BotHostConn *hc = &udpServer.botHosts[h];
+    int slots;
     if (!hc->connected) return 0;
-    return botHostMachineSlots(botHostMachineKnown[h], &botHostMachine[h],
-                               botHostSlotsEffective((int)hc->slots,
-                                                     hc->slotOvr.override));
+    slots = botHostMachineSlots(botHostMachineKnown[h], &botHostMachine[h],
+                                botHostSlotsEffective((int)hc->slots,
+                                                      hc->slotOvr.override));
+    if (hc->localChild) {
+        /* The last server slots worked out (botHostServerSlots); -1
+         * before the first: no cap until then. */
+        slots = botHostChildSlots(slots, botHostSrvSlots.logged);
+    }
+    return slots;
 }
 
 /* The bots of the game: the bot seats, fielded or held for the start. */
@@ -5389,6 +5398,8 @@ static void botHostPlaceStep(ServerSim *sim, ServerState st) {
     botHostPlace.lastSt = st;
 
     memset(hosts, 0, sizeof(hosts));
+    /* The server's slots first: the child's slots are capped at them. */
+    hosts[0].slots = botHostServerSlots(sim);
     for (h = 0; h < MAX_BOT_HOSTS; h++) {
         BotHostConn *hc = &udpServer.botHosts[h];
         hostCount[h] = 0;
@@ -5403,10 +5414,10 @@ static void botHostPlaceStep(ServerSim *sim, ServerState st) {
         if (hosts[h + 1].open) anyHost = true;
     }
 
-    hosts[0].slots = botHostServerSlots(sim);
     for (h = 0; h < MAX_BOT_HOSTS; h++) {
-        /* The server's own child takes the server's slots: the server's
-         * process keeps only what the child does not take. */
+        /* The server's own child takes the server's slots (at most all of
+         * them): the server's process keeps only what the child does not
+         * take. */
         if (udpServer.botHosts[h].connected &&
             udpServer.botHosts[h].localChild && hosts[h + 1].open) {
             int left = (int)hosts[0].slots - (int)hosts[h + 1].slots;
