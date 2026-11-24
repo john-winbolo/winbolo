@@ -486,6 +486,17 @@ function M.rise_now(chain, world, info, now, walls, ox, oy, exp, x)
   end, o))
 end
 
+-- The planned squares of a take that need trees: a v2 plan square marked
+-- pt2_kind "pill" (to_scan_result) is a carried pill drop, not a wall.
+-- A v1 square (no pt2_kind) counts as a wall, as before.
+function M.wall_pots(pots)
+  local n = 0
+  for _, p in ipairs(pots or {}) do
+    if p.pt2_kind ~= "pill" then n = n + 1 end
+  end
+  return n
+end
+
 function M.start_now_check(goal, world, info, now, list)
   if C.PT2_START_WHILE_BUILDING == false then return false end
   local st = goal._pt2 and goal._pt2.start
@@ -494,7 +505,14 @@ function M.start_now_check(goal, world, info, now, list)
   goal._pt2_start_tick = now
   local walls = {}
   for _, p in ipairs(list) do
-    if not wall_up(world, p.mx, p.my) then walls[#walls + 1] = { mx = p.mx, my = p.my } end
+    if not wall_up(world, p.mx, p.my) then
+      -- A planned pill drop is placed by the hold only: a background
+      -- wall never places a carried pill (E5-10), so the take waits for it.
+      if p.pt2_kind == "pill" then
+        return false
+      end
+      walls[#walls + 1] = { mx = p.mx, my = p.my }
+    end
   end
   if #walls == 0 then return false end
   -- E4-6: a dead builder builds no wall: no start

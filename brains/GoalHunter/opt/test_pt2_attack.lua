@@ -348,6 +348,44 @@ do
   PC.slot_cover_shots = saved
 end
 
+-- Nov 24 (run_pillblk / run_rings): a plan square of kind "pill" is a
+-- carried pill drop. It needs no trees, and the hold places it: it never
+-- goes to the background walls, which build a wall there (or nothing).
+print("\nA planned pill drop: no trees, not a background wall")
+do
+  local P  = { mx = 40, my = 40, kind = "empty", pt2_kind = "pill" }
+  local Wq = { mx = 42, my = 40, kind = "empty", pt2_kind = "wall" }
+  local V1 = { mx = 44, my = 40, kind = "empty" }
+  check("wall_pots: a pill drop alone needs no wall", PA.wall_pots({ P }) == 0, PA.wall_pots({ P }))
+  check("wall_pots: pill + wall = 1 wall", PA.wall_pots({ P, Wq }) == 1, PA.wall_pots({ P, Wq }))
+  check("wall_pots: a v1 square counts as a wall", PA.wall_pots({ V1 }) == 1, PA.wall_pots({ V1 }))
+  check("wall_pots: nil = 0", PA.wall_pots(nil) == 0)
+
+  local up = {}
+  local saved = PC.slot_cover_shots
+  PC.slot_cover_shots = function(_, mx, my) return up[sq(mx, my)] and 5 or 0 end
+  local info = { armour = 40, tankx = 30 * 256, tanky = 40 * 256, man_status = C.LGM_INTANK,
+                 player_number = 0 }
+  local function g() return { substate = "build_walls", _pt2 = { start = { ok = true, pills = {} } } } end
+  local goal = g()
+  local r = PA.start_now_check(goal, { pills = {} }, info, 1000, { P })
+  check("pill drop not down: no start", r == false, r)
+  check("pill drop not down: no background wall", goal._pt2_bg == nil,
+        goal._pt2_bg and goal._pt2_bg.walls and #goal._pt2_bg.walls)
+  goal = g()
+  r = PA.start_now_check(goal, { pills = {} }, info, 1000, { P, Wq })
+  check("pill drop + wall, pill not down: no start", r == false, r)
+  -- the pill is down: the missing wall may start as before
+  up[sq(40, 40)] = true
+  goal = g()
+  r = PA.start_now_check(goal, { pills = {} }, info, 1000, { P, Wq })
+  local bgw = goal._pt2_bg and goal._pt2_bg.walls or {}
+  check("pill down, wall missing: start", r == true, r)
+  check("pill down: only the wall goes to the background",
+        #bgw == 1 and bgw[1].mx == 42 and bgw[1].my == 40, #bgw)
+  PC.slot_cover_shots = saved
+end
+
 C.PILLTAKE_V2_EVALUATOR = false
 print(string.format("\n%d passed, %d failed", pass, fail))
 os.exit(fail == 0 and 0 or 1)
