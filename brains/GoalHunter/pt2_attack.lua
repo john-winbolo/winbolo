@@ -87,6 +87,17 @@ end
 -- green spot costs its Dijkstra travel (plus the human-decoy cost, as v1),
 -- any other point 10000 + the spot's adjusted score (so greens always win),
 -- except on a finish: then every point costs its travel only.
+-- The builder's own trip ticks (pt2_start.trip_ticks): -1 when he cannot
+-- get there (E4-4: no start), nil when there is no answer. v2 (inp.lgm_ticks, E4-5)
+-- and the hold check (start_now_check) use the same walk.
+local function lgm_ticks(ox, oy, mx, my, bmx, bmy)
+  local t = cpf.lgm_travel_ticks_map(ox, oy, mx, my, bmx or mx, bmy or my,
+    C.WALL_SHIELD_LGM_MAX_TICKS, C.WALL_SHIELD_LGM_STUCK_TICKS)
+  if not t then return nil end
+  if t < 0 then return -1 end
+  return t
+end
+
 function M.build_inp(state, goal, info, world, pill, no_builder, npb, radius, now)
   local inp = V2.knob_inp(C, {})
   -- debug profile (C.PT2_PROF_LOG): the world_inp part of build_inp
@@ -111,6 +122,8 @@ function M.build_inp(state, goal, info, world, pill, no_builder, npb, radius, no
   if inp.start_while_building then
     local x = require("live_physics").context(info, {})
     inp.pill_attack_ticks, inp.pill_attack_min_ticks = x.pill_attack_ticks, x.pill_attack_min_ticks
+    -- E4-5: the builder's own trips, as the hold check counts them
+    inp.lgm_ticks = lgm_ticks
   end
   local goalA = inp.A
   local curA = goalA
@@ -405,15 +418,6 @@ end
 M.START_CHECK_TICKS = 10
 local PS = require("pt2_start")
 
--- The builder's own trip ticks (pt2_start.trip_ticks): -1 when he cannot
--- get there (E4-4: no start), nil when there is no answer.
-local function lgm_ticks(ox, oy, mx, my, bmx, bmy)
-  local t = cpf.lgm_travel_ticks_map(ox, oy, mx, my, bmx or mx, bmy or my,
-    C.WALL_SHIELD_LGM_MAX_TICKS, C.WALL_SHIELD_LGM_STUCK_TICKS)
-  if not t then return nil end
-  if t < 0 then return -1 end
-  return t
-end
 
 local function wall_up(world, mx, my)
   return PC.slot_cover_shots(world, mx, my, U.ttype(mx, my)) > 0

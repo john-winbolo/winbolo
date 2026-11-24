@@ -1436,7 +1436,7 @@ local function start_check(ctx, rec)
   if not plan or #plan == 0 then return end
   local ox = rec.omx or floor(rec.px / 256)
   local oy = rec.omy or floor(rec.py / 256)
-  local exp = PS.exposure_ticks(ox, oy, plan, inp.lgm_ticks)
+  local exp = PS.exposure_ticks(ox, oy, plan, ctx.lgm_ticks)
   -- E4-4: the builder cannot get to a wall: no start
   if not exp then
     rec.start_now, rec.exposure, rec.start_why = false, -1, "unreachable"
@@ -1715,6 +1715,21 @@ local function new_ctx(inp, A)
     if alive(p) and not inp.env.is_ally(p) then ctx.hostile[#ctx.hostile + 1] = p end
   end
   ctx.finish = OLD.finish_ok(inp, A)
+  -- E4-5: the builder's trips (inp.lgm_ticks), one walk per trip in an
+  -- evaluate (start_check asks the same trips at many points)
+  if inp.lgm_ticks then
+    local f, memo = inp.lgm_ticks, {}
+    ctx.lgm_ticks = function(ox, oy, mx, my, bx, by)
+      local k = ((ox * 256 + oy) * 256 + mx) * 256 + my
+      k = (k * 256 + (bx or mx)) * 256 + (by or my)
+      local v = memo[k]
+      if v == nil then
+        v = f(ox, oy, mx, my, bx, by)
+        memo[k] = v == nil and false or v
+      end
+      return v or nil
+    end
+  end
   ctx.tshell = shell_range(inp.env, SH.TANK_FIRE_LEN)
   ctx.pshell = shell_range(inp.env, inp.env.pill_fire_len or SH.PILL_FIRE_LEN)
   local cws = {}
