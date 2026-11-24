@@ -303,6 +303,28 @@ do
   package.loaded["attack"] = nil
 end
 
+print("== E5-12: a new plan during a take keeps the missing background walls")
+do
+  C.PILLTAKE_V2_EVALUATOR = true; _G.BRAIN_DEBUG_MODE = false; _G._PRINT2_ENABLED = false
+  local function has(bg, mx, my)
+    for _, w in ipairs(bg and bg.walls or {}) do if w.mx == mx and w.my == my then return true end end
+    return false
+  end
+  local world, pill = make_world()
+  local goal = { scan_spots = spots(), _is_ppt = true,
+                 _pt2_bg = { walls = { { mx = 60, my = 60 } }, go = true } }
+  call(goal, world, pill, v1_scan(world, pill))
+  check("after the hold: the missing wall stays", has(goal._pt2_bg, 60, 60), goal._pt2_bg)
+  check("the new bg waits for its own hold", goal._pt2_bg and not goal._pt2_bg.go, goal._pt2_bg and goal._pt2_bg.go)
+  check("counted once", goal._pt2_finish_in_take == 1, goal._pt2_finish_in_take)
+  world, pill = make_world()
+  goal = { scan_spots = spots(), _is_ppt = true,
+           _pt2_bg = { walls = { { mx = 60, my = 60 } } } }
+  call(goal, world, pill, v1_scan(world, pill))
+  check("before the hold: dropped", not has(goal._pt2_bg, 60, 60), goal._pt2_bg)
+  check("not counted", goal._pt2_finish_in_take == nil, goal._pt2_finish_in_take)
+end
+
 print("\nE5-9: background walls wait for the hold and a take substate")
 do
   local up = {}

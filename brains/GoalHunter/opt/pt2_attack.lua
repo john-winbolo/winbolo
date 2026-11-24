@@ -366,7 +366,10 @@ local function finish(a, inp, res, cost)
   end
   -- PT2_START_WHILE_BUILDING: v2's answer for this point (start_check);
   -- the hold point asks again with the live builder (M.start_now_check).
-  -- The background walls (M.bg_wall) start empty on each new plan.
+  -- The background walls (M.bg_wall) start empty on each new plan, but
+  -- E5-12: a plan made after the hold (old bg.go) keeps the old missing
+  -- walls (below).
+  local old_bg = goal._pt2_bg
   goal._pt2_bg = nil
   if b.start_now ~= nil then
     goal._pt2.start = { ok = b.start_now, why = b.start_why, pills = b.start_pills,
@@ -382,6 +385,36 @@ local function finish(a, inp, res, cost)
     for i, q in ipairs(b.plan or {}) do plan[i] = { mx = q.mx, my = q.my } end
     goal._pt2_bg = { walls = walls, plan = plan }
     goal._pt2.extra_cover = walls
+  end
+  -- E5-12: a new plan during a take (the old hold was over: bg.go) keeps
+  -- the old background walls that do not stand yet. The new plan's own
+  -- squares are left out: its hold builds them. PT2_FINISH_IN_TAKE counts
+  -- how often this happens.
+  if old_bg and old_bg.go then
+    goal._pt2_finish_in_take = (goal._pt2_finish_in_take or 0) + 1
+    local on_plan = {}
+    for _, q in ipairs(b.plan or {}) do on_plan[q.my * 256 + q.mx] = true end
+    local bg = goal._pt2_bg
+    local have = {}
+    for _, w in ipairs(bg and bg.walls or {}) do have[w.my * 256 + w.mx] = true end
+    local kept = {}
+    for _, w in ipairs(old_bg.walls or {}) do
+      local k = w.my * 256 + w.mx
+      if not on_plan[k] and not have[k]
+         and PC.slot_cover_shots(a.world, w.mx, w.my, U.ttype(w.mx, w.my)) <= 0 then
+        kept[#kept + 1] = { mx = w.mx, my = w.my }
+        have[k] = true
+      end
+    end
+    if #kept > 0 then
+      if not bg then
+        local plan = {}
+        for i, q in ipairs(b.plan or {}) do plan[i] = { mx = q.mx, my = q.my } end
+        bg = { walls = {}, plan = plan }
+        goal._pt2_bg = bg
+      end
+      for _, w in ipairs(kept) do bg.walls[#bg.walls + 1] = w end
+    end
   end
   -- hold point: the tank waits here until every planned wall stands
   local h = b.hold
