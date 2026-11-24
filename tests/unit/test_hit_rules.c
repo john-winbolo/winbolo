@@ -12,7 +12,9 @@
  *       own builder death test today (lgmDeathCheckAtPosition on a running
  *       sim). Every lgm_blast_shape, pill ranges from 0 to 2048, open
  *       ground and a building beside him, and explosions on a grid of
- *       places within 200 of the builder.
+ *       places within 200 of the builder, with the shapes' edges (127,
+ *       128, 129, 144 and 145 on each axis, and either side of the two
+ *       circles and the box's corner on the diagonals).
  *
  *   hit_rules_tank_matches_engine - hitRulesTankCircle and
  *       hitRulesTankSquare against the old tankShellInHitZone sums, for
@@ -99,11 +101,52 @@ int run_hit_rules_builder_matches_engine(void) {
   static const int ranges[] = {0, 100, 128, 140, 160, 2048};
   /* The builder's place in his square: the middle, and off it. */
   static const int places[][2] = {{128, 128}, {30, 200}, {250, 5}};
+  /* The edges on an axis: the box's 128 (edge out), the half-square
+     circle's 128 and the area circle's 144 (edge in). */
+  static const int axisEdges[] = {127, 128, 129, 144, 145};
+  /* On the diagonal: 90,91 is in the circle of 128 and 91,91 out; 101,102
+     is in the circle of 144 and 102,102 out; 127,127 is in the box and
+     127,128 and 128,128 out. */
+  static const int diagEdges[][2] = {{90, 90}, {90, 91}, {91, 91}, {101, 102},
+                                     {102, 102}, {127, 127}, {127, 128}, {128, 128}};
+  static int offsets[81 * 81 + 5 * 4 + 8 * 8][2];
   ServerSim *sim;
   BYTE cx = 0, cy = 0;
-  int shape, building, dx, dy;
-  size_t r, p;
+  int shape, building, dx, dy, sx, sy, o, count = 0;
+  size_t r, p, e;
   long checked = 0;
+
+  /* The grid every 5 world units, then the edges. */
+  for (dy = -200; dy <= 200; dy += 5) {
+    for (dx = -200; dx <= 200; dx += 5) {
+      offsets[count][0] = dx;
+      offsets[count][1] = dy;
+      count++;
+    }
+  }
+  for (e = 0; e < sizeof(axisEdges) / sizeof(axisEdges[0]); e++) {
+    for (sx = -1; sx <= 1; sx += 2) {
+      offsets[count][0] = sx * axisEdges[e];
+      offsets[count][1] = 0;
+      count++;
+      offsets[count][0] = 0;
+      offsets[count][1] = sx * axisEdges[e];
+      count++;
+    }
+  }
+  for (e = 0; e < sizeof(diagEdges) / sizeof(diagEdges[0]); e++) {
+    for (sy = -1; sy <= 1; sy += 2) {
+      for (sx = -1; sx <= 1; sx += 2) {
+        offsets[count][0] = sx * diagEdges[e][0];
+        offsets[count][1] = sy * diagEdges[e][1];
+        count++;
+        offsets[count][0] = sx * diagEdges[e][1];
+        offsets[count][1] = sy * diagEdges[e][0];
+        count++;
+      }
+    }
+  }
+  UT_ASSERT_MSG(count == (int)(sizeof(offsets) / sizeof(offsets[0])), "%d offsets", count);
 
   sim = hrMakeSim(&cx, &cy);
   UT_ASSERT_MSG(sim != NULL, "could not build a running sim");
@@ -118,8 +161,10 @@ int run_hit_rules_builder_matches_engine(void) {
         for (p = 0; p < sizeof(places) / sizeof(places[0]); p++) {
           WORLD lx = (WORLD)(((WORLD)cx << M_W_SHIFT_SIZE) + places[p][0]);
           WORLD ly = (WORLD)(((WORLD)cy << M_W_SHIFT_SIZE) + places[p][1]);
-          for (dy = -200; dy <= 200; dy += 5) {
-            for (dx = -200; dx <= 200; dx += 5) {
+          for (o = 0; o < count; o++) {
+            dx = offsets[o][0];
+            dy = offsets[o][1];
+            {
               WORLD wx = (WORLD)((long)lx + dx), wy = (WORLD)((long)ly + dy);
               BYTE mx = (BYTE)(wx >> M_W_SHIFT_SIZE), my = (BYTE)(wy >> M_W_SHIFT_SIZE);
               bool solid = building && mx == (BYTE)(cx + 1) && my == cy;
@@ -141,7 +186,33 @@ int run_hit_rules_builder_matches_engine(void) {
       }
     }
   }
-  serverSimDestroy(sim);
+  /* The engine's own answer at each shape's edge, below the builder (open
+     ground) with a pill range that cuts nothing: in at the last world unit
+     of the shape, out at the next. */
+  {
+    static const int edge[3][2] = {{128, 129}, {127, 128}, {144, 145}};
+    WORLD lx = (WORLD)(((WORLD)cx << M_W_SHIFT_SIZE) + 128);
+    WORLD ly = (WORLD)(((WORLD)cy << M_W_SHIFT_SIZE) + 128);
+    int bad = -1;
+    sim->sim.rules.pill_range = 2048;
+    for (shape = 0; shape <= 2 && bad < 0; shape++) {
+      sim->sim.rules.lgm_blast_shape = shape;
+      if (!hrEngineKills(sim, lx, ly, lx, (WORLD)(ly + edge[shape][0])) ||
+          hrEngineKills(sim, lx, ly, lx, (WORLD)(ly + edge[shape][1])) ||
+          !hrEngineKills(sim, lx, ly, (WORLD)(lx - edge[shape][0]), ly) ||
+          hrEngineKills(sim, lx, ly, (WORLD)(lx - edge[shape][1]), ly)) {
+        bad = shape;
+      }
+    }
+    /* The box's corner: 127,127 in, 127,128 out. */
+    sim->sim.rules.lgm_blast_shape = LGM_BLAST_SHAPE_MAC_BOX;
+    if (bad < 0 && (!hrEngineKills(sim, lx, ly, (WORLD)(lx - 127), (WORLD)(ly + 127)) ||
+                    hrEngineKills(sim, lx, ly, (WORLD)(lx - 127), (WORLD)(ly + 128)))) {
+      bad = LGM_BLAST_SHAPE_MAC_BOX;
+    }
+    serverSimDestroy(sim);
+    UT_ASSERT_MSG(bad < 0, "shape %d: the engine's edge is not where the shape says", bad);
+  }
   UT_ASSERT_MSG(checked > 0, "no places checked");
 
   /* The solid squares: only his own. */
