@@ -1281,5 +1281,55 @@ do
   clear(); V.reset()
 end
 
+-- ── 14. BLOCKER_MIN_LANE_BRAD: v2 asks attack's shield lane width ────────
+-- c13 gap_e (Nov 24): two pills side by side, the tank east of them. v2
+-- picked a point whose fire aim had no clear side lane; attack.lua's
+-- SHIELD_LANE check threw the plan away. With inp.min_lane_brad set, every
+-- aim v2 calls clear has the lane width on both sides.
+print("BLOCKER_MIN_LANE_BRAD: v2's clear aims are wide enough")
+do
+  local AL = require("aim_lane")
+  local function narrow_count(mlb_in, mlb_test, far)
+    clear(); V.reset()
+    local P1 = { mx = 124, my = 118, owner = "hostile", health = 15 }
+    local P2 = { mx = 126, my = 118, owner = "hostile", health = 15 }
+    local inp = make_inp(make_world({ P1, P2 }), far and P1 or P2, 1)
+    inp.carried_pills = 1
+    inp.keep_all = true
+    inp.min_lane_brad = mlb_in
+    inp.score_fn = function(deg, mx, my, cx, cy)
+      local dx, dy = cx - 138.5, cy - 118.5
+      return math.sqrt(dx * dx + dy * dy) * 10
+    end
+    local r = V.evaluate_lua(inp)
+    local n, bad = 0, 0
+    for _, x in ipairs(r.all or {}) do
+      if x.safe and x.aim_idx then
+        n = n + 1
+        local A = inp.A
+        local fo = V.FIRE_AIMS[x.aim_idx]
+        local dx, dy = A.mx * 256 + fo[1] - x.px, A.my * 256 + fo[2] - x.py
+        local a0 = (math.atan2(dx, -dy) * 256 / (2 * math.pi)) % 256
+        local ok = AL.wide_enough(function(a)
+          return (SH.tank_shot_angle(inp.env, x.px, x.py, a, A.mx, A.my, x.extra))
+        end, a0, mlb_test)
+        if not ok then bad = bad + 1 end
+      end
+    end
+    return n, bad, r.best
+  end
+  for _, far in ipairs({ false, true }) do
+    local tag = far and "far pill" or "near pill"
+    local n0, bad0 = narrow_count(0, 0.125, far)
+    local n1, bad1, b1 = narrow_count(0.125, 0.125, far)
+    print(string.format("    %s off: %d safe, %d narrow; on: %d safe, %d narrow", tag, n0, bad0, n1, bad1))
+    check(tag .. " off: some safe aims are narrow (the c13 case)", bad0 > 0, bad0)
+    check(tag .. " on: no safe aim is narrow", n1 > 0 and bad1 == 0, bad1)
+    check(tag .. " on: still a safe best", b1 and b1.safe, b1 and b1.safe)
+  end
+  check("knob_inp: BLOCKER_MIN_LANE_BRAD", V.knob_inp(C, {}).min_lane_brad == (C.BLOCKER_MIN_LANE_BRAD or 0))
+  clear()
+end
+
 print(string.format("%d passed, %d failed", pass, fail))
 os.exit(fail == 0 and 0 or 1)

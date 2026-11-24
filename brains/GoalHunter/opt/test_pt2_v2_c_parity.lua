@@ -541,6 +541,7 @@ local function random_case(ci)
   inp.ring_radii = ({ { 7.4, 7.2, 7.0, 6.6 }, { 7.4, 7.0 }, { 6.6 }, { 7.8, 7.4, 6.2 } })[1 + rnd(4)]
   if rnd(8) == 0 then inp.ring_radii = {} end
   if rnd(6) == 0 then inp._xcover_later = true end
+  inp.min_lane_brad = ({ 0, 0.125, 0.125, 0.25 })[1 + rnd(4)]
   local hx, hy = cx + 0.5 - 6 + rnd(13), cy + 0.5 + 8
   inp.score_fn = function(deg, mx, my, x, y)
     local dx, dy = x - hx, y - hy

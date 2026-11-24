@@ -3183,6 +3183,16 @@ local function blocked_line_replan(state, goal, pmx, pmy, now)
     end
     return true, bucket, tries
   end
+  -- Pill take v2 retarget (pt2_attack finish): the take shoots another pill
+  -- of the goal pill's group. The ban stays on the pill shot (pmx, pmy), but
+  -- the new plan is for the goal pill again, as the first plan was. Left on
+  -- the shot pill, the next plan used that pill's v1 scan ring (green filter)
+  -- and dropped the good spots near the goal pill (c13 gap_e Nov 24: the tank
+  -- drove to the far side of the group).
+  local gt = goal._pt2 and goal._pt2.goal_target
+  if gt and gt.id ~= nil and (goal.mx ~= gt.mx or goal.my ~= gt.my) then
+    goal.mx, goal.my, goal.target_id = gt.mx, gt.my, gt.id
+  end
   reset_to_plan_position(state, goal)
   return false, bucket, tries
 end

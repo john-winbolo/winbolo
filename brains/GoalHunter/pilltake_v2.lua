@@ -97,6 +97,8 @@ function M.knob_inp(C, inp)
   -- PT2_EXTRA_COVER_SKIP_PILL_LINE: no extra wall on a ray a friendly
   -- pill already blocks
   inp.xcover_skip_pill_line = C.PT2_EXTRA_COVER_SKIP_PILL_LINE ~= false
+  -- BLOCKER_MIN_LANE_BRAD: attack.lua's shield lane check (aim_wide)
+  inp.min_lane_brad = C.BLOCKER_MIN_LANE_BRAD or 0
   -- PT2_CHAINS_ONLY (S10): the runs that only a safe chain can use (a
   -- non-goal A in group_step, the pt2_dbl shadow runs) plan no single take
   inp.chains_only_runs = C.PT2_CHAINS_ONLY ~= false
@@ -743,6 +745,33 @@ local function pills_in_range(ctx, px, py)
   return T, hasA
 end
 
+-- C.BLOCKER_MIN_LANE_BRAD (inp.min_lane_brad, 0 = off): attack.lua's
+-- shield lane check (M.aim_lane_wide, the SHIELD_LANE line) throws away a
+-- plan whose fire aim has a clear lane narrower than this on either side,
+-- bans the angle and plans again (gap_e Nov 24: v2 kept picking a far ring
+-- point whose shell only just reached A). v2 asks the same of every aim it
+-- calls clear, the same way: the gun angle to the fire aim
+-- (attack_shield.AIM_INSET_FIRE, M.FIRE_AIMS) and aim_lane.wide_enough's
+-- samples each side, each shell from (px, py) must reach A. The shells are
+-- v2's own tank_shot (with the planned blockers).
+M.FIRE_AIMS = { { 128, 128 }, { 16, 16 }, { 240, 16 }, { 16, 240 }, { 240, 240 },
+                { 128, 16 }, { 240, 128 }, { 128, 240 }, { 16, 128 } }
+local AL = require("aim_lane")
+local function aim_wide(ctx, px, py, ai, extra)
+  local mlb = ctx.inp.min_lane_brad
+  if not mlb or mlb <= 0 then return true end
+  local A, env = ctx.A, ctx.env
+  local fo = M.FIRE_AIMS[ai]
+  local dx, dy = A.mx * 256 + fo[1] - px, A.my * 256 + fo[2] - py
+  local a0 = (atan2(dx, -dy) * 256 / TWO_PI) % 256
+  local buf = ctx.side_lane
+  return (AL.wide_enough(function(a)
+    ctx.n_shot = ctx.n_shot + 1
+    return (SH.tank_shot_angle(env, px, py, a, A.mx, A.my, extra, buf))
+  end, a0, mlb))
+end
+M._aim_wide = aim_wide
+
 -- the old nudge (pilltake_v2_old nudge_aim), on this module's aim list
 local function nudge_aim(ctx, px, py, extra, shorts)
   local inp, env, A = ctx.inp, ctx.env, ctx.A
@@ -766,6 +795,7 @@ local function nudge_aim(ctx, px, py, extra, shorts)
         local off = ctx.aims[ai]
         local ok, why, ln = SH.tank_shot(env, nx, ny, tx + off[1], ty + off[2], A.mx, A.my, extra, ctx.lane)
         ctx.n_shot = ctx.n_shot + 1
+        if ok and not aim_wide(ctx, nx, ny, ai, extra) then ok, why = false, "narrow" end
         if ok then ctx.lane = {}; return nx, ny, nw, ai, ln end
         if why == "short" then n = n + 1; live[n] = ai end
       end
@@ -799,6 +829,7 @@ local function eval_point(ctx, px, py, extra, aim_fixed, nudge, exact, lazy)
     local ok, why, ln = SH.tank_shot(env, px, py, A.mx * 256 + off[1], A.my * 256 + off[2], A.mx, A.my, extra,
                                      ctx.lane)
     ctx.n_shot = ctx.n_shot + 1
+    if ok and not aim_wide(ctx, px, py, ai, extra) then ok, why = false, "narrow" end
     if ok then aim_idx, lane = ai, ln; ctx.lane = {}; break end
     why_out = why
     if why == "short" then shorts = shorts or {}; shorts[#shorts + 1] = ai end
@@ -950,6 +981,7 @@ local function clear_aims_of(ctx, rec)
       local ok, _, ln = SH.tank_shot(env, rec.px, rec.py, A.mx * 256 + off[1], A.my * 256 + off[2],
                                      A.mx, A.my, rec.extra_in, ctx.lane)
       ctx.n_shot = ctx.n_shot + 1
+      if ok and not aim_wide(ctx, rec.px, rec.py, ai, rec.extra_in) then ok = false end
       if ok then rec.clear_aims[#rec.clear_aims + 1] = ai; rec.lanes[ai] = ln; ctx.lane = {} end
     end
     if t0 then ctx.tm.aim = ctx.tm.aim + ctx.clk() - t0 end
@@ -2053,7 +2085,8 @@ local function new_ctx(inp, A)
                 memo_nodes = 0,   -- M1: the wall nodes stat got from the memo
                 -- M2: the aim tests' lane buffer; a clear aim keeps it
                 -- (its lane) and the next test gets a new one
-                lane = {} }
+                lane = {},
+                side_lane = {} }  -- aim_wide's shells (their squares unused)
   for _, p in ipairs(inp.pills) do
     if alive(p) and not inp.env.is_ally(p) then ctx.hostile[#ctx.hostile + 1] = p end
   end

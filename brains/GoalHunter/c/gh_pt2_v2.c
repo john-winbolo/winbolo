@@ -105,14 +105,20 @@ static const double s_aims9[PT2_MAXAIMS][2] = {
     { 128, 128 }, { 24, 24 }, { 255 - 24, 24 }, { 24, 255 - 24 }, { 255 - 24, 255 - 24 },
     { 128, 24 }, { 231, 128 }, { 128, 231 }, { 24, 128 },
 };
+/* pilltake_v2 M.FIRE_AIMS: attack_shield's fire aims (AIM_INSET_FIRE 16),
+ * the points aim_wide turns the gun to. */
+static const double s_fire9[PT2_MAXAIMS][2] = {
+    { 128, 128 }, { 16, 16 }, { 240, 16 }, { 16, 240 }, { 240, 240 },
+    { 128, 16 }, { 240, 128 }, { 128, 240 }, { 16, 128 },
+};
 
 /* Block kinds (shadow.lua). */
 enum { BK_ALLY_PILL, BK_PLANNED, BK_WALL, BK_HALF_WALL, BK_BOAT, BK_FOREST };
 static const char *s_bk_name[] = { "ally_pill", "planned", "wall", "half_wall", "boat", "forest" };
 
 /* tank_shot why. */
-enum { TS_OK, TS_SHORT, TS_WALL, TS_PILL, TS_BASE, TS_PLANNED, TS_BOAT, TS_TANK };
-static const char *s_ts_name[] = { "ok", "short", "wall", "pill", "base", "planned", "boat", "tank" };
+enum { TS_OK, TS_SHORT, TS_WALL, TS_PILL, TS_BASE, TS_PLANNED, TS_BOAT, TS_TANK, TS_NARROW };
+static const char *s_ts_name[] = { "ok", "short", "wall", "pill", "base", "planned", "boat", "tank", "narrow" };
 
 /* Why codes for rejects and leeway points. */
 enum { W_NONE, W_A_OUT, W_OUTGOING, W_OVERLAP, W_CHAIN, W_QMARK, W_CANT };
@@ -530,6 +536,7 @@ struct St {
     int    fbp_on; double carried_pills;
     double extra_cover_walls, anger_bump;
     int    xcover_skip_pill_line;
+    double min_lane_brad;          /* BLOCKER_MIN_LANE_BRAD: aim_wide, 0 = off */
     int    has_pat, has_pamt, has_pad, has_pct, has_trl;
     double pill_attack_ticks, pill_attack_min_ticks, pill_angry_divisor, pill_cooldown_ticks, tank_reload;
     int    has_env_speed; double env_speed;
@@ -1196,10 +1203,11 @@ static Lane *lane_make(Ev *e, const int64_t *lane, int nl) {
     return l;
 }
 
-static int tank_shot_walk(Ev *e, double ox, double oy, double ax, double ay, double tmx, double tmy,
-                          const Extra *extra, Lane **lane_out) {
+/* shadow.tank_shot_angle: the shot at gun angle angle (brad, float). */
+static int tank_shot_walk_angle(Ev *e, double ox, double oy, double angle, double tmx, double tmy,
+                                const Extra *extra, Lane **lane_out) {
     int64_t lane[PT2_MAX_T];
-    double angle = tank_angle(ox, oy, ax, ay);
+    angle = f32(angle);
     double xa, ya, xs, ys;
     calc_distance_both(angle, e->sh_speed, &xa, &ya, &xs, &ys);
     Walk w;
@@ -1237,6 +1245,11 @@ static int tank_shot_walk(Ev *e, double ox, double oy, double ax, double ay, dou
         *lane_out = lane_make(e, lane, nl);
     }
     return why;
+}
+
+static int tank_shot_walk(Ev *e, double ox, double oy, double ax, double ay, double tmx, double tmy,
+                          const Extra *extra, Lane **lane_out) {
+    return tank_shot_walk_angle(e, ox, oy, tank_angle(ox, oy, ax, ay), tmx, tmy, extra, lane_out);
 }
 static uint32_t cg_hash(int32_t a, int32_t b, int32_t c) {
     uint32_t h = (uint32_t)a * 0x9E3779B1u;
@@ -1980,6 +1993,33 @@ static PList *pills_in_range(Ev *e, double px, double py) {
     return T;
 }
 
+/* pilltake_v2 aim_wide (C.BLOCKER_MIN_LANE_BRAD): the shell at the fire
+ * aim of aim ai and at aim_lane.wide_enough's samples each side (step
+ * 1/16 brad) must all reach A, as attack.lua's shield lane check asks. */
+static int aim_wide(Ev *e, double px, double py, int ai, const Extra *extra) {
+    double mlb = e->min_lane_brad;
+    if (!(mlb > 0)) return 1;
+    Pill *A = PI(e, e->A);
+    double dx = A->mx * 256 + s_fire9[ai - 1][0] - px, dy = A->my * 256 + s_fire9[ai - 1][1] - py;
+    double a0 = luamod(atan2(dx, -dy) * 256 / PT2_TWO_PI, 256);
+    const double step = 1.0 / 16.0;
+    e->n_shot += 1;
+    if (tank_shot_walk_angle(e, px, py, luamod(a0, 256), A->mx, A->my, extra, NULL) != TS_OK) return 0;
+    double n = ceil(mlb / step - 1e-9);
+    double reach[2];
+    for (int s = 0; s < 2; s++) {
+        double side = s ? 1 : -1, r = 0;
+        for (double k = 1; k <= n; k++) {
+            e->n_shot += 1;
+            if (tank_shot_walk_angle(e, px, py, luamod(a0 + side * k * step, 256), A->mx, A->my, extra, NULL)
+                != TS_OK) break;
+            r = k * step;
+        }
+        reach[s] = r;
+    }
+    return reach[0] >= mlb - 1e-9 && reach[1] >= mlb - 1e-9;
+}
+
 static int nudge_aim(Ev *e, double px, double py, const Extra *extra, const int *shorts, int nshorts,
                      double *onx, double *ony, double *onw, int *oai, Lane **oln) {
     Pill *A = PI(e, e->A);
@@ -2006,6 +2046,7 @@ static int nudge_aim(Ev *e, double px, double py, const Extra *extra, const int 
                 int why = tank_shot(e, nx, ny, tx + s_aims9[ai - 1][0], ty + s_aims9[ai - 1][1], A->mx, A->my,
                                     extra, &ln);
                 e->n_shot += 1;
+                if (why == TS_OK && !aim_wide(e, nx, ny, ai, extra)) why = TS_NARROW;
                 if (why == TS_OK) { *onx = nx; *ony = ny; *onw = nw; *oai = ai; *oln = ln; return 1; }
                 if (why == TS_SHORT) live[n++] = ai;
             }
@@ -2046,6 +2087,7 @@ static Rec *eval_point(Ev *e, double px, double py, Extra *extra, int aim_fixed,
         int w = tank_shot(e, px, py, A->mx * 256 + s_aims9[ai - 1][0], A->my * 256 + s_aims9[ai - 1][1],
                           A->mx, A->my, extra, &ln);
         e->n_shot += 1;
+        if (w == TS_OK && !aim_wide(e, px, py, ai, extra)) w = TS_NARROW;
         if (w == TS_OK) { aim_idx = ai; lane = ln; break; }
         why_out = w;
         if (w == TS_SHORT) shorts[nshorts++] = ai;
@@ -2190,6 +2232,8 @@ static Aims *clear_aims_of(Ev *e, Rec *rec) {
                               A->my * 256 + s_aims9[ai - 1][1], A->mx, A->my,
                               (rec->flags & RF_EXTRA_IN) ? rec->extra_in : NULL, &ln);
             e->n_shot += 1;
+            if (w == TS_OK && !aim_wide(e, rec->px, rec->py, ai, (rec->flags & RF_EXTRA_IN) ? rec->extra_in : NULL))
+                w = TS_NARROW;
             if (w == TS_OK) {
                 rec->clear->v[rec->clear->n++] = ai;
                 rec->lanes->ai[rec->lanes->n] = ai; rec->lanes->ln[rec->lanes->n] = ln; rec->lanes->n++;
@@ -4411,6 +4455,7 @@ static void ev_read_inp(Ev *e) {
     e->xcover_later = getbool(L, S_INP, "_xcover_later");
     e->extra_cover_walls = getnum(L, S_INP, "extra_cover_walls", 0, NULL);
     e->xcover_skip_pill_line = getbool(L, S_INP, "xcover_skip_pill_line");
+    e->min_lane_brad = getnum(L, S_INP, "min_lane_brad", 0, NULL);
     e->anger_bump = getnum(L, S_INP, "anger_bump", 0.3333, NULL);
     e->pill_attack_ticks = getnum(L, S_INP, "pill_attack_ticks", 100, &e->has_pat);
     e->pill_attack_min_ticks = getnum(L, S_INP, "pill_attack_min_ticks", 6, &e->has_pamt);

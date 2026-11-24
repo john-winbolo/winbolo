@@ -375,7 +375,8 @@ local function finish(a, inp, res, cost)
   out.pill_wall_equiv = C.PPT_PILL_WALL_EQUIV or 3.0
   goal._pt2 = out.chain
   goal._pt2.tick = a.now
-  goal._pt2.goal_target = { mx = pill.mx, my = pill.my }
+  -- id: blocked_line_replan gives a retargeted take back its goal pill
+  goal._pt2.goal_target = { mx = pill.mx, my = pill.my, id = goal.target_id }
   if A ~= pill then
     -- retarget: attack.lua takes sscan.pill as the pill for this take
     local id = inp.ids and inp.ids[A]

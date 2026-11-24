@@ -268,8 +268,15 @@ end
 --                  on the square and before the terrain, on its hit circle
 --                  (env.tank_hit_r); a team mate's tank stops it too.
 function M.tank_shot(env, ox, oy, ax, ay, tmx, tmy, extra, lane)
+  return M.tank_shot_angle(env, ox, oy, M.tank_angle(ox, oy, ax, ay), tmx, tmy, extra, lane)
+end
+
+-- The same shot at gun angle angle (brad, float; the engine fires at the
+-- float tank angle). The clear-lane width test (pilltake_v2 aim_wide,
+-- C.BLOCKER_MIN_LANE_BRAD) walks its side angles here.
+function M.tank_shot_angle(env, ox, oy, angle, tmx, tmy, extra, lane)
   lane = lane or {}
-  local angle = M.tank_angle(ox, oy, ax, ay)
+  angle = f32(angle)
   local speed = env.shell_speed or M.SHELL_SPEED
   local add = env.shell_start_add or M.SHELL_START_ADD
   local xa, ya = M.calc_distance(angle, speed)
