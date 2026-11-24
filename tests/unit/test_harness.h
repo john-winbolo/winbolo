@@ -2589,6 +2589,14 @@ int run_fog_road_edge_masks(void);
  * does nothing where the window does not own the flag. */
 int run_fullscreen_key_action(void);
 
+/* The game window's held status panel draws and its text texture cache
+ * (test_status_draw_hold.c): a draw asked for before the frame waits and is
+ * dropped when the frame repaints the panels (status_draw_hold.h), and a
+ * string reuses its own slot, then an empty one, then the one drawn longest
+ * ago (text_cache_pick.h). */
+int run_status_draw_hold(void);
+int run_text_cache_slot_pick(void);
+
 /* Line of sight (test_sight.c): the square the player stands on is seen even
  * when it is itself a building, a building across the line hides everything
  * behind it while the building itself is seen, the same building beside the
@@ -3917,6 +3925,7 @@ int run_lgm_drop_pill_spiral(void);
 int run_lgm_drop_pill_no_room(void);
 int run_util_spiral_north(void);
 int run_util_spiral_north_west(void);
+int run_util_spiral_rings(void);
 
 int run_scenario_lgm_dispatch(void);
 int run_scenario_lgm_recall(void);

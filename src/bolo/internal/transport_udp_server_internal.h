@@ -848,7 +848,7 @@ extern NetImpair srvImpairOut;
 /* True when a datagram to or from addr goes through the impairment layer
  * ni. Always true unless the spec has lanonly=1; then only loopback,
  * private and link-local IPv4 peers are impaired (netImpairAddrIsLan).
- * In a build with Bot Host support (#652) a -bothosts address is never
+ * In a build with Bot Host support a -bothosts address is never
  * impaired. */
 bool srvImpairPeer(const NetImpair *ni, const struct sockaddr_in *addr);
 

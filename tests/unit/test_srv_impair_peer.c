@@ -2,9 +2,10 @@
  * srvImpairPeer (src/server/udp/udp_server_recv.c): the server's test of
  * whether a datagram to or from a peer goes through the -netimpair layer.
  * With lanonly=0 every peer is impaired; with lanonly=1 only LAN peers
- * (netImpairAddrIsLan) are. In a build with Bot Host support (#652) a
+ * (netImpairAddrIsLan) are. In a build with Bot Host support a
  * -bothosts address is never impaired, and the second half of the test
- * checks that too.
+ * checks that too. That half is compiled only when BOT_HOST_LINK_H, the
+ * include guard of bot_host_link.h, is defined.
  *
  * No sockets: the sockaddr_in values are filled constants. srvImpairPeer
  * reads only ni->cfg.lanOnly, so the layer itself is never enabled.

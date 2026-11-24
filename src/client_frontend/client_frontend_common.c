@@ -116,6 +116,11 @@ extern bool showBaseLabels;
 
 void frontEndRedrawAll(ClientSim *cs) {
   if (!clientSimIsRunning(cs)) return;
+  /* Only the game on the window draws on it. The menu's background game
+     runs its own ClientSims, whose computer players joining and leaving
+     land here too and would otherwise paint their status panels over the
+     window's. */
+  if (!clientFrontIsActiveUiSim(cs)) return;
   /* In lobby state the in-game renderer hasn't taken over yet — the lobby
    * ImGui is the active view. Skip the game-frame blit so a subscriber-side
    * playersSetPlayer triggered by a CTRL_PLAYER_JOIN mid-lobby (e.g. another
