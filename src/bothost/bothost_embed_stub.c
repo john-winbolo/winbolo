@@ -44,6 +44,10 @@ int botHostEmbedGetMax(void) {
     return -1;
 }
 
+void botHostEmbedSetClientFrameMs(double ms) {
+    (void)ms;
+}
+
 void botHostEmbedConsentAnswer(bool yes) {
     (void)yes;
 }

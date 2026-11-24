@@ -6446,6 +6446,7 @@ set(_unit_test_names
     bot_host_remote_seat_stays_bot
     bot_host_info_host_name
     bot_host_target_ms
+    bot_host_embed_budget
     bot_host_sync_codec
     brain_sync_path_check
     brain_sync_manifest_codec
@@ -6589,6 +6590,7 @@ set(_unit_test_names
     bot_host_optout_slots_codec
     bot_host_optout_give_back
     bot_host_max_saved
+    bot_host_max_zero_no_host
     bot_host_dyn_raise_rule
     bot_host_dyn_under_reserve
     bot_host_dyn_carry
@@ -7683,7 +7685,7 @@ set(_unit_test_names
     server_text_codec_via_chat_wire
     vote_surrender_blocked_without_lobby
     vote_back_to_lobby_blocked_without_lobby
-    lobby_add_bot_rejects_at_host_capacity
+    lobby_add_bot_past_host_capacity
     server_bot_slots_codec
     server_bot_slots_setting
     server_bot_slots_locked

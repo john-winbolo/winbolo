@@ -391,6 +391,11 @@ int brainCapacityQueryC(const char *name, const char *version) {
   return value;
 }
 
+bool brainCapacityAddBlocks(BrainCapacityAddState state) {
+  /* FULL is a warning only: the player may add past the capacity. */
+  return state == BRAIN_CAPACITY_ADD_MEASURING;
+}
+
 BrainCapacityAddState brainCapacityAddState(bool measuring, int botsHere,
                                             int capacity, bool botsRunHere) {
   if (botsRunHere == false) {

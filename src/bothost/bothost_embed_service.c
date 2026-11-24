@@ -12,7 +12,11 @@
  * server makes for each new connection (a rejoin).
  *
  * The player's Max slots (bothost_optout.h) is the host's own setting
- * (botHostEmbedSetMax); Max 0 offers the server 0 slots.
+ * (botHostEmbedSetMax). Max 0 (botHostMaxRunsHost) means "I host no bots
+ * here": the host (child or thread) does not start, and a running one
+ * stops the normal way, so the server takes its bots back. The ticket is
+ * not blocked: set back to Auto or a number, the host starts with it on
+ * the next call.
  *
  * The host runs as a child process (WinBoloBotHost --embed-child,
  * src/bothost_child/bothost_child.h) unless the settings say "in this
@@ -31,7 +35,7 @@
 #include <SDL3/SDL.h>
 
 #include "bothost_embed.h"
-#include "bothost_optout.h"
+#include "bothost_optout.h" /* botHostMaxRunsHost */
 #include "../bothost_child/bothost_child.h"
 #include "../common/prefs.h"  /* botHostEmbedLoadPrefs */
 #include "cpu_speed_store.h"  /* cpuSpeedStorePath, for the child */
@@ -408,6 +412,13 @@ void botHostEmbedService(struct ClientSim *cs) {
         return;
     }
     if (embedSettings.disabled) return;
+    if (!botHostMaxRunsHost(botHostEmbedGetMax())) {
+        /* Max slots 0: no host. The ticket stays usable for a later
+         * Auto or number. */
+        embedStopNow(true, "the player set Max slots 0");
+        embedHaveTicket = false;
+        return;
+    }
     {
         /* Once a run: session folders a crash left. */
         static bool swept = false;

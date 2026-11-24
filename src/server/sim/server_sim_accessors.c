@@ -1448,9 +1448,11 @@ void serverSimSetGameBotLimit(ServerSim *sim, int limit, bool set) {
 }
 
 bool serverSimHostBotCapacityAllowsAdd(int capacity, int lobbyBots) {
-    if (capacity == SERVER_HOST_BOT_CAPACITY_MEASURING) return false;
-    if (capacity < 0) return true;
-    return lobbyBots < capacity;
+    /* The capacity is a warning only (the lobby's Server bot slots box):
+     * an add past it goes on. Only the CPU test's wait holds an add; the
+     * lobby's Server bot slots end that wait. */
+    (void)lobbyBots;
+    return capacity != SERVER_HOST_BOT_CAPACITY_MEASURING;
 }
 
 BYTE serverSimGetMaxSpectators(const ServerSim *sim) {

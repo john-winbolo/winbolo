@@ -1678,6 +1678,15 @@ double botRunnerTargetMsReserve(double serialMsEwma, double reservedSimMs,
     return perBot;
 }
 
+int botRunnerRunnersKeepOne(int runners) {
+    return runners > 1 ? runners - 1 : 1;
+}
+
+double botRunnerEwma(double prev, double sample) {
+    if (prev <= 0.0) return sample;
+    return 0.1 * sample + 0.9 * prev;
+}
+
 static void runBotThinkJob(int botIndex, void *userData) {
     ServerSim *sim = (ServerSim *)userData;
     BotJobCtx *j = &sim->botMgr.jobs[botIndex];

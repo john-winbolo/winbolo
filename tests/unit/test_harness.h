@@ -229,7 +229,7 @@ int run_lobby_add_bot_rejects_ai_none(void);
 int run_lobby_add_bot_rejects_not_in_lobby(void);
 int run_lobby_add_bot_rejects_non_host_sender(void);
 int run_lobby_bot_count_counts_only_connected_bots(void);
-int run_lobby_add_bot_rejects_at_host_capacity(void);
+int run_lobby_add_bot_past_host_capacity(void);
 int run_server_bot_slots_codec(void);
 int run_server_bot_slots_setting(void);
 int run_server_bot_slots_locked(void);
@@ -920,6 +920,7 @@ int run_bot_host_remote_seat_stays_bot(void);
 /* A Bot Host seat's info names its host as the lobby rows do. */
 int run_bot_host_info_host_name(void);
 int run_bot_host_target_ms(void);
+int run_bot_host_embed_budget(void);
 int run_bot_host_sync_codec(void);
 
 /* Bot Host brain sync (test_brain_sync.c). */
@@ -1084,6 +1085,7 @@ int run_bot_host_same_server_stop(void);
 int run_bot_host_optout_slots_codec(void);
 int run_bot_host_optout_give_back(void);
 int run_bot_host_max_saved(void);
+int run_bot_host_max_zero_no_host(void);
 int run_bot_host_dyn_raise_rule(void);
 int run_bot_host_dyn_under_reserve(void);
 int run_bot_host_dyn_carry(void);

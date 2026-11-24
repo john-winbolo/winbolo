@@ -517,6 +517,30 @@ int run_bot_host_target_ms(void) {
     return 0;
 }
 
+/* The Bot Host inside a client: one runner less (at least 1), the client's
+ * frame time as the reserve, and the moving average of both. */
+int run_bot_host_embed_budget(void) {
+    UT_ASSERT(botRunnerRunnersKeepOne(0) == 1);
+    UT_ASSERT(botRunnerRunnersKeepOne(1) == 1);
+    UT_ASSERT(botRunnerRunnersKeepOne(2) == 1);
+    UT_ASSERT(botRunnerRunnersKeepOne(3) == 2);
+    UT_ASSERT(botRunnerRunnersKeepOne(8) == 7);
+    /* The first sample seeds the average; then 0.1 new, 0.9 old. */
+    UT_ASSERT(bh_near(botRunnerEwma(0.0, 5.0), 5.0));
+    UT_ASSERT(bh_near(botRunnerEwma(10.0, 0.0), 9.0));
+    UT_ASSERT(bh_near(botRunnerEwma(10.0, 20.0), 11.0));
+    /* 4 runners keep 3; a 3 ms client frame: (20 - 0.5 - 3 - 2) * 3 / 6. */
+    UT_ASSERT(bh_near(botRunnerTargetMsReserve(0.5, 3.0,
+                          botRunnerRunnersKeepOne(4), 6), 7.25));
+    /* One core: one runner still, the budget only smaller by the frame. */
+    UT_ASSERT(bh_near(botRunnerTargetMsReserve(0.5, 3.0,
+                          botRunnerRunnersKeepOne(1), 1), 14.5));
+    /* A client frame longer than the tick: the 1 ms floor. */
+    UT_ASSERT(bh_near(botRunnerTargetMsReserve(0.5, 25.0,
+                          botRunnerRunnersKeepOne(4), 3), 1.0));
+    return 0;
+}
+
 /* ================================================================
  * 10. The brain sync events: CTRL_BOT_HOST_STATUS (the lobby's Bot Host
  *     row), CTRL_BOT_HOST_FILE_REQ and CTRL_BOT_HOST_SYNC keep every

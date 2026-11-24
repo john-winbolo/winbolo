@@ -912,9 +912,10 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
         }
         /* The game bot limit: the bots this server runs in its own
          * process (the CPU speed test, -botcapacity or the lobby's Server
-         * bot slots) plus the slots of each Bot Host that runs bots. It
-         * holds every add while the test runs and no host has a slot. The
-         * client greys its button on the same number, from the lobby
+         * bot slots) plus the slots of each Bot Host that runs bots. Past
+         * it is a warning only (the lobby's Server bot slots box): the add
+         * goes on. It holds every add while the test runs and no host has
+         * a slot. The client greys its button then too, from the lobby
          * settings; this is for a client that has not heard it yet.
          * Scenario adds do not come through here. */
         {

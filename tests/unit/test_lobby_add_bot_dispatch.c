@@ -139,9 +139,10 @@ int run_lobby_bot_count_counts_only_connected_bots(void) {
     return 0;
 }
 
-/* The host bot capacity (the server's CPU speed test, or -botcapacity)
- * caps lobby adds, and holds every add while the test runs. */
-int run_lobby_add_bot_rejects_at_host_capacity(void) {
+/* The host bot capacity (the server's CPU speed test, or -botcapacity) is
+ * a warning only: an add at or past it goes on. Every add waits while the
+ * test runs. */
+int run_lobby_add_bot_past_host_capacity(void) {
     ServerSim *sim = make_addbot_ready_sim();
     UT_ASSERT(sim != NULL);
     UT_ASSERT_MSG(serverSimGetHostBotCapacity(sim) ==
@@ -150,14 +151,15 @@ int run_lobby_add_bot_rejects_at_host_capacity(void) {
 
     serverSimSetHostBotCapacity(sim, 2);
     seed_lobby_bots(sim, 1, 2);                 /* slots 1,2 fill it */
-    UT_ASSERT_MSG(apply_add_bot(sim, 0) == CMD_REJECT_BOT_LIMIT,
-                  "add-bot at the host bot capacity must return "
-                  "CMD_REJECT_BOT_LIMIT");
+    /* The capacity check passes; the test build has no brain to make the
+     * bot, so a later step may still refuse it, but never for the limit. */
+    UT_ASSERT_MSG(apply_add_bot(sim, 0) != CMD_REJECT_BOT_LIMIT,
+                  "add-bot at the host bot capacity must go on");
 
-    /* 0 is a server that runs no bots of its own. */
+    /* 0: a server that should run no bots of its own still adds. */
     serverSimSetHostBotCapacity(sim, 0);
-    UT_ASSERT_MSG(apply_add_bot(sim, 0) == CMD_REJECT_BOT_LIMIT,
-                  "a host bot capacity of 0 must refuse every add");
+    UT_ASSERT_MSG(apply_add_bot(sim, 0) != CMD_REJECT_BOT_LIMIT,
+                  "a host bot capacity of 0 must not refuse an add");
     serverSimDestroy(sim);
 
     /* While the test runs, no add, even into an empty lobby. */
@@ -284,7 +286,7 @@ int run_server_bot_slots_setting(void) {
     UT_ASSERT(apply_server_bot_slots(sim, 0, &v, 1) == CMD_OK);
     UT_ASSERT(serverBotHostServerSlots(sim) == 2);
     seed_lobby_bots(sim, 2, 2);
-    UT_ASSERT(apply_add_bot(sim, 0) == CMD_REJECT_BOT_LIMIT);
+    UT_ASSERT(apply_add_bot(sim, 0) != CMD_REJECT_BOT_LIMIT);   /* a warning only */
     v = 0;
     UT_ASSERT(apply_server_bot_slots(sim, 0, &v, 1) == CMD_OK);
     UT_ASSERT(serverSimGetHostBotCapacity(sim) == 0);

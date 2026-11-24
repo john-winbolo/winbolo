@@ -299,6 +299,20 @@ int run_bot_host_same_server_stop(void) {
 /* ================================================================
  * 5. Max slots, saved
  * ================================================================ */
+/* Max slots 0 means "I host no bots here": the Bot Host inside a client
+ * does not start (botHostEmbedService), and gives no same-computer answer
+ * (onMachineSalt). Auto and 1 to 16 run it. */
+int run_bot_host_max_zero_no_host(void) {
+    UT_ASSERT(!botHostMaxRunsHost(0));
+    UT_ASSERT(!botHostMaxRunsHost(botHostMaxParse("0")));
+    UT_ASSERT(botHostMaxRunsHost(BOT_HOST_MAX_AUTO));
+    UT_ASSERT(botHostMaxRunsHost(botHostMaxParse("Auto")));
+    UT_ASSERT(botHostMaxRunsHost(botHostMaxParse("")));
+    UT_ASSERT(botHostMaxRunsHost(1));
+    UT_ASSERT(botHostMaxRunsHost(BOT_HOST_MAX_TOP));
+    return 0;
+}
+
 int run_bot_host_max_saved(void) {
     char path[1024], buf[32];
     char *body;

@@ -21,8 +21,8 @@
  *   7. brain_sync_shipped_missing: a shipped file gone from the install is
  *      refused and named.
  *   8. brain_sync_crlf_hash: the CRLF and LF copies of a text brain file
- *      give the same size, hash and SHA-256; a lone CR is kept; a .map
- *      file is hashed as it is.
+ *      (.lua, .txt, .json, .bat, .sh) give the same size, hash and SHA-256;
+ *      a lone CR is kept; a .map file is hashed as it is.
  *   9. brain_sync_crlf_table_agrees: the C hash of a CRLF file is the one
  *      the build's table gives it (the same values as
  *      tests/cmake/brain_shipped_table_test.cmake).
@@ -516,6 +516,12 @@ int run_brain_sync_crlf_hash(void) {
     UT_ASSERT(brainSyncIsTextPath("init.lua"));
     UT_ASSERT(brainSyncIsTextPath("opt/Modes.TXT"));
     UT_ASSERT(brainSyncIsTextPath("C:\\b\\x.json"));
+    UT_ASSERT(brainSyncIsTextPath("strip.bat"));
+    UT_ASSERT(brainSyncIsTextPath("tools/Strip.BAT"));
+    UT_ASSERT(brainSyncIsTextPath("tools/run.sh"));
+    UT_ASSERT(brainSyncIsTextPath("RUN.SH"));
+    UT_ASSERT(!brainSyncIsTextPath("a.bat.bak"));
+    UT_ASSERT(!brainSyncIsTextPath("a.shx"));
     UT_ASSERT(!brainSyncIsTextPath("Lead Arena.map"));
     UT_ASSERT(!brainSyncIsTextPath("shield_stamp_cache.bin"));
     UT_ASSERT(!brainSyncIsTextPath("lua.d/noext"));
@@ -530,12 +536,19 @@ int run_brain_sync_crlf_hash(void) {
     UT_ASSERT(bs_write_bytes(dirCr, "data.json", "{}\r\n", 4));
     UT_ASSERT(bs_write_bytes(dirLf, "lone.txt", "a\rb\n", 4));
     UT_ASSERT(bs_write_bytes(dirCr, "lone.txt", "a\rb\r\n", 5));
+    /* A Windows checkout (core.autocrlf) gives a .bat and a .sh CRLF. */
+    UT_ASSERT(bs_write_bytes(dirLf, "strip.bat", "@echo off\nexit 0\n", 18));
+    UT_ASSERT(bs_write_bytes(dirCr, "strip.bat",
+                             "@echo off\r\nexit 0\r\n", 20));
+    UT_ASSERT(bs_write_bytes(dirLf, "run.sh", "#!/bin/sh\nexit 0\n", 18));
+    UT_ASSERT(bs_write_bytes(dirCr, "run.sh",
+                             "#!/bin/sh\r\nexit 0\r\n", 20));
     UT_ASSERT(bs_write_bytes(dirLf, "arena.map", mapLf, sizeof(mapLf) - 1));
     UT_ASSERT(bs_write_bytes(dirCr, "arena.map", mapLf, sizeof(mapLf) - 1));
 
     UT_ASSERT(brainSyncCollectBrain(&a, "Crlf", dirLf, true, NULL));
     UT_ASSERT(brainSyncCollectBrain(&b, "Crlf", dirCr, true, NULL));
-    UT_ASSERT(a.fileCount == 4 && b.fileCount == 4);
+    UT_ASSERT(a.fileCount == 6 && b.fileCount == 6);
     UT_ASSERT_MSG(a.version == b.version, "the CRLF copy is another version");
     UT_ASSERT_MSG(a.totalBytes == b.totalBytes, "%u and %u bytes",
                   (unsigned)a.totalBytes, (unsigned)b.totalBytes);
@@ -543,6 +556,18 @@ int run_brain_sync_crlf_hash(void) {
     fb = bs_file(&b, "init.lua");
     UT_ASSERT(fa != NULL && fb != NULL);
     UT_ASSERT(fb->size == sizeof(lf) - 1);   /* the LF size is the one sent */
+    UT_ASSERT(fa->hash == fb->hash);
+    UT_ASSERT(memcmp(fa->sha, fb->sha, BRAIN_SYNC_SHA_LEN) == 0);
+    fa = bs_file(&a, "strip.bat");
+    fb = bs_file(&b, "strip.bat");
+    UT_ASSERT(fa != NULL && fb != NULL);
+    UT_ASSERT(fa->size == 18 && fb->size == 18);
+    UT_ASSERT(fa->hash == fb->hash);
+    UT_ASSERT(memcmp(fa->sha, fb->sha, BRAIN_SYNC_SHA_LEN) == 0);
+    fa = bs_file(&a, "run.sh");
+    fb = bs_file(&b, "run.sh");
+    UT_ASSERT(fa != NULL && fb != NULL);
+    UT_ASSERT(fa->size == 18 && fb->size == 18);
     UT_ASSERT(fa->hash == fb->hash);
     UT_ASSERT(memcmp(fa->sha, fb->sha, BRAIN_SYNC_SHA_LEN) == 0);
     /* The lone CR stays: 4 bytes, not 3. */
@@ -609,12 +634,16 @@ int run_brain_sync_crlf_hash(void) {
     "1c1f55e2fc4951e7280ddd6616c35b83bf12d6be4a1746e61b1f4d8c02872f02"
 #define BS_AGREE_LONE_SHA \
     "a967fb5d8c56bc9c1bbb0421958e552f286bcfc32f3df79269d98a34a53da730"
+#define BS_AGREE_BAT_SHA \
+    "d8d8e5b5d2fbc34dad9973bef63366c96abd3ae352e0b6d80d0b5a9d7108394d"
 int run_brain_sync_crlf_table_agrees(void) {
     static const char initCrlf[] = "return 'crlf'\r\nlocal x = 1\r\n";
     static const char loneCrlf[] = "lone\rcr\r\nend\r\n";
+    static const char batCrlf[] = "@echo off\r\nexit 0\r\n";
     static const BrainSyncShippedFile table[] = {
         { "Agree/init.lua", BS_AGREE_INIT_SHA },
         { "Agree/lone.txt", BS_AGREE_LONE_SHA },
+        { "Agree/strip.BAT", BS_AGREE_BAT_SHA },
     };
     char root[1024], dir[1100], lfRoot[1024], lfDir[1100], file[160];
     BrainSyncBrain local, lfBrain;
@@ -627,6 +656,7 @@ int run_brain_sync_crlf_table_agrees(void) {
     SDL_snprintf(dir, sizeof(dir), "%s/Agree", root);
     UT_ASSERT(bs_write_bytes(dir, "init.lua", initCrlf, sizeof(initCrlf) - 1));
     UT_ASSERT(bs_write_bytes(dir, "lone.txt", loneCrlf, sizeof(loneCrlf) - 1));
+    UT_ASSERT(bs_write_bytes(dir, "strip.BAT", batCrlf, sizeof(batCrlf) - 1));
 
     UT_ASSERT(brainSyncCollectBrain(&local, "Agree", dir, false, NULL));
     f = bs_file(&local, "init.lua");
@@ -644,8 +674,15 @@ int run_brain_sync_crlf_table_agrees(void) {
         hex[i * 2 + 1] = digits[f->sha[i] & 0x0f];
     }
     UT_ASSERT_MSG(strcmp(hex, BS_AGREE_LONE_SHA) == 0, "lone.txt is %s", hex);
+    f = bs_file(&local, "strip.BAT");
+    UT_ASSERT(f != NULL);
+    for (i = 0; i < BRAIN_SYNC_SHA_LEN; i++) {
+        hex[i * 2] = digits[f->sha[i] >> 4];
+        hex[i * 2 + 1] = digits[f->sha[i] & 0x0f];
+    }
+    UT_ASSERT_MSG(strcmp(hex, BS_AGREE_BAT_SHA) == 0, "strip.BAT is %s", hex);
 
-    UT_ASSERT(brainSyncShippedCheck(table, 2, root, "Agree", file,
+    UT_ASSERT(brainSyncShippedCheck(table, 3, root, "Agree", file,
                                     sizeof(file)) == BRAIN_SYNC_SHIPPED_OK);
 
     /* A server with LF copies: the CRLF install runs as it is. */
@@ -653,6 +690,7 @@ int run_brain_sync_crlf_table_agrees(void) {
     SDL_snprintf(lfDir, sizeof(lfDir), "%s/Agree", lfRoot);
     UT_ASSERT(bs_write(lfDir, "init.lua", "return 'crlf'\nlocal x = 1\n"));
     UT_ASSERT(bs_write(lfDir, "lone.txt", "lone\rcr\nend\n"));
+    UT_ASSERT(bs_write(lfDir, "strip.BAT", "@echo off\nexit 0\n"));
     UT_ASSERT(brainSyncCollectBrain(&lfBrain, "Agree", lfDir, false, NULL));
     UT_ASSERT(lfBrain.version == local.version);
     UT_ASSERT(brainSyncInstallMatches(root, &lfBrain));
