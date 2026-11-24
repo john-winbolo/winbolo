@@ -1320,6 +1320,23 @@ M.PT2_SPLIT_ONE_PART_PER_TICK = true
 -- false = each heavy part in one tick (KEEL, MAST).
 M.PT2_V2_SPLIT = true
 M.PT2_V2_SPLIT_TICKS = 5
+-- PT2_WALL_MEMO (Nov 23, Andrew's spec, M1): v2's wall searches keep their
+-- results across evaluates, by the search's whole input (pilltake_v2 WM),
+-- one table per goal pill; a pill set or team change clears it. The
+-- answer is the same. On the bench the memo hits 74% of the searches and
+-- saves 73% of the search nodes, but the search is only 8% of the
+-- evaluate (5.0 of 62 s): the keys cost 4.2 s and the kept results make
+-- the other parts slower (the GC), so the evaluate is 21% slower in Lua
+-- (75 s against 62 s). Proposal, awaiting Andrew's value: false (the spec
+-- said true). false = no memo. KEEL and MAST have no row: the default is
+-- their value (a row equal to the default fails test_preset_mast); a true
+-- default needs both rows (false).
+M.PT2_WALL_MEMO = false
+-- PT2_WALL_MEMO_MAX: the memo's results in all; a new one past the cap
+-- clears it all. The bench's peak is 17330 results (about 8 MB, 0.46 KB
+-- each); a cap of 2000 clears 125 times and hits 2% only. Proposal,
+-- awaiting Andrew's value.
+M.PT2_WALL_MEMO_MAX = 20000
 -- SHIELD_SCAN_PENDING_SURVIVES_V2 (Nov 22, Andrew: "Fix it"): with
 -- PT2_AFTER_SCAN_SPLIT off, v2 runs in one go on the plan tick. true: keep
 -- goal._shield_scan_pending until goal._shield_scan is set, so a budget kill

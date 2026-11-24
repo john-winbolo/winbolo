@@ -25,6 +25,17 @@
 --                             over up to n slices (PT2_V2_SPLIT, the slicer of
 --                             pilltake_v2); prints the cost per slice (the
 --                             work of one tick) and the slices per evaluate
+--   memo=<0|1>                with eval=v2: the wall search memo
+--                             (PT2_WALL_MEMO) off or on, kept across the
+--                             cases of one goal pill (a group: the same
+--                             pills, each A once; its first A is the goal);
+--                             each case is timed once, on its first run;
+--                             prints the hit rate and the memo's size
+--   memo_max=<n>              the memo's cap (default: no cap)
+--   keyonly=1                 with memo=0: make each search's key (the
+--                             memo's cost) but keep no memo
+--   tm=1                      with memo=: the evaluator's clock on; prints
+--                             the time of each part, summed
 --   set=<k>:<v>[,<k>:<v>...]  set these inp fields on every case (v: true,
 --                             false, a number, else a string)
 --   eval=ab ev=<old|oldlua|v2> a=<k>:<v>,... b=<k>:<v>,...
@@ -347,13 +358,45 @@ local function evaluate(inp)
 end
 
 local times, spots, n_case, prof, n_err = {}, {}, 0, {}, 0
+-- memo=<0|1>: the group of the case (the goal pill), the memo's peak size
+local MEMO = EVAL == "v2" and args.memo and args.memo ~= "" and tonumber(args.memo) or nil
+local MG = { sig = nil, seen = {}, goal = nil, peak = 0, groups = 0, tm = {} }
+local function memo_group(case)
+  local sig = {}
+  for i, p in ipairs(case.pills) do
+    sig[i] = fmt("%s,%s,%s,%s,%s,%s", tostring(p.mx), tostring(p.my), tostring(p.health), tostring(p.owner),
+      tostring(p.anger), tostring(p.in_tank))
+  end
+  sig = table.concat(sig, ";")
+  if sig ~= MG.sig or MG.seen[case.A] then
+    local A = case.pills[case.A]
+    MG.sig, MG.seen, MG.groups = sig, {}, MG.groups + 1
+    MG.goal = A and { mx = A.mx, my = A.my } or nil
+  end
+  MG.seen[case.A] = true
+  return MG.goal
+end
 local function run_case(case)
   n_case = n_case + 1
   local inp, pills = game_inp(case)
   if EVAL == "v2" then NV.reset() end
-  -- the digest run (also the first, untimed, run)
+  if MEMO then
+    inp.wall_memo = MEMO == 1
+    inp.wall_memo_max = tonumber(args.memo_max or "") or 1e9
+    inp.wall_memo_goal = memo_group(case)
+    -- keyonly=1: the keys are made (as the memo makes them), no memo
+    if args.keyonly == "1" then inp.v2_wkey = function() end end
+    if args.tm == "1" then inp.v2_clock = now_us end
+  end
+  -- the digest run (also the first, untimed, run; memo=: timed)
   inp.env.omx, inp.env.omy = nil, nil
+  local tf0 = now_us()
   local ok, res = pcall(evaluate, inp)
+  local tf = now_us() - tf0
+  if MEMO and NV.WM.n > MG.peak then MG.peak = NV.WM.n end
+  if MEMO and ok and res.v2 and res.v2.tm then
+    for k, v in pairs(res.v2.tm) do if type(v) == "number" then MG.tm[k] = (MG.tm[k] or 0) + v end end
+  end
   if not ok then
     n_err = n_err + 1
     if dumpf then dumpf:write(fmt("%d ERR %s\n", n_case, tostring(res):gsub("\n", " "))) end
@@ -404,7 +447,10 @@ local function run_case(case)
       b and fmt("%s/%s/%s/%s/%s", tostring(b.deg), tostring(b.score), tostring(b.safe), tostring(b.kills),
         tostring(b.plan and #b.plan)) or "-", #d, fnv(d), dec))
   end
-  if REPS > 0 then
+  if MEMO then
+    times[#times + 1] = tf
+    spots[#spots + 1] = res.n_eval
+  elseif REPS > 0 then
     local t = {}
     for r = 1, REPS do
       inp.env.omx, inp.env.omy = nil, nil
@@ -880,6 +926,27 @@ if SLICE then
   print(fmt("pt2_bench slice=%d: max / mean slice per evaluate: time median %.2f p90 %.2f; work median %.2f p90 %.2f;"
     .. " evaluates with one step over the budget %d of %d (%d steps)", SLICE, q(slice_rt, 0.5), q(slice_rt, 0.9),
     q(slice_rw, 0.5), q(slice_rw, 0.9), over_ev, #slice_n, over_n))
+end
+if MEMO then
+  local WM = NV.WM
+  local n = WM.n
+  collectgarbage("collect"); collectgarbage("collect")
+  local kb1 = collectgarbage("count")
+  NV.wall_memo_clear()
+  collectgarbage("collect"); collectgarbage("collect")
+  local kb0 = collectgarbage("count")
+  local per = n > 0 and (kb1 - kb0) / n or 0
+  print(fmt("pt2_bench memo=%d: searches %d, hits %d (%.1f%%), misses %d; clears %d, cap clears %d;"
+    .. " groups %d; size at the end %d results, %.1f KB (%.2f KB per result); peak %d results, about %.0f KB",
+    MEMO, WM.hits + WM.misses, WM.hits, 100 * WM.hits / math.max(1, WM.hits + WM.misses), WM.misses,
+    WM.clears, WM.full, MG.groups, n, kb1 - kb0, per, MG.peak, MG.peak * per))
+  local ks = {}
+  for k in pairs(MG.tm) do ks[#ks + 1] = k end
+  table.sort(ks)
+  for i, k in ipairs(ks) do ks[i] = fmt("%s %.1f", k, MG.tm[k] / 1e6) end
+  if #ks > 0 then print("pt2_bench memo: time parts (s): " .. table.concat(ks, ", ")) end
+  print(fmt("pt2_bench memo=%d: wall search nodes: from hits %d, run %d (%.1f%% saved)", MEMO, WM.hit_nodes,
+    WM.miss_nodes, 100 * WM.hit_nodes / math.max(1, WM.hit_nodes + WM.miss_nodes)))
 end
 local tot_us, tot_sp = 0, 0
 for i, v in ipairs(times) do tot_us = tot_us + v; tot_sp = tot_sp + spots[i] end

@@ -77,6 +77,9 @@ function M.knob_inp(C, inp)
   -- PT2_CHAINS_ONLY (S10): the runs that only a safe chain can use (a
   -- non-goal A in group_step, the pt2_dbl shadow runs) plan no single take
   inp.chains_only_runs = C.PT2_CHAINS_ONLY ~= false
+  -- PT2_WALL_MEMO (M1): the wall searches' memo across evaluates
+  inp.wall_memo = C.PT2_WALL_MEMO ~= false
+  inp.wall_memo_max = C.PT2_WALL_MEMO_MAX or 2000
   return inp
 end
 
@@ -1086,15 +1089,55 @@ local function ws_keys(so, inp, rec, U, lr, lon)
   so.depth, so.two, so.trip, so.order, so.key = depth, two, tl, order, table.concat(key, ",")
 end
 
+-- PT2_WALL_MEMO (M1): the wall searches' results by their S4b key (below),
+-- kept across evaluates. One memo per bot (each bot has its own Lua
+-- state), one table per goal pill (WM.by): the group run's goal; its
+-- start pill runs use the goal's table. M.wall_memo_check picks the goal's
+-- table (inp._wm_t) and clears every table when the pill set changes
+-- (squares, owners, in tank, ally or not: a team change shows in the ally
+-- flags). A goal pill change keeps the other goals' tables: the bot goes
+-- back to a pill it planned for before (the bench: most hits are there).
+-- The key holds every input of the search, so any other change (a map
+-- square, a pill's cover, a builder) gives a new key and a miss, never a
+-- stale answer. A new map is a new Lua state. Eviction: when the memo
+-- holds inp.wall_memo_max results in all, a new one clears it all
+-- (WM.full counts it).
+-- The results are read only: plan_point and confirm_plan copy what they
+-- keep (confirm_plan makes its own plan list).
+local WM = { sig = nil, by = {}, n = 0, hits = 0, misses = 0, clears = 0, full = 0, hit_nodes = 0, miss_nodes = 0 }
+M.WM = WM
+function M.wall_memo_clear()
+  WM.sig, WM.by, WM.n = nil, {}, 0
+end
+-- goalA: the goal pill (group_begin's inp.A; a lone evaluate: inp.A)
+function M.wall_memo_check(inp, goalA)
+  local goal = goalA and (goalA.mx .. "," .. goalA.my) or ""
+  local env = inp.env
+  local t = {}
+  for _, p in ipairs(inp.pills or {}) do
+    t[#t + 1] = tostring(p.mx) .. "," .. tostring(p.my) .. "," .. tostring(p.owner) .. ","
+      .. (p.in_tank and "t" or "") .. ((env and env.is_ally and env.is_ally(p)) and "a" or "")
+  end
+  local sig = table.concat(t, ";")
+  if sig ~= WM.sig then
+    if WM.sig ~= nil then WM.clears = WM.clears + 1 end
+    WM.sig, WM.by, WM.n = sig, {}, 0
+  end
+  local t = WM.by[goal]
+  if not t then t = {}; WM.by[goal] = t end
+  inp._wm_t, inp._wm_goal = t, goal
+end
+
 -- S4b: every input the wall search and its pick read, as one string (two
 -- searches with the same key return the same plans): the aims; the
 -- blocker counts and shots; the builder's start square (trip); per
 -- uncovered path in order, its need and its legal squares in order with
 -- their existing shots and aim mask; the last chain pill's ray cover and
--- the existing shots on it of the legal squares (depth).
+-- the existing shots on it of the legal squares (depth); the size cap of
+-- the travel band (rec.kmax, S9).
 local function ws_input_key(rec, aims, U, maskof, inp)
   local o = { table.concat(aims, ","), tostring(inp.num_pill_blockers or 0), tostring(inp.build_max),
-              tostring(inp.pill_drop_shots), tostring(inp.wall_shots),
+              tostring(inp.pill_drop_shots), tostring(inp.wall_shots), tostring(rec.kmax),
               tostring(rec.omx or floor(rec.px / 256)), tostring(rec.omy or floor(rec.py / 256)) }
   local cs = {}
   for _, u in ipairs(U) do
@@ -1135,6 +1178,7 @@ end
 -- lane misses it; a branch whose chosen squares AND to 0 over the aims
 -- still without a plan is cut. A set is a solution of each aim in its
 -- mask, so each aim gets the same sets as a search of its own.
+local ws_run   -- the search on the legal squares (below)
 local function search_walls_all(ctx, rec, aims)
   local inp = ctx.inp
   local out = {}
@@ -1220,7 +1264,42 @@ local function search_walls_all(ctx, rec, aims)
       if m ~= 0 then u.cand[#u.cand + 1] = s end
     end
   end
-  if inp.v2_wkey then inp.v2_wkey(ws_input_key(rec, aims, U, maskof, inp)) end
+  local wm = inp.wall_memo
+  local key = (wm or inp.v2_wkey) and ws_input_key(rec, aims, U, maskof, inp)
+  if inp.v2_wkey then inp.v2_wkey(key) end
+  if not wm then return ws_run(ctx, rec, aims, U, maskof) end
+  -- PT2_WALL_MEMO (M1): the same key gives the same plans; a hit adds the
+  -- search's own counts to stat as if it ran (the dumps stay the same) and
+  -- to ctx.memo_nodes (the slicer does not count them as work)
+  local st = ctx.stat
+  local mt = inp._wm_t
+  local e = mt and mt[key]
+  if e then
+    WM.hits = WM.hits + 1
+    WM.hit_nodes = WM.hit_nodes + e.nodes
+    st.wall_slow = st.wall_slow + e.slow
+    st.wall_nodes = st.wall_nodes + e.nodes
+    ctx.memo_nodes = ctx.memo_nodes + e.nodes
+    return e.out
+  end
+  WM.misses = WM.misses + 1
+  local s0, n0 = st.wall_slow, st.wall_nodes
+  local out = ws_run(ctx, rec, aims, U, maskof)
+  if not mt then return out end
+  if WM.n >= (inp.wall_memo_max or 2000) then
+    mt = {}
+    WM.by, WM.n, WM.full = { [inp._wm_goal] = mt }, 0, WM.full + 1
+    inp._wm_t = mt
+  end
+  mt[key] = { out = out, slow = st.wall_slow - s0, nodes = st.wall_nodes - n0 }
+  WM.miss_nodes = WM.miss_nodes + st.wall_nodes - n0
+  WM.n = WM.n + 1
+  return out
+end
+ws_run = function(ctx, rec, aims, U, maskof)
+  local inp = ctx.inp
+  local out = {}
+  local nA = #aims
   local npb = inp.num_pill_blockers or 0
   local nU = #U
   local P, W = inp.pill_drop_shots, inp.wall_shots
@@ -1772,7 +1851,8 @@ local function new_ctx(inp, A)
                 rays = cache.rays, sqm = cache.sqm, sqf = cache.sqf or {},
                 aims = (inp.aim_points == 9) and M.AIMS9 or M.AIMS,
                 stat = new_stat(), tm = new_tm(), clk = inp.v2_clock,
-                n_shot = 0 }  -- P1b: the aim tests (shadow.tank_shot), for the slicer
+                n_shot = 0,       -- P1b: the aim tests (shadow.tank_shot), for the slicer
+                memo_nodes = 0 }  -- M1: the wall nodes stat got from the memo
   for _, p in ipairs(inp.pills) do
     if alive(p) and not inp.env.is_ally(p) then ctx.hostile[#ctx.hostile + 1] = p end
   end
@@ -1908,6 +1988,8 @@ function M.evaluate_lua(inp)
   local ctx = new_ctx(inp, A)
   local clk = ctx.clk
   local T0 = clk and clk()
+  -- M1: a lone evaluate checks the memo here; a group run in group_begin
+  if inp.wall_memo and not inp._v2_cache then M.wall_memo_check(inp, inp.wall_memo_goal or A) end
   -- PT2_V2_SPLIT: the slicer (see M.slicer); paused: the time between ticks
   local slice_fn, paused = inp.v2_slice, 0
   local surv1 = nil
@@ -1919,7 +2001,7 @@ function M.evaluate_lua(inp)
   -- the work so far, in slice units (P1b)
   local function work()
     return SLICE_W_CAST * (st.casts + st.casts_confirm) + SLICE_W_SHOT * ctx.n_shot
-      + SLICE_W_NODE * st.wall_nodes + SLICE_W_POINT * n_eval
+      + SLICE_W_NODE * (st.wall_nodes - ctx.memo_nodes) + SLICE_W_POINT * n_eval
   end
   local function unit(est, fin)
     if slice_fn then paused = paused + (slice_fn(work(), est, fin) or 0) end
@@ -2301,6 +2383,7 @@ function M.evaluate_group(inp)
 end
 
 function M.group_begin(inp)
+  if inp.wall_memo then M.wall_memo_check(inp, inp.A) end
   return { inp = inp, goalA = inp.A, list = nil, i = 1, res = nil, cache = new_cache() }
 end
 

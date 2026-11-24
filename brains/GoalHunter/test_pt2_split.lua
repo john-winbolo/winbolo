@@ -564,6 +564,63 @@ do
   C.PT2_EVALUATOR = "old"
 end
 
+-- ── PT2_WALL_MEMO (M1): the wall searches' memo across evaluates ─────────
+print("== PT2_WALL_MEMO")
+do
+  local NV = require("pilltake_v2")
+  C.PT2_EVALUATOR = "v2"
+  local WM = NV.WM
+  for _, ng in ipairs({ 0, 3 }) do
+    C.PT2_WALL_MEMO = false
+    local env0 = new_env(ng, 100)
+    run(env0)
+    C.PT2_WALL_MEMO = true
+    NV.wall_memo_clear()
+    local h0, m0 = WM.hits, WM.misses
+    local env1 = new_env(ng, 100)
+    run(env1)
+    local name = string.format("memo, group %d: ", ng)
+    check(name .. "first run: same answer as no memo", deep_eq(env1.goal._shield_scan, env0.goal._shield_scan), nil)
+    check(name .. "first run: searches go in the memo", WM.misses > m0 and WM.n > 0, WM.n)
+    local h1 = WM.hits
+    local env2 = new_env(ng, 100)
+    run(env2)
+    check(name .. "second run: same answer", deep_eq(env2.goal._shield_scan, env0.goal._shield_scan), nil)
+    check(name .. "second run: hits", WM.hits > h1, WM.hits - h1)
+    check(name .. "same goal._pt2", deep_eq(env2.goal._pt2, env0.goal._pt2), nil)
+    local _ = h0
+  end
+  -- the clears: a pill set change clears all; a goal change keeps the
+  -- other goal's table
+  NV.wall_memo_clear()
+  local ally = false
+  local P1, P2 = { mx = 10, my = 10, owner = 1 }, { mx = 12, my = 10, owner = 1 }
+  local inp = { pills = { P1, P2 }, env = { is_ally = function() return ally end } }
+  NV.wall_memo_check(inp, P1)
+  inp._wm_t.k = { out = {} }
+  WM.n = 1
+  local c0 = WM.clears
+  NV.wall_memo_check(inp, P2)
+  check("memo: goal change keeps the first goal's table", WM.by["10,10"] and WM.by["10,10"].k ~= nil, nil)
+  check("memo: goal change is no clear", WM.clears == c0, WM.clears - c0)
+  NV.wall_memo_check(inp, P1)
+  check("memo: back to the first goal: its table", inp._wm_t.k ~= nil, nil)
+  P2.owner = 2
+  NV.wall_memo_check(inp, P1)
+  check("memo: owner change clears", WM.n == 0 and inp._wm_t.k == nil and WM.clears == c0 + 1, WM.n)
+  inp._wm_t.k = { out = {} }
+  ally = true
+  NV.wall_memo_check(inp, P1)
+  check("memo: ally change (team) clears", inp._wm_t.k == nil and WM.clears == c0 + 2, WM.clears - c0)
+  inp._wm_t.k = { out = {} }
+  P2.in_tank = true
+  NV.wall_memo_check(inp, P1)
+  check("memo: in tank change clears", inp._wm_t.k == nil and WM.clears == c0 + 3, WM.clears - c0)
+  NV.wall_memo_clear()
+  C.PT2_WALL_MEMO = false
+  C.PT2_EVALUATOR = "old"
+end
+
 -- ── knob off: split_get finds nothing, after_scan unchanged ──────────────
 print("== knob off")
 do
