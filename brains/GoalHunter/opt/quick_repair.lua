@@ -242,8 +242,9 @@ end
 -- A pill's next fire tick (tank_clear (b) below, and
 -- QUICK_REPAIR_WAIT_ALL_PILLS): the later of now + 1 and (last fire +
 -- reload). last fire = from its youngest visible shell whose line runs back
--- to the pill tile: its distance from the pill centre / SHELL_SPEED moves ago
--- (none seen = no last fire). reload = pt2_kill_lock.pill_reload (the
+-- to the pill tile: its distance from the pill centre / SHELL_SPEED moves ago,
+-- or the tick we last heard it fire (p._heard_fire, world.lua
+-- EVENT_SOUND_SHOOT), whichever is later (neither = no last fire). reload = pt2_kill_lock.pill_reload (the
 -- engine's halving ladder at the pill's anger). x = live_physics.context.
 -- Returns next, reload, last (last nil when no shell was seen).
 function M.pill_next_fire(p, info, now, x)
@@ -265,6 +266,8 @@ function M.pill_next_fire(p, info, now, x)
       end
     end
   end
+  local hf = p._heard_fire
+  if type(hf) == "number" and hf <= now and (not last or hf > last) then last = hf end
   local reload = KLK.pill_reload(PA.anger_now(p, now), x)
   -- run_c7: the engine's ladder from the pill's seen hits, when known.
   if p._eng_hits then
@@ -848,6 +851,37 @@ function M.own_hits(k, now, horizon, out)
   return out
 end
 
+-- The fire ticks of the take target when it is at the engine's lowest
+-- reload (x.pill_attack_min_ticks) and we did not see or hear its last shot
+-- within one reload. Such a pill shoots every few ticks, so a gap
+-- means its shots stopped (pillbox.c: a pill that sees the tank again
+-- first sets justSeen and starts its reload from 0), and its reload phase
+-- is not known: it can fire on any tick from its first possible shot to
+-- one reload after its last predicted one (before `death`, up to
+-- now + horizon). With a reload this short that costs at most one reload
+-- of waiting. Any other case keeps its own ticks.
+-- run_c15 beside_n t=785: no shell of the target in the air (its shot at
+-- 782 hit a pill at once), so the check put its shots at 786, 792 .. 852
+-- (reload 6) and the last one met the blocker at 868, a tick before the
+-- stay window (869). The real shots were 788, 794 .. 854; the one at 854
+-- was still on the blocker square when the builder rebuilt it at 868, and
+-- killed him. The shot heard at 782 (p._heard_fire) now gives the phase;
+-- this is for a pill with no shot seen or heard.
+function M.any_phase(p, info, now, x, horizon, death, fires)
+  if #fires == 0 then return fires end
+  local _, reload, last = M.pill_next_fire(p, info, now, x)
+  if reload > (x.pill_attack_min_ticks or 6) then return fires end
+  if last and now - last <= reload then return fires end
+  if reload < 1 then reload = 1 end
+  local t_end = now + horizon
+  local out = {}
+  for f = fires[1], fires[#fires] + reload - 1 do
+    if f > t_end or (death and f >= death) then break end
+    out[#out + 1] = f
+  end
+  return out
+end
+
 function M.fire_conflict(world, info, now, goal, k, rb, bx0, by0, t0, t_arr, sd, swerving, org)
   local x = LP.context(info, LPX) or {}
   local range = (x.pill_range or 2048) / 256
@@ -884,6 +918,7 @@ function M.fire_conflict(world, info, now, goal, k, rb, bx0, by0, t0, t_arr, sd,
       local extra = M.cross_pill_hits(world, info, guns, fires0, gi, tx, ty, range, now, horizon)
       if is_target then M.own_hits(k, now, horizon, extra) end
       if #extra > 0 then fires = M.fire_ticks(g.p, info, now, x, horizon, extra, death) end
+      if is_target then fires = M.any_phase(g.p, info, now, x, horizon, death, fires) end
       local dbx, dby = bcx - g.gx, bcy - g.gy
       local D = math.sqrt(dbx * dbx + dby * dby)
       local at_d = math.floor(D / spd + 0.5)

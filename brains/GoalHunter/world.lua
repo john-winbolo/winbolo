@@ -836,6 +836,19 @@ function M.process_events(world, info, state)
       -- data: [playerNum]
       -- Player left; downstream systems will notice missing objects.
 
+    elseif ev.type == (EVENT_SOUND_SHOOT or 16) and d and d[4] == 255 then
+      -- data: [soundId, mx, my, firingPlayer] (a bot gets the square). A
+      -- pill fired from (mx, my) this tick: the tick its reload starts from
+      -- (quick_repair.pill_next_fire). run_c15 beside_n t=785: the take
+      -- target's last shell hit a pill at once, so none was in the air,
+      -- and the shot heard at 782 was the only trace of its reload phase.
+      local list = d[2] and d[3] and world.pill_at and world.pill_at[mkey(d[2], d[3])]
+      if list then
+        for _, e in ipairs(list) do
+          if e.pill then e.pill._heard_fire = tick end
+        end
+      end
+
     elseif ev.type == EVENT_LGM_LOST and d then
       -- data: [victim_pn, killer_pn] — a player's builder was killed.
       -- Stamp the death + respawn ETA on the lgm_registry so

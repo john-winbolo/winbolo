@@ -464,5 +464,67 @@ do
   check("margin 0.0 (Andrew Nov 24)", C.REPAIR_FIRE_LANE_MARGIN_TILES == 0, C.REPAIR_FIRE_LANE_MARGIN_TILES)
 end
 
+-- -- 8. run_c15 beside_n t=785: a target whose reload phase is unknown --
+-- The real numbers: the take target (126,118) at the engine's lowest
+-- reload (6), no shell of it in the air; the dead blocker (124,118); the
+-- tank at (119.58,116.52). T_kill 858 (first 796 + 13 + flight 49), the
+-- builder on the blocker 869..889. Its real shots were 788, 794 .. 854 and
+-- the one at 854 killed him at 868: the check must wait.
+print("8. run_c15 beside_n: unknown reload phase")
+do
+  reset()
+  local T = 785
+  local LPm = require("live_physics")
+  local tp = pill(126, 118, 6, "neutral")
+  -- Our hits on it, every 13 ticks (EVENT_PILL_UPDATE armour 15 -> 6).
+  tp._eng_hits = { 677, 690, 703, 716, 729, 742, 755, 768, 781 }
+  local bp = pill(124, 118, 0, "friendly", true)
+  local w = { pills = { [1] = tp, [2] = bp }, pill_at = {}, bases = {}, base_at = {} }
+  for id, p in pairs(w.pills) do w.pill_at[p.my * 256 + p.mx] = { { pill = p, id = id } } end
+  local goal = { kind = "attack_pill", mx = 126, my = 118, target_id = 1, substate = "engage" }
+  local inf = { tankx = math.floor(119.58 * 256), tanky = math.floor(116.52 * 256),
+                trees = 36, man_status = C.LGM_INTANK, inboat = false, armour = 40,
+                carried_pills = 0, player_number = 0, shells = 27, direction = 72,
+                speed = 0, reload = false, reload_ticks = 13, objects = {} }
+  local x = LPm.context(inf, {}) or {}
+  local _, rl, last = QR.pill_next_fire(tp, inf, T, x)
+  check("the target is at reload 6 with no shot seen", rl == 6 and last == nil,
+        tostring(rl) .. "/" .. tostring(last))
+  -- The real game: the shot heard at 782 gives the phase 788, 794 .. 854.
+  tp._heard_fire = 782
+  local nx, _, l2 = QR.pill_next_fire(tp, inf, T, x)
+  check("heard at 782: last 782, next 788", l2 == 782 and nx == 788,
+        tostring(l2) .. "/" .. tostring(nx))
+  local fl = QR.fire_ticks(tp, inf, T, x, 104, nil, 858)
+  check("heard at 782: fires 788 .. 854", fl[1] == 788 and fl[#fl] == 854,
+        tostring(fl[1]) .. ".." .. tostring(fl[#fl]))
+  -- Four of our shells in the air (they hit at 794 .. 833), two still to
+  -- fire (796 and 809, 49 ticks of flight).
+  local k0 = { t = 858, src = "predict", first = 796, reload = 13, remaining = 2,
+               flight = 49, land = { 794, 807, 820, 833 }, n_inflight = 4 }
+  local cf0 = QR.fire_conflict(w, inf, T, goal, k0, { mx = 124, my = 118 }, 119.5, 116.5,
+                               T + 1, 869, nil, false)
+  check("heard at 782: the shot at 854 meets the blocker at 870: wait",
+        cf0 ~= nil and cf0.target and cf0.fire == 854 and cf0.at == 870,
+        cf0 and (tostring(cf0.how) .. " fire=" .. tostring(cf0.fire) .. " at=" .. tostring(cf0.at)) or "nil")
+  tp._heard_fire = nil
+  local k = { t = 858, src = "predict", first = 796, reload = 13, remaining = 2,
+              flight = 49, land = { 794, 807, 820, 833 }, n_inflight = 4 }
+  local rb = { mx = 124, my = 118 }
+  local cf = QR.fire_conflict(w, inf, T, goal, k, rb, 119.5, 116.5, T + 1, 869, nil, false)
+  check("a shot late in the unknown phase meets the blocker in the stay: wait",
+        cf ~= nil and cf.target and cf.at >= 869 and cf.fire < 858,
+        cf and (tostring(cf.how) .. " fire=" .. tostring(cf.fire) .. " at=" .. tostring(cf.at)) or "nil")
+  check("helper exists", type(QR.any_phase) == "function")
+  if type(QR.any_phase) == "function" then
+    local f = QR.any_phase(tp, inf, T, x, 120, 858, { 786, 792, 852 })
+    check("any_phase: every tick from the first shot to the kill",
+          #f == 858 - 786 and f[1] == 786 and f[#f] == 857, #f .. " " .. tostring(f[#f]))
+    local calm = pill(126, 118, 6, "neutral")
+    local g = QR.any_phase(calm, inf, T, x, 120, 858, { 786, 852 })
+    check("any_phase: a calm pill keeps its own ticks", #g == 2, #g)
+  end
+end
+
 print(string.format("\n%d passed, %d failed", pass, fail))
 if fail > 0 then os.exit(1) end
