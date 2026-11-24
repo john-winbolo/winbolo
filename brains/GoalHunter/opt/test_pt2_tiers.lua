@@ -94,6 +94,43 @@ for t = 1, 10 do
   check("tier " .. t .. " dbl_split = 2 x spread", row and row.dbl_split == 2 * sp, row and row.dbl_split)
   check("tier " .. t .. " no goal fields", row and row.dbl_goal == nil and row.dbl_margin == nil)
 end
+-- P2: the tier row's pt2_eval picks the evaluator (pt2_eval.lua). The
+-- values are a proposal, awaiting Andrew's value: 10-7 "v2", 6-1 "old".
+do
+  local E = require("pt2_eval")
+  local NEW, OLD = require("pilltake_v2"), require("pilltake_v2_old")
+  for t = 1, 10 do
+    local row = C.BRAIN_CAPACITY_LEVELS[t]
+    local want = (t >= 7) and "v2" or "old"
+    check("tier " .. t .. " pt2_eval " .. want, row and row.pt2_eval == want, row and row.pt2_eval)
+  end
+  local ev0, bt0 = C.PT2_EVALUATOR, C.PT2_EVAL_BY_TIER
+  C.PT2_EVALUATOR, C.PT2_EVAL_BY_TIER = "v2", true
+  E.use({ _capacity = C.BRAIN_CAPACITY_LEVELS[10] })
+  check("tier 10: v2", E.pick() == NEW and E.choice() == "v2", E.choice())
+  E.use({ _capacity = C.BRAIN_CAPACITY_LEVELS[6] })
+  check("tier 6: old wins over PT2_EVALUATOR v2", E.pick() == OLD and E.choice() == "old", E.choice())
+  check("tier 6: a field read comes from old", E.finish_ok == OLD.finish_ok, nil)
+  C.PT2_EVALUATOR = "old"
+  E.use({ _capacity = C.BRAIN_CAPACITY_LEVELS[8] })
+  check("tier 8: v2 wins over PT2_EVALUATOR old", E.pick() == NEW, E.choice())
+  E.use({ _capacity = { dbl_cache = 250 } })
+  check("a row with no pt2_eval: PT2_EVALUATOR", E.pick() == OLD, E.choice())
+  E.use(nil)
+  check("no state: PT2_EVALUATOR", E.pick() == OLD, E.choice())
+  C.PT2_EVAL_BY_TIER = false
+  E.use({ _capacity = C.BRAIN_CAPACITY_LEVELS[10] })
+  check("knob off: PT2_EVALUATOR at tier 10", E.pick() == OLD, E.choice())
+  -- a job keeps the module of its inp (inp._pt2_ev)
+  C.PT2_EVAL_BY_TIER = true
+  local called
+  local inp = { _pt2_ev = { evaluate_group = function() called = "kept"; return {} end } }
+  E.use({ _capacity = C.BRAIN_CAPACITY_LEVELS[1] })
+  E.evaluate_group(inp)
+  check("evaluate_group uses the inp's module", called == "kept", called)
+  E.use(nil)
+  C.PT2_EVALUATOR, C.PT2_EVAL_BY_TIER = ev0, bt0
+end
 do
   local D = require("pt2_dbl")
   check("tier value wins over the knob", D._tier_val({ _capacity = { dbl_cache = 100 } },

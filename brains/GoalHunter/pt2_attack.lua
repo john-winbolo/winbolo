@@ -99,7 +99,10 @@ local function lgm_ticks(ox, oy, mx, my, bmx, bmy)
 end
 
 function M.build_inp(state, goal, info, world, pill, no_builder, npb, radius, now)
+  -- P2: the tier row's evaluator (pt2_eval.use), kept in the inp
+  V2.use(state)
   local inp = V2.knob_inp(C, {})
+  inp._pt2_ev = V2.pick()
   -- debug profile (C.PT2_PROF_LOG): the world_inp part of build_inp
   local tw = BRAIN_DEBUG_MODE and C.PT2_PROF_LOG and clock_us()
   V2.world_inp(world, C, U, PC, cpf, inp, no_builder)

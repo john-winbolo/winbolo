@@ -1274,6 +1274,10 @@ M.PT2_C_EVAL = true
 -- v2 misses, and where both are safe the kills and the depth are the same.
 -- KEEL / MAST: "old".
 M.PT2_EVALUATOR = "v2"
+-- PT2_EVAL_BY_TIER (Nov 23, P2): the capacity tier row's pt2_eval wins over
+-- PT2_EVALUATOR (BRAIN_CAPACITY_LEVELS). Proposal, awaiting Andrew's value.
+-- false = PT2_EVALUATOR at every tier (KEEL, MAST: there it is "old").
+M.PT2_EVAL_BY_TIER = true
 -- PT2_C_STANDABLE (Nov 21, F4): true = the C copy (gh_pt2_old.c) does the
 -- inp.in_map, inp.stay_in, inp.standable and inp.buildable tests itself,
 -- from its terrain and pill caches and the tables world_inp gives once in
@@ -4733,6 +4737,11 @@ M.WSIM_TRUNCATED_COST       = 25
 --                this tier (pt2_dbl.lua). Andrew's values (Nov 18): cache
 --                250 and 1 run per tick at every tier; spread 5 (tier 10)
 --                up to 25 (tier 1); cap = 2 x spread.
+--   pt2_eval   : the pill take evaluator of this tier, "v2" or "old"; it
+--                wins over PT2_EVALUATOR when PT2_EVAL_BY_TIER is on
+--                (pt2_eval.lua). Proposal, awaiting Andrew's value: tiers
+--                10-7 "v2", 6 and below "old" (old is cheaper: bench median
+--                old Lua 10.9 ms, v2 Lua 15.5 ms, old C 0.43 ms).
 --   sb_positions / sb_step : shield-blocker ring scan density.
 --                positions ?? step ??? angular coverage. Tier 10 keeps the
 --                legacy 28 ?? 0.5?? (~??7??) sweep. Lower tiers drop to
@@ -4740,16 +4749,16 @@ M.WSIM_TRUNCATED_COST       = 25
 --                coverage stays similar but per-scan cost drops.
 -- =========================================================================
 M.BRAIN_CAPACITY_LEVELS = {
-  [10] = { dij_short=500, dij_long=560, scan_step=5,  pp_spread=1,  ttl_mult=1.0, eval_iv=1, wsim=nil,   place_r=12, tank_step=5,  sb_positions=28, sb_step=0.5, dbl_cache=250, dbl_evals=1, dbl_spread=5, dbl_split=10 },
-  [9]  = { dij_short=500, dij_long=450, scan_step=5,  pp_spread=6,  ttl_mult=1.0, eval_iv=1, wsim=nil,   place_r=12, tank_step=5,  sb_positions=28, sb_step=0.5, dbl_cache=250, dbl_evals=1, dbl_spread=6, dbl_split=12 },
-  [8]  = { dij_short=450, dij_long=350, scan_step=10, pp_spread=12, ttl_mult=1.1, eval_iv=1, wsim=5,     place_r=11, tank_step=10, sb_positions=28, sb_step=0.5, dbl_cache=250, dbl_evals=1, dbl_spread=7, dbl_split=14 },
-  [7]  = { dij_short=400, dij_long=275, scan_step=10, pp_spread=17, ttl_mult=1.3, eval_iv=1, wsim=5,     place_r=10, tank_step=10, sb_positions=28, sb_step=0.5, dbl_cache=250, dbl_evals=1, dbl_spread=8, dbl_split=16 },
-  [6]  = { dij_short=400, dij_long=200, scan_step=20, pp_spread=22, ttl_mult=1.5, eval_iv=2, wsim=3,     place_r=8, tank_step=10, sb_positions=28, sb_step=0.5, dbl_cache=250, dbl_evals=1, dbl_spread=10, dbl_split=20 },
-  [5]  = { dij_short=400, dij_long=150, scan_step=20, pp_spread=28, ttl_mult=1.7, eval_iv=2, wsim=3,     place_r=5, tank_step=20, sb_positions=28, sb_step=0.5, dbl_cache=250, dbl_evals=1, dbl_spread=12, dbl_split=24 },
-  [4]  = { dij_short=400, dij_long=100, scan_step=20, pp_spread=33, ttl_mult=2.0, eval_iv=3, wsim=1,     place_r=5, tank_step=20, sb_positions=28, sb_step=0.5, dbl_cache=250, dbl_evals=1, dbl_spread=14, dbl_split=28 },
-  [3]  = { dij_short=400, dij_long=75,  scan_step=45, pp_spread=39, ttl_mult=2.5, eval_iv=3, wsim=1,     place_r=4, tank_step=45, sb_positions=28, sb_step=0.5, dbl_cache=250, dbl_evals=1, dbl_spread=16, dbl_split=32 },
-  [2]  = { dij_short=400, dij_long=50,  scan_step=45, pp_spread=44, ttl_mult=3.0, eval_iv=4, wsim=false, place_r=3, tank_step=45, sb_positions=28, sb_step=0.5, dbl_cache=250, dbl_evals=1, dbl_spread=20, dbl_split=40 },
-  [1]  = { dij_short=400, dij_long=25,  scan_step=45, pp_spread=50, ttl_mult=4.0, eval_iv=5, wsim=false, place_r=2, tank_step=45, sb_positions=28, sb_step=0.5, dbl_cache=250, dbl_evals=1, dbl_spread=25, dbl_split=50 },
+  [10] = { dij_short=500, dij_long=560, scan_step=5,  pp_spread=1,  ttl_mult=1.0, eval_iv=1, wsim=nil,   place_r=12, tank_step=5,  sb_positions=28, sb_step=0.5, dbl_cache=250, dbl_evals=1, dbl_spread=5, dbl_split=10, pt2_eval="v2" },
+  [9]  = { dij_short=500, dij_long=450, scan_step=5,  pp_spread=6,  ttl_mult=1.0, eval_iv=1, wsim=nil,   place_r=12, tank_step=5,  sb_positions=28, sb_step=0.5, dbl_cache=250, dbl_evals=1, dbl_spread=6, dbl_split=12, pt2_eval="v2" },
+  [8]  = { dij_short=450, dij_long=350, scan_step=10, pp_spread=12, ttl_mult=1.1, eval_iv=1, wsim=5,     place_r=11, tank_step=10, sb_positions=28, sb_step=0.5, dbl_cache=250, dbl_evals=1, dbl_spread=7, dbl_split=14, pt2_eval="v2" },
+  [7]  = { dij_short=400, dij_long=275, scan_step=10, pp_spread=17, ttl_mult=1.3, eval_iv=1, wsim=5,     place_r=10, tank_step=10, sb_positions=28, sb_step=0.5, dbl_cache=250, dbl_evals=1, dbl_spread=8, dbl_split=16, pt2_eval="v2" },
+  [6]  = { dij_short=400, dij_long=200, scan_step=20, pp_spread=22, ttl_mult=1.5, eval_iv=2, wsim=3,     place_r=8, tank_step=10, sb_positions=28, sb_step=0.5, dbl_cache=250, dbl_evals=1, dbl_spread=10, dbl_split=20, pt2_eval="old" },
+  [5]  = { dij_short=400, dij_long=150, scan_step=20, pp_spread=28, ttl_mult=1.7, eval_iv=2, wsim=3,     place_r=5, tank_step=20, sb_positions=28, sb_step=0.5, dbl_cache=250, dbl_evals=1, dbl_spread=12, dbl_split=24, pt2_eval="old" },
+  [4]  = { dij_short=400, dij_long=100, scan_step=20, pp_spread=33, ttl_mult=2.0, eval_iv=3, wsim=1,     place_r=5, tank_step=20, sb_positions=28, sb_step=0.5, dbl_cache=250, dbl_evals=1, dbl_spread=14, dbl_split=28, pt2_eval="old" },
+  [3]  = { dij_short=400, dij_long=75,  scan_step=45, pp_spread=39, ttl_mult=2.5, eval_iv=3, wsim=1,     place_r=4, tank_step=45, sb_positions=28, sb_step=0.5, dbl_cache=250, dbl_evals=1, dbl_spread=16, dbl_split=32, pt2_eval="old" },
+  [2]  = { dij_short=400, dij_long=50,  scan_step=45, pp_spread=44, ttl_mult=3.0, eval_iv=4, wsim=false, place_r=3, tank_step=45, sb_positions=28, sb_step=0.5, dbl_cache=250, dbl_evals=1, dbl_spread=20, dbl_split=40, pt2_eval="old" },
+  [1]  = { dij_short=400, dij_long=25,  scan_step=45, pp_spread=50, ttl_mult=4.0, eval_iv=5, wsim=false, place_r=2, tank_step=45, sb_positions=28, sb_step=0.5, dbl_cache=250, dbl_evals=1, dbl_spread=25, dbl_split=50, pt2_eval="old" },
 }
 
 -- Hard ceiling on the angles ONE advance_pill_eval_chunk call may sweep,
@@ -8411,6 +8420,7 @@ M.PRESETS = {
     PT2_V2_SPLIT = false,
     --   2026-11-23: the old pill take evaluator (no shadow map).
     PT2_EVALUATOR = "old",
+    PT2_EVAL_BY_TIER = false,
     --   2026-11-21: the old world sim (no driving while pushed, 1 - d/range
     --   hit discount, capture sim with no exit leg).
     WSIM_DRIVE_WHILE_SLIDING = false,
@@ -8796,6 +8806,7 @@ M.PRESETS.mast = {
   PT2_SPLIT_ONE_PART_PER_TICK       = false,  -- 2.2.1 had no pill take v2
   PT2_V2_SPLIT                      = false,  -- 2.2.1 had no pill take v2
   PT2_EVALUATOR                     = "old",  -- 2.2.1 had no pill take v2
+  PT2_EVAL_BY_TIER                  = false,  -- 2.2.1 had no pill take v2
   WSIM_DRIVE_WHILE_SLIDING          = false,  -- 2.2.1 world sim: no driving while pushed
   WSIM_HIT_FULL_DIST                = 0,      -- 2.2.1 world sim: 1 - d/range discount
   WSIM_HIT_FAR_FRAC                 = 0,
