@@ -377,6 +377,9 @@ end
 -- ── eval=both: old and v2 side by side ──────────────────────────────────
 local BOTH = EVAL == "both"
 local B = {
+  t_gc_on = {}, t_gc_off = {}, gc_on_kb = {}, gc_alloc_kb = {},
+  wk = { searches = 0, unique_eval = 0, rep_eval = 0, unique_group = 0, rep_group = 0, groups = 0,
+         last_of = {}, x_groups = 0, x_searches = 0, x_unique = 0, x_hit = 0, x_hit_unique = 0 },
   t_oc = {}, t_ol = {}, t_vc = {}, t_vw = {},
   n = 0, err_o = 0, err_v = 0,
   safe_both = 0, safe_old_only = 0, safe_v2_only = 0, safe_none = 0,
@@ -425,16 +428,74 @@ local function run_both(case)
   -- mask losses (points CANT removed that pass the exact tests, and that
   -- would be safe after walls), the masks' chains against the exact ones,
   -- and the time split
+  -- S4b: the wall search keys (every input of a search), per evaluate,
+  -- per group run (the goal pill's case and the start pill cases after
+  -- it: the same pills, each A once) and against the last group of the
+  -- same goal pill (the next plan)
+  local sig = {}
+  for i, p in ipairs(case.pills) do
+    sig[i] = fmt("%s,%s,%s,%s,%s,%s", tostring(p.mx), tostring(p.my), tostring(p.health), tostring(p.owner),
+      tostring(p.anger), tostring(p.in_tank))
+  end
+  sig = table.concat(sig, ";")
+  local WK = B.wk
+  if sig ~= WK.sig or WK.gA[case.A] then
+    if WK.gkeys then
+      local gp = WK.goal
+      local prev = WK.last_of[gp]
+      if prev then
+        WK.x_groups = WK.x_groups + 1
+        for k, n in pairs(WK.gkeys) do
+          WK.x_searches = WK.x_searches + n
+          WK.x_unique = WK.x_unique + 1
+          if prev[k] then WK.x_hit = WK.x_hit + n; WK.x_hit_unique = WK.x_hit_unique + 1 end
+        end
+      end
+      WK.last_of[gp] = WK.gkeys
+    end
+    local A = case.pills[case.A]
+    WK.sig, WK.gA, WK.gkeys = sig, {}, {}
+    WK.goal = fmt("%s,%s", tostring(A and A.mx), tostring(A and A.my))
+    WK.groups = WK.groups + 1
+  end
+  WK.gA[case.A] = true
+  local ek = {}
+  vinp.v2_wkey = function(k)
+    WK.searches = WK.searches + 1
+    if ek[k] then WK.rep_eval = WK.rep_eval + 1 else ek[k] = true; WK.unique_eval = WK.unique_eval + 1 end
+    if WK.gkeys[k] then WK.rep_group = WK.rep_group + 1; WK.gkeys[k] = WK.gkeys[k] + 1
+    else WK.gkeys[k] = 1; WK.unique_group = WK.unique_group + 1 end
+  end
   NV.reset()
   vinp.v2_loss_check, vinp.v2_mask_stats = true, true
   local rs = NV.evaluate_lua(vinp)
   vinp.v2_loss_check, vinp.v2_mask_stats = nil, nil
+  vinp.v2_wkey = nil
   add_to(B.st, rs.v2 and rs.v2.stat)
   NV.reset()
   vinp.v2_clock = now_us
   local rt = NV.evaluate_lua(vinp)
   vinp.v2_clock = nil
   add_to(B.tm, rt.v2 and rt.v2.tm)
+  -- GC: one cold run as the bot runs it (collector on): its time and its
+  -- heap change; then one with the collector stopped: its time and all
+  -- that it allocates (a full collect after it, not timed)
+  NV.reset()
+  local g0 = collectgarbage("count")
+  local tg = now_us()
+  NV.evaluate_lua(vinp)
+  B.t_gc_on[#B.t_gc_on + 1] = now_us() - tg
+  B.gc_on_kb[#B.gc_on_kb + 1] = collectgarbage("count") - g0
+  collectgarbage("collect")
+  NV.reset()
+  collectgarbage("stop")
+  g0 = collectgarbage("count")
+  tg = now_us()
+  NV.evaluate_lua(vinp)
+  B.t_gc_off[#B.t_gc_off + 1] = now_us() - tg
+  B.gc_alloc_kb[#B.gc_alloc_kb + 1] = collectgarbage("count") - g0
+  collectgarbage("restart")
+  collectgarbage("collect")
   -- compare
   local bo, bv = ro.best, rv.best
   local so, sv = bo and bo.safe or false, bv and bv.safe or false
@@ -629,9 +690,20 @@ if BOTH then
     g("casts"), g("ray_reuse"), g("casts_confirm"), g("planned"), g("confirm_fail"), g("lone"),
     g("plan_skipped"), g("wall_nodes"), g("nudged")))
   print(fmt("v2 wall search: searches on the slow path (a blocker that adds no cover) %d", g("wall_slow")))
+  local wk = B.wk
+  local function pc(a, n) return 100 * a / math.max(1, n) end
+  print(fmt("v2 wall search keys: searches %d; per evaluate: unique %d, repeats %d (%.1f%%);"
+    .. " per group run (%d groups): unique %d, repeats %d (%.1f%%)",
+    wk.searches, wk.unique_eval, wk.rep_eval, pc(wk.rep_eval, wk.searches), wk.groups,
+    wk.unique_group, wk.rep_group, pc(wk.rep_group, wk.searches)))
+  print(fmt("v2 wall search keys, next plan of the same goal pill (%d groups with an earlier group): searches %d,"
+    .. " found in the earlier group %d (%.1f%%); unique keys %d, found %d (%.1f%%)",
+    wk.x_groups, wk.x_searches, wk.x_hit, pc(wk.x_hit, wk.x_searches), wk.x_unique, wk.x_hit_unique,
+    pc(wk.x_hit_unique, wk.x_unique)))
   local tm = B.tm
   local tot = tm.total or 0
-  local parts = { "wedges", "masks", "cast", "aim", "walls", "score_fn", "start", "xcover" }
+  local parts = { "wedges", "masks", "cast", "aim", "walls", "score_fn", "start", "xcover",
+                  "pir", "evb", "sort" }
   local sum = 0
   local out = {}
   for _, k in ipairs(parts) do
@@ -640,8 +712,24 @@ if BOTH then
   end
   out[#out + 1] = fmt("other %.1f%%", 100 * (tot - sum) / math.max(1, tot))
   print(fmt("v2 time split (one cold run per case, clock on, total %.1f ms): %s", tot / 1000, table.concat(out, ", ")))
-  print(fmt("  (nested, already in cast and aim: wall plan confirm %.1f%%, leeway %.1f%%)",
-    100 * (tm.confirm or 0) / math.max(1, tot), 100 * (tm.leeway or 0) / math.max(1, tot)))
+  local function sh(k) return 100 * (tm[k] or 0) / math.max(1, tot) end
+  print("  (pir = pills_in_range at each point; evb = eval_point after the aim, less its casts: ray_view,"
+    .. " the chain walk, the bars, the record; sort = the pre_rank sort and set_band with its sorts;"
+    .. " other = the point loop, cant, hold_point and the rest)")
+  print(fmt("  (nested, already counted above: wall plan confirm %.1f%% (in cast, aim, pir, evb), leeway %.1f%%"
+    .. " (in cast, aim, pir, evb), nudge %.1f%% (in aim), chain DFS %.1f%% (in masks; runs only with the mask"
+    .. " stats, off in this run))", sh("confirm"), sh("leeway"), sh("nudge"), sh("dfs")))
+  print(fmt("v2 GC: cold run with the collector on: median %.3f p90 %.3f ms, heap change median %.0f p90 %.0f max %.0f KB;"
+    .. " collector stopped: median %.3f p90 %.3f ms, allocated median %.0f p90 %.0f max %.0f KB;"
+    .. " GC share (on - stopped) / on, by the totals: %.1f%%",
+    q(B.t_gc_on, 0.5) / 1000, q(B.t_gc_on, 0.9) / 1000, q(B.gc_on_kb, 0.5), q(B.gc_on_kb, 0.9), q(B.gc_on_kb, 1),
+    q(B.t_gc_off, 0.5) / 1000, q(B.t_gc_off, 0.9) / 1000, q(B.gc_alloc_kb, 0.5), q(B.gc_alloc_kb, 0.9),
+    q(B.gc_alloc_kb, 1), (function()
+      local a, c = 0, 0
+      for _, v in ipairs(B.t_gc_on) do a = a + v end
+      for _, v in ipairs(B.t_gc_off) do c = c + v end
+      return 100 * (a - c) / math.max(1, a)
+    end)()))
   return 0
 end
 local tot_us, tot_sp = 0, 0

@@ -693,7 +693,10 @@ end
 -- old shape, or nil, why.
 local function eval_point(ctx, px, py, extra, aim_fixed, nudge, exact)
   local inp, A, env = ctx.inp, ctx.A, ctx.env
+  local clk = ctx.clk
+  local tp = clk and clk()
   local T, hasA = pills_in_range(ctx, px, py)
+  if tp then ctx.tm.pir = ctx.tm.pir + clk() - tp end
   if not hasA then return nil, "A_OUT_OF_RANGE" end
   env.omx, env.omy = floor(px / 256), floor(py / 256)
   local t0 = ctx.clk and ctx.clk()
@@ -710,6 +713,7 @@ local function eval_point(ctx, px, py, extra, aim_fixed, nudge, exact)
   end
   local nudge_wu = 0
   if not aim_idx and nudge and shorts and inp.aim_nudge and not aim_fixed then
+    local tn = clk and clk()
     local nx, ny, nw, nai, nln = nudge_aim(ctx, px, py, extra, shorts)
     if nx then
       -- the nudged point is judged again: A in range there too
@@ -720,9 +724,13 @@ local function eval_point(ctx, px, py, extra, aim_fixed, nudge, exact)
       end
       env.omx, env.omy = floor(px / 256), floor(py / 256)
     end
+    if tn then ctx.tm.nudge = ctx.tm.nudge + clk() - tn end
   end
   if t0 then ctx.tm.aim = ctx.tm.aim + ctx.clk() - t0 end
   if not aim_idx then return nil, "OUTGOING:" .. tostring(why_out) end
+  -- the clock of the rest (rays, chain, bars, the record), less its casts
+  local tb = clk and clk()
+  local cast0 = ctx.tm.cast
   -- rays
   local rays = {}
   for i, X in ipairs(T) do
@@ -786,7 +794,7 @@ local function eval_point(ctx, px, py, extra, aim_fixed, nudge, exact)
   end
   local last = chain[#chain]
   local depth = rays[ri[last]] and rays[ri[last]].cover or 0
-  return {
+  local out = {
     px = px, py = py, nudge_wu = nudge_wu, T = T, rays = rays, ri = ri, chain = chain, in_chain = in_chain,
     chain_mode = chain_mode, aim_idx = aim_idx, lane = lane, clear_aims = { aim_idx },
     lanes = { [aim_idx] = lane }, aims_done = aim_fixed or aim_idx, extra_in = extra,
@@ -796,6 +804,8 @@ local function eval_point(ctx, px, py, extra, aim_fixed, nudge, exact)
     ally_cover = ally_cover, need = need_A, have = have_A, depth = depth,
     finish = ctx.finish or false,
   }
+  if tb then ctx.tm.evb = ctx.tm.evb + (clk() - tb) - (ctx.tm.cast - cast0) end
+  return out
 end
 M._eval_point = eval_point
 
@@ -1006,6 +1016,43 @@ local function ws_keys(so, inp, rec, U, lr, lon)
   so.depth, so.two, so.trip, so.order, so.key = depth, two, tl, order, table.concat(key, ",")
 end
 
+-- S4b: every input the wall search and its pick read, as one string (two
+-- searches with the same key return the same plans): the aims; the
+-- blocker counts and shots; the builder's start square (trip); per
+-- uncovered path in order, its need and its legal squares in order with
+-- their existing shots and aim mask; the last chain pill's ray cover and
+-- the existing shots on it of the legal squares (depth).
+local function ws_input_key(rec, aims, U, maskof, inp)
+  local o = { table.concat(aims, ","), tostring(inp.num_pill_blockers or 0), tostring(inp.build_max),
+              tostring(inp.pill_drop_shots), tostring(inp.wall_shots),
+              tostring(rec.omx or floor(rec.px / 256)), tostring(rec.omy or floor(rec.py / 256)) }
+  local cs = {}
+  for _, u in ipairs(U) do
+    local t = { tostring(u.need) }
+    for _, s in ipairs(u.cand) do
+      t[#t + 1] = s .. ":" .. u.on[s] .. ":" .. maskof[s]
+      cs[s] = true
+    end
+    o[#o + 1] = table.concat(t, " ")
+  end
+  local last = rec.chain[#rec.chain]
+  local lr = rec.rays[rec.ri[last]]
+  if lr then
+    local ex = {}
+    for b = 1, lr.n_block do
+      local e = lr.block[b]
+      if e.kind ~= "ally_pill" then ex[e.sq] = e.shots end
+    end
+    local t = { "L", tostring(lr.cover) }
+    for k = 1, lr.n_sq do
+      local q = lr.sq[k]
+      if cs[q] then t[#t + 1] = q .. ":" .. (ex[q] or 0) end
+    end
+    o[#o + 1] = table.concat(t, " ")
+  end
+  return table.concat(o, "|")
+end
+
 -- The wall plans for record rec on each aim of aims (each aim's lane).
 -- Returns { [ai] = the best solution { k, depth, two, trip, ai,
 -- items = { {sq, kind, shots} } in build order } }; an aim with no plan has
@@ -1103,6 +1150,7 @@ local function search_walls_all(ctx, rec, aims)
       if m ~= 0 then u.cand[#u.cand + 1] = s end
     end
   end
+  if inp.v2_wkey then inp.v2_wkey(ws_input_key(rec, aims, U, maskof, inp)) end
   local npb = inp.num_pill_blockers or 0
   local nU = #U
   local P, W = inp.pill_drop_shots, inp.wall_shots
@@ -1489,7 +1537,8 @@ local function new_stat()
 end
 local function new_tm()
   return { wedges = 0, masks = 0, cast = 0, aim = 0, walls = 0, confirm = 0, leeway = 0,
-           score_fn = 0, start = 0, xcover = 0, total = 0 }
+           score_fn = 0, start = 0, xcover = 0, total = 0,
+           pir = 0, nudge = 0, evb = 0, dfs = 0, sort = 0 }
 end
 
 -- The job cache: rays and square reads kept for one group run.
@@ -1636,6 +1685,7 @@ function M.evaluate_lua(inp)
     if inp.v2_mask_stats and #mpts > 0 then
       local t1 = clk and clk()
       local list, at, sure = chains_dfs(ctx, mpts, A)
+      if t1 then tm.dfs = tm.dfs + clk() - t1 end
       for i, P in ipairs(mpts) do
         local mc = list[at[i]].chain
         P.rec.mask_chain = mc
@@ -1648,7 +1698,9 @@ function M.evaluate_lua(inp)
       end
       if t1 then tm.masks = tm.masks + clk() - t1 end
     end
+    local ts = clk and clk()
     table.sort(cands, pre_rank)
+    if ts then tm.sort = tm.sort + clk() - ts end
     -- lone pill: no other hostile pill in range of any point
     local lone = #cands > 0
     for _, rec in ipairs(cands) do if #rec.T ~= 1 then lone = false; break end end
@@ -1701,8 +1753,10 @@ function M.evaluate_lua(inp)
         scored[#scored + 1] = fin
       end
     end
+    ts = clk and clk()
     OLD.set_band(scored, band)
     table.sort(scored, function(a, b) return M.better(a, b, cap, band, inp.prefer_existing_cover, inp.start_while_building) end)
+    if ts then tm.sort = tm.sort + clk() - ts end
     if inp.leeway_on then
       for i = 1, min(inp.leeway_top, #scored) do
         local rec = scored[i]
@@ -1711,8 +1765,10 @@ function M.evaluate_lua(inp)
           rec.safe, rec.why_unsafe = false, "LEEWAY"
         end
       end
+      ts = clk and clk()
       OLD.set_band(scored, band)
       table.sort(scored, function(a, b) return M.better(a, b, cap, band, inp.prefer_existing_cover, inp.start_while_building) end)
+      if ts then tm.sort = tm.sort + clk() - ts end
     end
     for _, rec in ipairs(scored) do all[#all + 1] = rec end
     if scored[1] and (not best or M.better(scored[1], best, cap, band, inp.prefer_existing_cover, inp.start_while_building)) then best = scored[1] end
