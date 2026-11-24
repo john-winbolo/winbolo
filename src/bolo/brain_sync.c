@@ -43,7 +43,13 @@ uint64_t brainSyncHash(uint64_t h, const void *data, size_t len) {
 }
 
 bool brainSyncIsTextPath(const char *path) {
-    static const char *const exts[] = { ".lua", ".txt", ".json" };
+    /* .bat and .sh too: a Windows checkout with core.autocrlf gives them
+     * CRLF, and a brain such as GoalHunter ships one (strip.bat). Read as
+     * they are, they hashed differently on a Linux server, and no player
+     * could host its bots. Keep this list the same as the one in
+     * cmake/brain_shipped_table.cmake (winbolo_brain_file_sha256). */
+    static const char *const exts[] = { ".lua", ".txt", ".json", ".bat",
+                                        ".sh" };
     const char *dot, *slash, *back;
     size_t i;
     if (path == NULL) return false;
