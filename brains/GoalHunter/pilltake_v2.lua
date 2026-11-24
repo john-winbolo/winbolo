@@ -80,6 +80,8 @@ function M.knob_inp(C, inp)
   -- PT2_WALL_MEMO (M1): the wall searches' memo across evaluates
   inp.wall_memo = C.PT2_WALL_MEMO ~= false
   inp.wall_memo_max = C.PT2_WALL_MEMO_MAX or 2000
+  -- PT2_V2_C: run the C copy (gh_pt2_v2.c) when the exe has it
+  inp.v2_c = C.PT2_V2_C ~= false
   return inp
 end
 
@@ -1949,6 +1951,7 @@ M._new_cache = new_cache
 function M.evaluate(inp)
   local cf = inp.capture_file
   if cf and cf ~= "" then return require("pt2_capture").evaluate(M, inp, cf) end
+  if inp.v2_c then return M.evaluate_c(inp) end
   return M.evaluate_lua(inp)
 end
 
@@ -2014,10 +2017,12 @@ M.SLICE_W = { cast = SLICE_W_CAST, shot = SLICE_W_SHOT, node = SLICE_W_NODE, poi
 -- pass; no yield before it), fin = the evaluate's end (no yield). s.slices, s.budget, and for the bench:
 -- s.wu (the work of each slice), s.over (steps between two calls that
 -- alone are over the budget: one plan's wall search, which is not cut).
+-- The slicers by their fn (M.evaluate_c finds the slicer of inp.v2_slice).
+local SLICERS = setmetatable({}, { __mode = "k" })
 function M.slicer(inp, ticks, yield)
   ticks = ticks or 5
   local clk = inp.v2_clock
-  local s = { budget = nil, slices = 1, wu = {}, over = 0 }
+  local s = { budget = nil, slices = 1, wu = {}, over = 0, ticks = ticks, yield = yield }
   local start, last = 0, 0
   s.fn = function(wu, est, fin)
     if fin then s.wu[s.slices] = wu - start; return 0 end
@@ -2036,7 +2041,47 @@ function M.slicer(inp, ticks, yield)
     yield()
     return t and (clk() - t) or 0
   end
+  SLICERS[s.fn] = s
   return s
+end
+
+-- PT2_V2_C: the C copy (gh_pt2_v2.c) of M.evaluate_lua, with the same
+-- result. With inp.v2_slice (PT2_V2_SPLIT) the C stops where the Lua
+-- calls the slicer, by the same rules, and this function yields there.
+-- An exe with no gh_pt2_v2 (an older exe) runs the Lua; so do the
+-- debug checks the C does not have (v2_mask_stats, v2_loss_check,
+-- v2_confirm_check, v2_confirm_drop).
+function M.evaluate_c(inp)
+  local g = rawget(_G, "gh_pt2_v2")
+  if not g then
+    if not M._warned_no_c then
+      -- Log only, once per brain: a stale exe runs the Lua copy.
+      M._warned_no_c = true
+      print("[pilltake_v2] PT2_V2_C is on but this exe has no gh_pt2_v2:"
+        .. " the Lua evaluator runs. Rebuild the exe.")
+    end
+    return M.evaluate_lua(inp)
+  end
+  if inp.v2_mask_stats or inp.v2_loss_check or inp.v2_confirm_check or inp.v2_confirm_drop then
+    return M.evaluate_lua(inp)
+  end
+  -- M1: a lone evaluate checks the memo here; a group run in group_begin
+  if inp.wall_memo and not inp._v2_cache then M.wall_memo_check(inp, inp.wall_memo_goal or inp.A) end
+  local fn = inp.v2_slice
+  local s = fn and SLICERS[fn]
+  if fn and not s then return M.evaluate_lua(inp) end
+  local st = g.begin(inp, M, OLD, s and s.ticks or nil)
+  while true do
+    local done, res = g.step(st)
+    if done then
+      if s then
+        local info = g.slices(st)
+        s.slices, s.wu, s.over, s.budget = info.slices, info.wu, info.over, info.budget
+      end
+      return res
+    end
+    s.yield()
+  end
 end
 
 function M.evaluate_lua(inp)

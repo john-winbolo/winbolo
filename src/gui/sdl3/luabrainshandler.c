@@ -104,6 +104,7 @@
 #include "gh_opt_log.h"
 #include "gh_attack.h"
 #include "gh_pt2_old.h"
+#include "gh_pt2_v2.h"
 #include "../clientmutex.h"
 #include "../gamefront.h"
 #include "luabrainshandler.h"
@@ -696,6 +697,8 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
   naAttackRegister(L);
   /* gh_pt2_old — pill take v2 evaluator in C (pilltake_v2_old.lua M.evaluate_lua). */
   naPt2OldRegister(L);
+  /* gh_pt2_v2 — pill take v2 evaluator in C (pilltake_v2.lua M.evaluate_lua). */
+  naPt2V2Register(L);
 
   /* Compute brain directory once at function scope so it can be reused for
    * the SDL searcher, BRAIN_DIR global, and opt/ detection below. */

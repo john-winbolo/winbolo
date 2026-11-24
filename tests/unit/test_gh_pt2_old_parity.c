@@ -45,6 +45,7 @@
 #include "shells.h"
 #include "brain_pathfinder.h"
 #include "gh_pt2_old.h"
+#include "gh_pt2_v2.h"
 #include "test_harness.h"
 
 #ifndef WB_REPO_ROOT_DIR
@@ -441,6 +442,7 @@ int run_gh_pt2_bench(void) {
     lua_pushstring(L, args ? args : ""); lua_setglobal(L, "PT2_BENCH_ARGS");
     lua_pushcfunction(L, pt2b_clock_us); lua_setglobal(L, "bench_clock_us");
     naPt2OldRegister(L);
+    naPt2V2Register(L);
     lua_getglobal(L, "package");
     lua_pushfstring(L, "%s/?.lua;%s/?/init.lua", brainDir, brainDir);
     lua_setfield(L, -2, "path");

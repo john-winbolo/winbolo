@@ -18,6 +18,11 @@
 --   lua=1                     run pilltake_v2_old.evaluate_lua, not the C
 --   eval=v2                   time pilltake_v2.evaluate_lua instead (wedges
 --                             cold: dropped before each run; warm=1 keeps them)
+--   eval=v2c                  as eval=v2 with the C copy (pilltake_v2.evaluate_c,
+--                             gh_pt2_v2.c); slice=, memo= and dump= work the same
+--   strip=1                   the digest leaves out the Lua's scratch fields
+--                             (wall_base, slot_memo, mask_chain), so eval=v2
+--                             and eval=v2c dumps can be compared
 --   eval=both                 old (C and Lua) and v2 on each case: costs, safe
 --                             takes each finds, best points, kills and depth
 --   anger=<v>                 every pill's anger is v (0..1, the angry cases)
@@ -268,6 +273,7 @@ end
 -- reference to its first place (so table sharing is in the digest too);
 -- input tables (pills, inp) by name.
 local fmt = string.format
+local STRIP = args.strip == "1" and { wall_base = true, slot_memo = true, mask_chain = true } or {}
 local function digest(res, inp, pills)
   local out, seen, nseen = {}, {}, 0
   local inputs = { [inp] = "INP" }
@@ -291,7 +297,7 @@ local function digest(res, inp, pills)
       nseen = nseen + 1
       seen[v] = nseen
       local ks = {}
-      for k in pairs(v) do ks[#ks + 1] = k end
+      for k in pairs(v) do if not STRIP[k] then ks[#ks + 1] = k end end
       table.sort(ks, function(a, b) return kstr(a) < kstr(b) end)
       out[#out + 1] = "{"
       for _, k in ipairs(ks) do
@@ -321,6 +327,9 @@ local dumpf = args.dump and assert(io.open(args.dump, "w"))
 -- counts (pilltake_v2 M.last_work), to fit the slicer's unit weights
 local workf = args.work and assert(io.open(args.work, "w"))
 local EVAL = args.eval or "old"
+-- eval=v2c: the v2 runs (eval=v2 paths) with the C copy
+local V2C = EVAL == "v2c"
+if V2C then EVAL = "v2" end
 local NV = (EVAL ~= "old") and require("pilltake_v2") or nil
 
 -- slice=<n>: the cost of each slice (us) and the slices of each evaluate
@@ -330,7 +339,8 @@ local slice_us, slice_n = {}, {}
 -- (one plan's wall search) over the budget, and those steps
 local slice_rt, slice_rw, over_ev, over_n = {}, {}, 0, 0
 local function sliced(inp)
-  local co = coroutine.create(function() return NV.evaluate_lua(inp) end)
+  local ev = V2C and NV.evaluate_c or NV.evaluate_lua
+  local co = coroutine.create(function() return ev(inp) end)
   local sl = NV.slicer(inp, SLICE, coroutine.yield)
   inp.v2_slice = sl.fn
   local res
@@ -358,6 +368,7 @@ end
 
 local function evaluate(inp)
   if EVAL == "v2" and SLICE then return sliced(inp) end
+  if EVAL == "v2" and V2C then return NV.evaluate_c(inp) end
   if EVAL == "v2" then return NV.evaluate_lua(inp) end
   if USE_LUA then return V2.evaluate_lua(inp) end
   return G.evaluate(inp, V2)

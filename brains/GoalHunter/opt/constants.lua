@@ -1345,6 +1345,11 @@ M.PT2_WALL_MEMO = false
 -- each); a cap of 2000 clears 125 times and hits 2% only. Proposal,
 -- awaiting Andrew's value.
 M.PT2_WALL_MEMO_MAX = 20000
+-- PT2_V2_C (Nov 24, P3): run pill take v2 in its C copy (gh_pt2_v2.c,
+-- pilltake_v2.lua M.evaluate_c) when the exe has it. The result is the
+-- one the Lua gives (test_gh_pt2_v2_parity), with PT2_V2_SPLIT too. An
+-- older exe has no C copy and the Lua runs. false = the Lua copy.
+M.PT2_V2_C = false
 -- SHIELD_SCAN_PENDING_SURVIVES_V2 (Nov 22, Andrew: "Fix it"): with
 -- PT2_AFTER_SCAN_SPLIT off, v2 runs in one go on the plan tick. true: keep
 -- goal._shield_scan_pending until goal._shield_scan is set, so a budget kill
