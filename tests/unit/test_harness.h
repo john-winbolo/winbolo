@@ -684,6 +684,8 @@ int run_loadbrowser_rename_rejections(void);
 int run_loadbrowser_rename_applies(void);
 
 int run_net_impair(void);
+/* srvImpairPeer with lanonly on and off (test_srv_impair_peer.c). */
+int run_srv_impair_peer_lanonly(void);
 
 /* ChannelMux reliability primitive (test_channel_mux.c): the full
  * off-socket loss/reorder/dup/window/boundary matrix over two ChannelMux
@@ -2245,6 +2247,14 @@ int run_fog_road_edge_masks(void);
  * does nothing where the window does not own the flag. */
 int run_fullscreen_key_action(void);
 
+/* The game window's held status panel draws and its text texture cache
+ * (test_status_draw_hold.c): a draw asked for before the frame waits and is
+ * dropped when the frame repaints the panels (status_draw_hold.h), and a
+ * string reuses its own slot, then an empty one, then the one drawn longest
+ * ago (text_cache_pick.h). */
+int run_status_draw_hold(void);
+int run_text_cache_slot_pick(void);
+
 /* Line of sight (test_sight.c): the square the player stands on is seen even
  * when it is itself a building, a building across the line hides everything
  * behind it while the building itself is seen, the same building beside the
@@ -2481,11 +2491,19 @@ int run_lgm_kill_seen_out_dead_tank(void);
 /* A blast on a pillbox's square against a builder (test_lgm_blast_dead_pill.c):
  * a dead pill's square is open ground, so the blast kills within half a
  * square across its edge and not in its far corner; a live pill's square is
- * still solid. The shot that kills a pill is a hit on its square. */
+ * still solid. Shell hits on a wall, a forest, a boat, the shore or a bridge
+ * are hits on the square. */
 int run_lgm_blast_dead_pill_edge(void);
 int run_lgm_blast_dead_pill_far_corner(void);
 int run_lgm_blast_live_pill_unchanged(void);
 int run_lgm_blast_pill_kill_shot(void);
+int run_lgm_blast_wall_rubble_shot(void);
+int run_lgm_blast_forest_shot(void);
+int run_lgm_blast_boat_shot(void);
+int run_lgm_blast_shore_shot(void);
+int run_lgm_blast_bridge_shot(void);
+int run_lgm_blast_road_open_ground(void);
+int run_lgm_blast_mined_bridge_shot(void);
 int run_lgm_blast_shell_runs_out_dead_pill(void);
 int run_lgm_blast_shell_hits_tank_dead_pill(void);
 int run_lgm_blast_tank_explosion_kills_pill(void);
@@ -3177,6 +3195,16 @@ int run_man_dead_pill_walk_ticks(void);
 int run_man_dead_pill_walk_across_water(void);
 int run_man_dead_pill_lifted_waits_for_tank(void);
 int run_man_dead_pill_brain_walk(void);
+/* lgm_helicopter_speed: a parachuting builder flies the rule's own speed on
+ * every heading, the rule takes a fraction, a step wider than the arrival
+ * tolerance still lands, a man moved in flight flies on from where he was
+ * put, and one a script puts back where he is starts from exactly there
+ * (test_lgm_parachute_speed.c). */
+int run_lgm_parachute_speed_same_on_every_heading(void);
+int run_lgm_parachute_speed_takes_a_fraction(void);
+int run_lgm_parachute_wide_step_lands(void);
+int run_lgm_parachute_moved_in_flight(void);
+int run_lgm_parachute_put_back_starts_exact(void);
 /* lgm_blast_shape: the half-square circle, the Mac Bolo box and the Mac
  * Bolo equivalent area circle at 127/128/129 and 143/144/145 across and at
  * 100 and 120 on the diagonal; an explosion on a building still kills only
@@ -3516,6 +3544,7 @@ int run_lgm_drop_pill_spiral(void);
 int run_lgm_drop_pill_no_room(void);
 int run_util_spiral_north(void);
 int run_util_spiral_north_west(void);
+int run_util_spiral_rings(void);
 
 int run_scenario_lgm_dispatch(void);
 int run_scenario_lgm_recall(void);
@@ -3849,6 +3878,13 @@ int run_scenario_flow_end_round_refusals(void);
 int run_scenario_flow_set_game_time(void);
 int run_scenario_flow_set_game_time_refusals(void);
 int run_scenario_flow_arm_records(void);
+
+/* The round's clocks against real time (test_game_time_limit.c): the time
+ * limit and the start delay each lose one a 20 ms frame, so a round set in
+ * minutes lasts that many minutes. */
+int run_game_time_limit_counts_frames(void);
+int run_game_time_start_delay_counts_frames(void);
+int run_game_time_lobby_minutes(void);
 
 /* The rules op (test_scenario_rule_arms.c). The index list against the table
  * it indexes, a rule written and read back, a rate the op's double carries
@@ -4889,6 +4925,7 @@ int run_lv_pill_numbers_sums(void);
 int run_lv_pill_numbers_list(void);
 int run_lv_pill_numbers_layout(void);
 int run_lv_pill_numbers_overview(void);
+int run_lv_pill_numbers_batched(void);
 /* Where the items of the log viewer's Controls panel go
  * (test_lv_controls_layout.c). */
 int run_lv_controls_top_row(void);

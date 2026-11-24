@@ -256,7 +256,7 @@ int run_sim_rules_classic_defaults(void) {
     SR_EQ(lgm_cost_mine, LGM_COST_MINE);
     SR_EQ(lgm_pill_repair_load, LGM_LOAD_PILLREPAIR);
     SR_EQ(lgm_gather_trees, LGM_GATHER_TREE);
-    SR_EQ(lgm_helicopter_speed, LGM_HELICOPTER_SPEED);
+    SR_FEQ(lgm_helicopter_speed, LGM_HELICOPTER_SPEED);
     SR_EQ(lgm_arrive_tolerance, LGM_MAX_GOAL);
     SR_EQ(lgm_return_tolerance, LGM_RETURN_MAX_GOAL);
     SR_EQ(lgm_pill_drop_search, LGM_PILL_DROP_SEARCH);
@@ -518,6 +518,7 @@ int run_sim_rules_validate_ranges(void) {
     SR_RANGE_FLT(tank_decel_rate, 0.01, 16.0, 0.005);
     SR_RANGE_FLT(tank_brake_rate, 0.01, 16.0, 0.005);
     SR_RANGE_FLT(tank_autoslow_rate, 0.01, 16.0, 0.005);
+    SR_RANGE_FLT(lgm_helicopter_speed, 0.01, 255.0, 0.005);
     /* A tree cannot be worth more than a whole pill, and one load still has
        to finish a pill on nothing — which at the top of the range means a
        tree worth far more than the classic four. The splash a dying tank
@@ -1618,18 +1619,20 @@ int run_sim_rules_tank_deep_sea_safe(void) {
 }
 
 int run_sim_rules_pill_aim_mac(void) {
-    /* Mac Bolo reference shell directions, with WinBolo speeds multiplied
+    /* Shell directions under pill_aim_mac, with WinBolo speeds multiplied
      * by four. The first three rows cover moving, stopped and obstructed
      * tanks at close range. The rest cover
      * the asymmetric pixel boundary, all 16 headings, diagonal distance,
-     * slow motion and normal leading out to eight squares. */
+     * slow motion and normal leading out to eight squares. The fourth row is 18
+     * pixels out, two past one square, so its lead is 32 and the shot goes
+     * 16 world units ahead of the tank. */
     static const struct {
         int dx, dy, heading, speed, obstructed, expected;
     } cases[] = {
         {0, -200, 64, 4, 0, 63},
         {0, -200, 64, 0, 0, 1},
         {0, -200, 64, 4, 1, 1},
-        {0, -300, 64, 16, 0, 1},
+        {0, -300, 64, 16, 0, 3},
         {0, -256, 64, 16, 0, 1},
         {0, -255, 64, 16, 0, 63},
         {0, 255, 64, 16, 0, 127},
@@ -2072,18 +2075,19 @@ int run_sim_rules_pairs(void) {
     /* And at the longest shot the budget still has to fit the BYTE the shell
        record stores it in. At the classic gunsight_max of 14 the budget is
        7 per point of shell_life, so 37 lands on 255 exactly and 38 is one
-       past it. A pillbox's 8.5 squares would wrap at 37, so its length
+       past it. A pillbox's 8.375 squares would wrap at 37, so its length
        comes down to 7 for the case that passes: 1 + 37*7 - 5 is 255 too. */
     SR_PAIR_REFUSED(t.shell_life = 38, "shell_life", "gunsight_max");
     SR_PAIR_OK(t.shell_life = 37; t.pill_fire_length = 7.0f,
                "the longest shot whose budget still fits a byte");
 
     /* A pillbox's shot goes into the same BYTE, with pill_fire_length as its
-       length. At the classic 8.5 squares, shell_life 30 is 1 + 255 - 5 = 251
-       and 31 is 259; at the classic shell_life of 8, 32.375 squares lands on
+       length. At the classic 8.375 squares, shell_life 31 is 259.625, which
+       counts as 259 and lands on 1 + 259 - 5 = 255 exactly, and 32 is 268,
+       which is 264; at the classic shell_life of 8, 32.375 squares lands on
        255 exactly and 32.5 is 256. */
-    SR_PAIR_REFUSED(t.shell_life = 31, "shell_life", "pill_fire_length");
-    SR_PAIR_OK(t.shell_life = 30,
+    SR_PAIR_REFUSED(t.shell_life = 32, "shell_life", "pill_fire_length");
+    SR_PAIR_OK(t.shell_life = 31,
                "a shell_life whose pillbox budget still fits a byte");
     SR_PAIR_REFUSED(t.pill_fire_length = 32.5f, "shell_life",
                     "pill_fire_length");
@@ -2092,10 +2096,10 @@ int run_sim_rules_pairs(void) {
     /* All three are asked together: a shorter pillbox shot, or a shell that
        starts further out, makes room for a shell_life the classic table
        refuses. */
-    SR_PAIR_OK(t.shell_life = 31; t.pill_fire_length = 8.0f,
-               "shell_life 31 with an 8-square pillbox shot");
-    SR_PAIR_OK(t.shell_life = 31; t.shell_start_add = 9,
-               "shell_life 31 with the shell starting 9 ticks out");
+    SR_PAIR_OK(t.shell_life = 32; t.pill_fire_length = 8.0f,
+               "shell_life 32 with an 8-square pillbox shot");
+    SR_PAIR_OK(t.shell_life = 32; t.shell_start_add = 14,
+               "shell_life 32 with the shell starting 14 ticks out");
     /* The product is truncated, as shellLifeTicks truncates it: 8 * 32.4 is
        259.2, which counts as 259 and lands on 255, where rounding up would
        have refused it. */

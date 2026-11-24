@@ -4365,6 +4365,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # not do — and the game-time change, the four lengths it refuses, and the
     # new length on the sim, at a subscriber and in a recording.
     tests/unit/test_scenario_flow_arms.c
+    # The round's time limit and start delay against real time: each loses
+    # one a 20 ms frame, so a round set in minutes lasts that many minutes.
+    tests/unit/test_game_time_limit.c
     # The rules op: the index list against the table it indexes, a rule
     # written and read back, a rate the op's double carries and an int32
     # could not, the value outside a row and the value that breaks a pair
@@ -4568,6 +4571,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_client_frontend_tick.c
     tests/unit/test_await_join.c
     tests/unit/test_net_impair.c
+    tests/unit/test_srv_impair_peer.c
     tests/unit/test_lobby_runtime_fixes.c
     tests/unit/test_bot_chat_routing.c
     tests/unit/test_bot_ping.c
@@ -4668,6 +4672,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # What Alt+Enter does in a game the server keeps in classic mode;
     # header-only logic (fullscreen_key.h).
     tests/unit/test_fullscreen_key.c
+    # Which status panel draws wait for the frame (status_draw_hold.h) and
+    # which slot of the text texture cache a string uses (text_cache_pick.h);
+    # both header-only logic.
+    tests/unit/test_status_draw_hold.c
     tests/unit/test_overview_hud_layout.cpp
     tests/unit/test_newswire_slide.c
     tests/unit/test_sight.c
@@ -5004,6 +5012,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # man_dead_pill_terrain_speed: the builder's speed on the square of a
     # dead pillbox.
     tests/unit/test_man_dead_pill_speed.c
+    # lgm_helicopter_speed: the parachute flies the rule's own speed on
+    # every heading, and the rule takes a fraction.
+    tests/unit/test_lgm_parachute_speed.c
     # lgm_blast_shape: the open-ground area round an explosion that kills a
     # builder.
     tests/unit/test_lgm_blast_shape.c
@@ -6552,6 +6563,8 @@ set(_unit_test_names
     fog_road_edges
     fog_road_edge_masks
     fullscreen_key_action
+    status_draw_hold
+    text_cache_slot_pick
     overview_hud_layout
     newswire_slide
     sight
@@ -6625,6 +6638,13 @@ set(_unit_test_names
     lgm_blast_dead_pill_far_corner
     lgm_blast_live_pill_unchanged
     lgm_blast_pill_kill_shot
+    lgm_blast_wall_rubble_shot
+    lgm_blast_forest_shot
+    lgm_blast_boat_shot
+    lgm_blast_shore_shot
+    lgm_blast_bridge_shot
+    lgm_blast_road_open_ground
+    lgm_blast_mined_bridge_shot
     lgm_blast_shell_runs_out_dead_pill
     lgm_blast_shell_hits_tank_dead_pill
     lgm_blast_tank_explosion_kills_pill
@@ -6730,6 +6750,11 @@ set(_unit_test_names
     man_dead_pill_walk_across_water
     man_dead_pill_lifted_waits_for_tank
     man_dead_pill_brain_walk
+    lgm_parachute_speed_same_on_every_heading
+    lgm_parachute_speed_takes_a_fraction
+    lgm_parachute_wide_step_lands
+    lgm_parachute_moved_in_flight
+    lgm_parachute_put_back_starts_exact
     lgm_blast_shape_half_square
     lgm_blast_shape_mac_box
     lgm_blast_shape_mac_area
@@ -7031,6 +7056,7 @@ set(_unit_test_names
     md5_block_boundaries
     md5_streaming_matches_oneshot
     net_impair
+    srv_impair_peer_lanonly
     lobby_time_minutes_valid
     lobby_time_limit_reaches_round
     lobby_time_limit_removed_reaches_round
@@ -7238,6 +7264,7 @@ set(_unit_test_names
     lgm_drop_pill_no_room
     util_spiral_north
     util_spiral_north_west
+    util_spiral_rings
     scenario_lgm_dispatch
     scenario_lgm_recall
     scenario_lgm_kill
@@ -7450,6 +7477,9 @@ set(_unit_test_names
     scenario_flow_set_game_time
     scenario_flow_set_game_time_refusals
     scenario_flow_arm_records
+    game_time_limit_counts_frames
+    game_time_start_delay_counts_frames
+    game_time_lobby_minutes
     scenario_rule_index_matches_table
     scenario_rule_set
     scenario_rule_set_float
@@ -8114,6 +8144,7 @@ set(_unit_test_names
     lv_pill_numbers_list
     lv_pill_numbers_layout
     lv_pill_numbers_overview
+    lv_pill_numbers_batched
     lv_controls_top_row
     lv_controls_bottom_row
     lv_controls_wheel_step

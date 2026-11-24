@@ -139,12 +139,14 @@
 -- A mode may also change rules, alone or beside its modifiers:
 --   rules = { name = value }  sets each rule to that value. A value may be
 --           a function of the rule's old value that answers the new one.
---   scale = { pct, rules, max, max_rule }  sets each rule in the list to pct
---           percent of the value it had, rounded to the nearest whole
---           number. A rule at 0 stays 0, and one above 0 stays at least 1,
---           so a terrain the builder cannot walk stays shut and one he can
---           stays open. `max` is the rule's own top; `max_rule` names a rule
---           whose value is a top as well.
+--   scale = { pct, rules, max, max_rule, exact }  sets each rule in the
+--           list to pct percent of the value it had, rounded to the nearest
+--           whole number. A rule at 0 stays 0, and one above 0 stays at
+--           least 1, so a terrain the builder cannot walk stays shut and one
+--           he can stays open. `max` is the rule's own top; `max_rule` names
+--           a rule whose value is a top as well. `exact = true` is for rules
+--           that take a fraction: the value is not rounded and has no floor
+--           of 1, so a rule at 0.25 goes to pct percent of 0.25.
 --   show = "..."  the panel's own line, in place of number rows.
 --           A "%d" in it is the percentage the first scaled rule really got,
 --           after rounding.
@@ -220,13 +222,13 @@ local BUILDER_MODES = {
     scale = { pct = 75, rules = MAN_SPEED_RULES, max = 63 },
     show = "Builder: %d%% speed" },
   -- A dead builder flies from a random start straight back to where his
-  -- tank was, lgm_helicopter_speed a tick, then walks the rest. He lands
-  -- when a step ends inside lgm_arrive_tolerance on both axes, so the speed
-  -- is kept at or under that tolerance: a longer step could fly past it.
-  -- Classic 3 is 5.01 at 167%, which rounds to 5.
+  -- tank was, lgm_helicopter_speed a tick, then walks the rest. A step that
+  -- would carry him past the place lands him on it, so the speed needs no
+  -- top but the rule's own. The rule takes a fraction, so it is scaled as
+  -- it comes: classic 3 is 5.01 at 167%, and a host's 0.25 is 0.4175.
   { name = "Air Drop",     kind = "good",  mean = "Dead builders fly back fast.",
     scale = { pct = 167, rules = { "lgm_helicopter_speed" }, max = 255,
-              max_rule = "lgm_arrive_tolerance" },
+              exact = true },
     show = "Parachute: %d%% speed" },
   -- No builder rule changed. The last builder mode's rules go back as they
   -- do at every change.
@@ -503,12 +505,17 @@ end
 -- pct percent of v, to the nearest whole number: 0 stays 0, anything above
 -- 0 stays at least 1, and a raise goes no higher than `top`. A top already
 -- under v holds the rule at v: a mode that raises a rule never lowers it.
-local function scaled(v, pct, top)
+-- With `exact`, for a rule that takes a fraction, the value is not rounded
+-- and has no floor of 1.
+local function scaled(v, pct, top, exact)
   if v <= 0 then
     return v
   end
-  local n = math.floor(v * pct / 100 + 0.5)
-  if n < 1 then n = 1 end
+  local n = v * pct / 100
+  if not exact then
+    n = math.floor(n + 0.5)
+    if n < 1 then n = 1 end
+  end
   if top ~= nil and n > top then n = math.max(top, v) end
   return n
 end
@@ -527,7 +534,11 @@ local function set_one(tr, name, to)
   end
   local ok, code, why = game.set_rule(name, v)
   if ok then
-    tr.saved[#tr.saved + 1] = { name = name, was = was, set = v }
+    -- What the rule reads now, not what was asked for: a rule that takes a
+    -- fraction keeps it to fewer digits than a number here has, and
+    -- restore_rules puts a rule back only while it still reads `set`.
+    local now = game.rule(name)
+    tr.saved[#tr.saved + 1] = { name = name, was = was, set = now ~= nil and now or v }
   else
     game.log(string.format("RuleRoulette: set_rule %s %s refused: %s %s",
                            name, tostring(v), tostring(code), tostring(why)))
@@ -564,7 +575,7 @@ local function apply_rules(tr)
       if i == 1 then
         first_was = game.rule(name)
       end
-      set_one(tr, name, function(v) return scaled(v, sc.pct, top) end)
+      set_one(tr, name, function(v) return scaled(v, sc.pct, top, sc.exact) end)
       if i == 1 then
         first_set = game.rule(name)
       end

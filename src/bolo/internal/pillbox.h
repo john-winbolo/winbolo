@@ -100,8 +100,12 @@ static inline bool    pillPosCurrentFromByte(uint8_t b) {
 /* A pillbox range is 8 map squares or 2048 world units */
 #define PILLBOX_RANGE 2048
 
-/* A pillbox fires 9 map squares this value is 8.5 becuase winbolo targets from the center of the pillbox*/
-#define PILLBOX_FIRE_DISTANCE 8.5
+/* How far a pillbox's shell flies, in map squares. The shell starts 160
+   world units from the middle of the pillbox and lands 2176 out, 8.5
+   squares. This was 8.5, which landed it 2208 out; Mac Bolo's lands 2143
+   to 2192 out by direction, 2166 on average, and 8.375 is the nearest
+   this comes to that. */
+#define PILLBOX_FIRE_DISTANCE 8.375
 
 /* Pillbox not found return Value */
 #define PILL_NOT_FOUND 254
