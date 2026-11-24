@@ -951,9 +951,16 @@ end
 -- live pill keeps the plain refusal (the team shoots it to move it).
 -- run_c8 beside_e: the blocker died at 637 with a stamp of 636; the hold ran
 -- to 686, and the walk was 85 ticks, so the builder would arrive at 723.
+-- The waiver also needs the quick repair's own send checks to pass for this
+-- pill and this arrival (QR.dead_pill_send_ok: lgm_certain_death on the
+-- walk, tank_clear, Rule 2 in the stay window). The hold was the only shell
+-- test an ordinary discovery row had: run_c11 beside_n / beside_s waived it
+-- alone and sent the builder into a pill's shells that met the blocker on
+-- the tick he rebuilt it. With no take, or a failed check, the hold stays.
 -- walk: the walk ticks when the caller has them, else QR.walk_ticks.
--- Returns the reason, or nil; the second value is the waive record.
-local function friendly_fire_hold(state, info, p, fs_tick, walk)
+-- Returns the reason, or nil; the second value is the waive record (or, on
+-- a hold kept by a failed check, the check record).
+local function friendly_fire_hold(state, world, info, p, fs_tick, walk)
   local now = state.tick or 0
   local hold_end = fs_tick + (C.REPAIR_FRIENDLY_FIRE_REJECT_TICKS or 50)
   if now >= hold_end then return nil end
@@ -962,10 +969,13 @@ local function friendly_fire_hold(state, info, p, fs_tick, walk)
   if not walk then return "friendly_fire" end
   local wa, wb = QR.stay_window(now + 1 + walk)
   if hold_end >= wa then return "friendly_fire" end
-  return nil, { stamp = fs_tick, hold_end = hold_end, wa = wa, wb = wb }
+  local ok, why = QR.dead_pill_send_ok(state, world, info, now, p, walk)
+  local rec = { stamp = fs_tick, hold_end = hold_end, wa = wa, wb = wb, why = why }
+  if not ok then return "friendly_fire", rec end
+  return nil, rec
 end
 
-local function pill_blocked(state, p, skip_take, info, walk)
+local function pill_blocked(state, p, skip_take, info, walk, world)
   if state.blocked then
     local bk = U.mkey(p.mx, p.my)
     if state.blocked[bk] and (state.tick or 0) < state.blocked[bk] then return "blocked" end
@@ -989,20 +999,22 @@ local function pill_blocked(state, p, skip_take, info, walk)
   local fs_tick = p._friendly_shot_tick
   if skip_take and C.QUICK_REPAIR_SKIP_OWN_FIRE then fs_tick = p._friendly_shot_other_tick end
   if fs_tick then
-    local ff, waive = friendly_fire_hold(state, info, p, fs_tick, walk)
-    if ff then return ff end
-    if waive and BRAIN_DEBUG_MODE then
-      local key = string.format("%d:%d:%d", p.mx, p.my, fs_tick)
+    local ff, rec = friendly_fire_hold(state, world, info, p, fs_tick, walk)
+    if rec and BRAIN_DEBUG_MODE then
+      local key = string.format("%d:%d:%d:%s", p.mx, p.my, fs_tick, tostring(rec.why))
       state._bp_ff_waive_log = state._bp_ff_waive_log or {}
       if state._bp_ff_waive_log[skip_take and 1 or 0] ~= key then
         state._bp_ff_waive_log[skip_take and 1 or 0] = key
         print2(string.format(
-          "BP_FF_WAIVE t=%d pill=(%d,%d) hp=0 row=%s friendly shell stamp=%d hold_end=%d"
-          .. " < arrive: window=%d..%d (dead pill, shells fly over it)",
+          "%s t=%d pill=(%d,%d) hp=0 row=%s friendly shell stamp=%d hold_end=%d"
+          .. " < arrive: window=%d..%d quick_checks=%s%s",
+          ff and "BP_FF_KEEP" or "BP_FF_WAIVE",
           state.tick or 0, p.mx, p.my, skip_take and "quick" or "discovery",
-          waive.stamp, waive.hold_end, waive.wa, waive.wb))
+          rec.stamp, rec.hold_end, rec.wa, rec.wb, tostring(rec.why),
+          ff and " (hold kept)" or " (dead pill, shells fly over it)"))
       end
     end
+    if ff then return ff end
   end
   local g = state.goal
   if g and (g.kind == "capture_pill" or g.kind == "pill_place")
@@ -1059,7 +1071,7 @@ function M.discover(state, world, info)
                         math.ceil((maxhp - hp) / (C.PILL_REPAIR_AMOUNT or 4)))
         end
         if kind then
-          local blk = pill_blocked(state, p, nil, info)
+          local blk = pill_blocked(state, p, nil, info, nil, world)
           out[#out + 1] = {
             type = kind, id = pid, mx = p.mx, my = p.my,
             dist = d, hp = hp, missing = maxhp - hp, own = p.owner,
@@ -2262,7 +2274,7 @@ function M.update(state, world, info, now)
       -- and the leash are waived for this row on this tick. pill_blocked's
       -- other reasons (blocked, repos, friendly_fire, our_target) still hold.
       row.quick = true
-      row.hard = pill_blocked(state, quick_pill, true, info, quick.walk)
+      row.hard = pill_blocked(state, quick_pill, true, info, quick.walk, world)
       row.out_of_leash = nil
       quick_seen = true
       rctx = quick_ctx
@@ -2305,7 +2317,7 @@ function M.update(state, world, info, now)
                      quick.mx, quick.my),
       hp = quick.hp, missing = maxhp - quick.hp, own = "friendly",
       trees_need = quick.trees_need, quick = true,
-      hard = pill_blocked(state, quick_pill, true, info, quick.walk),
+      hard = pill_blocked(state, quick_pill, true, info, quick.walk, world),
     }
     M.score_row(state, world, info, now, row, quick_ctx)
     rows[#rows + 1] = row

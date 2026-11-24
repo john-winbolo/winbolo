@@ -970,8 +970,9 @@ end
 -- commits the clean unblocked swerve side (C.SWERVE_AVOID_REPAIR_SIDE),
 -- Rule 2 waits while a predicted pill shot conflicts
 -- (C.QUICK_REPAIR_WAIT_ALL_PILLS). Returns "send", "wait:fire_predict" (the
--- take target's shot) or "wait:other_pill".
-function M.side_and_fire(state, world, info, now, goal, k, p, qr)
+-- take target's shot) or "wait:other_pill". dry: test only, commit nothing
+-- (M.send_checks for a builder pool row).
+function M.side_and_fire(state, world, info, now, goal, k, p, qr, dry)
   local rb = { mx = p.mx, my = p.my }
   local rs
   if C.SWERVE_AVOID_REPAIR_SIDE then
@@ -1013,13 +1014,54 @@ function M.side_and_fire(state, world, info, now, goal, k, p, qr)
       return cf.target and "wait:fire_predict" or "wait:other_pill"
     end
   end
-  if cdir then
+  if cdir and not dry then
     goal._repair_swerve_dir = { dir = cdir, mx = p.mx, my = p.my, tick = now,
                                 ox = info.tankx / 256.0, oy = info.tanky / 256.0,
                                 left = M.side_txt(rs.side[1]),
                                 right = M.side_txt(rs.side[-1]), why = cwhy }
   end
   return "send"
+end
+
+-- The send checks for one blocker p and one arrival (qr.t_repair = send +
+-- 1 + walk), in order: danger.lgm_certain_death on his walk, tank_clear at
+-- the tank, then Rule 1 / Rule 2 (side_and_fire: the shots that meet the
+-- blocker inside the stay window). The quick repair's send ladder and the
+-- builder pool's dead-pill friendly_fire waiver (M.dead_pill_send_ok) both
+-- call this one function. Fills qr.death / qr.tank / qr.fire / qr.window.
+-- dry: commit no swerve side. Returns "send" or the wait result.
+function M.send_checks(state, world, info, now, goal, k, p, qr, dry)
+  local hit = danger.lgm_certain_death(world, info, p.mx, p.my)
+  if hit then
+    qr.death = hit
+    return "wait:death"
+  end
+  local tc = M.tank_clear(world, info, now)
+  if tc then
+    qr.tank = tc
+    return "wait:tank"
+  end
+  return M.side_and_fire(state, world, info, now, goal, k, p, qr, dry)
+end
+
+-- The builder pool's question for a DEAD pill whose friendly_fire hold ends
+-- before the builder would arrive (builder_pool friendly_fire_hold): do the
+-- quick repair's own send checks pass for this pill and this arrival? Only
+-- inside a take that this tick's evaluate has a record for (the kill tick
+-- of the take target); with no take there is nothing to test, so the old
+-- hold stays. run_c11 beside_n / beside_s: the waiver without these checks
+-- sent the builder into a neutral pill's shells, which met the blocker
+-- square on the tick he rebuilt it. Returns ok, result, qr.
+function M.dead_pill_send_ok(state, world, info, now, p, walk)
+  local q0 = state._quick_repair
+  local goal = state.goal
+  if not (q0 and q0.tick == now and q0.kill and goal and goal.kind == "attack_pill"
+          and goal.mx and goal.my) then
+    return false, "no_take", nil
+  end
+  local qr = { t_repair = now + 1 + walk }
+  local r = M.send_checks(state, world, info, now, goal, q0.kill, p, qr, true)
+  return r == "send", r, qr
 end
 
 -- QUICK_REPAIR_WAIT_ALL_PILLS while the builder is out on a quick repair:
@@ -1103,19 +1145,7 @@ function M.evaluate(state, world, info, now)
   elseif (info.trees or 0) < qr.trees_need then
     result = "wait:wood"
   else
-    local hit = danger.lgm_certain_death(world, info, p.mx, p.my)
-    if hit then
-      result = "wait:death"
-      qr.death = hit
-    else
-      local tc = M.tank_clear(world, info, now)
-      if tc then
-        result = "wait:tank"
-        qr.tank = tc
-      else
-        result = M.side_and_fire(state, world, info, now, goal, k, p, qr)
-      end
-    end
+    result = M.send_checks(state, world, info, now, goal, k, p, qr)
   end
   qr.result = result
   state._quick_repair = qr

@@ -10,7 +10,9 @@
 --      (friendly_fire).
 --   3b. the stay window (2026-11-24): a DEAD blocker's friendly-fire stamp
 --      (from before it died) refuses the row only while its hold still
---      runs when the builder arrives; a live blocker keeps the plain rule.
+--      runs when the builder arrives, and only when the quick repair's own
+--      send checks pass for that pill and arrival (run_c11: a second pill's
+--      shot in the stay keeps the hold); a live pill keeps the plain rule.
 --   4. the presets: KEEL, MAST and the R221 table keep the old rule.
 -- No engine: terrain, the walk sim and the shell death check are stubs.
 --
@@ -262,42 +264,93 @@ end
 print("3b. dead blocker stay window")
 do
   local RJ = C.REPAIR_FRIENDLY_FIRE_REJECT_TICKS or 50
-  local function dead(bmx, stamp_age, quick_on, hp)
+  -- opts: quick (QUICK_REPAIR_ON_TAKE, default true), hp (a live pill, not
+  -- a take blocker), early (the take target dies late, NOW+200: the quick
+  -- repair says wait:early, so the pool's discovery row is the one tested),
+  -- gun (a second hostile pill at (106,100) whose next shot, from its last
+  -- shell seen, crosses (104,100) at NOW+80), death (lgm_certain_death hit).
+  local function dead(bmx, stamp_age, opts)
+    opts = opts or {}
     reset(true)
-    C.QUICK_REPAIR_ON_TAKE = quick_on
-    local st, w, inf = mk({})
+    C.QUICK_REPAIR_ON_TAKE = opts.quick ~= false
+    local objs = {}
+    if opts.gun then
+      -- Fired at NOW-36: 36 moves of 32 west of the pill centre. The pill
+      -- reloads in 100, so it fires again at NOW+64; that shot crosses the
+      -- blocker 2 tiles on (16 ticks) at NOW+80, inside NOW+65 .. NOW+85.
+      objs[1] = { type = OBJECT_SHOT, x = 106 * 256 + 128 - 36 * 32, y = 100 * 256 + 128,
+                  angle = 192, life = 2, owner = 255, info = 2 }
+    end
+    local st, w, inf = mk(objs)
+    if opts.early then st.goal._on_target_land = { NOW + 10, NOW + 200 } end
+    if opts.gun then
+      w.pills[5] = pill(106, 100, 15, "hostile")
+      w.pill_at[100 * 256 + 106] = { { pill = w.pills[5], id = 5 } }
+    end
     local b = w.pills[8]
     w.pill_at[b.my * 256 + b.mx] = nil
     b.mx = bmx
-    b.health = hp or 0
-    if hp then b._in_use = nil end        -- a live take blocker is refused take_blocker first
+    b.health = opts.hp or 0
+    if opts.hp then b._in_use = nil end   -- a live take blocker is refused take_blocker first
     w.pill_at[b.my * 256 + b.mx] = { { pill = b, id = 8 } }
     b._friendly_shot_tick = NOW - stamp_age
     b._friendly_shot_other_tick = NOW - stamp_age
+    local old_death = danger.lgm_certain_death
+    if opts.death then
+      danger.lgm_certain_death = function() return { src = "test", t = 30, how = "walk" } end
+    end
     local bp, cmd = run_pool(st, w, inf)
-    return row_at(bp, bmx, 100), cmd
+    danger.lgm_certain_death = old_death
+    return row_at(bp, bmx, 100), cmd, st, w, inf
   end
   local function ff(r) return r and tostring(r.reject):find("friendly_fire", 1, true) ~= nil end
+  local function rs(r, st)
+    local q = st and st._quick_repair
+    return (r and tostring(r.reject) or "no row") .. " quick=" .. tostring(q and q.result)
+  end
   -- (104,100): walk 4 tiles x 16 = 64, arrive NOW+65 > hold end NOW+49.
-  local r = dead(104, 1, false)
-  check("discovery row, dead blocker, hold ends before he arrives: not refused friendly_fire",
-        r and not ff(r), r and tostring(r.reject))
-  r = dead(104, 1, true)
+  local r, cmd, st = dead(104, 1, { early = true })
+  check("discovery row, dead blocker, hold ends before he arrives, quick checks pass:"
+        .. " not refused friendly_fire", r and not r.quick and not ff(r), rs(r, st))
+  check("the quick repair itself waits (wait:early), so the row is the discovery row",
+        st._quick_repair and st._quick_repair.result == "wait:early", rs(r, st))
+  r, cmd, st = dead(104, 1)
   check("quick row, dead blocker, hold ends before he arrives: not refused friendly_fire",
-        r and not ff(r), r and tostring(r.reject))
+        r and r.quick and not ff(r), rs(r, st))
+  -- run_c11 beside_n / beside_s: a second pill's shot meets the blocker in
+  -- the stay window. The waiver needs the quick repair's checks: hold kept.
+  local w, inf
+  r, cmd, st, w, inf = dead(104, 1, { early = true, gun = true })
+  check("second pill's shot meets the blocker in the stay: discovery row refused friendly_fire",
+        ff(r), rs(r, st))
+  local ok, why, q = QR.dead_pill_send_ok(st, w, inf, NOW, w.pills[8], 64)
+  check("the shared check says wait:other_pill (Rule 2 in the stay window)",
+        not ok and why == "wait:other_pill" and q.fire and q.fire.pill == 5
+        and q.fire.at >= q.window[1] and q.fire.at <= q.window[2],
+        tostring(why) .. " " .. tostring(q and q.fire and q.fire.at))
+  check("the dry check commits no swerve side", st.goal._repair_swerve_dir == nil,
+        st.goal._repair_swerve_dir)
+  check("second pill's shot: no send", not sent(cmd), cmd_s(cmd))
+  r, cmd, st = dead(104, 1, { gun = true })
+  check("second pill's shot: the quick repair waits too (wait:other_pill)",
+        st._quick_repair and st._quick_repair.result == "wait:other_pill", rs(r, st))
+  check("second pill's shot, quick waits: row refused friendly_fire, no send",
+        ff(r) and not sent(cmd), rs(r, st))
+  r, cmd, st = dead(104, 1, { early = true, death = true })
+  check("certain death on his walk: refused friendly_fire", ff(r), rs(r, st))
+  r, cmd, st = dead(104, 1, { quick = false })
+  check("no quick repair (knob off): old hold, refused friendly_fire", ff(r), rs(r, st))
   -- (101,100): next to the tank, walk 16, arrive NOW+17 <= hold end NOW+49.
-  r = dead(101, 1, false)
-  check("discovery row, dead blocker, hold runs when he arrives: refused friendly_fire",
-        ff(r), r and tostring(r.reject))
+  r, cmd, st = dead(101, 1, { early = true })
+  check("hold runs when he arrives: refused friendly_fire", ff(r), rs(r, st))
   -- The hold end equal to the arrival still holds: NOW-(RJ-65) + RJ = NOW+65.
-  r = dead(104, RJ - 65, false)
-  check("hold end == arrival: refused friendly_fire", ff(r), r and tostring(r.reject))
-  r = dead(104, RJ - 64, false)
-  check("hold end one tick before arrival: not refused", r and not ff(r), r and tostring(r.reject))
+  r, cmd, st = dead(104, RJ - 65, { early = true })
+  check("hold end == arrival: refused friendly_fire", ff(r), rs(r, st))
+  r, cmd, st = dead(104, RJ - 64, { early = true })
+  check("hold end one tick before arrival: not refused", r and not ff(r), rs(r, st))
   -- A live pill keeps the plain rule (the team shoots it to move it).
-  r = dead(104, 1, false, 5)
-  check("live pill: refused friendly_fire (plain rule)", ff(r),
-        r and tostring(r.reject))
+  r, cmd, st = dead(104, 1, { hp = 5 })
+  check("live pill: refused friendly_fire (plain rule)", ff(r), rs(r, st))
 end
 
 -- ── 4. Presets ───────────────────────────────────────────────────────────
