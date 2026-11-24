@@ -924,6 +924,78 @@ do
   check("attack_tank: no terrain-repair job (knob off)", trepair(false) == nil)
 end
 
+print("E5-10/E5-11. pill take v2 background walls")
+do
+  -- E5-10: with the old fire checks (knob off), an unsafe path stops a
+  -- background wall; the hold's own wall is forced and goes.
+  reset(); set_knobs(false, true, true)
+  local st, w, inf = mk("wall_shield", 8)
+  st.builder.wall_target = { mx = 102, my = 100 }
+  SAFE = false
+  local cmd = B.decide(st, w, inf, st.tick)
+  check("hold wall, unsafe path -> builds (forced)", cmd and cmd.action == BUILDMODE_BUILD, cmd and cmd.action)
+  reset(); set_knobs(false, true, true)
+  st, w, inf = mk("wall_shield", 8)
+  st.builder.wall_target = { mx = 102, my = 100 }
+  st.builder.bg_wall = true
+  SAFE = false
+  cmd = B.decide(st, w, inf, st.tick)
+  check("background wall, unsafe path -> no send", cmd == nil, cmd and cmd.action)
+  reset(); set_knobs(false, true, true)
+  st, w, inf = mk("wall_shield", 8)
+  st.builder.wall_target = { mx = 102, my = 100 }
+  st.builder.bg_wall = true
+  st.perc.pill_threats = { { pill = { mx = 104, my = 100 }, anger = 0.9 } }
+  cmd = B.decide(st, w, inf, st.tick)
+  check("background wall, angry pill near -> no send", cmd == nil, cmd and cmd.action)
+  reset(); set_knobs(false, true, true)
+  st, w, inf = mk("wall_shield", 8)
+  st.builder.wall_target = { mx = 102, my = 100 }
+  st.builder.bg_wall = true
+  inf.carried_pills = 2
+  cmd = B.decide(st, w, inf, st.tick)
+  check("background wall with a carried pill -> a wall, not a pill",
+        cmd and cmd.action == BUILDMODE_BUILD, cmd and cmd.action)
+  -- the checks stay with BUILDER_SEND_CERTAIN_DEATH_ONLY on too
+  reset(); set_knobs(true, true, true)
+  st, w, inf = mk("wall_shield", 8)
+  st.builder.wall_target = { mx = 102, my = 100 }
+  st.builder.bg_wall = true
+  SAFE = false
+  cmd = B.decide(st, w, inf, st.tick)
+  check("certain-death knob on: background wall, unsafe path -> no send", cmd == nil, cmd and cmd.action)
+  reset(); set_knobs(true, true, true)
+  st, w, inf = mk("wall_shield", 8)
+  st.builder.wall_target = { mx = 102, my = 100 }
+  st.builder.bg_wall = true
+  cmd = B.decide(st, w, inf, st.tick)
+  check("certain-death knob on: background wall, safe -> builds", cmd and cmd.action == BUILDMODE_BUILD,
+        cmd and cmd.action)
+  -- E5-11: set_mode asks bg_wall only when the builder is free.
+  local PA = require("pt2_attack")
+  local saved = PA.bg_wall
+  PA.bg_wall = function() return { mx = 102, my = 100 } end
+  reset(); set_knobs(true, true, true)
+  st, w, inf = mk()
+  st.goal = { kind = "attack_pill", substate = "aim", mx = 110, my = 100, _pt2_bg = { walls = {} } }
+  B.set_mode(st, w, inf, st.goal)
+  check("free builder -> background wall", st.builder.mode == "wall_shield" and st.builder.bg_wall == true,
+        st.builder.mode)
+  st.goal.substate = "gather_trees"
+  B.set_mode(st, w, inf, st.goal)
+  check("gathering builder -> no background wall", st.builder.mode == "gather" and not st.builder.bg_wall,
+        st.builder.mode)
+  st.goal.substate = "aim"
+  inf.man_status = C.LGM_MOVING
+  B.set_mode(st, w, inf, st.goal)
+  check("builder out of the tank -> no background wall", st.builder.mode ~= "wall_shield", st.builder.mode)
+  inf.man_status = C.LGM_INTANK
+  st._place_trip = { mx = 1, my = 1 }
+  B.set_mode(st, w, inf, st.goal)
+  check("builder on a place trip -> no background wall", st.builder.mode ~= "wall_shield", st.builder.mode)
+  PA.bg_wall = saved
+end
+
 set_knobs(true, true, true)
 print(string.format("\n%d passed, %d failed", pass, fail))
 if fail > 0 then os.exit(1) end

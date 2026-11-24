@@ -443,6 +443,7 @@ function M.set_mode(state, world, info, goal)
   local kind = goal.kind
 
   b.mode           = goal_mode(kind, goal)
+  b.bg_wall        = nil
   b.target         = nil
   b.need_trees     = 0
   b.defensive_debug = nil
@@ -508,11 +509,16 @@ function M.set_mode(state, world, info, goal)
 
   -- Pill take v2 background walls (PT2_START_WHILE_BUILDING and
   -- PT2_EXTRA_COVER_WALLS): the builder builds them while the take goes
-  -- on, only when no other wall job holds him. The tank never waits.
-  if kind == "attack_pill" and b.mode ~= "wall_shield" and goal._pt2_bg then
+  -- on. The tank never waits. E5-11: only when the builder is free: in
+  -- the tank, on no task (the take's own no-job mode "suppressed"), not
+  -- on a place trip. E5-10: b.bg_wall keeps decide's angry-pill and
+  -- path-danger checks on and places no carried pill.
+  if kind == "attack_pill" and goal._pt2_bg and b.mode == "suppressed"
+     and info.man_status == C.LGM_INTANK and not state._place_trip then
     local w = require("pt2_attack").bg_wall(goal, world)
     if w then
       b.mode = "wall_shield"
+      b.bg_wall = true
       b.wall_target = { mx = w.mx, my = w.my }
       b.target_pill = { mx = goal.mx, my = goal.my }
     end
@@ -1688,8 +1694,10 @@ M._decide_inner = function(state, world, info, now)
       -- the hard-physical gates 2 (trees on hand) and 3 (LGM can
       -- physically reach the tile) still apply. base_shield (the
       -- refuel-defense variant) keeps full safety.
-      local force_mode = (b.mode == "wall_shield")
-      local safety_ok  = force_mode or fire_free
+      -- E5-10: a pill take v2 background wall (b.bg_wall) is not forced.
+      local force_mode = (b.mode == "wall_shield") and not b.bg_wall
+      -- E5-10: a background wall keeps both checks, also with fire_free.
+      local safety_ok  = force_mode or (fire_free and not b.bg_wall)
         or (not angry_pill_close and path_safe)
 
       -- Pillbox-as-blocker: if the bot has carried pills on hand,
@@ -1701,7 +1709,8 @@ M._decide_inner = function(state, world, info, now)
       -- the engine refuses on FOREST tiles so we still farm those first.
       local PILLBOX_BLOCKERS_MAX = 2
       local pbox_used = (state.goal and state.goal._pillbox_blockers_used) or 0
-      local can_pbox = b.mode == "wall_shield"
+      -- E5-10: never a carried pill on a background wall
+      local can_pbox = b.mode == "wall_shield" and not b.bg_wall
                        and (info.carried_pills or 0) > 0
                        and pbox_used < PILLBOX_BLOCKERS_MAX
                        and wtt ~= C.T_FOREST
