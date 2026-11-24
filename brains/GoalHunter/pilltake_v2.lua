@@ -1428,7 +1428,8 @@ M._search_walls_all = search_walls_all
 --   start_why      nil, "bystander", "armour" or "unreachable" (a trip
 --                  cannot be made; exposure -1)
 -- A bystander (a pill not in the chain, its ray not "reach") whose ray has
--- a planned blocker needs that cover before the start: start_now false.
+-- a planned blocker and whose standing cover is under its bar needs that
+-- cover before the start: start_now false (E4-7).
 local function start_check(ctx, rec)
   local inp = ctx.inp
   rec.start_now, rec.exposure, rec.shells_through, rec.start_pills, rec.start_why = true, 0, 0, nil, nil
@@ -1458,7 +1459,9 @@ local function start_check(ctx, rec)
     if planned then
       local ci = rec.in_chain[X]
       if not ci then
-        if r.hit ~= "reach" then
+        -- E4-7: a bystander whose standing cover meets its bar needs no
+        -- planned blocker before the start
+        if r.hit ~= "reach" and now_sh < (r.bar or 0) then
           rec.start_now, rec.exposure, rec.start_why = false, exp, "bystander"
           return
         end

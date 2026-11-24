@@ -805,5 +805,28 @@ do
   check("extra walls legal, on the last chain ray, judge passes", bad == 0 and with > 0, bad)
 end
 
+print("E4-7: a bystander's standing cover")
+do
+  -- A (in the chain, covered by its link) and a bystander B whose ray has
+  -- a planned wall. B's standing cover 5 meets its bar 5: start; 0: wait.
+  local A, B = { mx = 10, my = 10 }, { mx = 20, my = 10 }
+  local function rec_with(now_shots)
+    local blockB = { { kind = "planned", sq = 10 * 256 + 15, shots = 5 } }
+    if now_shots > 0 then blockB[2] = { kind = "wall", sq = 10 * 256 + 16, shots = now_shots } end
+    return { px = 15 * 256, py = 12 * 256, omx = 15, omy = 12, T = { A, B }, in_chain = { [A] = 1 },
+             plan = { { mx = 15, my = 10, sq = 10 * 256 + 15, shots = 5, kind = "wall" } },
+             rays = { { n_block = 0, block = {}, link_cover = true, bar = 0, hit = "tank" },
+                      { n_block = #blockB, block = blockB, bar = 5, hit = "tank" } } }
+  end
+  local ctx = { inp = { armour = 40, finish_min_armour = 5, anger_bump = 0.3333 } }
+  local r1 = rec_with(5)
+  V._start_check(ctx, r1)
+  check("standing cover 5, bar 5: start", r1.start_now == true and r1.start_why == nil, tostring(r1.start_why))
+  local r2 = rec_with(0)
+  V._start_check(ctx, r2)
+  check("standing cover 0, bar 5: wait (bystander)", r2.start_now == false and r2.start_why == "bystander",
+    tostring(r2.start_why))
+end
+
 print(string.format("%d passed, %d failed", pass, fail))
 os.exit(fail == 0 and 0 or 1)
