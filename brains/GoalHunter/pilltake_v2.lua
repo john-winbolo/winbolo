@@ -647,6 +647,20 @@ M._ray_view = ray_view
 M._base_ray = base_ray
 
 -- ── One tank point (exact) ────────────────────────────────────────────────
+-- M2: is A in range of (px, py)? pills_in_range's hasA, with no list
+local function A_in_range(ctx, px, py)
+  local inp, A = ctx.inp, ctx.A
+  local pr = inp.pill_range + inp.range_margin
+  local h = ctx.hostile
+  for i = 1, #h do
+    if h[i] == A then
+      local cx, cy = pill_centre(A)
+      local dx, dy = cx - px, cy - py
+      return dx * dx + dy * dy <= pr * pr
+    end
+  end
+  return false
+end
 local function pills_in_range(ctx, px, py)
   local inp, A = ctx.inp, ctx.A
   local pr = inp.pill_range + inp.range_margin
@@ -684,9 +698,9 @@ local function nudge_aim(ctx, px, py, extra, shorts)
       for i = 1, #live do
         local ai = live[i]
         local off = ctx.aims[ai]
-        local ok, why, ln = SH.tank_shot(env, nx, ny, tx + off[1], ty + off[2], A.mx, A.my, extra)
+        local ok, why, ln = SH.tank_shot(env, nx, ny, tx + off[1], ty + off[2], A.mx, A.my, extra, ctx.lane)
         ctx.n_shot = ctx.n_shot + 1
-        if ok then return nx, ny, nw, ai, ln end
+        if ok then ctx.lane = {}; return nx, ny, nw, ai, ln end
         if why == "short" then n = n + 1; live[n] = ai end
       end
       for k = n + 1, #live do live[k] = nil end
@@ -704,7 +718,8 @@ local function eval_point(ctx, px, py, extra, aim_fixed, nudge, exact, lazy)
   local inp, A, env = ctx.inp, ctx.A, ctx.env
   local clk = ctx.clk
   local tp = clk and clk()
-  local T, hasA = pills_in_range(ctx, px, py)
+  -- M2: the pills in range only once the point has an aim (T below)
+  local hasA = A_in_range(ctx, px, py)
   if tp then ctx.tm.pir = ctx.tm.pir + clk() - tp end
   if not hasA then return nil, "A_OUT_OF_RANGE" end
   env.omx, env.omy = floor(px / 256), floor(py / 256)
@@ -715,9 +730,10 @@ local function eval_point(ctx, px, py, extra, aim_fixed, nudge, exact, lazy)
   local why_out, shorts = "short", nil
   for ai = a1, a2 do
     local off = ctx.aims[ai]
-    local ok, why, ln = SH.tank_shot(env, px, py, A.mx * 256 + off[1], A.my * 256 + off[2], A.mx, A.my, extra)
+    local ok, why, ln = SH.tank_shot(env, px, py, A.mx * 256 + off[1], A.my * 256 + off[2], A.mx, A.my, extra,
+                                     ctx.lane)
     ctx.n_shot = ctx.n_shot + 1
-    if ok then aim_idx, lane = ai, ln; break end
+    if ok then aim_idx, lane = ai, ln; ctx.lane = {}; break end
     why_out = why
     if why == "short" then shorts = shorts or {}; shorts[#shorts + 1] = ai end
   end
@@ -727,9 +743,8 @@ local function eval_point(ctx, px, py, extra, aim_fixed, nudge, exact, lazy)
     local nx, ny, nw, nai, nln = nudge_aim(ctx, px, py, extra, shorts)
     if nx then
       -- the nudged point is judged again: A in range there too
-      local T2, hasA2 = pills_in_range(ctx, nx, ny)
-      if hasA2 then
-        px, py, nudge_wu, aim_idx, lane, T = nx, ny, nw, nai, nln, T2
+      if A_in_range(ctx, nx, ny) then
+        px, py, nudge_wu, aim_idx, lane = nx, ny, nw, nai, nln
         ctx.stat.nudged = ctx.stat.nudged + 1
       end
       env.omx, env.omy = floor(px / 256), floor(py / 256)
@@ -738,6 +753,7 @@ local function eval_point(ctx, px, py, extra, aim_fixed, nudge, exact, lazy)
   end
   if t0 then ctx.tm.aim = ctx.tm.aim + ctx.clk() - t0 end
   if not aim_idx then return nil, "OUTGOING:" .. tostring(why_out) end
+  local T = pills_in_range(ctx, px, py)
   -- the clock of the rest (rays, chain, bars, the record), less its casts
   local tb = clk and clk()
   local cast0 = ctx.tm.cast
@@ -865,9 +881,9 @@ local function clear_aims_of(ctx, rec)
     for ai = rec.aims_done + 1, #ctx.aims do
       local off = ctx.aims[ai]
       local ok, _, ln = SH.tank_shot(env, rec.px, rec.py, A.mx * 256 + off[1], A.my * 256 + off[2],
-                                     A.mx, A.my, rec.extra_in)
+                                     A.mx, A.my, rec.extra_in, ctx.lane)
       ctx.n_shot = ctx.n_shot + 1
-      if ok then rec.clear_aims[#rec.clear_aims + 1] = ai; rec.lanes[ai] = ln end
+      if ok then rec.clear_aims[#rec.clear_aims + 1] = ai; rec.lanes[ai] = ln; ctx.lane = {} end
     end
     if t0 then ctx.tm.aim = ctx.tm.aim + ctx.clk() - t0 end
     rec.aims_done = #ctx.aims
@@ -1179,17 +1195,30 @@ end
 -- still without a plan is cut. A set is a solution of each aim in its
 -- mask, so each aim gets the same sets as a search of its own.
 local ws_run   -- the search on the legal squares (below)
+-- M2: the search's scratch tables (see search_walls_all)
+local WL = { gen = 0, g = {}, m = {}, U = {}, UP = {}, mask = {}, mtouch = {}, nm = 0 }
+local NOLANE = {}
 local function search_walls_all(ctx, rec, aims)
   local inp = ctx.inp
   local out = {}
   local nA = #aims
   if nA == 0 then return out end
-  local lanesets = {}
+  -- M2: the lanes as one table, reused: WL.m[s] = the bits of the aims
+  -- whose lane holds s (valid when WL.g[s] is this call's gen)
+  local wg = WL.gen + 1
+  WL.gen = wg
+  local lg, lm = WL.g, WL.m
   for i, ai in ipairs(aims) do
-    local ls = {}
-    for _, s in ipairs(rec.lanes[ai] or {}) do ls[s] = true end
-    lanesets[i] = ls
+    local bi = blshift(1, i - 1)
+    local l = rec.lanes[ai]
+    if l then
+      for k = 1, #l do
+        local s = l[k]
+        if lg[s] ~= wg then lg[s] = wg; lm[s] = bi else lm[s] = bbor(lm[s], bi) end
+      end
+    end
   end
+  local all_aims = blshift(1, nA) - 1
   -- the same for every aim, kept on the record: the squares in front of a
   -- used chain link (a blocker there cuts the chain), and the uncovered
   -- paths (need, existing shots per square)
@@ -1220,25 +1249,37 @@ local function search_walls_all(ctx, rec, aims)
     rec.wall_base = base
   end
   local forbid = base.forbid
-  local U = {}
-  for j, ub in ipairs(base.U) do U[j] = { r = ub.r, need = ub.need, on = ub.on, cand = {} } end
+  -- M2: the paths' entries and the masks, reused call to call (a search
+  -- runs to its end with no yield; nothing keeps them after it)
+  local U, UP = WL.U, WL.UP
+  local nb = #base.U
+  for j = 1, nb do
+    local ub = base.U[j]
+    local e = UP[j]
+    if not e then e = { cand = {} }; UP[j] = e end
+    e.r, e.need, e.on = ub.r, ub.need, ub.on
+    local c = e.cand
+    for q = #c, 1, -1 do c[q] = nil end
+    U[j] = e
+  end
+  for j = #U, nb + 1, -1 do U[j] = nil end
   -- legal squares: old's slot rules pass on some uncovered path the
   -- square is on (all but the lane rule are the same for every aim, kept
   -- on the record: rec.slot_memo), and the lane of some aim misses it
   local memo = rec.slot_memo
   if not memo then memo = {}; rec.slot_memo = memo end
-  local nolane = {}
-  local maskof = {}
+  local nolane = NOLANE
+  local maskof = WL.mask
+  local mt = WL.mtouch
+  for q = 1, WL.nm do maskof[mt[q]] = nil; mt[q] = nil end
+  local nm = 0
   for _, u in ipairs(U) do
     local r = u.r
     for k = 1, r.n_sq do
       local s = r.sq[k]
       local m = maskof[s]
       if m == nil then
-        m = 0
-        for i = 1, nA do
-          if not lanesets[i][s] then m = bbor(m, blshift(1, i - 1)) end
-        end
+        m = (lg[s] == wg) and bband(all_aims, bbnot(lm[s])) or all_aims
         if m ~= 0 then
           local l = memo[s]
           if l == nil then
@@ -1260,10 +1301,12 @@ local function search_walls_all(ctx, rec, aims)
           if not l then m = 0 end
         end
         maskof[s] = m
+        nm = nm + 1; mt[nm] = s
       end
       if m ~= 0 then u.cand[#u.cand + 1] = s end
     end
   end
+  WL.nm = nm
   local wm = inp.wall_memo
   local key = (wm or inp.v2_wkey) and ws_input_key(rec, aims, U, maskof, inp)
   if inp.v2_wkey then inp.v2_wkey(key) end
@@ -1852,7 +1895,10 @@ local function new_ctx(inp, A)
                 aims = (inp.aim_points == 9) and M.AIMS9 or M.AIMS,
                 stat = new_stat(), tm = new_tm(), clk = inp.v2_clock,
                 n_shot = 0,       -- P1b: the aim tests (shadow.tank_shot), for the slicer
-                memo_nodes = 0 }  -- M1: the wall nodes stat got from the memo
+                memo_nodes = 0,   -- M1: the wall nodes stat got from the memo
+                -- M2: the aim tests' lane buffer; a clear aim keeps it
+                -- (its lane) and the next test gets a new one
+                lane = {} }
   for _, p in ipairs(inp.pills) do
     if alive(p) and not inp.env.is_ally(p) then ctx.hostile[#ctx.hostile + 1] = p end
   end
@@ -1994,8 +2040,8 @@ function M.evaluate_lua(inp)
   local slice_fn, paused = inp.v2_slice, 0
   local surv1 = nil
   -- the mask pass's points of one ring (P1b), reused ring to ring
-  local PP_deg, PP_cx, PP_cy, PP_mx, PP_my, PP_px, PP_py, PP_T, PP_hasA, PP_cant =
-    {}, {}, {}, {}, {}, {}, {}, {}, {}, {}
+  local PP_deg, PP_cx, PP_cy, PP_mx, PP_my, PP_px, PP_py, PP_hasA, PP_cant =
+    {}, {}, {}, {}, {}, {}, {}, {}, {}
   local st = ctx.stat
   local n_eval = 0
   -- the work so far, in slice units (P1b)
@@ -2042,7 +2088,7 @@ function M.evaluate_lua(inp)
         if inp.in_map(mx, my) and inp.stay_in(mx, my) and inp.standable(mx, my) then
           n_eval = n_eval + 1
           local px, py = floor(cx * 256), floor(cy * 256)
-          local T, hasA = pills_in_range(ctx, px, py)
+          local hasA = A_in_range(ctx, px, py)
           local is_cant = false
           if hasA then
             local t1 = clk and clk()
@@ -2052,7 +2098,7 @@ function M.evaluate_lua(inp)
           end
           np = np + 1
           PP_deg[np], PP_cx[np], PP_cy[np], PP_mx[np], PP_my[np] = deg, cx, cy, mx, my
-          PP_px[np], PP_py[np], PP_T[np], PP_hasA[np], PP_cant[np] = px, py, T, hasA, is_cant
+          PP_px[np], PP_py[np], PP_hasA[np], PP_cant[np] = px, py, hasA, is_cant
         end
       end
     end
@@ -2062,8 +2108,7 @@ function M.evaluate_lua(inp)
     end
     for q = 1, np do
       local deg, cx, cy, mx, my = PP_deg[q], PP_cx[q], PP_cy[q], PP_mx[q], PP_my[q]
-      local px, py, T, hasA, is_cant = PP_px[q], PP_py[q], PP_T[q], PP_hasA[q], PP_cant[q]
-      PP_T[q] = nil
+      local px, py, hasA, is_cant = PP_px[q], PP_py[q], PP_hasA[q], PP_cant[q]
       do
         do
           local rec, why
@@ -2084,7 +2129,9 @@ function M.evaluate_lua(inp)
               end
             else
               rec, why = eval_point(ctx, px, py, nil, nil, true, false, lazy)
-              if rec then mpts[#mpts + 1] = { px = px, py = py, T = T, rec = rec } end
+              if rec and inp.v2_mask_stats then
+                mpts[#mpts + 1] = { px = px, py = py, T = (pills_in_range(ctx, px, py)), rec = rec }
+              end
             end
           end
           if rec then
