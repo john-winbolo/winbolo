@@ -11,7 +11,8 @@
 --     random v2 knobs (aim points, prefer existing cover, start while
 --     building, anger rise, extra cover walls, chains only, wall memo,
 --     aim avoid chain neighbour, farthest ring and its ring radii, favor
---     blocker place and the carried pills);
+--     blocker place and the carried pills, extra cover skip on a pill
+--     line);
 --   * N_LIVE random worlds with non-classic shell rules in env;
 --   * N_BLOCK random worlds with env.ts_boats and env.ts_tanks;
 --   * the cases in PT2_CASES_FILE (when set), recorded by pt2_capture.lua.
@@ -536,6 +537,7 @@ local function random_case(ci)
   inp.farthest_ring = rnd(2) == 0
   inp.favor_blocker_place = rnd(3) ~= 0
   inp.carried_pills = rnd(2) == 0 and 1 + rnd(2) or 0
+  inp.xcover_skip_pill_line = rnd(3) ~= 0
   inp.ring_radii = ({ { 7.4, 7.2, 7.0, 6.6 }, { 7.4, 7.0 }, { 6.6 }, { 7.8, 7.4, 6.2 } })[1 + rnd(4)]
   if rnd(8) == 0 then inp.ring_radii = {} end
   if rnd(6) == 0 then inp._xcover_later = true end

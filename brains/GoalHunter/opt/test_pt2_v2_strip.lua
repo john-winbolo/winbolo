@@ -966,6 +966,30 @@ do
   check("extra walls legal, on the last chain ray, judge passes", bad == 0 and with > 0, bad)
 end
 
+-- PT2_EXTRA_COVER_SKIP_PILL_LINE (Nov 24, run_c12 gap_n): our pill P
+-- (122,118) on A's (124,118) ray already blocks it, so no extra wall
+-- (123,118) goes between them.
+print("PT2_EXTRA_COVER_SKIP_PILL_LINE: no extra wall on a friendly pill's line")
+do
+  local A = { mx = 124, my = 118 }
+  local ray = { n_sq = 3, sq = { sq(123, 118), sq(122, 118), sq(121, 118) },
+                n_block = 0, block = {} }
+  local drop = { sq = sq(122, 118), mx = 122, my = 118, shots = 5, kind = "pill" }
+  local wall = { sq = sq(122, 118), mx = 122, my = 118, shots = 5, kind = "wall" }
+  local function rec(plan, r)
+    return { chain = { A }, ri = { [A] = 1 }, rays = { r }, plan = plan }
+  end
+  check("pill_on_ray: a planned pill drop on the ray", V._pill_on_ray(rec({ drop }, ray), ray) == true)
+  check("pill_on_ray: a planned wall is not a pill", V._pill_on_ray(rec({ wall }, ray), ray) == false)
+  local off = { sq = sq(122, 119), mx = 122, my = 119, shots = 5, kind = "pill" }
+  check("pill_on_ray: a pill drop off the ray", V._pill_on_ray(rec({ off }, ray), ray) == false)
+  local placed = { n_sq = 3, sq = ray.sq, n_block = 1,
+                   block = { { sq = sq(122, 118), shots = 5, kind = "ally_pill", t = 9 } } }
+  check("pill_on_ray: a placed friendly pill on the ray", V._pill_on_ray(rec({}, placed), placed) == true)
+  local ctx = { inp = { extra_cover_walls = 1, build_max = 4, xcover_skip_pill_line = true } }
+  check("extra_cover: none on a ray our pill blocks", V._extra_cover(ctx, rec({ drop }, ray)) == nil)
+end
+
 print("E4-7: a bystander's standing cover")
 do
   -- A (in the chain, covered by its link) and a bystander B whose ray has

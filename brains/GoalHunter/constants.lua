@@ -1109,6 +1109,17 @@ M.PT2_START_ANGER_RISE = true
 -- builder builds them while the take goes on, only when he is free; the
 -- tank never waits. 0 = none. KEEL / MAST: 0.
 M.PT2_EXTRA_COVER_WALLS = 1
+-- PT2_EXTRA_COVER_SKIP_PILL_LINE (Nov 24, Andrew's yes, run_c12 gap_n): v2
+-- and its C port. "we don't need a wall blocker in addition to the pill.
+-- at least not that close to the hostile pills, a wall blocker closer to
+-- the tank might work though, it'd be quicker to build". When a friendly
+-- pill already blocks the ray of the last chain pill (a planned pill drop
+-- on the ray, or a placed friendly pill the ray meets), the extra walls
+-- (PT2_EXTRA_COVER_WALLS) add no wall on that ray. On a ray no friendly
+-- pill blocks, the extra wall stays the square nearest the tank's approach
+-- square (the short builder trip). false = the old extra walls. MAST:
+-- false.
+M.PT2_EXTRA_COVER_SKIP_PILL_LINE = true
 -- Longest chain counted, pills. Proposal, awaiting Andrew's value.
 M.PT2_MAX_CHAIN = 3
 -- Ring step around the target, degrees. Andrew approved 1 for HELM (Nov 19):
@@ -8534,6 +8545,7 @@ M.PRESETS = {
     PT2_START_WHILE_BUILDING = false,
     PT2_START_ANGER_RISE = false,
     PT2_EXTRA_COVER_WALLS = 0,
+    PT2_EXTRA_COVER_SKIP_PILL_LINE = false,
     PT2_LEEWAY = false,
     PT2_OWN_PILL_BONUS = false,
     PT2_AIM_NUDGE = false,
@@ -8944,6 +8956,7 @@ M.PRESETS.mast = {
   PT2_START_WHILE_BUILDING          = false,  -- 2.2.1 had no pill take v2
   PT2_START_ANGER_RISE              = false,  -- 2.2.1 counted round(anger / bump) hits
   PT2_EXTRA_COVER_WALLS             = 0,      -- 2.2.1 had no pill take v2
+  PT2_EXTRA_COVER_SKIP_PILL_LINE    = false,  -- 2.2.1 had no pill take v2
   PT2_LEEWAY                        = false,
   PT2_OWN_PILL_BONUS                = false,
   PT2_TRAVEL_BAND_TICKS             = 0,

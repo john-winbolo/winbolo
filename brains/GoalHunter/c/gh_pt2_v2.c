@@ -529,6 +529,7 @@ struct St {
     int    aim_nb_on;
     int    fbp_on; double carried_pills;
     double extra_cover_walls, anger_bump;
+    int    xcover_skip_pill_line;
     int    has_pat, has_pamt, has_pad, has_pct, has_trl;
     double pill_attack_ticks, pill_attack_min_ticks, pill_angry_divisor, pill_cooldown_ticks, tank_reload;
     int    has_env_speed; double env_speed;
@@ -3284,6 +3285,22 @@ static int xc_lt(void *cx, void *a, void *b) {
     return x->sq < y->sq;
 }
 
+/* PT2_EXTRA_COVER_SKIP_PILL_LINE (Nov 24, Andrew's yes): pill_on_ray as
+ * the Lua. A friendly pill blocks ray r: a planned pill drop on one of its
+ * squares, or a placed friendly pill it meets (BK_ALLY_PILL). */
+static int pill_on_ray(const Rec *rec, const Ray *r) {
+    for (int k = 0; k < r->n_block; k++)
+        if (r->blk[k]->kind == BK_ALLY_PILL) return 1;
+    if (rec->plan) {
+        for (int i = 0; i < rec->plan->n; i++) {
+            if (!rec->plan->v[i].kind_pill) continue;
+            for (int k = 0; k < r->n_sq; k++)
+                if (r->sq[k] == rec->plan->v[i].sq) return 1;
+        }
+    }
+    return 0;
+}
+
 static void extra_cover(Ev *e, Rec *rec) {
     rec->flags |= RF_XCOVER;
     rec->n_xc = 0; rec->xc = NULL;
@@ -3291,6 +3308,7 @@ static void extra_cover(Ev *e, Rec *rec) {
     if (n <= 0 || !rec->chain) return;
     Ray *r = last_ray(rec);
     if (!r) return;
+    if (e->xcover_skip_pill_line && pill_on_ray(rec, r)) return;
     Lane *lane = NULL;
     for (int q = 0; q < rec->lanes->n; q++) if (rec->lanes->ai[q] == rec->aim_idx) { lane = rec->lanes->ln[q]; break; }
     int cap = 1;
@@ -4392,6 +4410,7 @@ static void ev_read_inp(Ev *e) {
     e->chains_only = getbool(L, S_INP, "chains_only");
     e->xcover_later = getbool(L, S_INP, "_xcover_later");
     e->extra_cover_walls = getnum(L, S_INP, "extra_cover_walls", 0, NULL);
+    e->xcover_skip_pill_line = getbool(L, S_INP, "xcover_skip_pill_line");
     e->anger_bump = getnum(L, S_INP, "anger_bump", 0.3333, NULL);
     e->pill_attack_ticks = getnum(L, S_INP, "pill_attack_ticks", 100, &e->has_pat);
     e->pill_attack_min_ticks = getnum(L, S_INP, "pill_attack_min_ticks", 6, &e->has_pamt);

@@ -94,6 +94,9 @@ function M.knob_inp(C, inp)
   inp.start_anger_rise = C.PT2_START_ANGER_RISE ~= false
   -- PT2_EXTRA_COVER_WALLS (E5): 0 = off
   inp.extra_cover_walls = C.PT2_EXTRA_COVER_WALLS or 1
+  -- PT2_EXTRA_COVER_SKIP_PILL_LINE: no extra wall on a ray a friendly
+  -- pill already blocks
+  inp.xcover_skip_pill_line = C.PT2_EXTRA_COVER_SKIP_PILL_LINE ~= false
   -- PT2_CHAINS_ONLY (S10): the runs that only a safe chain can use (a
   -- non-goal A in group_step, the pt2_dbl shadow runs) plan no single take
   inp.chains_only_runs = C.PT2_CHAINS_ONLY ~= false
@@ -1734,7 +1737,25 @@ M._start_check = start_check
 -- the squares in front of a used link), not on the plan, and the plan plus
 -- the extra walls never pass PT2_BUILD_MAX. Of the legal squares the one
 -- nearest the tank's approach square goes first (the shortest builder
--- trip). Returns { { sq, mx, my, shots, kind = "wall" } } or nil.
+-- trip).
+-- PT2_EXTRA_COVER_SKIP_PILL_LINE (Nov 24, Andrew's yes): none when a
+-- friendly pill already blocks that ray: a planned pill drop on one of its
+-- squares, or a placed friendly pill it meets (block kind "ally_pill").
+-- Returns { { sq, mx, my, shots, kind = "wall" } } or nil.
+local function pill_on_ray(rec, r)
+  for k = 1, r.n_block do
+    if r.block[k].kind == "ally_pill" then return true end
+  end
+  local drops = nil
+  for _, q in ipairs(rec.plan or {}) do
+    if q.kind == "pill" then drops = drops or {}; drops[q.sq] = true end
+  end
+  if drops then
+    for k = 1, r.n_sq do if drops[r.sq[k]] then return true end end
+  end
+  return false
+end
+M._pill_on_ray = pill_on_ray
 local function extra_cover(ctx, rec)
   local inp = ctx.inp
   local n = min(inp.extra_cover_walls or 0, inp.build_max - #(rec.plan or {}))
@@ -1742,6 +1763,7 @@ local function extra_cover(ctx, rec)
   local last = rec.chain[#rec.chain]
   local r = rec.rays[rec.ri[last]]
   if not r then return nil end
+  if inp.xcover_skip_pill_line and pill_on_ray(rec, r) then return nil end
   local lane_set = {}
   for _, q in ipairs((rec.lanes and rec.lanes[rec.aim_idx]) or {}) do lane_set[q] = true end
   local forbid = {}
