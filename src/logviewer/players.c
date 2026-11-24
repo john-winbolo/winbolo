@@ -584,11 +584,12 @@ bool lv_playersLgmPlace(BYTE playerNum, BYTE mx, BYTE my, BYTE px, BYTE py,
   }
   t = &lgmFit[playerNum];
   /* The entry the drawing is of: the present (the newest note), or for the
-     lag view the newest note at or before its frame's time. The time picks
+     lag view the newest note at or before the time of its builders' frame
+     (lagLgmFrame, one entry newer than the tanks'). The time picks
      it, not the pixel, so a builder in one pixel for two entries, or back
      in a pixel he walked through before, is fitted at the right entry. */
   at = lvHitboxLgmPickEntry(t->ms, t->ax, t->ay, t->count,
-                            lagFrame != NULL ? lagFrame->ms : UINT32_MAX, ax, ay);
+                            lagLgmFrame != NULL ? lagLgmFrame->ms : UINT32_MAX, ax, ay);
   if (at < 0) {
     return FALSE;
   }

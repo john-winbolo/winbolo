@@ -140,6 +140,18 @@ LogViewerState *lv_screenGetState(void) { return g_lv; }
 static LvLagTrack s_lagTracks[LV_LAG_SLOTS];
 static bool       s_lagAny      = FALSE;  /* some record was read */
 static LvLagRing  s_lagRing;
+/* A snapshot record is played as a tick of its own, with the shell list
+   cleared (lv_screenLogTick), but the server wrote it with no tick of its
+   own (logWriteSnapshot): it is no entry for the history. So it takes no
+   frame. s_lagSnapshotMs is the playhead time of the last such tick. At
+   that time the lag view draws as at the tick before (lv_lagNowMs), and the
+   next frame finds its shells' owners against the frame before the
+   snapshot (lv_lagFindShellOwners). Without
+   this the history had a frame with no shells: the chosen player's shells
+   in flight lost their owner, were not drawn for the rewind length, and
+   had a false early explosion. */
+static bool       s_lagSnapshotSkipped = FALSE;
+static uint32_t   s_lagSnapshotMs;
 /* The map as the newest frame had it, which the next frame's changed
    squares are found against (lv_lagMapDiff). It is made the same as the map
    when the ring starts again. */
@@ -229,6 +241,7 @@ static void lv_lagReset(void) {
   }
   s_lagAny = FALSE;
   lv_lagRingClear(&s_lagRing);
+  s_lagSnapshotSkipped = FALSE;
   s_lagViewSlot = -1;
   s_lagViewJoin = -1;
   for (i = 0; i < LV_LAG_SLOTS; i++) {
@@ -415,7 +428,12 @@ static void lv_lagFindShellOwners(LvLagFrame *f) {
 
   if (s_lagRing.count >= 2) {
     prev = &s_lagRing.frames[(s_lagRing.newest - 1 + LV_LAG_FRAMES) % LV_LAG_FRAMES];
-    if (prev->ms + LV_LAG_ENTRY_MS != f->ms) {
+    /* The entry before, or the one before a snapshot tick that took no
+       frame (s_lagSnapshotMs). */
+    const bool afterSnapshot = s_lagSnapshotSkipped &&
+                               s_lagSnapshotMs == prev->ms + LV_LAG_ENTRY_MS &&
+                               f->ms == s_lagSnapshotMs + LV_LAG_ENTRY_MS;
+    if (prev->ms + LV_LAG_ENTRY_MS != f->ms && !afterSnapshot) {
       prev = NULL;
     }
   }
@@ -544,6 +562,17 @@ static const LvLagRecord *lv_lagViewRecord(void) {
   return lv_lagTrackAt(&s_lagTracks[s_lagViewSlot], g_lv->timeRunning);
 }
 
+/* The time the lag view takes as the present: the playhead, or on a
+   snapshot tick, which took no frame (s_lagSnapshotMs), the tick before.
+   So the view draws there as at the tick before, not the present. */
+static uint32_t lv_lagNowMs(void) {
+  if (s_lagSnapshotSkipped && g_lv->timeRunning == s_lagSnapshotMs && s_lagRing.count > 0 &&
+      s_lagRing.frames[s_lagRing.newest].ms + LV_LAG_ENTRY_MS == s_lagSnapshotMs) {
+    return s_lagSnapshotMs - LV_LAG_ENTRY_MS;
+  }
+  return g_lv->timeRunning;
+}
+
 /* The frame the lag view draws at the playhead, or NULL to draw the present:
    the view is off, its player has no record yet, or the history holds no
    frame that old. lgmFrame, when not NULL, takes the frame the builders are
@@ -571,11 +600,11 @@ static const LvLagFrame *lv_lagViewFrame(uint32_t *behindMs, const LvLagFrame **
   }
   /* The newest frame must be the playhead's own: a frame noted before a
      seek is of another time. */
-  f = lv_lagRingBack(&s_lagRing, g_lv->timeRunning, behind);
+  f = lv_lagRingBack(&s_lagRing, lv_lagNowMs(), behind);
   if (f != NULL && lgmFrame != NULL) {
     /* Newer than f, so the ring has it whenever it has f. */
     uint32_t lgmBehind = (uint32_t) shellLgmRewind(rec->rewind) * LV_LAG_ENTRY_MS;
-    *lgmFrame = lv_lagRingFind(&s_lagRing, g_lv->timeRunning - lgmBehind);
+    *lgmFrame = lv_lagRingFind(&s_lagRing, lv_lagNowMs() - lgmBehind);
     if (*lgmFrame == NULL) {
       *lgmFrame = f;
     }
@@ -593,7 +622,7 @@ static const LvLagFrame *lv_lagViewMapFrame(void) {
   if (rec == NULL) {
     return NULL;
   }
-  return lv_lagRingBack(&s_lagRing, g_lv->timeRunning, lv_lagRttBackMs(rec->rttMs));
+  return lv_lagRingBack(&s_lagRing, lv_lagNowMs(), lv_lagRttBackMs(rec->rttMs));
 }
 
 /* Fill out with the pillboxes as the map draws them: those of the lag
@@ -4214,6 +4243,7 @@ bool lv_screenLogTick() {
                            !s_scanGathers);
 
   bool process = FALSE;
+  bool snapshotTick = FALSE;
   s_logTickAtLiveHead = FALSE;
   /* The clocks stop with the log. A tick after the end (the Play button at
      the end of a log, a step key) reads nothing, so it must not move the
@@ -4267,6 +4297,7 @@ bool lv_screenLogTick() {
         if (lv_wtLiveCounts()) {
           lv_wtCountTick(g_lv->timeRunning, FALSE);
         }
+        snapshotTick = TRUE;
         lv_processSnapshot();
         returnValue = TRUE;
         break;
@@ -4334,7 +4365,11 @@ bool lv_screenLogTick() {
       }
     }
   }
-  if (lagCapture) {
+  if (lagCapture && snapshotTick) {
+    /* No frame for the lag view's history (s_lagSnapshotMs). */
+    s_lagSnapshotSkipped = TRUE;
+    s_lagSnapshotMs = g_lv->timeRunning;
+  } else if (lagCapture) {
     lv_lagCaptureTick();
   }
   return returnValue;

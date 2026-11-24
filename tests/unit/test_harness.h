@@ -1404,6 +1404,7 @@ int run_lv_lag_view_draw(void);
  * ask only (WB_LV_OWNER_WBV). */
 int run_lv_lag_view_own_shells(void);
 int run_lv_lag_view_lost_owner(void);
+int run_lv_lag_view_shell_snapshot(void);
 int run_lv_shell_owner_recording(void);
 /* The shell owner matcher (lv_shell_owner.h), against the game's shell code
  * (test_lv_shell_owner.c). */

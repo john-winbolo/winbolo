@@ -1895,6 +1895,7 @@ typedef struct {
   int      itemPx[2];
   int      lgmItems;      /* builders in the draw list */
   int      lgmMx, lgmPx;  /* the first one's column and pixel */
+  bool     lgmPlaced;     /* lv_playersLgmPlace fitted slot 1's builder there */
 } LagDrawSeen;
 static LagDrawSeen s_lagDrawSeen;
 
@@ -1938,6 +1939,14 @@ static void lagDrawHook(screenTanks *tks, screenBullets *sBullet, screenLgm *lgm
     lv_screenLgmGetItem(lgms, 1, &mx, &my, &px, &py, &frame);
     s_lagDrawSeen.lgmMx = mx;
     s_lagDrawSeen.lgmPx = px;
+    {
+      /* The hit box's fit for the builder at the place he is drawn
+         (lagDrawOnce puts the view's left column at 55). */
+      double wx = 0.0, wy = 0.0;
+      s_lagDrawSeen.lgmPlaced =
+          lv_playersLgmPlace(1, (BYTE)(mx + 55), (BYTE)(LAG_DRAW_ROW + 1), px, py, &wx, &wy) !=
+          FALSE;
+    }
   }
 }
 
@@ -2084,6 +2093,10 @@ int run_lv_lag_view_draw(void) {
                 "B's builder drawn at %d/%d, want %d/%d (entry 76)", s_lagDrawSeen.lgmMx,
                 s_lagDrawSeen.lgmPx, (int)(lagDrawPlace(1, 76) / 16) - 55,
                 (int)(lagDrawPlace(1, 76) % 16));
+  /* His hit box is fitted at that entry too: at the tanks' entry (75) his
+     note has another pixel, and the fit gave up. */
+  UT_ASSERT_MSG(s_lagDrawSeen.lgmPlaced,
+                "B's builder hit box not fitted at his drawn place (entry 76)");
 
   /* Seek back to entry 42: the frames are there at once. */
   lv_screenSeekToTimeMs(lagDrawMs(42));
@@ -2594,6 +2607,113 @@ int run_lv_lag_view_lost_owner(void) {
                 "the pillbox's shell is not drawn at its entry-65 place");
   UT_ASSERT_MSG(!lagShellSeenAt(lagLostPx(), lagShellAy(70)),
                 "the shell with no owner is drawn at the present");
+
+  lv_screenLagViewSet(-1);
+  lv_screenSetLagFeature(0);
+  lv_decoderDestroy(lv);
+  lv_screenSetHideLobby(savedHide);
+  remove(path);
+  return 0;
+}
+
+/*
+ * A snapshot record in the middle of the chosen player's shell flight. The
+ * viewer plays a snapshot as a tick of its own, with no shells, but the
+ * server wrote it with no game tick: the shell is one step on at the entry
+ * after it. The snapshot tick takes no frame in the lag view's history, so
+ * the shell keeps its owner across it.
+ *
+ *   entry 40          A's lag record, rewind 5 (100 ms)
+ *   entry 60          A fires: A's shell starts six steps north of A
+ *   entry 64          a snapshot, in place of the moves
+ *   entries 60..80    the shell moves one step north each entry but 64
+ *
+ * At entry 64, the snapshot tick, the view for A draws as at entry 63: A's
+ * shell at its entry-63 place. At entry 66, A's shell at the present. The
+ * shell starts once, with A as its owner, and does not end. Before the fix
+ * the snapshot tick's frame had no shells: at entry 64 the shell was not
+ * drawn, at entry 65 it started again with no owner, it was drawn at the
+ * old time, and it had ended once (a false early explosion).
+ */
+#define LAG_SNAP_K 64
+static int lagSnapStep(int k) { return k < LAG_SNAP_K ? k - LAG_SHELL_FIRST : k - LAG_SHELL_FIRST - 1; }
+static int32_t lagSnapAy(int k) { return LAG_DRAW_ROW * 256 - 6 * 32 - 32 * lagSnapStep(k); }
+
+int run_lv_lag_view_shell_snapshot(void) {
+  const char *path = "lv_lag_view_shell_snapshot.wbv";
+  static const uint8_t rec[4] = {0, 0x00, 0x96, 5};   /* A: 150 ms, rewind 5 */
+  LogBuf b;
+  LogViewerState *lv;
+  int savedHide = lv_screenGetHideLobby();
+  LvShellOwnerStats st0, st;
+  LvEarlyBlastStats eb0, eb;
+  int k;
+
+  b.len = 0;
+  putHeader(&b);
+  putLagDrawSnapshot(&b, 0);
+  for (k = 1; k <= 99; k++) {
+    bool shell = (k >= LAG_SHELL_FIRST && k <= 80);
+    int events = 2 + (k == 40 ? 1 : 0) + (shell ? 1 : 0) + (k == LAG_SHELL_FIRST ? 1 : 0);
+    if (k == 39 || k == LAG_SNAP_K) {
+      putLagDrawSnapshot(&b, k);
+      continue;
+    }
+    putU8(&b, LOG_EVENT);
+    putU8(&b, (uint8_t)events);
+    putLagDrawLocation(&b, 0, k);
+    putLagDrawLocation(&b, 1, k);
+    if (k == 40) {
+      putU8(&b, log_PlayerLag);
+      putU8(&b, 0); putU8(&b, 4);
+      put(&b, rec, sizeof(rec));
+    }
+    if (k == LAG_SHELL_FIRST) {
+      putU8(&b, log_TankSetStock);
+      putU8(&b, 0); putU8(&b, 5);
+      putU8(&b, 0); putU8(&b, 39); putU8(&b, 0); putU8(&b, 40); putU8(&b, 0);
+    }
+    if (shell) {
+      putLagShell(&b, lagShellAx(), lagSnapAy(k));
+    }
+  }
+  putU8(&b, LOG_QUIT);
+
+  lv_screenSetHideLobby(0);
+  lv_screenSetLagFeature(1);
+  lv = loadSynthetic(&b, path);
+  UT_ASSERT_MSG(lv != NULL, "synthetic shell snapshot log failed to build/load");
+
+  lv_screenLagShellOwnerStats(&st0);
+  lv_screenEarlyBlastStats(&eb0);
+  if (lagDrawPlayTo(lv, 62) != 0) return 1;
+  lv_screenLagViewSet(0);
+  UT_ASSERT_MSG(lv_screenLagViewSlot() == 0, "the view did not turn on for A");
+
+  /* The snapshot tick: drawn as at entry 63. */
+  if (lagDrawPlayTo(lv, LAG_SNAP_K) != 0) return 1;
+  lagShellDraw(55, 50);
+  UT_ASSERT_MSG(s_lagShellSeen.n == 1, "%d shells drawn at the snapshot tick, want 1",
+                s_lagShellSeen.n);
+  UT_ASSERT_MSG(lagShellSeenAt(lagShellAx(), lagSnapAy(63)),
+                "A's shell is not at its entry-63 place at the snapshot tick");
+
+  /* Two entries on: A's own shell at the present. */
+  if (lagDrawPlayTo(lv, 66) != 0) return 1;
+  lagShellDraw(55, 50);
+  UT_ASSERT_MSG(s_lagShellSeen.n == 1, "%d shells drawn at entry 66, want 1", s_lagShellSeen.n);
+  UT_ASSERT_MSG(lagShellSeenAt(lagShellAx(), lagSnapAy(66)),
+                "A's shell is not at its entry-66 place: it lost its owner at the snapshot");
+
+  if (lagDrawPlayTo(lv, 70) != 0) return 1;
+  lv_screenLagShellOwnerStats(&st);
+  lv_screenEarlyBlastStats(&eb);
+  UT_ASSERT_MSG(st.started - st0.started == 1, "%u shells started, want 1",
+                (unsigned)(st.started - st0.started));
+  UT_ASSERT_MSG(st.startOwned - st0.startOwned == 1, "%u shells given an owner, want 1",
+                (unsigned)(st.startOwned - st0.startOwned));
+  UT_ASSERT_MSG(eb.ended - eb0.ended == 0, "%u owned shells ended in flight, want 0",
+                (unsigned)(eb.ended - eb0.ended));
 
   lv_screenLagViewSet(-1);
   lv_screenSetLagFeature(0);
