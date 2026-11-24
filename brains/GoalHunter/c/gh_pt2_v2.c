@@ -370,6 +370,7 @@ typedef struct { int n, cap; int64_t *sq; uint8_t *v; } SlotMemo;
 #define RF_LB        0x10000
 #define RF_KMIN      0x20000
 #define RF_AIMNB     0x40000
+#define RF_FBP       0x80000
 
 typedef struct Rec {
     double  px, py, nudge_wu;
@@ -415,6 +416,7 @@ typedef struct Rec {
     /* the lazy stub */
     double  a_need, a_bar, lb, kmin;
     int     aimnb;              /* RF_AIMNB: PT2_AIM_AVOID_CHAIN_NEIGHBOUR */
+    double  bp_tier, wall_far;  /* RF_FBP: PT2_FAVOR_BLOCKER_PLACE */
     struct Rec *done;           /* the lone pass: the plan's record */
     Memo    m, m_ri;
 } Rec;
@@ -525,6 +527,7 @@ struct St {
     int    has_armour;
     int    pec, swb, rise, chains_only, xcover_later, has_cache;
     int    aim_nb_on;
+    int    fbp_on; double carried_pills;
     double extra_cover_walls, anger_bump;
     int    has_pat, has_pamt, has_pad, has_pct, has_trl;
     double pill_attack_ticks, pill_attack_min_ticks, pill_angry_divisor, pill_cooldown_ticks, tank_reload;
@@ -3554,6 +3557,54 @@ static double leeway(Ev *e, Rec *rec, double ring_wu, LeePt **out) {
     return n;
 }
 
+/* PT2_FAVOR_BLOCKER_PLACE (Nov 24, Andrew's yes): blocker_place as the
+ * Lua. bp_tier from the record's friendly blocker pills (its planned pill
+ * drops and the placed friendly pills on its chain pills' rays) within
+ * BLOCKER_NEAR_SQ squares of A; wall_far the largest floored distance from
+ * a planned wall to the firing square. */
+#define BLOCKER_NEAR_SQ 2.0
+static void blocker_place(Ev *e, Rec *fin) {
+    if (!e->fbp_on) return;
+    Pill *A = PI(e, e->A);
+    int any = 0, far = 0;
+    double lim = BLOCKER_NEAR_SQ * BLOCKER_NEAR_SQ;
+    double fmx = floor(fin->px / 256), fmy = floor(fin->py / 256);
+    double wf = 0;
+    if (fin->plan) {
+        for (int i = 0; i < fin->plan->n; i++) {
+            PlanE *q = &fin->plan->v[i];
+            if (q->kind_pill) {
+                double dx = q->mx - A->mx, dy = q->my - A->my;
+                any = 1;
+                if (dx * dx + dy * dy > lim) far = 1;
+            } else {
+                double dx = q->mx - fmx, dy = q->my - fmy;
+                double d = floor(sqrt(dx * dx + dy * dy));
+                if (d > wf) wf = d;
+            }
+        }
+    }
+    if (fin->chain) {
+        for (int c = 0; c < fin->chain->n; c++) {
+            int i = fin->rays ? ri_of(fin, fin->chain->v[c]) : 0;
+            if (!i) continue;
+            Ray *r = fin->rays->v[i - 1];
+            for (int k = 0; k < r->n_block; k++) {
+                Blk *b = r->blk[k];
+                if (b->kind != BK_ALLY_PILL) continue;
+                double bx = (double)(b->sq % 256), by = floor((double)b->sq / 256);
+                double dx = bx - A->mx, dy = by - A->my;
+                any = 1;
+                if (dx * dx + dy * dy > lim) far = 1;
+            }
+        }
+    }
+    if (e->carried_pills > 0) fin->bp_tier = !any ? 2 : (far ? 1 : 0);
+    else fin->bp_tier = far ? 1 : 0;
+    fin->wall_far = wf;
+    fin->flags |= RF_FBP;
+}
+
 /* ── Score and rank ─────────────────────────────────────────────────── */
 static void score_of(Ev *e, Rec *fin) {
     fin->n_built = fin->plan->n;
@@ -3561,6 +3612,7 @@ static void score_of(Ev *e, Rec *fin) {
     fin->score = fin->base + fin->n_built * e->build_cost;
     fin->flags |= RF_SCORED;
     aim_nb(e, fin);
+    blocker_place(e, fin);
     if (e->swb && fin->safe) start_check(e, fin);
 }
 
@@ -3600,6 +3652,10 @@ static int old_better(Ev *e, const Rec *a, const Rec *b) {
 /* M.better(a, b, cap, band, pec, swb, no_s0) */
 static int better(Ev *e, const Rec *a, const Rec *b, int no_s0) {
     if (a->safe == b->safe && a->kills == b->kills) {
+        double ta = (a->flags & RF_FBP) ? a->bp_tier : 0, tb = (b->flags & RF_FBP) ? b->bp_tier : 0;
+        if (ta != tb) return ta < tb;
+        double wa = (a->flags & RF_FBP) ? a->wall_far : 0, wb = (b->flags & RF_FBP) ? b->wall_far : 0;
+        if (wa != wb) return wa < wb;
         int na = (a->flags & RF_AIMNB) ? a->aimnb : 0, nb = (b->flags & RF_AIMNB) ? b->aimnb : 0;
         if (na != nb) return nb;
         if (e->far) {
@@ -3984,6 +4040,7 @@ static void push_rec(Ev *e, Rec *r) {
     }
     if (r->flags & RF_UNSEARCH) setbool(L, "unsearched", 1);
     if (r->flags & RF_AIMNB) setbool(L, "aimnb", r->aimnb);
+    if (r->flags & RF_FBP) { setnum(L, "bp_tier", r->bp_tier); setnum(L, "wall_far", r->wall_far); }
     if (r->flags & RF_BAND) { setnum(L, "tier_min", r->tier_min); setbool(L, "in_band", r->in_band); }
     if (r->flags & RF_LEEWAY) {
         setnum(L, "leeway", r->leeway);
@@ -4330,6 +4387,8 @@ static void ev_read_inp(Ev *e) {
     e->pec = getbool(L, S_INP, "prefer_existing_cover");
     e->swb = getbool(L, S_INP, "start_while_building");
     e->aim_nb_on = getbool(L, S_INP, "aim_avoid_nb");
+    e->fbp_on = getbool(L, S_INP, "favor_blocker_place");
+    e->carried_pills = getnum(L, S_INP, "carried_pills", 0, NULL);
     e->chains_only = getbool(L, S_INP, "chains_only");
     e->xcover_later = getbool(L, S_INP, "_xcover_later");
     e->extra_cover_walls = getnum(L, S_INP, "extra_cover_walls", 0, NULL);

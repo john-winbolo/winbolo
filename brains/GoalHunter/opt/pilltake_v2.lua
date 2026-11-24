@@ -78,6 +78,9 @@ function M.knob_inp(C, inp)
   inp.aim_points = C.PT2_AIM_POINTS or 5
   -- PT2_AIM_AVOID_CHAIN_NEIGHBOUR (Nov 24): an aim beside a chain member last
   inp.aim_avoid_nb = C.PT2_AIM_AVOID_CHAIN_NEIGHBOUR ~= false
+  -- PT2_FAVOR_BLOCKER_PLACE (Nov 24): the blocker pill tier and the walls
+  -- nearer the tank, after safe and kills (inp.carried_pills: build_inp)
+  inp.favor_blocker_place = C.PT2_FAVOR_BLOCKER_PLACE ~= false
   -- PT2_FARTHEST_RING (Nov 24): every ring of ring_radii (absolute, far
   -- to near), the farther ring first in the rank
   inp.farthest_ring = C.PT2_FARTHEST_RING ~= false
@@ -132,6 +135,11 @@ M.AIMS9[9] = { 24, 128 }
 -- with every point beside, the best of them still wins. aimnb is nil with
 -- the knob off (the old order).
 --
+-- PT2_FAVOR_BLOCKER_PLACE (Nov 24, Andrew's yes): two points of the same
+-- safe and kills rank next by bp_tier (lower wins), then by wall_far
+-- (smaller wins), before aimnb (blocker_place below). Both are nil with
+-- the knob off (the old order).
+--
 -- PT2_FARTHEST_RING (Nov 24, Andrew's yes): far on (M.far_on: the knob
 -- and a ring_radii list), two points of the same safe and kills (and
 -- aimnb) rank next by ring: the farther ring wins. Before E1, E4 and the
@@ -143,6 +151,12 @@ M.AIMS9[9] = { 24, 128 }
 -- pill's own, run first) wins, as before S0.
 function M.better(a, b, cap, band, pec, swb, no_s0, far)
   if a.safe == b.safe and a.kills == b.kills then
+    -- PT2_FAVOR_BLOCKER_PLACE: the lower blocker pill tier, then the
+    -- nearer walls (nil with the knob off: the old order)
+    local ta, tb = a.bp_tier or 0, b.bp_tier or 0
+    if ta ~= tb then return ta < tb end
+    local wa, wb = a.wall_far or 0, b.wall_far or 0
+    if wa ~= wb then return wa < wb end
     local na, nb = a.aimnb or false, b.aimnb or false
     if na ~= nb then return nb end
     if far then
@@ -2070,6 +2084,58 @@ local function pre_rank(a, b)
   return (a.deg or 0) < (b.deg or 0)
 end
 
+-- PT2_FAVOR_BLOCKER_PLACE (Nov 24, Andrew's yes): the record's bp_tier
+-- and wall_far. The friendly blocker pills of a record: its planned pill
+-- drops, and the placed friendly pills on its chain pills' rays. "Near":
+-- within BLOCKER_NEAR_SQ (Andrew's 2.0) squares of the target pill A,
+-- centre to centre.
+--   carrying a pill (inp.carried_pills > 0): 0 = it uses one and every one
+--   is near; 1 = it uses one and one is not near; 2 = it uses none.
+--   carrying none: 0 = every one is near, or it has none; 1 = one is not.
+-- wall_far: the largest distance from a planned wall to the record's
+-- firing square, centre to centre, floored to whole squares (0 = no wall).
+local BLOCKER_NEAR_SQ = 2.0
+local function blocker_place(ctx, fin)
+  if not ctx.inp.favor_blocker_place then return end
+  local A = ctx.A
+  local any, far = false, false
+  local lim = BLOCKER_NEAR_SQ * BLOCKER_NEAR_SQ
+  local function see(mx, my)
+    any = true
+    local dx, dy = mx - A.mx, my - A.my
+    if dx * dx + dy * dy > lim then far = true end
+  end
+  local fmx, fmy = floor(fin.px / 256), floor(fin.py / 256)
+  local wf = 0
+  for _, q in ipairs(fin.plan or {}) do
+    if q.kind == "pill" then
+      see(q.mx, q.my)
+    else
+      local dx, dy = q.mx - fmx, q.my - fmy
+      local d = floor(sqrt(dx * dx + dy * dy))
+      if d > wf then wf = d end
+    end
+  end
+  for _, X in ipairs(fin.chain or {}) do
+    local i = fin.ri and fin.ri[X]
+    local r = i and fin.rays and fin.rays[i]
+    if r then
+      for k = 1, r.n_block do
+        local b = r.block[k]
+        if b.kind == "ally_pill" then see(b.sq % 256, floor(b.sq / 256)) end
+      end
+    end
+  end
+  local tier
+  if (ctx.inp.carried_pills or 0) > 0 then
+    tier = (not any) and 2 or (far and 1 or 0)
+  else
+    tier = far and 1 or 0
+  end
+  fin.bp_tier, fin.wall_far = tier, wf
+end
+M._blocker_place = blocker_place
+
 -- A planned point's rank numbers (S4: a module function, no closure).
 local function score_of(ctx, fin)
   local inp, clk = ctx.inp, ctx.clk
@@ -2077,6 +2143,7 @@ local function score_of(ctx, fin)
   fin.blk = (inp.own_pill_rank and fin.ally_cover) and 2 or 1
   fin.score = fin.base + fin.n_built * inp.build_cost
   aim_nb(ctx, fin)
+  blocker_place(ctx, fin)
   if inp.start_while_building and fin.safe then
     local t3 = clk and clk()
     start_check(ctx, fin)

@@ -1165,5 +1165,97 @@ do
   clear()
 end
 
+-- ── 13. PT2_FAVOR_BLOCKER_PLACE ───────────────────────────────────────────
+print("PT2_FAVOR_BLOCKER_PLACE: blocker pills near the target, walls near the tank")
+do
+  local A = { mx = 128, my = 120 }
+  local function ctx_of(carried, on)
+    return { A = A, inp = { favor_blocker_place = on ~= false, carried_pills = carried } }
+  end
+  -- firing square (128,130); plan items as v2 makes them
+  local function fin(plan, ally)
+    local f = { px = 128.5 * 256, py = 130.5 * 256, plan = plan or {}, chain = { A } }
+    if ally then
+      local blk = {}
+      for i, q in ipairs(ally) do blk[i] = { sq = q[2] * 256 + q[1], kind = "ally_pill", shots = 1 } end
+      f.ri = { [A] = 1 }
+      f.rays = { { n_block = #blk, block = blk } }
+    end
+    return f
+  end
+  local function P(mx, my) return { sq = my * 256 + mx, mx = mx, my = my, shots = 1, kind = "pill" } end
+  local function W(mx, my) return { sq = my * 256 + mx, mx = mx, my = my, shots = 1, kind = "wall" } end
+  local function tier(carried, f) V._blocker_place(ctx_of(carried), f); return f.bp_tier, f.wall_far end
+  -- carrying a pill
+  check("carrying: a near pill drop = tier 0", tier(1, fin({ P(129, 121) })) == 0)
+  check("carrying: 2.0 squares is near (tier 0)", tier(1, fin({ P(130, 120) })) == 0)
+  check("carrying: 2.24 squares is not near (tier 1)", tier(1, fin({ P(130, 121) })) == 1)
+  check("carrying: one near and one far = tier 1", tier(2, fin({ P(128, 121), P(125, 120) })) == 1)
+  check("carrying: walls only = tier 2", tier(1, fin({ W(128, 122) })) == 2)
+  check("carrying: no blocker at all = tier 2", tier(1, fin({})) == 2)
+  check("carrying: a near placed pill on a chain ray = tier 0", tier(1, fin({ W(128, 125) }, { { 127, 121 } })) == 0)
+  check("carrying: a far placed pill on a chain ray = tier 1", tier(1, fin({}, { { 128, 124 } })) == 1)
+  -- carrying none
+  check("not carrying: no friendly pill = tier 0", tier(0, fin({ W(128, 122) })) == 0)
+  check("not carrying: a near placed pill = tier 0", tier(0, fin({}, { { 129, 119 } })) == 0)
+  check("not carrying: a far placed pill = tier 1", tier(0, fin({}, { { 129, 119 }, { 131, 120 } })) == 1)
+  -- wall_far: the largest floored distance to (128,130)
+  local _, wf = tier(0, fin({ W(128, 127), W(130, 128) }))
+  check("wall_far: max of floor(3), floor(2.83)", wf == 3, wf)
+  local _, wf2 = tier(1, fin({ P(128, 121) }))
+  check("wall_far: no wall = 0", wf2 == 0, wf2)
+  local fo = fin({ P(128, 121), W(128, 122) })
+  V._blocker_place(ctx_of(1, false), fo)
+  check("knob off: no bp_tier, no wall_far", fo.bp_tier == nil and fo.wall_far == nil)
+  -- the rank
+  local function pt(t, wfar, aimnb)
+    return { safe = true, kills = 1, score = 10, tier_min = 10, n_built = 2, depth = 3, blk = 1,
+             leeway = 8, deg = 0, radius = 7, bp_tier = t, wall_far = wfar, aimnb = aimnb }
+  end
+  check("rank: tier 0 beats tier 1 and tier 2",
+        V.better(pt(0, 5), pt(1, 1), 8, 5, true, true) and V.better(pt(1, 5), pt(2, 1), 8, 5, true, true)
+        and not V.better(pt(2, 1), pt(0, 5), 8, 5, true, true))
+  check("rank: same tier, nearer walls win", V.better(pt(0, 2), pt(0, 3), 8, 5, true, true)
+        and not V.better(pt(0, 3), pt(0, 2), 8, 5, true, true))
+  check("rank: tier before the aim rule", V.better(pt(0, 3, true), pt(1, 3, false), 8, 5, true, true))
+  check("rank: walls before the aim rule", V.better(pt(0, 2, true), pt(0, 3, false), 8, 5, true, true))
+  local fr, nr = pt(0, 2), pt(0, 3)
+  fr.radius, nr.radius = 6.6, 7.4
+  check("rank: walls before the farther ring", V.better(fr, nr, 8, 5, true, true, false, true))
+  local un = pt(0, 0); un.safe = false
+  check("rank: safe first (a tier 2 safe point wins)", V.better(pt(2, 9), un, 8, 5, true, true))
+  local k0 = pt(0, 0); k0.kills = 0
+  check("rank: kills first (a tier 2 1-kill point wins)", V.better(pt(2, 9), k0, 8, 5, true, true))
+  check("rank: knob off (nil) = the old order",
+        V.better(pt(nil, nil), pt(nil, nil), 8, 5, true, true) == OLD.better(pt(nil, nil), pt(nil, nil), 8, 5))
+  -- evaluate: one pill, one carried pill; every record keeps the rule
+  local function run(on, carried)
+    clear(); V.reset()
+    local T = { mx = 128, my = 120, owner = "hostile", health = 15 }
+    local inp = make_inp(make_world({ T }), T, carried > 0 and 1 or 0)
+    inp.favor_blocker_place = on
+    inp.carried_pills = carried
+    inp.keep_all = true
+    return V.evaluate_lua(inp)
+  end
+  for _, carried in ipairs({ 0, 1 }) do
+    local r = run(true, carried)
+    local b = r.best
+    local ok = b ~= nil and b.bp_tier ~= nil
+    for _, x in ipairs(r.all or {}) do
+      if b and x ~= b and x.bp_tier and x.safe == b.safe and x.kills == b.kills then
+        if x.bp_tier < b.bp_tier or (x.bp_tier == b.bp_tier and x.wall_far < b.wall_far) then ok = false end
+      end
+    end
+    check("evaluate (carried " .. carried .. "): no point of the same safe and kills has a lower tier or nearer walls",
+          ok, b and string.format("tier %s wfar %s", tostring(b.bp_tier), tostring(b.wall_far)))
+  end
+  local off = run(false, 1).best
+  check("evaluate, knob off: no bp_tier", off and off.bp_tier == nil and off.wall_far == nil)
+  check("knob_inp: PT2_FAVOR_BLOCKER_PLACE",
+        V.knob_inp(C, {}).favor_blocker_place == (C.PT2_FAVOR_BLOCKER_PLACE ~= false))
+  clear(); V.reset()
+end
+
 print(string.format("%d passed, %d failed", pass, fail))
 os.exit(fail == 0 and 0 or 1)

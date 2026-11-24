@@ -108,6 +108,8 @@ function M.build_inp(state, goal, info, world, pill, no_builder, npb, radius, no
   if not inp.A then return nil end
   inp.radius = radius
   inp.num_pill_blockers = npb
+  -- PT2_FAVOR_BLOCKER_PLACE: the pills we carry pick the blocker pill tiers
+  inp.carried_pills = info.carried_pills or 0
   -- PT2_FINISH_NO_COVER_MAX_ANGER: our armour and each pill's anger now
   inp.armour = info.armour or 0
   -- PT2_LIVE_SHELL: the shadow's shells walk the live rules
@@ -278,7 +280,7 @@ local function cmp_line(now, pill, inp, res, v1, cost_us, drive, do_print)
   end
   local line = string.format(
     "PT2_CMP t=%d pill=(%d,%d) hp=%d | v1: so=%s deg=%s aim=%s act=%s pot=%s cover=%s"
-    .. " | v2: so=%s deg=%s R=%s aim=%s aimnb=%s chain=%s mode=%s kills=%s need=%s have=%s safe=%s lee=%s plan=%s"
+    .. " | v2: so=%s deg=%s R=%s aim=%s aimnb=%s bpt=%s wfar=%s carried=%d chain=%s mode=%s kills=%s need=%s have=%s safe=%s lee=%s plan=%s"
     .. " | diff=%s d_wu=%s why=%s drive=%s cost_us=%d evals=%d green_pen=%d green_pen_skip=%d travel_noA=%d noA_pts=%d v1_score=%s v2_score=%s",
     now, pill.mx, pill.my, pill.health or 0,
     v1 and string.format("(%.2f,%.2f)", v1.cx, v1.cy) or "-",
@@ -291,6 +293,8 @@ local function cmp_line(now, pill, inp, res, v1, cost_us, drive, do_print)
     b and string.format("%.2f", b.radius or 0) or "-",
     b and tostring(b.aim_idx) or "-",
     b and b.aimnb ~= nil and (b.aimnb and "1" or "0") or "-",
+    b and b.bp_tier ~= nil and tostring(b.bp_tier) or "-",
+    b and b.wall_far ~= nil and tostring(b.wall_far) or "-", inp.carried_pills or 0,
     chain, mode_of(b),
     b and tostring(b.kills) or "-", b and tostring(b.need) or "-", b and tostring(b.have) or "-",
     tostring(v2ok and true or false), b and tostring(b.leeway) or "-", plan,

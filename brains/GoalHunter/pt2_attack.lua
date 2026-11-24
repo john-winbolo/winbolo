@@ -114,6 +114,8 @@ function M.build_inp(state, goal, info, world, pill, no_builder, npb, radius, no
   if not inp.A then return nil end
   inp.radius = radius
   inp.num_pill_blockers = npb
+  -- PT2_FAVOR_BLOCKER_PLACE: the pills we carry pick the blocker pill tiers
+  inp.carried_pills = info.carried_pills or 0
   -- PT2_FINISH_NO_COVER_MAX_ANGER: our armour and each pill's anger now
   inp.armour = info.armour or 0
   -- PT2_LIVE_SHELL: the shadow's shells walk the live rules
@@ -284,7 +286,7 @@ local function cmp_line(now, pill, inp, res, v1, cost_us, drive, do_print)
   end
   local line = string.format(
     "PT2_CMP t=%d pill=(%d,%d) hp=%d | v1: so=%s deg=%s aim=%s act=%s pot=%s cover=%s"
-    .. " | v2: so=%s deg=%s R=%s aim=%s aimnb=%s chain=%s mode=%s kills=%s need=%s have=%s safe=%s lee=%s plan=%s"
+    .. " | v2: so=%s deg=%s R=%s aim=%s aimnb=%s bpt=%s wfar=%s carried=%d chain=%s mode=%s kills=%s need=%s have=%s safe=%s lee=%s plan=%s"
     .. " | diff=%s d_wu=%s why=%s drive=%s cost_us=%d evals=%d green_pen=%d green_pen_skip=%d travel_noA=%d noA_pts=%d v1_score=%s v2_score=%s",
     now, pill.mx, pill.my, pill.health or 0,
     v1 and string.format("(%.2f,%.2f)", v1.cx, v1.cy) or "-",
@@ -297,6 +299,8 @@ local function cmp_line(now, pill, inp, res, v1, cost_us, drive, do_print)
     b and string.format("%.2f", b.radius or 0) or "-",
     b and tostring(b.aim_idx) or "-",
     b and b.aimnb ~= nil and (b.aimnb and "1" or "0") or "-",
+    b and b.bp_tier ~= nil and tostring(b.bp_tier) or "-",
+    b and b.wall_far ~= nil and tostring(b.wall_far) or "-", inp.carried_pills or 0,
     chain, mode_of(b),
     b and tostring(b.kills) or "-", b and tostring(b.need) or "-", b and tostring(b.have) or "-",
     tostring(v2ok and true or false), b and tostring(b.leeway) or "-", plan,
@@ -441,10 +445,12 @@ local function finish(a, inp, res, cost)
     out.hold = { fx = h.fx, fy = h.fy, safe = h.safe }
     goal._pt2.hold = out.hold
   end
-  print2(string.format("PT2_DRIVE t=%d A=(%d,%d) goal_target=(%d,%d) so=(%.2f,%.2f) deg=%.1f R=%s aim=%d aimnb=%s nudge=%d mode=%s A_hp=%d anger=%.3f armour=%d kills=%d build=%d have=%d need=%d depth=%s score=%.0f travel=%.0ft quick=%st band=%d hold=%s green_pen=%d green_pen_skip=%d travel_noA=%d noA_pts=%d",
+  print2(string.format("PT2_DRIVE t=%d A=(%d,%d) goal_target=(%d,%d) so=(%.2f,%.2f) deg=%.1f R=%s aim=%d aimnb=%s bpt=%s wfar=%s carried=%d nudge=%d mode=%s A_hp=%d anger=%.3f armour=%d kills=%d build=%d have=%d need=%d depth=%s score=%.0f travel=%.0ft quick=%st band=%d hold=%s green_pen=%d green_pen_skip=%d travel_noA=%d noA_pts=%d",
     a.now, A.mx, A.my, pill.mx, pill.my, b.cx, b.cy, b.deg,
     string.format("%.2f", b.radius or 0), b.aim_idx,
-    b.aimnb ~= nil and (b.aimnb and "1" or "0") or "-", b.nudge_wu or 0,
+    b.aimnb ~= nil and (b.aimnb and "1" or "0") or "-",
+    b.bp_tier ~= nil and tostring(b.bp_tier) or "-", b.wall_far ~= nil and tostring(b.wall_far) or "-",
+    inp.carried_pills or 0, b.nudge_wu or 0,
     mode_of(b), A.health or 0, M.anger_now(A, a.now), inp.armour or 0, b.kills, #b.plan, b.have, b.need,
     tostring(b.depth), b.score or 0, (b.score or 0) * inp.ticks_per_score,
     b.tier_min and string.format("%.0f", b.tier_min * inp.ticks_per_score) or "-", inp.travel_band_ticks,

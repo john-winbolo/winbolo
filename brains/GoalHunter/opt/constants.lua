@@ -1021,6 +1021,20 @@ M.PT2_AIM_AVOID_CHAIN_NEIGHBOUR = true
 -- false = the old rings. KEEL / MAST: false.
 M.PT2_FARTHEST_RING = true
 M.PT2_FARTHEST_RING_RADII = { 7.4, 7.2, 7.0, 6.6 }
+-- PT2_FAVOR_BLOCKER_PLACE (Nov 24, Andrew's yes): v2 only. "If we have
+-- friendly blocker pills in tank we should favor using them as blockers."
+-- Rank: safe, kills, then the blocker pill tier, then walls nearer the
+-- tank, then the aim rule, the farther ring and the rest. A friendly
+-- blocker pill is a planned pill drop or a placed friendly pill on a chain
+-- pill's ray; near = within 2.0 squares of the target pill, centre to
+-- centre. Carrying a pill: tier 0 = the plan uses one and every one is
+-- near, 1 = it uses one and one is not near, 2 = it uses none. Carrying
+-- none: 0 = every one is near (or there is none), 1 = one is not. Then the
+-- smaller largest distance from a planned wall to the firing square,
+-- floored to whole squares (no wall = 0). Lower wins in both. Log: bpt=,
+-- wfar= and carried= on PT2_CMP and PT2_DRIVE. false = the old rank.
+-- KEEL / MAST: false.
+M.PT2_FAVOR_BLOCKER_PLACE = true
 -- PT2_START_WHILE_BUILDING (Nov 23, Andrew's yes, E4): v2 and its caller.
 -- The take may start while the builder still builds the planned walls when
 -- the armour holds the shells that get through (pt2_start.lua):
@@ -8508,6 +8522,7 @@ M.PRESETS = {
     PT2_AIM_POINTS = 5,
     PT2_AIM_AVOID_CHAIN_NEIGHBOUR = false,
     PT2_FARTHEST_RING = false,
+    PT2_FAVOR_BLOCKER_PLACE = false,
     PT2_START_WHILE_BUILDING = false,
     PT2_START_ANGER_RISE = false,
     PT2_EXTRA_COVER_WALLS = 0,
@@ -8917,6 +8932,7 @@ M.PRESETS.mast = {
   PT2_AIM_POINTS                    = 5,      -- 2.2.1 had no pill take v2
   PT2_AIM_AVOID_CHAIN_NEIGHBOUR     = false,  -- 2.2.1 had no pill take v2
   PT2_FARTHEST_RING                 = false,  -- 2.2.1 had no pill take v2
+  PT2_FAVOR_BLOCKER_PLACE           = false,  -- 2.2.1 had no pill take v2
   PT2_START_WHILE_BUILDING          = false,  -- 2.2.1 had no pill take v2
   PT2_START_ANGER_RISE              = false,  -- 2.2.1 counted round(anger / bump) hits
   PT2_EXTRA_COVER_WALLS             = 0,      -- 2.2.1 had no pill take v2
