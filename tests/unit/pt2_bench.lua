@@ -300,26 +300,42 @@ end
 
 -- ── run ─────────────────────────────────────────────────────────────────
 local dumpf = args.dump and assert(io.open(args.dump, "w"))
+-- work=<file>: with eval=v2 and reps: each case's timed median and its work
+-- counts (pilltake_v2 M.last_work), to fit the slicer's unit weights
+local workf = args.work and assert(io.open(args.work, "w"))
 local EVAL = args.eval or "old"
 local NV = (EVAL ~= "old") and require("pilltake_v2") or nil
 
 -- slice=<n>: the cost of each slice (us) and the slices of each evaluate
 local SLICE = tonumber(args.slice or "")
 local slice_us, slice_n = {}, {}
+-- per evaluate: max / mean slice time and work; evaluates with a step
+-- (one plan's wall search) over the budget, and those steps
+local slice_rt, slice_rw, over_ev, over_n = {}, {}, 0, 0
 local function sliced(inp)
   local co = coroutine.create(function() return NV.evaluate_lua(inp) end)
   local sl = NV.slicer(inp, SLICE, coroutine.yield)
   inp.v2_slice = sl.fn
   local res
+  local mine = {}
   while true do
     local t0 = now_us()
     local ok, r = coroutine.resume(co)
-    slice_us[#slice_us + 1] = now_us() - t0
+    mine[#mine + 1] = now_us() - t0
+    slice_us[#slice_us + 1] = mine[#mine]
     if not ok then inp.v2_slice = nil; error(r, 0) end
     if coroutine.status(co) == "dead" then res = r; break end
   end
   inp.v2_slice = nil
   slice_n[#slice_n + 1] = sl.slices
+  local function ratio(t)
+    local sum, mx = 0, 0
+    for _, v in ipairs(t) do sum = sum + v; if v > mx then mx = v end end
+    return (sum > 0) and mx / (sum / #t) or 1
+  end
+  slice_rt[#slice_rt + 1] = ratio(mine)
+  slice_rw[#slice_rw + 1] = ratio(sl.wu or {})
+  if (sl.over or 0) > 0 then over_ev = over_ev + 1; over_n = over_n + sl.over end
   return res
 end
 
@@ -399,6 +415,11 @@ local function run_case(case)
     end
     table.sort(t)
     times[#times + 1] = t[math.ceil(#t / 2)]
+    if workf and EVAL == "v2" and NV.last_work then
+      local w = NV.last_work
+      workf:write(fmt("%d us=%d casts=%d shots=%d nodes=%d points=%d cant=%d survive=%d planned=%d surv1=%d\n",
+        n_case, t[math.ceil(#t / 2)], w.casts, w.shots, w.nodes, w.points, w.cant, w.survive, w.planned, w.surv1 or 0)); workf:flush()
+    end
     spots[#spots + 1] = res.n_eval
   end
   if args.prof == "1" and not USE_LUA then
@@ -856,6 +877,9 @@ if SLICE then
   print(fmt("pt2_bench slice=%d: per slice (one work tick) ms median %.3f p90 %.3f max %.3f (n %d);"
     .. " slices per evaluate %s", SLICE, q(slice_us, 0.5) / 1000, q(slice_us, 0.9) / 1000,
     q(slice_us, 1) / 1000, #slice_us, table.concat(hs, " ")))
+  print(fmt("pt2_bench slice=%d: max / mean slice per evaluate: time median %.2f p90 %.2f; work median %.2f p90 %.2f;"
+    .. " evaluates with one step over the budget %d of %d (%d steps)", SLICE, q(slice_rt, 0.5), q(slice_rt, 0.9),
+    q(slice_rw, 0.5), q(slice_rw, 0.9), over_ev, #slice_n, over_n))
 end
 local tot_us, tot_sp = 0, 0
 for i, v in ipairs(times) do tot_us = tot_us + v; tot_sp = tot_sp + spots[i] end

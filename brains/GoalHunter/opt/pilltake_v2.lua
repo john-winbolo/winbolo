@@ -682,6 +682,7 @@ local function nudge_aim(ctx, px, py, extra, shorts)
         local ai = live[i]
         local off = ctx.aims[ai]
         local ok, why, ln = SH.tank_shot(env, nx, ny, tx + off[1], ty + off[2], A.mx, A.my, extra)
+        ctx.n_shot = ctx.n_shot + 1
         if ok then return nx, ny, nw, ai, ln end
         if why == "short" then n = n + 1; live[n] = ai end
       end
@@ -712,6 +713,7 @@ local function eval_point(ctx, px, py, extra, aim_fixed, nudge, exact, lazy)
   for ai = a1, a2 do
     local off = ctx.aims[ai]
     local ok, why, ln = SH.tank_shot(env, px, py, A.mx * 256 + off[1], A.my * 256 + off[2], A.mx, A.my, extra)
+    ctx.n_shot = ctx.n_shot + 1
     if ok then aim_idx, lane = ai, ln; break end
     why_out = why
     if why == "short" then shorts = shorts or {}; shorts[#shorts + 1] = ai end
@@ -861,6 +863,7 @@ local function clear_aims_of(ctx, rec)
       local off = ctx.aims[ai]
       local ok, _, ln = SH.tank_shot(env, rec.px, rec.py, A.mx * 256 + off[1], A.my * 256 + off[2],
                                      A.mx, A.my, rec.extra_in)
+      ctx.n_shot = ctx.n_shot + 1
       if ok then rec.clear_aims[#rec.clear_aims + 1] = ai; rec.lanes[ai] = ln end
     end
     if t0 then ctx.tm.aim = ctx.tm.aim + ctx.clk() - t0 end
@@ -1768,7 +1771,8 @@ local function new_ctx(inp, A)
   local ctx = { inp = inp, A = A, env = inp.env, reach_cache = {}, hostile = {},
                 rays = cache.rays, sqm = cache.sqm, sqf = cache.sqf or {},
                 aims = (inp.aim_points == 9) and M.AIMS9 or M.AIMS,
-                stat = new_stat(), tm = new_tm(), clk = inp.v2_clock }
+                stat = new_stat(), tm = new_tm(), clk = inp.v2_clock,
+                n_shot = 0 }  -- P1b: the aim tests (shadow.tank_shot), for the slicer
   for _, p in ipairs(inp.pills) do
     if alive(p) and not inp.env.is_ally(p) then ctx.hostile[#ctx.hostile + 1] = p end
   end
@@ -1838,29 +1842,60 @@ local function carry(fin, rec)
   fin.base = rec.base
 end
 
--- PT2_V2_SPLIT (P1): one evaluate over up to PT2_V2_SPLIT_TICKS work ticks.
--- The caller runs the evaluate in a coroutine and sets inp.v2_slice
--- (M.slicer). The evaluate calls it after each unit of work: a point of the
--- ring loop, a plan, a leeway test. The slicer counts the units and yields
--- when the tick's budget is used; the next tick resumes the same run, so
--- the answer is the one of the run in one call. The time between a yield
--- and its resume is taken off tm.total (the slicer returns it).
--- Budget (points, not measured us: the same split on every machine and in
--- the bench): ceil(2 x angle steps x rings / ticks) units per tick (the ring
--- loop's points and about as many plans); the last tick runs what is left.
+-- PT2_V2_SPLIT (P1, P1b): one evaluate over up to PT2_V2_SPLIT_TICKS work
+-- ticks. The caller runs the evaluate in a coroutine and sets inp.v2_slice
+-- (M.slicer). The evaluate calls it between units of work (a ring point, a
+-- plan, a leeway test) with its work so far; the slicer yields when the
+-- tick's budget is used, and the next tick resumes the same run, so the
+-- answer is the one of the run in one call. The time between a yield and
+-- its resume is taken off tm.total (the slicer returns it).
+-- P1b (Andrew approved Nov 23): the work is weighted, in fixed units, so
+-- the slices cost about the same and the split is the same on every
+-- machine (no timers):
+--   SLICE_W_CAST  one shadow.cast (a pill ray, base or exact)
+--   SLICE_W_SHOT  one shadow.tank_shot (an aim test)
+--   SLICE_W_NODE  one node of the wall search
+--   SLICE_W_POINT one ring point (its square tests, pills in range and the
+--                 mask test; a point the masks cut costs only this)
+-- Bench fit (1399 cases, Nov 23): a cast, an aim test and a search node
+-- each cost about 3.3 us, a ring point about 5 us more than its casts and
+-- tests, so the weights are 2, 2, 2 and 3. Leeway tests are eval_point
+-- runs (their casts and aim tests count); the sorts are 2% of the time
+-- and get no weight.
+-- The budget comes from the survivors: after the first ring's mask pass,
+-- the work left is SLICE_PER_SURVIVOR x the ring's points the masks keep
+-- (the bench mean of the whole evaluate's work per first-ring survivor is
+-- 52 units), and budget = ceil(estimate / ticks). The last tick runs what
+-- is left. One wall search is never cut: a point's plan ends in the slice
+-- it starts in.
+local SLICE_W_CAST, SLICE_W_SHOT, SLICE_W_NODE, SLICE_W_POINT = 2, 2, 2, 3
+local SLICE_PER_SURVIVOR = 52
+M.SLICE_W = { cast = SLICE_W_CAST, shot = SLICE_W_SHOT, node = SLICE_W_NODE, point = SLICE_W_POINT,
+              per_survivor = SLICE_PER_SURVIVOR }
+
+-- The slicer: s.fn(wu, est, fin) with wu = the evaluate's work so far, est
+-- = the estimate of its whole work (given once, after the first ring's mask
+-- pass; no yield before it), fin = the evaluate's end (no yield). s.slices, s.budget, and for the bench:
+-- s.wu (the work of each slice), s.over (steps between two calls that
+-- alone are over the budget: one plan's wall search, which is not cut).
 function M.slicer(inp, ticks, yield)
   ticks = ticks or 5
-  local steps = floor(360 / (inp.angle_step or 5) + 0.5)
-  local budget = math.ceil(2 * steps * #(inp.radii_offsets or { 0 }) / math.max(1, ticks))
-  if budget < 1 then budget = 1 end
-  local used, slices = 0, 1
   local clk = inp.v2_clock
-  local s = { budget = budget, slices = 1 }
-  s.fn = function()
-    used = used + 1
-    if used < s.budget or slices >= ticks then return 0 end
-    used, slices = 0, slices + 1
-    s.slices = slices
+  local s = { budget = nil, slices = 1, wu = {}, over = 0 }
+  local start, last = 0, 0
+  s.fn = function(wu, est, fin)
+    if fin then s.wu[s.slices] = wu - start; return 0 end
+    if est and not s.budget then
+      local b = math.ceil(est / math.max(1, ticks))
+      s.budget = b < 1 and 1 or b
+    end
+    local b = s.budget
+    if b and wu - last > b then s.over = s.over + 1 end
+    last = wu
+    if not b or wu - start < b or s.slices >= ticks then return 0 end
+    s.wu[s.slices] = wu - start
+    start = wu
+    s.slices = s.slices + 1
     local t = clk and clk()
     yield()
     return t and (clk() - t) or 0
@@ -1875,13 +1910,24 @@ function M.evaluate_lua(inp)
   local T0 = clk and clk()
   -- PT2_V2_SPLIT: the slicer (see M.slicer); paused: the time between ticks
   local slice_fn, paused = inp.v2_slice, 0
-  local function unit()
-    if slice_fn then paused = paused + (slice_fn() or 0) end
+  local surv1 = nil
+  -- the mask pass's points of one ring (P1b), reused ring to ring
+  local PP_deg, PP_cx, PP_cy, PP_mx, PP_my, PP_px, PP_py, PP_T, PP_hasA, PP_cant =
+    {}, {}, {}, {}, {}, {}, {}, {}, {}, {}
+  local st = ctx.stat
+  local n_eval = 0
+  -- the work so far, in slice units (P1b)
+  local function work()
+    return SLICE_W_CAST * (st.casts + st.casts_confirm) + SLICE_W_SHOT * ctx.n_shot
+      + SLICE_W_NODE * st.wall_nodes + SLICE_W_POINT * n_eval
+  end
+  local function unit(est, fin)
+    if slice_fn then paused = paused + (slice_fn(work(), est, fin) or 0) end
   end
   local pcx, pcy = A.mx + 0.5, A.my + 0.5
   local all, best = {}, nil
-  local n_eval, n_reject = 0, 0
-  local st, tm = ctx.stat, ctx.tm
+  local n_reject = 0
+  local tm = ctx.tm
   local t0 = clk and clk()
   local asets = aim_wedges(ctx, A)
   if t0 then tm.wedges = tm.wedges + clk() - t0 end
@@ -1901,6 +1947,10 @@ function M.evaluate_lua(inp)
     local cands = {}
     local mpts = {}
     local nsteps = floor(360 / inp.angle_step + 0.5)
+    -- P1b: the mask pass first (the square tests, pills in range, the mask
+    -- test of every point of the ring), then the points it keeps; the
+    -- first ring's survivors give the slicer its estimate
+    local np = 0
     for s = 0, nsteps - 1 do
       local deg = s * inp.angle_step
       if not (inp.banned and inp.banned(deg)) then
@@ -1911,15 +1961,34 @@ function M.evaluate_lua(inp)
           n_eval = n_eval + 1
           local px, py = floor(cx * 256), floor(cy * 256)
           local T, hasA = pills_in_range(ctx, px, py)
+          local is_cant = false
+          if hasA then
+            local t1 = clk and clk()
+            is_cant = cant(ctx, asets, px, py)
+            if t1 then tm.masks = tm.masks + clk() - t1 end
+            if is_cant then st.cant = st.cant + 1 else st.survive = st.survive + 1 end
+          end
+          np = np + 1
+          PP_deg[np], PP_cx[np], PP_cy[np], PP_mx[np], PP_my[np] = deg, cx, cy, mx, my
+          PP_px[np], PP_py[np], PP_T[np], PP_hasA[np], PP_cant[np] = px, py, T, hasA, is_cant
+        end
+      end
+    end
+    if not surv1 then
+      surv1 = st.survive
+      unit(SLICE_PER_SURVIVOR * surv1)
+    end
+    for q = 1, np do
+      local deg, cx, cy, mx, my = PP_deg[q], PP_cx[q], PP_cy[q], PP_mx[q], PP_my[q]
+      local px, py, T, hasA, is_cant = PP_px[q], PP_py[q], PP_T[q], PP_hasA[q], PP_cant[q]
+      PP_T[q] = nil
+      do
+        do
           local rec, why
           if not hasA then
             why = "A_OUT_OF_RANGE"
           else
-            local t1 = clk and clk()
-            local is_cant = cant(ctx, asets, px, py)
-            if t1 then tm.masks = tm.masks + clk() - t1 end
             if is_cant then
-              st.cant = st.cant + 1
               why = "CANT"
               if inp.v2_loss_check then
                 local q = eval_point(ctx, px, py, nil, nil, true, false)
@@ -1932,7 +2001,6 @@ function M.evaluate_lua(inp)
                 end
               end
             else
-              st.survive = st.survive + 1
               rec, why = eval_point(ctx, px, py, nil, nil, true, false, lazy)
               if rec then mpts[#mpts + 1] = { px = px, py = py, T = T, rec = rec } end
             end
@@ -2216,7 +2284,11 @@ function M.evaluate_lua(inp)
     best.extra_cover = extra_cover(ctx, best)
     if t3 then tm.xcover = tm.xcover + clk() - t3 end
   end
+  unit(nil, true)
   if T0 then tm.total = clk() - T0 - paused end
+  M.last_work = { casts = st.casts + st.casts_confirm, shots = ctx.n_shot,
+                  nodes = st.wall_nodes, points = n_eval, cant = st.cant, survive = st.survive,
+                  planned = st.planned, surv1 = surv1 }
   return { best = best, all = inp.keep_all and all or nil, n_eval = n_eval, n_reject = n_reject,
            hostile = ctx.hostile, inp = inp, no_chain = no_chain, v2 = { stat = st, tm = tm } }
 end

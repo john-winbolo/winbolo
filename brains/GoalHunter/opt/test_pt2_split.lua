@@ -519,13 +519,14 @@ do
   local slices, kill_unit = 0, nil
   NV.slicer = function(inp, ticks, yield)
     local s = real_slicer(inp, ticks, yield)
-    s.budget = 3
+    s.budget = 3   -- work units (P1b weights): several slices per evaluate
     local units, fn = 0, s.fn
-    s.fn = function()
+    s.fn = function(...)
       units = units + 1
       if kill_unit and units == kill_unit then kill_unit = nil; error("tick_budget_exceeded (slice)", 0) end
       local before = s.slices
-      local r = fn()
+      local wu, _, fin = ...
+      local r = fn(wu, nil, fin)   -- the fixed budget, not the estimate
       if s.slices ~= before then slices = slices + 1 end
       return r
     end
