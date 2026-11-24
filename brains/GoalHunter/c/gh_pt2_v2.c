@@ -2135,6 +2135,7 @@ static Rec *eval_point(Ev *e, double px, double py, Extra *extra, int aim_fixed,
         else if (ci) bar = e->bar_chain;
         else bar = e->bar_other;
         r->bar = bar;
+        r->has_bar = 1;
         r->link_cover = e->link_covers && ci && !r->cut && r->link != 0 && ci < chain->n
                         && r->link == chain->v[ci];
         int ok;

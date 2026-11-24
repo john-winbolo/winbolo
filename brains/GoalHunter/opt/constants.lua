@@ -1349,7 +1349,7 @@ M.PT2_WALL_MEMO_MAX = 20000
 -- pilltake_v2.lua M.evaluate_c) when the exe has it. The result is the
 -- one the Lua gives (test_gh_pt2_v2_parity), with PT2_V2_SPLIT too. An
 -- older exe has no C copy and the Lua runs. false = the Lua copy.
-M.PT2_V2_C = false
+M.PT2_V2_C = true
 -- SHIELD_SCAN_PENDING_SURVIVES_V2 (Nov 22, Andrew: "Fix it"): with
 -- PT2_AFTER_SCAN_SPLIT off, v2 runs in one go on the plan tick. true: keep
 -- goal._shield_scan_pending until goal._shield_scan is set, so a budget kill
@@ -8448,6 +8448,8 @@ M.PRESETS = {
     --   2026-11-23: the split v2 run packs its parts into few ticks.
     PT2_SPLIT_ONE_PART_PER_TICK = false,
     PT2_V2_SPLIT = false,
+    --   2026-11-24: pill take v2 in Lua only (no C copy).
+    PT2_V2_C = false,
     --   2026-11-23: the old pill take evaluator (no shadow map).
     PT2_EVALUATOR = "old",
     PT2_EVAL_BY_TIER = false,
@@ -8835,6 +8837,7 @@ M.PRESETS.mast = {
   PT2_AFTER_SCAN_SPLIT              = false,  -- 2.2.1 had no pill take v2
   PT2_SPLIT_ONE_PART_PER_TICK       = false,  -- 2.2.1 had no pill take v2
   PT2_V2_SPLIT                      = false,  -- 2.2.1 had no pill take v2
+  PT2_V2_C                          = false,  -- 2.2.1 had no pill take v2
   PT2_EVALUATOR                     = "old",  -- 2.2.1 had no pill take v2
   PT2_EVAL_BY_TIER                  = false,  -- 2.2.1 had no pill take v2
   WSIM_DRIVE_WHILE_SLIDING          = false,  -- 2.2.1 world sim: no driving while pushed

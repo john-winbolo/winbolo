@@ -520,6 +520,7 @@ local function random_case(ci)
 end
 
 local n, bad, first = 0, 0, nil
+KINDS, KINDS_ORDER = {}, {}
 local function one(tag, ci, inp, pills)
   n = n + 1
   local ok, e = pcall(run_case, inp, pills)
@@ -527,6 +528,9 @@ local function one(tag, ci, inp, pills)
   if e then
     bad = bad + 1
     first = first or (tag .. " " .. ci .. ": " .. e)
+    local kind = e:gsub("%-?[%d%.]+e?[%-+]?%d*", "#"):sub(1, 120)
+    if not KINDS[kind] then KINDS[kind] = 0; KINDS_ORDER[#KINDS_ORDER + 1] = { kind, tag .. " " .. ci .. ": " .. e } end
+    KINDS[kind] = KINDS[kind] + 1
   end
 end
 
@@ -609,4 +613,8 @@ for _, k in ipairs({ "split", "group", "std_on", "memo" }) do
 end
 print("test_pt2_v2_c_parity: " .. n .. " cases, " .. bad .. " bad; " .. cvs)
 if first then print("  first: " .. first) end
+for i, k in ipairs(KINDS_ORDER) do
+  if i > 25 then break end
+  print(string.format("  kind x%d: %s", KINDS[k[1]], k[2]:sub(1, 300)))
+end
 return n, bad, first or "", cvs
