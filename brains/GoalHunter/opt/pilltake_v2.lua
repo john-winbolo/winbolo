@@ -45,7 +45,9 @@
 --     trip. One exact evaluation with the chosen blockers confirms the plan.
 --     Every point the masks keep gets a plan.
 --  8. Rank: the old M.better, travel band and leeway as old; with
---     PT2_PREFER_EXISTING_COVER, fewer planned blockers first in the band.
+--     PT2_AIM_AVOID_CHAIN_NEIGHBOUR, an aim beside a chain member last of
+--     the same safe and kills; with PT2_PREFER_EXISTING_COVER, fewer
+--     planned blockers first in the band.
 --  9. A lone pill (no other hostile pill in range of any point): the points
 --     are planned in travel score order, and planning stops once no point
 --     left can come into the travel band (the best is the same).
@@ -67,6 +69,8 @@ function M.knob_inp(C, inp)
   inp.prefer_existing_cover = C.PT2_PREFER_EXISTING_COVER ~= false
   -- PT2_AIM_POINTS (E3): 9 = M.AIMS9, else the old 5
   inp.aim_points = C.PT2_AIM_POINTS or 5
+  -- PT2_AIM_AVOID_CHAIN_NEIGHBOUR (Nov 24): an aim beside a chain member last
+  inp.aim_avoid_nb = C.PT2_AIM_AVOID_CHAIN_NEIGHBOUR ~= false
   -- PT2_START_WHILE_BUILDING (E4); anger_bump: world.lua's anger per hit
   inp.start_while_building = C.PT2_START_WHILE_BUILDING ~= false
   inp.anger_bump = C.PILL_ANGER_BUMP or 0.3333
@@ -107,11 +111,23 @@ M.AIMS9[9] = { 24, 128 }
 -- start_now: a point the tank may start while the walls go up ranks above
 -- one where it must wait. After n_built (E1), before depth.
 --
+-- PT2_AIM_AVOID_CHAIN_NEIGHBOUR (Nov 24, Andrew's yes): two points of the
+-- same safe and kills rank next by aimnb: a point whose aim is beside a
+-- chain member (aim_nb: another chain pill, or a blocker on a chain
+-- pill's ray, that touches the aim's corner or edge) comes after one whose
+-- aim is not. In or out of the band, before E1 and E4. A preference only:
+-- with every point beside, the best of them still wins. aimnb is nil with
+-- the knob off (the old order).
+--
 -- no_s0: skip the S0 tie-break; a full tie is then false (b stays). The
 -- group step passes it (Nov 23, Andrew approved Nov 23): on a full tie
 -- between plans with different first pills, the plan it has (the goal
 -- pill's own, run first) wins, as before S0.
 function M.better(a, b, cap, band, pec, swb, no_s0)
+  if a.safe == b.safe and a.kills == b.kills then
+    local na, nb = a.aimnb or false, b.aimnb or false
+    if na ~= nb then return nb end
+  end
   if (pec or swb) and band and band > 0 and a.safe == b.safe and a.kills == b.kills then
     local sa, sb = a.score, b.score
     local m = math.min(sa, sb, a.tier_min or sa, b.tier_min or sb)
@@ -1792,6 +1808,66 @@ local function confirm_plan(ctx, rec, ai, items)
   return nil
 end
 
+-- PT2_AIM_AVOID_CHAIN_NEIGHBOUR (Nov 24, Andrew's yes): the squares of
+-- a record's chain members: every chain pill but A, and every blocker on
+-- a chain pill's ray (a wall or pill that stands, a planned wall, a
+-- dropped pill). nil when there is none (a single take with no cover).
+local function nb_set(ctx, rec)
+  local A = ctx.A
+  local a_sq = A.my * 256 + A.mx
+  local set, any = {}, false
+  for _, X in ipairs(rec.chain or {}) do
+    if X ~= A then set[X.my * 256 + X.mx] = true; any = true end
+    local i = rec.ri and rec.ri[X]
+    local r = i and rec.rays and rec.rays[i]
+    if r then
+      for k = 1, r.n_block do
+        local q = r.block[k].sq
+        if q ~= a_sq then set[q] = true; any = true end
+      end
+    end
+  end
+  return any and set or nil
+end
+M._nb_set = nb_set
+
+-- Is aim ai on A's square beside a square of set? A corner aim touches the
+-- 3 squares that share its corner (the 2 side neighbours and the
+-- diagonal), an edge midpoint the 1 square on its side, the centre none.
+local function aim_beside(ctx, ai, set)
+  if not set then return false end
+  local off = ctx.aims[ai]
+  local dx = (off[1] < 128 and -1) or (off[1] > 128 and 1) or 0
+  local dy = (off[2] < 128 and -1) or (off[2] > 128 and 1) or 0
+  local ax, ay = ctx.A.mx, ctx.A.my
+  if dx ~= 0 and set[ay * 256 + ax + dx] then return true end
+  if dy ~= 0 and set[(ay + dy) * 256 + ax] then return true end
+  if dx ~= 0 and dy ~= 0 and set[(ay + dy) * 256 + ax + dx] then return true end
+  return false
+end
+M._aim_beside = aim_beside
+
+-- The record's aimnb (inp.aim_avoid_nb only): is its aim beside a chain
+-- member? A covered point with no plan takes its first clear aim that is
+-- not beside one, when it has one (the aim's own preference; a plan's aim
+-- is picked in plan_point).
+local function aim_nb(ctx, fin)
+  if not ctx.inp.aim_avoid_nb then return end
+  local set = nb_set(ctx, fin)
+  local nb = aim_beside(ctx, fin.aim_idx, set)
+  if nb and fin.covered and #fin.plan == 0 then
+    for _, ai in ipairs(clear_aims_of(ctx, fin)) do
+      if not aim_beside(ctx, ai, set) then
+        fin.aim_idx, fin.lane = ai, fin.lanes[ai]
+        nb = false
+        ctx.stat.aimnb_moved = ctx.stat.aimnb_moved + 1
+        break
+      end
+    end
+  end
+  fin.aimnb = nb
+end
+
 local function plan_point(ctx, rec)
   if rec.covered then rec.plan, rec.extra = {}, {}; return rec end
   -- S1: the clear aims' tank shots count in "aim" only (clear_aims_of has
@@ -1800,16 +1876,23 @@ local function plan_point(ctx, rec)
   local t0 = ctx.clk and ctx.clk()
   local best = nil
   local all = search_walls_all(ctx, rec, aims)
+  -- PT2_AIM_AVOID_CHAIN_NEIGHBOUR: an aim beside a chain member (of the
+  -- point's chain and cover now, before the plan) comes after one that is
+  -- not, before fewer walls
+  local nbs = ctx.inp.aim_avoid_nb and nb_set(ctx, rec) or nil
+  local best_nb = false
   for _, ai in ipairs(aims) do
     local s = all[ai]
     if s then
+      local nb = aim_beside(ctx, ai, nbs)
       local b = false
       if not best then b = true
+      elseif nb ~= best_nb then b = not nb
       elseif s.k ~= best.k then b = s.k < best.k
       elseif s.depth ~= best.depth then b = s.depth > best.depth
       elseif s.two ~= best.two then b = s.two
       elseif abs(s.trip - best.trip) > 1e-9 then b = s.trip < best.trip end
-      if b then best = s end
+      if b then best, best_nb = s, nb end
     end
   end
   if t0 then ctx.tm.walls = ctx.tm.walls + ctx.clk() - t0 end
@@ -1826,11 +1909,13 @@ local function plan_point(ctx, rec)
     for n, ai in ipairs(aims) do
       local a = all[ai]
       if a and a.k == best.k then
-        for _, so in ipairs(a.sols) do pairs_[#pairs_ + 1] = { so = so, ai = ai, n = n } end
+        local nb = aim_beside(ctx, ai, nbs)
+        for _, so in ipairs(a.sols) do pairs_[#pairs_ + 1] = { so = so, ai = ai, n = n, nb = nb } end
       end
     end
     table.sort(pairs_, function(x, y)
       local a, b = x.so, y.so
+      if x.nb ~= y.nb then return not x.nb end
       if a.depth ~= b.depth then return a.depth > b.depth end
       if a.two ~= b.two then return a.two end
       if abs(a.trip - b.trip) > 1e-9 then return a.trip < b.trip end
@@ -1889,7 +1974,7 @@ local function new_stat()
            wall_slow = 0,
            confirm_checked = 0, confirm_mismatch = 0, confirm_winner = 0,
            confirm_retry = 0, confirm_rescued = 0, reach_calls = 0, reach_sq_calls = 0, reach_differs = 0,
-           leeway_more = 0, leeway_more_fail = 0, leeway_single = 0 }
+           leeway_more = 0, leeway_more_fail = 0, leeway_single = 0, aimnb_moved = 0 }
 end
 local function new_tm()
   return { wedges = 0, masks = 0, cast = 0, aim = 0, walls = 0, confirm = 0, leeway = 0,
@@ -1969,6 +2054,7 @@ local function score_of(ctx, fin)
   fin.n_built = #fin.plan
   fin.blk = (inp.own_pill_rank and fin.ally_cover) and 2 or 1
   fin.score = fin.base + fin.n_built * inp.build_cost
+  aim_nb(ctx, fin)
   if inp.start_while_building and fin.safe then
     local t3 = clk and clk()
     start_check(ctx, fin)

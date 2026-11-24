@@ -1033,5 +1033,68 @@ do
   check("the group's extra walls = the result run's own", same == n and with > 0, n - same)
 end
 
+-- ── 11. PT2_AIM_AVOID_CHAIN_NEIGHBOUR ────────────────────────────────────
+-- pt2_grass_double_take_demo n1 (Nov 24): pills A (125,118) and B
+-- (126,118) side by side, the tank south-west, chain B-A. B's bottom-left
+-- corner (aim 4) touches A: shells to it graze A. Its bottom-right corner
+-- (aim 5) is free.
+print("PT2_AIM_AVOID_CHAIN_NEIGHBOUR: an aim beside a chain member last")
+do
+  local PA = { mx = 125, my = 118, owner = "hostile", health = 15 }
+  local PB = { mx = 126, my = 118, owner = "hostile", health = 15 }
+  -- beside: per aim, on B with A in the chain
+  local world = make_world({ PB, PA })
+  local inp = make_inp(world, PB, 0)
+  inp.aim_points = 9
+  local ctx = V._new_ctx(inp, PB)
+  local set = V._nb_set(ctx, { chain = { PB, PA } })
+  local want = { false, true, false, true, false, false, false, false, true }
+  local ok = true
+  for ai = 1, 9 do if V._aim_beside(ctx, ai, set) ~= want[ai] then ok = false end end
+  check("beside A: TL, BL and the left edge only", ok)
+  check("a single take with no cover: never beside", V._nb_set(ctx, { chain = { PB } }) == nil
+        and V._aim_beside(ctx, 4, nil) == false)
+  local dset = { [119 * 256 + 125] = true }   -- a wall at B's bottom-left diagonal
+  check("the diagonal counts for a corner", V._aim_beside(ctx, 4, dset) and not V._aim_beside(ctx, 8, dset)
+        and not V._aim_beside(ctx, 5, dset))
+  -- the rank: same safe and kills, beside last (even with less walls)
+  local function pt(aimnb, n_built)
+    return { safe = true, kills = 2, score = 10, tier_min = 10, n_built = n_built,
+             depth = 3, blk = 1, leeway = 8, aimnb = aimnb, deg = 0, radius = 7 }
+  end
+  check("rank: a free aim beats a beside aim", V.better(pt(false, 2), pt(true, 1), 8, 5, true, true) == true
+        and V.better(pt(true, 1), pt(false, 2), 8, 5, true, true) == false)
+  local un = pt(false, 1); un.safe = false
+  check("rank: safe first (a beside safe point wins)", V.better(pt(true, 1), un, 8, 5, true, true) == true)
+  local k1 = pt(false, 1); k1.kills = 1
+  check("rank: kills first (a beside 2-kill point wins)", V.better(pt(true, 1), k1, 8, 5, true, true) == true)
+  check("rank: knob off (aimnb nil) = the old order",
+        V.better(pt(nil, 2), pt(nil, 1), 8, 5, true, true) == false)
+  -- evaluate: walls at (123,119) and (124,121); the best point (deg 232)
+  -- is the same both ways, its aim is not
+  local function run(on)
+    clear(); V.reset()
+    terrain[sq(123, 119)] = C.T_BUILDING
+    terrain[sq(124, 121)] = C.T_BUILDING
+    local i2 = make_inp(make_world({ PB, PA }), PB, 0)
+    i2.aim_points = 9
+    i2.aim_avoid_nb = on
+    i2.score_fn = function(deg, mx, my, cx, cy)
+      local dx, dy = cx - 120.5, cy - 124.5
+      return math.sqrt(dx * dx + dy * dy)
+    end
+    return V.evaluate_lua(i2).best
+  end
+  local off, on = run(false), run(true)
+  check("knob off: the old pick stands (BL, beside A)", off and off.safe and off.kills == 2
+        and off.aim_idx == 4 and off.aimnb == nil, off and off.aim_idx)
+  check("knob on: the free corner wins (BR, not beside)", on and on.safe and on.kills == 2
+        and on.aim_idx == 5 and on.aimnb == false, on and on.aim_idx)
+  check("knob on: the same point", on and off and on.px == off.px and on.py == off.py)
+  check("knob_inp: PT2_AIM_AVOID_CHAIN_NEIGHBOUR",
+        V.knob_inp(C, {}).aim_avoid_nb == (C.PT2_AIM_AVOID_CHAIN_NEIGHBOUR ~= false))
+  clear(); V.reset()
+end
+
 print(string.format("%d passed, %d failed", pass, fail))
 os.exit(fail == 0 and 0 or 1)

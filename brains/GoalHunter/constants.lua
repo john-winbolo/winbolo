@@ -996,6 +996,19 @@ M.PT2_CHAINS_ONLY = true
 -- attack_shield.AIM_OFFSETS_TILE_FIRE9 (fire inset, as the corners).
 -- 5 = the old aims. KEEL / MAST: 5.
 M.PT2_AIM_POINTS = 9
+-- PT2_AIM_AVOID_CHAIN_NEIGHBOUR (Nov 24, Andrew's yes): v2 only. "In a
+-- double take like this, favor targeting a corner that isn't right beside
+-- another pill or blocker in the chain." An aim is beside a chain member
+-- when its corner or edge touches the square of another chain pill, or of
+-- a blocker on a chain pill's ray (a wall or pill used as cover, a planned
+-- wall, a dropped pill): a corner aim touches the 3 squares at its corner,
+-- an edge midpoint the 1 square on its side, the centre none. Shells to
+-- such an aim can graze that square. Two points of the same safe and kills
+-- rank by it next (not beside first), before E1 and the rest; a point with
+-- no plan takes its first clear aim that is not beside one. A preference,
+-- never a ban. Log: aimnb= on PT2_CMP and PT2_DRIVE. false = the old aims
+-- and rank. KEEL / MAST: false.
+M.PT2_AIM_AVOID_CHAIN_NEIGHBOUR = true
 -- PT2_START_WHILE_BUILDING (Nov 23, Andrew's yes, E4): v2 and its caller.
 -- The take may start while the builder still builds the planned walls when
 -- the armour holds the shells that get through (pt2_start.lua):
@@ -8401,6 +8414,7 @@ M.PRESETS = {
     PT2_PREFER_EXISTING_COVER = false,
     PT2_CHAINS_ONLY = false,
     PT2_AIM_POINTS = 5,
+    PT2_AIM_AVOID_CHAIN_NEIGHBOUR = false,
     PT2_START_WHILE_BUILDING = false,
     PT2_START_ANGER_RISE = false,
     PT2_EXTRA_COVER_WALLS = 0,
@@ -8802,6 +8816,7 @@ M.PRESETS.mast = {
   PT2_PREFER_EXISTING_COVER         = false,  -- 2.2.1 had no pill take v2
   PT2_CHAINS_ONLY                   = false,  -- 2.2.1 had no pill take v2
   PT2_AIM_POINTS                    = 5,      -- 2.2.1 had no pill take v2
+  PT2_AIM_AVOID_CHAIN_NEIGHBOUR     = false,  -- 2.2.1 had no pill take v2
   PT2_START_WHILE_BUILDING          = false,  -- 2.2.1 had no pill take v2
   PT2_START_ANGER_RISE              = false,  -- 2.2.1 counted round(anger / bump) hits
   PT2_EXTRA_COVER_WALLS             = 0,      -- 2.2.1 had no pill take v2

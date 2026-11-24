@@ -369,6 +369,7 @@ typedef struct { int n, cap; int64_t *sq; uint8_t *v; } SlotMemo;
 #define RF_ANEED     0x08000
 #define RF_LB        0x10000
 #define RF_KMIN      0x20000
+#define RF_AIMNB     0x40000
 
 typedef struct Rec {
     double  px, py, nudge_wu;
@@ -413,6 +414,7 @@ typedef struct Rec {
     SlotMemo *sm;
     /* the lazy stub */
     double  a_need, a_bar, lb, kmin;
+    int     aimnb;              /* RF_AIMNB: PT2_AIM_AVOID_CHAIN_NEIGHBOUR */
     struct Rec *done;           /* the lone pass: the plan's record */
     Memo    m, m_ri;
 } Rec;
@@ -522,6 +524,7 @@ struct St {
     double finish_min_armour, armour;
     int    has_armour;
     int    pec, swb, rise, chains_only, xcover_later, has_cache;
+    int    aim_nb_on;
     double extra_cover_walls, anger_bump;
     int    has_pat, has_pamt, has_pad, has_pct, has_trl;
     double pill_attack_ticks, pill_attack_min_ticks, pill_angry_divisor, pill_cooldown_ticks, tank_reload;
@@ -564,6 +567,7 @@ struct St {
     double sq_reads, casts, casts_confirm, ray_reuse, nudged, planned, confirm_fail, wall_nodes;
     double cant, survive, lone, plan_skipped, lazy_n, plan_cut, must_cut, must_cut_wrong;
     double co_stop, co_single_eval, wall_slow, confirm_retry, confirm_rescued, reach_calls;
+    double aimnb_moved;
     double leeway_more, leeway_more_fail, leeway_single;
     double n_shot, memo_nodes;
     /* the slicer */
@@ -3371,11 +3375,77 @@ static PlanE *sol_items(Ev *e, const Sol *so) {
     return it;
 }
 
-typedef struct { Sol *so; int ai; int n; } S6Pair;
+/* PT2_AIM_AVOID_CHAIN_NEIGHBOUR (Nov 24, Andrew's yes): nb_set, aim_beside
+ * and aim_nb as the Lua. The squares of a record's chain members: every
+ * chain pill but A, and every blocker on a chain pill's ray. n = 0: none. */
+typedef struct { int n; int64_t *sq; } NbSet;
+static NbSet nb_set(Ev *e, const Rec *rec) {
+    NbSet o; o.n = 0; o.sq = NULL;
+    if (!rec->chain) return o;
+    Pill *A = PI(e, e->A);
+    int64_t a_sq = (int64_t)(A->my * 256 + A->mx);
+    int cap = 0;
+    for (int c = 0; c < rec->chain->n; c++) {
+        cap += 1;
+        int i = rec->rays ? ri_of(rec, rec->chain->v[c]) : 0;
+        if (i) cap += rec->rays->v[i - 1]->n_block;
+    }
+    o.sq = NEWN(e, int64_t, cap + 1);
+    for (int c = 0; c < rec->chain->n; c++) {
+        int X = rec->chain->v[c];
+        if (X != e->A) { Pill *P = PI(e, X); o.sq[o.n++] = (int64_t)(P->my * 256 + P->mx); }
+        int i = rec->rays ? ri_of(rec, X) : 0;
+        if (i) {
+            Ray *r = rec->rays->v[i - 1];
+            for (int k = 0; k < r->n_block; k++) if (r->blk[k]->sq != a_sq) o.sq[o.n++] = r->blk[k]->sq;
+        }
+    }
+    return o;
+}
+static int nb_has(const NbSet *s, int64_t q) {
+    for (int i = 0; i < s->n; i++) if (s->sq[i] == q) return 1;
+    return 0;
+}
+static int aim_beside(Ev *e, int ai, const NbSet *s) {
+    if (!s || s->n == 0) return 0;
+    double ox = s_aims9[ai - 1][0], oy = s_aims9[ai - 1][1];
+    int dx = ox < 128 ? -1 : (ox > 128 ? 1 : 0);
+    int dy = oy < 128 ? -1 : (oy > 128 ? 1 : 0);
+    Pill *A = PI(e, e->A);
+    double ax = A->mx, ay = A->my;
+    if (dx && nb_has(s, (int64_t)(ay * 256 + ax + dx))) return 1;
+    if (dy && nb_has(s, (int64_t)((ay + dy) * 256 + ax))) return 1;
+    if (dx && dy && nb_has(s, (int64_t)((ay + dy) * 256 + ax + dx))) return 1;
+    return 0;
+}
+static void aim_nb(Ev *e, Rec *fin) {
+    if (!e->aim_nb_on) return;
+    NbSet s = nb_set(e, fin);
+    int nb = aim_beside(e, fin->aim_idx, &s);
+    if (nb && fin->covered && fin->plan->n == 0) {
+        Aims *aims = clear_aims_of(e, fin);
+        for (int i = 0; i < aims->n; i++) {
+            int ai = aims->v[i];
+            if (!aim_beside(e, ai, &s)) {
+                fin->aim_idx = ai;
+                for (int j = 0; j < fin->lanes->n; j++)
+                    if (fin->lanes->ai[j] == ai) { fin->lane = fin->lanes->ln[j]; break; }
+                nb = 0;
+                e->aimnb_moved += 1;
+                break;
+            }
+        }
+    }
+    fin->aimnb = nb;
+    fin->flags |= RF_AIMNB;
+}
+
+typedef struct { Sol *so; int ai; int n; int nb; } S6Pair;
 static int s6_lt(void *cx, void *pa, void *pb) {
     (void)cx;
     const S6Pair *x = (const S6Pair *)pa, *y = (const S6Pair *)pb;
     const Sol *a = x->so, *b = y->so;
+    if (x->nb != y->nb) return !x->nb;
     if (a->depth != b->depth) return a->depth > b->depth;
     if (a->two != b->two) return a->two;
     if (fabs(a->trip - b->trip) > 1e-9) return a->trip < b->trip;
@@ -3387,21 +3457,26 @@ static Rec *plan_point(Ev *e, Rec *rec) {
     if (rec->covered) { plan_empty(e, rec); return rec; }
     Aims *aims = clear_aims_of(e, rec);
     WSOut *all = search_walls_all(e, rec, aims);
-    int bi = -1;
+    /* PT2_AIM_AVOID_CHAIN_NEIGHBOUR: an aim beside a chain member last */
+    NbSet nbs; nbs.n = 0; nbs.sq = NULL;
+    if (e->aim_nb_on) nbs = nb_set(e, rec);
+    int bi = -1, best_nb = 0;
     for (int i = 0; i < aims->n && i < all->nA; i++) {
         AimOut *s = &all->a[i];
         if (!s->has) continue;
+        int nb = aim_beside(e, aims->v[i], &nbs);
         int b = 0;
         if (bi < 0) b = 1;
         else {
             AimOut *bo = &all->a[bi];
             Sol *ss = s->sols.v[s->best], *bs = bo->sols.v[bo->best];
-            if (s->k != bo->k) b = s->k < bo->k;
+            if (nb != best_nb) b = !nb;
+            else if (s->k != bo->k) b = s->k < bo->k;
             else if (ss->depth != bs->depth) b = ss->depth > bs->depth;
             else if (ss->two != bs->two) b = ss->two;
             else if (fabs(ss->trip - bs->trip) > 1e-9) b = ss->trip < bs->trip;
         }
-        if (b) bi = i;
+        if (b) { bi = i; best_nb = nb; }
     }
     e->planned += 1;
     if (bi >= 0) {
@@ -3419,8 +3494,9 @@ static Rec *plan_point(Ev *e, Rec *rec) {
         for (int i = 0; i < aims->n && i < all->nA; i++) {
             AimOut *a = &all->a[i];
             if (a->has && a->k == bo->k) {
+                int nb = aim_beside(e, aims->v[i], &nbs);
                 for (int q = 0; q < a->sols.n; q++) {
-                    pr[np].so = a->sols.v[q]; pr[np].ai = aims->v[i]; pr[np].n = i + 1;
+                    pr[np].so = a->sols.v[q]; pr[np].ai = aims->v[i]; pr[np].n = i + 1; pr[np].nb = nb;
                     pp[np + 1] = &pr[np];
                     np++;
                 }
@@ -3481,6 +3557,7 @@ static void score_of(Ev *e, Rec *fin) {
     fin->blk = (e->own_pill_rank && fin->ally_cover) ? 2 : 1;
     fin->score = fin->base + fin->n_built * e->build_cost;
     fin->flags |= RF_SCORED;
+    aim_nb(e, fin);
     if (e->swb && fin->safe) start_check(e, fin);
 }
 
@@ -3519,6 +3596,10 @@ static int old_better(Ev *e, const Rec *a, const Rec *b) {
 
 /* M.better(a, b, cap, band, pec, swb, no_s0) */
 static int better(Ev *e, const Rec *a, const Rec *b, int no_s0) {
+    if (a->safe == b->safe && a->kills == b->kills) {
+        int na = (a->flags & RF_AIMNB) ? a->aimnb : 0, nb = (b->flags & RF_AIMNB) ? b->aimnb : 0;
+        if (na != nb) return nb;
+    }
     if ((e->pec || e->swb) && e->has_band && e->band > 0 && a->safe == b->safe && a->kills == b->kills) {
         double sa = a->score, sb = b->score;
         double m = sa;
@@ -3895,6 +3976,7 @@ static void push_rec(Ev *e, Rec *r) {
         setnum(L, "n_built", r->n_built); setnum(L, "blk", r->blk); setnum(L, "score", r->score);
     }
     if (r->flags & RF_UNSEARCH) setbool(L, "unsearched", 1);
+    if (r->flags & RF_AIMNB) setbool(L, "aimnb", r->aimnb);
     if (r->flags & RF_BAND) { setnum(L, "tier_min", r->tier_min); setbool(L, "in_band", r->in_band); }
     if (r->flags & RF_LEEWAY) {
         setnum(L, "leeway", r->leeway);
@@ -4240,6 +4322,7 @@ static void ev_read_inp(Ev *e) {
     e->armour = getnum(L, S_INP, "armour", 0, &e->has_armour);
     e->pec = getbool(L, S_INP, "prefer_existing_cover");
     e->swb = getbool(L, S_INP, "start_while_building");
+    e->aim_nb_on = getbool(L, S_INP, "aim_avoid_nb");
     e->chains_only = getbool(L, S_INP, "chains_only");
     e->xcover_later = getbool(L, S_INP, "_xcover_later");
     e->extra_cover_walls = getnum(L, S_INP, "extra_cover_walls", 0, NULL);
@@ -4792,6 +4875,7 @@ static void push_result(Ev *e) {
     stat_put(L, "reach_calls", e->reach_calls); stat_put(L, "reach_sq_calls", 0); stat_put(L, "reach_differs", 0);
     stat_put(L, "leeway_more", e->leeway_more); stat_put(L, "leeway_more_fail", e->leeway_more_fail);
     stat_put(L, "leeway_single", e->leeway_single);
+    stat_put(L, "aimnb_moved", e->aimnb_moved);
     lua_setfield(L, -2, "stat");
     {
         static const char *tmk[] = { "wedges", "masks", "cast", "aim", "walls", "confirm", "leeway",
