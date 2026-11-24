@@ -6040,9 +6040,13 @@ static LvLoadStage s_loadStage   = LV_LOAD_UNZIP;
 static uint32_t    s_loadPlayTo  = 0;
 static bool        s_loadPlaying = FALSE;
 
+static void lv_screenHoverBaseReset(void);
+
 /* Drop the previous log and everything that belongs to it. */
 static void lv_screenLoadPrepare(void) {
   s_loadActive = FALSE;
+  /* The old recording's base hover, so its selection cannot come back. */
+  lv_screenHoverBaseReset();
   lv_blocksDestroy();
   lv_screenDestroy();
   lv_screenSetup();
@@ -7764,6 +7768,14 @@ int lv_screenBaseSpots(LvPillSpot *out, int max) {
 static int  s_hoverBase = 0;
 static BYTE s_hoverPrevType = 0;
 static BYTE s_hoverPrevItem = 0;
+
+/* A new recording has no hover: the selection kept from the old one must
+   not come back in it (lv_screenLoadPrepare). */
+static void lv_screenHoverBaseReset(void) {
+  s_hoverBase = 0;
+  s_hoverPrevType = 0;
+  s_hoverPrevItem = 0;
+}
 
 /* An item of the selection kept from before the hover, if the log still has
    it on the map. */
