@@ -385,7 +385,9 @@ local function finish(a, inp, res, cost)
   if b.extra_cover and #b.extra_cover > 0 then
     local walls = {}
     for i, w in ipairs(b.extra_cover) do walls[i] = { mx = w.mx, my = w.my } end
-    goal._pt2_bg = { walls = walls }
+    local plan = {}
+    for i, q in ipairs(b.plan or {}) do plan[i] = { mx = q.mx, my = q.my } end
+    goal._pt2_bg = { walls = walls, plan = plan }
     goal._pt2.extra_cover = walls
     print2(string.format("PT2_EXTRA_COVER t=%d walls=%s", a.now, sq_list(walls)))
   end
@@ -482,19 +484,29 @@ function M.start_now_check(goal, world, info, now, list)
     if not seen then merged[#merged + 1] = w end
   end
   bg.walls = merged
+  bg.go = true
   goal._pt2_bg = bg
   return true
 end
 
 -- The next background wall for the builder (builder.set_mode), or nil.
--- Walls that stand leave the list. Only outside the build substates, so
--- the hold's own wall queue keeps the builder there.
-local BG_SKIP = { build_walls = true, gather_trees = true, ws_prebuild = true,
-                  ws_rebuild = true, ws_prewait = true, ws_advance = true,
-                  ws_engage = true, ws_retreat = true }
+-- Walls that stand leave the list. E5-9: nothing until the hold is over
+-- (bg.go: start_now_check said yes, or every planned wall, bg.plan,
+-- stands), and only in the take substates after the hold (an allow
+-- list), so the hold's own wall queue keeps the builder.
+local BG_TAKE = { aim = true, blitz_wait = true, in_range_position = true,
+                  charge = true, engage = true, post_engage = true,
+                  kill_hardline = true }
+M.BG_TAKE = BG_TAKE
 function M.bg_wall(goal, world)
   local bg = goal and goal._pt2_bg
-  if not bg or BG_SKIP[goal.substate or ""] then return nil end
+  if not bg or not BG_TAKE[goal.substate or ""] then return nil end
+  if not bg.go then
+    for _, q in ipairs(bg.plan or {}) do
+      if not wall_up(world, q.mx, q.my) then return nil end
+    end
+    bg.go = true
+  end
   while bg.walls[1] do
     local w = bg.walls[1]
     if not wall_up(world, w.mx, w.my) then return w end

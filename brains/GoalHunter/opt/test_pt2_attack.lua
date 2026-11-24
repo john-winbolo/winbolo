@@ -303,6 +303,29 @@ do
   package.loaded["attack"] = nil
 end
 
+print("\nE5-9: background walls wait for the hold and a take substate")
+do
+  local up = {}
+  local saved = PC.slot_cover_shots
+  PC.slot_cover_shots = function(_, mx, my) return up[sq(mx, my)] and 5 or 0 end
+  local goal = { substate = "build_walls",
+                 _pt2_bg = { walls = { { mx = 30, my = 30 } }, plan = { { mx = 20, my = 20 } } } }
+  check("build_walls: nil", PA.bg_wall(goal, {}) == nil)
+  goal.substate = "approach"
+  check("approach (not in the allow list): nil", PA.bg_wall(goal, {}) == nil)
+  goal.substate = "aim"
+  check("aim, a planned wall missing: nil", PA.bg_wall(goal, {}) == nil)
+  up[sq(20, 20)] = true
+  local w = PA.bg_wall(goal, {})
+  check("aim, every planned wall up: the extra wall", w and w.mx == 30 and w.my == 30)
+  up[sq(20, 20)] = nil
+  check("go stays after a planned wall falls", PA.bg_wall(goal, {}) ~= nil)
+  local g2 = { substate = "engage",
+               _pt2_bg = { walls = { { mx = 31, my = 31 } }, plan = { { mx = 21, my = 21 } }, go = true } }
+  check("start_now_check yes (go): the wall with a planned wall missing", PA.bg_wall(g2, {}) ~= nil)
+  PC.slot_cover_shots = saved
+end
+
 C.PILLTAKE_V2_EVALUATOR = false
 print(string.format("\n%d passed, %d failed", pass, fail))
 os.exit(fail == 0 and 0 or 1)
