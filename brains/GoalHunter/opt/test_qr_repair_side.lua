@@ -543,5 +543,57 @@ do
   end
 end
 
+-- -- 9. run_c17 beside_e t=623: a shot east along the blocker row --------
+-- The real numbers: the take target (125,118) fires east every 6 ticks
+-- (heard 620; its shots 626 .. 692, then it dies at 697); the blocker
+-- (127,118) next door but one; the tank at (132.42,116.52). The send at
+-- 623 had T_repair 707; he arrived at 706, and the shot at 692 was on the
+-- blocker 699 .. 706: it hit the rebuilt pill at 706 and killed him.
+print("9. run_c17 beside_e: a shot east along the blocker row")
+do
+  reset()
+  local T = 623
+  local LPm = require("live_physics")
+  local tp = pill(125, 118, 6, "neutral")
+  -- Our hits on it, every 13 ticks (EVENT_PILL_UPDATE armour 14 -> 6).
+  tp._eng_hits = { 515, 528, 541, 554, 567, 580, 593, 606, 619 }
+  tp._heard_fire = 620
+  local bp = pill(127, 118, 1, "friendly", true)
+  local w = { pills = { [1] = tp, [2] = bp }, pill_at = {}, bases = {}, base_at = {} }
+  for id, p in pairs(w.pills) do w.pill_at[p.my * 256 + p.mx] = { { pill = p, id = id } } end
+  local goal = { kind = "attack_pill", mx = 125, my = 118, target_id = 1, substate = "shoot_pill" }
+  local inf = { tankx = math.floor(132.4211 * 256), tanky = math.floor(116.5154 * 256),
+                trees = 36, man_status = C.LGM_INTANK, inboat = false, armour = 40,
+                carried_pills = 0, player_number = 0, shells = 27, direction = 183,
+                speed = 0, reload = false, reload_ticks = 13, objects = {} }
+  local x = LPm.context(inf, {}) or {}
+  local fl = QR.fire_ticks(tp, inf, T, x, 104, nil, 696)
+  check("c17: fires 626 .. 692", fl[1] == 626 and fl[#fl] == 692,
+        tostring(fl[1]) .. ".." .. tostring(fl[#fl]))
+  -- The shell east from (125,118): on (127,118) fire+7 .. fire+14, the
+  -- same as the c15 shell west (a point on a square edge is on the square
+  -- nearer the pill: the real shells are never exactly on the axis).
+  local a, b = QR.shell_on_square(125.5, 118.5, 1, 0, 127, 118, 0, 8, QR.shell_lead(inf))
+  check("c17: shell east on the blocker (127,118) fire+7 .. fire+14", a == 7 and b == 14,
+        tostring(a) .. ".." .. tostring(b))
+  a, b = QR.shell_on_square(125.5, 118.5, 1, 0, 126, 118, 0, 8, QR.shell_lead(inf))
+  check("c17: shell east on (126,118) fire+0 .. fire+6", a == 0 and b == 6,
+        tostring(a) .. ".." .. tostring(b))
+  local k = { t = 696, src = "predict", first = 634, reload = 13, remaining = 2,
+              flight = 49, land = { 632, 645, 658, 671 }, n_inflight = 4 }
+  local cf = QR.fire_conflict(w, inf, T, goal, k, { mx = 127, my = 118 }, 132.5, 116.5,
+                              T + 1, 707, nil, false)
+  check("c17 at 623: the shot at 692 is on the blocker when he arrives (706): wait",
+        cf ~= nil and cf.target and cf.fire == 692 and cf.at == 706,
+        cf and (tostring(cf.how) .. " fire=" .. tostring(cf.fire) .. " at=" .. tostring(cf.at)) or "nil")
+  -- One tick later he arrives at 707: the shell has left; the pill is dead
+  -- before its next shot (698). Send.
+  cf = QR.fire_conflict(w, inf, T + 1, goal, k, { mx = 127, my = 118 }, 132.5, 116.5,
+                        T + 2, 708, nil, false)
+  check("c17 at 624: arrival 707, after the last shell: no conflict", cf == nil,
+        cf and (tostring(cf.how) .. " fire=" .. tostring(cf.fire) .. " at=" .. tostring(cf.at)) or "nil")
+end
+
+
 print(string.format("\n%d passed, %d failed", pass, fail))
 if fail > 0 then os.exit(1) end

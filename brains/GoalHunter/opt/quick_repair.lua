@@ -758,6 +758,12 @@ end
 -- along the unit vector (ux, uy) is on tile (mx, my) grown by m (tiles),
 -- within `range` tiles of the pill: first, last (n of M.shell_lead), or
 -- nil when it is never on it.
+-- A point on a square edge counts on the square nearer the pill (one
+-- world unit back along the line). A line along a row or column (the line
+-- to a blocker centre) puts every step on an edge; the real shells are a
+-- little off it. run_c15 beside_n, west: on the blocker fire+7 .. fire+14;
+-- run_c17 beside_e, east: also fire+7 .. fire+14 (the shot at 692 hit the
+-- rebuilt pill at 706). Without the step back, east gave fire+6 .. fire+13.
 function M.shell_on_square(gx, gy, ux, uy, mx, my, m, range, lead)
   local spd = (C.SHELL_SPEED or 32) / 256
   local x0, x1 = mx - (m or 0), mx + 1 + (m or 0)
@@ -765,7 +771,7 @@ function M.shell_on_square(gx, gy, ux, uy, mx, my, m, range, lead)
   local a, b
   local n = 0
   while (lead + n) * spd <= range do
-    local d = (lead + n) * spd
+    local d = (lead + n) * spd - 1 / 256
     local px, py = gx + ux * d, gy + uy * d
     if px >= x0 and px < x1 and py >= y0 and py < y1 then
       if not a then a = n end
