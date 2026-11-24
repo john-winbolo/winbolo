@@ -524,6 +524,121 @@ do
   PC.slot_cover_shots = saved
 end
 
+-- Nov 24 (run_c4): the fire hold said "safe -> go" on the very tick the
+-- pill fired (beside_n t=489, diag_s 415, beside_se 421, beside_s 502) and
+-- the shell already in flight killed the builder on his wall 12 to 22
+-- ticks later. Shells in flight count now. And his trip comes from what the
+-- brain sees of him (danger.own_builder_timeline), not from a walk estimate.
+print("PT2_START_BUILDER_SAFE: shells in flight, the real trip")
+do
+  local saved = PC.slot_cover_shots
+  PC.slot_cover_shots = function() return 0 end
+  local H = { mx = 36, my = 40, health = 8, owner = "hostile", anger = 0, anger_tick = 0 }
+  local world = { pills = { [5] = H }, pill_at = { [sq(36, 40)] = { { id = 5, pill = H } } } }
+  local function inf(objs)
+    return { armour = 40, tankx = 30 * 256 + 128, tanky = 40 * 256 + 128,
+             man_status = C.LGM_MOVING, man_x = 33 * 256 + 128, man_y = 40 * 256 + 128,
+             player_number = 0, objects = objs or {} }
+  end
+  local x = require("live_physics").context(inf(), {})
+  local function g()
+    return { kind = "attack_pill", mx = 36, my = 40, substate = "in_range_aim",
+             _pt2 = { start = { ok = true, pills = {}, cx = 30.5, cy = 40.5 } } }
+  end
+  local K = C.PT2_START_BUILDER_SAFE
+  C.PT2_START_BUILDER_SAFE = true
+  -- He is on his wall (33,40) for 20 more ticks, then walks home.
+  local legs = {
+    { t0 = 0, t1 = 20, x0 = 33.5, y0 = 40.5, x1 = 33.5, y1 = 40.5, kind = "build", i = 1 },
+    { t0 = 20, t1 = 30, x0 = 33.5, y0 = 40.5, x1 = 30.5, y1 = 40.5, kind = "back", i = 1 },
+  }
+  -- A pill shell fired this tick from (36,40), flying west at the tank.
+  local west = { type = 1, owner = 255, info = 2, x = 35 * 256 + 200, y = 40 * 256 + 128,
+                 angle = 192, life = 40 }
+  local hit = PA.builder_trip_hit(g(), world, inf({ west }), 1000, {}, 0, 0, x,
+                                  { legs = legs, home = 30 })
+  check("a pill shell in flight stops on his wall: unsafe",
+        hit ~= nil and hit.id == "shell" and hit.sq_mx == 33 and hit.sq_my == 40,
+        hit and string.format("%s +%d (%s,%s)", tostring(hit.id), hit.t,
+                              tostring(hit.sq_mx), tostring(hit.sq_my)))
+  local east = { type = 1, owner = 255, info = 2, x = 36 * 256 + 200, y = 40 * 256 + 128,
+                 angle = 64, life = 40 }
+  hit = PA.builder_trip_hit(g(), world, inf({ east }), 1000, {}, 0, 0, x,
+                            { legs = legs, home = 30 })
+  check("a pill shell flying away: not his death", hit == nil or hit.id ~= "shell",
+        hit and tostring(hit.id))
+  local ours = { type = 1, owner = 0, info = 0, x = 35 * 256 + 200, y = 40 * 256 + 128,
+                 angle = 192, life = 40 }
+  hit = PA.builder_trip_hit(g(), world, inf({ ours }), 1000, {}, 0, 0, x,
+                            { legs = legs, home = 30 })
+  check("our own shell is not a pill shell", hit == nil or hit.id ~= "shell",
+        hit and tostring(hit.id))
+
+  -- The real trip: he reached his spot (33,40) at 995, so 15 ticks of his
+  -- stay are left at 1000; then the engine walk takes him home (stub:
+  -- 16 wu a tick straight at the tank's square).
+  local function st()
+    return { _wall_shield_dispatch = { tick = 990, wx = 33, wy = 40, action = "BUILD" },
+             _lgm_dispatch = { tick = 990, x = 33, y = 40 },
+             _fire_block = { own = { key = 990, arrive = 995, back = false,
+                                     hist = {}, hist_tick = 1000 }, ally = {} } }
+  end
+  local had = rawget(_G, "cpf_lgm_walk_path_wu")
+  _G.cpf_lgm_walk_path_wu = function(sx, sy, mx, my, _, _, need, _, out)
+    local tx, ty = mx * 256 + 128, my * 256 + 128
+    local n, px, py = 0, sx, sy
+    while n < need do
+      local dx, dy = tx - px, ty - py
+      local d = math.sqrt(dx * dx + dy * dy)
+      if d < 1 then break end
+      local s = math.min(16, d)
+      px, py = px + dx / d * s, py + dy / d * s
+      n = n + 1
+      out[n * 2 - 1], out[n * 2] = px, py
+    end
+    return n
+  end
+  local PS = require("pt2_start")
+  local tl, home = PA.current_trip(st(), g(), world, inf(), 1000)
+  local lx, ly
+  if tl then lx, ly = PS.man_at(tl, 14) end
+  check("real trip: on the wall for the rest of his stay",
+        lx ~= nil and math.floor(lx) == 33 and math.floor(ly) == 40,
+        lx and string.format("(%.2f,%.2f)", lx, ly))
+  check("real trip: home after the stay and the engine walk",
+        home ~= nil and home >= 15 + 40 and home <= 15 + 52, tostring(home))
+  -- The engine walk cannot be made: he stays where he is to the end.
+  _G.cpf_lgm_walk_path_wu = function() return 0 end
+  tl, home = PA.current_trip(st(), g(), world, inf(), 1000)
+  check("real trip: a walk that cannot be made keeps him out",
+        home == (C.BUILDER_POOL_LGM_STUCK_TICKS or 150), tostring(home))
+  _G.cpf_lgm_walk_path_wu = had
+  -- No tracker (fire_block has not seen him): the estimate as before.
+  local s2 = st(); s2._fire_block = nil
+  tl, home = PA.current_trip(s2, g(), world, inf(), 1000)
+  check("no tracker: the estimate (a whole build time, then home)",
+        tl ~= nil and tl[1].kind == "build" and tl[1].t1 == PS.LGM_BUILD_TIME, tl and tl[1].kind)
+
+  -- The one fire check: danger.fire_block takes the fire bit off while the
+  -- hold is on (the stuck walk keeps him on the shell row).
+  local D = require("danger")
+  _G.cpf_lgm_walk_path_wu = function() return 0 end
+  local s3 = st()
+  s3.goal = g()
+  if rawget(_G, "KEY_SHOOT") == nil then _G.KEY_SHOOT = 1 end
+  local KS = KEY_SHOOT
+  local k3, t3 = D.fire_block(s3, world, inf({ west }), KS, 0, 1000)
+  check("fire_block: the take's fire is held", bit.band(k3, KS) == 0, k3)
+  C.PT2_START_BUILDER_SAFE = false
+  s3 = st(); s3.goal = g()
+  k3 = D.fire_block(s3, world, inf({ west }), KS, 0, 1000)
+  check("knob off: fire_block keeps the fire bit (no friendly shell kill here)",
+        bit.band(k3, KS) ~= 0, k3)
+  _G.cpf_lgm_walk_path_wu = had
+  C.PT2_START_BUILDER_SAFE = K
+  PC.slot_cover_shots = saved
+end
+
 C.PILLTAKE_V2_EVALUATOR = false
 print(string.format("\n%d passed, %d failed", pass, fail))
 os.exit(fail == 0 and 0 or 1)

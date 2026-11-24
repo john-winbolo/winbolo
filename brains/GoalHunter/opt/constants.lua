@@ -1055,6 +1055,12 @@ M.PT2_START_WHILE_BUILDING = true
 -- the rest of his trip is not safe; it asks again each tick. A background
 -- wall is not sent when its trip is not safe; the builder stays in and the
 -- take goes on (the tank never waits for a background wall).
+-- The fire hold also sits in danger.fire_block, the one check every fire
+-- press goes through, so every way into the take's fire is held. Pill
+-- shells already in flight count (pt2_attack.inflight_hit). While the
+-- brain tracks the builder, his trip is what it sees of him: his real
+-- arrival, the rest of his stay, the engine's own walk home
+-- (danger.own_builder_timeline); else the walk estimate.
 -- Log effect: PT2_START ... builder unsafe (pill #id shell at +Nt hits (x,y)
 -- builder at (x,y)) -> wait; after the hold "PT2_START t=.. fire builder
 -- unsafe (...)" or "bg_wall=(x,y) builder unsafe (...)", once per change,

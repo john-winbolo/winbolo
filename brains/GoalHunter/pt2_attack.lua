@@ -545,6 +545,61 @@ end
 --     PILL_ANGER_BUMP per landed hit (the same ladder as rise_shells).
 --     The pill fires when the ticks since its last shot reach the reload
 --     of that tick.
+-- PT2_START_BUILDER_SAFE: does a hostile pill shell already in flight
+-- (info.objects, owner 255) kill the builder on his trip (legs, home: ticks
+-- from now)? run_c4: the hold said "safe -> go" on the tick the pill fired,
+-- because only the pill's NEXT shots were looked at; the shell it had just
+-- fired killed him 12 to 22 ticks later. Each shell flies SHELL_SPEED a tick
+-- along its angle for the rest of its life (shells_on_blocker's flight).
+-- It stops on a square that stops shells (danger.shell_stops_on, or a trip
+-- wall up by then: up_at) or on our tank (TANK_HIT_RADIUS_WU), else it
+-- bursts at the end of its life. Returns builder_trip_hit's hit or nil.
+function M.inflight_hit(world, info, legs, home, up_at)
+  local QR = require("quick_repair")
+  local danger = require("danger")
+  local N = C.LGM_SHELL_PREDICT_TICKS or 63
+  local spd = (C.SHELL_SPEED or 32) / 256
+  local tx, ty = (info.tankx or 0) / 256, (info.tanky or 0) / 256
+  local tr = (C.TANK_HIT_RADIUS_WU or 112) / 256
+  for _, ob in ipairs(info.objects or {}) do
+    if ob.type == (OBJECT_SHOT or 1) and (ob.owner or 255) == 255 and (ob.info or 0) ~= 0
+       and ob.x and ob.y then
+      local life = ob.life
+      local moves = (type(life) == "number" and life >= 0 and life <= N) and life or N
+      local vx = U.bsin_f(ob.angle or 0) * spd
+      local vy = -U.bcos_f(ob.angle or 0) * spd
+      local sx, sy = ob.x / 256, ob.y / 256
+      local smx0, smy0 = floor(sx), floor(sy)
+      local e
+      for k = 1, moves do
+        if k > home then break end
+        sx, sy = sx + vx, sy + vy
+        local mx, my = floor(sx), floor(sy)
+        local t = up_at[my * 256 + mx]
+        if not (mx == smx0 and my == smy0)
+           and (danger.shell_stops_on(world, mx, my) or (t ~= nil and k >= t)) then
+          e = { t = k, ex = mx + 0.5, ey = my + 0.5, sq_mx = mx, sq_my = my, how = "square" }
+          break
+        end
+        local dx, dy = sx - tx, sy - ty
+        if dx * dx + dy * dy <= tr * tr then
+          e = { t = k, ex = sx, ey = sy, how = "tank" }
+          break
+        end
+        if k == moves then e = { t = k, ex = sx, ey = sy, how = "range" } end
+      end
+      if e and e.t <= home then
+        local lx, ly = PS.man_at(legs, e.t)
+        if lx and QR.blast_catches_man(e, lx, ly) then
+          return { id = "shell", t = e.t, sq_mx = e.sq_mx, sq_my = e.sq_my,
+                   ex = e.ex, ey = e.ey, lx = lx, ly = ly, how = e.how }
+        end
+      end
+    end
+  end
+  return nil
+end
+
 function M.builder_trip_hit(goal, world, info, now, walls, ox, oy, x, opts)
   opts = opts or {}
   local QR = require("quick_repair")
@@ -575,6 +630,8 @@ function M.builder_trip_hit(goal, world, info, now, walls, ox, oy, x, opts)
       up_at[floor(L.y0) * 256 + floor(L.x0)] = L.t0
     end
   end
+  local fl = M.inflight_hit(world, info, legs, home, up_at)
+  if fl then return fl end
   local guns = QR.guns_at(world, tx, ty, range)
   for gi = 1, #guns do
     local g = guns[gi]
@@ -629,7 +686,7 @@ end
 -- or home (the wall stands and he is off it). A build under way counts as
 -- a whole LGM_BUILD_TIME. Returns legs, home (pt2_start.trip_timeline's
 -- form) or nil.
-function M.current_trip(state, goal, world, info)
+function M.current_trip(state, goal, world, info, now)
   if info.man_status ~= C.LGM_MOVING then return nil end
   local d = state and state._wall_shield_dispatch
   if not d or not d.wx or goal.kind ~= "attack_pill" then return nil end
@@ -637,6 +694,36 @@ function M.current_trip(state, goal, world, info)
   local tmx, tmy = bit.rshift(info.tankx or 0, 8), bit.rshift(info.tanky or 0, 8)
   local up = wall_up(world, d.wx, d.wy)
   local on = mx == d.wx and my == d.wy
+  -- The estimate below counts a whole LGM_BUILD_TIME from now while he is
+  -- on the wall, and walks him home in a straight line at the lgm_ticks
+  -- pace. run_c4 beside_n: the walk home from the wall (122,116) to the
+  -- tank at (120,113) runs into our own new pill at (121,115), so the
+  -- engine walk is not that line. So when the brain tracks him
+  -- (danger.own_builder_timeline: his real arrival, the rest of his stay,
+  -- the engine's own walk home) that is his trip, up to
+  -- BUILDER_POOL_LGM_STUCK_TICKS ahead. The wall goes up the first tick he
+  -- is on its square while it is not up yet.
+  if now then
+    local cap = C.BUILDER_POOL_LGM_STUCK_TICKS or 150
+    local tl = require("danger").own_builder_timeline(state, info, now, cap)
+    if tl then
+      local legs, home, built = {}, cap, up
+      for t = 0, cap - 1 do
+        local a, b = tl[t], tl[t + 1]
+        if not a then home = t; break end
+        if not built and floor(a[1]) == d.wx and floor(a[2]) == d.wy then
+          built = true
+          legs[#legs + 1] = { t0 = t, t1 = t, x0 = d.wx + 0.5, y0 = d.wy + 0.5,
+                              x1 = d.wx + 0.5, y1 = d.wy + 0.5, kind = "build", i = 1 }
+        end
+        b = b or a
+        legs[#legs + 1] = { t0 = t, t1 = t + 1, x0 = a[1], y0 = a[2],
+                            x1 = b[1], y1 = b[2], kind = "back", i = 1 }
+        if not tl[t + 1] then home = t + 1; break end
+      end
+      return legs, home
+    end
+  end
   if not up and not on then
     return PS.trip_timeline(mx, my, { { mx = d.wx, my = d.wy } }, lgm_ticks, nil, tmx, tmy)
   end
@@ -685,7 +772,7 @@ end
 -- next tick.
 function M.builder_fire_hold(state, goal, world, info, now)
   if not C.PT2_START_BUILDER_SAFE then return false end
-  local legs, home = M.current_trip(state, goal, world, info)
+  local legs, home = M.current_trip(state, goal, world, info, now)
   local hit
   if legs then
     local x = require("live_physics").context(info, {})
