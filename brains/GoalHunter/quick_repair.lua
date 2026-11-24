@@ -109,6 +109,65 @@ function M.shot_land_tick(s, mx, my, now)
   return (now or 0) + k
 end
 
+-- run_c7 (c6 beside_e t=675): the walk of our real shell from where the
+-- engine has it now (shot_tracker real_fx/real_fy, matched this tick) for
+-- the moves it has left (real_life), at the engine's 24.8 step for the
+-- tank's float fire angle (utilCalcDistanceHP). Returns the squares in
+-- order, each { mx, my, k } with k = moves from real_tick to its first
+-- entry, or nil when the shell was not matched or has no fire angle.
+-- The old test fired a new sim shell from the tank at the byte direction:
+-- the shells that killed pill (125,118) graze its edge (y 119.0 at life 1,
+-- the last move takes them in), so that sim ended at (125,119).
+function M.shell_real_walk(s)
+  if not (s.real_fx and s.real_fy and s.real_life and s.angle) then return nil end
+  local speed = s.speed or C.SHELL_SPEED
+  local a = s.angle - 64
+  if a < 0 then a = a + 256 end
+  local r = a * (2 * math.pi / 256)
+  local function rd(v)
+    if v >= 0 then return math.floor(v + 0.5) end
+    return -math.floor(-v + 0.5)
+  end
+  local xs = rd(speed * math.cos(r) * 256) / 256
+  local ys = rd(speed * math.sin(r) * 256) / 256
+  local out = {}
+  local lmx, lmy = math.floor(s.real_fx / 256), math.floor(s.real_fy / 256)
+  out[1] = { mx = lmx, my = lmy, k = 0 }
+  for k = 1, s.real_life do
+    local mx = math.floor((s.real_fx + xs * k) / 256)
+    local my = math.floor((s.real_fy + ys * k) / 256)
+    if mx ~= lmx or my ~= lmy then
+      out[#out + 1] = { mx = mx, my = my, k = k }
+      lmx, lmy = mx, my
+    end
+  end
+  return out
+end
+
+-- run_c7 (c6 beside_e t=696): the shell sim (cpf.simulate_shot) says this
+-- in-flight shot reaches the target tile, but the tracker's straight steps
+-- only graze it (the shells ended on the tile's edge, y = 119.0, and still
+-- killed pill (125,118)), so shot_land_tick finds no tick. Its landing tick
+-- is then the tick of its closest pass to the tile, within the same 72
+-- steps.
+function M.shot_near_tick(s, mx, my, now)
+  local x, y = s.cur_fx, s.cur_fy
+  if s.matched and s.closest_fx and s.closest_fy then
+    x, y = s.closest_fx, s.closest_fy
+  end
+  local sx, sy = s.step_x or 0, s.step_y or 0
+  local x0, y0, x1, y1 = mx * 256, my * 256, mx * 256 + 255, my * 256 + 255
+  local best, bk
+  for k = 0, 72 do
+    local px, py = x + sx * k, y + sy * k
+    local ex = px < x0 and x0 - px or (px > x1 and px - x1 or 0)
+    local ey = py < y0 and y0 - py or (py > y1 and py - y1 or 0)
+    local d = ex * ex + ey * ey
+    if not best or d < best then best, bk = d, k end
+  end
+  return (now or 0) + bk
+end
+
 -- Is a pill sitting live on (mx, my) other than the one at (xmx, xmy)?
 local function live_pill_on(world, mx, my)
   local lst = world and world.pill_at and world.pill_at[my * 256 + mx]
@@ -206,6 +265,10 @@ function M.pill_next_fire(p, info, now, x)
     end
   end
   local reload = KLK.pill_reload(PA.anger_now(p, now), x)
+  -- run_c7: the engine's ladder from the pill's seen hits, when known.
+  if p._eng_hits then
+    reload = require("pt2_start").engine_reload(p._eng_hits, now, x)
+  end
   local nxt = now + 1
   if last and last + reload > nxt then nxt = last + reload end
   return nxt, reload, last

@@ -94,6 +94,54 @@ end
 -- landed hit adds bump). attack_ticks / min_ticks / divisor: the live
 -- rules (pill_attack_ticks, pill_attack_min_ticks, pill_angry_divisor),
 -- else 100, 6 and 2. Knob off: halved once per hit (today's ladder).
+-- run_c7: the engine's own pill reload (pillbox.c `speed`) at tick t,
+-- rolled from the pill's hits. Before the first hit it is pill_attack_ticks.
+-- Each hit (pillsDamagePos with damage) sets coolDown = pill_cooldown_ticks
+-- and, while speed is above pill_attack_min_ticks, divides speed by
+-- pill_angry_divisor (floored at the minimum). Each tick coolDown counts
+-- down; when it reaches 0 speed goes up by one and, while speed is still
+-- below pill_attack_ticks, coolDown starts again. `hits` and `more` are
+-- lists of hit ticks (any order); only hits at or before t count.
+-- x = live_physics.context.
+function M.engine_reload(hits, t, x, more)
+  local A = x.pill_attack_ticks or 100
+  local lo = x.pill_attack_min_ticks or 6
+  local div = x.pill_angry_divisor or 2
+  if div < 1 then div = 1 end
+  local cd = x.pill_cooldown_ticks or 32
+  if cd < 1 then cd = 1 end
+  local all = {}
+  for _, h in ipairs(hits or {}) do if h <= t then all[#all + 1] = h end end
+  for _, h in ipairs(more or {}) do if h <= t then all[#all + 1] = h end end
+  table.sort(all)
+  local speed, cool, at = A, 0, nil
+  local function roll(to)
+    if at and cool > 0 then
+      local e = to - at
+      if e >= cool then
+        local inc = 1 + math.floor((e - cool) / cd)
+        speed = speed + inc
+        if speed >= A then speed, cool = A, 0
+        else cool = cd - ((e - cool) % cd) end
+      else
+        cool = cool - e
+      end
+    end
+    at = to
+  end
+  for _, h in ipairs(all) do
+    roll(h)
+    cool = cd
+    if speed > lo then
+      speed = math.floor(speed / div)
+      if speed < lo then speed = lo end
+    end
+  end
+  roll(t)
+  if speed < 1 then speed = 1 end
+  return speed
+end
+
 function M.pill_interval(anger, bump, attack_ticks, min_ticks, divisor, rise)
   local on = M.rise_on(rise)
   local hits, at_min = M.anger_hits(anger, bump, on)

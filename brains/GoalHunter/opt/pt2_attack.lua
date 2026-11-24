@@ -590,6 +590,39 @@ function M.inflight_hit(world, info, legs, home, up_at)
   return nil
 end
 
+-- run_c7: the tick pill p first sees our tank on its straight drive from
+-- where it is now to (tx, ty) (tiles), or nil: the tank is in range now
+-- (the pill could see it at any tick, for example out of trees), it never
+-- comes in range on that line, or the drive cannot be made. range in tiles.
+function M.sight_tick(p, info, tx, ty, range, now)
+  local ax, ay = (info.tankx or 0) / 256.0, (info.tanky or 0) / 256.0
+  local px, py = p.mx + 0.5, p.my + 0.5
+  local dx, dy = tx - ax, ty - ay
+  local fx, fy = ax - px, ay - py
+  local a = dx * dx + dy * dy
+  local b = 2 * (fx * dx + fy * dy)
+  local c = fx * fx + fy * fy - range * range
+  local s
+  if c <= 0 then return nil
+  elseif a > 0 then
+    local disc = b * b - 4 * a * c
+    if disc < 0 then return nil end
+    s = (-b - math.sqrt(disc)) / (2 * a)
+    if s < 0 or s > 1 then return nil end
+  else
+    return nil
+  end
+  local emx, emy = floor(ax + dx * s), floor(ay + dy * s)
+  local amx, amy = floor(ax), floor(ay)
+  local d = 1
+  if emx ~= amx or emy ~= amy then
+    d = cpf.estimate_tank_travel_ticks(amx, amy, emx, emy, info.inboat and 1 or 0)
+    if not d or d < 0 then return nil end
+    if d < 1 then d = 1 end
+  end
+  return now + d
+end
+
 function M.builder_trip_hit(goal, world, info, now, walls, ox, oy, x, opts)
   opts = opts or {}
   local QR = require("quick_repair")
@@ -628,8 +661,19 @@ function M.builder_trip_hit(goal, world, info, now, walls, ox, oy, x, opts)
     local nxt, _, last = QR.pill_next_fire(g.p, info, now, x)
     local a0 = M.anger_now(g.p, now)
     local shot_at = hit_flight and g.p.mx == goal.mx and g.p.my == goal.my
+    -- run_c7: with the pill's hits seen (world.lua _eng_hits), its reload
+    -- is the engine's ladder (pt2_start.engine_reload) from those hits plus
+    -- the tank's shells that land in the trip, not the brain's anger.
+    local eh = g.p._eng_hits
+    local more
+    if eh and shot_at then
+      more = {}
+      local h = now + 1 + hit_flight
+      while h <= now + home do more[#more + 1] = h; h = h + hit_reload end
+    end
     -- this pill's reload at tick t (ticks from now)
     local function iv_at(t)
+      if eh then return PS.engine_reload(eh, now + t, x, more) end
       local a = a0
       if shot_at and t >= 1 + hit_flight then
         a = a + bump * (floor((t - 1 - hit_flight) / hit_reload) + 1)
@@ -651,6 +695,15 @@ function M.builder_trip_hit(goal, world, info, now, walls, ox, oy, x, opts)
     -- and it fires once a reload from then. Its last fire is the latest
     -- such tick at or before now (the sight tick itself before the first).
     local since = g.p._tank_seen_since
+    -- run_c7: the pill does not see the tank yet and no shell of it was
+    -- seen. The tank drives from where it is now to its point (tx, ty); the
+    -- pill sees it from the first square of that straight drive inside its
+    -- range, at the tank's drive time there (cpathfinder's straight-line
+    -- estimate). Its first shell is one reload after that.
+    if not since and not last then
+      local s0 = M.sight_tick(g.p, info, tx, ty, range, now)
+      if s0 then last, nxt = s0, nil end
+    end
     if since and since <= now and (not last or since > last) then
       local iv0 = iv_at(0)
       last = since + floor((now - since) / iv0) * iv0

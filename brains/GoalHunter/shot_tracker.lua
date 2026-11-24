@@ -133,6 +133,12 @@ local function make_shot(info, tick)
     cur_fx    = fx,
     cur_fy    = fy,
     status    = "in_flight",
+    -- run_c7: the tank's place and its exact (float) angle at fire time,
+    -- for cpf.simulate_shot_angle (the engine fires at the float angle).
+    tank_fx   = info.tankx,
+    tank_fy   = info.tanky,
+    angle     = info.tank_angle,
+    speed     = speed,
   }
 end
 
@@ -150,7 +156,7 @@ local function verify_alive(shot, info)
   local tol = M.MATCH_TOLERANCE_WU
   local tol2 = tol * tol
   local best2 = math.huge
-  local best_x, best_y, best_info, best_type
+  local best_x, best_y, best_info, best_type, best_life
   local seen_any_shot = false
   -- C.SHOT_TRACK_OWN_SHELLS_ONLY: a neutral pill's shell is not ours either.
   -- It leaves the pill square where our shell has just hit, so it kept that
@@ -171,6 +177,7 @@ local function verify_alive(shot, info)
           best_y    = ob.y
           best_info = ob.info
           best_type = ob.type
+          best_life = ob.life
         end
       end
     end
@@ -179,6 +186,7 @@ local function verify_alive(shot, info)
   shot.closest_fx  = best_x
   shot.closest_fy  = best_y
   shot.closest_info = best_info
+  shot.closest_life = best_life
   shot._saw_any_shot = seen_any_shot
   return best2 <= tol2
 end
@@ -214,6 +222,10 @@ function M.update(info, tick)
         if verify_alive(shot, info) then
           shot.matched = true
           shot.was_matched = true
+          -- run_c7: the real shell as the engine has it now (its place and
+          -- the moves it has left), for quick_repair.shell_real_walk.
+          shot.real_fx, shot.real_fy = shot.closest_fx, shot.closest_fy
+          shot.real_life, shot.real_tick = shot.closest_life, tick
         elseif shot.was_matched then
           -- Green stopped matching — shot impacted or left perception. Kill it.
           shot.status   = "dead"

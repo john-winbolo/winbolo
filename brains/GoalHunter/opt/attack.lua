@@ -4424,6 +4424,7 @@ local function update_shot_accounting(goal, world, now)
       -- clip the corner of an adjacent tile no longer counts.
       local sm = math.sqrt(s.step_x * s.step_x + s.step_y * s.step_y)
       local on_target = false
+      local real, real_k
       if sm > 0 then
         -- Project a target point far down the firing direction so
         -- simulate_shot traces the full trajectory's range. Round to
@@ -4432,14 +4433,26 @@ local function update_shot_accounting(goal, world, now)
         local far = 14 * 256
         local tx_w = math.floor(s.fire_fx + s.step_x * (far / sm) + 0.5)
         local ty_w = math.floor(s.fire_fy + s.step_y * (far / sm) + 0.5)
-        local path = cpf.simulate_shot(s.fire_fx, s.fire_fy, tx_w, ty_w,
-                                       cpf.SHOT_TANK, 14)
+        -- run_c7 (c6 beside_e t=675): a shell in flight that the tracker
+        -- sees this tick walks on from where the engine has it
+        -- (quick_repair.shell_real_walk). The sim shell from the tank at the
+        -- byte direction ended one square beside pill (125,118), at
+        -- (125,119), so the three shells that killed it were not counted.
+        local path = s.status == "in_flight" and s.real_tick == now
+                     and QR.shell_real_walk(s) or nil
+        if not path then
+          path = cpf.simulate_shot(s.fire_fx, s.fire_fy, tx_w, ty_w,
+                                   cpf.SHOT_TANK, 14)
+        else
+          real = path
+        end
         if path then
           local o_mx = math.floor(s.fire_fx / 256)
           local o_my = math.floor(s.fire_fy / 256)
           for _, t in ipairs(path) do
             if t.mx == pmx and t.my == pmy then
               on_target = true
+              if real then real_k = t.k end
               break
             end
             -- A tree, wall, or another live pillbox between the muzzle and
@@ -4471,9 +4484,11 @@ local function update_shot_accounting(goal, world, now)
         if s.status == "in_flight" then
           on_target_in_flight = on_target_in_flight + 1
           if land or kl_shells then
-            local lt = QR.shot_land_tick(s, pmx, pmy, now)
-            if lt and land then land[#land + 1] = lt end
-            if kl_shells then kl_shells[#kl_shells + 1] = { s = s, land = lt } end
+            local lt = real_k and (now + real_k) or QR.shot_land_tick(s, pmx, pmy, now)
+            -- run_c7: the sim says it reaches the pill; a graze still lands
+            local llt = lt or QR.shot_near_tick(s, pmx, pmy, now)
+            if llt and land then land[#land + 1] = llt end
+            if kl_shells then kl_shells[#kl_shells + 1] = { s = s, land = llt or lt } end
           end
         elseif s.status == "dead" then
           local ddx = s.dead_fx - pwx
@@ -4500,6 +4515,7 @@ local function update_shot_accounting(goal, world, now)
   goal._on_target_shells      = kl_shells
   goal._on_target_shells_tick = kl_shells and now or nil
 end
+M._update_shot_accounting = update_shot_accounting   -- unit tests
 
 -- C.BLITZ_SETUP_16DIR (2026-11-03): the engine moves a tank in 16 directions
 -- only (tank.c: ang = utilGet16Dir(angle), then utilCalcDistance(ang)). The

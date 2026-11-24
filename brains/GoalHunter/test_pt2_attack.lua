@@ -813,5 +813,166 @@ do
   PC.slot_cover_shots = saved
 end
 
+-- =========================================================================
+-- run_c7 model fixes (PT2_START_BUILDER_SAFE and the quick repair):
+--  1 the engine's pill reload ladder from the hits seen on the pill
+--    (pt2_start.engine_reload, world.note_eng_hit), used by the trip check
+--    and quick_repair.pill_next_fire;
+--  2 a pill that does not see the tank yet first sees it on the drive to
+--    the firing point (pt2_attack.sight_tick);
+--  3 our shells in flight walk on from where the engine has them
+--    (quick_repair.shell_real_walk) in update_shot_accounting, and a graze
+--    still gets a landing tick (quick_repair.shot_near_tick).
+print("run_c7: engine reload ladder, drive-in sight, real shell walk")
+do
+  local PS = require("pt2_start")
+  local W  = require("world")
+  local QR = require("quick_repair")
+  local x  = { pill_attack_ticks = 100, pill_attack_min_ticks = 6,
+               pill_angry_divisor = 2, pill_cooldown_ticks = 32 }
+  -- 1. The ladder (pillbox.c): halve on a hit, +1 every 32 ticks after it.
+  check("ladder: no hit = calm reload 100", PS.engine_reload({}, 500, x) == 100)
+  check("ladder: hit at 100 -> 50", PS.engine_reload({ 100 }, 100, x) == 50)
+  check("ladder: 31 ticks on still 50", PS.engine_reload({ 100 }, 131, x) == 50)
+  check("ladder: 32 ticks on 51", PS.engine_reload({ 100 }, 132, x) == 51)
+  check("ladder: 64 ticks on 52", PS.engine_reload({ 100 }, 164, x) == 52)
+  check("ladder: two hits on one tick -> 25", PS.engine_reload({ 100, 100 }, 100, x) == 25)
+  -- hit at 100 (50), at 140 it is 51 (one step at 132), a hit halves to 25,
+  -- the next step is 32 ticks after the second hit.
+  check("ladder: hit at 140 after one step -> 25",
+        PS.engine_reload({ 100, 140 }, 140, x) == 25, PS.engine_reload({ 100, 140 }, 140, x))
+  check("ladder: and 26 at 172", PS.engine_reload({ 100, 140 }, 172, x) == 26)
+  check("ladder: floored at the minimum 6",
+        PS.engine_reload({ 1, 1, 1, 1, 1, 1, 1 }, 1, x) == 6)
+  check("ladder: back to 100 after 50 steps", PS.engine_reload({ 100 }, 100 + 50 * 32, x) == 100)
+  check("ladder: hits after t do not count", PS.engine_reload({ 100, 200 }, 150, x) == 51)
+  check("ladder: predicted hits count too", PS.engine_reload({ 100 }, 150, x, { 140 }) == 25)
+
+  -- world.note_eng_hit: the hit list, cleared once the pill is calm again.
+  local K = C.PT2_START_BUILDER_SAFE
+  C.PT2_START_BUILDER_SAFE = true
+  local P = {}
+  W.note_eng_hit(P, { rules = {} }, 10)
+  W.note_eng_hit(P, { rules = {} }, 20)
+  check("hit list: both hits kept", P._eng_hits and #P._eng_hits == 2)
+  W.note_eng_hit(P, { rules = {} }, 20 + 100 * 32 + 1)
+  check("hit list: starts over once calm", #P._eng_hits == 1)
+  C.PT2_START_BUILDER_SAFE = false
+  local P2 = {}
+  W.note_eng_hit(P2, { rules = {} }, 10)
+  check("hit list: knob off, not kept", P2._eng_hits == nil)
+  C.PT2_START_BUILDER_SAFE = true
+
+  -- quick_repair.pill_next_fire takes the ladder reload.
+  local PP = { mx = 36, my = 40, anger = 0, anger_tick = 0, _eng_hits = { 990 } }
+  local _, rl = QR.pill_next_fire(PP, { objects = {} }, 1000, x)
+  check("pill_next_fire: ladder reload 50 after a hit 10 ticks ago", rl == 50, rl)
+
+  -- The trip check with the ladder (fixture of the section above): the pill
+  -- saw us 150 ticks ago and was hit 100 ticks ago. With anger 0 the brain
+  -- thought its reload is 100 (next shell at +50, safe). The engine's reload
+  -- is 53 (50 + 3 steps): it fired at 956 and fires again at 1009 (+9).
+  local saved = PC.slot_cover_shots
+  PC.slot_cover_shots = function() return 0 end
+  local H = { mx = 36, my = 40, health = 8, owner = "hostile", anger = 0, anger_tick = 0 }
+  local world = { pills = { [5] = H }, pill_at = { [sq(36, 40)] = { { id = 5, pill = H } } },
+                  base_at = {} }
+  local function inf()
+    return { armour = 40, tankx = 30 * 256 + 128, tanky = 40 * 256 + 128,
+             man_status = C.LGM_INTANK, player_number = 0, objects = {} }
+  end
+  local lx = require("live_physics").context(inf(), {})
+  local function g()
+    return { substate = "build_walls",
+             _pt2 = { start = { ok = true, pills = {}, cx = 30.5, cy = 40.5 } } }
+  end
+  local on_line = { mx = 33, my = 40, kind = "empty", pt2_kind = "wall" }
+  H._tank_seen_since = 850
+  local hit = PA.builder_trip_hit(g(), world, inf(), 1000, { on_line }, 30, 40, lx)
+  check("trip check, brain anger 0: safe", hit == nil, hit and tostring(hit.t))
+  H._eng_hits = { 900 }
+  hit = PA.builder_trip_hit(g(), world, inf(), 1000, { on_line }, 30, 40, lx)
+  check("trip check, engine ladder (hit 100 ago): its shell at +9 hits his wall",
+        hit ~= nil and hit.sq_mx == 33 and hit.sq_my == 40, hit and tostring(hit.t))
+  H._eng_hits = nil
+
+  -- 2. Drive-in sight. The tank is at (10.5, 40.5), out of range of the pill
+  -- (36,40) (8 squares); its firing point is (30.5, 40.5). On that line it
+  -- comes in range at x = 28.5 (square 28). Drive time stub: 4 ticks a square.
+  local est = cpf.estimate_tank_travel_ticks
+  cpf.estimate_tank_travel_ticks = function(sx, sy, dx, dy) return math.abs(dx - sx) * 4 end
+  local far = inf(); far.tankx = 10 * 256 + 128
+  local st = PA.sight_tick(H, far, 30.5, 40.5, 8, 1000)
+  check("sight tick: drive time to the first square in range (18 squares)",
+        st == 1000 + 72, st)
+  check("sight tick: in range now gives nil (old rule)",
+        PA.sight_tick(H, inf(), 30.5, 40.5, 8, 1000) == nil)
+  check("sight tick: never in range on the line gives nil",
+        PA.sight_tick(H, far, 12.5, 40.5, 8, 1000) == nil)
+  H._tank_seen_since = nil
+  hit = PA.builder_trip_hit(g(), world, far, 1000, { on_line }, 30, 40, lx,
+                            { tx = 30.5, ty = 40.5 })
+  check("trip check: pill sees us at +72, first shell at +172, safe", hit == nil,
+        hit and tostring(hit.t))
+  cpf.estimate_tank_travel_ticks = function() return -1 end
+  hit = PA.builder_trip_hit(g(), world, far, 1000, { on_line }, 30, 40, lx,
+                            { tx = 30.5, ty = 40.5 })
+  check("trip check: no drive estimate, the old shell at +1", hit ~= nil,
+        hit and tostring(hit.t))
+  cpf.estimate_tank_travel_ticks = est
+  PC.slot_cover_shots = saved
+
+  -- 3. The real shell walk (c6 beside_e, engine tick 1320): our shell at
+  -- (32209, 30466) with 1 move left, fired at angle 200.875. Its last move
+  -- takes it into pill square (125,118).
+  local s = { real_fx = 32209, real_fy = 30466, real_life = 1, angle = 200.875, speed = 32 }
+  local wk = QR.shell_real_walk(s)
+  local last = wk and wk[#wk]
+  check("real walk: the last move enters (125,118)",
+        last and last.mx == 125 and last.my == 118 and last.k == 1,
+        last and string.format("(%d,%d) k=%d", last.mx, last.my, last.k))
+  check("real walk: no match, no walk", QR.shell_real_walk({ angle = 200 }) == nil)
+
+  -- shot_near_tick: a shell flying west along y = 119.0 + 6 wu.
+  local gs = { cur_fx = 33000, cur_fy = 30470, step_x = -32, step_y = 0 }
+  check("graze: no exact tile tick", QR.shot_land_tick(gs, 125, 118, 500) == nil)
+  check("graze: closest pass tick", QR.shot_near_tick(gs, 125, 118, 500) == 524,
+        QR.shot_near_tick(gs, 125, 118, 500))
+
+  -- update_shot_accounting (attack.lua): the same shell seen this tick.
+  local A  = require("attack")
+  local ST = require("shot_tracker")
+  local QK = C.QUICK_REPAIR_ON_TAKE
+  C.QUICK_REPAIR_ON_TAKE = true
+  local rt = U.ttype
+  U.ttype = function() return C.T_GRASS end
+  local ss = cpf.simulate_shot
+  -- The old sim shell: it ends one square beside the pill.
+  cpf.simulate_shot = function()
+    return { { mx = 132, my = 120 }, { mx = 126, my = 119 }, { mx = 125, my = 119 } }
+  end
+  local saved_shots = ST.shots
+  local shot = { fire_tick = 660, fire_fx = 33958 - 160, fire_fy = 30854 - 35,
+                 step_x = -31, step_y = -6, cur_fx = 32240, cur_fy = 30470,
+                 status = "in_flight", angle = 200.875, speed = 32,
+                 real_fx = 32209, real_fy = 30466, real_life = 1, real_tick = 675 }
+  ST.shots = { shot }
+  local goal = { kind = "attack_pill", mx = 125, my = 118, _attack_start_tick = 600 }
+  A._update_shot_accounting(goal, { pills = {}, pill_at = {} }, 675)
+  check("accounting: the real walk counts the shell in the air",
+        goal._on_target_in_flight == 1 and goal._on_target_land
+        and goal._on_target_land[1] == 676,
+        tostring(goal._on_target_in_flight) .. " " .. tostring(goal._on_target_land and goal._on_target_land[1]))
+  shot.real_tick = 674   -- not seen this tick: the old sim shell
+  A._update_shot_accounting(goal, { pills = {}, pill_at = {} }, 675)
+  check("accounting: not seen this tick, the old sim (misses)",
+        goal._on_target_in_flight == 0, goal._on_target_in_flight)
+  ST.shots = saved_shots
+  cpf.simulate_shot = ss
+  U.ttype = rt
+  C.QUICK_REPAIR_ON_TAKE = QK
+  C.PT2_START_BUILDER_SAFE = K
+end
+
 print(string.format("\n%d passed, %d failed", pass, fail))
 os.exit(fail == 0 and 0 or 1)
