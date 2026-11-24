@@ -116,6 +116,9 @@ function M.build_inp(state, goal, info, world, pill, no_builder, npb, radius, no
   if inp.start_while_building then
     local x = require("live_physics").context(info, {})
     inp.pill_attack_ticks, inp.pill_attack_min_ticks = x.pill_attack_ticks, x.pill_attack_min_ticks
+    -- PT2_START_ANGER_RISE: the rest of the reload rules, our reload
+    inp.pill_angry_divisor, inp.pill_cooldown_ticks = x.pill_angry_divisor, x.pill_cooldown_ticks
+    inp.tank_reload = x.reload
     -- E4-5: the builder's own trips, as the hold check counts them
     inp.lgm_ticks = lgm_ticks
   end
@@ -373,7 +376,7 @@ local function finish(a, inp, res, cost)
   goal._pt2_bg = nil
   if b.start_now ~= nil then
     goal._pt2.start = { ok = b.start_now, why = b.start_why, pills = b.start_pills,
-                        exposure = b.exposure, shells = b.shells_through }
+                        exposure = b.exposure, shells = b.shells_through, chain = b.start_chain }
   end
   -- PT2_EXTRA_COVER_WALLS: v2's extra walls for a safe point (after the
   -- rank). The builder builds them while the take goes on, only when he
@@ -443,6 +446,41 @@ local function wall_up(world, mx, my)
   return PC.slot_cover_shots(world, mx, my, U.ttype(mx, my)) > 0
 end
 
+-- PT2_START_ANGER_RISE at the hold point: v2's chain (start_check) with
+-- the live pills, anger and walls. A planned wall that stands now covers
+-- from tick 0; a missing one from its finish tick (the order of `walls`,
+-- each later trip from the tank). A dead chain pill neither fires nor is
+-- hit.
+function M.rise_now(chain, world, info, now, walls, ox, oy, exp, x)
+  local ts = PS.wall_ticks(ox, oy, walls, lgm_ticks, nil,
+    bit.rshift(info.tankx or 0, 8), bit.rshift(info.tanky or 0, 8)) or {}
+  local wt = {}
+  for i, w in ipairs(walls) do wt[w.my * 256 + w.mx] = ts[i] end
+  local entries = {}
+  for k, c in ipairs(chain) do
+    local p = PC.pill_on_square(world, c.mx, c.my)
+    local e = { to = c.to, cover_now = c.cover_now, planned = c.planned, count = c.count }
+    if p and (p.health or 0) > 0 then
+      e.speed = PS.pill_interval(M.anger_now(p, now), C.PILL_ANGER_BUMP,
+        x.pill_attack_ticks, x.pill_attack_min_ticks, x.pill_angry_divisor)
+    else
+      e.speed, e.off = x.pill_attack_ticks or 100, true
+    end
+    entries[k] = e
+  end
+  local A = chain[1]
+  local o = { attack_ticks = x.pill_attack_ticks, min_ticks = x.pill_attack_min_ticks,
+              divisor = x.pill_angry_divisor, cooldown = x.pill_cooldown_ticks,
+              tank_reload = x.reload,
+              flight = A and PS.flight_ticks(info.tankx or 0, info.tanky or 0, A.mx, A.my, x.shell_speed) or 0 }
+  return (PS.rise_chain(entries, exp, function(mx, my)
+    local t = wt[my * 256 + mx]
+    if t then return t end
+    if wall_up(world, mx, my) then return 0 end
+    return nil
+  end, o))
+end
+
 function M.start_now_check(goal, world, info, now, list)
   if C.PT2_START_WHILE_BUILDING == false then return false end
   local st = goal._pt2 and goal._pt2.start
@@ -472,6 +510,9 @@ function M.start_now_check(goal, world, info, now, list)
   end
   local x = require("live_physics").context(info, {})
   local shells = 0
+  if st.chain and PS.rise_on() then
+    shells = M.rise_now(st.chain, world, info, now, walls, ox, oy, exp, x)
+  else
   for _, sp in ipairs(st.pills or {}) do
     local p = PC.pill_on_square(world, sp.mx, sp.my)
     if p and (p.health or 0) > 0 then
@@ -483,6 +524,7 @@ function M.start_now_check(goal, world, info, now, list)
                                   x.pill_attack_ticks, x.pill_attack_min_ticks)
       shells = shells + PS.shells_through(exp, iv, cover)
     end
+  end
   end
   local armour = info.armour or 0
   local ok = PS.can_start(armour, shells, C.ATTACK_RUSH_MIN_ARMOUR or 5)

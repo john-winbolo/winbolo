@@ -715,6 +715,7 @@ do
     local world = make_world(pills)
     local inp = make_inp(world, A, 0)
     inp.start_while_building = true
+    inp.start_anger_rise = false
     inp.armour = 40
     local res = V.evaluate_lua(inp)
     n = n + 1
@@ -738,6 +739,7 @@ do
         -- no armour: a point with shells through must wait
         local inp0 = make_inp(world, A, 0)
         inp0.start_while_building = true
+        inp0.start_anger_rise = false
         inp0.armour = 0
         V.reset()
         local b0 = V.evaluate_lua(inp0).best
@@ -749,6 +751,70 @@ do
   end
   print(string.format("    %d maps, %d with a plan: start %d, wait %d, bystander %d", n, planned, go_n, wait_n, bys))
   check("start check = pt2_start by hand, no plan = start", bad == 0, bad)
+end
+
+-- ── 9b. PT2_START_ANGER_RISE ───────────────────────────────────────────────
+print("PT2_START_ANGER_RISE: the tick walk over the chain")
+local PS = require("pt2_start")
+do
+  local n, walked, go_off, go_on, more, less, bad = 0, 0, 0, 0, 0, 0, 0
+  for trial = 1, 30 do
+    clear()
+    V.reset()
+    local A = { mx = 128, my = 120, owner = "hostile", health = 15, anger = (rnd(4) - 1) / 3 }
+    local pills = { A }
+    for _ = 1, rnd(3) do
+      local mx, my = 122 + rnd(12), 114 + rnd(12)
+      if math.abs(mx - 128) + math.abs(my - 120) > 2 then
+        pills[#pills + 1] = { mx = mx, my = my, owner = "hostile", health = 15, anger = (rnd(4) - 1) / 3 }
+      end
+    end
+    for _ = 1, rnd(10) do terrain[sq(120 + rnd(16), 112 + rnd(16))] = C.T_BUILDING end
+    terrain[sq(128, 120)] = nil
+    local world = make_world(pills)
+    local function run(rise)
+      local inp = make_inp(world, A, 0)
+      inp.start_while_building = true
+      inp.start_anger_rise = rise
+      inp.armour = 40
+      V.reset()
+      return V.evaluate_lua(inp).best, inp
+    end
+    local b0 = run(false)
+    local b1, inp = run(true)
+    n = n + 1
+    -- the rank does not see the start check's shells inside the band
+    -- only through start_now; the point may move, so compare like points
+    if b0 and b0.start_now then go_off = go_off + 1 end
+    if b1 and b1.start_now then go_on = go_on + 1 end
+    if b1 and b1.safe and b1.start_chain then
+      walked = walked + 1
+      -- by hand: the chain's pills, the wall ticks of the plan, the flight
+      local ts = PS.wall_ticks(b1.omx, b1.omy, b1.plan)
+      local wt = {}
+      for i, q in ipairs(b1.plan) do wt[q.my * 256 + q.mx] = ts[i] end
+      local entries = {}
+      for k, c in ipairs(b1.start_chain) do
+        local X = b1.chain[k]
+        if X.mx ~= c.mx or X.my ~= c.my then bad = bad + 1 end
+        if (k < #b1.chain) ~= (c.to == k + 1) then bad = bad + 1 end
+        entries[k] = { speed = PS.pill_interval(X.anger or 0, inp.anger_bump, nil, nil, nil, true),
+                       to = c.to, cover_now = c.cover_now, planned = c.planned, count = c.count }
+      end
+      local fl = PS.flight_ticks(b1.px, b1.py, A.mx, A.my)
+      local sh = PS.rise_chain(entries, b1.exposure, function(mx, my) return wt[my * 256 + mx] end,
+                               { tank_reload = 13, flight = fl })
+      if sh ~= b1.shells_through then bad = bad + 1 end
+      if PS.can_start(40, sh, inp.finish_min_armour) ~= b1.start_now then bad = bad + 1 end
+      if b0 and b0.omx == b1.omx and b0.omy == b1.omy and b0.shells_through then
+        if sh > b0.shells_through then more = more + 1 elseif sh < b0.shells_through then less = less + 1 end
+      end
+    end
+  end
+  print(string.format("    %d maps, %d walked: start off %d, on %d; same point: more shells %d, fewer %d",
+    n, walked, go_off, go_on, more, less))
+  check("the walk = pt2_start.rise_chain by hand", bad == 0, bad)
+  check("some maps walk the chain", walked > 0, walked)
 end
 
 -- ── 10. PT2_EXTRA_COVER_WALLS ─────────────────────────────────────────────

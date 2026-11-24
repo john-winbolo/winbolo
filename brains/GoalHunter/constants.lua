@@ -1003,6 +1003,18 @@ M.PT2_AIM_POINTS = 9
 -- on a yes the builder builds the rest while the take goes on.
 -- false = wait for every wall. KEEL / MAST: false.
 M.PT2_START_WHILE_BUILDING = true
+-- PT2_START_ANGER_RISE (Nov 23, Andrew's spec): the start check above
+-- counts the pills getting angrier while the walls go up. It walks the
+-- ticks as the engine does (pt2_start.rise_shells): chain pill 1 takes a
+-- tank shell per tank reload after the flight time, chain pill k+1 takes
+-- the shells of chain pill k through a used link, bystanders take none.
+-- A hit divides the reload by the live pill_angry_divisor (floor the
+-- minimum); each calm period adds 1. Each wall counts from its finish tick.
+-- The anger to hits map becomes ceil(anger / bump - 1e-6), and 3 or more
+-- hits = the minimum reload; that map is shared with
+-- attack.heat_hits_landed and pt2_kill_lock.pill_reload.
+-- false = today's numbers. KEEL / MAST: false.
+M.PT2_START_ANGER_RISE = true
 -- PT2_EXTRA_COVER_WALLS (Nov 23, Andrew's yes, E5): v2 and its caller. A
 -- safe point gets up to this many extra walls on the ray of the last chain
 -- pill (a single take: A), decided after the rank. Each on a legal square
@@ -8341,6 +8353,7 @@ M.PRESETS = {
     PT2_CHAINS_ONLY = false,
     PT2_AIM_POINTS = 5,
     PT2_START_WHILE_BUILDING = false,
+    PT2_START_ANGER_RISE = false,
     PT2_EXTRA_COVER_WALLS = 0,
     PT2_LEEWAY = false,
     PT2_OWN_PILL_BONUS = false,
@@ -8737,6 +8750,7 @@ M.PRESETS.mast = {
   PT2_CHAINS_ONLY                   = false,  -- 2.2.1 had no pill take v2
   PT2_AIM_POINTS                    = 5,      -- 2.2.1 had no pill take v2
   PT2_START_WHILE_BUILDING          = false,  -- 2.2.1 had no pill take v2
+  PT2_START_ANGER_RISE              = false,  -- 2.2.1 counted round(anger / bump) hits
   PT2_EXTRA_COVER_WALLS             = 0,      -- 2.2.1 had no pill take v2
   PT2_LEEWAY                        = false,
   PT2_OWN_PILL_BONUS                = false,

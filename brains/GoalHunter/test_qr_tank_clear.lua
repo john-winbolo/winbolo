@@ -191,10 +191,13 @@ do
   check(string.format("why = next, t = last %+d + reload %d + flight 12 = %d", -ago, r, want),
         qr and qr.tank and qr.tank.why == "next" and qr.tank.t == want,
         qr and qr.tank and (tostring(qr.tank.why) .. "/" .. tostring(qr.tank.t)))
-  -- Fired 6 ticks ago: next at now + r - 6, lands at r + 6 > 16: send.
-  sh = pshell(100 * 256 + 128, 98 * 256 + 128 - 6 * 32, 0)
+  -- Fired ago2 ticks ago: next at now + r - ago2, lands at r - ago2 + 12
+  -- > 16: send. ago2 = 6 at reload 12; PT2_START_ANGER_RISE puts anger
+  -- 1.0 at the minimum reload 6, then ago2 = 1.
+  local ago2 = math.max(1, r - 6)
+  sh = pshell(100 * 256 + 128, 98 * 256 + 128 - ago2 * 32, 0)
   qr = eval({ extra = { [5] = north_pill(1.0) }, objects = { sh } })
-  check(string.format("angry pill fired 6 ago: lands at +%d > 16: send", r + 6),
+  check(string.format("angry pill fired %d ago: lands at +%d > 16: send", ago2, r - ago2 + 12),
         res(qr) == "send", res(qr))
 end
 

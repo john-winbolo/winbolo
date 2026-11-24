@@ -70,6 +70,8 @@ function M.knob_inp(C, inp)
   -- PT2_START_WHILE_BUILDING (E4); anger_bump: world.lua's anger per hit
   inp.start_while_building = C.PT2_START_WHILE_BUILDING ~= false
   inp.anger_bump = C.PILL_ANGER_BUMP or 0.3333
+  -- PT2_START_ANGER_RISE: the start check walks the pills' reload ticks
+  inp.start_anger_rise = C.PT2_START_ANGER_RISE ~= false
   -- PT2_EXTRA_COVER_WALLS (E5): 0 = off
   inp.extra_cover_walls = C.PT2_EXTRA_COVER_WALLS or 1
   -- PT2_CHAINS_ONLY (S10): the runs that only a safe chain can use (a
@@ -1430,9 +1432,63 @@ M._search_walls_all = search_walls_all
 -- A bystander (a pill not in the chain, its ray not "reach") whose ray has
 -- a planned blocker and whose standing cover is under its bar needs that
 -- cover before the start: start_now false (E4-7).
+-- PT2_START_ANGER_RISE: the chain (A, then each used link) as
+-- pt2_start.rise_chain walks it. Chain pill k < last hits chain pill k + 1
+-- (the link is used: no cover in front of it); the last chain pill's
+-- shells go to the tank through the cover on its ray (standing cover from
+-- tick 0, each planned wall from its own finish tick) and are counted when
+-- the ray has a planned blocker. Returns the shells and the chain
+-- ({ mx, my, to, cover_now, planned, count }, kept for the hold point).
+local function pill_speed(inp, X)
+  local iv
+  if inp.pill_interval then iv = inp.pill_interval(X) end
+  if iv then return iv end
+  local anger = inp.anger_of and inp.anger_of(X) or (X.anger or 0)
+  return PS.pill_interval(anger, inp.anger_bump, inp.pill_attack_ticks, inp.pill_attack_min_ticks,
+    inp.pill_angry_divisor, inp.start_anger_rise)
+end
+
+local function rise_check(ctx, rec, ox, oy, exp)
+  local inp = ctx.inp
+  local chain, n = rec.chain, #rec.chain
+  local ts = PS.wall_ticks(ox, oy, rec.plan, ctx.lgm_ticks) or {}
+  local wt = {}
+  for i, q in ipairs(rec.plan) do wt[q.my * 256 + q.mx] = ts[i] end
+  local entries, keep = {}, {}
+  for k = 1, n do
+    local X = chain[k]
+    local e = { speed = pill_speed(inp, X), mx = X.mx, my = X.my, cover_now = 0 }
+    if k < n then
+      e.to = k + 1
+    else
+      local r = rec.rays[rec.ri[X]]
+      for j = 1, r.n_block do
+        local b = r.block[j]
+        if b.kind == "planned" then
+          e.planned = e.planned or {}
+          e.planned[#e.planned + 1] = { mx = b.sq % 256, my = floor(b.sq / 256), shots = b.shots }
+        else
+          e.cover_now = e.cover_now + b.shots
+        end
+      end
+      e.count = e.planned ~= nil
+    end
+    entries[k] = e
+    keep[k] = { mx = e.mx, my = e.my, to = e.to, cover_now = e.cover_now, planned = e.planned, count = e.count }
+  end
+  local A = chain[1]
+  local o = { attack_ticks = inp.pill_attack_ticks, min_ticks = inp.pill_attack_min_ticks,
+              divisor = inp.pill_angry_divisor, cooldown = inp.pill_cooldown_ticks,
+              tank_reload = inp.tank_reload,
+              flight = PS.flight_ticks(rec.px, rec.py, A.mx, A.my, inp.env and inp.env.shell_speed) }
+  local shells = PS.rise_chain(entries, exp, function(mx, my) return wt[my * 256 + mx] end, o)
+  return shells, keep
+end
+
 local function start_check(ctx, rec)
   local inp = ctx.inp
   rec.start_now, rec.exposure, rec.shells_through, rec.start_pills, rec.start_why = true, 0, 0, nil, nil
+  rec.start_chain = nil
   local plan = rec.plan
   if not plan or #plan == 0 then return end
   local ox = rec.omx or floor(rec.px / 256)
@@ -1466,16 +1522,15 @@ local function start_check(ctx, rec)
           return
         end
       elseif not r.link_cover then
-        local iv
-        if inp.pill_interval then iv = inp.pill_interval(X) end
-        if not iv then
-          local anger = inp.anger_of and inp.anger_of(X) or (X.anger or 0)
-          iv = PS.pill_interval(anger, inp.anger_bump, inp.pill_attack_ticks, inp.pill_attack_min_ticks)
-        end
-        shells = shells + PS.shells_through(exp, iv, now_sh)
+        shells = shells + PS.shells_through(exp, pill_speed(inp, X), now_sh)
         pills[#pills + 1] = { mx = X.mx, my = X.my, cover_now = now_sh, planned = planned }
       end
     end
+  end
+  -- PT2_START_ANGER_RISE: the tick walk over the chain replaces the sum
+  -- (only a point with a counted pill; the bystander rule above stays)
+  if #pills > 0 and PS.rise_on(inp.start_anger_rise) then
+    shells, rec.start_chain = rise_check(ctx, rec, ox, oy, exp)
   end
   rec.exposure, rec.shells_through, rec.start_pills = exp, shells, pills
   rec.start_now = PS.can_start(inp.armour, shells, inp.finish_min_armour)

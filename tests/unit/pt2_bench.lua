@@ -20,6 +20,7 @@
 --                             cold: dropped before each run; warm=1 keeps them)
 --   eval=both                 old (C and Lua) and v2 on each case: costs, safe
 --                             takes each finds, best points, kills and depth
+--   anger=<v>                 every pill's anger is v (0..1, the angry cases)
 --   set=<k>:<v>[,<k>:<v>...]  set these inp fields on every case (v: true,
 --                             false, a number, else a string)
 --   eval=ab ev=<old|oldlua|v2> a=<k>:<v>,... b=<k>:<v>,...
@@ -221,6 +222,12 @@ local function game_inp(case)
     end
   end
   soft("anger_of", function() return nil end)
+  -- anger=<v>: every pill at this anger (the angry pill cases of
+  -- PT2_START_ANGER_RISE)
+  if tonumber(args.anger or "") then
+    local v = tonumber(args.anger)
+    inp.anger_of = function() return v end
+  end
   inp.keep_all = args.keep_all == "1" or nil
   -- drop1=1: the first confirm at each point fails (tests the S6 retry)
   if args.drop1 == "1" then

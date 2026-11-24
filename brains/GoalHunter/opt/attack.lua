@@ -9634,11 +9634,11 @@ end
 local HEAT_MAX_HITS = 4
 
 -- Hits already landed on a pill, inferred from world.lua's anger proxy.
+-- The map is pt2_start.anger_hits (shared with the pill take start check
+-- and pt2_kill_lock); C.PT2_START_ANGER_RISE picks the rule there.
 local function heat_hits_landed(anger)
-  local bump = C.PILL_ANGER_BUMP or 0.3333
-  if bump <= 0 then return 0 end
-  local n = math.floor((anger or 0) / bump + 0.5)
-  if n < 0 then n = 0 elseif n > HEAT_MAX_HITS then n = HEAT_MAX_HITS end
+  local n = require("pt2_start").anger_hits(anger, C.PILL_ANGER_BUMP or 0.3333)
+  if n > HEAT_MAX_HITS then n = HEAT_MAX_HITS end
   return n
 end
 
