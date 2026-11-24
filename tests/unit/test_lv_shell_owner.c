@@ -346,5 +346,45 @@ int run_lv_shell_owner_ids(void) {
                        &next, &ev, &st);
   UT_ASSERT(out[0] == 3 && outId[0] == 100);
   UT_ASSERT(ev.nLost == 0 && ev.nMerge == 1 && ev.mergeFrom[0] == 101 && ev.mergeTo[0] == 100);
+  UT_ASSERT(!ev.overflow);
+
+  /* Twenty pairs of shells, each pair a tank's shell and a pillbox's side
+     by side, all go on as one shell a pair at the same entry: forty shells
+     lose their owner, more than the events hold. No more than the most are
+     kept, the overflow is told, and no shell of the entry has an owner, so
+     the caller takes the owner off every shell before too. */
+  {
+    enum { PAIRS = 20 };
+    LvShellPt mp[PAIRS * 2], mc[PAIRS + 1];
+    int8_t mOwner[PAIRS * 2], mOut[PAIRS + 1];
+    uint16_t mId[PAIRS * 2], mOutId[PAIRS + 1];
+    int k;
+    for (k = 0; k < PAIRS; k++) {
+      mp[2 * k].wx = 1000 + k * 1024;     mp[2 * k].wy = 2000;     mp[2 * k].dir = 4;
+      mp[2 * k + 1].wx = 1000 + k * 1024; mp[2 * k + 1].wy = 2016; mp[2 * k + 1].dir = 4;
+      mOwner[2 * k] = 3;
+      mOwner[2 * k + 1] = 5;
+      mId[2 * k] = (uint16_t)(200 + 2 * k);
+      mId[2 * k + 1] = (uint16_t)(201 + 2 * k);
+      mc[k].wx = 1032 + k * 1024; mc[k].wy = 2008; mc[k].dir = 4;
+    }
+    /* One more shell, new at tank 2's gun: on its own it would be tank 2's. */
+    tanks[2].on = true; tanks[2].wx = 60000; tanks[2].wy = 9000; tanks[2].dir = 4;
+    tanks[2].fired = true;
+    mc[PAIRS].wx = 60000 + 6 * 32; mc[PAIRS].wy = 9000; mc[PAIRS].dir = 4;
+    lv_shellOwnerLinkIds(mp, mOwner, mId, PAIRS * 2, true, mc, PAIRS + 1, tanks,
+                         LV_SHELL_OWNER_MAX_TANKS, true, mOut, mOutId, &next, &ev, &st);
+    UT_ASSERT_MSG(ev.overflow, "forty lost owners at one entry did not overflow");
+    UT_ASSERT_MSG(ev.nLost + ev.nMerge == LV_SHELL_OWNER_MAX_ID_EVENTS,
+                  "%d events kept, want %d", ev.nLost + ev.nMerge,
+                  LV_SHELL_OWNER_MAX_ID_EVENTS);
+    for (k = 0; k <= PAIRS; k++) {
+      UT_ASSERT_MSG(mOut[k] == LV_SHELL_OWNER_NONE, "shell %d kept owner %d", k, mOut[k]);
+    }
+    /* The most that fit do not overflow: eight pairs are sixteen lost. */
+    lv_shellOwnerLinkIds(mp, mOwner, mId, 16, true, mc, 8, tanks, 0, true, mOut, mOutId,
+                         &next, &ev, &st);
+    UT_ASSERT(!ev.overflow && ev.nLost == LV_SHELL_OWNER_MAX_ID_EVENTS);
+  }
   return 0;
 }

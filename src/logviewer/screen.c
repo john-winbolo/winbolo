@@ -362,13 +362,19 @@ static uint16_t s_lagShellIdNext;
    frames too, and two shells that went on as one share one id. */
 static void lv_lagApplyShellIdEvents(const LvShellOwnerIdEvents *ev) {
   int n, i, k;
-  if (ev->nMerge == 0 && ev->nLost == 0) {
+  if (ev->nMerge == 0 && ev->nLost == 0 && !ev->overflow) {
     return;
   }
   for (n = 1; n < s_lagRing.count; n++) {
     LvLagFrame *g = &s_lagRing.frames[(s_lagRing.newest - n + LV_LAG_FRAMES) % LV_LAG_FRAMES];
     for (i = 0; i < g->shellCount; i++) {
       LvLagShell *sh = &g->shells[i];
+      if (ev->overflow) {
+        /* More shells went on as one than the events hold: no shell of
+           the newest frame has an owner, so none here has one either. */
+        sh->owner = LV_SHELL_OWNER_NONE;
+        continue;
+      }
       for (k = 0; k < ev->nMerge; k++) {
         if (sh->id == ev->mergeFrom[k]) {
           sh->id = ev->mergeTo[k];
