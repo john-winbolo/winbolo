@@ -6548,7 +6548,8 @@ local function eval_reposition_pill(state, world, info, tmx, tmy, boat, ammo, sc
   -- distance-to-us influences WHICH pill wins). Lower = more worth moving.
   for pid, p in pairs(world.pills) do
     if (p.owner == "friendly" or p.owner == "allied")
-       and (p.health or 0) > 0 and not p.in_tank and not p._in_use then
+       and (p.health or 0) > 0 and not p.in_tank and not p._in_use
+       and not p._take_pend then
       local cat = PP.role_of(p, state.tick)
       -- Fresh reclassify (cached "back" can be ~60s stale) + ally-claim skip
       -- (a pill an ally is already repositioning is off-limits) gate eligibility.

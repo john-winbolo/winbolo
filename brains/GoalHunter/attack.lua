@@ -618,29 +618,41 @@ end
 -- the allies') does not shoot a pill a take needs. The union of:
 --   * current_blocker_tiles: the attack_pill goal's own scan (v1 or v2);
 --   * the chain latch (state._take_blk): the last non-empty current set,
---     kept while the goal is capture_pill (or anything else) between the
---     kills and captures of the same chain. It ends when every chain pill
---     is ours, carried or gone, when an attack_pill on a pill outside the
---     chain starts, or when no chain pill is dead and the goal is no longer
---     attack_pill / capture_pill on a chain pill (the take was dropped);
+--     kept while the goal is attack_pill / capture_pill on a chain pill (or
+--     no goal, for the replan tick) between the kills and captures of the
+--     same chain. It ends when every chain pill is ours, carried or gone,
+--     when an attack_pill on a pill outside the chain starts, or when any
+--     other goal starts (the take was dropped). When no chain pill is still
+--     alive (every kill is done) the latch tiles turn soft (see below): the
+--     blocker has no job, so it is not "utility" any more, but reposition
+--     still leaves it alone until the captures end (arena diag_n t=843).
+--     Arena c20 (Nov 24): a hard latch through the capture of the two dead
+--     pills kept our placed blocker "utility", so the pill portfolio saw
+--     util=2 > reserve=1 and the bot drove off to place the captured pill
+--     (beside_sw t=806, +740 ticks);
 --   * the pending plan: the best (lowest cost) live pool-6 row in
 --     state.cost_cache, when it is priced by a double-take shadow plan
 --     (entry._dbl.blk, pt2_dbl.fill_entry: the ally pills on its rays and
 --     the squares where it places a pill). This covers the ticks before
 --     the take is the goal (gap_w arena, Nov 24: reposition shot the
---     take's ally blocker at brain t=15).
+--     take's ally blocker at brain t=15). A pending tile is a soft mark:
+--     it goes out on pblk and stops our reposition (pill._take_pend), but
+--     it does not set our own _in_use, so it does not change the pill
+--     portfolio roles (arena a3 carry_diag_sw t=351: a pending mark on the
+--     ally pill made util=2 and the bot placed its carried pill).
 -- false = current_blocker_tiles only. MAST: false.
--- Returns a sorted list of packed tiles (my*256+mx), or the shared empty table.
+-- Returns a sorted list of packed tiles (my*256+mx), or the shared empty
+-- table, and a set of the tiles that only the pending plan gives (or nil).
 local function chain_state(world, ids)
-  local open, dead = false, false
+  local open, alive = false, false
   for _, id in pairs(ids) do
     local p = world.pills and world.pills[id]
     if p and not p.in_tank and p.owner ~= "friendly" and p.owner ~= "allied" then
       open = true
-      if (p.health or 0) <= 0 then dead = true end
+      if (p.health or 0) > 0 then alive = true end
     end
   end
-  return open, dead
+  return open, alive
 end
 
 function M.take_blocker_tiles(state, world)
@@ -666,14 +678,17 @@ function M.take_blocker_tiles(state, world)
       state._take_blk = nil
     end
   end
+  local hard = L   -- latch tiles that still set _in_use
   if L then
-    local open, dead = chain_state(world, L.ids)
+    local open, alive = chain_state(world, L.ids)
+    local idle = not g or g.kind == "none"
     local on_chain = g and (g.kind == "attack_pill" or g.kind == "capture_pill")
       and g.target_id and L.set[g.target_id]
-    if not open or (not dead and not on_chain) then
+    if not open or not (idle or on_chain) then
       L = nil
       state._take_blk = nil
     end
+    hard = L and alive and L or nil
   end
   local pend
   local best, bcost = nil, 1e29
@@ -691,10 +706,19 @@ function M.take_blocker_tiles(state, world)
       if not seen[ti] then seen[ti] = true; out[#out + 1] = ti end
     end
   end
-  add(cur); add(L and L.tiles); add(pend)
+  add(cur); add(hard and hard.tiles)
+  local soft
+  local function add_soft(list)
+    if not list then return end
+    for _, ti in ipairs(list) do
+      if not seen[ti] then soft = soft or {}; soft[ti] = true end
+    end
+    add(list)
+  end
+  add_soft(L and L.tiles); add_soft(pend)
   if #out == 0 then return _EMPTY end
   table.sort(out)
-  return out
+  return out, soft
 end
 
 -- Shield WALL tiles this take is BUILDING, broadcast (bwl) ONLY while in

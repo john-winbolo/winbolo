@@ -6457,7 +6457,7 @@ function Brain.think(info)
       local util = {}   -- packed-tile set; any friendly pill on one of these is _in_use
       -- PT2_BLOCKER_MARK: the current take, its chain latch and the best
       -- pending double-take plan (attack.take_blocker_tiles).
-      local mine = attack.take_blocker_tiles(state, world)
+      local mine, soft = attack.take_blocker_tiles(state, world)
       state._blocker_tiles = mine
       -- Shield WALL tiles we're building THIS tick (commander, build_walls only):
       -- broadcast separately (bwl) so blitz soldiers route their shot AROUND our
@@ -6465,7 +6465,7 @@ function Brain.think(info)
       -- protection) — these are the walls being laid, gated to build_walls.
       state._shield_wall_tiles = attack.current_shield_wall_tiles
         and attack.current_shield_wall_tiles(state, world) or nil
-      if mine then for _, ti in ipairs(mine) do util[ti] = true end end
+      if mine then for _, ti in ipairs(mine) do if not (soft and soft[ti]) then util[ti] = true end end end
       if ally_state.iter_active then
         for pn, slot in ally_state.iter_active(now, 1750) do
           if pn ~= info.player_number and slot.info and slot.info.pblk then
@@ -6478,7 +6478,9 @@ function Brain.think(info)
         end
       end
       for _, p in pairs(world.pills) do
-        p._in_use = util[p.my * 256 + p.mx] and true or nil
+        local ti = p.my * 256 + p.mx
+        p._in_use = util[ti] and true or nil
+        p._take_pend = soft and soft[ti] or nil
       end
     end
 

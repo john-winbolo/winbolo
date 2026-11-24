@@ -18,15 +18,21 @@
 --      it places the pill on.
 --   3. pending plan: the best pool-6 row priced by that plan marks the
 --      tile; a cheaper row with no double take, a blitz-skipped row, a
---      rejected row and the knob off do not.
+--      rejected row and the knob off do not. The pending mark is soft:
+--      _take_pend, not _in_use (arena a3 carry_diag_sw t=351: a hard
+--      pending mark made util=2 and the bot placed its carried pill).
 --   4. chain latch: an attack_pill take marks; capture_pill and goal none
---      keep it while a chain pill lies dead; it ends when the chain is
---      ours, when a take on another pill starts, or when the take is
---      dropped with no chain pill dead.
---   5. source checks: init.lua marks and sends take_blocker_tiles, drops
---      our own reposition on a marked pill; goals.lua copies blk on the
---      pool-6 row and the reposition pool skips _in_use; the ally vote
---      says no to an _in_use pill.
+--      keep it between the kills (hard while a chain pill is alive, soft
+--      when every kill is done: arena c20 beside_sw t=806, the hard mark
+--      made util=2 and the bot placed the captured pill, 1670 -> 2410
+--      ticks); it ends when the chain is ours, when a take on another
+--      pill starts, or when any other goal starts (arena a3 carry_diag_sw:
+--      the old latch held t=656..3863 through refuel and flee).
+--   5. source checks: init.lua marks and sends take_blocker_tiles, sets
+--      _in_use from the hard tiles only, drops our own reposition on a
+--      marked pill; goals.lua copies blk on the pool-6 row and the
+--      reposition pool skips _in_use and _take_pend; the ally vote says
+--      no to both.
 --
 -- Run from this directory with the LuaJIT built beside the game:
 --   ../../build-xc/_deps/luajit_src-src/src/luajit.exe test_pt2_blocker_mark.lua
@@ -190,15 +196,24 @@ do
   check("knob off: the pending plan marks nothing (old rule)", #t == 0, str(t))
   C.PT2_BLOCKER_MARK = was
 end
--- the marks reach the pill the way init.lua sets _in_use
+-- the marks reach the pill the way init.lua sets _in_use / _take_pend
+local function apply(world, list, soft)
+  local util = {}
+  for _, ti in ipairs(list) do if not (soft and soft[ti]) then util[ti] = true end end
+  for _, p in pairs(world.pills) do
+    local ti = sq(p.mx, p.my)
+    p._in_use = util[ti] and true or nil
+    p._take_pend = soft and soft[ti] or nil
+  end
+end
 st = st_with({ ["6:1"] = row(1, 123.2, dbl) })
-t = A.take_blocker_tiles(st, GW)
-local util = {}
-for _, ti in ipairs(t) do util[ti] = true end
-for _, p in pairs(GW.pills) do p._in_use = util[sq(p.mx, p.my)] and true or nil end
-check("our pill (121,118) is _in_use; the take pills are not",
-  GW.pills[3]._in_use == true and not GW.pills[1]._in_use and not GW.pills[2]._in_use,
-  tostring(GW.pills[3]._in_use))
+local soft
+t, soft = A.take_blocker_tiles(st, GW)
+apply(GW, t, soft)
+check("a3 carry_diag_sw t=351: a pending mark is soft: (121,118) _take_pend, not _in_use",
+  GW.pills[3]._take_pend == true and not GW.pills[3]._in_use
+  and not GW.pills[1]._take_pend and not GW.pills[2]._take_pend,
+  tostring(GW.pills[3]._take_pend) .. "/" .. tostring(GW.pills[3]._in_use))
 
 -- ── 4. chain latch ────────────────────────────────────────────────────────
 print("4. chain latch")
@@ -209,19 +224,31 @@ local sscan = V2.to_scan_result(res_ours, AP, { cx = b.cx, cy = b.cy, mx = math.
 local goal = { kind = "attack_pill", target_id = 1, mx = 124, my = 118, _shield_scan = sscan,
                _pt2 = { ids = { 1, 2 }, mode = "HOLD", step = 1 } }
 local cs = { goal = goal, cost_cache = {} }
-t = A.take_blocker_tiles(cs, CW)
-check("attack_pill take: its own scan marks (121,118)", has(t, OURS), str(t))
+t, soft = A.take_blocker_tiles(cs, CW)
+check("attack_pill take: its own scan marks (121,118), hard",
+  has(t, OURS) and not (soft and soft[OURS]), str(t))
 -- first kill: the goal turns capture_pill on dead pill 1
 CW.pills[1].health = 0
 cs.goal = { kind = "capture_pill", target_id = 1, mx = 124, my = 118 }
-t = A.take_blocker_tiles(cs, CW)
-check("between the kills: capture_pill on chain pill 1 keeps the mark", has(t, OURS), str(t))
--- both dead, pill 2 picked up, goal none (diag_n t=843: reposition won here)
+t, soft = A.take_blocker_tiles(cs, CW)
+check("between the kills: capture_pill on chain pill 1 keeps the mark hard (pill 2 alive)",
+  has(t, OURS) and not (soft and soft[OURS]), str(t))
+-- c20 beside_sw t=806: both dead, the first one picked up; capture of the other
 CW.pills[2].health = 0
-CW.pills[2].owner = "friendly"; CW.pills[2].in_tank = true
+CW.pills[1].owner = "friendly"; CW.pills[1].in_tank = true
+cs.goal = { kind = "capture_pill", target_id = 2, mx = 126, my = 118 }
+t, soft = A.take_blocker_tiles(cs, CW)
+apply(CW, t, soft)
+check("c20 beside_sw t=806: every kill done, capture of chain pill 2: mark soft (not utility)",
+  has(t, OURS) and soft and soft[OURS] and CW.pills[3]._take_pend and not CW.pills[3]._in_use,
+  str(t))
+-- goal none on the replan tick (diag_n t=843: reposition won here)
 cs.goal = { kind = "none", mx = 0, my = 0 }
-t = A.take_blocker_tiles(cs, CW)
-check("one chain pill still dead on the ground, goal none: mark kept", has(t, OURS), str(t))
+t, soft = A.take_blocker_tiles(cs, CW)
+check("one chain pill still dead on the ground, goal none: mark kept soft",
+  has(t, OURS) and soft and soft[OURS], str(t))
+CW.pills[1].owner = "neutral"; CW.pills[1].in_tank = nil
+CW.pills[2].owner = "friendly"; CW.pills[2].in_tank = true
 CW.pills[1].owner = "friendly"; CW.pills[1].in_tank = true
 t = A.take_blocker_tiles(cs, CW)
 check("every chain pill ours: the mark ends", #t == 0 and cs._take_blk == nil, str(t))
@@ -242,6 +269,16 @@ A.take_blocker_tiles(cs, CW3)
 cs.goal = { kind = "explore", mx = 0, my = 0 }
 t = A.take_blocker_tiles(cs, CW3)
 check("take dropped, no chain pill dead: the mark ends", #t == 0, str(t))
+-- the take dropped after the first kill (a3 carry_diag_sw: refuel at t=1350)
+local CW5 = gap_world(true)
+goal._shield_scan = sscan
+cs = { goal = goal, cost_cache = {} }
+A.take_blocker_tiles(cs, CW5)
+CW5.pills[1].health = 0
+cs.goal = { kind = "refuel_at_base", mx = 0, my = 0 }
+t = A.take_blocker_tiles(cs, CW5)
+check("a3 carry_diag_sw t=1350: refuel after the first kill: the mark ends",
+  #t == 0 and cs._take_blk == nil, str(t))
 do
   local was = C.PT2_BLOCKER_MARK
   C.PT2_BLOCKER_MARK = false
@@ -263,7 +300,10 @@ local function read(name)
 end
 local init_src, goals_src, vote_src = read("init.lua"), read("goals.lua"), read("reposition_vote.lua")
 check("init.lua: the _in_use / pblk set is attack.take_blocker_tiles",
-  init_src:find("local mine = attack.take_blocker_tiles(state, world)", 1, true) ~= nil)
+  init_src:find("local mine, soft = attack.take_blocker_tiles(state, world)", 1, true) ~= nil)
+check("init.lua: _in_use from the hard tiles only, soft tiles set _take_pend",
+  init_src:find("if not (soft and soft[ti]) then util[ti] = true end", 1, true) ~= nil
+  and init_src:find("p._take_pend = soft and soft[ti] or nil", 1, true) ~= nil)
 check("init.lua: pblk sends state._blocker_tiles",
   init_src:find('("/info pblk " .. _pblk)', 1, true) ~= nil
   and init_src:find("state._blocker_tiles = mine", 1, true) ~= nil)
@@ -272,10 +312,10 @@ check("init.lua: our own reposition on a marked live pill drops",
   and init_src:find('"own_blocker"', 1, true) ~= nil)
 check("goals.lua: the pool-6 row keeps the plan's blocker tiles",
   goals_src:find("blk = _dbl.e.blk", 1, true) ~= nil)
-check("goals.lua: the reposition pool skips an _in_use pill",
-  goals_src:find("and not p.in_tank and not p._in_use then", 1, true) ~= nil)
-check("reposition_vote.lua: an ally votes no on an _in_use pill",
-  vote_src:find('if p and p._in_use then return true, "blocker" end', 1, true) ~= nil)
+check("goals.lua: the reposition pool skips an _in_use or _take_pend pill",
+  goals_src:find("and not p%.in_tank and not p%._in_use%s+and not p%._take_pend then") ~= nil)
+check("reposition_vote.lua: a vote says no on an _in_use or _take_pend pill",
+  vote_src:find('if p and (p._in_use or p._take_pend) then return true, "blocker" end', 1, true) ~= nil)
 
 print(string.format("\n%d passed, %d failed", pass, fail))
 os.exit(fail == 0 and 0 or 1)
