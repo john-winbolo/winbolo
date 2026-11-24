@@ -473,6 +473,7 @@ local function shell_stops_on(world, mx, my)
   end
   return false
 end
+M.shell_stops_on = shell_stops_on
 
 -- The first forest or boat square a shell fired from (ox,oy) along the unit
 -- heading (hx,hy) stops on, out to max_t wu. The shell is stepped as the

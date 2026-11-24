@@ -388,7 +388,8 @@ local function finish(a, inp, res, cost)
   goal._pt2_bg = nil
   if b.start_now ~= nil then
     goal._pt2.start = { ok = b.start_now, why = b.start_why, pills = b.start_pills,
-                        exposure = b.exposure, shells = b.shells_through, chain = b.start_chain }
+                        exposure = b.exposure, shells = b.shells_through, chain = b.start_chain,
+                        cx = b.cx, cy = b.cy }
   end
   -- PT2_EXTRA_COVER_WALLS: v2's extra walls for a safe point (after the
   -- rank). The builder builds them while the take goes on, only when he
@@ -518,6 +519,67 @@ function M.plan_trees(pots)
   return n
 end
 
+-- PT2_START_BUILDER_SAFE: does a predicted pill shell kill the builder on
+-- his remaining wall trips (out, build, home; pt2_start.trip_timeline, the
+-- same trips as exposure_ticks) if the take starts now? The shell model is
+-- quick_repair's (Rule 2): every live non-friendly pill whose range reaches
+-- the tank's point (the start record's cx, cy, else the tank now) fires at
+-- it, the first shell at its next fire tick (quick_repair.pill_next_fire),
+-- then one per reload at its anger now (pt2_start.pill_interval). Each shell
+-- explodes where the engine ends it (quick_repair.shell_end): on the first
+-- square that stops it, a planned wall included from the tick the builder
+-- reaches it (lgmDoWork puts the wall up on arrival), else on the tank or at
+-- the end of its range. It kills him if he is there then
+-- (quick_repair.blast_catches_man: on that square for a square hit, else
+-- in the blast area). Returns nil (safe) or
+-- { id, t (ticks from now), sq_mx, sq_my, ex, ey, lx, ly }.
+function M.builder_trip_hit(goal, world, info, now, walls, ox, oy, x)
+  local QR = require("quick_repair")
+  local tmx, tmy = bit.rshift(info.tankx or 0, 8), bit.rshift(info.tanky or 0, 8)
+  local legs, home = PS.trip_timeline(ox, oy, walls, lgm_ticks, nil, tmx, tmy)
+  if not legs or home <= 0 then return nil end
+  local st = goal._pt2 and goal._pt2.start
+  local tx, ty = (info.tankx or 0) / 256.0, (info.tanky or 0) / 256.0
+  if st and st.cx and st.cy then tx, ty = st.cx, st.cy end
+  local range = (x.pill_range or 2048) / 256
+  -- the tick each missing wall goes up (arrival)
+  local up_at = {}
+  for _, L in ipairs(legs) do
+    if L.kind == "build" then
+      local w = walls[L.i]
+      up_at[w.my * 256 + w.mx] = L.t0
+    end
+  end
+  local guns = QR.guns_at(world, tx, ty, range)
+  for gi = 1, #guns do
+    local g = guns[gi]
+    local nxt, _, last = QR.pill_next_fire(g.p, info, now, x)
+    local iv = PS.pill_interval(M.anger_now(g.p, now), C.PILL_ANGER_BUMP,
+      x.pill_attack_ticks, x.pill_attack_min_ticks, x.pill_angry_divisor)
+    if not iv or iv < 1 then iv = 1 end
+    local f = now + 1
+    if last and last + iv > f then f = last + iv end
+    if nxt and nxt < f then f = nxt end
+    while f - now <= home do
+      local f0 = f - now
+      local e = QR.shell_end(world, g, tx, ty, range, function(mx, my, k)
+        local t = up_at[my * 256 + mx]
+        return t ~= nil and f0 + k >= t
+      end)
+      local at = f0 + e.t
+      if at <= home then
+        local lx, ly = PS.man_at(legs, at)
+        if lx and QR.blast_catches_man(e, lx, ly) then
+          return { id = g.id, t = at, sq_mx = e.sq_mx, sq_my = e.sq_my,
+                   ex = e.ex, ey = e.ey, lx = lx, ly = ly, how = e.how }
+        end
+      end
+      f = f + iv
+    end
+  end
+  return nil
+end
+
 function M.start_now_check(goal, world, info, now, list)
   if C.PT2_START_WHILE_BUILDING == false then return false end
   local st = goal._pt2 and goal._pt2.start
@@ -575,6 +637,19 @@ function M.start_now_check(goal, world, info, now, list)
   end
   local armour = info.armour or 0
   local ok = PS.can_start(armour, shells, C.ATTACK_RUSH_MIN_ARMOUR or 5)
+  -- PT2_START_BUILDER_SAFE: the armour holds, but would a pill shell kill
+  -- the builder on his remaining wall trips?
+  if ok and C.PT2_START_BUILDER_SAFE then
+    local hit = M.builder_trip_hit(goal, world, info, now, walls, ox, oy, x)
+    if hit then
+      local hx = hit.sq_mx or floor(hit.ex)
+      local hy = hit.sq_my or floor(hit.ey)
+      print2(string.format("PT2_START t=%d missing=%d builder unsafe (pill #%s shell at %+dt hits (%d,%d)"
+        .. " builder at (%d,%d)) -> wait",
+        now, #walls, tostring(hit.id), hit.t, hx, hy, floor(hit.lx), floor(hit.ly)))
+      return false
+    end
+  end
   print2(string.format("PT2_START t=%d missing=%d from=(%d,%d) exposure=%.0ft shells=%d armour=%d min=%d -> %s",
     now, #walls, ox, oy, exp, shells, armour, C.ATTACK_RUSH_MIN_ARMOUR or 5, ok and "start" or "wait"))
   if not ok then return false end

@@ -162,6 +162,49 @@ function M.wall_ticks(ox, oy, walls, lgm_ticks, build_time, tx, ty)
   return out
 end
 
+-- The builder's whole timeline for `walls` (the same trips as
+-- wall_ticks, plus the walk home after the last wall): a list of legs
+-- { t0, t1, x0, y0, x1, y1, kind = "out" | "build" | "back", i = wall index }
+-- in ticks from now and square centres (tiles), and the tick he is home.
+-- He walks each leg in a straight line at an even pace. nil when a trip
+-- cannot be made.
+function M.trip_timeline(ox, oy, walls, lgm_ticks, build_time, tx, ty)
+  build_time = build_time or M.LGM_BUILD_TIME
+  tx, ty = tx or ox, ty or oy
+  local legs, t = {}, 0
+  local sx, sy = ox, oy
+  for i, w in ipairs(walls) do
+    local go = M.trip_ticks(sx, sy, w.mx, w.my, lgm_ticks)
+    if not go then return nil end
+    legs[#legs + 1] = { t0 = t, t1 = t + go, x0 = sx + 0.5, y0 = sy + 0.5,
+                        x1 = w.mx + 0.5, y1 = w.my + 0.5, kind = "out", i = i }
+    t = t + go
+    legs[#legs + 1] = { t0 = t, t1 = t + build_time, x0 = w.mx + 0.5, y0 = w.my + 0.5,
+                        x1 = w.mx + 0.5, y1 = w.my + 0.5, kind = "build", i = i }
+    t = t + build_time
+    local back = M.trip_ticks(w.mx, w.my, tx, ty, lgm_ticks, w.mx, w.my)
+    if not back then return nil end
+    legs[#legs + 1] = { t0 = t, t1 = t + back, x0 = w.mx + 0.5, y0 = w.my + 0.5,
+                        x1 = tx + 0.5, y1 = ty + 0.5, kind = "back", i = i }
+    t = t + back
+    sx, sy = tx, ty
+  end
+  return legs, t
+end
+
+-- Where the builder is at tick t of a trip_timeline (tiles), or nil when he
+-- is in the tank (before the first leg, between trips or home).
+function M.man_at(legs, t)
+  for _, L in ipairs(legs) do
+    if t >= L.t0 and t <= L.t1 then
+      local d = L.t1 - L.t0
+      local w = d > 0 and (t - L.t0) / d or 1
+      return L.x0 + (L.x1 - L.x0) * w, L.y0 + (L.y1 - L.y0) * w, L
+    end
+  end
+  return nil
+end
+
 function M.exposure_ticks(ox, oy, walls, lgm_ticks, build_time, tx, ty)
   local ts = M.wall_ticks(ox, oy, walls, lgm_ticks, build_time, tx, ty)
   if not ts then return nil end

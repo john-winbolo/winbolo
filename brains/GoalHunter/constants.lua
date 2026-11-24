@@ -1036,6 +1036,22 @@ M.PT2_FARTHEST_RING_RADII = { 7.4, 7.2, 7.0, 6.6 }
 -- on a yes the builder builds the rest while the take goes on.
 -- false = wait for every wall. KEEL / MAST: false.
 M.PT2_START_WHILE_BUILDING = true
+-- PT2_START_BUILDER_SAFE (Nov 24, Andrew's yes). The early start above also
+-- needs the builder to live through his remaining wall trips: walk out,
+-- build, walk home (pt2_start.trip_timeline). Every live non-friendly pill
+-- whose range reaches the tank's point fires at it from its next fire tick,
+-- one shell per reload at its anger now. Each shell explodes where the
+-- engine ends it: on the first square that stops it (a wall, a live pill,
+-- a forest or boat, a planned wall from the tick the builder reaches it),
+-- else on the tank or at the end of its range. It kills him only on that
+-- square for a square hit, else inside the lgm_blast_shape area
+-- (quick_repair.shell_end / blast_catches_man; pt2_attack.builder_trip_hit).
+-- A kill: no early start; the take waits for the walls and the builder, or
+-- starts later when the trips are clear.
+-- Log effect: PT2_START ... builder unsafe (pill #id shell at +Nt hits (x,y)
+-- builder at (x,y)) -> wait.
+-- false = old rule (the tank's armour only). KEEL / MAST: false.
+M.PT2_START_BUILDER_SAFE = true
 -- PT2_START_ANGER_RISE (Nov 23, Andrew's spec): the start check above
 -- counts the pills getting angrier while the walls go up. It walks the
 -- ticks as the engine does (pt2_start.rise_shells): chain pill 1 takes a
@@ -8567,6 +8583,8 @@ M.PRESETS = {
     --   does not wait for other pills' predicted shots.
     SWERVE_AVOID_REPAIR_SIDE = false,
     QUICK_REPAIR_WAIT_ALL_PILLS = false,
+    --   2026-11-24: the early take start looks at the tank's armour only.
+    PT2_START_BUILDER_SAFE = false,
     --   2026-11-17: hold 15 ticks with no goal after a kill (old rule).
     POST_KILL_WAIT_TICKS = 15,
     --   2026-11-17: carrying-pill approach floor 30 (old rule).
@@ -8949,6 +8967,7 @@ M.PRESETS.mast = {
   QUICK_REPAIR_TANK_CLEAR_TICKS     = 0,      -- 2.2.1 had no quick repair
   SWERVE_AVOID_REPAIR_SIDE          = false,  -- 2.2.1: the cover pick always
   QUICK_REPAIR_WAIT_ALL_PILLS       = false,  -- 2.2.1 had no quick repair
+  PT2_START_BUILDER_SAFE            = false,  -- 2.2.1 had no pill take v2
   POST_KILL_WAIT_TICKS              = 15,
   CARRY_APPROACH_MIN_ARMOUR_ONE     = 30,
   CARRY_APPROACH_MIN_ARMOUR_MANY    = 30,

@@ -389,6 +389,64 @@ do
   PC.slot_cover_shots = saved
 end
 
+-- Nov 24 (run_c2_beside_e): PT2_START_BUILDER_SAFE. The early start also
+-- needs the builder to live through his wall trips. The tank's point is
+-- (30.5, 40.5); a hostile pill at (36,40) shoots it along the row y = 40.5.
+-- Each trip leg is 10 ticks here (the lgm stub), the build 20: out 0-10,
+-- on the wall 10-30, home 30-40. The pill's first shell leaves at +1.
+print("PT2_START_BUILDER_SAFE: the builder's wall trips")
+do
+  local saved = PC.slot_cover_shots
+  PC.slot_cover_shots = function() return 0 end
+  local H = { mx = 36, my = 40, health = 8, owner = "hostile", anger = 0, anger_tick = 0 }
+  local world = { pills = { [5] = H }, pill_at = { [sq(36, 40)] = { { id = 5, pill = H } } } }
+  local info = { armour = 40, tankx = 30 * 256 + 128, tanky = 40 * 256 + 128,
+                 man_status = C.LGM_INTANK, player_number = 0, objects = {} }
+  local x = require("live_physics").context(info, {})
+  local function g()
+    return { substate = "build_walls",
+             _pt2 = { start = { ok = true, pills = {}, cx = 30.5, cy = 40.5 } } }
+  end
+  local function txt(hit)
+    return hit and string.format("#%s (%s,%s) +%s %s", tostring(hit.id), tostring(hit.sq_mx),
+                                 tostring(hit.sq_my), tostring(hit.t), tostring(hit.how)) or "nil"
+  end
+  local on_line  = { mx = 33, my = 40, kind = "empty", pt2_kind = "wall" }
+  local off_line = { mx = 31, my = 42, kind = "empty", pt2_kind = "wall" }
+  local beside   = { mx = 33, my = 41, kind = "empty", pt2_kind = "wall" }
+  local K = C.PT2_START_BUILDER_SAFE
+  C.PT2_START_BUILDER_SAFE = true
+
+  -- The wall (33,40) is on the pill's row: it is up from +10, and the shell
+  -- fired at +1 stops on it at +22 while he still builds there.
+  local hit = PA.builder_trip_hit(g(), world, info, 1000, { on_line }, 30, 40, x)
+  check("wall on the shell's row: the shell hits his wall while he builds",
+        hit and hit.id == 5 and hit.sq_mx == 33 and hit.sq_my == 40 and hit.t == 22, txt(hit))
+  local goal = g()
+  local r = PA.start_now_check(goal, world, info, 1000, { on_line })
+  check("builder unsafe: no early start", r == false, r)
+  check("builder unsafe: no background walls", goal._pt2_bg == nil)
+
+  -- A wall off the row: the shells explode on the tank, the first at +49,
+  -- and he is home at +40.
+  hit = PA.builder_trip_hit(g(), world, info, 1000, { off_line }, 30, 40, x)
+  check("trips over before the first explosion: safe", hit == nil, txt(hit))
+  r = PA.start_now_check(g(), world, info, 1000, { off_line })
+  check("trips over before the first explosion: start", r == true, r)
+
+  -- He builds (33,41), right beside the row: the shells fly past him to
+  -- the tank and explode there, so they do not kill him.
+  hit = PA.builder_trip_hit(g(), world, info, 1000, { beside }, 30, 40, x)
+  check("shells only fly past him: safe", hit == nil, txt(hit))
+
+  C.PT2_START_BUILDER_SAFE = false
+  goal = g()
+  r = PA.start_now_check(goal, world, info, 1000, { on_line })
+  check("knob off: the old result (start)", r == true, r)
+  C.PT2_START_BUILDER_SAFE = K
+  PC.slot_cover_shots = saved
+end
+
 C.PILLTAKE_V2_EVALUATOR = false
 print(string.format("\n%d passed, %d failed", pass, fail))
 os.exit(fail == 0 and 0 or 1)

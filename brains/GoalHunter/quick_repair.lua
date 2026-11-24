@@ -373,8 +373,12 @@ end
 -- (cmx, cmy) is given, the centre of that tile too.
 -- { {id, p, gx, gy}, ... } (pill centres in tiles), in id order.
 function M.guns(world, info, range, cmx, cmy)
+  return M.guns_at(world, info.tankx / 256.0, info.tanky / 256.0, range, cmx, cmy)
+end
+
+-- The same for a tank at (tx, ty) (tiles), for a place the tank will be.
+function M.guns_at(world, tx, ty, range, cmx, cmy)
   local out = {}
-  local tx, ty = info.tankx / 256.0, info.tanky / 256.0
   local r2 = range * range
   for id, p in pairs(world.pills or {}) do
     if (p.health or 0) > 0 and not p.in_tank and not p.carrier
@@ -579,6 +583,52 @@ function M.swerve_repair_side(state, world, info, goal, pmx, pmy, haz, old_dir, 
       (old_dir or 0) > 0 and "L" or "R"))
   end
   return rec.dir
+end
+
+-- Where a pill's shell aimed at a tank at (tx, ty) explodes (tiles), and
+-- after how many ticks of flight. The engine's three endings (shells.c
+-- shellsUpdate / shellsCalcCollision):
+--   * the first square on its path that stops it (danger.shell_stops_on: a
+--     wall, a half wall, a live pill, a forest or a boat with
+--     SHELL_STOPS_ON_FOREST_BOAT), or a square solid_at(mx, my, tick) says
+--     will be solid at that flight tick (a wall that will be up by then).
+--     The explosion is a hit on that square: only a builder ON it dies.
+--   * the tank: the open-ground blast area round the tank.
+--   * the end of its range: the open-ground blast area there.
+-- The pill's own square never stops it. g = { gx, gy } (pill centre).
+-- Returns { t = flight ticks, ex, ey, sq_mx, sq_my (nil unless a square
+-- hit), how = "square" | "tank" | "range" }.
+function M.shell_end(world, g, tx, ty, range, solid_at)
+  local spd = (C.SHELL_SPEED or 32) / 256
+  local ax, ay = tx - g.gx, ty - g.gy
+  local al = math.sqrt(ax * ax + ay * ay)
+  local ux, uy = 0, 0
+  if al > 0.01 then ux, uy = ax / al, ay / al end
+  local land = math.min(al, range)
+  local pmx, pmy = math.floor(g.gx), math.floor(g.gy)
+  local k = 1
+  while k * spd < land do
+    local d = k * spd
+    local mx, my = math.floor(g.gx + ux * d), math.floor(g.gy + uy * d)
+    if not (mx == pmx and my == pmy)
+       and (danger.shell_stops_on(world, mx, my) or (solid_at and solid_at(mx, my, k))) then
+      return { t = k, ex = mx + 0.5, ey = my + 0.5, sq_mx = mx, sq_my = my, how = "square" }
+    end
+    k = k + 1
+  end
+  return { t = math.max(1, math.floor(land / spd + 0.5)),
+           ex = g.gx + ux * land, ey = g.gy + uy * land,
+           how = (al <= range) and "tank" or "range" }
+end
+
+-- Does an explosion e (M.shell_end) catch a builder at (lx, ly) (tiles)?
+-- lgm.c lgmBlastCatches: a hit on a square kills only a builder on it;
+-- else the lgm_blast_shape area round the explosion.
+function M.blast_catches_man(e, lx, ly)
+  if e.sq_mx then
+    return math.floor(lx) == e.sq_mx and math.floor(ly) == e.sq_my
+  end
+  return U.lgm_open_blast_catches((e.ex - lx) * 256, (e.ey - ly) * 256)
 end
 
 -- Does the segment (ax, ay)-(bx, by) cross tile (mx, my) grown by m?
