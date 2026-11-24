@@ -348,18 +348,21 @@ do
   PC.slot_cover_shots = saved
 end
 
--- Nov 24 (run_pillblk / run_rings): a plan square of kind "pill" is a
--- carried pill drop. It needs no trees, and the hold places it: it never
--- goes to the background walls, which build a wall there (or nothing).
-print("\nA planned pill drop: no trees, not a background wall")
+-- Nov 24 (run_pillblk / run_rings / run_n1_pillfix): a plan square of
+-- kind "pill" is a carried pill drop. It costs a pill's trees
+-- (PILL_PLACE_TREE_COST, the engine's LGM_COST_PILLNEW), not a wall's,
+-- and the hold places it: it never goes to the background walls, which
+-- build a wall there (or nothing).
+print("\nA planned pill drop: a pill's trees, not a background wall")
 do
   local P  = { mx = 40, my = 40, kind = "empty", pt2_kind = "pill" }
   local Wq = { mx = 42, my = 40, kind = "empty", pt2_kind = "wall" }
   local V1 = { mx = 44, my = 40, kind = "empty" }
-  check("wall_pots: a pill drop alone needs no wall", PA.wall_pots({ P }) == 0, PA.wall_pots({ P }))
-  check("wall_pots: pill + wall = 1 wall", PA.wall_pots({ P, Wq }) == 1, PA.wall_pots({ P, Wq }))
-  check("wall_pots: a v1 square counts as a wall", PA.wall_pots({ V1 }) == 1, PA.wall_pots({ V1 }))
-  check("wall_pots: nil = 0", PA.wall_pots(nil) == 0)
+  local PT, WT = C.PILL_PLACE_TREE_COST, C.WALL_SHIELD_BUILD_COST
+  check("plan_trees: a pill drop = a pill's trees", PA.plan_trees({ P }) == PT, PA.plan_trees({ P }))
+  check("plan_trees: pill + wall", PA.plan_trees({ P, Wq }) == PT + WT, PA.plan_trees({ P, Wq }))
+  check("plan_trees: a v1 square counts as a wall", PA.plan_trees({ V1 }) == WT, PA.plan_trees({ V1 }))
+  check("plan_trees: nil = 0", PA.plan_trees(nil) == 0)
 
   local up = {}
   local saved = PC.slot_cover_shots

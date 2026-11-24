@@ -505,13 +505,15 @@ function M.rise_now(chain, world, info, now, walls, ox, oy, exp, x)
   end, o))
 end
 
--- The planned squares of a take that need trees: a v2 plan square marked
--- pt2_kind "pill" (to_scan_result) is a carried pill drop, not a wall.
+-- The trees the planned squares of a take need: a v2 plan square marked
+-- pt2_kind "pill" (to_scan_result) is a carried pill drop, which costs
+-- PILL_PLACE_TREE_COST (the engine's LGM_COST_PILLNEW), not a wall.
 -- A v1 square (no pt2_kind) counts as a wall, as before.
-function M.wall_pots(pots)
+function M.plan_trees(pots)
   local n = 0
   for _, p in ipairs(pots or {}) do
-    if p.pt2_kind ~= "pill" then n = n + 1 end
+    if p.pt2_kind == "pill" then n = n + (C.PILL_PLACE_TREE_COST or 4)
+    else n = n + (C.WALL_SHIELD_BUILD_COST or 2) end
   end
   return n
 end

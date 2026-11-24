@@ -996,6 +996,32 @@ do
   PA.bg_wall = saved
 end
 
+-- Nov 24 (run_n1_pillfix, trees 0): a pillbox blocker needs
+-- PILL_PLACE_TREE_COST trees. With fewer, the engine refused the order
+-- (ASSIST_MSG_INSUFFICIENT_TREES) and each try used up a pbox_used slot.
+print("6. pillbox blocker needs a pill's trees")
+do
+  local function pbox(trees)
+    reset(); set_knobs(true, true, true)
+    local st, w, inf = mk("wall_shield", trees)
+    st.builder.wall_target = { mx = 102, my = 100 }
+    st.goal = st.goal or { kind = "attack_pill", mx = 110, my = 100 }
+    inf.carried_pills = 1
+    local cmd = B.decide(st, w, inf, st.tick)
+    return cmd, st.goal._pillbox_blockers_used
+  end
+  local cmd, used = pbox(C.PILL_PLACE_TREE_COST)
+  check("wall_shield, 1 pill, trees = pill cost -> PBOX",
+        cmd and cmd.action == BUILDMODE_PBOX and used == 1, cmd and cmd.action)
+  cmd, used = pbox(0)
+  check("wall_shield, 1 pill, 0 trees -> no PBOX", not (cmd and cmd.action == BUILDMODE_PBOX),
+        cmd and cmd.action)
+  check("  no pbox_used slot spent", used == nil, used)
+  cmd, used = pbox(C.PILL_PLACE_TREE_COST - 1)
+  check("wall_shield, 1 pill, trees below pill cost -> wall, not PBOX",
+        cmd and cmd.action == BUILDMODE_BUILD and used == nil, cmd and cmd.action)
+end
+
 set_knobs(true, true, true)
 print(string.format("\n%d passed, %d failed", pass, fail))
 if fail > 0 then os.exit(1) end

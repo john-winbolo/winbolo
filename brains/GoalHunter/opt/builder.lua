@@ -1651,8 +1651,12 @@ M._decide_inner = function(state, world, info, now)
       local PILLBOX_BLOCKERS_MAX = 2
       local pbox_used = (state.goal and state.goal._pillbox_blockers_used) or 0
       -- E5-10: never a carried pill on a background wall
+      -- A new pill costs PILL_PLACE_TREE_COST trees (engine
+      -- LGM_COST_PILLNEW); with fewer the engine refuses the order, and
+      -- each refused try would still use up a pbox_used slot.
       local can_pbox = b.mode == "wall_shield" and not b.bg_wall
                        and (info.carried_pills or 0) > 0
+                       and (info.trees or 0) >= (C.PILL_PLACE_TREE_COST or 4)
                        and pbox_used < PILLBOX_BLOCKERS_MAX
                        and wtt ~= C.T_FOREST
                        and can_reach

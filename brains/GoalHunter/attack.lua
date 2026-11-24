@@ -7035,11 +7035,10 @@ local function update_attack_substate_body(goal, state, world, info)
           local w = goal._shield_scan.best
           local pots = w.best_aim_idx and w.aims[w.best_aim_idx]
                        and w.aims[w.best_aim_idx].potential_blockers
-          -- a planned pill drop (pt2_kind "pill") needs no trees
-          local n_walls = require("pt2_attack").wall_pots(pots)
-          if n_walls > 0 then
-            n_pots = n_walls
-            trees_needed = n_pots * (C.WALL_SHIELD_BUILD_COST or 2)
+          -- a planned pill drop (pt2_kind "pill") costs a pill's trees
+          if pots and #pots > 0 then
+            n_pots = #pots
+            trees_needed = require("pt2_attack").plan_trees(pots)
             if (info.trees or 0) < trees_needed then
               need_gather = true
             end
@@ -8169,7 +8168,6 @@ local function update_attack_substate_body(goal, state, world, info)
         -- if we're still short here, gathering would either be wasted
         -- (no nearby forest reachable from the standoff) or undoing
         -- the approach we just finished. Degrade to no-shield aim.
-        local cost_per_wall = C.WALL_SHIELD_BUILD_COST or 2
         local needs_build = pots and #pots > 0
         -- Wall-building is a PPT-only behavior. If the per-tick health
         -- check has demoted us to non-PPT (pill HP < threshold), the
@@ -8205,13 +8203,12 @@ local function update_attack_substate_body(goal, state, world, info)
           needs_build = false
           why_no_build = "charge now (attack ping) - no more blockers"
         end
-        -- a planned pill drop (pt2_kind "pill") needs no trees
-        local n_walls = needs_build and require("pt2_attack").wall_pots(pots) or 0
-        local trees_needed = n_walls * cost_per_wall
+        -- a planned pill drop (pt2_kind "pill") costs a pill's trees
+        local trees_needed = needs_build and require("pt2_attack").plan_trees(pots) or 0
         if needs_build and (info.trees or 0) < trees_needed then
           needs_build = false
           why_no_build = string.format("not enough trees (%d/%d for %d walls) at standoff",
-                                       info.trees or 0, trees_needed, n_walls)
+                                       info.trees or 0, trees_needed, #pots)
         end
         -- Full-pill PPT blitz that has NO buildable wall slots: nothing to build,
         -- so rally now (blitz_wait → GO) instead of falling into the solo firing
