@@ -994,7 +994,7 @@ function M.knob_inp(C, inp)
   inp.link_cut_min_shots = C.PT2_LINK_CUT_MIN_SHOTS or 0
   inp.max_chain        = C.PT2_MAX_CHAIN or 3
   inp.leeway_on        = C.PT2_LEEWAY ~= false
-  inp.leeway_ring_wu   = 32               -- proposal, awaiting Andrew's value
+  inp.leeway_ring_wu   = 32               -- Andrew approved Nov 24
   inp.leeway_top       = C.PT2_LEEWAY_TOP or 8
   inp.leeway_min       = C.PT2_LEEWAY_MIN or 6
   inp.own_pill_rank    = C.PT2_OWN_PILL_BONUS ~= false

@@ -506,6 +506,37 @@ do
   end
 end
 
+-- ── 4c. the group step: on a full tie the goal pill's plan stays ────────
+print("group step: a full tie keeps the goal pill's own plan")
+do
+  -- Andrew approved Nov 23: inside one evaluate S0 breaks a full tie (the
+  -- smaller angle, then the larger radius); the group step does not, so
+  -- the goal pill's own plan (run first) wins over another first pill's
+  local G = { mx = 128, my = 120, owner = "hostile", health = 15 }
+  local Y = { mx = 128, my = 123, owner = "hostile", health = 15 }
+  local function plan(first, deg, score)
+    return { safe = true, kills = 2, score = score, tier_min = 10, n_built = 1, depth = 3, blk = 1,
+             leeway = 8, deg = deg, radius = 7, chain_mode = true, chain = { first, G },
+             in_chain = { [first] = true, [G] = true } }
+  end
+  local inp = { leeway_min = 8, travel_band = 5, prefer_existing_cover = true, start_while_building = true }
+  local goal_plan = plan(G, 90, 12)
+  local y_plan = plan(Y, 10, 12)           -- the same keys, a smaller angle
+  check("S0 alone would pick Y's plan (smaller angle)",
+    V.better(y_plan, goal_plan, 8, 5, true, true) == true)
+  check("full tie, two first pills: the goal pill's plan stays",
+    V.group_takes(inp, G, y_plan, goal_plan) == false)
+  check("full tie the other way: the plan the group has stays",
+    V.group_takes(inp, G, goal_plan, y_plan) == false)
+  check("a better plan of another first pill still takes over",
+    V.group_takes(inp, G, plan(Y, 10, 11), goal_plan) == true)
+  check("no plan yet: a safe chain with the goal pill takes it",
+    V.group_takes(inp, G, y_plan, nil) == true)
+  local no_goal = plan(Y, 10, 11); no_goal.in_chain = { [Y] = true }
+  check("a chain without the goal pill never takes it",
+    V.group_takes(inp, G, no_goal, goal_plan) == false)
+end
+
 -- ── 5. wall search against brute force ────────────────────────────────────
 print("PT2_PREFER_EXISTING_COVER: fewer planned blockers first in the band")
 do

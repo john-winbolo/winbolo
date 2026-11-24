@@ -36,6 +36,12 @@
 --                             memo's cost) but keep no memo
 --   tm=1                      with memo=: the evaluator's clock on; prints
 --                             the time of each part, summed
+--   group_tie=1               with eval=v2: replay the group step's pick on
+--                             each recorded group (the goal pill's case,
+--                             then the start pill cases after it) with the
+--                             group rule (a full tie keeps the plan it has)
+--                             and with S0 (the smaller angle wins); prints
+--                             the full ties and the groups whose pick differs
 --   set=<k>:<v>[,<k>:<v>...]  set these inp fields on every case (v: true,
 --                             false, a number, else a string)
 --   eval=ab ev=<old|oldlua|v2> a=<k>:<v>,... b=<k>:<v>,...
@@ -376,6 +382,46 @@ local function memo_group(case)
   MG.seen[case.A] = true
   return MG.goal
 end
+-- group_tie=1: the group of the case, and the pick of each rule
+local GT = args.group_tie == "1" and EVAL == "v2"
+  and { sig = nil, seen = {}, goal = nil, groups = 0, ties = 0, differ = 0, a = nil, b = nil } or nil
+local function gt_end()
+  if GT.goal and GT.a ~= GT.b then GT.differ = GT.differ + 1 end
+end
+local function gt_case(case, inp, res)
+  local sig = {}
+  for i, p in ipairs(case.pills) do
+    sig[i] = fmt("%s,%s,%s,%s", tostring(p.mx), tostring(p.my), tostring(p.health), tostring(p.owner))
+  end
+  sig = table.concat(sig, ";")
+  local A = case.pills[case.A]
+  if sig ~= GT.sig or GT.seen[case.A] then
+    gt_end()
+    GT.sig, GT.seen, GT.groups = sig, {}, GT.groups + 1
+    GT.goal = A and { mx = A.mx, my = A.my } or nil
+    GT.a, GT.b, GT.ba, GT.bb = n_case, n_case, res.best, res.best
+    GT.seen[case.A] = true
+    return
+  end
+  GT.seen[case.A] = true
+  if not GT.goal then return end
+  local goalA
+  for _, p in ipairs(inp.pills) do if p.mx == GT.goal.mx and p.my == GT.goal.my then goalA = p end end
+  local b = res.best
+  if not (goalA and b and b.safe and b.chain_mode and b.in_chain and b.in_chain[goalA]) then return end
+  local function s0(x, y)
+    return NV.better(x, y, inp.leeway_min, inp.travel_band, inp.prefer_existing_cover, inp.start_while_building)
+  end
+  local function tie(x, y)
+    return not x or not y or (not NV.better(x, y, inp.leeway_min, inp.travel_band, inp.prefer_existing_cover,
+        inp.start_while_building, true)
+      and not NV.better(y, x, inp.leeway_min, inp.travel_band, inp.prefer_existing_cover,
+        inp.start_while_building, true))
+  end
+  if GT.ba and tie(b, GT.ba) then GT.ties = GT.ties + 1 end
+  if NV.group_takes(inp, goalA, b, GT.ba) then GT.a, GT.ba = n_case, b end
+  if not GT.bb or s0(b, GT.bb) then GT.b, GT.bb = n_case, b end
+end
 local function run_case(case)
   n_case = n_case + 1
   local inp, pills = game_inp(case)
@@ -397,6 +443,7 @@ local function run_case(case)
   if MEMO and ok and res.v2 and res.v2.tm then
     for k, v in pairs(res.v2.tm) do if type(v) == "number" then MG.tm[k] = (MG.tm[k] or 0) + v end end
   end
+  if GT and ok then gt_case(case, inp, res) end
   if not ok then
     n_err = n_err + 1
     if dumpf then dumpf:write(fmt("%d ERR %s\n", n_case, tostring(res):gsub("\n", " "))) end
@@ -949,6 +996,11 @@ if MEMO then
     WM.miss_nodes, 100 * WM.hit_nodes / math.max(1, WM.hit_nodes + WM.miss_nodes)))
 end
 local tot_us, tot_sp = 0, 0
+if GT then
+  gt_end()
+  print(fmt("group_tie: %d groups, full ties with the plan the group has %d, groups whose pick differs"
+    .. " (group rule against S0) %d", GT.groups, GT.ties, GT.differ))
+end
 for i, v in ipairs(times) do tot_us = tot_us + v; tot_sp = tot_sp + spots[i] end
 print(fmt("pt2_bench: %d cases (%d errors), %s, reps %d: evaluate ms median %.3f p90 %.3f max %.3f;"
   .. " spots median %d p90 %d max %d; total %.1f ms, %.3f spots/us (%.2f us/spot)",

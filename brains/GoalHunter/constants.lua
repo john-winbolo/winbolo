@@ -1046,7 +1046,7 @@ M.PT2_FOREST_TRANSPARENT = true
 -- the same blockers; more ranks higher inside a tier, counted up to
 -- PT2_LEEWAY_MIN. A chain needs at least PT2_LEEWAY_MIN. KEEL / MAST: false.
 M.PT2_LEEWAY = true
-M.PT2_LEEWAY_MIN = 6   -- of 8. Proposal, awaiting Andrew's value.
+M.PT2_LEEWAY_MIN = 6   -- of 8. Andrew approved Nov 24.
 M.PT2_LEEWAY_TOP = 8   -- candidates that get the leeway test. Proposal, awaiting Andrew's value.
 -- An allied pill in a point's cover ranks it above points covered by walls
 -- only (same chain length). KEEL / MAST: false.

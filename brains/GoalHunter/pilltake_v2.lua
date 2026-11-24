@@ -104,7 +104,12 @@ M.AIMS9[9] = { 24, 128 }
 -- two points (same safe and kills, both in the band) rank next by
 -- start_now: a point the tank may start while the walls go up ranks above
 -- one where it must wait. After n_built (E1), before depth.
-function M.better(a, b, cap, band, pec, swb)
+--
+-- no_s0: skip the S0 tie-break; a full tie is then false (b stays). The
+-- group step passes it (Nov 23, Andrew approved Nov 23): on a full tie
+-- between plans with different first pills, the plan it has (the goal
+-- pill's own, run first) wins, as before S0.
+function M.better(a, b, cap, band, pec, swb, no_s0)
   if (pec or swb) and band and band > 0 and a.safe == b.safe and a.kills == b.kills then
     local sa, sb = a.score, b.score
     local m = math.min(sa, sb, a.tier_min or sa, b.tier_min or sb)
@@ -121,6 +126,7 @@ function M.better(a, b, cap, band, pec, swb)
   end
   if OLD.better(a, b, cap, band) then return true end
   if OLD.better(b, a, cap, band) then return false end
+  if no_s0 then return false end
   -- S0: a last tie-break after every key above, so the winner never
   -- depends on the order table.sort leaves equal points in: the smaller
   -- angle, then the larger radius
@@ -2484,6 +2490,16 @@ local function job_done(job)
   end
 end
 
+-- The group step's pick: does run p's best b take over from the group's
+-- best? A safe chain plan that holds the goal pill, ranked by M.better
+-- with no S0 (Nov 23, Andrew approved Nov 23): on a full tie the plan
+-- the group has (the goal pill's own, run first) stays.
+function M.group_takes(inp, goalA, b, best)
+  return (b and b.safe and b.chain_mode and b.in_chain and b.in_chain[goalA]
+          and (not best or M.better(b, best, inp.leeway_min, inp.travel_band, inp.prefer_existing_cover,
+                                    inp.start_while_building, true))) and true or false
+end
+
 function M.group_step(job)
   local inp, goalA = job.inp, job.goalA
   if not job.list then
@@ -2515,8 +2531,7 @@ function M.group_step(job)
     if not ok then error(r, 0) end
     job.n_eval, job.n_reject = job.n_eval + r.n_eval, job.n_reject + r.n_reject
     local b, res = r.best, job.res
-    if b and b.safe and b.chain_mode and b.in_chain and b.in_chain[goalA]
-       and (not res.best or M.better(b, res.best, inp.leeway_min, inp.travel_band, inp.prefer_existing_cover, inp.start_while_building)) then
+    if M.group_takes(inp, goalA, b, res.best) then
       r.A, r.goal_A = p, goalA
       job.res = r
     end
