@@ -6455,7 +6455,9 @@ function Brain.think(info)
     local _ally_blk = nil   -- blocker TILES allies declared this tick (packed, for the yield check below)
     do
       local util = {}   -- packed-tile set; any friendly pill on one of these is _in_use
-      local mine = attack.current_blocker_tiles and attack.current_blocker_tiles(state, world) or nil
+      -- PT2_BLOCKER_MARK: the current take, its chain latch and the best
+      -- pending double-take plan (attack.take_blocker_tiles).
+      local mine = attack.take_blocker_tiles(state, world)
       state._blocker_tiles = mine
       -- Shield WALL tiles we're building THIS tick (commander, build_walls only):
       -- broadcast separately (bwl) so blitz soldiers route their shot AROUND our
@@ -6504,6 +6506,27 @@ function Brain.think(info)
       print2(string.format("BLOCKER_YIELD t=%d goal=capture_pill pill=#%s declared blocker by ally — reject pool + clear goal", now, tostring(_bid)))
       state.goal = { kind = "none", mx = 0, my = 0, wx = 0, wy = 0 }
       state._force_replan_reason = "ally_blocker"
+    end
+
+    -- PT2_BLOCKER_MARK: the same yield for our OWN mark. A reposition that
+    -- started before our take plan marked its pill (gap_w arena, Nov 24: the
+    -- vote passed at t=16, the plan's row came at t=16) drops while the pill
+    -- still lives. The reposition pool skips an _in_use pill (goals.lua
+    -- eval_reposition_pill), so it does not come back.
+    do
+      local _g = state.goal
+      if C.PT2_BLOCKER_MARK and _g and _g.kind == "capture_pill" and _g.reposition
+         and _gt and _tp and (_tp.health or 0) > 0 and state._blocker_tiles then
+        for _, _ti in ipairs(state._blocker_tiles) do
+          if _ti == _gt then
+            state._reposition_lock_tick = nil
+            print2(string.format("BLOCKER_YIELD t=%d goal=capture_pill(reposition) pill=#%s is a blocker of our own take plan — clear goal", now, tostring(_bid)))
+            state.goal = { kind = "none", mx = 0, my = 0, wx = 0, wy = 0 }
+            state._force_replan_reason = "own_blocker"
+            break
+          end
+        end
+      end
     end
 
     -- Unapproved reposition BID watchdog. steering refuses to demolish until the

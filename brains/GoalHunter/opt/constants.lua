@@ -1256,6 +1256,16 @@ M.PF_DANGER_INITIAL_LOAD = true
 -- fired take_cover at 8.2 squares, out of real range, and dropped the take.
 -- Andrew's yes (Nov 18). false = the old triggers. KEEL / MAST: false.
 M.PT2_HAUL_KEEP_TAKE = true
+-- PT2_BLOCKER_MARK: a pill a pill take uses as a blocker is marked in use
+-- (_in_use) and sent to allies on the pblk verb, from the moment the take is
+-- the plan: the current take (v1 or v2), the same chain between its kills
+-- and captures, and the best pending double-take plan of pool 6
+-- (attack.take_blocker_tiles). Reposition skips a marked pill, and a
+-- reposition already under way on it drops while the pill lives (init.lua
+-- BLOCKER_YIELD). Owner's yes (Nov 24): "if a bot is using a built pill as a
+-- blocker it needs to communicate that". A bug fix, no new number.
+-- false = only the attack_pill goal's own scan marks. KEEL / MAST: false.
+M.PT2_BLOCKER_MARK = true
 -- HAUL_KEEP_LGM_KILL: while kill_lgm has an enemy builder target close by
 -- with a clear line of sight (pool 13's winner; pathfinder.wall_hp_between
 -- == 0), the haul triggers in goals.lua haul_flee_eval stop using the
@@ -8987,6 +8997,7 @@ M.PRESETS.mast = {
   SHOT_TRACK_OWN_SHELLS_ONLY        = false,
   PF_DANGER_INITIAL_LOAD            = false,  -- 2.2.1 copied danger only on rebuild
   PT2_HAUL_KEEP_TAKE                = false,  -- 2.2.1 had no pill take v2
+  PT2_BLOCKER_MARK                  = false,  -- 2.2.1 marked the attack_pill scan only
   HAUL_KEEP_LGM_KILL                = false,  -- 2.2.1 hauled on pill stamp / tank range
   PT2_DOUBLE_TAKE_DISCOUNT          = false,  -- 2.2.1 had no pill take v2
   PT2_DBL_SPLIT                     = false,  -- 2.2.1 had no pill take v2

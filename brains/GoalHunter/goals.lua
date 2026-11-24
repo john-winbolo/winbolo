@@ -14133,7 +14133,7 @@ function M.step_eval_queue(state, world, info)
         entry._dbl_block = _dbl_block
         entry._dbl = _dbl and { mult = _dbl.mult, ids = _dbl.e.ids, kills = _dbl.e.kills,
                                 have = _dbl.e.have, need = _dbl.e.need, walls = _dbl.e.walls,
-                                pills = _dbl.e.pills,
+                                pills = _dbl.e.pills, blk = _dbl.e.blk,
                                 age = _dbl.age, diff1 = _dbl.diff1, xfire_ex = _dbl.xfire_ex,
                                 spot_ex = _dbl.spot_ex, travel_ex = _dbl.travel_ex } or nil
       elseif pool_idx == 7 then

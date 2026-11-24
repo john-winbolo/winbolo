@@ -171,6 +171,32 @@ local function fill_entry(e, res, inp, id)
     elseif s.kind == "pill" then e.pills = e.pills + 1 end
   end
   e.trees_need = e.walls * (C.WALL_SHIELD_BUILD_COST or 2)
+  -- PT2_BLOCKER_MARK: the plan's blocker pill squares (packed my*256+mx),
+  -- as to_scan_result reads them: an ally pill on a ray that reaches the
+  -- tank, and a square where the plan places a pill. attack.take_blocker_tiles
+  -- marks them while this plan prices the best pool-6 row.
+  local blk, seen = nil, {}
+  for _, r in ipairs(b.rays or {}) do
+    if r.hit == "tank" then
+      for k = 1, r.n_block or 0 do
+        local bl = r.block[k]
+        if bl.kind == "ally_pill" and not seen[bl.sq] then
+          seen[bl.sq] = true
+          blk = blk or {}
+          blk[#blk + 1] = bl.sq
+        end
+      end
+    end
+  end
+  for _, s in ipairs(b.plan or {}) do
+    local sq = s.kind == "pill" and s.mx and s.my and (s.my * 256 + s.mx)
+    if sq and not seen[sq] then
+      seen[sq] = true
+      blk = blk or {}
+      blk[#blk + 1] = sq
+    end
+  end
+  e.blk = blk
   -- the chain's pills, the target first (an unsafe chain too: the entry
   -- goes stale when one of them changes)
   local ids = inp.ids or {}
@@ -185,6 +211,7 @@ local function fill_entry(e, res, inp, id)
   end
   return e
 end
+M._fill_entry = fill_entry
 
 -- The shadow run in one go. Returns the entry (always, a no-chain answer too).
 local function run(state, world, info, id, pill, now)

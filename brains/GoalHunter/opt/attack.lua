@@ -585,6 +585,91 @@ function M.current_blocker_tiles(state, world)
   return out or _EMPTY
 end
 
+-- PT2_BLOCKER_MARK (Nov 24, owner's yes: "if a bot is using a built pill as
+-- a blocker it needs to communicate that"). The take blocker TILES this bot
+-- broadcasts (pblk) and marks _in_use (init.lua), so reposition (ours and
+-- the allies') does not shoot a pill a take needs. The union of:
+--   * current_blocker_tiles: the attack_pill goal's own scan (v1 or v2);
+--   * the chain latch (state._take_blk): the last non-empty current set,
+--     kept while the goal is capture_pill (or anything else) between the
+--     kills and captures of the same chain. It ends when every chain pill
+--     is ours, carried or gone, when an attack_pill on a pill outside the
+--     chain starts, or when no chain pill is dead and the goal is no longer
+--     attack_pill / capture_pill on a chain pill (the take was dropped);
+--   * the pending plan: the best (lowest cost) live pool-6 row in
+--     state.cost_cache, when it is priced by a double-take shadow plan
+--     (entry._dbl.blk, pt2_dbl.fill_entry: the ally pills on its rays and
+--     the squares where it places a pill). This covers the ticks before
+--     the take is the goal (gap_w arena, Nov 24: reposition shot the
+--     take's ally blocker at brain t=15).
+-- false = current_blocker_tiles only. MAST: false.
+-- Returns a sorted list of packed tiles (my*256+mx), or the shared empty table.
+local function chain_state(world, ids)
+  local open, dead = false, false
+  for _, id in pairs(ids) do
+    local p = world.pills and world.pills[id]
+    if p and not p.in_tank and p.owner ~= "friendly" and p.owner ~= "allied" then
+      open = true
+      if (p.health or 0) <= 0 then dead = true end
+    end
+  end
+  return open, dead
+end
+
+function M.take_blocker_tiles(state, world)
+  local cur = M.current_blocker_tiles(state, world)
+  if not C.PT2_BLOCKER_MARK then
+    state._take_blk = nil
+    return cur
+  end
+  local g = state.goal
+  local L = state._take_blk
+  if g and g.kind == "attack_pill" and g.target_id then
+    if #cur > 0 then
+      local ids = {}
+      local chain = g._pt2 and g._pt2.ids
+      if chain then for k, id in pairs(chain) do ids[k] = id end end
+      ids[#ids + 1] = g.target_id
+      local set = {}
+      for _, id in pairs(ids) do set[id] = true end
+      L = { ids = ids, set = set, tiles = cur }
+      state._take_blk = L
+    elseif L and not L.set[g.target_id] then
+      L = nil
+      state._take_blk = nil
+    end
+  end
+  if L then
+    local open, dead = chain_state(world, L.ids)
+    local on_chain = g and (g.kind == "attack_pill" or g.kind == "capture_pill")
+      and g.target_id and L.set[g.target_id]
+    if not open or (not dead and not on_chain) then
+      L = nil
+      state._take_blk = nil
+    end
+  end
+  local pend
+  local best, bcost = nil, 1e29
+  for _, ce in pairs(state.cost_cache or _EMPTY) do
+    if ce._p == 6 and not ce._reject and ce.cost and ce.cost < bcost then
+      best, bcost = ce, ce.cost
+    end
+  end
+  if best and best._dbl and not best._dbl.skip then pend = best._dbl.blk end
+  if not L and not pend then return cur end
+  local seen, out = {}, {}
+  local function add(list)
+    if not list then return end
+    for _, ti in ipairs(list) do
+      if not seen[ti] then seen[ti] = true; out[#out + 1] = ti end
+    end
+  end
+  add(cur); add(L and L.tiles); add(pend)
+  if #out == 0 then return _EMPTY end
+  table.sort(out)
+  return out
+end
+
 -- Shield WALL tiles this take is BUILDING, broadcast (bwl) ONLY while in
 -- build_walls so blitz soldiers route their shot AROUND them — a freshly built
 -- friendly wall blocks a soldier's shell exactly like an enemy one, and the wall
