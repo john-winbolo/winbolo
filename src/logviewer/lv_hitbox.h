@@ -20,14 +20,25 @@
  *    with BOLO_LEGACY_SQUARE_COLLISION, used a square: less
  *    than 128 from the centre on both axes.
  *
- *  - A builder: lgmBlastCatches (src/bolo/lgm.c). An
- *    explosion catches a builder when it is on a square that
- *    is not a building, a half building, a pillbox or a base,
- *    and no more than half a square (128) from him. On one of
- *    those squares it catches him only when it is on his own
- *    square. The distance comes from utilIsItemInRange with
- *    the pill_range rule as its limit, so when pill_range is
- *    under 128 the circle is pill_range across, not 128.
+ *  - A builder: lgmBlastCatches (src/bolo/lgm.c), which
+ *    applies hitRulesBuilderCaught. An explosion catches a
+ *    builder when it is on a square that is not a building, a
+ *    half building, a live pillbox or a base, and he is in the
+ *    lgm_blast_shape rule's area round it
+ *    (lgmBlastOpenGroundCatches): a circle of half a square
+ *    (128), the Mac Bolo box (less than 128 on both axes) or a
+ *    circle of 144. On one of those squares it catches him
+ *    only when it is on his own square. Every shape stops at
+ *    the pill_range rule, so when pill_range is under the
+ *    shape's reach the area is cut to a circle of pill_range.
+ *
+ *    The outline is for an explosion with no square hit: a
+ *    mine, a tank's explosion, and a shell that bursts on open
+ *    ground (it ran out, or hit a tank). A shell that hits a
+ *    wall, a live pillbox, forest, a boat, the shore a boat's
+ *    shell stops on or a bridge catches only a builder on that
+ *    square (the squareHit of lgmBlastCatches), wherever he is
+ *    on it. The outline does not show that case.
  *
  *  Sizes are in world units: 256 to a map square, 16 to a
  *  pixel of the map's art.
@@ -49,9 +60,11 @@
 #define LV_HITBOX_WU_PER_PIXEL 16
 /* World units in one map square. */
 #define LV_HITBOX_WU_PER_SQUARE 256
-/* Half a square (MAP_SQUARE_MIDDLE): the builder's catch distance on
-   open ground. */
-#define LV_HITBOX_BUILDER_REACH HIT_RULES_HALF_SQUARE
+/* The furthest on one axis an explosion on open ground can catch a
+   builder from, for any lgm_blast_shape: the circle of 144 reaches 144
+   across, the box 128 and the half-square circle 128. The outline looks
+   for the area's edge this far round his square. */
+#define LV_HITBOX_BUILDER_REACH LGM_BLAST_MAC_AREA_RADIUS
 /* lgmGetMX / lgmGetPX (src/bolo/lgm.c) take 1 world unit off a walking
    builder's x and 2 off his y before they round his place down to an art
    pixel, which is the place a recording holds. */
@@ -286,14 +299,23 @@ static inline double lvHitboxTankCentreInPicture(void) {
     return (lvHitboxTankPlace(0) + LV_HITBOX_TANK_HALF) / (double)LV_HITBOX_WU_PER_PIXEL;
 }
 
-/* The distance an explosion on open ground catches a builder at. The engine
-   asks for distance <= 128, but the distance it reads is the one
-   utilIsItemInRange gives with pill_range as its limit: past the limit it
-   gives WORLD_MAX, which never passes. So the catch distance is the smaller
-   of the two. */
-static inline int lvHitboxBuilderReach(int pillRange) {
+/* The radius of the circle on the edge of the builder's area on open
+   ground, for the lgm_blast_shape rule shape and the pill_range rule, or 0
+   when the edge has no circle. The half-square circle (and a shape outside
+   the three, which plays as it) is 128 and the area circle 144, each cut to
+   pill_range when pill_range is less. The box has a circle only when
+   pill_range cuts its corners off: pill_range under the corner's distance,
+   128 times the square root of 2. */
+static inline int lvHitboxBuilderReach(int shape, int pillRange) {
+    int full;
     if (pillRange < 0) return 0;
-    return pillRange < LV_HITBOX_BUILDER_REACH ? pillRange : LV_HITBOX_BUILDER_REACH;
+    if (shape == LGM_BLAST_SHAPE_MAC_BOX) {
+        return ((double)pillRange * pillRange <
+                2.0 * LGM_BLAST_MAC_BOX_HALF * LGM_BLAST_MAC_BOX_HALF) ? pillRange : 0;
+    }
+    full = (shape == LGM_BLAST_SHAPE_MAC_AREA) ? LGM_BLAST_MAC_AREA_RADIUS
+                                               : HIT_RULES_HALF_SQUARE;
+    return pillRange < full ? pillRange : full;
 }
 
 /* The builder test, as lgmBlastCatches makes it, for an explosion at (x, y)
@@ -303,15 +325,15 @@ static inline int lvHitboxBuilderReach(int pillRange) {
    by 256 (rounding down). solid is a mask of the 3 by 3 squares round the
    builder's: bit (row * 3 + col), with col and row 0, 1 or 2 and the
    builder's own square at col 1, row 1. A set bit is a building, a half
-   building, a pillbox or a base. reach is lvHitboxBuilderReach's. The rule
-   is hitRulesBuilderCaught's, the engine's own. reach is given to it as
-   the pill range, which gives the same answer, since reach is pill_range or
-   128, whichever is less.
+   building, a live pillbox or a base. shape and pillRange are the
+   lgm_blast_shape and pill_range rules. The rule is hitRulesBuilderCaught,
+   the one lgmBlastCatches applies.
 
-   An explosion off the 3 by 3 squares is further than 128 from the builder,
-   so it never catches him: its square is not looked at. */
+   An explosion off the 3 by 3 squares is further than
+   LV_HITBOX_BUILDER_REACH from the builder on one axis, so it never
+   catches him: its square is not looked at. */
 static inline bool lvHitboxBuilderCaught(double x, double y, double bx, double by,
-                                         unsigned solid, int reach) {
+                                         unsigned solid, int shape, int pillRange) {
     int col, row;
     bool isSolid;
 
@@ -324,7 +346,8 @@ static inline bool lvHitboxBuilderCaught(double x, double y, double bx, double b
         return false;
     }
     isSolid = ((solid >> (row * 3 + col)) & 1u) != 0;
-    return hitRulesBuilderCaught(isSolid, col == 1 && row == 1, x - bx, y - by, reach);
+    return hitRulesBuilderCaught(isSolid, col == 1 && row == 1, x - bx, y - by, shape,
+                                 pillRange);
 }
 
 /* The entry of a builder's notes the frame at time atMs shows: the newest
@@ -353,24 +376,31 @@ static inline int lvHitboxLgmPickEntry(const uint32_t *ms, const int *ax, const 
  *
  * The border of the area lvHitboxBuilderCaught catches in: every piece of
  * line with the area on one side and not on the other. The pieces are the
- * circle's and the four square edges (x and y at 0 and 256) that cross the
- * 3 by 3 squares the circle can reach. The answer changes only where the
- * circle meets a square edge or a square edge meets another, so each
- * circle segment and each edge piece is cut at those places first and
- * then tested at its middle. So the outline goes to the true edge, not to
- * the middle of the nearest segment.
+ * circle's (lvHitboxBuilderReach), the four square edges (x and y at 0 and
+ * 256) that cross the 3 by 3 squares the area can reach, and for the Mac
+ * Bolo box its four sides (x and y at 128 each side of him). The answer
+ * changes only where two of these meet, so each circle segment and each
+ * line piece is cut at those places first and then tested at its middle.
+ * So the outline goes to the true edge, not to the middle of the nearest
+ * segment.
  *
  * The outline is runs of joined points, in world units from the top left
  * of his square, ready to draw as lines (SDL_RenderLines takes one run). */
 #define LV_HITBOX_OUTLINE_SEGMENTS 48     /* segments in the full circle */
 #define LV_HITBOX_OUTLINE_PIECE    16     /* edge pieces, one art pixel long */
 #define LV_HITBOX_OUTLINE_SIDE     1e-3   /* how far each side of a line is asked */
-/* The circle: 48 segments and up to 8 places where it meets an edge. Each
-   edge: 32 pieces and up to 2 places where it meets the circle. */
-#define LV_HITBOX_OUTLINE_CIRCLE_MAX (LV_HITBOX_OUTLINE_SEGMENTS + 9)
+/* The straight lines: the four square edges and the box's four sides. */
+#define LV_HITBOX_OUTLINE_LINES    8
+/* The circle: 48 segments and up to 2 places where it meets each line.
+   Each line: its pieces, up to 2 places where it meets the circle, and the
+   places where the lines across it meet it (half the lines at most). */
+#define LV_HITBOX_OUTLINE_CIRCLE_MAX \
+    (LV_HITBOX_OUTLINE_SEGMENTS + 1 + 2 * LV_HITBOX_OUTLINE_LINES)
 #define LV_HITBOX_OUTLINE_EDGE_MAX   \
-    ((2 * LV_HITBOX_BUILDER_REACH + LV_HITBOX_WU_PER_SQUARE) / LV_HITBOX_OUTLINE_PIECE + 3)
-#define LV_HITBOX_OUTLINE_MAX_RUNS   (LV_HITBOX_OUTLINE_CIRCLE_MAX + 4 * LV_HITBOX_OUTLINE_EDGE_MAX)
+    ((2 * LV_HITBOX_BUILDER_REACH + LV_HITBOX_WU_PER_SQUARE) / LV_HITBOX_OUTLINE_PIECE + 3 + \
+     LV_HITBOX_OUTLINE_LINES / 2)
+#define LV_HITBOX_OUTLINE_MAX_RUNS   \
+    (LV_HITBOX_OUTLINE_CIRCLE_MAX + LV_HITBOX_OUTLINE_LINES * LV_HITBOX_OUTLINE_EDGE_MAX)
 #define LV_HITBOX_OUTLINE_MAX_PTS    (2 * LV_HITBOX_OUTLINE_MAX_RUNS)
 
 typedef struct {
@@ -413,41 +443,77 @@ static inline void lvHitboxSortSmall(double *v, int n) {
     }
 }
 
+/* Put a straight line (x = v when up, else y = v) on the list, once. */
+static inline void lvHitboxOutlineLine(bool *upright, double *value, int *n, bool up,
+                                       double v) {
+    int i;
+    for (i = 0; i < *n; i++) {
+        if (upright[i] == up && value[i] == v) return;
+    }
+    if (*n < LV_HITBOX_OUTLINE_LINES) {
+        upright[*n] = up;
+        value[*n] = v;
+        (*n)++;
+    }
+}
+
 /* The outline of the area for a builder at (bx, by), with the solid mask
-   and the reach of lvHitboxBuilderCaught. */
-static inline void lvHitboxBuilderOutline(double bx, double by, unsigned solid, int reach,
-                                          LvHitOutline *o) {
+   and the rules of lvHitboxBuilderCaught. */
+static inline void lvHitboxBuilderOutline(double bx, double by, unsigned solid, int shape,
+                                          int pillRange, LvHitOutline *o) {
     const double twoPi = 2.0 * 3.14159265358979323846;
+    const int reach = lvHitboxBuilderReach(shape, pillRange);
     const double r = (double)reach;
     const double side = LV_HITBOX_OUTLINE_SIDE;
     const double lo = -(double)LV_HITBOX_BUILDER_REACH;
     const double hi = (double)(LV_HITBOX_WU_PER_SQUARE + LV_HITBOX_BUILDER_REACH);
     double cut[LV_HITBOX_OUTLINE_EDGE_MAX + LV_HITBOX_OUTLINE_CIRCLE_MAX];
-    int n, i, e;
+    bool upright[LV_HITBOX_OUTLINE_LINES];
+    double value[LV_HITBOX_OUTLINE_LINES];
+    int nLines = 0;
+    int n, i, e, k;
 
     o->nPts = 0;
     o->nRuns = 0;
     o->runStart[0] = 0;
 
-    /* The circle, cut at each segment's ends and wherever it meets an edge. */
+    /* The square edges at 0 and 256 on each axis, and the box's sides. */
+    for (e = 0; e < 2; e++) {
+        lvHitboxOutlineLine(upright, value, &nLines, true,
+                            (double)(e * LV_HITBOX_WU_PER_SQUARE));
+        lvHitboxOutlineLine(upright, value, &nLines, false,
+                            (double)(e * LV_HITBOX_WU_PER_SQUARE));
+    }
+    if (shape == LGM_BLAST_SHAPE_MAC_BOX && pillRange >= 0) {
+        for (e = -1; e <= 1; e += 2) {
+            lvHitboxOutlineLine(upright, value, &nLines, true,
+                                bx + (double)(e * LGM_BLAST_MAC_BOX_HALF));
+            lvHitboxOutlineLine(upright, value, &nLines, false,
+                                by + (double)(e * LGM_BLAST_MAC_BOX_HALF));
+        }
+    }
+
+    /* The circle, cut at each segment's ends and wherever it meets a line. */
     if (reach > 0) {
         n = 0;
         for (i = 0; i <= LV_HITBOX_OUTLINE_SEGMENTS; i++) {
             cut[n++] = (double)i * twoPi / LV_HITBOX_OUTLINE_SEGMENTS;
         }
-        for (e = 0; e < 2; e++) {
-            double line = (double)(e * LV_HITBOX_WU_PER_SQUARE);
-            double c = (line - bx) / r;    /* x = line: cos(a) = c */
-            double s = (line - by) / r;    /* y = line: sin(a) = s */
-            if (c > -1.0 && c < 1.0) {
-                double a = acos(c);
-                cut[n++] = a;
-                cut[n++] = twoPi - a;
-            }
-            if (s > -1.0 && s < 1.0) {
-                double a = asin(s);
-                cut[n++] = (a < 0.0) ? a + twoPi : a;
-                cut[n++] = 0.5 * twoPi - a;
+        for (k = 0; k < nLines; k++) {
+            if (upright[k]) {
+                double c = (value[k] - bx) / r;    /* x = line: cos(a) = c */
+                if (c > -1.0 && c < 1.0) {
+                    double a = acos(c);
+                    cut[n++] = a;
+                    cut[n++] = twoPi - a;
+                }
+            } else {
+                double sn = (value[k] - by) / r;   /* y = line: sin(a) = sn */
+                if (sn > -1.0 && sn < 1.0) {
+                    double a = asin(sn);
+                    cut[n++] = (a < 0.0) ? a + twoPi : a;
+                    cut[n++] = 0.5 * twoPi - a;
+                }
             }
         }
         lvHitboxSortSmall(cut, n);
@@ -457,9 +523,9 @@ static inline void lvHitboxBuilderOutline(double bx, double by, unsigned solid, 
             LvHitPt p0, p1;
             if (a1 - a0 < 1e-12) continue;
             if (lvHitboxBuilderCaught(bx + cx * (r - side), by + cy * (r - side), bx, by,
-                                      solid, reach) ==
+                                      solid, shape, pillRange) ==
                 lvHitboxBuilderCaught(bx + cx * (r + side), by + cy * (r + side), bx, by,
-                                      solid, reach)) {
+                                      solid, shape, pillRange)) {
                 continue;
             }
             p0.x = bx + cos(a0) * r;  p0.y = by + sin(a0) * r;
@@ -468,14 +534,14 @@ static inline void lvHitboxBuilderOutline(double bx, double by, unsigned solid, 
         }
     }
 
-    /* The edges at 0 and 256 on each axis, from half a square before his
-       square to half a square after it (all the circle can reach), cut at
-       each piece's ends and wherever the circle meets them. */
-    for (e = 0; e < 4; e++) {
-        bool upright = (e < 2);                 /* x = line, else y = line */
-        double line = (double)((e & 1) * LV_HITBOX_WU_PER_SQUARE);
-        double across = upright ? line - bx : line - by;
-        double along = upright ? by : bx;
+    /* Each line, from LV_HITBOX_BUILDER_REACH before his square to as far
+       after it (all the area can reach), cut at each piece's ends and
+       wherever the circle or a line across it meets it. */
+    for (e = 0; e < nLines; e++) {
+        bool up = upright[e];                   /* x = line, else y = line */
+        double line = value[e];
+        double across = up ? line - bx : line - by;
+        double along = up ? by : bx;
         double t;
         n = 0;
         for (t = lo; t <= hi; t += LV_HITBOX_OUTLINE_PIECE) {
@@ -486,19 +552,24 @@ static inline void lvHitboxBuilderOutline(double bx, double by, unsigned solid, 
             if (along - h > lo && along - h < hi) cut[n++] = along - h;
             if (along + h > lo && along + h < hi) cut[n++] = along + h;
         }
+        for (k = 0; k < nLines; k++) {
+            if (upright[k] != up && value[k] > lo && value[k] < hi) {
+                cut[n++] = value[k];
+            }
+        }
         lvHitboxSortSmall(cut, n);
         for (i = 0; i + 1 < n; i++) {
             double t0 = cut[i], t1 = cut[i + 1], m = (t0 + t1) * 0.5;
             bool a, b;
             LvHitPt p0, p1;
             if (t1 - t0 < 1e-9) continue;
-            if (upright) {
-                a = lvHitboxBuilderCaught(line - side, m, bx, by, solid, reach);
-                b = lvHitboxBuilderCaught(line + side, m, bx, by, solid, reach);
+            if (up) {
+                a = lvHitboxBuilderCaught(line - side, m, bx, by, solid, shape, pillRange);
+                b = lvHitboxBuilderCaught(line + side, m, bx, by, solid, shape, pillRange);
                 p0.x = line; p0.y = t0; p1.x = line; p1.y = t1;
             } else {
-                a = lvHitboxBuilderCaught(m, line - side, bx, by, solid, reach);
-                b = lvHitboxBuilderCaught(m, line + side, bx, by, solid, reach);
+                a = lvHitboxBuilderCaught(m, line - side, bx, by, solid, shape, pillRange);
+                b = lvHitboxBuilderCaught(m, line + side, bx, by, solid, shape, pillRange);
                 p0.x = t0; p0.y = line; p1.x = t1; p1.y = line;
             }
             if (a != b) {

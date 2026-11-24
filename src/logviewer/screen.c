@@ -1144,6 +1144,8 @@ static void lv_rulesRefresh(void) {
       lv_screenRuleValueAt(SIM_RULE_tank_hit_radius, t), 1, 255);
   g_lv->rules.pillRange      = lv_rulesClampInt(
       lv_screenRuleValueAt(SIM_RULE_pill_range, t), 0, 65535);
+  g_lv->rules.lgmBlastShape  = lv_rulesClampInt(
+      lv_screenRuleValueAt(SIM_RULE_lgm_blast_shape, t), 0, 2);
   g_lv->rules.baseStatusRange = lv_rulesClampInt(
       lv_screenRuleValueAt(SIM_RULE_base_status_range, t), 0, 65535);
   /* The tank's hit zone: the circle, or the square of games from before it
@@ -6499,6 +6501,7 @@ LogViewerState *lv_decoderCreate(bool fromMainMenu) {
   lv->rules.pillMaxArmour  = 15;
   lv->rules.tankHitRadius  = 112;   /* TANK_HIT_RADIUS */
   lv->rules.pillRange      = 2048;  /* PILLBOX_RANGE */
+  lv->rules.lgmBlastShape  = LGM_BLAST_SHAPE_CLASSIC;
   lv->rules.baseStatusRange = 1792; /* BASE_STATUS_RANGE */
 
   lv->fromMainMenu = fromMainMenu;

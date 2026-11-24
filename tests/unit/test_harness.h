@@ -4822,7 +4822,8 @@ int run_lv_hitbox_outline(void);
 /* The tank's hit zone from a recording's version (test_lv_calibration.c). */
 int run_lv_hitbox_zone_from_version(void);
 /* The hit rules the engine and the log viewer share (test_hit_rules.c):
- * the same answers as the engine's sums before they moved to hit_rules.h. */
+ * the builder rule against the engine's death test today, and the tank
+ * rule against the engine's sums before they moved to hit_rules.h. */
 int run_hit_rules_builder_matches_engine(void);
 int run_hit_rules_tank_matches_engine(void);
 /* A click on a tank on the log viewer's map (test_lv_tank_pick.c): which

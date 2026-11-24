@@ -16,9 +16,10 @@
  *    in client_sim.c): hitRulesTankShellInZone.
  *
  *  - An explosion catches a builder (lgmBlastCatches in
- *    lgm.c): hitRulesBuilderCaught. The engine finds the
- *    squares and the solid ground; this header has the rule
- *    that is applied to them.
+ *    lgm.c): hitRulesBuilderCaught, with the open-ground area
+ *    of the lgm_blast_shape rule in lgmBlastOpenGroundCatches.
+ *    The engine finds the squares and the solid ground; this
+ *    header has the rule that is applied to them.
  *
  *  The Log Viewer draws its hit boxes from these same
  *  functions (src/logviewer/lv_hitbox.h), so a change here
@@ -33,6 +34,7 @@
 #define HIT_RULES_H
 
 #include <stdbool.h>
+#include <stdint.h>
 
 /* Define BOLO_LEGACY_SQUARE_COLLISION (compile time only, there is no
  * runtime toggle) to go back to the original Bolo behaviour: the square
@@ -75,34 +77,92 @@ static inline bool hitRulesTankShellInZone(int dx, int dy, int radius) {
 #endif
 }
 
-/* Whether an explosion on open ground catches a builder: no more than 128
-   from him. pillRange is the pill_range rule as the engine reads it (a
-   WORLD, 0 to 65535). The engine takes the distance from utilIsItemInRange
-   with pill_range as its limit, and past the limit that gives WORLD_MAX,
-   which never passes; so the distance must also be no more than pillRange.
-   For whole-number dx and dy and a whole-number r, d2 <= r * r gives the
-   same answer as the engine's sqrt(d2) <= r (the unit test
-   hit_rules_builder_matches_engine checks it). dx and dy are the
-   explosion's place less his. */
-static inline bool hitRulesBuilderOpenGround(double dx, double dy, int pillRange) {
+/* The lgm_blast_shape rule: the area of open ground an explosion catches a
+   builder in. dx and dy are the explosion's place less the builder's, in
+   world units (256 to a square).
+   - LGM_BLAST_SHAPE_HALF_SQUARE: "Half-square circle". A circle of radius
+     HIT_RULES_HALF_SQUARE (128, MAP_SQUARE_MIDDLE), edge included, the
+     WinBolo rule.
+   - LGM_BLAST_SHAPE_MAC_BOX: "Mac Bolo box". |dx| < 128 and |dy| < 128,
+     edge left out. Mac Bolo tests each axis on its own in this way.
+   - LGM_BLAST_SHAPE_MAC_AREA: "Mac Bolo equivalent area circle". A circle
+     of radius LGM_BLAST_MAC_AREA_RADIUS, edge included: 256 / sqrt(pi) is
+     about 144.4, so it covers about the same area as the box.
+   Every shape also stops at the pill_range rule: a builder further than
+   pill_range from the explosion is safe. That limit is the old test's, and
+   it changes a shape only when pill_range is under the shape's reach (128,
+   about 180 and 144). */
+#define LGM_BLAST_SHAPE_HALF_SQUARE 0
+#define LGM_BLAST_SHAPE_MAC_BOX     1
+#define LGM_BLAST_SHAPE_MAC_AREA    2
+#define LGM_BLAST_SHAPE_CLASSIC     LGM_BLAST_SHAPE_HALF_SQUARE
+#define LGM_BLAST_MAC_BOX_HALF      128
+#define LGM_BLAST_MAC_AREA_RADIUS   144
+
+/*********************************************************
+*NAME:          lgmBlastOpenGroundCatches
+*PURPOSE:
+*  Whether an explosion on open ground (not a building, a
+*  half building, a pillbox or a base) catches a builder
+*  dx, dy world units from it, by the lgm_blast_shape
+*  rule. shape is the rule's value; a value outside the
+*  three plays as the half-square circle.
+*
+*  The half-square circle keeps the old test exactly: it
+*  read its distance from utilIsItemInRange with the
+*  pill_range rule as the limit, and past that limit the
+*  distance never passes. So with pill_range under 128 the
+*  circle has radius pill_range. The other two shapes stop
+*  at pill_range the same way: a builder further than
+*  pill_range from the explosion is safe. A pill_range
+*  under 0 catches no builder.
+*
+*  dx and dy are doubles so the Log Viewer can ask between
+*  whole world units when it draws the area's edge. The
+*  engine gives whole numbers, and for those the answers
+*  are the same as with whole-number sums.
+*
+*ARGUMENTS:
+*  shape     - The lgm_blast_shape rule
+*  pillRange - The pill_range rule
+*  dx        - Explosion X less the builder's X
+*  dy        - Explosion Y less the builder's Y
+*********************************************************/
+static inline bool lgmBlastOpenGroundCatches(int32_t shape, int32_t pillRange,
+                                             double dx, double dy) {
+    double ax = dx < 0 ? -dx : dx;
+    double ay = dy < 0 ? -dy : dy;
     double d2 = dx * dx + dy * dy;
-    if (pillRange < 0) {
+
+    /* Every shape: within pill_range, the limit utilIsItemInRange measured
+       the old test against. */
+    if (pillRange < 0 || d2 > (double)pillRange * pillRange) {
         return false;
     }
-    return d2 <= (double)HIT_RULES_HALF_SQUARE * (double)HIT_RULES_HALF_SQUARE &&
-           d2 <= (double)pillRange * (double)pillRange;
+    if (shape == LGM_BLAST_SHAPE_MAC_BOX) {
+        return ax < LGM_BLAST_MAC_BOX_HALF && ay < LGM_BLAST_MAC_BOX_HALF;
+    }
+    if (shape == LGM_BLAST_SHAPE_MAC_AREA) {
+        return d2 <= (double)LGM_BLAST_MAC_AREA_RADIUS * LGM_BLAST_MAC_AREA_RADIUS;
+    }
+    /* The half-square circle: within half a square. */
+    return d2 <= (double)HIT_RULES_HALF_SQUARE * HIT_RULES_HALF_SQUARE;
 }
 
-/* The builder rule. blastSolid: the explosion's square is a building, a
-   half building, a pillbox or a base. blastOnHisSquare: the explosion's
-   square is his own square. On a solid square it catches him only on his
-   own square; on open ground it is hitRulesBuilderOpenGround. */
+/* The builder rule, as lgmBlastCatches (lgm.c) applies it. blastSolid: the
+   explosion's square is a building, a half building, a live pillbox or a
+   base, or the explosion is a shell's hit on the thing on its square.
+   blastOnHisSquare: the explosion's square is his own square. On a solid
+   square it catches him only on his own square; on open ground it is
+   lgmBlastOpenGroundCatches. shape and pillRange are the lgm_blast_shape
+   and pill_range rules. */
 static inline bool hitRulesBuilderCaught(bool blastSolid, bool blastOnHisSquare,
-                                         double dx, double dy, int pillRange) {
+                                         double dx, double dy, int32_t shape,
+                                         int32_t pillRange) {
     if (blastSolid) {
         return blastOnHisSquare;
     }
-    return hitRulesBuilderOpenGround(dx, dy, pillRange);
+    return lgmBlastOpenGroundCatches(shape, pillRange, dx, dy);
 }
 
 #endif /* HIT_RULES_H */
