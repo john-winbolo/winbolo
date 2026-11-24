@@ -2482,8 +2482,9 @@ BYTE lv_drawGetHitBoxes(void) {
 static void lvDrawRingBand(float cx, float cy, float rIn, float rOut, SDL_FColor col);
 
 /* Each builder's outline (lvHitboxBuilderOutline) on the screen, worked out
-   once each time the hit areas are drawn and then drawn twice, dark and in
-   its colour. */
+   again every frame the hit areas are drawn (not kept from one frame to the
+   next) and then drawn twice, dark and in its colour. The cost is small:
+   one outline for each builder out of his tank, a few hundred tests each. */
 #define LV_HIT_SCREEN_PTS (MAX_TANKS * LV_HITBOX_OUTLINE_MAX_PTS)
 #define LV_HIT_SCREEN_RUNS (MAX_TANKS * LV_HITBOX_OUTLINE_MAX_RUNS)
 static SDL_FPoint s_hitPts[LV_HIT_SCREEN_PTS];

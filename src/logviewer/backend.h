@@ -896,7 +896,8 @@ void lv_screenLagShellOwnerStats(LvShellOwnerStats *out);
  * lag view the chosen player's own shells are drawn from the present frame,
  * as that player's own screen drew them. Off draws them from the old frame,
  * as every other shell is. The value is one bool that lv_screenUpdate
- * reads, so the menu sets and gets it with no client mutex. */
+ * and the lag view's capture at each entry (lv_lagEarlyBlastTick) read, so
+ * the menu sets and gets it with no client mutex. */
 void lv_screenSetScreenTrueShells(int enabled);
 int  lv_screenGetScreenTrueShells(void);
 
@@ -905,9 +906,9 @@ int  lv_screenGetScreenTrueShells(void);
  * server's later explosion of that shell is hidden. It does something only
  * while "Screen-True Own Shells" is on (lv_earlyBlastOn). Stats gives
  * how many own shells ended and how many server explosions were found for
- * them. The toggle is one bool that lv_screenUpdate reads, so the menu
- * sets and gets it with no client mutex; hold the client mutex for the
- * stats. */
+ * them. The toggle is one bool that lv_screenUpdate and the lag view's
+ * capture at each entry (lv_lagEarlyBlastTick) read, so the menu sets and
+ * gets it with no client mutex; hold the client mutex for the stats. */
 void lv_screenSetScreenTrueExplosions(int enabled);
 int  lv_screenGetScreenTrueExplosions(void);
 void lv_screenEarlyBlastStats(LvEarlyBlastStats *out);

@@ -1741,8 +1741,8 @@ void lv_screenUpdate(updateType value) {
   if (lagFrame != NULL) {
     /* The lag view: the other tanks, the builders and the shells where the
        chosen player's screen showed them. The player's own client drew
-       its own shells at once, from its own tank, so with "Toggle
-       Screen-True Own Shells" on those come from the present frame
+       its own shells at once, from its own tank, so with "Screen-True
+       Own Shells" on those come from the present frame
        (lv_lagViewFrame has checked the newest frame is the playhead's).
        With it off they stay at the old time too. A shell with no clear
        owner stays at the old time. The builders are one entry newer than
