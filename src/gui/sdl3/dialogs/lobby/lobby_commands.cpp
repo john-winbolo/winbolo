@@ -652,9 +652,10 @@ bool lobbyAddBotPending(ClientSim *cs) {
 void lobbySendAddBotDebounced(ClientSim *cs,
                                      int namingPool, uint8_t teamNumber) {
     if (!cs) return;
-    /* The buttons are off while this is so; a click queued before they went
-     * off is refused here too. */
-    if (lobbyAddBotState(cs, NULL) != BRAIN_CAPACITY_ADD_OK) return;
+    /* The buttons are off while the CPU speed test runs; a click queued
+     * before they went off is refused here too. At the capacity (FULL) the
+     * add goes on: that is a warning only, on the Server bot slots box. */
+    if (brainCapacityAddBlocks(lobbyAddBotState(cs, NULL))) return;
     /* Drop the call entirely if anything already added a bot this
      * frame — the visible button was probably stale-clicked. */
     if (s_commands.addBotFrame == ImGui::GetFrameCount()) return;
@@ -777,18 +778,60 @@ BrainCapacityAddState lobbyAddBotState(ClientSim *cs, int *capacityOut) {
                                      true);
     }
     bool measuring = false;
+    int capacity = lobbyLocalBotCapacity(cs, &measuring);
+    /* The player's own Server bot slots (single player): the value to warn
+     * at, and the CPU speed test is not waited for. */
+    if (clientSimIsSinglePlayer(cs)) {
+        ServerSim *sim = gameFrontGetSinglePlayerServerSim();
+        if (sim && serverSimGetServerBotSlots(sim) >= 0) {
+            capacity = serverSimGetServerBotSlots(sim);
+            measuring = false;
+        }
+    }
+    if (capacityOut) *capacityOut = capacity;
+    return brainCapacityAddState(measuring, lobbyCountBots(cs), capacity,
+                                 botsRunHere);
+}
+
+int lobbyLocalBotCapacity(ClientSim *cs, bool *measuringOut) {
+    bool measuring = false;
 #ifdef WINBOLO_CPU_SPEED_TEST
     measuring = cpuSpeedBackgroundRunning();
 #endif
+    if (measuringOut) *measuringOut = measuring;
     char name[BRAIN_LIST_NAME_LEN];
     lobbyNextBotBrainName(cs, name, sizeof(name));
     /* By name only: the brain list carries file times, not brain.version.
      * Unknown (no bot of this brain has loaded since the speed test result
      * was given) means no cap until one has. */
-    int capacity = brainCapacityLookupName(name);
-    if (capacityOut) *capacityOut = capacity;
-    return brainCapacityAddState(measuring, lobbyCountBots(cs), capacity,
-                                 botsRunHere);
+    return brainCapacityLookupName(name);
+}
+
+bool lobbyLocalBotSlots(ClientSim *cs, ClientServerBotSlots *out) {
+    if (!cs || !clientSimIsSinglePlayer(cs)) return false;
+    ServerSim *sim = gameFrontGetSinglePlayerServerSim();
+    if (!sim) return false;
+    bool measuring = false;
+    int capacity = lobbyLocalBotCapacity(cs, &measuring);
+    /* The values the server sends over UDP: the brain's answer is the
+     * recommendation, -2 while the test runs, -1 when not known. */
+    int rec = measuring ? -2 : (capacity >= 0 ? capacity : -1);
+    int slots = serverSimGetServerBotSlots(sim);
+    if (out) {
+        out->value = slots >= 0 ? slots : rec;
+        out->recommended = rec;
+        out->locked = false;
+    }
+    return true;
+}
+
+void lobbySetLocalBotSlots(ClientSim *cs, int slots) {
+    if (!cs || !clientSimIsSinglePlayer(cs)) return;
+    ServerSim *sim = gameFrontGetSinglePlayerServerSim();
+    if (!sim) return;
+    threadsWaitForMutex();
+    (void)serverSimSetServerBotSlots(sim, slots);
+    threadsReleaseMutex();
 }
 
 const char *lobbyAddBotOffReason(ClientSim *cs) {
@@ -799,16 +842,23 @@ const char *lobbyAddBotOffReason(ClientSim *cs) {
     case BRAIN_CAPACITY_ADD_MEASURING:
         return langGetText(server ? STR_DLGLOBBY_ADDBOT_SERVER_MEASURING
                                   : STR_DLGLOBBY_ADDBOT_MEASURING);
-    case BRAIN_CAPACITY_ADD_FULL: {
-        MessageArgs args = {};
-        args.number = capacity;
-        return langGetTextFmt(server ? STR_DLGLOBBY_ADDBOT_SERVER_FULL
-                                     : STR_DLGLOBBY_ADDBOT_FULL, &args);
-    }
+    case BRAIN_CAPACITY_ADD_FULL:   /* a warning only: lobbyAddBotWarning */
     case BRAIN_CAPACITY_ADD_OK:
     default:
         return NULL;
     }
+}
+
+const char *lobbyAddBotWarning(ClientSim *cs) {
+    int capacity = BRAIN_CAPACITY_UNKNOWN;
+    bool server = cs && clientSimIsUdpTransport(cs);
+    if (lobbyAddBotState(cs, &capacity) != BRAIN_CAPACITY_ADD_FULL) {
+        return NULL;
+    }
+    MessageArgs args = {};
+    args.number = capacity;
+    return langGetTextFmt(server ? STR_DLGLOBBY_ADDBOT_SERVER_FULL
+                                 : STR_DLGLOBBY_ADDBOT_FULL, &args);
 }
 
 void lobbyAddBotOffTooltip(const char *reason) {

@@ -536,6 +536,23 @@ bool botHostOverWarnStep(BotHostOverWarn *w, int serverBots, int serverSlots,
     return true;
 }
 
+int botHostChildSlots(int offered, int serverSlots) {
+    if (offered < 0) offered = 0;
+    if (serverSlots < 0) return offered;   /* not known yet */
+    return offered < serverSlots ? offered : serverSlots;
+}
+
+void botHostOverCount(const BotHostPlaceHost *raw, int n, int serverSlots,
+                      int child, int *bots, int *slots) {
+    int b = 0;
+    if (raw != NULL && n > 0) {
+        b = raw[0].bots;
+        if (child >= 1 && child < n) b += raw[child].bots;
+    }
+    if (bots != NULL) *bots = b;
+    if (slots != NULL) *slots = serverSlots;
+}
+
 bool botHostPlaceRebalance(const BotHostPlaceHost *hosts, int n,
                            int smallSlots, double bias, int *from, int *to) {
     return botHostPlaceRebalanceLag(hosts, n, smallSlots, bias, NULL, from,

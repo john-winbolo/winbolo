@@ -431,6 +431,13 @@ void   botRunnerThink(BotJobCtx *j, double targetMs, uint32_t tick);
 double botRunnerTargetMs(double serialMsEwma, int runners, int activeBots);
 double botRunnerTargetMsReserve(double serialMsEwma, double reservedSimMs,
                                 int runners, int activeBots);
+/* The Bot Host inside a player's client counts one runner less, so one
+ * core stays for the client's own game and drawing: runners - 1, and at
+ * least 1. */
+int    botRunnerRunnersKeepOne(int runners);
+/* The moving average of the Bot Host's timings: the first sample (prev
+ * <= 0) as it is, then 0.1 of the new sample and 0.9 of prev. */
+double botRunnerEwma(double prev, double sample);
 /* The server's sim reserve in botRunnerTargetMs, for the Bot Host's
  * --budget-legacy option. */
 #define BOT_RUNNER_SERVER_SIM_RESERVE_MS 6.0

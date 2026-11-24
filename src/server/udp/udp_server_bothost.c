@@ -117,6 +117,9 @@
 /* Ticks without a datagram from a Bot Host before it is dropped. The host
  * pings every 500 ms. */
 #define BOT_HOST_TIMEOUT_TICKS   250
+/* A log line that may repeat (a row's CPU estimate, a host's slot count):
+ * at most one each 500 ticks (10 s) for each host. */
+#define BOT_HOST_CPU_LOG_TICKS 500
 /* Ticks a seat waits for its bot connection after the assign. */
 /* The pending timeout: botHostPendingExpired (bot_host_lockstep.h). */
 /* Ticks between checks of a remote seat's brain, AI level, team and init
@@ -596,13 +599,22 @@ static bool botHostSendEvent(int h, const ControlEvent *evt);
 
 /* The slots host h may be given: what it offers, lowered by its row's
  * override, and 0 when another host on its computer (or the server, for a
- * player's host) has them. */
+ * player's host) has them. The server's own child is also capped at the
+ * server's slots (botHostChildSlots): those count the server's process and
+ * the child together. */
 static int botHostEffSlots(int h) {
     const BotHostConn *hc = &udpServer.botHosts[h];
+    int slots;
     if (!hc->connected) return 0;
-    return botHostMachineSlots(botHostMachineKnown[h], &botHostMachine[h],
-                               botHostSlotsEffective((int)hc->slots,
-                                                     hc->slotOvr.override));
+    slots = botHostMachineSlots(botHostMachineKnown[h], &botHostMachine[h],
+                                botHostSlotsEffective((int)hc->slots,
+                                                      hc->slotOvr.override));
+    if (hc->localChild) {
+        /* The last server slots worked out (botHostServerSlots); -1
+         * before the first: no cap until then. */
+        slots = botHostChildSlots(slots, botHostSrvSlots.logged);
+    }
+    return slots;
 }
 
 /* The bots of the game: the bot seats, fielded or held for the start. */
@@ -1623,9 +1635,30 @@ static void botHostOnControl(int h, const uint8_t *msg, uint16_t len) {
     if (evt.type == CTRL_BOT_HOST_SLOTS) {
         uint8_t rs = evt.u.botHostSlots.refuseSeat;
         if (evt.u.botHostSlots.slots != hc->slots) {
-            fprintf(stderr, "[bothost] Bot Host \"%s\" now offers this server "
-                            "%u slots\n", hc->name,
-                    (unsigned)evt.u.botHostSlots.slots);
+            /* A change only, and at most one line each
+             * BOT_HOST_CPU_LOG_TICKS (10 s) for each host, so a host whose
+             * slots go up and down does not fill the log. The next line
+             * counts the changes it left out. */
+            if (hc->slotsLogged &&
+                udpServer.tickCount - hc->slotsLogTick <
+                    BOT_HOST_CPU_LOG_TICKS) {
+                hc->slotsUnlogged++;
+            } else if (hc->slotsUnlogged > 0) {
+                fprintf(stderr, "[bothost] Bot Host \"%s\" now offers this "
+                                "server %u slots (%u changes before this "
+                                "one not logged)\n", hc->name,
+                        (unsigned)evt.u.botHostSlots.slots,
+                        (unsigned)hc->slotsUnlogged);
+                hc->slotsUnlogged = 0;
+                hc->slotsLogged = true;
+                hc->slotsLogTick = udpServer.tickCount;
+            } else {
+                fprintf(stderr, "[bothost] Bot Host \"%s\" now offers this "
+                                "server %u slots\n", hc->name,
+                        (unsigned)evt.u.botHostSlots.slots);
+                hc->slotsLogged = true;
+                hc->slotsLogTick = udpServer.tickCount;
+            }
         }
         hc->slots = evt.u.botHostSlots.slots;
         {
@@ -1991,8 +2024,8 @@ static uint8_t  botHostCpuBotOwnerSent[MAX_BOT_HOSTS + 1];
 static uint8_t  botHostCpuBotSrcSent[MAX_BOT_HOSTS + 1];
 
 /* The log line for a row's CPU estimate: the first one, then a change at
- * most each BOT_HOST_CPU_LOG_TICKS, so the log does not fill. */
-#define BOT_HOST_CPU_LOG_TICKS 500
+ * most each BOT_HOST_CPU_LOG_TICKS (defined at the top of this file), so
+ * the log does not fill. */
 static uint32_t botHostCpuLogTick[MAX_BOT_HOSTS + 1];
 static bool     botHostCpuLogged[MAX_BOT_HOSTS + 1];
 
@@ -5308,7 +5341,7 @@ static void botHostTellAll(ServerSim *sim, langid id, int argCount,
 static void botHostOverStep(ServerSim *sim, const BotHostPlaceHost *raw,
                             const BotHostPlaceHost *hosts, bool anyPending) {
     bool hostTakes;
-    int s;
+    int s, h, child = -1, overBots, overSlots;
 
     for (s = 0; s < MAX_TANKS; s++) {
         if (udpServer.botSeats[s].state != BOT_SEAT_LOCAL) continue;
@@ -5325,12 +5358,24 @@ static void botHostOverStep(ServerSim *sim, const BotHostPlaceHost *raw,
                 botHostPlaceGoodHost(hosts, 1 + MAX_BOT_HOSTS,
                                      botHostSmallSlots, botHostSmallBias,
                                      &botHostLag) >= 1;
-    if (botHostOverWarnStep(&botHostOverWarn, raw[0].bots, raw[0].slots,
+    /* With the server's own child linked, raw[0] keeps only the slots the
+     * child does not take: count the server's full slots against the bots
+     * of the server's process plus the child's. */
+    for (h = 0; h < MAX_BOT_HOSTS; h++) {
+        if (udpServer.botHosts[h].connected &&
+            udpServer.botHosts[h].localChild) {
+            child = h + 1;
+            break;
+        }
+    }
+    botHostOverCount(raw, 1 + MAX_BOT_HOSTS, botHostServerSlots(sim), child,
+                     &overBots, &overSlots);
+    if (botHostOverWarnStep(&botHostOverWarn, overBots, overSlots,
                             hostTakes)) {
         char bots[12], slots[12];
         const char *args[4];
-        snprintf(bots, sizeof(bots), "%d", raw[0].bots);
-        snprintf(slots, sizeof(slots), "%d", raw[0].slots);
+        snprintf(bots, sizeof(bots), "%d", overBots);
+        snprintf(slots, sizeof(slots), "%d", overSlots);
         args[0] = "";
         args[1] = "";
         args[2] = bots;
@@ -5338,7 +5383,7 @@ static void botHostOverStep(ServerSim *sim, const BotHostPlaceHost *raw,
         fprintf(stderr, "[bothost] the server runs %d bots for its %d slots "
                         "and no Bot Host has a slot: every bot runs on the "
                         "server, and they may play worse (game tick %u)\n",
-                raw[0].bots, raw[0].slots, (unsigned)serverSimGetTick(sim));
+                overBots, overSlots, (unsigned)serverSimGetTick(sim));
         botHostTellAll(sim, STR_BOTHOST_OVER_SLOTS, 4, args);
     }
 }
@@ -5377,6 +5422,8 @@ static void botHostPlaceStep(ServerSim *sim, ServerState st) {
     botHostPlace.lastSt = st;
 
     memset(hosts, 0, sizeof(hosts));
+    /* The server's slots first: the child's slots are capped at them. */
+    hosts[0].slots = botHostServerSlots(sim);
     for (h = 0; h < MAX_BOT_HOSTS; h++) {
         BotHostConn *hc = &udpServer.botHosts[h];
         hostCount[h] = 0;
@@ -5391,10 +5438,10 @@ static void botHostPlaceStep(ServerSim *sim, ServerState st) {
         if (hosts[h + 1].open) anyHost = true;
     }
 
-    hosts[0].slots = botHostServerSlots(sim);
     for (h = 0; h < MAX_BOT_HOSTS; h++) {
-        /* The server's own child takes the server's slots: the server's
-         * process keeps only what the child does not take. */
+        /* The server's own child takes the server's slots (at most all of
+         * them): the server's process keeps only what the child does not
+         * take. */
         if (udpServer.botHosts[h].connected &&
             udpServer.botHosts[h].localChild && hosts[h + 1].open) {
             int left = (int)hosts[0].slots - (int)hosts[h + 1].slots;
@@ -5405,9 +5452,8 @@ static void botHostPlaceStep(ServerSim *sim, ServerState st) {
     hosts[0].open = true;
     hosts[0].unlimited = true;
     /* -bothost-enforce-server-limit: no bot past its slots after all. Not
-     * with the server's own child: the child has the server's slots, and a
-     * bot the child cannot take now runs in the server's process (the DS
-     * rule), never held with its tank standing still. */
+     * with the server's own child linked: then the server's process is not
+     * capped at its slots. */
     hosts[0].capped = botHostEnforceServerLimit && !botHostDsChildLinked();
     hosts[0].lagMs = 0.0;  /* the server's own process */
     /* Dynamic slots: each place's start, ceiling and reserve. */
@@ -5445,8 +5491,11 @@ static void botHostPlaceStep(ServerSim *sim, ServerState st) {
      * map or carry tokens off the list) takes none. The bots already on a
      * Bot Host count too (their slot holds the bot connection, not a
      * player): a host that joins while every bot runs on other hosts may
-     * take them by the lag rule. */
-    {
+     * take them by the lag rule. With no open host (none connected) this
+     * is skipped: it would build every bot's init argument and leave
+     * anyHost false. The early return stays below botHostOverStep, so with
+     * no Bot Host a held bot still gets its brain on the server again. */
+    if (anyHost) {
         BotSeatFitInfo fitInfo[MAX_TANKS];
         bool fitHave[MAX_TANKS];
         for (s = 0; s < MAX_TANKS; s++) {
@@ -5753,7 +5802,9 @@ void serverServiceBotHosts(ServerSim *sim) {
                     botHostSlotOverrideNewLobby(&udpServer.botHosts[h].slotOvr);
                 }
             }
-            /* The hosts send their recordings of it now, at full speed. */
+            /* The hosts send their recordings of it now, at full speed.
+             * (Game over asked already; this asks a host that joined in
+             * the game, or one whose upload failed.) */
             if (udpServer.botHostLastState != -1) serverBotRecOnLobby();
             /* The players are sent their tickets again. */
             for (s = 0; s < MAX_TANKS; s++) {
@@ -5763,7 +5814,9 @@ void serverServiceBotHosts(ServerSim *sim) {
         if (st == serverStateRunning &&
             (udpServer.botHostLastState == (int)serverStateLobby ||
              udpServer.botHostLastState == (int)serverStateCountdown)) {
-            /* A game starts: a host still sending goes on slowly. */
+            /* A game starts: a host still sending stops (HOLD) and goes
+             * on after the game. A map rotation (Running on both sides)
+             * needs no HOLD: no UPLOAD goes out while a game runs. */
             serverBotRecOnGameStart();
         }
         if (udpServer.botHostEnabled &&
@@ -5923,7 +5976,9 @@ void serverServiceBotHosts(ServerSim *sim) {
         }
         botHostServiceFiles(sim, h);
     }
-    serverBotRecService(sim, st == serverStateLobby);
+    /* Uploads and merges only between games: game over and the lobby. */
+    serverBotRecService(sim, st == serverStateLobby ||
+                                 st == serverStateGameOver);
     botHostBroadcastRows();
 
     /* Finding hosts: ask the listed ones for free slots when the first

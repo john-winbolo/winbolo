@@ -229,7 +229,7 @@ int run_lobby_add_bot_rejects_ai_none(void);
 int run_lobby_add_bot_rejects_not_in_lobby(void);
 int run_lobby_add_bot_rejects_non_host_sender(void);
 int run_lobby_bot_count_counts_only_connected_bots(void);
-int run_lobby_add_bot_rejects_at_host_capacity(void);
+int run_lobby_add_bot_past_host_capacity(void);
 int run_server_bot_slots_codec(void);
 int run_server_bot_slots_setting(void);
 int run_server_bot_slots_locked(void);
@@ -964,6 +964,7 @@ int run_bot_host_remote_seat_stays_bot(void);
 /* A Bot Host seat's info names its host as the lobby rows do. */
 int run_bot_host_info_host_name(void);
 int run_bot_host_target_ms(void);
+int run_bot_host_embed_budget(void);
 int run_bot_host_sync_codec(void);
 
 /* Bot Host brain sync (test_brain_sync.c). */
@@ -1048,6 +1049,8 @@ int run_bot_host_place_keep_batch_slot_limit(void);
 int run_bot_host_place_keep_batch_cpu_limit(void);
 int run_bot_host_enforce_over_warns(void);
 int run_bot_host_enforce_good_host(void);
+int run_bot_host_enforce_over_child_count(void);
+int run_bot_host_child_slots_cap(void);
 int run_bot_host_enforce_off_keeps_fall_back(void);
 /* A Bot Host that joins a game in progress (test_bot_host_midgame.c). */
 int run_bot_host_place_keep_lag_join(void);
@@ -1126,6 +1129,7 @@ int run_bot_host_same_server_stop(void);
 int run_bot_host_optout_slots_codec(void);
 int run_bot_host_optout_give_back(void);
 int run_bot_host_max_saved(void);
+int run_bot_host_max_zero_no_host(void);
 int run_bot_host_dyn_raise_rule(void);
 int run_bot_host_dyn_under_reserve(void);
 int run_bot_host_dyn_carry(void);
@@ -1775,15 +1779,18 @@ int run_brainrec_host_merge_verdict(void);
 int run_brainrec_host_merge_again_acks_merged(void);
 int run_brainrec_host_merge_replace_waits(void);
 int run_brainrec_host_ack_target_rejoined(void);
+int run_brainrec_host_upload_waits_for_game_end(void);
 /* The Bot Host's recorder keeps its blocks (test_bothost_rec.c). */
 int run_bothost_rec_upload_keeps_files(void);
 int run_bothost_rec_lowdisk_keeps_files(void);
 int run_bothost_rec_pool_raw_flag(void);
+int run_bothost_rec_hold_keeps_place(void);
 int run_brainrec_host_path_checks(void);
 int run_brainrec_dir_lock_orders_merge_and_gzip(void);
 int run_brainrec_host_make_absolute(void);
 int run_brainrec_host_print2_gz(void);
 int run_brainrec_print2_zst_round_trip(void);
+int run_brainrec_print2_line_cap(void);
 int run_brainrec_host_rec_codec(void);
 int run_brainrec_host_legend_unclosed(void);
 int run_brainrec_host_upload_no_session(void);
@@ -2722,6 +2729,7 @@ int run_map_colours_team(void);
 int run_map_markers_tank_reach(void);
 
 int run_stall_advances_processed_tick(void);
+int run_stall_bothost_stale_keys(void);
 int run_turn_release_no_overshoot(void);
 int run_turn_gap_preserves_ramp(void);
 int run_turn_long_gap_no_duplicate(void);

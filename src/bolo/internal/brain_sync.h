@@ -35,7 +35,7 @@
  *  drive letter, "..", a backslash, and the Windows device
  *  names.
  *
- *  A text brain file (.lua, .txt, .json) is read with each
+ *  A text brain file (.lua, .txt, .json, .bat, .sh) is read with each
  *  CR that comes just before a LF taken out, so a copy with
  *  CRLF line endings (a Windows checkout) is the same file
  *  as one with LF. Every size, hash and SHA-256 of a brain
@@ -109,9 +109,9 @@ typedef struct {
 #define BRAIN_SYNC_HASH_SEED 0xcbf29ce484222325ull
 uint64_t brainSyncHash(uint64_t h, const void *data, size_t len);
 
-/* True when path names a text brain file: its name ends in .lua, .txt or
- * .json (any case). Its line endings are made LF before it is hashed or
- * sent. */
+/* True when path names a text brain file: its name ends in .lua, .txt,
+ * .json, .bat or .sh (any case). Its line endings are made LF before it is
+ * hashed or sent. cmake/brain_shipped_table.cmake uses the same list. */
 bool brainSyncIsTextPath(const char *path);
 
 /* Make the line endings of len bytes LF, in place: every run of CRs that a

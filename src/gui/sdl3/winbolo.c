@@ -188,6 +188,9 @@ static DWORD dwSysFrameTotal = 0;
 static DWORD dwSysFrame = 0;
 static DWORD dwSysGameTotal = 0;
 static DWORD dwSysGame = 0;
+/* This frame's main-thread game tick and drawing time, in performance
+ * counter units, for the Bot Host's budget (botHostEmbedSetClientFrameMs). */
+static Uint64 frameWorkCount = 0;
 static DWORD dwSysBrainTotal = 0;
 static DWORD dwSysBrain = 0;
 
@@ -916,6 +919,7 @@ int main(int argc, char *argv[]) {
            causing a visible "jump-back" flicker. */
         {
           DWORD tick = SDL_GetTicks();
+          Uint64 drawStart = SDL_GetPerformanceCounter();
           clientMutexWaitFor();
           if (finishedLoop == FALSE) {
             clientFrontRenderPrepare(cs, tick);
@@ -926,9 +930,16 @@ int main(int argc, char *argv[]) {
              above filled, now that the lock is off. */
           sdl3DrawFlushOverviewInWindow();
           dwSysFrame += (SDL_GetTicks() - tick);
+          /* Render the ImGui overlay. The present below is left out: with
+             vsync it waits, and a wait is not work. */
+          sdl3ImguiPumpAndRender(cs);
+          frameWorkCount += SDL_GetPerformanceCounter() - drawStart;
+          botHostEmbedSetClientFrameMs(
+              (double)frameWorkCount * 1000.0 /
+              (double)SDL_GetPerformanceFrequency());
+          frameWorkCount = 0;
         }
-        /* Render the ImGui overlay and present the frame */
-        sdl3ImguiPumpAndRender(cs);
+        /* Present the frame */
         {
           SDL_Renderer *ren = sdl3DrawGetRenderer();
           if (ren) SDL_RenderPresent(ren);
@@ -1171,6 +1182,7 @@ static void windowRunGameTick(ClientSim *cs, bool inOsLoop) {
   }
 
   ttick = SDL_GetTicks();
+  Uint64 workStart = SDL_GetPerformanceCounter();
   /* Update the game objects if required */
   if ((ttick - oldTick) > GAME_TICK_LENGTH) {
     while ((ttick - oldTick) > GAME_TICK_LENGTH) {
@@ -1190,6 +1202,7 @@ static void windowRunGameTick(ClientSim *cs, bool inOsLoop) {
     }
   }
   dwSysGame += (SDL_GetTicks() - ttick);
+  frameWorkCount += SDL_GetPerformanceCounter() - workStart;
 
   /* AI */
   if (used == TRUE && inBrain == FALSE && brainRunning == TRUE && clientSimGetNetStatus(cs) != netFailed) {

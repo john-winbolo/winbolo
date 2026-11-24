@@ -3823,6 +3823,19 @@
  * team that the map's scenario does not allow (CMD_REJECT_SCENARIO_TEAM) */
 #define STR_DLGLOBBY_REJECT_SCENARIO_TEAM        3944
 
+/* The single player lobby's Server bot slots box (the bots of this
+ * computer): its mouse-over line ({number} = the brain's answer) and the
+ * line for a value above that answer */
+#define STR_DLGLOBBY_LOCAL_BOT_SLOTS_TIP         3945
+#define STR_DLGLOBBY_LOCAL_BOT_SLOTS_OVER        3946
+
+/* The Settings dialog's Network tab: the Bot Host Max slots row (the same
+ * setting as the lobby's Max slots box), its mouse-over line and its
+ * "Auto" item */
+#define STR_DLGSETTINGS_BOTHOST_MAX              3947
+#define STR_DLGSETTINGS_BOTHOST_MAX_TIP          3948
+#define STR_DLGSETTINGS_BOTHOST_MAX_AUTO         3949
+
 /* The lobby's Bot Host row of a player's computer when the server sent no
  * name: the player's number, or, when that is not known, a plain name */
 #define STR_DLGLOBBY_BOTHOST_PLAYER_NAME         3925

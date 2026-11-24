@@ -2423,6 +2423,15 @@ bool          serverSimIsServerBotSlotsLocked(const ServerSim *sim);
 bool          serverSimSetServerBotSlots(ServerSim *sim, int slots);
 /* -botcapacity N: the choice is N and no player may change it. */
 void          serverSimLockServerBotSlots(ServerSim *sim, int slots);
+
+/* -bothost-stale-keys-ms: when a Bot Host sends no input for a bot it
+ * runs for this many ms, the server clears that bot's keys (the tank stops
+ * turning and driving; a stall input never fires) until input comes again.
+ * 0 is off. Default BOT_HOST_STALE_KEYS_MS_DEFAULT. One value for the
+ * process. */
+#define BOT_HOST_STALE_KEYS_MS_DEFAULT 500   /* Andrew approved Nov 9 */
+void          serverSimSetBotHostStaleKeysMs(int ms);
+int           serverSimGetBotHostStaleKeysMs(void);
 /* The CTRL_SERVER_BOT_SLOTS event for the value now. */
 void          serverSimFillServerBotSlotsEvent(const ServerSim *sim,
                                                struct ControlEvent *evt);
@@ -2436,9 +2445,9 @@ int           serverSimGetGameBotLimit(const ServerSim *sim);
 /* set false: follow the server's own again. Publishes the lobby settings
  * when the value changes. */
 void          serverSimSetGameBotLimit(ServerSim *sim, int limit, bool set);
-/* Whether a lobby Add Bot fits under the host bot capacity: false while
- * the test runs, and false when lobbyBots (the bots in the lobby now) has
- * reached a capacity of 0..16. True when there is no cap. */
+/* Whether a lobby Add Bot may go on: false only while the CPU test runs.
+ * A capacity of 0..16 is a warning only: lobbyBots (the bots in the lobby
+ * now) past it is still true. */
 bool          serverSimHostBotCapacityAllowsAdd(int capacity, int lobbyBots);
 /* Cap on spectator connections; 0 = spectating disabled (no MAX_TANKS fallback). */
 BYTE          serverSimGetMaxSpectators(const ServerSim *sim);

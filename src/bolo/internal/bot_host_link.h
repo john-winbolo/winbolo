@@ -846,6 +846,22 @@ typedef struct {
 void botHostOverWarnInit(BotHostOverWarn *w);
 bool botHostOverWarnStep(BotHostOverWarn *w, int serverBots, int serverSlots,
                          bool hostTakes);
+/* OverCount: the bots and slots the warning compares and names. raw is
+ * the place table as the places offer them (index 0 the server, index
+ * h + 1 Bot Host h), n its size. serverSlots: the server's full slots.
+ * child: the index in raw of the server's own linked child Bot Host, or
+ * -1 for none (an index outside 1 .. n - 1 counts as none). The child
+ * runs the server's slots, so bots is the bots of the server's process
+ * plus the child's bots; with no child it is the server's bots. slots is
+ * always serverSlots. */
+void botHostOverCount(const BotHostPlaceHost *raw, int n, int serverSlots,
+                      int child, int *bots, int *slots);
+/* ChildSlots: the slots the server's own child Bot Host may be given. The
+ * lobby's Server bot slots count the bots on the server's computer, the
+ * server's process and the child together, so the child gets what it
+ * offers but never more than serverSlots (4 slots and a child that offers
+ * 11: 4). serverSlots < 0 (not known yet): what it offers. */
+int botHostChildSlots(int offered, int serverSlots);
 
 /* ---- The lobby's wait for a Bot Host's brain files --------------------- */
 

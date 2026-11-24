@@ -23,6 +23,7 @@
  * game's frame does not wait for them.
  */
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include <SDL3/SDL.h>
@@ -80,6 +81,27 @@ typedef struct {
     BotHostRelay     *relay;
 } ChildReap;
 static ChildReap childReaps[CHILD_REAP_MAX];
+
+/* Children lost after a stop: the list above was full and each still ran
+ * BOT_HOST_CHILD_KILL_WAIT_MAX_MS after its kill. Each record and its
+ * handles stay allocated on purpose (never freed while the child may run);
+ * botHostChildClientPoll frees one once it ended (on POSIX it is reaped
+ * then). A node that cannot be allocated leaves its child leaked. */
+typedef struct ChildLost {
+    BotHostChildProc *proc;
+    BotHostRelay     *relay;
+    struct ChildLost *next;
+} ChildLost;
+static ChildLost *childLost;
+
+static void childLoseAdd(BotHostChildProc *proc, BotHostRelay *relay) {
+    ChildLost *n = (ChildLost *)malloc(sizeof(*n));
+    if (n == NULL) return;
+    n->proc = proc;
+    n->relay = relay;
+    n->next = childLost;
+    childLost = n;
+}
 
 bool botHostChildFindExe(char *out, size_t outSize) {
 #ifdef _WIN32
@@ -250,7 +272,18 @@ static void childRelease(BotHostChildProc *proc, BotHostRelay *relay) {
                         "ended %u ms after its kill and the list of "
                         "stopped children is full: waiting for its end",
                         botHostChildPid(proc), (unsigned)CHILD_STOP_WAIT_MS);
-            botHostChildKillWait(proc);
+            if (!botHostChildKillWait(proc)) {
+                /* Not freed while it may run: its record, handles and
+                 * relay stay, and the poll frees them if it ends. The
+                 * server goes on. */
+                CHILD_EVENT("[bothost] the Bot Host child (pid %lu) is "
+                            "lost: it still runs %u ms after a second "
+                            "kill; it is kept, and freed if it ends",
+                            botHostChildPid(proc),
+                            (unsigned)BOT_HOST_CHILD_KILL_WAIT_MAX_MS);
+                childLoseAdd(proc, relay);
+                return;
+            }
         }
     }
     childRelayEnd(relay);
@@ -269,6 +302,22 @@ static void childReapPoll(void) {
         botHostChildFree(proc);
         childReaps[i].proc = NULL;
         childReaps[i].relay = NULL;
+    }
+    {
+        ChildLost **at = &childLost;
+        while (*at != NULL) {
+            ChildLost *n = *at;
+            if (botHostChildAlive(n->proc, NULL)) {
+                at = &n->next;
+                continue;
+            }
+            CHILD_EVENT("[bothost] the lost Bot Host child (pid %lu) ended",
+                        botHostChildPid(n->proc));
+            childRelayEnd(n->relay);
+            botHostChildFree(n->proc);
+            *at = n->next;
+            free(n);
+        }
     }
 }
 
@@ -799,7 +848,11 @@ bool botHostChildClientReaping(void) {
     for (i = 0; i < CHILD_REAP_MAX; i++) {
         if (childReaps[i].proc != NULL) return true;
     }
-    return false;
+    return childLost != NULL;
+}
+
+void botHostChildClientLoseForTest(BotHostChildProc *p) {
+    if (p != NULL) childLoseAdd(p, NULL);
 }
 
 bool botHostChildClientReapForTest(BotHostChildProc *p) {

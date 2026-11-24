@@ -486,14 +486,26 @@ unsigned int lobbyBotDifficultyTaglineId(uint8_t difficulty);
 unsigned int lobbyBotDifficultyDescId(uint8_t difficulty);
 void lobbyBotBrainBaseName(ClientSim *cs, int slot, char *out, size_t outSz);
 bool lobbyAddBotPending(ClientSim *cs);
-/* Add Bot's capacity rule (brainCapacityAddState): off while the CPU speed
- * test runs, and off once the bots that run on this machine reach the
- * capacity answer of the brain the next Add Bot adds. Always OK when the
- * bots run on another machine. capacityOut (may be NULL) gets that answer,
- * or BRAIN_CAPACITY_UNKNOWN. */
+/* Add Bot's capacity rule (brainCapacityAddState): MEASURING while the CPU
+ * speed test runs, FULL once the bots reach the capacity: the server's over
+ * UDP, else the lobby's Server bot slots (single player) or the answer of
+ * the brain the next Add Bot adds. Only MEASURING turns Add Bot off
+ * (brainCapacityAddBlocks); FULL is a warning. capacityOut (may be NULL)
+ * gets the capacity, or BRAIN_CAPACITY_UNKNOWN. */
 BrainCapacityAddState lobbyAddBotState(ClientSim *cs, int *capacityOut);
-/* Why Add Bot is off, for its tooltip, or NULL when it is on. */
+/* Why Add Bot is off (the CPU speed test runs), for its tooltip, or NULL
+ * when it is on. */
 const char *lobbyAddBotOffReason(ClientSim *cs);
+/* The capacity warning for the Server bot slots box's tooltip, or NULL
+ * below the capacity. */
+const char *lobbyAddBotWarning(ClientSim *cs);
+/* This machine's answer for the brain the next Add Bot adds, or
+ * BRAIN_CAPACITY_UNKNOWN; measuringOut (may be NULL): the CPU test runs. */
+int lobbyLocalBotCapacity(ClientSim *cs, bool *measuringOut);
+/* Single player's Server bot slots row, from the in-process server: false
+ * when not single player. The brain's answer is the recommendation. */
+bool lobbyLocalBotSlots(ClientSim *cs, ClientServerBotSlots *out);
+void lobbySetLocalBotSlots(ClientSim *cs, int slots);
 /* After an Add Bot button: shows reason (when not NULL) on mouse-over,
  * the button being off. */
 void lobbyAddBotOffTooltip(const char *reason);

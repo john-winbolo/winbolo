@@ -16,8 +16,17 @@
  *
  *    - each session block that opens or closes is told to
  *      every connected host (CTRL_BOT_HOST_REC OPEN / CLOSE);
- *    - back in the lobby the hosts are asked to UPLOAD; while
- *      a game runs (a map rotation) they send slowly;
+ *    - the hosts are asked to UPLOAD only between games: at
+ *      game over and back in the lobby. A block that closes
+ *      while a game runs (the 15-minute roll) waits for the
+ *      game's end. When a game starts, each host is told to
+ *      HOLD: an upload still under way stops where it is and
+ *      goes on from there at the next UPLOAD. A host from
+ *      before HOLD meant "stop" ignores it (or only slows
+ *      down) and sends on during the game; that is accepted,
+ *      and its merge still waits for the game's end. With a
+ *      map rotation and no lobby, one game follows the next
+ *      in one tick, so the blocks wait for a lobby;
  *    - a host sends each file of a block in
  *      BULK_KIND_REC_CHUNK pieces and then DONE;
  *    - the server stages the files in
@@ -25,10 +34,12 @@
  *      host's connection number, as two hosts can have one name)
  *      and merges
  *      them into the block (brainRecMergeDir) on a thread, one
- *      merge at a time, then ACKs (to the host's new connection
- *      if it joined again meanwhile). MERGED when every host
- *      file was read and the merge was written (a file that
- *      filled no entry is noted, not sent again); else FAILED
+ *      merge at a time and only between games (a whole upload
+ *      that comes in during a game waits), then ACKs (to the
+ *      host's new connection if it joined again meanwhile).
+ *      MERGED when every host file was read and the merge was
+ *      written (a file that filled no entry is noted, not
+ *      sent again); else FAILED
  *      with the reason, and the host sends the block again later.
  *      The host keeps its copy either way, marked uploaded on
  *      MERGED. The uploaded files are kept as they came in
@@ -224,8 +235,9 @@ void transportUdpServerRecClose(void) {
     if (!s_open) return;
     s_open = false;
     s_seq++;
-    /* The block is finished: the hosts send it now, at full speed, also
-     * while a game runs. */
+    /* The block is finished. The UPLOAD goes out only between games
+     * (serverBotRecService): a block closed by the 15-minute roll waits
+     * for the game's end, and a block closed at game over goes at once. */
     for (h = 0; h < MAX_BOT_HOSTS; h++) {
         BotHostConn *hc = &udpServer.botHosts[h];
         if (!hc->connected) continue;
@@ -250,9 +262,17 @@ void serverBotRecOnLobby(void) {
 }
 
 void serverBotRecOnGameStart(void) {
-    /* Nothing: an upload goes on at full speed while a game runs. An older
-     * server sent BOT_HOST_REC_OP_HOLD here, which made an older host slow
-     * its upload down. */
+    int h;
+    if (!recHasSessions()) return;   /* no host was asked for an upload */
+    /* A game starts: an upload still under way stops where it is, and goes
+     * on from there at the next UPLOAD (game over or the lobby). A host
+     * from before HOLD meant "stop" ignores it, or only slows down, and
+     * sends on during the game; that is accepted. Its merge still waits
+     * for the game's end (serverBotRecService). */
+    for (h = 0; h < MAX_BOT_HOSTS; h++) {
+        if (!udpServer.botHosts[h].connected) continue;
+        recSend(h, BOT_HOST_REC_OP_HOLD, 0, 0, 0, NULL);
+    }
 }
 
 void serverBotRecHostConnected(int h, bool inLobby) {
@@ -262,7 +282,8 @@ void serverBotRecHostConnected(int h, bool inLobby) {
     hc->recSentSeq = 0;
     hc->recClearSent = 0;
     /* A host may hold blocks from before (the server or the host was
-     * stopped): it sends them now, when this server has sessions. */
+     * stopped): it is asked for them when this server has sessions, at
+     * once between games, else at the game's end. */
     hc->recUploadOwed = recHasSessions();
     (void)inLobby;
 }
@@ -754,10 +775,9 @@ static uint8_t recOpenFlags(int *poolMode) {
     return f;
 }
 
-void serverBotRecService(ServerSim *sim, bool inLobby) {
+void serverBotRecService(ServerSim *sim, bool betweenGames) {
     int h;
     (void)sim;
-    (void)inLobby;
 
     if (s_job.thread != NULL && SDL_GetAtomicInt(&s_job.done) != 0) {
         recMergeFinish();
@@ -784,7 +804,8 @@ void serverBotRecService(ServerSim *sim, bool inLobby) {
                 recSend(h, BOT_HOST_REC_OP_CLOSE, 0, 0, 0, NULL);
             }
         }
-        if (hc->recUploadOwed) {
+        if (hc->recUploadOwed && betweenGames) {
+            /* Owed during a game: kept until the game ends. */
             hc->recUploadOwed = false;
             /* Never BOT_HOST_REC_F_PACED now. a: this server's wide bulk
              * ring, which a newer host sends into; an older host leaves a
@@ -821,7 +842,10 @@ void serverBotRecService(ServerSim *sim, bool inLobby) {
         }
     }
 
-    if (s_job.thread == NULL) {
+    /* A merge starts only between games: it reads and writes the whole
+     * block, and the brains' log files are closed for it. A merge started
+     * in the lobby runs on to its end on its thread if a game starts. */
+    if (s_job.thread == NULL && betweenGames) {
         for (h = 0; h < MAX_BOT_HOSTS; h++) {
             BotHostConn *hc = &udpServer.botHosts[h];
             if (hc->connected && hc->recMergeWant) {

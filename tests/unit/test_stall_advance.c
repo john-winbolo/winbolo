@@ -410,3 +410,76 @@ int run_stall_long_dry_advances(void) {
     serverSimDestroy(sim);
     return 0;
 }
+
+/* A Bot Host bot whose host sends nothing (a frozen laptop): after
+ * -bothost-stale-keys-ms (500) of no input the server lets go of its keys,
+ * and the next input brings control back. A player's slot, and the option
+ * at 0, keep the held keys. */
+static uint32_t sa_dry_frames(ServerSim *sim, int frames) {
+    int i;
+    for (i = 0; i < frames; i++) serverSimTick(sim);
+    return sim->inputDryTicks[SA_SLOT];
+}
+
+int run_stall_bothost_stale_keys(void) {
+    ServerSim *sim;
+    uint32_t t, dry;
+    UT_ASSERT(serverSimGetBotHostStaleKeysMs() ==
+              BOT_HOST_STALE_KEYS_MS_DEFAULT);
+
+    /* 1. A hosted bot: held keys until 500 ms, then none. */
+    sim = ut_make_running_sim("StaleKeys");
+    UT_ASSERT(sim != NULL);
+    t = sa_establish(sim, INPUT_BTN_LEFT | INPUT_BTN_ACCEL, 0);
+    sim->botMgr.bots[SA_SLOT].active = true;
+    sim->botMgr.bots[SA_SLOT].remote = true;
+    /* 20 frames: 40 half-steps, 400 ms. */
+    dry = sa_dry_frames(sim, 20);
+    UT_ASSERT_MSG(dry == 40, "dry %u", (unsigned)dry);
+    UT_ASSERT(sim->lastInputButtons[SA_SLOT] ==
+              (INPUT_BTN_LEFT | INPUT_BTN_ACCEL));
+    /* 5 more: 50 half-steps, 500 ms. */
+    dry = sa_dry_frames(sim, 5);
+    UT_ASSERT_MSG(dry == 50, "dry %u", (unsigned)dry);
+    UT_ASSERT_MSG(sim->lastInputButtons[SA_SLOT] == 0,
+                  "keys %u after 500 ms with no input",
+                  (unsigned)sim->lastInputButtons[SA_SLOT]);
+    (void)sa_dry_frames(sim, 10);
+    UT_ASSERT(sim->lastInputButtons[SA_SLOT] == 0);
+    /* New input: control again. */
+    t = sim->lastProcessedInput[SA_SLOT] + 1;
+    sa_feed(sim, t, INPUT_BTN_RIGHT, 0, 0, 0, 0);
+    sa_feed(sim, t + 1, INPUT_BTN_RIGHT, 0, 0, 0, 0);
+    serverSimTick(sim);
+    UT_ASSERT(sim->inputDryTicks[SA_SLOT] == 0);
+    UT_ASSERT_MSG(sim->lastInputButtons[SA_SLOT] == INPUT_BTN_RIGHT,
+                  "keys %u after new input",
+                  (unsigned)sim->lastInputButtons[SA_SLOT]);
+    sim->botMgr.bots[SA_SLOT].remote = false;
+    sim->botMgr.bots[SA_SLOT].active = false;
+    serverSimDestroy(sim);
+
+    /* 2. A player's slot keeps its held keys (the stall-advance rule). */
+    sim = ut_make_running_sim("StaleHuman");
+    UT_ASSERT(sim != NULL);
+    (void)sa_establish(sim, INPUT_BTN_LEFT, 0);
+    (void)sa_dry_frames(sim, 30);
+    UT_ASSERT(sim->lastInputButtons[SA_SLOT] == INPUT_BTN_LEFT);
+    serverSimDestroy(sim);
+
+    /* 3. 0: off. */
+    serverSimSetBotHostStaleKeysMs(0);
+    sim = ut_make_running_sim("StaleOff");
+    UT_ASSERT(sim != NULL);
+    (void)sa_establish(sim, INPUT_BTN_LEFT, 0);
+    sim->botMgr.bots[SA_SLOT].active = true;
+    sim->botMgr.bots[SA_SLOT].remote = true;
+    (void)sa_dry_frames(sim, 30);
+    UT_ASSERT(sim->lastInputButtons[SA_SLOT] == INPUT_BTN_LEFT);
+    sim->botMgr.bots[SA_SLOT].remote = false;
+    sim->botMgr.bots[SA_SLOT].active = false;
+    serverSimDestroy(sim);
+    serverSimSetBotHostStaleKeysMs(BOT_HOST_STALE_KEYS_MS_DEFAULT);
+    (void)t;
+    return 0;
+}

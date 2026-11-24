@@ -15,10 +15,11 @@
 # runs (all of them, or opt/ and the top-level files opt/ does not replace)
 # is decided at run time, by the same rule as brainSyncCollectBrain.
 #
-# A text file (.lua, .txt, .json, any case) is hashed as brainSyncLoadFile
-# reads it: every run of CRs that a LF comes after is taken out, so a
-# Windows checkout with CRLF line endings gives the same table as a Linux
-# one. A lone CR stays. Any other file (a .map, a .bin) is hashed as it is.
+# A text file (.lua, .txt, .json, .bat, .sh, any case) is hashed as
+# brainSyncLoadFile reads it: every run of CRs that a LF comes after is
+# taken out, so a Windows checkout with CRLF line endings gives the same
+# table as a Linux one. A lone CR stays. Any other file (a .map, a .bin)
+# is hashed as it is.
 #
 # Pass -DBRAINS_DIR=<source brains folder> -DOUT=<header> and
 # -DSTAMP=<stamp file>. The header is rewritten only when its text changes,
@@ -34,9 +35,11 @@ include("${CMAKE_CURRENT_LIST_DIR}/brain_folders.cmake")
 winbolo_brain_folders(_brains "${BRAINS_DIR}")
 
 # The lower-case SHA-256 of the brain file at path into out. A text file
-# (.lua, .txt, .json) is hashed with its line endings made LF, as
-# brainSyncNormalizeText in src/bolo/brain_sync.c makes them: each run of
-# CRs that a LF comes after is taken out, and a lone CR stays.
+# (.lua, .txt, .json, .bat, .sh) is hashed with its line endings made LF,
+# as brainSyncNormalizeText in src/bolo/brain_sync.c makes them: each run of
+# CRs that a LF comes after is taken out, and a lone CR stays. The list is
+# the one in brainSyncIsTextPath (src/bolo/brain_sync.c); keep them the
+# same.
 #
 # file(READ) without HEX is not exact (it drops a CR at the end of each line
 # and at the end of the file, and on Windows reads in text mode), so it is
@@ -50,7 +53,8 @@ winbolo_brain_folders(_brains "${BRAINS_DIR}")
 #      bytes are put back into a string. This is exact but slow, about three
 #      seconds a megabyte, and no shipped brain file needs it.
 function(winbolo_brain_file_sha256 out path)
-    if(NOT path MATCHES "\\.([Ll][Uu][Aa]|[Tt][Xx][Tt]|[Jj][Ss][Oo][Nn])$")
+    if(NOT path MATCHES
+       "\\.([Ll][Uu][Aa]|[Tt][Xx][Tt]|[Jj][Ss][Oo][Nn]|[Bb][Aa][Tt]|[Ss][Hh])$")
         file(SHA256 "${path}" _sha)
         string(TOLOWER "${_sha}" _sha)
         set(${out} "${_sha}" PARENT_SCOPE)

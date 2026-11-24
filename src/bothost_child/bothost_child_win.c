@@ -816,9 +816,10 @@ bool botHostChildKill(BotHostChildProc *p) {
            WAIT_OBJECT_0;
 }
 
-void botHostChildKillWait(BotHostChildProc *p) {
-    if (p == NULL || p->process == NULL || botHostChildKill(p)) return;
-    (void)WaitForSingleObject(p->process, INFINITE);
+bool botHostChildKillWait(BotHostChildProc *p) {
+    if (p == NULL || p->process == NULL || botHostChildKill(p)) return true;
+    return WaitForSingleObject(p->process, BOT_HOST_CHILD_KILL_WAIT_MAX_MS) ==
+           WAIT_OBJECT_0;
 }
 
 void botHostChildFree(BotHostChildProc *p) {
