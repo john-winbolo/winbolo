@@ -7082,6 +7082,7 @@ set(_unit_test_names
     map_colours_team
     map_markers_tank_reach
     stall_advances_processed_tick
+    stall_bothost_stale_keys
     turn_release_no_overshoot
     turn_gap_preserves_ramp
     turn_long_gap_no_duplicate
