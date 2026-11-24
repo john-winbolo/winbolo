@@ -81,6 +81,7 @@ local function make_inp(world, A, npb)
 end
 
 local function clear() for k in pairs(terrain) do terrain[k] = nil end end
+local function inp_wall_shots_of(world, A) return make_inp(world, A).env.wall_shots end
 
 -- ── 1. ray with planned blockers = cast with them ─────────────────────────
 print("ray_view with planned blockers = shadow.cast")
@@ -163,7 +164,7 @@ local function mask_trial(world, A, pills)
             st.pred_sure = st.pred_sure + 1
             local r = V._ray_view(SH.cast(env, X.mx * 256 + 128, X.my * 256 + 128, px, py, SH.PILL_FIRE_LEN, nil), nil)
             local cut = r.cut
-            if ctx.inp.link_clear_front then cut = r.cut_front end
+            if ctx.inp.link_clear_front then cut = r.link ~= nil and OLD.link_cut(ctx.inp, r.front) end
             local used = r.link ~= nil and not cut
             if r.link ~= pr.link or used ~= pr.used or r.cover ~= pr.cover or r.front ~= pr.front
                or r.hit ~= pr.hit then
@@ -299,7 +300,7 @@ do
   end
   print(string.format("    %d points: chain length 1/2/3 = %d/%d/%d", n, by_len[1], by_len[2], by_len[3]))
   check("every chain: at most PT2_MAX_CHAIN, each link the uncut first pill", bad == 0 and by_len[2] > 0, bad)
-  local skip_ok, cut_ok, cut_n, max_ok, max_n = 0, 0, 0, 0, 0
+  local skip_ok, cut_ok, cut_n, max_ok, max_n, keep_ok = 0, 0, 0, 0, 0, 0
   for _, f in ipairs(found) do
     clear()
     for k, v in pairs(f.terrain) do terrain[k] = v end
@@ -317,6 +318,8 @@ do
       inp.max_chain = C.PT2_MAX_CHAIN or 3
     end
     -- a wall in front of A's link (off the shot lane) cuts the chain there
+    -- with PT2_LINK_CUT_MIN_SHOTS 0 (any cover cuts); with the default 10
+    -- one wall (5 shots) is thin cover and keeps the link
     local ra = f.rec.rays[f.rec.ri[f.A]]
     local lane = {}
     for _, q in ipairs(f.rec.lanes[f.rec.aim_idx] or {}) do lane[q] = true end
@@ -324,11 +327,15 @@ do
       local q = ra.sq[k]
       if ra.sq_t[k] < ra.link_t and not lane[q] then
         terrain[q] = C.T_BUILDING
-        local r2 = V._eval_point(V._new_ctx(make_inp(world, f.A), f.A), f.px, f.py, nil, f.rec.aim_idx, false, false)
+        local i0 = make_inp(world, f.A)
+        i0.link_cut_min_shots = 0
+        local r2 = V._eval_point(V._new_ctx(i0, f.A), f.px, f.py, nil, f.rec.aim_idx, false, false)
+        local r4 = V._eval_point(V._new_ctx(make_inp(world, f.A), f.A), f.px, f.py, nil, f.rec.aim_idx, false, false)
         terrain[q] = f.terrain[q]
         if r2 then
           cut_n = cut_n + 1
           if #r2.chain == 1 and r2.have >= 5 then cut_ok = cut_ok + 1 end
+          if r4 and #r4.chain >= 2 and r4.chain[2] == f.rec.chain[2] then keep_ok = keep_ok + 1 end
           break
         end
       end
@@ -338,6 +345,8 @@ do
   check(string.format("PT2_MAX_CHAIN 2 stops a 3 chain (%d points)", max_n), max_ok == max_n, max_ok)
   check(string.format("a wall in front of the link cuts the chain, and counts as cover (%d points)", cut_n),
         cut_ok == cut_n and cut_n > 0, cut_ok)
+  check(string.format("PT2_LINK_CUT_MIN_SHOTS 10: one wall (5 shots) keeps the link (%d points)", cut_n),
+        keep_ok == cut_n and cut_n > 0, keep_ok)
 end
 
 -- ── 4b. PT2_LINK_CLEAR_FRONT: v2's chains = the old evaluator's ──────────
@@ -408,6 +417,7 @@ do
   for _, on in ipairs({ true, false }) do
     local inp = make_inp(world, A)
     inp.link_clear_front = on
+    inp.link_cut_min_shots = 0     -- the first E2 rule: any cover cuts
     local vctx, octx = V._new_ctx(inp, A), old_ctx(inp, A)
     for deg = 0, 359 do
       local cx = A.mx + 0.5 + math.sin(math.rad(deg)) * 7
@@ -440,6 +450,60 @@ do
     cnt[true].n - cnt[true].cut)
   check("knob on: v2 agrees", cnt[true].same == cnt[true].n, cnt[true].n - cnt[true].same)
   check("knob off: old keeps the link", cnt[false].n > 0 and cnt[false].cut == 0, cnt[false].cut)
+
+  -- PT2_LINK_CUT_MIN_SHOTS (E2 thin cover, 10 = the chain bar): only cover
+  -- of 10 shots or more in front of Y cuts the link. The shot counts are
+  -- the ones shadow.cast uses: a forest is 1 shot, a wall env.wall_shots.
+  local FOREST, WALL = 1, inp_wall_shots_of(world, A)
+  check("the knob default is 10", C.PT2_LINK_CUT_MIN_SHOTS == 10, C.PT2_LINK_CUT_MIN_SHOTS)
+  check("a wall is 5 shots", WALL == 5, WALL)
+  clear()
+  local Y2 = { mx = 128, my = 123, owner = "hostile", health = 15 }
+  terrain[sq(126, 124)] = C.T_BUILDING
+  terrain[sq(130, 124)] = C.T_BUILDING
+  local w2 = make_world({ A, Y2 })
+  local cases = {
+    { name = "a forest (1 shot) in front of Y keeps the link", shots = { FOREST }, cut = false },
+    { name = "one wall (5 shots) in front of Y keeps the link", shots = { WALL }, cut = false },
+    { name = "two walls in a row (5 + 5 = 10 shots) in front of Y cut the link", shots = { WALL, WALL }, cut = true },
+  }
+  for _, cs in ipairs(cases) do
+    local inp = make_inp(w2, A)
+    inp.link_clear_front = true
+    inp.link_cut_min_shots = C.PT2_LINK_CUT_MIN_SHOTS
+    local vctx, octx = V._new_ctx(inp, A), old_ctx(inp, A)
+    local n, want, same = 0, 0, 0
+    for deg = 0, 359 do
+      local cx = A.mx + 0.5 + math.sin(math.rad(deg)) * 7
+      local cy = A.my + 0.5 - math.cos(math.rad(deg)) * 7
+      local px, py = math.floor(cx * 256), math.floor(cy * 256)
+      local r0 = V._eval_point(vctx, px, py, nil, nil, false, false)
+      if r0 and #r0.chain == 2 then
+        local ra = r0.rays[r0.ri[A]]
+        local front = {}
+        for k = 1, ra.n_sq do
+          local s = ra.sq[k]
+          if ra.sq_t[k] < ra.link_t and s ~= sq(A.mx, A.my) then front[#front + 1] = s end
+        end
+        if #front >= #cs.shots then
+          local extra = {}
+          for k = 1, #cs.shots do extra[front[k]] = cs.shots[k] end
+          local rv = V._eval_point(vctx, px, py, extra, nil, false, false)
+          inp.env.omx, inp.env.omy = math.floor(cx), math.floor(cy)
+          local ro = OLD._eval_point(octx, px, py, extra, nil, nil, nil, false)
+          if rv and ro then
+            n = n + 1
+            local cut = #ro.chain == 1
+            if cut == cs.cut then want = want + 1 end
+            if #rv.chain == #ro.chain then same = same + 1 end
+          end
+        end
+      end
+    end
+    print(string.format("    %s: %d points, as wanted %d, v2 same %d", cs.name, n, want, same))
+    check(cs.name, n > 0 and want == n, n - want)
+    check(cs.name .. " (v2 agrees)", same == n, n - same)
+  end
 end
 
 -- ── 5. wall search against brute force ────────────────────────────────────

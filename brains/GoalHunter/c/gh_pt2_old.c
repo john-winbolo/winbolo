@@ -341,6 +341,7 @@ typedef struct {
     double wall_shots, build_max, build_cost, bar_single, bar_chain, bar_other;
     int    chains, link_covers, leeway_on, own_pill_rank, orth_only, aim_nudge, keep_all;
     int    link_clear_front;   /* PT2_LINK_CLEAR_FRONT */
+    double link_cut_min_shots; /* PT2_LINK_CUT_MIN_SHOTS (0 = any cover cuts) */
     double max_chain, leeway_ring_wu, leeway_top, search_top, pill_range, range_margin;
     double blocker_min_dist, nudge_step_wu, nudge_max_steps;
     int    has_leeway_min; double leeway_min;
@@ -377,6 +378,13 @@ typedef struct {
     int    no_builder;
     double st_r[4 * PT2_STAY_MAX]; int st_n;   /* x1, y1, x2, y2; 0 = none */
 } Ev;
+
+/* PT2_LINK_CLEAR_FRONT with PT2_LINK_CUT_MIN_SHOTS (E2 thin cover): does the
+   cover in front of a link (front, in shots) cut it? Any cover when the knob
+   is 0, else at least that many shots (pilltake_v2_old.lua M.link_cut). */
+static int link_cut(const Ev *e, double front) {
+    return front > 0 && front >= e->link_cut_min_shots;
+}
 
 static double NB[8][2];
 static int    s_nb_ready = 0;
@@ -1473,7 +1481,7 @@ static Rec *eval_point(Ev *e, double px, double py, Extra *extra, int aim_fixed,
             int nxt = r ? r->link : 0;
             /* PT2_LINK_CLEAR_FRONT: a blocker in front of the link ends the
                chain here (pilltake_v2_old.lua eval_point) */
-            if (nxt && e->link_clear_front && r->front > 0) nxt = 0;
+            if (nxt && e->link_clear_front && link_cut(e, r->front)) nxt = 0;
             if (!nxt || in_chain(chain, nxt) || chain_skip(e, nxt)) break;
             plist_push(e, chain, nxt);
             chain_mode = 1;
@@ -1764,7 +1772,7 @@ static int hold_safe(Ev *e, Rec *b, double hx, double hy, int *why_pill) {
             Ray *r; PTIME(e, P_CAST, r = cast(e, sx, sy, hx, hy, e->pill_len, NULL, 0, &scratch));
             int linked = e->link_covers && ci && r->link != 0 && ci < b->chain->n
                          && r->link == b->chain->v[ci]
-                         && !(e->link_clear_front && r->front > 0);
+                         && !(e->link_clear_front && link_cut(e, r->front));
             if (r->tank && !linked && r->cover < bar) { *why_pill = p; return 0; }
         }
     }
@@ -2380,6 +2388,7 @@ static int l_evaluate(lua_State *L) {
     e->chains = getbool(L, S_INP, "chains");
     e->link_covers = getbool(L, S_INP, "link_covers");
     e->link_clear_front = getbool(L, S_INP, "link_clear_front");
+    e->link_cut_min_shots = getnum(L, S_INP, "link_cut_min_shots", 0, NULL);
     e->leeway_on = getbool(L, S_INP, "leeway_on");
     e->own_pill_rank = getbool(L, S_INP, "own_pill_rank");
     e->orth_only = getbool(L, S_INP, "orth_only");

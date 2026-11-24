@@ -967,6 +967,14 @@ M.PT2_LINK_COVERS_PREV = true
 -- and its C copy gh_pt2_old.c, and v2). false = a link counts with a
 -- blocker in front (old), v2 cuts on any blocker in front. KEEL / MAST: false.
 M.PT2_LINK_CLEAR_FRONT = true
+-- PT2_LINK_CUT_MIN_SHOTS (Nov 23, Andrew approved Nov 23, E2 thin cover):
+-- with PT2_LINK_CLEAR_FRONT on, the cover in front of the next pill Y cuts
+-- the link X -> Y only when it holds at least this many shots (the chain
+-- bar). Thinner cover keeps the link: Y is judged with the chain bar, not
+-- as a bystander. A forest is 1 shot and a wall 5, so one wall keeps it;
+-- two walls (10) cut it. 0 = any cover cuts (the first E2). Both
+-- evaluators (old Lua, its C copy, v2). KEEL / MAST: E2 is off there.
+M.PT2_LINK_CUT_MIN_SHOTS = 10
 -- PT2_PREFER_EXISTING_COVER (Nov 23, Andrew's yes, E1): v2 only. Two
 -- points of the same safe and kills, both in the travel band
 -- (PT2_TRAVEL_BAND_TICKS), rank by planned blockers first: fewer walls and

@@ -493,14 +493,16 @@ local function predict(ctx, set, px, py)
       if link then
         if w.far < link.near then
           front = front + w.shots
-          -- PT2_LINK_CLEAR_FRONT: only cover (shots > 0) cuts the link
-          if w.shots > 0 or not ctx.inp.link_clear_front then infront = true end
+          if not ctx.inp.link_clear_front then infront = true end
         elseif w.near <= link.far then out.sure = false end
       else
         front = front + w.shots
       end
     end
   end
+  -- PT2_LINK_CLEAR_FRONT: only cover cuts the link, and with
+  -- PT2_LINK_CUT_MIN_SHOTS (E2 thin cover) only that much cover in all
+  if link and ctx.inp.link_clear_front and OLD.link_cut(ctx.inp, front) then infront = true end
   out.cover, out.front = cover, front
   if link then out.link, out.used = link.pill, not infront end
   return out
@@ -631,7 +633,8 @@ local function ray_view(b, extra)
   end
   -- a blocker in front of the link cuts it (the link is not used).
   -- PT2_LINK_CLEAR_FRONT (inp.link_clear_front): only cover in front cuts
-  -- it, the old evaluator's test res.front > 0 (eval_point picks v.cut)
+  -- it, the old evaluator's test (eval_point sets v.cut with OLD.link_cut:
+  -- front > 0, and at least PT2_LINK_CUT_MIN_SHOTS); cut_front is front > 0
   local cut = false
   if v.link then
     for i = 1, v.n_block do
@@ -773,7 +776,7 @@ local function eval_point(ctx, px, py, extra, aim_fixed, nudge, exact, lazy)
         ctx.stat.must_cut = ctx.stat.must_cut + 1
         if inp.v2_mask_stats then
           local v = ray_view(base_ray(ctx, A, px, py), extra)
-          if inp.link_clear_front then v.cut = v.cut_front end
+          if inp.link_clear_front then v.cut = v.link ~= nil and OLD.link_cut(inp, v.front) end
           local n2 = (not v.cut) and v.link or nil
           if n2 and n2 ~= A and not (inp.chain_skip and inp.chain_skip[n2]) then
             ctx.stat.must_cut_wrong = ctx.stat.must_cut_wrong + 1
@@ -785,7 +788,7 @@ local function eval_point(ctx, px, py, extra, aim_fixed, nudge, exact, lazy)
       end
     end
     local vA = ray_view(base_ray(ctx, A, px, py), extra)
-    if inp.link_clear_front then vA.cut = vA.cut_front end
+    if inp.link_clear_front then vA.cut = vA.link ~= nil and OLD.link_cut(inp, vA.front) end
     local nxt = (inp.chains and inp.max_chain >= 2 and not vA.cut) and vA.link or nil
     if not nxt or nxt == A or (inp.chain_skip and inp.chain_skip[nxt]) then
       ctx.stat.lazy = ctx.stat.lazy + 1
@@ -809,7 +812,8 @@ local function eval_point(ctx, px, py, extra, aim_fixed, nudge, exact, lazy)
     else
       v = ray_view(base_ray(ctx, X, px, py), extra)
     end
-    if inp.link_clear_front then v.cut = v.cut_front end
+    -- PT2_LINK_CUT_MIN_SHOTS (E2 thin cover): thin cover keeps the link
+    if inp.link_clear_front then v.cut = v.link ~= nil and OLD.link_cut(inp, v.front) end
     rays[i] = v
   end
   local ri = {}
