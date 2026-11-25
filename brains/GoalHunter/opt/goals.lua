@@ -6548,7 +6548,8 @@ local function eval_reposition_pill(state, world, info, tmx, tmy, boat, ammo, sc
   -- distance-to-us influences WHICH pill wins). Lower = more worth moving.
   for pid, p in pairs(world.pills) do
     if (p.owner == "friendly" or p.owner == "allied")
-       and (p.health or 0) > 0 and not p.in_tank and not p._in_use then
+       and (p.health or 0) > 0 and not p.in_tank and not p._in_use
+       and not p._take_pend then
       local cat = PP.role_of(p, state.tick)
       -- Fresh reclassify (cached "back" can be ~60s stale) + ally-claim skip
       -- (a pill an ally is already repositioning is off-limits) gate eligibility.
@@ -6648,7 +6649,13 @@ local function eval_reposition_pill(state, world, info, tmx, tmy, boat, ammo, sc
     c.travel = (tv == math.huge) and 1e7 or (tv * DIST_W)
     c.score  = c.pos + c.travel
     local lp = world.pills[c.pid]
+    -- The scan (above) skips an _in_use / _take_pend pill, but the cached
+    -- candidates live until the next scan, and a forced replan every tick
+    -- starves it (dt_demo d1 beside_sw, Nov 24: our take's blocker came back
+    -- each tick from t=16 to t=103, BLOCKER_YIELD 86 times, and our own
+    -- reposition shells took it from 9 to 5 hp). Check the marks here too.
     if c.eligible and lp and (lp.health or 0) > 0
+       and not lp._in_use and not lp._take_pend
        and (not best_total or c.score < best_total) then
       best_total = c.score; best_pid = c.pid; best_pill = lp; best_cand = c
     end
@@ -9110,6 +9117,12 @@ local function compute_pool4_cost(state, world, info, obj, tmx, tmy)
   -- looking like the direct route was tried and lost.
   local _route_dmg, _route_far = 0, nil
   local _rent = state.capture_route and state.capture_route[obj.my * 256 + obj.mx]
+  -- A stale verdict must not price the pill: the probe runs only for the
+  -- focus pill, so an entry for any other pill is never refreshed. Arena
+  -- gap_sw (Nov 24): pill A's "direct LETHAL, detour 874" verdict from t=602,
+  -- while pill B still fired, priced A at 640 until t=801, with the tank one
+  -- square away and B long dead. Same test as kill_pickup_lethal_verdict.
+  if _rent and capture_route_stale(_rent, state.tick or 0, tmx, tmy) then _rent = nil end
   if _rent and _rent.cost and _rent.cost < 1e29
      and (_rent.mode == "direct" or _rent.mode == "danger") then
     dist_raw     = _rent.cost
@@ -13573,7 +13586,7 @@ function M.step_eval_queue(state, world, info)
         entry._dbl_block = _dbl_block
         entry._dbl = _dbl and { mult = _dbl.mult, ids = _dbl.e.ids, kills = _dbl.e.kills,
                                 have = _dbl.e.have, need = _dbl.e.need, walls = _dbl.e.walls,
-                                pills = _dbl.e.pills,
+                                pills = _dbl.e.pills, blk = _dbl.e.blk,
                                 age = _dbl.age, diff1 = _dbl.diff1, xfire_ex = _dbl.xfire_ex,
                                 spot_ex = _dbl.spot_ex, travel_ex = _dbl.travel_ex } or nil
       elseif pool_idx == 7 then

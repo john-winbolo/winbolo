@@ -5387,7 +5387,9 @@ function Brain.think(info)
     local _ally_blk = nil   -- blocker TILES allies declared this tick (packed, for the yield check below)
     do
       local util = {}   -- packed-tile set; any friendly pill on one of these is _in_use
-      local mine = attack.current_blocker_tiles and attack.current_blocker_tiles(state, world) or nil
+      -- PT2_BLOCKER_MARK: the current take, its chain latch and the best
+      -- pending double-take plan (attack.take_blocker_tiles).
+      local mine, soft = attack.take_blocker_tiles(state, world)
       state._blocker_tiles = mine
       -- Shield WALL tiles we're building THIS tick (commander, build_walls only):
       -- broadcast separately (bwl) so blitz soldiers route their shot AROUND our
@@ -5395,7 +5397,7 @@ function Brain.think(info)
       -- protection) — these are the walls being laid, gated to build_walls.
       state._shield_wall_tiles = attack.current_shield_wall_tiles
         and attack.current_shield_wall_tiles(state, world) or nil
-      if mine then for _, ti in ipairs(mine) do util[ti] = true end end
+      if mine then for _, ti in ipairs(mine) do if not (soft and soft[ti]) then util[ti] = true end end end
       if ally_state.iter_active then
         for pn, slot in ally_state.iter_active(now, 1750) do
           if pn ~= info.player_number and slot.info and slot.info.pblk then
@@ -5408,7 +5410,9 @@ function Brain.think(info)
         end
       end
       for _, p in pairs(world.pills) do
-        p._in_use = util[p.my * 256 + p.mx] and true or nil
+        local ti = p.my * 256 + p.mx
+        p._in_use = util[ti] and true or nil
+        p._take_pend = soft and soft[ti] or nil
       end
     end
 
@@ -5435,6 +5439,44 @@ function Brain.think(info)
       state._reposition_lock_tick = nil
       state.goal = { kind = "none", mx = 0, my = 0, wx = 0, wy = 0 }
       state._force_replan_reason = "ally_blocker"
+    end
+
+    -- PT2_BLOCKER_MARK: the same yield for our OWN mark. A reposition that
+    -- started before our take plan marked its pill (gap_w arena, Nov 24: the
+    -- vote passed at t=16, the plan's row came at t=16) drops while the pill
+    -- still lives. The reposition pool skips an _in_use pill (goals.lua
+    -- eval_reposition_pill), so it does not come back.
+    do
+      local _g = state.goal
+      if C.PT2_BLOCKER_MARK and _g and _g.kind == "capture_pill" and _g.reposition
+         and _gt and _tp and (_tp.health or 0) > 0 and state._blocker_tiles then
+        for _, _ti in ipairs(state._blocker_tiles) do
+          if _ti == _gt then
+            state._reposition_lock_tick = nil
+            state.goal = { kind = "none", mx = 0, my = 0, wx = 0, wy = 0 }
+            state._force_replan_reason = "own_blocker"
+            break
+          end
+        end
+      end
+      -- Our passed reposition vote on a blocker of our own take: drop the
+      -- approval and its guard. The guard (reposition_vote.lua, refreshed
+      -- from the approval every tick) makes the builder pool refuse the
+      -- blocker's repair (dt_demo d1 beside_n, Nov 24: vote passed at t=16,
+      -- "skip:pool(discovery:repos)" at aim, approval consumed only at t=706).
+      local _ap = C.PT2_BLOCKER_MARK and state._repo_approved_pid
+      local _apl = _ap and world.pills and world.pills[_ap]
+      if _apl and (_apl.health or 0) > 0 and not _apl.in_tank and state._blocker_tiles then
+        local _at = _apl.my * 256 + _apl.mx
+        for _, _ti in ipairs(state._blocker_tiles) do
+          if _ti == _at then
+            state._repo_approved_pid  = nil
+            state._repo_approved_used = nil
+            if state._repos_guard then state._repos_guard[_at] = nil end
+            break
+          end
+        end
+      end
     end
 
     -- Unapproved reposition BID watchdog. steering refuses to demolish until the

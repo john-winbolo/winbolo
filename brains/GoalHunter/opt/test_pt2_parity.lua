@@ -4,7 +4,7 @@
 --
 -- v1 = attack_shield.scan on its Lua path (no C module), started from the
 -- spot plan_position would pick (the clear-shot spot with the lowest travel
--- cost). v2 = pilltake_v2.evaluate with the same travel cost. Both see the
+-- cost). v2 = pilltake_v2_old.evaluate with the same travel cost. Both see the
 -- same hand-made map. The shell stand-in for v1 is the engine-exact walk
 -- from shadow.lua, so both read the same squares.
 --
@@ -84,7 +84,7 @@ end
 _G.gh_shield = nil
 package.loaded["attack_shield"] = nil
 local S  = require("attack_shield")
-local V2 = require("pilltake_v2")
+local V2 = require("pilltake_v2_old")
 
 local PMX, PMY = 128, 120
 local HOME = { 128.5, 134.5 }           -- where the tank comes from (south)

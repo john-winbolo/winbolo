@@ -28,6 +28,8 @@ if math.atan2 then
 end
 
 local C   = require("constants")
+-- these tests stub pilltake_v2_old: run the old evaluator (pt2_eval)
+C.PT2_EVALUATOR = "old"
 local U   = require("util")
 local cpf = require("cpathfinder")
 local SH  = require("shadow")
@@ -88,7 +90,7 @@ end
 _G.gh_shield = nil
 package.loaded["attack_shield"] = nil
 local S   = require("attack_shield")
-local V2  = require("pilltake_v2")
+local V2  = require("pilltake_v2_old")
 local PA  = require("pt2_attack")
 
 local PMX, PMY = 128, 120
@@ -218,6 +220,8 @@ local function count(t, v) local n = 0; for _, x in ipairs(t) do if x == v then 
 
 C.PT2_AFTER_SCAN_SPLIT = true
 C.PT2_AFTER_SCAN_MAX_TICKS = 5
+-- the packed rule first; the PT2_SPLIT_ONE_PART_PER_TICK section turns it on
+C.PT2_SPLIT_ONE_PART_PER_TICK = false
 _G.brain = { targetMs = 0 }        -- no target: every part may run at once
 
 -- ── parity ───────────────────────────────────────────────────────────────
@@ -457,6 +461,164 @@ do
   if LOGS then print("    " .. tostring(find_line("^PT2_SPLIT_GIVEUP", n0))) end
   check("give up, why=drops", PA.last_run and PA.last_run.giveup == "drops", PA.last_run and PA.last_run.giveup)
   check("v1's plan set", res[#res] == "set" and env.goal._shield_scan == env.v1, table.concat(res, ","))
+end
+
+-- ── one heavy part per work tick ─────────────────────────────────────────
+print("== PT2_SPLIT_ONE_PART_PER_TICK")
+do
+  C.PT2_SPLIT_ONE_PART_PER_TICK = true
+  -- the ticks each v2 evaluate (a heavy part) ran on
+  local function per_tick(env)
+    local real, at = V2.evaluate, {}
+    V2.evaluate = function(...)
+      at[env.now] = (at[env.now] or 0) + 1
+      return real(...)
+    end
+    local res = run(env)
+    V2.evaluate = real
+    local most = 0
+    for _, n in pairs(at) do if n > most then most = n end end
+    return res, at, most
+  end
+  for _, tgt in ipairs({ 0, 12 }) do
+    _G.brain = { targetMs = tgt }
+    for _, ng in ipairs({ 0, 3, 6 }) do
+      local env = new_env(ng, 100)
+      local res, at, most = per_tick(env)
+      local name = string.format("target %d, group %d: ", tgt, ng)
+      local parts = PA.last_run and PA.last_run.parts
+      check(name .. "parts", parts == ng + 2, parts)
+      check(name .. "one evaluate a tick at most", most == 1, most)
+      check(name .. "part 0 and part 1 on the first work tick", at[101] == 1, at[101])
+      check(name .. "work ticks = parts - 1", PA.last_run.work == ng + 1, PA.last_run.work)
+      check(name .. "plan tick + work ticks", #res == ng + 2 and res[#res] == "set", table.concat(res, ","))
+      check(name .. "same answer as one go", deep_eq(env.goal._shield_scan, (one_go(ng, 101))), nil)
+    end
+  end
+  -- a kill: the killed part runs again on the next tick, still one a tick
+  _G.brain = { targetMs = 0 }
+  local env = new_env(3, 100)
+  local undo = kill_at(V2, "evaluate", 2)
+  local res = run(env)
+  undo()
+  check("one kill: 4 work ticks, 1 kill", PA.last_run.work == 4 and PA.last_run.kills == 1, PA.last_run.work)
+  check("one kill: 1 more tick", #res == 6 and res[6] == "set", table.concat(res, ","))
+  check("one kill: same answer as one go", deep_eq(env.goal._shield_scan, REF3), nil)
+  C.PT2_SPLIT_ONE_PART_PER_TICK = false
+end
+
+-- ── PT2_V2_SPLIT: one v2 evaluate over up to PT2_V2_SPLIT_TICKS ticks ───
+print("== PT2_V2_SPLIT")
+do
+  local NV = require("pilltake_v2")
+  C.PT2_EVALUATOR = "v2"
+  C.PT2_SPLIT_ONE_PART_PER_TICK = true
+  _G.brain = { targetMs = 0 }
+  -- the slicer with a small budget, so each evaluate takes several slices
+  local real_slicer = NV.slicer
+  local slices, kill_unit = 0, nil
+  NV.slicer = function(inp, ticks, yield)
+    local s = real_slicer(inp, ticks, yield)
+    s.budget = 3   -- work units (P1b weights): several slices per evaluate
+    local units, fn = 0, s.fn
+    s.fn = function(...)
+      units = units + 1
+      if kill_unit and units == kill_unit then kill_unit = nil; error("tick_budget_exceeded (slice)", 0) end
+      local before = s.slices
+      local wu, _, fin = ...
+      local r = fn(wu, nil, fin)   -- the fixed budget, not the estimate
+      if s.slices ~= before then slices = slices + 1 end
+      return r
+    end
+    return s
+  end
+  for _, ng in ipairs({ 0, 3 }) do
+    C.PT2_V2_SPLIT = false
+    local env0 = new_env(ng, 100)
+    local res0 = run(env0)
+    local work0 = PA.last_run and PA.last_run.work
+    C.PT2_V2_SPLIT = true
+    slices = 0
+    local env = new_env(ng, 100)
+    local res = run(env)
+    local name = string.format("v2, group %d: ", ng)
+    check(name .. "set", res[#res] == "set", table.concat(res, ","))
+    check(name .. "v2 answer (pt2)", env.goal._shield_scan and env.goal._shield_scan.pt2 == true, nil)
+    check(name .. "same answer as the evaluate in one tick", deep_eq(env.goal._shield_scan, env0.goal._shield_scan), nil)
+    check(name .. "same goal._pt2", deep_eq(env.goal._pt2, env0.goal._pt2), nil)
+    check(name .. "the evaluates were sliced", slices > 0, slices)
+    check(name .. "more work ticks than one part a tick", PA.last_run.work > work0, PA.last_run.work)
+    check(name .. "at most 5 ticks a part", PA.last_run.work <= 5 * (PA.last_run.parts - 1), PA.last_run.work)
+    -- a budget kill in a later slice: the part runs again from its start
+    kill_unit = 5
+    local envk = new_env(ng, 100)
+    local resk = run(envk)
+    check(name .. "kill in a slice: set", resk[#resk] == "set", table.concat(resk, ","))
+    check(name .. "kill in a slice: 1 kill", PA.last_run.kills == 1, PA.last_run.kills)
+    check(name .. "kill in a slice: same answer", deep_eq(envk.goal._shield_scan, env0.goal._shield_scan), nil)
+    kill_unit = nil
+  end
+  NV.slicer = real_slicer
+  C.PT2_V2_SPLIT = true
+  C.PT2_SPLIT_ONE_PART_PER_TICK = false
+  C.PT2_EVALUATOR = "old"
+end
+
+-- ── PT2_WALL_MEMO (M1): the wall searches' memo across evaluates ─────────
+print("== PT2_WALL_MEMO")
+do
+  local NV = require("pilltake_v2")
+  C.PT2_EVALUATOR = "v2"
+  local WM = NV.WM
+  for _, ng in ipairs({ 0, 3 }) do
+    C.PT2_WALL_MEMO = false
+    local env0 = new_env(ng, 100)
+    run(env0)
+    C.PT2_WALL_MEMO = true
+    NV.wall_memo_clear()
+    local h0, m0 = WM.hits, WM.misses
+    local env1 = new_env(ng, 100)
+    run(env1)
+    local name = string.format("memo, group %d: ", ng)
+    check(name .. "first run: same answer as no memo", deep_eq(env1.goal._shield_scan, env0.goal._shield_scan), nil)
+    check(name .. "first run: searches go in the memo", WM.misses > m0 and WM.n > 0, WM.n)
+    local h1 = WM.hits
+    local env2 = new_env(ng, 100)
+    run(env2)
+    check(name .. "second run: same answer", deep_eq(env2.goal._shield_scan, env0.goal._shield_scan), nil)
+    check(name .. "second run: hits", WM.hits > h1, WM.hits - h1)
+    check(name .. "same goal._pt2", deep_eq(env2.goal._pt2, env0.goal._pt2), nil)
+    local _ = h0
+  end
+  -- the clears: a pill set change clears all; a goal change keeps the
+  -- other goal's table
+  NV.wall_memo_clear()
+  local ally = false
+  local P1, P2 = { mx = 10, my = 10, owner = 1 }, { mx = 12, my = 10, owner = 1 }
+  local inp = { pills = { P1, P2 }, env = { is_ally = function() return ally end } }
+  NV.wall_memo_check(inp, P1)
+  inp._wm_t.k = { out = {} }
+  WM.n = 1
+  local c0 = WM.clears
+  NV.wall_memo_check(inp, P2)
+  check("memo: goal change keeps the first goal's table", WM.by["10,10"] and WM.by["10,10"].k ~= nil, nil)
+  check("memo: goal change is no clear", WM.clears == c0, WM.clears - c0)
+  NV.wall_memo_check(inp, P1)
+  check("memo: back to the first goal: its table", inp._wm_t.k ~= nil, nil)
+  P2.owner = 2
+  NV.wall_memo_check(inp, P1)
+  check("memo: owner change clears", WM.n == 0 and inp._wm_t.k == nil and WM.clears == c0 + 1, WM.n)
+  inp._wm_t.k = { out = {} }
+  ally = true
+  NV.wall_memo_check(inp, P1)
+  check("memo: ally change (team) clears", inp._wm_t.k == nil and WM.clears == c0 + 2, WM.clears - c0)
+  inp._wm_t.k = { out = {} }
+  P2.in_tank = true
+  NV.wall_memo_check(inp, P1)
+  check("memo: in tank change clears", inp._wm_t.k == nil and WM.clears == c0 + 3, WM.clears - c0)
+  NV.wall_memo_clear()
+  C.PT2_WALL_MEMO = false
+  C.PT2_EVALUATOR = "old"
 end
 
 -- ── knob off: split_get finds nothing, after_scan unchanged ──────────────

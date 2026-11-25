@@ -51,7 +51,7 @@ local CLASSIC = {
   tank_accel_rate = 0.25, tank_brake_rate = 0.25,
   pill_max_armour = 15, pill_attack_ticks = 100, pill_attack_min_ticks = 6,
   pill_cooldown_ticks = 32, pill_repair_amount = 4, pill_range = 2048,
-  pill_shell_damage = 1, building_life = 4, lgm_blast_shape = 0,
+  pill_shell_damage = 1, pill_angry_divisor = 2, building_life = 4, lgm_blast_shape = 0,
   base_full_armour = 90, base_capture_armour = 9, base_regen_ticks = 1000,
   lgm_build_ticks = 20, lgm_cost_road = 2, lgm_cost_building = 2,
   lgm_cost_boat = 20, lgm_cost_pill_new = 4, lgm_cost_mine = 1,

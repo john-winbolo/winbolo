@@ -259,7 +259,7 @@ end
 -- M.angle_line_trees, which fires at a gun angle instead of an aim point.
 local line_trees
 function M.aim_line_trees(ox, oy, omx, omy, pmx, pmy, world, i, wallset)
-  local off = shield.AIM_OFFSETS_TILE_FIRE[i]
+  local off = shield.fire_aim(i)
   local awx = bit.lshift(pmx, 8) + math.floor(off[1] * 256)
   local awy = bit.lshift(pmy, 8) + math.floor(off[2] * 256)
   local tiles = cpf.simulate_shot(ox, oy, awx, awy, cpf.SHOT_TANK, 0)
@@ -278,7 +278,7 @@ end
 -- with the pill square added at the end: if that walk passes, nothing on the
 -- shell's real path stopped it, so it only ran out of range.
 function M.aim_line_class(ox, oy, omx, omy, pmx, pmy, world, i, wallset)
-  local off = shield.AIM_OFFSETS_TILE_FIRE[i]
+  local off = shield.fire_aim(i)
   local awx = bit.lshift(pmx, 8) + math.floor(off[1] * 256)
   local awy = bit.lshift(pmy, 8) + math.floor(off[2] * 256)
   local tiles = cpf.simulate_shot(ox, oy, awx, awy, cpf.SHOT_TANK, 0)

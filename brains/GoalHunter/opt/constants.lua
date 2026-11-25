@@ -807,9 +807,9 @@ M.PT2_FINISH_SWERVE_TURN_TICKS = 27
 -- KEEL / MAST: false (old rule: wait for the shell).
 M.PT2_FINISH_CAPTURE_LOCK = true
 -- Armour floor for that lock: carrying no pill, one pill, two or more.
-M.PT2_FINISH_LOCK_FLOOR_NONE = 10
-M.PT2_FINISH_LOCK_FLOOR_ONE  = 15
-M.PT2_FINISH_LOCK_FLOOR_MANY = 20
+M.PT2_FINISH_LOCK_FLOOR_NONE = 10  -- Andrew, 2026-11-17
+M.PT2_FINISH_LOCK_FLOOR_ONE  = 15  -- Andrew, 2026-11-17
+M.PT2_FINISH_LOCK_FLOOR_MANY = 20  -- Andrew, 2026-11-17
 
 -- Attack position planner (pick_attack_standoff in goals.lua)
 M.ATTACK_PLAN_DIRS          = 12   -- candidate directions sampled around the pill
@@ -935,7 +935,7 @@ M.PILL_COVER_BY_HEALTH = true
 M.PPT_COVER_TARGET_SHOTS = 15  -- build phase ends once shield cover reaches this many shots-to-break (friendly pill = PILLS_MAX_HEALTH 15, wall = SHIELD_WALL_COVER_SHOTS 5). 15 = one pill OR three walls. Independent of the blitz gate.
 M.PPT_PILL_WALL_EQUIV = 3.0    -- a dropped/standing friendly pillbox blocker is worth this many WALLS of shield cover (PILLS_MAX_HEALTH 15 / SHIELD_WALL_COVER_SHOTS 5 = 3). The C combo scorer (gh_shield_stamp) weights a pill-filled slot accordingly, so one carried pill stands in for a 3-wall shield.
 M.PPT_PILL_BLOCKERS_MAX = 2    -- cap on how many carried pillboxes the shield planner assumes it can drop onto buildable slots (matches builder.lua's PILLBOX_BLOCKERS_MAX). num_pill_blockers passed to the scorer = min(carried_pills, this).
--- ── Pill take v2 (2026-11-16; pilltake_v2.lua) ──
+-- ── Pill take v2 (2026-11-16; pilltake_v2_old.lua) ──
 -- Master knob. On: the v2 evaluator picks the take's standoff, its blockers
 -- (built by build_walls) and, with PT2_CHAINS, a chain of pills that shoot
 -- each other. On by default since 2026-11-18 (Andrew: HELM uses v2). Off:
@@ -971,6 +971,184 @@ M.PT2_CHAIN_BLOCKER_MIN_SHOTS = 10
 -- (Andrew, Nov 17). Off: every chain pill needs that cover behind its link.
 -- KEEL / MAST: false.
 M.PT2_LINK_COVERS_PREV = true
+-- PT2_LINK_CLEAR_FRONT (Nov 23, Andrew's yes, E2): a link counts only when
+-- no cover stands in front of it (the ray's res.front == 0, planned
+-- blockers too). A blocked link stops the pill's shells first: the chain
+-- ends at that pill, and the blocker is its cover. Both evaluators (old Lua
+-- and its C copy gh_pt2_old.c, and v2). false = a link counts with a
+-- blocker in front (old), v2 cuts on any blocker in front. KEEL / MAST: false.
+M.PT2_LINK_CLEAR_FRONT = true
+-- PT2_LINK_CUT_MIN_SHOTS (Nov 23, Andrew approved Nov 23, E2 thin cover):
+-- with PT2_LINK_CLEAR_FRONT on, the cover in front of the next pill Y cuts
+-- the link X -> Y only when it holds at least this many shots (the chain
+-- bar). Thinner cover keeps the link: Y is judged with the chain bar, not
+-- as a bystander. A forest is 1 shot and a wall 5, so one wall keeps it;
+-- two walls (10) cut it. 0 = any cover cuts (the first E2). Both
+-- evaluators (old Lua, its C copy, v2). KEEL / MAST: E2 is off there.
+M.PT2_LINK_CUT_MIN_SHOTS = 10
+-- PT2_PREFER_EXISTING_COVER (Nov 23, Andrew's yes, E1): v2 only. Two
+-- points of the same safe and kills, both in the travel band
+-- (PT2_TRAVEL_BAND_TICKS), rank by planned blockers first: fewer walls and
+-- dropped pills win, before depth, own pill cover and leeway. Cover that
+-- stands now beats cover the builder must make. false = the old order.
+-- KEEL / MAST: false.
+M.PT2_PREFER_EXISTING_COVER = true
+-- PT2_CHAINS_ONLY (S10, speed): the v2 runs whose answer counts only as a
+-- safe chain (a non-goal A in group_step, the pt2_dbl shadow runs) plan no
+-- single take. A ring with no safe chain stops the run ("no chain") when
+-- it has a safe single take; a sure MUST mask with no usable link skips
+-- the point's cast. Same decisions. false = plan every point as a full
+-- run does.
+M.PT2_CHAINS_ONLY = true
+-- PT2_AIM_POINTS (Nov 23, Andrew's yes, E3): v2 only. 9 = the 5 aims
+-- (centre and corners) plus the 4 edge midpoints of the pill's square at
+-- inset 24 (pilltake_v2.AIMS9); the tank_shot tests and the CANT masks use
+-- the list. The caller fires at the midpoints through
+-- attack_shield.AIM_OFFSETS_TILE_FIRE9 (fire inset, as the corners).
+-- 5 = the old aims. KEEL / MAST: 5.
+M.PT2_AIM_POINTS = 9
+-- PT2_AIM_AVOID_CHAIN_NEIGHBOUR (Nov 24, Andrew's yes): v2 only. "In a
+-- double take like this, favor targeting a corner that isn't right beside
+-- another pill or blocker in the chain." An aim is beside a chain member
+-- when its corner or edge touches the square of another chain pill, or of
+-- a blocker on a chain pill's ray (a wall or pill used as cover, a planned
+-- wall, a dropped pill): a corner aim touches the 3 squares at its corner,
+-- an edge midpoint the 1 square on its side, the centre none. Shells to
+-- such an aim can graze that square. Two points of the same safe and kills
+-- rank by it next (not beside first), before E1 and the rest; a point with
+-- no plan takes its first clear aim that is not beside one. A preference,
+-- never a ban. Log: aimnb= on PT2_CMP and PT2_DRIVE. false = the old aims
+-- and rank. KEEL / MAST: false.
+M.PT2_AIM_AVOID_CHAIN_NEIGHBOUR = true
+-- PT2_FARTHEST_RING (Nov 24, Andrew's yes): v2 only. Prefer the farthest
+-- standoff ring that works. v2 tries every ring of PT2_FARTHEST_RING_RADII
+-- (absolute radii in squares, far to near, PPT and other takes alike), not
+-- the old radius + {0, -0.4} with an inner ring only when nothing was
+-- safe. Rank: safe, kills, the aim rule above, then the farther ring, then
+-- the rest (fewer walls, depth, own pill cover, leeway). A farther ring
+-- never beats more kills or a safe point; a ring too far fails the shot
+-- test on its own. No builder rule: the attack builder goal drives in
+-- the little more it needs. Log: R= on PT2_CMP and PT2_DRIVE.
+-- false = the old rings. KEEL / MAST: false.
+M.PT2_FARTHEST_RING = true
+M.PT2_FARTHEST_RING_RADII = { 7.4, 7.2, 7.0, 6.6 }
+-- PT2_FAVOR_BLOCKER_PLACE (Nov 24, Andrew's yes): v2 only. "If we have
+-- friendly blocker pills in tank we should favor using them as blockers."
+-- Rank: safe, kills, then the blocker pill tier, then walls nearer the
+-- tank, then the aim rule, the farther ring and the rest. A friendly
+-- blocker pill is a planned pill drop or a placed friendly pill on a chain
+-- pill's ray; near = within 2.0 squares of the target pill, centre to
+-- centre. Carrying a pill: tier 0 = the plan uses one and every one is
+-- near, 1 = it uses one and one is not near, 2 = it uses none. Carrying
+-- none: 0 = every one is near (or there is none), 1 = one is not. Then the
+-- smaller largest distance from a planned wall to the firing square,
+-- floored to whole squares (no wall = 0). Lower wins in both. Log: bpt=,
+-- wfar= and carried= on PT2_CMP and PT2_DRIVE. false = the old rank.
+-- KEEL / MAST: false.
+M.PT2_FAVOR_BLOCKER_PLACE = true
+-- PT2_START_WHILE_BUILDING (Nov 23, Andrew's yes, E4): v2 and its caller.
+-- The take may start while the builder still builds the planned walls when
+-- the armour holds the shells that get through (pt2_start.lua):
+--   exposure = builder trip to the first wall + LGM_BUILD_TIME per wall +
+--              the trips between walls (ticks)
+--   interval = the pill's reload at its anger now (100 halved per landed
+--              hit, floor 6), as the bot sees the anger
+--   shells   = max(0, ceil(exposure / interval) - cover_now_shots), summed
+--   start    when armour - shells * 5 >= ATTACK_RUSH_MIN_ARMOUR
+-- A bystander that needs a planned wall: no start. Inside the travel band,
+-- a point that may start ranks above one that must wait (after E1). The
+-- hold point asks again with the live builder (pt2_attack.start_now_check);
+-- on a yes the builder builds the rest while the take goes on.
+-- false = wait for every wall. KEEL / MAST: false.
+M.PT2_START_WHILE_BUILDING = true
+-- PT2_START_BUILDER_SAFE (Nov 24, Andrew's yes). The early start above also
+-- needs the builder to live through his remaining wall trips: walk out,
+-- build, walk home (pt2_start.trip_timeline). Every live non-friendly pill
+-- whose range reaches the tank's point fires at it from its next fire tick,
+-- one shell per reload at its anger now. Each shell explodes where the
+-- engine ends it: on the first square that stops it (a wall, a live pill,
+-- a forest or boat, a planned wall from the tick the builder reaches it),
+-- else on the tank or at the end of its range. It kills him only on that
+-- square for a square hit, else inside the lgm_blast_shape area
+-- (quick_repair.shell_end / blast_catches_man; pt2_attack.builder_trip_hit).
+-- A kill: no early start; the take waits for the walls and the builder, or
+-- starts later when the trips are clear.
+-- After the hold (pt2_attack.builder_fire_hold / bg_trip_ok), with the
+-- tank firing at the target pill (its reload falls one step per landed
+-- tank shell): a take does not open fire (finetune to shoot_pill, the fast
+-- setup stop, aim to charge) while the builder is out on a take wall and
+-- the rest of his trip is not safe; it asks again each tick. A background
+-- wall is not sent when its trip is not safe; the builder stays in and the
+-- take goes on (the tank never waits for a background wall).
+-- The fire hold also sits in danger.fire_block, the one check every fire
+-- press goes through, so every way into the take's fire is held. Pill
+-- shells already in flight count (pt2_attack.inflight_hit). While the
+-- brain tracks the builder, his trip is what it sees of him: his real
+-- arrival, the rest of his stay, the engine's own walk home
+-- (danger.own_builder_timeline); else the walk estimate.
+-- The take's own walls (Nov 24, Andrew's option a): before the builder
+-- goes out from the tank to a v2 take's wall_shield wall, his trip gets
+-- the same check, with every pill in range of the tank firing at it by
+-- itself (the tank's fire counts only after the start check passed).
+-- Unsafe: he stays in, that wall is dropped from the take's wall list (not
+-- waited for, not missing) and the take goes on with its other blockers.
+-- A new wall list (a new plan) checks it again (pt2_attack.shield_wall_ok).
+-- Log effect: PT2_START ... builder unsafe (pill #id shell at +Nt hits (x,y)
+-- builder at (x,y)) -> wait; after the hold "PT2_START t=.. fire builder
+-- unsafe (...)" or "bg_wall=(x,y) builder unsafe (...)", once per change,
+-- then "... builder safe -> go"; a take wall: "PT2_START t=.. shield_wall=
+-- (x,y) builder unsafe (...) -> skip".
+-- false = old rule (the tank's armour only). KEEL / MAST: false.
+M.PT2_START_BUILDER_SAFE = true
+-- PT2_START_ANGER_RISE (Nov 23, Andrew's spec): the start check above
+-- counts the pills getting angrier while the walls go up. It walks the
+-- ticks as the engine does (pt2_start.rise_shells): chain pill 1 takes a
+-- tank shell per tank reload after the flight time, chain pill k+1 takes
+-- the shells of chain pill k through a used link, bystanders take none.
+-- A hit divides the reload by the live pill_angry_divisor (floor the
+-- minimum); each calm period adds 1. Each wall counts from its finish tick.
+-- The anger to hits map becomes ceil(anger / bump - 1e-6), and 3 or more
+-- hits = the minimum reload; that map is shared with
+-- attack.heat_hits_landed and pt2_kill_lock.pill_reload.
+-- false = today's numbers. KEEL / MAST: false.
+M.PT2_START_ANGER_RISE = true
+-- PT2_EXTRA_COVER_WALLS (Nov 23, Andrew's yes, E5): v2 and its caller. A
+-- safe point gets up to this many extra walls on the ray of the last chain
+-- pill (a single take: A), decided after the rank. Each on a legal square
+-- (the wall search's rules), the plan plus the extra walls never past
+-- PT2_BUILD_MAX; the square nearest the tank's approach square first. The
+-- builder builds them while the take goes on, only when he is free; the
+-- tank never waits. 0 = none. KEEL / MAST: 0.
+M.PT2_EXTRA_COVER_WALLS = 1
+-- PT2_EXTRA_COVER_SKIP_PILL_LINE (Nov 24, Andrew's yes, run_c12 gap_n): v2
+-- and its C port. "we don't need a wall blocker in addition to the pill.
+-- at least not that close to the hostile pills, a wall blocker closer to
+-- the tank might work though, it'd be quicker to build". When a friendly
+-- pill already blocks the ray of the last chain pill (a planned pill drop
+-- on the ray, or a placed friendly pill the ray meets), the extra walls
+-- (PT2_EXTRA_COVER_WALLS) add no wall on that ray. On a ray no friendly
+-- pill blocks, the extra wall stays the square nearest the tank's approach
+-- square (the short builder trip). false = the old extra walls. MAST:
+-- false.
+M.PT2_EXTRA_COVER_SKIP_PILL_LINE = true
+-- PT2_QUICK_SIDE_FIRST (Nov 24, Andrew, run_c13 gap_e: "do a double take
+-- originating east hitting the west most pill, don't drive all the way
+-- over, it's a waste of time"): v2 and its C port. The place keys that
+-- rank before travel (PT2_FAVOR_BLOCKER_PLACE tier and walls,
+-- PT2_AIM_AVOID_CHAIN_NEIGHBOUR, PT2_FARTHEST_RING) rank two points of the
+-- same safe and kills only when both are inside the travel band
+-- (PT2_TRAVEL_BAND_TICKS). A slower plan, such as the far side of the
+-- pills after a lane fail or a ban near the tank, wins only on its travel
+-- and build score. The same rank picks between the group runs (a plan for
+-- another first pill). No new value. false = the old rank. MAST: false.
+M.PT2_QUICK_SIDE_FIRST = true
+-- PT2_MIRROR_SAFE_TIE (Nov 24, Andrew: a mirrored setup gives a mirrored
+-- plan): v2 and its C port. On a full tie (S0), the point nearer the tank
+-- wins, then the point further north (smaller y), and only then the
+-- smaller angle as before. The old angle rule picks north of the pills on
+-- the east side but south of them on the west side. No new value.
+-- false = the old S0. MAST: false.
+M.PT2_MIRROR_SAFE_TIE = true
 -- Longest chain counted, pills. Proposal, awaiting Andrew's value.
 M.PT2_MAX_CHAIN = 3
 -- Ring step around the target, degrees. Andrew approved 1 for HELM (Nov 19):
@@ -986,7 +1164,7 @@ M.PT2_FOREST_TRANSPARENT = true
 -- the same blockers; more ranks higher inside a tier, counted up to
 -- PT2_LEEWAY_MIN. A chain needs at least PT2_LEEWAY_MIN. KEEL / MAST: false.
 M.PT2_LEEWAY = true
-M.PT2_LEEWAY_MIN = 6   -- of 8. Proposal, awaiting Andrew's value.
+M.PT2_LEEWAY_MIN = 6   -- of 8. Andrew approved Nov 24.
 M.PT2_LEEWAY_TOP = 8   -- candidates that get the leeway test. Proposal, awaiting Andrew's value.
 -- An allied pill in a point's cover ranks it above points covered by walls
 -- only (same chain length). KEEL / MAST: false.
@@ -1053,7 +1231,7 @@ M.APPROACH_SKIP_RUNUP_MAX_PAST_WU  = 256  -- 1 tile (Nov 22, Andrew: yes)
 M.APPROACH_SKIP_RUNUP_STOP_SPEED   = 4    -- the approach step's own SPEED_TOL
 -- APPROACH_SKIP_RUNUP_SHIELD_CHECK (Nov 22, Andrew): past the standoff, the
 -- run-up skip fires from where the tank is only when the take's own cover
--- test passes there too: pilltake_v2.judge at the tank's place with the
+-- test passes there too: pilltake_v2_old.judge at the tank's place with the
 -- take's plan (approach_skip.shield_check). A clear shot alone is not
 -- enough: one square past the standoff, the pill's ray can go round the
 -- blockers. When the test fails, the tank drives back (the old way).
@@ -1089,6 +1267,46 @@ M.PF_DANGER_INITIAL_LOAD = true
 -- fired take_cover at 8.2 squares, out of real range, and dropped the take.
 -- Andrew's yes (Nov 18). false = the old triggers. KEEL / MAST: false.
 M.PT2_HAUL_KEEP_TAKE = true
+-- PT2_BLOCKER_MARK: a pill a pill take uses as a blocker is marked in use
+-- (_in_use) and sent to allies on the pblk verb, from the moment the take is
+-- the plan: the current take (v1 or v2), the same chain between its kills
+-- and captures, and the best pending double-take plan of pool 6
+-- (attack.take_blocker_tiles). Reposition skips a marked pill, and a
+-- reposition already under way on it drops while the pill lives (init.lua
+-- BLOCKER_YIELD). Owner's yes (Nov 24): "if a bot is using a built pill as a
+-- blocker it needs to communicate that". A bug fix, no new number.
+-- false = only the attack_pill goal's own scan marks. KEEL / MAST: false.
+M.PT2_BLOCKER_MARK = true
+-- PT2_REPAIR_BLOCKER_FIRST: before a pill take (v1 or v2, single or double
+-- take) fires its first shot, a built friendly or ally pill on a blocker
+-- tile of the take with health below the pill maximum is repaired to full
+-- first, by the quick repair's own send rules and builder pool row
+-- (quick_repair.lua pre_shoot / first_hold). The tank waits in aim at its
+-- approach point while the repair goes out; the send may already go during
+-- the approach. No wood, no path, a dead builder, a boat, tank or fire
+-- risk on the errand, or an ally's repair claim: no wait, the take goes on.
+-- A blitz is left alone (its GO is shared). Owner's yes (Nov 24):
+-- "repairing the damaged blocker first sounds good". No new number.
+-- Log: PT2_BLOCKER_REPAIR ... -> hold:<why> | done | skip:<why>.
+-- false = the blocker is only repaired after the kill (QUICK_REPAIR_ON_TAKE).
+-- KEEL / MAST: false.
+M.PT2_REPAIR_BLOCKER_FIRST = true
+-- PT2_REPAIR_NO_PACE (Nov 24, part of the approved P4): while the builder
+-- is out on a take's quick blocker repair, the attack_pill tank is not
+-- paced to his speed (steering.lua LGM pacing). He walks back to the tank
+-- where it is. d2 noc beside_n: the paced approach took aim at t=499, the
+-- rule off at t=315. false = old rule (paced). MAST: false.
+M.PT2_REPAIR_NO_PACE = true
+-- PT2_REPAIR_COVER_FULL (Nov 24, part of the approved P4): before a take's
+-- first shot, a damaged friendly pill (health 1 .. 14, so also one under 5)
+-- that the builder can repair counts as a blocker at full health (3 walls)
+-- in the shield plan (pill_cover.cover_health, quick_repair.repair_full).
+-- The take sends the repair, not a wall trip. A wall is planned only when
+-- the repair cannot go: no wood, no walk, the builder dead or busy, or
+-- first_hold skipped it. d2 noc beside_sw: ally (121,121) hp 9 counted 1
+-- wall; bg wall (122,120) went out at t=234 and the builder died at t=349.
+-- false = cover at the health now (old rule). MAST: false.
+M.PT2_REPAIR_COVER_FULL = true
 -- HAUL_KEEP_LGM_KILL: while kill_lgm has an enemy builder target close by
 -- with a clear line of sight (pool 13's winner; pathfinder.wall_hp_between
 -- == 0), the haul triggers in goals.lua haul_flee_eval stop using the
@@ -1142,7 +1360,7 @@ M.PT2_DBL_SPLIT = true
 -- when this think so far + the part's estimate + the EWMA of the rest of
 -- the think after the shadow pump (the pool queue and everything after it,
 -- parts taken off) stays under the tick target. Without it a 16 ms part on
--- an 18 ms target ran over on every part (Bot Host with no gh_pt2, game
+-- an 18 ms target ran over on every part (Bot Host with no gh_pt2_old, game
 -- 20261119_122256). EWMA weight: CAPACITY_EWMA_ALPHA. KEEL / MAST: false.
 M.PT2_DBL_PART_LEAVE_REST = true
 -- Ticks one split job is spread over, brain ticks: part k of n (k from 0,
@@ -1170,7 +1388,7 @@ M.PT2_DBL_EVENT_FILE = ""
 M.PT2_DBL_CAN_WIN = true
 -- PT2_LIVE_SHELL (Nov 18, Andrew: rays must follow the engine's shell
 -- exactly): the v2 shadow's shell walks (shadow.lua cast / tank_shot and
--- gh_pt2.c) use the live rules from info.rules (shell_speed,
+-- gh_pt2_old.c) use the live rules from info.rules (shell_speed,
 -- shell_start_add, shell_life, tank_hit_radius, pill_fire_length), as the
 -- engine's shell and the shot simulator do. A rule the exe does not send
 -- stays classic. Under classic rules nothing changes. false = the classic
@@ -1206,15 +1424,30 @@ M.PT2_TANKSHOT_BLOCKERS = true
 -- false = claims name the target only.
 M.PT2_CHAIN_CLAIM = true
 -- PT2_C_EVAL (Nov 18, Andrew: "we need a C port of pill take v2"): true =
--- pilltake_v2.evaluate runs the C copy (brains/GoalHunter/c/gh_pt2.c) when
--- the exe has it (global gh_pt2). The C gives the same result as the Lua
--- (parity test test_gh_pt2_parity), only faster. An older exe (Bot Host)
--- has no gh_pt2 and runs the Lua. false = always the Lua.
+-- pilltake_v2_old.evaluate runs the C copy (brains/GoalHunter/c/gh_pt2_old.c) when
+-- the exe has it (global gh_pt2_old). The C gives the same result as the Lua
+-- (parity test test_gh_pt2_old_parity), only faster. An older exe (Bot Host)
+-- has no gh_pt2_old and runs the Lua. false = always the Lua.
 M.PT2_C_EVAL = true
--- PT2_C_STANDABLE (Nov 21, F4): true = the C copy (gh_pt2.c) does the
+-- PT2_EVALUATOR (Nov 23, Andrew's design): which pill take evaluator runs
+-- (pt2_eval.lua picks it). "old" = pilltake_v2_old.lua (rays cast per ring
+-- point on every run, the C copy gh_pt2_old.c with PT2_C_EVAL). "v2" =
+-- pilltake_v2.lua (Andrew's strip design): the same ring points, but
+-- angle masks from each pill's blocker wedges drop the points that cannot
+-- pass before any shell is cast, and the walls are searched over every
+-- set. Default "v2" from the bench (pt2_bench eval=both, 1399 cases): v2
+-- finds a safe take in 105 cases where old finds none, old finds none that
+-- v2 misses, and where both are safe the kills and the depth are the same.
+-- KEEL / MAST: "old".
+M.PT2_EVALUATOR = "v2"
+-- PT2_EVAL_BY_TIER (Nov 23, P2): the capacity tier row's pt2_eval wins over
+-- PT2_EVALUATOR (BRAIN_CAPACITY_LEVELS). Andrew approved Nov 23.
+-- false = PT2_EVALUATOR at every tier (KEEL, MAST: there it is "old").
+M.PT2_EVAL_BY_TIER = true
+-- PT2_C_STANDABLE (Nov 21, F4): true = the C copy (gh_pt2_old.c) does the
 -- inp.in_map, inp.stay_in, inp.standable and inp.buildable tests itself,
 -- from its terrain and pill caches and the tables world_inp gives once in
--- inp.c_std. Same answers as the Lua functions (test_gh_pt2_parity), no
+-- inp.c_std. Same answers as the Lua functions (test_gh_pt2_old_parity), no
 -- Lua call per square. An older exe skips inp.c_std and calls the Lua
 -- functions. false = the C calls the Lua functions (KEEL, MAST).
 M.PT2_C_STANDABLE = true
@@ -1232,6 +1465,49 @@ M.PT2_AFTER_SCAN_SPLIT = true
 -- fine if it takes up to 5 ticks". A tick killed by the budget is not a
 -- work tick.
 M.PT2_AFTER_SCAN_MAX_TICKS = 5
+-- PT2_SPLIT_ONE_PART_PER_TICK (Nov 23, Andrew's yes): the split v2 run
+-- (PT2_AFTER_SCAN_SPLIT) runs at most one heavy part (a v2 evaluate, part
+-- 1 and on) on each work tick. Part 0 (build_inp, light) may share a tick
+-- with part 1. A run of n parts then takes n - 1 work ticks, and
+-- PT2_AFTER_SCAN_MAX_TICKS does not squeeze the parts left into its last
+-- tick. In a game the 3 heavy parts often ran on one tick (median 6.8 ms,
+-- max 13.5 ms for the tick); one part is median 2.8 ms, max 7.5 ms. The
+-- answer is the same. false = each work tick runs its share of the parts
+-- left and more while the think is under the tick target, and the last
+-- work tick runs all parts left (KEEL, MAST).
+M.PT2_SPLIT_ONE_PART_PER_TICK = true
+-- PT2_V2_SPLIT (Nov 23, Andrew's spec, P1): each heavy part of the split
+-- run (one v2 evaluate) runs over up to PT2_V2_SPLIT_TICKS work ticks. The
+-- evaluate keeps its state between ticks (a coroutine) and uses a work
+-- budget per tick in points: ceil(2 x angle steps x rings / ticks); the
+-- last tick runs what is left (pilltake_v2.slicer). The answer is the same
+-- as the evaluate in one call; the drop and restart rules
+-- (PT2_SPLIT_DROP, budget kills) are the same. Needs PT2_AFTER_SCAN_SPLIT.
+-- false = each heavy part in one tick (KEEL, MAST).
+M.PT2_V2_SPLIT = true
+M.PT2_V2_SPLIT_TICKS = 5
+-- PT2_WALL_MEMO (Nov 23, Andrew's spec, M1): v2's wall searches keep their
+-- results across evaluates, by the search's whole input (pilltake_v2 WM),
+-- one table per goal pill; a pill set or team change clears it. The
+-- answer is the same. On the bench the memo hits 74% of the searches and
+-- saves 73% of the search nodes, but the search is only 8% of the
+-- evaluate (5.0 of 62 s): the keys cost 4.2 s and the kept results make
+-- the other parts slower (the GC), so the evaluate is 21% slower in Lua
+-- (75 s against 62 s). Proposal, awaiting Andrew's value: false (the spec
+-- said true). false = no memo. KEEL and MAST have no row: the default is
+-- their value (a row equal to the default fails test_preset_mast); a true
+-- default needs both rows (false).
+M.PT2_WALL_MEMO = false
+-- PT2_WALL_MEMO_MAX: the memo's results in all; a new one past the cap
+-- clears it all. The bench's peak is 17330 results (about 8 MB, 0.46 KB
+-- each); a cap of 2000 clears 125 times and hits 2% only. Proposal,
+-- awaiting Andrew's value.
+M.PT2_WALL_MEMO_MAX = 20000
+-- PT2_V2_C (Nov 24, P3): run pill take v2 in its C copy (gh_pt2_v2.c,
+-- pilltake_v2.lua M.evaluate_c) when the exe has it. The result is the
+-- one the Lua gives (test_gh_pt2_v2_parity), with PT2_V2_SPLIT too. An
+-- older exe has no C copy and the Lua runs. false = the Lua copy.
+M.PT2_V2_C = true
 -- SHIELD_SCAN_PENDING_SURVIVES_V2 (Nov 22, Andrew: "Fix it"): with
 -- PT2_AFTER_SCAN_SPLIT off, v2 runs in one go on the plan tick. true: keep
 -- goal._shield_scan_pending until goal._shield_scan is set, so a budget kill
@@ -2272,12 +2548,12 @@ M.HUMAN_YIELD_TRACK_TICKS       = 50    -- 1 s position ring for the heading / c
 M.HUMAN_YIELD_HOLD_TICKS        = 35    -- 0.7 s in the cone before the claim
 M.HUMAN_YIELD_CLOSE_TILES       = 2.5   -- within 2.5 tiles: claim at once
 M.HUMAN_YIELD_AWAY_COS          = 0.3   -- turned away: cos(heading, pill) < 0.3 ...
-M.HUMAN_YIELD_AWAY_TICKS        = 50    -- ... for 1 s (also: not seen for 1 s)
-M.HUMAN_YIELD_STOP_TILES        = 4     -- stopped farther than 4 tiles ...
-M.HUMAN_YIELD_STOP_TICKS        = 150   -- ... for 3 s
-M.HUMAN_YIELD_LIMIT_TICKS       = 750   -- hard limit 15 s ...
-M.HUMAN_YIELD_LIMIT_NEAR_TILES  = 2     -- ... unless within 2 tiles
-M.HUMAN_YIELD_POST_TICKS        = 50    -- still claimed 1 s after the release
+M.HUMAN_YIELD_AWAY_TICKS        = 50    -- ... for 1 s (also: not seen for 1 s) (Andrew, 2026-11-19)
+M.HUMAN_YIELD_STOP_TILES        = 4     -- stopped farther than 4 tiles ... (Andrew, 2026-11-19)
+M.HUMAN_YIELD_STOP_TICKS        = 150   -- ... for 3 s (Andrew, 2026-11-19)
+M.HUMAN_YIELD_LIMIT_TICKS       = 750   -- hard limit 15 s ... (Andrew, 2026-11-19)
+M.HUMAN_YIELD_LIMIT_NEAR_TILES  = 2     -- ... unless within 2 tiles (Andrew, 2026-11-19)
+M.HUMAN_YIELD_POST_TICKS        = 50    -- still claimed 1 s after the release (Andrew, 2026-11-19)
 M.HUMAN_YIELD_ENEMY_RATIO       = 0.7   -- no yield: a seen enemy tank/LGM < 0.7 x the human's distance
 M.GOAL_POOL_COUNT          = 10    -- number of pool evaluators to spread across ticks
 M.GOAL_CANDS_PER_TICK      = 1     -- A* cost_to evaluations per tick (round-robin)
@@ -4372,7 +4648,7 @@ M.DEFEND_ALARM_DIJ_STOP_TILES = 9    -- stop summing per-tile Dijkstra cost once
 -- enemy shot the pill dead, the row rejected too_close the whole time.
 -- KEEL / MAST: false / 1.0 (too_close always rejects).
 M.DEFEND_ALARM_CLOSE_INTERRUPT  = true
-M.DEFEND_ALARM_CLOSE_TOTAL_MULT = 0.5
+M.DEFEND_ALARM_CLOSE_TOTAL_MULT = 0.5  -- Andrew, 2026-11-18
 -- ALARM HEAT (Andrew, Nov 18).  While we hold an alarm-mode defend_pill goal
 -- for pill D and enemy tank E is at D, heat a friendly pill with the
 -- attack_tank heat volley (attack.lua defend_heat_steer; same rules as
@@ -4390,8 +4666,8 @@ M.DEFEND_ALARM_CLOSE_TOTAL_MULT = 0.5
 -- KEEL / MAST: false.  The two numeric knobs need no keel / mast entry: the
 -- master is off there, so they are never read.
 M.DEFEND_ALARM_HEAT                = true
-M.DEFEND_HEAT_NEAR_ENEMY_TILES     = 9   -- euclidean tiles, enemy tank -> heated pill
-M.DEFEND_HEAT_NEAR_ENEMY_MAX_SHOTS = 2   -- volley cap while an enemy is that close
+M.DEFEND_HEAT_NEAR_ENEMY_TILES     = 9   -- euclidean tiles, enemy tank -> heated pill (Andrew, 2026-11-18)
+M.DEFEND_HEAT_NEAR_ENEMY_MAX_SHOTS = 2   -- volley cap while an enemy is that close (Andrew, 2026-11-18)
 M.HEAT_REQUIRE_ENEMY_RANGE   = 10    -- heat only with a hostile tank VISIBLE within this
                                      -- euclidean range of the pill (and not actively
                                      -- shelling it ??? taking_damage blocks first).
@@ -4569,8 +4845,8 @@ M.WSIM_DRIVE_WHILE_SLIDING = true
 -- range = pill range in squares (8), rounded half up. Damage 5 gives
 -- 5,5,4,4,3,3,2 at 2..8 squares. Both 0 = the old 1 - dist/range discount
 -- (at least 1 inside half range). A parked tank takes full damage either way.
-M.WSIM_HIT_FULL_DIST = 2
-M.WSIM_HIT_FAR_FRAC  = 0.4
+M.WSIM_HIT_FULL_DIST = 2  -- Andrew, 2026-11-21
+M.WSIM_HIT_FAR_FRAC  = 0.4  -- Andrew, 2026-11-21
 -- WSIM_CAPTURE_EXIT_MAX (C): capture_pill sims (the goal pool sim and the
 -- CAPTURE_ROUTE sim) drive ON to the pill square (the pickup is instant,
 -- no dwell), then back along the incoming path, at most this many squares
@@ -4579,11 +4855,11 @@ M.WSIM_HIT_FAR_FRAC  = 0.4
 -- (at once when none did). A death on the exit leg is still a KILL.
 -- 0 = the old sim (the goal pool to the pill square, CAPTURE_ROUTE to the
 -- square next to it, no exit leg).
-M.WSIM_CAPTURE_EXIT_MAX = 10
+M.WSIM_CAPTURE_EXIT_MAX = 10  -- Andrew, 2026-11-21
 -- WSIM_CAPTURE_EXIT_DMG_WEIGHT: exit leg damage costs this share of
 -- WSIM_DAMAGE_COST_WEIGHT in the goal pool:
 --   extra = (damage - exit_damage) x W + exit_damage x W x this.
-M.WSIM_CAPTURE_EXIT_DMG_WEIGHT = 0.5
+M.WSIM_CAPTURE_EXIT_DMG_WEIGHT = 0.5  -- Andrew, 2026-11-21
 
 -- Dwell: how long the tank has to STAND STILL at the destination once it
 -- gets there. The sim keeps running for this many ticks after arrival, with
@@ -4651,6 +4927,11 @@ M.WSIM_TRUNCATED_COST       = 25
 --                this tier (pt2_dbl.lua). Andrew's values (Nov 18): cache
 --                250 and 1 run per tick at every tier; spread 5 (tier 10)
 --                up to 25 (tier 1); cap = 2 x spread.
+--   pt2_eval   : the pill take evaluator of this tier, "v2" or "old"; it
+--                wins over PT2_EVALUATOR when PT2_EVAL_BY_TIER is on
+--                (pt2_eval.lua). Andrew approved Nov 23: tiers
+--                10-7 "v2", 6 and below "old" (old is cheaper: bench median
+--                old Lua 10.9 ms, v2 Lua 15.5 ms, old C 0.43 ms).
 --   sb_positions / sb_step : shield-blocker ring scan density.
 --                positions ?? step ??? angular coverage. Tier 10 keeps the
 --                legacy 28 ?? 0.5?? (~??7??) sweep. Lower tiers drop to
@@ -4658,16 +4939,16 @@ M.WSIM_TRUNCATED_COST       = 25
 --                coverage stays similar but per-scan cost drops.
 -- =========================================================================
 M.BRAIN_CAPACITY_LEVELS = {
-  [10] = { dij_short=500, dij_long=560, scan_step=5,  pp_spread=1,  ttl_mult=1.0, eval_iv=1, wsim=nil,   place_r=12, tank_step=5,  sb_positions=28, sb_step=0.5, dbl_cache=250, dbl_evals=1, dbl_spread=5, dbl_split=10 },
-  [9]  = { dij_short=500, dij_long=450, scan_step=5,  pp_spread=6,  ttl_mult=1.0, eval_iv=1, wsim=nil,   place_r=12, tank_step=5,  sb_positions=28, sb_step=0.5, dbl_cache=250, dbl_evals=1, dbl_spread=6, dbl_split=12 },
-  [8]  = { dij_short=450, dij_long=350, scan_step=10, pp_spread=12, ttl_mult=1.1, eval_iv=1, wsim=5,     place_r=11, tank_step=10, sb_positions=28, sb_step=0.5, dbl_cache=250, dbl_evals=1, dbl_spread=7, dbl_split=14 },
-  [7]  = { dij_short=400, dij_long=275, scan_step=10, pp_spread=17, ttl_mult=1.3, eval_iv=1, wsim=5,     place_r=10, tank_step=10, sb_positions=28, sb_step=0.5, dbl_cache=250, dbl_evals=1, dbl_spread=8, dbl_split=16 },
-  [6]  = { dij_short=400, dij_long=200, scan_step=20, pp_spread=22, ttl_mult=1.5, eval_iv=2, wsim=3,     place_r=8, tank_step=10, sb_positions=28, sb_step=0.5, dbl_cache=250, dbl_evals=1, dbl_spread=10, dbl_split=20 },
-  [5]  = { dij_short=400, dij_long=150, scan_step=20, pp_spread=28, ttl_mult=1.7, eval_iv=2, wsim=3,     place_r=5, tank_step=20, sb_positions=28, sb_step=0.5, dbl_cache=250, dbl_evals=1, dbl_spread=12, dbl_split=24 },
-  [4]  = { dij_short=400, dij_long=100, scan_step=20, pp_spread=33, ttl_mult=2.0, eval_iv=3, wsim=1,     place_r=5, tank_step=20, sb_positions=28, sb_step=0.5, dbl_cache=250, dbl_evals=1, dbl_spread=14, dbl_split=28 },
-  [3]  = { dij_short=400, dij_long=75,  scan_step=45, pp_spread=39, ttl_mult=2.5, eval_iv=3, wsim=1,     place_r=4, tank_step=45, sb_positions=28, sb_step=0.5, dbl_cache=250, dbl_evals=1, dbl_spread=16, dbl_split=32 },
-  [2]  = { dij_short=400, dij_long=50,  scan_step=45, pp_spread=44, ttl_mult=3.0, eval_iv=4, wsim=false, place_r=3, tank_step=45, sb_positions=28, sb_step=0.5, dbl_cache=250, dbl_evals=1, dbl_spread=20, dbl_split=40 },
-  [1]  = { dij_short=400, dij_long=25,  scan_step=45, pp_spread=50, ttl_mult=4.0, eval_iv=5, wsim=false, place_r=2, tank_step=45, sb_positions=28, sb_step=0.5, dbl_cache=250, dbl_evals=1, dbl_spread=25, dbl_split=50 },
+  [10] = { dij_short=500, dij_long=560, scan_step=5,  pp_spread=1,  ttl_mult=1.0, eval_iv=1, wsim=nil,   place_r=12, tank_step=5,  sb_positions=28, sb_step=0.5, dbl_cache=250, dbl_evals=1, dbl_spread=5, dbl_split=10, pt2_eval="v2" },
+  [9]  = { dij_short=500, dij_long=450, scan_step=5,  pp_spread=6,  ttl_mult=1.0, eval_iv=1, wsim=nil,   place_r=12, tank_step=5,  sb_positions=28, sb_step=0.5, dbl_cache=250, dbl_evals=1, dbl_spread=6, dbl_split=12, pt2_eval="v2" },
+  [8]  = { dij_short=450, dij_long=350, scan_step=10, pp_spread=12, ttl_mult=1.1, eval_iv=1, wsim=5,     place_r=11, tank_step=10, sb_positions=28, sb_step=0.5, dbl_cache=250, dbl_evals=1, dbl_spread=7, dbl_split=14, pt2_eval="v2" },
+  [7]  = { dij_short=400, dij_long=275, scan_step=10, pp_spread=17, ttl_mult=1.3, eval_iv=1, wsim=5,     place_r=10, tank_step=10, sb_positions=28, sb_step=0.5, dbl_cache=250, dbl_evals=1, dbl_spread=8, dbl_split=16, pt2_eval="v2" },
+  [6]  = { dij_short=400, dij_long=200, scan_step=20, pp_spread=22, ttl_mult=1.5, eval_iv=2, wsim=3,     place_r=8, tank_step=10, sb_positions=28, sb_step=0.5, dbl_cache=250, dbl_evals=1, dbl_spread=10, dbl_split=20, pt2_eval="old" },
+  [5]  = { dij_short=400, dij_long=150, scan_step=20, pp_spread=28, ttl_mult=1.7, eval_iv=2, wsim=3,     place_r=5, tank_step=20, sb_positions=28, sb_step=0.5, dbl_cache=250, dbl_evals=1, dbl_spread=12, dbl_split=24, pt2_eval="old" },
+  [4]  = { dij_short=400, dij_long=100, scan_step=20, pp_spread=33, ttl_mult=2.0, eval_iv=3, wsim=1,     place_r=5, tank_step=20, sb_positions=28, sb_step=0.5, dbl_cache=250, dbl_evals=1, dbl_spread=14, dbl_split=28, pt2_eval="old" },
+  [3]  = { dij_short=400, dij_long=75,  scan_step=45, pp_spread=39, ttl_mult=2.5, eval_iv=3, wsim=1,     place_r=4, tank_step=45, sb_positions=28, sb_step=0.5, dbl_cache=250, dbl_evals=1, dbl_spread=16, dbl_split=32, pt2_eval="old" },
+  [2]  = { dij_short=400, dij_long=50,  scan_step=45, pp_spread=44, ttl_mult=3.0, eval_iv=4, wsim=false, place_r=3, tank_step=45, sb_positions=28, sb_step=0.5, dbl_cache=250, dbl_evals=1, dbl_spread=20, dbl_split=40, pt2_eval="old" },
+  [1]  = { dij_short=400, dij_long=25,  scan_step=45, pp_spread=50, ttl_mult=4.0, eval_iv=5, wsim=false, place_r=2, tank_step=45, sb_positions=28, sb_step=0.5, dbl_cache=250, dbl_evals=1, dbl_spread=25, dbl_split=50, pt2_eval="old" },
 }
 
 -- Hard ceiling on the angles ONE advance_pill_eval_chunk call may sweep,
@@ -6372,6 +6653,69 @@ M.QUICK_REPAIR_SKIP_OWN_FIRE = true
 -- pill's next shot (its last fire + its reload, the flight to the tank) can
 -- land within it (quick_repair.tank_clear). 0 = off. KEEL / MAST: 0.
 M.QUICK_REPAIR_TANK_CLEAR_TICKS = 16
+-- SWERVE_AVOID_REPAIR_SIDE (Nov 24, Andrew). In a double take the builder
+-- died on 6 of 12 quick repairs: the swerve picked the side with the most
+-- cover, and a friendly pill in fire range is +3 cover, so it chose the
+-- blocker's side and steered the pill shots (aimed at the swerving tank)
+-- through the repair. Andrew: "trace the path of the pill to our tank,
+-- that's the dividing line. if we swerve all pill shots will flow in one
+-- side of that line or the other" and "we'll need to pick a side BEFORE the
+-- builder goes out". true => at the quick repair's send, the swerve side
+-- whose shot fan (rays from each live non-friendly pill that can shoot our
+-- tank to the swerve's points, quick_repair.lua "The repair-side rules")
+-- misses the blocker, and that has no terrain hazard on attack.lua's side
+-- score (deep-water retreat, -10 out-of-range tile), is committed on the
+-- goal; every swerve that starts while that repair runs takes it. A swerve
+-- with a damaged blocker and no repair out takes the one clean unblocked
+-- side too. No such side: the old cover pick (and the send waits for
+-- QUICK_REPAIR_WAIT_ALL_PILLS).
+-- Log effect: SWERVE_REPAIR_SIDE t=.. blocker=(x,y) left=clean|dirty|blocked
+-- right=.. chosen=L|R why=clean_side|clean_unblocked|committed|cover:<why>;
+-- the QUICK_REPAIR line gets side=L|R|-(why L=.. R=..), QUICK_REPAIR_SEND
+-- gets side=L|R|-.
+-- false = old rule (the cover pick always). KEEL / MAST: false.
+M.SWERVE_AVOID_REPAIR_SIDE = true
+-- QUICK_REPAIR_WAIT_ALL_PILLS (Nov 24, Andrew: "look forward to predict if
+-- lgm will repair while shots from the pill could still be <= D away ...
+-- simulating new shots as well until the ticks where the pill will die").
+-- true => before the send, every live non-friendly pill whose range covers
+-- the blocker and our tank fires its future shots (next fire, then one a
+-- reload, until it dies: T_kill for the take target, never for the
+-- others), aimed at the tank, or into the swerve side once the swerve
+-- starts. The send waits while one of them crosses the blocker during the
+-- builder's errand (out, arrival, LGM_BUILD_TIME dwell) or meets him on his
+-- walk. A pill whose fan on the committed (or running) swerve side is
+-- clean does not count. While he is out on a quick repair the test runs
+-- every tick from where he stands; a conflict prints QUICK_REPAIR_ABORT
+-- why=pill_fire_predict (a player brain cannot call him back, so it is a
+-- log only).
+-- Log effect: QUICK_REPAIR ... -> wait:fire_predict (the take target's
+-- shot) | wait:other_pill (another pill's shot) (pill #id shot at +Nt
+-- meets the blocker|builder|side at +Nt); QUICK_REPAIR_ABORT
+-- why=pill_fire_predict.
+-- false = old rule (only the take target's kill and the shells in the
+-- air). KEEL / MAST: false.
+M.QUICK_REPAIR_WAIT_ALL_PILLS = true
+-- QUICK_REPAIR_DEATH_TICK_SHOT (Nov 24): the fire prediction counts a shot
+-- on the take target's kill tick (the engine lets a pill fire in the tick
+-- it dies). a5 noc beside_e: pill #0's fire event and its health 0 both
+-- came at t=521; that shell killed the builder at t=532.
+-- false = old rule (no shot on the kill tick). MAST: false.
+M.QUICK_REPAIR_DEATH_TICK_SHOT = true
+-- QUICK_REPAIR_KILL_SLOP_TICKS (Nov 24, value 2 approved by the owner): the
+-- fire prediction lets the take target fire this many ticks past T_kill.
+-- a5 noc beside_e: at t=449 T_kill was predicted 520 (first 458, reload
+-- 13, flight 49); the shells landed 508 and 521 (flight 50), and the pill
+-- fired at 521. The a5 batch: the last predicted T_kill against the kill
+-- seen was 2 late in beside_w (507 / 509), 1 late in beside_e, else on
+-- time or early. 0 = old rule. MAST: 0.
+M.QUICK_REPAIR_KILL_SLOP_TICKS = 2
+-- How far (tiles) past the blocker's square a shell's ray may pass and
+-- still count as a hit, for both rules above; for the builder, how much
+-- nearer to him a shell's explosion counts (the engine's blast area is used
+-- as is at 0). Andrew Nov 24 set 0.0: the squares and the blast area exactly
+-- as the engine has them.
+M.REPAIR_FIRE_LANE_MARGIN_TILES = 0.0
 -- The take substates in which the tank is shooting the target pill: the
 -- firing run that QUICK_REPAIR_PREDICT_SHOTS needs.
 M.QUICK_REPAIR_FIRE_SUBSTATES = {
@@ -8276,6 +8620,19 @@ M.PRESETS = {
     PILLTAKE_V2_EVALUATOR = false,
     PT2_CHAINS = false,
     PT2_LINK_COVERS_PREV = false,
+    PT2_LINK_CLEAR_FRONT = false,
+    PT2_PREFER_EXISTING_COVER = false,
+    PT2_CHAINS_ONLY = false,
+    PT2_AIM_POINTS = 5,
+    PT2_AIM_AVOID_CHAIN_NEIGHBOUR = false,
+    PT2_FARTHEST_RING = false,
+    PT2_FAVOR_BLOCKER_PLACE = false,
+    PT2_START_WHILE_BUILDING = false,
+    PT2_START_ANGER_RISE = false,
+    PT2_EXTRA_COVER_WALLS = 0,
+    PT2_EXTRA_COVER_SKIP_PILL_LINE = false,
+    PT2_QUICK_SIDE_FIRST = false,
+    PT2_MIRROR_SAFE_TIE = false,
     PT2_LEEWAY = false,
     PT2_OWN_PILL_BONUS = false,
     PT2_AIM_NUDGE = false,
@@ -8317,6 +8674,14 @@ M.PRESETS = {
     --   2026-11-21: the C copy calls the Lua square tests.
     PT2_C_STANDABLE = false,
     PT2_AFTER_SCAN_SPLIT = false,
+    --   2026-11-23: the split v2 run packs its parts into few ticks.
+    PT2_SPLIT_ONE_PART_PER_TICK = false,
+    PT2_V2_SPLIT = false,
+    --   2026-11-24: pill take v2 in Lua only (no C copy).
+    PT2_V2_C = false,
+    --   2026-11-23: the old pill take evaluator (no shadow map).
+    PT2_EVALUATOR = "old",
+    PT2_EVAL_BY_TIER = false,
     --   2026-11-21: the old world sim (no driving while pushed, 1 - d/range
     --   hit discount, capture sim with no exit leg).
     WSIM_DRIVE_WHILE_SLIDING = false,
@@ -8351,6 +8716,12 @@ M.PRESETS = {
     QUICK_REPAIR_SKIP_OWN_FIRE = false,
     --   2026-11-22: the quick repair does not wait for the tank to be clear.
     QUICK_REPAIR_TANK_CLEAR_TICKS = 0,
+    --   2026-11-24: the swerve side is the cover pick; the quick repair
+    --   does not wait for other pills' predicted shots.
+    SWERVE_AVOID_REPAIR_SIDE = false,
+    QUICK_REPAIR_WAIT_ALL_PILLS = false,
+    --   2026-11-24: the early take start looks at the tank's armour only.
+    PT2_START_BUILDER_SAFE = false,
     --   2026-11-17: hold 15 ticks with no goal after a kill (old rule).
     POST_KILL_WAIT_TICKS = 15,
     --   2026-11-17: carrying-pill approach floor 30 (old rule).
@@ -8662,6 +9033,19 @@ M.PRESETS.mast = {
   PILLTAKE_V2_EVALUATOR             = false,  -- 2.2.1 had no pill take v2
   PT2_CHAINS                        = false,  -- 2.2.1 had no pill take v2
   PT2_LINK_COVERS_PREV              = false,
+  PT2_LINK_CLEAR_FRONT              = false,  -- 2.2.1 had no pill take v2
+  PT2_PREFER_EXISTING_COVER         = false,  -- 2.2.1 had no pill take v2
+  PT2_CHAINS_ONLY                   = false,  -- 2.2.1 had no pill take v2
+  PT2_AIM_POINTS                    = 5,      -- 2.2.1 had no pill take v2
+  PT2_AIM_AVOID_CHAIN_NEIGHBOUR     = false,  -- 2.2.1 had no pill take v2
+  PT2_FARTHEST_RING                 = false,  -- 2.2.1 had no pill take v2
+  PT2_FAVOR_BLOCKER_PLACE           = false,  -- 2.2.1 had no pill take v2
+  PT2_START_WHILE_BUILDING          = false,  -- 2.2.1 had no pill take v2
+  PT2_START_ANGER_RISE              = false,  -- 2.2.1 counted round(anger / bump) hits
+  PT2_EXTRA_COVER_WALLS             = 0,      -- 2.2.1 had no pill take v2
+  PT2_EXTRA_COVER_SKIP_PILL_LINE    = false,  -- 2.2.1 had no pill take v2
+  PT2_QUICK_SIDE_FIRST              = false,  -- 2.2.1 had no pill take v2
+  PT2_MIRROR_SAFE_TIE               = false,  -- 2.2.1 had no pill take v2
   PT2_LEEWAY                        = false,
   PT2_OWN_PILL_BONUS                = false,
   PT2_TRAVEL_BAND_TICKS             = 0,
@@ -8670,6 +9054,10 @@ M.PRESETS.mast = {
   SHOT_TRACK_OWN_SHELLS_ONLY        = false,
   PF_DANGER_INITIAL_LOAD            = false,  -- 2.2.1 copied danger only on rebuild
   PT2_HAUL_KEEP_TAKE                = false,  -- 2.2.1 had no pill take v2
+  PT2_BLOCKER_MARK                  = false,  -- 2.2.1 marked the attack_pill scan only
+  PT2_REPAIR_BLOCKER_FIRST          = false,  -- 2.2.1 repaired a take blocker after the kill only
+  PT2_REPAIR_NO_PACE                = false,  -- 2.2.1 paced the tank for every build trip
+  PT2_REPAIR_COVER_FULL             = false,  -- 2.2.1 counted a pill's cover at its health now
   HAUL_KEEP_LGM_KILL                = false,  -- 2.2.1 hauled on pill stamp / tank range
   PT2_DOUBLE_TAKE_DISCOUNT          = false,  -- 2.2.1 had no pill take v2
   PT2_DBL_SPLIT                     = false,  -- 2.2.1 had no pill take v2
@@ -8692,6 +9080,11 @@ M.PRESETS.mast = {
   PT2_C_EVAL                        = false,  -- 2.2.1 had no pill take v2
   PT2_C_STANDABLE                   = false,  -- 2.2.1 had no pill take v2
   PT2_AFTER_SCAN_SPLIT              = false,  -- 2.2.1 had no pill take v2
+  PT2_SPLIT_ONE_PART_PER_TICK       = false,  -- 2.2.1 had no pill take v2
+  PT2_V2_SPLIT                      = false,  -- 2.2.1 had no pill take v2
+  PT2_V2_C                          = false,  -- 2.2.1 had no pill take v2
+  PT2_EVALUATOR                     = "old",  -- 2.2.1 had no pill take v2
+  PT2_EVAL_BY_TIER                  = false,  -- 2.2.1 had no pill take v2
   WSIM_DRIVE_WHILE_SLIDING          = false,  -- 2.2.1 world sim: no driving while pushed
   WSIM_HIT_FULL_DIST                = 0,      -- 2.2.1 world sim: 1 - d/range discount
   WSIM_HIT_FAR_FRAC                 = 0,
@@ -8717,6 +9110,11 @@ M.PRESETS.mast = {
   BLITZ_NO_DOUBLE_TAKE              = false,  -- 2.2.1 had no double takes
   QUICK_REPAIR_SKIP_OWN_FIRE        = false,  -- 2.2.1 had no quick repair
   QUICK_REPAIR_TANK_CLEAR_TICKS     = 0,      -- 2.2.1 had no quick repair
+  SWERVE_AVOID_REPAIR_SIDE          = false,  -- 2.2.1: the cover pick always
+  QUICK_REPAIR_WAIT_ALL_PILLS       = false,  -- 2.2.1 had no quick repair
+  QUICK_REPAIR_DEATH_TICK_SHOT      = false,  -- 2.2.1 had no quick repair
+  QUICK_REPAIR_KILL_SLOP_TICKS      = 0,      -- 2.2.1 had no quick repair
+  PT2_START_BUILDER_SAFE            = false,  -- 2.2.1 had no pill take v2
   POST_KILL_WAIT_TICKS              = 15,
   CARRY_APPROACH_MIN_ARMOUR_ONE     = 30,
   CARRY_APPROACH_MIN_ARMOUR_MANY    = 30,

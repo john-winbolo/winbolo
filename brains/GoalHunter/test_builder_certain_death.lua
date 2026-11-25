@@ -924,6 +924,104 @@ do
   check("attack_tank: no terrain-repair job (knob off)", trepair(false) == nil)
 end
 
+print("E5-10/E5-11. pill take v2 background walls")
+do
+  -- E5-10: with the old fire checks (knob off), an unsafe path stops a
+  -- background wall; the hold's own wall is forced and goes.
+  reset(); set_knobs(false, true, true)
+  local st, w, inf = mk("wall_shield", 8)
+  st.builder.wall_target = { mx = 102, my = 100 }
+  SAFE = false
+  local cmd = B.decide(st, w, inf, st.tick)
+  check("hold wall, unsafe path -> builds (forced)", cmd and cmd.action == BUILDMODE_BUILD, cmd and cmd.action)
+  reset(); set_knobs(false, true, true)
+  st, w, inf = mk("wall_shield", 8)
+  st.builder.wall_target = { mx = 102, my = 100 }
+  st.builder.bg_wall = true
+  SAFE = false
+  cmd = B.decide(st, w, inf, st.tick)
+  check("background wall, unsafe path -> no send", cmd == nil, cmd and cmd.action)
+  reset(); set_knobs(false, true, true)
+  st, w, inf = mk("wall_shield", 8)
+  st.builder.wall_target = { mx = 102, my = 100 }
+  st.builder.bg_wall = true
+  st.perc.pill_threats = { { pill = { mx = 104, my = 100 }, anger = 0.9 } }
+  cmd = B.decide(st, w, inf, st.tick)
+  check("background wall, angry pill near -> no send", cmd == nil, cmd and cmd.action)
+  reset(); set_knobs(false, true, true)
+  st, w, inf = mk("wall_shield", 8)
+  st.builder.wall_target = { mx = 102, my = 100 }
+  st.builder.bg_wall = true
+  inf.carried_pills = 2
+  cmd = B.decide(st, w, inf, st.tick)
+  check("background wall with a carried pill -> a wall, not a pill",
+        cmd and cmd.action == BUILDMODE_BUILD, cmd and cmd.action)
+  -- the checks stay with BUILDER_SEND_CERTAIN_DEATH_ONLY on too
+  reset(); set_knobs(true, true, true)
+  st, w, inf = mk("wall_shield", 8)
+  st.builder.wall_target = { mx = 102, my = 100 }
+  st.builder.bg_wall = true
+  SAFE = false
+  cmd = B.decide(st, w, inf, st.tick)
+  check("certain-death knob on: background wall, unsafe path -> no send", cmd == nil, cmd and cmd.action)
+  reset(); set_knobs(true, true, true)
+  st, w, inf = mk("wall_shield", 8)
+  st.builder.wall_target = { mx = 102, my = 100 }
+  st.builder.bg_wall = true
+  cmd = B.decide(st, w, inf, st.tick)
+  check("certain-death knob on: background wall, safe -> builds", cmd and cmd.action == BUILDMODE_BUILD,
+        cmd and cmd.action)
+  -- E5-11: set_mode asks bg_wall only when the builder is free.
+  local PA = require("pt2_attack")
+  local saved = PA.bg_wall
+  PA.bg_wall = function() return { mx = 102, my = 100 } end
+  reset(); set_knobs(true, true, true)
+  st, w, inf = mk()
+  st.goal = { kind = "attack_pill", substate = "aim", mx = 110, my = 100, _pt2_bg = { walls = {} } }
+  B.set_mode(st, w, inf, st.goal)
+  check("free builder -> background wall", st.builder.mode == "wall_shield" and st.builder.bg_wall == true,
+        st.builder.mode)
+  st.goal.substate = "gather_trees"
+  B.set_mode(st, w, inf, st.goal)
+  check("gathering builder -> no background wall", st.builder.mode == "gather" and not st.builder.bg_wall,
+        st.builder.mode)
+  st.goal.substate = "aim"
+  inf.man_status = C.LGM_MOVING
+  B.set_mode(st, w, inf, st.goal)
+  check("builder out of the tank -> no background wall", st.builder.mode ~= "wall_shield", st.builder.mode)
+  inf.man_status = C.LGM_INTANK
+  st._place_trip = { mx = 1, my = 1 }
+  B.set_mode(st, w, inf, st.goal)
+  check("builder on a place trip -> no background wall", st.builder.mode ~= "wall_shield", st.builder.mode)
+  PA.bg_wall = saved
+end
+
+-- Nov 24 (run_n1_pillfix, trees 0): a pillbox blocker needs
+-- PILL_PLACE_TREE_COST trees. With fewer, the engine refused the order
+-- (ASSIST_MSG_INSUFFICIENT_TREES) and each try used up a pbox_used slot.
+print("6. pillbox blocker needs a pill's trees")
+do
+  local function pbox(trees)
+    reset(); set_knobs(true, true, true)
+    local st, w, inf = mk("wall_shield", trees)
+    st.builder.wall_target = { mx = 102, my = 100 }
+    st.goal = st.goal or { kind = "attack_pill", mx = 110, my = 100 }
+    inf.carried_pills = 1
+    local cmd = B.decide(st, w, inf, st.tick)
+    return cmd, st.goal._pillbox_blockers_used
+  end
+  local cmd, used = pbox(C.PILL_PLACE_TREE_COST)
+  check("wall_shield, 1 pill, trees = pill cost -> PBOX",
+        cmd and cmd.action == BUILDMODE_PBOX and used == 1, cmd and cmd.action)
+  cmd, used = pbox(0)
+  check("wall_shield, 1 pill, 0 trees -> no PBOX", not (cmd and cmd.action == BUILDMODE_PBOX),
+        cmd and cmd.action)
+  check("  no pbox_used slot spent", used == nil, used)
+  cmd, used = pbox(C.PILL_PLACE_TREE_COST - 1)
+  check("wall_shield, 1 pill, trees below pill cost -> wall, not PBOX",
+        cmd and cmd.action == BUILDMODE_BUILD and used == nil, cmd and cmd.action)
+end
+
 set_knobs(true, true, true)
 print(string.format("\n%d passed, %d failed", pass, fail))
 if fail > 0 then os.exit(1) end

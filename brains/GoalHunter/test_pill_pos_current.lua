@@ -36,6 +36,7 @@ NEUTRAL_PLAYER = 0xFF
 EVENT_PILL_CAPTURED, EVENT_BASE_CAPTURED, EVENT_TANK_KILLED = 1, 2, 3
 EVENT_PILL_UPDATE, EVENT_BASE_UPDATE, EVENT_BASE_STOCK = 5, 6, 7
 EVENT_PLAYER_LEAVE, EVENT_LGM_LOST = 8, 10
+EVENT_SOUND_SHOOT = 16
 
 local W = require("world")
 
@@ -296,6 +297,25 @@ do
   check("square filled", p and p.mx == 101 and p.my == 127)
   check("owner kept", p and p.owner == "hostile", p and p.owner)
   check("armour kept", p and p.health == 4, p and p.health)
+end
+
+-- run_c15 beside_n: a pill's shot heard (EVENT_SOUND_SHOOT, firing player
+-- 255, the pill's square) stamps p._heard_fire, the tick
+-- quick_repair.pill_next_fire starts its reload from.
+print("heard pill fire")
+do
+  local world = new_world()
+  events(world, 700, pill_ev(1, 126, 118, 0xFF, POS_CURRENT, 6))
+  local p = world.pills[1]
+  check("pill on its square", p and p.mx == 126 and p.my == 118)
+  events(world, 782, { type = EVENT_SOUND_SHOOT, data = { 1, 126, 118, 255 } })
+  check("shot heard at 782", p and p._heard_fire == 782, p and p._heard_fire)
+  events(world, 783, { type = EVENT_SOUND_SHOOT, data = { 1, 126, 118, 2 } })
+  check("a tank's shot on the square is not the pill's", p and p._heard_fire == 782,
+        p and p._heard_fire)
+  events(world, 784, { type = EVENT_SOUND_SHOOT, data = { 1, 125, 118, 255 } })
+  check("another square's shot is not this pill's", p and p._heard_fire == 782,
+        p and p._heard_fire)
 end
 
 print(string.format("%d passed, %d failed", pass, fail))

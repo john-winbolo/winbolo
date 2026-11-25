@@ -289,6 +289,30 @@ function M.sync_ally_carried(world, ally_carry, now)
   world._ally_carry_ids = cur
 end
 
+-- PT2_START_BUILDER_SAFE (run_c7): the hit ticks for the engine's reload
+-- ladder (pt2_start.engine_reload). The list starts over once the pill has
+-- had time to come back to its calm reload from any level
+-- (pill_attack_ticks steps of pill_cooldown_ticks). Every hit counts,
+-- whoever fired the shell: our own, an ally's, an enemy's, or another
+-- pill's (run_c12 gap_n: in a double take the take target's shells hit the
+-- other pill, and each one halves its speed). lost: the armour lost this
+-- tick; one hit per pill_shell_damage of it (pillbox.c takes that much a
+-- shell), at least one.
+local function note_eng_hit(p, info, tick, lost)
+  if not C.PT2_START_BUILDER_SAFE then return end
+  local r = info and info.rules
+  local A = r and type(r.pill_attack_ticks) == "number" and r.pill_attack_ticks or 100
+  local cd = r and type(r.pill_cooldown_ticks) == "number" and r.pill_cooldown_ticks or 32
+  local dmg = r and type(r.pill_shell_damage) == "number" and r.pill_shell_damage or 1
+  if dmg < 1 then dmg = 1 end
+  local n = math.max(1, math.floor((lost or 1) / dmg))
+  local h = p._eng_hits
+  if not h or (h[#h] and tick - h[#h] > A * cd) then h = {} end
+  for _ = 1, n do h[#h + 1] = tick end
+  p._eng_hits = h
+end
+M.note_eng_hit = note_eng_hit   -- unit tests
+
 function M.update(world, info, tick)
   world.tick = tick  -- store for staleness reporting
   note_on_map(world, info)
@@ -407,6 +431,7 @@ function M.update(world, info, tick)
           p.anger      = math.min(1.0, (p.anger or 0) + C.PILL_ANGER_BUMP)
           p.anger_tick = tick
           p.last_hit_tick = tick   -- only on REAL damage (never on decay)
+          note_eng_hit(p, info, tick, old_health - new_health)
           -- Short hit history (last 8 hit ticks): defend_pill measures the
           -- live damage rate from it (hits inside DEFEND_ACTIVE_WINDOW).
           p.hit_log = p.hit_log or {}
@@ -524,6 +549,7 @@ function M.update(world, info, tick)
   end
   -- Last, so nothing above can bring a removed item's record back.
   purge_removed(world)
+  if C.PT2_START_BUILDER_SAFE then M.track_tank_sight(world, info, tick) end
   local t1 = clock_us()
 
   metrics.set("us_world_update_objects", t1 - t0)
@@ -645,6 +671,7 @@ function M.process_events(world, info, state)
             p.anger      = math.min(1.0, (p.anger or 0) + C.PILL_ANGER_BUMP)
             p.anger_tick = tick
             p.last_hit_tick = tick   -- only on REAL damage (never on decay)
+            note_eng_hit(p, info, tick, old_health - new_health)
             p.hit_log = p.hit_log or {}
             p.hit_log[#p.hit_log + 1] = tick
             if #p.hit_log > 8 then table.remove(p.hit_log, 1) end
@@ -809,6 +836,19 @@ function M.process_events(world, info, state)
       -- data: [playerNum]
       -- Player left; downstream systems will notice missing objects.
 
+    elseif ev.type == (EVENT_SOUND_SHOOT or 16) and d and d[4] == 255 then
+      -- data: [soundId, mx, my, firingPlayer] (a bot gets the square). A
+      -- pill fired from (mx, my) this tick: the tick its reload starts from
+      -- (quick_repair.pill_next_fire). run_c15 beside_n t=785: the take
+      -- target's last shell hit a pill at once, so none was in the air,
+      -- and the shot heard at 782 was the only trace of its reload phase.
+      local list = d[2] and d[3] and world.pill_at and world.pill_at[mkey(d[2], d[3])]
+      if list then
+        for _, e in ipairs(list) do
+          if e.pill then e.pill._heard_fire = tick end
+        end
+      end
+
     elseif ev.type == EVENT_LGM_LOST and d then
       -- data: [victim_pn, killer_pn] — a player's builder was killed.
       -- Stamp the death + respawn ETA on the lgm_registry so
@@ -838,6 +878,50 @@ function M.pill_at(world, mx, my)
     if e.pill.health > 0 then return e.pill end
   end
   return nil
+end
+
+-- The engine's utilIsTankInTrees for our tank at world (wx, wy): its own
+-- square and the square beside it on each axis (the side of the square
+-- centre it is on) are forest with no pill or base on them.
+local function tank_in_trees(world, wx, wy)
+  local mx, my = bit.rshift(wx, 8), bit.rshift(wy, 8)
+  local nx = (wx % 256) >= 128 and mx + 1 or mx - 1
+  local ny = (wy % 256) >= 128 and my + 1 or my - 1
+  for _, q in ipairs({ { mx, my }, { nx, my }, { mx, ny } }) do
+    if U.ttype(q[1], q[2]) ~= C.T_FOREST then return false end
+    if M.pill_at(world, q[1], q[2]) or M.base_at(world, q[1], q[2]) then return false end
+  end
+  return true
+end
+
+-- PT2_START_BUILDER_SAFE (run_c6): the tick each pill first saw our tank
+-- in the sight run going on now (p._tank_seen_since; nil when it does not
+-- see us). The engine (pillbox.c) sets justSeen and reload = 0 on that
+-- tick and fires one reload later, so this tick stands in for a last fire
+-- when no shell of the pill has been seen since. It sees us while we are
+-- alive, within pill_range of its centre (utilIsItemInRange) and not hidden
+-- in trees beyond tree_hide_distance on either axis. Other tanks the pill
+-- may see are not counted.
+function M.track_tank_sight(world, info, tick)
+  local r = info.rules
+  local R = r and type(r.pill_range) == "number" and r.pill_range or 2048
+  local H = r and type(r.tree_hide_distance) == "number" and r.tree_hide_distance or 768
+  local tx, ty = info.tankx, info.tanky
+  local ok = tx and ty and not info.dead
+  local trees = ok and tank_in_trees(world, tx, ty)
+  for _, p in pairs(world.pills) do
+    local sees = false
+    if ok and not p.in_tank and (p.health or 0) > 0 then
+      local dx = math.abs(tx - (p.mx * 256 + 128))
+      local dy = math.abs(ty - (p.my * 256 + 128))
+      sees = dx * dx + dy * dy <= R * R and not (trees and (dx >= H or dy >= H))
+    end
+    if not sees then
+      p._tank_seen_since = nil
+    elseif not p._tank_seen_since then
+      p._tank_seen_since = tick
+    end
+  end
 end
 
 -- Lookup: return the base entry at (mx, my), or nil.

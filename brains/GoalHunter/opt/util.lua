@@ -190,7 +190,7 @@ local function _stay_parse()
 end
 
 -- The STAY_AREA rectangles { {x1, y1, x2, y2}, ... } (inclusive), or nil
--- when none is set. For gh_pt2.c (inp.c_std); do not change them.
+-- when none is set. For gh_pt2_old.c (inp.c_std); do not change them.
 function M.stay_rects()
   return _stay_parse()
 end
@@ -1165,7 +1165,7 @@ function M.lgm_open_blast_reach()
   return r
 end
 
--- The square tests gh_pt2.c copies (pilltake_v2.world_inp, inp.c_std). A
+-- The square tests gh_pt2_old.c copies (pilltake_v2_old.world_inp, inp.c_std). A
 -- test that puts its own function in one of these places keeps the Lua.
 M.C_COPIED = { in_map = M.in_map, stay_in = M.stay_in, is_water = M.is_water }
 

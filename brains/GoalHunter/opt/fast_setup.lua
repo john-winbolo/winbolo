@@ -113,14 +113,17 @@ end
 
 -- Step 1: the angle the finetune ends on at (fx, fy). a0: the aim corner's
 -- bearing; ac: the pill centre's bearing. Returns ang, lo, hi or nil.
-function M.final_angle(env, fx, fy, a0, ac)
+-- tally (optional table): counts each failed angle's why (the log).
+function M.final_angle(env, fx, fy, a0, ac, tally)
   local d = U.adiff(a0, ac)
   local sgn = d >= 0 and 1 or -1
   local n = ceil(abs(d) / M.TAP)
   local lo
   for k = 0, n do
     local a = (a0 + sgn * k * M.TAP) % 256
-    if M.shot_ok(env, fx, fy, a) then lo = k; break end
+    local ok, why = M.shot_ok(env, fx, fy, a)
+    if ok then lo = k; break end
+    if tally then tally[why] = (tally[why] or 0) + 1 end
   end
   if not lo then return nil end
   -- keep stepping while the shot passes (the lane can go past the centre;
@@ -166,7 +169,7 @@ function M.setup_t(fx, fy, ux, uy, pills, R)
   return t
 end
 
--- The 8 leeway neighbours (pilltake_v2.lua NB): unit directions.
+-- The 8 leeway neighbours (pilltake_v2_old.lua NB): unit directions.
 local NB = {}
 for k = 0, 7 do
   local a = k * math.pi / 4
@@ -188,7 +191,8 @@ function M.plan(env, inp)
   local rec = {}
   local fx, fy = inp.fx, inp.fy
   local ac = bearing(fx, fy, inp.pcx, inp.pcy)
-  local ang, lo, hi = M.final_angle(env, fx, fy, inp.a0, ac)
+  rec.lane_why = {}
+  local ang, lo, hi = M.final_angle(env, fx, fy, inp.a0, ac, rec.lane_why)
   rec.a0, rec.ac = inp.a0, ac
   if not ang then return nil, "no_lane", rec end
   rec.ang, rec.lo, rec.hi = ang, lo, hi
@@ -215,9 +219,11 @@ function M.plan(env, inp)
   local ok, why = M.shot_ok(env, fx, fy, ang)
   if not ok then return nil, "shot_at_F:" .. tostring(why), rec end
   local lee = 0
+  rec.lee_why = {}
   for k = 1, 8 do
     local qx, qy = fx + NB[k][1] * inp.ring_wu, fy + NB[k][2] * inp.ring_wu
-    if M.shot_ok(env, qx, qy, bearing(qx, qy, apx, apy)) then lee = lee + 1 end
+    local qok, qwhy = M.shot_ok(env, qx, qy, bearing(qx, qy, apx, apy))
+    if qok then lee = lee + 1 else rec.lee_why[qwhy] = (rec.lee_why[qwhy] or 0) + 1 end
   end
   rec.lee = lee
   if lee < inp.lee_min then return nil, "leeway", rec end
@@ -228,14 +234,28 @@ function M.plan(env, inp)
 end
 
 -- ── Adapters to the bot's world ───────────────────────────────────────────
+-- The sight length for cpf.simulate_shot_angle. The C reads it as a whole
+-- number of half squares (luaL_optinteger), so C.GUNSIGHT_MAX (13.875) went
+-- in as 13: a shell 6.5 squares long, half a square short of the gun the
+-- tank fires with (14, steering's KEY_MORERANGE). From a standoff 7.4
+-- squares from the pill centre the test shell stopped before the pill
+-- square at every angle (no_lane), and the leeway ring lost most points.
+-- The longest sight (C.GUNSIGHT_MAX or more, or none) is 0: the engine's
+-- own longest sight, as shot_path_obstacle_count uses.
+function M.sight_len(gunrange)
+  if not gunrange or gunrange >= (C.GUNSIGHT_MAX or 14) then return 0 end
+  return floor(gunrange)
+end
+
 -- The shot-test env for goal's pill. obs_fn: attack.lua's
 -- shot_path_obstacle_count. gunrange: the sight length the shot uses.
 function M.world_env(info, goal, world, obs_fn, gunrange)
   local probe = setmetatable({}, { __index = info })
+  local sight = M.sight_len(gunrange)
   return {
-    pmx = goal.mx, pmy = goal.my,
+    pmx = goal.mx, pmy = goal.my, sight = sight,
     sim = function(x, y, ang)
-      return cpf.simulate_shot_angle(x, y, ang, cpf.SHOT_TANK, gunrange)
+      return cpf.simulate_shot_angle(x, y, ang, cpf.SHOT_TANK, sight)
     end,
     obs = function(x, y, ang)
       probe.tankx, probe.tanky, probe.tank_angle = x, y, ang
@@ -289,6 +309,17 @@ local function standable_fn(world)
   end
 end
 
+-- The refusal tally for the log: "miss:16,pill:2" (sorted), "-" for none.
+function M.why_tally(t)
+  if not t then return "-" end
+  local keys = {}
+  for k in pairs(t) do keys[#keys + 1] = tostring(k) end
+  if #keys == 0 then return "-" end
+  table.sort(keys)
+  for i, k in ipairs(keys) do keys[i] = k .. ":" .. t[k] end
+  return table.concat(keys, ",")
+end
+
 -- The plan for goal's standoff from the bot's world. stage: "approach" or
 -- "in_range" (the log only). Returns plan or nil.
 local function plan_from_world(stage, goal, info, world, now, obs_fn)
@@ -298,7 +329,7 @@ local function plan_from_world(stage, goal, info, world, now, obs_fn)
   local axw = goal.aim_wx or floor((goal.aim_mx or (goal.mx + 0.5)) * 256 + 0.5)
   local ayw = goal.aim_wy or floor((goal.aim_my or (goal.my + 0.5)) * 256 + 0.5)
   local env = M.world_env(info, goal, world, obs_fn, C.GUNSIGHT_MAX)
-  local V2 = require("pilltake_v2")
+  local V2 = require("pilltake_v2_old")
   local SH = require("shadow")
   local inp = {
     fx = fx, fy = fy,
@@ -504,6 +535,11 @@ function M.attack_tick(state, goal, info, world, now, obs_fn)
     local err = U.wdist(info.tankx, info.tanky, floor(fs.fx + 0.5), floor(fs.fy + 0.5))
     local env = M.world_env(info, goal, world, obs_fn, info.gunrange or 14)
     local here_ok, here_why = M.shot_ok(env, info.tankx, info.tanky, ang)
+    -- PT2_START_BUILDER_SAFE: no fire while it would kill the builder out
+    -- on a take wall; stay stopped on F and ask again next tick.
+    if here_ok and require("pt2_attack").builder_fire_hold(state, goal, world, info, now) then
+      return true
+    end
     goal._fs = nil
     if here_ok then
       to_shoot_pill(goal, info, now)

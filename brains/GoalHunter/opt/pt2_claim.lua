@@ -22,7 +22,7 @@
 --     number keeps (the attack_pill dual-hold rule).
 -- The loser: a bot whose TARGET lost yields through sync_ally_claimed_rejects
 -- (goals.lua); a chain owner whose CHAIN pill lost plans without it
--- (M.chain_skip -> inp.chain_skip in pilltake_v2).
+-- (M.chain_skip -> inp.chain_skip in pilltake_v2_old).
 -- State: the last list per ally (M.rx) and a payload decode memo (pure,
 -- size-capped).
 -- =========================================================================

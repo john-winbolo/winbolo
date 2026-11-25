@@ -122,6 +122,10 @@ local function reset(w)
   C.QUICK_REPAIR_MARGIN_TICKS = 2
   C.QUICK_REPAIR_SKIP_OWN_FIRE = true
   C.QUICK_REPAIR_TANK_CLEAR_TICKS = w
+  -- The fixture's blocker sits on the target's own line to the tank, so
+  -- QUICK_REPAIR_WAIT_ALL_PILLS (test_qr_repair_side.lua) would wait on
+  -- every case; this file tests the tank-clear rule alone.
+  C.QUICK_REPAIR_WAIT_ALL_PILLS = false
 end
 local function eval(opts)
   local st, w, inf = mk(opts)
@@ -166,14 +170,17 @@ do
   reset(16)
   local qr = eval({ extra = { [5] = north_pill(0) } })
   check("pill 2 tiles out, no shell seen: wait:tank", res(qr) == "wait:tank", res(qr))
-  check("why = next, t = 13", qr and qr.tank and qr.tank.why == "next" and qr.tank.t == 13,
+  -- Next shot at +1; its shell is 6 steps out then (QR.shell_lead) and
+  -- reaches the tank tile 6 ticks later (it leaves the pill tile at 12).
+  check("why = next, t = 7", qr and qr.tank and qr.tank.why == "next" and qr.tank.t == 7,
         qr and qr.tank and (tostring(qr.tank.why) .. "/" .. tostring(qr.tank.t)))
 end
 print("4. next shot, calm pill fired 1 tick ago")
 do
   reset(16)
-  -- Its shell left the pill tile 1 tick ago flying north (away from us).
-  local sh = pshell(100 * 256 + 128, 98 * 256 + 128 - 32, 0)
+  -- Its shell was fired 1 tick ago flying north (away from us): 7 steps
+  -- out (6 at the end of its fire tick, one more since).
+  local sh = pshell(100 * 256 + 128, 98 * 256 + 128 - 7 * 32, 0)
   local qr = eval({ extra = { [5] = north_pill(0) }, objects = { sh } })
   check("reload 100 from the last fire: send", res(qr) == "send", res(qr))
 end
@@ -182,19 +189,24 @@ do
   reset(16)
   local r = KLK.pill_reload(PA.anger_now(north_pill(1.0), NOW), {})
   check("angry reload is shorter than calm (100)", r < 100, r)
-  -- Fired r - 2 ticks ago: the next shot is at now + 2 and lands at +14.
+  -- Fired r - 2 ticks ago (6 + ago steps out): the next shot is at now + 2
+  -- and lands at +8 (flight 6 from the fire tick).
   local ago = r - 2
-  local sh = pshell(100 * 256 + 128, 98 * 256 + 128 - ago * 32, 0)
+  local sh = pshell(100 * 256 + 128, 98 * 256 + 128 - (6 + ago) * 32, 0)
   local qr = eval({ extra = { [5] = north_pill(1.0) }, objects = { sh } })
-  local want = (NOW - ago + r) - NOW + 12
+  local want = (NOW - ago + r) - NOW + 6
   check("angry pill: wait:tank", res(qr) == "wait:tank", res(qr))
-  check(string.format("why = next, t = last %+d + reload %d + flight 12 = %d", -ago, r, want),
+  check(string.format("why = next, t = last %+d + reload %d + flight 6 = %d", -ago, r, want),
         qr and qr.tank and qr.tank.why == "next" and qr.tank.t == want,
         qr and qr.tank and (tostring(qr.tank.why) .. "/" .. tostring(qr.tank.t)))
-  -- Fired 6 ticks ago: next at now + r - 6, lands at r + 6 > 16: send.
-  sh = pshell(100 * 256 + 128, 98 * 256 + 128 - 6 * 32, 0)
+  -- With W = 8: fired ago2 ticks ago, next at now + r - ago2, lands at
+  -- r - ago2 + 6 > 8: send. PT2_START_ANGER_RISE puts anger 1.0 at the
+  -- minimum reload 6, then ago2 = 3.
+  reset(8)
+  local ago2 = math.max(1, r - 3)
+  sh = pshell(100 * 256 + 128, 98 * 256 + 128 - (6 + ago2) * 32, 0)
   qr = eval({ extra = { [5] = north_pill(1.0) }, objects = { sh } })
-  check(string.format("angry pill fired 6 ago: lands at +%d > 16: send", r + 6),
+  check(string.format("angry pill fired %d ago: lands at +%d > 8: send", ago2, r - ago2 + 6),
         res(qr) == "send", res(qr))
 end
 

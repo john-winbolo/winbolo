@@ -12,7 +12,7 @@
 --   * the sender payload: live hostile/neutral chain pills only; cleared
 --     when the take ends.
 --   * drop_lost: a live plan drops a chain pill an ally now holds.
---   * pilltake_v2: a skipped pill ends the chain.
+--   * pilltake_v2_old: a skipped pill ends the chain.
 --
 -- Run from this directory with the LuaJIT built beside the game:
 --   ../../build/_deps/luajit_src-src/src/luajit.exe test_pt2_claim.lua
@@ -211,10 +211,10 @@ do
   package.loaded["attack"] = saved_attack
 end
 
--- ── pilltake_v2: a skipped pill ends the chain ───────────────────────────
-print("pilltake_v2")
+-- ── pilltake_v2_old: a skipped pill ends the chain ───────────────────────────
+print("pilltake_v2_old")
 do
-  local src = io.open("pilltake_v2.lua"):read("*a")
+  local src = io.open("pilltake_v2_old.lua"):read("*a")
   check("eval_point honours chain_skip", src:find("inp.chain_skip and inp.chain_skip[nxt]", 1, true) ~= nil)
   check("evaluate_group honours chain_skip", src:find("inp.chain_skip and inp.chain_skip[p]", 1, true) ~= nil)
 end

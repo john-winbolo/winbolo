@@ -325,6 +325,135 @@ do
   check("no S: no undo", g3.substate == "in_range_position" and not g3._fs_off)
 end
 
+-- ── sight length: the arena double takes (Nov 24) ─────────────────────────
+-- dt_demo_nov24 run_c21_*: every plan of a double take on open grass was
+-- refused (no_lane, or leeway with lee=3), because C.GUNSIGHT_MAX (13.875)
+-- went to the C shell sim as 13 (luaL_optinteger): 6.5 squares, not the
+-- 7 the tank fires. A Lua copy of the engine shell walk (brain_pathfinder.c
+-- simulate_shot_walk, exact mode, classic rules: speed 32, life 8, start
+-- add 5, longest sight 14) runs the real F / a0 / pill squares from the logs.
+print("sight length")
+do
+  check("13.875 -> 0 (the engine's longest)", FS.sight_len(C.GUNSIGHT_MAX) == 0, FS.sight_len(C.GUNSIGHT_MAX))
+  check("14 -> 0", FS.sight_len(14) == 0)
+  check("nil -> 0", FS.sight_len(nil) == 0)
+  check("10 stays 10", FS.sight_len(10) == 10)
+  -- world_env hands the whole number to the C sim
+  local got
+  local orig = cpf_simulate_shot_angle
+  cpf_simulate_shot_angle = function(x, y, a, st, sl) got = sl; return {} end
+  FS.world_env({}, { mx = 1, my = 1 }, {}, nil, C.GUNSIGHT_MAX).sim(0, 0, 0)
+  check("plan env: sight 0 to the sim", got == 0, got)
+  FS.world_env({}, { mx = 1, my = 1 }, {}, nil, 9).sim(0, 0, 0)
+  check("short gun: sight 9 to the sim", got == 9, got)
+  cpf_simulate_shot_angle = orig
+end
+do
+  local floor = math.floor
+  local function rnd(v) if v >= 0 then return floor(v + 0.5) end return -floor(-v + 0.5) end
+  local function step(ang, speed, scale)        -- util.c utilCalcDistance(HP)
+    local a = ang - 64; if a < 0 then a = a + 256 end
+    local r = a / 256 * 2 * math.pi
+    return rnd(speed * math.cos(r) * scale), rnd(speed * math.sin(r) * scale)
+  end
+  local function walk(ox, oy, ang, sl)
+    if sl == 0 then sl = 14 end
+    local xa, ya = step(ang, 32, 1)
+    local x, y = ox + 5 * xa, oy + 5 * ya
+    local xs, ys = step(ang, 32, 256)
+    local xacc, yacc = 0, 0
+    local out = { { mx = floor(ox / 256), my = floor(oy / 256) } }
+    local function add()
+      local mx, my = floor(x / 256), floor(y / 256)
+      local l = out[#out]
+      if mx ~= l.mx or my ~= l.my then out[#out + 1] = { mx = mx, my = my } end
+    end
+    add()
+    for _ = 1, 1 + floor(8 * sl / 2) - 5 do
+      xacc, yacc = xacc + xs, yacc + ys
+      local xm, ym = floor(xacc / 256), floor(yacc / 256)
+      xacc, yacc = xacc - xm * 256, yacc - ym * 256
+      x, y = x + xm, y + ym
+      add()
+    end
+    return out
+  end
+  -- shot_path_obstacle_count with sight 0: a live pill before the target
+  -- is math.huge; the diagonal corner skip counts as reached
+  local function arena_env(pmx, pmy, other, sl)
+    return {
+      pmx = pmx, pmy = pmy,
+      sim = function(x, y, a) return walk(x, y, a, sl) end,
+      obs = function(x, y, a)
+        local omx, omy, px, py = floor(x / 256), floor(y / 256)
+        for _, t in ipairs(walk(x, y, a, 0)) do
+          if t.mx == pmx and t.my == pmy then return 0, nil, true end
+          if px and t.mx ~= px and t.my ~= py
+             and ((pmx == px and pmy == t.my) or (pmx == t.mx and pmy == py)) then
+            return 0, nil, true
+          end
+          px, py = t.mx, t.my
+          if (t.mx ~= omx or t.my ~= omy) and t.mx == other[1] and t.my == other[2] then
+            return math.huge, "pill"
+          end
+        end
+        return 0, nil, false
+      end,
+    }
+  end
+  local function arena_inp(pmx, pmy, fx, fy, a0)
+    return {
+      fx = fx, fy = fy, pcx = pmx * 256 + 128, pcy = pmy * 256 + 128, a0 = a0,
+      pills = {}, R = 2048 + 128, edge = 0.5, min_t = 2.25 * 256,
+      ring_wu = 32, lee_min = 6,
+      standable = function() return true end, drive_ok = function() return true end,
+    }
+  end
+  -- name, target square, the other target pill, F, a0, lee at sight 13
+  local cases = {
+    { "beside_n t=33/391", 126, 118, { 125, 118 }, 30954, 29093, 91.265, nil },
+    { "beside_e t=33/333", 125, 118, { 126, 118 }, 33900, 29828, 183.042, 3 },
+    { "beside_w t=33/332", 126, 118, { 125, 118 }, 30612, 29828, 72.958, 3 },
+    { "diag_n t=33/277",   126, 118, { 125, 117 }, 31674, 28580, 109.109, nil },
+    { "diag_nw t=33/291",  126, 118, { 125, 117 }, 30653, 29565, 82.204, nil },
+    { "gap_e t=33/270",    124, 118, { 126, 118 }, 33752, 30105, 189.569, nil },
+    { "gap_sw t=33/349",   126, 118, { 124, 118 }, 30572, 30890, 53.636, nil },
+  }
+  for _, c in ipairs(cases) do
+    local name, pmx, pmy, other, fx, fy, a0, lee13 = c[1], c[2], c[3], c[4], c[5], c[6], c[7], c[8]
+    -- the bug: sight 13
+    local p, why, rec = FS.plan(arena_env(pmx, pmy, other, 13), arena_inp(pmx, pmy, fx, fy, a0))
+    if lee13 then
+      check(name .. ": sight 13 gave leeway lee=" .. lee13, p == nil and why == "leeway" and rec.lee == lee13,
+            tostring(why) .. " lee=" .. tostring(rec.lee))
+    else
+      check(name .. ": sight 13 gave no_lane, every angle a miss",
+            p == nil and why == "no_lane" and rec.lane_why.miss and not rec.lane_why.pill, why)
+    end
+    -- the fix: the engine's longest sight
+    local env = arena_env(pmx, pmy, other, 0)
+    p, why, rec = FS.plan(env, arena_inp(pmx, pmy, fx, fy, a0))
+    check(name .. ": longest sight qualifies", p ~= nil, tostring(why) .. " lee=" .. tostring(rec.lee))
+    if p then
+      -- every angle in the lane is clear of the other target pill
+      local d = U.adiff(rec.lo, rec.hi)
+      local all = true
+      for k = 0, math.floor(math.abs(d) / FS.TAP + 1e-6) do
+        local a = (rec.lo + (d >= 0 and 1 or -1) * k * FS.TAP) % 256
+        if not FS.shot_ok(env, fx, fy, a) then all = false end
+      end
+      check(name .. ": the whole lane is clear", all)
+      check(name .. ": fire at the plan angle from F", FS.shot_ok(env, fx, fy, p.ang))
+    end
+  end
+  -- never our blocker: beside_e's lane stops one tap before pill B
+  local env = arena_env(125, 118, { 126, 118 }, 0)
+  local _, _, rec = FS.plan(env, arena_inp(125, 118, 33900, 29828, 183.042))
+  local ok, why = FS.shot_ok(env, 33900, 29828, rec.hi - FS.TAP)
+  check("beside_e: one tap past the lane hits pill B", not ok and why == "pill", why)
+  check("tally text", FS.why_tally({ pill = 2, miss = 16 }) == "miss:16,pill:2" and FS.why_tally({}) == "-")
+end
+
 -- ── shot tracker knob ─────────────────────────────────────────────────────
 print("shot tracker knob")
 check("own shells only on by default", C.SHOT_TRACK_OWN_SHELLS_ONLY == true)

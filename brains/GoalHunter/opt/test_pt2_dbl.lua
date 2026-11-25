@@ -19,6 +19,8 @@
 package.path = "./?.lua;" .. package.path
 
 local C = require("constants")
+-- these tests stub pilltake_v2_old: run the old evaluator (pt2_eval)
+C.PT2_EVALUATOR = "old"
 
 local pass, fail = 0, 0
 local function check(name, cond, got)
@@ -40,7 +42,7 @@ package.loaded["pt2_attack"] = {
 local T = 1000000
 _G.clock_us = function() return T end
 local part_us, n_parts_job = 900, 3
-package.loaded["pilltake_v2"] = {
+package.loaded["pilltake_v2_old"] = {
   evaluate_group = function(inp)
     runs = runs + 1
     return { best = answer }

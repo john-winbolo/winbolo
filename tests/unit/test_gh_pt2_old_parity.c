@@ -16,17 +16,17 @@
  */
 
 /*
- * test_gh_pt2_parity.c -- the pill take v2 evaluator in C
- * (brains/GoalHunter/c/gh_pt2.c) against the Lua copy
- * (pilltake_v2.lua M.evaluate_lua).
+ * test_gh_pt2_old_parity.c -- the pill take v2 evaluator in C
+ * (brains/GoalHunter/c/gh_pt2_old.c) against the Lua copy
+ * (pilltake_v2_old.lua M.evaluate_lua).
  *
- * The test is brains/GoalHunter/test_pt2_c_parity.lua: random small worlds
+ * The test is brains/GoalHunter/test_pt2_old_c_parity.lua: random small worlds
  * plus the cases recorded in a real game (tests/unit/data/pt2_cases.lua,
  * written by pt2_capture.lua). Each case runs both copies; the result, the
  * order of the calls they make and the terrain reads must be the same.
  * It runs on brains/GoalHunter and on brains/GoalHunter/opt.
  *
- * gh_pt2_engine (below): the shadow's shell walk against the engine's
+ * gh_pt2_old_engine (below): the shadow's shell walk against the engine's
  * shell and the brain's shot simulator.
  */
 
@@ -34,6 +34,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include <lua.h>
 #include <lauxlib.h>
@@ -43,7 +44,8 @@
 #include "util.h"
 #include "shells.h"
 #include "brain_pathfinder.h"
-#include "gh_pt2.h"
+#include "gh_pt2_old.h"
+#include "gh_pt2_v2.h"
 #include "test_harness.h"
 
 #ifndef WB_REPO_ROOT_DIR
@@ -59,7 +61,7 @@ static int pt2p_run(const char *brainDir) {
     lua_pushstring(L, brainDir); lua_setglobal(L, "BRAIN_DIR");
     lua_pushstring(L, WB_REPO_ROOT_DIR "/tests/unit/data/pt2_cases.lua");
     lua_setglobal(L, "PT2_CASES_FILE");
-    naPt2Register(L);
+    naPt2OldRegister(L);
 
     lua_getglobal(L, "package");
     lua_pushfstring(L, "%s/?.lua;%s/?/init.lua", brainDir, brainDir);
@@ -67,7 +69,7 @@ static int pt2p_run(const char *brainDir) {
     lua_pop(L, 1);
 
     char path[1024];
-    snprintf(path, sizeof(path), "%s/test_pt2_c_parity.lua", brainDir);
+    snprintf(path, sizeof(path), "%s/test_pt2_old_c_parity.lua", brainDir);
     int rc = 0;
     if (luaL_loadfile(L, path) != 0) {
         fprintf(stderr, "FAIL load: %s\n", lua_tostring(L, -1));
@@ -80,7 +82,7 @@ static int pt2p_run(const char *brainDir) {
         int bad = (int)lua_tointeger(L, -3);
         const char *first = lua_tostring(L, -2);
         const char *cov = lua_tostring(L, -1);
-        printf("gh_pt2_parity (%s): %d cases, %d mismatches; %s\n", brainDir, n, bad,
+        printf("gh_pt2_old_parity (%s): %d cases, %d mismatches; %s\n", brainDir, n, bad,
                cov ? cov : "");
         if (bad > 0) {
             fprintf(stderr, "FAIL first mismatch: %s\n", first ? first : "");
@@ -98,7 +100,7 @@ static int pt2p_run(const char *brainDir) {
 /* ── The shadow's shell walk against the engine's shell ─────────────────
  * Andrew, Nov 18: the rays must follow the engine's shell exactly. For
  * every ring point round a pill (and round the pills next to it), the
- * walk gh_pt2.c uses (naPt2TestWalk) must give the same angle, the same
+ * walk gh_pt2_old.c uses (naPt2OldTestWalk) must give the same angle, the same
  * squares on the same steps and the same tank-hit step as the engine's
  * own shell code: utilCalcAngle (pillsTargetTank), shellSpawnPos,
  * shellLifeTicks, shellAdvance1Tick (shellsUpdate) and the circle of
@@ -265,7 +267,7 @@ static int pt2e_run(const double sh[5], const char *name) {
                     Pt2EWalk eng, gh;
                     pt2e_engine(0, sh, (float)sh[4], px, py, tx, ty, &eng);
                     double ang;
-                    gh.n = naPt2TestWalk(0, sh, px, py, tx, ty, &ang, gh.mx, gh.my, gh.t, PT2E_MAX, &gh.hit_t);
+                    gh.n = naPt2OldTestWalk(0, sh, px, py, tx, ty, &ang, gh.mx, gh.my, gh.t, PT2E_MAX, &gh.hit_t);
                     gh.angle = (float)ang;
                     rays++;
                     int same = ang == (double)eng.angle && gh.n == eng.n && gh.hit_t == eng.hit_t;
@@ -318,7 +320,7 @@ static int pt2e_run(const double sh[5], const char *name) {
                     /* our shell from the tank point at the pill (tank_shot) */
                     Pt2EWalk te, tg;
                     pt2e_engine(1, sh, 7.0f, tx, ty, px, py, &te);
-                    tg.n = naPt2TestWalk(1, sh, tx, ty, px, py, &ang, tg.mx, tg.my, tg.t, PT2E_MAX, NULL);
+                    tg.n = naPt2OldTestWalk(1, sh, tx, ty, px, py, &ang, tg.mx, tg.my, tg.t, PT2E_MAX, NULL);
                     shots++;
                     int ts = tg.n == te.n;
                     for (int k = 0; ts && k < tg.n && k < PT2E_MAX; k++)
@@ -369,7 +371,7 @@ static int pt2e_run(const double sh[5], const char *name) {
         }
     }
     brainPathfinderDestroy(pf);
-    printf("gh_pt2_engine (%s): %d pill rays: walk differs %d, shot sim (angle) differs %d, "
+    printf("gh_pt2_old_engine (%s): %d pill rays: walk differs %d, shot sim (angle) differs %d, "
            "shot sim (target) differs %d, with tanks differs %d of %d; %d tank shots: angle differs %d "
            "(report only; squares differ in %d of them), walk differs %d, shot sim differs %d (sight 14 and 13), "
            "with tanks differs %d of %d\n",
@@ -380,7 +382,7 @@ static int pt2e_run(const double sh[5], const char *name) {
            old_psim, rays, old_pwt, pwt, old_tsim, twt, old_twt, twt);
     if (first[0]) printf("  first: %s\n", first);
     if (bad_walk || bad_sim || bad_psim || bad_pwt || bad_twalk || bad_tsim || bad_twt) {
-        fprintf(stderr, "FAIL gh_pt2_engine (%s): a shell walk is not the engine's shell\n", name);
+        fprintf(stderr, "FAIL gh_pt2_old_engine (%s): a shell walk is not the engine's shell\n", name);
         return 1;
     }
     return 0;
@@ -392,7 +394,7 @@ static int pt2e_all(void) {
     static const double tuned[5]   = { 40, 3, 7, 128, 10.25 };
     static const double slow[5]    = { 24, 6, 9, 96, 6.5 };
 #ifdef BOLO_LEGACY_SQUARE_COLLISION
-    printf("gh_pt2_engine: built with BOLO_LEGACY_SQUARE_COLLISION (128 box hit zone)\n");
+    printf("gh_pt2_old_engine: built with BOLO_LEGACY_SQUARE_COLLISION (128 box hit zone)\n");
 #endif
     int rc = pt2e_run(classic, "classic");
     rc |= pt2e_run(tuned, "speed 40 add 3 life 7 r 128 pill length 10.25");
@@ -400,9 +402,58 @@ static int pt2e_all(void) {
     return rc;
 }
 
-int run_gh_pt2_parity(void) {
+int run_gh_pt2_old_parity(void) {
     int rc = pt2e_all();
     rc |= pt2p_run(WB_REPO_ROOT_DIR "/brains/GoalHunter");
     rc |= pt2p_run(WB_REPO_ROOT_DIR "/brains/GoalHunter/opt");
+    return rc;
+}
+
+/* gh_pt2_bench: a speed check of the evaluator on recorded inputs (no pass
+ * or fail of its own). It runs only when WB_PT2_BENCH names a Lua script
+ * (tests/unit/pt2_bench.lua); else it does nothing. WB_PT2_BENCH_BRAIN is
+ * the brain folder (default brains/GoalHunter) and WB_PT2_BENCH_ARGS is
+ * handed to the script as the global PT2_BENCH_ARGS. The script returns
+ * 0 when it ran. */
+/* bench_clock_us(): a wall clock in microseconds for the script (the
+ * test state has no ffi). */
+static int pt2b_clock_us(lua_State *L) {
+    struct timespec ts;
+    timespec_get(&ts, TIME_UTC);
+    lua_pushnumber(L, (double)ts.tv_sec * 1e6 + (double)ts.tv_nsec / 1e3);
+    return 1;
+}
+
+int run_gh_pt2_bench(void) {
+    const char *script = getenv("WB_PT2_BENCH");
+    if (!script || !script[0]) {
+        printf("gh_pt2_bench: WB_PT2_BENCH is not set: skipped\n");
+        return 0;
+    }
+    const char *brainDir = getenv("WB_PT2_BENCH_BRAIN");
+    if (!brainDir || !brainDir[0]) brainDir = WB_REPO_ROOT_DIR "/brains/GoalHunter";
+    const char *args = getenv("WB_PT2_BENCH_ARGS");
+    lua_State *L = luaL_newstate();
+    UT_ASSERT(L != NULL);
+    luaL_openlibs(L);
+    lua_pushboolean(L, 0); lua_setglobal(L, "BRAIN_DEBUG_MODE");
+    lua_pushboolean(L, 0); lua_setglobal(L, "_PRINT2_ENABLED");
+    lua_pushstring(L, brainDir); lua_setglobal(L, "BRAIN_DIR");
+    lua_pushstring(L, args ? args : ""); lua_setglobal(L, "PT2_BENCH_ARGS");
+    lua_pushcfunction(L, pt2b_clock_us); lua_setglobal(L, "bench_clock_us");
+    naPt2OldRegister(L);
+    naPt2V2Register(L);
+    lua_getglobal(L, "package");
+    lua_pushfstring(L, "%s/?.lua;%s/?/init.lua", brainDir, brainDir);
+    lua_setfield(L, -2, "path");
+    lua_pop(L, 1);
+    int rc = 0;
+    if (luaL_loadfile(L, script) != 0 || lua_pcall(L, 0, 1, 0) != 0) {
+        fprintf(stderr, "FAIL gh_pt2_bench: %s\n", lua_tostring(L, -1));
+        rc = 1;
+    } else if (lua_tointeger(L, -1) != 0) {
+        rc = 1;
+    }
+    lua_close(L);
     return rc;
 }

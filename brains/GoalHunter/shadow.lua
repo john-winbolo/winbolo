@@ -115,7 +115,7 @@ end
 -- Returns out, n_points. For tests and the BrainTest ray layer.
 -- env (optional): the shadow env. With C.SHELL_MODEL_RULES_ALL on, its live
 -- shell rules (env.shell_speed, shell_start_add, shell_life, as
--- pilltake_v2.live_shell sets them) start and move the shell, the same as
+-- pilltake_v2_old.live_shell sets them) start and move the shell, the same as
 -- M.cast; a rule that is nil stays classic. Off, or no env: always classic.
 function M.shell_points(ox, oy, angle, len, out, env)
   out = out or {}
@@ -148,7 +148,7 @@ end
 --   env.T_BUILDING, T_HALFBUILD, T_BOAT, T_FOREST
 --   env.wall_shots, half_wall_shots, boat_shots, forest_transparent
 --   env.shell_speed, shell_start_add, shell_life, tank_hit_r (optional):
---     the live rules (pilltake_v2 sets them from info.rules), else the
+--     the live rules (pilltake_v2_old sets them from info.rules), else the
 --     classic M.SHELL_SPEED ... M.TANK_HIT_RADIUS
 -- extra: nil or { [sq] = shots } planned blockers (walls or dropped pills).
 --
@@ -260,7 +260,7 @@ end
 --   why ("wall", "pill", "base", "planned", "boat", "tank", "short"),
 --   list of squares crossed before the target square (the shot lane).
 -- env.base_stops(mx, my) -> true when a base there stops a tank shell.
--- PT2_TANKSHOT_BLOCKERS (pilltake_v2 M.tank_blockers sets them):
+-- PT2_TANKSHOT_BLOCKERS (pilltake_v2_old M.tank_blockers sets them):
 --   env.ts_boats   a boat square stops the shell, as in the engine
 --   env.ts_tanks   flat list { x1, y1, x2, y2, ... } of the other tanks this
 --                  bot sees, where they are now. The engine tests every
@@ -268,8 +268,15 @@ end
 --                  on the square and before the terrain, on its hit circle
 --                  (env.tank_hit_r); a team mate's tank stops it too.
 function M.tank_shot(env, ox, oy, ax, ay, tmx, tmy, extra, lane)
+  return M.tank_shot_angle(env, ox, oy, M.tank_angle(ox, oy, ax, ay), tmx, tmy, extra, lane)
+end
+
+-- The same shot at gun angle angle (brad, float; the engine fires at the
+-- float tank angle). The clear-lane width test (pilltake_v2 aim_wide,
+-- C.BLOCKER_MIN_LANE_BRAD) walks its side angles here.
+function M.tank_shot_angle(env, ox, oy, angle, tmx, tmy, extra, lane)
   lane = lane or {}
-  local angle = M.tank_angle(ox, oy, ax, ay)
+  angle = f32(angle)
   local speed = env.shell_speed or M.SHELL_SPEED
   local add = env.shell_start_add or M.SHELL_START_ADD
   local xa, ya = M.calc_distance(angle, speed)

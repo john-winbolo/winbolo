@@ -57,16 +57,11 @@ local LOCK_MAX_TICKS = 150
 local LPX = {}
 
 -- Pill reload ticks at `anger` (see the header).
+-- The map is pt2_start.pill_interval (shared with the pill take start
+-- check and attack.heat_hits_landed).
 local function pill_reload(anger, x)
-  local hits = require("attack").heat_hits_landed(anger)
-  local r = x.pill_attack_ticks or 100
-  local lo = x.pill_attack_min_ticks or 6
-  for _ = 1, hits do
-    r = floor(r / 2)
-  end
-  if r < lo then r = lo end
-  if r < 1 then r = 1 end
-  return r
+  return require("pt2_start").pill_interval(anger, C.PILL_ANGER_BUMP or 0.3333,
+    x.pill_attack_ticks, x.pill_attack_min_ticks, x.pill_angry_divisor)
 end
 M.pill_reload = pill_reload
 

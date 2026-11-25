@@ -1,6 +1,6 @@
 -- =========================================================================
 -- test_pt2_tiers.lua -- standalone unit tests (2026-11-16) for the pill
--- take v2 rank (pilltake_v2.lua):
+-- take v2 rank (pilltake_v2_old.lua):
 --   1. the rank order: safe, then chain length, then an allied pill in the
 --      cover above walls only, then leeway (up to PT2_LEEWAY_MIN), then the
 --      travel score;
@@ -25,7 +25,7 @@ local U   = require("util")
 local cpf = require("cpathfinder")
 local PC  = require("pill_cover")
 _G.print2 = _G.print2 or function() end
-local V2  = require("pilltake_v2")
+local V2  = require("pilltake_v2_old")
 
 local pass, fail = 0, 0
 local function check(name, cond, got)
@@ -93,6 +93,43 @@ for t = 1, 10 do
   check("tier " .. t .. " dbl_spread " .. sp, row and row.dbl_spread == sp, row and row.dbl_spread)
   check("tier " .. t .. " dbl_split = 2 x spread", row and row.dbl_split == 2 * sp, row and row.dbl_split)
   check("tier " .. t .. " no goal fields", row and row.dbl_goal == nil and row.dbl_margin == nil)
+end
+-- P2: the tier row's pt2_eval picks the evaluator (pt2_eval.lua). The
+-- values are Andrew's, approved Nov 23: 10-7 "v2", 6-1 "old".
+do
+  local E = require("pt2_eval")
+  local NEW, OLD = require("pilltake_v2"), require("pilltake_v2_old")
+  for t = 1, 10 do
+    local row = C.BRAIN_CAPACITY_LEVELS[t]
+    local want = (t >= 7) and "v2" or "old"
+    check("tier " .. t .. " pt2_eval " .. want, row and row.pt2_eval == want, row and row.pt2_eval)
+  end
+  local ev0, bt0 = C.PT2_EVALUATOR, C.PT2_EVAL_BY_TIER
+  C.PT2_EVALUATOR, C.PT2_EVAL_BY_TIER = "v2", true
+  E.use({ _capacity = C.BRAIN_CAPACITY_LEVELS[10] })
+  check("tier 10: v2", E.pick() == NEW and E.choice() == "v2", E.choice())
+  E.use({ _capacity = C.BRAIN_CAPACITY_LEVELS[6] })
+  check("tier 6: old wins over PT2_EVALUATOR v2", E.pick() == OLD and E.choice() == "old", E.choice())
+  check("tier 6: a field read comes from old", E.finish_ok == OLD.finish_ok, nil)
+  C.PT2_EVALUATOR = "old"
+  E.use({ _capacity = C.BRAIN_CAPACITY_LEVELS[8] })
+  check("tier 8: v2 wins over PT2_EVALUATOR old", E.pick() == NEW, E.choice())
+  E.use({ _capacity = { dbl_cache = 250 } })
+  check("a row with no pt2_eval: PT2_EVALUATOR", E.pick() == OLD, E.choice())
+  E.use(nil)
+  check("no state: PT2_EVALUATOR", E.pick() == OLD, E.choice())
+  C.PT2_EVAL_BY_TIER = false
+  E.use({ _capacity = C.BRAIN_CAPACITY_LEVELS[10] })
+  check("knob off: PT2_EVALUATOR at tier 10", E.pick() == OLD, E.choice())
+  -- a job keeps the module of its inp (inp._pt2_ev)
+  C.PT2_EVAL_BY_TIER = true
+  local called
+  local inp = { _pt2_ev = { evaluate_group = function() called = "kept"; return {} end } }
+  E.use({ _capacity = C.BRAIN_CAPACITY_LEVELS[1] })
+  E.evaluate_group(inp)
+  check("evaluate_group uses the inp's module", called == "kept", called)
+  E.use(nil)
+  C.PT2_EVALUATOR, C.PT2_EVAL_BY_TIER = ev0, bt0
 end
 do
   local D = require("pt2_dbl")
@@ -707,6 +744,27 @@ do
   check("pill_shots_clear knob on: our live pill on the line, blocked", clear_with(ours, true) == false)
   check("pill_shots_clear knob off: dead pill on the line, blocked", clear_with(dead, false) == false)
   cpf.simulate_shot = save_sim
+end
+
+-- -- pilltake_v2.better: the last tie-break (smaller angle, larger radius) --
+do
+  print("\n[v2 better: the last tie-break]")
+  local NV = require("pilltake_v2")
+  local function pt(deg, radius)
+    return { safe = true, kills = 1, score = 10, blk = 1, leeway = 8, depth = 0, deg = deg, radius = radius }
+  end
+  local a, b = pt(30, 7), pt(40, 7)
+  check("smaller angle wins (a, b)", NV.better(a, b, 8, 0) == true)
+  check("smaller angle wins (b, a)", NV.better(b, a, 8, 0) == false)
+  local c, d = pt(30, 8), pt(30, 7)
+  check("same angle: larger radius wins (c, d)", NV.better(c, d, 8, 0) == true)
+  check("same angle: larger radius wins (d, c)", NV.better(d, c, 8, 0) == false)
+  local e, f = pt(30, 7), pt(30, 7)
+  check("identical points: neither wins", NV.better(e, f, 8, 0) == false and NV.better(f, e, 8, 0) == false)
+  -- an earlier key still comes first: the lower score wins over the angle
+  local g, h = pt(40, 7), pt(30, 7)
+  g.score = 5
+  check("an earlier key comes before the angle", NV.better(g, h, 8, 0) == true and NV.better(h, g, 8, 0) == false)
 end
 
 print(string.format("\n%d passed, %d failed", pass, fail))

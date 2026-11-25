@@ -109,7 +109,8 @@ local function mk(opts)
              substate = opts.substate or "engage",
              _attack_start_tick = NOW - 50,
              _on_target_land = opts.land,
-             _on_target_land_tick = opts.land_tick or NOW },
+             _on_target_land_tick = opts.land_tick or NOW,
+             _last_fire_tick = opts.last_fire },
   }
   local info = { tankx = 100 * 256 + 128, tanky = 100 * 256 + 128,
                  trees = opts.trees or 10, man_status = C.LGM_INTANK,
@@ -310,12 +311,51 @@ do
   check("predict: T_kill = +14 + 71 = +85", qr and qr.t_kill == NOW + 85, qr and qr.t_kill)
   check("predict: wait:early (+65 < +87)", qr and qr.result == "wait:early", qr and qr.result)
 
-  -- Gun reloading: the first shot waits one full reload.
+  -- Gun reloading, last shot not known: the first shot waits one full reload.
   reset(true, true)
   st, w, inf = mk({ target_hp = 3, land = { NOW + 4 }, reloading = true })
   qr = QR.evaluate(st, w, inf, NOW)
   check("predict reloading: T_kill = +13 + 13 + 71 = +97",
         qr and qr.t_kill == NOW + 97, qr and qr.t_kill)
+
+  -- run_c9: gun reloading, our last shot 9 ticks ago: the reload has 4 ticks
+  -- left, so the first shot is at +4 (last + 13), not +13.
+  reset(true, true)
+  st, w, inf = mk({ target_hp = 3, land = { NOW + 4 }, reloading = true,
+                    last_fire = NOW - 9 })
+  qr = QR.evaluate(st, w, inf, NOW)
+  k = qr and qr.kill
+  check("predict reloading, fired at -9: first = +4", k and k.first == NOW + 4,
+        k and tostring(k.first))
+  check("predict reloading, fired at -9: T_kill = +4 + 13 + 71 = +88",
+        qr and qr.t_kill == NOW + 88, qr and qr.t_kill)
+
+  -- run_c9: the last shot is a full reload ago but the gun still shows
+  -- reloading (one tick late): the first shot is never before +1.
+  reset(true, true)
+  st, w, inf = mk({ target_hp = 3, land = { NOW + 4 }, reloading = true,
+                    last_fire = NOW - 20 })
+  qr = QR.evaluate(st, w, inf, NOW)
+  k = qr and qr.kill
+  check("predict reloading, fired at -20: first = +1", k and k.first == NOW + 1,
+        k and tostring(k.first))
+
+  -- run_c9: a last-shot tick from an older accounting pass is not used.
+  reset(true, true)
+  st, w, inf = mk({ target_hp = 3, land = { NOW + 4 }, reloading = true,
+                    last_fire = NOW - 9, land_tick = NOW - 1 })
+  qr = QR.evaluate(st, w, inf, NOW)
+  k = qr and qr.kill
+  check("predict reloading, stale accounting: first = +13",
+        k and k.first == NOW + 13, k and tostring(k.first))
+
+  -- run_c9: gun ready: the last shot does not matter, first at +1.
+  reset(true, true)
+  st, w, inf = mk({ target_hp = 3, land = { NOW + 4 }, last_fire = NOW - 2 })
+  qr = QR.evaluate(st, w, inf, NOW)
+  k = qr and qr.kill
+  check("predict ready, fired at -2: first = +1", k and k.first == NOW + 1,
+        k and tostring(k.first))
 
   -- The reload figure comes from the engine (info.reload_ticks).
   reset(true, true)
@@ -331,7 +371,17 @@ do
                  [8] = pill(100, 104, 0, "friendly", true) })
   qr = QR.evaluate(st, w, inf, NOW)
   check("predict near: T_kill = +1 + flight 15", qr and qr.t_kill == NOW + 16, qr and qr.t_kill)
-  check("predict near: send", qr and qr.result == "send", qr and qr.result)
+  -- The pill 3 tiles off fires at +1 and its shell reaches the tank tile
+  -- 15 ticks later (6 steps out at the fire tick): inside the tank-clear
+  -- 16 ticks, so the tank check holds him.
+  check("predict near: wait:tank (its next shell lands at +16)",
+        qr and qr.result == "wait:tank" and qr.tank and qr.tank.t == 16,
+        qr and (qr.result .. " " .. tostring(qr.tank and qr.tank.t) .. " fl=" .. tostring(qr.tank and qr.tank.flight) .. " last=" .. tostring(qr.tank and qr.tank.last)))
+  local W0 = C.QUICK_REPAIR_TANK_CLEAR_TICKS
+  C.QUICK_REPAIR_TANK_CLEAR_TICKS = 0
+  qr = QR.evaluate(st, w, inf, NOW)
+  C.QUICK_REPAIR_TANK_CLEAR_TICKS = W0
+  check("predict near, tank check off: send", qr and qr.result == "send", qr and qr.result)
 
   -- Predict knob off: in-flight shells short of hp -> nokill.
   reset(true, false)
@@ -422,6 +472,27 @@ if HAS_LOGS then
   QR.evaluate(st, w, inf, NOW)
   check("log: result changes, new line", #LOG == n1 + 1 and LOG[#LOG]:find("-> send", 1, true) ~= nil,
         LOG[#LOG])
+  -- run_c7: the blocker's death is a new line even when the result stands.
+  reset(true, true)
+  st, w, inf = mk({ blocker_hp = 5, land = { NOW + 80, NOW + 70 } })
+  QR.evaluate(st, w, inf, NOW)
+  n1 = #LOG
+  w.pills[8].health = 0
+  QR.evaluate(st, w, inf, NOW)
+  check("log: the blocker dies, new line (same result)",
+        #LOG == n1 + 1 and LOG[#LOG]:find("hp=0", 1, true) ~= nil, LOG[#LOG])
+  -- run_c7 (Andrew, Nov 24): a send on a PREDICTED kill says so. Target hp
+  -- 3, two of our shells in the air, the third one predicted.
+  reset(true, true)
+  st, w, inf = mk({ bx = 106, target_hp = 3, land = { NOW + 10, NOW + 20 } })
+  local _, cmd = run_pool(st, w, inf)
+  local sl
+  for i = 1, #LOG do if LOG[i]:find("^QUICK_REPAIR_SEND") then sl = LOG[i] end end
+  check("predicted kill: the builder is sent", cmd and cmd.x == 106 and cmd.y == 100,
+        st._quick_repair and st._quick_repair.result)
+  check("predicted kill: the send line names it",
+        sl and sl:find("kill=predict T_kill=", 1, true) ~= nil
+        and sl:find("(predicted kill: target still alive)", 1, true) ~= nil, sl)
   _G.BRAIN_DEBUG_MODE = nil
 end
 

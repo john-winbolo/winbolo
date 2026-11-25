@@ -841,6 +841,10 @@ void brainCorePushInfo(lua_State *L, const BrainInfo *info) {
        *   owner — the firing player's number, NEUTRAL (0xFF) for a pillbox;
        *   life  — remaining flight in ENGINE ticks (shells.h `length`); at
        *           SHELL_SPEED 32 WU/tick that is 32 x life WU of flight left.
+       * TODO (Andrew, Nov 24): a human cannot see who fired a shell. Consider
+       * hiding `owner` from the regular "allow bots" AI level (aiYes) and
+       * giving it only to the levels that are told to give bots an
+       * advantage. Kept for now.
        * Written for every object (0 on non-shells) because the element tables
        * are reused across ticks — a stale `life` on a slot that now holds a
        * tank would be a lie. */

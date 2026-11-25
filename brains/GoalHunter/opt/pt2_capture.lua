@@ -9,7 +9,7 @@
 --   CASES[#CASES + 1] = { ... }
 -- replay(case) builds an inp that answers from the record only (an
 -- unrecorded question is an error), so the Lua and the C copy can be run
--- on it without the game (test_pt2_c_parity.lua).
+-- on it without the game (test_pt2_old_c_parity.lua).
 --
 -- The game result does not change: the wrapped Lua copy runs, and every
 -- side effect (U.ttype's change list, env.omx / env.omy) still happens.
@@ -24,6 +24,29 @@ local function num(x)
   if x == math.huge then return "math.huge" end
   if x == -math.huge then return "-math.huge" end
   return fmt("%.17g", x)
+end
+
+-- score_fn (deg, mx, my, cx, cy) and banned (deg): the same answers kept on
+-- number keys (mx, my are floor(cx), floor(cy), so deg, cx, cy name a call)
+local function memo_score(f)
+  local memo = {}
+  return function(deg, mx, my, cx, cy)
+    local a = memo[deg]
+    if not a then a = {}; memo[deg] = a end
+    local b = a[cx]
+    if not b then b = {}; a[cx] = b end
+    local v = b[cy]
+    if v == nil then v = f(deg, mx, my, cx, cy); b[cy] = v end
+    return v
+  end
+end
+local function memo_banned(f)
+  local memo = {}
+  return function(deg)
+    local v = memo[deg]
+    if v == nil then v = f(deg) and true or false; memo[deg] = v end
+    return v
+  end
 end
 
 local function key(...)
@@ -168,6 +191,8 @@ function M.evaluate(V2, inp, path)
     if tv == "number" or tv == "boolean" or tv == "string" then case.inp[k] = v end
   end
   case.inp.radii_offsets = inp.radii_offsets
+  -- PT2_FARTHEST_RING: the absolute ring radii
+  case.inp.ring_radii = inp.ring_radii
   for _, k in ipairs(ENV_FIELDS) do case.env[k] = env[k] end
   for k, p in ipairs(plist) do
     local q = {}
@@ -240,8 +265,10 @@ function M.replay(case, V2)
     inp[name] = function(a, b) return look(tab, name, key(a, b)) end
   end
   inp.lgm_reach = function(omx, omy, mx, my) return look(rec.lgm_reach, "lgm_reach", key(omx, omy, mx, my)) end
-  inp.score_fn = function(deg, mx, my, cx, cy) return look(rec.score_fn, "score_fn", key(deg, mx, my, cx, cy)) end
-  if next(rec.banned) then inp.banned = function(deg) return look(rec.banned, "banned", key(deg)) end end
+  inp.score_fn = memo_score(function(deg, mx, my, cx, cy)
+    return look(rec.score_fn, "score_fn", key(deg, mx, my, cx, cy))
+  end)
+  if next(rec.banned) then inp.banned = memo_banned(function(deg) return look(rec.banned, "banned", key(deg)) end) end
   if next(rec.anger_of) then
     inp.anger_of = function(p)
       local v = look(rec.anger_of, "anger_of", pidx[p])

@@ -66,11 +66,16 @@ local BLITZ_EARLY_GO_ENROUTE_SUBS = {
 -- -1=RIGHT-sample) and goal._swerve_viz for the HUD overlay.
 -- Called from BOTH the legacy aim->swerve path AND PPT shoot_pill->
 -- swerve so PPT doesn't fall back to a random direction.
-local function compute_best_swerve_dir(goal, world, pmx, pmy, tmx, tmy)
+-- swerve_side_scores: the two sides' scores, with the hazards apart from
+-- the cover (C.SWERVE_AVOID_REPAIR_SIDE reads a side as terrain-blocked when
+-- it has a hazard: a -10 out-of-range tile on its sample line, or the deep-
+-- water retreat penalty). The sums are exactly the old scores. nil when the
+-- tank sits on the pill. quick_repair.side_scores is this function.
+local function swerve_side_scores(world, pmx, pmy, tmx, tmy, is_ppt)
   local dx = pmx - tmx
   local dy = pmy - tmy
   local len = math.sqrt(dx * dx + dy * dy)
-  if len <= 0.01 then return end
+  if len <= 0.01 then return nil end
   local ux, uy = dx / len, dy / len
   local tcx, tcy = tmx + 0.5, tmy + 0.5
   local pcx, pcy = pmx + 0.5, pmy + 0.5
@@ -104,6 +109,7 @@ local function compute_best_swerve_dir(goal, world, pmx, pmy, tmx, tmy)
   end
   local function count_cover(fx0, fy0)
     local n = 0
+    local hz = 0
     U.line_walk(fx0, fy0, pcx, pcy, function(bx, by)
       if not U.in_map(bx, by) then return end
       local tt = U.ttype(bx, by)
@@ -132,23 +138,23 @@ local function compute_best_swerve_dir(goal, world, pmx, pmy, tmx, tmy)
         if tt == C.T_BUILDING or tt == C.T_HALFBUILD
            or tt == C.T_RIVER  or tt == C.T_DEEPSEA
            or tt == C.T_SWAMP  or tt == C.T_RUBBLE then
-          n = n - 10
+          n = n - 10; hz = hz + 1
         end
-        if friendly_pill then n = n - 10 end
-        if enemy_base then n = n - 10 end
+        if friendly_pill then n = n - 10; hz = hz + 1 end
+        if enemy_base then n = n - 10; hz = hz + 1 end
       end
     end)
-    return n
+    return n, hz
   end
 
-  local left_cover  = count_cover(lfx, lfy)
-  local right_cover = count_cover(rfx, rfy)
+  local left_cover,  left_hz  = count_cover(lfx, lfy)
+  local right_cover, right_hz = count_cover(rfx, rfy)
 
   -- Deep-water penalty on the swerve retreat path. The tank swerves
   -- perpendicular then retreats outward from standoff to the setup
   -- circle. Check each side's retreat line (from standoff radius to
   -- approach radius along the swerve direction) for deep water.
-  local standoff_r = goal._is_ppt and C.PPT_STANDOFF or C.ATTACK_PILL_STANDOFF
+  local standoff_r = is_ppt and C.PPT_STANDOFF or C.ATTACK_PILL_STANDOFF
   local setup_r    = standoff_r + C.ATTACK_APPROACH_OFFSET
   local DEEP_WATER_PENALTY = -50
   local function check_retreat_deepsea(perp_x, perp_y)
@@ -171,15 +177,30 @@ local function compute_best_swerve_dir(goal, world, pmx, pmy, tmx, tmy)
     return penalty
   end
 
-  left_cover  = left_cover  + check_retreat_deepsea(-uy, ux)
-  right_cover = right_cover + check_retreat_deepsea(uy, -ux)
+  local left_deep  = check_retreat_deepsea(-uy, ux)
+  local right_deep = check_retreat_deepsea(uy, -ux)
+  left_cover  = left_cover  + left_deep
+  right_cover = right_cover + right_deep
 
-  goal._best_swerve_dir = left_cover >= right_cover and 1 or -1
-  goal._swerve_viz = {
+  return {
     lfx = lfx, lfy = lfy, left_cover = left_cover,
     rfx = rfx, rfy = rfy, right_cover = right_cover,
-    chosen = goal._best_swerve_dir,
+    left_hazard  = left_hz > 0 or left_deep < 0,
+    right_hazard = right_hz > 0 or right_deep < 0,
     pcx = pcx, pcy = pcy,
+  }
+end
+QR.side_scores = swerve_side_scores
+
+local function compute_best_swerve_dir(goal, world, pmx, pmy, tmx, tmy)
+  local sc = swerve_side_scores(world, pmx, pmy, tmx, tmy, goal._is_ppt)
+  if not sc then return end
+  goal._best_swerve_dir = sc.left_cover >= sc.right_cover and 1 or -1
+  goal._swerve_viz = {
+    lfx = sc.lfx, lfy = sc.lfy, left_cover = sc.left_cover,
+    rfx = sc.rfx, rfy = sc.rfy, right_cover = sc.right_cover,
+    chosen = goal._best_swerve_dir,
+    pcx = sc.pcx, pcy = sc.pcy,
   }
 end
 
@@ -237,6 +258,18 @@ local function enter_swerve(goal, world, state, info, pmx, pmy, mode)
     compute_best_swerve_dir(goal, world, pmx, pmy, tmx, tmy)
   end
   goal._swerve_dir = goal._best_swerve_dir or ((now % 2 == 0) and 1 or -1)
+  -- C.SWERVE_AVOID_REPAIR_SIDE: the side committed at the quick repair's
+  -- send while that repair runs, else the one clean unblocked side when a
+  -- take blocker is damaged; nil keeps the cover pick
+  -- (quick_repair.swerve_repair_side, which logs SWERVE_REPAIR_SIDE). The
+  -- terrain is read fresh here, where the swerve starts.
+  if C.SWERVE_AVOID_REPAIR_SIDE then
+    local sc = swerve_side_scores(world, pmx, pmy, tmx, tmy, goal._is_ppt)
+    local haz = sc and { left = sc.left_hazard, right = sc.right_hazard } or nil
+    local d = QR.swerve_repair_side(state, world, info, goal, pmx, pmy, haz,
+                                    goal._swerve_dir, now)
+    if d then goal._swerve_dir = d end
+  end
   goal._engage_hits = nil
   -- Re-baseline the charge defensive-swerve counters so a charge RESUMED after
   -- this swerve starts fresh (no instant re-swerve from the old accumulated hits).
@@ -552,6 +585,115 @@ function M.current_blocker_tiles(state, world)
   return out or _EMPTY
 end
 
+-- PT2_BLOCKER_MARK (Nov 24, owner's yes: "if a bot is using a built pill as
+-- a blocker it needs to communicate that"). The take blocker TILES this bot
+-- broadcasts (pblk) and marks _in_use (init.lua), so reposition (ours and
+-- the allies') does not shoot a pill a take needs. The union of:
+--   * current_blocker_tiles: the attack_pill goal's own scan (v1 or v2);
+--   * the chain latch (state._take_blk): the last non-empty current set,
+--     kept while the goal is attack_pill / capture_pill on a chain pill (or
+--     no goal, for the replan tick) between the kills and captures of the
+--     same chain. It ends when every chain pill is ours, carried or gone,
+--     when an attack_pill on a pill outside the chain starts, or when any
+--     other goal starts (the take was dropped). When no chain pill is still
+--     alive (every kill is done) the latch tiles turn soft (see below): the
+--     blocker has no job, so it is not "utility" any more, but reposition
+--     still leaves it alone until the captures end (arena diag_n t=843).
+--     Arena c20 (Nov 24): a hard latch through the capture of the two dead
+--     pills kept our placed blocker "utility", so the pill portfolio saw
+--     util=2 > reserve=1 and the bot drove off to place the captured pill
+--     (beside_sw t=806, +740 ticks);
+--   * the pending plan: the best (lowest cost) live pool-6 row in
+--     state.cost_cache, when it is priced by a double-take shadow plan
+--     (entry._dbl.blk, pt2_dbl.fill_entry: the ally pills on its rays and
+--     the squares where it places a pill). This covers the ticks before
+--     the take is the goal (gap_w arena, Nov 24: reposition shot the
+--     take's ally blocker at brain t=15). A pending tile is a soft mark:
+--     it goes out on pblk and stops our reposition (pill._take_pend), but
+--     it does not set our own _in_use, so it does not change the pill
+--     portfolio roles (arena a3 carry_diag_sw t=351: a pending mark on the
+--     ally pill made util=2 and the bot placed its carried pill).
+-- false = current_blocker_tiles only. MAST: false.
+-- Returns a sorted list of packed tiles (my*256+mx), or the shared empty
+-- table, and a set of the tiles that only the pending plan gives (or nil).
+local function chain_state(world, ids)
+  local open, alive = false, false
+  for _, id in pairs(ids) do
+    local p = world.pills and world.pills[id]
+    if p and not p.in_tank and p.owner ~= "friendly" and p.owner ~= "allied" then
+      open = true
+      if (p.health or 0) > 0 then alive = true end
+    end
+  end
+  return open, alive
+end
+
+function M.take_blocker_tiles(state, world)
+  local cur = M.current_blocker_tiles(state, world)
+  if not C.PT2_BLOCKER_MARK then
+    state._take_blk = nil
+    return cur
+  end
+  local g = state.goal
+  local L = state._take_blk
+  if g and g.kind == "attack_pill" and g.target_id then
+    if #cur > 0 then
+      local ids = {}
+      local chain = g._pt2 and g._pt2.ids
+      if chain then for k, id in pairs(chain) do ids[k] = id end end
+      ids[#ids + 1] = g.target_id
+      local set = {}
+      for _, id in pairs(ids) do set[id] = true end
+      L = { ids = ids, set = set, tiles = cur }
+      state._take_blk = L
+    elseif L and not L.set[g.target_id] then
+      L = nil
+      state._take_blk = nil
+    end
+  end
+  local hard = L   -- latch tiles that still set _in_use
+  if L then
+    local open, alive = chain_state(world, L.ids)
+    local idle = not g or g.kind == "none"
+    local on_chain = g and (g.kind == "attack_pill" or g.kind == "capture_pill")
+      and g.target_id and L.set[g.target_id]
+    if not open or not (idle or on_chain) then
+      L = nil
+      state._take_blk = nil
+    end
+    hard = L and alive and L or nil
+  end
+  local pend
+  local best, bcost = nil, 1e29
+  for _, ce in pairs(state.cost_cache or _EMPTY) do
+    if ce._p == 6 and not ce._reject and ce.cost and ce.cost < bcost then
+      best, bcost = ce, ce.cost
+    end
+  end
+  if best and best._dbl and not best._dbl.skip then pend = best._dbl.blk end
+  if not L and not pend then return cur end
+  local seen, out = {}, {}
+  local function add(list)
+    if not list then return end
+    for _, ti in ipairs(list) do
+      if not seen[ti] then seen[ti] = true; out[#out + 1] = ti end
+    end
+  end
+  add(cur); add(hard and hard.tiles)
+  local soft
+  local function add_soft(list)
+    if not list then return end
+    for _, ti in ipairs(list) do
+      if not seen[ti] then soft = soft or {}; soft[ti] = true end
+    end
+    add(list)
+  end
+  add_soft(L and L.tiles); add_soft(pend)
+  if #out == 0 then return _EMPTY end
+  table.sort(out)
+  return out, soft
+end
+
 -- Shield WALL tiles this take is BUILDING, broadcast (bwl) ONLY while in
 -- build_walls so blitz soldiers route their shot AROUND them — a freshly built
 -- friendly wall blocks a soldier's shell exactly like an enemy one, and the wall
@@ -843,8 +985,7 @@ local function standoff_shot_obstacle(goal, pill, world)
     target_wx, target_wy = goal.aim_wx, goal.aim_wy
   elseif goal._shield_scan and goal._shield_scan.best then
     local w   = goal._shield_scan.best
-    local off = shield.AIM_OFFSETS_TILE_FIRE[w.best_aim_idx or 1]
-                or shield.AIM_OFFSETS_TILE_FIRE[1]
+    local off = shield.fire_aim(w.best_aim_idx or 1)
     target_wx = (bit.lshift(pmx, 8)) + math.floor(off[1] * 256)
     target_wy = (bit.lshift(pmy, 8)) + math.floor(off[2] * 256)
   else
@@ -2712,7 +2853,7 @@ local function clear_aim_from_world(ox, oy, pmx, pmy, world, prefer_idx, min_lan
     end
     return trees, awx, awy
   end
-  if prefer_idx and shield.AIM_OFFSETS_TILE_FIRE[prefer_idx] then
+  if prefer_idx and shield.AIM_OFFSETS_TILE_FIRE9[prefer_idx] then
     local trees, awx, awy = line(prefer_idx)
     if trees then return prefer_idx, awx, awy, trees end
   end
@@ -2771,7 +2912,7 @@ end
 -- charge / aim / engage read aim_wx/aim_wy through planned_aim_tile — set only
 -- half and the gun keeps turning onto the line we just rejected.
 local function set_goal_aim(goal, pmx, pmy, idx, awx, awy)
-  local off = shield.AIM_OFFSETS_TILE_FIRE[idx] or shield.AIM_OFFSETS_TILE_FIRE[1]
+  local off = shield.fire_aim(idx)
   goal.aim_idx = idx
   goal.aim_wx  = awx
   goal.aim_wy  = awy
@@ -3150,6 +3291,16 @@ local function blocked_line_replan(state, goal, pmx, pmy, now)
       state._pp_blacklist[pid] = now + (C.PP_BLACKLIST_TICKS or 500)
     end
     return true, bucket, tries
+  end
+  -- Pill take v2 retarget (pt2_attack finish): the take shoots another pill
+  -- of the goal pill's group. The ban stays on the pill shot (pmx, pmy), but
+  -- the new plan is for the goal pill again, as the first plan was. Left on
+  -- the shot pill, the next plan used that pill's v1 scan ring (green filter)
+  -- and dropped the good spots near the goal pill (c13 gap_e Nov 24: the tank
+  -- drove to the far side of the group).
+  local gt = goal._pt2 and goal._pt2.goal_target
+  if gt and gt.id ~= nil and (goal.mx ~= gt.mx or goal.my ~= gt.my) then
+    goal.mx, goal.my, goal.target_id = gt.mx, gt.my, gt.id
   end
   reset_to_plan_position(state, goal)
   return false, bucket, tries
@@ -4380,7 +4531,12 @@ local function update_shot_accounting(goal, world, now)
   local hit_tol_wu = 384        -- death within 1.5 tiles counts as a hit
   local hit2 = hit_tol_wu * hit_tol_wu
   local fired, on_target_fired, on_target_in_flight, misses = 0, 0, 0, 0
+  local last_fire_tick = nil
   for _, s in ipairs(shot_tracker.shots) do
+    -- The gun's reload runs from our newest shot, in this attack or not.
+    if not last_fire_tick or s.fire_tick > last_fire_tick then
+      last_fire_tick = s.fire_tick
+    end
     if s.fire_tick >= goal._attack_start_tick then
       -- Total shots fired during this attack (any direction).
       fired = fired + 1
@@ -4392,6 +4548,7 @@ local function update_shot_accounting(goal, world, now)
       -- clip the corner of an adjacent tile no longer counts.
       local sm = math.sqrt(s.step_x * s.step_x + s.step_y * s.step_y)
       local on_target = false
+      local real, real_k
       if sm > 0 then
         -- Project a target point far down the firing direction so
         -- simulate_shot traces the full trajectory's range. Round to
@@ -4400,14 +4557,32 @@ local function update_shot_accounting(goal, world, now)
         local far = 14 * 256
         local tx_w = math.floor(s.fire_fx + s.step_x * (far / sm) + 0.5)
         local ty_w = math.floor(s.fire_fy + s.step_y * (far / sm) + 0.5)
-        local path = cpf.simulate_shot(s.fire_fx, s.fire_fy, tx_w, ty_w,
-                                       cpf.SHOT_TANK, 14)
+        -- run_c7 (c6 beside_e t=675): a shell in flight that the tracker
+        -- sees this tick walks on from where the engine has it
+        -- (quick_repair.shell_real_walk). The sim shell from the tank at the
+        -- byte direction ended one square beside pill (125,118), at
+        -- (125,119), so the three shells that killed it were not counted.
+        local path = s.status == "in_flight" and s.real_tick == now
+                     and QR.shell_real_walk(s) or nil
+        real = path
+        -- run_c9 (diag_se t=698): a shell not matched this tick flies from
+        -- the tank at the exact (float) fire angle, as the engine fires it.
+        -- The byte direction counted a shell at 209.6 as on target, the kill
+        -- lock swerved on it, and it missed by one square.
+        if not path and s.tank_fx and s.tank_fy and s.angle and cpf.simulate_shot_angle then
+          path = cpf.simulate_shot_angle(s.tank_fx, s.tank_fy, s.angle, cpf.SHOT_TANK, 14)
+        end
+        if not path then
+          path = cpf.simulate_shot(s.fire_fx, s.fire_fy, tx_w, ty_w,
+                                   cpf.SHOT_TANK, 14)
+        end
         if path then
           local o_mx = math.floor(s.fire_fx / 256)
           local o_my = math.floor(s.fire_fy / 256)
           for _, t in ipairs(path) do
             if t.mx == pmx and t.my == pmy then
               on_target = true
+              if real then real_k = t.k end
               break
             end
             -- A tree, wall, or another live pillbox between the muzzle and
@@ -4439,9 +4614,11 @@ local function update_shot_accounting(goal, world, now)
         if s.status == "in_flight" then
           on_target_in_flight = on_target_in_flight + 1
           if land or kl_shells then
-            local lt = QR.shot_land_tick(s, pmx, pmy, now)
-            if lt and land then land[#land + 1] = lt end
-            if kl_shells then kl_shells[#kl_shells + 1] = { s = s, land = lt } end
+            local lt = real_k and (now + real_k) or QR.shot_land_tick(s, pmx, pmy, now)
+            -- run_c7: the sim says it reaches the pill; a graze still lands
+            local llt = lt or QR.shot_near_tick(s, pmx, pmy, now)
+            if llt and land then land[#land + 1] = llt end
+            if kl_shells then kl_shells[#kl_shells + 1] = { s = s, land = llt or lt } end
           end
         elseif s.status == "dead" then
           local ddx = s.dead_fx - pwx
@@ -4465,9 +4642,13 @@ local function update_shot_accounting(goal, world, now)
   goal._on_target_misses    = misses
   goal._on_target_land      = land
   goal._on_target_land_tick = now
+  -- run_c9: the tick of our newest shot, for the reload already counted down
+  -- in quick_repair.kill_tick.
+  goal._last_fire_tick      = last_fire_tick
   goal._on_target_shells      = kl_shells
   goal._on_target_shells_tick = kl_shells and now or nil
 end
+M._update_shot_accounting = update_shot_accounting   -- unit tests
 
 -- C.BLITZ_SETUP_16DIR (2026-11-03): the engine moves a tank in 16 directions
 -- only (tank.c: ang = utilGet16Dir(angle), then utilCalcDistance(ang)). The
@@ -6441,8 +6622,7 @@ local function update_attack_substate_body(goal, state, world, info)
           goal.approach_mx = U.mclamp(math.floor(goal.approach_fx))
           goal.approach_my = U.mclamp(math.floor(goal.approach_fy))
         end
-        local off = shield.AIM_OFFSETS_TILE_FIRE[w.best_aim_idx or 1]
-                    or shield.AIM_OFFSETS_TILE_FIRE[1]
+        local off = shield.fire_aim(w.best_aim_idx or 1)
         goal.aim_mx = pmx + off[1]
         goal.aim_my = pmy + off[2]
         -- The shield scan moved the standoff, so the spot scan's aim is stale.
@@ -6500,9 +6680,10 @@ local function update_attack_substate_body(goal, state, world, info)
           local w = goal._shield_scan.best
           local pots = w.best_aim_idx and w.aims[w.best_aim_idx]
                        and w.aims[w.best_aim_idx].potential_blockers
+          -- a planned pill drop (pt2_kind "pill") costs a pill's trees
           if pots and #pots > 0 then
             n_pots = #pots
-            trees_needed = n_pots * (C.WALL_SHIELD_BUILD_COST or 2)
+            trees_needed = require("pt2_attack").plan_trees(pots)
             if (info.trees or 0) < trees_needed then
               need_gather = true
             end
@@ -7477,8 +7658,7 @@ local function update_attack_substate_body(goal, state, world, info)
             -- charge/aim/engage to all use. (Done unconditionally here
             -- in case the standoff itself ends up being target_for_build
             -- — the original best-only path doesn't set aim_mx/my then.)
-            local off = shield.AIM_OFFSETS_TILE_FIRE[target_for_build.best_aim_idx]
-                        or shield.AIM_OFFSETS_TILE_FIRE[1]
+            local off = shield.fire_aim(target_for_build.best_aim_idx)
             goal.aim_mx = pmx + off[1]
             goal.aim_my = pmy + off[2]
             -- Same aim in world units, for the GO gate / steering / sanity check.
@@ -7503,7 +7683,6 @@ local function update_attack_substate_body(goal, state, world, info)
         -- if we're still short here, gathering would either be wasted
         -- (no nearby forest reachable from the standoff) or undoing
         -- the approach we just finished. Degrade to no-shield aim.
-        local cost_per_wall = C.WALL_SHIELD_BUILD_COST or 2
         local needs_build = pots and #pots > 0
         -- Wall-building is a PPT-only behavior. If the per-tick health
         -- check has demoted us to non-PPT (pill HP < threshold), the
@@ -7539,7 +7718,8 @@ local function update_attack_substate_body(goal, state, world, info)
           needs_build = false
           why_no_build = "charge now (attack ping) - no more blockers"
         end
-        local trees_needed = needs_build and (#pots * cost_per_wall) or 0
+        -- a planned pill drop (pt2_kind "pill") costs a pill's trees
+        local trees_needed = needs_build and require("pt2_attack").plan_trees(pots) or 0
         if needs_build and (info.trees or 0) < trees_needed then
           needs_build = false
           why_no_build = string.format("not enough trees (%d/%d for %d walls) at standoff",
@@ -7784,7 +7964,13 @@ local function update_attack_substate_body(goal, state, world, info)
       -- (140,127), "0 built" after 250 ticks, replan). Any pill counts here,
       -- whatever its owner or health: no wall can go on it. Its cover is
       -- counted below (5 * floor(health / 5) shots for a friendly pill).
-      if PC.slot_done(world, target.mx, target.my, tt) then
+      -- PT2_START_BUILDER_SAFE: a take wall dropped for the builder's
+      -- safety (pt2_attack.shield_wall_ok) is passed over too.
+      if goal._pt2 and require("pt2_attack").shield_wall_skipped(goal, target.mx, target.my) then
+        idx = idx + 1
+        goal._wall_build_last_progress = now
+        goal._wall_idx_started = nil
+      elseif PC.slot_done(world, target.mx, target.my, tt) then
         if tt ~= C.T_BUILDING and tt ~= C.T_HALFBUILD and tt ~= C.T_PILLBOX then
           local sp = PC.pill_on_square(world, target.mx, target.my)
         end
@@ -7985,8 +8171,18 @@ local function update_attack_substate_body(goal, state, world, info)
     -- queue ends or stalls with a wall missing, ban this angle and plan
     -- again (blocked_line_replan; SANITY_PILL_REPLANS_MAX gives up).
     if goal._pt2 and not goal._charge_now then
+      -- PT2_START_BUILDER_SAFE: the walls dropped for the builder's safety
+      -- are not missing; the take goes on with the rest
+      local PA = require("pt2_attack")
+      local live = list
+      if goal._pt2_shield_skip then
+        live = {}
+        for _, p in ipairs(list) do
+          if not PA.shield_wall_skipped(goal, p.mx, p.my) then live[#live + 1] = p end
+        end
+      end
       local missing = 0
-      for _, p in ipairs(list) do
+      for _, p in ipairs(live) do
         if PC.slot_cover_shots(world, p.mx, p.my, U.ttype(p.mx, p.my)) <= 0 then missing = missing + 1 end
       end
       built_enough, cover_enough = false, false
@@ -7994,6 +8190,10 @@ local function update_attack_substate_body(goal, state, world, info)
       if missing == 0 then
         if idx <= #list then
         end
+        idx = #list + 1
+      elseif PA.start_now_check(goal, world, info, now, live) then
+        -- PT2_START_WHILE_BUILDING: the armour holds the shells that get
+        -- through; the builder builds the rest while the take goes on
         idx = #list + 1
       elseif idx > #list or stalled then
         local abandon, bucket, tries = blocked_line_replan(state, goal, pmx, pmy, now)
@@ -8280,6 +8480,16 @@ local function update_attack_substate_body(goal, state, world, info)
     if goal._aim_locked then
       compute_best_swerve_dir(goal, world, pmx, pmy, tmx, tmy)
 
+      -- PT2_REPAIR_BLOCKER_FIRST (owner's yes, Nov 24): a damaged built
+      -- blocker pill of this take is repaired to full before the first
+      -- shot. The tank waits here, at the approach point, while the repair
+      -- goes out or is on its way (quick_repair.lua first_hold); aim_tick
+      -- is bumped so the aim timeout does not fire meanwhile.
+      if require("quick_repair").first_hold(state, world, info, now, goal) then
+        goal.aim_tick = now
+        return
+      end
+
       -- Anger cool-down gate: don't commit to the take while the pill
       -- is still hot. We wait in aim until anger drops to <= 0.65.
       -- aim_tick is bumped each waiting tick so the 3-second aim
@@ -8349,6 +8559,11 @@ local function update_attack_substate_body(goal, state, world, info)
         local unsafe = armour_unsafe_for_pill_take(info, pill and pill.health, blitz_2plus, goal)
         if unsafe then
           clear_attack_goal(state, "abort@charge_entry — " .. unsafe)
+          return
+        end
+        -- PT2_START_BUILDER_SAFE: no charge while the take's fire would
+        -- kill the builder out on a take wall; stay in aim, ask next tick.
+        if require("pt2_attack").builder_fire_hold(state, goal, world, info, now) then
           return
         end
         goal.substate = "charge"
@@ -8670,7 +8885,13 @@ local function update_attack_substate_body(goal, state, world, info)
         goal, goal._finetune_taps or 0, lane_err, CLEAR_TURN_IN_TAPS)
     end
 
-    if on_pill and _fine_clear then
+    if on_pill and _fine_clear
+       and require("pt2_attack").builder_fire_hold(state, goal, world, info, now) then
+      -- PT2_START_BUILDER_SAFE: the builder is out on a take wall and the
+      -- take's fire would get him killed (a pill shell on his trip). Hold
+      -- the verified aim; ask again next tick. The finetune clock waits too.
+      goal._finetune_start = (goal._finetune_start or now) + 1
+    elseif on_pill and _fine_clear then
       -- Lock the verified angle as the new aim point so shoot_pill's
       -- corner-correction tap (steering.lua's shoot_pill block) doesn't
       -- pull the angle back toward the original shield-scan corner —
@@ -9633,11 +9854,11 @@ end
 local HEAT_MAX_HITS = 4
 
 -- Hits already landed on a pill, inferred from world.lua's anger proxy.
+-- The map is pt2_start.anger_hits (shared with the pill take start check
+-- and pt2_kill_lock); C.PT2_START_ANGER_RISE picks the rule there.
 local function heat_hits_landed(anger)
-  local bump = C.PILL_ANGER_BUMP or 0.3333
-  if bump <= 0 then return 0 end
-  local n = math.floor((anger or 0) / bump + 0.5)
-  if n < 0 then n = 0 elseif n > HEAT_MAX_HITS then n = HEAT_MAX_HITS end
+  local n = require("pt2_start").anger_hits(anger, C.PILL_ANGER_BUMP or 0.3333)
+  if n > HEAT_MAX_HITS then n = HEAT_MAX_HITS end
   return n
 end
 

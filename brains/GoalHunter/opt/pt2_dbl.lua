@@ -151,7 +151,11 @@ local function make_inp(state, world, info, pill, now)
   local PA = require("pt2_attack")
   local no_builder = info.man_status == C.LGM_DEAD
   local npb = math.min(info.carried_pills or 0, C.PPT_PILL_BLOCKERS_MAX or 2)
-  return PA.build_inp(state, {}, info, world, pill, no_builder, npb, C.PPT_STANDOFF, now)
+  local inp = PA.build_inp(state, {}, info, world, pill, no_builder, npb, C.PPT_STANDOFF, now)
+  -- PT2_CHAINS_ONLY (S10): the entry counts only as a safe chain, so v2
+  -- plans no single take here (the old evaluator ignores the field)
+  if inp and inp.chains_only_runs then inp.chains_only = true end
+  return inp
 end
 
 -- Fill entry e from v2's group result.
@@ -166,7 +170,34 @@ local function fill_entry(e, res, inp, id)
     elseif s.kind == "pill" then e.pills = e.pills + 1 end
   end
   e.trees_need = e.walls * (C.WALL_SHIELD_BUILD_COST or 2)
-  -- the chain's pills, the target first
+  -- PT2_BLOCKER_MARK: the plan's blocker pill squares (packed my*256+mx),
+  -- as to_scan_result reads them: an ally pill on a ray that reaches the
+  -- tank, and a square where the plan places a pill. attack.take_blocker_tiles
+  -- marks them while this plan prices the best pool-6 row.
+  local blk, seen = nil, {}
+  for _, r in ipairs(b.rays or {}) do
+    if r.hit == "tank" then
+      for k = 1, r.n_block or 0 do
+        local bl = r.block[k]
+        if bl.kind == "ally_pill" and not seen[bl.sq] then
+          seen[bl.sq] = true
+          blk = blk or {}
+          blk[#blk + 1] = bl.sq
+        end
+      end
+    end
+  end
+  for _, s in ipairs(b.plan or {}) do
+    local sq = s.kind == "pill" and s.mx and s.my and (s.my * 256 + s.mx)
+    if sq and not seen[sq] then
+      seen[sq] = true
+      blk = blk or {}
+      blk[#blk + 1] = sq
+    end
+  end
+  e.blk = blk
+  -- the chain's pills, the target first (an unsafe chain too: the entry
+  -- goes stale when one of them changes)
   local ids = inp.ids or {}
   for _, p in ipairs(b.chain or {}) do
     local pid = ids[p]
@@ -179,12 +210,13 @@ local function fill_entry(e, res, inp, id)
   end
   return e
 end
+M._fill_entry = fill_entry
 
 -- The shadow run in one go. Returns the entry (always, a no-chain answer too).
 local function run(state, world, info, id, pill, now)
-  local V2 = require("pilltake_v2")
+  local V2 = require("pt2_eval")
   -- debug profile (C.PT2_PROF_LOG, PT2_DBL_PROF line): the parts of one run, in us
-  local G = BRAIN_DEBUG_MODE and C.PT2_PROF_LOG and rawget(_G, "gh_pt2")
+  local G = BRAIN_DEBUG_MODE and C.PT2_PROF_LOG and rawget(_G, "gh_pt2_old")
   local prof = G and G.prof_take and {}
   if prof then G.prof(true); G.prof_take() end
   local t0 = prof and clock_us()
@@ -207,7 +239,7 @@ end
 -- Part 1 builds the inputs (a snapshot: the pill list, our tank, armour,
 -- anger and banned angles at the start tick) and runs v2 on the target;
 -- each later part runs v2 with one more pill of the group as A
--- (pilltake_v2.group_step). One part = one whole v2 evaluate. The parts are
+-- (pilltake_v2_old.group_step). One part = one whole v2 evaluate. The parts are
 -- spread evenly over dbl_spread ticks (PT2_DBL_SPREAD_TICKS): part k of n
 -- (k from 0) is due on tick t0 + floor(k * spread / n). A due part also
 -- waits while this think so far plus its estimated cost would reach the
@@ -298,7 +330,7 @@ M._part_due = part_due
 
 -- Run one part of the job. Stores the entry when the job is done.
 local function job_part(s, state, job, now)
-  local V2 = require("pilltake_v2")
+  local V2 = require("pt2_eval")
   local t0 = clock_us()
   local ok, done = pcall(V2.group_step, job.g)
   local us = clock_us() - t0
@@ -356,7 +388,7 @@ end
 -- PT2_DBL_SPLIT: open a job on pill id and run its first part. Returns the
 -- entry when the job is done at once, else nil.
 local function start_job(s, state, world, info, id, pill, now)
-  local V2 = require("pilltake_v2")
+  local V2 = require("pt2_eval")
   local t0 = clock_us()
   local inp = make_inp(state, world, info, pill, now)
   local e = new_entry(info, id, pill, now)

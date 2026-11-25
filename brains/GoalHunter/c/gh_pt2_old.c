@@ -16,11 +16,11 @@
  */
 
 /*
- * gh_pt2.c -- pill take v2 evaluator in C (pilltake_v2.lua + shadow.lua).
+ * gh_pt2_old.c -- pill take v2 evaluator in C (pilltake_v2_old.lua + shadow.lua).
  *
- * This is a line-by-line port of pilltake_v2.lua M.evaluate_lua and the
+ * This is a line-by-line port of pilltake_v2_old.lua M.evaluate_lua and the
  * shadow.lua ray walks it uses. The Lua stays the reference: the parity
- * test (tests/unit/test_gh_pt2_parity.c) runs both on the same inputs and
+ * test (tests/unit/test_gh_pt2_old_parity.c) runs both on the same inputs and
  * compares every field of the result.
  *
  * Rules the port keeps, so the result is the same as the Lua's:
@@ -47,7 +47,7 @@
  *     are one table in the result here too.
  */
 
-#include "gh_pt2.h"
+#include "gh_pt2_old.h"
 
 #include <lauxlib.h>
 #include <math.h>
@@ -143,7 +143,7 @@ typedef struct {
     Pill    **pills;      /* 1-based; each Pill is in the arena, so a
                              * Pill pointer stays valid while the list grows */
     int       npills, cap_pills;
-    /* gh_pt2.prof(true): time and count each part (debug profile only;
+    /* gh_pt2_old.prof(true): time and count each part (debug profile only;
      * the result does not change). Indexed by the stack slot of the
      * callback (S_TTYPE ...) or by a P_* part below. */
     int       prof;
@@ -153,8 +153,8 @@ typedef struct {
     int       cg_n, tg_n;
     double    cg_par[5];         /* the shell numbers it was made with */
     int       cg_par_set;
-    int       cg_off;            /* gh_pt2.table(false): every ray walks */
-    int       cg_check;          /* gh_pt2.table_check(true): each table ray
+    int       cg_off;            /* gh_pt2_old.table(false): every ray walks */
+    int       cg_check;          /* gh_pt2_old.table_check(true): each table ray
                                   * is checked against the walk (tests) */
     double    cg_checked, cg_bad;
     char      cg_first[160];
@@ -181,7 +181,7 @@ static void *ar_alloc(lua_State *L, Arena *a, size_t n) {
         }
         size_t cap = n > (size_t)(1u << 20) ? n : (size_t)(1u << 20);
         Chunk *nc = (Chunk *)malloc(sizeof(Chunk) + cap);
-        if (!nc) { luaL_error(L, "gh_pt2: out of memory"); return NULL; }
+        if (!nc) { luaL_error(L, "gh_pt2_old: out of memory"); return NULL; }
         nc->next = NULL; nc->used = 0; nc->cap = cap;
         if (c) c->next = nc; else a->head = nc;
         a->cur = nc;
@@ -340,6 +340,8 @@ typedef struct {
     double radius, angle_step, approach_offset, num_pill_blockers, pill_drop_shots;
     double wall_shots, build_max, build_cost, bar_single, bar_chain, bar_other;
     int    chains, link_covers, leeway_on, own_pill_rank, orth_only, aim_nudge, keep_all;
+    int    link_clear_front;   /* PT2_LINK_CLEAR_FRONT */
+    double link_cut_min_shots; /* PT2_LINK_CUT_MIN_SHOTS (0 = any cover cuts) */
     double max_chain, leeway_ring_wu, leeway_top, search_top, pill_range, range_margin;
     double blocker_min_dist, nudge_step_wu, nudge_max_steps;
     int    has_leeway_min; double leeway_min;
@@ -376,6 +378,13 @@ typedef struct {
     int    no_builder;
     double st_r[4 * PT2_STAY_MAX]; int st_n;   /* x1, y1, x2, y2; 0 = none */
 } Ev;
+
+/* PT2_LINK_CLEAR_FRONT with PT2_LINK_CUT_MIN_SHOTS (E2 thin cover): does the
+   cover in front of a link (front, in shots) cut it? Any cover when the knob
+   is 0, else at least that many shots (pilltake_v2_old.lua M.link_cut). */
+static int link_cut(const Ev *e, double front) {
+    return front > 0 && front >= e->link_cut_min_shots;
+}
 
 static double NB[8][2];
 static int    s_nb_ready = 0;
@@ -507,7 +516,7 @@ static double ttype(Ev *e, double mx, double my);
 static int pill_on(Ev *e, double mx, double my);
 
 /* The four square tests. With inp.c_std (PT2_C_STANDABLE) each one is done
- * here, as pilltake_v2.world_inp and util.lua do it:
+ * here, as pilltake_v2_old.world_inp and util.lua do it:
  *   in_map    U.in_map: 0 <= mx, my <= 255
  *   stay_in   U.stay_in: no rect, or inside one (inclusive)
  *   standable (cost[tt] or 9999) < 9999, not water, no pill on it (the
@@ -578,7 +587,7 @@ static int pill_index(Ev *e, int idx) {
     if (c->npills + 1 >= c->cap_pills) {
         int nc = c->cap_pills ? c->cap_pills * 2 : 64;
         Pill **np = (Pill **)realloc(c->pills, sizeof(Pill *) * (size_t)nc);
-        if (!np) { luaL_error(L, "gh_pt2: out of memory"); return 0; }
+        if (!np) { luaL_error(L, "gh_pt2_old: out of memory"); return 0; }
         c->pills = np; c->cap_pills = nc;
     }
     int k = ++c->npills;
@@ -875,7 +884,7 @@ static Ray *cast_walk(Ev *e, double sx, double sy, double tx, double ty, double 
             last_sq = sq;
         }
     }
-    if (nsq > PT2_MAX_T || nblk > PT2_MAX_T) luaL_error(e->L, "gh_pt2: ray too long");
+    if (nsq > PT2_MAX_T || nblk > PT2_MAX_T) luaL_error(e->L, "gh_pt2_old: ray too long");
     res->tank = tank; res->t = hit_t;
     res->link = link; res->link_t = link_t;
     res->cover = cover; res->front = front;
@@ -969,7 +978,7 @@ static int tank_shot_walk(Ev *e, double ox, double oy, double ax, double ay, dou
         }
     }
     if (why == TS_OK && lane_out) {
-        if (nl > PT2_MAX_T) luaL_error(e->L, "gh_pt2: lane too long");
+        if (nl > PT2_MAX_T) luaL_error(e->L, "gh_pt2_old: lane too long");
         Lane *l = NEW(e, Lane);
         l->n = nl; l->memo = 0;
         l->v = NEWN(e, int64_t, nl);
@@ -1470,6 +1479,9 @@ static Rec *eval_point(Ev *e, double px, double py, Extra *extra, int aim_fixed,
             Ray *r = NULL;
             for (int i = 0; i < T->n; i++) if (T->v[i] == cur) r = rays->v[i];
             int nxt = r ? r->link : 0;
+            /* PT2_LINK_CLEAR_FRONT: a blocker in front of the link ends the
+               chain here (pilltake_v2_old.lua eval_point) */
+            if (nxt && e->link_clear_front && link_cut(e, r->front)) nxt = 0;
             if (!nxt || in_chain(chain, nxt) || chain_skip(e, nxt)) break;
             plist_push(e, chain, nxt);
             chain_mode = 1;
@@ -1545,7 +1557,7 @@ static Aims *clear_aims_of(Ev *e, Rec *rec) {
                               A->my * 256 + s_aims[a - 1][1], A->mx, A->my,
                               (rec->flags & RF_EXTRA_IN) ? rec->extra_in : NULL, &ln));
             if (w == TS_OK) {
-                if (rec->clear->n >= PT2_NAIMS) luaL_error(e->L, "gh_pt2: too many aims");
+                if (rec->clear->n >= PT2_NAIMS) luaL_error(e->L, "gh_pt2_old: too many aims");
                 rec->clear->v[rec->clear->n++] = a;
                 Lanes *ls = rec->lanes;
                 int j;
@@ -1658,7 +1670,7 @@ static Rec *search_one(Ev *e, Rec *rec) {
         }
         if (!have_pick) break;
         if (ntried < 64) tried[ntried++] = picked;
-        else luaL_error(e->L, "gh_pt2: too many blockers");
+        else luaL_error(e->L, "gh_pt2_old: too many blockers");
         double shots; int kind_pill;
         if (pills_left > 0) {
             shots = e->pill_drop_shots; kind_pill = 1;
@@ -1759,7 +1771,8 @@ static int hold_safe(Ev *e, Rec *b, double hx, double hy, int *why_pill) {
             else bar = e->bar_other;
             Ray *r; PTIME(e, P_CAST, r = cast(e, sx, sy, hx, hy, e->pill_len, NULL, 0, &scratch));
             int linked = e->link_covers && ci && r->link != 0 && ci < b->chain->n
-                         && r->link == b->chain->v[ci];
+                         && r->link == b->chain->v[ci]
+                         && !(e->link_clear_front && link_cut(e, r->front));
             if (r->tank && !linked && r->cover < bar) { *why_pill = p; return 0; }
         }
     }
@@ -1878,7 +1891,7 @@ static void set_band(Ev *e, Rec **sc, int n) {
         int j;
         for (j = 0; j < nk; j++) if (ksafe[j] == r->safe && kkills[j] == r->kills) break;
         if (j == nk) {
-            if (nk >= 64) luaL_error(e->L, "gh_pt2: too many tiers");
+            if (nk >= 64) luaL_error(e->L, "gh_pt2_old: too many tiers");
             ksafe[nk] = r->safe; kkills[nk] = r->kills; kmin[nk] = r->score; nk++;
         } else if (r->score < kmin[j]) {
             kmin[j] = r->score;
@@ -2162,7 +2175,7 @@ static int std_list(lua_State *L, int t, const char *k, double *v, int max, int 
     return ok;
 }
 
-/* inp.c_std (pilltake_v2.world_inp, PT2_C_STANDABLE): the C does a test
+/* inp.c_std (pilltake_v2_old.world_inp, PT2_C_STANDABLE): the C does a test
  * itself only while inp's function is still the one c_std names, and only
  * when the tables have the shape read here. An inp without c_std (KEEL,
  * MAST, the recorded cases) calls the Lua functions. */
@@ -2261,10 +2274,10 @@ static int getbool(lua_State *L, int t, const char *k) {
 }
 
 static Pt2Ctx *get_ctx(lua_State *L) {
-    lua_getfield(L, LUA_REGISTRYINDEX, "gh_pt2_ctx");
+    lua_getfield(L, LUA_REGISTRYINDEX, "gh_pt2_old_ctx");
     Pt2Ctx *c = (Pt2Ctx *)lua_touserdata(L, -1);
     lua_pop(L, 1);
-    if (!c) luaL_error(L, "gh_pt2: no ctx");
+    if (!c) luaL_error(L, "gh_pt2_old: no ctx");
     return c;
 }
 
@@ -2293,7 +2306,7 @@ static int l_evaluate(lua_State *L) {
         c->po_val = (int *)calloc(PT2_MAP_SQ, sizeof(int));
         c->ba_stamp = (uint32_t *)calloc(PT2_MAP_SQ, sizeof(uint32_t));
         if (!c->tt_stamp || !c->tt_val || !c->po_stamp || !c->po_val || !c->ba_stamp)
-            return luaL_error(L, "gh_pt2: out of memory");
+            return luaL_error(L, "gh_pt2_old: out of memory");
     }
     c->gen++;
     if (c->gen == 0) {
@@ -2339,7 +2352,7 @@ static int l_evaluate(lua_State *L) {
     lua_getfield(L, S_ENV, "base_at");
     lua_getfield(L, S_V2, "pill_name");
     lua_getfield(L, S_ENV, "count_reads");
-    if (lua_gettop(L) != S_TOP) return luaL_error(L, "gh_pt2: stack");
+    if (lua_gettop(L) != S_TOP) return luaL_error(L, "gh_pt2_old: stack");
     std_setup(e);
     /* base_at: mark the keys once (a key off the map is looked up in the
      * table at each read, as before) */
@@ -2374,6 +2387,8 @@ static int l_evaluate(lua_State *L) {
     }
     e->chains = getbool(L, S_INP, "chains");
     e->link_covers = getbool(L, S_INP, "link_covers");
+    e->link_clear_front = getbool(L, S_INP, "link_clear_front");
+    e->link_cut_min_shots = getnum(L, S_INP, "link_cut_min_shots", 0, NULL);
     e->leeway_on = getbool(L, S_INP, "leeway_on");
     e->own_pill_rank = getbool(L, S_INP, "own_pill_rank");
     e->orth_only = getbool(L, S_INP, "orth_only");
@@ -2419,20 +2434,20 @@ static int l_evaluate(lua_State *L) {
             int isnil = lua_isnil(L, -1);
             if (!isnil) {
                 if (nn >= 2 * PT2_TS_MAX_TANKS)
-                    return luaL_error(L, "gh_pt2.evaluate: env.ts_tanks has over %d numbers", 2 * PT2_TS_MAX_TANKS);
+                    return luaL_error(L, "gh_pt2_old.evaluate: env.ts_tanks has over %d numbers", 2 * PT2_TS_MAX_TANKS);
                 e->ts_t[nn] = lua_tonumber(L, -1);
             }
             lua_pop(L, 1);
             if (isnil) break;
         }
-        if (nn % 2 != 0) return luaL_error(L, "gh_pt2.evaluate: env.ts_tanks has %d numbers", nn);
+        if (nn % 2 != 0) return luaL_error(L, "gh_pt2_old.evaluate: env.ts_tanks has %d numbers", nn);
         e->ts_nt = nn / 2;
     }
     lua_pop(L, 1);
 
     /* A */
     lua_getfield(L, S_INP, "A");
-    if (!lua_istable(L, -1)) return luaL_error(L, "gh_pt2.evaluate: inp.A is not a table");
+    if (!lua_istable(L, -1)) return luaL_error(L, "gh_pt2_old.evaluate: inp.A is not a table");
     e->A = pill_index(e, -1);
     lua_pop(L, 1);
 
@@ -2648,14 +2663,14 @@ static int l_evaluate(lua_State *L) {
     return 1;
 }
 
-/* gh_pt2.prof(on): turn the profile on or off (debug only). */
+/* gh_pt2_old.prof(on): turn the profile on or off (debug only). */
 static int l_prof(lua_State *L) {
     Pt2Ctx *c = get_ctx(L);
     c->prof = lua_toboolean(L, 1);
     return 0;
 }
 
-/* gh_pt2.prof_take(): { [part] = { n = calls, us = microseconds } } since
+/* gh_pt2_old.prof_take(): { [part] = { n = calls, us = microseconds } } since
  * the last take, then zero. Only parts with a call are listed. */
 static int l_prof_take(lua_State *L) {
     Pt2Ctx *c = get_ctx(L);
@@ -2671,7 +2686,7 @@ static int l_prof_take(lua_State *L) {
     return 1;
 }
 
-/* gh_pt2.table(on): false = every ray walks (no ray table), for the
+/* gh_pt2_old.table(on): false = every ray walks (no ray table), for the
  * profile and the tests; true (the default) = the table is used. */
 static int l_table(lua_State *L) {
     Pt2Ctx *c = get_ctx(L);
@@ -2679,7 +2694,7 @@ static int l_table(lua_State *L) {
     return 0;
 }
 
-/* gh_pt2.table_check(on): each ray read from the table is also walked and
+/* gh_pt2_old.table_check(on): each ray read from the table is also walked and
  * the two compared (tests only: the walk repeats the base_stops calls).
  * Returns checked, mismatches, the first mismatch ("" when none) since the
  * last call, then zeroes them. */
@@ -2706,7 +2721,7 @@ static int pt2_ctx_gc(lua_State *L) {
     return 0;
 }
 
-static const luaL_Reg gh_pt2_lib[] = {
+static const luaL_Reg gh_pt2_old_lib[] = {
     { "evaluate", l_evaluate },
     { "prof", l_prof },
     { "prof_take", l_prof_take },
@@ -2715,21 +2730,21 @@ static const luaL_Reg gh_pt2_lib[] = {
     { NULL, NULL }
 };
 
-void naPt2Register(lua_State *L) {
+void naPt2OldRegister(lua_State *L) {
     Pt2Ctx *c = (Pt2Ctx *)lua_newuserdata(L, sizeof(Pt2Ctx));
     memset(c, 0, sizeof(*c));
-    if (luaL_newmetatable(L, "gh_pt2_ctx_mt")) {
+    if (luaL_newmetatable(L, "gh_pt2_old_ctx_mt")) {
         lua_pushcfunction(L, pt2_ctx_gc);
         lua_setfield(L, -2, "__gc");
     }
     lua_setmetatable(L, -2);
-    lua_setfield(L, LUA_REGISTRYINDEX, "gh_pt2_ctx");
-    luaL_newlib(L, gh_pt2_lib);
-    lua_setglobal(L, "gh_pt2");
+    lua_setfield(L, LUA_REGISTRYINDEX, "gh_pt2_old_ctx");
+    luaL_newlib(L, gh_pt2_old_lib);
+    lua_setglobal(L, "gh_pt2_old");
 }
 
 /* ── Test hook ──────────────────────────────────────────────────────── */
-/* tests/unit/test_gh_pt2_parity.c checks the walk against the engine's
+/* tests/unit/test_gh_pt2_old_parity.c checks the walk against the engine's
  * shell (shells.c) with this. sh = { shell_speed, shell_start_add,
  * shell_life, tank_hit_r, pill_fire_len }. kind 0: a pill's shell from
  * (sx, sy) at (tx, ty), as cast walks it; kind 1: a tank's shot, as
@@ -2737,7 +2752,7 @@ void naPt2Register(lua_State *L) {
  * life (mx, my, the step it is entered on; at most max) and, for kind 0,
  * the first step inside the tank circle round (tx, ty) (0 = none).
  * Returns the number of squares. */
-int naPt2TestWalk(int kind, const double sh[5], double sx, double sy, double tx, double ty,
+int naPt2OldTestWalk(int kind, const double sh[5], double sx, double sy, double tx, double ty,
                   double *angle, int *mx, int *my, int *t, int max, int *hit_t) {
     Ev ev;
     memset(&ev, 0, sizeof(ev));

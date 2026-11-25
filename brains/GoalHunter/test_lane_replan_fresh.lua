@@ -151,5 +151,38 @@ do
   check("old spot cleared", spot_left(g) == nil, spot_left(g))
 end
 
+-- ── A pill take v2 retarget gets its goal pill back (c13 gap_e Nov 24) ────
+-- v2 adopted the plan for pill 7 (124,141), the shot pill of goal pill 6's
+-- group. The lane check fails: the ban is on pill 7, the new plan is for
+-- pill 6 again.
+print("blocked_line_replan on a retargeted take")
+do
+  local st = { tick = NOW, phase = "mid" }
+  local g = lane_fail_goal()
+  g.target_id, g.mx, g.my = 7, PMX - 2, PMY
+  g._pt2 = { goal_target = { mx = PMX, my = PMY, id = PID } }
+  local ab = A._blocked_line_replan(st, g, PMX - 2, PMY, NOW)
+  local b7 = st.banned_pill_angles and st.banned_pill_angles[PMY * 256 + PMX - 2] or {}
+  local b6 = st.banned_pill_angles and st.banned_pill_angles[PMY * 256 + PMX]
+  check("not abandoned", ab == false, ab)
+  check("ban on the shot pill", b7[325] ~= nil)
+  check("no ban on the goal pill", b6 == nil)
+  check("goal pill back (id, mx, my)", g.target_id == PID and g.mx == PMX and g.my == PMY,
+        tostring(g.target_id) .. " " .. tostring(g.mx))
+  -- not retargeted: unchanged
+  local g2 = lane_fail_goal()
+  g2._pt2 = { goal_target = { mx = PMX, my = PMY, id = PID } }
+  A._blocked_line_replan(st, g2, PMX, PMY, NOW)
+  check("no retarget: goal unchanged", g2.target_id == PID and g2.mx == PMX, g2.target_id)
+  -- abandon (third replan): the goal is left as it is
+  local g3 = lane_fail_goal()
+  g3.target_id, g3.mx, g3.my = 7, PMX - 2, PMY
+  g3._pt2 = { goal_target = { mx = PMX, my = PMY, id = PID } }
+  g3._sanity_pill_replans = (C.SANITY_PILL_REPLANS_MAX or 3) - 1
+  local ab3 = A._blocked_line_replan(st, g3, PMX - 2, PMY, NOW)
+  check("abandon: shot pill blacklisted as before", ab3 == true and st._pp_blacklist[7] ~= nil, ab3)
+  check("abandon: goal left on the shot pill", g3.target_id == 7, g3.target_id)
+end
+
 print(string.format("\n%d passed, %d failed", pass, fail))
 if fail > 0 then os.exit(1) end

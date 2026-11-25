@@ -473,6 +473,7 @@ local function shell_stops_on(world, mx, my)
   end
   return false
 end
+M.shell_stops_on = shell_stops_on
 
 -- The first forest or boat square a shell fired from (ox,oy) along the unit
 -- heading (hx,hy) stops on, out to max_t wu. The shell is stepped as the
@@ -1726,6 +1727,46 @@ local function fb_catches(world, T, last, ex, ey, kill2, pill_hit, hist, now)
   return nil
 end
 
+-- PT2_START_BUILDER_SAFE (pt2_attack.current_trip): where our own builder
+-- is on each tick t = 0 .. last from now, from what the brain sees of him,
+-- not from a walk estimate. The same model fire_block uses: his real
+-- arrival at his spot (the tracker below, kept every think), the
+-- rest of his stay there, then the engine's own walk home
+-- (cpf_lgm_walk_path_wu: straight at the tank, blocked squares slide or
+-- stop him). A walk that cannot be made leaves him where it ends.
+-- Returns out[t] = { x, y } in tiles or false (in the tank), and the model
+-- text; or nil when he is not out or the tracker has not seen him.
+function M.own_builder_timeline(state, info, now, last)
+  local fb = state and state._fire_block
+  local own = fb and fb.own
+  if not own or info.man_status ~= C.LGM_MOVING or not info.man_x or not info.man_y then
+    return nil
+  end
+  if not own.hist_tick or now - own.hist_tick > 1 then return nil end
+  local disp = state._lgm_dispatch
+  local rules = info.rules or {}
+  local dwell_full = rules.lgm_build_ticks or C.LGM_BUILD_TIME or 20
+  local tmx, tmy = bit.rshift(info.tankx or 0, 8), bit.rshift(info.tanky or 0, 8)
+  local model
+  if disp and not own.back and own.key == disp.tick then
+    if own.arrive then
+      model = fb_timeline(last, info.man_x, info.man_y, "dwell", disp.x, disp.y,
+                          dwell_full - (now - own.arrive), tmx, tmy)
+    else
+      model = fb_timeline(last, info.man_x, info.man_y, "go", disp.x, disp.y,
+                          dwell_full, tmx, tmy)
+    end
+  else
+    model = fb_timeline(last, info.man_x, info.man_y, "back", nil, nil, 0, tmx, tmy)
+  end
+  local out = {}
+  for t = 0, last do
+    local x, y = TL[t * 2 + 1], TL[t * 2 + 2]
+    out[t] = x and { x / 256, y / 256 } or false
+  end
+  return out, model
+end
+
 local metrics_mod = nil
 
 function M.fire_block(state, world, info, keys, taps, now)
@@ -1789,6 +1830,22 @@ function M.fire_block(state, world, info, keys, taps, now)
 
   if bit.band(keys or 0, KEY_SHOOT) == 0 and bit.band(taps or 0, KEY_SHOOT) == 0 then
     return keys, taps
+  end
+
+  -- PT2_START_BUILDER_SAFE: the take's fire hold, here at the one check
+  -- every fire press goes through, so no way into the take's fire (finetune,
+  -- fast setup, shoot_pill, charge, engage, kill_hardline, finish) can miss
+  -- it. While our builder is out on a take wall and a pill shell would kill
+  -- him on the rest of his trip with the tank firing at the target pill
+  -- (pt2_attack.builder_fire_hold), the fire bit comes off.
+  if C.PT2_START_BUILDER_SAFE and own_status == C.LGM_MOVING then
+    local g = state.goal
+    if g and g.kind == "attack_pill"
+       and require("pt2_attack").builder_fire_hold(state, g, world, info, now) then
+      if not metrics_mod then metrics_mod = require("metrics") end
+      metrics_mod.inc("fire_block_pt2_builder")
+      return bit.band(keys or 0, bit.bnot(KEY_SHOOT)), bit.band(taps or 0, bit.bnot(KEY_SHOOT))
+    end
   end
 
   -- Is any builder of ours or an ally's out?

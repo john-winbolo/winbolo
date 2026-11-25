@@ -2,7 +2,7 @@
 -- test_approach_skip_shield.lua -- standalone unit tests (2026-11-22) for
 -- C.APPROACH_SKIP_RUNUP_SHIELD_CHECK (approach_skip.shield_check): past the
 -- standoff, the run-up skip fires from where the tank is only when the
--- take's own cover test (pilltake_v2.judge with the take's plan) passes
+-- take's own cover test (pilltake_v2_old.judge with the take's plan) passes
 -- there too. The shot test (fast_setup.final_angle) is stubbed clear, so
 -- the old code fires from every place below.
 --   1. knobs: on by default, off in KEEL and MAST.
@@ -45,7 +45,7 @@ local C   = require("constants")
 local U   = require("util")
 local cpf = require("cpathfinder")
 local PC  = require("pill_cover")
-local V2  = require("pilltake_v2")
+local V2  = require("pilltake_v2_old")
 local FS  = require("fast_setup")
 local AS  = require("approach_skip")
 

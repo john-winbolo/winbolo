@@ -1,10 +1,10 @@
 -- =========================================================================
--- test_pt2_c_parity.lua -- the C copy of the pill take v2 evaluator
--- (gh_pt2.evaluate, brains/GoalHunter/c/gh_pt2.c) against the Lua one
--- (pilltake_v2.lua M.evaluate_lua), 2026-11-18.
+-- test_pt2_old_c_parity.lua -- the C copy of the pill take v2 evaluator
+-- (gh_pt2_old.evaluate, brains/GoalHunter/c/gh_pt2_old.c) against the Lua one
+-- (pilltake_v2_old.lua M.evaluate_lua), 2026-11-18.
 --
--- Needs the gh_pt2 global, so it runs inside the unit test exe
--- (tests/unit/test_gh_pt2_parity.c), not in a plain luajit.
+-- Needs the gh_pt2_old global, so it runs inside the unit test exe
+-- (tests/unit/test_gh_pt2_old_parity.c), not in a plain luajit.
 --
 -- Cases:
 --   * N_RANDOM random small worlds (walls, half walls, forest, boats,
@@ -15,8 +15,8 @@
 --   * N_LIVE random worlds with non-classic shell rules in env
 --     (shell_speed, shell_start_add, shell_life, tank_hit_r, pill_fire_len;
 --     PT2_LIVE_SHELL), after the first N_RANDOM so those stay the same;
---   * the ray table (gh_pt2.c "Shell ray table"): N_TABLE worlds, classic
---     and live rules, run through the C copy with gh_pt2.table_check(true),
+--   * the ray table (gh_pt2_old.c "Shell ray table"): N_TABLE worlds, classic
+--     and live rules, run through the C copy with gh_pt2_old.table_check(true),
 --     which also walks every ray read from the table and compares the two;
 --   * N_BLOCK random worlds with PT2_TANKSHOT_BLOCKERS (env.ts_boats and
 --     0 to 6 other tanks in env.ts_tanks round the target), half with live
@@ -49,12 +49,12 @@ local U   = require("util")
 local cpf = require("cpathfinder")
 local PC  = require("pill_cover")
 _G.print2 = _G.print2 or function() end
-local V2  = require("pilltake_v2")
+local V2  = require("pilltake_v2_old")
 local CAP = require("pt2_capture")
 
-local G = rawget(_G, "gh_pt2")
+local G = rawget(_G, "gh_pt2_old")
 if not G then
-  print("test_pt2_c_parity: no gh_pt2 global (plain luajit): skipped")
+  print("test_pt2_old_c_parity: no gh_pt2_old global (plain luajit): skipped")
   return 0, 0, "", "skipped"
 end
 
@@ -202,10 +202,10 @@ end
 local cov = { cases = 0, best = 0, safe = 0, chain = 0, plan = 0, nudge = 0, hold = 0,
               hold_unsafe = 0, leeway = 0, reject = 0, finish = 0, why_unsafe = 0,
               ally_cover = 0, unsearched = 0, std_on = 0 }
--- PT2_C_STANDABLE on: the square tests the C did itself (gh_pt2.prof_take).
+-- PT2_C_STANDABLE on: the square tests the C did itself (gh_pt2_old.prof_take).
 local std_n = { in_map_c = 0, stay_in_c = 0, standable_c = 0, buildable_c = 0 }
 
--- The C time, PT2_C_STANDABLE off and on (gh_pt2.prof_take, the same inp
+-- The C time, PT2_C_STANDABLE off and on (gh_pt2_old.prof_take, the same inp
 -- with its own square-test functions): evaluate us and the part of it in
 -- the Lua callbacks.
 local CB = { "ttype", "pill_on", "is_ally", "cover_of_pill", "base_stops", "in_map", "stay_in",
@@ -619,6 +619,6 @@ for _, k in ipairs({ "in_map_c", "stay_in_c", "standable_c", "buildable_c" }) do
 end
 cvs = cvs .. "; square tests in C: " .. table.concat(sq, " ")
   .. "; C time (" .. #PF.off .. " cases) off: " .. pf_text(PF.off) .. "; on: " .. pf_text(PF.on)
-print("test_pt2_c_parity: " .. n .. " cases, " .. bad .. " bad; " .. cvs)
+print("test_pt2_old_c_parity: " .. n .. " cases, " .. bad .. " bad; " .. cvs)
 if first then print("  first: " .. first) end
 return n, bad, first or "", cvs

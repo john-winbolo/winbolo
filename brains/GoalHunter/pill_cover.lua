@@ -38,9 +38,24 @@ end
 -- or neutral pill, or a friendly pill under 5 health.
 function M.pill_walls(p)
   if p and not p.in_tank and M.is_friendly_owner(p.owner) then
-    return M.walls_for_health(p.health)
+    return M.walls_for_health(M.cover_health(p))
   end
   return 0
+end
+
+-- PT2_REPAIR_COVER_FULL: the health a pill's cover is counted at. A
+-- damaged friendly pill (1 .. max-1) the builder can repair before the
+-- take's first shot counts at full health (quick_repair.repair_full).
+-- Any other pill: its health now.
+M.repair_full_fn = nil   -- set by quick_repair.lua
+function M.cover_health(p)
+  local h = p and p.health or 0
+  if C.PT2_REPAIR_COVER_FULL and M.repair_full_fn and h > 0
+     and h < (C.PILLS_MAX_HEALTH or 15) and not p.in_tank
+     and M.is_friendly_owner(p.owner) and M.repair_full_fn(p) then
+    return C.PILLS_MAX_HEALTH or 15
+  end
+  return h
 end
 
 -- The deployed pill on square (mx,my), any owner, any health (a dead pill
