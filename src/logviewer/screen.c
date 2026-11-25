@@ -139,18 +139,33 @@ LogViewerState *lv_screenGetState(void) { return g_lv; }
 static LvLagTrack s_lagTracks[LV_LAG_SLOTS];
 static bool       s_lagAny      = FALSE;  /* some record was read */
 static LvLagRing  s_lagRing;
-/* A snapshot record is played as a tick of its own, with the shell list
-   cleared (lv_screenLogTick), but the server wrote it with no tick of its
-   own (logWriteSnapshot): it is no entry for the history. So it takes no
-   frame. s_lagSnapshotMs is the playhead time of the last such tick. At
-   that time the lag view draws as at the tick before (lv_lagNowMs), and the
-   next frame finds its shells' owners against the frame before the
-   snapshot (lv_lagFindShellOwners). Without
-   this the history had a frame with no shells: the chosen player's shells
-   in flight lost their owner, were not drawn for the rewind length, and
-   had a false early explosion. */
-static bool       s_lagSnapshotSkipped = FALSE;
-static uint32_t   s_lagSnapshotMs;
+/* The records round a snapshot that are no game tick. The server writes a
+   snapshot inside one game tick (logWriteSnapshot, logWriteTick in
+   src/bolo/log.c): first the events the tick had queued, its shells among
+   them, as a block of their own; then the snapshot; then a block that holds
+   log_EntityMasks; and at the end of the tick a block with what was queued
+   after the snapshot, which is log_ServerTick. The viewer plays each of
+   these as a 20 ms tick with the shell list cleared (lv_screenLogTick), but
+   the game did not move in the last three: the shells are one step on only
+   in the block after them.
+
+   So those three take no frame in the history: the snapshot, and each block
+   straight after a tick that took none which holds log_EntityMasks or
+   log_ServerTick and no shell. A block with a shell record is always a
+   frame. s_lagSkipFirstMs and s_lagSkipLastMs are the playhead times of the
+   first and the last tick of the newest such run. During the run the lag
+   view draws as at the tick before it (lv_lagNowMs), and the frame after
+   the run finds its shells' owners against the frame before it
+   (lv_lagFindShellOwners). Without this the history had frames with no
+   shells: the chosen player's shells in flight lost their owner, were not
+   drawn for the rewind length, and had a false early explosion. */
+static bool       s_lagSkipped = FALSE;
+static uint32_t   s_lagSkipFirstMs;
+static uint32_t   s_lagSkipLastMs;
+/* What the block of the tick being played held, for the test above. */
+static bool       s_tickSawShell = FALSE;
+static bool       s_tickSawEntityMasks = FALSE;
+static bool       s_tickSawServerTick = FALSE;
 /* The map as the newest frame had it, which the next frame's changed
    squares are found against (lv_lagMapDiff). It is made the same as the map
    when the ring starts again. */
@@ -267,7 +282,7 @@ static void lv_lagReset(void) {
   }
   s_lagAny = FALSE;
   lv_lagRingClear(&s_lagRing);
-  s_lagSnapshotSkipped = FALSE;
+  s_lagSkipped = FALSE;
   s_lagViewSlot = -1;
   s_lagViewJoin = -1;
   for (i = 0; i < LV_LAG_SLOTS; i++) {
@@ -620,11 +635,11 @@ static void lv_lagFindShellOwners(LvLagFrame *f) {
 
   if (s_lagRing.count >= 2) {
     prev = &s_lagRing.frames[(s_lagRing.newest - 1 + LV_LAG_FRAMES) % LV_LAG_FRAMES];
-    /* The entry before, or the one before a snapshot tick that took no
-       frame (s_lagSnapshotMs). */
-    const bool afterSnapshot = s_lagSnapshotSkipped &&
-                               s_lagSnapshotMs == prev->ms + LV_LAG_ENTRY_MS &&
-                               f->ms == s_lagSnapshotMs + LV_LAG_ENTRY_MS;
+    /* The entry before, or the one before a run of ticks that took no
+       frame (s_lagSkipFirstMs). */
+    const bool afterSnapshot = s_lagSkipped &&
+                               s_lagSkipFirstMs == prev->ms + LV_LAG_ENTRY_MS &&
+                               f->ms == s_lagSkipLastMs + LV_LAG_ENTRY_MS;
     if (prev->ms + LV_LAG_ENTRY_MS != f->ms && !afterSnapshot) {
       prev = NULL;
     }
@@ -768,13 +783,14 @@ static const LvLagRecord *lv_lagViewRecord(void) {
   return lv_lagTrackAt(&s_lagTracks[s_lagViewSlot], g_lv->timeRunning);
 }
 
-/* The time the lag view takes as the present: the playhead, or on a
-   snapshot tick, which took no frame (s_lagSnapshotMs), the tick before.
-   So the view draws there as at the tick before, not the present. */
+/* The time the lag view takes as the present: the playhead, or in a run of
+   ticks that took no frame (s_lagSkipFirstMs), the tick before the run. So
+   the view draws there as at that tick, not the present. */
 static uint32_t lv_lagNowMs(void) {
-  if (s_lagSnapshotSkipped && g_lv->timeRunning == s_lagSnapshotMs && s_lagRing.count > 0 &&
-      s_lagRing.frames[s_lagRing.newest].ms + LV_LAG_ENTRY_MS == s_lagSnapshotMs) {
-    return s_lagSnapshotMs - LV_LAG_ENTRY_MS;
+  if (s_lagSkipped && g_lv->timeRunning >= s_lagSkipFirstMs &&
+      g_lv->timeRunning <= s_lagSkipLastMs && s_lagRing.count > 0 &&
+      s_lagRing.frames[s_lagRing.newest].ms + LV_LAG_ENTRY_MS == s_lagSkipFirstMs) {
+    return s_lagSkipFirstMs - LV_LAG_ENTRY_MS;
   }
   return g_lv->timeRunning;
 }
@@ -3855,6 +3871,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
       break;
     }
     case log_Shell:
+      s_tickSawShell = TRUE;
       logReadBytes(&opt1, 1);
       logReadBytes(&opt2, 1);
       logReadBytes(&opt3, 1);
@@ -4055,6 +4072,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
       logReadBytes((BYTE *)(mem+1), (unsigned char)mem[0]);
       break;
     case log_ServerTick:
+      s_tickSawServerTick = TRUE;
       /* The server's game tick at this entry, as a big-endian u32. A loaded
          file's anchors were all collected by the load walk; a live feed has
          no walk, and this is how its anchors arrive. The record is consumed
@@ -4233,6 +4251,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
       g_lv->wantScreenUpdate = TRUE;
       break;
     case log_EntityMasks:
+      s_tickSawEntityMasks = TRUE;
       /* Which indices are on the map, as three big-endian 16-bit masks — the
          part the snapshot before this one had nowhere to put. Bit i stands
          for index i counting from zero; a bit at or above a list's own count
@@ -4672,6 +4691,9 @@ bool lv_screenLogTick() {
 
   bool process = FALSE;
   bool snapshotTick = FALSE;
+  s_tickSawShell = FALSE;
+  s_tickSawEntityMasks = FALSE;
+  s_tickSawServerTick = FALSE;
   s_logTickAtLiveHead = FALSE;
   /* The clocks stop with the log. A tick after the end (the Play button at
      the end of a log, a step key) reads nothing, so it must not move the
@@ -4792,11 +4814,22 @@ bool lv_screenLogTick() {
       }
     }
   }
-  if (lagCapture && snapshotTick) {
-    /* No frame for the lag view's history (s_lagSnapshotMs). */
-    s_lagSnapshotSkipped = TRUE;
-    s_lagSnapshotMs = g_lv->timeRunning;
-  } else if (lagCapture) {
+  if (lagCapture) {
+    /* A tick that is no game tick takes no frame in the lag view's history
+       (s_lagSkipFirstMs): a snapshot, and a block straight after such a
+       tick that holds the entity masks or the server tick and no shell. */
+    const bool afterSkip = s_lagSkipped &&
+                           s_lagSkipLastMs + LV_LAG_ENTRY_MS == g_lv->timeRunning;
+    if (snapshotTick ||
+        (afterSkip && process == TRUE && !s_tickSawShell &&
+         (s_tickSawEntityMasks || s_tickSawServerTick))) {
+      if (!afterSkip) {
+        s_lagSkipFirstMs = g_lv->timeRunning;
+      }
+      s_lagSkipLastMs = g_lv->timeRunning;
+      s_lagSkipped = TRUE;
+      return returnValue;
+    }
     lv_lagCaptureTick();
   }
   return returnValue;

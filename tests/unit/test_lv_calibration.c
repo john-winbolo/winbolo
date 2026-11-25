@@ -2807,26 +2807,34 @@ int run_lv_lag_view_lost_owner(void) {
 }
 
 /*
- * A snapshot record in the middle of the chosen player's shell flight. The
- * viewer plays a snapshot as a tick of its own, with no shells, but the
- * server wrote it with no game tick: the shell is one step on at the entry
- * after it. The snapshot tick takes no frame in the lag view's history, so
- * the shell keeps its owner across it.
+ * A snapshot in the middle of the chosen player's shell flight, in the
+ * records the server writes for it (logWriteSnapshot and logWriteTick in
+ * src/bolo/log.c): the snapshot, then a block that holds log_EntityMasks,
+ * then the tick's own block, which holds log_ServerTick. The viewer plays
+ * each of the three as a tick of its own, with no shells, but the game did
+ * not move in them: the shell is one step on only in the block after. None
+ * of the three takes a frame in the lag view's history, so the shell keeps
+ * its owner across them.
  *
  *   entry 40          A's lag record, rewind 5 (100 ms)
  *   entry 60          A fires: A's shell starts six steps north of A
- *   entry 64          a snapshot, in place of the moves
- *   entries 60..80    the shell moves one step north each entry but 64
+ *   entry 64          the snapshot
+ *   entry 65          the entity masks
+ *   entry 66          the server tick
+ *   entries 60..80    the shell moves one step north each entry but 64 to 66
  *
- * At entry 64, the snapshot tick, the view for A draws as at entry 63: A's
- * shell at its entry-63 place. At entry 66, A's shell at the present. The
- * shell starts once, with A as its owner, and does not end. Before the fix
- * the snapshot tick's frame had no shells: at entry 64 the shell was not
- * drawn, at entry 65 it started again with no owner, it was drawn at the
- * old time, and it had ended once (a false early explosion).
+ * At entries 64 to 66 the view for A draws as at entry 63: A's shell at its
+ * entry-63 place. At entry 68, A's shell at the present. The shell starts
+ * once, with A as its owner, and does not end. Without the rule the frames
+ * of those ticks had no shells: the shell was not drawn, it started again
+ * with no owner at the next entry, it was drawn at the old time, and it had
+ * ended once (a false early explosion).
  */
 #define LAG_SNAP_K 64
-static int lagSnapStep(int k) { return k < LAG_SNAP_K ? k - LAG_SHELL_FIRST : k - LAG_SHELL_FIRST - 1; }
+#define LAG_SNAP_LAST (LAG_SNAP_K + 2)
+static int lagSnapStep(int k) {
+  return k < LAG_SNAP_K ? k - LAG_SHELL_FIRST : k - LAG_SHELL_FIRST - 3;
+}
 static int32_t lagSnapAy(int k) { return LAG_DRAW_ROW * 256 - 6 * 32 - 32 * lagSnapStep(k); }
 
 int run_lv_lag_view_shell_snapshot(void) {
@@ -2847,6 +2855,25 @@ int run_lv_lag_view_shell_snapshot(void) {
     int events = 2 + (k == 40 ? 1 : 0) + (shell ? 1 : 0) + (k == LAG_SHELL_FIRST ? 1 : 0);
     if (k == 39 || k == LAG_SNAP_K) {
       putLagDrawSnapshot(&b, k);
+      continue;
+    }
+    if (k == LAG_SNAP_K + 1) {
+      /* Straight after the snapshot: which items are on the map. */
+      putU8(&b, LOG_EVENT);
+      putU8(&b, 1);
+      putU8(&b, log_EntityMasks);
+      putU8(&b, 0); putU8(&b, 6);
+      putU8(&b, 0xFF); putU8(&b, 0xFF); putU8(&b, 0xFF);
+      putU8(&b, 0xFF); putU8(&b, 0xFF); putU8(&b, 0xFF);
+      continue;
+    }
+    if (k == LAG_SNAP_LAST) {
+      /* The tick's own block: what was queued after the snapshot. */
+      putU8(&b, LOG_EVENT);
+      putU8(&b, 1);
+      putU8(&b, log_ServerTick);
+      putU8(&b, 0); putU8(&b, 4);
+      putU8(&b, 0); putU8(&b, 0); putU8(&b, 0); putU8(&b, 128);
       continue;
     }
     putU8(&b, LOG_EVENT);
@@ -2888,12 +2915,31 @@ int run_lv_lag_view_shell_snapshot(void) {
   UT_ASSERT_MSG(lagShellSeenAt(lagShellAx(), lagSnapAy(63)),
                 "A's shell is not at its entry-63 place at the snapshot tick");
 
+  /* The two blocks after it, which are no game tick either: still drawn
+     as at entry 63. They hold no tank places, so lagDrawPlayTo's check of
+     the tank is not made here. */
+  {
+    int at;
+    for (at = LAG_SNAP_K + 1; at <= LAG_SNAP_LAST; at++) {
+      while (lv->timeRunning < lagDrawMs(at) && lv->isPlaying == TRUE) {
+        lv_screenLogTick();
+      }
+      UT_ASSERT_MSG(lv->timeRunning == lagDrawMs(at), "at %u ms, want %u",
+                    (unsigned)lv->timeRunning, (unsigned)lagDrawMs(at));
+      lagShellDraw(55, 50);
+      UT_ASSERT_MSG(s_lagShellSeen.n == 1, "%d shells drawn at entry %d, want 1",
+                    s_lagShellSeen.n, at);
+      UT_ASSERT_MSG(lagShellSeenAt(lagShellAx(), lagSnapAy(63)),
+                    "A's shell is not at its entry-63 place at entry %d", at);
+    }
+  }
+
   /* Two entries on: A's own shell at the present. */
-  if (lagDrawPlayTo(lv, 66) != 0) return 1;
+  if (lagDrawPlayTo(lv, 68) != 0) return 1;
   lagShellDraw(55, 50);
-  UT_ASSERT_MSG(s_lagShellSeen.n == 1, "%d shells drawn at entry 66, want 1", s_lagShellSeen.n);
-  UT_ASSERT_MSG(lagShellSeenAt(lagShellAx(), lagSnapAy(66)),
-                "A's shell is not at its entry-66 place: it lost its owner at the snapshot");
+  UT_ASSERT_MSG(s_lagShellSeen.n == 1, "%d shells drawn at entry 68, want 1", s_lagShellSeen.n);
+  UT_ASSERT_MSG(lagShellSeenAt(lagShellAx(), lagSnapAy(68)),
+                "A's shell is not at its entry-68 place: it lost its owner at the snapshot");
 
   if (lagDrawPlayTo(lv, 70) != 0) return 1;
   lv_screenLagShellOwnerStats(&st);
