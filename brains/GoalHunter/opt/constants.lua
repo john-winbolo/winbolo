@@ -4501,8 +4501,9 @@ M.LGM_SHELL_PREDICT_TICKS = 63
 -- kills the man when the explosion is within MAP_SQUARE_MIDDLE of him (on a
 -- tile that is not solid). global.h MAP_SQUARE_MIDDLE = 128. Not a tunable --
 -- changing it makes the gate disagree with the engine.
--- This is the radius of the classic lgm_blast_shape (0, "Half-square
--- circle"); U.lgm_open_blast_catches picks the shape the game plays with.
+-- This is the radius of lgm_blast_shape 0 ("Half-square circle"), the
+-- classic shape before 2.2.2 (from 2.2.2 the classic shape is 2);
+-- U.lgm_open_blast_catches picks the shape the game plays with.
 M.LGM_SHELL_KILL_RADIUS_WU = 128
 -- The other two lgm_blast_shape values (src/bolo/internal/lgm.h): 1, the
 -- "Mac Bolo box", is |dx| < LGM_BLAST_MAC_BOX_HALF_WU and |dy| < that;
@@ -4516,9 +4517,11 @@ M.LGM_BLAST_MAC_AREA_RADIUS_WU = 144
 -- through U.lgm_open_blast_catches): 0 the half-square circle, 1 the Mac
 -- Bolo box, 2 the Mac Bolo equivalent area circle. live_physics.lua group
 -- BLAST (LIVE_PHYSICS_BLAST) sets it from the lgm_blast_shape rule each
--- think. Under the classic rule (0), or with LIVE_PHYSICS or
--- LIVE_PHYSICS_BLAST off, it stays 0, the old model.
-M.LGM_BLAST_SHAPE = 0
+-- think. With no rules sent, or with LIVE_PHYSICS or LIVE_PHYSICS_BLAST
+-- off, it stays at this start value.
+-- 2026-11-25: the start value is 2, the engine's classic shape from 2.2.2
+-- (it was 0, the classic shape before 2.2.2). PRESETS.keel keeps 0.
+M.LGM_BLAST_SHAPE = 2
 -- 2026-11-07: the engine stops every shape at the pill_range rule (lgm.h
 -- lgmBlastOpenGroundCatches): a builder further than this from the
 -- explosion is safe. Classic 2048, far past every shape, so it changes
@@ -5783,6 +5786,9 @@ M.PRESETS = {
     LIVE_PHYSICS_WSIM_BUILD       = false,
     LIVE_PHYSICS_SHELL_LIFE       = false,
     LIVE_PHYSICS_PILL_RANGE_WU    = false,
+    -- 2026-11-25: the builder blast start value was 0, the half-square
+    -- circle of 128 (the engine's classic shape before 2.2.2).
+    LGM_BLAST_SHAPE               = 0,
     -- 2026-10-01: attack_tank aim/fire knobs for Joust. All default off; KEEL
     -- pinned at the same old values.
     COMBAT_CLIFF_AIM_KEEP         = false,

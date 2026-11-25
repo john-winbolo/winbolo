@@ -676,8 +676,8 @@ int run_lv_rule_changes_lgm_blast_shape_outside(void) {
         LVRC_SHAPE_HI, LVRC_SHAPE_LO, 8,
         0x40, 0x58, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00};
     static const int want[5] = {
-        LGM_BLAST_SHAPE_CLASSIC, LGM_BLAST_SHAPE_MAC_BOX, LGM_BLAST_SHAPE_CLASSIC,
-        LGM_BLAST_SHAPE_MAC_BOX, LGM_BLAST_SHAPE_CLASSIC};
+        LGM_BLAST_SHAPE_CLASSIC, LGM_BLAST_SHAPE_MAC_BOX, LGM_BLAST_SHAPE_HALF_SQUARE,
+        LGM_BLAST_SHAPE_MAC_BOX, LGM_BLAST_SHAPE_HALF_SQUARE};
     static LvrcLog  b;
     LogViewerState *lv;
     int             seen[8];

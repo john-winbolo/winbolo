@@ -55,8 +55,8 @@
 --
 -- Builder blast. A shell or mine that goes off on open ground kills a
 -- builder near it. WinBolo counts "near" as a circle of radius 144 world
--- units, edge included (it was 128, half a square, before the
--- lgm_blast_shape rule). Mac Bolo counts it as a box: under
+-- units, edge included (it was 128, half a square, before 2.2.2).
+-- Mac Bolo counts it as a box: under
 -- 128 from the explosion on each axis, so it reaches further on a
 -- diagonal, about 180 at the corners. This part sets lgm_blast_shape to 1,
 -- the box. An explosion on a building, a half building, a pillbox or a
