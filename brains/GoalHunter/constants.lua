@@ -6667,6 +6667,20 @@ M.SWERVE_AVOID_REPAIR_SIDE = true
 -- false = old rule (only the take target's kill and the shells in the
 -- air). KEEL / MAST: false.
 M.QUICK_REPAIR_WAIT_ALL_PILLS = true
+-- QUICK_REPAIR_DEATH_TICK_SHOT (Nov 24): the fire prediction counts a shot
+-- on the take target's kill tick (the engine lets a pill fire in the tick
+-- it dies). a5 noc beside_e: pill #0's fire event and its health 0 both
+-- came at t=521; that shell killed the builder at t=532.
+-- false = old rule (no shot on the kill tick). MAST: false.
+M.QUICK_REPAIR_DEATH_TICK_SHOT = true
+-- QUICK_REPAIR_KILL_SLOP_TICKS (Nov 24, value needs the owner's yes): the
+-- fire prediction lets the take target fire this many ticks past T_kill.
+-- a5 noc beside_e: at t=449 T_kill was predicted 520 (first 458, reload
+-- 13, flight 49); the shells landed 508 and 521 (flight 50), and the pill
+-- fired at 521. The a5 batch: the last predicted T_kill against the kill
+-- seen was 2 late in beside_w (507 / 509), 1 late in beside_e, else on
+-- time or early. Suggested value 2. 0 = old rule. MAST: 0.
+M.QUICK_REPAIR_KILL_SLOP_TICKS = 0
 -- How far (tiles) past the blocker's square a shell's ray may pass and
 -- still count as a hit, for both rules above; for the builder, how much
 -- nearer to him a shell's explosion counts (the engine's blast area is used
@@ -9067,6 +9081,7 @@ M.PRESETS.mast = {
   QUICK_REPAIR_TANK_CLEAR_TICKS     = 0,      -- 2.2.1 had no quick repair
   SWERVE_AVOID_REPAIR_SIDE          = false,  -- 2.2.1: the cover pick always
   QUICK_REPAIR_WAIT_ALL_PILLS       = false,  -- 2.2.1 had no quick repair
+  QUICK_REPAIR_DEATH_TICK_SHOT      = false,  -- 2.2.1 had no quick repair
   PT2_START_BUILDER_SAFE            = false,  -- 2.2.1 had no pill take v2
   POST_KILL_WAIT_TICKS              = 15,
   CARRY_APPROACH_MIN_ARMOUR_ONE     = 30,

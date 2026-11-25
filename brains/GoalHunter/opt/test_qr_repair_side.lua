@@ -594,6 +594,86 @@ do
         cf and (tostring(cf.how) .. " fire=" .. tostring(cf.fire) .. " at=" .. tostring(cf.at)) or "nil")
 end
 
+print("10. a5 noc beside_e: the target's shot on its kill tick")
+do
+  -- dt_demo_nov24 a5 noc beside_e, t=449 (the send): target #0 (125,118)
+  -- fires every 6 ticks (fire events 455, 461 .. 515, 521); T_kill was
+  -- predicted 520 (first 458, reload 13, remaining 2, flight 49). Pill #1
+  -- (126,118) died at t=449. Blocker (127,118) hp 1; tank (132.42,116.52);
+  -- both swerve sides dirty, no side committed, no swerve running.
+  -- T_repair 533 (window from 532). The real end: the pill died at 521
+  -- and fired at 521; the tank swerved to (132,118); that shell was on
+  -- (127,118) at 528..531 and exploded on the rebuilt pill at 532 with
+  -- the builder on it.
+  local T = 449
+  local tp = pill(125, 118, 6, "neutral")
+  local p1 = pill(126, 118, 0, "hostile")
+  local bp = pill(127, 118, 1, "friendly", true)
+  local w = { pills = { [0] = tp, [1] = p1, [2] = bp }, pill_at = {}, bases = {}, base_at = {} }
+  for id, p in pairs(w.pills) do w.pill_at[p.my * 256 + p.mx] = { { pill = p, id = id } } end
+  local goal = { kind = "attack_pill", mx = 125, my = 118, target_id = 0, substate = "shoot_pill" }
+  local inf = { tankx = math.floor(132.4211 * 256), tanky = math.floor(116.5154 * 256),
+                trees = 40, man_status = C.LGM_INTANK, inboat = false, armour = 40,
+                carried_pills = 0, player_number = 0, shells = 27, direction = 185,
+                speed = 4, reload = false, reload_ticks = 13, objects = {} }
+  local k = { t = 520, src = "predict", first = 458, reload = 13, remaining = 2,
+              flight = 49, land = {}, n_inflight = 0 }
+  local pnf, ap = QR.pill_next_fire, QR.any_phase
+  QR.pill_next_fire = function(p, _, now)
+    if p == tp then return 455, 6, 449 end
+    return now + 1000, 100, nil
+  end
+  QR.any_phase = function(_, _, _, _, _, _, fires) return fires end
+  -- fire_ticks itself (no extra hits): 455 .. 515 before T_kill 520; with
+  -- the kill tick 521 (slop 1) and the death-tick shot, 521 too.
+  C.QUICK_REPAIR_DEATH_TICK_SHOT = true
+  local f1 = QR.fire_ticks(tp, inf, T, {}, 104, nil, 521)
+  C.QUICK_REPAIR_DEATH_TICK_SHOT = false
+  local f0 = QR.fire_ticks(tp, inf, T, {}, 104, nil, 521)
+  check("a5 beside_e: fire_ticks to 521 with the death-tick shot", f1[#f1] == 521 and f1[1] == 455,
+        tostring(f1[1]) .. ".." .. tostring(f1[#f1]))
+  check("a5 beside_e: fire_ticks to 515 without it (old rule)", f0[#f0] == 515,
+        tostring(f0[#f0]))
+  -- The ladder with our hits (own_hits) is not under test here: the fire
+  -- list is the one the engine showed, cut at the death tick as fire_ticks
+  -- cuts it.
+  local ft = QR.fire_ticks
+  QR.fire_ticks = function(p, _, _, _, _, _, death)
+    local out = {}
+    if p ~= tp then return out end
+    for f = 455, 521, 6 do
+      if not death or f < death or (C.QUICK_REPAIR_DEATH_TICK_SHOT and f == death) then
+        out[#out + 1] = f
+      end
+    end
+    return out
+  end
+  local rb = { mx = 127, my = 118 }
+  local function run(dts, slop)
+    reset()
+    C.QUICK_REPAIR_DEATH_TICK_SHOT, C.QUICK_REPAIR_KILL_SLOP_TICKS = dts, slop
+    return QR.fire_conflict(w, inf, T, goal, k, rb, 132.5, 116.5, T + 1, 533, nil, false)
+  end
+  local function txt(cf)
+    return cf and (tostring(cf.pill) .. " " .. tostring(cf.how) .. " fire=" .. tostring(cf.fire)
+                   .. " at=" .. tostring(cf.at)) or "nil"
+  end
+  local c_old = run(false, 0)
+  local c_def = run(true, 0)
+  local c_s1  = run(true, 1)
+  local c_s1o = run(false, 1)
+  local c_s2  = run(true, 2)
+  QR.pill_next_fire, QR.any_phase, QR.fire_ticks = pnf, ap, ft
+  C.QUICK_REPAIR_DEATH_TICK_SHOT = true
+  C.QUICK_REPAIR_KILL_SLOP_TICKS = 0
+  check("a5 beside_e: old rule: no conflict (the send at 449)", c_old == nil, txt(c_old))
+  check("a5 beside_e: slop 0 (default): the 521 shot is past T_kill 520: no conflict",
+        c_def == nil, txt(c_def))
+  check("a5 beside_e: slop 1 + the death-tick shot: the 521 shot on the blocker at 532: wait",
+        c_s1 ~= nil and c_s1.pill == 0 and c_s1.fire == 521 and c_s1.at == 532, txt(c_s1))
+  check("a5 beside_e: slop 1 without the death-tick shot: 521 is cut", c_s1o == nil, txt(c_s1o))
+  check("a5 beside_e: slop 2: wait", c_s2 ~= nil and c_s2.fire == 521, txt(c_s2))
+end
 
 print(string.format("\n%d passed, %d failed", pass, fail))
 if fail > 0 then os.exit(1) end

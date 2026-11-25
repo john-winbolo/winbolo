@@ -327,7 +327,13 @@ function M.fire_ticks(p, info, now, x, horizon, more, death)
   local nxt, reload, last = M.pill_next_fire(p, info, now, x)
   if reload < 1 then reload = 1 end
   local t_end = now + horizon
-  local function ok(f) return f <= t_end and (not death or f < death) end
+  -- QUICK_REPAIR_DEATH_TICK_SHOT: a pill fires on the tick it dies too
+  -- (a5 noc beside_e, Nov 24: pill #0's fire event and its health 0 came
+  -- in the same tick, 521; that shell killed the builder at 532).
+  local on_death = C.QUICK_REPAIR_DEATH_TICK_SHOT
+  local function ok(f)
+    return f <= t_end and (not death or f < death or (on_death and f == death))
+  end
   local out = {}
   if not (more and #more > 0) then
     local f = nxt
@@ -911,7 +917,9 @@ function M.any_phase(p, info, now, x, horizon, death, fires)
   local t_end = now + horizon
   local out = {}
   for f = fires[1], fires[#fires] + reload - 1 do
-    if f > t_end or (death and f >= death) then break end
+    if f > t_end or (death and (f > death or (f == death and not C.QUICK_REPAIR_DEATH_TICK_SHOT))) then
+      break
+    end
     out[#out + 1] = f
   end
   return out
@@ -932,19 +940,23 @@ function M.fire_conflict(world, info, now, goal, k, rb, bx0, by0, t0, t_arr, sd,
   local verts = sd and M.swerve_verts(ox, oy, goal.mx + 0.5, goal.my + 0.5, sd) or nil
   local bcx, bcy = rb.mx + 0.5, rb.my + 0.5
   local kt = k and k.t
+  -- The target's last fire tick: T_kill, later by QUICK_REPAIR_KILL_SLOP_TICKS
+  -- (the predicted kill can come early: a5 noc beside_e predicted 520 at
+  -- t=449, the pill died at 521).
+  local kd = kt and (kt + (C.QUICK_REPAIR_KILL_SLOP_TICKS or 0))
   -- run_c12 gap_n: each gun's fire ticks count the other guns' shells that
   -- hit it (M.cross_pill_hits): first without them, then with them.
   local horizon = math.max(0, t_end - now)
   local fires0 = {}
   for gi = 1, #guns do
     local g = guns[gi]
-    local d0 = (g.p.mx == goal.mx and g.p.my == goal.my) and kt or nil
+    local d0 = (g.p.mx == goal.mx and g.p.my == goal.my) and kd or nil
     fires0[gi] = M.fire_ticks(g.p, info, now, x, horizon, nil, d0)
   end
   for gi = 1, #guns do
     local g = guns[gi]
     local is_target = (g.p.mx == goal.mx and g.p.my == goal.my)
-    local death = is_target and kt or nil
+    local death = is_target and kd or nil
     local sdirty = verts and side_dirty(g, ox, oy, verts, rb, m, range) or false
     -- A pill whose shots all flow on a clean swerve side does not conflict:
     -- the swerve runs now, or it is a pill that outlives the kill (its
