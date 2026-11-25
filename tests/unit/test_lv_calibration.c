@@ -1492,6 +1492,88 @@ int run_lv_player_lag_read(void) {
   return 0;
 }
 
+/* The Tank panel's lag graph has the playhead at its middle sample, half
+ * the span before it and half after. A sample is empty before the start of
+ * the recording, before the player's first record and after the last time
+ * the viewer has read; between records it has the earlier record's value. */
+int run_lv_lag_graph_window(void) {
+  static LvPlayerLag g;
+  LvLagTrack t;
+  const LvLagRecord *r;
+  const int half = LV_LAG_GRAPH_SPAN_MS / 2;
+  int i;
+
+  memset(&t, 0, sizeof(t));
+  UT_ASSERT(LV_LAG_GRAPH_SAMPLES % 2 == 1);
+  /* The window from the playhead. */
+  UT_ASSERT(lv_lagGraphStartMs(100000) == 100000 - half);
+  UT_ASSERT(lv_lagGraphStartMs(1000) == 1000 - half);   /* below 0 */
+  UT_ASSERT(lv_lagGraphSampleMs(lv_lagGraphStartMs(100000), LV_LAG_GRAPH_MID) == 100000);
+  UT_ASSERT(lv_lagGraphSampleMs(lv_lagGraphStartMs(100000), 0) == 100000 - half);
+  UT_ASSERT(lv_lagGraphSampleMs(lv_lagGraphStartMs(100000), LV_LAG_GRAPH_SAMPLES - 1) ==
+            100000 + half);
+  /* The sample under a place across the graph. */
+  UT_ASSERT(lv_lagGraphSampleAt(-0.5f) == 0);
+  UT_ASSERT(lv_lagGraphSampleAt(0.0f) == 0);
+  UT_ASSERT(lv_lagGraphSampleAt(0.5f) == LV_LAG_GRAPH_MID);
+  UT_ASSERT(lv_lagGraphSampleAt(1.0f) == LV_LAG_GRAPH_SAMPLES - 1);
+  UT_ASSERT(lv_lagGraphSampleAt(2.0f) == LV_LAG_GRAPH_SAMPLES - 1);
+
+  /* Records at 10 s (40 ms, rewind 2) and 20 s (80 ms, rewind 4). */
+  UT_ASSERT(lv_lagTrackAdd(&t, 10000, 40, 2, true));
+  UT_ASSERT(lv_lagTrackAdd(&t, 20000, 80, 4, true));
+  /* The value at a time: before the start, before the first record, at
+     and between records, after the last record but read, and not read. */
+  UT_ASSERT(lv_lagTrackValueAt(&t, -1, 60000) == NULL);
+  UT_ASSERT(lv_lagTrackValueAt(&t, 9999, 60000) == NULL);
+  r = lv_lagTrackValueAt(&t, 10000, 60000);
+  UT_ASSERT(r != NULL && r->rttMs == 40);
+  r = lv_lagTrackValueAt(&t, 15000, 60000);
+  UT_ASSERT(r != NULL && r->rttMs == 40 && r->rewind == 2);
+  r = lv_lagTrackValueAt(&t, 20000, 60000);
+  UT_ASSERT(r != NULL && r->rttMs == 80);
+  r = lv_lagTrackValueAt(&t, 60000, 60000);
+  UT_ASSERT(r != NULL && r->rttMs == 80);
+  UT_ASSERT(lv_lagTrackValueAt(&t, 60001, 60000) == NULL);
+
+  /* The playhead at 15 s, every record read (a loaded file to 120 s). */
+  lv_lagGraphFill(&g, &t, 15000, 120000);
+  UT_ASSERT(g.graphStartMs == 15000 - half);
+  for (i = 0; i < LV_LAG_GRAPH_SAMPLES; i++) {
+    int64_t ms = lv_lagGraphSampleMs(g.graphStartMs, i);
+    if (ms < 10000) {
+      UT_ASSERT(!g.graphHas[i]);
+    } else if (ms < 20000) {
+      UT_ASSERT(g.graphHas[i] && g.graph[i] == 40.0f && g.graphBehind[i] == 40);
+    } else {
+      UT_ASSERT(g.graphHas[i] && g.graph[i] == 80.0f && g.graphBehind[i] == 80);
+    }
+  }
+  UT_ASSERT(g.graphHas[LV_LAG_GRAPH_MID] && g.graph[LV_LAG_GRAPH_MID] == 40.0f);
+  UT_ASSERT(g.graphMax == 80.0f);   /* the record ahead of the playhead counts */
+
+  /* A live feed: read only up to the playhead, so the half after it is
+     empty and the playhead keeps the middle. */
+  lv_lagGraphFill(&g, &t, 15000, 15000);
+  UT_ASSERT(g.graphHas[LV_LAG_GRAPH_MID] && g.graph[LV_LAG_GRAPH_MID] == 40.0f);
+  for (i = LV_LAG_GRAPH_MID + 1; i < LV_LAG_GRAPH_SAMPLES; i++) {
+    UT_ASSERT(!g.graphHas[i]);
+  }
+  UT_ASSERT(g.graphMax == 40.0f);
+  /* A known end before the playhead is taken as the playhead. */
+  lv_lagGraphFill(&g, &t, 15000, 0);
+  UT_ASSERT(g.graphHas[LV_LAG_GRAPH_MID]);
+
+  /* No records: every sample empty, the scale at least 1. */
+  lv_lagTrackClear(&t);
+  lv_lagGraphFill(&g, &t, 15000, 120000);
+  for (i = 0; i < LV_LAG_GRAPH_SAMPLES; i++) {
+    UT_ASSERT(!g.graphHas[i]);
+  }
+  UT_ASSERT(g.graphMax == 1.0f);
+  return 0;
+}
+
 /* A track keeps its records in time order, finds the one in effect at a
  * time, and takes a second read at one time as the same record. */
 int run_lv_lag_track(void) {
@@ -4298,5 +4380,158 @@ int run_lv_server_check_builder_killed(void) {
   lv_decoderDestroy(lv);
   lv_screenSetHideLobby(savedHide);
   remove(path);
+  return 0;
+}
+
+/* The lag view's notice for one forward step (lv_lagNoticeFor): a line only
+ * when the view drew an older frame than at the step before, naming the
+ * player's lag change and the snapshot hold when there are, and a plain
+ * line when there is neither. */
+int run_lv_lag_notice(void) {
+  LvLagNotice n;
+  LvLagRecord was = {378520, 40, 3};
+  LvLagRecord now = {378540, 41, 4};
+  LvLagHold hold;
+  LvLagHold none;
+
+  memset(&none, 0, sizeof(none));
+  memset(&hold, 0, sizeof(hold));
+  hold.on = true;
+  hold.ms = 60;
+  hold.gameMs = 20;
+  hold.tickFrom = 30498;
+  hold.tickTo = 30500;
+
+  /* The view moved on or stayed: nothing, a hold or not. */
+  lv_lagNoticeFor(&n, true, true, 378440, 378460, &was, &now, &hold);
+  UT_ASSERT(!n.any && !n.back && !n.lag && !n.hold);
+  lv_lagNoticeFor(&n, true, true, 378440, 378440, &was, &now, &hold);
+  UT_ASSERT(!n.any);
+  /* The view off, or no frame noted at the step before: nothing. */
+  lv_lagNoticeFor(&n, false, true, 378440, 378420, &was, &now, &hold);
+  UT_ASSERT(!n.any);
+  lv_lagNoticeFor(&n, true, false, 378440, 378420, &was, &now, &hold);
+  UT_ASSERT(!n.any);
+
+  /* Back 20 ms with the rewind 3 -> 4 and a hold: both lines. */
+  lv_lagNoticeFor(&n, true, true, 378440, 378420, &was, &now, &hold);
+  UT_ASSERT(n.any && n.back && n.backMs == 20);
+  UT_ASSERT(n.lag && n.behindWas == 60 && n.behindNow == 80);
+  UT_ASSERT(n.rttWas == 40 && n.rttNow == 41);
+  UT_ASSERT(n.hold && n.run.ms == 60 && n.run.gameMs == 20);
+  UT_ASSERT(n.run.tickFrom == 30498 && n.run.tickTo == 30500);
+
+  /* Back with no hold: the lag line alone. */
+  lv_lagNoticeFor(&n, true, true, 378440, 378420, &was, &now, &none);
+  UT_ASSERT(n.any && n.lag && !n.hold);
+  lv_lagNoticeFor(&n, true, true, 378440, 378420, &was, &now, NULL);
+  UT_ASSERT(n.any && n.lag && !n.hold);
+
+  /* Back with the same record: no lag line; the hold line, or the plain
+     line alone. */
+  lv_lagNoticeFor(&n, true, true, 378440, 378420, &now, &now, &hold);
+  UT_ASSERT(n.any && n.back && !n.lag && n.hold);
+  lv_lagNoticeFor(&n, true, true, 378440, 378420, &now, &now, &none);
+  UT_ASSERT(n.any && n.back && !n.lag && !n.hold);
+  /* Only the round trip changed: still the lag line. */
+  was.rewind = 4;
+  lv_lagNoticeFor(&n, true, true, 378440, 378420, &was, &now, NULL);
+  UT_ASSERT(n.lag && n.behindWas == 80 && n.behindNow == 80 && n.rttWas == 40);
+  /* No record at the step before: no lag line. */
+  lv_lagNoticeFor(&n, true, true, 378440, 378400, NULL, &now, NULL);
+  UT_ASSERT(n.any && n.backMs == 40 && !n.lag);
+  return 0;
+}
+
+/*
+ * The lag view's notice on a real recording, on ask only: set WB_LV_LN_WBV
+ * to the JonnyWar I game of Nov 19 ("2026-11-19 19.28 JonnyWar I - Demon3,
+ * rooklift, jasanimi, Sethos, Demon1.wbv"). With no file set it skips
+ * (UT_SKIP). The view is on for Demon1 (slot 4). At 378500 the server wrote
+ * the block before a snapshot, at 378520 the snapshot and at 378540 the
+ * server tick: the game moved one step (ticks 30498 to 30500) in 60 ms of
+ * playback, and the view holds at 378500. At 378540 Demon1's rewind goes
+ * 3 -> 4 (60 -> 80 ms behind, round trip 40 -> 41 ms), so the frame drawn
+ * goes from 378440 to 378420. Forward play gives one notice there, with
+ * both lines; a seek back or a long seek forward over it gives none; a one
+ * step seek onto it (the "." key) gives it again.
+ */
+int run_lv_lag_notice_recording(void) {
+  const char *path = getenv("WB_LV_LN_WBV");
+  static char pathBuf[1024];
+  LogViewerState *lv;
+  int savedHide = lv_screenGetHideLobby();
+  LvLagNotice n;
+  uint32_t serial, notices = 0, noticeAt = 0;
+
+  if (path == NULL || path[0] == '\0') {
+    UT_SKIP("WB_LV_LN_WBV not set: nothing to check");
+  }
+  snprintf(pathBuf, sizeof(pathBuf), "%s", path);
+  lv_screenSetHideLobby(0);
+  lv_screenSetLagFeature(1);
+  lv = lv_decoderCreate(false);
+  UT_ASSERT(lv != NULL);
+  lv_screenSetSizeX(30);
+  lv_screenSetSizeY(30);
+  UT_ASSERT_MSG(lv_screenLoadMap(pathBuf, 4) == TRUE, "%s did not load", path);
+  lv->fastForwarding = FALSE;
+  lv_screenSeekToTimeMs(378000);
+  UT_ASSERT(lv->timeRunning == 378000);
+  lv_screenLagViewSet(4);
+  UT_ASSERT(lv_screenLagViewSlot() == 4);
+
+  /* Forward play over the snapshot. */
+  serial = lv_screenLagNotice(NULL);
+  while (lv->isPlaying == TRUE && lv->timeRunning < 378700) {
+    uint32_t s;
+    lv_screenLogTick();
+    s = lv_screenLagNotice(&n);
+    if (s != serial) {
+      serial = s;
+      notices++;
+      noticeAt = lv->timeRunning;
+      printf("  notice at %u: back %u ms, lag %d (%d -> %d behind, %d -> %d rtt), "
+             "hold %d (%u ms, game %u ms, tick %u to %u)\n",
+             (unsigned)n.atMs, (unsigned)n.backMs, (int)n.lag, n.behindWas, n.behindNow,
+             n.rttWas, n.rttNow, (int)n.hold, (unsigned)n.run.ms, (unsigned)n.run.gameMs,
+             (unsigned)n.run.tickFrom, (unsigned)n.run.tickTo);
+    }
+  }
+  UT_ASSERT_MSG(notices == 1 && noticeAt == 378540, "%u notices, the last at %u",
+                (unsigned)notices, (unsigned)noticeAt);
+  lv_screenLagNotice(&n);
+  UT_ASSERT(n.any && n.atMs == 378540 && n.back && n.backMs == 20);
+  UT_ASSERT(n.lag && n.behindWas == 60 && n.behindNow == 80);
+  UT_ASSERT(n.rttWas == 40 && n.rttNow == 41);
+  UT_ASSERT(n.hold && n.run.tickFrom == 30498 && n.run.tickTo == 30500);
+  UT_ASSERT(n.run.ms == 60 && n.run.gameMs == 20);
+
+  /* A seek back, a long seek forward over the step and a step back: none. */
+  lv_screenSeekToTimeMs(378400);
+  lv_screenSeekToTimeMs(378600);
+  lv_screenSeekToTimeMs(378580);
+  UT_ASSERT(lv_screenLagNotice(NULL) == serial);
+  /* A one-step seek onto it, as the "." key makes: the notice again. */
+  lv_screenSeekToTimeMs(378520);
+  UT_ASSERT(lv->timeRunning == 378520);
+  lv_screenSeekToTimeMs(378540);
+  UT_ASSERT_MSG(lv_screenLagNotice(&n) == serial + 1, "a one-step seek gave no notice");
+  UT_ASSERT(n.atMs == 378540 && n.lag && n.hold);
+  /* A change of player gives none: the view moved to another player and
+     back, and forward play from there. */
+  serial = lv_screenLagNotice(NULL);
+  lv_screenSeekToTimeMs(378500);
+  lv_screenLogTick();
+  lv_screenLagViewSet(-1);
+  lv_screenLagViewSet(4);
+  lv_screenLogTick();
+  UT_ASSERT(lv->timeRunning == 378540);
+  UT_ASSERT(lv_screenLagNotice(NULL) == serial);
+
+  lv_screenLagViewSet(-1);
+  lv_screenSetLagFeature(0);
+  lv_decoderDestroy(lv);
+  lv_screenSetHideLobby(savedHide);
   return 0;
 }

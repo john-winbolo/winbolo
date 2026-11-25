@@ -1713,6 +1713,14 @@ int run_server_overrun_stats_due(void);
 int run_lv_player_lag_read(void);
 int run_lv_lag_track(void);
 int run_lv_lag_ring(void);
+/* The Tank panel lag graph: the playhead in the middle, and the value at a
+   time (lv_lagGraphFill in lv_lag.h). */
+int run_lv_lag_graph_window(void);
+/* The lag view's notice when the view moves back, on a real recording
+   (WB_LV_LN_WBV; skips with no file). */
+int run_lv_lag_notice_recording(void);
+/* The lines of that notice for one step (lv_lagNoticeFor in lv_lag.h). */
+int run_lv_lag_notice(void);
 /* The lag view's pillboxes and map, one round trip back (lv_lag.h). */
 int run_lv_lag_rtt_back(void);
 int run_lv_lag_ring_back(void);
