@@ -2343,9 +2343,14 @@ void serverSimResolveGameOver(ServerSim *sim) {
 }
 
 bool serverSimCheckEmptyReset(ServerSim *sim) {
-    BYTE numPlayers = serverSimGetNumPlayers(sim);
+    /* Only people count. A bot is server configuration, not someone playing:
+     * a server bot or a Bot Host seat (both answer serverSimIsBot) keeps the
+     * world busy but nobody is there to play with it. A spectator holds no
+     * player seat at all, so it is never in this count either. Counting every
+     * connected seat here meant a server with -bots was never empty. */
+    BYTE numHumans = serverSimGetNumHumans(sim);
 
-    if (numPlayers > 0) {
+    if (numHumans > 0) {
         /* Players present — reset the timer */
         sim->emptyResetTicks = -1;
         return FALSE;
@@ -2355,7 +2360,7 @@ bool serverSimCheckEmptyReset(ServerSim *sim) {
     if (sim->emptyResetTicks < 0) {
         /* Start the countdown: minutes * 60 seconds * 50 ticks/sec */
         sim->emptyResetTicks = sim->emptyResetMinutes * 60 * 50;
-        serverSimConsoleMessage("No players connected. Empty reset timer started.");
+        serverSimConsoleMessage("No human players connected. Empty reset timer started.");
     }
 
     sim->emptyResetTicks--;

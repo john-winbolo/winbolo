@@ -1820,9 +1820,11 @@ void serverSimResolveGameOver(ServerSim *sim);
 /*********************************************************
  *NAME:          serverSimCheckEmptyReset
  *PURPOSE:
- *  Checks if the server has been empty long enough to
- *  trigger a lobby reset. Returns TRUE if reset should
- *  happen.
+ *  Checks if the server has had no human player long
+ *  enough to trigger an empty reset. Bots (server bots and
+ *  Bot Host seats) and spectators do not count. Returns
+ *  TRUE if the reset should happen: the host resets to the
+ *  lobby, or with no lobby starts the next round.
  *********************************************************/
 bool serverSimCheckEmptyReset(ServerSim *sim);
 

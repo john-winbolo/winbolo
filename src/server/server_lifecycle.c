@@ -686,10 +686,15 @@ bool serverInstanceStartup(ServerSim *sim, const ServerInstanceConfig *cfg) {
  * process-shutdown path that doesn't run in rotation), so neither the win
  * trigger's CTRL_GAME_PHASE_GAME_OVER publish nor the empty trigger stashes
  * for us. serverDedicatedLogStashCurrentRound is idempotent (no-ops once the
- * log is stopped), so an extra call is harmless. */
-static void serverLifecycleRotateRound(ServerSim *sim) {
+ * log is stopped), so an extra call is harmless.
+ *
+ * bootClients is false for the no-lobby empty reset. That fires only when no
+ * human is connected, so there is nobody to boot, and the boot-all would only
+ * send the round-over shutdown to the clients that remain: spectators, and a
+ * Bot Host's connections for its bot seats, which the next round keeps. */
+static void serverLifecycleRotateRound(ServerSim *sim, bool bootClients) {
   /* Boot everyone first — the round is over and nobody carries forward. */
-  if (instanceAcceptRemoteClients) {
+  if (bootClients && instanceAcceptRemoteClients) {
     transportUdpServerDisconnectAll(sim);
   }
 
@@ -1036,7 +1041,7 @@ void serverInstanceTick(ServerSim *sim) {
        * round here, inside the tick, so sim->state leaves gameOver before
        * the main loop's exit check observes it — the server never quits. */
       if (serverSimIsMapRotateEnabled(sim)) {
-        serverLifecycleRotateRound(sim);
+        serverLifecycleRotateRound(sim, true);
       }
     }
     if (sim->state == serverStateRunning) {
@@ -1103,22 +1108,36 @@ void serverInstanceTick(ServerSim *sim) {
       /* This leaves the running state without the game-over hook, so the
        * recording block is closed here; the new round opens its own. */
       lifecycleCloseBraindbgBlock();
-      serverLifecycleRotateRound(sim);
+      serverLifecycleRotateRound(sim, true);
     } else {
       sim->lobbyEnabled = FALSE;
       serverSimEnterGameOver(sim);
     }
   }
 
-  /* Empty reset check — when enabled and no players are connected,
-   * count down and reset to lobby with map reload after the timeout.
-   * Skipped if autoCloseOnEmpty is active (it takes priority). */
-  if (sim->emptyResetEnabled && !sim->autoCloseOnEmpty &&
-      sim->lobbyEnabled &&
-      sim->state != serverStateGameOver &&
-      sim->state != serverStateLobby &&
-      sim->state != serverStateCountdown &&
-      serverSimCheckEmptyReset(sim)) {
+  /* Empty reset check — when enabled and no human player is connected
+   * (bots and spectators do not count), count down, and after the timeout
+   * reset to the lobby with a map reload, or with no lobby start the next
+   * round straight away. Skipped if autoCloseOnEmpty is active (it takes
+   * priority). -maprotate never gets here: servermain turns empty reset off
+   * for it, as it has its own empty-server rotation above. */
+  bool emptyResetDue = sim->emptyResetEnabled && !sim->autoCloseOnEmpty &&
+                       sim->state != serverStateGameOver &&
+                       sim->state != serverStateLobby &&
+                       sim->state != serverStateCountdown &&
+                       serverSimCheckEmptyReset(sim);
+  if (emptyResetDue && !sim->lobbyEnabled) {
+    /* No lobby to go back to, so the reset is a fresh round: the next -mapdir
+     * map, or the same map reloaded without one, a fresh world, and the bots
+     * re-armed to play it. The rotation does the round log stash, the parked
+     * runner release, the timer re-arm and the WBN session rotation; the
+     * recording block is this path's to close, as for the empty-server
+     * rotation above. The timer starts again with the new round, so a server
+     * nobody joins starts a new round every emptyResetMinutes. */
+    serverSimConsoleMessage("Empty reset timer expired. Starting a new round...");
+    lifecycleCloseBraindbgBlock();
+    serverLifecycleRotateRound(sim, false);
+  } else if (emptyResetDue) {
     serverSimConsoleMessage("Empty reset timer expired. Resetting to lobby...");
     /* Empty-reset bypasses serverSimReturnToLobby, so open the WBN
      * session-rotation window here before the map pick below reports
