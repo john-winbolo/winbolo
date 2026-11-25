@@ -543,6 +543,7 @@ static const UnitTestEntry s_tests[] = {
     { "gh_attack_lane_parity",                   run_gh_attack_lane_parity                   },
     { "gh_pt2_old_parity",                           run_gh_pt2_old_parity                           },
     { "gh_pt2_v2_parity",                            run_gh_pt2_v2_parity                            },
+    { "gh_pt2_walk_jump",                            run_gh_pt2_walk_jump                            },
     { "gh_pt2_bench",                            run_gh_pt2_bench                            },
     { "pf_tail_reaches_radius_and_stops",        run_pf_tail_reaches_radius_and_stops        },
     { "pf_tail_blocked_by_wall_and_sea",         run_pf_tail_blocked_by_wall_and_sea         },
