@@ -205,7 +205,13 @@ void addPlayerInternal(ServerSim *sim, BYTE playerNum, const char *playerName,
     if (wantRejoin && sim->state == serverStateRunning && playerName != NULL) {
         BYTE team;
         bool signedIn;
-        if (playersRejoinFind(playerName, &team, &signedIn) && signedIn) {
+        bool found = playersRejoinFind(playerName, &team, &signedIn);
+        /* A seat with no record under its name waits too. A signed-in
+         * player whose name is held by another player is seated under a
+         * temporary name, and takes the name back only when WinBolo.net
+         * confirms the seat. serverSimRejoinSignedIn looks for the record
+         * again then, under the confirmed name. */
+        if (!found || signedIn) {
             sim->rejoinAwaitSignIn[playerNum] = true;
         } else {
             sim->rejoinTeam[playerNum] = team;

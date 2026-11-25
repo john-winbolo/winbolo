@@ -1366,6 +1366,8 @@ int run_team_sides_rejoin_signed_in_leave_clears(void);
 int run_team_sides_rejoin_signed_in_outlives_same_name_join(void);
 int run_team_sides_rejoin_signed_in_outlives_same_name_rejoin(void);
 int run_team_sides_rejoin_signed_in_keeps_address(void);
+int run_team_sides_rejoin_signed_in_name_taken_restored(void);
+int run_team_sides_rejoin_no_record_confirm_changes_nothing(void);
 int run_team_sides_joiner_slot_before_join(void);
 int run_team_sides_lobby_joiner_keeps_rule(void);
 int run_team_sides_lobby_drops_empty_teams(void);
