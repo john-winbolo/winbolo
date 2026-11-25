@@ -1724,52 +1724,6 @@ int run_lv_lag_view_toggle(void) {
 }
 
 /*
- * While "See What the Selected Player Saw" is on, every Screen-True option
- * acts as on; with it off, each one is the user's saved choice, which the
- * view never changes. Screen-True Local Explosions still needs Screen-True
- * Own Shells (lv_earlyBlastOn), and the view turns both on.
- */
-int run_lv_lag_screen_true(void) {
-  bool shells, expl, view;
-  UT_ASSERT(lv_lagScreenTrueOn(true, false));
-  UT_ASSERT(lv_lagScreenTrueOn(true, true));
-  UT_ASSERT(lv_lagScreenTrueOn(false, true));
-  UT_ASSERT(!lv_lagScreenTrueOn(false, false));
-  /* Every saved pair: with the view on both act as on; with it off they
-     are the saved pair, Local Explosions only with Own Shells. */
-  for (shells = false; ; shells = true) {
-    for (expl = false; ; expl = true) {
-      for (view = false; ; view = true) {
-        const bool s = lv_lagScreenTrueOn(view, shells);
-        const bool e = lv_earlyBlastOn(s, lv_lagScreenTrueOn(view, expl));
-        UT_ASSERT(s == (view || shells));
-        UT_ASSERT(e == (view || (shells && expl)));
-        if (view) break;
-      }
-      if (expl) break;
-    }
-    if (shells) break;
-  }
-  /* The viewer's own state, with no view on: what acts as on is the saved
-     choice, and the saved choices are what was set. */
-  lv_screenLagViewSet(-1);
-  UT_ASSERT(lv_screenScreenTrueForced() == 0);
-  lv_screenSetScreenTrueShells(0);
-  lv_screenSetScreenTrueExplosions(1);
-  UT_ASSERT(lv_screenScreenTrueShellsOn() == 0);
-  UT_ASSERT(lv_screenScreenTrueExplosionsOn() == 0);
-  UT_ASSERT(lv_screenGetScreenTrueExplosions() == 1);
-  lv_screenSetScreenTrueShells(1);
-  UT_ASSERT(lv_screenScreenTrueShellsOn() == 1);
-  UT_ASSERT(lv_screenScreenTrueExplosionsOn() == 1);
-  lv_screenSetScreenTrueExplosions(0);
-  UT_ASSERT(lv_screenScreenTrueExplosionsOn() == 0);
-  UT_ASSERT(lv_screenGetScreenTrueShells() == 1);
-  /* Back to the defaults: Own Shells on, Local Explosions off. */
-  return 0;
-}
-
-/*
  * The lag display is off until the "Player Lag View" preference turns it on.
  * With it off the records are still read, but the panels are told there are
  * none and the lag view does not turn on for any player. Turned on, the
@@ -2538,7 +2492,7 @@ int run_lv_lag_view_own_shells(void) {
 
   /* A's shell has ended (entry 78) and the old time still has it (73):
      it is not drawn, as A's own screen no longer had it. With the view
-     on, Screen-True Local Explosions is on too (lv_lagScreenTrueOn), so
+     on, Screen-True Local Explosions is on too (lv_screenScreenTrueOn), so
      A's early blast is drawn where the shell ended: two items in all. */
   if (lagDrawPlayTo(lv, 78) != 0) return 1;
   lagShellDraw(55, 50);
@@ -2550,6 +2504,192 @@ int run_lv_lag_view_own_shells(void) {
 
   lv_screenLagViewSet(-1);
   lv_screenSetLagFeature(0);
+  lv_decoderDestroy(lv);
+  lv_screenSetHideLobby(savedHide);
+  remove(path);
+  return 0;
+}
+
+/*
+ * A new explosion recorded at frame 7 is drawn with the frame 8 picture on
+ * its first step only (lvHitboxDrawFrame), in the plain view and in the lag
+ * view. A pillbox's explosion, with no tank behind it, is first recorded at
+ * entry 60 at frame 7 and goes down one frame each 3 entries. No shell is
+ * recorded before it, so the empty steps make the step before known.
+ *
+ *   plain view: new at entry 60 only
+ *   lag view for A (rewind 5): the old time's frame, so new at entry 65 only
+ */
+#define LAG_PIC_FIRST 60
+#define LAG_PIC_LAST 80
+static int32_t lagPicX(void) { return 80 * 256 + 5 * 16; }
+static int32_t lagPicY(void) { return 70 * 256 + 9 * 16; }
+static uint8_t lagPicFrame(int k) { return (uint8_t)(7 - (k - LAG_PIC_FIRST) / 3); }
+
+static void putLagBlast(LogBuf *b, int32_t wx, int32_t wy, uint8_t frame) {
+  putU8(b, log_Shell);
+  putU8(b, 0); putU8(b, 4);
+  putU8(b, (uint8_t)(wx / 256));
+  putU8(b, (uint8_t)(wy / 256));
+  putU8(b, (uint8_t)((((wx % 256) / 16) << 4) | ((wy % 256) / 16)));
+  putU8(b, frame);
+}
+
+/* The picture frame the draw gives the explosion at (lagPicX, lagPicY)
+   recorded at frame, after lagShellDraw: 8 when it is new and at frame 7. */
+static int lagPicDrawFrame(uint8_t frame) {
+  const struct LvHitBlastRec *nb = NULL;
+  int n = lv_screenNewBlasts(&nb), i;
+  bool isNew = false;
+  for (i = 0; i < n; i++) {
+    if (nb[i].mx == lagPicX() / 256 && nb[i].my == lagPicY() / 256 &&
+        nb[i].px == (lagPicX() % 256) / 16 && nb[i].py == (lagPicY() % 256) / 16 &&
+        nb[i].frame == frame) {
+      isNew = true;
+    }
+  }
+  return lvHitboxDrawFrame(frame, isNew);
+}
+
+int run_lv_lag_view_first_picture(void) {
+  const char *path = "lv_lag_view_first_picture.wbv";
+  static const uint8_t rec[4] = {0, 0x00, 0x96, 5};   /* A: 150 ms, rewind 5 */
+  LogBuf b;
+  LogViewerState *lv;
+  int savedHide = lv_screenGetHideLobby();
+  int k;
+
+  b.len = 0;
+  putHeader(&b);
+  putLagDrawSnapshot(&b, 0);
+  for (k = 1; k <= 99; k++) {
+    bool blast = (k >= LAG_PIC_FIRST && k <= LAG_PIC_LAST);
+    int events = 2 + (k == 40 ? 1 : 0) + (blast ? 1 : 0);
+    if (k == 39) {
+      putLagDrawSnapshot(&b, k);
+      continue;
+    }
+    putU8(&b, LOG_EVENT);
+    putU8(&b, (uint8_t)events);
+    putLagDrawLocation(&b, 0, k);
+    putLagDrawLocation(&b, 1, k);
+    if (k == 40) {
+      putU8(&b, log_PlayerLag);
+      putU8(&b, 0); putU8(&b, 4);
+      put(&b, rec, sizeof(rec));
+    }
+    if (blast) {
+      putLagBlast(&b, lagPicX(), lagPicY(), lagPicFrame(k));
+    }
+  }
+  putU8(&b, LOG_QUIT);
+
+  lv_screenSetHideLobby(0);
+  lv_screenSetLagFeature(1);
+  lv = loadSynthetic(&b, path);
+  UT_ASSERT_MSG(lv != NULL, "synthetic first picture log failed to build/load");
+
+  /* The plain view: the frame 8 picture on the first step, then the
+     recorded frame. */
+  if (lagDrawPlayTo(lv, LAG_PIC_FIRST - 1) != 0) return 1;
+  lagShellDraw(55, 50);
+  UT_ASSERT_MSG(s_lagShellSeen.n == 0, "%d items before the explosion", s_lagShellSeen.n);
+  for (k = LAG_PIC_FIRST; k <= LAG_PIC_FIRST + 3; k++) {
+    int want = (k == LAG_PIC_FIRST) ? 8 : lagPicFrame(k);
+    if (lagDrawPlayTo(lv, k) != 0) return 1;
+    lagShellDraw(55, 50);
+    UT_ASSERT_MSG(lagShellSeenAt(lagPicX(), lagPicY()), "no explosion at entry %d", k);
+    UT_ASSERT_MSG(lagPicDrawFrame(lagPicFrame(k)) == want,
+                  "plain view, entry %d: picture %d, want %d", k,
+                  lagPicDrawFrame(lagPicFrame(k)), want);
+  }
+
+  /* The lag view for A: the explosion is at the old time, 5 entries back,
+     so its first picture is at entry 65, and nothing is drawn at 64. */
+  if (lagDrawPlayTo(lv, LAG_PIC_FIRST + 4) != 0) return 1;
+  lv_screenLagViewSet(0);
+  UT_ASSERT_MSG(lv_screenLagViewSlot() == 0, "the view did not turn on for A");
+  lagShellDraw(55, 50);
+  UT_ASSERT_MSG(!lagShellSeenAt(lagPicX(), lagPicY()),
+                "the lag view draws the explosion before its old time");
+  for (k = LAG_PIC_FIRST + 5; k <= LAG_PIC_FIRST + 8; k++) {
+    int old = k - 5;
+    int want = (old == LAG_PIC_FIRST) ? 8 : lagPicFrame(old);
+    if (lagDrawPlayTo(lv, k) != 0) return 1;
+    lagShellDraw(55, 50);
+    UT_ASSERT_MSG(lagShellSeenAt(lagPicX(), lagPicY()), "no explosion at entry %d", k);
+    UT_ASSERT_MSG(lagPicDrawFrame(lagPicFrame(old)) == want,
+                  "lag view, entry %d: picture %d, want %d", k,
+                  lagPicDrawFrame(lagPicFrame(old)), want);
+  }
+
+  lv_screenLagViewSet(-1);
+  lv_screenSetLagFeature(0);
+  lv_decoderDestroy(lv);
+  lv_screenSetHideLobby(savedHide);
+  remove(path);
+  return 0;
+}
+
+/*
+ * The two Screen-True options (Screen-True Own Shells, Screen-True Local
+ * Explosions) have no menu item and no preference: they are on exactly while
+ * "See What the Selected Player Saw" is on, and off while it is off. The log
+ * is the one of lv_lag_view_draw, with A's lag record at entry 40.
+ */
+int run_lv_lag_screen_true(void) {
+  const char *path = "lv_lag_screen_true.wbv";
+  static const uint8_t rec[4] = {0, 0x00, 0x96, 5};   /* A: 150 ms, rewind 5 */
+  LogBuf b;
+  LogViewerState *lv;
+  int savedHide = lv_screenGetHideLobby();
+  int k;
+
+  /* Local Explosions works only together with Own Shells, and the view
+     turns both on. */
+  UT_ASSERT(lv_earlyBlastOn(true, true));
+  lv_screenLagViewSet(-1);
+  UT_ASSERT_MSG(lv_screenScreenTrueOn() == 0, "on with no log and no view");
+
+  b.len = 0;
+  putHeader(&b);
+  putLagDrawSnapshot(&b, 0);
+  for (k = 1; k <= 60; k++) {
+    putU8(&b, LOG_EVENT);
+    putU8(&b, (uint8_t)(k == 40 ? 3 : 2));
+    putLagDrawLocation(&b, 0, k);
+    putLagDrawLocation(&b, 1, k);
+    if (k == 40) {
+      putU8(&b, log_PlayerLag);
+      putU8(&b, 0); putU8(&b, 4);
+      put(&b, rec, sizeof(rec));
+    }
+  }
+  putU8(&b, LOG_QUIT);
+
+  lv_screenSetHideLobby(0);
+  lv_screenSetLagFeature(1);
+  lv = loadSynthetic(&b, path);
+  UT_ASSERT_MSG(lv != NULL, "synthetic Screen-True log failed to build/load");
+  if (lagDrawPlayTo(lv, 50) != 0) return 1;
+  UT_ASSERT_MSG(lv_screenLagViewSlot() < 0, "a view is on before it was asked for");
+  UT_ASSERT_MSG(lv_screenScreenTrueOn() == 0, "on with the view off");
+
+  lv_screenLagViewSet(0);
+  UT_ASSERT_MSG(lv_screenLagViewSlot() == 0, "the view did not turn on for A");
+  UT_ASSERT_MSG(lv_screenScreenTrueOn() == 1, "off with the view on");
+
+  lv_screenLagViewSet(-1);
+  UT_ASSERT_MSG(lv_screenScreenTrueOn() == 0, "still on after the view was turned off");
+
+  /* The view on again, then the lag display turned off: the view goes
+     off, and the options with it. */
+  lv_screenLagViewSet(0);
+  UT_ASSERT(lv_screenScreenTrueOn() == 1);
+  lv_screenSetLagFeature(0);
+  UT_ASSERT_MSG(lv_screenScreenTrueOn() == 0, "on after the lag display was turned off");
+
+  lv_screenLagViewSet(-1);
   lv_decoderDestroy(lv);
   lv_screenSetHideLobby(savedHide);
   remove(path);

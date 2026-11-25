@@ -70,6 +70,7 @@
 #include "imgui/imgui_scenario_panel.h"
 #include "imgui/imgui_dock.h"
 #include "lv_dock_fit.h"
+#include "lv_zoom_text.h"
 #include "lv_fullscreen_key.h"
 #include "lv_save_name.h"   /* the file name Save Log File offers */
 #include "lv_utf8_path.h"   /* lvFopenUtf8: the dialogs' paths are UTF-8 */
@@ -2104,19 +2105,24 @@ static void lvHostHandleResize(const SDL_Event *e) {
      * windowed resize still snaps to a clean tile boundary. */
     /* A window -size fixed is not snapped either: it must stay the size
      * asked for, so it is fitted as a maximized one is. */
+    /* Above 400% one square is more than 64 points, so a snap could move
+     * the window's edge a long way from where the user dragged it: the
+     * window is left as it is, and fitted as a maximized one is. */
     SDL_WindowFlags wflags = SDL_GetWindowFlags(g_lv->window);
-    if (!lvHostFixedWindowSize() && !(wflags & (SDL_WINDOW_MAXIMIZED | SDL_WINDOW_FULLSCREEN))) {
+    if (!lvHostFixedWindowSize() && !(wflags & (SDL_WINDOW_MAXIMIZED | SDL_WINDOW_FULLSCREEN)) &&
+        zoom <= LV_ZOOM_SNAP_MAX) {
         int snappedW = (int)(newTilesX * tilePxX + 0.5f);
         int snappedH = (int)(newTilesY * tilePxY + 0.5f);
         SDL_SetWindowSize(g_lv->window, snappedW + reservedX,
                           snappedH + menuH + reservedY);
     } else {
         /* The window stays as it is, so the map cannot be snapped to end at
-         * a sidebar. Rounding to the nearest square could stop it short and
-         * leave a black strip beside the sidebar; cover the gap instead, with
-         * the last square running a little way under the sidebar's edge. */
-        if (reservedX > 0) newTilesX = lvFitTilesCover(w - reservedX, tilePxX);
-        if (reservedY > 0) newTilesY = lvFitTilesCover(h - menuH - reservedY, tilePxY);
+         * its edge or at a sidebar. Rounding to the nearest square could stop
+         * it short and leave a black strip; cover the gap instead, with the
+         * last square running a little way past the edge or under the
+         * sidebar's edge. */
+        newTilesX = lvFitTilesCover(w - reservedX, tilePxX);
+        newTilesY = lvFitTilesCover(h - menuH - reservedY, tilePxY);
     }
     lvHostDockNoteFitted(&dock);
     lv_screenSetSizeX((BYTE)newTilesX);
@@ -3017,7 +3023,13 @@ bool spectatorRun(SDL_Window *window, SDL_Renderer *renderer, void *cs,
         if (!g_lv->gameView && !specPopupOpen) {
             float panX = 0.0f, panY = 0.0f;
             int   zoomDir = 0;
-            if (specInputPollPan(&panX, &panY)) {
+            /* The part of an art pixel the pan steps cut off, kept for the
+             * next frame while the stick is held. */
+            static float specPanCarryX = 0.0f, specPanCarryY = 0.0f;
+            if (!specInputPollPan(&panX, &panY)) {
+                specPanCarryX = 0.0f;
+                specPanCarryY = 0.0f;
+            } else {
                 float zoom = lv_drawGetZoomLevel();
                 if (zoom <= 0.0f) zoom = 1.0f;
                 /* Per-frame pan reach in screen pixels at full deflection. */
@@ -3028,8 +3040,11 @@ bool spectatorRun(SDL_Window *window, SDL_Renderer *renderer, void *cs,
                 lv_screenGetSubOffset(&sx, &sy);
                 int curX = (int)ox * TILE_SIZE_X + sx;
                 int curY = (int)oy * TILE_SIZE_Y + sy;
-                int newX = curX + (int)(panX * kPanSpeedPx / zoom);
-                int newY = curY + (int)(panY * kPanSpeedPx / zoom);
+                /* The step is under one art pixel a frame at a big zoom
+                 * (0.75 at 1600%), so the part cut off is kept and added
+                 * to the next frame's step. */
+                int newX = curX + lvZoomPanStep(panX * kPanSpeedPx / zoom, &specPanCarryX);
+                int newY = curY + lvZoomPanStep(panY * kPanSpeedPx / zoom, &specPanCarryY);
                 lv_drawDirtyScreen();
                 lv_screenPanToTotalPixels(newX, newY);
             }

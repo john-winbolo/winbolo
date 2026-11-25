@@ -1707,7 +1707,8 @@ int run_lv_lag_view_map(void);
 /* Options > Base Numbers: the bases in the view (test_lv_calibration.c). */
 int run_lv_base_spots(void);
 int run_lv_lag_view_toggle(void);
-/* The Screen-True options while the lag view is on (test_lv_calibration.c). */
+/* The Screen-True options are on exactly while the lag view is on
+   (test_lv_calibration.c). */
 int run_lv_lag_screen_true(void);
 int run_lv_lag_feature_default_off(void);
 int run_lv_lag_view_draw(void);
@@ -1715,6 +1716,9 @@ int run_lv_lag_view_draw(void);
  * (test_lv_calibration.c), and the shell owner matcher on a recording, on
  * ask only (WB_LV_OWNER_WBV). */
 int run_lv_lag_view_own_shells(void);
+/* A new explosion recorded at frame 7 draws the frame 8 picture on its
+ * first step, in the plain view and in the lag view (test_lv_calibration.c). */
+int run_lv_lag_view_first_picture(void);
 int run_lv_lag_view_lost_owner(void);
 int run_lv_lag_view_shell_snapshot(void);
 int run_lv_shell_owner_recording(void);
@@ -5214,6 +5218,8 @@ int run_lv_region_rect_placement(void);
  * and the viewer's own text for the sidebar options and for the arrangement
  * of a sidebar that is off, read back as written and safe on damaged text. */
 int run_lv_dock_fit_sums(void);
+/* The zoom steps up to 16 (test_lv_dock_fit.c, lv_zoom_text.h). */
+int run_lv_zoom_big_sums(void);
 int run_lv_dock_fit_margins(void);
 int run_lv_dock_layout_sides(void);
 int run_lv_dock_layout_tree(void);
@@ -5257,6 +5263,8 @@ int run_lv_tank_bars_sums(void);
 /* The hit areas the log viewer draws round each tank and each builder
  * (test_lv_hitbox.c): the engine's tank circle and builder catch test. */
 int run_lv_hitbox_sums(void);
+/* Which explosions get the dot of Hit Boxes (test_lv_hitbox.c). */
+int run_lv_hitbox_new_blast(void);
 int run_lv_hitbox_lgm_fit(void);
 int run_lv_hitbox_lgm_pick(void);
 int run_lv_hitbox_outline(void);

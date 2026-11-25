@@ -741,4 +741,98 @@ static inline float lvHitboxBlastDotSize(float pxPerWu) {
     return (s < 1.0f) ? 1.0f : s;
 }
 
+/* One record of the map's shell list: the square, the art pixel in it and
+   the frame. Frames 1 to 8 are explosions (SHELL_EXPLOSION8 to
+   SHELL_EXPLOSION1): an explosion starts at 8 and counts down. */
+typedef struct LvHitBlastRec {
+    uint8_t mx, my, px, py, frame;
+} LvHitBlastRec;
+
+/* The most records of the step before that lvHitboxNewBlasts can match. */
+#define LV_HITBOX_BLAST_PREV_MAX 256
+
+static inline bool lvHitboxIsBlastFrame(uint8_t frame) {
+    return frame >= 1 && frame <= 8;
+}
+
+/* Which explosions of a recorded step are new, for the dot: isNew[i] is 1
+   when cur[i] is an explosion with no explosion at its place in the step
+   before (prev), and 0 otherwise.
+
+   The dot cannot go by the frame. The server lowers each explosion's frame
+   once every third tick, after it adds the new ones and before it writes
+   the tick to the log, so an explosion can be first recorded at frame 7,
+   and one at frame 8 can stay at 8 for two steps.
+
+   An explosion does not move, and its frame never goes up. So an
+   explosion of the step before at the same place, with a frame the same
+   or higher, is the same one; each one of the step before matches one
+   explosion only. The explosions are matched from the lowest frame up,
+   each to the unused one of the step before with the closest frame, so
+   that one in the middle of a stack does not take the match of a lower
+   one (the step before 7, 5, 3, 1 and this step 7, 6, 4, 2: the 6 is the
+   old 7, and the 7 is new). A new explosion on the place of an older one
+   has a higher frame than it, and so is new.
+
+   havePrev is false when the step before is not known (the first step,
+   or a jump in time), and then no explosion is new: no dot is better than
+   a wrong one. For the same reason no explosion is new when the step
+   before has more records than LV_HITBOX_BLAST_PREV_MAX. */
+static inline void lvHitboxNewBlasts(const LvHitBlastRec *prev, int nPrev, bool havePrev,
+                                     const LvHitBlastRec *cur, int nCur, uint8_t *isNew) {
+    bool used[LV_HITBOX_BLAST_PREV_MAX];
+    int i, k, f;
+
+    if (nCur <= 0 || isNew == NULL) {
+        return;
+    }
+    if (nPrev < 0) nPrev = 0;
+    if (!havePrev || nPrev > LV_HITBOX_BLAST_PREV_MAX) {
+        for (i = 0; i < nCur; i++) {
+            isNew[i] = 0;
+        }
+        return;
+    }
+    for (k = 0; k < nPrev; k++) {
+        used[k] = false;
+    }
+    for (i = 0; i < nCur; i++) {
+        isNew[i] = 0;
+    }
+    for (f = 1; f <= 8; f++) {
+        for (i = 0; i < nCur; i++) {
+            const LvHitBlastRec *c = &cur[i];
+            int best = -1;
+            if (c->frame != f) {
+                continue;
+            }
+            for (k = 0; k < nPrev; k++) {
+                const LvHitBlastRec *p = &prev[k];
+                if (used[k] || !lvHitboxIsBlastFrame(p->frame) || p->mx != c->mx ||
+                    p->my != c->my || p->px != c->px || p->py != c->py ||
+                    p->frame < c->frame) {
+                    continue;
+                }
+                if (best < 0 || p->frame < prev[best].frame) {
+                    best = k;
+                }
+            }
+            if (best >= 0) {
+                used[best] = true;
+            } else {
+                isNew[i] = 1;
+            }
+        }
+    }
+}
+
+/* The frame to draw for an explosion recorded at frame: a new explosion
+   (lvHitboxNewBlasts) recorded at frame 7 is drawn with the frame 8
+   picture on that step, so every explosion starts with its first picture.
+   The server lowered the frame before it wrote the step; the recording is
+   not changed. Every other step draws the recorded frame. */
+static inline uint8_t lvHitboxDrawFrame(uint8_t frame, bool isNew) {
+    return (isNew && frame == 7) ? 8 : frame;
+}
+
 #endif /* LV_HITBOX_H */

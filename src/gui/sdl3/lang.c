@@ -1069,11 +1069,6 @@ static const LangEntry langTable[] = {
     {3118, "{string1}, {number} ms round trip"},
     {3119, "See What the Selected Player Saw"},
     {3120, "Draw the round as the selected tank's player saw it on their own screen. The recording must hold lag records"},
-    {3472, "Screen-True Own Shells"},
-    {3474, "On: the selected player's own shells are drawn at the present, as their own screen drew them at once. Off: they are drawn at the old time, as every other shell is. See What the Selected Player Saw turns it on"},
-    {3475, "Screen-True Local Explosions"},
-    {3476, "On: the selected player's own shells explode at once where they end, and the server's later explosion of each is hidden. Off: each one explodes when the server's explosion comes. See What the Selected Player Saw turns it on"},
-    {3477, "Turn on Screen-True Own Shells first"},
     /* Log viewer Tank panel: the line beside the empty base bars */
     {3480, "No base near"},
     {3121, "Lag: a bot, screen {number} ms behind"},
@@ -1132,7 +1127,7 @@ static const LangEntry langTable[] = {
     {2869, "{player} captured Neutral Pillbox {number}"},
     {2870, "{player} just stole pillbox {number} from {other}"},
     {3470, "Hit Boxes"},
-    {3471, "Over each tank on the map, the circle a shell must reach to hit it. Over each builder out of his tank, the area an explosion must be in to kill him: a mine, a tank's explosion, or a shell that bursts on open ground. A shell that bursts on forest, a boat, the shore or a bridge kills only a builder on that square. A pulsing rainbow dot marks the exact centre of each shell explosion on the tick it explodes"},
+    {3471, "Over each tank on the map, the circle a shell must reach to hit it. Over each builder out of his tank, the area an explosion must be in to kill him: a mine, a tank's explosion, or a shell that bursts on open ground. A shell that bursts on forest, a boat, the shore or a bridge kills only a builder on that square. A pulsing rainbow dot marks the exact centre of each explosion on the tick it explodes"},
 
     /* Log viewer dialogs */
     {1128, "Assign colours to each player team:"},

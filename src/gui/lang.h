@@ -1405,15 +1405,6 @@
 #define STR_LV_LAG_MENU                     3119
 #define STR_LV_LAG_MENU_TIP                 3120
 #define STR_LV_LAG_LINE_BOT                 3121
-/* The lag view's shell toggles in the Options menu. Screen-True Own
-   Shells (lv_shell_owner.h) and its tooltip. Screen-True Local
-   Explosions (lv_early_blast.h): its name, its tooltip, and the tooltip
-   while it is off because the first toggle is off. */
-#define STR_LV_SCREEN_TRUE_SHELLS           3472
-#define STR_LV_SCREEN_TRUE_SHELLS_TIP       3474
-#define STR_LV_SCREEN_TRUE_EXPL             3475
-#define STR_LV_SCREEN_TRUE_EXPL_TIP         3476
-#define STR_LV_SCREEN_TRUE_EXPL_OFF_TIP     3477
 /* The viewer's server timing (log_OverrunStats) in the Game Info panel: the
    section's name, the line that says when the record shown was written
    (string1 the round time, m:ss), the record's lines (string1..3 times in ms
@@ -3192,8 +3183,8 @@
  * after those. tank_hit_sets_off_mines took the next free one at the end of
  * the file after that, and man_dead_pill_terrain_speed took the next free one
  * at the end of the file after that. lgm_blast_shape took 3478. The Log
- * Viewer's strings took 3470 to 3472, 3474 to 3477 and 3480 to 3484
- * since, so 3429 to 3469, 3473 and 3479 are left free. The
+ * Viewer's strings took 3470, 3471 and 3480 to 3484 since, so 3429 to
+ * 3469, 3472 to 3477 and 3479 are left free. The
  * order of the block is SIM_RULE_LIST's throughout, which is the order that
  * matters, and a hole in the numbers costs nothing: langTable is searched by
  * id rather than indexed by it. */

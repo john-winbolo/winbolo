@@ -177,9 +177,10 @@ static LvHitLgmPos  s_hitLgmPos[MAX_TANKS];
 static int          s_hitLgmCount = 0;
 /* The zoom factor the places were noted at: target pixels per art pixel. */
 static BYTE         s_hitZoom = 1;
-/* The centre of each shell explosion lv_drawShells drew, in render-target
+/* The centre of each explosion lv_drawShells drew, in render-target
    pixels, for the pulsing dot (lvHitboxBlastCentreInPicture). Noted only
-   while hit boxes are on, and only on the tick the shell exploded. */
+   while hit boxes are on, and only on the step the explosion is new
+   (lv_screenNewBlasts). */
 #define LV_HIT_BLAST_MAX 256
 static SDL_FPoint   s_hitBlast[LV_HIT_BLAST_MAX];
 static int          s_hitBlastCount = 0;
@@ -203,10 +204,7 @@ static uint32_t g_dwFrameTotal = 0;
  * At 1.5 a map square is 24 points, so the pixels of the art are 1 and 2
  * pixels of the display in turn: sharp, but not all the same width.
  * ZOOM_STEP_1X is the place of 1.0 in the table. */
-static const float g_zoomSteps[] = {
-    0.5f, 0.6f, 0.7f, 0.8f, 0.9f,
-    1.0f, 1.5f, 2.0f, 3.0f, 4.0f, 6.0f, 8.0f, 12.0f, 16.0f
-};
+static const float g_zoomSteps[] = { LV_ZOOM_STEP_LIST };
 #define ZOOM_STEP_COUNT ((int)(sizeof(g_zoomSteps) / sizeof(g_zoomSteps[0])))
 #define ZOOM_STEP_1X    5
 
@@ -672,7 +670,7 @@ static void lv_drawApplyZoomStep(int newStepIndex, int mouseScreenX, int mouseSc
     BYTE  zf;
     float maxGx, maxGy;
     int   curTexW, curTexH;
-    int   gameW;
+    int   newPxX, newPxY;
     int   mapW = 0;
     int   dockL = 0, dockT = 0, dockR = 0, dockB = 0;
     LvDockMargins dock = { 0, 0, 0, 0 };
@@ -740,21 +738,15 @@ static void lv_drawApplyZoomStep(int newStepIndex, int mouseScreenX, int mouseSc
     anchorTileX = (float)oldOffX + (float)oldSubX / (float)TILE_SIZE_X + gx / oldEffective;
     anchorTileY = (float)oldOffY + (float)oldSubY / (float)TILE_SIZE_Y + gy / oldEffective;
 
-    /* Compute new viewport tile count so the blit fills (approximately)
-     * the available window area at the new zoom. Use the same nearest-
-     * tile rounding the resize handler uses, just in zoomed pixel space. */
-    gameW = windowW;
+    /* Compute new viewport tile count so the blit covers the map's part
+     * of the window at the new zoom. A zoom step does not resize the
+     * window, so the map runs up to its edges: the last square may go a
+     * little way past an edge, or under a sidebar, rather than stop short
+     * (one square is 256 points at 1600%). */
     newEffective = (float)(zf * TILE_SIZE_X) * newZoom;
     if (newEffective <= 0.0f) newEffective = (float)TILE_SIZE_X;
-    newTilesX = (int)(((float)gameW + newEffective * 0.5f) / newEffective);
-    /* Beside a sidebar the map runs up to the sidebar's edge: the last
-     * square may go a little way under it rather than stop short. */
-    if (dockL + dockR > 0) {
-        gameW = mapW;
-        newTilesX = lvFitTilesCover(gameW, newEffective);
-    }
-    newTilesY = (int)(((float)gameH + newEffective * 0.5f) / newEffective);
-    if (dockT + dockB > 0) newTilesY = lvFitTilesCover(gameH, newEffective);
+    newTilesX = lvFitTilesCover(mapW, newEffective);
+    newTilesY = lvFitTilesCover(gameH, newEffective);
     if (newTilesX < 1) newTilesX = 1;
     if (newTilesY < 1) newTilesY = 1;
     if (newTilesX > 255) newTilesX = 255;
@@ -763,6 +755,10 @@ static void lv_drawApplyZoomStep(int newStepIndex, int mouseScreenX, int mouseSc
     /* Place the anchor tile back under the cursor at the new zoom. */
     newOffXf = anchorTileX - gx / newEffective;
     newOffYf = anchorTileY - gy / newEffective;
+    /* The same start in art pixels, with the part of a square kept, so the
+     * point under the cursor stays there to the art pixel. */
+    newPxX = lvZoomStartArtPx(anchorTileX, gx, newEffective);
+    newPxY = lvZoomStartArtPx(anchorTileY, gy, newEffective);
 
     maxOffX = 255 - newTilesX;
     maxOffY = 255 - newTilesY;
@@ -787,10 +783,11 @@ static void lv_drawApplyZoomStep(int newStepIndex, int mouseScreenX, int mouseSc
     if (newTilesY != curTilesY) lv_screenSetSizeY((BYTE)newTilesY);
 
     lv_screenSetOffset((BYTE)newOffX, (BYTE)newOffY);
-    /* Zoom anchors on the cursor's tile, not its sub-tile pixel; reset
-     * sub-pan so the new viewport doesn't carry an offset from the
-     * pre-zoom sub-pixel position. */
     lv_screenSetSubOffset(0, 0);
+    /* Then the start to the art pixel: whole squares and the part of a
+     * square, held inside the map (nothing while no log is open, when the
+     * whole squares above stand). */
+    lv_screenPanToTotalPixels(newPxX, newPxY);
     lv_drawDirtyScreen();
     lv_windowNeedRedraw();
 }
@@ -1682,26 +1679,44 @@ void lv_drawShells(screenBullets *sBullets) {
     int total, count, srcX, srcY, srcW, srcH;
     float fx, fy;
     BYTE px, py, frame, mx, my, zf;
+    const LvHitBlastRec *newBlast = NULL;
+    int newBlastCount = 0;
+    BYTE viewX = 0, viewY = 0;
     
     total = lv_screenBulletsGetNumEntries(sBullets);
     zf = lv_windowGetZoomFactor();
     s_hitBlastCount = 0;
     s_hitBlastZoom = zf;
+    /* The explosions that are new on this map, in map squares: the shell
+       list's squares are from the view's top left. They get the frame 8
+       picture (lvHitboxDrawFrame) and, with Hit Boxes on, the dot. */
+    newBlastCount = lv_screenNewBlasts(&newBlast);
+    lv_screenGetOffsets(&viewX, &viewY);
 
     for (count = 1; count <= total; count++) {
         lv_screenBulletsGetItem(sBullets, count, &mx, &my, &px, &py, &frame);
         spritePositionShell(0.0f, 0.0f, GFX_ANIM_CLASSIC, (float)zf, 1,
                             mx, my, px, py, px << 4, py << 4, frame, &fx, &fy);
         /* The blast point of an explosion, for the pulsing dot: only on the
-           explosion's first frame (SHELL_EXPLOSION1; the frames count down
-           to SHELL_EXPLOSION8), which is the tick the shell exploded. The
-           picture of an explosion has its top left at (fx, fy). */
-        if (s_hitBoxes && frame == SHELL_EXPLOSION1 &&
-            s_hitBlastCount < LV_HIT_BLAST_MAX) {
-            float c = (float)zf * (float)lvHitboxBlastCentreInPicture();
-            s_hitBlast[s_hitBlastCount].x = fx + c;
-            s_hitBlast[s_hitBlastCount].y = fy + c;
-            s_hitBlastCount++;
+           step the explosion is new (lv_screenNewBlasts), not by its
+           frame, which the server can have lowered before it wrote the
+           step. The picture of an explosion has its top left at (fx, fy). */
+        if (newBlastCount > 0 && lvHitboxIsBlastFrame(frame)) {
+            int k;
+            for (k = 0; k < newBlastCount; k++) {
+                const LvHitBlastRec *nb = &newBlast[k];
+                if ((int)nb->mx == (int)viewX + (int)mx && (int)nb->my == (int)viewY + (int)my &&
+                    nb->px == px && nb->py == py && nb->frame == frame) {
+                    if (s_hitBoxes && s_hitBlastCount < LV_HIT_BLAST_MAX) {
+                        float c = (float)zf * (float)lvHitboxBlastCentreInPicture();
+                        s_hitBlast[s_hitBlastCount].x = fx + c;
+                        s_hitBlast[s_hitBlastCount].y = fy + c;
+                        s_hitBlastCount++;
+                    }
+                    frame = lvHitboxDrawFrame(frame, true);
+                    break;
+                }
+            }
         }
 
         switch (frame) {
@@ -2681,10 +2696,10 @@ static void lvDrawHitBoxesOverBlit(const SDL_FRect *src, const SDL_FRect *dst) {
 }
 
 /* With hit boxes on, a dot one art pixel across on the blast point of each
-   shell explosion on the tick it exploded (s_hitBlast): the point the
-   engine tests builders against. Its colour goes round the whole rainbow every 2 seconds
-   (lvHitboxRainbow), and it pulses from 35% to 100% solid, one rise and
-   fall a second (lvHitboxPulseAlpha). The pulse goes by the wall
+   explosion on the step it is new (s_hitBlast): the point the engine
+   tests builders against. Its colour goes round the whole rainbow every
+   2 seconds (lvHitboxRainbow), and it pulses from 35% to 100% solid, one
+   rise and fall a second (lvHitboxPulseAlpha). The pulse goes by the wall
    clock, so it keeps on while playback is paused. src is the slice of the
    target the blit took, dst where it went. */
 static void lvDrawBlastCentresOverBlit(const SDL_FRect *src, const SDL_FRect *dst) {

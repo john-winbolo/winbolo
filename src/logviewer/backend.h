@@ -900,36 +900,28 @@ bool lv_screenLagViewStatus(char *name, size_t nameSize, int *behindMs, bool *dr
  * have none. */
 void lv_screenLagShellOwnerStats(LvShellOwnerStats *out);
 
-/* "Screen-True Own Shells" (lv_shell_owner.h), on by default: in the
- * lag view the chosen player's own shells are drawn from the present frame,
- * as that player's own screen drew them. Off draws them from the old frame,
- * as every other shell is. The value is one bool that lv_screenUpdate
- * and the lag view's capture at each entry (lv_lagEarlyBlastTick) read, so
- * the menu sets and gets it with no client mutex. */
-void lv_screenSetScreenTrueShells(int enabled);
-int  lv_screenGetScreenTrueShells(void);
-
-/* "Screen-True Local Explosions" (lv_early_blast.h), off by
- * default: in the lag view each own shell of the chosen player explodes at the present where it ended, and the
- * server's later explosion of that shell is hidden. It does something only
- * while "Screen-True Own Shells" is on (lv_earlyBlastOn). Stats gives
- * how many own shells ended and how many server explosions were found for
- * them. The toggle is one bool that lv_screenUpdate and the lag view's
- * capture at each entry (lv_lagEarlyBlastTick) read, so the menu sets and
- * gets it with no client mutex; hold the client mutex for the stats. */
-void lv_screenSetScreenTrueExplosions(int enabled);
-int  lv_screenGetScreenTrueExplosions(void);
+/* The two Screen-True options, "Screen-True Own Shells" (lv_shell_owner.h)
+ * and "Screen-True Local Explosions" (lv_early_blast.h), are on exactly
+ * while "See What the Selected Player Saw" is on. Then the chosen player's
+ * own shells are drawn from the present frame, as that player's own screen
+ * drew them, and each one explodes at the present where it ended; the
+ * server's later explosion of that shell is hidden. lv_screenScreenTrueOn
+ * gives 1 while they are on. It reads one value with no client mutex.
+ * Stats gives how many own shells ended and how many server explosions
+ * were found for them; hold the client mutex for the stats. */
+int  lv_screenScreenTrueOn(void);
 void lv_screenEarlyBlastStats(LvEarlyBlastStats *out);
 
-/* What the Screen-True options do now (lv_lagScreenTrueOn). Forced is 1
- * while "See What the Selected Player Saw" is on: then every Screen-True
- * option acts as on, and the menus show its item ticked and greyed. The
- * two On functions give whether each option acts as on, the saved choice
- * (the Get functions above) while the view is off. Like the toggles, they
- * read single values with no client mutex. */
-int  lv_screenScreenTrueForced(void);
-int  lv_screenScreenTrueShellsOn(void);
-int  lv_screenScreenTrueExplosionsOn(void);
+/* The explosions that are new on the map (lvHitboxNewBlasts in
+ * lv_hitbox.h), for the dot of Hit Boxes. lv_screenNewBlasts gives those of
+ * the map lv_screenUpdate drew last, in the lag view too, as map squares and
+ * art pixels; *out points into the viewer's own list. lv_screenShellsNewBlasts
+ * puts those of the present step's shell list into out, at most max. Both
+ * return how many; none when the step before is not known (the first step of
+ * a log, or a seek put playback on a snapshot and read no step since). */
+struct LvHitBlastRec;
+int  lv_screenNewBlasts(const struct LvHitBlastRec **out);
+int  lv_screenShellsNewBlasts(struct LvHitBlastRec *out, int max);
 
 void lv_screenCentreOnSelectedItem();
 

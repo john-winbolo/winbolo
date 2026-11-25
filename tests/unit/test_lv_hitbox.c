@@ -22,6 +22,12 @@
  *       art pixel a recording holds, with the builder's 1 and 2 put back,
  *       and the offsets the game draws the tank and builder pictures at.
  *
+ *   lv_hitbox_new_blast — which explosions of a step get the dot
+ *       (lvHitboxNewBlasts): each one on its first recorded step only,
+ *       whether that step shows frame 8 or frame 7, and not again when
+ *       frame 8 lasts two steps; a new explosion on an old one's place is
+ *       new; with the step before unknown, or too big, none is new.
+ *
  *   lv_hitbox_lgm_fit — that the closer guess at a walking builder's place
  *       (lvHitboxLgmFitRange) always holds his true place, is never wider
  *       than his newest pixel, is that whole pixel for a builder standing
@@ -853,6 +859,186 @@ int run_lv_hitbox_square_hit_by_version(void) {
                       "2.2.1: a dead pill's square next to him does not catch across the edge");
         UT_ASSERT_MSG(lvHitboxBuilderCaught(260.0, 128.0, 250.0, 128.0, deadNew, 128),
                       "2.2.2: a dead pill's square next to him catches across the edge");
+    }
+    return 0;
+}
+
+/* One step's record, for lv_hitbox_new_blast. */
+static LvHitBlastRec newBlastRec(uint8_t mx, uint8_t my, uint8_t px, uint8_t py,
+                                 uint8_t frame) {
+    LvHitBlastRec r;
+    r.mx = mx;
+    r.my = my;
+    r.px = px;
+    r.py = py;
+    r.frame = frame;
+    return r;
+}
+
+int run_lv_hitbox_new_blast(void) {
+    static LvHitBlastRec prev[LV_HITBOX_BLAST_PREV_MAX + 1];
+    LvHitBlastRec cur[4];
+    uint8_t isNew[4];
+    int i;
+
+    /* Frames 1 to 8 are explosions; 0 and 9 up are not. */
+    UT_ASSERT(!lvHitboxIsBlastFrame(0));
+    UT_ASSERT(lvHitboxIsBlastFrame(1));
+    UT_ASSERT(lvHitboxIsBlastFrame(8));
+    UT_ASSERT(!lvHitboxIsBlastFrame(9));
+
+    /* First recorded at frame 8, with nothing there the step before: new. */
+    cur[0] = newBlastRec(10, 20, 3, 4, 8);
+    isNew[0] = 9;
+    lvHitboxNewBlasts(prev, 0, true, cur, 1, isNew);
+    UT_ASSERT_MSG(isNew[0] == 1, "a frame 8 explosion with nothing before is not new");
+
+    /* First recorded at frame 7 (the server lowered it before it wrote the
+       step): new too. */
+    cur[0] = newBlastRec(10, 20, 3, 4, 7);
+    lvHitboxNewBlasts(prev, 0, true, cur, 1, isNew);
+    UT_ASSERT_MSG(isNew[0] == 1, "a frame 7 explosion with nothing before is not new");
+
+    /* Frame 8 for two steps: the second step is not new. */
+    prev[0] = newBlastRec(10, 20, 3, 4, 8);
+    cur[0] = newBlastRec(10, 20, 3, 4, 8);
+    lvHitboxNewBlasts(prev, 1, true, cur, 1, isNew);
+    UT_ASSERT_MSG(isNew[0] == 0, "frame 8 on its second step is new");
+
+    /* 8 then 7, and 7 then 7: the same explosion, not new. */
+    cur[0] = newBlastRec(10, 20, 3, 4, 7);
+    lvHitboxNewBlasts(prev, 1, true, cur, 1, isNew);
+    UT_ASSERT(isNew[0] == 0);
+    prev[0] = newBlastRec(10, 20, 3, 4, 7);
+    lvHitboxNewBlasts(prev, 1, true, cur, 1, isNew);
+    UT_ASSERT(isNew[0] == 0);
+
+    /* An explosion's frame never goes up, so a frame 8 where a frame 5
+       was is a new explosion on the old one's place. */
+    prev[0] = newBlastRec(10, 20, 3, 4, 5);
+    cur[0] = newBlastRec(10, 20, 3, 4, 8);
+    lvHitboxNewBlasts(prev, 1, true, cur, 1, isNew);
+    UT_ASSERT_MSG(isNew[0] == 1, "a new explosion on an old one's place is not new");
+
+    /* Both: the old one goes on at 4 and the new one starts at 8, in
+       either order. Each old one matches one only. */
+    cur[0] = newBlastRec(10, 20, 3, 4, 4);
+    cur[1] = newBlastRec(10, 20, 3, 4, 8);
+    lvHitboxNewBlasts(prev, 1, true, cur, 2, isNew);
+    UT_ASSERT(isNew[0] == 0 && isNew[1] == 1);
+    cur[0] = newBlastRec(10, 20, 3, 4, 8);
+    cur[1] = newBlastRec(10, 20, 3, 4, 5);
+    lvHitboxNewBlasts(prev, 1, true, cur, 2, isNew);
+    UT_ASSERT(isNew[0] == 1 && isNew[1] == 0);
+
+    /* Two old ones at one place (8 and 3), both going on (8 and 2): the 8
+       takes the 8 and the 2 takes the 3, so neither is new. */
+    prev[0] = newBlastRec(10, 20, 3, 4, 8);
+    prev[1] = newBlastRec(10, 20, 3, 4, 3);
+    cur[0] = newBlastRec(10, 20, 3, 4, 2);
+    cur[1] = newBlastRec(10, 20, 3, 4, 8);
+    lvHitboxNewBlasts(prev, 2, true, cur, 2, isNew);
+    UT_ASSERT(isNew[0] == 0 && isNew[1] == 0);
+
+    /* A stack at one place in the list order of the log: the step before
+       7, 5, 3, 1 and this step 7, 6, 4, 2. The 1 has ended, the others went
+       down one, and the 7 is new. A match in list order would give the 7
+       to the old 7 and call the 6 new. */
+    prev[0] = newBlastRec(10, 20, 3, 4, 7);
+    prev[1] = newBlastRec(10, 20, 3, 4, 5);
+    prev[2] = newBlastRec(10, 20, 3, 4, 3);
+    prev[3] = newBlastRec(10, 20, 3, 4, 1);
+    cur[0] = newBlastRec(10, 20, 3, 4, 7);
+    cur[1] = newBlastRec(10, 20, 3, 4, 6);
+    cur[2] = newBlastRec(10, 20, 3, 4, 4);
+    cur[3] = newBlastRec(10, 20, 3, 4, 2);
+    lvHitboxNewBlasts(prev, 4, true, cur, 4, isNew);
+    UT_ASSERT_MSG(isNew[0] == 1 && isNew[1] == 0 && isNew[2] == 0 && isNew[3] == 0,
+                  "stack: new %d %d %d %d", isNew[0], isNew[1], isNew[2], isNew[3]);
+
+    /* Another place, by one art pixel or one square: new. */
+    prev[0] = newBlastRec(10, 20, 3, 4, 8);
+    cur[0] = newBlastRec(10, 20, 3, 5, 7);
+    cur[1] = newBlastRec(11, 20, 3, 4, 7);
+    cur[2] = newBlastRec(10, 20, 2, 4, 7);
+    cur[3] = newBlastRec(10, 21, 3, 4, 7);
+    lvHitboxNewBlasts(prev, 1, true, cur, 4, isNew);
+    for (i = 0; i < 4; i++) {
+        UT_ASSERT_MSG(isNew[i] == 1, "explosion %d, at another place, is not new", i);
+    }
+
+    /* A shell (frame 9 up) is never new, and a shell of the step before
+       does not hide an explosion. */
+    prev[0] = newBlastRec(10, 20, 3, 4, 12);
+    cur[0] = newBlastRec(10, 20, 3, 4, 12);
+    cur[1] = newBlastRec(10, 20, 3, 4, 8);
+    lvHitboxNewBlasts(prev, 1, true, cur, 2, isNew);
+    UT_ASSERT(isNew[0] == 0 && isNew[1] == 1);
+
+    /* The step before not known (the first step, or a jump): none is new. */
+    cur[0] = newBlastRec(10, 20, 3, 4, 8);
+    isNew[0] = 9;
+    lvHitboxNewBlasts(prev, 0, false, cur, 1, isNew);
+    UT_ASSERT_MSG(isNew[0] == 0, "new with the step before unknown");
+
+    /* The step before has more records than can be matched: none is new,
+       as one of them could be this explosion. */
+    for (i = 0; i <= LV_HITBOX_BLAST_PREV_MAX; i++) {
+        prev[i] = newBlastRec(1, 1, 0, 0, 12);
+    }
+    isNew[0] = 9;
+    lvHitboxNewBlasts(prev, LV_HITBOX_BLAST_PREV_MAX + 1, true, cur, 1, isNew);
+    UT_ASSERT_MSG(isNew[0] == 0, "new with too many records the step before");
+    lvHitboxNewBlasts(prev, LV_HITBOX_BLAST_PREV_MAX, true, cur, 1, isNew);
+    UT_ASSERT_MSG(isNew[0] == 1, "not new with a full step before that has no explosion");
+
+    /* The picture: a new explosion recorded at frame 7 draws the frame 8
+       picture on that step only; every other frame and step draws the
+       recorded frame. */
+    UT_ASSERT(lvHitboxDrawFrame(7, true) == 8);
+    UT_ASSERT(lvHitboxDrawFrame(8, true) == 8);
+    UT_ASSERT(lvHitboxDrawFrame(7, false) == 7);
+    UT_ASSERT(lvHitboxDrawFrame(6, true) == 6);
+    UT_ASSERT(lvHitboxDrawFrame(1, true) == 1);
+    UT_ASSERT(lvHitboxDrawFrame(12, true) == 12);
+
+    /* A run of steps: an explosion first recorded at 8 for two steps, then
+       7 down to 1, gets the dot on its first step only; one first recorded
+       at 7 too. */
+    {
+        static const uint8_t runA[] = {8, 8, 7, 7, 7, 6, 6, 6, 5, 5, 5, 4, 4, 4,
+                                       3, 3, 3, 2, 2, 2, 1, 1, 1};
+        static const uint8_t runB[] = {7, 7, 7, 6, 6, 6, 5, 5, 5, 4, 4, 4,
+                                       3, 3, 3, 2, 2, 2, 1, 1, 1};
+        const uint8_t *runs[2];
+        int lens[2];
+        int r;
+        runs[0] = runA;
+        lens[0] = (int)sizeof(runA);
+        runs[1] = runB;
+        lens[1] = (int)sizeof(runB);
+        for (r = 0; r < 2; r++) {
+            int dots = 0, firstDot = -1, k;
+            int nPrev = 0;
+            for (k = 0; k < lens[r]; k++) {
+                cur[0] = newBlastRec(30, 40, 7, 9, runs[r][k]);
+                lvHitboxNewBlasts(prev, nPrev, true, cur, 1, isNew);
+                /* Every run starts with the frame 8 picture, and after
+                   that draws the recorded frame. */
+                UT_ASSERT_MSG(lvHitboxDrawFrame(cur[0].frame, isNew[0] != 0) ==
+                                  (k == 0 ? 8 : runs[r][k]),
+                              "run %d step %d draws frame %d", r, k,
+                              lvHitboxDrawFrame(cur[0].frame, isNew[0] != 0));
+                if (isNew[0]) {
+                    dots++;
+                    if (firstDot < 0) firstDot = k;
+                }
+                prev[0] = cur[0];
+                nPrev = 1;
+            }
+            UT_ASSERT_MSG(dots == 1 && firstDot == 0, "run %d: %d dots, first at step %d",
+                          r, dots, firstDot);
+        }
     }
     return 0;
 }

@@ -14,6 +14,12 @@
  *       dock; the count stays inside 1..255; and the dock's width is held
  *       between its smallest and two thirds of the window.
  *
+ *   lv_zoom_big_sums — the zoom steps reach 16, one map square 256
+ *       points; there a part square counts as a whole one, so the map
+ *       reaches the window's edge; a zoom step keeps the point under the
+ *       cursor to the art pixel; and a pan step under one pixel still moves
+ *       the map, as the part cut off is kept for the next frame.
+ *
  *   lv_dock_fit_margins — the four sidebars together: one that is off takes
  *       nothing; two that face each other leave the map a third of the
  *       window however much they ask for; the left and right ones do not
@@ -36,6 +42,7 @@
 
 #include "lv_dock_fit.h"
 #include "lv_dock_layout.h"
+#include "lv_zoom_text.h"
 #include "test_harness.h"
 
 int run_lv_dock_fit_sums(void) {
@@ -458,5 +465,83 @@ int run_lv_dock_layout_tree(void) {
     strcpy(tree.node[0].win[0], "a,b");
     UT_ASSERT(lvDockTreeFormat(&tree, text, sizeof(text)) == -1);
     UT_ASSERT(text[0] == '\0');
+    return 0;
+}
+
+int run_lv_zoom_big_sums(void) {
+    static const float steps[] = { LV_ZOOM_STEP_LIST };
+    const int count = (int)(sizeof(steps) / sizeof(steps[0]));
+    const float square = 16.0f * 16.0f;   /* one map square at 16, in points */
+    int i, area;
+
+    /* The steps go up, and the last is 16. */
+    UT_ASSERT_MSG(count == 14, "%d zoom steps, want 14", count);
+    UT_ASSERT_MSG(steps[count - 1] == 16.0f, "the last zoom step is %.2f", steps[count - 1]);
+    for (i = 1; i < count; i++) {
+        UT_ASSERT_MSG(steps[i] > steps[i - 1], "zoom step %d is not bigger", i);
+    }
+    UT_ASSERT(LV_ZOOM_SNAP_MAX == 4.0f);
+
+    /* About 1060 points under the menu bar: nearest gives 4 squares, 1024
+       points and 36 short; cover gives 5, past the edge. */
+    UT_ASSERT_MSG(lvFitTilesNearest(1060, square) == 4, "1060 nearest at 16: %d",
+                  lvFitTilesNearest(1060, square));
+    UT_ASSERT_MSG(lvFitTilesCover(1060, square) == 5, "1060 cover at 16: %d",
+                  lvFitTilesCover(1060, square));
+    UT_ASSERT(lvFitTilesCover(1024, square) == 4);
+    UT_ASSERT(lvFitTilesCover(1025, square) == 5);
+    UT_ASSERT(lvFitTilesCover(1, square) == 1);
+    UT_ASSERT(lvFitTilesCover(0, square) == 1);
+    /* Cover always reaches the edge, by less than one square past it. */
+    for (area = 1; area <= 4000; area++) {
+        int t = lvFitTilesCover(area, square);
+        UT_ASSERT_MSG((float)t * square >= (float)area, "%d points: %d squares stop short",
+                      area, t);
+        UT_ASSERT_MSG((float)(t - 1) * square < (float)area,
+                      "%d points: %d squares are one too many", area, t);
+    }
+
+    /* A zoom step from 4 to 16 with the cursor 300 points in: the place
+       under the cursor was square 10 + 300/64 = 14.6875, art pixel 235. At
+       16 the start is 14.6875 - 300/256 squares, art pixel 216.25: 216,
+       with the part of a square (8 pixels) kept. */
+    UT_ASSERT_MSG(lvZoomStartArtPx(14.6875f, 300.0f, square) == 216,
+                  "the start after the step is %d", lvZoomStartArtPx(14.6875f, 300.0f, square));
+    /* For every cursor place, the point under it stays to half an art pixel
+       (8 points at 16). */
+    {
+        int cursor;
+        for (cursor = 0; cursor <= 1500; cursor += 7) {
+            const float anchor = 10.0f + (float)cursor / 64.0f;
+            const int start = lvZoomStartArtPx(anchor, (float)cursor, square);
+            const float underPx = (float)start + (float)cursor / 16.0f;
+            const float err = underPx - anchor * 16.0f;
+            UT_ASSERT_MSG(err >= -0.5f && err <= 0.5f,
+                          "cursor %d: the point moved %.2f art pixels", cursor, err);
+        }
+    }
+
+    /* The controller's pan at 16: 12 points a frame is 0.75 of an art
+       pixel. With the part kept, 100 frames move 75 pixels, each way. A
+       step of 0.75 cut to a whole pixel each frame would move none. */
+    {
+        float carry = 0.0f;
+        int total = 0, frame, step;
+        for (frame = 0; frame < 100; frame++) {
+            step = lvZoomPanStep(12.0f / 16.0f, &carry);
+            UT_ASSERT(step == 0 || step == 1);
+            total += step;
+        }
+        UT_ASSERT_MSG(total == 75, "100 frames at 0.75 moved %d pixels", total);
+        carry = 0.0f;
+        total = 0;
+        for (frame = 0; frame < 100; frame++) {
+            total += lvZoomPanStep(-12.0f / 16.0f, &carry);
+        }
+        UT_ASSERT_MSG(total == -75, "100 frames at -0.75 moved %d pixels", total);
+        /* Whole steps are as before, with nothing kept. */
+        carry = 0.0f;
+        UT_ASSERT(lvZoomPanStep(12.0f, &carry) == 12 && carry == 0.0f);
+    }
     return 0;
 }

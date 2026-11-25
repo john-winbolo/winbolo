@@ -207,6 +207,8 @@ typedef struct {
     uint8_t mx, my, px, py, frame;
     int8_t  owner;   /* the player who fired it, or LV_SHELL_OWNER_NONE */
     uint16_t id;     /* the same for one shell in every frame (lv_shellOwnerLinkIds) */
+    bool    isNew;   /* an explosion new at this step, as the map found it when
+                        the frame was taken: the dot and the frame 8 picture */
 } LvLagShell;
 
 /* One pillbox as the map drew it at one entry: what the pillbox drawing and
@@ -414,15 +416,6 @@ static inline int lv_lagViewToggle(bool feature, bool loaded, bool recorded, int
         return -1;
     }
     return sel;
-}
-
-/* Whether a "Screen-True" option (Screen-True Own Shells, Screen-True
-   Local Explosions) acts as on. While "See What the Selected Player Saw"
-   is on (viewOn), every one of them is on, and its menu item shows ticked
-   and greyed. With the view off, each one is the user's saved choice
-   (saved), which the view never changes. */
-static inline bool lv_lagScreenTrueOn(bool viewOn, bool saved) {
-    return viewOn || saved;
 }
 
 /* What the Tank panel shows of one player's lag. */
