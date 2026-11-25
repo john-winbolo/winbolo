@@ -722,7 +722,6 @@ static const UnitTestEntry s_tests[] = {
     { "lv_early_blast_frames", run_lv_early_blast_frames },
     { "lv_early_blast_match", run_lv_early_blast_match },
     { "lv_early_blast_hide", run_lv_early_blast_hide },
-    { "lv_early_blast_needs_own_shells", run_lv_early_blast_needs_own_shells },
     { "lv_early_blast_same_place", run_lv_early_blast_same_place },
     { "lv_early_blast_many_players", run_lv_early_blast_many_players },
     { "lv_early_blast_watch_miss", run_lv_early_blast_watch_miss },

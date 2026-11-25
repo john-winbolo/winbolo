@@ -370,8 +370,13 @@ static void lv_lagEarlyBlastTick(const LvLagFrame *f, const LvShellPt *prev,
 #define LV_SHS_BLAST_LIFE_MS (2u * (uint32_t) LV_EARLY_BLAST_LIFE_MS)
 BOLO_STATIC_ASSERT(LV_SHS_BLAST_LIFE_MS > (uint32_t) LV_EARLY_BLAST_LIFE_MS + 3u * LV_SHS_STEP_MS,
                    lv_shs_blast_life_covers_snapshot_steps);
-/* A seek starts the decode this far back, for the lag history too. */
-BOLO_STATIC_ASSERT(LV_LAG_HISTORY_MS <= LV_SHS_BLAST_LIFE_MS, lv_seek_lead_covers_lag_history);
+/* A seek starts the decode this far back, for the lag history too. After
+   the restore, a run of steps with no shell makes the step before known
+   only when it is longer than LV_SHS_BLAST_LIFE_MS, counted from the first
+   step after the snapshot. That step is one step after the snapshot, and
+   the step before the target must be known: thus two steps more. */
+#define LV_SHS_SEEK_LEAD_MS (LV_SHS_BLAST_LIFE_MS + 2u * LV_SHS_STEP_MS)
+BOLO_STATIC_ASSERT(LV_LAG_HISTORY_MS <= LV_SHS_SEEK_LEAD_MS, lv_seek_lead_covers_lag_history);
 static LvHitBlastRec s_blastPrev[LV_HITBOX_BLAST_PREV_MAX];
 static int      s_blastPrevN = 0;
 /* The step before had more explosions than s_blastPrev holds. */
@@ -8524,14 +8529,15 @@ static void lv_screenSeekToAbsoluteMs(uint32_t targetTime) {
   if (targetTime == g_lv->timeRunning && g_lv->logLoaded == TRUE) {
     return;
   }
-  /* The decode starts an explosion's longest life before the target, so
-     the explosions on the map at the target were read from their start,
-     and their dots are as forward play shows them (lv_screenShellsReset).
-     This is longer than the lag history, so the lag view also has its
-     frames when the seek ends, whether or not the view is on yet. */
+  /* The decode starts an explosion's longest life and two steps before
+     the target (LV_SHS_SEEK_LEAD_MS), so the explosions on the map at the
+     target were read from their start, and their dots are as forward play
+     shows them (lv_screenShellsReset). This is longer than the lag
+     history, so the lag view also has its frames when the seek ends,
+     whether or not the view is on yet. */
   haveSnap = lv_snapshotFindByTime(&g_lv->snap,
-                                   (targetTime > LV_SHS_BLAST_LIFE_MS)
-                                       ? targetTime - LV_SHS_BLAST_LIFE_MS : 0,
+                                   (targetTime > LV_SHS_SEEK_LEAD_MS)
+                                       ? targetTime - LV_SHS_SEEK_LEAD_MS : 0,
                                    &snapPos, &snapTime, &key, &pTeams);
 
   if (targetTime > g_lv->timeRunning && g_lv->logLoaded == TRUE &&

@@ -1464,7 +1464,6 @@ int run_lv_early_blast_ended(void);
 int run_lv_early_blast_frames(void);
 int run_lv_early_blast_match(void);
 int run_lv_early_blast_hide(void);
-int run_lv_early_blast_needs_own_shells(void);
 int run_lv_early_blast_same_place(void);
 int run_lv_early_blast_many_players(void);
 int run_lv_early_blast_watch_miss(void);

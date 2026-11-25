@@ -19,7 +19,7 @@
  *  view also always draws: the chosen player's own shells from
  *  the present frame (lv_shell_owner.h), and every other shell
  *  and explosion from the old frame. The early blast starts
- *  where those present-frame own shells end (lv_earlyBlastOn):
+ *  where those present-frame own shells end:
  *
  *  - An owned shell of the entry before that no shell of this
  *    entry continues has ended. Its early blast starts at this
@@ -58,15 +58,6 @@
 #include <string.h>
 
 #include "lv_shell_owner.h"
-
-/* The rule that the early blast (screenTrueExpl) is drawn only with the
-   own shells drawn from the present frame (screenTrueShells), as it starts
-   where those shells end. "See What the Selected Player Saw" always draws
-   both, so the viewer has no setting that turns either off; the unit test
-   keeps the rule. */
-static inline bool lv_earlyBlastOn(bool screenTrueShells, bool screenTrueExpl) {
-  return screenTrueShells && screenTrueExpl;
-}
 
 /* The explosion's frames: it starts at 8 (EXPLOSION_START) and goes down
    one each 3 game ticks of 20 ms (EXPLOAD_UPDATE_TIME). */
