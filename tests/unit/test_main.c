@@ -493,6 +493,7 @@ static const UnitTestEntry s_tests[] = {
     { "brain_bounds_stamps_bad_tables", run_brain_bounds_stamps_bad_tables },
     { "brain_bounds_threat_range", run_brain_bounds_threat_range },
     { "brain_crash_log_ignores_brain_globals", run_brain_crash_log_ignores_brain_globals },
+    { "brain_crash_log_file_note", run_brain_crash_log_file_note },
     { "brain_sandbox_hostile_native_preloads", run_brain_sandbox_hostile_native_preloads },
     { "brain_sandbox_hostile_bytecode_init", run_brain_sandbox_hostile_bytecode_init },
     { "brain_sandbox_hostile_loaders_removed", run_brain_sandbox_hostile_loaders_removed },
