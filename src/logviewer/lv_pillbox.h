@@ -141,6 +141,20 @@ void lv_pillsSetPill(pillboxes *value, pillbox *item, BYTE pillNum);
 bool lv_pillsExistPos(pillboxes *value, BYTE xValue, BYTE yValue);
 
 /*********************************************************
+*NAME:          lv_pillsIsPillHit
+*PURPOSE:
+*  Whether a live pillbox (armour above 0, on the map) is
+*  at a specific location: the engine's pillsIsPillHit. A
+*  dead pillbox is not solid to an explosion.
+*
+*ARGUMENTS:
+*  value  - Pointer to the pillbox structure
+*  xValue - X Location
+*  yValue - Y Location
+*********************************************************/
+bool lv_pillsIsPillHit(pillboxes *value, BYTE xValue, BYTE yValue);
+
+/*********************************************************
 *NAME:          lv_pillsGetPill
 *AUTHOR:        John Morrison
 *CREATION DATE:   9/2/99

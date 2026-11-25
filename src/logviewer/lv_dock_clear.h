@@ -127,6 +127,52 @@ static inline int lvDockClearSnapLen(int current, int content, int min) {
     return len;
 }
 
+/* A panel with sections that it shows only some of the time (the Tank
+ * panel's lag section, which only a recording with lag records has, and its
+ * base row, which Windows > Tank: Base Resources turns off). Its length
+ * counts the room of those sections: *room is the part of len that is for
+ * them, now the room they take this frame (0 when none is shown). The
+ * length grows or shrinks by the difference, so the rest of the panel keeps
+ * the length the user gave it and no empty room is left.
+ *
+ * When min or LV_DOCK_CLEAR_LEN_MAX holds the length back, the amount it
+ * was held back by is kept in *room (never under 0), so the length goes
+ * back to what it was when the sections come back: 100 with 98 of room
+ * goes to 48 with 46 kept, and back to 100, not 146.
+ *
+ * *room < 0: the length was saved before the room was kept with it. It is
+ * then taken to hold no room for the sections, so a panel opened with none
+ * in view keeps the length it had. From then on the room is kept, and the
+ * length follows the sections. len <= 0 (no length yet) stays as it is: the
+ * first length counts the sections already (lvDockClearFirstLen). *room is
+ * now on return. */
+static inline int lvDockClearRoomLen(int len, int *room, int now, int min) {
+    int had = (*room < 0) ? 0 : *room;
+    int want, got;
+    if (len <= 0) {
+        *room = now;
+        return len;
+    }
+    want = len + now - had;
+    got = want;
+    if (got < min) got = min;
+    if (got > LV_DOCK_CLEAR_LEN_MAX) got = LV_DOCK_CLEAR_LEN_MAX;
+    *room = now + (got - want);
+    if (*room < 0) *room = 0;
+    return got;
+}
+
+/* A length the user sets (a drag or a double click on the grip) is his own:
+ * it holds the sections' room as they are now, and no amount that min or
+ * LV_DOCK_CLEAR_LEN_MAX held back before is kept. So the next frame
+ * (lvDockClearRoomLen) shows the length he set: 100 goes to 48 with 46
+ * kept, the user sets 270, and it stays 270, not 224. now is the room the
+ * sections take this frame. Returns len. */
+static inline int lvDockClearUserLen(int len, int *room, int now) {
+    *room = (now < 0) ? 0 : now;
+    return len;
+}
+
 /* ---- Where the panels go --------------------------------------------------- */
 
 /* The panels along a sidebar: where each starts and how long it is, measured

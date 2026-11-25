@@ -111,6 +111,21 @@ typedef struct {
   /* pill_max_armour: the armour a pillbox draws as intact against. 1 to 255,
      never 0, since the pill picture divides by it. */
   int  pillMaxArmour;
+  /* tank_hit_radius: the circle a shell must reach to hit a tank, and
+     pill_range, which limits the distance the builder test reads. Both in
+     world units, for the hit areas (lv_hitbox.h). */
+  int  tankHitRadius;
+  int  pillRange;
+  /* lgm_blast_shape: the area of open ground an explosion catches a
+     builder in, LGM_BLAST_SHAPE_* (hit_rules.h), for the builder's hit
+     area. */
+  int  lgmBlastShape;
+  /* base_status_range: how near a base has to be for the game to show its
+     stock, in world units (the Tank panel's near base, lv_base_near.h). */
+  int  baseStatusRange;
+  /* The tank's hit zone, LV_HITBOX_TANK_* (lv_hitbox.h): the circle, the
+     square of games before it, or none when the file cannot tell. */
+  int  tankHitZone;
 } LvRules;
 
 /* Speed values. 1 is real time and 2 to 9 are faster, up to as fast as the

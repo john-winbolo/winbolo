@@ -389,6 +389,22 @@ langid clientSimGetConnectErrorLangId(const ClientSim *cs) {
   return cs->connectErrorId;
 }
 
+void clientSimSetAskRejoin(ClientSim *cs, bool ask) {
+  if (cs != NULL) cs->askRejoin = ask;
+}
+
+bool clientSimGetAskRejoin(const ClientSim *cs) {
+  return cs != NULL && cs->askRejoin;
+}
+
+void clientSimSetSignInFirst(ClientSim *cs, bool on) {
+  if (cs != NULL) cs->signInFirst = on;
+}
+
+bool clientSimGetSignInFirst(const ClientSim *cs) {
+  return cs != NULL && cs->signInFirst;
+}
+
 BYTE clientSimGetServerPlayerNum(const ClientSim *cs) {
   if (cs == NULL || !cs->hasTransport) return 0;
   /* The in-process transport learns its slot once, at the join
@@ -1149,6 +1165,21 @@ void clientSimGetReconcileStats(ClientSim *cs, int *countPerSec,
     *renderOffsetPx =
         sqrtf(cs->errX * cs->errX + cs->errY * cs->errY) / 16.0f;
   }
+}
+
+uint32_t clientSimGetPredictionCorrections(ClientSim *cs,
+                                           WORLD *predX, WORLD *predY,
+                                           WORLD *postX, WORLD *postY) {
+  if (predX) *predX = 0;
+  if (predY) *predY = 0;
+  if (postX) *postX = 0;
+  if (postY) *postY = 0;
+  if (cs == NULL) return 0;
+  if (predX) *predX = cs->predCorrPredX;
+  if (predY) *predY = cs->predCorrPredY;
+  if (postX) *postX = cs->predCorrPostX;
+  if (postY) *postY = cs->predCorrPostY;
+  return cs->predCorrCount;
 }
 
 void clientSimGetTimingStats(ClientSim *cs, int *clockOffsetTicks,
