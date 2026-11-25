@@ -3069,6 +3069,9 @@ void clientSimResetWorld(ClientSim *cs) {
   cs->reconCountLastSec = 0;
   cs->reconErrAvgPxLast = 0.0f;
   cs->reconErrMaxPxLast = 0.0f;
+  cs->predCorrCount = 0;
+  cs->predCorrPredX = cs->predCorrPredY = 0;
+  cs->predCorrPostX = cs->predCorrPostY = 0;
 
   /* Render-only error offset is predict-scoped too — start fresh. */
   cs->errX = 0.0f;

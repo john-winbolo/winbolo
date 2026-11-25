@@ -1167,6 +1167,21 @@ void clientSimGetReconcileStats(ClientSim *cs, int *countPerSec,
   }
 }
 
+uint32_t clientSimGetPredictionCorrections(ClientSim *cs,
+                                           WORLD *predX, WORLD *predY,
+                                           WORLD *postX, WORLD *postY) {
+  if (predX) *predX = 0;
+  if (predY) *predY = 0;
+  if (postX) *postX = 0;
+  if (postY) *postY = 0;
+  if (cs == NULL) return 0;
+  if (predX) *predX = cs->predCorrPredX;
+  if (predY) *predY = cs->predCorrPredY;
+  if (postX) *postX = cs->predCorrPostX;
+  if (postY) *postY = cs->predCorrPostY;
+  return cs->predCorrCount;
+}
+
 void clientSimGetTimingStats(ClientSim *cs, int *clockOffsetTicks,
                              int *jitterMs, int *rttMs,
                              int *pipelineDepthTicks) {

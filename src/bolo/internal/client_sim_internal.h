@@ -268,6 +268,17 @@ struct ClientSim {
     uint16_t reconCountLastSec;
     float    reconErrAvgPxLast, reconErrMaxPxLast;
 
+    /* Prediction corrections since the round began: snapshots after which
+     * the replayed tank stood somewhere other than where it was predicted to
+     * be. The reconcile stats above count every snapshot that arrives while
+     * the tank is moving, because they compare the tank now with the server's
+     * tank some inputs ago; these count only the ones the replay did not
+     * bring back to the same place. The last one's two positions are kept
+     * for a test that logs where corrections happen. */
+    uint32_t predCorrCount;
+    WORLD    predCorrPredX, predCorrPredY;   /* Where the tank was predicted */
+    WORLD    predCorrPostX, predCorrPostY;   /* Where the replay put it */
+
     /* Render-only error offset: reconciliation corrections accumulate here
      * and decay to zero; the sim never reads these. */
     float errX, errY;       /* world units */

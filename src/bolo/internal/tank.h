@@ -1706,6 +1706,13 @@ BYTE tankGetFirstRight(tank *value);
 void tankSetFirstLeft(tank *value, BYTE val);
 void tankSetFirstRight(tank *value, BYTE val);
 
+/* The speed a tank moving slower than tank_min_move has saved up towards its
+ * next move. The server sends it to the tank's owner in each snapshot
+ * (TankSnapshot.residualSpeed) and the owning client sets it before replaying
+ * its unacknowledged inputs. */
+BYTE tankGetResidualSpeed(tank *value);
+void tankSetResidualSpeed(tank *value, BYTE val);
+
 /*********************************************************
 *NAME:          tankSetLastTankDeath
 *AUTHOR:        Chris Lesnieski
@@ -1764,33 +1771,5 @@ int tankCalcCRCSetup(tank *value);
  *  src - The tank to copy (may be NULL)
  *********************************************************/
 tank tankDeepCopy(tank src);
-
-/*********************************************************
- *NAME:          tankSnapToServer
- *PURPOSE:
- *  Copies all state from a server-authoritative tank into
- *  the predicted tank. Preserves client-only settings
- *  (autoSlowdown, autoHideGunsight, sightLen, showSight).
- *  Deep-copies the carried pills linked list.
- *
- *ARGUMENTS:
- *  dst - The predicted tank (destination)
- *  src - The server's authoritative tank (source)
- *********************************************************/
-void tankSnapToServer(tank dst, tank src);
-
-/*********************************************************
- *NAME:          tankSyncResources
- *PURPOSE:
- *  Copies server-authoritative resource and status fields
- *  (armour, shells, mines, trees, kills, deaths, etc.)
- *  into the predicted tank without touching position or
- *  physics state.
- *
- *ARGUMENTS:
- *  dst - The predicted tank (destination)
- *  src - The server's authoritative tank (source)
- *********************************************************/
-void tankSyncResources(tank dst, tank src);
 
 #endif
