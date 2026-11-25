@@ -405,6 +405,29 @@ int run_lv_hitbox_sums(void) {
             prev = a;
         }
     }
+    /* The colour goes round the whole rainbow every 2 s, smoothly. */
+    {
+        double r, g, b, pr, pg, pb;
+        uint64_t ms;
+        int sawRed = 0, sawGreen = 0, sawBlue = 0;
+        lvHitboxRainbow(0, &r, &g, &b);
+        UT_ASSERT_MSG(r == 1.0 && g == 0.0 && b == 0.0, "rainbow starts red");
+        lvHitboxRainbow(2000, &r, &g, &b);
+        UT_ASSERT_MSG(r == 1.0 && g == 0.0 && b == 0.0, "rainbow is red again at 2 s");
+        pr = 1.0; pg = 0.0; pb = 0.0;
+        for (ms = 1; ms <= 4000; ms++) {
+            lvHitboxRainbow(ms, &r, &g, &b);
+            UT_ASSERT_MSG(r >= 0.0 && r <= 1.0 && g >= 0.0 && g <= 1.0 &&
+                          b >= 0.0 && b <= 1.0, "rainbow in range at %u ms", (unsigned)ms);
+            UT_ASSERT_MSG(fabs(r - pr) < 0.01 && fabs(g - pg) < 0.01 && fabs(b - pb) < 0.01,
+                          "rainbow is smooth at %u ms", (unsigned)ms);
+            if (r == 1.0 && g < 0.01 && b < 0.01) sawRed = 1;
+            if (g == 1.0 && r < 0.01 && b < 0.01) sawGreen = 1;
+            if (b == 1.0 && r < 0.01 && g < 0.01) sawBlue = 1;
+            pr = r; pg = g; pb = b;
+        }
+        UT_ASSERT_MSG(sawRed && sawGreen && sawBlue, "rainbow passes red, green and blue");
+    }
     /* The dot is one art pixel (16 units) at every zoom, and never less
        than one screen pixel. */
     UT_ASSERT_MSG(lvHitboxBlastDotSize(1.0f / 16.0f) == 1.0f, "1 pixel at 1x");

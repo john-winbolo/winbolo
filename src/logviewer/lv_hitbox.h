@@ -711,6 +711,28 @@ static inline double lvHitboxPulseAlpha(uint64_t ms) {
     return LV_HITBOX_PULSE_LOW + (LV_HITBOX_PULSE_HIGH - LV_HITBOX_PULSE_LOW) * rise;
 }
 
+/* The dot's colour cycles through the whole rainbow (red, yellow, green,
+   cyan, blue, magenta and back to red) once each LV_HITBOX_RAINBOW_MS, by
+   the wall clock, so it stands out on every kind of ground. */
+#define LV_HITBOX_RAINBOW_MS 2000u
+
+/* The rainbow colour at wall-clock time ms, each part 0..1: a hue that
+   goes once round the colour wheel each LV_HITBOX_RAINBOW_MS, at full
+   saturation and brightness. It is red at the start of each period. */
+static inline void lvHitboxRainbow(uint64_t ms, double *r, double *g, double *b) {
+    double h = 6.0 * (double)(ms % LV_HITBOX_RAINBOW_MS) / (double)LV_HITBOX_RAINBOW_MS;
+    int sector = (int)h;
+    double f = h - (double)sector;
+    switch (sector) {
+    case 0:  *r = 1.0;     *g = f;       *b = 0.0;     break;
+    case 1:  *r = 1.0 - f; *g = 1.0;     *b = 0.0;     break;
+    case 2:  *r = 0.0;     *g = 1.0;     *b = f;       break;
+    case 3:  *r = 0.0;     *g = 1.0 - f; *b = 1.0;     break;
+    case 4:  *r = f;       *g = 0.0;     *b = 1.0;     break;
+    default: *r = 1.0;     *g = 0.0;     *b = 1.0 - f; break;
+    }
+}
+
 /* The dot's size in screen pixels, for pxPerWu screen pixels to a world
    unit: one art pixel, and never less than one screen pixel, so it still
    shows at the smallest zoom. */
