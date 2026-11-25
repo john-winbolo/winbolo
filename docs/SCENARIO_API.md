@@ -1698,7 +1698,7 @@ starts comes due after about twice the seconds it asked for.
 | `game.map_name()` | What the map is called. |
 | `game.map_tile(x, y)` | The terrain code at a square, or `nil` for a square off the map. |
 | `game.is_mine(x, y)` | Whether a square holds a mine. |
-| `game.wall_shots(x, y)` | The shells a wall square still takes before it falls to rubble: one more than `building_life` for a wall no shell has touched (5 on the classic table), what is left for a damaged one, and 0 for a square that is not a wall or is off the map. |
+| `game.wall_shots(x, y)` | The shells a wall square still takes before it falls to rubble: one more than `building_life` for a wall no shell has touched (5 on the classic table), `building_life` for a half building no shell has touched (one on the map from the start, or one a script wrote; 4 on the classic table), what is left for a wall the shells have hit, and 0 for a square that is not a wall or is off the map. |
 | `game.terrain()` | Every square as one 65,536-byte string, the square at `(x, y)` at byte `y * 256 + x + 1`. One call instead of 65,536 — and a fresh 64 KiB string each time, so read it where you need the whole map, not from `on_tick`. |
 
 ### Entities

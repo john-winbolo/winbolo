@@ -893,12 +893,14 @@ int run_sim_rules_base_regen_seed_follows(void) {
 }
 
 /* How many hits a building takes before it is rubble is the life rule plus
- * the hit that puts it on the list. Counted here through buildingAddItem,
- * which is where a shell landing on a building ends up. */
-static int hitsToRubble(ServerSim *sim, BYTE mx, BYTE my) {
+ * the hit that puts it on the list. A half building no shell has touched
+ * takes the life rule alone. Counted here through buildingAddItem, which is
+ * where a shell landing on a building ends up; `terrain` is what the square
+ * starts as, BUILDING or HALFBUILDING. */
+static int hitsToRubble(ServerSim *sim, BYTE mx, BYTE my, BYTE terrain) {
     int hits = 0;
     while (hits < 64) {
-        BYTE terrain = buildingAddItem(&sim->sim, &sim->sim.blds, mx, my);
+        terrain = buildingAddItem(&sim->sim, &sim->sim.blds, mx, my, terrain);
         hits++;
         if (terrain == RUBBLE) {
             return hits;
@@ -909,21 +911,33 @@ static int hitsToRubble(ServerSim *sim, BYTE mx, BYTE my) {
 
 int run_sim_rules_terrain_life_follows(void) {
     ServerSim *sim = ut_make_running_sim("Rules");
-    int classicHits, shortHits;
+    int classicHits, shortHits, halfHits;
     UT_ASSERT(sim != NULL);
 
-    /* Two squares, because the first is spent once it turns to rubble and
+    /* A square each, because a square is spent once it turns to rubble and
        the count is about how long a fresh building lasts. */
-    classicHits = hitsToRubble(sim, 40, 40);
+    classicHits = hitsToRubble(sim, 40, 40, BUILDING);
     UT_ASSERT_MSG(classicHits == BUILDING_LIFE + 1,
                   "a classic building took %d hits to rubble, expected %d",
                   classicHits, BUILDING_LIFE + 1);
 
+    /* A half building no shell has touched is a building one hit down. */
+    halfHits = hitsToRubble(sim, 44, 40, HALFBUILDING);
+    UT_ASSERT_MSG(halfHits == BUILDING_LIFE,
+                  "a classic half building took %d hits to rubble, "
+                  "expected %d", halfHits, BUILDING_LIFE);
+
     sim->sim.rules.building_life = 1;
-    shortHits = hitsToRubble(sim, 42, 40);
+    shortHits = hitsToRubble(sim, 42, 40, BUILDING);
     UT_ASSERT_MSG(shortHits == 2,
                   "a building with a life of 1 took %d hits to rubble, "
                   "expected 2", shortHits);
+    halfHits = hitsToRubble(sim, 46, 40, HALFBUILDING);
+    UT_ASSERT_MSG(halfHits == 1,
+                  "a half building with a life of 1 took %d hits to rubble, "
+                  "expected 1", halfHits);
+    UT_ASSERT_MSG(sim->sim.blds == NULL,
+                  "a wall that fell to rubble left a record behind");
 
     /* The other three life rules are read at the same point in their own
        add paths; changing the building's moved none of them. */

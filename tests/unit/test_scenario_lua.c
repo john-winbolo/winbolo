@@ -3450,7 +3450,7 @@ int run_scenario_lua_wall_shots(void) {
                   slGlobalInt(L, "o"));
 
     /* Shell one: the wall is damaged with building_life left. */
-    t = buildingAddItem(&sim->sim, &sim->sim.blds, 30, 30);
+    t = buildingAddItem(&sim->sim, &sim->sim.blds, 30, 30, BUILDING);
     UT_ASSERT(t == HALFBUILDING);
     mapSetPos(&sim->sim, &sim->sim.mp, 30, 30, t, false, false);
     UT_ASSERT(slRun(L, "n = game.wall_shots(30, 30)\n", err, sizeof(err)));
@@ -3458,20 +3458,42 @@ int run_scenario_lua_wall_shots(void) {
                   "after one shell the wall answered %ld", slGlobalInt(L, "n"));
 
     /* Shells two to four leave one; shell five is rubble. */
-    t = buildingAddItem(&sim->sim, &sim->sim.blds, 30, 30);
-    t = buildingAddItem(&sim->sim, &sim->sim.blds, 30, 30);
-    t = buildingAddItem(&sim->sim, &sim->sim.blds, 30, 30);
+    t = buildingAddItem(&sim->sim, &sim->sim.blds, 30, 30, t);
+    t = buildingAddItem(&sim->sim, &sim->sim.blds, 30, 30, t);
+    t = buildingAddItem(&sim->sim, &sim->sim.blds, 30, 30, t);
     UT_ASSERT(t == HALFBUILDING);
     UT_ASSERT(slRun(L, "n = game.wall_shots(30, 30)\n", err, sizeof(err)));
     UT_ASSERT_MSG(slGlobalInt(L, "n") == 1,
                   "after four shells the wall answered %ld",
                   slGlobalInt(L, "n"));
-    t = buildingAddItem(&sim->sim, &sim->sim.blds, 30, 30);
+    t = buildingAddItem(&sim->sim, &sim->sim.blds, 30, 30, t);
     UT_ASSERT(t == RUBBLE);
     mapSetPos(&sim->sim, &sim->sim.mp, 30, 30, t, false, false);
     UT_ASSERT(slRun(L, "n = game.wall_shots(30, 30)\n", err, sizeof(err)));
     UT_ASSERT_MSG(slGlobalInt(L, "n") == 0, "rubble answered %ld",
                   slGlobalInt(L, "n"));
+
+    /* A half building no shell has touched, as a map can have from the
+       start: building_life shells, one fewer than a wall. Its first shell
+       comes off the count. */
+    mapSetPos(&sim->sim, &sim->sim.mp, 33, 30, HALFBUILDING, false, false);
+    UT_ASSERT(slRun(L, "n = game.wall_shots(33, 30)\n", err, sizeof(err)));
+    UT_ASSERT_MSG(slGlobalInt(L, "n") == sim->sim.rules.building_life,
+                  "an untouched half building answered %ld",
+                  slGlobalInt(L, "n"));
+    t = buildingAddItem(&sim->sim, &sim->sim.blds, 33, 30, HALFBUILDING);
+    UT_ASSERT(t == HALFBUILDING);
+    UT_ASSERT(slRun(L, "n = game.wall_shots(33, 30)\n", err, sizeof(err)));
+    UT_ASSERT_MSG(slGlobalInt(L, "n") == 3,
+                  "after one shell the half building answered %ld",
+                  slGlobalInt(L, "n"));
+    t = buildingAddItem(&sim->sim, &sim->sim.blds, 33, 30, t);
+    t = buildingAddItem(&sim->sim, &sim->sim.blds, 33, 30, t);
+    UT_ASSERT(t == HALFBUILDING);
+    t = buildingAddItem(&sim->sim, &sim->sim.blds, 33, 30, t);
+    UT_ASSERT_MSG(t == RUBBLE,
+                  "the half building's fourth shell left terrain %u",
+                  (unsigned)t);
 
     lua_close(L);
     serverSimDestroy(sim);

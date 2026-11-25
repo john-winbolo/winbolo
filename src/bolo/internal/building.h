@@ -44,7 +44,8 @@ struct GameSim;
 #define BuildingHeadLength(list) ((list)->life);
 #define BuildingTail(list) ((list)->next);
 
-/* How manu shots it takes to destroy a building */
+/* How many shots it takes to destroy a half building. A building takes
+   one more: its first shot makes it a half building. */
 #define BUILDING_LIFE 4
 
 /* Shells die when there length equals */
@@ -98,13 +99,23 @@ void buildingDestroy(building *bld);
 *  If it already exists returns the terrain type of the
 *  item and decrements its lifetime.
 *
+*  A building's first hit makes it a half building and
+*  starts its record with the whole life. A half building
+*  with no record was not made by a hit: it was on the map
+*  from the start, or a scenario wrote it. It stands where
+*  a building stands after its first hit, so its record
+*  starts one hit down, and it takes one hit fewer than a
+*  building, as in Mac Bolo.
+*
 *ARGUMENTS:
-*  sim   - The game the building belongs to
-*  bld   - Pointer to the buildings object
-*  x     - X co-ord
-*  y     - Y co-ord
+*  sim     - The game the building belongs to
+*  bld     - Pointer to the buildings object
+*  x       - X co-ord
+*  y       - Y co-ord
+*  terrain - The square's terrain as the shell found it:
+*            BUILDING or HALFBUILDING
 *********************************************************/
-BYTE buildingAddItem(struct GameSim *sim, building *bld, BYTE x, BYTE y);
+BYTE buildingAddItem(struct GameSim *sim, building *bld, BYTE x, BYTE y, BYTE terrain);
 
 /*********************************************************
 *NAME:          buildingDeleteItem
