@@ -71,4 +71,33 @@ static inline int32_t pt2w_next2(int32_t x0, int32_t xs, int32_t y0, int32_t ys,
     return kx < ky ? kx : ky;
 }
 
+#include <string.h>
+
+/* The bits of a double: the keys below compare bit for bit (negative
+ * zero is not zero, a NaN is only its own bits). */
+static inline uint64_t pt2w_bits(double d) { uint64_t u; memcpy(&u, &d, sizeof(u)); return u; }
+
+/*
+ * The walk reuse key. A walk's result (stop reason) depends on its
+ * origin, f32 angle, target square, extra list, the step's map reads
+ * (gen) and the evaluate's shell and tank inputs (fixed for one
+ * evaluate). The reuse takes an earlier result only when every field
+ * here is the same, bit for bit, and the earlier walk was the last walk
+ * made (serial) and made no Lua read that is not kept in the step's
+ * stamp caches.
+ */
+typedef struct {
+    uint64_t ox, oy, angle, tmx, tmy;
+    const void *extra;
+    int      extra_n;
+    uint32_t gen;
+    uint64_t serial;
+} Pt2wKey;
+
+static inline int pt2w_key_same(const Pt2wKey *a, const Pt2wKey *b) {
+    return a->ox == b->ox && a->oy == b->oy && a->angle == b->angle && a->tmx == b->tmx
+           && a->tmy == b->tmy && a->extra == b->extra && a->extra_n == b->extra_n
+           && a->gen == b->gen && a->serial == b->serial;
+}
+
 #endif /* GH_PT2_WALK_H */

@@ -5081,6 +5081,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_gh_pt2_v2_parity.c
     # The square jump math of the pill take v2 tank shot walk.
     tests/unit/test_gh_pt2_walk_jump.c
+    # The reuse key of the pill take v2 tank shot walk.
+    tests/unit/test_gh_pt2_walk_reuse.c
     # BrainTest Load Session next/prev-segment lookup. The finder is plain C
     # and ImGui-free precisely so it can be linked here; the rest of the
     # browser (braintest_loadbrowser.cpp) is not part of this target.
@@ -6636,6 +6638,7 @@ set(_unit_test_names
     gh_pt2_old_parity
     gh_pt2_v2_parity
     gh_pt2_walk_jump
+    gh_pt2_walk_reuse
     gh_pt2_bench
     pf_tail_reaches_radius_and_stops
     pf_tail_blocked_by_wall_and_sea
