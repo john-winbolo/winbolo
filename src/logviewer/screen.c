@@ -322,6 +322,24 @@ void lv_screenSetScreenTrueExplosions(int enabled) {
 
 int lv_screenGetScreenTrueExplosions(void) { return s_screenTrueExpl ? 1 : 0; }
 
+/* While "See What the Selected Player Saw" is on, every Screen-True option
+   acts as on (lv_lagScreenTrueOn). The saved choices above stay as they
+   are, so each one comes back when the view is turned off. */
+int lv_screenScreenTrueForced(void) { return s_lagViewSlot >= 0 ? 1 : 0; }
+
+static bool lv_screenTrueShellsOn(void) {
+  return lv_lagScreenTrueOn(s_lagViewSlot >= 0, s_screenTrueShells);
+}
+
+static bool lv_screenTrueExplOn(void) {
+  return lv_earlyBlastOn(lv_screenTrueShellsOn(),
+                         lv_lagScreenTrueOn(s_lagViewSlot >= 0, s_screenTrueExpl));
+}
+
+int lv_screenScreenTrueShellsOn(void) { return lv_screenTrueShellsOn() ? 1 : 0; }
+
+int lv_screenScreenTrueExplosionsOn(void) { return lv_screenTrueExplOn() ? 1 : 0; }
+
 void lv_screenEarlyBlastStats(LvEarlyBlastStats *out) {
   if (out != NULL) {
     *out = s_earlyBlastList.stats;
@@ -355,7 +373,7 @@ static void lv_lagEarlyBlastTick(const LvLagFrame *f, const LvShellPt *prev,
      only while the view draws early blasts. */
   missed = lv_earlyBlastListTick(&s_earlyBlastList, f->ms, prev, prevOwner, nPrev, cur, nCur,
                                  expl, nExpl, s_lagViewSlot, &missMs);
-  if (missed > 0 && s_lagViewSlot >= 0 && lv_earlyBlastOn(s_screenTrueShells, s_screenTrueExpl)) {
+  if (missed > 0 && s_lagViewSlot >= 0 && lv_screenTrueExplOn()) {
     fprintf(stderr,
             "logviewer: early blast: no server explosion for player %d's shell at %u ms "
             "(%u of %u owned shells of all players with none)\n",
@@ -1773,9 +1791,9 @@ void lv_screenUpdate(updateType value) {
        and the map squares are one round trip back, from the frame
        lv_screenUpdateView above took them from (lv_lagViewMapFrame). */
     const LvLagFrame *now = &s_lagRing.frames[s_lagRing.newest];
-    const bool ownAtPresent = s_screenTrueShells;
+    const bool ownAtPresent = lv_screenTrueShellsOn();
     /* Screen-True Local Explosions (lv_early_blast.h): the early blasts. */
-    const bool earlyBlast = lv_earlyBlastOn(s_screenTrueShells, s_screenTrueExpl);
+    const bool earlyBlast = lv_screenTrueExplOn();
     int i;
     lv_playersSetLagFrame(lagFrame, s_lagViewSlot);
     lv_playersSetLagLgmFrame(lagLgmFrame);

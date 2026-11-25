@@ -700,6 +700,7 @@ static const UnitTestEntry s_tests[] = {
     { "lv_lag_ring_back", run_lv_lag_ring_back },
     { "lv_lag_map_undo", run_lv_lag_map_undo },
     { "lv_lag_view_toggle", run_lv_lag_view_toggle },
+    { "lv_lag_screen_true", run_lv_lag_screen_true },
     { "lv_lag_feature_default_off", run_lv_lag_feature_default_off },
     { "lv_lag_view_draw", run_lv_lag_view_draw },
     { "lv_lag_view_own_shells", run_lv_lag_view_own_shells },

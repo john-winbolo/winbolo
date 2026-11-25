@@ -6094,6 +6094,7 @@ set(_unit_test_names
     lv_lag_ring_back
     lv_lag_map_undo
     lv_lag_view_toggle
+    lv_lag_screen_true
     lv_lag_feature_default_off
     lv_lag_view_draw
     lv_lag_view_own_shells
