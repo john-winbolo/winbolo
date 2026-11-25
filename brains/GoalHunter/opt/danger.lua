@@ -39,6 +39,9 @@ local print2 = require("print2")
 -- direction is a load cycle; the score functions take `info`/`world`/`state`
 -- as parameters instead.
 local ally_state = require("ally_state")
+-- kill_lgm requires only constants and util at load, so this is no cycle.
+-- Read for its SHELL_RULES (the host's shell rules).
+local kill_lgm = require("kill_lgm")
 
 local M = {}
 
@@ -460,10 +463,9 @@ local function forest_or_boat_stops(tt)
   return (tt == C.T_FOREST or tt == C.T_BOAT) and C.SHELL_STOPS_ON_FOREST_BOAT
 end
 
-local function shell_stops_on(world, mx, my)
-  local tt = U.ttype(mx, my)
-  if tt == C.T_BUILDING or tt == C.T_HALFBUILD then return true end
-  if forest_or_boat_stops(tt) then return true end
+-- A live pill on (mx,my) stops the shell. shellsCalcCollision tests this
+-- first, before any tank.
+local function live_pill_stops(world, mx, my)
   local lst = world and world.pill_at and world.pill_at[my * 256 + mx]
   if lst then
     for i = 1, #lst do
@@ -473,20 +475,47 @@ local function shell_stops_on(world, mx, my)
   end
   return false
 end
+
+-- The terrain on (mx,my) stops the shell. shellsCalcCollision tests this
+-- last, after the tanks.
+local function terrain_stops(mx, my)
+  local tt = U.ttype(mx, my)
+  if tt == C.T_BUILDING or tt == C.T_HALFBUILD then return true end
+  return forest_or_boat_stops(tt) and true or false
+end
+
+local function shell_stops_on(world, mx, my)
+  return terrain_stops(mx, my) or live_pill_stops(world, mx, my)
+end
 M.shell_stops_on = shell_stops_on
+
+-- How far along its line the engine first tests a shell that a tank
+-- centred at the line's origin fires. shellsAddItem (shells.c) puts the
+-- shell shell_start_add steps out (shellApplyStartOffset), and shellsUpdate
+-- moves it one step (shellAdvance1Tick) before its first collision test
+-- (shellsCalcCollision). Classic: 32 * (5 + 1) = 192 wu. The places before
+-- that are never tested. The numbers are the host's shell rules
+-- (kill_lgm.SHELL_RULES, set from info.rules each think).
+function M.tank_shell_first_test_wu()
+  local SR = kill_lgm.SHELL_RULES
+  return SR.speed * (SR.start_add + 1)
+end
 
 -- The first forest or boat square a shell fired from (ox,oy) along the unit
 -- heading (hx,hy) stops on, out to max_t wu. The shell is stepped as the
--- engine moves it, C.SHELL_SPEED wu a tick, and each step's square is
+-- engine moves it, one shell_speed step a tick, and each step's square is
 -- tested, so a line that only clips the corner of a forest square stops
--- there too. Returns t (wu along the line), mx, my, or nil when no forest or
--- boat is on the line or C.SHELL_STOPS_ON_FOREST_BOAT is off. Only forests
--- and boats: the capture shot's other rules (a man on a wall, a live pill
--- or a base) stay as they were.
-function M.forest_boat_stop(ox, oy, hx, hy, max_t)
+-- there too. start_t is the first place tested, in wu along the line; nil
+-- is a shell a tank centred at (ox,oy) fires (M.tank_shell_first_test_wu),
+-- so the tank's own square and anything inside the start offset are not
+-- tested, as in the engine. Returns t (wu along the line), mx, my, or nil
+-- when no forest or boat is on the line or C.SHELL_STOPS_ON_FOREST_BOAT is
+-- off. Only forests and boats: the capture shot's other rules (a man on a
+-- wall, a live pill or a base) stay as they were.
+function M.forest_boat_stop(ox, oy, hx, hy, max_t, start_t)
   if not C.SHELL_STOPS_ON_FOREST_BOAT then return nil end
-  local step = C.SHELL_SPEED or 32
-  local t = step
+  local step = kill_lgm.SHELL_RULES.speed
+  local t = start_t or M.tank_shell_first_test_wu()
   while t <= max_t do
     local mx = bit.rshift(math.floor(ox + hx * t), 8)
     local my = bit.rshift(math.floor(oy + hy * t), 8)
@@ -634,11 +663,17 @@ function M.lgm_shell_gate(world, info, dest_mx, dest_my)
         local smx = bit.rshift(math.floor(sx), 8)
         local smy = bit.rshift(math.floor(sy), 8)
         local lx, ly = man_at(nw, dwell, t, home_x, home_y)
-        -- (1) a wall, a live pill, or a forest or a boat: the engine
-        -- recentres the explosion on that tile and counts it a hit on the
-        -- square, so only a man standing ON it dies.
-        if shell_stops_on(world, smx, smy) then
-          if bit.rshift(lx, 8) == smx and bit.rshift(ly, 8) == smy then
+        -- The engine's order (shells.c shellsCalcCollision): a live pill,
+        -- then the tanks, then a base, then the terrain. So a shell that
+        -- reaches our hull over a forest or a boat hits the tank, and that
+        -- blast is open ground at the shell's place, not a hit on the
+        -- square.
+        -- (1) a live pill, and (3) below a wall, a forest or a boat: the
+        -- engine recentres the explosion on that tile and counts it a hit
+        -- on the square, so only a man standing ON it dies.
+        local on_sq = bit.rshift(lx, 8) == smx and bit.rshift(ly, 8) == smy
+        if live_pill_stops(world, smx, smy) then
+          if on_sq then
             return { t = t, sx = smx * 256 + 128, sy = smy * 256 + 128,
                      lx = lx, ly = ly, src = shell_src(ob), how = "wall",
                      solid = true, walk_n = nw }
@@ -664,7 +699,16 @@ function M.lgm_shell_gate(world, info, dest_mx, dest_my)
             break
           end
         end
-        -- (3) end of life, over open ground.
+        -- (3) a wall, a forest or a boat.
+        if terrain_stops(smx, smy) then
+          if on_sq then
+            return { t = t, sx = smx * 256 + 128, sy = smy * 256 + 128,
+                     lx = lx, ly = ly, src = shell_src(ob), how = "wall",
+                     solid = true, walk_n = nw }
+          end
+          break
+        end
+        -- (4) end of life, over open ground.
         if near_man and (not known_life or t == expires_at) then
           return { t = t, sx = sx, sy = sy, lx = lx, ly = ly,
                    src = shell_src(ob), how = known_life and "expiry" or "unknown_life",
