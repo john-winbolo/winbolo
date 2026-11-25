@@ -476,6 +476,86 @@ static bool lv_scLgmAt(const LvLagFrame *f, int slot, int32_t *wx, int32_t *wy) 
   return l->out && l->frame != LGM_HELICOPTER_FRAME;
 }
 
+/* The frame of the step just before f in the lag history, or NULL when
+   the ring has none (f is the first frame after a load or a seek). */
+static const LvLagFrame *lv_scStepBefore(const LvLagFrame *f) {
+  const LvLagFrame *prev;
+  if (f->ms < LV_LAG_ENTRY_MS) {
+    return NULL;
+  }
+  prev = lv_lagRingFind(&s_lagRing, f->ms - LV_LAG_ENTRY_MS);
+  return (prev != NULL && prev->ms == f->ms - LV_LAG_ENTRY_MS) ? prev : NULL;
+}
+
+/* The builder's present place for a blast new at frame f: his place at f.
+   The server moves the builders (lgmUpdate) before the shells
+   (shellsUpdate), so f has his place after his move, the place the server
+   tested. But when the blast killed him, f already has him on his
+   parachute: then the place is the one of the step before (before), the
+   last place on foot the recording has. A builder who went into his tank
+   at f is not out when the shells move, so he stays not out. */
+static bool lv_scLgmPresent(const LvLagFrame *f, const LvLagFrame *before, int slot,
+                            int32_t *wx, int32_t *wy) {
+  const LvLagLgm *l = &f->lgm[slot];
+  if (lv_scLgmAt(f, slot, wx, wy)) {
+    return TRUE;
+  }
+  if (before != NULL && l->out && l->frame == LGM_HELICOPTER_FRAME) {
+    int32_t bx, by;
+    if (lv_scLgmAt(before, slot, &bx, &by)) {
+      *wx = bx;
+      *wy = by;
+      return TRUE;
+    }
+  }
+  return FALSE;
+}
+
+/* Whether a builder the blast killed (lv_scLgmPresent) stood on square
+   (x, y) in the step before. */
+static bool lv_scBuilderDiedOn(const LvLagFrame *f, const LvLagFrame *before, BYTE x, BYTE y) {
+  int slot;
+  if (before == NULL) {
+    return FALSE;
+  }
+  for (slot = 0; slot < LV_LAG_SLOTS && slot < MAX_TANKS; slot++) {
+    int32_t wx, wy;
+    if (!lv_scLgmAt(f, slot, &wx, &wy) && lv_scLgmPresent(f, before, slot, &wx, &wy) &&
+        (wx >> 8) == x && (wy >> 8) == y) {
+      return TRUE;
+    }
+  }
+  return FALSE;
+}
+
+/* Whether a pillbox was on square (x, y) when the server tested the
+   builders, and whether it had armour: the pillboxes now, less one put
+   down in f's step by a builder the blast killed there. He drops the
+   pillbox he holds after the test. A tank the shell killed drops his
+   pillboxes when the shell hits, before the test, so those count. */
+static void lv_scPillAt(const LvLagFrame *f, const LvLagFrame *before, BYTE x, BYTE y,
+                        bool *exists, bool *alive) {
+  const bool dropped = lv_scBuilderDiedOn(f, before, x, y);
+  BYTE count;
+  *exists = FALSE;
+  *alive = FALSE;
+  for (count = 0; count < g_lv->pb->numPills; count++) {
+    const pillbox *p = &g_lv->pb->item[count];
+    if (g_lv->pb->active[count] == FALSE || p->inTank != FALSE || p->x != x || p->y != y) {
+      continue;
+    }
+    if (dropped && count < before->pillCount && count < LV_LAG_PILLS_MAX &&
+        (before->pills[count].inTank || before->pills[count].x != x ||
+         before->pills[count].y != y)) {
+      continue;   /* the dead builder's pillbox, put down after the test */
+    }
+    *exists = TRUE;
+    if (p->armour > 0) {
+      *alive = TRUE;
+    }
+  }
+}
+
 /* The estimate for frame f, the newest of the lag history, for a recording
    with no log_BuilderCheck records. Each explosion new at f is a blast: its
    point is the explosion record and half a square. The early blast list
@@ -486,19 +566,24 @@ static bool lv_scLgmAt(const LvLagFrame *f, int slot, int32_t *wx, int32_t *wy) 
    builder out (now, or at the tested frame) whose tested or present place
    is on the blast's square or one of its eight neighbours, the engine's
    test is made again (lvServerCheckEstimate) by the rule of the
-   recording's version. */
+   recording's version. A builder the blast killed is on his parachute at
+   f: his present place is his place of the step before
+   (lv_scLgmPresent), and the pillbox he dropped there is not on the
+   blast's square for the test (lv_scPillAt). */
 static void lv_scEstimateTick(const LvLagFrame *f) {
   int i, k, slot, rule;
+  const LvLagFrame *before;
   if (!s_scOn || s_scRecorded || g_lv->mp == NULL) {
     return;
   }
   rule = lvServerCheckRuleFor(g_lv->versionMajor, g_lv->versionMinor, g_lv->versionRevision);
+  before = lv_scStepBefore(f);
   for (i = 0; i < f->shellCount; i++) {
     const LvLagShell *sh = &f->shells[i];
     int32_t ex, ey, bx, by;
     uint8_t shooter = BUILDER_CHECK_NONE;
     int rewind = 0;
-    bool squareHit, solid;
+    bool squareHit, solid, pill, pillAlive;
     BYTE sx, sy, pos;
     const LvLagFrame *back = NULL;
 
@@ -539,13 +624,12 @@ static void lv_scEstimateTick(const LvLagFrame *f) {
     sx = (BYTE) (bx >> 8);
     sy = (BYTE) (by >> 8);
     pos = lv_scSquareBefore(f, sx, sy);
-    solid = lvServerCheckSolid(rule, squareHit, pos == BUILDING || pos == HALFBUILDING,
-                               lv_pillsExistPos(&g_lv->pb, sx, sy) != FALSE,
-                               lv_pillsIsPillHit(&g_lv->pb, sx, sy) != FALSE,
-                               lv_basesExistPos(&g_lv->bs, sx, sy) != FALSE);
+    lv_scPillAt(f, before, sx, sy, &pill, &pillAlive);
+    solid = lvServerCheckSolid(rule, squareHit, pos == BUILDING || pos == HALFBUILDING, pill,
+                               pillAlive, lv_basesExistPos(&g_lv->bs, sx, sy) != FALSE);
     for (slot = 0; slot < LV_LAG_SLOTS && slot < MAX_TANKS; slot++) {
       int32_t px, py, tx, ty;
-      bool nowOut = lv_scLgmAt(f, slot, &px, &py);
+      bool nowOut = lv_scLgmPresent(f, before, slot, &px, &py);
       bool seenOut = nowOut;
       LvServerCheck c;
 

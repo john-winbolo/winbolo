@@ -3888,3 +3888,190 @@ int run_lv_server_check_recording(void) {
   UT_ASSERT_MSG(want == NULL || found, "no check has the label \"%s\"", want);
   return 0;
 }
+
+/*
+ * The Server Check estimate for a builder the blast killed, on 2.2.1. The
+ * server moves the builders before the shells, tests the builder in the
+ * blast, and then he dies and drops the pillbox he holds. The recording's
+ * step of the blast has him on his parachute already, far away, and the
+ * pillbox on his square: the estimate takes his place and the pillboxes
+ * of the step before. (Demon1's builder at tick 30516 of the JonnyWar I
+ * game of Nov 19.)
+ *
+ *   entry 0        snapshot: A and B on the map; pillbox 1 in A's tank
+ *   entries 1..49  A's builder out, at A's entry-k place, one row lower
+ *   entry 49       he is at (16144, 15616), on square (63, 61)
+ *   entry 50       a new explosion (a pillbox's shell: no tank behind it)
+ *                  whose blast is at (16176, 15664), 57 away on his
+ *                  square; he is on his parachute at (142, 144); the
+ *                  pillbox is put down on (63, 61) with armour 0
+ *
+ *   entry 60       a new explosion 57 away from B's builder, on his
+ *                  square, and pillbox 2 put down there: a tank the shell
+ *                  killed drops his pillboxes before the test
+ *
+ * One check, at entry 50: builder 0, no shooter, tested at his entry-49
+ * place, open ground (his own pillbox is put down after the test):
+ * "DIES 57 <= 128 estimate". None before it. At entry 60, builder 1: the
+ * pillbox counts, "DIES on square estimate".
+ */
+#define LV_SC_KILL_ENTRY 50
+#define LV_SC_TANK_ENTRY 60
+static void putScLgm(LogBuf *b, int slot, uint8_t frame, int32_t wx, int32_t wy) {
+  putU8(b, log_LgmLocation);
+  putU8(b, 0); putU8(b, 4);
+  putU8(b, (uint8_t)((slot << 4) | frame));
+  putU8(b, (uint8_t)(wx / 256));
+  putU8(b, (uint8_t)(wy / 256));
+  putU8(b, (uint8_t)((((wx % 256) / 16) << 4) | ((wy % 256) / 16)));
+}
+
+int run_lv_server_check_builder_killed(void) {
+  const char *path = "lv_server_check_builder_killed.wbv";
+  /* Two pillboxes: x, y, armour, owner, speed, inTank, reload, justSeen,
+     coolDown. Both are in A's tank. */
+  static const uint8_t pills[20] = {19, 2, 0, 0, 0, 0, 50, 1, 0, 0, 0,
+                                    0, 0, 0, 0, 50, 1, 0, 0, 0};
+  const int32_t lgmX = (int32_t)lagDrawPlace(0, LV_SC_KILL_ENTRY - 1) * 16;
+  const int32_t lgmY = (LAG_DRAW_ROW + 1) * 256;
+  const int32_t explX = lgmX + 32 - 128, explY = lgmY + 48 - 128;
+  const int32_t bLgmX = (int32_t)lagDrawPlace(1, LV_SC_TANK_ENTRY) * 16;
+  const int32_t bExplX = bLgmX + 32 - 128;
+  LogBuf b;
+  LogViewerState *lv;
+  int savedHide = lv_screenGetHideLobby();
+  LvServerCheck got[LV_SC_MAX];
+  uint32_t nowMs = 0;
+  int k, n;
+
+  UT_ASSERT(lgmX == 16144 && lgmY == 15616);
+  b.len = 0;
+  putHeaderVersion(&b, "Test", 2, 2, 1);
+  putLagDrawSnapshotPills(&b, 0, pills, (int)sizeof(pills));
+  for (k = 1; k <= LV_SC_TANK_ENTRY + 3; k++) {
+    bool kill = (k == LV_SC_KILL_ENTRY);
+    bool blast = (k >= LV_SC_KILL_ENTRY && k <= LV_SC_KILL_ENTRY + 3);
+    bool tankKill = (k == LV_SC_TANK_ENTRY);
+    bool bBlast = (k >= LV_SC_TANK_ENTRY);
+    putU8(&b, LOG_EVENT);
+    putU8(&b, (uint8_t)(4 + (blast ? 1 : 0) + (kill ? 3 : 0) + (bBlast ? 1 : 0) +
+                        (tankKill ? 3 : 0)));
+    putLagDrawLocation(&b, 0, k);
+    putLagDrawLocation(&b, 1, k);
+    putScLgm(&b, 1, 0, (int32_t)lagDrawPlace(1, k) * 16, lgmY);
+    if (k < LV_SC_KILL_ENTRY) {
+      putScLgm(&b, 0, 0, (int32_t)lagDrawPlace(0, k) * 16, lgmY);
+    } else {
+      putScLgm(&b, 0, LGM_HELICOPTER_FRAME, 142 * 256, 144 * 256);
+    }
+    if (blast) {
+      putLagBlast(&b, explX, explY, (uint8_t)(8 - (k - LV_SC_KILL_ENTRY)));
+    }
+    if (kill) {
+      putU8(&b, log_PillSetInTank);
+      putU8(&b, 0); putU8(&b, 1);
+      putU8(&b, 0x00);                  /* pillbox 0, not in a tank */
+      putU8(&b, log_PillSetPlace);
+      putU8(&b, 0); putU8(&b, 3);
+      putU8(&b, 0); putU8(&b, (uint8_t)(lgmX / 256)); putU8(&b, (uint8_t)(lgmY / 256));
+      putU8(&b, log_PillSetHealth);
+      putU8(&b, 0); putU8(&b, 1);
+      putU8(&b, 0x00);                  /* v2: pillbox 0, armour 0 */
+    }
+    if (bBlast) {
+      putLagBlast(&b, bExplX, explY, (uint8_t)(8 - (k - LV_SC_TANK_ENTRY)));
+    }
+    if (tankKill) {
+      putU8(&b, log_PillSetInTank);
+      putU8(&b, 0); putU8(&b, 1);
+      putU8(&b, 0x10);                  /* pillbox 1, not in a tank */
+      putU8(&b, log_PillSetPlace);
+      putU8(&b, 0); putU8(&b, 3);
+      putU8(&b, 1); putU8(&b, (uint8_t)(bLgmX / 256)); putU8(&b, (uint8_t)(lgmY / 256));
+      putU8(&b, log_PillSetHealth);
+      putU8(&b, 0); putU8(&b, 1);
+      putU8(&b, 0x10);                  /* v2: pillbox 1, armour 0 */
+    }
+  }
+  putU8(&b, LOG_QUIT);
+
+  lv_screenSetHideLobby(0);
+  lv_screenSetServerCheck(1);
+  lv = loadSynthetic(&b, path);
+  UT_ASSERT_MSG(lv != NULL, "synthetic builder kill log failed to build/load");
+  UT_ASSERT(lvServerCheckRuleFor(lv->versionMajor, lv->versionMinor, lv->versionRevision) ==
+            LV_SC_RULE_221);
+
+  if (lagDrawPlayTo(lv, LV_SC_KILL_ENTRY - 1) != 0) return 1;
+  n = lv_screenServerChecks(got, LV_SC_MAX, &nowMs);
+  UT_ASSERT_MSG(n == 0, "%d checks before the blast", n);
+
+  if (lagDrawPlayTo(lv, LV_SC_KILL_ENTRY) != 0) return 1;
+  UT_ASSERT_MSG(lv->pb->item[0].x == lgmX / 256 && lv->pb->item[0].inTank == FALSE,
+                "the pillbox was not put down: (%u, %u) in tank %d",
+                (unsigned)lv->pb->item[0].x, (unsigned)lv->pb->item[0].y,
+                (int)lv->pb->item[0].inTank);
+  n = lv_screenServerChecks(got, LV_SC_MAX, &nowMs);
+  UT_ASSERT_MSG(n == 1, "%d checks at the blast (want 1)", n);
+  UT_ASSERT(!got[0].exact && got[0].builder == 0 && got[0].shooter == BUILDER_CHECK_NONE);
+  UT_ASSERT_MSG(got[0].startMs == lagDrawMs(LV_SC_KILL_ENTRY), "start %u",
+                (unsigned)got[0].startMs);
+  UT_ASSERT_MSG(got[0].blastX == explX + 128 && got[0].blastY == explY + 128,
+                "blast (%d, %d)", (int)got[0].blastX, (int)got[0].blastY);
+  UT_ASSERT_MSG(got[0].presentX == lgmX && got[0].presentY == lgmY &&
+                    got[0].testedX == lgmX && got[0].testedY == lgmY,
+                "tested (%d, %d) present (%d, %d), want (%d, %d)", (int)got[0].testedX,
+                (int)got[0].testedY, (int)got[0].presentX, (int)got[0].presentY, (int)lgmX,
+                (int)lgmY);
+  UT_ASSERT_MSG(!got[0].solid, "the square is solid: the pillbox put down at the blast "
+                               "counted");
+  UT_ASSERT_MSG(got[0].result == BUILDER_CHECK_DIES, "result %u", (unsigned)got[0].result);
+  {
+    LvServerCheckTexts t;
+    char label[160];
+    t.lives = "LIVES";
+    t.dies = "DIES";
+    t.refused = "HOST REFUSED";
+    t.notTested = "NOT TESTED";
+    t.circleOut = "{string1} {number} > {number2}";
+    t.circleIn = "{string1} {number} <= {number2}";
+    t.boxOut = "{string1} {number} >= {number2}";
+    t.boxIn = "{string1} {number} < {number2}";
+    t.offSquare = "{string1} off square";
+    t.onSquare = "{string1} on square";
+    t.rewind = "(rewind {number})";
+    t.estimate = "estimate";
+    lvServerCheckLabel(&got[0], &t, label, sizeof(label));
+    UT_ASSERT_MSG(strcmp(label, "DIES 57 <= 128 estimate") == 0, "label \"%s\"", label);
+  }
+
+  /* The steps after it make no new check: the explosion is not new. */
+  if (lagDrawPlayTo(lv, LV_SC_KILL_ENTRY + 3) != 0) return 1;
+  n = lv_screenServerChecks(got, LV_SC_MAX, &nowMs);
+  UT_ASSERT_MSG(n == 1, "%d checks after the blast (want 1)", n);
+
+  /* B's builder: the tank's pillbox counts, so the square is solid. */
+  if (lagDrawPlayTo(lv, LV_SC_TANK_ENTRY) != 0) return 1;
+  n = lv_screenServerChecks(got, LV_SC_MAX, &nowMs);
+  {
+    int at = -1, j;
+    for (j = 0; j < n; j++) {
+      if (got[j].startMs == lagDrawMs(LV_SC_TANK_ENTRY)) {
+        UT_ASSERT_MSG(at < 0, "two checks at entry %d", LV_SC_TANK_ENTRY);
+        at = j;
+      }
+    }
+    UT_ASSERT_MSG(at >= 0, "no check at entry %d (%d checks)", LV_SC_TANK_ENTRY, n);
+    UT_ASSERT_MSG(got[at].builder == 1 && got[at].presentX == bLgmX && got[at].solid &&
+                      got[at].onSquare && got[at].result == BUILDER_CHECK_DIES,
+                  "builder %u present %d solid %d on square %d result %u",
+                  (unsigned)got[at].builder, (int)got[at].presentX, (int)got[at].solid,
+                  (int)got[at].onSquare, (unsigned)got[at].result);
+  }
+
+  lv_screenSetServerCheck(0);
+  lv_decoderDestroy(lv);
+  lv_screenSetHideLobby(savedHide);
+  remove(path);
+  return 0;
+}

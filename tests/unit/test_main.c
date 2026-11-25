@@ -729,6 +729,7 @@ static const UnitTestEntry s_tests[] = {
     { "lv_server_check_exact_record", run_lv_server_check_exact_record },
     { "lv_server_check_label", run_lv_server_check_label },
     { "lv_server_check_recording", run_lv_server_check_recording },
+    { "lv_server_check_builder_killed", run_lv_server_check_builder_killed },
     { "lv_early_blast_hide", run_lv_early_blast_hide },
     { "lv_early_blast_same_place", run_lv_early_blast_same_place },
     { "lv_early_blast_many_players", run_lv_early_blast_many_players },
