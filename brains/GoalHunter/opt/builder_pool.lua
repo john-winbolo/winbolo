@@ -891,7 +891,7 @@ local function friendly_fire_hold(state, world, info, p, fs_tick, walk)
   if (p.health or 0) > 0 or not info then return "friendly_fire" end
   walk = walk or QR.walk_ticks(info, p.mx, p.my)
   if not walk then return "friendly_fire" end
-  local wa, wb = QR.stay_window(now + 1 + walk)
+  local wa, wb = QR.stay_window(now + QR.lag_d(state) + walk)
   if hold_end >= wa then return "friendly_fire" end
   local ok, why = QR.dead_pill_send_ok(state, world, info, now, p, walk)
   local rec = { stamp = fs_tick, hold_end = hold_end, wa = wa, wb = wb, why = why }

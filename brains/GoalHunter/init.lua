@@ -11914,8 +11914,11 @@ function Brain.think(info)
       -- sends the old 8-char advert byte for byte.
       if ld.pbox and C.BLITZ_SPOT_PENDING_PILLS then bse.lgmd = bse.lgmd .. "P" end
     else
+      -- C.QUICK_REPAIR_LAG_AWARE: the record stays D - 1 more thinks (D =
+      -- the key delay), as the man leaves the tank D thinks after the order.
       if state._lgm_dispatch and info.man_status == C.LGM_INTANK
-         and (now - (state._lgm_dispatch.tick or 0)) > 2 then
+         and (now - (state._lgm_dispatch.tick or 0))
+             > 1 + require("quick_repair").lag_d(state) then
         state._lgm_dispatch = nil  -- LGM home again; advert the clear
       end
       bse.lgmd = "-"
