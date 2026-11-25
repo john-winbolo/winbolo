@@ -258,5 +258,289 @@ do
   check("7g heap valid after", good3, why3)
 end
 
+-- ── Helpers for the stop (tick budget) tests ────────────────────────────────
+-- Run fn under a count hook that raises an error at instruction k. Returns
+-- true if the hook fired (fn was stopped), false if fn ran to the end.
+local function run_killed(k, fn)
+  local count, fired = 0, false
+  local function hook()
+    count = count + 1
+    if count >= k then fired = true; debug.sethook(); error("tick_budget_exceeded") end
+  end
+  pcall(function() debug.sethook(hook, "", 1); fn(); debug.sethook() end)
+  debug.sethook()
+  return fired
+end
+
+-- Set of tile keys (my*256+mx) held in slots 1..h.n.
+local function heap_keys(h)
+  local t = {}
+  for i = 1, h.n do local v = h[i]; if v then t[v % 65536] = true end end
+  return t
+end
+local function key_of(mx, my) return my * 256 + mx end
+
+-- Danger field: tiles with mx < DANGER_X are dangerous (danger 9, above 5).
+local DANGER_X = 0
+local function danger_at(mx, my) return (mx < DANGER_X) and 9 or 0 end
+
+-- State with n frontier tiles: tile i is at (10+i, 60+i%3) with cost i, so
+-- the lowest-cost tiles have the smallest mx and are the dangerous ones.
+local function danger_state(n)
+  local st = { visited = {}, frontier = expl.new_frontier(), frontier_set = {} }
+  for i = 1, n do
+    local mx, my = 10 + i, 60 + (i % 3)
+    st.frontier_set[key_of(mx, my)] = true
+    expl.frontier_push(st.frontier, i, mx, my)
+  end
+  return st
+end
+
+-- frontier_set and the heap hold the same tiles (duplicates allowed).
+local function set_agrees(st)
+  local hk = heap_keys(st.frontier)
+  for k in pairs(st.frontier_set) do if not hk[k] then return false, "lost " .. k end end
+  for k in pairs(hk) do if not st.frontier_set[k] and not st.visited[k] then return false, "extra " .. k end end
+  return true
+end
+
+-- best_frontier as it was before this fix (local aside list), on the 2.2.1
+-- push/pop. Reference for "same choices when no stop happens".
+local function ref_best_frontier(state)
+  local h = state.frontier
+  local thresh, measure = 5, (cpf_danger_at ~= nil)
+  local fb_x, fb_y
+  local aside, n_aside = nil, 0
+  local skipped, SKIP_LIMIT = 0, 48
+  while h.n > 0 do
+    local top = h[1]
+    local nx, ny = top % 256, math.floor(top / 256) % 256
+    local nk = ny * 256 + nx
+    if state.visited[nk] then
+      ref_pop(h); state.frontier_set[nk] = nil
+    else
+      local dng = measure and cpf_danger_at(nx, ny) or 0
+      if dng <= thresh then
+        if aside then for i = 1, n_aside do ref_push(h, aside[i]) end end
+        return nx, ny
+      end
+      if not fb_x then fb_x, fb_y = nx, ny end
+      ref_pop(h)
+      aside = aside or {}
+      n_aside = n_aside + 1; aside[n_aside] = top
+      skipped = skipped + 1
+      if skipped >= SKIP_LIMIT then break end
+    end
+  end
+  if aside then for i = 1, n_aside do ref_push(h, aside[i]) end end
+  return fb_x, fb_y
+end
+
+-- ── 8. No stop: best_frontier picks and heap match the old code ─────────────
+do
+  _G.cpf_danger_at = function(mx, my) return ((mx * 7 + my * 3) % 5 == 0) and 9 or 0 end
+  local function mk() return { visited = {}, frontier = { n = 0 }, frontier_set = {} } end
+  local a, b = mk(), mk()
+  local same_pick, same_heap, picks, danger_seen = true, true, 0, 0
+  for step = 1, 3000 do
+    local r = rnd(10)
+    if r < 6 then
+      local mx, my, c = rnd(256), rnd(256), rnd(40)
+      local k = key_of(mx, my)
+      if not a.frontier_set[k] and not a.visited[k] then
+        a.frontier_set[k] = true; b.frontier_set[k] = true
+        expl.frontier_push(a.frontier, c, mx, my); ref_push(b.frontier, enc(c, mx, my))
+      end
+    elseif r < 8 then
+      local fx, fy = expl.best_frontier(a)
+      local gx, gy = ref_best_frontier(b)
+      picks = picks + 1
+      if fx ~= gx or fy ~= gy then same_pick = false end
+      if fx and cpf_danger_at(fx, fy) > 5 then danger_seen = danger_seen + 1 end
+      if fx and rnd(2) == 0 then      -- explore it: mark visited
+        local k = key_of(fx, fy); a.visited[k] = true; b.visited[k] = true
+      end
+    else
+      if a.frontier.n > 0 then
+        local v = a.frontier[1] % 65536
+        a.visited[v] = true; b.visited[v] = true
+      end
+    end
+    if not same_array(a.frontier, b.frontier) then same_heap = false; break end
+  end
+  check("8a no stop: best_frontier returns the same tile as the old code", same_pick, picks .. " picks")
+  check("8b no stop: heap array identical to the old code after every step", same_heap)
+  check("8c the run set aside danger tiles and used the fallback", danger_seen > 0, danger_seen .. " fallbacks")
+  check("8d no stop: nothing left in hold or aside",
+        a.frontier.hold == nil and (a.frontier.aside == nil or a.frontier.aside.n == 0))
+end
+
+-- ── 9. Stop at every instruction inside best_frontier: no tile lost ─────────
+do
+  _G.cpf_danger_at = danger_at
+  DANGER_X = 10 + 6                  -- the 5 lowest-cost tiles are dangerous
+  local ref = danger_state(20)
+  local want_x, want_y = expl.best_frontier(ref)
+  local lost, bad_pick, bad_heap, runs, fired_runs = 0, 0, 0, 0, 0
+  for k = 1, 100000 do
+    local st = danger_state(20)
+    local fired = run_killed(k, function() expl.best_frontier(st) end)
+    runs = runs + 1
+    if fired then fired_runs = fired_runs + 1 end
+    local fx, fy = expl.best_frontier(st)       -- next tick, same state
+    if fx ~= want_x or fy ~= want_y then bad_pick = bad_pick + 1 end
+    if not set_agrees(st) then lost = lost + 1 end
+    if not valid(st.frontier) then bad_heap = bad_heap + 1 end
+    if not fired then break end
+  end
+  check("9a stop anywhere in best_frontier then run again: no tile lost", lost == 0,
+        lost .. " lost of " .. runs .. " runs (" .. fired_runs .. " stopped)")
+  check("9b ...and the next call returns the same tile as with no stop", bad_pick == 0, bad_pick .. " differ")
+  check("9c ...and the heap is valid", bad_heap == 0, bad_heap .. " bad")
+  check("9d the stop loop covered the whole call", fired_runs > 200, fired_runs .. " stop points")
+  DANGER_X = 0
+end
+
+-- ── 10. Bug 2: drop the too-close tile best_frontier returned ───────────────
+do
+  _G.cpf_danger_at = danger_at
+  DANGER_X = 10 + 6                  -- tiles 11..15 dangerous, 16 is the pick
+  local st = danger_state(20)
+  local fx, fy = expl.best_frontier(st)
+  local tk = key_of(fx or 0, fy or 0)
+  check("10a best_frontier skipped the danger tiles", fx == 16, tostring(fx))
+  check("10b after the re-push h[1] is a danger tile, not the pick", st.frontier[1] % 65536 ~= tk)
+  -- goals.lua explore pick: too close -> visited, unmark, remove that tile.
+  st.visited[tk] = true
+  st.frontier_set[tk] = nil
+  local removed = expl.frontier_remove(st.frontier, fx, fy)
+  local hk = heap_keys(st.frontier)
+  check("10c frontier_remove removed the pick", removed and not hk[tk])
+  local all_danger = true
+  for i = 1, 5 do if not hk[key_of(10 + i, 60 + (i % 3))] then all_danger = false end end
+  check("10d every danger tile is still in the heap", all_danger)
+  check("10e 19 entries left, heap valid", st.frontier.n == 19 and valid(st.frontier), "n=" .. st.frontier.n)
+  local ok, why = set_agrees(st)
+  check("10f frontier_set agrees with the heap", ok, why)
+  local nx = expl.best_frontier(st)
+  check("10g next pick is the next safe tile", nx == 17, tostring(nx))
+  DANGER_X = 0
+end
+
+-- ── 11. frontier_remove on h[1] is exactly frontier_pop; any slot works ────
+do
+  _G.cpf_danger_at = nil
+  local same, okall = true, true
+  for t = 1, 300 do
+    local h, r = expl.new_frontier(), { n = 0 }
+    for i = 1, 1 + rnd(60) do local v = rnd_entry(); push_v(h, v); ref_push(r, v) end
+    local top = h[1]
+    expl.frontier_remove(h, top % 256, math.floor(top / 256) % 256)
+    ref_pop(r)
+    if not same_array(h, r) then same = false end
+    if h.n > 0 then
+      local i = 1 + rnd(h.n)
+      local v = h[i]
+      -- frontier_remove takes the first slot with that tile; find its value.
+      local gone
+      for j = 1, h.n do if h[j] % 65536 == v % 65536 then gone = h[j]; break end end
+      local rest = {}
+      local skipped = false
+      for j = 1, h.n do
+        if not skipped and h[j] == gone then skipped = true else rest[#rest + 1] = h[j] end
+      end
+      local removed = expl.frontier_remove(h, v % 256, math.floor(v / 256) % 256)
+      local good = valid(h)
+      local out = drain(h)
+      table.sort(rest)
+      local match = removed and good and out and #out == #rest
+      if match then for j = 1, #out do if out[j] ~= rest[j] then match = false end end end
+      if not match then okall = false end
+    end
+  end
+  check("11a frontier_remove of the h[1] tile matches frontier_pop exactly", same)
+  check("11b frontier_remove of any slot keeps every other entry, in order", okall)
+  check("11c frontier_remove of a tile not in the heap returns false",
+        expl.frontier_remove(expl.new_frontier(), 3, 4) == false)
+end
+
+-- ── 12. Stop at every instruction of push / pop / remove: no entry lost ─────
+do
+  local lost, runs = 0, 0
+  for which = 1, 3 do
+    for k = 1, 2000 do
+      local h, vals = build(40)
+      local v = rnd_entry()
+      local target = h[1 + rnd(40)]
+      local snap = { n = h.n }
+      for i = 1, h.n + 2 do snap[i] = h[i] end
+      local fired = run_killed(k, function()
+        if which == 1 then push_v(h, v)
+        elseif which == 2 then expl.frontier_pop(h)
+        else expl.frontier_remove(h, target % 256, math.floor(target / 256) % 256) end
+      end)
+      runs = runs + 1
+      -- A push stopped before it took v (h.hold or a slot) must have left the
+      -- heap untouched; the caller pushes v again (test 13 checks update).
+      -- (The test values can repeat, so count copies of v rather than look.)
+      local v_in, v_before = (h.hold == v) and 1 or 0, 0
+      for i = 1, h.n do if h[i] == v then v_in = v_in + 1 end end
+      for _, x in ipairs(vals) do if x == v then v_before = v_before + 1 end end
+      local v_kept = v_in > v_before
+      if which == 1 and not v_kept and not same_array(h, snap) then lost = lost + 1 end
+      if not valid(h) then lost = lost + 1 end
+      -- Every value that should remain must still come out of the heap. The
+      -- op itself may take one entry: pop the smallest value, remove the
+      -- first entry for the target tile (any cost).
+      local out = drain(h) or {}
+      local have = {}
+      for _, x in ipairs(out) do have[x] = (have[x] or 0) + 1 end
+      local must = {}
+      for _, x in ipairs(vals) do must[#must + 1] = x end
+      if which == 1 and v_kept then must[#must + 1] = v end
+      table.sort(must)
+      local missing = {}
+      for _, x in ipairs(must) do
+        if (have[x] or 0) == 0 then missing[#missing + 1] = x
+        else have[x] = have[x] - 1 end
+      end
+      local allowed = 0
+      if #missing == 1 then
+        local x = missing[1]
+        if which == 2 and x == must[1] then allowed = 1 end
+        if which == 3 and x % 65536 == target % 65536 then allowed = 1 end
+      end
+      if #missing > allowed then lost = lost + 1 end
+      if not fired then break end
+    end
+  end
+  check("12 push/pop/remove stopped at any instruction: heap valid, no entry lost", lost == 0,
+        lost .. " lost of " .. runs)
+end
+
+-- ── 13. Stop at every instruction of update: all neighbours end up pushed ───
+do
+  local bad, runs = 0, 0
+  local info = { tankx = 100 * 256 + 128, tanky = 80 * 256 + 128, inboat = false }
+  for k = 1, 20000 do
+    local st = { visited = {}, frontier = expl.new_frontier(), frontier_set = {} }
+    local fired = run_killed(k, function() expl.update(st, info) end)
+    expl.update(st, info)                       -- next tick
+    runs = runs + 1
+    local hk = heap_keys(st.frontier)
+    local cnt = 0
+    for dy = -1, 1 do for dx = -1, 1 do
+      if dx ~= 0 or dy ~= 0 then
+        local kk = key_of(100 + dx, 80 + dy)
+        if hk[kk] and st.frontier_set[kk] then cnt = cnt + 1 end
+      end
+    end end
+    if cnt ~= 8 or not st.visited[key_of(100, 80)] or not valid(st.frontier) then bad = bad + 1 end
+    if not fired then break end
+  end
+  check("13 update stopped at any instruction then run again: all 8 neighbours kept", bad == 0,
+        bad .. " bad of " .. runs)
+end
+
 print(string.format("\n%d passed, %d failed", passes, fails))
 os.exit(fails == 0 and 0 or 1)

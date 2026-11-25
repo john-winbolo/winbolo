@@ -18499,7 +18499,9 @@ M._pick_goal_inner = function(state, world, info, quiet)
     local nk = U.mkey(fx, fy)
     state.visited[nk]      = true
     state.frontier_set[nk] = nil
-    expl.frontier_pop(state.frontier)
+    -- Remove this exact tile. best_frontier may have pushed set-aside danger
+    -- tiles back, so h[1] is not always the tile it returned.
+    expl.frontier_remove(state.frontier, fx, fy)
     fx, fy = expl.best_frontier(state)
   end
 
