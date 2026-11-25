@@ -179,7 +179,7 @@ static int          s_hitLgmCount = 0;
 static BYTE         s_hitZoom = 1;
 /* The centre of each shell explosion lv_drawShells drew, in render-target
    pixels, for the pulsing dot (lvHitboxBlastCentreInPicture). Noted only
-   while hit boxes are on, and for as long as the explosion is drawn. */
+   while hit boxes are on, and only on the tick the shell exploded. */
 #define LV_HIT_BLAST_MAX 256
 static SDL_FPoint   s_hitBlast[LV_HIT_BLAST_MAX];
 static int          s_hitBlastCount = 0;
@@ -1691,9 +1691,11 @@ void lv_drawShells(screenBullets *sBullets) {
         lv_screenBulletsGetItem(sBullets, count, &mx, &my, &px, &py, &frame);
         spritePositionShell(0.0f, 0.0f, GFX_ANIM_CLASSIC, (float)zf, 1,
                             mx, my, px, py, px << 4, py << 4, frame, &fx, &fy);
-        /* The blast point of an explosion, for the pulsing dot. The picture
-           of an explosion has its top left at (fx, fy). */
-        if (s_hitBoxes && frame >= SHELL_EXPLOSION8 && frame <= SHELL_EXPLOSION1 &&
+        /* The blast point of an explosion, for the pulsing dot: only on the
+           explosion's first frame (SHELL_EXPLOSION1; the frames count down
+           to SHELL_EXPLOSION8), which is the tick the shell exploded. The
+           picture of an explosion has its top left at (fx, fy). */
+        if (s_hitBoxes && frame == SHELL_EXPLOSION1 &&
             s_hitBlastCount < LV_HIT_BLAST_MAX) {
             float c = (float)zf * (float)lvHitboxBlastCentreInPicture();
             s_hitBlast[s_hitBlastCount].x = fx + c;
@@ -2648,8 +2650,8 @@ static void lvDrawHitBoxesOverBlit(const SDL_FRect *src, const SDL_FRect *dst) {
 }
 
 /* With hit boxes on, a dot one art pixel across on the blast point of each
-   shell explosion drawn (s_hitBlast): the point the engine tests builders
-   against. Its colour goes round the whole rainbow every 2 seconds
+   shell explosion on the tick it exploded (s_hitBlast): the point the
+   engine tests builders against. Its colour goes round the whole rainbow every 2 seconds
    (lvHitboxRainbow), and it pulses from 35% to 100% solid, one rise and
    fall a second (lvHitboxPulseAlpha). The pulse goes by the wall
    clock, so it keeps on while playback is paused. src is the slice of the
