@@ -9111,6 +9111,12 @@ local function compute_pool4_cost(state, world, info, obj, tmx, tmy)
   -- looking like the direct route was tried and lost.
   local _route_dmg, _route_far = 0, nil
   local _rent = state.capture_route and state.capture_route[obj.my * 256 + obj.mx]
+  -- A stale verdict must not price the pill: the probe runs only for the
+  -- focus pill, so an entry for any other pill is never refreshed. Arena
+  -- gap_sw (Nov 24): pill A's "direct LETHAL, detour 874" verdict from t=602,
+  -- while pill B still fired, priced A at 640 until t=801, with the tank one
+  -- square away and B long dead. Same test as kill_pickup_lethal_verdict.
+  if _rent and capture_route_stale(_rent, state.tick or 0, tmx, tmy) then _rent = nil end
   if _rent and _rent.cost and _rent.cost < 1e29
      and (_rent.mode == "direct" or _rent.mode == "danger") then
     dist_raw     = _rent.cost
