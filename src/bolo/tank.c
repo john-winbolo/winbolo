@@ -4021,6 +4021,14 @@ void tankSetFirstRight(tank *value, BYTE val) {
   (*value)->firstRight = val;
 }
 
+BYTE tankGetResidualSpeed(tank *value) {
+  return (*value)->residualSpeed;
+}
+
+void tankSetResidualSpeed(tank *value, BYTE val) {
+  (*value)->residualSpeed = val;
+}
+
 /*********************************************************
 *NAME:          tankSetLastTankDeath
 *AUTHOR:        Chris Lesnieski
@@ -4106,54 +4114,6 @@ tank tankDeepCopy(tank src) {
     /* vectorBody fields are unused (always NULL) — no copy needed */
 
     return dst;
-}
-
-void tankSnapToServer(tank dst, tank src) {
-    tankCarryPb srcPill, dstPill, prev, q;
-    bool savedAutoSlowdown;
-    bool savedAutoHideGunsight;
-    bool savedShowSight;
-
-    if (dst == NULL || src == NULL) {
-        return;
-    }
-
-    /* Save client-only settings (UI preferences, not game state) */
-    savedAutoSlowdown = dst->autoSlowdown;
-    savedAutoHideGunsight = dst->autoHideGunsight;
-    savedShowSight = dst->showSight;
-
-    /* Free dst's carried pills list */
-    while (NonEmpty(dst->carryPills)) {
-        q = dst->carryPills;
-        dst->carryPills = TankPillsTail(q);
-        Dispose(q);
-    }
-
-    /* Copy all fields from server */
-    *dst = *src;
-
-    /* Deep copy carried pills so we have our own list */
-    dst->carryPills = NULL;
-    prev = NULL;
-    srcPill = src->carryPills;
-    while (srcPill != NULL) {
-        New(dstPill);
-        dstPill->pillNum = srcPill->pillNum;
-        dstPill->next = NULL;
-        if (prev == NULL) {
-            dst->carryPills = dstPill;
-        } else {
-            prev->next = dstPill;
-        }
-        prev = dstPill;
-        srcPill = srcPill->next;
-    }
-
-    /* Restore client-only settings (UI preferences, not game state) */
-    dst->autoSlowdown = savedAutoSlowdown;
-    dst->autoHideGunsight = savedAutoHideGunsight;
-    dst->showSight = savedShowSight;
 }
 
 
@@ -4247,53 +4207,4 @@ tankHit tankIsTankHitAtPosition(GameSim *sim, tank *value,
 		}
 	}
 	return returnValue;
-}
-
-void tankSyncResources(tank dst, tank src) {
-    tankCarryPb srcPill, dstPill, prev, q;
-
-    if (dst == NULL || src == NULL) {
-        return;
-    }
-
-    dst->armour = src->armour;
-    dst->destroyed = src->destroyed;
-    dst->shells = src->shells;
-    dst->mines = src->mines;
-    dst->trees = src->trees;
-    dst->reload = src->reload;
-    dst->numKills = src->numKills;
-    dst->numDeaths = src->numDeaths;
-    dst->deathWait = src->deathWait;
-    dst->newTank = src->newTank;
-    dst->waterCount = src->waterCount;
-    dst->tankHitCount = src->tankHitCount;
-    dst->onBoat = src->onBoat;
-    dst->boatState = src->boatState;
-    dst->lastBoatRiverX = src->lastBoatRiverX;
-    dst->lastBoatRiverY = src->lastBoatRiverY;
-    dst->sightLen = src->sightLen;
-    dst->mods = src->mods;
-
-    /* Deep-copy carried pills list from server to client */
-    while (NonEmpty(dst->carryPills)) {
-        q = dst->carryPills;
-        dst->carryPills = TankPillsTail(q);
-        Dispose(q);
-    }
-    dst->carryPills = NULL;
-    prev = NULL;
-    srcPill = src->carryPills;
-    while (srcPill != NULL) {
-        New(dstPill);
-        dstPill->pillNum = srcPill->pillNum;
-        dstPill->next = NULL;
-        if (prev == NULL) {
-            dst->carryPills = dstPill;
-        } else {
-            prev->next = dstPill;
-        }
-        prev = dstPill;
-        srcPill = srcPill->next;
-    }
 }
