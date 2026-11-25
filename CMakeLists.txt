@@ -6938,6 +6938,7 @@ set(_unit_test_names
     lv_server_check_exact_record
     lv_server_check_label
     lv_server_check_recording
+    lv_server_check_builder_killed
     lv_early_blast_hide
     lv_early_blast_same_place
     lv_early_blast_many_players

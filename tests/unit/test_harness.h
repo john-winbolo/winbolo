@@ -1758,8 +1758,10 @@ int run_lv_server_check_rule_version(void);
 int run_lv_server_check_estimate_6830(void);
 int run_lv_server_check_exact_record(void);
 int run_lv_server_check_label(void);
-/* The Server Check on a real recording, on ask only (test_lv_calibration.c). */
+/* The Server Check on a real recording, on ask only, and for a builder the
+   blast killed (test_lv_calibration.c). */
 int run_lv_server_check_recording(void);
+int run_lv_server_check_builder_killed(void);
 int run_lv_early_blast_hide(void);
 int run_lv_early_blast_same_place(void);
 int run_lv_early_blast_many_players(void);
