@@ -1102,16 +1102,18 @@ M.live_physics = require("live_physics")
 -- lgmBlastCatches, internal/lgm.h lgmBlastOpenGroundCatches). dx, dy are the
 -- explosion's place less the man's, in world units.
 --   0  "Half-square circle": dx^2 + dy^2 <= 128^2 (LGM_SHELL_KILL_RADIUS_WU).
---      The classic table, and what the brain modelled before the rule.
+--      The classic shape before 2.2.2, and what the brain modelled before
+--      the rule.
 --   1  "Mac Bolo box": |dx| < 128 and |dy| < 128.
---   2  "Mac Bolo equivalent area circle": dx^2 + dy^2 <= 144^2.
+--   2  "Mac Bolo equivalent area circle": dx^2 + dy^2 <= 144^2. The
+--      classic shape from 2.2.2.
 -- Every shape also stops at the pill_range rule, as the engine's does: a
 -- man further than C.LGM_BLAST_PILL_RANGE_WU from the explosion is safe.
 -- Classic pill_range (2048) is far past every shape.
 -- The shape is C.LGM_BLAST_SHAPE and the limit C.LGM_BLAST_PILL_RANGE_WU,
 -- which live_physics.lua group BLAST sets from info.rules each think. With
--- C.LIVE_PHYSICS or C.LIVE_PHYSICS_BLAST off (KEEL), or no rule sent, they
--- keep their base values: shape 0 and 2048, the old model.
+-- C.LIVE_PHYSICS or C.LIVE_PHYSICS_BLAST off, or no rule sent, they keep
+-- their base values: shape 2 and 2048 (PRESETS.keel: shape 0).
 -- A solid square (a wall, a live pill, a base) keeps the square rule, which
 -- this does not cover.
 function M.lgm_blast_shape()

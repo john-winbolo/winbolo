@@ -99,6 +99,11 @@ typedef struct LvScripts {
  * lv_screenGetScripts returns the recording's scripts.json holder, or NULL
  * while no log is loaded. */
 double lv_screenRuleValueAt(int index, uint32_t ms);
+/* lv_screenRuleUnsetValue answers the value rule index played while the
+ * recording never set it: the classic value of the version that wrote the
+ * recording (for lgm_blast_shape, 0 before 2.2.2, else 2), or this build's
+ * with no recording open. */
+double lv_screenRuleUnsetValue(int index);
 int lv_screenGetRuleChanges(const LvRuleChange **out);
 const LvScripts *lv_screenGetScripts(void);
 

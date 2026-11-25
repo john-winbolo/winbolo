@@ -510,7 +510,7 @@ static void game_info_draw_scripts(void) {
             char   classicText[32];
             char   valueText[32];
             char   phrase[96];
-            game_info_rule_number(simRulesClassicValue(rule),
+            game_info_rule_number(lv_screenRuleUnsetValue(rule),
                                   classicText, sizeof(classicText));
             game_info_rule_number(value, valueText, sizeof(valueText));
             simRulesPhrase(rule, value, phrase, sizeof(phrase));

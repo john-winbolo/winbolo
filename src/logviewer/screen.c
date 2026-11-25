@@ -1298,8 +1298,9 @@ static void lv_ruleChangesClear(void) {
  * 128) and later ones 2 (the circle of 144), so for a loaded recording it
  * comes from the version in the header (simRulesLgmBlastShapeForVersion). A
  * version of 0.0.0 says nothing (a spectator seed before its version is
- * filled in), and with no recording open the answer is this build's. */
-static double lv_screenRuleUnsetValue(int index) {
+ * filled in), and with no recording open the answer is this build's. The
+ * game info panel's "Classic" column reads it too. */
+double lv_screenRuleUnsetValue(int index) {
   if (index == SIM_RULE_lgm_blast_shape && g_lv != NULL &&
       g_lv->logLoaded == TRUE &&
       (g_lv->versionMajor != 0 || g_lv->versionMinor != 0 ||
@@ -1404,16 +1405,14 @@ static void lv_rulesRefresh(void) {
       lv_screenRuleValueAt(SIM_RULE_tank_hit_radius, t), 1, 255);
   g_lv->rules.pillRange      = lv_rulesClampInt(
       lv_screenRuleValueAt(SIM_RULE_pill_range, t), 0, 65535);
-  /* The engine plays any lgm_blast_shape other than 1 or 2 as 0, the
-     circle of 128 (hitRulesBuilderOpenGroundShape), so a value outside 0 to
-     2 reads as 0 here. A server holds the rule to 0 to 2, so only a
-     hand-made file can have one. */
+  /* The engine plays a value outside the three shapes as shape 0, the
+     half-square circle of 128 (lgmBlastOpenGroundCatches), and not as the
+     classic shape, so the viewer does too. A NaN is outside them. */
   {
     double shape = lv_screenRuleValueAt(SIM_RULE_lgm_blast_shape, t);
-    g_lv->rules.lgmBlastShape = (shape >= (double)LGM_BLAST_SHAPE_HALF_SQUARE &&
-                                 shape <= (double)LGM_BLAST_SHAPE_MAC_AREA)
-                                    ? (int)shape
-                                    : LGM_BLAST_SHAPE_HALF_SQUARE;
+    g_lv->rules.lgmBlastShape =
+        (shape >= LGM_BLAST_SHAPE_HALF_SQUARE && shape <= LGM_BLAST_SHAPE_MAC_AREA)
+            ? (int)shape : LGM_BLAST_SHAPE_HALF_SQUARE;
   }
   g_lv->rules.baseStatusRange = lv_rulesClampInt(
       lv_screenRuleValueAt(SIM_RULE_base_status_range, t), 0, 65535);

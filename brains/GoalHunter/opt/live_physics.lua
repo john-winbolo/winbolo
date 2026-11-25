@@ -38,6 +38,7 @@ local floor = math.floor
 local ceil  = math.ceil
 
 -- The engine's classic rules (src/bolo/sim_rules.c simRulesClassic).
+-- lgm_blast_shape is 2, the classic shape from 2.2.2 (0 before 2.2.2).
 local CLASSIC = {
   tank_full_armour = 40, tank_full_shells = 40, tank_reload_ticks = 13,
   shell_damage = 5, shell_speed = 32, shell_life = 8, gunsight_max = 14,
@@ -51,7 +52,7 @@ local CLASSIC = {
   tank_accel_rate = 0.25, tank_brake_rate = 0.25,
   pill_max_armour = 15, pill_attack_ticks = 100, pill_attack_min_ticks = 6,
   pill_cooldown_ticks = 32, pill_repair_amount = 4, pill_range = 2048,
-  pill_shell_damage = 1, pill_angry_divisor = 2, building_life = 4, lgm_blast_shape = 0,
+  pill_shell_damage = 1, pill_angry_divisor = 2, building_life = 4, lgm_blast_shape = 2,
   base_full_armour = 90, base_capture_armour = 9, base_regen_ticks = 1000,
   lgm_build_ticks = 20, lgm_cost_road = 2, lgm_cost_building = 2,
   lgm_cost_boat = 20, lgm_cost_pill_new = 4, lgm_cost_mine = 1,
@@ -66,6 +67,7 @@ M.CLASSIC = CLASSIC
 -- Rules where 0 is a legal live value (a free job, a man who cannot walk
 -- a terrain). For every other rule 0 means "not sent" and reads as classic.
 local ZERO_OK = {
+  lgm_blast_shape = true,
   lgm_cost_road = true, lgm_cost_building = true, lgm_cost_boat = true,
   lgm_cost_pill_new = true, lgm_cost_mine = true,
   man_speed_road = true, man_speed_grass = true, man_speed_forest = true,
@@ -678,13 +680,14 @@ local ENTRIES = {
   -- The builder blast (src/bolo/internal/lgm.h lgmBlastOpenGroundCatches):
   -- the lgm_blast_shape rule's shape, stopped at pill_range. A value outside
   -- the three shapes plays as the half-square circle (0) in the engine, so
-  -- it keeps the base. Classic rules: shape 0 and pill_range 2048, the base
-  -- values, so nothing changes. U.lgm_open_blast_catches reads both.
+  -- it reads 0 here too. No rule sent reads the classic 2. Classic rules:
+  -- shape 2 and pill_range 2048, the base values, so nothing changes.
+  -- U.lgm_open_blast_catches reads both.
   { "LGM_BLAST_SHAPE", "BLAST",
     function(b, x)
       local s = x.lgm_blast_shape
-      if s == 1 or s == 2 then return s end
-      return b
+      if s == 0 or s == 1 or s == 2 then return s end
+      return 0
     end },
   { "LGM_BLAST_PILL_RANGE_WU", "BLAST", direct("pill_range") },
 }

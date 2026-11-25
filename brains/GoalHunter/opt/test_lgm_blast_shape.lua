@@ -8,11 +8,14 @@
 --
 -- The rules reach the model through live_physics.apply (group BLAST), as
 -- they do in Brain.think.
--- 1. No rule sent, or lgm_blast_shape 0: the half-square circle, radius 128.
+-- 1. No rule sent: the bot's start value 2, the circle of radius 144 (the
+--    classic shape from 2.2.2). lgm_blast_shape 0: the half-square circle,
+--    radius 128.
 -- 2. lgm_blast_shape 1: the Mac Bolo box, |dx| < 128 and |dy| < 128.
 -- 3. lgm_blast_shape 2: the circle of radius 144.
--- 4. LIVE_PHYSICS = false (KEEL) or LIVE_PHYSICS_BLAST = false: always the
---    half-square circle.
+-- 4. LIVE_PHYSICS = false with the PRESETS.keel value: always the
+--    half-square circle. LIVE_PHYSICS_BLAST = false: always the start
+--    value, the circle of 144.
 -- 5. The perp form and the reach follow the same shape.
 -- 6. danger.lgm_shell_gate, the builder pool's shell check, follows the
 --    shape: one shell that ends its life next to the man, on grass.
@@ -76,11 +79,18 @@ local function check_shape(label, want_shape)
   end
 end
 
-print("1. no rule / shape 0: half-square circle")
+print("1. no rule: circle of 144; shape 0: half-square circle")
+check("the start value is 2", C.LGM_BLAST_SHAPE == 2, C.LGM_BLAST_SHAPE)
+check("PRESETS.keel keeps 0", C.PRESETS.keel.LGM_BLAST_SHAPE == 0,
+      C.PRESETS.keel.LGM_BLAST_SHAPE)
 rules(nil)
-check("no rules table reads 0", U.lgm_blast_shape() == 0, U.lgm_blast_shape())
-check_shape("no rule", 0)
+check("no rules table reads 2", U.lgm_blast_shape() == 2, U.lgm_blast_shape())
+check_shape("no rule", 2)
+rules({})
+check("an empty rules table reads 2", U.lgm_blast_shape() == 2,
+      U.lgm_blast_shape())
 rules({ lgm_blast_shape = 0 })
+check("shape 0 reads 0", U.lgm_blast_shape() == 0, U.lgm_blast_shape())
 check_shape("shape 0", 0)
 check("shape 0 reach 128", U.lgm_open_blast_reach() == 128, U.lgm_open_blast_reach())
 check("classic pill_range limit 2048", U.lgm_open_blast_limit() == 2048,
@@ -99,19 +109,23 @@ check_shape("shape 2", 2)
 check("shape 2 reach 144", U.lgm_open_blast_reach() == 144, U.lgm_open_blast_reach())
 
 print("4. KEEL: LIVE_PHYSICS = false, and LIVE_PHYSICS_BLAST = false")
+-- KEEL is LIVE_PHYSICS = false with the PRESETS.keel start value 0, written
+-- into C as the preset does.
 C.LIVE_PHYSICS = false
+C.LGM_BLAST_SHAPE = C.PRESETS.keel.LGM_BLAST_SHAPE
 rules({ lgm_blast_shape = 1, pill_range = 100 })
 check("keel reads 0 under shape 1", U.lgm_blast_shape() == 0, U.lgm_blast_shape())
 check("keel keeps the 2048 limit", U.lgm_open_blast_limit() == 2048,
       U.lgm_open_blast_limit())
 check_shape("keel under shape 1", 0)
+C.LGM_BLAST_SHAPE = 2
 C.LIVE_PHYSICS = true
 C.LIVE_PHYSICS_BLAST = false
 rules({ lgm_blast_shape = 1, pill_range = 100 })
-check("BLAST off reads 0 under shape 1", U.lgm_blast_shape() == 0, U.lgm_blast_shape())
+check("BLAST off reads 2 under shape 1", U.lgm_blast_shape() == 2, U.lgm_blast_shape())
 check("BLAST off keeps the 2048 limit", U.lgm_open_blast_limit() == 2048,
       U.lgm_open_blast_limit())
-check_shape("BLAST off under shape 1", 0)
+check_shape("BLAST off under shape 1", 2)
 C.LIVE_PHYSICS_BLAST = true
 rules({ lgm_blast_shape = 7 })
 check("an unknown value reads 0", U.lgm_blast_shape() == 0, U.lgm_blast_shape())
@@ -169,14 +183,16 @@ local function check_gate(label, want_shape)
   end
 end
 rules(nil)
-check_gate("no rule", 0)
+check_gate("no rule", 2)
 for shape = 0, 2 do
   rules({ lgm_blast_shape = shape })
   check_gate("shape " .. shape, shape)
 end
 C.LIVE_PHYSICS = false
+C.LGM_BLAST_SHAPE = C.PRESETS.keel.LGM_BLAST_SHAPE
 rules({ lgm_blast_shape = 1 })
 check_gate("keel under shape 1", 0)
+C.LGM_BLAST_SHAPE = 2
 C.LIVE_PHYSICS = true
 
 print("7. pill_range under the reach")
