@@ -402,7 +402,7 @@ do
   -- init.lua: our approval on a blocker of our own take is dropped.
   local i = read("init.lua")
   check("own-blocker approval drop",
-        i:find("dropped (blocker of our own take plan)", 1, true) ~= nil)
+        i:find("state._repos_guard[_at] = nil", 1, true) ~= nil)
   -- pt2_attack.lua: bg_trip_ok judges the guns at the tank now.
   local p = read("pt2_attack.lua")
   local b = p:find("function M.bg_trip_ok", 1, true)
