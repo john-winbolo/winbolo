@@ -1513,6 +1513,25 @@ int run_team_sides_rejoin_timed_out_frees_team(void) {
    leaves; signedIn says whether WinBolo.net had confirmed player 1. The
    pill goes to player 0, its ally, and is then put back to neutral, so a
    restore can give it back. */
+/* A rejoin record's age goes up once a server frame, 50 a second, so
+   MAX_REJOIN_TIME is the 5 minutes it is written as. Player 1 leaves, and
+   the server runs one second of frames: the record is one second old. */
+int run_team_sides_rejoin_age_counts_frames(void) {
+    const BYTE teams[3] = { 2, 1, 3 };
+    ServerSim *sim = tsRunningSim(teams, 3);
+    int i;
+
+    UT_ASSERT(sim != NULL);
+    serverSimRemovePlayer(sim, 1);
+    UT_ASSERT(playersRejoinGetAge("P1") == 0);
+    for (i = 0; i < REJOIN_TICKS_PER_SECOND; i++) serverSimTick(sim);
+    UT_ASSERT_MSG(playersRejoinGetAge("P1") == REJOIN_TICKS_PER_SECOND,
+                  "after one second of frames the record's age is %d, not %d",
+                  playersRejoinGetAge("P1"), REJOIN_TICKS_PER_SECOND);
+    serverSimDestroy(sim);
+    return 0;
+}
+
 static ServerSim *tsRejoinLeaver(bool signedIn) {
     const BYTE teams[3] = { 1, 1, 2 };
     ServerSim *sim = tsRunningSim(teams, 3);
@@ -1667,6 +1686,157 @@ int run_team_sides_rejoin_signed_in_leave_clears(void) {
     UT_ASSERT_MSG(tsTeam(sim, 1) != 1, "the new player is on team %u",
                   (unsigned)tsTeam(sim, 1));
     UT_ASSERT(tsAlliedWithNobody(sim, 1, 3));
+    UT_ASSERT(sim->sim.pb->item[0].owner == NEUTRAL);
+    UT_ASSERT(serverSimSidesAgree(sim));
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* The signed-in player P1 (team 1 with player 0, one pill) has left. A
+   player who is not signed in takes the seat under the name P1, with
+   wantRejoin as given, and leaves. Then the signed-in P1 rejoins and
+   WinBolo.net confirms the seat. Returns 0 when the signed-in record was
+   still there and gave back team 1 and the pill, and the record of the
+   player who was not signed in is still there, apart from it. */
+static int tsSignedInRecordOutlivesSameName(bool otherWantsRejoin) {
+    ServerSim *sim = tsRejoinLeaver(true);
+    BYTE team;
+    bool signedIn;
+
+    UT_ASSERT(sim != NULL);
+    /* The other player, not signed in, under the same name. */
+    serverSimAddPlayer(sim, 1, "P1", otherWantsRejoin);
+    playersSetClientFlags(&sim->sim.plyrs, 1, 0);
+    UT_ASSERT_MSG(sim->sim.pb->item[0].owner == NEUTRAL,
+                  "the pill went to the player who is not signed in");
+    serverSimRemovePlayer(sim, 1);
+
+    /* The signed-in record is as the signed-in player left it. */
+    UT_ASSERT(playersRejoinFind("P1", &team, &signedIn));
+    UT_ASSERT_MSG(signedIn, "the signed-in record was replaced by the "
+                            "record of a player who is not signed in");
+    UT_ASSERT_MSG(team == 1, "the signed-in record has team %u",
+                  (unsigned)team);
+
+    /* The signed-in player rejoins, and WinBolo.net confirms the seat. */
+    serverSimAddPlayer(sim, 1, "P1", true);
+    UT_ASSERT(sim->rejoinAwaitSignIn[1]);
+    playersSetClientFlags(&sim->sim.plyrs, 1, PLAYER_FLAG_WBN_VERIFIED);
+    serverSimRejoinSignedIn(sim, 1);
+    UT_ASSERT_MSG(tsTeam(sim, 1) == 1, "the signed-in rejoiner is on team %u",
+                  (unsigned)tsTeam(sim, 1));
+    UT_ASSERT(tsAllied(sim, 0, 1) && tsAllied(sim, 1, 0));
+    UT_ASSERT_MSG(sim->sim.pb->item[0].owner == 1, "the pill went to %u",
+                  (unsigned)sim->sim.pb->item[0].owner);
+
+    /* The other player's record is a record of its own, and is left. */
+    UT_ASSERT(playersRejoinFind("P1", &team, &signedIn));
+    UT_ASSERT_MSG(!signedIn, "the signed-in record was not used up");
+    UT_ASSERT(team != 1);
+    UT_ASSERT(serverSimSidesAgree(sim));
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* A player who is not signed in joins as new under the name of a signed-in
+   player who left, and leaves. The signed-in player's record stays, and
+   gives back the team and the pill. */
+int run_team_sides_rejoin_signed_in_outlives_same_name_join(void) {
+    return tsSignedInRecordOutlivesSameName(false);
+}
+
+/* The same, when the player who is not signed in pressed Rejoin and left
+   while the seat waited for WinBolo.net. */
+int run_team_sides_rejoin_signed_in_outlives_same_name_rejoin(void) {
+    return tsSignedInRecordOutlivesSameName(true);
+}
+
+/* A signed-in player leaves from one address. A player who is not signed
+   in joins under the same name from another address and leaves. The
+   signed-in record keeps the signed-in player's address. */
+int run_team_sides_rejoin_signed_in_keeps_address(void) {
+    const BYTE teams[3] = { 1, 1, 2 };
+    ServerSim *sim = tsRunningSim(teams, 3);
+    const uint32_t signedAddr = 0x0100000aU;
+    const uint32_t otherAddr = 0x0200000aU;
+
+    UT_ASSERT(sim != NULL);
+    playersSetClientFlags(&sim->sim.plyrs, 1, PLAYER_FLAG_WBN_VERIFIED);
+    serverSimSetRejoinAddress(sim, 1, signedAddr);
+    serverSimRemovePlayer(sim, 1);
+    UT_ASSERT(playersRejoinGetAddress("P1") == signedAddr);
+
+    serverSimAddPlayer(sim, 1, "P1", false);
+    playersSetClientFlags(&sim->sim.plyrs, 1, 0);
+    serverSimSetRejoinAddress(sim, 1, otherAddr);
+    serverSimRemovePlayer(sim, 1);
+    UT_ASSERT_MSG(playersRejoinGetAddress("P1") == signedAddr,
+                  "the signed-in record has the address %08x",
+                  (unsigned)playersRejoinGetAddress("P1"));
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* The signed-in player P1 (team 1 with player 0, one pill) has left, and a
+   player who is not signed in now has the name P1. The signed-in player
+   rejoins, and is seated under a temporary name because P1 is taken. Then
+   WinBolo.net confirms the seat: the other player is renamed and the seat
+   becomes P1. The seat gets team 1 and the pill back. */
+int run_team_sides_rejoin_signed_in_name_taken_restored(void) {
+    ServerSim *sim = tsRejoinLeaver(true);
+    char seatName[PLAYER_NAME_LEN];
+    BYTE team;
+    bool signedIn;
+
+    UT_ASSERT(sim != NULL);
+    /* The other player, not signed in, has the name. */
+    serverSimAddPlayer(sim, 1, "P1", false);
+    playersSetClientFlags(&sim->sim.plyrs, 1, 0);
+    /* The signed-in player rejoins under a temporary name. */
+    serverSimAddPlayer(sim, 3, "P1-unverified", true);
+    playersSetClientFlags(&sim->sim.plyrs, 3, 0);
+    UT_ASSERT(tsTeam(sim, 3) != 1);
+    UT_ASSERT(sim->sim.pb->item[0].owner == NEUTRAL);
+    /* WinBolo.net confirms the seat: the name moves to it. */
+    serverSimSetPlayerName(sim, 1, "P1-other");
+    serverSimSetPlayerName(sim, 3, "P1");
+    playersGetPlayerName(&sim->sim.plyrs, 3, seatName, sizeof(seatName), TRUE);
+    UT_ASSERT_MSG(strcmp(seatName, "P1") == 0, "the seat is named '%s'",
+                  seatName);
+    UT_ASSERT_MSG(sim->rejoinAwaitSignIn[3],
+                  "the seat does not wait for WinBolo.net");
+    playersSetClientFlags(&sim->sim.plyrs, 3, PLAYER_FLAG_WBN_VERIFIED);
+    serverSimRejoinSignedIn(sim, 3);
+    UT_ASSERT_MSG(tsTeam(sim, 3) == 1, "the signed-in rejoiner is on team %u",
+                  (unsigned)tsTeam(sim, 3));
+    UT_ASSERT(tsAllied(sim, 0, 3) && tsAllied(sim, 3, 0));
+    UT_ASSERT(!tsAllied(sim, 1, 3));
+    UT_ASSERT_MSG(sim->sim.pb->item[0].owner == 3, "the pill went to %u",
+                  (unsigned)sim->sim.pb->item[0].owner);
+    UT_ASSERT_MSG(!playersRejoinFind("P1", &team, &signedIn),
+                  "the signed-in record was not used up");
+    UT_ASSERT(serverSimSidesAgree(sim));
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* A player presses Rejoin under a name that has no record, and WinBolo.net
+   then confirms the seat under that name. Nothing comes back: the seat
+   stays alone on the team the join gave it, and the wait is over. */
+int run_team_sides_rejoin_no_record_confirm_changes_nothing(void) {
+    ServerSim *sim = tsRejoinLeaver(true);
+    BYTE joinTeam;
+
+    UT_ASSERT(sim != NULL);
+    serverSimAddPlayer(sim, 3, "Nobody", true);
+    joinTeam = tsTeam(sim, 3);
+    UT_ASSERT(joinTeam != 0 && joinTeam != 1 && joinTeam != 2);
+    playersSetClientFlags(&sim->sim.plyrs, 3, PLAYER_FLAG_WBN_VERIFIED);
+    serverSimRejoinSignedIn(sim, 3);
+    UT_ASSERT(!sim->rejoinAwaitSignIn[3]);
+    UT_ASSERT_MSG(tsTeam(sim, 3) == joinTeam, "the seat moved to team %u",
+                  (unsigned)tsTeam(sim, 3));
+    UT_ASSERT(tsAlliedWithNobody(sim, 3, 4));
     UT_ASSERT(sim->sim.pb->item[0].owner == NEUTRAL);
     UT_ASSERT(serverSimSidesAgree(sim));
     serverSimDestroy(sim);

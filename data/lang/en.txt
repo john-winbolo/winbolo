@@ -3215,6 +3215,6 @@ STR_LV_SIZE_ARG_BAD=-size wants a width and a height in pixels, such as -size 19
 STR_LV_SIZE_NOT_MET=The window could not be made {string1} pixels, as -size asked. It is {string2} pixels: the display may be too small to hold it.
 
 # The question a Join gets when a player of that name left the game a short time ago
-STR_REJECT_CAN_REJOIN=A tank named {player} left this game {string1} s ago. Its pillboxes and bases can come back to you. Rejoin it?
+STR_REJECT_CAN_REJOIN=A player named {player} left this game {string1} seconds ago. Rejoin as that player?\n\nRejoining puts you back on the same team and returns the pillboxes and bases you owned that are still neutral.
 STR_JOIN_AS_NEW=Join as new
 

@@ -120,15 +120,17 @@ void playersRejoinAddPlayer(char *playerName, PlayerBitMap pills, PlayerBitMap b
 *NAME:          playersRejoinSetAddress
 *PURPOSE:
 * Puts the IPv4 address the player had when leaving (network
-* byte order, no port) in the record for that name. Does
-* nothing when there is no record. playersRejoinAddPlayer
-* sets the address to 0, so call this after it.
+* byte order, no port) in the record for that name and
+* signed-in state. Does nothing when there is no such record.
+* playersRejoinAddPlayer sets the address to 0, so call this
+* after it, with the same signedIn.
 *
 *ARGUMENTS:
 *  playerName - The player name
+*  signedIn   - The signed-in state the record was added with
 *  ipv4       - The address, 0 for not known
 *********************************************************/
-void playersRejoinSetAddress(const char *playerName, uint32_t ipv4);
+void playersRejoinSetAddress(const char *playerName, bool signedIn, uint32_t ipv4);
 
 /*********************************************************
 *NAME:          playersRejoinGetAddress
@@ -157,6 +159,11 @@ BYTE playersRejoinGetTeam(const char *playerName);
 /*********************************************************
 *NAME:          playersRejoinFind
 *PURPOSE:
+* A player who was signed in to WinBolo.net and a player who
+* was not can each have a record under one name. This, and
+* every other call here that takes only a name, finds the
+* signed-in record when both are there.
+*
 * Returns TRUE when there is a record for that name, and
 * puts its team (0 for none) in team and whether the player
 * was signed in to WinBolo.net when leaving in signedIn.

@@ -7135,12 +7135,18 @@ set(_unit_test_names
     team_sides_rejoin_team_waits_for_rejoiner
     team_sides_rejoin_all_numbers_held
     team_sides_rejoin_timed_out_frees_team
+    team_sides_rejoin_age_counts_frames
     team_sides_rejoin_unsigned_restores_at_join
     team_sides_rejoin_signed_in_waits
     team_sides_rejoin_signed_in_restored
     team_sides_rejoin_signed_in_solo_keeps_team
     team_sides_rejoin_signed_in_moved_seat_kept
     team_sides_rejoin_signed_in_leave_clears
+    team_sides_rejoin_signed_in_outlives_same_name_join
+    team_sides_rejoin_signed_in_outlives_same_name_rejoin
+    team_sides_rejoin_signed_in_keeps_address
+    team_sides_rejoin_signed_in_name_taken_restored
+    team_sides_rejoin_no_record_confirm_changes_nothing
     team_sides_joiner_slot_before_join
     team_sides_lobby_joiner_keeps_rule
     team_sides_lobby_drops_empty_teams

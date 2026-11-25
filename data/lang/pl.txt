@@ -2924,3 +2924,7 @@ STR_CLIPGIF_MOVE_TIP=Przeciągnij, aby przesunąć GIF-a na wcześniejszy lub p�
 # Opcja -size przeglądarki logów, gdy jej tekst nie jest rozmiarem lub nie można go uzyskać
 STR_LV_SIZE_ARG_BAD=-size wymaga szerokości i wysokości w pikselach, na przykład -size 1920x1080. Okno otwarto w zwykłym rozmiarze.
 STR_LV_SIZE_NOT_MET=Nie udało się utworzyć okna o rozmiarze {string1} pikseli, o jaki prosiła opcja -size. Okno ma {string2} pikseli: wyświetlacz może być za mały, aby je pomieścić.
+
+# Pytanie, jakie dostaje Dołącz, gdy gracz o tej nazwie niedawno opuścił grę
+STR_REJECT_CAN_REJOIN=Gracz o nazwie {player} opuścił tę grę {string1} s temu. Dołączyć ponownie jako ten gracz?\n\nDołączenie ponownie przywraca cię do tej samej drużyny i oddaje bunkry i bazy, które posiadałeś i które nadal są neutralne.
+STR_JOIN_AS_NEW=Jako nowy

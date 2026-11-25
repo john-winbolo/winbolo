@@ -3097,7 +3097,7 @@ static const LangEntry langTable[] = {
     {3492, "The server is measuring its speed. Bots can be added in a moment."},
     {3493, "The server can run {number} of these bots at full strength."},
     {3478, "The area of open ground round an explosion that kills a builder. 0, \"Half-square circle\", is the WinBolo rule: a circle of radius 128, half a square, edge included. 1, \"Mac Bolo box\", is the Mac Bolo rule: a box that reaches under 128 from the explosion on each axis, so it reaches further on a diagonal. 2, \"Mac Bolo equivalent area circle\", is the default: a circle of radius 144, about the same area as the box. An explosion on a building, a half building, a pillbox or a base still kills only a builder on that square. Every shape also stops at pill_range: a builder further than pill_range from the explosion is safe."},
-    {3945, "A tank named {player} left this game {string1} s ago. Its pillboxes and bases can come back to you. Rejoin it?"},
+    {3945, "A player named {player} left this game {string1} seconds ago. Rejoin as that player?\n\nRejoining puts you back on the same team and returns the pillboxes and bases you owned that are still neutral."},
     {3946, "Join as new"},
     {2810, "Whether a pillbox may pick a tank as its target."},
     {2860, "+ {number} others"},

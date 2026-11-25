@@ -2928,3 +2928,7 @@ STR_CLIPGIF_MOVE_TIP=Arrastra para mover el GIF a un momento anterior o posterio
 # La opción -size del Log Viewer cuando su texto no es un tamaño o no se puede cumplir
 STR_LV_SIZE_ARG_BAD=-size necesita un ancho y un alto en píxeles, por ejemplo -size 1920x1080. La ventana se ha abierto con su tamaño habitual.
 STR_LV_SIZE_NOT_MET=No se pudo dar a la ventana un tamaño de {string1} píxeles, como pedía -size. Tiene {string2} píxeles: puede que la pantalla sea demasiado pequeña para contenerla.
+
+# La pregunta que recibe Unirse cuando un jugador con ese nombre salió de la partida hace poco
+STR_REJECT_CAN_REJOIN=Un jugador llamado {player} salió de esta partida hace {string1} segundos. ¿Reincorporarte como ese jugador?\n\nAl reincorporarte vuelves al mismo equipo y recuperas los búnkeres y las bases que tenías y que siguen siendo neutrales.
+STR_JOIN_AS_NEW=Unirse como nuevo
