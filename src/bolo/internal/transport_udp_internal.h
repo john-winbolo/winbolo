@@ -155,7 +155,7 @@ uint16_t pingEwmaUpdate(PingEwma *e, uint16_t sample);
  * presence mask) plus every field group present at once. NOT the typical
  * on-wire size — most entries are far smaller because absent (zero) groups are
  * omitted. */
-#define TANK_SNAPSHOT_WIRE_SIZE 39
+#define TANK_SNAPSHOT_WIRE_SIZE 40
 
 /* ---- Serialization helpers ---- */
 

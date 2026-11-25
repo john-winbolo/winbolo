@@ -421,8 +421,26 @@ static void lvWindowRewindNow(int toKnown, uint32_t toMs) {
     }
 }
 
+/* A seek of the seek bar with no animation: to ms, a log time. */
+static void lvWindowSeekNow(uint32_t ms) {
+    lv_clientMutexWaitFor();
+    lv_drawDirtyScreen();
+    lv_screenSeekToTimeMs(ms);
+    lv_drawDirtyScreen();
+    /* Defer to the flag — see lvWindowFastForwardNow. */
+    g_lv->wantScreenUpdate = TRUE;
+    lv_clientMutexRelease();
+    lv_windowNeedRedraw();
+}
+
 /* --------------------------------------------------------------------------
  * The animation of Rewind and Fast Forward (lv_jump_anim.h)
+ *
+ * A seek of the seek bar is made the same way (lv_windowSeekToMs), to the
+ * place under the handle: the third kind, `seek`. It has its own option,
+ * Options > Animate Seek. A new place for it while it runs (the handle is
+ * dragged on) is a new target for the same animation, from where playback
+ * is now (LV_JUMP_ANIM_RETARGET_MS).
  *
  * A press does not jump. For LV_JUMP_ANIM_MS the host seeks, one step on
  * each frame that has a new step due, through moments between the time
@@ -446,6 +464,7 @@ static void lvWindowRewindNow(int toKnown, uint32_t toMs) {
 static struct {
     bool     active;
     bool     back;
+    bool     seek;    /* a seek of the seek bar, not Rewind or Fast Forward */
     uint32_t fromMs, toMs;
     int      steps;   /* lvJumpAnimSteps */
     int      shown;   /* the last step that was sought to */
@@ -482,7 +501,9 @@ static void lvJumpAnimFinish(void) {
     if (stale) {
         return;
     }
-    if (s_lvJump.back) {
+    if (s_lvJump.seek) {
+        lvWindowSeekNow(s_lvJump.toMs);
+    } else if (s_lvJump.back) {
         lvWindowRewindNow(1, s_lvJump.toMs);
     } else {
         lvWindowFastForwardNow();
@@ -528,6 +549,7 @@ static bool lvJumpAnimStart(bool back) {
     }
     s_lvJump.active = TRUE;
     s_lvJump.back = back;
+    s_lvJump.seek = FALSE;
     s_lvJump.fromMs = nowMs;
     s_lvJump.toMs = toMs;
     s_lvJump.steps = steps;
@@ -604,6 +626,67 @@ void lv_windowRewind(void) {
         return;
     }
     lvWindowRewindNow(0, 0);
+}
+
+/* A seek of the seek bar (imgui_controls.cpp) to ms, a log time: with the
+ * animation where it can be, as Rewind and Fast Forward are, so the tanks
+ * and shells are seen to go there. However far the jump, it takes
+ * LV_JUMP_ANIM_MS: a long one goes faster. The caller does not hold the
+ * decoder's mutex.
+ *
+ * While a seek's animation runs, ms is a new target for it, from where
+ * playback is now, and the time it has had goes on, up to
+ * LV_JUMP_ANIM_RETARGET_MS. An animation of Rewind or Fast Forward is let go
+ * where it is: this seek wins, as every seek does. With Options > Animate
+ * Seek off, or no tick between playback and ms, it is a seek at once. Play
+ * and Pause are as they were. */
+void lv_windowSeekToMs(uint32_t ms) {
+    uint32_t nowMs, startMs, lenMs, elapsedMs = 0;
+    Uint64 nowNs;
+    int steps;
+
+    if (g_lv->isLoaded == FALSE) {
+        return;
+    }
+    nowNs = SDL_GetTicksNS();
+    if (s_lvJump.active && s_lvJump.seek) {
+        elapsedMs = lvJumpAnimRetargetElapsed(
+            (uint32_t)((nowNs - s_lvJump.startNs) / 1000000u), LV_JUMP_ANIM_RETARGET_MS);
+    }
+    lvJumpAnimDrop();
+    if (!s_lvJumpHost || !lv_imgui_get_seek_anim()) {
+        lvWindowSeekNow(ms);
+        return;
+    }
+    lv_clientMutexWaitFor();
+    /* The place the seek lands on, as lv_screenSeekToTimeMs holds it. */
+    startMs = lv_screenWindowStartMs();
+    lenMs = lv_screenWindowLenMs();
+    if (lenMs == 0) {
+        lv_clientMutexRelease();
+        return;
+    }
+    if (ms < startMs) ms = startMs;
+    if (ms > startMs + lenMs) ms = startMs + lenMs;
+    nowMs = lv_screenGetTimeRunning();
+    steps = lvJumpAnimSteps(nowMs, ms, LV_JUMP_ANIM_STEPS, 0, UINT32_MAX);
+    if (steps < 2) {
+        lv_clientMutexRelease();
+        lvWindowSeekNow(ms);
+        return;
+    }
+    s_lvJump.active = TRUE;
+    s_lvJump.back = (ms < nowMs);
+    s_lvJump.seek = TRUE;
+    s_lvJump.fromMs = nowMs;
+    s_lvJump.toMs = ms;
+    s_lvJump.steps = steps;
+    s_lvJump.shown = 0;
+    s_lvJump.startNs = nowNs - (Uint64)elapsedMs * 1000000u;
+    s_lvJump.serial = lv_screenSeekSerial();
+    lv_windowSetTickHold(true);
+    lv_clientMutexRelease();
+    lv_windowNeedRedraw();
 }
 
 void lv_windowResize(void) {
@@ -2185,6 +2268,8 @@ static void lvHostRenderFrame(const char *overlay) {
         lvms.tankBars         = lv_drawGetTankBars() ? true : false;
         lvms.builderStatus    = lv_drawGetBuilderStatus() ? true : false;
         lvms.pillNumbers      = lv_drawGetPillNumbers() ? true : false;
+        lvms.baseNumbers      = lv_drawGetBaseNumbers() ? true : false;
+        lvms.hitBoxes         = lv_drawGetHitBoxes() ? true : false;
         lvms.dockEnabled      = lv_imgui_dock_get_enabled() ? true : false;
         lvms.dockLeft         = lv_imgui_dock_get_side_enabled(LV_DOCK_LEFT) ? true : false;
         lvms.dockTop          = lv_imgui_dock_get_side_enabled(LV_DOCK_TOP) ? true : false;
@@ -2850,9 +2935,14 @@ bool spectatorRun(SDL_Window *window, SDL_Renderer *renderer, void *cs,
                                         /* allowSeek */ TRUE)) {
                 continue;
             }
-            /* End / L jumps back to the live head and resumes following it. */
+            /* End / L jumps back to the live head and resumes following it.
+             * Not with Ctrl or Cmd held: Ctrl+L (Cmd+L on macOS) is the
+             * Options menu's "See What the Selected Player Saw", which
+             * the menu bar's key handler takes. */
             if (sdlEvent.type == SDL_EVENT_KEY_DOWN &&
-                (sdlEvent.key.key == SDLK_END || sdlEvent.key.key == SDLK_L)) {
+                (sdlEvent.key.key == SDLK_END ||
+                 (sdlEvent.key.key == SDLK_L &&
+                  (sdlEvent.key.mod & (SDL_KMOD_CTRL | SDL_KMOD_GUI)) == 0))) {
                 lv_screenSpecJumpToLive();
                 continue;
             }

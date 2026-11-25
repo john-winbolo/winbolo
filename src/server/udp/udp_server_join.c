@@ -52,6 +52,7 @@
 #include "control_event.h"   /* ControlEvent, CTRL_BALANCE_PROPOSAL */
 #include "channel_mux.h"     /* channelMuxInit */
 #include "bulk_transfer.h"   /* bulkSenderInit, bulkReceiverInit */
+#include "playersrejoin.h"   /* playersRejoinGetAge, MAX_REJOIN_TIME */
 #include "playername_validate.h" /* playerNameValidate, playerNameCompare,
                                   * playerNameMakeUnverifiedSuffix */
 #include "../geolookup.h"    /* geoLookupCountry */
@@ -61,7 +62,7 @@
 #include "../sim/server_sim_shared.h"  /* serverSimAnnounce */
 #include "../../winbolonet/winbolonet_core.h"   /* winbolonetIsRunning, winbolonetAddEvent,
                                                  * WINBOLONET_KEY_LEN */
-#include "../../winbolonet/winbolonet_server.h" /* winboloNetVerifyClientKey,
+#include "../../winbolonet/winbolonet_server.h" /* winbolonetSetPlayerKey,
                                                  * winboloNetVerifySpectatorKey */
 
 /* OS cryptographic RNG, used to seed the address-proof cookie secret. Kept
@@ -659,6 +660,54 @@ bool serverChooseUnverifiedSuffix(const char *baseName,
     return false;
 }
 
+/* How a rejoin may get past the game lock. */
+typedef enum {
+    LOCKED_REJOIN_NONE = 0,  /* no: the joiner gets the game-locked reject */
+    LOCKED_REJOIN_ADDRESS,   /* the joiner's IPv4 address is the leaver's */
+    LOCKED_REJOIN_WBN        /* the leaver was signed in to WinBolo.net, and
+                              * the joiner will authenticate and can answer
+                              * PACKET_JOIN_SIGN_IN: WinBolo.net must accept
+                              * its key before it is seated */
+} LockedRejoinMatch;
+
+/* Whether a joiner under name, from fromAddr, may rejoin a locked game. Only
+ * while a round runs, and only with a live rejoin record under that name.
+ * The address match compares the IPv4 address only, never the port. */
+static LockedRejoinMatch serverLockedRejoinMatch(ServerSim *sim,
+                                                 const char *name,
+                                                 const struct sockaddr_in *fromAddr,
+                                                 bool willAuth,
+                                                 bool signInFirst) {
+    BYTE team;
+    bool signedIn;
+    uint32_t recordAddr;
+
+    if (serverSimGetState(sim) != serverStateRunning) return LOCKED_REJOIN_NONE;
+    if (!playersRejoinFind(name, &team, &signedIn)) return LOCKED_REJOIN_NONE;
+    recordAddr = playersRejoinGetAddress(name);
+    if (recordAddr != 0 &&
+        recordAddr == (uint32_t)fromAddr->sin_addr.s_addr) {
+        return LOCKED_REJOIN_ADDRESS;
+    }
+    if (signedIn && willAuth && signInFirst &&
+        udpServerLockedSignInAvailable()) {
+        return LOCKED_REJOIN_WBN;
+    }
+    return LOCKED_REJOIN_NONE;
+}
+
+/* Sends PACKET_JOIN_SIGN_IN with the server key. Returns false, and sends
+ * nothing, when there is no server key. */
+static bool serverSendJoinSignIn(const struct sockaddr_in *addr) {
+    uint8_t buf[PACKET_HEADER_SIZE + WBN_JOIN_KEY_WIRE_LEN];
+    if (!udpServerLockedSignInServerKey(buf + PACKET_HEADER_SIZE)) {
+        return false;
+    }
+    packHeader(buf, PACKET_JOIN_SIGN_IN, 0);
+    srvSendTo(buf, (int)sizeof(buf), addr);
+    return true;
+}
+
 /* Handle a join request from a new client */
 void serverHandleJoinRequest(const uint8_t *buf, int len,
                              const struct sockaddr_in *fromAddr,
@@ -805,12 +854,16 @@ void serverHandleJoinRequest(const uint8_t *buf, int len,
     bool isSpectator = false;
     bool isBotSlot = false;
     bool isBotHost = false;
+    bool askRejoin = false;
+    bool signInFirst = false;
     if (len > pos) {
         wantRejoin       = (buf[pos] & JOIN_FLAG_WANT_REJOIN) != 0;
         incomingWillAuth = (buf[pos] & JOIN_FLAG_WILL_AUTHENTICATE) != 0;
         isSpectator      = (buf[pos] & JOIN_FLAG_SPECTATOR) != 0;
         isBotSlot        = (buf[pos] & JOIN_FLAG_BOT_SLOT) != 0;
         isBotHost        = (buf[pos] & JOIN_FLAG_BOT_HOST) != 0;
+        askRejoin        = (buf[pos] & JOIN_FLAG_ASK_REJOIN) != 0;
+        signInFirst      = (buf[pos] & JOIN_FLAG_SIGN_IN_FIRST) != 0;
         pos++;
     }
 
@@ -963,14 +1016,114 @@ void serverHandleJoinRequest(const uint8_t *buf, int len,
     }
 
     /* Check game lock: server admin command OR host toggled
-     * "Allow New Players: Now" off (mirrored as !sim->allowNewPlayers). */
+     * "Allow New Players: Now" off (mirrored as !sim->allowNewPlayers).
+     *
+     * A rejoin gets past the lock when a live rejoin record has the
+     * joiner's name and either the joiner's IPv4 address is the one the
+     * player had when leaving, or the player was signed in to WinBolo.net
+     * when leaving and WinBolo.net accepts the joiner's key under that
+     * name. The second case does not seat the joiner until WinBolo.net has
+     * answered: the server sends PACKET_JOIN_SIGN_IN with its key, the
+     * client sends the JOIN again with a player_key, and the verify runs on
+     * the WinBolo.net worker while each JOIN gets PACKET_JOIN_SIGN_IN
+     * again. Only a client that sets JOIN_FLAG_SIGN_IN_FIRST gets this; any
+     * other gets the reject. A Join that asks the rejoin question, with
+     * such a match, goes on to the question below; its "Join as new"
+     * answer comes back without the ask flag and gets the reject here. */
+    bool lockedSignInOk = false;
+    bool wbnHasSteam = false;
+    bool wbnIsSupporter = false;
+    char lockedSignInKey[WINBOLONET_KEY_LEN];
+    lockedSignInKey[0] = '\0';
     if (udpServer.gameLocked || !serverSimIsAcceptingJoins(sim)) {
-        char consoleMsg[128];
-        snprintf(consoleMsg, sizeof(consoleMsg),
-                 "Join rejected for '%s': Game is locked", name);
-        serverSimConsoleMessage(consoleMsg);
-        serverSendJoinReject(fromAddr, STR_REJECT_GAME_LOCKED, 0, NULL);
-        return;
+        LockedRejoinMatch match = LOCKED_REJOIN_NONE;
+        LockedSignInStep step = LOCKED_SIGN_IN_REFUSED;
+        if (wantRejoin || askRejoin) {
+            match = serverLockedRejoinMatch(sim, name, fromAddr,
+                                            incomingWillAuth, signInFirst);
+        }
+        if (wantRejoin && match == LOCKED_REJOIN_WBN) {
+            step = udpServerLockedSignInStep(fromAddr, name, wbnJoinKey,
+                                             udpServer.tickCount,
+                                             lockedSignInKey, &wbnHasSteam,
+                                             &wbnIsSupporter);
+            if ((step == LOCKED_SIGN_IN_ASK || step == LOCKED_SIGN_IN_WAIT) &&
+                serverSendJoinSignIn(fromAddr)) {
+                if (step == LOCKED_SIGN_IN_ASK) {
+                    char consoleMsg[160];
+                    snprintf(consoleMsg, sizeof(consoleMsg),
+                             "Rejoin of '%s' on the locked game: asking "
+                             "WinBolo.net to confirm the player", name);
+                    serverSimConsoleMessage(consoleMsg);
+                }
+                return;
+            }
+            if (step != LOCKED_SIGN_IN_OK) {
+                char consoleMsg[160];
+                snprintf(consoleMsg, sizeof(consoleMsg),
+                         "Join rejected for '%s': Game is locked. "
+                         "WinBolo.net did not confirm the player", name);
+                serverSimConsoleMessage(consoleMsg);
+                serverSendJoinReject(fromAddr, STR_REJECT_GAME_LOCKED, 0, NULL);
+                return;
+            }
+            lockedSignInOk = true;
+        }
+        if (match == LOCKED_REJOIN_NONE) {
+            char consoleMsg[128];
+            snprintf(consoleMsg, sizeof(consoleMsg),
+                     "Join rejected for '%s': Game is locked", name);
+            serverSimConsoleMessage(consoleMsg);
+            serverSendJoinReject(fromAddr, STR_REJECT_GAME_LOCKED, 0, NULL);
+            return;
+        }
+        if (wantRejoin) {
+            char consoleMsg[160];
+            snprintf(consoleMsg, sizeof(consoleMsg),
+                     match == LOCKED_REJOIN_ADDRESS
+                         ? "Rejoin allowed for '%s' on the locked game: "
+                           "same address as when the player left"
+                         : "Rejoin allowed for '%s' on the locked game: "
+                           "WinBolo.net confirmed the player",
+                     name);
+            serverSimConsoleMessage(consoleMsg);
+        }
+        /* Else the Join asks the rejoin question. The record that matched
+         * is live and the round runs, so the question below answers it. */
+    }
+
+    /* A Join from a client that can show the rejoin question, while a
+     * rejoin record has the joiner's name: the player is not seated. The
+     * reply asks the client whether to rejoin. It carries the name, the
+     * seconds since the player left and the seconds left on the record.
+     * The client sends the JOIN again, with JOIN_FLAG_WANT_REJOIN to
+     * rejoin, or without JOIN_FLAG_ASK_REJOIN to join as a new player.
+     * This runs before a slot is found or WinBolo.net is asked. */
+    if (askRejoin && !wantRejoin &&
+        serverSimGetState(sim) == serverStateRunning) {
+        int age = playersRejoinGetAge(name);
+        if (age >= 0) {
+            char agoText[12];
+            char leftText[12];
+            char consoleMsg[128];
+            const char *askArgs[4];
+            int left = MAX_REJOIN_TIME - age;
+            if (left < 0) left = 0;
+            snprintf(agoText, sizeof(agoText), "%d",
+                     age / REJOIN_TICKS_PER_SECOND);
+            snprintf(leftText, sizeof(leftText), "%d",
+                     (left + REJOIN_TICKS_PER_SECOND - 1) /
+                         REJOIN_TICKS_PER_SECOND);
+            snprintf(consoleMsg, sizeof(consoleMsg),
+                     "Join of '%s' asked whether to rejoin", name);
+            serverSimConsoleMessage(consoleMsg);
+            askArgs[0] = name;
+            askArgs[1] = "";
+            askArgs[2] = agoText;
+            askArgs[3] = leftText;
+            serverSendJoinReject(fromAddr, STR_REJECT_CAN_REJOIN, 4, askArgs);
+            return;
+        }
     }
 
     /* Find free slot for the incoming player.  Slot allocation moved
@@ -1011,56 +1164,13 @@ void serverHandleJoinRequest(const uint8_t *buf, int len,
         incomingCountry[2] = '\0';
     }
 
-    /* Verify WBN token if provided. Verification failure is no longer
-     * fatal — the client simply joins as a non-WBN player and forfeits
-     * WBN-mediated features (Balance from WBN, ranked credit, ladder
-     * placement). This keeps a game playable when winbolo.net is
-     * unreachable or returns transient errors, instead of locking
-     * everyone out of the lobby. The collision policy below already
-     * treats !incomingIsWBN as the lower-priority class. */
-    bool incomingIsWBN = false;
-    bool wbnHasSteam = false;
-    bool wbnIsSupporter = false;
-    /* The guard below cannot currently be true: wbnJoinKey rides the JOIN
-     * empty, because minting a player_key needs the server key and a client
-     * is given an empty one at every clientSimConnectUdp call site — it
-     * learns the key from the PACKET_WBN_REKEY that follows JOIN_ACCEPT.
-     * Before any handshake change lets a key ride the JOIN, this call has to
-     * become a job on the WinBolo.net worker, the way the reauth's verify is:
-     * it is a synchronous HTTPS round trip and this is the tick thread.
-     *
-     * Such a change also has to reckon with incomingWillAuth, which comes from
-     * JOIN_FLAG_WILL_AUTHENTICATE and is set from the client's wbnApiToken
-     * alone — so a key and that flag can disagree.  A key arriving with the
-     * flag clear breaks two things.  The join announcement below publishes an
-     * immediate anonymous PLAYER_JOIN, and the verify result then publishes a
-     * second keyed one on an arm that was never raised; the hold that keeps
-     * those two apart covers only the grace sweep, and this announcement does
-     * not go through it.  And the joiner's collision drops from an immediate
-     * preempt to JOIN_COLLISION_REJECT_IN_USE, which turns it away instead of
-     * seating it. */
-    if (wbnJoinKey[0] != '\0' && winbolonetIsRunning()) {
-        char errorMsg[512];
-        errorMsg[0] = '\0';
-        if (winboloNetVerifyClientKey(wbnJoinKey, name, (BYTE)slot, errorMsg,
-                                      &wbnHasSteam, &wbnIsSupporter)) {
-            fprintf(stderr, "[UDP SERVER] Player '%s' verified with WinBolo.net\n", name);
-            incomingIsWBN = true;
-        } else {
-            /* Degrade to non-WBN join instead of rejecting outright.
-             * The original "WinBolo.net verification failed: <reason>"
-             * message is extended with "Proceeding without WBN.net
-             * features" so the host's console explains both halves
-             * (what broke, and that the lobby keeps running anyway). */
-            char failMsg[256];
-            snprintf(failMsg, sizeof(failMsg),
-                     "WinBolo.net verification failed: %s. Proceeding "
-                     "without WBN.net features.", errorMsg);
-            fprintf(stderr, "[UDP SERVER] %s (player='%s')\n", failMsg, name);
-            serverSimConsoleMessage(failMsg);
-            incomingIsWBN = false;
-        }
-    }
+    /* A joiner is verified with WinBolo.net at the join only by the locked
+     * game's sign-in check above, whose verify ran on the WinBolo.net
+     * worker before this JOIN. Any other key on the JOIN is not checked
+     * here: this is the tick thread, and a verify is an HTTPS round trip.
+     * Such a joiner is verified by the re-authentication that follows the
+     * PACKET_WBN_REKEY, as every joiner is. */
+    bool incomingIsWBN = lockedSignInOk;
 
     /* Verified-priority collision policy (Phase 5).  Replaces the older
      * single-rule "Name already in use" check.  Loop terminates on the
@@ -1080,16 +1190,34 @@ void serverHandleJoinRequest(const uint8_t *buf, int len,
                 (playersGetClientFlags(&serverSimGetGameSim(sim)->plyrs, (BYTE)i)
                  & PLAYER_FLAG_WBN_VERIFIED) != 0;
 
-            /* The joiner is always the unverified class here.  A client
-             * does not hold the server key at join: clientSimConnectUdp is
-             * given an empty one at every call site, and the key a player_key
-             * is minted against only arrives afterwards, on the
-             * PACKET_WBN_REKEY the server sends once the join is accepted.
-             * So wbnJoinKey rides the JOIN empty, the verify above never runs
-             * and incomingIsWBN is never true.  A joiner's WinBolo.net
-             * identity is established later, by the reauth that follows the
-             * rekey, and the provisional claim recorded below is what carries
-             * the name it asked for across to that point.
+            /* A rejoin that WinBolo.net has just confirmed takes its name
+             * back from an unverified holder at once: the holder is renamed
+             * off, as the reauth's claim resolve renames a squatter. */
+            if (incomingIsWBN && !existingIsWBN) {
+                char squatterName[PACKET_MAX_PLAYER_NAME];
+                if (!serverChooseUnverifiedSuffix(
+                        udpServer.clients[i].playerName, i, squatterName,
+                        sizeof(squatterName))) {
+                    char consoleMsg[200];
+                    snprintf(consoleMsg, sizeof(consoleMsg),
+                             "WARNING: -unverified suffix pool exhausted for "
+                             "'%s'; rejecting verified rejoin", name);
+                    serverSimConsoleMessage(consoleMsg);
+                    serverSendJoinReject(fromAddr,
+                                         STR_REJECT_NAME_POOL_EXHAUSTED, 0,
+                                         NULL);
+                    return;
+                }
+                serverPreemptRename(sim, i, squatterName, name,
+                                    incomingCountry);
+                break;
+            }
+
+            /* Every other joiner is the unverified class here. Its
+             * WinBolo.net identity is established later, by the reauth
+             * that follows the rekey, and the provisional claim recorded
+             * below is what carries the name it asked for across to that
+             * point.
              *
              * Consult the pure verdict core. */
             JoinCollisionVerdict verdict =
@@ -1218,9 +1346,28 @@ void serverHandleJoinRequest(const uint8_t *buf, int len,
                           udpServer.clients[slot].playerName,
                           udpServer.clients[slot].countryCode,
                           udpServer.clients[slot].wantRejoin);
+        /* The rejoin record made when this seat leaves keeps the address,
+         * so a later rejoin on a locked game can be matched by it. */
+        serverSimSetRejoinAddress(sim, (BYTE)slot,
+                                  (uint32_t)fromAddr->sin_addr.s_addr);
+        /* WinBolo.net accepted this key under this name before the seat.
+         * Store it, as an accepted verify would, so the slot is a
+         * participant before the keyed PLAYER_JOIN below. */
+        if (lockedSignInOk) {
+            winbolonetSetPlayerKey((BYTE)slot, lockedSignInKey);
+        }
         setClientTypeFlagsInternal(sim, (BYTE)slot, clientType, flags);
         serverSimPlaceJoiner(sim, (BYTE)slot);
         fillAndPublishPlayerJoin(sim, (BYTE)slot);
+        /* After the join is out, so clients know the seat before the
+         * alliance that puts a rejoiner back on their old team. */
+        serverSimRestoreRejoinTeam(sim, (BYTE)slot);
+        /* The signed-in record gives back its team, pillboxes and bases
+         * now, before the map blob, as the reauth gives them to any other
+         * signed-in rejoin. */
+        if (lockedSignInOk) {
+            serverSimRejoinSignedIn(sim, (BYTE)slot);
+        }
         /* Before the subscriber registers below, so the replay this client
          * gets already names the slot holding the host role. */
         serverSimPromoteHostOnJoin(sim, (BYTE)slot);
@@ -1303,11 +1450,13 @@ void serverHandleJoinRequest(const uint8_t *buf, int len,
         transportUdpServerFlushChannel(slot);
     }
 
-    /* Announce the join to WBN.  If the slot's key already rode the JOIN
-     * field and verified inline (incomingIsWBN), the player is already a
-     * participant — register keyed right now.  Otherwise, when WBN is
-     * running, a will-authenticate joiner defers: the rekey we sent above
-     * prompts a reauth that fills the key and fires a keyed join
+    /* Announce the join to WBN.  If the slot's key rode the JOIN field and
+     * WinBolo.net accepted it before the seat (incomingIsWBN, the locked
+     * game's sign-in check), the player is already a participant —
+     * register keyed right now.  The reauth that the rekey above starts
+     * then finds the slot a participant and announces nothing more.
+     * Otherwise, when WBN is running, a will-authenticate joiner defers:
+     * the rekey we sent above prompts a reauth that fills the key and fires a keyed join
      * (transportUdpServerHandleWbnReauth); if no reauth lands within the
      * grace window the per-tick sweep in transportUdpServerCheckTimeouts
      * fires an anonymous one.  A not-signed-in joiner owes no reauth, so

@@ -1851,8 +1851,8 @@ int run_scenario_funnel_set_tile_resets_wall_damage(void) {
     fresh = serverSimWallShotsLeft(sim, rx, ry);
     UT_ASSERT_MSG(fresh > 2, "a new wall takes %d shots", fresh);
 
-    buildingAddItem(&sim->sim, &sim->sim.blds, rx, ry);
-    buildingAddItem(&sim->sim, &sim->sim.blds, rx, ry);
+    buildingAddItem(&sim->sim, &sim->sim.blds, rx, ry, BUILDING);
+    buildingAddItem(&sim->sim, &sim->sim.blds, rx, ry, HALFBUILDING);
     hit = serverSimWallShotsLeft(sim, rx, ry);
     UT_ASSERT_MSG(hit == fresh - 2,
                   "two shells left the wall at %d shots, expected %d", hit,

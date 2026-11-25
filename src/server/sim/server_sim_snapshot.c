@@ -1359,6 +1359,11 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
             ts->gunsightLen = tankGetGunsightLength(&sim->sim.tanks[i]);
             ts->deathWait = tankGetDeathWait(&sim->sim.tanks[i]);
             ts->reload = tankGetReloadTime(&sim->sim.tanks[i]);
+            /* The owning client replays its unacknowledged inputs from this
+             * snapshot, and a tank slower than tank_min_move moves only on
+             * the ticks its saved-up speed reaches it, so the replay needs
+             * how much is saved. */
+            ts->residualSpeed = tankGetResidualSpeed(&sim->sim.tanks[i]);
             {
                 /* The owning client predicts with these, so they ride the
                  * same owner-only path the resources do. All zero on an
@@ -1383,6 +1388,7 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
             ts->gunsightLen = 0;
             ts->deathWait = 0;
             ts->reload = 0;
+            ts->residualSpeed = 0;
             ts->modSpeed = 0;
             ts->modAccel = 0;
             ts->modTurn = 0;

@@ -55,6 +55,7 @@
                               * serverSimSetPlayerName,
                               * serverSimSetPlayerCountry */
 #include "playername_validate.h" /* playerNameCompare */
+#include "server_sim_join.h" /* serverSimRejoinSignedIn */
 #include "../../common/wb_log.h" /* WB_LOG_INFO, WB_LOG_WARN, WB_LOG_CAT_NET */
 #include "../../winbolonet/winbolonet_core.h"   /* winbolonetIsRunning,
                                                  * winboloNetGetServerKey,
@@ -283,8 +284,224 @@ void udpServerClearReauthPending(BYTE slot) {
     s_reauthPending[slot].jobId = 0;
 }
 
+/* The WinBolo.net checks of rejoins into a locked game, before a seat is
+ * given (udpServerLockedSignInStep). An entry is a joiner (address and
+ * name) and the player_key it sent. The verify runs on the WinBolo.net
+ * worker; the joiner's next JOIN reads the result. The table has MAX_TANKS
+ * entries, and a source IP has at most one check that runs, so one
+ * address cannot fill it. An entry is freed when its JOIN reads the end of
+ * the check, or reused once WBN_REAUTH_HOLD_TICKS have gone. Cleared with
+ * the re-authentication table. */
+typedef enum {
+    LOCKED_ENTRY_FREE = 0,
+    LOCKED_ENTRY_WAITING,
+    LOCKED_ENTRY_OK,
+    LOCKED_ENTRY_FAILED
+} LockedEntryState;
+
+static struct {
+    LockedEntryState   state;
+    uint32_t           jobId;
+    uint32_t           untilTick;  /* the check lapses at this tick */
+    struct sockaddr_in addr;
+    char               name[PACKET_MAX_PLAYER_NAME];
+    char               key[WBN_JOIN_KEY_WIRE_LEN];
+    bool               hasSteam;
+    bool               isSupporter;
+} s_lockedSignIn[MAX_TANKS];
+
+/* Test seam: transportUdpServerSetLockedRejoinWbnForTest. With it on, the
+ * check runs as if WinBolo.net runs: a fake server key, and job ids that
+ * only the result seam answers. */
+static bool     s_lockedSignInForTest = false;
+static uint32_t s_lockedSignInTestJobId = 0;
+#define LOCKED_SIGN_IN_TEST_SERVER_KEY "test-locked-sign-in-server-key"
+
 void udpServerClearAllReauthPending(void) {
     memset(s_reauthPending, 0, sizeof(s_reauthPending));
+    memset(s_lockedSignIn, 0, sizeof(s_lockedSignIn));
+}
+
+void transportUdpServerSetLockedRejoinWbnForTest(bool on) {
+    s_lockedSignInForTest = on;
+}
+
+bool udpServerLockedSignInAvailable(void) {
+    return winbolonetIsRunning() || s_lockedSignInForTest;
+}
+
+bool udpServerLockedSignInServerKey(uint8_t *out) {
+    char serverKey[WINBOLONET_KEY_LEN];
+    serverKey[0] = '\0';
+    if (winbolonetIsRunning()) {
+        winboloNetGetServerKey(serverKey);
+    } else if (s_lockedSignInForTest) {
+        snprintf(serverKey, sizeof(serverKey), "%s",
+                 LOCKED_SIGN_IN_TEST_SERVER_KEY);
+    }
+    if (serverKey[0] == '\0') return false;
+    wbnKeyEncode(out, serverKey);
+    return true;
+}
+
+static bool lockedSignInLapsed(int i, uint32_t nowTick) {
+    /* Wrap-safe compare, as wbnJoinOnTick does it. */
+    return (int32_t)(nowTick - s_lockedSignIn[i].untilTick) >= 0;
+}
+
+LockedSignInStep udpServerLockedSignInStep(const struct sockaddr_in *addr,
+                                           const char *name,
+                                           const char *joinKey,
+                                           uint32_t nowTick,
+                                           char *keyOut,
+                                           bool *hasSteamOut,
+                                           bool *isSupporterOut) {
+    int i;
+    int found = -1;
+    int freeIdx = -1;
+    uint32_t jobId;
+
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (s_lockedSignIn[i].state == LOCKED_ENTRY_FREE) continue;
+        if (s_lockedSignIn[i].addr.sin_addr.s_addr == addr->sin_addr.s_addr &&
+            s_lockedSignIn[i].addr.sin_port == addr->sin_port &&
+            playerNameCompare(s_lockedSignIn[i].name, name) == 0) {
+            found = i;
+            break;
+        }
+    }
+    if (found >= 0) {
+        LockedEntryState state = s_lockedSignIn[found].state;
+        bool sameKey = joinKey[0] == '\0' ||
+                       strcmp(s_lockedSignIn[found].key, joinKey) == 0;
+        if (sameKey && state == LOCKED_ENTRY_WAITING &&
+            !lockedSignInLapsed(found, nowTick)) {
+            return LOCKED_SIGN_IN_WAIT;
+        }
+        /* The check ends here in every other case: a check that lapsed,
+         * a JOIN with another key, or a result to give. */
+        s_lockedSignIn[found].state = LOCKED_ENTRY_FREE;
+        if (lockedSignInLapsed(found, nowTick) || joinKey[0] == '\0' ||
+            !sameKey || state != LOCKED_ENTRY_OK) {
+            return LOCKED_SIGN_IN_REFUSED;
+        }
+        snprintf(keyOut, WINBOLONET_KEY_LEN, "%s", s_lockedSignIn[found].key);
+        *hasSteamOut = s_lockedSignIn[found].hasSteam;
+        *isSupporterOut = s_lockedSignIn[found].isSupporter;
+        return LOCKED_SIGN_IN_OK;
+    }
+    if (joinKey[0] == '\0') return LOCKED_SIGN_IN_ASK;
+
+    /* A new check. One source IP has at most one check that runs. */
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (s_lockedSignIn[i].state == LOCKED_ENTRY_FREE ||
+            lockedSignInLapsed(i, nowTick)) {
+            if (freeIdx < 0) freeIdx = i;
+            continue;
+        }
+        if (s_lockedSignIn[i].state == LOCKED_ENTRY_WAITING &&
+            s_lockedSignIn[i].addr.sin_addr.s_addr == addr->sin_addr.s_addr) {
+            return LOCKED_SIGN_IN_REFUSED;
+        }
+    }
+    if (freeIdx < 0) return LOCKED_SIGN_IN_REFUSED;
+    if (winbolonetIsRunning()) {
+        jobId = winbolonetQueueVerifyClientKey(joinKey, name);
+    } else if (s_lockedSignInForTest) {
+        jobId = ++s_lockedSignInTestJobId;
+    } else {
+        jobId = 0;
+    }
+    if (jobId == 0) return LOCKED_SIGN_IN_REFUSED;
+    memset(&s_lockedSignIn[freeIdx], 0, sizeof(s_lockedSignIn[freeIdx]));
+    s_lockedSignIn[freeIdx].state = LOCKED_ENTRY_WAITING;
+    s_lockedSignIn[freeIdx].jobId = jobId;
+    s_lockedSignIn[freeIdx].untilTick = nowTick + WBN_REAUTH_HOLD_TICKS;
+    s_lockedSignIn[freeIdx].addr = *addr;
+    snprintf(s_lockedSignIn[freeIdx].name, sizeof(s_lockedSignIn[freeIdx].name),
+             "%s", name);
+    snprintf(s_lockedSignIn[freeIdx].key, sizeof(s_lockedSignIn[freeIdx].key),
+             "%s", joinKey);
+    return LOCKED_SIGN_IN_WAIT;
+}
+
+/* Writes the end of a check that runs. */
+static void lockedSignInFinish(int i, bool ok, bool hasSteam,
+                               bool isSupporter) {
+    s_lockedSignIn[i].state = ok ? LOCKED_ENTRY_OK : LOCKED_ENTRY_FAILED;
+    s_lockedSignIn[i].hasSteam = ok && hasSteam;
+    s_lockedSignIn[i].isSupporter = ok && isSupporter;
+    WB_LOG_INFO(WB_LOG_CAT_NET,
+                "[WBN] locked-game rejoin check for '%s': %s",
+                s_lockedSignIn[i].name, ok ? "accepted" : "refused");
+}
+
+bool udpServerLockedSignInResult(uint32_t jobId, int status,
+                                 const char *response) {
+    int i;
+    char errorMsg[512];
+    bool hasSteam = FALSE;
+    bool isSupporter = FALSE;
+    bool ok;
+
+    if (jobId == 0) return false;
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (s_lockedSignIn[i].state == LOCKED_ENTRY_WAITING &&
+            s_lockedSignIn[i].jobId == jobId) {
+            break;
+        }
+    }
+    if (i == MAX_TANKS) return false;
+    /* The joiner has no slot yet, so the reply is only read
+     * (playerNum MAX_TANKS). The seat stores the key. */
+    errorMsg[0] = '\0';
+    ok = winbolonetApplyVerifyResult(status, response, s_lockedSignIn[i].key,
+                                     (BYTE)MAX_TANKS, errorMsg, &hasSteam,
+                                     &isSupporter);
+    lockedSignInFinish(i, ok, hasSteam, isSupporter);
+    return true;
+}
+
+/* Test seam: the result WinBolo.net gives the check that runs under name.
+ * WinBolo.net verifies the key under the name the joiner asked for, so it
+ * accepts only when keyOwner is that name. NULL is a failed verify. */
+bool transportUdpServerLockedSignInResultForTest(const char *name,
+                                                 const char *keyOwner) {
+    int i;
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (s_lockedSignIn[i].state == LOCKED_ENTRY_WAITING &&
+            playerNameCompare(s_lockedSignIn[i].name, name) == 0) {
+            lockedSignInFinish(i,
+                               keyOwner != NULL &&
+                                   playerNameCompare(keyOwner, name) == 0,
+                               false, false);
+            return true;
+        }
+    }
+    return false;
+}
+
+/* Test seam: true while a check under name waits for its result. */
+bool transportUdpServerLockedSignInPendingForTest(const char *name) {
+    int i;
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (s_lockedSignIn[i].state == LOCKED_ENTRY_WAITING &&
+            playerNameCompare(s_lockedSignIn[i].name, name) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/* Test seam: makes the check under name lapse at this tick. */
+void transportUdpServerExpireLockedSignInForTest(const char *name) {
+    int i;
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (s_lockedSignIn[i].state != LOCKED_ENTRY_FREE &&
+            playerNameCompare(s_lockedSignIn[i].name, name) == 0) {
+            s_lockedSignIn[i].untilTick = udpServer.tickCount;
+        }
+    }
 }
 
 void transportUdpServerExpireReauthHoldForTest(BYTE slot) {
@@ -427,6 +644,11 @@ static void udpServerStampReauth(ServerSim *sim, const WbnReauthCtx *rc,
             udpServer.clients[slot].claimPending = false;
             udpServer.clients[slot].claimDesiredName[0] = '\0';
         }
+
+        /* The seat's name is now the one WinBolo.net confirmed. A rejoiner
+         * under the name of a signed-in leaver gets that player's team,
+         * pillboxes and bases back here, not at the join. */
+        serverSimRejoinSignedIn(sim, slot);
     } else if (rc->isWeb && udpServer.clients[slot].wbnWebIdentityCached) {
         /* A web slot whose code verified but resolved to a guest (not logged
          * in) returns false here — that is the expected anonymous case, not a
@@ -451,6 +673,8 @@ void udpServerApplyReauthResult(ServerSim *sim, uint32_t id, int status,
     int  idx;
 
     if (sim == NULL) return;
+    /* A check of a rejoin into a locked game has no slot yet. */
+    if (udpServerLockedSignInResult(id, status, response)) return;
     idx = udpServerFindReauthPending(id);
     if (idx < 0) return;
     rc = s_reauthPending[idx].ctx;
