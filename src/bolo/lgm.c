@@ -1699,7 +1699,7 @@ void lgmGetScreenCoords(lgm *lgman, BYTE leftPos, BYTE topPos, BYTE *mx, BYTE *m
    shell that ran out there or hit a tank there, a tank's or a mine's
    explosion) must reach a builder just across that edge, as it would on
    any open square. */
-static bool lgmBlastCatches(GameSim *sim, WORLD lgmWorldX, WORLD lgmWorldY, WORLD wx, WORLD wy, bool squareHit) {
+static bool lgmBlastCatches(GameSim *sim, WORLD lgmWorldX, WORLD lgmWorldY, WORLD wx, WORLD wy, bool squareHit, LgmBlastOutcome *out) {
   map *mp = &sim->mp;
   pillboxes *pb = &sim->pb;
   bases *bs = &sim->bs;
@@ -1723,6 +1723,12 @@ static bool lgmBlastCatches(GameSim *sim, WORLD lgmWorldX, WORLD lgmWorldY, WORL
   if (squareHit == TRUE || pos == BUILDING || pos == HALFBUILDING || pillsIsPillHit(pb, mx, my) == TRUE || basesExistPos(bs, mx, my) == TRUE) {
     solid = TRUE;
   }
+  /* For the round log's log_BuilderCheck only (shellsBlastTestBuilder):
+     which rule the test used. Nothing here reads it. */
+  if (out != NULL) {
+    out->solid = solid;
+    out->onSquare = (checkMapX == mx && checkMapY == my);
+  }
   /* On a solid square only his own square; on open ground the
      lgm_blast_shape rule's area round the explosion (a circle of half a
      square in the classic table). The rule is in hit_rules.h, which the Log
@@ -1738,12 +1744,21 @@ BOLO_STATIC_ASSERT(HIT_RULES_HALF_SQUARE == MAP_SQUARE_MIDDLE,
                    hit_rules_half_square_is_map_square_middle);
 
 void lgmDeathCheckAtPosition(GameSim *sim, lgm *lgman, WORLD lgmWorldX, WORLD lgmWorldY, WORLD wx, WORLD wy, BYTE owner, BYTE attacker, BYTE cause, BYTE pill, tank *tnk, bool squareHit) {
+  lgmDeathCheckAtPositionReport(sim, lgman, lgmWorldX, lgmWorldY, wx, wy, owner,
+                                attacker, cause, pill, tnk, squareHit, NULL);
+}
+
+void lgmDeathCheckAtPositionReport(GameSim *sim, lgm *lgman, WORLD lgmWorldX, WORLD lgmWorldY, WORLD wx, WORLD wy, BYTE owner, BYTE attacker, BYTE cause, BYTE pill, tank *tnk, bool squareHit, LgmBlastOutcome *out) {
   bool isServer = sim->isServer;
   bool dead;                        /* Are we dead */
 
 
   if (isServer == TRUE && (*lgman)->isDead == FALSE && (*lgman)->inTank == FALSE) {
-    dead = lgmBlastCatches(sim, lgmWorldX, lgmWorldY, wx, wy, squareHit);
+    dead = lgmBlastCatches(sim, lgmWorldX, lgmWorldY, wx, wy, squareHit, out);
+    if (out != NULL) {
+      out->tested = TRUE;
+      out->caught = dead;
+    }
 
     if (dead == TRUE) {
       /* The engine's own test says the blast caught him; the host has the
@@ -1757,6 +1772,11 @@ void lgmDeathCheckAtPosition(GameSim *sim, lgm *lgman, WORLD lgmWorldX, WORLD lg
       if (gameSimCanDie(sim, DIE_KIND_BUILDER, (*lgman)->playerNum, attacker,
                         cause, pill) != FALSE) {
         lgmKill(sim, lgman, tnk, owner);
+        if (out != NULL) {
+          out->died = TRUE;
+        }
+      } else if (out != NULL) {
+        out->refused = TRUE;
       }
     }
   }
@@ -2003,10 +2023,16 @@ static bool lgmInTankCanBeKilled(GameSim *sim, lgm *lgman, tank *tnk);
 *  squareHit - As lgmDeathCheckAtPosition
 *********************************************************/
 void lgmDeathCheckSeenOut(GameSim *sim, lgm *lgman, WORLD lgmWorldX, WORLD lgmWorldY, WORLD wx, WORLD wy, BYTE owner, BYTE attacker, BYTE cause, BYTE pill, tank *tnk, bool squareHit) {
+  lgmDeathCheckSeenOutReport(sim, lgman, lgmWorldX, lgmWorldY, wx, wy, owner,
+                             attacker, cause, pill, tnk, squareHit, NULL);
+}
+
+void lgmDeathCheckSeenOutReport(GameSim *sim, lgm *lgman, WORLD lgmWorldX, WORLD lgmWorldY, WORLD wx, WORLD wy, BYTE owner, BYTE attacker, BYTE cause, BYTE pill, tank *tnk, bool squareHit, LgmBlastOutcome *out) {
+  bool caught;
   if (*lgman == NULL) return;
   if ((*lgman)->isDead == TRUE || (*lgman)->inTank == FALSE) {
-    lgmDeathCheckAtPosition(sim, lgman, lgmWorldX, lgmWorldY, wx, wy, owner,
-                            attacker, cause, pill, tnk, squareHit);
+    lgmDeathCheckAtPositionReport(sim, lgman, lgmWorldX, lgmWorldY, wx, wy, owner,
+                                  attacker, cause, pill, tnk, squareHit, out);
     return;
   }
 
@@ -2014,17 +2040,28 @@ void lgmDeathCheckSeenOut(GameSim *sim, lgm *lgman, WORLD lgmWorldX, WORLD lgmWo
   if (lgmInTankCanBeKilled(sim, lgman, tnk) == FALSE) {
     return;
   }
-  if (lgmBlastCatches(sim, lgmWorldX, lgmWorldY, wx, wy, squareHit) == FALSE) {
+  caught = lgmBlastCatches(sim, lgmWorldX, lgmWorldY, wx, wy, squareHit, out);
+  if (out != NULL) {
+    out->tested = TRUE;
+    out->caught = caught;
+  }
+  if (caught == FALSE) {
     return;
   }
   /* The host has the last word, as it has in lgmDeathCheckAtPosition. Asked
      before he is touched, so a refusal leaves him in the tank. */
   if (gameSimCanDie(sim, DIE_KIND_BUILDER, (*lgman)->playerNum, attacker,
                     cause, pill) == FALSE) {
+    if (out != NULL) {
+      out->refused = TRUE;
+    }
     return;
   }
 
   lgmKillInTank(sim, lgman, tnk, owner);
+  if (out != NULL) {
+    out->died = TRUE;
+  }
 }
 
 /* Can a man who is inside his tank be killed there? Only on the server, and

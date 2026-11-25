@@ -38,6 +38,7 @@
 #include "server_sim_internal.h"  /* serverSimLagLogDue, playerPing, statLastRewindTicks */
 #include "server_lifecycle.h"      /* serverOverrunStatsDue */
 #include "overrun_record.h"         /* log_OverrunStats payload */
+#include "builder_check_record.h"   /* log_BuilderCheck payload */
 #include "game_sim.h"       /* GameSim.tanks — set the stocks a snapshot records */
 #include "tank.h"           /* tankSetShells / tankSetMines / ... */
 #include "unzip.h"
@@ -107,6 +108,7 @@ static int eventFixedBytesAfterCode(uint8_t code) {
         case log_MapName:          return -1;  /* 0 + pstr */
         case log_PlayerLag:        return 4;   /* player, RTT (BE u16), rewind */
         case log_OverrunStats:     return -3;  /* 44 + 13 a bot, checked below */
+        case log_BuilderCheck:     return BUILDER_CHECK_RECORD_BYTES;
         default:                   return -2;  /* unknown */
     }
 }
@@ -1145,6 +1147,183 @@ int run_log_roundtrip_overrun_stats(void) {
     remove(fname);
     UT_ASSERT_MSG(decoded, "the viewer could not decode the file");
     return 0;
+}
+
+/* log_BuilderCheck: what the server tested when a shell's blast came near a
+ * builder (builder_check_record.h). This encodes a record, checks the bytes
+ * are where the layout puts them, writes it through logAddEvent as shells.c
+ * does, reads the bytes back, checks they decode to the same record, and
+ * checks the viewer still decodes the file. */
+int run_log_roundtrip_builder_check(void) {
+    char fname[64];
+    BuilderCheckRecord rec;
+    BuilderCheckRecord back;
+    uint8_t payload[BUILDER_CHECK_RECORD_BYTES + 4];
+    int len;
+
+    mkTempPath(fname, sizeof(fname), "buildercheck");
+    remove(fname);
+
+    memset(&rec, 0, sizeof(rec));
+    rec.builder = 0;
+    rec.shooter = 2;
+    rec.pill = BUILDER_CHECK_NONE;
+    rec.result = BUILDER_CHECK_LIVES;
+    rec.flags = BUILDER_CHECK_FLAG_SOLID | BUILDER_CHECK_FLAG_REWOUND |
+                BUILDER_CHECK_FLAG_SQUARE_HIT;
+    rec.shape = 0;
+    rec.rewind = 2;
+    rec.shellRewind = 3;
+    rec.blastX = 33920;
+    rec.blastY = 32384;
+    rec.testedX = 33888;
+    rec.testedY = 32528;
+    rec.presentX = 33872;
+    rec.presentY = 32496;
+    rec.pillRange = 0x0A00;
+    len = builderCheckRecordEncode(&rec, payload, (int)sizeof(payload));
+    UT_ASSERT_MSG(len == BUILDER_CHECK_RECORD_BYTES, "encoded %d bytes", len);
+    UT_ASSERT(payload[0] == BUILDER_CHECK_RECORD_VERSION);
+    UT_ASSERT(payload[1] == 0 && payload[2] == 2 && payload[3] == 0xFF);
+    UT_ASSERT(payload[4] == BUILDER_CHECK_LIVES && payload[5] == 0x15);
+    UT_ASSERT(payload[7] == 2 && payload[8] == 3);
+    UT_ASSERT(payload[9] == 0x84 && payload[10] == 0x80);    /* 33920 */
+    UT_ASSERT(payload[13] == 0x84 && payload[14] == 0x60);   /* 33888 */
+    UT_ASSERT(payload[21] == 0x0A && payload[22] == 0x00);   /* pill_range */
+    /* A buffer too small gets nothing; a short record or version 0 does not
+       decode; bytes a later version adds are left alone. */
+    UT_ASSERT(builderCheckRecordEncode(&rec, payload, BUILDER_CHECK_RECORD_BYTES - 1) == 0);
+    UT_ASSERT(!builderCheckRecordDecode(payload, BUILDER_CHECK_RECORD_BYTES - 1, &back));
+    payload[23] = 0x55;
+    UT_ASSERT(builderCheckRecordDecode(payload, BUILDER_CHECK_RECORD_BYTES + 1, &back));
+    payload[0] = 0;
+    UT_ASSERT(!builderCheckRecordDecode(payload, len, &back));
+    payload[0] = BUILDER_CHECK_RECORD_VERSION;
+    /* The 3x3 squares the record is written for. */
+    UT_ASSERT(builderCheckNearSquare(132, 127, 132, 126));
+    UT_ASSERT(builderCheckNearSquare(131, 125, 132, 126));
+    UT_ASSERT(!builderCheckNearSquare(130, 126, 132, 126));
+    UT_ASSERT(!builderCheckNearSquare(132, 128, 132, 126));
+
+    ServerSim *sim = ut_make_running_sim("Tester");
+    UT_ASSERT_MSG(sim != NULL, "ut_make_running_sim failed");
+
+    logSetStopHook(NULL);
+    logCreate();
+    UT_ASSERT_MSG(logStart(fname, sim, 0, MAX_TANKS, FALSE),
+                  "logStart failed");
+    logAddEvent(log_BuilderCheck, 0, 0, 0, 0, (unsigned short)len, (char *)payload);
+    logWriteTick();
+    logStop();
+    logDestroy();
+    serverSimDestroy(sim);
+
+    uint8_t *buf = NULL;
+    size_t   blen = 0;
+    UT_ASSERT_MSG(extractLogDat(fname, &buf, &blen), "extractLogDat failed");
+
+    size_t  blockStart = 0;
+    uint8_t version    = 0;
+    UT_ASSERT_MSG(locateSnapshotMarker(buf, blen, &blockStart, &version),
+                  "header parse failed");
+
+    uint8_t got[64];
+    int     nGot  = 0;
+    int     nSnap = 0;
+    eventPayloadCapture cap;
+    cap.code = log_BuilderCheck;
+    cap.len  = -1;
+    int rc = walkLog(buf, blen, blockStart, got, &nGot, (int)sizeof(got),
+                     &nSnap, &cap);
+    free(buf);
+
+    UT_ASSERT_MSG(rc == 0, "walkLog rc=%d", rc);
+    UT_ASSERT_MSG(cap.len == len, "log_BuilderCheck payload is %d bytes (want %d)",
+                  cap.len, len);
+    UT_ASSERT_MSG(memcmp(cap.bytes, payload, (size_t)len) == 0,
+                  "the written bytes differ from the encoded ones");
+    UT_ASSERT(builderCheckRecordDecode(cap.bytes, cap.len, &back));
+    rec.version = BUILDER_CHECK_RECORD_VERSION;
+    UT_ASSERT_MSG(memcmp(&back, &rec, sizeof(rec)) == 0,
+                  "the decoded record differs from the one written");
+
+    /* The shared collector the engine test uses finds the same record. */
+    {
+        BuilderCheckRecord all[4];
+        int n = ut_logBuilderChecks(fname, all, 4);
+        UT_ASSERT_MSG(n == 1, "%d log_BuilderCheck records (want 1)", n);
+        UT_ASSERT(memcmp(&all[0], &rec, sizeof(rec)) == 0);
+    }
+
+    ReplayWorld    *world = (ReplayWorld *)malloc(sizeof(*world));
+    ReplayFileInfo  info;
+    UT_ASSERT_MSG(world != NULL, "out of memory");
+    bool decoded = replayHarnessDecodeFile(fname, world, &info);
+    free(world);
+    remove(fname);
+    UT_ASSERT_MSG(decoded, "the viewer could not decode the file");
+    return 0;
+}
+
+/* Every log_BuilderCheck record in a .wbv, in order, decoded into out (up
+ * to max). Returns the count, or -1 when the file does not read or the
+ * stream does not walk. Shared with test_tank_blast_at_tank.c (prototype in
+ * test_harness.h). */
+int ut_logBuilderChecks(const char *wbvPath, BuilderCheckRecord *out, int max) {
+    uint8_t *buf = NULL;
+    size_t   len = 0, pos = 0;
+    uint8_t  version = 0;
+    int      n = 0;
+    int      result = -1;
+
+    if (!extractLogDat(wbvPath, &buf, &len)) return -1;
+    if (!locateSnapshotMarker(buf, len, &pos, &version)) {
+        free(buf);
+        return -1;
+    }
+    while (pos < len) {
+        int code = buf[pos++];
+        if (code == LOG_QUIT) {
+            result = n;
+            break;
+        } else if (code == LOG_NOEVENTS) {
+            pos += 1;
+        } else if (code == LOG_NOEVENTS_LONG) {
+            pos += 2;
+        } else if (code == LOG_EVENT_SNAPSHOT) {
+            if (!skipSnapshot(buf, len, &pos)) break;
+        } else if (code == LOG_EVENT || code == LOG_EVENT_LONG) {
+            int count, i;
+            bool ok = true;
+            if (code == LOG_EVENT) {
+                if (pos + 1 > len) break;
+                count = buf[pos];
+                pos += 1;
+            } else {
+                if (pos + 2 > len) break;
+                count = (buf[pos + 1] << 8) | buf[pos];
+                pos += 2;
+            }
+            for (i = 0; i < count && ok; i++) {
+                int ev, plen;
+                if (pos + 3 > len) { ok = false; break; }
+                ev = buf[pos];
+                plen = (buf[pos + 1] << 8) | buf[pos + 2];
+                pos += 3;
+                if (pos + (size_t)plen > len) { ok = false; break; }
+                if (ev == log_BuilderCheck && n < max &&
+                    builderCheckRecordDecode(buf + pos, plen, &out[n])) {
+                    n++;
+                }
+                pos += (size_t)plen;
+            }
+            if (!ok) break;
+        } else {
+            break;
+        }
+    }
+    free(buf);
+    return result;
 }
 
 /* Every log_OverrunStats record in a log, in order, and whether one is the

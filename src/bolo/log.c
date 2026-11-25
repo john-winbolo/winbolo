@@ -47,6 +47,7 @@
 #include "attribution_track.h"
 #include "scripts_record.h"
 #include "overrun_record.h"  /* OVERRUN_RECORD_MAX_BYTES — log_OverrunStats' payload */
+#include "builder_check_record.h"  /* BUILDER_CHECK_RECORD_BYTES — log_BuilderCheck's payload */
 #include "log_internal.h"
 #include "byte_order.h"
 #include "../winbolonet/winbolonet_core.h"
@@ -1100,6 +1101,22 @@ static int logSerializeEvent(logitem itemNum, BYTE opt1, BYTE opt2, BYTE opt3, B
       off += wordsLen;
     }
     break;
+  case log_BuilderCheck:
+    /* What the server tested when a shell's blast came near a builder:
+       short1 bytes that builderCheckRecordEncode wrote
+       (builder_check_record.h), copied as they are. As for
+       log_OverrunStats, the framed length is the only length, so a reader
+       that does not know it skips it. Layout in docs/replay-format.md. */
+    out[off++] = log_BuilderCheck;
+    wordsLen = short1;
+    if (wordsLen > BUILDER_CHECK_RECORD_BYTES) {
+      wordsLen = BUILDER_CHECK_RECORD_BYTES;
+    }
+    if (wordsLen > 0 && words != NULL) {
+      memcpy(out + off, words, wordsLen);
+      off += wordsLen;
+    }
+    break;
   default:
     return 0;
   }
@@ -1220,8 +1237,10 @@ void logAddEvent(logitem itemNum, BYTE opt1, BYTE opt2, BYTE opt3, BYTE opt4, un
     logKey = itemNum;
   }
   /* Feed the same plaintext to the spectator ring's per-tick accumulator, so the
-     tap inherits this function's emit decisions and lobby gating. */
-  if (logSpectatorRing != NULL &&
+     tap inherits this function's emit decisions and lobby gating. A
+     log_BuilderCheck is for the .wbv only: it is not sent to spectators, so
+     the network traffic stays as it was. */
+  if (logSpectatorRing != NULL && itemNum != log_BuilderCheck &&
       logSpectatorAccLen + eventLen <= (int)sizeof(logSpectatorAcc)) {
     memcpy(logSpectatorAcc + logSpectatorAccLen, event, (size_t)eventLen);
     logSpectatorAccLen += eventLen;

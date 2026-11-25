@@ -6081,6 +6081,7 @@ set(_unit_test_names
     log_roundtrip_player_lag
     log_roundtrip_player_lag_recorded
     log_roundtrip_overrun_stats
+    log_roundtrip_builder_check
     log_roundtrip_overrun_stats_recorded
     log_roundtrip_overrun_stats_bots
     log_roundtrip_overrun_stats_every_30s
@@ -6766,6 +6767,7 @@ set(_unit_test_names
     tank_blast_zero_rewind_unchanged
     tank_blast_hit_decision_unchanged
     tank_blast_builder_on_shooter_screen
+    tank_blast_builder_check_record
     tank_blast_absent_builder_lives
     tank_blast_builder_back_in_tank
     tank_blast_pill_shell_builder_now
