@@ -52,6 +52,7 @@
  */
 
 #include "gh_pt2_v2.h"
+#include "gh_pt2_walk.h"
 
 #include <lauxlib.h>
 #include <math.h>
@@ -59,6 +60,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+/* PT2_WALK_CHECK=1 (a check build only, never shipped): every tank shot
+ * walk runs both ways (ts_walk_ticks and ts_walk_jump) and the results
+ * are compared. */
+#ifndef PT2_WALK_CHECK
+#define PT2_WALK_CHECK 0
+#endif
 
 /* ── Engine constants (shadow.lua) ──────────────────────────────────── */
 #define PT2_RADIANS_MAX   (2.0 * 3.14159)
@@ -1445,23 +1453,22 @@ static Lane *lane_make(Ev *e, const int64_t *lane, int nl) {
     return l;
 }
 
-/* shadow.tank_shot_angle: the shot at gun angle angle (brad, float). */
-static int tank_shot_walk_angle__p(Ev *e, double ox, double oy, double angle, double tmx, double tmy,
-                                const Extra *extra, Lane **lane_out) {
-    int64_t lane[PT2_MAX_T];
-    angle = f32(angle);
-    double xa, ya, xs, ys;
-    calc_distance_both(angle, e->sh_speed, &xa, &ya, &xs, &ys);
-    Walk w;
-    walk_init(&w, ox + e->sh_add * xa, oy + e->sh_add * ya, xs, ys);
-    double n = life_ticks(e, PT2_TANK_FIRE_LEN);
+/* Where a tank shot walk stopped: the tick and the square (the walk
+ * check build compares these and the lane). */
+typedef struct { double t, mx, my; } TsStop;
+
+/* The tank shot walk, one walk_step per tick. Used when the square jump
+ * below is not exact (tanks to test each tick, a walk off the integer
+ * fast path, a very long life). */
+static int ts_walk_ticks(Ev *e, Walk *w, double n, double omx, double omy, double tmx, double tmy,
+                         const Extra *extra, int64_t *lane, int *nl_out, TsStop *st) {
     int nl = 0;
     double last_sq = -1;
-    double omx = rsh8(ox), omy = rsh8(oy);
+    double mx = -1, my = -1, sq;
     int why = TS_SHORT;
-    for (double t = 1; t <= n; t++) {
-        double mx, my, sq;
-        walk_step(&w, &mx, &my, &sq);
+    double t;
+    for (t = 1; t <= n; t++) {
+        walk_step(w, &mx, &my, &sq);
         PC(C_walk_tshot_steps, 1);
         int new_sq = 0;
         if (sq != last_sq) {
@@ -1474,7 +1481,7 @@ static int tank_shot_walk_angle__p(Ev *e, double ox, double oy, double angle, do
                 if (pill_on(e, mx, my)) { why = TS_PILL; break; }
             }
         }
-        if (e->ts_nt > 0 && ts_tank_hit(e, w.x, w.y)) { why = TS_TANK; break; }
+        if (e->ts_nt > 0 && ts_tank_hit(e, w->x, w->y)) { why = TS_TANK; break; }
         if (new_sq) {
             if (extra_find(extra, (int64_t)sq) >= 0) { why = TS_PLANNED; break; }
             double tt = ttype(e, mx, my);
@@ -1483,12 +1490,164 @@ static int tank_shot_walk_angle__p(Ev *e, double ox, double oy, double angle, do
             if (base_stops(e, mx, my)) { why = TS_BASE; break; }
         }
     }
+    if (why == TS_SHORT) t = t - 1;
+    *nl_out = nl;
+    st->t = t; st->mx = mx; st->my = my;
+    return why;
+}
+
+/* The same walk, jumping from one tick where the square changes to the
+ * next (gh_pt2_walk.h). Exact when there are no tanks to test (the only
+ * test made on a tick with no new square), the walk is on walk_step's
+ * integer fast path and the life is at most PT2W_MAX_T ticks: on the
+ * ticks it skips, the per-tick walk only steps. The square reads use the
+ * square's index once (pill_on, ttype and base_at stamps) and make the
+ * same calls as before on a cache miss. */
+static int ts_walk_jump(Ev *e, const Walk *w, int32_t N, double omx, double omy, double tmx, double tmy,
+                        const Extra *extra, int64_t *lane, int *nl_out, TsStop *st) {
+    Pt2Ctx *c = e->c;
+    const int32_t x0 = w->xi, y0 = w->yi, xs = w->xsi, ys = w->ysi;
+    int nl = 0;
+    double last_sq = -1;
+    double mx = -1, my = -1;
+    int why = TS_SHORT;
+    int32_t t = 1;
+    while (t <= N) {
+        int32_t xi = pt2w_pos(x0, xs, t), yi = pt2w_pos(y0, ys, t);
+        int32_t mxi = (int32_t)((uint32_t)xi >> 8), myi = (int32_t)((uint32_t)yi >> 8);
+        mx = (double)mxi; my = (double)myi;
+        int64_t sqi = (int64_t)myi * 256 + mxi;
+        double sq = (double)sqi;
+        if (sq != last_sq) {
+            last_sq = sq;
+            if (mx == tmx && my == tmy) { why = TS_OK; break; }
+            if (!(mx == omx && my == omy)) {
+                if (nl < PT2_MAX_T) lane[nl] = sqi;
+                nl++;
+                /* mxi, myi >= 0 (unsigned shift): in the map when both <= 255. */
+                int in = mxi <= 255 && myi <= 255;
+                int k = (int)(sqi & (PT2_MAP_SQ - 1));
+                int p;
+                if (in && c->po_stamp[k] == c->gen) { PC(C_po_hit, 1); p = c->po_val[k]; }
+                else p = pill_on(e, mx, my);
+                if (p) { why = TS_PILL; break; }
+                if (extra_find(extra, sqi) >= 0) { why = TS_PLANNED; break; }
+                double tt;
+                if (in && c->tt_stamp[k] == c->gen) { e->tt_hits += 1; tt = c->tt_val[k]; }
+                else tt = ttype(e, mx, my);
+                if (tt == e->T_BUILDING || tt == e->T_HALFBUILD) { why = TS_WALL; break; }
+                if (e->ts_boats && tt == e->T_BOAT) { why = TS_BOAT; break; }
+                /* base_stops: no Lua call for a square with no base_at
+                 * stamp; a key past the stamp table goes the Lua way. */
+                if (e->bs_on && (!e->ba_tab || sqi >= PT2_MAP_SQ || c->ba_stamp[k] == c->gen)
+                    && base_stops(e, mx, my)) { why = TS_BASE; break; }
+            }
+        }
+        t = pt2w_next2(x0, xs, y0, ys, t);
+    }
+    if (why == TS_SHORT) t = N;
+    PC(C_walk_tshot_steps, t);
+    *nl_out = nl;
+    st->t = (double)t; st->mx = mx; st->my = my;
+    return why;
+}
+
+#if PT2_WALK_CHECK
+/* The walk check build: every tank shot walk the jump can take runs both
+ * ways and the results are compared (stop reason, stop tick and square,
+ * lane). The counts and the time of each way go to stderr. */
+#ifdef _MSC_VER
+#include <intrin.h>
+#else
+#include <x86intrin.h>
+#endif
+#include <time.h>
+static uint64_t wc_tsc(void) { return __rdtsc(); }
+static struct {
+    uint64_t walks, compared, bad, tsc_ticks, tsc_jump, tsc0;
+    double   wall0;
+    int      started;
+    uint64_t why_n[TS_NARROW + 1];
+} s_wc;
+static double wc_wall(void) { struct timespec ts; timespec_get(&ts, TIME_UTC); return ts.tv_sec + ts.tv_nsec * 1e-9; }
+static void wc_report(void) {
+    if (!s_wc.started) return;
+    double us = (wc_wall() - s_wc.wall0) * 1e6;
+    double tpu = us > 0 ? (double)(wc_tsc() - s_wc.tsc0) / us : 0;
+    double cn = s_wc.compared ? (double)s_wc.compared : 1;
+    fprintf(stderr, "PT2_WALK_CHECK walks=%llu compared=%llu mismatches=%llu tsc_per_us=%.1f ticks_ns=%.1f jump_ns=%.1f"
+            " ok=%llu short=%llu wall=%llu pill=%llu base=%llu planned=%llu boat=%llu tank=%llu\n",
+            (unsigned long long)s_wc.walks, (unsigned long long)s_wc.compared, (unsigned long long)s_wc.bad, tpu,
+            tpu > 0 ? s_wc.tsc_ticks / cn / tpu * 1000 : 0, tpu > 0 ? s_wc.tsc_jump / cn / tpu * 1000 : 0,
+            (unsigned long long)s_wc.why_n[TS_OK], (unsigned long long)s_wc.why_n[TS_SHORT],
+            (unsigned long long)s_wc.why_n[TS_WALL], (unsigned long long)s_wc.why_n[TS_PILL],
+            (unsigned long long)s_wc.why_n[TS_BASE], (unsigned long long)s_wc.why_n[TS_PLANNED],
+            (unsigned long long)s_wc.why_n[TS_BOAT], (unsigned long long)s_wc.why_n[TS_TANK]);
+    fflush(stderr);
+}
+#endif
+
+/* shadow.tank_shot_angle: the shot at gun angle angle (brad, float). */
+static int tank_shot_walk_angle__p(Ev *e, double ox, double oy, double angle, double tmx, double tmy,
+                                const Extra *extra, Lane **lane_out) {
+    int64_t lane[PT2_MAX_T];
+    angle = f32(angle);
+    double xa, ya, xs, ys;
+    calc_distance_both(angle, e->sh_speed, &xa, &ya, &xs, &ys);
+    Walk w;
+    walk_init(&w, ox + e->sh_add * xa, oy + e->sh_add * ya, xs, ys);
+    double n = life_ticks(e, PT2_TANK_FIRE_LEN);
+    double omx = rsh8(ox), omy = rsh8(oy);
+    int nl, why;
+    TsStop st;
+    /* n <= PT2W_MAX_T is false for a NaN life (no ticks either way). */
+    int jump = w.fast && e->ts_nt <= 0 && n <= PT2W_MAX_T;
+#if PT2_WALK_CHECK
+    {
+        int64_t lane2[PT2_MAX_T];
+        int nl2 = 0, why2;
+        TsStop st2;
+        Walk w2 = w;
+        if (!s_wc.started) { s_wc.started = 1; s_wc.wall0 = wc_wall(); s_wc.tsc0 = wc_tsc(); atexit(wc_report); }
+        s_wc.walks++;
+        if (jump) {
+            uint64_t a0, a1, b0, b1;
+            if (s_wc.walks & 1) {
+                b0 = wc_tsc(); why = ts_walk_jump(e, &w, (int32_t)n, omx, omy, tmx, tmy, extra, lane, &nl, &st); b1 = wc_tsc();
+                a0 = wc_tsc(); why2 = ts_walk_ticks(e, &w2, n, omx, omy, tmx, tmy, extra, lane2, &nl2, &st2); a1 = wc_tsc();
+            } else {
+                a0 = wc_tsc(); why2 = ts_walk_ticks(e, &w2, n, omx, omy, tmx, tmy, extra, lane2, &nl2, &st2); a1 = wc_tsc();
+                b0 = wc_tsc(); why = ts_walk_jump(e, &w, (int32_t)n, omx, omy, tmx, tmy, extra, lane, &nl, &st); b1 = wc_tsc();
+            }
+            s_wc.tsc_ticks += a1 - a0; s_wc.tsc_jump += b1 - b0;
+            s_wc.compared++;
+            int same = why == why2 && nl == nl2 && st.t == st2.t && st.mx == st2.mx && st.my == st2.my;
+            for (int i = 0; same && i < nl && i < PT2_MAX_T; i++) same = lane[i] == lane2[i];
+            if (!same) {
+                s_wc.bad++;
+                if (s_wc.bad <= 20)
+                    fprintf(stderr, "PT2_WALK_CHECK MISMATCH x0=%d y0=%d xs=%d ys=%d n=%g o=(%g,%g) tm=(%g,%g)"
+                            " ticks: why=%d t=%g sq=(%g,%g) nl=%d  jump: why=%d t=%g sq=(%g,%g) nl=%d\n",
+                            (int)w2.xi, (int)w2.yi, (int)w2.xsi, (int)w2.ysi, n, omx, omy, tmx, tmy,
+                            why2, st2.t, st2.mx, st2.my, nl2, why, st.t, st.mx, st.my, nl);
+            }
+        } else {
+            why = ts_walk_ticks(e, &w, n, omx, omy, tmx, tmy, extra, lane, &nl, &st);
+        }
+        s_wc.why_n[why]++;
+        if ((s_wc.walks & 262143) == 0) wc_report();
+    }
+#else
+    if (jump) why = ts_walk_jump(e, &w, (int32_t)n, omx, omy, tmx, tmy, extra, lane, &nl, &st);
+    else why = ts_walk_ticks(e, &w, n, omx, omy, tmx, tmy, extra, lane, &nl, &st);
+#endif
     if (why == TS_OK && lane_out) {
         if (nl > PT2_MAX_T) luaL_error(e->L, "gh_pt2_v2: lane too long");
         *lane_out = lane_make(e, lane, nl);
     }
     return why;
 }
+
 static int tank_shot_walk_angle(Ev *e, double ox, double oy, double angle, double tmx, double tmy, const Extra *extra, Lane **lane_out) { PB(P_tank_shot_walk_angle); int r_ = tank_shot_walk_angle__p(e, ox, oy, angle, tmx, tmy, extra, lane_out); PE(); return r_; }
 
 static int tank_shot_walk__p(Ev *e, double ox, double oy, double ax, double ay, double tmx, double tmy,
