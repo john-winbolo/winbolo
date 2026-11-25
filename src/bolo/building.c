@@ -79,16 +79,27 @@ void buildingDestroy(building *bld) {
 *  If it already exists returns the terrain type of the
 *  item and decrements its lifetime.
 *
+*  A building's first hit makes it a half building and
+*  starts its record with the whole life. A half building
+*  with no record was not made by a hit: it was on the map
+*  from the start, or a scenario wrote it. It stands where
+*  a building stands after its first hit, so its record
+*  starts one hit down, and it takes one hit fewer than a
+*  building, as in Mac Bolo.
+*
 *ARGUMENTS:
-*  sim   - The game the building belongs to
-*  bld   - Pointer to the buildings object
-*  x     - X co-ord
-*  y     - Y co-ord
+*  sim     - The game the building belongs to
+*  bld     - Pointer to the buildings object
+*  x       - X co-ord
+*  y       - Y co-ord
+*  terrain - The square's terrain as the shell found it:
+*            BUILDING or HALFBUILDING
 *********************************************************/
-BYTE buildingAddItem(GameSim *sim, building *bld, BYTE x, BYTE y) {
+BYTE buildingAddItem(GameSim *sim, building *bld, BYTE x, BYTE y, BYTE terrain) {
   BYTE returnValue; /* Value to return */
   bool found;       /* Is the item found */
   int count;        /* Looping Variable */
+  BYTE life;        /* Life of a new item */
   building q;
   building inc;
 
@@ -114,12 +125,23 @@ BYTE buildingAddItem(GameSim *sim, building *bld, BYTE x, BYTE y) {
 
   /* If not found add a new item */
   if (found == FALSE) {
-    New (q);
-    q->x = x;
-    q->y = y;
-    q->life = (BYTE) sim->rules.building_life;
-    q->next = *bld;
-    *bld = q;
+    life = (BYTE) sim->rules.building_life;
+    if (terrain == HALFBUILDING) {
+      /* This hit is not the one that made it a half building, so it
+         comes off the life. */
+      life--;
+    }
+    if (life == BUILDING_DEATH) {
+      /* A life of 1: the half building's one hit is this one. */
+      returnValue = RUBBLE;
+    } else {
+      New (q);
+      q->x = x;
+      q->y = y;
+      q->life = life;
+      q->next = *bld;
+      *bld = q;
+    }
   }
 
   return returnValue;

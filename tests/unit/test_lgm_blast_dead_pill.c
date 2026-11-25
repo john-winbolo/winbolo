@@ -59,6 +59,10 @@
  *                                  each once with no rewind and once with a
  *                                  rewind. As in Mac Bolo, where a shell's
  *                                  hit on a square explodes at that square.
+ *                                  The same again with the square a half
+ *                                  building no shell has touched, as a map
+ *                                  can have from the start: building_life
+ *                                  hits, one fewer, as in Mac Bolo.
  * lgm_blast_forest_shot          - one land shell into a forest (it becomes
  *                                  grass), the same four builder places and
  *                                  the same answers: a hit on the square.
@@ -475,57 +479,70 @@ int run_lgm_blast_wall_rubble_shot(void) {
     static const uint8_t comps[2] = { 0, 3 };
     /* 0 keeps the fixture's building_life, the default (4). */
     static const int lives[3] = { 0, 1, 7 };
+    /* What the square starts as: a wall, and a half building no shell has
+     * touched, as a map can have from the start. */
+    static const BYTE starts[2] = { BUILDING, HALFBUILDING };
     LbdFix f;
-    int    l, i, s, h;
+    int    l, i, s, h, w;
 
-    for (l = 0; l < 3; l++) {
-        for (i = 0; i < 2; i++) {
-            for (s = 0; s < LBD_SPOTS; s++) {
-                WORLD lx, ly;
-                BYTE  after[LBD_WALL_MAX_HITS];
-                bool  died[LBD_WALL_MAX_HITS];
-                int   life, hits;
+    for (w = 0; w < 2; w++) {
+        for (l = 0; l < 3; l++) {
+            for (i = 0; i < 2; i++) {
+                for (s = 0; s < LBD_SPOTS; s++) {
+                    WORLD lx, ly;
+                    BYTE  after[LBD_WALL_MAX_HITS];
+                    bool  died[LBD_WALL_MAX_HITS];
+                    int   life, hits;
 
-                if (lbd_open_bare(&f) != 0) {
-                    return 1;
-                }
-                if (lives[l] != 0) {
-                    f.gs->rules.building_life = lives[l];
-                }
-                life = (int)f.gs->rules.building_life;
-                /* A new wall takes building_life + 1 hits to rubble
-                 * (buildingAddItem). */
-                hits = life + 1;
-                if ((lives[l] == 0 && life != 4) || hits > LBD_WALL_MAX_HITS) {
+                    if (lbd_open_bare(&f) != 0) {
+                        return 1;
+                    }
+                    if (lives[l] != 0) {
+                        f.gs->rules.building_life = lives[l];
+                    }
+                    life = (int)f.gs->rules.building_life;
+                    /* A new wall takes building_life + 1 hits to rubble, and
+                     * a half building one fewer (buildingAddItem). */
+                    hits = (starts[w] == BUILDING) ? life + 1 : life;
+                    if ((lives[l] == 0 && life != 4) ||
+                        hits > LBD_WALL_MAX_HITS) {
+                        lbd_close(&f);
+                    }
+                    UT_ASSERT_MSG(lives[l] != 0 || life == 4,
+                                  "the default building_life is %d, not 4",
+                                  life);
+                    UT_ASSERT_MSG(hits <= LBD_WALL_MAX_HITS,
+                                  "building_life %d needs more than %d hits",
+                                  life, LBD_WALL_MAX_HITS);
+                    mapSetPos(f.gs, &f.gs->mp, f.px, f.py, starts[w], FALSE,
+                              FALSE);
+
+                    lbd_spot(&f, s, &lx, &ly);
+                    for (h = 0; h < hits; h++) {
+                        died[h] = lbd_fire_east_kills(&f, lx, ly, comps[i],
+                                                      false);
+                        after[h] = mapGetPos(&f.gs->mp, f.px, f.py);
+                    }
                     lbd_close(&f);
-                }
-                UT_ASSERT_MSG(lives[l] != 0 || life == 4,
-                              "the default building_life is %d, not 4", life);
-                UT_ASSERT_MSG(hits <= LBD_WALL_MAX_HITS,
-                              "building_life %d needs more than %d hits",
-                              life, LBD_WALL_MAX_HITS);
-                mapSetPos(f.gs, &f.gs->mp, f.px, f.py, BUILDING, FALSE, FALSE);
 
-                lbd_spot(&f, s, &lx, &ly);
-                for (h = 0; h < hits; h++) {
-                    died[h] = lbd_fire_east_kills(&f, lx, ly, comps[i], false);
-                    after[h] = mapGetPos(&f.gs->mp, f.px, f.py);
-                }
-                lbd_close(&f);
-
-                for (h = 0; h < hits; h++) {
-                    BYTE want = (h == hits - 1) ? RUBBLE : HALFBUILDING;
-                    UT_ASSERT_MSG(after[h] == want,
-                                  "building_life %d, rewind %u: after hit %d "
-                                  "the wall's square is terrain %u, not %u",
-                                  life, (unsigned)comps[i], h + 1,
-                                  (unsigned)after[h], (unsigned)want);
-                    UT_ASSERT_MSG(died[h] == lbdSpotOnSquare[s],
-                                  "building_life %d, rewind %u: hit %d on a "
-                                  "wall %s a builder %s",
-                                  life, (unsigned)comps[i], h + 1,
-                                  died[h] ? "killed" : "left alive",
-                                  lbdSpotNames[s]);
+                    for (h = 0; h < hits; h++) {
+                        BYTE want = (h == hits - 1) ? RUBBLE : HALFBUILDING;
+                        UT_ASSERT_MSG(after[h] == want,
+                                      "start terrain %u, building_life %d, "
+                                      "rewind %u: after hit %d the wall's "
+                                      "square is terrain %u, not %u",
+                                      (unsigned)starts[w], life,
+                                      (unsigned)comps[i], h + 1,
+                                      (unsigned)after[h], (unsigned)want);
+                        UT_ASSERT_MSG(died[h] == lbdSpotOnSquare[s],
+                                      "start terrain %u, building_life %d, "
+                                      "rewind %u: hit %d on a wall %s a "
+                                      "builder %s",
+                                      (unsigned)starts[w], life,
+                                      (unsigned)comps[i], h + 1,
+                                      died[h] ? "killed" : "left alive",
+                                      lbdSpotNames[s]);
+                    }
                 }
             }
         }
