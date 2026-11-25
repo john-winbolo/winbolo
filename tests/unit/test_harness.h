@@ -4224,6 +4224,13 @@ int run_lobby_random_map_drops_map_own_script(void);
 int run_lobby_random_map_clears_map_md5(void);
 int run_lobby_cancel_file_preview_keeps_random_map(void);
 int run_lobby_map_rotate_holds_seats_again(void);
+/* The empty reset (test_empty_reset.c): only human players count, bots and
+ * spectators do not, and a server with no lobby starts a new round. */
+int run_empty_reset_bots_only_fires(void);
+int run_empty_reset_human_holds_timer(void);
+int run_empty_reset_human_leaves_starts_timer(void);
+int run_empty_reset_spectator_counts_empty(void);
+int run_empty_reset_nolobby_starts_new_round(void);
 /* A map rotation decides the scenario again: a plain map leaves none
  * attached, and the scripted map brings its own back. */
 int run_scenario_map_rotation_redecides(void);
