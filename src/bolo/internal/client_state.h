@@ -137,25 +137,4 @@ void clientStatePredictTick(struct ClientSim *csim, ClientState *cs, const Input
                             tank *predictedTank, struct GameSim *sim,
                             bool isKeysTick, bool inBrain);
 
-/*********************************************************
- *NAME:          clientStateReconcile
- *PURPOSE:
- *  Compares the predicted tank with the server's
- *  authoritative tank. If they differ, snaps the
- *  predicted tank to the server's state and replays
- *  all unacknowledged inputs.
- *
- *  Returns TRUE if a correction was applied.
- *
- *ARGUMENTS:
- *  cs                 - Pointer to ClientState
- *  lastProcessedInput - Tick of last input server processed
- *  predictedTank      - Pointer to the client's predicted tank
- *  serverTank         - The server's authoritative tank
- *  sim                - Pointer to GameSim
- *********************************************************/
-bool clientStateReconcile(struct ClientSim *csim, ClientState *cs, uint32_t lastProcessedInput,
-                          tank *predictedTank, tank serverTank,
-                          struct GameSim *sim);
-
 #endif /* CLIENT_STATE_H */

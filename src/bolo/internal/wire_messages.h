@@ -60,6 +60,7 @@
     FGROUP(TANK_PRESENT_MODS, U8, modReload)                 \
     FGROUP(TANK_PRESENT_MODS, U8, modDealt)                  \
     FGROUP(TANK_PRESENT_MODS, U8, modTaken)                  \
-    FGROUP(TANK_PRESENT_MODS_WIDE, U16, modSpeedWide)
+    FGROUP(TANK_PRESENT_MODS_WIDE, U16, modSpeedWide)        \
+    FGROUP(TANK_PRESENT_RESIDUAL, U8, residualSpeed)
 
 #endif /* WINBOLO_WIRE_MESSAGES_H */

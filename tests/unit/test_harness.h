@@ -2722,6 +2722,10 @@ int run_loopback_channel(void);
  * value no substitute can invent has to reach the server again and keep
  * reaching it as the client changes it. */
 int run_loopback_hitch_recovers(void);
+/* A tank moving slower than tank_min_move, under 80ms of delay each way, is
+ * never moved off its predicted position by a snapshot
+ * (test_prediction_slow_tank.c). */
+int run_prediction_slow_tank_no_corrections(void);
 /* One client quits while another keeps playing (test_loopback_quit_keeps_peer.c):
  * the peer sees the slot leave its roster, stays connected for 600 pumps, and
  * its own inputs keep being applied on tick numbers it actually sent. */

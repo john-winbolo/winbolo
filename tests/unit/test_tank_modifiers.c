@@ -164,8 +164,9 @@ int run_tank_modifiers_wire_roundtrip(void) {
     filled.modSpeed = 0xB1; filled.modAccel = 0xB2; filled.modTurn = 0xB3;
     filled.modReload = 0xB4; filled.modDealt = 0xB5; filled.modTaken = 0xB6;
     filled.modSpeedWide = 533;
+    filled.residualSpeed = 0xC1;
 
-    for (combo = 0; combo < 1024; combo++) {
+    for (combo = 0; combo < 2048; combo++) {
         TankSnapshot s, out;
         uint8_t buf[TANK_SNAPSHOT_WIRE_SIZE];
         int packed, consumed;
