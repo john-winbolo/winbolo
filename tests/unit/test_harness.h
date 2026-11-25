@@ -3494,6 +3494,9 @@ int run_dialog_quit(void);
 int run_bot_init_arg_difficulty_token(void);
 int run_bot_init_arg_mode_tokens(void);
 int run_bot_difficulty_names(void);
+/* -brain-lag-ms frame split (test_bot_init_arg.c): botLagSplitFrames
+ * rounds a round trip to frames and splits it down/up, clamped. */
+int run_bot_lag_split_frames(void);
 
 /* mDNS LAN discovery (test_mdns_discovery.c): unicast-loopback round-trip of
  * the advertiser builder + browser parse path, asserting the SRV port, the

@@ -484,6 +484,11 @@ typedef struct
 	BrainTankMods mods;
 	BYTE    reload_ticks;
 
+	// The round trip this brain plays with, in ms (info.ping_ms). Only the
+	// test option -brain-lag-ms sets it; 0 otherwise, and 0 is not pushed.
+	// Appended, like everything else here.
+	uint16_t ping_ms;
+
 	} BrainInfo;
 
 #pragma pack(pop)

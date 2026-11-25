@@ -432,6 +432,7 @@ void brainDataMakeInfo(ClientSim *csPtr, BrainInfo *value, bool first, aiType ai
 
   /* Server tick and assistant message */
   value->server_tick = clientSimGetLastServerTick(csPtr);
+  value->ping_ms = csPtr->brainPingMs;
   value->assistant_msg = clientSimGetBrainLastAssistMsg(csPtr);
   clientSimSetBrainLastAssistMsg(csPtr, 0);  /* consume once */
 

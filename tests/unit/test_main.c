@@ -1882,6 +1882,7 @@ static const UnitTestEntry s_tests[] = {
     { "dialog_quit",                             run_dialog_quit                             },
     { "bot_init_arg_difficulty_token",           run_bot_init_arg_difficulty_token           },
     { "bot_init_arg_mode_tokens",                run_bot_init_arg_mode_tokens                },
+    { "bot_lag_split_frames",                    run_bot_lag_split_frames                    },
     { "bot_difficulty_names",                    run_bot_difficulty_names                    },
     { "screencalc_river_road_counts_as_water",   run_screencalc_river_road_counts_as_water   },
     { "screencalc_river_arms_of_road_centred_cross",

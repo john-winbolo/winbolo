@@ -957,6 +957,12 @@ void brainCorePushInfo(lua_State *L, const BrainInfo *info) {
    * state for a clean respawn; it should early-return without acting. */
   lua_pushboolean(L, info->dead);
   lua_setfield(L, -2, "dead");
+  /* The round trip under the test option -brain-lag-ms. Pushed only when
+   * set, so a game without it builds the very same info table. */
+  if (info->ping_ms != 0) {
+    lua_pushinteger(L, info->ping_ms);
+    lua_setfield(L, -2, "ping_ms");
+  }
 
   /* The rules this sim runs on (info.rules) and this tank's own modifiers
    * (info.mods, percent, 100 = classic) — persistent tables, overwritten in

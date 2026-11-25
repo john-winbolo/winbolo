@@ -231,6 +231,11 @@ struct ClientSim {
      * path anchors forward-projection to it rather than the display ping. */
     uint16_t    projectionPingMs;
 
+    /* The round trip a brain is told (info.ping_ms). Set only by the
+     * in-server bot runner under -brain-lag-ms; 0 everywhere else, and a 0
+     * leaves info.ping_ms unset. */
+    uint16_t    brainPingMs;
+
     /* Forward offset added to every input tick this client produces. A
      * producer whose counter has fallen behind the server's consumption
      * adopts the jump once and keeps it, so it catches up in one round trip
