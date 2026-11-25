@@ -4,7 +4,8 @@
  */
 
 /*
- * lv_jump_anim.h - the short animation of Rewind and Fast Forward.
+ * lv_jump_anim.h - the short animation of Rewind and Fast Forward, and of a
+ * seek of the seek bar.
  *
  * Each of the two buttons takes playback to a snapshot of the log. With the
  * animation the map does not jump there: for LV_JUMP_ANIM_MS it shows a small
@@ -110,6 +111,23 @@ static inline int lvJumpAnimStepAt(uint32_t elapsedMs, uint32_t durMs, int steps
     if (k < 0) k = 0;
     if (k > steps - 1) k = steps - 1;
     return k;
+}
+
+/* The seek bar moves playback the same way (lv_windowSeekToMs): a click or a
+   drag of its handle is a jump to the place under it, made with this
+   animation. While the handle is dragged the target moves on every frame; a
+   new target does not start the time again, or playback would always be
+   in the first, short steps of a new animation and fall behind the handle.
+   It goes on from where it is in the time, but never from later than this:
+   so the animation to the new place is at least the last half of one, and
+   the first frame after it goes three quarters of the way (lvJumpAnimStepAt
+   at half the time). */
+#define LV_JUMP_ANIM_RETARGET_MS (LV_JUMP_ANIM_MS / 2)
+
+/* The time into the animation a new target goes on from: elapsedMs, the
+   time of the animation so far, held to at most retargetMs. */
+static inline uint32_t lvJumpAnimRetargetElapsed(uint32_t elapsedMs, uint32_t retargetMs) {
+    return (elapsedMs > retargetMs) ? retargetMs : elapsedMs;
 }
 
 #ifdef __cplusplus

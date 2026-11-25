@@ -227,6 +227,20 @@ void lv_windowRewind(void) {
     g_lv->wantScreenUpdate = TRUE;
 }
 
+/* A seek of the seek bar (imgui_controls.cpp) to ms, a log time. The desktop
+ * viewer plays there in a short animation (logviewer.c); the browser build
+ * has none, as for Rewind and Fast Forward, so it is a jump, as the seek bar
+ * made before the animation. The seek bar has paused playback already. */
+void lv_windowSeekToMs(uint32_t ms) {
+    if (g_lv->isLoaded == FALSE) {
+        return;
+    }
+    lv_drawDirtyScreen();
+    lv_screenSeekToTimeMs(ms);
+    lv_drawDirtyScreen();
+    lv_windowNeedRedraw();
+}
+
 void lv_windowResize(void) {
     lv_drawResizeRenderTarget();
 }

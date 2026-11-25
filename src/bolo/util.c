@@ -219,20 +219,12 @@ bool utilIsTankHit(WORLD xTank, WORLD yTank, TURNTYPE tankAngle, WORLD x, WORLD 
    * signature for a future per-facing check that isn't wired up yet. */
   (void)tankAngle;
   (void)angle;
-#ifdef BOLO_LEGACY_SQUARE_COLLISION
-  (void)hitRadius;
-  return (abs(xTank - x) < 128 && abs(yTank - y) < 128);
-#else
-  {
-    int dx = (int)xTank - (int)x;
-    int dy = (int)yTank - (int)y;
-    /* Bounding-box pre-test bounds dx/dy before squaring; see tankIsTankHit.
-     * Never rejects a real hit, prevents int overflow for far-apart pairs
-     * (pillbox aim prediction steps a shell from far away toward the tank). */
-    const int r = (int) hitRadius;
-    return (abs(dx) < r && abs(dy) < r && (dx * dx + dy * dy) < r * r);
-  }
-#endif
+  /* The rule is hitRulesTankShellInZone (hit_rules.h), the circle by
+   * default and the square under BOLO_LEGACY_SQUARE_COLLISION. Its test on
+   * each axis bounds dx and dy before they are squared, so far-apart pairs
+   * (pillbox aim prediction steps a shell from far away toward the tank)
+   * cannot overflow. */
+  return hitRulesTankShellInZone((int)xTank - (int)x, (int)yTank - (int)y, (int) hitRadius);
 }
 
 /*********************************************************

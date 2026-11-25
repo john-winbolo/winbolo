@@ -29,6 +29,7 @@
 #include "logviewer.h"
 #include "lv_log.h"
 #include "lv_pillbox.h"
+#include "hit_rules.h"          /* LGM_BLAST_SHAPE_* */
 #include "sim_rules_names.h"
 #include "zip.h"
 #include "replay_harness.h"
@@ -649,6 +650,79 @@ int run_lv_rule_changes_live_same_tick(void) {
                       "then 30)", n, seen[0], seen[1]);
         UT_ASSERT_MSG(at == 30.0 && cap == 30,
                       "the file reads %g, pillMaxArmour %d (want 30)", at, cap);
+    }
+    return 0;
+}
+
+/* ── 8. An lgm_blast_shape outside the three shapes ────────────────── */
+
+/* The engine plays an lgm_blast_shape value outside 0..2 as the half-square
+ * circle (lgmBlastOpenGroundCatches), so the viewer must draw that and not
+ * the circle of 144. On a feed: the box (1.0), then 3.0, the box again, then
+ * 99.0. The shape at the playhead goes box, half-square, box, half-square.
+ * 1.0 is 0x3FF0000000000000, 3.0 0x4008000000000000 and 99.0
+ * 0x4058C00000000000. */
+#define LVRC_SHAPE_HI ((uint8_t)(SIM_RULE_lgm_blast_shape >> 8))
+#define LVRC_SHAPE_LO ((uint8_t)(SIM_RULE_lgm_blast_shape & 0xFF))
+
+int run_lv_rule_changes_lgm_blast_shape_outside(void) {
+    static const uint8_t box[3 + 8] = {
+        LVRC_SHAPE_HI, LVRC_SHAPE_LO, 8,
+        0x3F, 0xF0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+    static const uint8_t three[3 + 8] = {
+        LVRC_SHAPE_HI, LVRC_SHAPE_LO, 8,
+        0x40, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+    static const uint8_t many[3 + 8] = {
+        LVRC_SHAPE_HI, LVRC_SHAPE_LO, 8,
+        0x40, 0x58, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00};
+    static const int want[5] = {
+        LGM_BLAST_SHAPE_CLASSIC, LGM_BLAST_SHAPE_MAC_BOX, LGM_BLAST_SHAPE_CLASSIC,
+        LGM_BLAST_SHAPE_MAC_BOX, LGM_BLAST_SHAPE_CLASSIC};
+    static LvrcLog  b;
+    LogViewerState *lv;
+    int             seen[8];
+    int             n = 0;
+    int             steps = 0;
+    int             i;
+    bool            loaded;
+
+    b.len = 0;
+    lvrcPutHeader(&b);
+    lvrcPutSnapshot(&b);
+    lvrcPutNoEvents(&b, 2);
+    lvrcPutRuleSet(&b, box, sizeof(box));
+    lvrcPutNoEvents(&b, 3);
+    lvrcPutRuleSet(&b, three, sizeof(three));
+    lvrcPutNoEvents(&b, 3);
+    lvrcPutRuleSet(&b, box, sizeof(box));
+    lvrcPutNoEvents(&b, 3);
+    lvrcPutRuleSet(&b, many, sizeof(many));
+    lvrcPutNoEvents(&b, 2);
+    lvrcPutU8(&b, LOG_QUIT);
+
+    lv = lv_decoderCreate(false);
+    UT_ASSERT_MSG(lv != NULL, "lv_decoderCreate returned NULL");
+    lv_screenSetSizeX(30);
+    lv_screenSetSizeY(30);
+
+    loaded = lv_screenLoadFromStream(b.buf, b.len) == TRUE;
+    if (loaded) {
+        seen[n++] = lv->rules.lgmBlastShape;
+        while (lv_screenIsPlaying() == TRUE && steps < 4096) {
+            lv_screenLogTick();
+            steps++;
+            if (lv->rules.lgmBlastShape != seen[n - 1] && n < 8) {
+                seen[n++] = lv->rules.lgmBlastShape;
+            }
+        }
+    }
+    lv_decoderDestroy(lv);
+
+    UT_ASSERT_MSG(loaded, "the stream failed to load");
+    UT_ASSERT_MSG(n == 5, "the shape changed %d times (want 4)", n - 1);
+    for (i = 0; i < 5; i++) {
+        UT_ASSERT_MSG(seen[i] == want[i], "shape %d was %d (want %d)", i, seen[i],
+                      want[i]);
     }
     return 0;
 }

@@ -24,6 +24,17 @@
         return 1;                                                           \
     } while (0)
 
+/* A test that has nothing to check here (an input it needs is not given)
+ * returns UT_SKIP_RC through UT_SKIP. The runner prints SKIP for it, it is
+ * not a failure, and CTest shows it as skipped for a test with
+ * SKIP_RETURN_CODE set to this value in CMakeLists.txt. */
+#define UT_SKIP_RC 77
+#define UT_SKIP(fmt, ...)                                                   \
+    do {                                                                    \
+        fprintf(stderr, "  skipped: " fmt "\n", ##__VA_ARGS__);             \
+        return UT_SKIP_RC;                                                  \
+    } while (0)
+
 #define UT_ASSERT(cond)                                                     \
     do {                                                                    \
         if (!(cond)) {                                                      \
@@ -1413,8 +1424,41 @@ int run_server_overrun_stats_due(void);
 int run_lv_player_lag_read(void);
 int run_lv_lag_track(void);
 int run_lv_lag_ring(void);
+/* The lag view's pillboxes and map, one round trip back (lv_lag.h). */
+int run_lv_lag_rtt_back(void);
+int run_lv_lag_ring_back(void);
+int run_lv_lag_map_undo(void);
+int run_lv_lag_view_map(void);
+/* Options > Base Numbers: the bases in the view (test_lv_calibration.c). */
+int run_lv_base_spots(void);
+int run_lv_lag_view_toggle(void);
 int run_lv_lag_feature_default_off(void);
 int run_lv_lag_view_draw(void);
+/* The lag view draws the chosen player's own shells at the present
+ * (test_lv_calibration.c), and the shell owner matcher on a recording, on
+ * ask only (WB_LV_OWNER_WBV). */
+int run_lv_lag_view_own_shells(void);
+int run_lv_lag_view_lost_owner(void);
+int run_lv_lag_view_shell_snapshot(void);
+int run_lv_shell_owner_recording(void);
+/* The shell owner matcher (lv_shell_owner.h), against the game's shell code
+ * (test_lv_shell_owner.c). */
+int run_lv_shell_owner_rules(void);
+int run_lv_shell_owner_real_flight(void);
+int run_lv_shell_owner_start(void);
+int run_lv_shell_owner_link(void);
+int run_lv_shell_owner_one_line(void);
+int run_lv_shell_owner_ids(void);
+/* The lag view's early blast toggle (test_lv_early_blast.c). */
+int run_lv_early_blast_rules(void);
+int run_lv_early_blast_ended(void);
+int run_lv_early_blast_frames(void);
+int run_lv_early_blast_match(void);
+int run_lv_early_blast_hide(void);
+int run_lv_early_blast_needs_own_shells(void);
+int run_lv_early_blast_same_place(void);
+int run_lv_early_blast_many_players(void);
+int run_lv_early_blast_watch_miss(void);
 int run_lv_lag_view_rename(void);
 /* The viewer reads log_OverrunStats records and gives the one at the playhead. */
 int run_lv_overrun_read(void);
@@ -4734,6 +4778,7 @@ int run_lv_rule_changes_hostile(void);
 int run_lv_rule_changes_live_feed(void);
 int run_lv_rule_changes_armour_levels(void);
 int run_lv_rule_changes_live_same_tick(void);
+int run_lv_rule_changes_lgm_blast_shape_outside(void);
 /* The log viewer's scenario panels, scores, announcement and markers at the
  * playhead (test_lv_presentation.c, with the presentation round recorded by
  * lv_scripts_fixture.c): a hand-written log played through and seeked both
@@ -4818,6 +4863,19 @@ int run_lv_tank_status_sums(void);
 /* The bars the log viewer draws over each tank (test_lv_tank_bars.c): their
  * size and place for a size of map square, the filled part, the colours. */
 int run_lv_tank_bars_sums(void);
+/* The hit areas the log viewer draws round each tank and each builder
+ * (test_lv_hitbox.c): the engine's tank circle and builder catch test. */
+int run_lv_hitbox_sums(void);
+int run_lv_hitbox_lgm_fit(void);
+int run_lv_hitbox_lgm_pick(void);
+int run_lv_hitbox_outline(void);
+/* The tank's hit zone from a recording's version (test_lv_calibration.c). */
+int run_lv_hitbox_zone_from_version(void);
+/* The hit rules the engine and the log viewer share (test_hit_rules.c):
+ * the builder rule against the engine's death test today, and the tank
+ * rule against the engine's sums before they moved to hit_rules.h. */
+int run_hit_rules_builder_matches_engine(void);
+int run_hit_rules_tank_matches_engine(void);
 /* A click on a tank on the log viewer's map (test_lv_tank_pick.c): which
  * tank a point is on, and where the mark round the selected one goes. */
 int run_lv_tank_pick_sums(void);
@@ -4835,6 +4893,8 @@ int run_lv_dock_clear_layout(void);
 int run_lv_dock_clear_rects(void);
 int run_lv_dock_clear_map(void);
 int run_lv_dock_clear_prefs(void);
+/* The Tank panel's length there follows its lag section. */
+int run_lv_dock_clear_room_len(void);
 /* The arrangement of the sidebars a new user starts with
  * (test_lv_dock_clear.c, lv_dock_default.h). */
 int run_lv_dock_default_layout(void);
@@ -4959,6 +5019,11 @@ int run_lv_jump_targets(void);
 int run_lv_jump_anim_lands(void);
 int run_lv_jump_anim_steps(void);
 int run_lv_jump_anim_time(void);
+int run_lv_jump_anim_retarget(void);
+int run_lv_base_near_pick(void);
+int run_lv_base_near_range(void);
+int run_lv_base_near_bars(void);
+int run_lv_base_near_game_screen(void);
 
 /* The four presentation control events (test_scenario_presentation_codec.c):
  * their body codecs against hand-written bytes, the refusals a short or

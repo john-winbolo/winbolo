@@ -696,8 +696,33 @@ static const UnitTestEntry s_tests[] = {
     { "lv_player_lag_read", run_lv_player_lag_read },
     { "lv_lag_track", run_lv_lag_track },
     { "lv_lag_ring", run_lv_lag_ring },
+    { "lv_lag_rtt_back", run_lv_lag_rtt_back },
+    { "lv_lag_ring_back", run_lv_lag_ring_back },
+    { "lv_lag_map_undo", run_lv_lag_map_undo },
+    { "lv_lag_view_toggle", run_lv_lag_view_toggle },
     { "lv_lag_feature_default_off", run_lv_lag_feature_default_off },
     { "lv_lag_view_draw", run_lv_lag_view_draw },
+    { "lv_lag_view_own_shells", run_lv_lag_view_own_shells },
+    { "lv_lag_view_lost_owner", run_lv_lag_view_lost_owner },
+    { "lv_lag_view_shell_snapshot", run_lv_lag_view_shell_snapshot },
+    { "lv_lag_view_map", run_lv_lag_view_map },
+    { "lv_base_spots", run_lv_base_spots },
+    { "lv_shell_owner_recording", run_lv_shell_owner_recording },
+    { "lv_shell_owner_rules", run_lv_shell_owner_rules },
+    { "lv_shell_owner_real_flight", run_lv_shell_owner_real_flight },
+    { "lv_shell_owner_start", run_lv_shell_owner_start },
+    { "lv_shell_owner_link", run_lv_shell_owner_link },
+    { "lv_shell_owner_one_line", run_lv_shell_owner_one_line },
+    { "lv_shell_owner_ids", run_lv_shell_owner_ids },
+    { "lv_early_blast_rules", run_lv_early_blast_rules },
+    { "lv_early_blast_ended", run_lv_early_blast_ended },
+    { "lv_early_blast_frames", run_lv_early_blast_frames },
+    { "lv_early_blast_match", run_lv_early_blast_match },
+    { "lv_early_blast_hide", run_lv_early_blast_hide },
+    { "lv_early_blast_needs_own_shells", run_lv_early_blast_needs_own_shells },
+    { "lv_early_blast_same_place", run_lv_early_blast_same_place },
+    { "lv_early_blast_many_players", run_lv_early_blast_many_players },
+    { "lv_early_blast_watch_miss", run_lv_early_blast_watch_miss },
     { "lv_lag_view_rename", run_lv_lag_view_rename },
     { "lv_overrun_read", run_lv_overrun_read },
     { "log_roundtrip_ping",                      run_log_roundtrip_ping                      },
@@ -2804,6 +2829,7 @@ static const UnitTestEntry s_tests[] = {
     { "lv_rule_changes_live_feed",                       run_lv_rule_changes_live_feed                       },
     { "lv_rule_changes_armour_levels",                   run_lv_rule_changes_armour_levels                   },
     { "lv_rule_changes_live_same_tick",                  run_lv_rule_changes_live_same_tick                  },
+    { "lv_rule_changes_lgm_blast_shape_outside",         run_lv_rule_changes_lgm_blast_shape_outside         },
     { "lv_presentation_seek",                            run_lv_presentation_seek                            },
     { "lv_presentation_hostile",                         run_lv_presentation_hostile                         },
     { "lv_presentation_scripted_round",                  run_lv_presentation_scripted_round                  },
@@ -2842,6 +2868,13 @@ static const UnitTestEntry s_tests[] = {
     { "lv_overview_neutral_row",                         run_lv_overview_neutral_row                         },
     { "lv_tank_status_sums",                             run_lv_tank_status_sums                             },
     { "lv_tank_bars_sums",                               run_lv_tank_bars_sums                               },
+    { "lv_hitbox_sums",                                  run_lv_hitbox_sums                                  },
+    { "lv_hitbox_lgm_fit",                               run_lv_hitbox_lgm_fit                               },
+    { "lv_hitbox_lgm_pick",                              run_lv_hitbox_lgm_pick                              },
+    { "lv_hitbox_outline",                               run_lv_hitbox_outline                               },
+    { "lv_hitbox_zone_from_version",                     run_lv_hitbox_zone_from_version                     },
+    { "hit_rules_builder_matches_engine",                run_hit_rules_builder_matches_engine                },
+    { "hit_rules_tank_matches_engine",                   run_hit_rules_tank_matches_engine                   },
     { "lv_tank_pick_sums",                               run_lv_tank_pick_sums                               },
     { "lv_marks_fade",                                   run_lv_marks_fade                                   },
     { "lv_window_size_parse",                            run_lv_window_size_parse                            },
@@ -2851,6 +2884,7 @@ static const UnitTestEntry s_tests[] = {
     { "lv_dock_clear_rects",                             run_lv_dock_clear_rects                             },
     { "lv_dock_clear_map",                               run_lv_dock_clear_map                               },
     { "lv_dock_clear_prefs",                             run_lv_dock_clear_prefs                             },
+    { "lv_dock_clear_room_len",                          run_lv_dock_clear_room_len                          },
     { "lv_dock_default_layout",                          run_lv_dock_default_layout                          },
     { "lv_dump_recorded_round",                          run_lv_dump_recorded_round                          },
     { "lv_spmap_owner_table",                            run_lv_spmap_owner_table                            },
@@ -2930,6 +2964,11 @@ static const UnitTestEntry s_tests[] = {
     { "lv_jump_anim_lands",                              run_lv_jump_anim_lands                              },
     { "lv_jump_anim_steps",                              run_lv_jump_anim_steps                              },
     { "lv_jump_anim_time",                               run_lv_jump_anim_time                               },
+    { "lv_jump_anim_retarget",                           run_lv_jump_anim_retarget                           },
+    { "lv_base_near_pick",                               run_lv_base_near_pick                               },
+    { "lv_base_near_range",                              run_lv_base_near_range                              },
+    { "lv_base_near_bars",                               run_lv_base_near_bars                               },
+    { "lv_base_near_game_screen",                        run_lv_base_near_game_screen                        },
     { "scn_presentation_codec_bodies",                   run_scn_presentation_codec_bodies                   },
     { "scn_presentation_codec_refuses_short",            run_scn_presentation_codec_refuses_short            },
     { "scn_presentation_decoder_sets_broadcast",         run_scn_presentation_decoder_sets_broadcast         },
@@ -3064,7 +3103,8 @@ static int run_one(const char *name) {
             s_currentTest = s_tests[i].name;
             int rc = s_tests[i].fn();
             s_currentTest = "none";
-            fprintf(stderr, "%s %s\n", rc == 0 ? "PASS" : "FAIL",
+            fprintf(stderr, "%s %s\n",
+                    rc == 0 ? "PASS" : (rc == UT_SKIP_RC ? "SKIP" : "FAIL"),
                     s_tests[i].name);
             return rc;
         }
@@ -3102,13 +3142,18 @@ int main(int argc, char **argv) {
     /* Several names run in that order in one process, which is how to
      * reproduce a test that passes alone and fails in the full run: give it
      * the tests that ran before it until the failure comes back. The exit
-     * code is the first nonzero one. */
+     * code is the first failure's, else UT_SKIP_RC when a test skipped,
+     * else 0. */
     if (argc >= 3 && strcmp(argv[1], "--test") == 0) {
         int rc = 0;
         int a;
         for (a = 2; a < argc; a++) {
             int one = run_one(argv[a]);
-            if (rc == 0) {
+            if (one == UT_SKIP_RC) {
+                if (rc == 0) {
+                    rc = one;
+                }
+            } else if (one != 0 && (rc == 0 || rc == UT_SKIP_RC)) {
                 rc = one;
             }
         }
@@ -3124,8 +3169,11 @@ int main(int argc, char **argv) {
             printf("SKIP %s (regenerates a committed fixture)\n", s_tests[i].name);
             continue;
         }
-        if (run_one(s_tests[i].name) != 0) {
-            fail = 1;
+        {
+            int one = run_one(s_tests[i].name);
+            if (one != 0 && one != UT_SKIP_RC) {
+                fail = 1;
+            }
         }
     }
     SDL_Quit();
