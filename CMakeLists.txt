@@ -6094,6 +6094,9 @@ set(_unit_test_names
     lv_player_lag_read
     lv_lag_track
     lv_lag_ring
+    lv_lag_graph_window
+    lv_lag_notice_recording
+    lv_lag_notice
     lv_lag_rtt_back
     lv_lag_ring_back
     lv_lag_map_undo

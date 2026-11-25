@@ -886,6 +886,11 @@ void lv_screenOverrunNow(LvOverrunNow *out);
 void lv_screenLagViewSet(int slot);
 int  lv_screenLagViewSlot(void);
 bool lv_screenLagViewStatus(char *name, size_t nameSize, int *behindMs, bool *drawn);
+/* The newest notice that the lag view moved back in forward play
+ * (LvLagNotice in lv_lag.h) into *out (may be NULL). Returns a count that
+ * goes up by one with each new notice; 0 before the first. Hold the client
+ * mutex. */
+uint32_t lv_screenLagNotice(LvLagNotice *out);
 
 /* What the lag view's shell owner matcher (lv_shell_owner.h) did since the
  * viewer started: how many new shells it gave an owner and why the others

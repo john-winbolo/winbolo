@@ -206,6 +206,21 @@ static int        s_lagViewJoin = -1;
    decode where it always did. */
 static bool       s_lagFeature  = FALSE;
 
+/* The notes of the lag view's notice (lv_lagNoticeStep). */
+static bool        s_lagNoteHave = FALSE;  /* the notes below are of the step before */
+static uint32_t    s_lagNotePlayMs;        /* the playhead at that step */
+static uint32_t    s_lagNoteFrameMs;       /* the frame the view drew there */
+static int         s_lagNoteSlot = -1;
+static int         s_lagNoteJoin = -1;
+static bool        s_lagNoteRecHave = FALSE;
+static LvLagRecord s_lagNoteRec;
+/* Set while a forward seek of one step ticks on, so that step counts as
+   play. */
+static bool        s_lagNoteOneStepSeek = FALSE;
+/* The newest notice, and a count that goes up with each new one. */
+static LvLagNotice s_lagNotice;
+static uint32_t    s_lagNoticeSerial = 0;
+
 /* --- Overrun records ----------------------------------------------------
  * The server's timing and each bot's overruns, as the recording's
  * log_OverrunStats records state them (overrun_record.h). Collected the way
@@ -271,6 +286,8 @@ static void lv_lagReset(void) {
   s_lagSkipped = FALSE;
   s_lagViewSlot = -1;
   s_lagViewJoin = -1;
+  s_lagNoteHave = FALSE;
+  memset(&s_lagNotice, 0, sizeof(s_lagNotice));
   for (i = 0; i < LV_LAG_SLOTS; i++) {
     lv_lagTrackClear(&s_lagJoins[i]);
   }
@@ -1138,6 +1155,88 @@ static const LvLagFrame *lv_lagViewMapFrame(void) {
   return lv_lagRingBack(&s_lagRing, lv_lagNowMs(), lv_lagRttBackMs(rec->rttMs));
 }
 
+/* --- The notice when the lag view moves back ----------------------------
+ * In forward play the frame the view draws its tanks and shells from can be
+ * older than the one it drew at the step before: the player's rewind went up
+ * (one entry more is 20 ms further back), or the view holds at the tick
+ * before a run of snapshot steps (lv_lagNowMs) while the rewind changes. The
+ * game window then says why for about a second (lv_imgui_lag_banner_at).
+ *
+ * Each step playback makes notes the frame drawn, the player's record and
+ * the playhead. The next step compares with them only when it is the step
+ * straight after (20 ms on), with the same player chosen, and made by play
+ * or by a one-step forward seek (the "." key). The steps a longer seek
+ * decodes, a step back (also a seek) and the view turned on or moved to
+ * another player give no notice. */
+/* The snapshot hold the view is in at the playhead, for the notice. */
+static void lv_lagHoldNow(LvLagHold *h) {
+  uint32_t nowMs = lv_lagNowMs();
+  uint32_t from;
+  int i;
+
+  memset(h, 0, sizeof(*h));
+  if (nowMs >= g_lv->timeRunning) {
+    return;
+  }
+  h->on = TRUE;
+  h->tickFrom = lv_screenServerTickAt(nowMs);
+  h->tickTo = lv_screenServerTickAt(g_lv->timeRunning);
+  /* The run starts at the first step with the held tick: the server writes
+     the events of the tick before a snapshot as a block of their own. */
+  from = nowMs;
+  for (i = 0; i < 16 && from >= LV_LAG_ENTRY_MS; i++) {
+    if (lv_screenServerTickAt(from - LV_LAG_ENTRY_MS) != h->tickFrom) {
+      break;
+    }
+    from -= LV_LAG_ENTRY_MS;
+  }
+  h->ms = g_lv->timeRunning - from;
+  h->gameMs = (h->tickTo > h->tickFrom) ? (h->tickTo - h->tickFrom) * 10u : 0u;
+}
+
+/* Note the step playback has just made, and make a notice when the view
+   moved back. Called at the end of each tick that may take a history
+   frame. */
+static void lv_lagNoticeStep(void) {
+  const bool play = (g_lv->fastForwarding == FALSE) || s_lagNoteOneStepSeek;
+  const LvLagRecord *rec = lv_lagViewRecord();
+  uint32_t behind = 0;
+  const LvLagFrame *f = (rec != NULL) ? lv_lagViewFrame(&behind, NULL) : NULL;
+
+  if (play && f != NULL && s_lagNoteHave &&
+      g_lv->timeRunning == s_lagNotePlayMs + LV_LAG_ENTRY_MS &&
+      s_lagNoteSlot == s_lagViewSlot && s_lagNoteJoin == s_lagViewJoin) {
+    LvLagHold hold;
+    LvLagNotice n;
+    lv_lagHoldNow(&hold);
+    lv_lagNoticeFor(&n, TRUE, TRUE, s_lagNoteFrameMs, f->ms,
+                    s_lagNoteRecHave ? &s_lagNoteRec : NULL, rec, &hold);
+    if (n.any) {
+      n.atMs = g_lv->timeRunning;
+      s_lagNotice = n;
+      s_lagNoticeSerial++;
+    }
+  }
+  /* Noted in a seek too, so a step after the seek compares with where the
+     seek stopped. */
+  s_lagNoteHave = (f != NULL);
+  s_lagNotePlayMs = g_lv->timeRunning;
+  s_lagNoteFrameMs = (f != NULL) ? f->ms : 0;
+  s_lagNoteSlot = s_lagViewSlot;
+  s_lagNoteJoin = s_lagViewJoin;
+  s_lagNoteRecHave = (rec != NULL);
+  if (rec != NULL) {
+    s_lagNoteRec = *rec;
+  }
+}
+
+uint32_t lv_screenLagNotice(LvLagNotice *out) {
+  if (out != NULL) {
+    *out = s_lagNotice;
+  }
+  return s_lagNoticeSerial;
+}
+
 /* Fill out with the pillboxes as the map draws them: those of the lag
    view's frame (lv_lagViewMapFrame) while it has one. out starts as a copy
    of the present pillboxes, so what a frame does not keep is the present's.
@@ -1240,8 +1339,7 @@ bool lv_screenPlayerLagNow(int slot, int *rttMs, int *behindMs) {
 }
 
 void lv_screenPlayerLagSnapshot(int slot, LvPlayerLag *out) {
-  uint32_t total;
-  int i;
+  uint32_t known;
 
   if (out == NULL) {
     return;
@@ -1260,28 +1358,15 @@ void lv_screenPlayerLagSnapshot(int slot, LvPlayerLag *out) {
     return;
   }
   out->bot = (lv_playersIsBot((BYTE) slot) != FALSE);
-  /* The RTT across the whole recording, so a spike shows wherever the
-     playhead is. A live feed's end is its head, which moves on. */
-  total = g_lv->totalTimeMs;
-  if (total < g_lv->timeRunning) {
-    total = g_lv->timeRunning;
+  /* The graph has the playhead in its middle. A loaded file's load walk
+     read every record, so the time after the playhead is known to the end
+     of the file. A live feed's records are read as playback reaches them,
+     so its graph is empty after the playhead. */
+  known = g_lv->timeRunning;
+  if (!lv_screenSpecIsLiveMode() && g_lv->totalTimeMs > known) {
+    known = g_lv->totalTimeMs;
   }
-  if (total == 0) {
-    total = 1;
-  }
-  for (i = 0; i < LV_LAG_GRAPH_SAMPLES; i++) {
-    uint32_t ms = (uint32_t) (((uint64_t) total * (uint64_t) i) /
-                              (uint64_t) (LV_LAG_GRAPH_SAMPLES - 1));
-    const LvLagRecord *rec = lv_lagTrackAt(&s_lagTracks[slot], ms);
-    out->graph[i] = (rec != NULL) ? (float) rec->rttMs : 0.0f;
-    if (out->graph[i] > out->graphMax) {
-      out->graphMax = out->graph[i];
-    }
-  }
-  out->playhead = (float) g_lv->timeRunning / (float) total;
-  if (out->playhead > 1.0f) {
-    out->playhead = 1.0f;
-  }
+  lv_lagGraphFill(out, &s_lagTracks[slot], g_lv->timeRunning, known);
 }
 
 void lv_screenLagViewSet(int slot) {
@@ -1293,6 +1378,8 @@ void lv_screenLagViewSet(int slot) {
   }
   s_lagViewSlot = slot;
   s_lagViewJoin = lv_lagJoinAt(slot);
+  /* The view turned on or moved: the next step is no step of this view. */
+  s_lagNoteHave = FALSE;
 }
 
 int lv_screenLagViewSlot(void) {
@@ -5002,9 +5089,11 @@ bool lv_screenLogTick() {
       }
       s_lagSkipLastMs = g_lv->timeRunning;
       s_lagSkipped = TRUE;
+      lv_lagNoticeStep();
       return returnValue;
     }
     lv_lagCaptureTick();
+    lv_lagNoticeStep();
   }
   return returnValue;
 }
@@ -8877,9 +8966,12 @@ static void lv_screenSeekToAbsoluteMs(uint32_t targetTime) {
 
   if (targetTime > g_lv->timeRunning && g_lv->logLoaded == TRUE &&
       !(haveSnap && snapTime > g_lv->timeRunning)) {
+    /* One step on (the "." key) is play for the lag view's notice. */
+    s_lagNoteOneStepSeek = (targetTime - g_lv->timeRunning <= LV_LAG_ENTRY_MS);
     lv_screenFastForwardStart();
     lv_screenFastForwardSome(targetTime, UINT32_MAX);
     lv_screenFastForwardFinish();
+    s_lagNoteOneStepSeek = FALSE;
     return;
   }
 

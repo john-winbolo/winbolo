@@ -1061,7 +1061,7 @@ static const LangEntry langTable[] = {
     {2832, "Two small bars over each tank: armour on top, shells under it"},
     {3110, "Lag: {number} ms round trip, screen {number2} ms behind"},
     {3111, "Lag: none recorded for this player yet"},
-    {3112, "Round-trip time across the recording, in ms. The highest is {number} ms. The white line is the playhead"},
+    {3112, "Round-trip time in ms, 30 seconds each side of the playhead, which is the strong line in the middle. The top of the graph is {number} ms. Click to move the playhead to a time"},
     {3113, "See what this player saw"},
     {3114, "Draw the other tanks, the builders and the shells where this player's screen showed them: as far back as the server's rewind for this player. The pillboxes and the map are drawn one round trip back, as this player's screen had them. This player's own tank stays at its present place"},
     {3115, "{string1}'s screen, {number} ms behind"},
@@ -1073,6 +1073,12 @@ static const LangEntry langTable[] = {
     /* Log viewer Tank panel: the line beside the empty base bars */
     {3480, "No base near"},
     {3121, "Lag: a bot, screen {number} ms behind"},
+    /* The Tank panel's lag graph: the time and tick under the mouse
+       (string1 the time, number the tick), a time with no record, and the
+       value beside the playhead line (number the round trip, ms). */
+    {3122, "{string1}, tick {number}"},
+    {3123, "No lag record for this time"},
+    {3124, "{number} ms"},
     /* The viewer's server timing (log_OverrunStats) in the Game Info panel. */
     {3130, "Server timing"},
     {3131, "Recorded at {string1} of the round"},
@@ -3009,6 +3015,10 @@ static const LangEntry langTable[] = {
     {3969, "{string1} on square"},
     {3970, "(rewind {number})"},
     {3971, "estimate"},
+    /* The lag view's notice that the view moved back in forward play. */
+    {3972, "View moved back {number} ms"},
+    {3973, "View moved back {number} ms: {string1}'s lag {number2} -> {number3} ms behind (round trip {number4} -> {string2} ms)"},
+    {3974, "Recording snapshot: game time moved {number} ms in {number2} ms of playback (tick {number3} to {number4})"},
     {2810, "Whether a pillbox may pick a tank as its target."},
     {2860, "+ {number} others"},
     {2861, "+ 1 other"},

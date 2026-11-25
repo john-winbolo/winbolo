@@ -72,8 +72,14 @@
    the present map. */
 #define LV_LAG_SQUARES_MAX 64
 
-/* The samples the Tank panel's graph shows over the round. */
-#define LV_LAG_GRAPH_SAMPLES 120
+/* The samples the Tank panel's graph shows. An odd count, so the middle
+   sample (LV_LAG_GRAPH_MID) is at the playhead. */
+#define LV_LAG_GRAPH_SAMPLES 121
+#define LV_LAG_GRAPH_MID     ((LV_LAG_GRAPH_SAMPLES - 1) / 2)
+
+/* The time the graph shows: half of it before the playhead and half after,
+   so the playhead is in the middle. 60 seconds, a sample each 500 ms. */
+#define LV_LAG_GRAPH_SPAN_MS 60000
 
 /* The preference that turns the viewer's lag display on: the Tank panel's
    lag line, graph and check box, the View menu item, the round-trip time in
@@ -385,6 +391,75 @@ static inline void lv_lagMapUndo(const LvLagRing *r, const LvLagFrame *target, u
     }
 }
 
+/* A run of playback steps in which the game did not move: the steps of a
+   snapshot. The server writes a snapshot inside one game tick: the events
+   of the tick before it as a block of their own, the snapshot, and the
+   blocks after it (see s_lagSkipFirstMs in screen.c). The viewer plays each
+   block as a 20 ms step, so in those steps the game time stands still, and
+   the lag view holds at the step before them (lv_lagNowMs). on is false
+   when the view is not in such a hold. The server counts two game ticks
+   for each 20 ms (lv_screenServerTickAt). */
+typedef struct {
+    bool     on;
+    uint32_t ms;        /* the run's length in playback time */
+    uint32_t gameMs;    /* the game time that passed in it: 10 ms a tick */
+    uint32_t tickFrom;  /* the server's tick at the run's first step */
+    uint32_t tickTo;    /* the server's tick at the playhead */
+} LvLagHold;
+
+/* What the game window says for one forward step of playback
+   (lv_lagNoticeFor). */
+typedef struct {
+    bool     any;       /* there is a line to show */
+    uint32_t atMs;      /* the playhead at the step (set by the caller) */
+    bool     back;      /* the lag view drew an older frame than before */
+    uint32_t backMs;    /* by how much */
+    bool     lag;       /* the player's lag changed at this step: the line
+                           names the change */
+    int      behindWas, behindNow;   /* screen behind, ms */
+    int      rttWas, rttNow;         /* round trip, ms */
+    bool     hold;      /* the view was in a snapshot hold: the line names it */
+    LvLagHold run;
+} LvLagNotice;
+
+/* The notice for one forward step of playback.
+
+   viewOn      the lag view is on, for the same player as at the step before
+   havePrev    prevFrameMs is the frame the view drew at the step before
+   prevFrameMs the time of that frame
+   frameMs     the time of the frame the view draws at this step
+   was, now    the player's lag record at the step before and at this one
+               (NULL for none)
+   hold        the snapshot hold the view is in at this step, or NULL
+
+   There is a notice only when the view moved back. It has the lag line
+   when the lag record changed, and the hold line when the view was in a
+   hold; with neither, the line that says only how far it moved. */
+static inline void lv_lagNoticeFor(LvLagNotice *out, bool viewOn, bool havePrev,
+                                   uint32_t prevFrameMs, uint32_t frameMs,
+                                   const LvLagRecord *was, const LvLagRecord *now,
+                                   const LvLagHold *hold) {
+    memset(out, 0, sizeof(*out));
+    if (!viewOn || !havePrev || frameMs >= prevFrameMs) {
+        return;
+    }
+    out->any = true;
+    out->back = true;
+    out->backMs = prevFrameMs - frameMs;
+    if (was != NULL && now != NULL &&
+        (was->rewind != now->rewind || was->rttMs != now->rttMs)) {
+        out->lag = true;
+        out->behindWas = (int) was->rewind * LV_LAG_ENTRY_MS;
+        out->behindNow = (int) now->rewind * LV_LAG_ENTRY_MS;
+        out->rttWas = (int) was->rttMs;
+        out->rttNow = (int) now->rttMs;
+    }
+    if (hold != NULL && hold->on) {
+        out->hold = true;
+        out->run = *hold;
+    }
+}
+
 /* The value lv_lagViewToggle gives when the view must stay as it is. */
 #define LV_LAG_TOGGLE_NONE (-2)
 
@@ -426,12 +501,77 @@ typedef struct {
                         panel shows the rewind only */
     int   rttMs;     /* round-trip time at the playhead */
     int   behindMs;  /* how far behind the present the player's screen was */
-    /* The RTT over the recording, LV_LAG_GRAPH_SAMPLES samples spread
-       from its start to its end; a sample before the player's first record
-       is 0. */
-    float graph[LV_LAG_GRAPH_SAMPLES];
-    float graphMax;  /* the highest sample, at least 1 */
-    float playhead;  /* where the playhead is across the graph, 0 to 1 */
+    /* The graph: LV_LAG_GRAPH_SAMPLES samples over LV_LAG_GRAPH_SPAN_MS,
+       with the playhead at sample LV_LAG_GRAPH_MID (lv_lagGraphFill). A
+       sample with no value (graphHas false) is drawn empty: a time before
+       the recording's start, before the player's first record, or after
+       the last time the viewer has read. */
+    float   graph[LV_LAG_GRAPH_SAMPLES];        /* round-trip time, ms */
+    int     graphBehind[LV_LAG_GRAPH_SAMPLES];  /* screen behind, ms */
+    bool    graphHas[LV_LAG_GRAPH_SAMPLES];
+    int64_t graphStartMs;  /* the playback time of sample 0; below 0 near the start */
+    float   graphMax;      /* the highest sample, at least 1 */
 } LvPlayerLag;
+
+/* The playback time of the graph's first sample, for the playhead at
+   playheadMs. It is below 0 when the playhead is less than half the span
+   from the start. */
+static inline int64_t lv_lagGraphStartMs(uint32_t playheadMs) {
+    return (int64_t) playheadMs - (int64_t) (LV_LAG_GRAPH_SPAN_MS / 2);
+}
+
+/* The playback time of sample i of a graph that starts at startMs. */
+static inline int64_t lv_lagGraphSampleMs(int64_t startMs, int i) {
+    return startMs + ((int64_t) LV_LAG_GRAPH_SPAN_MS * i) / (LV_LAG_GRAPH_SAMPLES - 1);
+}
+
+/* The sample nearest to a place across the graph, frac 0 at its left edge
+   and 1 at its right edge. A place outside the graph gives the end sample. */
+static inline int lv_lagGraphSampleAt(float frac) {
+    int i;
+    if (!(frac > 0.0f)) {
+        return 0;
+    }
+    if (frac >= 1.0f) {
+        return LV_LAG_GRAPH_SAMPLES - 1;
+    }
+    i = (int) (frac * (float) (LV_LAG_GRAPH_SAMPLES - 1) + 0.5f);
+    return i > LV_LAG_GRAPH_SAMPLES - 1 ? LV_LAG_GRAPH_SAMPLES - 1 : i;
+}
+
+/* The record in effect at ms, for a viewer that has read the track's
+   records up to knownEndMs: NULL for a time below 0, a time after
+   knownEndMs (a record could come later), or a time before the track's
+   first record. */
+static inline const LvLagRecord *lv_lagTrackValueAt(const LvLagTrack *t, int64_t ms,
+                                                    uint32_t knownEndMs) {
+    if (ms < 0 || ms > (int64_t) knownEndMs) {
+        return NULL;
+    }
+    return lv_lagTrackAt(t, (uint32_t) ms);
+}
+
+/* Fill out's graph from the track t, with the playhead at playheadMs in
+   the middle and the records read up to knownEndMs (the playhead at
+   least). */
+static inline void lv_lagGraphFill(LvPlayerLag *out, const LvLagTrack *t, uint32_t playheadMs,
+                                   uint32_t knownEndMs) {
+    int i;
+    if (knownEndMs < playheadMs) {
+        knownEndMs = playheadMs;
+    }
+    out->graphStartMs = lv_lagGraphStartMs(playheadMs);
+    out->graphMax = 1.0f;
+    for (i = 0; i < LV_LAG_GRAPH_SAMPLES; i++) {
+        const LvLagRecord *rec =
+            lv_lagTrackValueAt(t, lv_lagGraphSampleMs(out->graphStartMs, i), knownEndMs);
+        out->graphHas[i] = (rec != NULL);
+        out->graph[i] = (rec != NULL) ? (float) rec->rttMs : 0.0f;
+        out->graphBehind[i] = (rec != NULL) ? (int) rec->rewind * LV_LAG_ENTRY_MS : 0;
+        if (out->graph[i] > out->graphMax) {
+            out->graphMax = out->graph[i];
+        }
+    }
+}
 
 #endif /* LV_LAG_H */

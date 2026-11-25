@@ -1344,6 +1344,9 @@
 #define STR_LV_LAG_MENU                     3119
 #define STR_LV_LAG_MENU_TIP                 3120
 #define STR_LV_LAG_LINE_BOT                 3121
+#define STR_LV_LAG_GRAPH_AT                 3122
+#define STR_LV_LAG_GRAPH_NONE               3123
+#define STR_LV_LAG_GRAPH_NOW                3124
 /* The viewer's server timing (log_OverrunStats) in the Game Info panel: the
    section's name, the line that says when the record shown was written
    (string1 the round time, m:ss), the record's lines (string1..3 times in ms
@@ -3734,6 +3737,15 @@
 #define STR_LV_SC_ON_SQUARE                      3969
 #define STR_LV_SC_REWIND                         3970
 #define STR_LV_SC_ESTIMATE                       3971
+/* The lag view's notice that the view moved back in forward play: the line
+   with no named cause (number the ms), the line for the player's lag change
+   (number the ms, string1 the player, number2 and number3 the screen behind
+   before and after, number4 and string2 the round trip before and after),
+   and the line for a snapshot hold (number the game time, number2 the
+   playback time, number3 and number4 the ticks). */
+#define STR_LV_LAG_NOTICE_BACK                   3972
+#define STR_LV_LAG_NOTICE_LAG                    3973
+#define STR_LV_LAG_NOTICE_HOLD                   3974
 
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
