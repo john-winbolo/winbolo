@@ -1467,6 +1467,13 @@ int run_lv_early_blast_ended(void);
 int run_lv_early_blast_frames(void);
 int run_lv_early_blast_match(void);
 int run_lv_early_blast_square_hit(void);
+/* The Server Check of the hit boxes (test_lv_server_check.c). */
+int run_lv_server_check_rule_version(void);
+int run_lv_server_check_estimate_6830(void);
+int run_lv_server_check_exact_record(void);
+int run_lv_server_check_label(void);
+/* The Server Check on a real recording, on ask only (test_lv_calibration.c). */
+int run_lv_server_check_recording(void);
 int run_lv_early_blast_hide(void);
 int run_lv_early_blast_same_place(void);
 int run_lv_early_blast_many_players(void);
