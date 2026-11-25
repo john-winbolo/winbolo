@@ -92,6 +92,22 @@ file instead. Running `WinBoloDS` without the required arguments prints the
 full list of options. A client can also host a game itself
 from the in-game menu, without a separate server.
 
+Bots get their names from the themed pools in `data/bot_names.json`. To use
+only some of them, give `-botnames` one or more pool labels, comma separated
+(case and spaces around each label do not matter):
+
+```bash
+./build/WinBoloDS -inbuilt -bots 4 -botnames "Classic AI"
+./build/WinBoloDS -inbuilt -bots 8 -teams 2 -botnames "Famous Painters, Planes"
+```
+
+The shipped labels are: Classic AI, Famous Painters, Famous Musicians,
+Martial Artists, Famous Scientists, Philosophers, Generals & Tacticians,
+Pilot Callsigns, Famous Authors, Aliens, Ancient Greeks, Australian Birds,
+Water Fountains and Planes. `-botnames list` prints them. A value that is an
+existing file, or that looks like a path (it has `/` or `\` in it, or ends in
+`.json`), is loaded as your own pool file in the same format instead.
+
 ## Tests
 
 The unit tests and the baseline tests (scripted games played by headless bots,

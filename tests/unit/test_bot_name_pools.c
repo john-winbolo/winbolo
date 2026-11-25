@@ -19,6 +19,7 @@
 
 #include "global.h"
 #include "lobby_bot_pools.h"
+#include "bolo_rand.h"
 #include "control_event.h"
 #include "transport_control_codec.h"
 #include "netpacks.h"               /* PACKET_HEADER_SIZE, PACKET_LOBBY_BOT_POOL_CHUNK */
@@ -487,6 +488,257 @@ int run_bot_pool_catalog_id(void) {
                   "it was made from %08x",
                   (unsigned)lobbyBotPoolsCatalogId(), (unsigned)builtinId);
 
+    lobbyBotPoolsReset();
+    return 0;
+}
+
+/* ── -botnames pool labels ──────────────────────────────────────────
+ *
+ * WinBoloDS reads -botnames as a pool file when the value is an existing
+ * file or looks like a path, and otherwise as comma-separated labels of
+ * pools in the shipped file. lobbyBotPoolsLoadFromArg holds those rules;
+ * these cases hand it their own "shipped" file so they do not depend on
+ * data/bot_names.json. */
+
+#define LABEL_TEST_FILE  "test_bot_names_labels_tmp.json"
+#define LABEL_OTHER_FILE "test_bot_names_other_tmp.json"
+#define LABEL_WARN_FILE  "test_bot_names_warn_tmp.txt"
+
+static int writeLabelFile(void) {
+    return writeFile(LABEL_TEST_FILE,
+        "{ \"pools\": [\n"
+        "  { \"label\": \"Classic AI\", \"names\": [\"HAL\", \"Skynet\", \"WOPR\"] },\n"
+        "  { \"label\": \"Famous Painters\", \"names\": [\"Monet\", \"Dali\"] },\n"
+        "  { \"label\": \"Planes\", \"names\": [\"Spitfire\", \"Mustang\"] }\n"
+        "] }\n");
+}
+
+/* Run lobbyBotPoolsLoadFromArg with warnings into a file, and read them
+ * back into out (NUL-terminated). */
+static bool loadArgCapture(const char *arg, char *out, size_t cap,
+                           LobbyBotPoolLoadStats *st) {
+    FILE *w = fopen(LABEL_WARN_FILE, "w+b");
+    bool ok;
+    size_t n = 0;
+    out[0] = '\0';
+    ok = lobbyBotPoolsLoadFromArg(arg, LABEL_TEST_FILE, w, st);
+    if (w) {
+        fflush(w);
+        fseek(w, 0, SEEK_SET);
+        n = fread(out, 1, cap - 1, w);
+        out[n] = '\0';
+        fclose(w);
+        remove(LABEL_WARN_FILE);
+    }
+    return ok;
+}
+
+int run_bot_pool_label_one(void) {
+    char warn[2048];
+    LobbyBotPoolLoadStats st;
+    int i;
+
+    lobbyBotPoolsReset();
+    UT_ASSERT(writeLabelFile());
+    UT_ASSERT(loadArgCapture("Classic AI", warn, sizeof(warn), &st));
+    UT_ASSERT_MSG(lobbyBotPoolCount() == 1 + 1,
+                  "one label kept %d pools (with numbered)",
+                  lobbyBotPoolCount());
+    UT_ASSERT(strcmp(lobbyBotPoolLabel(0), "Classic AI") == 0);
+    UT_ASSERT(lobbyBotPoolNameCount(0) == 3);
+    UT_ASSERT(strcmp(lobbyBotPoolName(0, 1), "Skynet") == 0);
+    UT_ASSERT_MSG(lobbyBotPoolDrawCount() == 1,
+                  "draws may pick %d pools, want only the chosen one",
+                  lobbyBotPoolDrawCount());
+    UT_ASSERT(st.poolsKept == 1);
+    UT_ASSERT_MSG(strstr(warn, "Warning") == NULL, "unexpected: %s", warn);
+    UT_ASSERT(strstr(warn, "Bot name pools chosen: Classic AI") != NULL);
+
+    /* Every draw over the draw count lands on the chosen pool. */
+    for (i = 0; i < 50; i++) {
+        UT_ASSERT(bolo_rand_below((uint32_t)lobbyBotPoolDrawCount()) == 0);
+    }
+
+    remove(LABEL_TEST_FILE);
+    lobbyBotPoolsReset();
+    UT_ASSERT(lobbyBotPoolDrawCount() == lobbyBotPoolCount());
+    return 0;
+}
+
+int run_bot_pool_label_several_spaces_case(void) {
+    char warn[2048];
+    LobbyBotPoolLoadStats st;
+    LobbyBotPoolFilterResult fr;
+
+    lobbyBotPoolsReset();
+    UT_ASSERT(writeLabelFile());
+    /* Odd case, spaces and tabs around labels, an empty item, a repeat. */
+    UT_ASSERT(loadArgCapture("  planes ,\tCLASSIC ai,, classic AI ", warn,
+                             sizeof(warn), &st));
+    UT_ASSERT_MSG(lobbyBotPoolCount() == 2 + 1, "kept %d pools",
+                  lobbyBotPoolCount() - 1);
+    /* File order, not list order. */
+    UT_ASSERT(strcmp(lobbyBotPoolLabel(0), "Classic AI") == 0);
+    UT_ASSERT(strcmp(lobbyBotPoolLabel(1), "Planes") == 0);
+    UT_ASSERT(lobbyBotPoolDrawCount() == 2);
+    UT_ASSERT_MSG(strstr(warn, "Warning") == NULL, "unexpected: %s", warn);
+
+    /* The pure filter on its own: counts labels as typed. */
+    lobbyBotPoolsReset();
+    UT_ASSERT(lobbyBotPoolsLoadFromFile(LABEL_TEST_FILE, NULL));
+    UT_ASSERT(lobbyBotPoolsFilterByLabels(" Famous Painters,planes", &fr) == 2);
+    UT_ASSERT(fr.labelsGiven == 2 && fr.labelsMatched == 2);
+    UT_ASSERT(fr.unknownCount == 0 && fr.poolsKept == 2);
+    UT_ASSERT(strcmp(lobbyBotPoolLabel(0), "Famous Painters") == 0);
+    UT_ASSERT(strcmp(lobbyBotPoolLabel(1), "Planes") == 0);
+
+    remove(LABEL_TEST_FILE);
+    lobbyBotPoolsReset();
+    return 0;
+}
+
+int run_bot_pool_label_unknown_falls_back(void) {
+    char warn[2048];
+    LobbyBotPoolLoadStats st;
+
+    lobbyBotPoolsReset();
+    UT_ASSERT(writeLabelFile());
+    UT_ASSERT(loadArgCapture("Zebras", warn, sizeof(warn), &st));
+    UT_ASSERT_MSG(strstr(warn,
+                  "Warning: -botnames: no pool named 'Zebras'; pools are: "
+                  "Classic AI, Famous Painters, Planes") != NULL,
+                  "warning was: %s", warn);
+    UT_ASSERT_MSG(strstr(warn, "using all pools") != NULL,
+                  "warning was: %s", warn);
+    /* All pools, and draws as with no -botnames. */
+    UT_ASSERT(lobbyBotPoolCount() == 3 + 1);
+    UT_ASSERT(lobbyBotPoolDrawCount() == lobbyBotPoolCount());
+    UT_ASSERT(st.poolsKept == 3);
+
+    remove(LABEL_TEST_FILE);
+    lobbyBotPoolsReset();
+    return 0;
+}
+
+int run_bot_pool_label_mixed_known_unknown(void) {
+    char warn[2048];
+    LobbyBotPoolLoadStats st;
+
+    lobbyBotPoolsReset();
+    UT_ASSERT(writeLabelFile());
+    UT_ASSERT(loadArgCapture("Planes, Zebras ,famous painters", warn,
+                             sizeof(warn), &st));
+    UT_ASSERT_MSG(strstr(warn, "no pool named 'Zebras'; pools are: "
+                  "Classic AI, Famous Painters, Planes") != NULL,
+                  "warning was: %s", warn);
+    UT_ASSERT(strstr(warn, "using all pools") == NULL);
+    UT_ASSERT(lobbyBotPoolCount() == 2 + 1);
+    UT_ASSERT(strcmp(lobbyBotPoolLabel(0), "Famous Painters") == 0);
+    UT_ASSERT(strcmp(lobbyBotPoolLabel(1), "Planes") == 0);
+    UT_ASSERT(lobbyBotPoolDrawCount() == 2);
+    UT_ASSERT(st.poolsKept == 2);
+
+    remove(LABEL_TEST_FILE);
+    lobbyBotPoolsReset();
+    return 0;
+}
+
+int run_bot_pool_label_file_path_still_loads(void) {
+    char warn[2048];
+    LobbyBotPoolLoadStats st;
+
+    lobbyBotPoolsReset();
+    UT_ASSERT(writeLabelFile());
+    UT_ASSERT(writeFile(LABEL_OTHER_FILE,
+        "{ \"pools\": [ { \"label\": \"Own\", \"names\": [\"A\", \"B\"] } ] }"));
+    /* An existing file is loaded as a pool file, not as labels. */
+    UT_ASSERT(loadArgCapture(LABEL_OTHER_FILE, warn, sizeof(warn), &st));
+    UT_ASSERT(lobbyBotPoolCount() == 1 + 1);
+    UT_ASSERT(strcmp(lobbyBotPoolLabel(0), "Own") == 0);
+    /* A file keeps today's draws, the numbered pool included. */
+    UT_ASSERT(lobbyBotPoolDrawCount() == lobbyBotPoolCount());
+    UT_ASSERT_MSG(warn[0] == '\0', "unexpected: %s", warn);
+
+    remove(LABEL_OTHER_FILE);
+    remove(LABEL_TEST_FILE);
+    lobbyBotPoolsReset();
+    return 0;
+}
+
+int run_bot_pool_label_path_missing_not_label(void) {
+    char warn[2048];
+    LobbyBotPoolLoadStats st;
+
+    UT_ASSERT(lobbyBotNamesArgLooksLikePath("pools/mine.json"));
+    UT_ASSERT(lobbyBotNamesArgLooksLikePath("C:\\names\\x"));
+    UT_ASSERT(lobbyBotNamesArgLooksLikePath("Classic AI.JSON"));
+    UT_ASSERT(!lobbyBotNamesArgLooksLikePath("Classic AI"));
+    UT_ASSERT(!lobbyBotNamesArgLooksLikePath("Classic AI,Planes"));
+    UT_ASSERT(!lobbyBotNamesArgLooksLikePath(".js"));
+
+    lobbyBotPoolsReset();
+    UT_ASSERT(writeLabelFile());
+    /* A missing path is never tried as a label, even when its stem is
+     * one: today's warning, and the built-in names stay. */
+    UT_ASSERT(!loadArgCapture("Classic AI.json", warn, sizeof(warn), &st));
+    UT_ASSERT_MSG(strstr(warn, "Warning: -botnames 'Classic AI.json' could "
+                  "not be loaded; using built-in bot names") != NULL,
+                  "warning was: %s", warn);
+    UT_ASSERT(lobbyBotPoolCount() == BUILTIN_THEMED + 1);
+    UT_ASSERT(lobbyBotPoolDrawCount() == lobbyBotPoolCount());
+
+    UT_ASSERT(!loadArgCapture("no-such-dir/names", warn, sizeof(warn), &st));
+    UT_ASSERT(strstr(warn, "could not be loaded") != NULL);
+    UT_ASSERT(lobbyBotPoolCount() == BUILTIN_THEMED + 1);
+
+    remove(LABEL_TEST_FILE);
+    lobbyBotPoolsReset();
+    return 0;
+}
+
+int run_bot_pool_label_none_same_draws(void) {
+    char warn[2048];
+    LobbyBotPoolLoadStats st;
+    BoloRandState rs;
+    uint32_t before[64];
+    int i, n;
+
+    /* The reference: the shipped file loaded directly, as WinBoloDS did
+     * before -botnames took labels, and the draws over the pool count. */
+    lobbyBotPoolsReset();
+    UT_ASSERT(writeLabelFile());
+    UT_ASSERT(lobbyBotPoolsLoadFromFile(LABEL_TEST_FILE, NULL));
+    n = lobbyBotPoolCount();
+    bolo_rand_save(&rs);
+    for (i = 0; i < 64; i++) before[i] = bolo_rand_below((uint32_t)n);
+
+    /* No -botnames: same pools, same draw count, same draws. */
+    lobbyBotPoolsReset();
+    UT_ASSERT(loadArgCapture(NULL, warn, sizeof(warn), &st));
+    UT_ASSERT_MSG(warn[0] == '\0', "unexpected: %s", warn);
+    UT_ASSERT(lobbyBotPoolCount() == n);
+    UT_ASSERT(lobbyBotPoolDrawCount() == n);
+    UT_ASSERT(strcmp(lobbyBotPoolLabel(0), "Classic AI") == 0);
+    UT_ASSERT(strcmp(lobbyBotPoolLabel(2), "Planes") == 0);
+    bolo_rand_restore(&rs);
+    for (i = 0; i < 64; i++) {
+        UT_ASSERT(bolo_rand_below((uint32_t)lobbyBotPoolDrawCount()) == before[i]);
+    }
+
+    /* "list" prints the labels and keeps every pool. */
+    UT_ASSERT(loadArgCapture("list", warn, sizeof(warn), &st));
+    UT_ASSERT_MSG(strstr(warn, "Bot name pools: Classic AI, Famous Painters, "
+                  "Planes") != NULL, "output was: %s", warn);
+    UT_ASSERT(lobbyBotPoolDrawCount() == lobbyBotPoolCount());
+
+    /* A later install (a file, or a client taking the server's catalogue)
+     * puts the draws back over every pool. */
+    UT_ASSERT(lobbyBotPoolsFilterByLabels("Planes", NULL) == 1);
+    UT_ASSERT(lobbyBotPoolDrawCount() == 1);
+    UT_ASSERT(lobbyBotPoolsLoadFromFile(LABEL_TEST_FILE, NULL));
+    UT_ASSERT(lobbyBotPoolDrawCount() == lobbyBotPoolCount());
+
+    remove(LABEL_TEST_FILE);
     lobbyBotPoolsReset();
     return 0;
 }

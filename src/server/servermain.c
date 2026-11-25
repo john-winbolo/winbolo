@@ -868,8 +868,13 @@ void printArgs() {
   fprintf(stderr, "                that bot's BRAIN_INIT Lua table: ';'-separated key=value\n");
   fprintf(stderr, "                pairs, a bare word being the value '1'. Ids not listed use\n");
   fprintf(stderr, "                -brain. E.g. -bot-init 0-3=brains/A/init.lua,4=brains/B/init.lua[llm]\n");
-  fprintf(stderr, "-botnames <path> - JSON file of bot name pools (themed name lists) for\n");
-  fprintf(stderr, "                naming auto-added bots. Defaults to data/bot_names.json.\n");
+  fprintf(stderr, "-botnames <path|labels> - Bot name pools (themed name lists) for naming\n");
+  fprintf(stderr, "                bots. A JSON file path, or one or more pool labels from\n");
+  fprintf(stderr, "                data/bot_names.json, comma separated (case and spaces\n");
+  fprintf(stderr, "                around labels do not matter): -botnames \"Classic AI\" or\n");
+  fprintf(stderr, "                -botnames \"Classic AI,Famous Painters\". Each team then\n");
+  fprintf(stderr, "                draws its pool only from those. -botnames list prints the\n");
+  fprintf(stderr, "                labels. Default: every pool in data/bot_names.json.\n");
   fprintf(stderr, "-allybots [N] - Place all -bots on the same team (1-16, default 1) so\n");
   fprintf(stderr, "                they start allied. Pick the same team in the lobby to join\n");
   fprintf(stderr, "                them, or a different one to fight against them.\n");
@@ -2725,28 +2730,20 @@ int main(int argc, char **argv) {
       brainPath[MAX_PATH - 1] = '\0';
     }
 
-    /* Bot naming pools: a custom file via -botnames, otherwise the
-     * shipped data/bot_names.json. These supply the themed names for
-     * the auto-add loop below. Bot names travel on the wire as
-     * strings, so a server's choice of pool is always rendered
-     * correctly on every client regardless of which file the client
-     * has. Silent fallback to the built-in names on any failure. */
+    /* Bot naming pools: a custom file via -botnames, or pool labels
+     * from the shipped data/bot_names.json (-botnames "Classic AI,
+     * Famous Painters"), otherwise the whole shipped file. These supply
+     * the themed names for the auto-add loop below. Bot names travel on
+     * the wire as strings, so a server's choice of pool is always
+     * rendered correctly on every client regardless of which file the
+     * client has. A file that cannot be loaded falls back to the
+     * built-in names; lobbyBotPoolsLoadFromArg has the rules. */
     {
       int bnArg = findArg(argc, argv, "botnames");
       LobbyBotPoolLoadStats poolStats;
-      bool poolsLoaded = false;
-      if (bnArg != ARG_NOT_FOUND) {
-        poolsLoaded =
-            lobbyBotPoolsLoadFromFile((char *)argv[bnArg], &poolStats);
-        if (!poolsLoaded) {
-          fprintf(stderr,
-                  "Warning: -botnames '%s' could not be loaded; "
-                  "using built-in bot names\n",
-                  (char *)argv[bnArg]);
-        }
-      } else {
-        poolsLoaded = lobbyBotPoolsLoadDefault(&poolStats);
-      }
+      bool poolsLoaded = lobbyBotPoolsLoadFromArg(
+          bnArg != ARG_NOT_FOUND ? (const char *)argv[bnArg] : NULL, NULL,
+          stderr, &poolStats);
       if (poolsLoaded) {
         fprintf(stderr, "Loaded %d bot name pool(s)\n", poolStats.poolsKept);
       }
@@ -3510,7 +3507,7 @@ int main(int argc, char **argv) {
           int botPool;
           if (team == 0) {
             if (noTeamPool < 0) {
-              noTeamPool = (int)bolo_rand_below((uint32_t)lobbyBotPoolCount());
+              noTeamPool = (int)bolo_rand_below((uint32_t)lobbyBotPoolDrawCount());
             }
             botPool = noTeamPool;
           } else {

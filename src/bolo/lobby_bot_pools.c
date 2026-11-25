@@ -136,6 +136,9 @@ typedef struct {
 static DynPool *s_dyn = NULL;
 static int      s_dynCount = 0;
 static int      s_useDyn = 0;
+/* Set by lobbyBotPoolsFilterByLabels: random draws skip the generated
+ * "Numbered Bots" pool. Cleared by every reset and install. */
+static int      s_drawThemedOnly = 0;
 
 static int themedCount(void) {
     return s_useDyn ? s_dynCount : BUILTIN_THEMED_COUNT;
@@ -262,6 +265,7 @@ void lobbyBotPoolsReset(void) {
     s_dyn = NULL;
     s_dynCount = 0;
     s_useDyn = 0;
+    s_drawThemedOnly = 0;
 }
 
 /* Number of bytes in a UTF-8 string (just strlen — names are stored
@@ -385,6 +389,143 @@ int lobbyBotPoolsInstall(const LobbyBotPoolDef *defs, int defCount,
 
     if (stats) *stats = st;
     return outCount;
+}
+
+/* ── Choosing pools by label ────────────────────────────────────── */
+
+int lobbyBotPoolDrawCount(void) {
+    int themed = themedCount();
+    if (s_drawThemedOnly && themed > 0) return themed;
+    return lobbyBotPoolCount();
+}
+
+/* ASCII-only lower case, so the match does not depend on the C locale. */
+static int asciiLower(int c) {
+    return (c >= 'A' && c <= 'Z') ? c + ('a' - 'A') : c;
+}
+
+/* Whether label (NUL-terminated) equals the len bytes at s, ignoring
+ * ASCII case. */
+static int labelEqualsNoCase(const char *label, const char *s, size_t len) {
+    size_t i;
+    if (strlen(label) != len) return 0;
+    for (i = 0; i < len; i++) {
+        if (asciiLower((unsigned char)label[i]) !=
+            asciiLower((unsigned char)s[i])) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static int isTrimSpace(char c) {
+    return c == ' ' || c == '\t' || c == '\r' || c == '\n';
+}
+
+int lobbyBotPoolsFilterByLabels(const char *labelList,
+                                LobbyBotPoolFilterResult *res) {
+    LobbyBotPoolFilterResult r;
+    unsigned char keep[LOBBY_BOT_POOL_MAX_POOLS];
+    int themed = themedCount();
+    int keptCount = 0;
+    int installed = 0;
+    int i;
+    const char *p = labelList;
+
+    memset(&r, 0, sizeof(r));
+    memset(keep, 0, sizeof(keep));
+    if (themed > LOBBY_BOT_POOL_MAX_POOLS) themed = LOBBY_BOT_POOL_MAX_POOLS;
+
+    while (p != NULL && *p != '\0') {
+        const char *start = p;
+        const char *end = strchr(p, ',');
+        size_t len;
+        int found = 0;
+
+        if (end == NULL) end = p + strlen(p);
+        p = (*end == ',') ? end + 1 : end;
+
+        while (start < end && isTrimSpace(*start)) start++;
+        while (end > start && isTrimSpace(end[-1])) end--;
+        len = (size_t)(end - start);
+        if (len == 0) continue;
+
+        r.labelsGiven++;
+        for (i = 0; i < themed; i++) {
+            if (labelEqualsNoCase(lobbyBotPoolLabel(i), start, len)) {
+                keep[i] = 1;
+                found = 1;
+            }
+        }
+        if (found) {
+            r.labelsMatched++;
+        } else {
+            if (r.unknownCount < LOBBY_BOT_POOL_FILTER_MAX_UNKNOWN) {
+                size_t n = len;
+                if (n > LOBBY_BOT_POOL_MAX_LABEL_BYTES) {
+                    n = LOBBY_BOT_POOL_MAX_LABEL_BYTES;
+                }
+                memcpy(r.unknown[r.unknownCount], start, n);
+                r.unknown[r.unknownCount][n] = '\0';
+            }
+            r.unknownCount++;
+        }
+    }
+
+    for (i = 0; i < themed; i++) {
+        if (keep[i]) keptCount++;
+    }
+
+    if (keptCount > 0) {
+        /* Copy the kept pools out through the public accessors, then
+         * install the copy. lobbyBotPoolsInstall copies every string
+         * before it frees the old set, so pointing into it here is safe. */
+        LobbyBotPoolDef *defs =
+            (LobbyBotPoolDef *)calloc((size_t)keptCount, sizeof(*defs));
+        const char ***nameArrays =
+            (const char ***)calloc((size_t)keptCount, sizeof(*nameArrays));
+        int k = 0;
+        if (defs != NULL && nameArrays != NULL) {
+            int ok = 1;
+            for (i = 0; i < themed; i++) {
+                int n, j;
+                if (!keep[i]) continue;
+                n = lobbyBotPoolNameCount(i);
+                nameArrays[k] = (const char **)calloc(
+                    (size_t)(n > 0 ? n : 1), sizeof(const char *));
+                if (nameArrays[k] == NULL) { ok = 0; break; }
+                for (j = 0; j < n; j++) {
+                    nameArrays[k][j] = lobbyBotPoolName(i, j);
+                }
+                defs[k].label = lobbyBotPoolLabel(i);
+                defs[k].names = nameArrays[k];
+                defs[k].nameCount = n;
+                k++;
+            }
+            if (ok) {
+                installed = lobbyBotPoolsInstall(defs, k, NULL);
+            }
+            for (i = 0; i < k; i++) free((void *)nameArrays[i]);
+        }
+        /* The casts avoid MSVC C4090 for pointers to const strings. */
+        free((void *)nameArrays);
+        free(defs);
+        if (installed > 0) {
+            s_drawThemedOnly = 1;
+        }
+    }
+
+    r.poolsKept = installed;
+    if (res) *res = r;
+    return installed;
+}
+
+bool lobbyBotNamesArgLooksLikePath(const char *arg) {
+    size_t n;
+    if (arg == NULL) return false;
+    if (strchr(arg, '/') != NULL || strchr(arg, '\\') != NULL) return true;
+    n = strlen(arg);
+    return n >= 5 && labelEqualsNoCase(".json", arg + n - 5, 5);
 }
 
 /* ── Wire catalog (serialize / compress / install) ──────────────── */
