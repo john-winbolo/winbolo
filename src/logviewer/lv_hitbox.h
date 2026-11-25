@@ -579,4 +579,46 @@ static inline void lvHitboxBuilderOutline(double bx, double by, unsigned solid, 
     }
 }
 
+/* The pulsing dot at the centre of each shell explosion.
+ *
+ * The engine tests builders against the shell's own end place (newX, newY
+ * in shellsUpdate, src/bolo/shells.c). The explosion record is put
+ * TANK_SUBTRACT (128) world units up and left of that place and then
+ * rounded down to an art pixel (explosionsAddItem), and the game draws the
+ * explosion's 16 by 16 picture with its top left on that record. So the
+ * blast point is 128 world units plus 0 to 15 more from the picture's top
+ * left on each axis; the middle of those 16, 135.5, is the closest guess,
+ * as for a tank (lvHitboxTankPlace). */
+#define LV_HITBOX_BLAST_OFFSET 128
+/* The dot is one art pixel across: 16 world units. */
+#define LV_HITBOX_BLAST_DOT_WU LV_HITBOX_WU_PER_PIXEL
+/* The pulse: one slow rise and fall a second, from 35% to 100% solid. */
+#define LV_HITBOX_PULSE_MS   1000u
+#define LV_HITBOX_PULSE_LOW  0.35
+#define LV_HITBOX_PULSE_HIGH 1.0
+
+/* The blast point, in art pixels from the top left of the explosion's
+   picture (the same on both axes). */
+static inline double lvHitboxBlastCentreInPicture(void) {
+    return (lvHitboxTankPlace(0) + LV_HITBOX_BLAST_OFFSET) / (double)LV_HITBOX_WU_PER_PIXEL;
+}
+
+/* How solid the dot is at wall-clock time ms: a cosine, so it rises and
+   falls smoothly with no hard step. It is at LV_HITBOX_PULSE_LOW at the
+   start of each period and at LV_HITBOX_PULSE_HIGH half way. */
+static inline double lvHitboxPulseAlpha(uint64_t ms) {
+    const double twoPi = 2.0 * 3.14159265358979323846;
+    double phase = (double)(ms % LV_HITBOX_PULSE_MS) / (double)LV_HITBOX_PULSE_MS;
+    double rise = 0.5 - 0.5 * cos(phase * twoPi);
+    return LV_HITBOX_PULSE_LOW + (LV_HITBOX_PULSE_HIGH - LV_HITBOX_PULSE_LOW) * rise;
+}
+
+/* The dot's size in screen pixels, for pxPerWu screen pixels to a world
+   unit: one art pixel, and never less than one screen pixel, so it still
+   shows at the smallest zoom. */
+static inline float lvHitboxBlastDotSize(float pxPerWu) {
+    float s = (float)LV_HITBOX_BLAST_DOT_WU * pxPerWu;
+    return (s < 1.0f) ? 1.0f : s;
+}
+
 #endif /* LV_HITBOX_H */

@@ -223,6 +223,60 @@ int run_lv_hitbox_sums(void) {
                       "his place is inside his picture, down");
     }
 
+    /* The pulsing dot of a shell explosion. The record is the blast point
+       less 128, rounded down to the pixel, so a blast at world 1000 is
+       recorded at (1000 - 128) & ~15 = 864: 136 units, 8.5 pixels, before
+       it. The guess, 8.46875 pixels from the picture's top left, is 135.5
+       units, inside the 16 units the blast can be in (128 to 143). */
+    UT_ASSERT_MSG(LV_HITBOX_BLAST_OFFSET == 128, "explosion record offset");
+    UT_ASSERT_MSG(lvHitboxBlastCentreInPicture() == 8.46875, "blast centre in the picture");
+    {
+        double guess = lvHitboxBlastCentreInPicture() * 16.0;
+        int wx;
+        for (wx = 128; wx < 128 + 64; wx++) {
+            int rec = (wx - 128) & ~15;
+            double err = (double)rec + guess - (double)wx;
+            UT_ASSERT_MSG(err >= -8.0 && err <= 8.0,
+                          "blast at %d: the dot is on it (%.1f off)", wx, err);
+        }
+    }
+    /* A real one, from the Oil Rig log: an explosion recorded at
+       (34016, 30080) whose blast point was about (34146, 30210), 130 units
+       further on each axis. The dot goes 135.5 units on from the record,
+       not on the record (the picture's corner), and so is on the blast
+       point to within half an art pixel. */
+    {
+        double guess = lvHitboxBlastCentreInPicture() * (double)LV_HITBOX_WU_PER_PIXEL;
+        double dotX = 34016.0 + guess, dotY = 30080.0 + guess;
+        UT_ASSERT_MSG(fabs(dotX - 34146.0) <= 8.0, "Oil Rig blast, x: %.1f", dotX);
+        UT_ASSERT_MSG(fabs(dotY - 30210.0) <= 8.0, "Oil Rig blast, y: %.1f", dotY);
+        UT_ASSERT_MSG(guess > 120.0, "the dot is not at the picture's corner");
+    }
+    /* The pulse: smooth, from 35% to 100%, once a second, from the wall
+       clock alone. */
+    UT_ASSERT_MSG(fabs(lvHitboxPulseAlpha(0) - 0.35) < 1e-9, "pulse starts low");
+    UT_ASSERT_MSG(fabs(lvHitboxPulseAlpha(500) - 1.0) < 1e-9, "pulse is full half way");
+    UT_ASSERT_MSG(fabs(lvHitboxPulseAlpha(1000) - 0.35) < 1e-9, "pulse is low again at 1 s");
+    UT_ASSERT_MSG(fabs(lvHitboxPulseAlpha(250) - lvHitboxPulseAlpha(1250)) < 1e-9,
+                  "pulse repeats each second");
+    {
+        uint64_t ms;
+        double prev = lvHitboxPulseAlpha(0);
+        for (ms = 1; ms <= 2000; ms++) {
+            double a = lvHitboxPulseAlpha(ms);
+            UT_ASSERT_MSG(a >= 0.35 - 1e-9 && a <= 1.0 + 1e-9, "pulse in range at %u ms",
+                          (unsigned)ms);
+            /* No hard step: at most a little change each millisecond. */
+            UT_ASSERT_MSG(fabs(a - prev) < 0.005, "pulse is smooth at %u ms", (unsigned)ms);
+            prev = a;
+        }
+    }
+    /* The dot is one art pixel (16 units) at every zoom, and never less
+       than one screen pixel. */
+    UT_ASSERT_MSG(lvHitboxBlastDotSize(1.0f / 16.0f) == 1.0f, "1 pixel at 1x");
+    UT_ASSERT_MSG(lvHitboxBlastDotSize(4.0f / 16.0f) == 4.0f, "4 pixels at 4x");
+    UT_ASSERT_MSG(lvHitboxBlastDotSize(0.5f / 16.0f) == 1.0f, "still 1 pixel at 0.5x");
+
     return 0;
 }
 
