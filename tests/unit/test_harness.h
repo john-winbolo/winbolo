@@ -1408,6 +1408,8 @@ int run_lv_lag_view_map(void);
 /* Options > Base Numbers: the bases in the view (test_lv_calibration.c). */
 int run_lv_base_spots(void);
 int run_lv_lag_view_toggle(void);
+/* The Screen-True options while the lag view is on (test_lv_calibration.c). */
+int run_lv_lag_screen_true(void);
 int run_lv_lag_feature_default_off(void);
 int run_lv_lag_view_draw(void);
 /* The lag view draws the chosen player's own shells at the present

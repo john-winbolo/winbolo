@@ -1071,9 +1071,9 @@ static const LangEntry langTable[] = {
     {3119, "See What the Selected Player Saw"},
     {3120, "Draw the round as the selected tank's player saw it on their own screen. The recording must hold lag records"},
     {3472, "Screen-True Own Shells"},
-    {3474, "On: the selected player's own shells are drawn at the present, as their own screen drew them at once. Off: they are drawn at the old time, as every other shell is"},
+    {3474, "On: the selected player's own shells are drawn at the present, as their own screen drew them at once. Off: they are drawn at the old time, as every other shell is. See What the Selected Player Saw turns it on"},
     {3475, "Screen-True Local Explosions"},
-    {3476, "On: the selected player's own shells explode at once where they end, and the server's later explosion of each is hidden. Off: each one explodes when the server's explosion comes"},
+    {3476, "On: the selected player's own shells explode at once where they end, and the server's later explosion of each is hidden. Off: each one explodes when the server's explosion comes. See What the Selected Player Saw turns it on"},
     {3477, "Turn on Screen-True Own Shells first"},
     /* Log viewer Tank panel: the line beside the empty base bars */
     {3480, "No base near"},

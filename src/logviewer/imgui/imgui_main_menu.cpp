@@ -925,17 +925,23 @@ int lv_imgui_main_menu_bar(void) {
                 if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
                     ImGui::SetTooltip("%s", langGetText(STR_LV_LAG_MENU_TIP));
                 }
+                /* While the view is on, every Screen-True option acts as
+                 * on (lv_lagScreenTrueOn): its item shows ticked and is
+                 * greyed, and the tooltip says why. The saved choices stay
+                 * as they are, and come back when the view is turned off. */
+                const bool forced = lv_screenScreenTrueForced() != 0;
                 /* In the lag view, the chosen player's own shells come from
                  * the present frame, as that player's own screen drew them
                  * (lv_shell_owner.h). Off draws them at the old time. */
-                const bool ownShells = lv_screenGetScreenTrueShells() != 0;
+                const bool ownShells = lv_screenScreenTrueShellsOn() != 0;
                 sep.item();
-                if (ImGui::MenuItem(langGetText(STR_LV_SCREEN_TRUE_SHELLS), NULL, ownShells)) {
+                if (ImGui::MenuItem(langGetText(STR_LV_SCREEN_TRUE_SHELLS), NULL, ownShells,
+                                    !forced)) {
                     lv_screenSetScreenTrueShells(ownShells ? 0 : 1);
                     lv_windowNeedRedraw();
                     clicked = 1;
                 }
-                if (ImGui::IsItemHovered()) {
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
                     ImGui::SetTooltip("%s", langGetText(STR_LV_SCREEN_TRUE_SHELLS_TIP));
                 }
                 /* Screen-True Local Explosions (lv_early_blast.h): in
@@ -945,19 +951,17 @@ int lv_imgui_main_menu_bar(void) {
                  * It works only with Screen-True Own Shells on
                  * (lv_earlyBlastOn), so the item is off and greyed until
                  * that one is on. The saved choice is kept meanwhile. */
-                const bool explOn = lv_earlyBlastOn(lv_screenGetScreenTrueShells() != 0,
-                                                    lv_screenGetScreenTrueExplosions() != 0);
+                const bool explOn = lv_screenScreenTrueExplosionsOn() != 0;
                 sep.item();
                 if (ImGui::MenuItem(langGetText(STR_LV_SCREEN_TRUE_EXPL), NULL, explOn,
-                                    lv_screenGetScreenTrueShells() != 0)) {
+                                    !forced && ownShells)) {
                     lv_screenSetScreenTrueExplosions(explOn ? 0 : 1);
                     lv_windowNeedRedraw();
                     clicked = 1;
                 }
                 if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-                    ImGui::SetTooltip("%s", langGetText(lv_screenGetScreenTrueShells()
-                                                            ? STR_LV_SCREEN_TRUE_EXPL_TIP
-                                                            : STR_LV_SCREEN_TRUE_EXPL_OFF_TIP));
+                    ImGui::SetTooltip("%s", langGetText(ownShells ? STR_LV_SCREEN_TRUE_EXPL_TIP
+                                                                  : STR_LV_SCREEN_TRUE_EXPL_OFF_TIP));
                 }
             }
             sep.end();
