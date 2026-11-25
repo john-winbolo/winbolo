@@ -29,14 +29,6 @@ void lv_windowRewind(void);
 void lv_windowFastForward(void);
 void lv_windowNeedRedraw(void);
 bool lv_screenSpecIsLiveMode(void);
-int  lv_screenGetLagFeature(void);
-void lv_screenSetScreenTrueShells(int enabled);
-int  lv_screenGetScreenTrueShells(void);
-void lv_screenSetScreenTrueExplosions(int enabled);
-int  lv_screenGetScreenTrueExplosions(void);
-int  lv_screenScreenTrueForced(void);
-int  lv_screenScreenTrueShellsOn(void);
-int  lv_screenScreenTrueExplosionsOn(void);
 }
 
 #define LANG_STR(id) ([NSString stringWithUTF8String:langGetText(id)])
@@ -82,9 +74,6 @@ static NSMenuItem *s_lv_builderStatusItem  = nil;
 static NSMenuItem *s_lv_pillNumbersItem    = nil;
 static NSMenuItem *s_lv_baseNumbersItem    = nil;
 static NSMenuItem *s_lv_hitBoxesItem       = nil;
-static NSMenuItem *s_lv_ownShellsItem      = nil;
-static NSMenuItem *s_lv_localExplItem      = nil;
-static NSMenuItem *s_lv_lagSepItem         = nil;
 static NSMenuItem *s_lv_jumpAnimItem       = nil;
 static NSMenuItem *s_lv_seekAnimItem       = nil;
 static NSMenuItem *s_lv_soundEffectsItem   = nil;
@@ -150,8 +139,6 @@ static void lv_push_sdl_quit(void) {
 - (void)onTogglePillNumbers:(id)sender;
 - (void)onToggleBaseNumbers:(id)sender;
 - (void)onToggleHitBoxes:(id)sender;
-- (void)onToggleScreenTrueShells:(id)sender;
-- (void)onToggleScreenTrueExplosions:(id)sender;
 - (void)onToggleJumpAnim:(id)sender;
 - (void)onToggleSeekAnim:(id)sender;
 - (void)onToggleSoundEffects:(id)sender;
@@ -304,25 +291,6 @@ static void lv_push_sdl_quit(void) {
 - (void)onToggleHitBoxes:(id)sender {
     (void)sender;
     lv_drawSetHitBoxes(lv_drawGetHitBoxes() ? 0 : 1);
-    lv_windowNeedRedraw();
-}
-/* Both items are greyed while "See What the Selected Player Saw" is on
- * (lv_mac_menubar_refresh), as every Screen-True option is on then; no
- * click comes, and the saved choices stay as they are. */
-- (void)onToggleScreenTrueShells:(id)sender {
-    (void)sender;
-    if (lv_screenScreenTrueForced()) return;
-    lv_screenSetScreenTrueShells(lv_screenGetScreenTrueShells() ? 0 : 1);
-    lv_windowNeedRedraw();
-}
-/* As the in-window item: ticked only while Screen-True Own Shells is on too,
- * and a click flips what the tick shows. The item is greyed while that one
- * is off (lv_mac_menubar_refresh), so no click comes then. */
-- (void)onToggleScreenTrueExplosions:(id)sender {
-    (void)sender;
-    if (lv_screenScreenTrueForced()) return;
-    bool on = lv_screenScreenTrueExplosionsOn() != 0;
-    lv_screenSetScreenTrueExplosions(on ? 0 : 1);
     lv_windowNeedRedraw();
 }
 - (void)onToggleJumpAnim:(id)sender { (void)sender; lv_imgui_toggle_jump_anim(); }
@@ -759,31 +727,9 @@ void lv_mac_menubar_install(struct SDL_Window *win, struct LogViewerState *lvSta
      * bar's key handler (handle_keyboard_shortcuts), which runs here too;
      * no item of this bar may take Cmd+L. */
 
-    /* The lag view's two shell items, in the in-window menu's place. Like
-     * the in-window ones they are there only while the "Player Lag View"
-     * setting is on: lv_mac_menubar_refresh hides them, and the separator
-     * after them, while it is off. */
-    NSMenuItem *ownShells = [[NSMenuItem alloc]
-        initWithTitle:LANG_STR(STR_LV_SCREEN_TRUE_SHELLS)
-        action:@selector(onToggleScreenTrueShells:)
-        keyEquivalent:@""];
-    [ownShells setTarget:s_lv_bridge];
-    [ownShells setToolTip:LANG_STR(STR_LV_SCREEN_TRUE_SHELLS_TIP)];
-    [optionsMenu addItem:ownShells];
-    s_lv_ownShellsItem = ownShells;
-
-    NSMenuItem *localExpl = [[NSMenuItem alloc]
-        initWithTitle:LANG_STR(STR_LV_SCREEN_TRUE_EXPL)
-        action:@selector(onToggleScreenTrueExplosions:)
-        keyEquivalent:@""];
-    [localExpl setTarget:s_lv_bridge];
-    [localExpl setToolTip:LANG_STR(STR_LV_SCREEN_TRUE_EXPL_TIP)];
-    [optionsMenu addItem:localExpl];
-    s_lv_localExplItem = localExpl;
-
-    NSMenuItem *lagSep = [NSMenuItem separatorItem];
-    [optionsMenu addItem:lagSep];
-    s_lv_lagSepItem = lagSep;
+    /* No Screen-True items: while that view is on, the chosen player's own
+     * shells are drawn at the present and explode at once where they end
+     * (lv_shell_owner.h, lv_early_blast.h), as in the in-window menu. */
 
     /* Animate Rewind and Fast Forward, in the in-window menu's place. */
     NSMenuItem *jumpAnim = [[NSMenuItem alloc]
@@ -1150,9 +1096,6 @@ void lv_mac_menubar_uninstall(void) {
     s_lv_pillNumbersItem = nil;
     s_lv_baseNumbersItem = nil;
     s_lv_hitBoxesItem = nil;
-    s_lv_ownShellsItem = nil;
-    s_lv_localExplItem = nil;
-    s_lv_lagSepItem = nil;
     s_lv_jumpAnimItem = nil;
     s_lv_seekAnimItem = nil;
     s_lv_soundEffectsItem = nil;
@@ -1264,30 +1207,6 @@ void lv_mac_menubar_refresh(const struct LvMenuState *s) {
     if (s_lv_pillNumbersItem) [s_lv_pillNumbersItem setState:(s->pillNumbers ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_lv_baseNumbersItem) [s_lv_baseNumbersItem setState:(s->baseNumbers ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_lv_hitBoxesItem) [s_lv_hitBoxesItem setState:(s->hitBoxes ? NSControlStateValueOn : NSControlStateValueOff)];
-    {
-        /* The lag view's shell items: there only with the lag display on.
-           Local Explosions needs Own Shells: ticked only with both on, and
-           greyed, with the tooltip that says why, while Own Shells is off.
-           While "See What the Selected Player Saw" is on, both are on,
-           ticked and greyed (lv_lagScreenTrueOn). */
-        const BOOL noLag = lv_screenGetLagFeature() ? NO : YES;
-        const bool forced = lv_screenScreenTrueForced() != 0;
-        const bool ownShells = lv_screenScreenTrueShellsOn() != 0;
-        const bool localExpl = lv_screenScreenTrueExplosionsOn() != 0;
-        if (s_lv_ownShellsItem) {
-            [s_lv_ownShellsItem setHidden:noLag];
-            [s_lv_ownShellsItem setEnabled:(forced ? NO : YES)];
-            [s_lv_ownShellsItem setState:(ownShells ? NSControlStateValueOn : NSControlStateValueOff)];
-        }
-        if (s_lv_localExplItem) {
-            [s_lv_localExplItem setHidden:noLag];
-            [s_lv_localExplItem setEnabled:((ownShells && !forced) ? YES : NO)];
-            [s_lv_localExplItem setState:(localExpl ? NSControlStateValueOn : NSControlStateValueOff)];
-            [s_lv_localExplItem setToolTip:LANG_STR(ownShells ? STR_LV_SCREEN_TRUE_EXPL_TIP
-                                                              : STR_LV_SCREEN_TRUE_EXPL_OFF_TIP)];
-        }
-        if (s_lv_lagSepItem) [s_lv_lagSepItem setHidden:noLag];
-    }
     if (s_lv_jumpAnimItem) [s_lv_jumpAnimItem setState:(lv_imgui_get_jump_anim() ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_lv_seekAnimItem) [s_lv_seekAnimItem setState:(lv_imgui_get_seek_anim() ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_lv_soundEffectsItem) [s_lv_soundEffectsItem setState:(s->soundEffects ? NSControlStateValueOn : NSControlStateValueOff)];

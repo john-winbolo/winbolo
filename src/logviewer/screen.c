@@ -277,21 +277,6 @@ static int32_t lv_lagWorld(BYTE m, BYTE p) {
   return (int32_t) m * 256 + (int32_t) p * 16;
 }
 
-/* "Screen-True Own Shells" (lv_shell_owner.h). On by default: the
-   lag view draws the chosen player's own shells from the present frame. */
-static bool s_screenTrueShells = TRUE;
-
-void lv_screenSetScreenTrueShells(int enabled) {
-  s_screenTrueShells = enabled ? TRUE : FALSE;
-}
-
-int lv_screenGetScreenTrueShells(void) { return s_screenTrueShells ? 1 : 0; }
-
-/* "Screen-True Local Explosions" (lv_early_blast.h). Off by
-   default, and drawn only while "Screen-True Own Shells" is on too
-   (lv_earlyBlastOn). It is used from lv_lagFindShellOwners and
-   lv_screenUpdate. */
-static bool              s_screenTrueExpl = FALSE;
 /* Every player's early blasts, so the list is right at once when the view
    moves to another player. */
 static LvEarlyBlastList  s_earlyBlastList;
@@ -301,29 +286,17 @@ BOLO_STATIC_ASSERT(LV_LAG_HISTORY_MS <= LV_EARLY_BLAST_HISTORY_MS,
                    lv_early_blast_keeps_lag_history);
 BOLO_STATIC_ASSERT(MAX_TANKS <= LV_EARLY_BLAST_TANKS, lv_early_blast_every_tank);
 
-void lv_screenSetScreenTrueExplosions(int enabled) {
-  s_screenTrueExpl = enabled ? TRUE : FALSE;
-}
+/* The two Screen-True options, "Screen-True Own Shells" (lv_shell_owner.h)
+   and "Screen-True Local Explosions" (lv_early_blast.h), are on exactly
+   while "See What the Selected Player Saw" is on. They have no menu item
+   and no preference, and nothing reads them while the view is off. */
+int lv_screenScreenTrueOn(void) { return s_lagViewSlot >= 0 ? 1 : 0; }
 
-int lv_screenGetScreenTrueExplosions(void) { return s_screenTrueExpl ? 1 : 0; }
-
-/* While "See What the Selected Player Saw" is on, every Screen-True option
-   acts as on (lv_lagScreenTrueOn). The saved choices above stay as they
-   are, so each one comes back when the view is turned off. */
-int lv_screenScreenTrueForced(void) { return s_lagViewSlot >= 0 ? 1 : 0; }
-
-static bool lv_screenTrueShellsOn(void) {
-  return lv_lagScreenTrueOn(s_lagViewSlot >= 0, s_screenTrueShells);
-}
+static bool lv_screenTrueShellsOn(void) { return s_lagViewSlot >= 0; }
 
 static bool lv_screenTrueExplOn(void) {
-  return lv_earlyBlastOn(lv_screenTrueShellsOn(),
-                         lv_lagScreenTrueOn(s_lagViewSlot >= 0, s_screenTrueExpl));
+  return lv_earlyBlastOn(lv_screenTrueShellsOn(), s_lagViewSlot >= 0);
 }
-
-int lv_screenScreenTrueShellsOn(void) { return lv_screenTrueShellsOn() ? 1 : 0; }
-
-int lv_screenScreenTrueExplosionsOn(void) { return lv_screenTrueExplOn() ? 1 : 0; }
 
 void lv_screenEarlyBlastStats(LvEarlyBlastStats *out) {
   if (out != NULL) {
@@ -365,6 +338,155 @@ static void lv_lagEarlyBlastTick(const LvLagFrame *f, const LvShellPt *prev,
             s_lagViewSlot, (unsigned) missMs, (unsigned) s_earlyBlastList.stats.missed,
             (unsigned) s_earlyBlastList.stats.ended);
   }
+}
+
+/* The dot at the centre of each new explosion (Hit Boxes, draw.c). An
+   explosion is new when the step before had no explosion at its place
+   (lvHitboxNewBlasts). g_lv->shs holds the shells of one step only, so
+   the explosions of the step before are kept here when the list is
+   emptied for the next step. A time of LV_SHS_NO_MS is not known.
+
+   A recording does not have a record at every playback step: some steps
+   have none at all (the server wrote two ticks in one step), and the
+   viewer then has no shell for that step. Such a step is passed over: the
+   explosions kept are those of the last step that had a shell. An
+   explosion of that step cannot have ended in the empty steps unseen, as
+   it lasts much longer, and a new one starts at frame 8 or 7, above every
+   old one that could still be there. After LV_SHS_BLAST_LIFE_MS every
+   explosion kept has surely ended. */
+#define LV_SHS_NO_MS UINT32_MAX
+/* The playback step: lv_screenLogTick moves the clock this far. */
+#define LV_SHS_STEP_MS 20u
+/* Longer than any explosion lasts (8 frames, each about 3 steps). */
+#define LV_SHS_BLAST_LIFE_MS 1000u
+static LvHitBlastRec s_blastPrev[LV_HITBOX_BLAST_PREV_MAX];
+static int      s_blastPrevN = 0;
+/* The step before had more explosions than s_blastPrev holds. */
+static bool     s_blastPrevFull = FALSE;
+/* The time of the step s_blastPrev is of, and of the step g_lv->shs is of. */
+static uint32_t s_blastPrevMs = LV_SHS_NO_MS;
+static uint32_t s_shsMs = LV_SHS_NO_MS;
+/* The new explosions of the last map lv_screenUpdate drew, in map
+   squares and art pixels (lv_screenNewBlasts). */
+#define LV_NEW_BLAST_MAX 256
+static LvHitBlastRec s_newBlast[LV_NEW_BLAST_MAX];
+static int      s_newBlastN = 0;
+
+BOLO_STATIC_ASSERT(LV_LAG_SHELLS_MAX <= LV_HITBOX_BLAST_PREV_MAX, lv_lag_shells_fit_new_blasts);
+
+/* No step before is known: the next step shows no dot. For a new log. */
+static void lv_screenShellsForget(void) {
+  s_blastPrevN = 0;
+  s_blastPrevFull = FALSE;
+  s_blastPrevMs = LV_SHS_NO_MS;
+  s_shsMs = LV_SHS_NO_MS;
+  s_newBlastN = 0;
+}
+
+/* Empty g_lv->shs for the step at g_lv->timeRunning, which is ticks steps
+   after the step it held, and keep the explosions of that step. When the
+   clock has not moved (a tick after the end of the log), or the list is
+   not of the step ticks before (a seek put playback on a snapshot), the
+   step before is not known. A list with no shell at all keeps the
+   explosions kept before (see LV_SHS_BLAST_LIFE_MS). */
+static void lv_screenShellsReset(uint32_t ticks) {
+  shells q;
+
+  if (s_shsMs == LV_SHS_NO_MS || g_lv->timeRunning == s_shsMs ||
+      g_lv->timeRunning != s_shsMs + LV_SHS_STEP_MS * ticks) {
+    s_blastPrevN = 0;
+    s_blastPrevFull = FALSE;
+    s_blastPrevMs = LV_SHS_NO_MS;
+    s_shsMs = (g_lv->timeRunning == s_shsMs) ? LV_SHS_NO_MS : g_lv->timeRunning;
+  } else if (g_lv->shs == NULL) {
+    s_shsMs = g_lv->timeRunning;
+  } else {
+    s_blastPrevN = 0;
+    s_blastPrevFull = FALSE;
+    for (q = g_lv->shs; q != NULL; q = q->next) {
+      if (!lvHitboxIsBlastFrame(q->frame)) {
+        continue;
+      }
+      if (s_blastPrevN >= LV_HITBOX_BLAST_PREV_MAX) {
+        s_blastPrevFull = TRUE;
+        break;
+      }
+      s_blastPrev[s_blastPrevN].mx = q->mx;
+      s_blastPrev[s_blastPrevN].my = q->my;
+      s_blastPrev[s_blastPrevN].px = q->px;
+      s_blastPrev[s_blastPrevN].py = q->py;
+      s_blastPrev[s_blastPrevN].frame = q->frame;
+      s_blastPrevN++;
+    }
+    s_blastPrevMs = s_shsMs;
+    s_shsMs = g_lv->timeRunning;
+  }
+  lv_shellsDestroy(&g_lv->shs);
+  g_lv->shs = lv_shellsCreate();
+}
+
+/* Add to s_newBlast the explosions of cur that lvHitboxNewBlasts finds
+   new against prev. */
+static void lv_screenNoteNewBlasts(const LvHitBlastRec *prev, int nPrev, bool havePrev,
+                                   const LvHitBlastRec *cur, int nCur) {
+  uint8_t isNew[LV_NEW_BLAST_MAX];
+  int i;
+
+  if (nCur > LV_NEW_BLAST_MAX) {
+    nCur = LV_NEW_BLAST_MAX;
+  }
+  lvHitboxNewBlasts(prev, nPrev, havePrev, cur, nCur, isNew);
+  for (i = 0; i < nCur && s_newBlastN < LV_NEW_BLAST_MAX; i++) {
+    if (isNew[i]) {
+      s_newBlast[s_newBlastN++] = cur[i];
+    }
+  }
+}
+
+/* The new explosions of g_lv->shs, the present step, into out (at most max).
+   None when the list is not the present step's own (a seek put playback
+   on a snapshot and no step has been read since), or the step before it
+   is not known. Returns how many. */
+int lv_screenShellsNewBlasts(struct LvHitBlastRec *out, int max) {
+  LvHitBlastRec cur[LV_NEW_BLAST_MAX];
+  uint8_t isNew[LV_NEW_BLAST_MAX];
+  int nCur = 0, n = 0, i;
+  bool havePrev;
+  shells q;
+
+  if (out == NULL || max <= 0 || g_lv->shs == NULL) {
+    return 0;
+  }
+  for (q = g_lv->shs; q != NULL && nCur < LV_NEW_BLAST_MAX; q = q->next) {
+    if (lvHitboxIsBlastFrame(q->frame)) {
+      cur[nCur].mx = q->mx;
+      cur[nCur].my = q->my;
+      cur[nCur].px = q->px;
+      cur[nCur].py = q->py;
+      cur[nCur].frame = q->frame;
+      nCur++;
+    }
+  }
+  havePrev = !s_blastPrevFull && s_shsMs != LV_SHS_NO_MS && s_shsMs == g_lv->timeRunning &&
+             s_blastPrevMs != LV_SHS_NO_MS && s_blastPrevMs < s_shsMs;
+  /* Kept so long that every one of them has ended: none is there. */
+  lvHitboxNewBlasts(s_blastPrev,
+                    (havePrev && s_shsMs - s_blastPrevMs > LV_SHS_BLAST_LIFE_MS) ? 0
+                                                                               : s_blastPrevN,
+                    havePrev, cur, nCur, isNew);
+  for (i = 0; i < nCur && n < max; i++) {
+    if (isNew[i]) {
+      out[n++] = cur[i];
+    }
+  }
+  return n;
+}
+
+int lv_screenNewBlasts(const struct LvHitBlastRec **out) {
+  if (out != NULL) {
+    *out = s_newBlast;
+  }
+  return s_newBlastN;
 }
 
 /* An explosion place as the map's shell list takes it. */
@@ -421,8 +543,7 @@ static void lv_lagApplyShellIdEvents(const LvShellOwnerIdEvents *ev) {
 
 /* Give the shells of the newest frame f their owners and ids
    (lv_shell_owner.h), from the frame of the entry before it, and note
-   which tanks fired. With "Screen-True Own Shells" on, the lag view
-   draws the chosen player's own shells at the present, as the player's own
+   which tanks fired. The lag view (Screen-True Own Shells) draws the chosen player's own shells at the present, as the player's own
    client drew them, and every other shell at the old time.
 
    This runs at every entry while the lag display preference is on, also
@@ -1661,6 +1782,7 @@ void lv_screenSetup() {
   lv_playersSetSelected(0);
   lvTankStockSeen = FALSE;
   g_lv->shs = lv_shellsCreate();
+  lv_screenShellsForget();
   if (g_lv->view != NULL) {
     free((*g_lv->view).screenItem);
     Dispose(g_lv->view);
@@ -1716,6 +1838,7 @@ void lv_screenDestroy() {
     lv_shellsDestroy(&g_lv->shs);
     g_lv->shs = NULL;
   }
+  lv_screenShellsForget();
   if (g_lv->view != NULL) {
     free((*g_lv->view).screenItem);
     Dispose(g_lv->view);
@@ -1731,6 +1854,45 @@ void lv_screenDestroy() {
 }
 
 void lv_frontEndDrawMainScreen(screen *value, screenMines *mineView, screenTanks *tks, screenGunsight *gs, screenBullets *sBullet, screenLgm *lgms, int32_t srtDelay, bool isPillView, int edgeX, int edgeY);
+
+/* The explosions of the lag view's history frame at ms, into out, or -1
+   when the history has no frame of that very time, or the frame was full
+   and may have lost some. A frame with no shell at all is passed over for
+   the one before it, as lv_screenShellsReset does (LV_SHS_BLAST_LIFE_MS). */
+static int lv_lagFrameBlastsAt(uint32_t ms, LvHitBlastRec *out) {
+  const LvLagFrame *f;
+  uint32_t back = 0;
+  int i, n = 0;
+
+  for (;;) {
+    f = lv_lagRingFind(&s_lagRing, ms - back);
+    if (f == NULL || f->ms != ms - back || f->shellCount >= LV_LAG_SHELLS_MAX) {
+      return -1;
+    }
+    if (f->shellCount > 0) {
+      break;
+    }
+    back += LV_LAG_ENTRY_MS;
+    if (back > LV_SHS_BLAST_LIFE_MS) {
+      return 0;
+    }
+    if (back > ms) {
+      return -1;
+    }
+  }
+  for (i = 0; i < f->shellCount; i++) {
+    const LvLagShell *sh = &f->shells[i];
+    if (lvHitboxIsBlastFrame(sh->frame)) {
+      out[n].mx = sh->mx;
+      out[n].my = sh->my;
+      out[n].px = sh->px;
+      out[n].py = sh->py;
+      out[n].frame = sh->frame;
+      n++;
+    }
+  }
+  return n;
+}
 
 
 /*********************************************************
@@ -1762,14 +1924,14 @@ void lv_screenUpdate(updateType value) {
   }
 
   lv_screenUpdateView(value);
+  s_newBlastN = 0;
   lagFrame = lv_lagViewFrame(NULL, &lagLgmFrame);
   if (lagFrame != NULL) {
     /* The lag view: the other tanks, the builders and the shells where the
        chosen player's screen showed them. The player's own client drew
-       its own shells at once, from its own tank, so with "Screen-True
-       Own Shells" on those come from the present frame
-       (lv_lagViewFrame has checked the newest frame is the playhead's).
-       With it off they stay at the old time too. A shell with no clear
+       its own shells at once, from its own tank, so those come from the
+       present frame (Screen-True Own Shells; lv_lagViewFrame has checked
+       the newest frame is the playhead's). A shell with no clear
        owner stays at the old time. The builders are one entry newer than
        the tanks (shellLgmRewind), as the server tests them. The pillboxes
        and the map squares are one round trip back, from the frame
@@ -1844,6 +2006,90 @@ void lv_screenUpdate(updateType value) {
         }
       }
     }
+    {
+      /* The new explosions, for the dot: each kind of item against the
+         same kind one step before, the old time's shells against the
+         history's frame before lagFrame, the own shells against the one
+         before the present, and the early blasts against themselves one
+         step before. */
+      LvHitBlastRec cur[LV_NEW_BLAST_MAX];
+      LvHitBlastRec prev[LV_HITBOX_BLAST_PREV_MAX];
+      int nCur = 0, nPrev;
+
+      for (i = lagFrame->shellCount - 1; i >= 0; i--) {
+        const LvLagShell *sh = &lagFrame->shells[i];
+        if (keep[i] && lvHitboxIsBlastFrame(sh->frame) && nCur < LV_NEW_BLAST_MAX) {
+          cur[nCur].mx = sh->mx;
+          cur[nCur].my = sh->my;
+          cur[nCur].px = sh->px;
+          cur[nCur].py = sh->py;
+          cur[nCur].frame = sh->frame;
+          nCur++;
+        }
+      }
+      nPrev = (lagFrame->ms >= LV_LAG_ENTRY_MS)
+                  ? lv_lagFrameBlastsAt(lagFrame->ms - LV_LAG_ENTRY_MS, prev) : -1;
+      lv_screenNoteNewBlasts(prev, nPrev, nPrev >= 0, cur, nCur);
+
+      nCur = 0;
+      for (i = now->shellCount - 1; i >= 0 && ownAtPresent; i--) {
+        const LvLagShell *sh = &now->shells[i];
+        if ((int) sh->owner == s_lagViewSlot && lvHitboxIsBlastFrame(sh->frame) &&
+            nCur < LV_NEW_BLAST_MAX) {
+          cur[nCur].mx = sh->mx;
+          cur[nCur].my = sh->my;
+          cur[nCur].px = sh->px;
+          cur[nCur].py = sh->py;
+          cur[nCur].frame = sh->frame;
+          nCur++;
+        }
+      }
+      if (nCur > 0) {
+        nPrev = (now->ms >= LV_LAG_ENTRY_MS)
+                    ? lv_lagFrameBlastsAt(now->ms - LV_LAG_ENTRY_MS, prev) : -1;
+        lv_screenNoteNewBlasts(prev, nPrev, nPrev >= 0, cur, nCur);
+      }
+
+      if (earlyBlast) {
+        bool prevFull = false;
+        nCur = 0;
+        nPrev = 0;
+        for (i = 0; i < LV_EARLY_BLAST_MAX; i++) {
+          const LvEarlyBlast *b = &s_earlyBlastList.b[i];
+          BYTE frame, before;
+          if ((int) b->owner != s_lagViewSlot) {
+            continue;
+          }
+          frame = lv_earlyBlastFrameAt(b, now->ms);
+          before = (now->ms >= LV_LAG_ENTRY_MS)
+                       ? lv_earlyBlastFrameAt(b, now->ms - LV_LAG_ENTRY_MS) : 0;
+          if (frame != 0 && nCur < LV_NEW_BLAST_MAX) {
+            cur[nCur].mx = lv_lagMapOf(b->wx);
+            cur[nCur].my = lv_lagMapOf(b->wy);
+            cur[nCur].px = lv_lagPixelOf(b->wx);
+            cur[nCur].py = lv_lagPixelOf(b->wy);
+            cur[nCur].frame = frame;
+            nCur++;
+          }
+          if (before != 0 && nPrev >= LV_HITBOX_BLAST_PREV_MAX) {
+            prevFull = true;
+          } else if (before != 0) {
+            prev[nPrev].mx = lv_lagMapOf(b->wx);
+            prev[nPrev].my = lv_lagMapOf(b->wy);
+            prev[nPrev].px = lv_lagPixelOf(b->wx);
+            prev[nPrev].py = lv_lagPixelOf(b->wy);
+            prev[nPrev].frame = before;
+            nPrev++;
+          }
+        }
+        if (nCur > 0) {
+          lv_screenNoteNewBlasts(prev, nPrev, now->ms >= LV_LAG_ENTRY_MS && !prevFull, cur,
+                                 nCur);
+        }
+      }
+    }
+  } else {
+    s_newBlastN = lv_screenShellsNewBlasts(s_newBlast, LV_NEW_BLAST_MAX);
   }
   {
     int rightEdge = (int)g_lv->xOffset + lv_screenGetSizeX();
@@ -4301,8 +4547,7 @@ bool lv_screenLogTick() {
       g_lv->gmeLength--;
     }
   }
-  lv_shellsDestroy(&g_lv->shs);
-  g_lv->shs = lv_shellsCreate();
+  lv_screenShellsReset(1u);
   if (g_lv->isPlaying == TRUE) {
     switch (g_lv->state) {
     case lv_lr_start:
@@ -8199,8 +8444,8 @@ static void lv_screenSkipWaitTicks(uint32_t ticks) {
     g_lv->gmeLength = (limitTicks >= (uint32_t)g_lv->gmeLength)
                           ? 0 : g_lv->gmeLength - (int32_t)limitTicks;
   }
-  lv_shellsDestroy(&g_lv->shs);
-  g_lv->shs = lv_shellsCreate();
+  /* The ticks waited held no shells: the explosions kept go on. */
+  lv_screenShellsReset(ticks);
   g_lv->waitLen = (unsigned short)(g_lv->waitLen - ticks);
   if (g_lv->waitLen == 0) {
     g_lv->state = lv_lr_start;

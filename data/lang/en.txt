@@ -1255,11 +1255,6 @@ STR_LV_LAG_OFF=Turn off
 STR_LV_LAG_HUD_TIP={string1}, {number} ms round trip
 STR_LV_LAG_MENU=See What the Selected Player Saw
 STR_LV_LAG_MENU_TIP=Draw the round as the selected tank's player saw it on their own screen. The recording must hold lag records
-STR_LV_SCREEN_TRUE_SHELLS=Screen-True Own Shells
-STR_LV_SCREEN_TRUE_SHELLS_TIP=On: the selected player's own shells are drawn at the present, as their own screen drew them at once. Off: they are drawn at the old time, as every other shell is. See What the Selected Player Saw turns it on
-STR_LV_SCREEN_TRUE_EXPL=Screen-True Local Explosions
-STR_LV_SCREEN_TRUE_EXPL_TIP=On: the selected player's own shells explode at once where they end, and the server's later explosion of each is hidden. Off: each one explodes when the server's explosion comes. See What the Selected Player Saw turns it on
-STR_LV_SCREEN_TRUE_EXPL_OFF_TIP=Turn on Screen-True Own Shells first
 STR_LV_LAG_LINE_BOT=Lag: a bot, screen {number} ms behind
 STR_LV_TIMING_HEADER=Server timing
 STR_LV_TIMING_AT=Recorded at {string1} of the round
@@ -1321,7 +1316,7 @@ STR_LV_MSG_PILL_STOLEN={player} just stole pillbox {number} from {other}
 
 # Log viewer: the hit area round each tank and builder on the map (Options)
 STR_LV_HIT_BOXES=Hit Boxes
-STR_LV_HIT_BOXES_TIP=Over each tank on the map, the circle a shell must reach to hit it. Over each builder out of his tank, the area an explosion must be in to kill him: a mine, a tank's explosion, or a shell that bursts on open ground. A shell that bursts on forest, a boat, the shore or a bridge kills only a builder on that square. A pulsing rainbow dot marks the exact centre of each shell explosion on the tick it explodes
+STR_LV_HIT_BOXES_TIP=Over each tank on the map, the circle a shell must reach to hit it. Over each builder out of his tank, the area an explosion must be in to kill him: a mine, a tank's explosion, or a shell that bursts on open ground. A shell that bursts on forest, a boat, the shore or a bridge kills only a builder on that square. A pulsing rainbow dot marks the exact centre of each explosion on the tick it explodes
 
 # Log viewer dialogs
 STR_LV_ASSIGN_COLOURS_HINT=Assign colours to each player team:
