@@ -47,6 +47,7 @@
 #include "attribution_track.h"
 #include "scripts_record.h"
 #include "overrun_record.h"  /* OVERRUN_RECORD_MAX_BYTES — log_OverrunStats' payload */
+#include "slow_tick_record.h" /* SLOW_TICK_RECORD_BYTES — log_SlowTick's payload */
 #include "bothost_record.h"  /* BOTHOST_RECORD_MAX_BYTES — log_BotHostData's payload */
 #include "builder_check_record.h"  /* BUILDER_CHECK_RECORD_BYTES — log_BuilderCheck's payload */
 #include "log_internal.h"
@@ -1126,6 +1127,21 @@ static int logSerializeEvent(logitem itemNum, BYTE opt1, BYTE opt2, BYTE opt3, B
     wordsLen = short1;
     if (wordsLen > BUILDER_CHECK_RECORD_BYTES) {
       wordsLen = BUILDER_CHECK_RECORD_BYTES;
+    }
+    if (wordsLen > 0 && words != NULL) {
+      memcpy(out + off, words, wordsLen);
+      off += wordsLen;
+    }
+    break;
+  case log_SlowTick:
+    /* One slow server frame: short1 bytes that slowTickRecordEncode wrote
+       (slow_tick_record.h), copied as they are, the way log_OverrunStats
+       is. A reader that does not know it skips it by the framed length.
+       Layout in docs/replay-format.md. */
+    out[off++] = log_SlowTick;
+    wordsLen = short1;
+    if (wordsLen > SLOW_TICK_RECORD_BYTES) {
+      wordsLen = SLOW_TICK_RECORD_BYTES;
     }
     if (wordsLen > 0 && words != NULL) {
       memcpy(out + off, words, wordsLen);

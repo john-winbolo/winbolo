@@ -246,8 +246,11 @@ ServerLocalEdge serverSimLocalTick(ServerSim *sim, uint32_t tickCount,
     }
 
     if (preTickState == serverStateRunning) {
-        /* Run brain AI bots — queues two InputPackets per bot (keys + game) */
+        /* Run brain AI bots — queues two InputPackets per bot (keys + game).
+         * Timed for the log_SlowTick record's bots part. */
+        Uint64 botStart = SDL_GetPerformanceCounter();
         serverSimLocalBotTick(sim);
+        sim->tickPartBots += SDL_GetPerformanceCounter() - botStart;
         /* Advance the sim by one 20ms frame.  serverSimTick internally runs
          * the keys-tick + game-tick pair and accumulates events from both
          * half-steps into a single frame's worth of state. The half-step

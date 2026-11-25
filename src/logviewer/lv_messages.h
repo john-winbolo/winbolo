@@ -256,6 +256,34 @@ void lv_messageTagPing(int pingKind);
 void lv_messageTagChat(const char *from, const char *note, const char *text);
 
 /*********************************************************
+*NAME:          lv_messageTagOverrun
+*PURPOSE:
+*  Says that the next line is a server overrun line (a
+*  log_SlowTick record) and how big the overrun is, so the
+*  host's events panel can hide the small ones. Call it just
+*  before the line is added, as lv_messageTagPlayers.
+*
+*ARGUMENTS:
+*  sizeMs - How far past its slot the frame ran, in ms
+*********************************************************/
+void lv_messageTagOverrun(int sizeMs);
+
+/*********************************************************
+*NAME:          lv_messageAddText
+*PURPOSE:
+*  Adds a line to the events panel that is already made up
+*  as text, with no place on the map. For a line built from
+*  several translated parts. The tags set before it go with
+*  it, as for lv_messageAddAt. The scrolling queue of the
+*  game view does not get it.
+*
+*ARGUMENTS:
+*  kind - The line's kind (LV_EVK_*)
+*  text - The line
+*********************************************************/
+void lv_messageAddText(lvEventKind kind, const char *text);
+
+/*********************************************************
 *NAME:          lv_messageAddItem
 *AUTHOR:        John Morrison
 *CREATION DATE:  3/1/99

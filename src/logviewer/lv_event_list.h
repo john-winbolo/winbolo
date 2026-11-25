@@ -58,6 +58,7 @@ typedef struct {
   int      ping;      /* the kind of ping the line is, or -1 */
   int      player;    /* the player the line is about, or -1 */
   bool     awayAdded; /* a lost builder's time away is on the text */
+  int      overrunMs; /* a server overrun line's size in ms, else 0 */
   /* A chat line's parts for the Chat panel (lvEventListSetChat), NULL for
      any other line: who sent it, a note on who it went to ("(team)",
      "(to Bob)") or NULL for a line to everyone, and the words typed. */

@@ -1318,7 +1318,10 @@ static void simRunHalfStep(ServerSim *sim) {
      * keys/game.  Only log on game ticks (every 20ms) to match the
      * legacy rate — the log viewer consumes one entry per 20ms. */
     if (!isKeysTick) {
+        /* Timed for the log_SlowTick record's recording part. */
+        Uint64 logStart = SDL_GetPerformanceCounter();
         serverSimLogTick(sim);
+        sim->tickPartRecording += SDL_GetPerformanceCounter() - logStart;
     }
 
     /* Per-second input-pipeline summary: one [netstat] line per connected
@@ -1402,6 +1405,9 @@ void serverSimTick(ServerSim *sim) {
          * comes off again before the shadow tick: without it a scenario's
          * terrain writes would reach the server's map and nobody else's. */
         mapSetChangeCallback(simMapChangeCallback);
+        /* The hook and its queued work are the log_SlowTick record's
+         * scenario part. */
+        Uint64 scenarioStart = SDL_GetPerformanceCounter();
         if (sim->scenarioTick != NULL) {
             sim->scenarioTick(sim->scenarioTickCtx);
         }
@@ -1413,6 +1419,7 @@ void serverSimTick(ServerSim *sim) {
          * added to. Inside the map callback's bracket because a bot joining
          * takes a copy of the terrain on its way in. */
         serverSimScenarioDrainRoster(sim);
+        sim->tickPartScenario += SDL_GetPerformanceCounter() - scenarioStart;
         mapSetChangeCallback(NULL);
         /* Both half-steps have finished filling mapEvents and no transport has
          * drained them yet, so this is where each client's copy of the terrain
@@ -1443,12 +1450,14 @@ void serverSimTick(ServerSim *sim) {
         if (sim->state == serverStateRunning) {
             mapSetChangeCallback(simMapChangeCallback);
         }
+        Uint64 scenarioStart = SDL_GetPerformanceCounter();
         if (sim->scenarioTick != NULL) {
             sim->scenarioTick(sim->scenarioTickCtx);
         }
         /* A fill is paced here only so one frame's work stays one frame's
          * work. */
         serverSimScenarioDrainFill(sim);
+        sim->tickPartScenario += SDL_GetPerformanceCounter() - scenarioStart;
         mapSetChangeCallback(NULL);
         if (sim->state == serverStateRunning) {
             /* The round started in this frame, so each slot's copy of the

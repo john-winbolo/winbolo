@@ -157,7 +157,11 @@ log_OverrunStats,    // the server's timing and each bot's overruns, the numbers
 log_BotHostData,     // what the server's bot placement measured and chose for each host: a payload of short1 bytes (bothost_record.h). Written only when the server runs with -record-bothost-data (layout in docs/replay-format.md)
 /* Code 73 is log_BotHostData, which another branch adds after
    log_OverrunStats: log_BuilderCheck keeps 74 so the two never meet. */
-log_BuilderCheck = 74 // what the server tested when a shell's blast came near a builder who was out, and what it found: a payload of short1 bytes (builder_check_record.h). Written to the .wbv only, never to the spectator stream (layout in docs/replay-format.md)
+log_BuilderCheck = 74, // what the server tested when a shell's blast came near a builder who was out, and what it found: a payload of short1 bytes (builder_check_record.h). Written to the .wbv only, never to the spectator stream (layout in docs/replay-format.md)
+/* Codes 73 and 74 are log_BotHostData and log_BuilderCheck, which other
+   branches add after log_OverrunStats: log_SlowTick keeps 75 so they never
+   meet. */
+log_SlowTick = 75    // one server frame that took more than 20 ms, or started late, and the time of each of its parts: a payload of short1 bytes (slow_tick_record.h). Written after each such frame, in the next entry (layout in docs/replay-format.md)
 } logitem;
 
 typedef struct {

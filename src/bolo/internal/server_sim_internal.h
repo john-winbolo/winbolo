@@ -753,6 +753,17 @@ struct ServerSim {
     bool     lagLogPending[MAX_TANKS];          /* a change came in the gap after the
                                                  * last record (serverSimLagLogStep) */
 
+    /* The wall-clock time of three parts of the current server frame, in
+     * SDL_GetPerformanceCounter counts, for the log_SlowTick record
+     * (slow_tick_record.h): the bots' think, the scenario hook with its
+     * queued work, and the round log's tick. serverSimLocalTick and
+     * serverSimTick add to them; the server's tick (serverInstanceTick)
+     * zeroes them before the frame and reads them after. Reads only;
+     * never gate sim behaviour on these. */
+    uint64_t tickPartBots;
+    uint64_t tickPartScenario;
+    uint64_t tickPartRecording;
+
 #ifdef WB_NETDEBUG
     /* Net-debug rig: sim-executed turn half-steps and mine lays per
      * player. Test-only — never compiled into production builds. */

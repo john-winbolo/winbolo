@@ -42,6 +42,7 @@
 #include "lv_shell_owner.h" /* LvShellOwnerStats */
 #include "lv_early_blast.h" /* LvEarlyBlastStats */
 #include "lv_overrun.h"     /* LvOverrunNow */
+#include "lv_slowtick.h"    /* LvSlowTickNow */
 #include "lv_bothost.h"     /* LvBotHostTrack */
 
 /* Defines */
@@ -718,6 +719,9 @@ int lv_screenGetPings(LvPingShown *out, int max);
 /* The kind of ping the line now being added is (lv_messageTagPing,
  * PING_KIND_*), or -1 for a line that is not a map ping. */
 int lv_screenEventPing(void);
+/* The size in ms of the server overrun the line now being added reports
+ * (lv_messageTagOverrun), or 0 for a line that is not one. */
+int lv_screenEventOverrunMs(void);
 /* The first player the line now being added is about (the actor of
  * lv_messageTagPlayers), 0..15, or -1 for none. */
 int lv_screenEventPlayer(void);
@@ -881,6 +885,16 @@ void lv_screenOverrunNow(LvOverrunNow *out);
  * client mutex while reading it: a live feed adds records on the timer
  * thread. Never NULL. */
 const LvBotHostTrack *lv_screenBotHostTrack(void);
+
+/* The recording's log_SlowTick record (one server frame that took more than
+ * 20 ms or started late, with the time of each of its parts) read closest to
+ * the playback time ms, no more than withinMs before or after it. The record
+ * lands in the log entry after its frame, so a caller that asks about a
+ * moment gives a window of 40 ms or more. Fills out and returns TRUE when
+ * there is one. out->recorded says whether the recording holds any; the
+ * load's walk collects every record, so this answers for any time of a
+ * loaded file. Hold the client mutex. */
+bool lv_screenSlowTickNear(uint32_t ms, uint32_t withinMs, LvSlowTickNow *out);
 
 /* The lag view ("see what this player saw"): the map draws the other tanks,
  * the builders and the shells as far behind as slot's player's screen was,

@@ -171,6 +171,7 @@ Selected event types (see the `logitem` enum for the complete list):
 | 72 | `log_OverrunStats` | The server's tick timing and each bot's overruns, as the console's overrun lines print them (below) |
 | 73 | `log_BotHostData` | What the bot placement measured and chose for each host: probes, free CPU readings and decisions (below). Only with `-record-bothost-data` |
 | 74 | `log_BuilderCheck` | What the server tested when a shell's blast came near a builder who was out, and what it found (below). In the `.wbv` only, never in the spectator stream. Code 73 is left for `log_BotHostData`, which another branch adds |
+| 75 | `log_SlowTick` | One server frame that took more than 20 ms, or started late, and the time of each of its parts (below) |
 
 ### `log_GameSettings` payload
 
@@ -930,6 +931,61 @@ A reader takes the fields it knows and skips the rest by the framed length. A
 record shorter than 23 bytes, or with version 0, is consumed and ignored. A
 viewer made before this record skips it by its framed length, the same as any
 other event it does not know.
+
+### `log_SlowTick` payload
+
+One server frame that took more than its 20 ms, or that started late, and how
+long each part of it took. A frame on time gets no record, so a round where
+the server keeps up has none. Built and read by `slowTickRecordEncode` and
+`slowTickRecordDecode` (`src/bolo/public/slow_tick_record.h`). Every
+multi-byte field is big-endian. A time is in tenths of a millisecond, so 612
+is 61.2 ms: a part is a `u16`, and 65535 (6553.5 ms) is the most it holds;
+the total, the gap and the pause are `u32`.
+
+34 bytes:
+
+| Bytes | Field | Notes |
+|---|---|---|
+| 0 | Version | `u8`, 1. A later version adds its fields after the ones below |
+| 1 | Flags | Bit 0, long: the frame took more than 20 ms. Bit 1, late: the frame started late (below). Both can be set |
+| 2–5 | Tick | `u32`. The server's game tick when the frame started, on the clock `log_ServerTick` counts. A running frame runs two ticks, this one and the next |
+| 6–9 | Total | `u32` tenths of a ms. The frame's whole time, start to end |
+| 10–13 | Gap | `u32` tenths of a ms. From the start of the frame before to the start of this one. 20 ms on a server that keeps up; 0 for the server's first frame |
+| 14–17 | Pause | `u32` tenths of a ms. From the end of the frame before to the start of this one: the time outside both frames |
+| 18–19 | Network receive | `u16` tenths of a ms. Reading the players' packets and the work they queue |
+| 20–21 | Lock wait | `u16` tenths of a ms. Waiting for the tick mutex that the console and other threads also take |
+| 22–23 | Bots | `u16` tenths of a ms. The bots' think (`serverSimLocalBotTick`) |
+| 24–25 | Simulation | `u16` tenths of a ms. The two simulation steps, less the scenario and the round log parts, which run inside them. Out of the running state, the lobby's one step |
+| 26–27 | Scenario | `u16` tenths of a ms. The scenario script's hook (Lua mods) and the fill and roster work it queues |
+| 28–29 | Recording | `u16` tenths of a ms. The round log's tick (`serverSimLogTick`: snapshots, records, the zip write) and the brain debug recording's block roll and disk check |
+| 30–31 | Network send | `u16` tenths of a ms. Sending the snapshots and the events; out of the running state, the timeout check and a game-start send |
+| 32–33 | Other | `u16` tenths of a ms. The total less every part above: the mDNS and WinBolo.net work, the round's edges (game over, rotation, empty reset), the tracker and NAT work. 0 when the parts, each rounded on its own, add to more than the total |
+
+The rule (`slowTickRecordReason`):
+
+- Long when the total is more than 20 ms (`SLOW_TICK_LONG_MS`).
+- Late when the gap is more than 40 ms (`SLOW_TICK_LATE_GAP_MS`, one missed
+  slot) and the pause is more than 20 ms (`SLOW_TICK_LATE_PAUSE_MS`). The
+  pause test is there because the frame straight after a long frame starts at
+  once to catch up: its gap is the long frame's own time, which that frame's
+  record already holds, and its pause is close to 0. A pause of more than one
+  frame is time the server lost between frames, such as a host that stopped
+  the process or a timer that slept too long.
+
+Written by the server's tick (`serverInstanceTick`,
+`src/server/server_lifecycle.c`) after the frame's end is measured, so the
+record's own write is not in the time it reports. The frame's own entry of
+the log is written during the frame, so the record lands in the next entry:
+about 20 ms after the frame it is about. A reader goes by the tick field, not
+by the entry. Written in every state while a round log is recording: in the
+lobby and the countdown too. The same hosts write it as `log_OverrunStats`:
+WinBoloDS and a game hosted from the desktop, iOS or Android client.
+WinBoloHeadless and the browser build write none.
+
+A reader takes the fields it knows and skips the rest by the framed length. A
+record shorter than 34 bytes, or with version 0, is consumed and ignored. A
+viewer made before this record skips it by its framed length, the same as any
+other event it does not know, and a recording made before it has none.
 
 ## Snapshot body
 

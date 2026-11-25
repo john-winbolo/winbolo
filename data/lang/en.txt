@@ -3220,6 +3220,17 @@ STR_LV_SIZE_NOT_MET=The window could not be made {string1} pixels, as -size aske
 # The question a Join gets when a player of that name left the game a short time ago
 STR_REJECT_CAN_REJOIN=A player named {player} left this game {string1} seconds ago. Rejoin as that player?\n\nRejoining puts you back on the same team and returns the pillboxes and bases you owned that are still neutral.
 STR_JOIN_AS_NEW=Join as new
+STR_LV_SLOW_TICK=Server overrun: tick {number} took {number2} ms
+STR_LV_SLOW_TICK_PART_NET_RECV=network in {number}
+STR_LV_SLOW_TICK_PART_LOCK=lock wait {number}
+STR_LV_SLOW_TICK_PART_BOTS=bots {number}
+STR_LV_SLOW_TICK_PART_SIM=sim {number}
+STR_LV_SLOW_TICK_PART_SCENARIO=scenario {number}
+STR_LV_SLOW_TICK_PART_RECORDING=recording {number}
+STR_LV_SLOW_TICK_PART_NET_SEND=network out {number}
+STR_LV_SLOW_TICK_PART_OTHER=other {number}
+STR_LV_SLOW_TICK_LATE=; started late, {number} ms after the frame before ({number2} ms between them)
+STR_LV_SLOW_TICK_HIDE_SMALL=Hide overruns under 30 ms
 STR_LV_SC_LIVES=LIVES
 STR_LV_SC_DIES=DIES
 STR_LV_SC_REFUSED=HOST REFUSED

@@ -38,6 +38,7 @@
 #include "server_sim_internal.h"  /* serverSimLagLogDue, playerPing, statLastRewindTicks */
 #include "server_lifecycle.h"      /* serverOverrunStatsDue */
 #include "overrun_record.h"         /* log_OverrunStats payload */
+#include "slow_tick_record.h"       /* log_SlowTick payload */
 #include "bothost_record.h"         /* log_BotHostData payload */
 #include "bot_host_link.h"           /* BotHostNoMove */
 #include "transport_udp.h"          /* transportUdpServerSetBotHostRecord */
@@ -112,6 +113,7 @@ static int eventFixedBytesAfterCode(uint8_t code) {
         case log_MapName:          return -1;  /* 0 + pstr */
         case log_PlayerLag:        return 4;   /* player, RTT (BE u16), rewind */
         case log_OverrunStats:     return -3;  /* 44 + 13 a bot, checked below */
+        case log_SlowTick:         return SLOW_TICK_RECORD_BYTES;
         case log_BotHostData:      return -4;  /* by kind, checked below */
         case log_BuilderCheck:     return BUILDER_CHECK_RECORD_BYTES;
         default:                   return -2;  /* unknown */
@@ -1346,6 +1348,166 @@ int ut_logBuilderChecks(const char *wbvPath, BuilderCheckRecord *out, int max) {
     }
     free(buf);
     return result;
+}
+
+/* log_SlowTick: one slow server frame and its parts (slow_tick_record.h).
+ * This fills a record the way serverInstanceTick does, writes it through
+ * logAddEvent, reads the bytes back, checks they are the encoded bytes and
+ * decode to the same record, and checks the viewer still decodes the file.
+ * The record of the JonnyWar frame: tick 30498, 61 ms. */
+int run_log_roundtrip_slow_tick(void) {
+    char fname[64];
+    SlowTickRecord rec;
+    SlowTickRecord back;
+    SlowTickParts parts;
+    uint8_t payload[SLOW_TICK_RECORD_BYTES + 4];
+    int len;
+
+    mkTempPath(fname, sizeof(fname), "slowtick");
+    remove(fname);
+
+    parts.netRecv   = 1.04;
+    parts.lockWait  = 0.0;
+    parts.bots      = 4.2;
+    parts.sim       = 2.0;
+    parts.scenario  = 0.3;
+    parts.recording = 50.0;
+    parts.netSend   = 0.66;
+    slowTickRecordFill(&rec, SLOW_TICK_FLAG_LONG, 30498u, 61.2, 61.25, 0.4, &parts);
+    UT_ASSERT(rec.version == SLOW_TICK_RECORD_VERSION);
+    UT_ASSERT(rec.total == 612u && rec.gap == 613u && rec.pause == 4u);
+    UT_ASSERT(rec.netRecv == 10 && rec.lockWait == 0 && rec.bots == 42 &&
+              rec.sim == 20 && rec.scenario == 3 && rec.recording == 500 &&
+              rec.netSend == 7);
+    /* other: 61.2 less 58.2 of parts. */
+    UT_ASSERT_MSG(rec.other == 30, "other is %u (want 30)", (unsigned)rec.other);
+
+    len = slowTickRecordEncode(&rec, payload, (int)sizeof(payload));
+    UT_ASSERT_MSG(len == SLOW_TICK_RECORD_BYTES, "encoded %d bytes", len);
+    /* Big-endian fields where the layout puts them. */
+    UT_ASSERT(payload[0] == SLOW_TICK_RECORD_VERSION && payload[1] == SLOW_TICK_FLAG_LONG);
+    UT_ASSERT(payload[2] == 0 && payload[3] == 0 && payload[4] == 0x77 && payload[5] == 0x22);
+    UT_ASSERT(payload[6] == 0 && payload[7] == 0 && payload[8] == 0x02 && payload[9] == 0x64);
+    UT_ASSERT(payload[28] == 0x01 && payload[29] == 0xF4);            /* recording 500 */
+    UT_ASSERT(payload[32] == 0 && payload[33] == 30);                 /* other */
+    /* A buffer too small gets nothing; a short record or version 0 does not
+     * decode; bytes a later version adds are left alone. */
+    UT_ASSERT(slowTickRecordEncode(&rec, payload, len - 1) == 0);
+    UT_ASSERT(!slowTickRecordDecode(payload, len - 1, &back));
+    memset(payload + len, 0xEE, 4);
+    UT_ASSERT(slowTickRecordDecode(payload, len + 4, &back));
+    UT_ASSERT(memcmp(&back, &rec, sizeof(rec)) == 0);
+    payload[0] = 0;
+    UT_ASSERT(!slowTickRecordDecode(payload, len, &back));
+    payload[0] = SLOW_TICK_RECORD_VERSION;
+
+    ServerSim *sim = ut_make_running_sim("Tester");
+    UT_ASSERT_MSG(sim != NULL, "ut_make_running_sim failed");
+
+    logSetStopHook(NULL);
+    logCreate();
+    UT_ASSERT_MSG(logStart(fname, sim, 0, MAX_TANKS, FALSE),
+                  "logStart failed");
+    logAddEvent(log_SlowTick, 0, 0, 0, 0, (unsigned short)len, (char *)payload);
+    logWriteTick();
+    logStop();
+    logDestroy();
+    serverSimDestroy(sim);
+
+    uint8_t *buf = NULL;
+    size_t   blen = 0;
+    UT_ASSERT_MSG(extractLogDat(fname, &buf, &blen), "extractLogDat failed");
+
+    size_t  blockStart = 0;
+    uint8_t version    = 0;
+    UT_ASSERT_MSG(locateSnapshotMarker(buf, blen, &blockStart, &version),
+                  "header parse failed");
+
+    uint8_t got[64];
+    int     nGot  = 0;
+    int     nSnap = 0;
+    eventPayloadCapture cap;
+    cap.code = log_SlowTick;
+    cap.len  = -1;
+    int rc = walkLog(buf, blen, blockStart, got, &nGot, (int)sizeof(got),
+                     &nSnap, &cap);
+    free(buf);
+
+    UT_ASSERT_MSG(rc == 0, "walkLog rc=%d", rc);
+    UT_ASSERT_MSG(cap.len == len, "log_SlowTick payload is %d bytes (want %d)",
+                  cap.len, len);
+    UT_ASSERT_MSG(memcmp(cap.bytes, payload, (size_t)len) == 0,
+                  "the written bytes differ from the encoded ones");
+    UT_ASSERT(slowTickRecordDecode(cap.bytes, cap.len, &back));
+    UT_ASSERT_MSG(memcmp(&back, &rec, sizeof(rec)) == 0,
+                  "the decoded record differs from the one written");
+
+    ReplayWorld    *world = (ReplayWorld *)malloc(sizeof(*world));
+    ReplayFileInfo  info;
+    UT_ASSERT_MSG(world != NULL, "out of memory");
+    bool decoded = replayHarnessDecodeFile(fname, world, &info);
+    free(world);
+    remove(fname);
+    UT_ASSERT_MSG(decoded, "the viewer could not decode the file");
+    return 0;
+}
+
+/* The rule for which frames get a log_SlowTick record
+ * (slowTickRecordReason), the clamps of the tenths and of "other", and the
+ * size the viewer's "Hide overruns under 30 ms" box compares. */
+int run_slow_tick_record_rule(void) {
+    SlowTickRecord rec;
+    SlowTickParts parts;
+
+    /* A frame on time: none. Exactly 20 ms is on time. */
+    UT_ASSERT(slowTickRecordReason(5.0, 20.0, 15.0) == 0);
+    UT_ASSERT(slowTickRecordReason(20.0, 20.0, 0.0) == 0);
+    /* Long: more than 20 ms of its own. */
+    UT_ASSERT(slowTickRecordReason(20.01, 20.0, 0.0) == SLOW_TICK_FLAG_LONG);
+    UT_ASSERT(slowTickRecordReason(61.0, 20.0, 0.0) == SLOW_TICK_FLAG_LONG);
+    /* The catch-up frame after a 61 ms frame starts at once: gap 61, pause
+     * about 0. Not late: the long frame's record holds that time. */
+    UT_ASSERT(slowTickRecordReason(3.0, 61.0, 0.1) == 0);
+    /* A gap of exactly 40 ms is not late. */
+    UT_ASSERT(slowTickRecordReason(3.0, 40.0, 37.0) == 0);
+    /* Late: more than 40 ms from the start before, more than 20 ms of it
+     * outside both frames. */
+    UT_ASSERT(slowTickRecordReason(3.0, 80.0, 77.0) == SLOW_TICK_FLAG_LATE);
+    UT_ASSERT(slowTickRecordReason(3.0, 80.0, 20.0) == 0);
+    UT_ASSERT(slowTickRecordReason(30.0, 80.0, 50.0) ==
+              (SLOW_TICK_FLAG_LONG | SLOW_TICK_FLAG_LATE));
+    /* The server's first frame (gap 0) is never late. */
+    UT_ASSERT(slowTickRecordReason(3.0, 0.0, 0.0) == 0);
+
+    /* Tenths round, hold to a u16, and a negative time is 0. */
+    UT_ASSERT(slowTickRecordTenths16(1.04) == 10 && slowTickRecordTenths16(1.06) == 11);
+    UT_ASSERT(slowTickRecordTenths16(7000.0) == 65535u);
+    UT_ASSERT(slowTickRecordTenths16(-3.0) == 0);
+    UT_ASSERT(slowTickRecordTenths32(7000.0) == 70000u);
+
+    /* Parts that add to more than the total: other is 0. No parts: the
+     * whole total is other. */
+    memset(&parts, 0, sizeof(parts));
+    parts.sim = 30.0;
+    slowTickRecordFill(&rec, SLOW_TICK_FLAG_LONG, 7u, 25.0, 20.0, 0.0, &parts);
+    UT_ASSERT(rec.sim == 300 && rec.other == 0);
+    slowTickRecordFill(&rec, SLOW_TICK_FLAG_LONG, 7u, 25.0, 20.0, 0.0, NULL);
+    UT_ASSERT(rec.sim == 0 && rec.other == 250);
+
+    /* The size: a long frame's own time, rounded to whole ms. */
+    slowTickRecordFill(&rec, SLOW_TICK_FLAG_LONG, 7u, 29.4, 20.0, 0.0, NULL);
+    UT_ASSERT_MSG(slowTickRecordSizeMs(&rec) == 29u, "size %u (want 29)",
+                  (unsigned)slowTickRecordSizeMs(&rec));
+    slowTickRecordFill(&rec, SLOW_TICK_FLAG_LONG, 7u, 61.2, 20.0, 0.0, NULL);
+    UT_ASSERT(slowTickRecordSizeMs(&rec) == 61u);
+    /* A late frame: the time it started after its slot when that is more:
+     * gap 95 less the 20 ms slot is 75. */
+    slowTickRecordFill(&rec, SLOW_TICK_FLAG_LATE, 7u, 3.0, 95.0, 92.0, NULL);
+    UT_ASSERT(slowTickRecordSizeMs(&rec) == 75u);
+    /* The gap counts only on a late frame. */
+    slowTickRecordFill(&rec, SLOW_TICK_FLAG_LONG, 7u, 21.0, 95.0, 0.0, NULL);
+    UT_ASSERT(slowTickRecordSizeMs(&rec) == 21u);
+    return 0;
 }
 
 /* Every log_OverrunStats record in a log, in order, and whether one is the
