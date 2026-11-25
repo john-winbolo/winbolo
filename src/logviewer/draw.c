@@ -1959,17 +1959,42 @@ void lv_drawLGMs(screenLgm *lgms) {
     total = lv_screenLgmGetNumEntries(lgms);
     zf = lv_windowGetZoomFactor();
     s_hitLgmCount = 0;
-    
+
+    /* The hit areas are what the server tested, so they come from the
+       builders where the server tested them (lv_playersMakeScreenLgmTested),
+       not from the list drawn here: in the lag view the drawn builders are
+       one round trip back, as that player's screen showed them, and the
+       server tested them at its builder rewind (shellLgmRewind). With no lag
+       view the two lists are the same. A builder on his parachute is dead:
+       lgmDeathCheckAtPosition tests no dead builder, so he has no hit area.
+       The areas are noted only while hit boxes are on; turning them on asks
+       for a redraw, which notes them again. */
+    if (s_hitBoxes) {
+        LogViewerState *lv = lv_screenGetState();
+        if (lv != NULL) {
+            screenLgm tested;
+            BYTE tTotal, t;
+            int rightEdge = (int)lv->xOffset + lv_screenGetSizeX();
+            int bottomEdge = (int)lv->yOffset + lv_screenGetSizeY();
+            if (rightEdge > 255) rightEdge = 255;
+            if (bottomEdge > 255) bottomEdge = 255;
+            lv_screenLgmCreate(&tested);
+            lv_playersMakeScreenLgmTested(&tested, lv->xOffset, (BYTE)rightEdge, lv->yOffset,
+                                          (BYTE)bottomEdge);
+            tTotal = lv_screenLgmGetNumEntries(&tested);
+            for (t = 1; t <= tTotal && s_hitLgmCount < MAX_TANKS; t++) {
+                lv_screenLgmGetItem(&tested, t, &mx, &my, &px, &py, &frame);
+                if (frame != LGM_HELICOPTER_FRAME) {
+                    lvDrawNoteLgmHit(mx, my, px, py, lv_screenLgmGetSlot(&tested, t), zf);
+                }
+            }
+            lv_screenLgmDestroy(&tested);
+        }
+    }
+
     for (count = 1; count <= total; count++) {
         int picX, picY;            /* the picture's top left, art pixels into his square */
         lv_screenLgmGetItem(lgms, count, &mx, &my, &px, &py, &frame);
-        /* A builder on his parachute is dead: lgmDeathCheckAtPosition tests
-           no dead builder, so he has no hit area. The area is noted only
-           while hit boxes are on; turning them on asks for a redraw, which
-           notes them again. */
-        if (s_hitBoxes && frame != LGM_HELICOPTER_FRAME && s_hitLgmCount < MAX_TANKS) {
-            lvDrawNoteLgmHit(mx, my, px, py, lv_screenLgmGetSlot(lgms, count), zf);
-        }
         /* A walking builder's picture goes 1 art pixel left of and above his
            recorded pixel, as the game draws it (spritePositionLgm), so it
            sits round his place. The parachute is drawn from its own top

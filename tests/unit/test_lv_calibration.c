@@ -1902,7 +1902,10 @@ typedef struct {
   int      itemPx[2];
   int      lgmItems;      /* builders in the draw list */
   int      lgmMx, lgmPx;  /* the first one's column and pixel */
-  bool     lgmPlaced;     /* lv_playersLgmPlace fitted slot 1's builder there */
+  int      testItems;     /* builders where the server tested them */
+  int      testMx, testPx; /* the first one's column and pixel */
+  bool     lgmPlaced;     /* lv_playersLgmPlace fitted slot 1's builder at the
+                             tested place, as the hit box does */
 } LagDrawSeen;
 static LagDrawSeen s_lagDrawSeen;
 
@@ -1946,14 +1949,32 @@ static void lagDrawHook(screenTanks *tks, screenBullets *sBullet, screenLgm *lgm
     lv_screenLgmGetItem(lgms, 1, &mx, &my, &px, &py, &frame);
     s_lagDrawSeen.lgmMx = mx;
     s_lagDrawSeen.lgmPx = px;
-    {
-      /* The hit box's fit for the builder at the place he is drawn
-         (lagDrawOnce puts the view's left column at 55). */
+  }
+  /* The list the hit boxes are drawn from (lv_drawLGMs): the builders where
+     the server tested them, with the same bounds lv_screenUpdate gives
+     (lagDrawOnce puts the view's left column at 55, top row at 50). */
+  s_lagDrawSeen.testMx = -1;
+  s_lagDrawSeen.testPx = -1;
+  {
+    screenLgm tested;
+    int right = 55 + lv_screenGetSizeX();
+    int bottom = 50 + lv_screenGetSizeY();
+    lv_screenLgmCreate(&tested);
+    lv_playersMakeScreenLgmTested(&tested, 55, (BYTE)(right > 255 ? 255 : right), 50,
+                                  (BYTE)(bottom > 255 ? 255 : bottom));
+    s_lagDrawSeen.testItems = lv_screenLgmGetNumEntries(&tested);
+    if (s_lagDrawSeen.testItems > 0) {
+      BYTE mx, my, px, py, frame;
       double wx = 0.0, wy = 0.0;
+      lv_screenLgmGetItem(&tested, 1, &mx, &my, &px, &py, &frame);
+      s_lagDrawSeen.testMx = mx;
+      s_lagDrawSeen.testPx = px;
+      /* The hit box's fit for the builder at the tested place. */
       s_lagDrawSeen.lgmPlaced =
           lv_playersLgmPlace(1, (BYTE)(mx + 55), (BYTE)(LAG_DRAW_ROW + 1), px, py, &wx, &wy) !=
           FALSE;
     }
+    lv_screenLgmDestroy(&tested);
   }
 }
 
@@ -2009,8 +2030,11 @@ static void lagDrawOnce(void) {
  * B's builder is out every entry, a row below B's tank at the same column.
  *
  * At entry 80, with the view on for A: B is drawn at its entry-75 place,
- * A at its entry-80 place, and B's builder at his entry-76 place, one entry
- * newer, as the server tests builders. A seek back to entry 42 (840 ms) without the
+ * A at its entry-80 place, and B's builder at his entry-73 place, one round
+ * trip back (140 ms in whole entries), with the pillboxes: a client puts a
+ * builder on its screen when the snapshot gets there. B's builder's hit box
+ * stays at his entry-76 place, one entry newer than the tanks, where the
+ * server tested him (shellLgmRewind). A seek back to entry 42 (840 ms) without the
  * early start would restore the entry-39 snapshot, which leaves frames only
  * for entries 40 to 42 and none for entry 37. The early start decodes from
  * the opening snapshot instead, so B is drawn at its entry-37 place.
@@ -2090,20 +2114,29 @@ int run_lv_lag_view_draw(void) {
   UT_ASSERT_MSG(s_lagDrawSeen.itemMx[1] == 19 && s_lagDrawSeen.itemPx[1] == 3,
                 "B's draw list place %d/%d, want 19/3", s_lagDrawSeen.itemMx[1],
                 s_lagDrawSeen.itemPx[1]);
-  /* B's builder one entry newer than his tank, as the server tests builders
-     (shellLgmRewind): entry 76, 1120 + 76 = 1196, column 74 pixel 12, so
-     column 19 on screen. */
+  /* B's builder drawn one round trip back, from the pillboxes' frame
+     (lv_lagRttBackMs: 150 ms is 7 whole entries): entry 73,
+     1120 + 73 = 1193, column 74 pixel 9, so column 19 on screen. */
   UT_ASSERT_MSG(s_lagDrawSeen.lgmItems == 1, "%d builders in the draw list, want 1",
                 s_lagDrawSeen.lgmItems);
-  UT_ASSERT_MSG(s_lagDrawSeen.lgmMx == (int)(lagDrawPlace(1, 76) / 16) - 55 &&
-                    s_lagDrawSeen.lgmPx == (int)(lagDrawPlace(1, 76) % 16),
-                "B's builder drawn at %d/%d, want %d/%d (entry 76)", s_lagDrawSeen.lgmMx,
-                s_lagDrawSeen.lgmPx, (int)(lagDrawPlace(1, 76) / 16) - 55,
+  UT_ASSERT_MSG(s_lagDrawSeen.lgmMx == (int)(lagDrawPlace(1, 73) / 16) - 55 &&
+                    s_lagDrawSeen.lgmPx == (int)(lagDrawPlace(1, 73) % 16),
+                "B's builder drawn at %d/%d, want %d/%d (entry 73, one round trip)",
+                s_lagDrawSeen.lgmMx, s_lagDrawSeen.lgmPx, (int)(lagDrawPlace(1, 73) / 16) - 55,
+                (int)(lagDrawPlace(1, 73) % 16));
+  /* Where the server tested him stays one entry newer than his tank
+     (shellLgmRewind): entry 76, 1120 + 76 = 1196, column 74 pixel 12. */
+  UT_ASSERT_MSG(s_lagDrawSeen.testItems == 1, "%d tested builders, want 1",
+                s_lagDrawSeen.testItems);
+  UT_ASSERT_MSG(s_lagDrawSeen.testMx == (int)(lagDrawPlace(1, 76) / 16) - 55 &&
+                    s_lagDrawSeen.testPx == (int)(lagDrawPlace(1, 76) % 16),
+                "B's builder tested at %d/%d, want %d/%d (entry 76)", s_lagDrawSeen.testMx,
+                s_lagDrawSeen.testPx, (int)(lagDrawPlace(1, 76) / 16) - 55,
                 (int)(lagDrawPlace(1, 76) % 16));
   /* His hit box is fitted at that entry too: at the tanks' entry (75) his
      note has another pixel, and the fit gave up. */
   UT_ASSERT_MSG(s_lagDrawSeen.lgmPlaced,
-                "B's builder hit box not fitted at his drawn place (entry 76)");
+                "B's builder hit box not fitted at his tested place (entry 76)");
 
   /* Seek back to entry 42: the frames are there at once. */
   lv_screenSeekToTimeMs(lagDrawMs(42));
@@ -2843,10 +2876,13 @@ int run_lv_new_blast_steps(void) {
 
 /* ---- the builder's hit box dot ------------------------------------------ */
 
-/* What lgmDotHook saw: the builders in the draw list and, for the first one,
- * the dot's place on the target (zoom factor 1) and his world place. */
+/* What lgmDotHook saw: the builders the hit boxes are drawn from (where the
+ * server tested them, lv_playersMakeScreenLgmTested) and, for the first one,
+ * the dot's place on the target (zoom factor 1) and his world place. drawnAx
+ * is the first drawn builder's place across, in art pixels, -1 for none. */
 typedef struct {
   int    items;
+  int    drawnAx;
   bool   placed;
   int    ax, ay;        /* his recorded place, in art pixels */
   double wx, wy;        /* lv_playersLgmPlace's place, world units */
@@ -2855,14 +2891,27 @@ typedef struct {
 static LgmDotSeen s_lgmDot;
 
 static void lgmDotHook(screenTanks *tks, screenBullets *sBullet, screenLgm *lgms) {
+  screenLgm tested;
+  int right = 55 + lv_screenGetSizeX();
+  int bottom = 50 + lv_screenGetSizeY();
   (void)tks; (void)sBullet;
   memset(&s_lgmDot, 0, sizeof(s_lgmDot));
-  s_lgmDot.items = lv_screenLgmGetNumEntries(lgms);
+  s_lgmDot.drawnAx = -1;
+  if (lv_screenLgmGetNumEntries(lgms) > 0) {
+    BYTE mx, my, px, py, frame;
+    lv_screenLgmGetItem(lgms, 1, &mx, &my, &px, &py, &frame);
+    s_lgmDot.drawnAx = (55 + mx) * 16 + px;
+  }
+  /* The list lv_drawLGMs notes the hit boxes from. */
+  lv_screenLgmCreate(&tested);
+  lv_playersMakeScreenLgmTested(&tested, 55, (BYTE)(right > 255 ? 255 : right), 50,
+                                (BYTE)(bottom > 255 ? 255 : bottom));
+  s_lgmDot.items = lv_screenLgmGetNumEntries(&tested);
   if (s_lgmDot.items > 0) {
     BYTE mx, my, px, py, frame, slot;
     int sqMx, sqMy;
-    lv_screenLgmGetItem(lgms, 1, &mx, &my, &px, &py, &frame);
-    slot = lv_screenLgmGetSlot(lgms, 1);
+    lv_screenLgmGetItem(&tested, 1, &mx, &my, &px, &py, &frame);
+    slot = lv_screenLgmGetSlot(&tested, 1);
     sqMx = 55 + mx;
     sqMy = 50 + my;
     s_lgmDot.ax = sqMx * 16 + px;
@@ -2874,6 +2923,7 @@ static void lgmDotHook(screenTanks *tks, screenBullets *sBullet, screenLgm *lgms
     s_lgmDot.dotX = lvHitboxLgmDotAt((double)(mx * 16), s_lgmDot.wx - (double)(sqMx * 256), 1);
     s_lgmDot.dotY = lvHitboxLgmDotAt((double)(my * 16), s_lgmDot.wy - (double)(sqMy * 256), 1);
   }
+  lv_screenLgmDestroy(&tested);
 }
 
 static void lgmDotDraw(void) {
@@ -2914,8 +2964,10 @@ static int lgmDotCheck(int k, const char *what) {
  *   entry 40       A's lag record: rewind 5
  *
  * At entry 30 the dot is on the builder's entry-30 place; with "See What
- * the Selected Player Saw" on for A at entry 50 it is on the place the view
- * draws him at, entry 46 (one entry newer than the tanks' 45). At entry 65,
+ * the Selected Player Saw" on for A at entry 50 it is on the place the
+ * server tested him at, entry 46 (one entry newer than the tanks' 45), and
+ * not on the place the view draws him at, entry 43 (one round trip, 150 ms
+ * in whole entries, back, with the pillboxes). At entry 65,
  * in his tank, there is no builder and no dot.
  */
 int run_lv_lgm_dot(void) {
@@ -2958,6 +3010,9 @@ int run_lv_lgm_dot(void) {
   UT_ASSERT_MSG(lv_screenLagViewSlot() == 0, "the view did not turn on for A");
   lgmDotDraw();
   if (lgmDotCheck(46, "entry 50, the view on") != 0) return 1;
+  UT_ASSERT_MSG(s_lgmDot.drawnAx == (int)lagDrawPlace(1, 43),
+                "entry 50, the view on: builder drawn at %d, want %d (entry 43)",
+                s_lgmDot.drawnAx, (int)lagDrawPlace(1, 43));
   lv_screenLagViewSet(-1);
 
   if (lagDrawPlayTo(lv, 65) != 0) return 1;
