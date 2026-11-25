@@ -15,17 +15,74 @@ local U    = require("util")
 local M = {}
 
 -- Min-heap helpers operating on plain integer entries (no table nodes).
+--
+-- Kill safety: the host's tick-budget hook (bot_manager.c brainBudgetHook)
+-- raises a Lua error at ANY instruction when think() runs out of time, and the
+-- same Lua state then runs think() again next tick. So a push or pop can stop
+-- half-way. The writes below are ordered so that a stop at any point leaves
+-- every slot 1..h.n holding a number (at worst a duplicate, or one entry lost,
+-- or the root out of order). The old order (h.n before h[n] in push; h[n]=nil
+-- before h.n in pop) could leave a nil at h[h.n], and the next pop then moved
+-- that nil to h[1] and crashed with "attempt to compare number with nil".
+--
+-- Desync guard: every read in the sift loops is nil-checked. A nil inside
+-- 1..h.n (from an old stop, or any other cause) makes the heap rebuild itself
+-- from its non-nil entries. On a valid heap the checks cost one compare each
+-- and the push/pop order is exactly as before.
+
+-- Restore heap order below slot i. Same choices as the original loop (left
+-- child first, strict <). Returns false if it meets a nil (heap desync).
+local function _sift_down(h, i, n)
+  while true do
+    local l = i + i
+    if l > n then return true end
+    local sv = h[i]
+    local lv = h[l]
+    if sv == nil or lv == nil then return false end
+    local s = i
+    if lv < sv then s = l; sv = lv end
+    local r = l + 1
+    if r <= n then
+      local rv = h[r]
+      if rv == nil then return false end
+      if rv < sv then s = r end
+    end
+    if s == i then return true end
+    h[i], h[s] = h[s], h[i]
+    i = s
+  end
+end
+
+-- Heal a desynced heap: keep every non-nil entry in 1..h.n, close the gaps,
+-- set h.n to the new count, then re-heapify. Only runs on a desync.
+local function _heap_rebuild(h)
+  local n = h.n or 0
+  local m = 0
+  for i = 1, n do
+    local v = h[i]
+    if v ~= nil then
+      m = m + 1
+      h[m] = v
+    end
+  end
+  h.n = m                                -- count first: tail slots go stale, not holes
+  for i = m + 1, n do h[i] = nil end
+  for i = bit.rshift(m, 1), 1, -1 do _sift_down(h, i, m) end
+end
+
 local function _heap_push(h, v)
   local n = h.n + 1
+  h[n] = v                               -- slot first, then count (kill safe)
   h.n = n
-  h[n] = v
   local i = n
   while i > 1 do
     local p = bit.rshift(i, 1)
     local hp = h[p]
-    -- nil parent = the heap is out of sync (a hole below n). Stop sifting rather
-    -- than crash on `nil <= number`; best_frontier heals the heap on next read.
-    if hp == nil or hp <= h[i] then break end
+    if hp == nil then                    -- hole below n: heap desync
+      _heap_rebuild(h)
+      return
+    end
+    if hp <= h[i] then break end
     h[i], h[p] = h[p], h[i]
     i = p
   end
@@ -33,23 +90,22 @@ end
 
 local function _heap_pop(h)
   local n = h.n
-  if n == 0 then return nil end
-  local top = h[1]
-  h[1]   = h[n]
-  h[n]   = nil
-  h.n    = n - 1
-  local i = 1
-  n = h.n
-  while true do
-    local l = i + i
-    local r = l + 1
-    local s = i
-    if l <= n and h[l] < h[s] then s = l end
-    if r <= n and h[r] < h[s] then s = r end
-    if s == i then break end
-    h[i], h[s] = h[s], h[i]
-    i = s
+  if n <= 0 then return nil end
+  local top  = h[1]
+  local last = h[n]
+  if top == nil or last == nil then      -- heap desync: heal, then pop
+    _heap_rebuild(h)
+    n = h.n
+    if n == 0 then return nil end
+    top  = h[1]
+    last = h[n]
   end
+  -- Count first, then move the last entry up, then clear its old slot. A stop
+  -- between any two of these leaves 1..h.n all numbers (kill safe).
+  h.n  = n - 1
+  h[1] = last
+  h[n] = nil
+  if not _sift_down(h, 1, n - 1) then _heap_rebuild(h) end
   return top
 end
 
@@ -101,15 +157,13 @@ function M.best_frontier(state)
   while h.n > 0 do
     local top = h[1]
     if top == nil then
-      -- Heap desync: h.n is out of step with the backing array (h[1] missing
-      -- while n>0). The push/pop logic can't produce this on its own, but a
-      -- snapshot restore / replay can hand back a frontier whose count and
-      -- array disagree. Rather than crash the whole think with arithmetic-on-nil,
-      -- drop the corrupt heap to empty — M.update rebuilds the frontier next
-      -- tick, and goals.pick_goal falls back to its nearest-unvisited scan
-      -- (which re-pushes) for this one.
-      h.n = 0
-      break
+      -- Heap desync: h[1] missing while n>0 (see the kill-safety note at the
+      -- heap helpers). Heal it from its non-nil entries instead of crashing
+      -- or dropping the whole frontier, then look again. After a rebuild h[1]
+      -- is a number whenever h.n > 0, so this runs at most once per call.
+      _heap_rebuild(h)
+      if h.n == 0 then break end
+      top = h[1]
     end
     local nx  = top % 256
     local ny  = math.floor(top / 256) % 256
