@@ -129,6 +129,11 @@ typedef struct {
  * reads are bounds-checked, so it cannot crash; those entries are wrong for
  * as long as the wide speed lasts. */
 #define TANK_PRESENT_MODS_WIDE 0x0200
+/* residualSpeed (1B): the speed a tank slower than tank_min_move has saved up
+ * towards its next move, to the owning player only. Zero on every tick the
+ * tank moves or has nothing saved, which keeps the group off the wire at
+ * normal speeds. */
+#define TANK_PRESENT_RESIDUAL  0x0400
 
 /* TankSnapshot.tankStatus bits. The low nibble carries the boat, the high
  * nibble the two death signals, which are not the same question:
@@ -177,6 +182,13 @@ typedef struct {
     uint8_t  gunsightLen;  /* Gunsight range (gunsight_min..gunsight_max), owning player only */
     uint16_t deathWait;    /* Ticks remaining until respawn (0 = alive) */
     uint8_t  reload;       /* Ticks remaining until can fire again (owning player only) */
+    uint8_t  residualSpeed; /* Speed saved up towards the next move, owning player
+                              only. The owning client starts its replay of
+                              unacknowledged inputs from this. Declared here
+                              because the byte after reload was padding: the
+                              struct keeps its size and every other field its
+                              offset, so brainrec files, which hold these
+                              structs raw, are unchanged. */
     uint16_t pingMs;       /* This player's ping in ms */
     uint8_t  clientFlags;  /* PLAYER_FLAG_* bits — see players.h */
     uint8_t  hiddenFlags;  /* TANK_HIDDEN_* bits — which fields are withheld */

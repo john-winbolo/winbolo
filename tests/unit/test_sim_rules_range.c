@@ -133,6 +133,29 @@ int run_sim_rules_range_matches_check(void) {
         UT_ASSERT_MSG(strstr(why, name) != NULL,
                       "%s below its floor gave \"%s\"", name, why);
 
+        /* A rate's ends are stated at the width the field holds, so the
+           value a float keeps of its own floor is not below the floor: a
+           form that holds what was typed in a float, and tests it against
+           the range, agrees with the check. 0.01 in a float is under 0.01
+           in a double. The check may still refuse the table for a pair, but
+           not for this row's range. */
+        if (rate) {
+            UT_ASSERT_MSG((double) (float) range.lo == range.lo,
+                          "%s: the floor %.12f is not a value a float holds",
+                          name, range.lo);
+            UT_ASSERT_MSG(!range.hasHi ||
+                              (double) (float) range.hi == range.hi,
+                          "%s: the ceiling %.12f is not a value a float "
+                          "holds", name, range.hi);
+            simRulesClassic(&rules);
+            srrSetValue(&rules, i, range.lo);
+            why[0] = '\0';
+            UT_ASSERT_MSG(simRulesCheck(&rules, why, sizeof why) !=
+                              SIM_RULES_FAULT_RANGE,
+                          "%s at its floor of %.12f was refused as out of "
+                          "range: %s", name, range.lo, why);
+        }
+
         /* A row whose ceiling is INT32_MAX has no value above it to hand in,
            and a row with no fixed ceiling has no ceiling to test. */
         if (!range.hasHi || range.hi >= (double) INT32_MAX) {

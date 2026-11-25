@@ -177,6 +177,15 @@ typedef struct {
     uint8_t  joinCookie[JOIN_COOKIE_LEN];
     bool     haveJoinCookie;
 
+    /* The WinBolo.net check before a rejoin into a locked game. The server
+     * key comes from PACKET_JOIN_SIGN_IN, and the player_key minted for it
+     * once is sent in every JOIN after, so the server checks one key. Kept
+     * apart from wbnServerKey, so the PACKET_WBN_REKEY after JOIN_ACCEPT
+     * still starts the normal re-authentication. Empty until a
+     * PACKET_JOIN_SIGN_IN arrives. */
+    char     signInServerKey[WINBOLONET_KEY_LEN];
+    char     signInJoinKey[WBN_JOIN_KEY_WIRE_LEN];
+
     /* Ping */
     uint32_t lastPingSentTick;
     /* Suppress the periodic ping below. Written only by the WB_NOPING read at
@@ -3062,6 +3071,41 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         }
         break;
 
+    case PACKET_JOIN_SIGN_IN: {
+        /* [header 8][serverKey WBN_JOIN_KEY_WIRE_LEN]. The server wants a
+         * player_key before it lets this rejoin into its locked game. Only
+         * a signed-in player JOIN that said it can answer acts on it. */
+        char key[WINBOLONET_KEY_LEN];
+        if (c->joinState != UDP_CLIENT_JOINING || c->spectator ||
+            c->wbnApiToken[0] == '\0' ||
+            !clientSimGetSignInFirst(c->clientSim) ||
+            len < PACKET_HEADER_SIZE + WBN_JOIN_KEY_WIRE_LEN) {
+            break;
+        }
+        memset(key, 0, sizeof(key));
+        if (!wbnKeyDecode(key, buf + PACKET_HEADER_SIZE) || key[0] == '\0') {
+            break;
+        }
+        if (strcmp(key, c->signInServerKey) != 0) {
+            /* A new server key: the next JOIN mints a player_key for it
+             * and goes now. The retry count starts again, as for the
+             * first challenge. */
+            memcpy(c->signInServerKey, key, sizeof(c->signInServerKey));
+            c->signInJoinKey[0] = '\0';
+            c->joinAttempts = 0;
+            c->ticksSinceJoinSent = JOIN_RETRY_INTERVAL;
+            WB_LOG_INFO(WB_LOG_CAT_NET,
+                        "[WBN] locked game asks for a WinBolo.net sign-in "
+                        "before the rejoin");
+        } else if (c->signInJoinKey[0] != '\0') {
+            /* The server checks the key the last JOIN carried. Keep
+             * sending the JOIN until it answers; the server ends the
+             * check itself after WBN_REAUTH_HOLD_TICKS. */
+            c->joinAttempts = 0;
+        }
+        break;
+    }
+
     case PACKET_STATE_SNAPSHOT: {
         uint32_t seq = unpackU32(buf + 4);
         int pos = PACKET_HEADER_SIZE;
@@ -4543,6 +4587,24 @@ static bool udpClientTick(void *ctx) {
                             playerKey[0] = '\0';
                         }
                     }
+                } else if (c->wbnApiToken[0] != '\0' &&
+                           c->signInServerKey[0] != '\0') {
+                    /* The locked game's sign-in check: mint once, then
+                     * send the same key until the server answers. */
+                    if (c->signInJoinKey[0] == '\0') {
+                        char errMsg[256];
+                        errMsg[0] = '\0';
+                        if (!winbolonetClientJoinSession(c->wbnApiToken,
+                                                         c->signInServerKey,
+                                                         c->signInJoinKey,
+                                                         errMsg)) {
+                            WB_LOG_WARN(WB_LOG_CAT_NET,
+                                    "[WBN] sign-in exchange failed: %s",
+                                    errMsg[0] ? errMsg : "(no detail)");
+                            c->signInJoinKey[0] = '\0';
+                        }
+                    }
+                    memcpy(playerKey, c->signInJoinKey, sizeof(playerKey));
                 } else if (c->wbnApiToken[0] != '\0' && c->wbnServerKey[0] != '\0') {
                     char errMsg[256];
                     errMsg[0] = '\0';
@@ -4579,6 +4641,12 @@ static bool udpClientTick(void *ctx) {
                 if (c->spectator)              joinFlags |= JOIN_FLAG_SPECTATOR;
                 /* Bot Host bot connection: the token follows the cookie. */
                 if (c->botSlot)                joinFlags |= JOIN_FLAG_BOT_SLOT;
+                /* The frontend can show the rejoin question. */
+                if (clientSimGetAskRejoin(c->clientSim))
+                                               joinFlags |= JOIN_FLAG_ASK_REJOIN;
+                /* The frontend handles PACKET_JOIN_SIGN_IN. */
+                if (clientSimGetSignInFirst(c->clientSim))
+                                               joinFlags |= JOIN_FLAG_SIGN_IN_FIRST;
                 jbuf[joffset++] = joinFlags;
                 jbuf[joffset++] = bolo_detect_client_type();
                 {

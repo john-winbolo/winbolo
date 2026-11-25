@@ -203,6 +203,11 @@ void serverDisconnectClient(ServerSim *sim, int idx, bool graceful) {
         serverBotHostPlayerGone(sim, idx, graceful ? "its player left"
                                                    : "its player timed out");
     }
+    /* The address the player has now, which a NAT rebind may have moved
+     * since the join. The rejoin record serverSimRemovePlayer makes next
+     * keeps it, for a rejoin on a locked game. */
+    serverSimSetRejoinAddress(sim, (BYTE)idx,
+                              (uint32_t)udpServer.clients[idx].addr.sin_addr.s_addr);
 
     {
         UdpServerClient *c = &udpServer.clients[idx];
