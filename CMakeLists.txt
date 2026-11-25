@@ -6905,6 +6905,7 @@ set(_unit_test_names
     lv_lag_view_draw
     lv_lag_view_own_shells
     lv_lag_view_first_picture
+    lv_new_blast_steps
     lv_lag_view_lost_owner
     lv_lag_view_shell_snapshot
     lv_lag_view_map

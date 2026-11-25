@@ -53,11 +53,17 @@
 /* ---- synthetic v2 log builder ------------------------------------------- */
 
 typedef struct {
-  uint8_t buf[4096];
+  uint8_t buf[8192];
   size_t len;
 } LogBuf;
 
 static void put(LogBuf *b, const void *bytes, size_t n) {
+  if (b->len + n > sizeof(b->buf)) {
+    /* A made log too long for the buffer: stop at once, not write past it. */
+    fprintf(stderr, "FAIL test_lv_calibration.c: made log over %u bytes\n",
+            (unsigned)sizeof(b->buf));
+    abort();
+  }
   memcpy(b->buf + b->len, bytes, n);
   b->len += n;
 }
@@ -2491,9 +2497,9 @@ int run_lv_lag_view_own_shells(void) {
                 "the pillbox's shell is not at its entry-65 place");
 
   /* A's shell has ended (entry 78) and the old time still has it (73):
-     it is not drawn, as A's own screen no longer had it. With the view
-     on, Screen-True Local Explosions is on too (lv_screenScreenTrueOn), so
-     A's early blast is drawn where the shell ended: two items in all. */
+     it is not drawn, as A's own screen no longer had it. The view always
+     draws Screen-True Local Explosions too, so A's early blast is drawn
+     where the shell ended: two items in all. */
   if (lagDrawPlayTo(lv, 78) != 0) return 1;
   lagShellDraw(55, 50);
   UT_ASSERT_MSG(s_lagShellSeen.n == 2, "%d items drawn at entry 78, want 2",
@@ -2632,10 +2638,165 @@ int run_lv_lag_view_first_picture(void) {
 }
 
 /*
+ * Which steps give an explosion the dot (the "step before" record in
+ * screen.c, lv_screenShellsReset and lv_screenShellsNewFlags), in forward
+ * play and after a seek. Each explosion is a pillbox's, with no tank behind
+ * it, at its own place in row 70 (newBlastX), and goes down one frame each
+ * 3 entries. No shell is recorded before entry 55, so by then the empty
+ * steps have made the step before known.
+ *
+ *   entries 55..78     A: frame 8 to 1, with no shell at all at entry 57
+ *   entry 90           a snapshot
+ *   entries 91..111    B: first recorded at frame 7, on the first step after
+ *                      the snapshot
+ *   entries 130..153   C: frame 8 to 1; entry 155 a second explosion at C's
+ *                      place, 500 ms after C started
+ *   entry 170          D: frame 8, one record only, and no shell after it
+ *                      until entry 225: a second explosion at D's place,
+ *                      1100 ms after D
+ *   entry 240          E: frame 8, one record only; entry 265 a second
+ *                      explosion at E's place, 500 ms after E
+ *
+ * Forward play: a dot at entries 55, 91, 130, 155, 170, 225 and 240 only.
+ * The empty step 57 gives A no second dot. The step after C's last record
+ * (frame 1) is under the new frame 8, so 155 is new. After 1100 ms with no
+ * shell D has surely ended, so 225 is new; 500 ms after E, with no record
+ * between, E's record is still kept and covers 265.
+ * A seek back to entry 91 starts the decode an explosion's life before it,
+ * not at the snapshot of entry 90, so B gets its dot and the frame 8
+ * picture as in forward play; a seek to 92 gives no dot.
+ */
+#define NEW_BLAST_LAST_K 270
+#define NEW_BLAST_SNAP_K 90
+static int32_t newBlastX(int i) { return (76 + 2 * i) * 256 + 5 * 16; }
+static int32_t newBlastY(void) { return 70 * 256 + 9 * 16; }
+
+/* The explosions recorded at entry k, as (place, frame) pairs. Returns how
+   many. */
+static int newBlastAt(int k, int *place, uint8_t *frame) {
+  int n = 0;
+  if (k >= 55 && k <= 78 && k != 57) {
+    place[n] = 0; frame[n++] = (uint8_t)(8 - (k - 55) / 3);
+  }
+  if (k >= 91 && k <= 111) {
+    place[n] = 1; frame[n++] = (uint8_t)(7 - (k - 91) / 3);
+  }
+  if (k >= 130 && k <= 153) {
+    place[n] = 2; frame[n++] = (uint8_t)(8 - (k - 130) / 3);
+  }
+  if (k == 155) {
+    place[n] = 2; frame[n++] = 8;
+  }
+  if (k == 170 || k == 225) {
+    place[n] = 3; frame[n++] = 8;
+  }
+  if (k == 240 || k == 265) {
+    place[n] = 4; frame[n++] = 8;
+  }
+  return n;
+}
+
+static bool newBlastWantDot(int k) {
+  return k == 55 || k == 91 || k == 130 || k == 155 || k == 170 || k == 225 || k == 240;
+}
+
+/* How many explosions of the present step are new, after a draw of the
+   map; -1 when the drawn map's count (lv_screenNewBlasts) is not the
+   step's (lv_screenShellsNewBlasts). */
+static int newBlastCount(void) {
+  struct LvHitBlastRec out[16];
+  const struct LvHitBlastRec *nb = NULL;
+  int n = lv_screenShellsNewBlasts(out, 16), drawn;
+  lagShellDraw(55, 50);
+  drawn = lv_screenNewBlasts(&nb);
+  if (drawn != n) {
+    fprintf(stderr, "the drawn map has %d new explosions, the step %d\n", drawn, n);
+    return -1;
+  }
+  return n;
+}
+
+int run_lv_new_blast_steps(void) {
+  const char *path = "lv_new_blast_steps.wbv";
+  LogBuf b;
+  LogViewerState *lv;
+  int savedHide = lv_screenGetHideLobby();
+  int k;
+
+  b.len = 0;
+  putHeader(&b);
+  putLagDrawSnapshot(&b, 0);
+  for (k = 1; k <= NEW_BLAST_LAST_K; k++) {
+    int place[4];
+    uint8_t frame[4];
+    int n = newBlastAt(k, place, frame), i;
+    if (k == NEW_BLAST_SNAP_K) {
+      putLagDrawSnapshot(&b, k);
+      continue;
+    }
+    putU8(&b, LOG_EVENT);
+    putU8(&b, (uint8_t)(2 + n));
+    putLagDrawLocation(&b, 0, k);
+    putLagDrawLocation(&b, 1, k);
+    for (i = 0; i < n; i++) {
+      putLagBlast(&b, newBlastX(place[i]), newBlastY(), frame[i]);
+    }
+  }
+  putU8(&b, LOG_QUIT);
+
+  lv_screenSetHideLobby(0);
+  lv_screenSetLagFeature(0);
+  lv = loadSynthetic(&b, path);
+  UT_ASSERT_MSG(lv != NULL, "synthetic new explosion log failed to build/load");
+
+  /* Forward play: one dot at the start of each new explosion only. */
+  for (k = 1; k <= NEW_BLAST_LAST_K - 1; k++) {
+    int n, want = newBlastWantDot(k) ? 1 : 0;
+    if (k == NEW_BLAST_SNAP_K) {
+      continue;
+    }
+    if (lagDrawPlayTo(lv, k) != 0) return 1;
+    n = newBlastCount();
+    UT_ASSERT_MSG(n == want, "forward play, entry %d: %d new explosions, want %d", k, n, want);
+  }
+
+  /* A seek back to the first step after the snapshot: as in forward play. */
+  lv_screenSeekToTimeMs(lagDrawMs(NEW_BLAST_SNAP_K + 1));
+  UT_ASSERT_MSG(lv->timeRunning == lagDrawMs(NEW_BLAST_SNAP_K + 1),
+                "the seek is at %u ms, want %u", (unsigned)lv->timeRunning,
+                (unsigned)lagDrawMs(NEW_BLAST_SNAP_K + 1));
+  k = newBlastCount();
+  UT_ASSERT_MSG(k == 1, "%d new explosions after a seek to entry 91, want 1", k);
+  {
+    struct LvHitBlastRec out[4];
+    int n = lv_screenShellsNewBlasts(out, 4);
+    UT_ASSERT(n == 1);
+    UT_ASSERT_MSG(out[0].mx == newBlastX(1) / 256 && out[0].frame == 7,
+                  "the new explosion after the seek is at column %d frame %d", out[0].mx,
+                  out[0].frame);
+    UT_ASSERT_MSG(lvHitboxDrawFrame(out[0].frame, true) == 8,
+                  "B is not drawn with the frame 8 picture after the seek");
+  }
+  lv_screenSeekToTimeMs(lagDrawMs(NEW_BLAST_SNAP_K + 2));
+  UT_ASSERT_MSG(lv->timeRunning == lagDrawMs(NEW_BLAST_SNAP_K + 2),
+                "the seek is at %u ms, want %u", (unsigned)lv->timeRunning,
+                (unsigned)lagDrawMs(NEW_BLAST_SNAP_K + 2));
+  k = newBlastCount();
+  UT_ASSERT_MSG(k == 0, "%d new explosions after a seek to entry 92, want 0", k);
+
+  lv_decoderDestroy(lv);
+  lv_screenSetHideLobby(savedHide);
+  remove(path);
+  return 0;
+}
+
+/*
  * The two Screen-True options (Screen-True Own Shells, Screen-True Local
- * Explosions) have no menu item and no preference: they are on exactly while
- * "See What the Selected Player Saw" is on, and off while it is off. The log
- * is the one of lv_lag_view_draw, with A's lag record at entry 40.
+ * Explosions) have no menu item and no preference: the view draws both
+ * always, so they are on exactly while "See What the Selected Player Saw"
+ * is on. The view turns on and off as asked, and goes off with the lag
+ * display. The log is the one of lv_lag_view_draw, with A's lag record at
+ * entry 40.
  */
 int run_lv_lag_screen_true(void) {
   const char *path = "lv_lag_screen_true.wbv";
@@ -2649,7 +2810,7 @@ int run_lv_lag_screen_true(void) {
      turns both on. */
   UT_ASSERT(lv_earlyBlastOn(true, true));
   lv_screenLagViewSet(-1);
-  UT_ASSERT_MSG(lv_screenScreenTrueOn() == 0, "on with no log and no view");
+  UT_ASSERT_MSG(lv_screenLagViewSlot() < 0, "a view is on with no log");
 
   b.len = 0;
   putHeader(&b);
@@ -2673,21 +2834,19 @@ int run_lv_lag_screen_true(void) {
   UT_ASSERT_MSG(lv != NULL, "synthetic Screen-True log failed to build/load");
   if (lagDrawPlayTo(lv, 50) != 0) return 1;
   UT_ASSERT_MSG(lv_screenLagViewSlot() < 0, "a view is on before it was asked for");
-  UT_ASSERT_MSG(lv_screenScreenTrueOn() == 0, "on with the view off");
 
   lv_screenLagViewSet(0);
   UT_ASSERT_MSG(lv_screenLagViewSlot() == 0, "the view did not turn on for A");
-  UT_ASSERT_MSG(lv_screenScreenTrueOn() == 1, "off with the view on");
 
   lv_screenLagViewSet(-1);
-  UT_ASSERT_MSG(lv_screenScreenTrueOn() == 0, "still on after the view was turned off");
+  UT_ASSERT_MSG(lv_screenLagViewSlot() < 0, "still on after the view was turned off");
 
   /* The view on again, then the lag display turned off: the view goes
      off, and the options with it. */
   lv_screenLagViewSet(0);
-  UT_ASSERT(lv_screenScreenTrueOn() == 1);
+  UT_ASSERT(lv_screenLagViewSlot() == 0);
   lv_screenSetLagFeature(0);
-  UT_ASSERT_MSG(lv_screenScreenTrueOn() == 0, "on after the lag display was turned off");
+  UT_ASSERT_MSG(lv_screenLagViewSlot() < 0, "on after the lag display was turned off");
 
   lv_screenLagViewSet(-1);
   lv_decoderDestroy(lv);

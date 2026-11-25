@@ -2808,4 +2808,4 @@ static const LangNameEntry kLangNameTable[] = {
     { "STR_YES", STR_YES },
 };
 
-#define K_LANG_NAME_TABLE_SIZE  2800
+#define K_LANG_NAME_TABLE_SIZE  2795

@@ -7,19 +7,19 @@
  *Name:          Log Viewer early blast
  *Filename:      lv_early_blast.h
  *Purpose:
- *  "Screen-True Local Explosions", on while "See What the
- *  Selected Player Saw" is on (lv_screenScreenTrueOn). It shows what the player would see if the
- *  game did this: when a player's own shell ends, that player's
+ *  "Screen-True Local Explosions", always on while "See What
+ *  the Selected Player Saw" is on. It shows what the player
+ *  would see if the game did this: when a player's own shell
+ *  ends, that player's
  *  client draws the explosion at once where its own shell
  *  stopped, and hides the server's later explosion of that
  *  shell.
  *
- *  It works together with "Screen-True Own Shells", which is
- *  on at the same times: that one draws
- *  the chosen player's own shells from the present frame
- *  (lv_shell_owner.h), and every other shell and explosion comes
- *  from the old frame. The early blast starts where those
- *  present-frame own shells end (lv_earlyBlastOn). With both on:
+ *  It works together with "Screen-True Own Shells", which the
+ *  view also always draws: the chosen player's own shells from
+ *  the present frame (lv_shell_owner.h), and every other shell
+ *  and explosion from the old frame. The early blast starts
+ *  where those present-frame own shells end (lv_earlyBlastOn):
  *
  *  - An owned shell of the entry before that no shell of this
  *    entry continues has ended. Its early blast starts at this
@@ -59,10 +59,11 @@
 
 #include "lv_shell_owner.h"
 
-/* Whether the early blast is drawn: "Screen-True Local Explosions"
-   (screenTrueExpl) is on, and so is "Screen-True Own Shells"
-   (screenTrueShells), as the early blast starts where the own shells drawn
-   from the present frame end. */
+/* The rule that the early blast (screenTrueExpl) is drawn only with the
+   own shells drawn from the present frame (screenTrueShells), as it starts
+   where those shells end. "See What the Selected Player Saw" always draws
+   both, so the viewer has no setting that turns either off; the unit test
+   keeps the rule. */
 static inline bool lv_earlyBlastOn(bool screenTrueShells, bool screenTrueExpl) {
   return screenTrueShells && screenTrueExpl;
 }
