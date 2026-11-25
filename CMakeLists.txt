@@ -8103,6 +8103,7 @@ set(_unit_test_names
     lv_server_tick_live_feed
     lv_region_rect_placement
     lv_dock_fit_sums
+    lv_zoom_big_sums
     lv_dock_fit_margins
     status_grid_slots
     lv_dock_layout_sides
@@ -8118,6 +8119,7 @@ set(_unit_test_names
     lv_tank_status_sums
     lv_tank_bars_sums
     lv_hitbox_sums
+    lv_hitbox_new_blast
     lv_hitbox_lgm_fit
     lv_hitbox_lgm_pick
     lv_hitbox_outline

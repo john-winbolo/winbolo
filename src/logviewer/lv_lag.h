@@ -416,15 +416,6 @@ static inline int lv_lagViewToggle(bool feature, bool loaded, bool recorded, int
     return sel;
 }
 
-/* Whether a "Screen-True" option (Screen-True Own Shells, Screen-True
-   Local Explosions) acts as on. While "See What the Selected Player Saw"
-   is on (viewOn), every one of them is on, and its menu item shows ticked
-   and greyed. With the view off, each one is the user's saved choice
-   (saved), which the view never changes. */
-static inline bool lv_lagScreenTrueOn(bool viewOn, bool saved) {
-    return viewOn || saved;
-}
-
 /* What the Tank panel shows of one player's lag. */
 typedef struct {
     bool  recorded;  /* the recording has lag records for some player */
