@@ -671,7 +671,15 @@ static void simRunHalfStep(ServerSim *sim) {
         break; /* Fall through to existing simulation code */
     }
 
-    playersRejoinUpdate();
+    /* A rejoin record's age is counted in 20 ms frames, 50 a second
+     * (REJOIN_TICKS_PER_SECOND). A running frame is two half-steps, so the
+     * age goes up on the world half-step only (sim->tick % 2 == 0), once a
+     * frame. Counting on every half-step timed a record out in half of
+     * MAX_REJOIN_TIME, and showed a joiner twice the seconds since the
+     * player left. */
+    if ((sim->tick % 2) == 0) {
+        playersRejoinUpdate();
+    }
 
     /* Install map change callback to emit EVENT_MAP_CHANGE during tick */
     mapSetChangeCallback(simMapChangeCallback);

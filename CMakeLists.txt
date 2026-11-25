@@ -4804,6 +4804,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_gate1_integration.c
     tests/unit/test_interp_jitter_e2e.c
     tests/unit/test_join_version_gate.c
+    tests/unit/test_join_ask_rejoin.c
+    tests/unit/test_join_locked_rejoin.c
     tests/unit/test_join_rate_limit.c
     # A password-protected server: the INFO ping flag, the incorrect-password
     # reject's langid at the client, and a join with the right password.
@@ -5969,6 +5971,7 @@ set(_unit_test_names
     brain_sandbox_hostile_file_jail
     brain_sandbox_hostile_off_map_terrain
     brain_sandbox_jit_limits
+    brain_sandbox_luajit_no_ffi
     brain_msgh_budget_kill_no_traceback
     brain_msgh_real_error_keeps_traceback
     brain_inbox_push_peek_fifo
@@ -6278,6 +6281,29 @@ set(_unit_test_names
     team_sides_panels_follow_team
     team_sides_infection_puts_leaver_back
     team_sides_rejoin_is_a_joiner
+    team_sides_rejoin_keeps_team
+    team_sides_rejoin_keeps_team_no_pills
+    team_sides_rejoin_solo_keeps_team
+    team_sides_join_without_rejoin_is_new
+    team_sides_rejoin_next_round_is_new
+    team_sides_rejoin_can_ally_refused
+    team_sides_rejoin_ranked_keeps_team
+    team_sides_rejoin_full_table_drops_oldest
+    team_sides_rejoin_team_waits_for_rejoiner
+    team_sides_rejoin_all_numbers_held
+    team_sides_rejoin_timed_out_frees_team
+    team_sides_rejoin_age_counts_frames
+    team_sides_rejoin_unsigned_restores_at_join
+    team_sides_rejoin_signed_in_waits
+    team_sides_rejoin_signed_in_restored
+    team_sides_rejoin_signed_in_solo_keeps_team
+    team_sides_rejoin_signed_in_moved_seat_kept
+    team_sides_rejoin_signed_in_leave_clears
+    team_sides_rejoin_signed_in_outlives_same_name_join
+    team_sides_rejoin_signed_in_outlives_same_name_rejoin
+    team_sides_rejoin_signed_in_keeps_address
+    team_sides_rejoin_signed_in_name_taken_restored
+    team_sides_rejoin_no_record_confirm_changes_nothing
     team_sides_joiner_slot_before_join
     team_sides_lobby_joiner_keeps_rule
     team_sides_lobby_drops_empty_teams
@@ -6856,6 +6882,20 @@ set(_unit_test_names
     gate1_host_noop
     interp_jitter_e2e
     join_version_gate
+    join_ask_rejoin_live_record_asks
+    join_ask_rejoin_without_flag_joins
+    join_ask_rejoin_want_rejoin_joins
+    join_ask_rejoin_no_record_joins
+    join_ask_rejoin_timed_out_joins
+    join_locked_rejoin_address_seats
+    join_locked_rejoin_no_match_rejects
+    join_locked_rejoin_wbn_sign_in_not_seated
+    join_locked_rejoin_wbn_verified_seats
+    join_locked_rejoin_wbn_fail_rejects
+    join_locked_rejoin_wbn_other_name_rejects
+    join_locked_rejoin_wbn_timeout_rejects
+    join_locked_rejoin_ask_gets_question
+    join_locked_rejoin_unlocked_unchanged
     join_rate_limit
     cookie_handshake
     map_amp_gate

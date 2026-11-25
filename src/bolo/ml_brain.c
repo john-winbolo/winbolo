@@ -235,6 +235,17 @@ static bool ensureOrtEnv(void) {
         g_ortApi = NULL;
         return false;
     }
+
+    /* Microsoft's prebuilt Windows library reports usage events to Windows
+     * unless told not to. The call does nothing on macOS and Linux, where the
+     * library has no telemetry code. A failure here is not a reason to refuse
+     * to load the brain. */
+    status = g_ortApi->DisableTelemetryEvents(g_ortEnv);
+    if (status != NULL) {
+        WB_LOG_ERROR(WB_LOG_CAT_SIM, "ONNX Runtime telemetry could not be turned off: %s",
+                     g_ortApi->GetErrorMessage(status));
+        g_ortApi->ReleaseStatus(status);
+    }
     return true;
 }
 

@@ -1081,7 +1081,7 @@ bool shellsCalcCollision(GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, s
 			switch (terrain)
 			{
 				case BUILDING:
-					mapSetPos(sim, mp, mapX, mapY, (buildingAddItem(sim, &sim->blds, mapX, mapY)), FALSE, FALSE);
+					mapSetPos(sim, mp, mapX, mapY, (buildingAddItem(sim, &sim->blds, mapX, mapY, terrain)), FALSE, FALSE);
 					sim->callbacks.soundDist(sim->callbacks.ctx, shotBuildingNear, mapX, mapY);
 					break;
 				case FOREST:
@@ -1093,7 +1093,7 @@ bool shellsCalcCollision(GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, s
 					sim->callbacks.soundDist(sim->callbacks.ctx, shotTreeNear, mapX, mapY);
 					break;
 				case HALFBUILDING:
-					mapSetPos(sim, mp, mapX, mapY, (buildingAddItem(sim, &sim->blds, mapX, mapY)), FALSE, FALSE);
+					mapSetPos(sim, mp, mapX, mapY, (buildingAddItem(sim, &sim->blds, mapX, mapY, terrain)), FALSE, FALSE);
 					sim->callbacks.soundDist(sim->callbacks.ctx, shotBuildingNear, mapX, mapY);
 					break;
 				case BOAT:

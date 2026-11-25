@@ -2928,3 +2928,7 @@ STR_CLIPGIF_MOVE_TIP=Faites glisser pour déplacer le GIF plus tôt ou plus tard
 # L'option -size du Log Viewer quand son texte n'est pas une taille ou ne peut pas être respecté
 STR_LV_SIZE_ARG_BAD=-size attend une largeur et une hauteur en pixels, par exemple -size 1920x1080. La fenêtre s'est ouverte à sa taille habituelle.
 STR_LV_SIZE_NOT_MET=La fenêtre n'a pas pu être mise à {string1} pixels, comme -size le demandait. Elle fait {string2} pixels : l'écran est peut-être trop petit pour la contenir.
+
+# La question que reçoit Rejoindre quand un joueur de ce nom a quitté la partie il y a peu
+STR_REJECT_CAN_REJOIN=Un joueur nommé {player} a quitté cette partie il y a {string1} secondes. Re-rejoindre en tant que ce joueur ?\n\nEn re-rejoignant, vous retournez dans la même équipe et récupérez les pillboxes et les bases que vous possédiez et qui sont encore neutres.
+STR_JOIN_AS_NEW=Rejoindre comme nouveau
