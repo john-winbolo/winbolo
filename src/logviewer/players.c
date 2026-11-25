@@ -68,23 +68,44 @@ static char perspectiveName[PLAYER_NAME_LEN];
 static int selectedTank = -1;
 
 /* The lag view's frame: when set, the map draws every tank but lagLiveSlot's
- * and every builder at the place this frame holds, which is where the chosen
- * player's screen showed them. NULL draws the present. */
+ * at the place this frame holds, which is where the chosen player's screen
+ * showed them. NULL draws the present. */
 static const LvLagFrame *lagFrame = NULL;
 static int lagLiveSlot = -1;
-/* The frame the lag view's builders are drawn from: the server rewinds
- * builders less far than tanks (shellLgmRewind), so it can be a newer one
- * than lagFrame. lv_playersSetLagFrame sets it to lagFrame. */
-static const LvLagFrame *lagLgmFrame = NULL;
+/* The lag view's builders have two frames.
+ *
+ * lagLgmShowFrame is the frame the map draws every builder from, the chosen
+ * player's own one too. A client does not draw a builder between two
+ * snapshots: it puts its own builder where each snapshot says when the
+ * snapshot gets there (src/bolo/client_snapshot.c), and the others' builders
+ * where the newest snapshot it has says (interpGetLgm,
+ * src/bolo/interpolation.c). The pillboxes change in the same snapshot. So a
+ * builder is on that player's screen at the same time as the pillboxes: the
+ * frame one round trip back (lv_lagRttBackMs), the pillboxes' and the map's
+ * frame. NULL draws the builders at the present, as the pillboxes are when
+ * that frame is not held.
+ *
+ * lagLgmTestFrame is the frame of the builders the server tests: it rewinds
+ * builders by shellLgmRewind of the shooter's rewind, one entry less far
+ * than tanks. The hit box (lv_playersMakeScreenLgmTested,
+ * lv_playersLgmPlace) is what the server tested, so it is drawn from this
+ * frame and not from the drawn builders. NULL is the present.
+ *
+ * lv_playersSetLagFrame sets both to its frame; lv_playersSetLagLgmFrames
+ * sets them apart. */
+static const LvLagFrame *lagLgmShowFrame = NULL;
+static const LvLagFrame *lagLgmTestFrame = NULL;
 
 void lv_playersSetLagFrame(const LvLagFrame *frame, int liveSlot) {
   lagFrame = frame;
-  lagLgmFrame = frame;
+  lagLgmShowFrame = frame;
+  lagLgmTestFrame = frame;
   lagLiveSlot = liveSlot;
 }
 
-void lv_playersSetLagLgmFrame(const LvLagFrame *frame) {
-  lagLgmFrame = (lagFrame != NULL && frame != NULL) ? frame : lagFrame;
+void lv_playersSetLagLgmFrames(const LvLagFrame *shown, const LvLagFrame *tested) {
+  lagLgmShowFrame = shown;
+  lagLgmTestFrame = tested;
 }
 
 /* Note where each tank and each builder is drawn now, into one frame of the
@@ -583,13 +604,15 @@ bool lv_playersLgmPlace(BYTE playerNum, BYTE mx, BYTE my, BYTE px, BYTE py,
     return FALSE;
   }
   t = &lgmFit[playerNum];
-  /* The entry the drawing is of: the present (the newest note), or for the
-     lag view the newest note at or before the time of its builders' frame
-     (lagLgmFrame, one entry newer than the tanks'). The time picks
+  /* The entry the hit box is of: the present (the newest note), or for the
+     lag view the newest note at or before the time of the frame of the
+     builders the server tested (lagLgmTestFrame, one entry newer than the
+     tanks'). Not the drawn builders' frame (lagLgmShowFrame): the hit box
+     shows what the server tested. The time picks
      it, not the pixel, so a builder in one pixel for two entries, or back
      in a pixel he walked through before, is fitted at the right entry. */
   at = lvHitboxLgmPickEntry(t->ms, t->ax, t->ay, t->count,
-                            lagLgmFrame != NULL ? lagLgmFrame->ms : UINT32_MAX, ax, ay);
+                            lagLgmTestFrame != NULL ? lagLgmTestFrame->ms : UINT32_MAX, ax, ay);
   if (at < 0) {
     return FALSE;
   }
@@ -963,26 +986,52 @@ void lv_playersMakeScreenTanks(screenTanks *value, BYTE leftPos, BYTE rightPos, 
 *  top      - top bound
 *  bottom   - Bottom bound
 *********************************************************/
+/* Add every builder out at the place frame holds to value. The frame made
+   the tests lv_playersMakeScreenLgm makes for the present when it was
+   noted. */
+static void playersScreenLgmFromFrame(screenLgm *value, const LvLagFrame *frame, BYTE leftPos,
+                                      BYTE rightPos, BYTE top, BYTE bottom) {
+  WORLD wx;
+  WORLD wy;
+  BYTE count;
+  for (count = 0; count < MAX_TANKS && count < LV_LAG_SLOTS; count++) {
+    const LvLagLgm *l = &frame->lgm[count];
+    if (plrs.item[count].inUse == TRUE && l->out &&
+        l->mx >= leftPos && l->mx <= rightPos && l->my >= top && l->my <= bottom) {
+      wx = l->mx << TANK_SHIFT_MAPSIZE;
+      wx += l->px << TANK_SHIFT_RIGHT2;
+      wy = l->my << TANK_SHIFT_MAPSIZE;
+      wy += l->py << TANK_SHIFT_RIGHT2;
+      lv_screenLgmAddItem(value, (BYTE) (l->mx - leftPos), (BYTE) (l->my - top), l->px, l->py, l->frame, (BYTE) wx, (BYTE) wy, count);
+    }
+  }
+}
+
+void lv_playersMakeScreenLgmTested(screenLgm *value, BYTE leftPos, BYTE rightPos, BYTE top, BYTE bottom) {
+  if (lagLgmTestFrame != NULL) {
+    /* The lag view: the builders where the server tested them. */
+    playersScreenLgmFromFrame(value, lagLgmTestFrame, leftPos, rightPos, top, bottom);
+    return;
+  }
+  /* No lag view, or no frame that old: the present. */
+  {
+    const LvLagFrame *keep = lagLgmShowFrame;
+    lagLgmShowFrame = NULL;
+    lv_playersMakeScreenLgm(value, leftPos, rightPos, top, bottom);
+    lagLgmShowFrame = keep;
+  }
+}
+
 void lv_playersMakeScreenLgm(screenLgm *value, BYTE leftPos, BYTE rightPos, BYTE top, BYTE bottom) {
   WORLD wx;
   WORLD wy;
   BYTE count;                    /* Looping variable */
 
-  if (lagLgmFrame != NULL) {
-    /* The lag view: every builder at the place the frame holds, the chosen
-       player's own one too, since his place comes from the server as the
-       others' do. The frame made the tests below when it was noted. */
-    for (count = 0; count < MAX_TANKS && count < LV_LAG_SLOTS; count++) {
-      const LvLagLgm *l = &lagLgmFrame->lgm[count];
-      if (plrs.item[count].inUse == TRUE && l->out &&
-          l->mx >= leftPos && l->mx <= rightPos && l->my >= top && l->my <= bottom) {
-        wx = l->mx << TANK_SHIFT_MAPSIZE;
-        wx += l->px << TANK_SHIFT_RIGHT2;
-        wy = l->my << TANK_SHIFT_MAPSIZE;
-        wy += l->py << TANK_SHIFT_RIGHT2;
-        lv_screenLgmAddItem(value, (BYTE) (l->mx - leftPos), (BYTE) (l->my - top), l->px, l->py, l->frame, (BYTE) wx, (BYTE) wy, count);
-      }
-    }
+  if (lagLgmShowFrame != NULL) {
+    /* The lag view: every builder at the place the pillboxes' frame holds
+       (lagLgmShowFrame), the chosen player's own one too, since his place
+       comes from the server in the same snapshots as the others'. */
+    playersScreenLgmFromFrame(value, lagLgmShowFrame, leftPos, rightPos, top, bottom);
     return;
   }
 

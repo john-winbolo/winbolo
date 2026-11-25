@@ -111,7 +111,7 @@ LogViewerState *lv_screenGetState(void) { return g_lv; }
  * Each frame also keeps every pillbox as it was drawn and the map squares
  * that changed in that entry.
  *
- * With the view on, the map draws the tanks, the builders and the shells
+ * With the view on, the map draws the tanks and the shells
  * from the frame that is the chosen player's rewind older than the playhead:
  * the server rewinds the other tanks by that much when it tests that
  * player's tank shells, and that player's client drew them that far back
@@ -124,7 +124,16 @@ LogViewerState *lv_screenGetState(void) { return g_lv; }
  * the player's input reaches the server at the playhead, the newest of them
  * that player had was one round trip old, and the view draws them from the
  * frame that is the player's round trip older than the playhead
- * (lv_lagRttBackMs). The pillboxes come from that frame. The map is a
+ * (lv_lagRttBackMs). The pillboxes come from that frame. The builders come
+ * from it too, every one, the chosen player's own as well: a client puts its
+ * own builder where each snapshot says when the snapshot gets there
+ * (src/bolo/client_snapshot.c), and the others' builders where the newest
+ * snapshot says (interpGetLgm), not between two snapshots as tanks. Where
+ * the history has no frame that old, the builders are drawn at the present,
+ * as the pillboxes are. What the server tested stays at the server's
+ * builder rewind (shellLgmRewind of the rewind, one entry less than tanks):
+ * the hit box of each builder (lv_playersMakeScreenLgmTested) and the
+ * Server Check (lv_scEstimateTick, log_BuilderCheck). The map is a
  * drawing copy of the present map with the changes of every newer frame
  * undone (lv_lagMapUndo); the map itself is never changed. Where one of
  * those frames had more changes than it keeps (LV_LAG_SQUARES_MAX), the map
@@ -1023,10 +1032,11 @@ static uint32_t lv_lagNowMs(void) {
 
 /* The frame the lag view draws at the playhead, or NULL to draw the present:
    the view is off, its player has no record yet, or the history holds no
-   frame that old. lgmFrame, when not NULL, takes the frame the builders are
-   drawn from: the server tests builders one entry less far back than tanks
-   (shellLgmRewind), so that is a newer frame. It is NULL when the tanks'
-   frame is. */
+   frame that old. lgmFrame, when not NULL, takes the frame of the builders
+   the server tests: it tests builders one entry less far back than tanks
+   (shellLgmRewind), so that is a newer frame. The builders' hit boxes are
+   drawn from it; the builders themselves are drawn from the pillboxes'
+   frame (lv_lagViewMapFrame). It is NULL when the tanks' frame is. */
 static const LvLagFrame *lv_lagViewFrame(uint32_t *behindMs, const LvLagFrame **lgmFrame) {
   const LvLagRecord *rec;
   uint32_t behind;
@@ -1060,9 +1070,9 @@ static const LvLagFrame *lv_lagViewFrame(uint32_t *behindMs, const LvLagFrame **
   return f;
 }
 
-/* The frame the lag view draws the pillboxes and the map from at the
-   playhead: the one that is the chosen player's round trip older than the
-   playhead (lv_lagRttBackMs). NULL to draw them at the present: the view is
+/* The frame the lag view draws the pillboxes, the builders and the map from
+   at the playhead: the one that is the chosen player's round trip older than
+   the playhead (lv_lagRttBackMs). NULL to draw them at the present: the view is
    off, its player has no record yet, or the history holds no frame that
    old. */
 static const LvLagFrame *lv_lagViewMapFrame(void) {
@@ -2293,7 +2303,8 @@ void lv_screenUpdate(updateType value) {
   screenBullets sb;
   screenLgm sl;
   const LvLagFrame *lagFrame; /* the lag view's frame; NULL draws the present */
-  const LvLagFrame *lagLgmFrame; /* the frame its builders are drawn from */
+  const LvLagFrame *lagLgmTestFrame; /* the frame of the builders the server tests */
+  const LvLagFrame *lagLgmShowFrame; /* the frame the builders are drawn from */
   shells lagShells = NULL;
 
 
@@ -2307,21 +2318,24 @@ void lv_screenUpdate(updateType value) {
 
   lv_screenUpdateView(value);
   s_newBlastN = 0;
-  lagFrame = lv_lagViewFrame(NULL, &lagLgmFrame);
+  lagFrame = lv_lagViewFrame(NULL, &lagLgmTestFrame);
+  /* The builders are drawn from the pillboxes' frame, one round trip back,
+     as a client puts them on its screen when the snapshot gets there. Their
+     hit boxes stay at the server's builder rewind (lagLgmTestFrame), as the
+     server tested them. A NULL frame is the present. */
+  lagLgmShowFrame = lv_lagViewMapFrame();
   if (lagFrame != NULL) {
     /* The lag view: the other tanks, the builders and the shells where the
        chosen player's screen showed them. The player's own client drew
        its own shells at once, from its own tank, so those come from the
        present frame (lv_lagViewFrame has checked
        the newest frame is the playhead's). A shell with no clear
-       owner stays at the old time. The builders are one entry newer than
-       the tanks (shellLgmRewind), as the server tests them. The pillboxes
-       and the map squares are one round trip back, from the frame
-       lv_screenUpdateView above took them from (lv_lagViewMapFrame). */
+       owner stays at the old time. The pillboxes, the map squares and the
+       builders are one round trip back, from the frame lv_screenUpdateView
+       above took them from (lv_lagViewMapFrame). */
     const LvLagFrame *now = &s_lagRing.frames[s_lagRing.newest];
     int i;
     lv_playersSetLagFrame(lagFrame, s_lagViewSlot);
-    lv_playersSetLagLgmFrame(lagLgmFrame);
     lagShells = lv_shellsCreate();
     /* A frame's shells are in the reverse of the game's draw order (the
        viewer's shell list is built front first), and lagShells draws in
@@ -2458,15 +2472,18 @@ void lv_screenUpdate(updateType value) {
     int bottomEdge = (int)g_lv->yOffset + lv_screenGetSizeY();
     if (rightEdge > 255) rightEdge = 255;
     if (bottomEdge > 255) bottomEdge = 255;
+    /* Set even with no tanks' frame: the pillboxes' frame can be held when
+       the tanks' is not, and the builders go with the pillboxes. */
+    lv_playersSetLagLgmFrames(lagLgmShowFrame, lagLgmTestFrame);
     lv_playersMakeScreenLgm(&sl, g_lv->xOffset, (BYTE) rightEdge, g_lv->yOffset, (BYTE) bottomEdge);
     lv_shellsCalcScreenBullets(lagFrame != NULL ? &lagShells : &g_lv->shs, &sb, g_lv->xOffset, (BYTE) rightEdge, g_lv->yOffset, (BYTE) bottomEdge);
     lv_playersMakeScreenTanks(&st, g_lv->xOffset, (BYTE) rightEdge, g_lv->yOffset, (BYTE) bottomEdge);
   }
   lv_frontEndDrawMainScreen(&g_lv->view, &g_lv->mineView, &st, NULL, &sb, &sl, 0, FALSE, 0, 0);
+  /* The game view's tank names and the builders' hit boxes read the frames
+     while it draws, so they are put back only after. */
+  lv_playersSetLagFrame(NULL, -1);
   if (lagFrame != NULL) {
-    /* The game view's tank names read the frame while it draws, so it is
-       put back only after. */
-    lv_playersSetLagFrame(NULL, -1);
     lv_shellsDestroy(&lagShells);
   }
   lv_screenTanksDestroy(&st);
