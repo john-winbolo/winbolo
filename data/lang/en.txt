@@ -1316,7 +1316,7 @@ STR_LV_MSG_PILL_STOLEN={player} just stole pillbox {number} from {other}
 
 # Log viewer: the hit area round each tank and builder on the map (Options)
 STR_LV_HIT_BOXES=Hit Boxes
-STR_LV_HIT_BOXES_TIP=Over each tank on the map, the circle a shell must reach to hit it. Over each builder out of his tank, the area an explosion must be in to kill him: a mine, a tank's explosion, or a shell that bursts on open ground. A shell that bursts on forest, a boat, the shore or a bridge kills only a builder on that square. A pulsing dot that goes from blue to purple marks the exact centre of each explosion on the tick it explodes, and the exact place of each builder out of his tank
+STR_LV_HIT_BOXES_TIP=Over each tank on the map, the circle a shell must reach to hit it. Over each builder out of his tank, the area an explosion must be in to kill him: a mine, a tank's explosion, or a shell that bursts on open ground. A shell that bursts on forest, a boat, the shore or a bridge kills only a builder on that square. A pulsing dot that goes from blue to purple marks the exact centre of each explosion on the tick it explodes, and the exact place of each builder out of his tank. When a shell explodes near a builder who is out, the Server Check shows for about a second what the server tested: the kill area of the rule, the place it tested him at (an orange dot), his place now (an orange ring), a line from the explosion to the tested place, and the result, for example "LIVES 147 > 128 (rewind 2)". For a recording made before the server wrote these checks, the viewer makes an estimate, and the label ends in "estimate".
 
 # Log viewer dialogs
 STR_LV_ASSIGN_COLOURS_HINT=Assign colours to each player team:
@@ -3083,4 +3083,16 @@ STR_LV_SIZE_NOT_MET=The window could not be made {string1} pixels, as -size aske
 # The question a Join gets when a player of that name left the game a short time ago
 STR_REJECT_CAN_REJOIN=A player named {player} left this game {string1} seconds ago. Rejoin as that player?\n\nRejoining puts you back on the same team and returns the pillboxes and bases you owned that are still neutral.
 STR_JOIN_AS_NEW=Join as new
+STR_LV_SC_LIVES=LIVES
+STR_LV_SC_DIES=DIES
+STR_LV_SC_REFUSED=HOST REFUSED
+STR_LV_SC_NOT_TESTED=NOT TESTED
+STR_LV_SC_CIRCLE_OUT={string1} {number} > {number2}
+STR_LV_SC_CIRCLE_IN={string1} {number} <= {number2}
+STR_LV_SC_BOX_OUT={string1} {number} >= {number2}
+STR_LV_SC_BOX_IN={string1} {number} < {number2}
+STR_LV_SC_OFF_SQUARE={string1} off square
+STR_LV_SC_ON_SQUARE={string1} on square
+STR_LV_SC_REWIND=(rewind {number})
+STR_LV_SC_ESTIMATE=estimate
 

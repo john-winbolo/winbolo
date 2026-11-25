@@ -54,9 +54,11 @@
 #include "lv_builder_draw.h"
 #include "lv_pill_numbers.h"
 #include "lv_hitbox.h"
+#include "lv_server_check.h"
 #include "lv_pillbox.h"
 #include "lv_zoom_text.h"
 #include "clientmutex.h"
+#include "../gui/lang.h"
 #include "../gui/sdl3/sdl_bmp.h"
 #include "../gui/sdl3/sprite_positions.h"
 #include "../gui/sdl3/tileloader.h"
@@ -564,6 +566,7 @@ static void lvDrawPillNumbersOverBlit(const SDL_FRect *src, const SDL_FRect *dst
 static void lvDrawBaseNumbersOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
 static void lvDrawHitBoxesOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
 static void lvDrawHitDotsOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
+static void lvDrawServerCheckOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
 
 /* Paint the world render target into the viewer's own window.
  *
@@ -642,6 +645,7 @@ static void lvDrawBlitTargetToWindow(void) {
            them. */
         lvDrawHitBoxesOverBlit(&srcRect, &dstRect);
         lvDrawHitDotsOverBlit(&srcRect, &dstRect);
+        lvDrawServerCheckOverBlit(&srcRect, &dstRect);
         /* The bars first, so a name is never under one. */
         lvDrawTankBarsOverBlit(&srcRect, &dstRect);
         lvDrawBuilderStatusOverBlit(&srcRect, &dstRect);
@@ -2511,6 +2515,9 @@ BYTE lv_drawGetBaseNumbers(void) {
 
 void lv_drawSetHitBoxes(BYTE on) {
     s_hitBoxes = on ? TRUE : FALSE;
+    /* The Server Check goes with the hit boxes: screen.c keeps its checks
+       only while they are on. */
+    lv_screenSetServerCheck(on ? 1 : 0);
 }
 
 BYTE lv_drawGetHitBoxes(void) {
@@ -2728,6 +2735,191 @@ static void lvDrawHitDotsOverBlit(const SDL_FRect *src, const SDL_FRect *dst) {
         SDL_FRect r;
         r.x = d.x; r.y = d.y; r.w = d.w; r.h = d.h;
         SDL_RenderFillRect(sdlRenderer, &r);
+    }
+
+    SDL_SetRenderDrawColor(sdlRenderer, oldR, oldG, oldB, oldA);
+    SDL_SetRenderDrawBlendMode(sdlRenderer, oldBlend);
+    SDL_SetRenderClipRect(sdlRenderer, hadClip ? &oldClip : NULL);
+}
+
+/* --- Server Check ------------------------------------------------------
+ * What the server tested when a shell's blast came near a builder who was
+ * out (lv_server_check.h, lv_screenServerChecks), drawn with the hit boxes
+ * for LV_SC_SHOW_MS of playback time from the blast's first step. It fades
+ * by playback time, so it stays as it is while playback is paused. For
+ * each check:
+ *   - the kill area of the rule, in the colour of the pulsing dot: the
+ *     blast's square for a solid hit, else the circle or the box of
+ *     lgm_blast_shape, cut by pill_range (lvServerCheckOpenArea);
+ *   - a line from the blast to the place the server tested;
+ *   - the tested place as an orange dot, the present place as an orange
+ *     ring;
+ *   - the label (lvServerCheckLabel) over the area.
+ * Places are in world units: a world unit is zf / 16 target pixels, from
+ * the view's top left square, as for the hit areas. */
+#define LV_SC_TESTED_R      3.5f   /* the tested dot's radius, screen pixels */
+#define LV_SC_PRESENT_IN    4.5f   /* the present ring's inner radius */
+#define LV_SC_PRESENT_OUT   6.0f   /* the present ring's outer radius */
+#define LV_SC_AREA_HALF_W   1.0f   /* half the width of the area's line */
+static TTF_Font *lvPingNameFont(void);
+
+/* An outline of the box (x0, y0) to (x1, y1), 2 * w pixels wide, in the
+   draw colour. */
+static void lvScOutlineRect(float x0, float y0, float x1, float y1, float w) {
+    SDL_FRect r[4];
+    r[0].x = x0 - w; r[0].y = y0 - w; r[0].w = x1 - x0 + 2.0f * w; r[0].h = 2.0f * w;
+    r[1].x = x0 - w; r[1].y = y1 - w; r[1].w = x1 - x0 + 2.0f * w; r[1].h = 2.0f * w;
+    r[2].x = x0 - w; r[2].y = y0 - w; r[2].w = 2.0f * w; r[2].h = y1 - y0 + 2.0f * w;
+    r[3].x = x1 - w; r[3].y = y0 - w; r[3].w = 2.0f * w; r[3].h = y1 - y0 + 2.0f * w;
+    SDL_RenderFillRects(sdlRenderer, r, 4);
+}
+
+static void lvDrawServerCheckOverBlit(const SDL_FRect *src, const SDL_FRect *dst) {
+    LvServerCheck checks[LV_SC_MAX];
+    LvServerCheckTexts t;
+    uint32_t nowMs = 0;
+    int n, i, j;
+    BYTE offX = 0, offY = 0, zf;
+    float scale, k, baseX, baseY;
+    double hueR, hueG, hueB;
+    SDL_Rect clip, oldClip;
+    bool hadClip;
+    SDL_BlendMode oldBlend = SDL_BLENDMODE_NONE;
+    Uint8 oldR, oldG, oldB, oldA;
+    TTF_Font *font;
+
+    if (!s_hitBoxes || sdlRenderer == NULL) return;
+    if (src->w <= 0.0f || src->h <= 0.0f) return;
+    /* Playback adds the checks on the timer thread, under the client
+       mutex: copy them out under it. */
+    lv_clientMutexWaitFor();
+    n = lv_screenServerChecks(checks, LV_SC_MAX, &nowMs);
+    lv_screenGetOffsets(&offX, &offY);
+    lv_clientMutexRelease();
+    if (n <= 0) return;
+
+    zf = lv_windowGetZoomFactor();
+    scale = dst->w / src->w;
+    /* Screen pixels to one world unit, and the screen place of world unit
+       0 on each axis. */
+    k = (float)zf * scale / (float)LV_HITBOX_WU_PER_PIXEL;
+    baseX = dst->x - src->x * scale - (float)offX * 256.0f * k;
+    baseY = dst->y - src->y * scale - (float)offY * 256.0f * k;
+    lvHitboxDotColour((uint64_t)SDL_GetTicks(), &hueR, &hueG, &hueB);
+
+    t.lives = langGetText(STR_LV_SC_LIVES);
+    t.dies = langGetText(STR_LV_SC_DIES);
+    t.refused = langGetText(STR_LV_SC_REFUSED);
+    t.notTested = langGetText(STR_LV_SC_NOT_TESTED);
+    t.circleOut = langGetText(STR_LV_SC_CIRCLE_OUT);
+    t.circleIn = langGetText(STR_LV_SC_CIRCLE_IN);
+    t.boxOut = langGetText(STR_LV_SC_BOX_OUT);
+    t.boxIn = langGetText(STR_LV_SC_BOX_IN);
+    t.offSquare = langGetText(STR_LV_SC_OFF_SQUARE);
+    t.onSquare = langGetText(STR_LV_SC_ON_SQUARE);
+    t.rewind = langGetText(STR_LV_SC_REWIND);
+    t.estimate = langGetText(STR_LV_SC_ESTIMATE);
+    font = lvPingNameFont();
+
+    hadClip = SDL_RenderClipEnabled(sdlRenderer);
+    SDL_GetRenderClipRect(sdlRenderer, &oldClip);
+    clip.x = (int)dst->x;
+    clip.y = (int)dst->y;
+    clip.w = (int)dst->w;
+    clip.h = (int)dst->h;
+    SDL_SetRenderClipRect(sdlRenderer, &clip);
+    SDL_GetRenderDrawBlendMode(sdlRenderer, &oldBlend);
+    SDL_GetRenderDrawColor(sdlRenderer, &oldR, &oldG, &oldB, &oldA);
+    SDL_SetRenderDrawBlendMode(sdlRenderer, SDL_BLENDMODE_BLEND);
+
+    for (i = 0; i < n; i++) {
+        const LvServerCheck *c = &checks[i];
+        float fade = (float)lvServerCheckAlpha(c->startMs, nowMs);
+        float bx = baseX + (float)c->blastX * k;
+        float by = baseY + (float)c->blastY * k;
+        float tx = baseX + (float)c->testedX * k;
+        float ty = baseY + (float)c->testedY * k;
+        float px = baseX + (float)c->presentX * k;
+        float py = baseY + (float)c->presentY * k;
+        float top = by;
+        SDL_FColor area, orange;
+        int r = 0, half = 0, above = 0;
+        char label[160];
+
+        if (fade <= 0.0f) continue;
+        area.r = (float)hueR; area.g = (float)hueG; area.b = (float)hueB; area.a = fade;
+        orange.r = 1.0f; orange.g = 0.55f; orange.b = 0.0f; orange.a = fade;
+
+        /* The kill area. */
+        SDL_SetRenderDrawColorFloat(sdlRenderer, area.r, area.g, area.b, area.a);
+        if (c->solid) {
+            float sx = baseX + (float)((c->blastX >> 8) << 8) * k;
+            float sy = baseY + (float)((c->blastY >> 8) << 8) * k;
+            lvScOutlineRect(sx, sy, sx + 256.0f * k, sy + 256.0f * k, LV_SC_AREA_HALF_W);
+            top = sy;
+        } else {
+            lvServerCheckOpenArea(c->shape, c->pillRange, &r, &half);
+            if (half > 0) {
+                float h = (float)half * k;
+                lvScOutlineRect(bx - h, by - h, bx + h, by + h, LV_SC_AREA_HALF_W);
+                top = by - h;
+            }
+            if (r > 0) {
+                float rr = (float)r * k;
+                lvDrawRingBand(bx, by, rr - LV_SC_AREA_HALF_W, rr + LV_SC_AREA_HALF_W, area);
+                if (by - rr < top) top = by - rr;
+            }
+        }
+
+        /* The line, then the two places over it. A builder the server did
+           not test has no tested place. */
+        if (c->result != BUILDER_CHECK_NOT_TESTED) {
+            SDL_SetRenderDrawColorFloat(sdlRenderer, 1.0f, 1.0f, 1.0f, 0.8f * fade);
+            SDL_RenderLine(sdlRenderer, bx, by, tx, ty);
+            lvDrawRingBand(tx, ty, 0.0f, LV_SC_TESTED_R, orange);
+        }
+        lvDrawRingBand(px, py, LV_SC_PRESENT_IN, LV_SC_PRESENT_OUT, orange);
+
+        /* The label over the area. The labels of one blast go one over
+           the other. */
+        if (font == NULL) continue;
+        for (j = 0; j < i; j++) {
+            if (checks[j].blastX == c->blastX && checks[j].blastY == c->blastY &&
+                checks[j].startMs == c->startMs) {
+                above++;
+            }
+        }
+        lvServerCheckLabel(c, &t, label, sizeof(label));
+        if (label[0] != '\0') {
+            SDL_Color col = { 255, 255, 255, 255 };
+            SDL_Surface *s;
+            SDL_Texture *tex;
+            if (c->result == BUILDER_CHECK_DIES) {
+                col.r = 255; col.g = 110; col.b = 110;
+            } else if (c->result == BUILDER_CHECK_LIVES) {
+                col.r = 120; col.g = 255; col.b = 120;
+            }
+            s = TTF_RenderText_Blended(font, label, 0, col);
+            if (s == NULL) continue;
+            tex = SDL_CreateTextureFromSurface(sdlRenderer, s);
+            if (tex != NULL) {
+                SDL_FRect d, back;
+                d.w = (float)s->w;
+                d.h = (float)s->h;
+                d.x = SDL_floorf(bx - d.w * 0.5f);
+                d.y = SDL_floorf(top - 4.0f - d.h - (float)above * (d.h + 2.0f));
+                back.x = d.x - 3.0f;
+                back.y = d.y - 1.0f;
+                back.w = d.w + 6.0f;
+                back.h = d.h + 2.0f;
+                SDL_SetRenderDrawColorFloat(sdlRenderer, 0.0f, 0.0f, 0.0f, 0.6f * fade);
+                SDL_RenderFillRect(sdlRenderer, &back);
+                SDL_SetTextureAlphaModFloat(tex, fade);
+                SDL_RenderTexture(sdlRenderer, tex, NULL, &d);
+                SDL_DestroyTexture(tex);
+            }
+            SDL_DestroySurface(s);
+        }
     }
 
     SDL_SetRenderDrawColor(sdlRenderer, oldR, oldG, oldB, oldA);
