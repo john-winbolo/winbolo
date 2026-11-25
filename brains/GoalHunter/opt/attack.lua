@@ -8480,6 +8480,16 @@ local function update_attack_substate_body(goal, state, world, info)
     if goal._aim_locked then
       compute_best_swerve_dir(goal, world, pmx, pmy, tmx, tmy)
 
+      -- PT2_REPAIR_BLOCKER_FIRST (owner's yes, Nov 24): a damaged built
+      -- blocker pill of this take is repaired to full before the first
+      -- shot. The tank waits here, at the approach point, while the repair
+      -- goes out or is on its way (quick_repair.lua first_hold); aim_tick
+      -- is bumped so the aim timeout does not fire meanwhile.
+      if require("quick_repair").first_hold(state, world, info, now, goal) then
+        goal.aim_tick = now
+        return
+      end
+
       -- Anger cool-down gate: don't commit to the take while the pill
       -- is still hot. We wait in aim until anger drops to <= 0.65.
       -- aim_tick is bumped each waiting tick so the 3-second aim

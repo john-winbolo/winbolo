@@ -1266,6 +1266,20 @@ M.PT2_HAUL_KEEP_TAKE = true
 -- blocker it needs to communicate that". A bug fix, no new number.
 -- false = only the attack_pill goal's own scan marks. KEEL / MAST: false.
 M.PT2_BLOCKER_MARK = true
+-- PT2_REPAIR_BLOCKER_FIRST: before a pill take (v1 or v2, single or double
+-- take) fires its first shot, a built friendly or ally pill on a blocker
+-- tile of the take with health below the pill maximum is repaired to full
+-- first, by the quick repair's own send rules and builder pool row
+-- (quick_repair.lua pre_shoot / first_hold). The tank waits in aim at its
+-- approach point while the repair goes out; the send may already go during
+-- the approach. No wood, no path, a dead builder, a boat, tank or fire
+-- risk on the errand, or an ally's repair claim: no wait, the take goes on.
+-- A blitz is left alone (its GO is shared). Owner's yes (Nov 24):
+-- "repairing the damaged blocker first sounds good". No new number.
+-- Log: PT2_BLOCKER_REPAIR ... -> hold:<why> | done | skip:<why>.
+-- false = the blocker is only repaired after the kill (QUICK_REPAIR_ON_TAKE).
+-- KEEL / MAST: false.
+M.PT2_REPAIR_BLOCKER_FIRST = true
 -- HAUL_KEEP_LGM_KILL: while kill_lgm has an enemy builder target close by
 -- with a clear line of sight (pool 13's winner; pathfinder.wall_hp_between
 -- == 0), the haul triggers in goals.lua haul_flee_eval stop using the
@@ -8998,6 +9012,7 @@ M.PRESETS.mast = {
   PF_DANGER_INITIAL_LOAD            = false,  -- 2.2.1 copied danger only on rebuild
   PT2_HAUL_KEEP_TAKE                = false,  -- 2.2.1 had no pill take v2
   PT2_BLOCKER_MARK                  = false,  -- 2.2.1 marked the attack_pill scan only
+  PT2_REPAIR_BLOCKER_FIRST          = false,  -- 2.2.1 repaired a take blocker after the kill only
   HAUL_KEEP_LGM_KILL                = false,  -- 2.2.1 hauled on pill stamp / tank range
   PT2_DOUBLE_TAKE_DISCOUNT          = false,  -- 2.2.1 had no pill take v2
   PT2_DBL_SPLIT                     = false,  -- 2.2.1 had no pill take v2

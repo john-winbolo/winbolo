@@ -1311,20 +1311,154 @@ function M.outbound_check(state, world, info, now, goal, k, qr)
   end
 end
 
+-- ── PT2_REPAIR_BLOCKER_FIRST (Nov 24, owner's yes) ───────────────────────
+-- "Repairing the damaged blocker first sounds good". Before a take fires
+-- its first shell, a built friendly or allied pill on a blocker tile of
+-- this take (attack.current_blocker_tiles: the take's own scan, v1 or v2)
+-- with health below the pill maximum is repaired to full first. Then the
+-- take starts to shoot.
+--   * Pre-shoot = goal attack_pill, no firing run yet (no
+--     goal._attack_start_tick), not a blitz (its GO is shared), substate
+--     approach or aim. In that window evaluate() uses the blocker of this
+--     take (pick_first_blocker) and needs no kill tick: T_safe is the last
+--     hostile shell that lands on the blocker (now when none). The send
+--     ladder is the quick repair's own (reach, early, man, wood,
+--     certain death, tank_clear, the fire prediction); a "send" becomes the
+--     builder pool's quick row as before. The swerve side is not committed
+--     (no swerve before the first shot).
+--   * The hold (first_hold, from attack.lua aim when the aim is locked):
+--     the take stays in aim, at its approach point, while the repair goes
+--     out or is on its way: send, early, death, and man (the builder is
+--     out and alive). It does not hold when the repair cannot go: wood,
+--     reach, tank, fire_predict, other_pill, a dead builder, a boat, or a
+--     pool reject of the quick row that is not a shell in the air (for
+--     example an ally's repair claim: the ally repairs it, the take goes
+--     on). A full blocker never holds. The hold ends the tick the blocker
+--     is at full health (the armour comes back on arrival).
+-- Log: PT2_BLOCKER_REPAIR t=.. pill=#id (x,y) hp=h/max -> hold:<why> |
+-- done | skip:<why>. false = the quick repair only after the kill.
+-- MAST: false.
+
+-- Is the take before its first shot (the pre-shoot window above)?
+function M.pre_shoot(goal)
+  if not C.PT2_REPAIR_BLOCKER_FIRST then return false end
+  if not goal or goal.kind ~= "attack_pill" then return false end
+  if goal._attack_start_tick or goal._blitz then return false end
+  return goal.substate == "approach" or goal.substate == "aim"
+end
+
+-- The damaged blocker of THIS take: a friendly or allied pill on one of the
+-- take's own blocker tiles with health below the maximum. Same order as
+-- pick_blocker (lowest health, then nearest, then tile key).
+function M.pick_first_blocker(state, world, info)
+  local tiles = require("attack").current_blocker_tiles(state, world)
+  if not tiles or #tiles == 0 then return nil end
+  local maxhp = C.PILLS_MAX_HEALTH or 15
+  local tx, ty = info.tankx / 256.0, info.tanky / 256.0
+  local best, best_d, best_id
+  for i = 1, #tiles do
+    local ti = tiles[i]
+    local lst = world.pill_at and world.pill_at[ti]
+    for j = 1, lst and #lst or 0 do
+      local p, pid = lst[j].pill, lst[j].id
+      if p and (p.owner == "friendly" or p.owner == "allied")
+         and not p.in_tank and not p.carrier and (p.health or 0) < maxhp then
+        local dx, dy = p.mx + 0.5 - tx, p.my + 0.5 - ty
+        local d = dx * dx + dy * dy
+        local better
+        if not best then better = true
+        elseif (p.health or 0) ~= (best.health or 0) then
+          better = (p.health or 0) < (best.health or 0)
+        elseif d ~= best_d then better = d < best_d
+        else better = (p.my * 256 + p.mx) < (best.my * 256 + best.mx) end
+        if better then best, best_d, best_id = p, d, pid end
+      end
+    end
+  end
+  return best, best_id
+end
+
+-- The quick row the builder pool scored for tile (mx, my), from its last
+-- update (this tick or the one before), or nil.
+local function pool_quick_row(state, now, mx, my)
+  local bp = state._builder_pool
+  if not bp or (bp.tick or -1) < now - 1 then return nil end
+  for _, r in ipairs(bp.rows or {}) do
+    if r.quick and r.mx == mx and r.my == my then return r end
+  end
+  return nil
+end
+
+-- The QR results that hold the take (the repair goes out soon or is out).
+local FIRST_HOLD = { send = "send", ["wait:early"] = "early",
+                     ["wait:death"] = "death", ["wait:man"] = "man" }
+
+-- Should the take hold its first shot for a blocker repair this tick?
+-- Reads this tick's or last tick's evaluate() record (attack.lua runs
+-- before the builder pool in a tick). Returns true to hold.
+function M.first_hold(state, world, info, now, goal)
+  if not M.pre_shoot(goal) then
+    state._pt2_brf = nil
+    return false
+  end
+  local maxhp = C.PILLS_MAX_HEALTH or 15
+  local qr = state._quick_repair
+  if qr and (not qr.first or (qr.tick or -1) < now - 1) then qr = nil end
+  local rec = state._pt2_brf
+  if not qr then
+    -- No damaged blocker of this take: the repair is done (or never needed).
+    if rec then
+      local lst = world.pill_at and world.pill_at[rec.my * 256 + rec.mx]
+      local p = lst and lst[1] and lst[1].pill
+      local hp = p and p.health or -1
+      state._pt2_brf = nil
+    end
+    return false
+  end
+  local tag = FIRST_HOLD[qr.result]
+  local why
+  if tag == "man" then
+    if info.man_status == C.LGM_DEAD then tag, why = nil, "man_dead"
+    elseif info.inboat then tag, why = nil, "boat" end
+  elseif tag == "send" then
+    local row = pool_quick_row(state, now, qr.mx, qr.my)
+    if row and row.reject and not row.shell_hit then
+      tag, why = nil, "pool(" .. tostring(row.reject) .. ")"
+    end
+  end
+  if not tag and not why then why = (qr.result or "?"):gsub("^wait:", "") end
+  local out = tag and ("hold:" .. tag) or ("skip:" .. why)
+  if not rec or rec.mx ~= qr.mx or rec.my ~= qr.my then
+    rec = { mx = qr.mx, my = qr.my, id = qr.id, t0 = now }
+    state._pt2_brf = rec
+  end
+  local key = out .. ":" .. tostring(qr.hp)
+  if rec.key ~= key then
+    rec.key = key
+  end
+  return tag ~= nil
+end
+
 -- One tick's answer. Returns the record (also left in state._quick_repair),
 -- or nil when there is no quick repair to think about (knob off, no take, no
 -- damaged blocker).
 function M.evaluate(state, world, info, now)
   state._quick_repair = nil
-  if not C.QUICK_REPAIR_ON_TAKE then return nil end
   local goal = state.goal
+  local first = M.pre_shoot(goal)   -- PT2_REPAIR_BLOCKER_FIRST
+  if not C.QUICK_REPAIR_ON_TAKE and not first then return nil end
   if not goal or goal.kind ~= "attack_pill" or not goal.mx or not goal.my then
     state._qr_log_key = nil
     return nil
   end
   local target = target_pill(world, goal)
   if not target then state._qr_log_key = nil; return nil end
-  local p, pid = M.pick_blocker(world, info)
+  local p, pid
+  if first then
+    p, pid = M.pick_first_blocker(state, world, info)
+  else
+    p, pid = M.pick_blocker(world, info)
+  end
   if not p then state._qr_log_key = nil; return nil end
 
   local margin = C.QUICK_REPAIR_MARGIN_TICKS or 2
@@ -1333,10 +1467,17 @@ function M.evaluate(state, world, info, now)
                margin = margin, dwell = 0,
                build_after = C.LGM_BUILD_TIME or 20 }
   local k = M.kill_tick(goal, target, info, now)
+  -- PT2_REPAIR_BLOCKER_FIRST: before the first shot there is no kill to
+  -- wait for; only the hostile shells on the blocker set T_safe.
+  if first then
+    qr.first = true
+    if not k.t then k.why = "pre_shoot" end
+  end
   qr.kill = k
   qr.t_kill, qr.kill_src = k.t, k.src
   qr.hits = M.shells_on_blocker(world, info, p.mx, p.my)
   local t_safe = k.t
+  if first then t_safe = now end
   if t_safe then
     for i = 1, #qr.hits do
       local lt = now + qr.hits[i].t
@@ -1355,7 +1496,7 @@ function M.evaluate(state, world, info, now)
   M.outbound_check(state, world, info, now, goal, k, qr)
 
   local result
-  if not k.t then
+  if not t_safe then
     result = "wait:nokill"
   elseif not qr.walk then
     result = "wait:reach"
@@ -1367,7 +1508,8 @@ function M.evaluate(state, world, info, now)
   elseif (info.trees or 0) < qr.trees_need then
     result = "wait:wood"
   else
-    result = M.send_checks(state, world, info, now, goal, k, p, qr)
+    -- first: dry, no swerve side to commit before the first shot.
+    result = M.send_checks(state, world, info, now, goal, k, p, qr, first)
   end
   qr.result = result
   state._quick_repair = qr
