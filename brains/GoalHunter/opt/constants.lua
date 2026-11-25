@@ -1280,6 +1280,22 @@ M.PT2_BLOCKER_MARK = true
 -- false = the blocker is only repaired after the kill (QUICK_REPAIR_ON_TAKE).
 -- KEEL / MAST: false.
 M.PT2_REPAIR_BLOCKER_FIRST = true
+-- PT2_REPAIR_NO_PACE (Nov 24, part of the approved P4): while the builder
+-- is out on a take's quick blocker repair, the attack_pill tank is not
+-- paced to his speed (steering.lua LGM pacing). He walks back to the tank
+-- where it is. d2 noc beside_n: the paced approach took aim at t=499, the
+-- rule off at t=315. false = old rule (paced). MAST: false.
+M.PT2_REPAIR_NO_PACE = true
+-- PT2_REPAIR_COVER_FULL (Nov 24, part of the approved P4): before a take's
+-- first shot, a damaged friendly pill (health 1 .. 14, so also one under 5)
+-- that the builder can repair counts as a blocker at full health (3 walls)
+-- in the shield plan (pill_cover.cover_health, quick_repair.repair_full).
+-- The take sends the repair, not a wall trip. A wall is planned only when
+-- the repair cannot go: no wood, no walk, the builder dead or busy, or
+-- first_hold skipped it. d2 noc beside_sw: ally (121,121) hp 9 counted 1
+-- wall; bg wall (122,120) went out at t=234 and the builder died at t=349.
+-- false = cover at the health now (old rule). MAST: false.
+M.PT2_REPAIR_COVER_FULL = true
 -- HAUL_KEEP_LGM_KILL: while kill_lgm has an enemy builder target close by
 -- with a clear line of sight (pool 13's winner; pathfinder.wall_hp_between
 -- == 0), the haul triggers in goals.lua haul_flee_eval stop using the
@@ -9027,6 +9043,8 @@ M.PRESETS.mast = {
   PT2_HAUL_KEEP_TAKE                = false,  -- 2.2.1 had no pill take v2
   PT2_BLOCKER_MARK                  = false,  -- 2.2.1 marked the attack_pill scan only
   PT2_REPAIR_BLOCKER_FIRST          = false,  -- 2.2.1 repaired a take blocker after the kill only
+  PT2_REPAIR_NO_PACE                = false,  -- 2.2.1 paced the tank for every build trip
+  PT2_REPAIR_COVER_FULL             = false,  -- 2.2.1 counted a pill's cover at its health now
   HAUL_KEEP_LGM_KILL                = false,  -- 2.2.1 hauled on pill stamp / tank range
   PT2_DOUBLE_TAKE_DISCOUNT          = false,  -- 2.2.1 had no pill take v2
   PT2_DBL_SPLIT                     = false,  -- 2.2.1 had no pill take v2

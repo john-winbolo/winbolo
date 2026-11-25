@@ -762,7 +762,7 @@ function M.scan(pill, world, standoff_mx, standoff_my, standoff_deg,
             pill_table[#pill_table+1] = p.mx
             pill_table[#pill_table+1] = p.my
             pill_table[#pill_table+1] = (p.owner == "friendly") and 1 or 0
-            if by_hp then pill_hp_table[#pill_hp_table+1] = p.health end
+            if by_hp then pill_hp_table[#pill_hp_table+1] = PC.cover_health(p) end
           elseif by_hp and e.pill and not e.pill.in_tank then
             local p = e.pill
             dead_pill_sq[#dead_pill_sq+1] = p.mx

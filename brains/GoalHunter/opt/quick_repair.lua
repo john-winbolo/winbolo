@@ -1445,6 +1445,17 @@ function M.first_hold(state, world, info, now, goal)
   end
   if not tag and not why then why = (qr.result or "?"):gsub("^wait:", "") end
   local out = tag and ("hold:" .. tag) or ("skip:" .. why)
+  if not tag then
+    -- PT2_REPAIR_COVER_FULL: no repair before the shot, so the pill counts
+    -- at its health now (pill_cover.cover_health) and the take may plan a
+    -- wall instead, for the rest of this goal.
+    local bad = state._pt2_cover_bad
+    if not bad or bad.goal ~= goal then
+      bad = { goal = goal, sq = {} }
+      state._pt2_cover_bad = bad
+    end
+    bad.sq[qr.my * 256 + qr.mx] = true
+  end
   if not rec or rec.mx ~= qr.mx or rec.my ~= qr.my then
     rec = { mx = qr.mx, my = qr.my, id = qr.id, t0 = now }
     state._pt2_brf = rec
@@ -1459,7 +1470,51 @@ end
 -- One tick's answer. Returns the record (also left in state._quick_repair),
 -- or nil when there is no quick repair to think about (knob off, no take, no
 -- damaged blocker).
+-- PT2_REPAIR_COVER_FULL (Nov 24, part of the approved P4): may damaged
+-- friendly pill p count at full health as a blocker of the take now?
+-- Yes when the take has not fired (no start tick, no blitz), the repair
+-- before the first shot is on, the builder is in the tank (or out on this
+-- pill's job), there is wood for it and a walk to it, and first_hold did
+-- not skip this pill's repair (state._pt2_cover_bad: fire on the errand,
+-- pool refusal, man busy). Else the take plans its walls as before.
+-- dt_demo d2 noc beside_sw: ally (121,121) hp 9 counted 1 wall, so the
+-- take planned bg wall (122,120) beside the repair; the builder went
+-- there at t=234 and died at t=349 to pill #0's shell at the tank.
+-- Reads the state of the last evaluate() (attack.lua runs before the
+-- builder pool in a tick).
+local cover_ctx = nil
+function M.repair_full(p)
+  local cx = cover_ctx
+  if not cx or not C.PT2_REPAIR_BLOCKER_FIRST then return false end
+  local state, info, now = cx.state, cx.info, cx.now
+  local goal = state.goal
+  if not goal or goal.kind ~= "attack_pill" or goal._attack_start_tick or goal._blitz then
+    return false
+  end
+  local key = p.my * 256 + p.mx
+  local bad = state._pt2_cover_bad
+  if bad and bad.goal == goal and bad.sq[key] then return false end
+  local c = cx.memo[key]
+  if c ~= nil then return c end
+  local j = state._bp_job
+  local ok
+  if j and j.mx == p.mx and j.my == p.my then
+    ok = true
+  elseif info.man_status ~= C.LGM_INTANK or info.inboat then
+    ok = false
+  elseif (info.trees or 0) < M.trees_need(p) then
+    ok = false
+  else
+    ok = M.walk_ticks(info, p.mx, p.my) ~= nil
+  end
+  cx.memo[key] = ok
+  return ok
+end
+local PC_cover = require("pill_cover")
+PC_cover.repair_full_fn = M.repair_full
+
 function M.evaluate(state, world, info, now)
+  cover_ctx = { state = state, info = info, now = now, memo = {} }
   state._quick_repair = nil
   local goal = state.goal
   local first = M.pre_shoot(goal)   -- PT2_REPAIR_BLOCKER_FIRST

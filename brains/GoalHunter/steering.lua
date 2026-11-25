@@ -6154,8 +6154,19 @@ local function steer_core(state, world, info, goal)
     -- follow the tank at all, so pacing for him only makes the trip for
     -- shells crawl.
     local lgm_walled = (C.LGM_WALLED_KILL and state.lgm_walled) and true or false
+    -- PT2_REPAIR_NO_PACE: a take's quick blocker repair before the first
+    -- shot (builder_pool row quick, quick_repair.pre_shoot) is a walk to a
+    -- pill beside the take and back to the tank; the
+    -- tank does not wait for him on its way in (attack.lua first_hold holds
+    -- the first shot for him). dt_demo d2 noc beside_n (Nov 24): the repair
+    -- went out at t=43 (walk 143), the paced tank reached aim at t=499; the
+    -- rule off (d0) reached it at t=315.
+    local bpj = state._bp_job
+    local quick_take = C.PT2_REPAIR_NO_PACE and bpj and bpj.quick
+                       and goal.kind == "attack_pill"
+                       and require("quick_repair").pre_shoot(goal)
     if lgm_out and not lgm_is_farming and goal.kind ~= "escape_water"
-       and not lgm_walled
+       and not lgm_walled and not quick_take
        and goal.kind ~= "rescue_lgm"
        and goal.kind ~= "capture_pill" and goal.kind ~= "capture_base" then
       -- Estimate LGM speed: use the terrain at the LGM's position

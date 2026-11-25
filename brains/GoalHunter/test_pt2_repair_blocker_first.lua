@@ -411,5 +411,82 @@ do
   check("bg_trip_ok passes the tank point", t and e and t < e)
 end
 
+print("9. cover at full health (PT2_REPAIR_COVER_FULL)")
+do
+  -- dt_demo d2 noc beside_sw (Nov 24): ally pill (121,121) hp 9 counted 1
+  -- wall (floor 9/5), so the take planned bg wall (122,120) as well. The
+  -- builder went there at t=234 and died at t=349 to pill #0's shell at
+  -- the tank. A pill the builder can repair before the first shot counts
+  -- at 15 (3 walls): no wall trip.
+  local PC = require("pill_cover")
+  local on = C.PT2_REPAIR_COVER_FULL
+  local function walls(o, cover)
+    reset(true)
+    C.PT2_REPAIR_COVER_FULL = cover
+    local st, w, inf = mk(o)
+    QR.evaluate(st, w, inf, NOW)
+    return PC.pill_walls(w.pills[7]), st, w, inf
+  end
+  check("PT2_REPAIR_COVER_FULL on by default", on == true, on)
+  check("PT2_REPAIR_COVER_FULL off in MAST", C.PRESETS.mast.PT2_REPAIR_COVER_FULL == false)
+  local n = walls({ hp = 9 }, false)
+  check("knob off: hp 9 = 1 wall (old rule)", n == 1, n)
+  n = walls({ hp = 9 }, true)
+  check("hp 9, repairable: 3 walls", n == 3, n)
+  n = walls({ hp = 3 }, true)
+  check("hp 3 (under 5), repairable: 3 walls", n == 3, n)
+  n = walls({ hp = 3 }, false)
+  check("hp 3, knob off: 0 walls", n == 0, n)
+  n = walls({ hp = 9, substate = "approach" }, true)
+  check("approach: 3 walls", n == 3, n)
+  n = walls({ hp = 9, trees = 1 }, true)
+  check("no wood (1 < 2): 1 wall", n == 1, n)
+  n = walls({ hp = 9, man = C.LGM_DEAD }, true)
+  check("builder dead: 1 wall", n == 1, n)
+  n = walls({ hp = 9, inboat = true }, true)
+  check("in a boat: 1 wall", n == 1, n)
+  n = walls({ hp = 9, started = NOW - 40 }, true)
+  check("after the first shot: 1 wall", n == 1, n)
+  n = walls({ hp = 9, owner = "hostile" }, true)
+  check("an enemy pill: 0 walls", n == 0, n)
+  -- The builder out on this pill's repair: still full.
+  reset(true); C.PT2_REPAIR_COVER_FULL = true
+  local st, w, inf = mk({ hp = 9, man = C.LGM_MOVING })
+  st._bp_job = { mx = BX, my = BY }
+  QR.evaluate(st, w, inf, NOW)
+  n = PC.pill_walls(w.pills[7])
+  check("builder out on this repair: 3 walls", n == 3, n)
+  -- first_hold skips the repair (no wood when it looks): the pill drops
+  -- to its health now for the rest of this goal.
+  reset(true); C.PT2_REPAIR_COVER_FULL = true
+  st, w, inf = mk({ hp = 9, trees = 1 })
+  QR.evaluate(st, w, inf, NOW)
+  QR.first_hold(st, w, inf, NOW, st.goal)
+  inf.trees = 10
+  QR.evaluate(st, w, inf, NOW + 1)
+  n = PC.pill_walls(w.pills[7])
+  check("after a first_hold skip: 1 wall", n == 1, n)
+  st.goal = { kind = "attack_pill", mx = TX, my = TY, target_id = 1, substate = "aim",
+              _aim_locked = true, _shield_scan = st.goal._shield_scan }
+  QR.evaluate(st, w, inf, NOW + 2)
+  n = PC.pill_walls(w.pills[7])
+  check("a new take goal: 3 walls again", n == 3, n)
+  -- Another goal (no take): health now.
+  st.goal = { kind = "defend_pill" }
+  QR.evaluate(st, w, inf, NOW + 3)
+  n = PC.pill_walls(w.pills[7])
+  check("not a take: 1 wall", n == 1, n)
+  C.PT2_REPAIR_COVER_FULL = on
+  -- PT2_REPAIR_NO_PACE (d2 noc beside_n: the paced approach reached aim at
+  -- t=499, the rule off at t=315): steering skips the LGM pace for a quick
+  -- repair before the first shot.
+  check("PT2_REPAIR_NO_PACE on by default, off in MAST",
+        C.PT2_REPAIR_NO_PACE == true and C.PRESETS.mast.PT2_REPAIR_NO_PACE == false)
+  local f = io.open("steering.lua", "r"); local sr = f and f:read("*a") or ""
+  if f then f:close() end
+  check("steering: no pace on a pre-shoot quick repair",
+        sr:find("bpj.quick", 1, true) ~= nil and sr:find("and not quick_take", 1, true) ~= nil)
+end
+
 print(string.format("\n%d passed, %d failed", pass, fail))
 os.exit(fail == 0 and 0 or 1)
