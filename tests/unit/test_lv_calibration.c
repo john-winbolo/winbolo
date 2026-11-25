@@ -2840,6 +2840,136 @@ int run_lv_new_blast_steps(void) {
   return 0;
 }
 
+/* ---- the builder's hit box dot ------------------------------------------ */
+
+/* What lgmDotHook saw: the builders in the draw list and, for the first one,
+ * the dot's place on the target (zoom factor 1) and his world place. */
+typedef struct {
+  int    items;
+  bool   placed;
+  int    ax, ay;        /* his recorded place, in art pixels */
+  double wx, wy;        /* lv_playersLgmPlace's place, world units */
+  double dotX, dotY;    /* the dot, target pixels from the view's top left */
+} LgmDotSeen;
+static LgmDotSeen s_lgmDot;
+
+static void lgmDotHook(screenTanks *tks, screenBullets *sBullet, screenLgm *lgms) {
+  (void)tks; (void)sBullet;
+  memset(&s_lgmDot, 0, sizeof(s_lgmDot));
+  s_lgmDot.items = lv_screenLgmGetNumEntries(lgms);
+  if (s_lgmDot.items > 0) {
+    BYTE mx, my, px, py, frame, slot;
+    int sqMx, sqMy;
+    lv_screenLgmGetItem(lgms, 1, &mx, &my, &px, &py, &frame);
+    slot = lv_screenLgmGetSlot(lgms, 1);
+    sqMx = 55 + mx;
+    sqMy = 50 + my;
+    s_lgmDot.ax = sqMx * 16 + px;
+    s_lgmDot.ay = sqMy * 16 + py;
+    s_lgmDot.placed = lv_playersLgmPlace(slot, (BYTE)sqMx, (BYTE)sqMy, px, py, &s_lgmDot.wx,
+                                         &s_lgmDot.wy) != FALSE;
+    /* As draw.c places it: his square's top left on the target and his
+       place in that square. */
+    s_lgmDot.dotX = lvHitboxLgmDotAt((double)(mx * 16), s_lgmDot.wx - (double)(sqMx * 256), 1);
+    s_lgmDot.dotY = lvHitboxLgmDotAt((double)(my * 16), s_lgmDot.wy - (double)(sqMy * 256), 1);
+  }
+}
+
+static void lgmDotDraw(void) {
+  memset(&s_lgmDot, 0, sizeof(s_lgmDot));
+  lv_screenSetOffset(55, 50);
+  g_testLvDrawMainScreenHook = lgmDotHook;
+  lv_screenUpdate(redraw);
+  g_testLvDrawMainScreenHook = NULL;
+}
+
+/* Check the dot is on the builder drawn at entry k: his world place (the
+   place lgmBlastCatches tests) is in his recorded art pixel, and the dot is
+   that place on the target. */
+static int lgmDotCheck(int k, const char *what) {
+  unsigned place = lagDrawPlace(1, k);
+  int ax = (int)place, ay = (LAG_DRAW_ROW + 1) * 16;
+  UT_ASSERT_MSG(s_lgmDot.items == 1, "%s: %d builders drawn, want 1", what, s_lgmDot.items);
+  UT_ASSERT_MSG(s_lgmDot.ax == ax && s_lgmDot.ay == ay, "%s: builder at %d/%d, want %d/%d",
+                what, s_lgmDot.ax, s_lgmDot.ay, ax, ay);
+  UT_ASSERT_MSG(s_lgmDot.placed, "%s: no world place for the builder", what);
+  /* lgmGetPX / PY: the pixel is his place less 1 across and 2 down. */
+  UT_ASSERT_MSG(s_lgmDot.wx >= ax * 16 + 1 && s_lgmDot.wx <= ax * 16 + 16,
+                "%s: world x %.2f not in pixel %d", what, s_lgmDot.wx, ax);
+  UT_ASSERT_MSG(s_lgmDot.wy >= ay * 16 + 2 && s_lgmDot.wy <= ay * 16 + 17,
+                "%s: world y %.2f not in pixel %d", what, s_lgmDot.wy, ay);
+  UT_ASSERT_MSG(fabs(s_lgmDot.dotX - (s_lgmDot.wx - 55.0 * 256.0) / 16.0) < 1e-9 &&
+                    fabs(s_lgmDot.dotY - (s_lgmDot.wy - 50.0 * 256.0) / 16.0) < 1e-9,
+                "%s: dot at %.4f/%.4f is not on his world place", what, s_lgmDot.dotX,
+                s_lgmDot.dotY);
+  return 0;
+}
+
+/*
+ * The builder's hit box dot: on his world place, only while he is out.
+ *
+ *   entry  1..60   B's builder out, a row under B's tank
+ *   entry 61..70   B's builder in his tank (no log_LgmLocation)
+ *   entry 40       A's lag record: rewind 5
+ *
+ * At entry 30 the dot is on the builder's entry-30 place; with "See What
+ * the Selected Player Saw" on for A at entry 50 it is on the place the view
+ * draws him at, entry 46 (one entry newer than the tanks' 45). At entry 65,
+ * in his tank, there is no builder and no dot.
+ */
+int run_lv_lgm_dot(void) {
+  const char *path = "lv_lgm_dot.wbv";
+  static const uint8_t rec[4] = {0, 0x00, 0x96, 5};   /* A: 150 ms, rewind 5 */
+  LogBuf b;
+  LogViewerState *lv;
+  int savedHide = lv_screenGetHideLobby();
+  int k;
+
+  b.len = 0;
+  putHeader(&b);
+  putLagDrawSnapshot(&b, 0);
+  for (k = 1; k <= 70; k++) {
+    bool out = k <= 60;
+    putU8(&b, LOG_EVENT);
+    putU8(&b, (uint8_t)(2 + (out ? 1 : 0) + (k == 40 ? 1 : 0)));
+    putLagDrawLocation(&b, 0, k);
+    putLagDrawLocation(&b, 1, k);
+    if (out) putLagDrawLgm(&b, 1, k);
+    if (k == 40) {
+      putU8(&b, log_PlayerLag);
+      putU8(&b, 0); putU8(&b, 4);
+      put(&b, rec, sizeof(rec));
+    }
+  }
+  putU8(&b, LOG_QUIT);
+
+  lv_screenSetHideLobby(0);
+  lv_screenSetLagFeature(1);
+  lv = loadSynthetic(&b, path);
+  UT_ASSERT_MSG(lv != NULL, "synthetic builder dot log failed to build/load");
+
+  if (lagDrawPlayTo(lv, 30) != 0) return 1;
+  lgmDotDraw();
+  if (lgmDotCheck(30, "entry 30") != 0) return 1;
+
+  if (lagDrawPlayTo(lv, 50) != 0) return 1;
+  lv_screenLagViewSet(0);
+  UT_ASSERT_MSG(lv_screenLagViewSlot() == 0, "the view did not turn on for A");
+  lgmDotDraw();
+  if (lgmDotCheck(46, "entry 50, the view on") != 0) return 1;
+  lv_screenLagViewSet(-1);
+
+  if (lagDrawPlayTo(lv, 65) != 0) return 1;
+  lgmDotDraw();
+  UT_ASSERT_MSG(s_lgmDot.items == 0, "%d builders drawn in his tank, want 0", s_lgmDot.items);
+
+  lv_screenSetLagFeature(0);
+  lv_decoderDestroy(lv);
+  lv_screenSetHideLobby(savedHide);
+  remove(path);
+  return 0;
+}
+
 /*
  * The two Screen-True options (Screen-True Own Shells, Screen-True Local
  * Explosions) have no menu item and no preference: the view draws both

@@ -563,7 +563,7 @@ static void lvDrawPingsOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
 static void lvDrawPillNumbersOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
 static void lvDrawBaseNumbersOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
 static void lvDrawHitBoxesOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
-static void lvDrawBlastCentresOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
+static void lvDrawHitDotsOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
 
 /* Paint the world render target into the viewer's own window.
  *
@@ -641,7 +641,7 @@ static void lvDrawBlitTargetToWindow(void) {
         /* Under the bars and the names: thin lines that should not hide
            them. */
         lvDrawHitBoxesOverBlit(&srcRect, &dstRect);
-        lvDrawBlastCentresOverBlit(&srcRect, &dstRect);
+        lvDrawHitDotsOverBlit(&srcRect, &dstRect);
         /* The bars first, so a name is never under one. */
         lvDrawTankBarsOverBlit(&srcRect, &dstRect);
         lvDrawBuilderStatusOverBlit(&srcRect, &dstRect);
@@ -2695,34 +2695,38 @@ static void lvDrawHitBoxesOverBlit(const SDL_FRect *src, const SDL_FRect *dst) {
     SDL_SetRenderClipRect(sdlRenderer, hadClip ? &oldClip : NULL);
 }
 
-/* With hit boxes on, a dot one art pixel across on the blast point of each
-   explosion on the step it is new (s_hitBlast): the point the engine
-   tests builders against. Its colour goes round the whole rainbow every
-   2 seconds (lvHitboxRainbow), and it pulses from 35% to 100% solid, one
-   rise and fall a second (lvHitboxPulseAlpha). The pulse goes by the wall
-   clock, so it keeps on while playback is paused. src is the slice of the
-   target the blit took, dst where it went. */
-static void lvDrawBlastCentresOverBlit(const SDL_FRect *src, const SDL_FRect *dst) {
-    float scale, size, alpha;
+/* With hit boxes on, a pulsing dot on the blast point of each explosion on
+   the step it is new (s_hitBlast), the point the engine tests builders
+   against, and on each builder out of his tank (s_hitLgmPos), at the place
+   lgmBlastCatches tests and his hit area goes round. A builder's dot is
+   noted where his picture is drawn, so it follows "See What the Selected
+   Player Saw" as the picture does. Each dot is centred on its exact point,
+   not rounded to a pixel, and its size is lvHitboxDotSize. Its colour goes
+   from blue to purple and back every 2 seconds (lvHitboxDotColour), and it
+   pulses from 35% to 100% solid, one rise and fall a second
+   (lvHitboxPulseAlpha). Both go by the wall clock, so they keep on while
+   playback is paused. src is the slice of the target the blit took, dst
+   where it went. */
+static void lvDrawHitDotsOverBlit(const SDL_FRect *src, const SDL_FRect *dst) {
+    float scale, blastK, lgmK, alpha;
     double hueR, hueG, hueB;
+    uint64_t now;
     int i;
     SDL_Rect clip, oldClip;
     bool hadClip;
     SDL_BlendMode oldBlend = SDL_BLENDMODE_NONE;
     Uint8 oldR, oldG, oldB, oldA;
 
-    if (!s_hitBoxes || s_hitBlastCount == 0) return;
+    if (!s_hitBoxes || (s_hitBlastCount == 0 && s_hitLgmCount == 0)) return;
     if (src->w <= 0.0f || src->h <= 0.0f) return;
 
     scale = dst->w / src->w;
     /* Screen pixels to one world unit, as for the hit areas. */
-    size = lvHitboxBlastDotSize((float)s_hitBlastZoom * scale /
-                                (float)LV_HITBOX_WU_PER_PIXEL);
-    /* Whole screen pixels, so a dot of one pixel is not lost between two. */
-    size = SDL_roundf(size);
-    if (size < 1.0f) size = 1.0f;
-    alpha = (float)lvHitboxPulseAlpha((uint64_t)SDL_GetTicks());
-    lvHitboxRainbow((uint64_t)SDL_GetTicks(), &hueR, &hueG, &hueB);
+    blastK = (float)s_hitBlastZoom * scale / (float)LV_HITBOX_WU_PER_PIXEL;
+    lgmK = (float)s_hitZoom * scale / (float)LV_HITBOX_WU_PER_PIXEL;
+    now = (uint64_t)SDL_GetTicks();
+    alpha = (float)lvHitboxPulseAlpha(now);
+    lvHitboxDotColour(now, &hueR, &hueG, &hueB);
 
     hadClip = SDL_RenderClipEnabled(sdlRenderer);
     SDL_GetRenderClipRect(sdlRenderer, &oldClip);
@@ -2737,13 +2741,22 @@ static void lvDrawBlastCentresOverBlit(const SDL_FRect *src, const SDL_FRect *ds
     SDL_SetRenderDrawColorFloat(sdlRenderer, (float)hueR, (float)hueG, (float)hueB, alpha);
 
     for (i = 0; i < s_hitBlastCount; i++) {
-        SDL_FRect r;
         float cx = dst->x + (s_hitBlast[i].x - src->x) * scale;
         float cy = dst->y + (s_hitBlast[i].y - src->y) * scale;
-        r.x = SDL_roundf(cx - size * 0.5f);
-        r.y = SDL_roundf(cy - size * 0.5f);
-        r.w = size;
-        r.h = size;
+        LvHitDotRect d = lvHitboxDotRect(cx, cy, blastK);
+        SDL_FRect r;
+        r.x = d.x; r.y = d.y; r.w = d.w; r.h = d.h;
+        SDL_RenderFillRect(sdlRenderer, &r);
+    }
+    for (i = 0; i < s_hitLgmCount; i++) {
+        const LvHitLgmPos *h = &s_hitLgmPos[i];
+        float tx = (float)lvHitboxLgmDotAt(h->sqX, h->bx, s_hitZoom);
+        float ty = (float)lvHitboxLgmDotAt(h->sqY, h->by, s_hitZoom);
+        float cx = dst->x + (tx - src->x) * scale;
+        float cy = dst->y + (ty - src->y) * scale;
+        LvHitDotRect d = lvHitboxDotRect(cx, cy, lgmK);
+        SDL_FRect r;
+        r.x = d.x; r.y = d.y; r.w = d.w; r.h = d.h;
         SDL_RenderFillRect(sdlRenderer, &r);
     }
 

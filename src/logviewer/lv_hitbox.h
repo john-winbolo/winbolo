@@ -677,7 +677,8 @@ static inline void lvHitboxBuilderOutline(double bx, double by, unsigned solid, 
     lvHitboxBuilderOutlineShape(bx, by, solid, LV_HITBOX_BUILDER_SHAPE_CIRCLE, pillRange, o);
 }
 
-/* The pulsing dot at the centre of each shell explosion.
+/* The pulsing dot at the centre of each shell explosion, and on each
+ * builder out of his tank (lvHitboxLgmDotAt).
  *
  * The engine tests builders against the shell's own end place (newX, newY
  * in shellsUpdate, src/bolo/shells.c). The explosion record is put
@@ -688,9 +689,12 @@ static inline void lvHitboxBuilderOutline(double bx, double by, unsigned solid, 
  * left on each axis; the middle of those 16, 135.5, is the closest guess,
  * as for a tank (lvHitboxTankPlace). */
 #define LV_HITBOX_BLAST_OFFSET 128
-/* The dot is one art pixel across: 16 world units. */
-#define LV_HITBOX_BLAST_DOT_WU LV_HITBOX_WU_PER_PIXEL
-/* The pulse: one slow rise and fall a second, from 35% to 100% solid. */
+/* The dot: one art pixel (16 world units) across while that is small on
+   the screen. Zoomed in, it is LV_HITBOX_DOT_NEAR_WU across, but never less
+   than LV_HITBOX_DOT_MIN_PX screen pixels (lvHitboxDotSize). */
+#define LV_HITBOX_DOT_WU      LV_HITBOX_WU_PER_PIXEL
+#define LV_HITBOX_DOT_NEAR_WU 4
+#define LV_HITBOX_DOT_MIN_PX  2.0f
 #define LV_HITBOX_PULSE_MS   1000u
 #define LV_HITBOX_PULSE_LOW  0.35
 #define LV_HITBOX_PULSE_HIGH 1.0
@@ -711,34 +715,71 @@ static inline double lvHitboxPulseAlpha(uint64_t ms) {
     return LV_HITBOX_PULSE_LOW + (LV_HITBOX_PULSE_HIGH - LV_HITBOX_PULSE_LOW) * rise;
 }
 
-/* The dot's colour cycles through the whole rainbow (red, yellow, green,
-   cyan, blue, magenta and back to red) once each LV_HITBOX_RAINBOW_MS, by
-   the wall clock, so it stands out on every kind of ground. */
-#define LV_HITBOX_RAINBOW_MS 2000u
+/* The dot's colour goes from blue to purple and back once each
+   LV_HITBOX_HUE_MS, by the wall clock, so it keeps moving while playback is
+   paused. The hue is in degrees on the colour wheel. */
+#define LV_HITBOX_HUE_MS   2000u
+#define LV_HITBOX_HUE_LOW  240.0   /* blue */
+#define LV_HITBOX_HUE_HIGH 285.0   /* purple */
 
-/* The rainbow colour at wall-clock time ms, each part 0..1: a hue that
-   goes once round the colour wheel each LV_HITBOX_RAINBOW_MS, at full
-   saturation and brightness. It is red at the start of each period. */
-static inline void lvHitboxRainbow(uint64_t ms, double *r, double *g, double *b) {
-    double h = 6.0 * (double)(ms % LV_HITBOX_RAINBOW_MS) / (double)LV_HITBOX_RAINBOW_MS;
-    int sector = (int)h;
-    double f = h - (double)sector;
-    switch (sector) {
-    case 0:  *r = 1.0;     *g = f;       *b = 0.0;     break;
-    case 1:  *r = 1.0 - f; *g = 1.0;     *b = 0.0;     break;
-    case 2:  *r = 0.0;     *g = 1.0;     *b = f;       break;
-    case 3:  *r = 0.0;     *g = 1.0 - f; *b = 1.0;     break;
-    case 4:  *r = f;       *g = 0.0;     *b = 1.0;     break;
-    default: *r = 1.0;     *g = 0.0;     *b = 1.0 - f; break;
-    }
+/* The dot's hue at wall-clock time ms: a cosine, so it goes smoothly from
+   LV_HITBOX_HUE_LOW at the start of each period to LV_HITBOX_HUE_HIGH half
+   way, and back. */
+static inline double lvHitboxDotHue(uint64_t ms) {
+    const double twoPi = 2.0 * 3.14159265358979323846;
+    double phase = (double)(ms % LV_HITBOX_HUE_MS) / (double)LV_HITBOX_HUE_MS;
+    double rise = 0.5 - 0.5 * cos(phase * twoPi);
+    return LV_HITBOX_HUE_LOW + (LV_HITBOX_HUE_HIGH - LV_HITBOX_HUE_LOW) * rise;
+}
+
+/* The dot's colour at wall-clock time ms, each part 0..1: the hue of
+   lvHitboxDotHue at full saturation and brightness. From 240 to 300
+   degrees blue is full, green is 0 and red rises from 0 to 1. */
+static inline void lvHitboxDotColour(uint64_t ms, double *r, double *g, double *b) {
+    double h = lvHitboxDotHue(ms);
+    *r = (h - 240.0) / 60.0;
+    if (*r < 0.0) *r = 0.0;
+    if (*r > 1.0) *r = 1.0;
+    *g = 0.0;
+    *b = 1.0;
 }
 
 /* The dot's size in screen pixels, for pxPerWu screen pixels to a world
-   unit: one art pixel, and never less than one screen pixel, so it still
-   shows at the smallest zoom. */
-static inline float lvHitboxBlastDotSize(float pxPerWu) {
-    float s = (float)LV_HITBOX_BLAST_DOT_WU * pxPerWu;
-    return (s < 1.0f) ? 1.0f : s;
+   unit: LV_HITBOX_DOT_NEAR_WU world units, but never less than
+   LV_HITBOX_DOT_MIN_PX screen pixels and never more than one art pixel.
+   At 100% zoom and less that is one art pixel. It is never less than one
+   screen pixel, so it still shows at the smallest zoom. */
+static inline float lvHitboxDotSize(float pxPerWu) {
+    float art = (float)LV_HITBOX_DOT_WU * pxPerWu;
+    float s = (float)LV_HITBOX_DOT_NEAR_WU * pxPerWu;
+    if (s < LV_HITBOX_DOT_MIN_PX) s = LV_HITBOX_DOT_MIN_PX;
+    if (s > art) s = art;
+    if (s < 1.0f) s = 1.0f;
+    return s;
+}
+
+/* The dot's square on the screen: size across (lvHitboxDotSize), centred
+   exactly on (cx, cy). It is not rounded to whole pixels or to art pixels,
+   so it keeps the point's full world-unit place. */
+typedef struct LvHitDotRect {
+    float x, y, w, h;
+} LvHitDotRect;
+static inline LvHitDotRect lvHitboxDotRect(float cx, float cy, float pxPerWu) {
+    LvHitDotRect r;
+    float size = lvHitboxDotSize(pxPerWu);
+    r.x = cx - size * 0.5f;
+    r.y = cy - size * 0.5f;
+    r.w = size;
+    r.h = size;
+    return r;
+}
+
+/* A builder's dot, on one axis, in render-target pixels: sq is the top left
+   of his square on the target and b his place in it in world units (the
+   place lgmBlastCatches tests, as his hit area uses it), at zf target pixels
+   to an art pixel. */
+static inline double lvHitboxLgmDotAt(double sq, double b, int zf) {
+    return sq + b * (double)zf / (double)LV_HITBOX_WU_PER_PIXEL;
 }
 
 /* One record of the map's shell list: the square, the art pixel in it and

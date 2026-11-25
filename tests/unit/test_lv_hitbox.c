@@ -411,34 +411,78 @@ int run_lv_hitbox_sums(void) {
             prev = a;
         }
     }
-    /* The colour goes round the whole rainbow every 2 s, smoothly. */
+    /* The colour goes from blue (240 degrees) to purple (285) and back
+       every 2 s, smoothly, and never leaves that part of the wheel. */
     {
-        double r, g, b, pr, pg, pb;
+        double r, g, b, pr, pg, pb, lowR = 1.0, highR = 0.0;
         uint64_t ms;
-        int sawRed = 0, sawGreen = 0, sawBlue = 0;
-        lvHitboxRainbow(0, &r, &g, &b);
-        UT_ASSERT_MSG(r == 1.0 && g == 0.0 && b == 0.0, "rainbow starts red");
-        lvHitboxRainbow(2000, &r, &g, &b);
-        UT_ASSERT_MSG(r == 1.0 && g == 0.0 && b == 0.0, "rainbow is red again at 2 s");
-        pr = 1.0; pg = 0.0; pb = 0.0;
+        UT_ASSERT_MSG(fabs(lvHitboxDotHue(0) - 240.0) < 1e-9, "hue starts blue");
+        UT_ASSERT_MSG(fabs(lvHitboxDotHue(1000) - 285.0) < 1e-9, "hue is purple at 1 s");
+        UT_ASSERT_MSG(fabs(lvHitboxDotHue(2000) - 240.0) < 1e-9, "hue is blue again at 2 s");
+        UT_ASSERT_MSG(fabs(lvHitboxDotHue(500) - lvHitboxDotHue(1500)) < 1e-9,
+                      "hue goes back the way it came");
+        lvHitboxDotColour(0, &r, &g, &b);
+        UT_ASSERT_MSG(r == 0.0 && g == 0.0 && b == 1.0, "colour starts blue");
+        lvHitboxDotColour(1000, &r, &g, &b);
+        UT_ASSERT_MSG(fabs(r - 0.75) < 1e-9 && g == 0.0 && b == 1.0,
+                      "colour is purple at 1 s: %.3f %.3f %.3f", r, g, b);
+        pr = 0.0; pg = 0.0; pb = 1.0;
         for (ms = 1; ms <= 4000; ms++) {
-            lvHitboxRainbow(ms, &r, &g, &b);
-            UT_ASSERT_MSG(r >= 0.0 && r <= 1.0 && g >= 0.0 && g <= 1.0 &&
-                          b >= 0.0 && b <= 1.0, "rainbow in range at %u ms", (unsigned)ms);
+            double h = lvHitboxDotHue(ms);
+            lvHitboxDotColour(ms, &r, &g, &b);
+            UT_ASSERT_MSG(h >= 240.0 - 1e-9 && h <= 285.0 + 1e-9, "hue %.1f at %u ms", h,
+                          (unsigned)ms);
+            UT_ASSERT_MSG(r >= 0.0 && r <= 0.75 + 1e-9 && g == 0.0 && b == 1.0,
+                          "colour blue to purple at %u ms", (unsigned)ms);
             UT_ASSERT_MSG(fabs(r - pr) < 0.01 && fabs(g - pg) < 0.01 && fabs(b - pb) < 0.01,
-                          "rainbow is smooth at %u ms", (unsigned)ms);
-            if (r == 1.0 && g < 0.01 && b < 0.01) sawRed = 1;
-            if (g == 1.0 && r < 0.01 && b < 0.01) sawGreen = 1;
-            if (b == 1.0 && r < 0.01 && g < 0.01) sawBlue = 1;
+                          "colour is smooth at %u ms", (unsigned)ms);
+            if (r < lowR) lowR = r;
+            if (r > highR) highR = r;
             pr = r; pg = g; pb = b;
         }
-        UT_ASSERT_MSG(sawRed && sawGreen && sawBlue, "rainbow passes red, green and blue");
+        UT_ASSERT_MSG(lowR < 1e-6 && highR > 0.75 - 1e-6, "colour reaches blue and purple");
     }
-    /* The dot is one art pixel (16 units) at every zoom, and never less
-       than one screen pixel. */
-    UT_ASSERT_MSG(lvHitboxBlastDotSize(1.0f / 16.0f) == 1.0f, "1 pixel at 1x");
-    UT_ASSERT_MSG(lvHitboxBlastDotSize(4.0f / 16.0f) == 4.0f, "4 pixels at 4x");
-    UT_ASSERT_MSG(lvHitboxBlastDotSize(0.5f / 16.0f) == 1.0f, "still 1 pixel at 0.5x");
+    /* The dot's size, in screen pixels: one art pixel at 100% zoom and
+       less, never less than one screen pixel; zoomed in, 4 world units but
+       never less than 2 screen pixels and never more than one art pixel.
+       The argument is screen pixels to a world unit: the zoom / 16. */
+    UT_ASSERT_MSG(lvHitboxDotSize(0.25f / 16.0f) == 1.0f, "1 pixel at 25%%");
+    UT_ASSERT_MSG(lvHitboxDotSize(0.5f / 16.0f) == 1.0f, "1 pixel at 50%%");
+    UT_ASSERT_MSG(lvHitboxDotSize(1.0f / 16.0f) == 1.0f, "1 pixel (one art pixel) at 100%%");
+    UT_ASSERT_MSG(lvHitboxDotSize(1.5f / 16.0f) == 1.5f, "one art pixel at 150%%");
+    UT_ASSERT_MSG(lvHitboxDotSize(2.0f / 16.0f) == 2.0f, "2 pixels at 200%%");
+    UT_ASSERT_MSG(lvHitboxDotSize(4.0f / 16.0f) == 2.0f, "2 pixels at 400%%");
+    UT_ASSERT_MSG(lvHitboxDotSize(8.0f / 16.0f) == 2.0f, "2 pixels (4 units) at 800%%");
+    UT_ASSERT_MSG(lvHitboxDotSize(12.0f / 16.0f) == 3.0f, "3 pixels (4 units) at 1200%%");
+    UT_ASSERT_MSG(lvHitboxDotSize(16.0f / 16.0f) == 4.0f, "4 pixels (4 units) at 1600%%");
+    {
+        float z;
+        for (z = 0.1f; z <= 32.0f; z += 0.1f) {
+            float k = z / 16.0f, s = lvHitboxDotSize(k);
+            UT_ASSERT_MSG(s >= 1.0f, "never under 1 pixel at zoom %.1f", z);
+            UT_ASSERT_MSG(s <= 16.0f * k + 1e-5f || s == 1.0f,
+                          "never over one art pixel at zoom %.1f", z);
+            UT_ASSERT_MSG(16.0f * k < 2.0f || s >= 2.0f - 1e-5f,
+                          "never under 2 pixels zoomed in, zoom %.1f", z);
+        }
+    }
+    /* The dot is centred on the exact point, not rounded to a pixel. */
+    {
+        LvHitDotRect d = lvHitboxDotRect(100.3f, 57.8f, 16.0f / 16.0f);
+        UT_ASSERT_MSG(fabsf(d.x + d.w * 0.5f - 100.3f) < 1e-4f &&
+                      fabsf(d.y + d.h * 0.5f - 57.8f) < 1e-4f, "dot centred on the point");
+        UT_ASSERT_MSG(d.w == 4.0f && d.h == 4.0f, "dot is 4 by 4 at 1600%%");
+        UT_ASSERT_MSG(fabsf(d.x - 98.3f) < 1e-4f && fabsf(d.y - 55.8f) < 1e-4f,
+                      "dot not rounded: %.2f %.2f", d.x, d.y);
+        d = lvHitboxDotRect(10.25f, 3.75f, 1.0f / 16.0f);
+        UT_ASSERT_MSG(fabsf(d.x - 9.75f) < 1e-4f && fabsf(d.y - 3.25f) < 1e-4f && d.w == 1.0f,
+                      "1 pixel dot centred on the point at 100%%");
+    }
+    /* A builder's dot: his place in his square, at the target's scale. At
+       zoom factor 2 a place 100.5 units in is 12.5625 target pixels on. */
+    UT_ASSERT_MSG(fabs(lvHitboxLgmDotAt(64.0, 100.5, 2) - (64.0 + 12.5625)) < 1e-9,
+                  "builder dot place");
+    UT_ASSERT_MSG(lvHitboxLgmDotAt(32.0, 0.0, 1) == 32.0, "builder dot at the square's corner");
 
     return 0;
 }
