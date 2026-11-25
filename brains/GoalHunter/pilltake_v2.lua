@@ -110,6 +110,8 @@ function M.knob_inp(C, inp)
   -- PT2_WALL_MEMO (M1): the wall searches' memo across evaluates
   inp.wall_memo = C.PT2_WALL_MEMO ~= false
   inp.wall_memo_max = C.PT2_WALL_MEMO_MAX or 2000
+  -- PT2_GEOM_CACHE_MODE (Nov 25): the C copy's shell walk tables
+  inp.geom_cache = C.PT2_GEOM_CACHE_MODE or "both"
   -- PT2_V2_C: run the C copy (gh_pt2_v2.c) when the exe has it
   inp.v2_c = C.PT2_V2_C ~= false
   return inp

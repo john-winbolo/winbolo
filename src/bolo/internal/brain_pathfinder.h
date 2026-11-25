@@ -140,6 +140,13 @@ struct BrainPathfinder {
    * brainPathfinderSetManSpeed. Nobody pushing = the classic walk. */
   uint8_t  man_speed[16];
   uint8_t  man_speed_blessed;
+  /* brainPathfinderLgmReachGen: a copy of every input of the LGM walk
+   * (map bytes, lgm_block, man speeds) and its change count. */
+  uint8_t  lr_map[65536];
+  uint8_t  lr_block[65536];
+  uint8_t  lr_speed[17];
+  int      lr_set;
+  uint32_t lr_gen;
 
   /* Per-terrain-type tables (indexed 0..15) */
   float terrain_cost_table[16];      /* land mode costs */
@@ -721,6 +728,13 @@ int brainPathfinderLgmTravelTicksMap(BrainPathfinder *pf,
                                       BYTE smx, BYTE smy, BYTE dmx, BYTE dmy,
                                       BYTE blessX, BYTE blessY,
                                       int maxTicks, int stuckTicks);
+
+/* The change count of the LGM walk's inputs: the map bytes, the lgm_block
+ * marks and the man speeds. The same count means every walk gives the same
+ * answer as before (the walk reads nothing else). Returns -1 when there is
+ * no map or the abort flag is set (an aborted walk answers -1 that is not
+ * the map's answer). Each call compares 128 KB against the copy. */
+long brainPathfinderLgmReachGen(BrainPathfinder *pf);
 
 /* Longest walk any caller may ask for the positions of. 128 engine ticks is
  * twice a shell's maximum life (shellLifeTicks caps at 63 for a pillbox), and
