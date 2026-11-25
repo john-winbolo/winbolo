@@ -1281,6 +1281,24 @@ static void (*s_log_flush_hook)(void) = NULL;
 
 void brainCoreSetLogFlushHook(void (*fn)(void)) { s_log_flush_hook = fn; }
 
+/* The end of the stderr crash line: what happened to the crash file. A host
+ * not in brain debug mode writes no file at all, so the line must not name
+ * one. Not static so tests/unit/test_brain_crash_log.c can check each case. */
+void brc_crash_file_note(bool debug_mode, bool suppress_file,
+                         const char *path, char *out, size_t outsz) {
+  if (out == NULL || outsz == 0) return;
+  if (!debug_mode) {
+    SDL_snprintf(out, outsz,
+                 "no crash file written (start with -brain-debug to save one)");
+  } else if (suppress_file) {
+    SDL_snprintf(out, outsz,
+                 "file SUPPRESSED (rate-limit: same brain crashed within %ds)",
+                 BRC_CRASH_RATE_LIMIT_SECS);
+  } else {
+    SDL_snprintf(out, outsz, "see %s", path ? path : "?");
+  }
+}
+
 void brc_write_crash_log(lua_State *L,
                          const char *method,
                          const char *err_or_traceback) {
@@ -1393,18 +1411,14 @@ void brc_write_crash_log(lua_State *L,
   /* Stderr surface so the failure is visible without grepping. Always
    * fires (even when the file was suppressed) so a chronically-crashing
    * brain stays loud in the console — just with a clear note that the
-   * file isn't being re-emitted. */
-  if (suppress_file) {
-    fprintf(stderr,
-            "[BRAIN_CRASH] brain.%s() crashed at %s (bot_index=%d tick=%d L=%p) "
-            "— file SUPPRESSED (rate-limit: same brain crashed within %ds)\n",
-            method, ts_local, bot_idx, tick, (void *)lptr,
-            BRC_CRASH_RATE_LIMIT_SECS);
-  } else {
-    fprintf(stderr,
-            "[BRAIN_CRASH] brain.%s() crashed at %s (bot_index=%d tick=%d L=%p) — see %s\n",
-            method, ts_local, bot_idx, tick, (void *)lptr, path);
-  }
+   * file isn't being re-emitted, or that none is written at all when the
+   * host is not in brain debug mode. */
+  char file_note[1200];
+  brc_crash_file_note(debug_mode, suppress_file, path,
+                      file_note, sizeof(file_note));
+  fprintf(stderr,
+          "[BRAIN_CRASH] brain.%s() crashed at %s (bot_index=%d tick=%d L=%p) — %s\n",
+          method, ts_local, bot_idx, tick, (void *)lptr, file_note);
   fprintf(stderr, "[BRAIN_CRASH] %s\n", err_or_traceback);
   fflush(stderr);
 

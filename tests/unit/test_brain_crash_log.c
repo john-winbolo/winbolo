@@ -17,6 +17,12 @@
  *       no state.bot_index; verifies the fallback filename pattern
  *       brain_crash_*_L0x*.log is used instead.
  *
+ * And one for the stderr crash line's note on the file:
+ *   - brain_crash_log_file_note:
+ *       debug mode off says no file was written and names no path, even
+ *       when rate-limited; debug mode on keeps "see <path>" and the
+ *       SUPPRESSED note.
+ *
  * And two for the message handler brainCoreCallThink installs,
  * brc_traceback_msgh, run through a lua_pcall of their own:
  *   - brain_msgh_budget_kill_no_traceback:
@@ -45,6 +51,8 @@
 extern void brc_write_crash_log(lua_State *L,
                                 const char *method,
                                 const char *err_or_traceback);
+extern void brc_crash_file_note(bool debug_mode, bool suppress_file,
+                                const char *path, char *out, size_t outsz);
 
 /* SDL3 directory enumeration callback: collect any brain_crash_*.log
  * filenames into a caller-owned buffer. Returns SDL_ENUM_CONTINUE
@@ -257,6 +265,41 @@ int run_brain_crash_log_ignores_brain_globals(void) {
 
     lua_close(L);
     cleanup_tempdir(TEMPDIR);
+    return 0;
+}
+
+/* The stderr crash line must not point at a file that was never written.
+ * A host not in brain debug mode writes none, rate-limited or not. */
+int run_brain_crash_log_file_note(void) {
+    static const char *kPath = "./brain_crash_20261125_120000Z_pid42_bot3.log";
+    char note[1200];
+
+    brc_crash_file_note(false, false, kPath, note, sizeof(note));
+    UT_ASSERT_MSG(strstr(note, "no crash file written") != NULL,
+                  "debug off: note should say no file was written: %s", note);
+    UT_ASSERT_MSG(strstr(note, "-brain-debug") != NULL,
+                  "debug off: note should name -brain-debug: %s", note);
+    UT_ASSERT_MSG(strstr(note, "brain_crash_") == NULL,
+                  "debug off: note names a crash file: %s", note);
+    UT_ASSERT_MSG(strstr(note, "SUPPRESSED") == NULL,
+                  "debug off: note says SUPPRESSED: %s", note);
+
+    brc_crash_file_note(false, true, kPath, note, sizeof(note));
+    UT_ASSERT_MSG(strstr(note, "no crash file written") != NULL,
+                  "debug off, rate-limited: note should say no file was written: %s",
+                  note);
+    UT_ASSERT_MSG(strstr(note, "SUPPRESSED") == NULL,
+                  "debug off, rate-limited: note says SUPPRESSED: %s", note);
+
+    brc_crash_file_note(true, false, kPath, note, sizeof(note));
+    UT_ASSERT_MSG(strncmp(note, "see ", 4) == 0 && strstr(note, kPath) != NULL,
+                  "debug on: note should be 'see <path>': %s", note);
+
+    brc_crash_file_note(true, true, kPath, note, sizeof(note));
+    UT_ASSERT_MSG(strstr(note, "file SUPPRESSED (rate-limit") != NULL,
+                  "debug on, rate-limited: note should say SUPPRESSED: %s", note);
+    UT_ASSERT_MSG(strstr(note, kPath) == NULL,
+                  "debug on, rate-limited: note names the path: %s", note);
     return 0;
 }
 
