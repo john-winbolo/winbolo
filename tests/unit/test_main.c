@@ -502,6 +502,7 @@ static const UnitTestEntry s_tests[] = {
     { "brain_sandbox_hostile_pack_encode", run_brain_sandbox_hostile_pack_encode },
     { "brain_sandbox_hostile_pack_decode", run_brain_sandbox_hostile_pack_decode },
     { "brain_sandbox_jit_limits", run_brain_sandbox_jit_limits },
+    { "brain_sandbox_luajit_no_ffi", run_brain_sandbox_luajit_no_ffi },
     { "brain_msgh_budget_kill_no_traceback",     run_brain_msgh_budget_kill_no_traceback     },
     { "brain_msgh_real_error_keeps_traceback",   run_brain_msgh_real_error_keeps_traceback   },
     { "brain_inbox_push_peek_fifo",              run_brain_inbox_push_peek_fifo              },
