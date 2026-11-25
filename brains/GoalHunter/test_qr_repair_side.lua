@@ -588,10 +588,22 @@ do
         cf and (tostring(cf.how) .. " fire=" .. tostring(cf.fire) .. " at=" .. tostring(cf.at)) or "nil")
   -- One tick later he arrives at 707: the shell has left; the pill is dead
   -- before its next shot (698). Send.
+  -- QUICK_REPAIR_KILL_SLOP_TICKS 0 (the old rule): send.
+  local slop0 = C.QUICK_REPAIR_KILL_SLOP_TICKS
+  C.QUICK_REPAIR_KILL_SLOP_TICKS = 0
   cf = QR.fire_conflict(w, inf, T + 1, goal, k, { mx = 127, my = 118 }, 132.5, 116.5,
                         T + 2, 708, nil, false)
-  check("c17 at 624: arrival 707, after the last shell: no conflict", cf == nil,
+  check("c17 at 624, slop 0: arrival 707, after the last shell: no conflict", cf == nil,
         cf and (tostring(cf.how) .. " fire=" .. tostring(cf.fire) .. " at=" .. tostring(cf.at)) or "nil")
+  -- Slop 2 (approved Nov 24): the pill may still fire at 698, up to T_kill
+  -- 696 + 2, and that shot is on the blocker at 707: wait.
+  C.QUICK_REPAIR_KILL_SLOP_TICKS = 2
+  cf = QR.fire_conflict(w, inf, T + 1, goal, k, { mx = 127, my = 118 }, 132.5, 116.5,
+                        T + 2, 708, nil, false)
+  check("c17 at 624, slop 2: the shot at 698 is on the blocker at 707: wait",
+        cf ~= nil and cf.fire == 698 and cf.at == 707,
+        cf and (tostring(cf.how) .. " fire=" .. tostring(cf.fire) .. " at=" .. tostring(cf.at)) or "nil")
+  C.QUICK_REPAIR_KILL_SLOP_TICKS = slop0
 end
 
 print("10. a5 noc beside_e: the target's shot on its kill tick")
