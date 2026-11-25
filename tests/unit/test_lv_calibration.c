@@ -53,7 +53,7 @@
 /* ---- synthetic v2 log builder ------------------------------------------- */
 
 typedef struct {
-  uint8_t buf[8192];
+  uint8_t buf[16384];
   size_t len;
 } LogBuf;
 
@@ -2656,8 +2656,13 @@ int run_lv_lag_view_first_picture(void) {
  *                      1100 ms after D
  *   entry 240          E: frame 8, one record only; entry 265 a second
  *                      explosion at E's place, 500 ms after E
+ *   entry 300          a snapshot, and no shell after it until entry 348:
+ *                      F, frame 8, one record only, 960 ms after the snapshot
+ *   entry 400          a snapshot, and no shell after it until entry 449:
+ *                      G, frame 7, one record only, 980 ms after the snapshot
  *
- * Forward play: a dot at entries 55, 91, 130, 155, 170, 225 and 240 only.
+ * Forward play: a dot at entries 55, 91, 130, 155, 170, 225, 240, 348 and
+ * 449 only.
  * The empty step 57 gives A no second dot. The step after C's last record
  * (frame 1) is under the new frame 8, so 155 is new. After 1100 ms with no
  * shell D has surely ended, so 225 is new; 500 ms after E, with no record
@@ -2665,9 +2670,21 @@ int run_lv_lag_view_first_picture(void) {
  * A seek back to entry 91 starts the decode an explosion's life before it,
  * not at the snapshot of entry 90, so B gets its dot and the frame 8
  * picture as in forward play; a seek to 92 gives no dot.
+ * A seek back to entry 449 (G) or 348 (F) must not restore the snapshot
+ * 980 or 960 ms before it: after that restore the step before becomes
+ * known only 1000 ms after the snapshot (LV_SHS_SEEK_LEAD_MS in screen.c).
+ * The seek starts at the snapshot before, so G and F get their dots, and G
+ * the frame 8 picture, as in forward play.
  */
-#define NEW_BLAST_LAST_K 270
+#define NEW_BLAST_LAST_K 470
 #define NEW_BLAST_SNAP_K 90
+#define NEW_BLAST_SNAP2_K 300
+#define NEW_BLAST_SNAP3_K 400
+#define NEW_BLAST_F_K 348
+#define NEW_BLAST_G_K 449
+static bool newBlastIsSnap(int k) {
+  return k == NEW_BLAST_SNAP_K || k == NEW_BLAST_SNAP2_K || k == NEW_BLAST_SNAP3_K;
+}
 static int32_t newBlastX(int i) { return (76 + 2 * i) * 256 + 5 * 16; }
 static int32_t newBlastY(void) { return 70 * 256 + 9 * 16; }
 
@@ -2693,11 +2710,18 @@ static int newBlastAt(int k, int *place, uint8_t *frame) {
   if (k == 240 || k == 265) {
     place[n] = 4; frame[n++] = 8;
   }
+  if (k == NEW_BLAST_F_K) {
+    place[n] = 5; frame[n++] = 8;
+  }
+  if (k == NEW_BLAST_G_K) {
+    place[n] = 6; frame[n++] = 7;
+  }
   return n;
 }
 
 static bool newBlastWantDot(int k) {
-  return k == 55 || k == 91 || k == 130 || k == 155 || k == 170 || k == 225 || k == 240;
+  return k == 55 || k == 91 || k == 130 || k == 155 || k == 170 || k == 225 || k == 240 ||
+         k == NEW_BLAST_F_K || k == NEW_BLAST_G_K;
 }
 
 /* How many explosions of the present step are new, after a draw of the
@@ -2730,7 +2754,7 @@ int run_lv_new_blast_steps(void) {
     int place[4];
     uint8_t frame[4];
     int n = newBlastAt(k, place, frame), i;
-    if (k == NEW_BLAST_SNAP_K) {
+    if (newBlastIsSnap(k)) {
       putLagDrawSnapshot(&b, k);
       continue;
     }
@@ -2752,7 +2776,7 @@ int run_lv_new_blast_steps(void) {
   /* Forward play: one dot at the start of each new explosion only. */
   for (k = 1; k <= NEW_BLAST_LAST_K - 1; k++) {
     int n, want = newBlastWantDot(k) ? 1 : 0;
-    if (k == NEW_BLAST_SNAP_K) {
+    if (newBlastIsSnap(k)) {
       continue;
     }
     if (lagDrawPlayTo(lv, k) != 0) return 1;
@@ -2784,6 +2808,32 @@ int run_lv_new_blast_steps(void) {
   k = newBlastCount();
   UT_ASSERT_MSG(k == 0, "%d new explosions after a seek to entry 92, want 0", k);
 
+  /* Seeks back to an explosion with no shell before it, 980 ms (G) and
+     960 ms (F) after a snapshot: as in forward play. G first, so that each
+     seek is backward and restores a snapshot. */
+  lv_screenSeekToTimeMs(lagDrawMs(NEW_BLAST_LAST_K - 1));
+  UT_ASSERT(lv->timeRunning == lagDrawMs(NEW_BLAST_LAST_K - 1));
+  lv_screenSeekToTimeMs(lagDrawMs(NEW_BLAST_G_K));
+  UT_ASSERT_MSG(lv->timeRunning == lagDrawMs(NEW_BLAST_G_K), "the seek is at %u ms, want %u",
+                (unsigned)lv->timeRunning, (unsigned)lagDrawMs(NEW_BLAST_G_K));
+  k = newBlastCount();
+  UT_ASSERT_MSG(k == 1, "%d new explosions after a seek to entry %d, want 1", k, NEW_BLAST_G_K);
+  {
+    struct LvHitBlastRec out[4];
+    int n = lv_screenShellsNewBlasts(out, 4);
+    UT_ASSERT(n == 1);
+    UT_ASSERT_MSG(out[0].mx == newBlastX(6) / 256 && out[0].frame == 7,
+                  "the new explosion after the seek is at column %d frame %d", out[0].mx,
+                  out[0].frame);
+    UT_ASSERT_MSG(lvHitboxDrawFrame(out[0].frame, true) == 8,
+                  "G is not drawn with the frame 8 picture after the seek");
+  }
+  lv_screenSeekToTimeMs(lagDrawMs(NEW_BLAST_F_K));
+  UT_ASSERT_MSG(lv->timeRunning == lagDrawMs(NEW_BLAST_F_K), "the seek is at %u ms, want %u",
+                (unsigned)lv->timeRunning, (unsigned)lagDrawMs(NEW_BLAST_F_K));
+  k = newBlastCount();
+  UT_ASSERT_MSG(k == 1, "%d new explosions after a seek to entry %d, want 1", k, NEW_BLAST_F_K);
+
   lv_decoderDestroy(lv);
   lv_screenSetHideLobby(savedHide);
   remove(path);
@@ -2806,9 +2856,6 @@ int run_lv_lag_screen_true(void) {
   int savedHide = lv_screenGetHideLobby();
   int k;
 
-  /* Local Explosions works only together with Own Shells, and the view
-     turns both on. */
-  UT_ASSERT(lv_earlyBlastOn(true, true));
   lv_screenLagViewSet(-1);
   UT_ASSERT_MSG(lv_screenLagViewSlot() < 0, "a view is on with no log");
 

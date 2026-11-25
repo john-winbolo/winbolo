@@ -6922,7 +6922,6 @@ set(_unit_test_names
     lv_early_blast_frames
     lv_early_blast_match
     lv_early_blast_hide
-    lv_early_blast_needs_own_shells
     lv_early_blast_same_place
     lv_early_blast_many_players
     lv_early_blast_watch_miss

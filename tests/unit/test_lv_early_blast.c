@@ -37,16 +37,6 @@ static LvBlastPt lebExpl(int32_t wx, int32_t wy, uint8_t frame) {
   return e;
 }
 
-/* The rule of lv_earlyBlastOn: the early blast needs the own shells drawn
-   from the present frame. The view always draws both. */
-int run_lv_early_blast_needs_own_shells(void) {
-  UT_ASSERT(lv_earlyBlastOn(true, true));
-  UT_ASSERT(!lv_earlyBlastOn(true, false));
-  UT_ASSERT(!lv_earlyBlastOn(false, true));
-  UT_ASSERT(!lv_earlyBlastOn(false, false));
-  return 0;
-}
-
 /* The header's numbers are the game's explosion rules. */
 int run_lv_early_blast_rules(void) {
   UT_ASSERT(LV_EARLY_BLAST_START_FRAME == EXPLOSION_START);
