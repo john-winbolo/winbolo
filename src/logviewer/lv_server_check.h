@@ -142,7 +142,7 @@ static inline void lvServerCheckFromRecord(const BuilderCheckRecord *r, uint32_t
    a pillbox's shell), the blast, the place the builder's history has for
    that rewind, his present place, whether the blast's square is solid
    (lvServerCheckSolid) and the two rules. The test is the engine's,
-   hitRulesBuilderCaught. The estimate cannot know a refused death. */
+   hitRulesBuilderCaughtShape. The estimate cannot know a refused death. */
 static inline void lvServerCheckEstimate(LvServerCheck *c, uint8_t builder, uint8_t shooter,
                                          int rewind, int32_t blastX, int32_t blastY,
                                          int32_t testedX, int32_t testedY,
@@ -164,8 +164,9 @@ static inline void lvServerCheckEstimate(LvServerCheck *c, uint8_t builder, uint
   c->pillRange = pillRange;
   c->startMs = startMs;
   c->onSquare = (testedX >> 8) == (blastX >> 8) && (testedY >> 8) == (blastY >> 8);
-  c->result = hitRulesBuilderCaught(solid, c->onSquare, (double)(blastX - testedX),
-                                    (double)(blastY - testedY), shape, pillRange)
+  c->result = hitRulesBuilderCaughtShape(shape, solid, c->onSquare,
+                                         (double)(blastX - testedX),
+                                         (double)(blastY - testedY), pillRange)
                   ? BUILDER_CHECK_DIES
                   : BUILDER_CHECK_LIVES;
 }
