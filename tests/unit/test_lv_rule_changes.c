@@ -661,7 +661,10 @@ int run_lv_rule_changes_live_same_tick(void) {
  * the circle of 144. On a feed: the box (1.0), then 3.0, the box again, then
  * 99.0. The shape at the playhead goes box, half-square, box, half-square.
  * 1.0 is 0x3FF0000000000000, 3.0 0x4008000000000000 and 99.0
- * 0x4058C00000000000. */
+ * 0x4058C00000000000. A feed takes this build's version, not the one in its
+ * header (lv_screenLoadFromStream), so the shape before the first change is
+ * the one this build's version plays when nothing sets the rule: 0 (the
+ * circle of 128) before 2.2.2, else 2 (the circle of 144). */
 #define LVRC_SHAPE_HI ((uint8_t)(SIM_RULE_lgm_blast_shape >> 8))
 #define LVRC_SHAPE_LO ((uint8_t)(SIM_RULE_lgm_blast_shape & 0xFF))
 
@@ -675,8 +678,8 @@ int run_lv_rule_changes_lgm_blast_shape_outside(void) {
     static const uint8_t many[3 + 8] = {
         LVRC_SHAPE_HI, LVRC_SHAPE_LO, 8,
         0x40, 0x58, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00};
-    static const int want[5] = {
-        LGM_BLAST_SHAPE_CLASSIC, LGM_BLAST_SHAPE_MAC_BOX, LGM_BLAST_SHAPE_HALF_SQUARE,
+    int want[5] = {
+        0, LGM_BLAST_SHAPE_MAC_BOX, LGM_BLAST_SHAPE_HALF_SQUARE,
         LGM_BLAST_SHAPE_MAC_BOX, LGM_BLAST_SHAPE_HALF_SQUARE};
     static LvrcLog  b;
     LogViewerState *lv;
@@ -686,6 +689,9 @@ int run_lv_rule_changes_lgm_blast_shape_outside(void) {
     int             i;
     bool            loaded;
 
+    want[0] = simRulesLgmBlastShapeForVersion(BOLO_VERSION_MAJOR,
+                                              BOLO_VERSION_MINOR,
+                                              BOLO_VERSION_REVISION);
     b.len = 0;
     lvrcPutHeader(&b);
     lvrcPutSnapshot(&b);

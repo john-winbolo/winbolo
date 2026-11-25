@@ -447,8 +447,11 @@ int run_lgm_blast_shape_classic_144(void) {
 /* The shape a recording with no lgm_blast_shape in it played, from the
  * version in its header. Versions before 2.2.2 played the old WinBolo
  * circle of 128 (0) as classic; 2.2.2 and later play the circle of 144
- * (2). This build's own version must give the classic shape, or its new
- * recordings would read back as 128. */
+ * (2). The rows use fixed version numbers, so the test does not depend on
+ * the version of this build. Only a build at 2.2.2 or later must give the
+ * classic shape for its own version, or its new recordings would read back
+ * as 128. A build before 2.2.2 (main before the release sets the version)
+ * gives 128 for its own version, so the check is not made there. */
 int run_lgm_blast_shape_for_version(void) {
     static const struct {
         unsigned major, minor, revision;
@@ -474,12 +477,20 @@ int run_lgm_blast_shape_for_version(void) {
                       kRows[i].major, kRows[i].minor, kRows[i].revision, got,
                       kRows[i].shape);
     }
-    UT_ASSERT_MSG(simRulesLgmBlastShapeForVersion(BOLO_VERSION_MAJOR,
-                                                  BOLO_VERSION_MINOR,
-                                                  BOLO_VERSION_REVISION) ==
-                      LGM_BLAST_SHAPE_CLASSIC,
-                  "this build (%u.%u.%u) does not give the classic shape",
-                  (unsigned) BOLO_VERSION_MAJOR, (unsigned) BOLO_VERSION_MINOR,
-                  (unsigned) BOLO_VERSION_REVISION);
+    if (((unsigned long) BOLO_VERSION_MAJOR << 16 |
+         (unsigned long) BOLO_VERSION_MINOR << 8 |
+         (unsigned long) BOLO_VERSION_REVISION) >=
+        ((unsigned long) SIM_RULES_LGM_BLAST_144_MAJOR << 16 |
+         (unsigned long) SIM_RULES_LGM_BLAST_144_MINOR << 8 |
+         (unsigned long) SIM_RULES_LGM_BLAST_144_REVISION)) {
+        UT_ASSERT_MSG(simRulesLgmBlastShapeForVersion(BOLO_VERSION_MAJOR,
+                                                      BOLO_VERSION_MINOR,
+                                                      BOLO_VERSION_REVISION) ==
+                          LGM_BLAST_SHAPE_CLASSIC,
+                      "this build (%u.%u.%u) does not give the classic shape",
+                      (unsigned) BOLO_VERSION_MAJOR,
+                      (unsigned) BOLO_VERSION_MINOR,
+                      (unsigned) BOLO_VERSION_REVISION);
+    }
     return 0;
 }
