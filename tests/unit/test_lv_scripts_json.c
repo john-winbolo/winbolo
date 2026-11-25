@@ -572,7 +572,9 @@ int run_lv_scripts_json_blast_shape_by_version(void) {
     char          oldPath[600];
     ReplayHarness h;
     uint8_t      *data;
+    uint8_t      *oldData = NULL;
     size_t        len = 0;
+    size_t        oldLen = 0;
     double        open, closed;
     int           drawn;
     unsigned      major, minor, revision;
@@ -597,6 +599,12 @@ int run_lv_scripts_json_blast_shape_by_version(void) {
     snprintf(oldPath, sizeof(oldPath), "%s.221.wbv", h.path);
     copied = lvsjCopyWithVersion(h.path, oldPath, 2, 2, 1);
     replayHarnessStop(&h);
+    /* Read the 2.2.1 copy and delete it now, so a failed assert below does
+       not leave it on disk. */
+    if (copied) {
+        oldData = lvsjReadFile(oldPath, &oldLen);
+    }
+    remove(oldPath);
     UT_ASSERT_MSG(data != NULL, "could not read the recording back");
     loaded = lvsjShapeOf(data, len, &open, &drawn, &closed, &major, &minor,
                          &revision);
@@ -617,10 +625,8 @@ int run_lv_scripts_json_blast_shape_by_version(void) {
 
     /* The same round as a 2.2.1 recording. */
     UT_ASSERT_MSG(copied, "could not write the 2.2.1 copy %s", oldPath);
-    data = lvsjReadFile(oldPath, &len);
-    remove(oldPath);
-    UT_ASSERT_MSG(data != NULL, "could not read %s", oldPath);
-    loaded = lvsjShapeOf(data, len, &open, &drawn, &closed, &major, &minor,
+    UT_ASSERT_MSG(oldData != NULL, "could not read %s", oldPath);
+    loaded = lvsjShapeOf(oldData, oldLen, &open, &drawn, &closed, &major, &minor,
                          &revision);
     UT_ASSERT_MSG(loaded, "the 2.2.1 copy did not open");
     UT_ASSERT_MSG(major == 2 && minor == 2 && revision == 1,
