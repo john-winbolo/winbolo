@@ -6012,6 +6012,7 @@ set(_unit_test_names
     brain_view_data_edge_rect
     bot_init_arg_difficulty_token
     bot_init_arg_mode_tokens
+    bot_lag_split_frames
     bot_difficulty_names
     bolo_rand_golden_sequence
     pf_dijkstra_no_solid_corner_cut

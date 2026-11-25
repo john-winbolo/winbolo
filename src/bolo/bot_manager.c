@@ -496,6 +496,109 @@ void botManagerSetBrainLuaSeed(long seed) {
 }
 long botManagerGetBrainLuaSeed(void)      { return s_brainLuaSeed; }
 
+/* ---- -brain-lag-ms (test only) ----
+ * An in-server brain normally reads the snapshot built this frame and its
+ * inputs are queued for the very next half-steps: zero lag. With a round
+ * trip set, each bot keeps a ring of the snapshots (and brain maps) it was
+ * "sent" and reads the one s_brainLagDown frames old, and keeps its inputs
+ * in a queue until s_brainLagUp frames have passed. Everything is counted
+ * in frames, so a seeded run stays one canonical game. */
+static int s_brainLagMs   = 0;
+static int s_brainLagDown = 0;   /* frames a snapshot is old when read */
+static int s_brainLagUp   = 0;   /* frames an input waits before it lands */
+
+/* Ring of captured frames. Must hold the down leg plus the frame being
+ * captured: BOT_LAG_MAX_RTT_MS is 30 frames, so at most 15 down. */
+#define BOT_LAG_RING 16
+/* Inputs in flight: two a frame, at most 15 frames up. */
+#define BOT_LAG_INQ  64
+
+typedef struct {
+    SnapshotHeader      hdr;
+    TankSnapshot        tanks[MAX_TANKS];
+    ShellSnapshot       shells[MAX_SNAPSHOT_SHELLS];
+    TkExplosionSnapshot tkExplosions[MAX_SNAPSHOT_TK_EXPLOSIONS];
+    BaseSnapshot        bases[MAX_SNAPSHOT_BASES];
+    PillSnapshot        pills[MAX_SNAPSHOT_PILLS];
+    GameEvent           events[MAX_SNAPSHOT_EVENTS];
+    /* The brain map as the server's terrain made it this frame. */
+    BYTE                brainMap[MAP_ARRAY_SIZE][MAP_ARRAY_SIZE];
+} BotLagFrame;
+
+struct BotLagState {
+    BotLagFrame frames[BOT_LAG_RING];
+    uint32_t    captured;            /* frames captured since the last reset */
+    InputPacket inq[BOT_LAG_INQ];
+    uint32_t    inqHead;
+    uint32_t    inqCount;
+};
+
+void botLagSplitFrames(int rttMs, int *downFrames, int *upFrames) {
+    int total;
+    if (rttMs < 0) rttMs = 0;
+    if (rttMs > BOT_LAG_MAX_RTT_MS) rttMs = BOT_LAG_MAX_RTT_MS;
+    total = (rttMs + 10) / 20;
+    if (downFrames != NULL) *downFrames = total / 2;
+    if (upFrames != NULL)   *upFrames   = total - total / 2;
+}
+
+void botManagerSetBrainLagMs(int rttMs) {
+    if (rttMs < 0) rttMs = 0;
+    if (rttMs > BOT_LAG_MAX_RTT_MS) rttMs = BOT_LAG_MAX_RTT_MS;
+    s_brainLagMs = rttMs;
+    botLagSplitFrames(rttMs, &s_brainLagDown, &s_brainLagUp);
+}
+int botManagerGetBrainLagMs(void) { return s_brainLagMs; }
+
+/* The bot's lag state, made on first use; NULL when the option is off. */
+static struct BotLagState *botLagState(BotContext *bot) {
+    if (s_brainLagMs <= 0) return NULL;
+    if (bot->lag == NULL) {
+        bot->lag = (struct BotLagState *)calloc(1, sizeof(struct BotLagState));
+    }
+    return bot->lag;
+}
+
+/* Forget what is in flight: a new round or a new life on a parked runner
+ * must not read the last world's snapshots or land its inputs. */
+static void botLagReset(BotContext *bot) {
+    if (bot->lag != NULL) {
+        bot->lag->captured = 0;
+        bot->lag->inqHead  = 0;
+        bot->lag->inqCount = 0;
+    }
+}
+
+/* Producer thread, under the mutex: hand the server every queued input
+ * whose half-step is next (tick <= now + 1, the two ticks the zero-lag path
+ * sends each frame), and keep the slot's ping at the round trip so the
+ * server's fallback rewind and its view margin match a client's. */
+static void botLagReleaseInputs(ServerSim *sim, BotContext *bot) {
+    struct BotLagState *lag = bot->lag;
+    uint32_t now = serverSimGetTick(sim);
+    while (lag->inqCount > 0) {
+        InputPacket *p = &lag->inq[lag->inqHead];
+        if (p->tick > now + 1) break;
+        bot->transport.sendInput(bot->transport.ctx, p);
+        lag->inqHead = (lag->inqHead + 1) % BOT_LAG_INQ;
+        lag->inqCount--;
+    }
+    if (bot->playerNum < MAX_TANKS) {
+        sim->playerPing[bot->playerNum] = (uint16_t)s_brainLagMs;
+    }
+}
+
+static void botLagQueueInput(BotContext *bot, const InputPacket *pkt) {
+    struct BotLagState *lag = bot->lag;
+    if (lag->inqCount == BOT_LAG_INQ) {
+        /* Cannot happen at BOT_LAG_MAX_RTT_MS; never drop an input. */
+        bot->transport.sendInput(bot->transport.ctx, pkt);
+        return;
+    }
+    lag->inq[(lag->inqHead + lag->inqCount) % BOT_LAG_INQ] = *pkt;
+    lag->inqCount++;
+}
+
 double botManagerComputePerBotTargetMs(const ServerSim *sim, int activeBots) {
     /* Slow-motion debug: hand out an oversized budget so the brain runs its
      * full tier and is never budget-killed. The same value drives the deadline
@@ -1053,6 +1156,7 @@ static bool botResumeParkedRunner(ServerSim *sim, BotContext *bot,
         MY_TANK(bot->cs) = NULL;
     }
     tankCreate(clientSimGetGameSim(bot->cs), &MY_TANK(bot->cs));
+    botLagReset(bot);
 
     /* Prediction state as a fresh ClientSim has it: hasPredictedTank FALSE,
        the input history ring empty and its tick counters back to 0, so the
@@ -1466,6 +1570,9 @@ static bool botSyncSnapshotForJob(BotJobCtx *j) {
     BotContext *bot = j->bot;
     ServerSim *sim  = j->sim;
     GameSim *gs     = serverSimGetGameSim(sim);
+    struct BotLagState *lag = botLagState(bot);
+    BotLagFrame *lagCur  = NULL;
+    BotLagFrame *lagSeen = NULL;
 
     bot->transport.getSnapshot(bot->transport.ctx, bot->playerNum,
                                &j->hdr, j->tanks, MAX_TANKS,
@@ -1474,6 +1581,33 @@ static bool botSyncSnapshotForJob(BotJobCtx *j) {
                                j->bases, MAX_SNAPSHOT_BASES,
                                j->pills, MAX_SNAPSHOT_PILLS,
                                j->events, MAX_SNAPSHOT_EVENTS);
+
+    if (lag != NULL) {
+        /* -brain-lag-ms: this frame's snapshot goes into the ring as "sent",
+         * and the bot reads the one sent s_brainLagDown frames ago (the
+         * oldest it has, for the first frames of a round). */
+        uint32_t back = (lag->captured < (uint32_t)s_brainLagDown)
+                            ? lag->captured : (uint32_t)s_brainLagDown;
+        lagCur  = &lag->frames[lag->captured % BOT_LAG_RING];
+        lagSeen = &lag->frames[(lag->captured - back) % BOT_LAG_RING];
+        lagCur->hdr = j->hdr;
+        memcpy(lagCur->tanks, j->tanks, sizeof(j->tanks));
+        memcpy(lagCur->shells, j->shells, sizeof(j->shells));
+        memcpy(lagCur->tkExplosions, j->tkExplosions, sizeof(j->tkExplosions));
+        memcpy(lagCur->bases, j->bases, sizeof(j->bases));
+        memcpy(lagCur->pills, j->pills, sizeof(j->pills));
+        memcpy(lagCur->events, j->events, sizeof(j->events));
+        if (lagSeen != lagCur) {
+            j->hdr = lagSeen->hdr;
+            memcpy(j->tanks, lagSeen->tanks, sizeof(j->tanks));
+            memcpy(j->shells, lagSeen->shells, sizeof(j->shells));
+            memcpy(j->tkExplosions, lagSeen->tkExplosions, sizeof(j->tkExplosions));
+            memcpy(j->bases, lagSeen->bases, sizeof(j->bases));
+            memcpy(j->pills, lagSeen->pills, sizeof(j->pills));
+            memcpy(j->events, lagSeen->events, sizeof(j->events));
+        }
+        bot->cs->brainPingMs = (uint16_t)s_brainLagMs;
+    }
 
     clientSimSyncFromSnapshot(bot->cs, &j->hdr,
                               j->tanks, j->hdr.tankCount,
@@ -1485,11 +1619,27 @@ static bool botSyncSnapshotForJob(BotJobCtx *j) {
                               bot->playerNum);
     botDropDisplayExplosions(bot->cs);
 
+    if (lag != NULL && lag->captured > 0) {
+        /* Put back the brain map as the server's terrain left it last frame,
+         * so the refresh below builds on the live map, not the late one. */
+        memcpy(clientSimGetBrainMap(bot->cs),
+               lag->frames[(lag->captured - 1) % BOT_LAG_RING].brainMap,
+               sizeof(lagCur->brainMap));
+    }
     if (bot->ai == aiFull && bot->brain.isFirst) {
         /* Full map on first tick */
         screenBrainMapFillFromMap(bot->cs, &gs->mp, &gs->mns);
     }
     botUpdateBrainMap(bot, sim);
+    if (lag != NULL) {
+        /* Keep this frame's map, and show the brain the one as old as the
+         * snapshot it read. */
+        memcpy(lagCur->brainMap, clientSimGetBrainMap(bot->cs),
+               sizeof(lagCur->brainMap));
+        memcpy(clientSimGetBrainMap(bot->cs), lagSeen->brainMap,
+               sizeof(lagSeen->brainMap));
+        lag->captured++;
+    }
 
     /* Hand the pathfinder this tank's acceleration modifier and this sim's
      * rules before the think, so cpf_predict_stop brakes at the rate the
@@ -1612,12 +1762,39 @@ static void runBotThinkJobImpl(BotJobCtx *j, BotContext *bot, Uint64 t0) {
     /* Build both InputPackets into per-bot scratch — packets are
      * thread-local to this ctx so two workers cannot collide. */
     bool firstIsGame = (serverSimGetTick(sim) % 2) == 0;
+    /* -brain-lag-ms: number the inputs for the half-steps they will land
+     * on, s_brainLagUp frames on (two half-steps a frame, so the parity is
+     * the same). No change when the option is off. */
+    uint32_t sendTick = serverSimGetTick(sim);
+    if (bot->lag != NULL) {
+        sendTick += 2u * (uint32_t)s_brainLagUp;
+    }
     clientBuildInputPacket(bot->cs, &j->pkt1, 0, FALSE, FALSE,
                              TRUE, firstIsGame, bot->playerNum,
-                             serverSimGetTick(sim));
+                             sendTick);
     clientBuildInputPacket(bot->cs, &j->pkt2, 0, FALSE, FALSE,
                              TRUE, !firstIsGame, bot->playerNum,
-                             serverSimGetTick(sim) + 1);
+                             sendTick + 1);
+    if (bot->lag != NULL) {
+        /* As a UDP client does: stamp the view age and the ping, then
+         * predict the own tank over both inputs, in tick order, so the
+         * next think sees it where these inputs will put it. The next
+         * snapshot's reconcile replays whatever the server has not yet
+         * applied. */
+        InputPacket *pk[2];
+        int n;
+        pk[0] = &j->pkt1;
+        pk[1] = &j->pkt2;
+        for (n = 0; n < 2; n++) {
+            pk[n]->viewTick = clientSimGetViewTick(bot->cs);
+            pk[n]->pingMs   = (uint16_t)s_brainLagMs;
+            if ((pk[n]->tick % 2) == 1) {
+                clientSimKeysTick(bot->cs, pk[n]);
+            } else {
+                clientSimGameTick(bot->cs, pk[n], TRUE);
+            }
+        }
+    }
     j->hasInput = true;
 }
 
@@ -1811,6 +1988,13 @@ void botManagerTick(ServerSim *sim, aiType ai) {
         int i = sim->botMgr.jobIndices[k];
         BotJobCtx *j = &sim->botMgr.jobs[i];
 
+        /* -brain-lag-ms: land the inputs whose time has come, whatever this
+         * frame's think did (a dead or killed think sends nothing new, but
+         * what it sent earlier is still in flight). */
+        if (sim->botMgr.bots[i].lag != NULL) {
+            botLagReleaseInputs(sim, &sim->botMgr.bots[i]);
+        }
+
         /* Hand the worker-prefetched pool JSON (built in parallel on the
          * bot's own worker, right after its think) to the recorder BEFORE
          * any of the skip-continues below — a killed/idle bot may still
@@ -1889,8 +2073,14 @@ void botManagerTick(ServerSim *sim, aiType ai) {
             continue;
         }
 
-        sim->botMgr.bots[i].transport.sendInput(sim->botMgr.bots[i].transport.ctx, &j->pkt1);
-        sim->botMgr.bots[i].transport.sendInput(sim->botMgr.bots[i].transport.ctx, &j->pkt2);
+        if (sim->botMgr.bots[i].lag != NULL) {
+            botLagQueueInput(&sim->botMgr.bots[i], &j->pkt1);
+            botLagQueueInput(&sim->botMgr.bots[i], &j->pkt2);
+            botLagReleaseInputs(sim, &sim->botMgr.bots[i]);
+        } else {
+            sim->botMgr.bots[i].transport.sendInput(sim->botMgr.bots[i].transport.ctx, &j->pkt1);
+            sim->botMgr.bots[i].transport.sendInput(sim->botMgr.bots[i].transport.ctx, &j->pkt2);
+        }
 
         /* Drain any commands the worker queued via
          * botManagerQueueingChatSendCallback.  We're on the producer
@@ -1966,6 +2156,7 @@ void botManagerOnGameStart(ServerSim *sim) {
         bot->overrunCount = 0;
         bot->thinkCount   = 0;
         bot->maxThinkMs   = 0.0;
+        botLagReset(bot);
 
         /* Reload the bot's ClientSim map from the server (map was reset) */
         if (!botLoadMapFromServer(bot, sim)) {
@@ -2079,6 +2270,8 @@ void botManagerDeliverInternalMessage(ServerSim *sim, BYTE fromPlayer,
  * with — botManagerRemoveBot takes it out of the game, and
  * botManagerRemoveBotKeepSeat leaves it in the roster. */
 static void botTearDownRunner(ServerSim *sim, BotContext *bot) {
+    free(bot->lag);
+    bot->lag = NULL;
     luaBrainInstanceDestroy(&bot->brain);
     serverSimUnregisterSubscriber(sim, bot->controlSub);
     bot->controlSub = SUBSCRIBER_HANDLE_INVALID;

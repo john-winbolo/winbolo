@@ -191,6 +191,11 @@ typedef struct {
      * needs no lock. The gap it enforces is BOT_PING_MIN_GAP_TICKS; the
      * server's own ping rate limit still applies after it. */
     uint32_t        lastPingTick;
+    /* -brain-lag-ms state (test only): the snapshots and brain maps this
+     * bot has been sent but not yet "received", and the inputs it has sent
+     * that have not yet "arrived". NULL when the option is off, which is
+     * every real game. Owned here; freed by botTearDownRunner. */
+    struct BotLagState *lag;
 } BotContext;
 
 /* Per-bot scratch carried across the three within-tick stages
@@ -983,6 +988,29 @@ int  botManagerGetBrainTierOverride(void);
  *********************************************************/
 void botManagerSetBrainLuaSeed(long seed);
 long botManagerGetBrainLuaSeed(void);
+
+/*********************************************************
+ *NAME:          botManagerSetBrainLagMs
+ *PURPOSE:
+ *  Test only (-brain-lag-ms). Make every in-server brain play as a
+ *  client with this round trip: it sees snapshots (and its terrain)
+ *  half a round trip late, its inputs reach the server half a round
+ *  trip late, it predicts its own tank like a UDP client, its inputs
+ *  carry viewTick so its shots get the rewind a client with that view
+ *  age gets, and info.ping_ms is the round trip. 0 (the default) is
+ *  the zero-lag path, unchanged. Clamped to 0..BOT_LAG_MAX_RTT_MS.
+ *  Call before any bot is added. Process-global, like the seed.
+ *********************************************************/
+#define BOT_LAG_MAX_RTT_MS 600
+void botManagerSetBrainLagMs(int rttMs);
+int  botManagerGetBrainLagMs(void);
+
+/* Splits a round trip into whole 20 ms frames: the total is the round
+ * trip rounded to the nearest frame (half up), the down leg (snapshot
+ * age) takes the smaller half and the up leg (input delay) the rest.
+ * 60 ms = 1 down + 2 up, 150 ms = 4 + 4. Negative counts as 0; above
+ * BOT_LAG_MAX_RTT_MS counts as the maximum. Pure. */
+void botLagSplitFrames(int rttMs, int *downFrames, int *upFrames);
 
 /*********************************************************
  *NAME:          botManagerFlushBrainLogs

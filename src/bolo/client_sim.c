@@ -320,6 +320,7 @@ bool clientSimCreate(ClientSim *cs) {
   cs->serverShellCount = 0;
   cs->projectedShellCount = 0;
   cs->projectionPingMs = 0;
+  cs->brainPingMs = 0;
   cs->inputTickOffset = 0;
   memset(cs->displayPing, 0, sizeof(cs->displayPing));
   explosionsCreate(&cs->sim.expl);
@@ -3060,6 +3061,7 @@ void clientSimResetWorld(ClientSim *cs) {
   earlyBlastReset(&cs->earlyBlast);
   cs->projectedShellCount = 0;
   cs->projectionPingMs = 0;
+  cs->brainPingMs = 0;
   cs->inputTickOffset = 0;
   /* Base-death prediction is stamped in input ticks, which restart with the
    * round; a stamp carried over would compare against the wrong clock. */

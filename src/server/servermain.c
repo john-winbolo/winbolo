@@ -991,6 +991,11 @@ void printArgs() {
   fprintf(stderr, "-brain-lua-seed <N> - Seed each brain's Lua math.random with N + player\n");
   fprintf(stderr, "                number. Without it PUC-Lua auto-seeds per process and runs\n");
   fprintf(stderr, "                diverge from the first tick.\n");
+  fprintf(stderr, "-brain-lag-ms <rtt> - Test only: in-server brains play as clients with\n");
+  fprintf(stderr, "                this round trip (0..600). Snapshots and terrain reach the\n");
+  fprintf(stderr, "                brain rtt/2 late, its inputs reach the server rtt/2 late,\n");
+  fprintf(stderr, "                it predicts its own tank, its shots get the client rewind\n");
+  fprintf(stderr, "                and info.ping_ms = rtt. 0 = no lag (the default).\n");
   fprintf(stderr, "-brain-no-budget-kill - Give each brain a 1000 ms budget so the watchdog\n");
   fprintf(stderr, "                never truncates a think. Still finite, so a hung brain is\n");
   fprintf(stderr, "                still aborted. For measurement runs; pair with -threads 1.\n");
@@ -2807,6 +2812,20 @@ int main(int argc, char **argv) {
         long ls = strtol((char *)argv[argNum], NULL, 0);
         botManagerSetBrainLuaSeed(ls);
         fprintf(stderr, "Brain math.random seeded from %ld (+ player number)\n", ls);
+      }
+      argNum = findArg(argc, argv, "brain-lag-ms");
+      if (argNum != ARG_NOT_FOUND) {
+        int rtt = atoi((char *)argv[argNum]);
+        int down = 0, up = 0;
+        if (rtt < 0 || rtt > BOT_LAG_MAX_RTT_MS) {
+          fprintf(stderr, "-brain-lag-ms must be 0..%d (got %d)\n",
+                  BOT_LAG_MAX_RTT_MS, rtt);
+          return 0;
+        }
+        botManagerSetBrainLagMs(rtt);
+        botLagSplitFrames(rtt, &down, &up);
+        fprintf(stderr, "Brain lag: round trip %d ms = snapshots %d frame(s) "
+                        "late, inputs %d frame(s) late\n", rtt, down, up);
       }
       /* NOTE: argExist prepends the "-" itself — passing the name with a
        * leading dash made it look for "--brain-no-budget-kill" and the flag
