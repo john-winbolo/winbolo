@@ -28,6 +28,7 @@
 *  Operations on tanks LGM are handled by this module
 *********************************************************/
 
+#include <math.h>
 #include <string.h>
 #include "game_sim.h"
 #include "client_sim.h"
@@ -57,7 +58,6 @@
 #include "tank.h"
 #include "types.h"
 #include "util.h"
-#include "hit_rules.h"       /* hitRulesBuilderCaughtShape */
 #include "../winbolonet/winbolonet_core.h"
 
 
@@ -82,6 +82,8 @@ lgm lgmCreate(BYTE playerNum) {
   lgman->playerNum = playerNum;
   lgman->x = 0;
   lgman->y = 0;
+  lgman->flyX = 0;
+  lgman->flyY = 0;
   lgman->inTank = TRUE;
   lgman->isDead = FALSE;
   lgman->nextAction = LGM_IDLE;
@@ -1667,28 +1669,32 @@ void lgmGetScreenCoords(lgm *lgman, BYTE leftPos, BYTE topPos, BYTE *mx, BYTE *m
 *              DMG_NO_PILL
 *  tnk       - Pointer to the tank
 *  squareHit - TRUE when the explosion is a shell's hit on
-*              the pillbox on its square, the shot that
-*              kills it included: the square rule applies
+*              the thing on its square (a pillbox, a wall,
+*              a forest, a boat, the shore a boat's shell
+*              stops on or a bridge), the hit that kills the pill or
+*              turns the wall to rubble included: the square
+*              rule applies
 *********************************************************/
 /* Whether an explosion at (wx, wy) catches a man at (lgmWorldX, lgmWorldY):
    in the lgm_blast_shape rule's area round it on open ground (within 144
    in the classic table, lgmBlastOpenGroundCatches), or on the very
    square when the explosion is on a wall, a live pillbox or a base, or is a
-   shell's hit on the pillbox on its square (squareHit). The one test every
-   builder death is decided by.
+   shell's hit on the pillbox, the wall or the terrain on its square
+   (squareHit). The one test every builder death is decided by.
 
    A tank's explosion that damages a live pillbox passes squareHit too
    (tkExplosionBigExplosion), for the same reason: the pill was live when
    the explosion went off, so the square is solid even when that damage
    took its armour to 0.
 
-   squareHit: the shell hit the pill on this square (shellsCalcCollision
-   outSquareHit). That is a hit on the square whatever armour it left the
-   pill, so the shot that kills a pill (its armour is already 0 here) kills
-   a builder anywhere on the square and nobody off it, as the hits before
-   it do. Mac Bolo does the same: a shell's hit on a pillbox explodes at
-   the pillbox's square, and the explosion kills the builder only on that
-   square.
+   squareHit: the shell hit the pill, the wall or the terrain on this
+   square (shellsCalcCollision outSquareHit). That is a hit on the square
+   whatever the hit left there, so the shot that kills a pill (its armour
+   is already 0 here) and the fifth shot on a wall (the square is already
+   rubble here) kill a builder anywhere on the square and nobody off it, as
+   the hits before them do. Mac Bolo does the same: a shell's hit on a
+   square explodes at that square, and the explosion kills the builder
+   only on that square.
 
    The square of a pill that was dead before the blast is open ground:
    shells fly over a dead pill, so a blast near the edge of its square (a
@@ -1719,16 +1725,19 @@ static bool lgmBlastCatches(GameSim *sim, WORLD lgmWorldX, WORLD lgmWorldY, WORL
   if (squareHit == TRUE || pos == BUILDING || pos == HALFBUILDING || pillsIsPillHit(pb, mx, my) == TRUE || basesExistPos(bs, mx, my) == TRUE) {
     solid = TRUE;
   }
-  /* The rule (hit_rules.h), the one the Log Viewer draws its hit boxes
-     from: on a solid square only his own square, on open ground the
+  /* On a solid square only his own square; on open ground the
      lgm_blast_shape rule's area round the explosion (a circle of radius
-     144, within pill_range, in the classic table). */
-  return hitRulesBuilderCaughtShape(sim->rules.lgm_blast_shape, solid,
-                                    checkMapX == mx && checkMapY == my,
-                                    (double) ((long) wx - (long) lgmWorldX),
-                                    (double) ((long) wy - (long) lgmWorldY),
-                                    sim->rules.pill_range);
+     144, within pill_range, in the classic table). The rule is in
+     hit_rules.h, which the Log Viewer draws the builder's hit box from. */
+  return hitRulesBuilderCaught(solid, checkMapX == mx && checkMapY == my,
+                               (double) ((long) wx - (long) lgmWorldX),
+                               (double) ((long) wy - (long) lgmWorldY),
+                               sim->rules.lgm_blast_shape, sim->rules.pill_range);
 }
+
+/* hit_rules.h measures the half-square circle in HIT_RULES_HALF_SQUARE. */
+BOLO_STATIC_ASSERT(HIT_RULES_HALF_SQUARE == MAP_SQUARE_MIDDLE,
+                   hit_rules_half_square_is_map_square_middle);
 
 void lgmDeathCheckAtPosition(GameSim *sim, lgm *lgman, WORLD lgmWorldX, WORLD lgmWorldY, WORLD wx, WORLD wy, BYTE owner, BYTE attacker, BYTE cause, BYTE pill, tank *tnk, bool squareHit) {
   bool isServer = sim->isServer;
@@ -1908,6 +1917,7 @@ void lgmKill(GameSim *sim, lgm *lgman, tank *tnk, BYTE owner) {
   (*lgman)->y = lgmMapY;
   (*lgman)->y <<= TANK_SHIFT_MAPSIZE;
   (*lgman)->y += MAP_SQUARE_MIDDLE;
+  lgmFlyFrom(lgman, (*lgman)->x, (*lgman)->y);
   if (isServer == FALSE) {
     frontEndManStatus(clientSimFromSim(sim), TRUE, 0.0f);
   }
@@ -2092,27 +2102,86 @@ bool lgmKillInTank(GameSim *sim, lgm *lgman, tank *tnk, BYTE owner) {
 }
 
 /*********************************************************
+*NAME:          lgmFlyFrom
+*PURPOSE:
+*  Puts a man who is parachuting in at a place, to fly on
+*  from there: the whole world units the rest of the engine
+*  reads, and the exact place lgmParchutingIn steps from,
+*  with no part of a unit left over from wherever he was.
+*  Where he is flying to is not changed.
+*
+*  For whatever starts a flight or moves one. Writing x and
+*  y alone leaves the old part of a unit behind when the new
+*  place has the same whole units as the old one, and the
+*  next step then carries it along.
+*
+*ARGUMENTS:
+*  lgman  - Pointer to the lgm sturcture
+*  x      - World X Co-ordinate
+*  y      - World Y Co-ordinate
+*********************************************************/
+void lgmFlyFrom(lgm *lgman, WORLD x, WORLD y) {
+  (*lgman)->x = x;
+  (*lgman)->y = y;
+  (*lgman)->flyX = x;
+  (*lgman)->flyY = y;
+}
+
+/*********************************************************
 *NAME:          lgmParchutingIn
 *AUTHOR:        John Morrison
 *CREATION DATE: 18/1/99
 *LAST MODIFIED: 23/9/00
 *PURPOSE:
-*  Man is parachuting back in.
+*  Man is parachuting back in. One tick of the flight: he
+*  moves lgm_helicopter_speed world units straight at the
+*  place he is flying to, whatever his heading, and lands
+*  once he is within lgm_arrive_tolerance of it on both
+*  axes. A step that would carry him past the place puts
+*  him on it instead.
 *
 *ARGUMENTS:
+*  sim    - Pointer to the game sim structure
 *  lgman  - Pointer to the lgm sturcture
 *********************************************************/
 void lgmParchutingIn(GameSim *sim, lgm *lgman) {
   bool isServer = sim->isServer;
-  TURNTYPE angle; /* Angle of travel */
-  int xAdd;       /* Add amounts */
-  int yAdd;
+  double speed = (double) sim->rules.lgm_helicopter_speed;
+  double gapX;    /* From him to where he is heading */
+  double gapY;
+  double gap;
 
+  /* His exact place. x and y hold it in whole world units, which is what the
+     rest of the engine reads and what goes to the clients. flyX and flyY keep
+     the part of a unit as well, so a step is not rounded on each axis: that
+     rounding left him a handful of headings to fly on, and at the classic 3
+     a speed anywhere from 2.83 to 3.61 depending on which one he had.
 
-  angle = utilCalcAngle((*lgman)->x, (*lgman)->y, (*lgman)->destX, (*lgman)->destY);
-  utilCalcDistance(&xAdd, &yAdd, angle, sim->rules.lgm_helicopter_speed);
-  (*lgman)->x = (WORLD) ((*lgman)->x + xAdd);
-  (*lgman)->y = (WORLD) ((*lgman)->y + yAdd);
+     A flight starts, and is moved, through lgmFlyFrom, which sets both.
+     Anything else that puts him somewhere writes x and y only, and an exact
+     place that no longer matches them is from before that, so the flight
+     starts again from the whole units. */
+  if ((WORLD) (*lgman)->flyX != (*lgman)->x || (WORLD) (*lgman)->flyY != (*lgman)->y) {
+    (*lgman)->flyX = (*lgman)->x;
+    (*lgman)->flyY = (*lgman)->y;
+  }
+
+  gapX = (double) (*lgman)->destX - (*lgman)->flyX;
+  gapY = (double) (*lgman)->destY - (*lgman)->flyY;
+  gap = sqrt(gapX * gapX + gapY * gapY);
+  if (gap > speed) {
+    (*lgman)->flyX += gapX * speed / gap;
+    (*lgman)->flyY += gapY * speed / gap;
+  } else {
+    /* The last step reaches the place, so it stops there. A step that went
+       on past it could clear the arrival window below altogether, and he
+       would turn round and step over it again for as long as the rule was
+       wider than the window. */
+    (*lgman)->flyX = (*lgman)->destX;
+    (*lgman)->flyY = (*lgman)->destY;
+  }
+  (*lgman)->x = (WORLD) (*lgman)->flyX;
+  (*lgman)->y = (WORLD) (*lgman)->flyY;
 
   /* Check for achieved goal */
   /* The same tolerance the goal test above uses; this site spelled it out
@@ -2665,8 +2734,8 @@ void lgmConnectionLost(GameSim *sim, lgm *lgman, tank *tnk, starts *sts) {
     tankGetWorld(tnk, &((*lgman)->destX), &((*lgman)->destY));
     if ((*lgman)->x == 0 || (*lgman)->y == 0) {
       startsGetRandStart(sim, sts, &lgmX, &lgmY, &dummy);
-      (*lgman)->x = (lgmX << TANK_SHIFT_MAPSIZE) + MAP_SQUARE_MIDDLE;
-      (*lgman)->y = (lgmY << TANK_SHIFT_MAPSIZE) + MAP_SQUARE_MIDDLE;
+      lgmFlyFrom(lgman, (WORLD) ((lgmX << TANK_SHIFT_MAPSIZE) + MAP_SQUARE_MIDDLE),
+                 (WORLD) ((lgmY << TANK_SHIFT_MAPSIZE) + MAP_SQUARE_MIDDLE));
     }
   } else if ((*lgman)->state != LGM_STATE_IDLE) {
     (*lgman)->state = LGM_STATE_RETURN;

@@ -4,11 +4,11 @@
  */
 
 /*
- * The Log Viewer's "Toggle Screen-True Local Explosions" option
+ * The Log Viewer's "Screen-True Local Explosions" option
  * (src/logviewer/lv_early_blast.h): when an own
  * shell ends, its early blast, and the match that finds and hides the
  * server's explosion of that shell in the lag view. It works only while
- * "Toggle Screen-True Own Shells" is on.
+ * "Screen-True Own Shells" is on.
  */
 #include <stdint.h>
 #include <stdlib.h>
@@ -37,7 +37,7 @@ static LvBlastPt lebExpl(int32_t wx, int32_t wy, uint8_t frame) {
 }
 
 /* The early blast is drawn only with both lag view toggles on: Toggle
-   Screen-True Local Explosions needs Toggle Screen-True Own Shells. */
+   Screen-True Local Explosions needs Screen-True Own Shells. */
 int run_lv_early_blast_needs_own_shells(void) {
   UT_ASSERT(lv_earlyBlastOn(true, true));
   UT_ASSERT(!lv_earlyBlastOn(true, false));

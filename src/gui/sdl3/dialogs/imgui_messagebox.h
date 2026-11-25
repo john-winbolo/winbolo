@@ -57,6 +57,13 @@ typedef enum {
 int imguiMessageBoxEx(const char *title, const char *message,
                       ImguiMsgType type, ImguiMsgButtons buttons);
 
+/* Same as imguiMessageBoxEx with IMGUI_MSG_YES_NO, but the Yes button
+ * shows yesLabel and the No button shows noLabel. Returns
+ * IMGUI_MSG_RESULT_YES or IMGUI_MSG_RESULT_NO. */
+int imguiMessageBoxYesNoLabels(const char *title, const char *message,
+                               ImguiMsgType type, const char *yesLabel,
+                               const char *noLabel);
+
 /* Same as imguiMessageBoxEx but the message body is a sequence of
  * TutorialSeg entries — text runs interleaved with PNG glyphs and
  * procedural keycaps for inline button hints.  Word wrap respects

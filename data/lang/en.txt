@@ -1248,18 +1248,18 @@ STR_LV_LAG_LINE=Lag: {number} ms round trip, screen {number2} ms behind
 STR_LV_LAG_NONE=Lag: none recorded for this player yet
 STR_LV_LAG_GRAPH_TIP=Round-trip time across the recording, in ms. The highest is {number} ms. The white line is the playhead
 STR_LV_LAG_VIEW=See what this player saw
-STR_LV_LAG_VIEW_TIP=Draw the other tanks, the builders and the shells where this player's screen showed them: as far back as the server's rewind for this player. This player's own tank stays at its present place
+STR_LV_LAG_VIEW_TIP=Draw the other tanks, the builders and the shells where this player's screen showed them: as far back as the server's rewind for this player. The pillboxes and the map are drawn one round trip back, as this player's screen had them. This player's own tank stays at its present place
 STR_LV_LAG_BANNER={string1}'s screen, {number} ms behind
 STR_LV_LAG_BANNER_WAIT={string1}'s screen: no history for this time yet, the present is shown
 STR_LV_LAG_OFF=Turn off
 STR_LV_LAG_HUD_TIP={string1}, {number} ms round trip
 STR_LV_LAG_MENU=See What the Selected Player Saw
 STR_LV_LAG_MENU_TIP=Draw the round as the selected tank's player saw it on their own screen. The recording must hold lag records
-STR_LV_SCREEN_TRUE_SHELLS=Toggle Screen-True Own Shells
+STR_LV_SCREEN_TRUE_SHELLS=Screen-True Own Shells
 STR_LV_SCREEN_TRUE_SHELLS_TIP=On: the selected player's own shells are drawn at the present, as their own screen drew them at once. Off: they are drawn at the old time, as every other shell is
-STR_LV_SCREEN_TRUE_EXPL=Toggle Screen-True Local Explosions
+STR_LV_SCREEN_TRUE_EXPL=Screen-True Local Explosions
 STR_LV_SCREEN_TRUE_EXPL_TIP=On: the selected player's own shells explode at once where they end, and the server's later explosion of each is hidden. Off: each one explodes when the server's explosion comes
-STR_LV_SCREEN_TRUE_EXPL_OFF_TIP=Turn on Toggle Screen-True Own Shells first
+STR_LV_SCREEN_TRUE_EXPL_OFF_TIP=Turn on Screen-True Own Shells first
 STR_LV_LAG_LINE_BOT=Lag: a bot, screen {number} ms behind
 STR_LV_TIMING_HEADER=Server timing
 STR_LV_TIMING_AT=Recorded at {string1} of the round
@@ -1307,15 +1307,21 @@ STR_LV_EVT_FILTER_TIP=Show only the events of the ticked kinds
 # Log viewer: the zoom of the map as a percentage
 STR_LV_ZOOM_TIP=Map zoom. 100% is the game's own size. Change it with + and -, the mouse wheel, or Options > Zoom
 STR_LV_JUMP_ANIM=Animate Rewind and Fast Forward
+STR_LV_SEEK_ANIM=Animate Seek
+STR_LV_TANK_SHOW_BASE=Tank: Base Resources
+STR_LV_TANK_SHOW_LAG=Tank: Lag Indicators
+STR_LV_TANK_BASE_NONE=No base near
 STR_LV_PILL_NUMBERS=Pillbox Numbers
 STR_LV_PILL_NUMBERS_TIP=The number of each pillbox beside it on the map, the number the game's own pillbox list gives it
 STR_LV_PILL_NUMBERS_LIST=Numbers: {string1}
+STR_LV_BASE_NUMBERS=Base Numbers
+STR_LV_BASE_NUMBERS_TIP=The number of each base beside it on the map, the number the game's own base list gives it
 STR_LV_MSG_PILL_CAPTURED={player} captured Neutral Pillbox {number}
 STR_LV_MSG_PILL_STOLEN={player} just stole pillbox {number} from {other}
 
 # Log viewer: the hit area round each tank and builder on the map (Options)
-STR_LV_HIT_BOXES=Toggle Hit Boxes
-STR_LV_HIT_BOXES_TIP=Over each tank on the map, the circle a shell must reach to hit it. Over each builder out of his tank, the area an explosion must be in to kill him
+STR_LV_HIT_BOXES=Hit Boxes
+STR_LV_HIT_BOXES_TIP=Over each tank on the map, the circle a shell must reach to hit it. Over each builder out of his tank, the area an explosion must be in to kill him: a mine, a tank's explosion, or a shell that bursts on open ground. A shell that bursts on forest, a boat, the shore or a bridge kills only a builder on that square
 
 # Log viewer dialogs
 STR_LV_ASSIGN_COLOURS_HINT=Assign colours to each player team:
@@ -3078,4 +3084,8 @@ STR_CLIPGIF_MOVE_TIP=Drag to move the GIF to an earlier or a later time. Its len
 # The Log Viewer's -size option when its text is not a size or cannot be met
 STR_LV_SIZE_ARG_BAD=-size wants a width and a height in pixels, such as -size 1920x1080. The window has opened at its usual size.
 STR_LV_SIZE_NOT_MET=The window could not be made {string1} pixels, as -size asked. It is {string2} pixels: the display may be too small to hold it.
+
+# The question a Join gets when a player of that name left the game a short time ago
+STR_REJECT_CAN_REJOIN=A player named {player} left this game {string1} seconds ago. Rejoin as that player?\n\nRejoining puts you back on the same team and returns the pillboxes and bases you owned that are still neutral.
+STR_JOIN_AS_NEW=Join as new
 

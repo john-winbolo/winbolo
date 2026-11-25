@@ -2928,3 +2928,7 @@ STR_CLIPGIF_MOVE_TIP=GIF'i daha erken ya da daha geç bir zamana taşımak için
 # The Log Viewer's -size option when its text is not a size or cannot be met
 STR_LV_SIZE_ARG_BAD=-size piksel cinsinden bir genişlik ve bir yükseklik ister, örneğin -size 1920x1080. Pencere olağan boyutunda açıldı.
 STR_LV_SIZE_NOT_MET=Pencere, -size seçeneğinin istediği gibi {string1} piksel yapılamadı. Pencere {string2} piksel: ekran pencereyi sığdıramayacak kadar küçük olabilir.
+
+# Bir oyuna Katıl denildiğinde, bu adlı bir oyuncu oyundan kısa süre önce ayrılmışsa sorulan soru
+STR_REJECT_CAN_REJOIN={player} adlı bir oyuncu bu oyundan {string1} saniye önce ayrıldı. O oyuncu olarak yeniden katılmak ister misiniz?\n\nYeniden katılırsanız aynı takıma geri dönersiniz ve sahip olduğunuz, hâlâ tarafsız olan bunkerlar ile üsler size geri verilir.
+STR_JOIN_AS_NEW=Yeni olarak katıl

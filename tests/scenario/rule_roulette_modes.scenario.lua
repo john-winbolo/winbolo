@@ -30,8 +30,8 @@
 --      and the tank still has none.
 --   4. The builder walks the road at 125% under Hustle and 75% under Lead
 --      Feet, measured from his position each frame.
---   5. A dead builder flies back at 175% under Air Drop (the host's 4 at
---      167% is 6.68, which rounds to 7), measured the same
+--   5. A dead builder flies back at 167% under Air Drop (the host's 4 at
+--      167% is 6.68, and the rule takes the fraction), measured the same
 --      way.
 --   6. Under the tank Normal every tank has all six modifiers at 100, and
 --      under the builder Normal every builder rule is at its value before
@@ -98,7 +98,8 @@ local WATCH = { "lgm_cost_road", "lgm_helicopter_speed", "man_speed_road",
   "man_speed_deep_sea", "man_speed_refuel_base" }
 
 -- The rules each rule mode changes, worked out by hand. 10 x 1.25 = 12.5
--- and 10 x 0.75 = 7.5 both round up; 0 stays 0.
+-- and 10 x 0.75 = 7.5 both round up; 0 stays 0. The parachute speed takes a
+-- fraction and is not rounded: 4 x 1.67 = 6.68.
 local EXPECT = {
   ["Cleanup Crew"] = { lgm_cost_road = 0 },
   ["Hustle"] = { man_speed_road = 20, man_speed_grass = 20, man_speed_forest = 13,
@@ -107,14 +108,14 @@ local EXPECT = {
   ["Lead Feet"] = { man_speed_road = 12, man_speed_grass = 12, man_speed_forest = 8,
                     man_speed_swamp = 3, man_speed_crater = 3, man_speed_rubble = 3,
                     man_speed_boat = 12, man_speed_refuel_base = 12 },
-  ["Air Drop"] = { lgm_helicopter_speed = 7 },
+  ["Air Drop"] = { lgm_helicopter_speed = 6.68 },
 }
 -- The builder track's panel line for each builder mode.
 local PANEL = {
   ["Cleanup Crew"] = "Roads: free",
   ["Hustle"]       = "Builder: 125% speed",
   ["Lead Feet"]    = "Builder: 75% speed",
-  ["Air Drop"]     = "Parachute: 175% speed",
+  ["Air Drop"]     = "Parachute: 167% speed",
   ["Normal"]       = "Builder rules all classic",
 }
 local TANK_NORMAL_LINE = "Tank numbers all classic"
@@ -233,7 +234,9 @@ local function check_rules(g)
   for _, r in ipairs(WATCH) do
     local v = g.rule(r)
     local w = want[r] or BASE[r]
-    if v ~= w then
+    -- A rule that takes a fraction reads back to about seven digits, so
+    -- 6.68 comes back a hair off it.
+    if math.abs(v - w) > 1e-5 then
       return string.format("%s/%s: %s is %s, want %s", tname, name, r,
                            tostring(v), tostring(w))
     end
@@ -362,7 +365,12 @@ end
 
 local function finish(g)
   local w16, w20, w12 = rate(walk, 16), rate(walk, 20), rate(walk, 12)
-  local f4, f7 = rate(fly, 4), rate(fly, 7)
+  -- The flights under Air Drop are filed under what the rule read then:
+  -- the one speed that is not the host's 4.
+  local f4, fdrop = rate(fly, 4), nil
+  for k in pairs(fly) do
+    if k ~= 4 then fdrop = rate(fly, k) end
+  end
   for _, n in ipairs({ "builder Cleanup Crew", "builder Hustle", "builder Lead Feet",
                        "builder Air Drop", "builder Normal", "tank Normal",
                        "tank Glass Cannon", "tank Rust Bucket" }) do
@@ -373,8 +381,8 @@ local function finish(g)
     return false, string.format("walk samples missing: 16 %s 20 %s 12 %s",
                                 tostring(w16), tostring(w20), tostring(w12))
   end
-  if not (f4 and f7) then
-    return false, string.format("flight samples missing: 4 %s 7 %s", tostring(f4), tostring(f7))
+  if not (f4 and fdrop) then
+    return false, string.format("flight samples missing: 4 %s 6.68 %s", tostring(f4), tostring(fdrop))
   end
   if not normal_ok then return false, "tank Normal never checked" end
   if not bnormal_ok then return false, "builder Normal never checked" end
@@ -384,8 +392,8 @@ local function finish(g)
     return false, string.format("pillbox armour per shell: Glass Cannon %s, others %s",
                                 hits_text(pill_hits.glass), hits_text(pill_hits.other))
   end
-  local hr, lr, ar = w20 / w16, w12 / w16, f7 / f4
-  local ok = hr > 1.17 and hr < 1.33 and lr > 0.69 and lr < 0.81 and ar > 1.65 and ar < 1.85
+  local hr, lr, ar = w20 / w16, w12 / w16, fdrop / f4
+  local ok = hr > 1.17 and hr < 1.33 and lr > 0.69 and lr < 0.81 and ar > 1.62 and ar < 1.72
   return ok, string.format("walk x%.2f/x%.2f, flight x%.2f, free road, rules back, " ..
                            "both Normals, pill 2 x%d / 1 x%d, full panel %d frames",
                            hr, lr, ar, pill_hits.glass[2], pill_hits.other[1], full_panel)

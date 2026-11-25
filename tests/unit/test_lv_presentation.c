@@ -1401,12 +1401,15 @@ int run_lv_builder_trips_scan(void) {
     UT_ASSERT_MSG(est40.isOut && !est40.isDead && !est40.has,
                   "a stream, builder out and alive at 40 ms: out %d dead %d "
                   "time %d", est40.isOut, est40.isDead, est40.has);
-    /* Flying at 58,50, the tank at 50,50: 8 squares, 2048 world units, less
-       the 16 that count as there, at 3 a tick: 678 ticks of 20 ms. */
+    /* Flying, logged at 58,50, the tank at 50,50. The log holds the corner
+       of a flying builder's picture, and he is half a square on from it on
+       both axes: 2,176 world units east of the tank and 128 south, 2,179.8
+       in all. The part of that line outside the arrival box of 16 either
+       way is 2,163.7, which at 3 a tick is 722 ticks of 20 ms. */
     UT_ASSERT_MSG(est80.isDead && est80.has && est80.approx == 1 &&
-                  est80.remain == 13560L,
+                  est80.remain == 14440L,
                   "a stream, flying at 80 ms: dead %d time %d approx %d "
-                  "remain %ld (want an estimate of 13560)", est80.isDead,
+                  "remain %ld (want an estimate of 14440)", est80.isDead,
                   est80.has, est80.approx, est80.remain);
     UT_ASSERT_MSG(est120.isOut && !est120.isDead && !est120.has,
                   "a stream, landed at 120 ms: out %d dead %d time %d (an "

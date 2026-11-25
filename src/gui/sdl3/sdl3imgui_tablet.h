@@ -81,6 +81,9 @@ typedef struct {
   float pillsGridX, pillsGridY;
   float basesGridX, basesGridY;
   float statusGridScale;
+  /* The kills and deaths panel under the bases grid; zero width when the
+     screen has no room for it (sdl3DrawGetTabletStatusColumn). */
+  float kdPanelX, kdPanelY, kdPanelW, kdPanelH;
 
   /* Resource bars — tank (S/M/A/T) and base (S/M/A) */
   float tankBarsX, tankBarsY;

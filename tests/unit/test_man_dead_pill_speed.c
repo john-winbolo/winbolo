@@ -8,8 +8,7 @@
  * (man_dead_pill_terrain_speed, mapGetManSpeed).
  *
  * In Mac Bolo the square of a pillbox reads as a pillbox, live or dead, and
- * the man's step on a pillbox square is the road step (moveman's table:
- * road, grass and pillbox all take the same step). So a builder sent to
+ * the man's step on a pillbox square is the road step. So a builder sent to
  * repair a dead pillbox that stands on swamp, crater, rubble or forest is
  * not slowed by that terrain, and a dead pillbox does not stop him.
  *

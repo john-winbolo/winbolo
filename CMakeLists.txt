@@ -4365,6 +4365,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # not do — and the game-time change, the four lengths it refuses, and the
     # new length on the sim, at a subscriber and in a recording.
     tests/unit/test_scenario_flow_arms.c
+    # The round's time limit and start delay against real time: each loses
+    # one a 20 ms frame, so a round set in minutes lasts that many minutes.
+    tests/unit/test_game_time_limit.c
     # The rules op: the index list against the table it indexes, a rule
     # written and read back, a rate the op's double carries and an int32
     # could not, the value outside a row and the value that breaks a pair
@@ -4568,6 +4571,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_client_frontend_tick.c
     tests/unit/test_await_join.c
     tests/unit/test_net_impair.c
+    tests/unit/test_srv_impair_peer.c
     tests/unit/test_lobby_runtime_fixes.c
     tests/unit/test_bot_chat_routing.c
     tests/unit/test_bot_ping.c
@@ -4668,6 +4672,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # What Alt+Enter does in a game the server keeps in classic mode;
     # header-only logic (fullscreen_key.h).
     tests/unit/test_fullscreen_key.c
+    # Which status panel draws wait for the frame (status_draw_hold.h) and
+    # which slot of the text texture cache a string uses (text_cache_pick.h);
+    # both header-only logic.
+    tests/unit/test_status_draw_hold.c
     tests/unit/test_overview_hud_layout.cpp
     tests/unit/test_newswire_slide.c
     tests/unit/test_sight.c
@@ -4748,6 +4756,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     # A server hitch and its catch-up burst, over an impaired path: the slot
     # it locks out has to start applying real inputs again and keep doing it.
     tests/unit/test_loopback_hitch.c
+    tests/unit/test_prediction_slow_tank.c
     # A client-initiated quit while a peer is playing: the peer keeps its
     # session and its inputs keep applying.
     tests/unit/test_loopback_quit_keeps_peer.c
@@ -4798,6 +4807,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_gate1_integration.c
     tests/unit/test_interp_jitter_e2e.c
     tests/unit/test_join_version_gate.c
+    tests/unit/test_join_ask_rejoin.c
+    tests/unit/test_join_locked_rejoin.c
     tests/unit/test_join_rate_limit.c
     # A password-protected server: the INFO ping flag, the incorrect-password
     # reject's langid at the client, and a join with the right password.
@@ -5006,6 +5017,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # man_dead_pill_terrain_speed: the builder's speed on the square of a
     # dead pillbox.
     tests/unit/test_man_dead_pill_speed.c
+    # lgm_helicopter_speed: the parachute flies the rule's own speed on
+    # every heading, and the rule takes a fraction.
+    tests/unit/test_lgm_parachute_speed.c
     # lgm_blast_shape: the open-ground area round an explosion that kills a
     # builder.
     tests/unit/test_lgm_blast_shape.c
@@ -5307,6 +5321,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # how many steps, the log time of each and which is due when
     # (lv_jump_anim.h, header only).
     tests/unit/test_lv_jump_anim.c
+    # The base the viewer's Tank panel shows under the gauges: picked as
+    # the game picks it, and its bars (lv_base_near.h, header only).
+    tests/unit/test_lv_base_near.c
     # The builder marker over each tank on the viewer's map: where it goes,
     # the arrow's direction, the countdown and the table of the times a
     # builder was away (lv_builder_status.h, header only).
@@ -5957,6 +5974,7 @@ set(_unit_test_names
     brain_sandbox_hostile_file_jail
     brain_sandbox_hostile_off_map_terrain
     brain_sandbox_jit_limits
+    brain_sandbox_luajit_no_ffi
     brain_msgh_budget_kill_no_traceback
     brain_msgh_real_error_keeps_traceback
     brain_inbox_push_peek_fifo
@@ -6075,11 +6093,17 @@ set(_unit_test_names
     lv_player_lag_read
     lv_lag_track
     lv_lag_ring
+    lv_lag_rtt_back
+    lv_lag_ring_back
+    lv_lag_map_undo
     lv_lag_view_toggle
     lv_lag_feature_default_off
     lv_lag_view_draw
     lv_lag_view_own_shells
     lv_lag_view_lost_owner
+    lv_lag_view_shell_snapshot
+    lv_lag_view_map
+    lv_base_spots
     lv_shell_owner_recording
     lv_shell_owner_rules
     lv_shell_owner_real_flight
@@ -6260,6 +6284,29 @@ set(_unit_test_names
     team_sides_panels_follow_team
     team_sides_infection_puts_leaver_back
     team_sides_rejoin_is_a_joiner
+    team_sides_rejoin_keeps_team
+    team_sides_rejoin_keeps_team_no_pills
+    team_sides_rejoin_solo_keeps_team
+    team_sides_join_without_rejoin_is_new
+    team_sides_rejoin_next_round_is_new
+    team_sides_rejoin_can_ally_refused
+    team_sides_rejoin_ranked_keeps_team
+    team_sides_rejoin_full_table_drops_oldest
+    team_sides_rejoin_team_waits_for_rejoiner
+    team_sides_rejoin_all_numbers_held
+    team_sides_rejoin_timed_out_frees_team
+    team_sides_rejoin_age_counts_frames
+    team_sides_rejoin_unsigned_restores_at_join
+    team_sides_rejoin_signed_in_waits
+    team_sides_rejoin_signed_in_restored
+    team_sides_rejoin_signed_in_solo_keeps_team
+    team_sides_rejoin_signed_in_moved_seat_kept
+    team_sides_rejoin_signed_in_leave_clears
+    team_sides_rejoin_signed_in_outlives_same_name_join
+    team_sides_rejoin_signed_in_outlives_same_name_rejoin
+    team_sides_rejoin_signed_in_keeps_address
+    team_sides_rejoin_signed_in_name_taken_restored
+    team_sides_rejoin_no_record_confirm_changes_nothing
     team_sides_joiner_slot_before_join
     team_sides_lobby_joiner_keeps_rule
     team_sides_lobby_drops_empty_teams
@@ -6546,6 +6593,8 @@ set(_unit_test_names
     fog_road_edges
     fog_road_edge_masks
     fullscreen_key_action
+    status_draw_hold
+    text_cache_slot_pick
     overview_hud_layout
     newswire_slide
     sight
@@ -6619,6 +6668,13 @@ set(_unit_test_names
     lgm_blast_dead_pill_far_corner
     lgm_blast_live_pill_unchanged
     lgm_blast_pill_kill_shot
+    lgm_blast_wall_rubble_shot
+    lgm_blast_forest_shot
+    lgm_blast_boat_shot
+    lgm_blast_shore_shot
+    lgm_blast_bridge_shot
+    lgm_blast_road_open_ground
+    lgm_blast_mined_bridge_shot
     lgm_blast_shell_runs_out_dead_pill
     lgm_blast_shell_hits_tank_dead_pill
     lgm_blast_tank_explosion_kills_pill
@@ -6724,6 +6780,11 @@ set(_unit_test_names
     man_dead_pill_walk_across_water
     man_dead_pill_lifted_waits_for_tank
     man_dead_pill_brain_walk
+    lgm_parachute_speed_same_on_every_heading
+    lgm_parachute_speed_takes_a_fraction
+    lgm_parachute_wide_step_lands
+    lgm_parachute_moved_in_flight
+    lgm_parachute_put_back_starts_exact
     lgm_blast_shape_half_square
     lgm_blast_shape_mac_box
     lgm_blast_shape_mac_area
@@ -6771,6 +6832,7 @@ set(_unit_test_names
     loopback_command_submitted_during_rejoin
     loopback_channel
     loopback_hitch_recovers
+    prediction_slow_tank_no_corrections
     loopback_quit_keeps_peer
     loopback_join_accept_lost_ready
     send_drains_channels_multi_frame
@@ -6833,6 +6895,20 @@ set(_unit_test_names
     gate1_host_noop
     interp_jitter_e2e
     join_version_gate
+    join_ask_rejoin_live_record_asks
+    join_ask_rejoin_without_flag_joins
+    join_ask_rejoin_want_rejoin_joins
+    join_ask_rejoin_no_record_joins
+    join_ask_rejoin_timed_out_joins
+    join_locked_rejoin_address_seats
+    join_locked_rejoin_no_match_rejects
+    join_locked_rejoin_wbn_sign_in_not_seated
+    join_locked_rejoin_wbn_verified_seats
+    join_locked_rejoin_wbn_fail_rejects
+    join_locked_rejoin_wbn_other_name_rejects
+    join_locked_rejoin_wbn_timeout_rejects
+    join_locked_rejoin_ask_gets_question
+    join_locked_rejoin_unlocked_unchanged
     join_rate_limit
     cookie_handshake
     map_amp_gate
@@ -7034,6 +7110,7 @@ set(_unit_test_names
     md5_block_boundaries
     md5_streaming_matches_oneshot
     net_impair
+    srv_impair_peer_lanonly
     lobby_time_minutes_valid
     lobby_time_limit_reaches_round
     lobby_time_limit_removed_reaches_round
@@ -7241,6 +7318,7 @@ set(_unit_test_names
     lgm_drop_pill_no_room
     util_spiral_north
     util_spiral_north_west
+    util_spiral_rings
     scenario_lgm_dispatch
     scenario_lgm_recall
     scenario_lgm_kill
@@ -7453,6 +7531,9 @@ set(_unit_test_names
     scenario_flow_set_game_time
     scenario_flow_set_game_time_refusals
     scenario_flow_arm_records
+    game_time_limit_counts_frames
+    game_time_start_delay_counts_frames
+    game_time_lobby_minutes
     scenario_rule_index_matches_table
     scenario_rule_set
     scenario_rule_set_float
@@ -8010,6 +8091,7 @@ set(_unit_test_names
     lv_rule_changes_live_feed
     lv_rule_changes_armour_levels
     lv_rule_changes_live_same_tick
+    lv_rule_changes_lgm_blast_shape_outside
     lv_presentation_seek
     lv_presentation_hostile
     lv_presentation_scripted_round
@@ -8064,6 +8146,7 @@ set(_unit_test_names
     lv_dock_clear_rects
     lv_dock_clear_map
     lv_dock_clear_prefs
+    lv_dock_clear_room_len
     lv_dock_default_layout
     lv_dump_recorded_round
     lv_spmap_owner_table
@@ -8117,6 +8200,7 @@ set(_unit_test_names
     lv_pill_numbers_list
     lv_pill_numbers_layout
     lv_pill_numbers_overview
+    lv_pill_numbers_batched
     lv_controls_top_row
     lv_controls_bottom_row
     lv_controls_wheel_step
@@ -8142,6 +8226,11 @@ set(_unit_test_names
     lv_jump_anim_lands
     lv_jump_anim_steps
     lv_jump_anim_time
+    lv_jump_anim_retarget
+    lv_base_near_pick
+    lv_base_near_range
+    lv_base_near_bars
+    lv_base_near_game_screen
     scn_presentation_codec_bodies
     scn_presentation_codec_refuses_short
     scn_presentation_decoder_sets_broadcast
@@ -8264,6 +8353,9 @@ endforeach()
 # A 4 MiB package over the loopback bulk channel is a few thousand pumps of
 # at least a millisecond each; give it room on a loaded machine.
 set_tests_properties(unit.loopback_script_upload_at_cap PROPERTIES TIMEOUT 180)
+# A test that needs an input given on ask returns UT_SKIP_RC (test_harness.h)
+# without it, which CTest then shows as skipped.
+set_tests_properties(unit.lv_shell_owner_recording PROPERTIES SKIP_RETURN_CODE 77)
 
 # ---------------------------------------------------------------------------
 # WinBoloWbnTests -- the WinBolo.net HTTP layer against a local TCP listener.

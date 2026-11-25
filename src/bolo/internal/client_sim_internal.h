@@ -268,6 +268,17 @@ struct ClientSim {
     uint16_t reconCountLastSec;
     float    reconErrAvgPxLast, reconErrMaxPxLast;
 
+    /* Prediction corrections since the round began: snapshots after which
+     * the replayed tank stood somewhere other than where it was predicted to
+     * be. The reconcile stats above count every snapshot that arrives while
+     * the tank is moving, because they compare the tank now with the server's
+     * tank some inputs ago; these count only the ones the replay did not
+     * bring back to the same place. The last one's two positions are kept
+     * for a test that logs where corrections happen. */
+    uint32_t predCorrCount;
+    WORLD    predCorrPredX, predCorrPredY;   /* Where the tank was predicted */
+    WORLD    predCorrPostX, predCorrPostY;   /* Where the replay put it */
+
     /* Render-only error offset: reconciliation corrections accumulate here
      * and decay to zero; the sim never reads these. */
     float errX, errY;       /* world units */
@@ -1111,6 +1122,16 @@ struct ClientSim {
      * having no self, so slot 0 is never mistaken for the viewer. */
     bool isSpectator;
 
+    /* True when the frontend can show the rejoin question, so the JOIN
+     * carries JOIN_FLAG_ASK_REJOIN. Set by clientSimSetAskRejoin before
+     * clientSimConnectUdp; only the GUI client sets it. */
+    bool askRejoin;
+
+    /* True when this client can answer PACKET_JOIN_SIGN_IN, so the JOIN
+     * carries JOIN_FLAG_SIGN_IN_FIRST. Set by clientSimSetSignInFirst
+     * before clientSimConnectUdp; only the desktop GUI client sets it. */
+    bool signInFirst;
+
     /* In-process server bound by clientSimConnectLocal{,Passive}. NULL
      * for UDP and disconnected clients. Read by the local-transport
      * branch of CTRL_LOBBY_MAP_CHANGE to fetch the freshly-compressed
@@ -1241,6 +1262,11 @@ void                    clientSimSetBoundServerSim(ClientSim *cs, struct ServerS
 struct ServerSim       *clientSimGetBoundServerSim(const ClientSim *cs);
 void                    clientSimSetConnectErrorReason(ClientSim *cs, const char *str);
 void                    clientSimSetConnectErrorId(ClientSim *cs, unsigned int id);
+/* Whether the JOIN carries JOIN_FLAG_ASK_REJOIN; see clientSimSetAskRejoin. */
+bool                    clientSimGetAskRejoin(const ClientSim *cs);
+/* Whether the JOIN carries JOIN_FLAG_SIGN_IN_FIRST; see
+ * clientSimSetSignInFirst. */
+bool                    clientSimGetSignInFirst(const ClientSim *cs);
 
 /* One bit per player slot: the remote tanks this client currently believes
  * are alive. The client holds no tanks[] object for anyone but itself, so a

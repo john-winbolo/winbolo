@@ -16,8 +16,12 @@
  *
  *  The history is a ring of frames, one for each 20 ms entry
  *  the viewer plays: where each tank, each builder and each
- *  shell was drawn at that entry. The lag view draws the frame
- *  that is the player's rewind older than the present.
+ *  shell was drawn at that entry, each pillbox as it was drawn,
+ *  and the map squares that changed in that entry. The lag
+ *  view draws the tanks, builders and shells from the frame
+ *  that is the player's rewind older than the present, and the
+ *  pillboxes and the map from the frame that is the player's
+ *  round trip older than the present.
  *
  *  Header only, with no includes but the C library's, so the
  *  viewer (C and C++) and the unit tests use the same code.
@@ -51,6 +55,22 @@
 
 /* The most shells, explosions included, one frame keeps. */
 #define LV_LAG_SHELLS_MAX 256
+
+/* The pillboxes one frame keeps: every one a map can hold (MAX_PILLS). */
+#define LV_LAG_PILLS_MAX 16
+
+/* The map is 256 squares on each side (MAP_ARRAY_SIZE). A map is held as
+   the viewer holds it, mapItem[x][y]: the square at x, y is byte
+   x * LV_LAG_MAP_SIDE + y. */
+#define LV_LAG_MAP_SIDE 256
+
+/* The most changed map squares one frame keeps. One entry of a real game
+   changes a few squares: a shell hits a wall or a tree, a builder builds, a
+   mine goes off. A frame that has more changes than this keeps the first
+   ones and is marked incomplete (squaresFull). The map before an incomplete
+   frame cannot be made again, so for a time before it the lag view draws
+   the present map. */
+#define LV_LAG_SQUARES_MAX 64
 
 /* The samples the Tank panel's graph shows over the round. */
 #define LV_LAG_GRAPH_SAMPLES 120
@@ -173,6 +193,7 @@ typedef struct {
     bool    onBoat;
     uint8_t shells;  /* its shell stock, as the recording states it */
     bool    fired;   /* the stock went down at this entry */
+    bool    alive;   /* the tank was alive (gameViewHud alive), for the hit box */
 } LvLagTank;
 
 /* Where one builder was drawn at one entry. out is false when he was in
@@ -188,12 +209,38 @@ typedef struct {
     uint16_t id;     /* the same for one shell in every frame (lv_shellOwnerLinkIds) */
 } LvLagShell;
 
+/* One pillbox as the map drew it at one entry: what the pillbox drawing and
+   the pillbox numbers read. on is false for a slot the round has taken off
+   the map. */
+typedef struct {
+    uint8_t x, y;
+    uint8_t owner;
+    uint8_t armour;
+    bool    inTank;
+    bool    on;
+} LvLagPill;
+
+/* One map square that changed in one entry: its place, the terrain before
+   the entry and the terrain after it. */
+typedef struct {
+    uint8_t x, y;
+    uint8_t was;
+    uint8_t now;
+} LvLagSquare;
+
 typedef struct {
     uint32_t   ms;
     LvLagTank  tank[LV_LAG_SLOTS];
     LvLagLgm   lgm[LV_LAG_SLOTS];
     int        shellCount;
     LvLagShell shells[LV_LAG_SHELLS_MAX];
+    LvLagPill  pills[LV_LAG_PILLS_MAX];
+    uint8_t    pillCount;     /* the pillbox count at this entry */
+    bool       squaresFull;   /* more squares changed than squares[] holds */
+    uint16_t   squareCount;
+    /* The squares that changed since the frame before. The first frame of
+       the ring has none: it is where the ring starts. */
+    LvLagSquare squares[LV_LAG_SQUARES_MAX];
 } LvLagFrame;
 
 typedef struct {
@@ -236,6 +283,104 @@ static inline const LvLagFrame *lv_lagRingFind(const LvLagRing *r, uint32_t ms) 
         }
     }
     return NULL;
+}
+
+/* How far back the lag view draws the pillboxes and the map for a player
+   with a round trip of rttMs. A pillbox change or a map change is drawn on
+   the player's screen when it gets there, with no delay, so when the
+   player's input reaches the server the newest of them that player had was
+   one round trip old. The round trip is taken in whole entries, rounded
+   down, as the server rounds the view age down to whole entries for the
+   rewind (serverSimComputeLagCompTicks). */
+static inline uint32_t lv_lagRttBackMs(uint16_t rttMs) {
+    return ((uint32_t) rttMs / LV_LAG_ENTRY_MS) * LV_LAG_ENTRY_MS;
+}
+
+/* The frame that is behindMs older than the present, nowMs. NULL when the
+   newest frame is not the present's own (a frame noted before a seek is of
+   another time), when behindMs is more than nowMs, or when the ring holds
+   no frame that old. */
+static inline const LvLagFrame *lv_lagRingBack(const LvLagRing *r, uint32_t nowMs,
+                                              uint32_t behindMs) {
+    if (r->count == 0 || r->frames[r->newest].ms != nowMs || behindMs > nowMs) {
+        return NULL;
+    }
+    return lv_lagRingFind(r, nowMs - behindMs);
+}
+
+/* Note one changed square in f. Returns false, and marks f incomplete,
+   when f holds LV_LAG_SQUARES_MAX squares already. */
+static inline bool lv_lagFrameAddSquare(LvLagFrame *f, uint8_t x, uint8_t y, uint8_t was,
+                                        uint8_t now) {
+    LvLagSquare *sq;
+    if (f->squareCount >= LV_LAG_SQUARES_MAX) {
+        f->squaresFull = true;
+        return false;
+    }
+    sq = &f->squares[f->squareCount++];
+    sq->x = x;
+    sq->y = y;
+    sq->was = was;
+    sq->now = now;
+    return true;
+}
+
+/* Note in f each square where the map cur is not the same as prev, the map
+   at the frame before, and make prev the same as cur. Both maps are
+   LV_LAG_MAP_SIDE * LV_LAG_MAP_SIDE bytes. One line of squares is tested
+   at a time, so a line with no change costs one compare. */
+static inline void lv_lagMapDiff(uint8_t *prev, const uint8_t *cur, LvLagFrame *f) {
+    int x, y;
+    for (x = 0; x < LV_LAG_MAP_SIDE; x++) {
+        uint8_t *p = prev + (size_t) x * LV_LAG_MAP_SIDE;
+        const uint8_t *c = cur + (size_t) x * LV_LAG_MAP_SIDE;
+        if (memcmp(p, c, LV_LAG_MAP_SIDE) == 0) {
+            continue;
+        }
+        for (y = 0; y < LV_LAG_MAP_SIDE; y++) {
+            if (p[y] != c[y]) {
+                (void) lv_lagFrameAddSquare(f, (uint8_t) x, (uint8_t) y, p[y], c[y]);
+            }
+        }
+        memcpy(p, c, LV_LAG_MAP_SIDE);
+    }
+}
+
+/* The changed squares of the frames newer than target, which is a frame of
+   r. Returns -1 when one of those frames is incomplete, or when target is
+   not in r: then the map at target cannot be made again from the present
+   one. */
+static inline int lv_lagMapChangesAfter(const LvLagRing *r, const LvLagFrame *target) {
+    int i, total = 0;
+    for (i = 0; i < r->count; i++) {
+        const LvLagFrame *g = &r->frames[(r->newest - i + LV_LAG_FRAMES) % LV_LAG_FRAMES];
+        if (g == target) {
+            return total;
+        }
+        if (g->squaresFull) {
+            return -1;
+        }
+        total += g->squareCount;
+    }
+    return -1;
+}
+
+/* Make map, a copy of the present map, into the map as it was at target:
+   undo the changes of every frame newer than target, the newest frame
+   first and in each frame the last change first. Use it only when
+   lv_lagMapChangesAfter gives 0 or more for the same target. */
+static inline void lv_lagMapUndo(const LvLagRing *r, const LvLagFrame *target, uint8_t *map) {
+    int i, j;
+    for (i = 0; i < r->count; i++) {
+        const LvLagFrame *g = &r->frames[(r->newest - i + LV_LAG_FRAMES) % LV_LAG_FRAMES];
+        if (g == target) {
+            return;
+        }
+        for (j = (int) g->squareCount - 1; j >= 0; j--) {
+            const LvLagSquare *sq = &g->squares[j];
+            map[(size_t) sq->x * LV_LAG_MAP_SIDE + sq->y] = sq->was;
+        }
+    }
 }
 
 /* The value lv_lagViewToggle gives when the view must stay as it is. */

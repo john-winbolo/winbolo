@@ -35,7 +35,7 @@
 /* Includes */
 #include "global.h"
 #include "types.h"
-#include "hit_rules.h"        /* LGM_BLAST_SHAPE_*, hitRulesBuilderOpenGroundShape */
+#include "hit_rules.h"
 
 struct GameSim;
 
@@ -94,8 +94,9 @@ struct GameSim;
    script that names it still runs. */
 #define LGM_PILL_DROP_SEARCH 10
 
-/* Speed the helicpter flys at */
-#define LGM_HELICOPTER_SPEED 3
+/* Speed the parachute flies at, in world units a tick. Not always a whole
+   number: the lgm_helicopter_speed rule is a float. */
+#define LGM_HELICOPTER_SPEED 3.0f
 /* The frame number for the helicopter */
 #define LGM_HELICOPTER_FRAME 3
 
@@ -123,28 +124,9 @@ struct GameSim;
 #define LGM_BRAIN_PARTIAL 1
 #define LGM_BRAIN_TOTAL 2
 
-/* The lgm_blast_shape rule and its LGM_BLAST_SHAPE_* values are in
- * hit_rules.h, which the Log Viewer shares. */
-
-/*********************************************************
-*NAME:          lgmBlastOpenGroundCatches
-*PURPOSE:
-*  Whether an explosion on open ground (not a building, a
-*  half building, a pillbox or a base) catches a builder
-*  dx, dy world units from it, by the lgm_blast_shape
-*  rule: hitRulesBuilderOpenGroundShape (hit_rules.h).
-*
-*ARGUMENTS:
-*  shape     - The lgm_blast_shape rule
-*  pillRange - The pill_range rule
-*  dx        - Explosion X less the builder's X
-*  dy        - Explosion Y less the builder's Y
-*********************************************************/
-static inline bool lgmBlastOpenGroundCatches(int32_t shape, int32_t pillRange,
-                                             long dx, long dy) {
-  return hitRulesBuilderOpenGroundShape((int) shape, (int) pillRange, (double) dx,
-                                        (double) dy);
-}
+/* The lgm_blast_shape rule (LGM_BLAST_SHAPE_*) and its open-ground test,
+   lgmBlastOpenGroundCatches, are in hit_rules.h, so the Log Viewer draws
+   the builder's hit box from the engine's own test. */
 
 typedef struct lgmObj *lgm;
 
@@ -152,7 +134,9 @@ struct lgmObj {
   WORLD x;         /* X and Y positions */
   WORLD y;     
   WORLD destX;      /* Where the man is heading */
-  WORLD destY;      
+  WORLD destY;
+  double flyX;     /* His exact place while he parachutes in, parts of a */
+  double flyY;     /* world unit included; see lgmParchutingIn */
   BYTE state;      /* Present state 0 = Idle, 1 = Going to do work, 2 = returning to tank */
   BYTE waitTime;   /* Is it counting down waiting for something? */
   bool inTank;     /* Is the builder in the tank */
@@ -563,8 +547,9 @@ void lgmDeathCheckSquareHit(struct GameSim *sim, lgm *lgman, WORLD wx, WORLD wy,
 *           DMG_NO_PILL
 *  tnk    - Pointer to the tank
 *  squareHit - TRUE when the explosion is a shell's hit on the
-*           pillbox on its square (shellsCalcCollision
-*           outSquareHit), the shot that kills the pill
+*           pillbox, the wall or the terrain on its square
+*           (shellsCalcCollision outSquareHit), the shot that
+*           kills the pill or turns the wall to rubble
 *           included: the builder dies only if he is on that
 *           square, as for a hit on a live pill. Also TRUE
 *           for a tank's explosion on a square whose pill
@@ -635,15 +620,42 @@ void lgmDeathCheckSeenOut(struct GameSim *sim, lgm *lgman, WORLD lgmWorldX, WORL
 bool lgmKillInTank(struct GameSim *sim, lgm *lgman, tank *tnk, BYTE owner);
 
 /*********************************************************
+*NAME:          lgmFlyFrom
+*PURPOSE:
+*  Puts a man who is parachuting in at a place, to fly on
+*  from there: the whole world units the rest of the engine
+*  reads, and the exact place lgmParchutingIn steps from,
+*  with no part of a unit left over from wherever he was.
+*  Where he is flying to is not changed.
+*
+*  For whatever starts a flight or moves one. Writing x and
+*  y alone leaves the old part of a unit behind when the new
+*  place has the same whole units as the old one, and the
+*  next step then carries it along.
+*
+*ARGUMENTS:
+*  lgman  - Pointer to the lgm sturcture
+*  x      - World X Co-ordinate
+*  y      - World Y Co-ordinate
+*********************************************************/
+void lgmFlyFrom(lgm *lgman, WORLD x, WORLD y);
+
+/*********************************************************
 *NAME:          lgmParchutingIn
 *AUTHOR:        John Morrison
 *CREATION DATE: 18/1/99
 *LAST MODIFIED: 23/9/00
 *PURPOSE:
-*  Man is parachuting back in.
+*  Man is parachuting back in. One tick of the flight: he
+*  moves lgm_helicopter_speed world units straight at the
+*  place he is flying to, whatever his heading, and lands
+*  once he is within lgm_arrive_tolerance of it on both
+*  axes. A step that would carry him past the place puts
+*  him on it instead.
 *
 *ARGUMENTS:
-*
+*  sim    - Pointer to the game sim structure
+*  lgman  - Pointer to the lgm sturcture
 *********************************************************/
 void lgmParchutingIn(struct GameSim *sim, lgm *lgman);
 

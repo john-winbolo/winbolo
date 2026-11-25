@@ -4273,7 +4273,7 @@ static int simulate_shot_walk(const BrainPathfinder *pf,
   /* Shell length in map units. Tank passes sightLen/2 to shellsAddItem
    * as TURNTYPE/float — float division, so odd sight_len contributes a
    * half-tile. For PILL shooter the engine passes PILLBOX_FIRE_DISTANCE
-   * (8.5) directly. Keep len_units float so shellLifeTicks sees the
+   * (8.375) directly. Keep len_units float so shellLifeTicks sees the
    * same fractional value the engine does. */
   float len_units;
   if (shooter_type == BRAIN_SHOT_SHOOTER_PILL) {

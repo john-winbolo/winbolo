@@ -220,6 +220,12 @@ BYTE lv_drawGetBuilderStatus(void);
 void lv_drawSetPillNumbers(BYTE on);
 BYTE lv_drawGetPillNumbers(void);
 
+/* The number of each base on the map, beside it, in the look and the place
+ * of the pillbox numbers. Off until set. Drawn where the pillbox numbers
+ * are drawn. */
+void lv_drawSetBaseNumbers(BYTE on);
+BYTE lv_drawGetBaseNumbers(void);
+
 /* The hit area round each live tank and each builder out of his tank, as
  * thin outlines (lv_hitbox.h): the circle a shell must reach to hit the
  * tank, and the area an explosion must be in to kill the builder. Drawn at
