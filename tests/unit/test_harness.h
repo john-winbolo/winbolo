@@ -1447,6 +1447,7 @@ int run_lv_lag_view_first_picture(void);
 /* Which steps give an explosion the dot of Hit Boxes, in forward play and
  * after a seek (test_lv_calibration.c). */
 int run_lv_new_blast_steps(void);
+int run_lv_lgm_dot(void);
 int run_lv_lag_view_lost_owner(void);
 int run_lv_lag_view_shell_snapshot(void);
 int run_lv_shell_owner_recording(void);

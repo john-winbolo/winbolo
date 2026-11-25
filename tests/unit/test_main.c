@@ -706,6 +706,7 @@ static const UnitTestEntry s_tests[] = {
     { "lv_lag_view_own_shells", run_lv_lag_view_own_shells },
     { "lv_lag_view_first_picture", run_lv_lag_view_first_picture },
     { "lv_new_blast_steps", run_lv_new_blast_steps },
+    { "lv_lgm_dot", run_lv_lgm_dot },
     { "lv_lag_view_lost_owner", run_lv_lag_view_lost_owner },
     { "lv_lag_view_shell_snapshot", run_lv_lag_view_shell_snapshot },
     { "lv_lag_view_map", run_lv_lag_view_map },
