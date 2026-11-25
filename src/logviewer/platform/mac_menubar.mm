@@ -34,6 +34,9 @@ void lv_screenSetScreenTrueShells(int enabled);
 int  lv_screenGetScreenTrueShells(void);
 void lv_screenSetScreenTrueExplosions(int enabled);
 int  lv_screenGetScreenTrueExplosions(void);
+int  lv_screenScreenTrueForced(void);
+int  lv_screenScreenTrueShellsOn(void);
+int  lv_screenScreenTrueExplosionsOn(void);
 }
 
 #define LANG_STR(id) ([NSString stringWithUTF8String:langGetText(id)])
@@ -305,8 +308,12 @@ static void lv_push_sdl_quit(void) {
     lv_drawSetHitBoxes(lv_drawGetHitBoxes() ? 0 : 1);
     lv_windowNeedRedraw();
 }
+/* Both items are greyed while "See What the Selected Player Saw" is on
+ * (lv_mac_menubar_refresh), as every Screen-True option is on then; no
+ * click comes, and the saved choices stay as they are. */
 - (void)onToggleScreenTrueShells:(id)sender {
     (void)sender;
+    if (lv_screenScreenTrueForced()) return;
     lv_screenSetScreenTrueShells(lv_screenGetScreenTrueShells() ? 0 : 1);
     lv_windowNeedRedraw();
 }
@@ -315,7 +322,8 @@ static void lv_push_sdl_quit(void) {
  * is off (lv_mac_menubar_refresh), so no click comes then. */
 - (void)onToggleScreenTrueExplosions:(id)sender {
     (void)sender;
-    bool on = lv_screenGetScreenTrueShells() && lv_screenGetScreenTrueExplosions();
+    if (lv_screenScreenTrueForced()) return;
+    bool on = lv_screenScreenTrueExplosionsOn() != 0;
     lv_screenSetScreenTrueExplosions(on ? 0 : 1);
     lv_windowNeedRedraw();
 }
@@ -1271,17 +1279,21 @@ void lv_mac_menubar_refresh(const struct LvMenuState *s) {
     {
         /* The lag view's shell items: there only with the lag display on.
            Local Explosions needs Own Shells: ticked only with both on, and
-           greyed, with the tooltip that says why, while Own Shells is off. */
+           greyed, with the tooltip that says why, while Own Shells is off.
+           While "See What the Selected Player Saw" is on, both are on,
+           ticked and greyed (lv_lagScreenTrueOn). */
         const BOOL noLag = lv_screenGetLagFeature() ? NO : YES;
-        const bool ownShells = lv_screenGetScreenTrueShells() != 0;
-        const bool localExpl = ownShells && lv_screenGetScreenTrueExplosions() != 0;
+        const bool forced = lv_screenScreenTrueForced() != 0;
+        const bool ownShells = lv_screenScreenTrueShellsOn() != 0;
+        const bool localExpl = lv_screenScreenTrueExplosionsOn() != 0;
         if (s_lv_ownShellsItem) {
             [s_lv_ownShellsItem setHidden:noLag];
+            [s_lv_ownShellsItem setEnabled:(forced ? NO : YES)];
             [s_lv_ownShellsItem setState:(ownShells ? NSControlStateValueOn : NSControlStateValueOff)];
         }
         if (s_lv_localExplItem) {
             [s_lv_localExplItem setHidden:noLag];
-            [s_lv_localExplItem setEnabled:(ownShells ? YES : NO)];
+            [s_lv_localExplItem setEnabled:((ownShells && !forced) ? YES : NO)];
             [s_lv_localExplItem setState:(localExpl ? NSControlStateValueOn : NSControlStateValueOff)];
             [s_lv_localExplItem setToolTip:LANG_STR(ownShells ? STR_LV_SCREEN_TRUE_EXPL_TIP
                                                               : STR_LV_SCREEN_TRUE_EXPL_OFF_TIP)];

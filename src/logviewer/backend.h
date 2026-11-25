@@ -921,6 +921,16 @@ void lv_screenSetScreenTrueExplosions(int enabled);
 int  lv_screenGetScreenTrueExplosions(void);
 void lv_screenEarlyBlastStats(LvEarlyBlastStats *out);
 
+/* What the Screen-True options do now (lv_lagScreenTrueOn). Forced is 1
+ * while "See What the Selected Player Saw" is on: then every Screen-True
+ * option acts as on, and the menus show its item ticked and greyed. The
+ * two On functions give whether each option acts as on, the saved choice
+ * (the Get functions above) while the view is off. Like the toggles, they
+ * read single values with no client mutex. */
+int  lv_screenScreenTrueForced(void);
+int  lv_screenScreenTrueShellsOn(void);
+int  lv_screenScreenTrueExplosionsOn(void);
+
 void lv_screenCentreOnSelectedItem();
 
 /* Move the camera onto the followed tank at native-pixel precision (tile

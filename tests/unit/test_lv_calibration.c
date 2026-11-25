@@ -1724,6 +1724,52 @@ int run_lv_lag_view_toggle(void) {
 }
 
 /*
+ * While "See What the Selected Player Saw" is on, every Screen-True option
+ * acts as on; with it off, each one is the user's saved choice, which the
+ * view never changes. Screen-True Local Explosions still needs Screen-True
+ * Own Shells (lv_earlyBlastOn), and the view turns both on.
+ */
+int run_lv_lag_screen_true(void) {
+  bool shells, expl, view;
+  UT_ASSERT(lv_lagScreenTrueOn(true, false));
+  UT_ASSERT(lv_lagScreenTrueOn(true, true));
+  UT_ASSERT(lv_lagScreenTrueOn(false, true));
+  UT_ASSERT(!lv_lagScreenTrueOn(false, false));
+  /* Every saved pair: with the view on both act as on; with it off they
+     are the saved pair, Local Explosions only with Own Shells. */
+  for (shells = false; ; shells = true) {
+    for (expl = false; ; expl = true) {
+      for (view = false; ; view = true) {
+        const bool s = lv_lagScreenTrueOn(view, shells);
+        const bool e = lv_earlyBlastOn(s, lv_lagScreenTrueOn(view, expl));
+        UT_ASSERT(s == (view || shells));
+        UT_ASSERT(e == (view || (shells && expl)));
+        if (view) break;
+      }
+      if (expl) break;
+    }
+    if (shells) break;
+  }
+  /* The viewer's own state, with no view on: what acts as on is the saved
+     choice, and the saved choices are what was set. */
+  lv_screenLagViewSet(-1);
+  UT_ASSERT(lv_screenScreenTrueForced() == 0);
+  lv_screenSetScreenTrueShells(0);
+  lv_screenSetScreenTrueExplosions(1);
+  UT_ASSERT(lv_screenScreenTrueShellsOn() == 0);
+  UT_ASSERT(lv_screenScreenTrueExplosionsOn() == 0);
+  UT_ASSERT(lv_screenGetScreenTrueExplosions() == 1);
+  lv_screenSetScreenTrueShells(1);
+  UT_ASSERT(lv_screenScreenTrueShellsOn() == 1);
+  UT_ASSERT(lv_screenScreenTrueExplosionsOn() == 1);
+  lv_screenSetScreenTrueExplosions(0);
+  UT_ASSERT(lv_screenScreenTrueExplosionsOn() == 0);
+  UT_ASSERT(lv_screenGetScreenTrueShells() == 1);
+  /* Back to the defaults: Own Shells on, Local Explosions off. */
+  return 0;
+}
+
+/*
  * The lag display is off until the "Player Lag View" preference turns it on.
  * With it off the records are still read, but the panels are told there are
  * none and the lag view does not turn on for any player. Turned on, the
@@ -2491,12 +2537,16 @@ int run_lv_lag_view_own_shells(void) {
                 "the pillbox's shell is not at its entry-65 place");
 
   /* A's shell has ended (entry 78) and the old time still has it (73):
-     it is not drawn, as A's own screen no longer had it. */
+     it is not drawn, as A's own screen no longer had it. With the view
+     on, Screen-True Local Explosions is on too (lv_lagScreenTrueOn), so
+     A's early blast is drawn where the shell ended: two items in all. */
   if (lagDrawPlayTo(lv, 78) != 0) return 1;
   lagShellDraw(55, 50);
-  UT_ASSERT_MSG(s_lagShellSeen.n == 1, "%d shells drawn at entry 78, want 1",
+  UT_ASSERT_MSG(s_lagShellSeen.n == 2, "%d items drawn at entry 78, want 2",
                 s_lagShellSeen.n);
   UT_ASSERT(lagShellSeenAt(lagShellPx(), lagShellPy(73)));
+  UT_ASSERT_MSG(!lagShellSeenAt(lagShellAx(), lagShellAy(73)),
+                "A's ended shell is drawn at the old time");
 
   lv_screenLagViewSet(-1);
   lv_screenSetLagFeature(0);
