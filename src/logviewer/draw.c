@@ -2649,12 +2649,14 @@ static void lvDrawHitBoxesOverBlit(const SDL_FRect *src, const SDL_FRect *dst) {
 
 /* With hit boxes on, a dot one art pixel across on the blast point of each
    shell explosion drawn (s_hitBlast): the point the engine tests builders
-   against. It is pale cyan and pulses slowly from 35% to 100% solid, one
-   rise and fall a second (lvHitboxPulseAlpha). The pulse goes by the wall
+   against. Its colour goes round the whole rainbow every 2 seconds
+   (lvHitboxRainbow), and it pulses from 35% to 100% solid, one rise and
+   fall a second (lvHitboxPulseAlpha). The pulse goes by the wall
    clock, so it keeps on while playback is paused. src is the slice of the
    target the blit took, dst where it went. */
 static void lvDrawBlastCentresOverBlit(const SDL_FRect *src, const SDL_FRect *dst) {
     float scale, size, alpha;
+    double hueR, hueG, hueB;
     int i;
     SDL_Rect clip, oldClip;
     bool hadClip;
@@ -2672,6 +2674,7 @@ static void lvDrawBlastCentresOverBlit(const SDL_FRect *src, const SDL_FRect *ds
     size = SDL_roundf(size);
     if (size < 1.0f) size = 1.0f;
     alpha = (float)lvHitboxPulseAlpha((uint64_t)SDL_GetTicks());
+    lvHitboxRainbow((uint64_t)SDL_GetTicks(), &hueR, &hueG, &hueB);
 
     hadClip = SDL_RenderClipEnabled(sdlRenderer);
     SDL_GetRenderClipRect(sdlRenderer, &oldClip);
@@ -2683,7 +2686,7 @@ static void lvDrawBlastCentresOverBlit(const SDL_FRect *src, const SDL_FRect *ds
     SDL_GetRenderDrawBlendMode(sdlRenderer, &oldBlend);
     SDL_GetRenderDrawColor(sdlRenderer, &oldR, &oldG, &oldB, &oldA);
     SDL_SetRenderDrawBlendMode(sdlRenderer, SDL_BLENDMODE_BLEND);
-    SDL_SetRenderDrawColorFloat(sdlRenderer, 200.0f / 255.0f, 240.0f / 255.0f, 1.0f, alpha);
+    SDL_SetRenderDrawColorFloat(sdlRenderer, (float)hueR, (float)hueG, (float)hueB, alpha);
 
     for (i = 0; i < s_hitBlastCount; i++) {
         SDL_FRect r;
