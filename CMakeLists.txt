@@ -6120,6 +6120,9 @@ set(_unit_test_names
     lv_early_blast_watch_miss
     lv_lag_view_rename
     lv_overrun_read
+    log_roundtrip_slow_tick
+    slow_tick_record_rule
+    lv_slow_tick_read
     log_roundtrip_ping
     log_roundtrip_snapshot_tank_stocks
     log_roundtrip_tank_stock_record

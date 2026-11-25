@@ -227,6 +227,106 @@ static bool lv_overrunReadPayload(uint32_t ms, unsigned short evLen) {
   return TRUE;
 }
 
+/* --- Slow tick records ---------------------------------------------------
+ * Each server frame that took more than 20 ms or started late, as the
+ * recording's log_SlowTick records state them (slow_tick_record.h).
+ * Collected by the load's walk and by playback, as the overrun records are.
+ * Playback also posts each one as a line of the events panel. */
+static LvSlowTickTrack s_slowTickTrack;
+
+/* Read the payload at the cursor, evLen bytes, into rec. FALSE when the
+   bytes are not there; *ok is FALSE when they are there but are not a
+   record (too short, or version 0), which is consumed and ignored. */
+static bool lv_slowTickReadPayload(unsigned short evLen, SlowTickRecord *rec, bool *ok) {
+  BYTE b[SLOW_TICK_RECORD_BYTES];
+  *ok = FALSE;
+  if (evLen < SLOW_TICK_RECORD_BYTES) {
+    return TRUE;   /* too short to be one: consumed and ignored */
+  }
+  if (logReadBytes(b, SLOW_TICK_RECORD_BYTES) != SLOW_TICK_RECORD_BYTES) {
+    return FALSE;
+  }
+  *ok = slowTickRecordDecode(b, SLOW_TICK_RECORD_BYTES, rec);
+  return TRUE;
+}
+
+/* Append ", <part> N" (or " (<part> N" for the first) for one part of a
+   slow tick line, when it is 1 ms or more after rounding. always: append it
+   whatever its size. */
+static void lv_slowTickAppendPart(char *body, size_t size, bool *first,
+                                  langid id, uint32_t tenths, bool always) {
+  MessageArgs args = {0};
+  size_t used = strlen(body);
+  args.number = (int)((tenths + 5u) / 10u);
+  if (args.number == 0 && !always) {
+    return;
+  }
+  if (used < size) {
+    snprintf(body + used, size - used, "%s%s", *first ? " (" : ", ",
+             langGetTextFmt(id, &args));
+  }
+  *first = FALSE;
+}
+
+/* The events panel line for one slow tick record: "Server overrun: tick
+   30498 took 61 ms (bots 4, simulation 2, ...)", every part of 1 ms or more
+   and "other" always, then the late start when the record says so. */
+static void lv_slowTickPostLine(const SlowTickRecord *rec) {
+  char body[512];
+  MessageArgs args = {0};
+  bool first = TRUE;
+  size_t used;
+
+  args.number = (int)rec->tick;
+  args.number2 = (int)((rec->total + 5u) / 10u);
+  snprintf(body, sizeof(body), "%s", langGetTextFmt(STR_LV_SLOW_TICK, &args));
+  lv_slowTickAppendPart(body, sizeof(body), &first, STR_LV_SLOW_TICK_PART_NET_RECV, rec->netRecv, FALSE);
+  lv_slowTickAppendPart(body, sizeof(body), &first, STR_LV_SLOW_TICK_PART_LOCK, rec->lockWait, FALSE);
+  lv_slowTickAppendPart(body, sizeof(body), &first, STR_LV_SLOW_TICK_PART_BOTS, rec->bots, FALSE);
+  lv_slowTickAppendPart(body, sizeof(body), &first, STR_LV_SLOW_TICK_PART_SIM, rec->sim, FALSE);
+  lv_slowTickAppendPart(body, sizeof(body), &first, STR_LV_SLOW_TICK_PART_SCENARIO, rec->scenario, FALSE);
+  lv_slowTickAppendPart(body, sizeof(body), &first, STR_LV_SLOW_TICK_PART_RECORDING, rec->recording, FALSE);
+  lv_slowTickAppendPart(body, sizeof(body), &first, STR_LV_SLOW_TICK_PART_NET_SEND, rec->netSend, FALSE);
+  lv_slowTickAppendPart(body, sizeof(body), &first, STR_LV_SLOW_TICK_PART_OTHER, rec->other, TRUE);
+  used = strlen(body);
+  if (used < sizeof(body)) {
+    snprintf(body + used, sizeof(body) - used, ")");
+  }
+  if (rec->flags & SLOW_TICK_FLAG_LATE) {
+    MessageArgs late = {0};
+    late.number = (int)((rec->gap + 5u) / 10u);
+    late.number2 = (int)((rec->pause + 5u) / 10u);
+    used = strlen(body);
+    if (used < sizeof(body)) {
+      snprintf(body + used, sizeof(body) - used, "%s",
+               langGetTextFmt(STR_LV_SLOW_TICK_LATE, &late));
+    }
+  }
+  lv_messageTagOverrun((int)slowTickRecordSizeMs(rec));
+  lv_messageAddText(LV_EVK_GAME, body);
+}
+
+bool lv_screenSlowTickNear(uint32_t ms, uint32_t withinMs, LvSlowTickNow *out) {
+  const LvSlowTickEntry *e;
+
+  if (out == NULL) {
+    return FALSE;
+  }
+  memset(out, 0, sizeof(*out));
+  if (g_lv == NULL || g_lv->logLoaded == FALSE) {
+    return FALSE;
+  }
+  out->recorded = (s_slowTickTrack.count > 0);
+  e = lv_slowTickTrackNear(&s_slowTickTrack, ms, withinMs);
+  if (e == NULL) {
+    return FALSE;
+  }
+  out->has = TRUE;
+  out->ms = e->ms;
+  out->rec = e->rec;
+  return TRUE;
+}
+
 void lv_screenOverrunNow(LvOverrunNow *out) {
   const LvOverrunEntry *e;
 
@@ -262,6 +362,7 @@ static void lv_lagReset(void) {
     lv_lagTrackClear(&s_lagJoins[i]);
   }
   lv_overrunTrackClear(&s_overrunTrack);
+  lv_slowTickTrackClear(&s_slowTickTrack);
 }
 
 /* Take one log_PlayerLag payload's first four bytes (the player, the RTT as
@@ -3725,6 +3826,19 @@ void lv_screenProcessLog(unsigned short numEvents) {
         lv_overrunReadPayload(g_lv->timeRunning, evLen);
       }
       break;
+    case log_SlowTick:
+      /* One slow server frame: into the track, and a line of the events
+         panel. Only a framed file has them, and the frame's length below
+         ends the record wherever the read stopped. */
+      if (isV2) {
+        SlowTickRecord rec;
+        bool ok;
+        if (lv_slowTickReadPayload(evLen, &rec, &ok) && ok) {
+          lv_slowTickTrackAdd(&s_slowTickTrack, g_lv->timeRunning, &rec);
+          lv_slowTickPostLine(&rec);
+        }
+      }
+      break;
     case log_BaseSetOwner:
       logReadBytes(&opt1, 1);
       logReadBytes(&opt2, 1);
@@ -5303,6 +5417,7 @@ typedef struct {
   bool     wt;         /* server tick count and anchors; framed files only */
   bool     lag;        /* log_PlayerLag into the lag tracks; framed files only */
   bool     overrun;    /* log_OverrunStats into the overrun track; framed files only */
+  bool     slowTick;   /* log_SlowTick into the slow tick track; framed files only */
   /* Set by walkScanEvents for the block it read, for the server tick count:
      whether it held log_EntityMasks, and its first four-byte log_ServerTick. */
   bool     masks;
@@ -5367,6 +5482,15 @@ static bool walkScanEvents(LvLoadWalk *w, unsigned short numEvents, uint32_t ms)
       if (w->overrun && code == log_OverrunStats &&
           !lv_overrunReadPayload(ms, evLen)) {
         w->overrun = FALSE;
+      }
+      if (w->slowTick && code == log_SlowTick) {
+        SlowTickRecord rec;
+        bool ok;
+        if (!lv_slowTickReadPayload(evLen, &rec, &ok)) {
+          w->slowTick = FALSE;
+        } else if (ok) {
+          lv_slowTickTrackAdd(&s_slowTickTrack, ms, &rec);
+        }
       }
       if (w->pres &&
           (code == log_ScnPanel || code == log_ScnScore ||
@@ -5459,6 +5583,7 @@ static void lv_walkLoadBegin(void) {
   s_walk.w.wt      = s_walk.w.framed;
   s_walk.w.lag     = s_walk.w.framed;
   s_walk.w.overrun = s_walk.w.framed;
+  s_walk.w.slowTick = s_walk.w.framed;
 
   lv_ruleChangesClear();
   lv_presReset();
@@ -6954,6 +7079,10 @@ static int s_eventPing = -1;
  * the Chat panel. s_eventChat is false for any other line. Cleared with the
  * teams. */
 static bool s_eventChat = false;
+/* The size in ms of the server overrun the next line reports
+ * (lv_messageTagOverrun), 0 for a line that is not one. Cleared with the
+ * teams. */
+static int s_eventOverrunMs = 0;
 static char s_eventChatFrom[256];
 static char s_eventChatNote[256];
 static bool s_eventChatHasNote = false;
@@ -6998,6 +7127,12 @@ int lv_screenEventChat(const char **from, const char **note, const char **text) 
 
 int lv_screenEventPing(void) { return s_eventPing; }
 
+void lv_messageTagOverrun(int sizeMs) {
+  s_eventOverrunMs = (sizeMs > 0) ? sizeMs : 0;
+}
+
+int lv_screenEventOverrunMs(void) { return s_eventOverrunMs; }
+
 int lv_screenEventPlayer(void) { return s_eventPlayer; }
 
 void lv_screenEventTeams(int *team, int *otherTeam) {
@@ -7039,6 +7174,40 @@ void lv_messageAdd(lvEventKind kind, messageType msgType, langid topId,
   lv_messageAddAt(kind, 0, 0, msgType, topId, bodyId, args);
 }
 
+/* Give a rendered line to the text dump, or else to the host's events
+ * panel, with the tags set for it, and clear the tags. FALSE when the text
+ * dump took it. */
+static bool lv_messageHandOver(lvEventKind kind, int mapX, int mapY,
+                               const char *body) {
+  bool host = (s_observer == NULL);
+  /* Cell (0,0) is the decoder's "not on the map", never a real place. */
+  if (mapX <= 0 && mapY <= 0) {
+    mapX = -1;
+    mapY = -1;
+  }
+  if (!host) {
+    /* The text dump takes the line and the host sees none of it. */
+    if (s_observer->event != NULL) {
+      s_observer->event(s_observer->ctx, (int)kind, mapX, mapY, body);
+    }
+  } else {
+    /* The host takes the tags with the line (lv_screenEventTeams,
+       lv_screenEventPing, lv_screenEventChat, lv_screenEventOverrunMs). */
+    lv_windowAddEvent(0, (int)kind, mapX, mapY, (char *)body);
+  }
+  s_eventTeam = -1;
+  s_eventOtherTeam = -1;
+  s_eventPing = -1;
+  s_eventPlayer = -1;
+  s_eventChat = false;
+  s_eventOverrunMs = 0;
+  return host;
+}
+
+void lv_messageAddText(lvEventKind kind, const char *text) {
+  (void)lv_messageHandOver(kind, -1, -1, text != NULL ? text : "");
+}
+
 void lv_messageAddAt(lvEventKind kind, int mapX, int mapY,
                      messageType msgType, langid topId, langid bodyId,
                      const MessageArgs *args) {
@@ -7053,31 +7222,9 @@ void lv_messageAddAt(lvEventKind kind, int mapX, int mapY,
   if (rendered) {
     snprintf(body, sizeof(body), "%s", rendered);
   }
-  /* Cell (0,0) is the decoder's "not on the map", never a real place. */
-  if (mapX <= 0 && mapY <= 0) {
-    mapX = -1;
-    mapY = -1;
-  }
-  /* The text dump takes the line and the host sees none of it. */
-  if (s_observer != NULL) {
-    if (s_observer->event != NULL) {
-      s_observer->event(s_observer->ctx, (int)kind, mapX, mapY, body);
-    }
-    s_eventTeam = -1;
-    s_eventOtherTeam = -1;
-    s_eventPing = -1;
-    s_eventPlayer = -1;
-    s_eventChat = false;
+  if (!lv_messageHandOver(kind, mapX, mapY, body)) {
     return;
   }
-  lv_windowAddEvent(0, (int)kind, mapX, mapY, body);
-  /* The host has taken the tag with the line (lv_screenEventTeams,
-     lv_screenEventPing, lv_screenEventChat). */
-  s_eventTeam = -1;
-  s_eventOtherTeam = -1;
-  s_eventPing = -1;
-  s_eventPlayer = -1;
-  s_eventChat = false;
 
   /* The text dump and the load decode the whole log once. The marquee queue
    * is walked to its tail on every append, so feeding it a whole round here

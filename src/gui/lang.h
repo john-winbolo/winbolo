@@ -3725,6 +3725,25 @@
 #define STR_REJECT_CAN_REJOIN                    3945
 #define STR_JOIN_AS_NEW                          3946
 
+/* The Log Viewer's line for a log_SlowTick record (one server frame that took
+ * more than 20 ms or started late). SLOW_TICK: {number} the server tick,
+ * {number2} the frame's ms. Each PART is one part of the frame, {number} its
+ * ms; the line puts them after SLOW_TICK in brackets, split by commas. LATE
+ * goes after the brackets: {number} the ms from the start of the frame
+ * before, {number2} the ms between the two frames. HIDE_SMALL is the events
+ * panel's checkbox. */
+#define STR_LV_SLOW_TICK                         3947
+#define STR_LV_SLOW_TICK_PART_NET_RECV           3948
+#define STR_LV_SLOW_TICK_PART_LOCK               3949
+#define STR_LV_SLOW_TICK_PART_BOTS               3950
+#define STR_LV_SLOW_TICK_PART_SIM                3951
+#define STR_LV_SLOW_TICK_PART_SCENARIO           3952
+#define STR_LV_SLOW_TICK_PART_RECORDING          3953
+#define STR_LV_SLOW_TICK_PART_NET_SEND           3954
+#define STR_LV_SLOW_TICK_PART_OTHER              3955
+#define STR_LV_SLOW_TICK_LATE                    3956
+#define STR_LV_SLOW_TICK_HIDE_SMALL              3957
+
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
  * ------------------------------------------------------- */
