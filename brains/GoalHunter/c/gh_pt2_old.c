@@ -45,10 +45,6 @@
  *   - Tables the Lua shares between records (a ray reused from the record
  *     before, the T list, the lane, the clear-aims list, the blocker table)
  *     are one table in the result here too.
- *
- * gh_pt2_shadow.c includes this file with GH_PT2_OLD_EMBED defined: it uses
- * the walks, casts, square tests, rank and output helpers here, and the
- * Lua functions and the registration below are left out.
  */
 
 #include "gh_pt2_old.h"
@@ -151,7 +147,7 @@ typedef struct {
      * the result does not change). Indexed by the stack slot of the
      * callback (S_TTYPE ...) or by a P_* part below. */
     int       prof;
-    double    p_ns[64], p_n[64];
+    double    p_ns[48], p_n[48];
     /* the shell ray table: calloc'd on first use, kept between evaluates */
     CGeom    *cg, *tg;
     int       cg_n, tg_n;
@@ -302,7 +298,7 @@ static const char *s_prof_name[] = {
     NULL   /* the count check below */
 };
 typedef char pt2_prof_names_ok[(sizeof(s_prof_name) / sizeof(s_prof_name[0]) == P_N + 1) ? 1 : -1];
-typedef char pt2_prof_slots_ok[(P_N <= 64) ? 1 : -1];   /* p_ns[64], p_n[64] */
+typedef char pt2_prof_slots_ok[(P_N <= 48) ? 1 : -1];   /* p_ns[48], p_n[48] */
 
 /* Time a C statement as part `cat` (inclusive of its callbacks). */
 #define PTIME(e, cat, stmt) do { \
@@ -2277,7 +2273,6 @@ static int getbool(lua_State *L, int t, const char *k) {
     return v;
 }
 
-#ifndef GH_PT2_OLD_EMBED
 static Pt2Ctx *get_ctx(lua_State *L) {
     lua_getfield(L, LUA_REGISTRYINDEX, "gh_pt2_old_ctx");
     Pt2Ctx *c = (Pt2Ctx *)lua_touserdata(L, -1);
@@ -2285,7 +2280,6 @@ static Pt2Ctx *get_ctx(lua_State *L) {
     if (!c) luaL_error(L, "gh_pt2_old: no ctx");
     return c;
 }
-#endif
 
 typedef struct { Rec **v; int n, cap; } RecVec;   /* 1-based */
 
@@ -2299,7 +2293,6 @@ static void rv_push(Ev *e, RecVec *rv, Rec *r) {
     rv->v[++rv->n] = r;
 }
 
-#ifndef GH_PT2_OLD_EMBED
 static int l_evaluate(lua_State *L) {
     luaL_checktype(L, 1, LUA_TTABLE);
     luaL_checktype(L, 2, LUA_TTABLE);
@@ -2714,7 +2707,6 @@ static int l_table_check(lua_State *L) {
     c->cg_checked = 0; c->cg_bad = 0; c->cg_first[0] = 0;
     return 3;
 }
-#endif
 
 /* ── Registration ───────────────────────────────────────────────────── */
 static int pt2_ctx_gc(lua_State *L) {
@@ -2729,7 +2721,6 @@ static int pt2_ctx_gc(lua_State *L) {
     return 0;
 }
 
-#ifndef GH_PT2_OLD_EMBED
 static const luaL_Reg gh_pt2_old_lib[] = {
     { "evaluate", l_evaluate },
     { "prof", l_prof },
@@ -2792,4 +2783,3 @@ int naPt2OldTestWalk(int kind, const double sh[5], double sx, double sy, double 
     }
     return k;
 }
-#endif /* GH_PT2_OLD_EMBED */
