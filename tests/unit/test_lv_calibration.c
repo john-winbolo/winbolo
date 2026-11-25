@@ -47,17 +47,24 @@
 #include "blocks.h"
 #include "lv_bolo_map.h"
 #include "lv_presentation.h" /* lv_screenServerTickAt */
+#include "lv_server_check.h" /* LvServerCheck, lvServerCheckLabel */
 #include "test_harness.h"
 #include "zip.h"
 
 /* ---- synthetic v2 log builder ------------------------------------------- */
 
 typedef struct {
-  uint8_t buf[4096];
+  uint8_t buf[16384];
   size_t len;
 } LogBuf;
 
 static void put(LogBuf *b, const void *bytes, size_t n) {
+  if (b->len + n > sizeof(b->buf)) {
+    /* A made log too long for the buffer: stop at once, not write past it. */
+    fprintf(stderr, "FAIL test_lv_calibration.c: made log over %u bytes\n",
+            (unsigned)sizeof(b->buf));
+    abort();
+  }
   memcpy(b->buf + b->len, bytes, n);
   b->len += n;
 }
@@ -1485,6 +1492,88 @@ int run_lv_player_lag_read(void) {
   return 0;
 }
 
+/* The Tank panel's lag graph has the playhead at its middle sample, half
+ * the span before it and half after. A sample is empty before the start of
+ * the recording, before the player's first record and after the last time
+ * the viewer has read; between records it has the earlier record's value. */
+int run_lv_lag_graph_window(void) {
+  static LvPlayerLag g;
+  LvLagTrack t;
+  const LvLagRecord *r;
+  const int half = LV_LAG_GRAPH_SPAN_MS / 2;
+  int i;
+
+  memset(&t, 0, sizeof(t));
+  UT_ASSERT(LV_LAG_GRAPH_SAMPLES % 2 == 1);
+  /* The window from the playhead. */
+  UT_ASSERT(lv_lagGraphStartMs(100000) == 100000 - half);
+  UT_ASSERT(lv_lagGraphStartMs(1000) == 1000 - half);   /* below 0 */
+  UT_ASSERT(lv_lagGraphSampleMs(lv_lagGraphStartMs(100000), LV_LAG_GRAPH_MID) == 100000);
+  UT_ASSERT(lv_lagGraphSampleMs(lv_lagGraphStartMs(100000), 0) == 100000 - half);
+  UT_ASSERT(lv_lagGraphSampleMs(lv_lagGraphStartMs(100000), LV_LAG_GRAPH_SAMPLES - 1) ==
+            100000 + half);
+  /* The sample under a place across the graph. */
+  UT_ASSERT(lv_lagGraphSampleAt(-0.5f) == 0);
+  UT_ASSERT(lv_lagGraphSampleAt(0.0f) == 0);
+  UT_ASSERT(lv_lagGraphSampleAt(0.5f) == LV_LAG_GRAPH_MID);
+  UT_ASSERT(lv_lagGraphSampleAt(1.0f) == LV_LAG_GRAPH_SAMPLES - 1);
+  UT_ASSERT(lv_lagGraphSampleAt(2.0f) == LV_LAG_GRAPH_SAMPLES - 1);
+
+  /* Records at 10 s (40 ms, rewind 2) and 20 s (80 ms, rewind 4). */
+  UT_ASSERT(lv_lagTrackAdd(&t, 10000, 40, 2, true));
+  UT_ASSERT(lv_lagTrackAdd(&t, 20000, 80, 4, true));
+  /* The value at a time: before the start, before the first record, at
+     and between records, after the last record but read, and not read. */
+  UT_ASSERT(lv_lagTrackValueAt(&t, -1, 60000) == NULL);
+  UT_ASSERT(lv_lagTrackValueAt(&t, 9999, 60000) == NULL);
+  r = lv_lagTrackValueAt(&t, 10000, 60000);
+  UT_ASSERT(r != NULL && r->rttMs == 40);
+  r = lv_lagTrackValueAt(&t, 15000, 60000);
+  UT_ASSERT(r != NULL && r->rttMs == 40 && r->rewind == 2);
+  r = lv_lagTrackValueAt(&t, 20000, 60000);
+  UT_ASSERT(r != NULL && r->rttMs == 80);
+  r = lv_lagTrackValueAt(&t, 60000, 60000);
+  UT_ASSERT(r != NULL && r->rttMs == 80);
+  UT_ASSERT(lv_lagTrackValueAt(&t, 60001, 60000) == NULL);
+
+  /* The playhead at 15 s, every record read (a loaded file to 120 s). */
+  lv_lagGraphFill(&g, &t, 15000, 120000);
+  UT_ASSERT(g.graphStartMs == 15000 - half);
+  for (i = 0; i < LV_LAG_GRAPH_SAMPLES; i++) {
+    int64_t ms = lv_lagGraphSampleMs(g.graphStartMs, i);
+    if (ms < 10000) {
+      UT_ASSERT(!g.graphHas[i]);
+    } else if (ms < 20000) {
+      UT_ASSERT(g.graphHas[i] && g.graph[i] == 40.0f && g.graphBehind[i] == 40);
+    } else {
+      UT_ASSERT(g.graphHas[i] && g.graph[i] == 80.0f && g.graphBehind[i] == 80);
+    }
+  }
+  UT_ASSERT(g.graphHas[LV_LAG_GRAPH_MID] && g.graph[LV_LAG_GRAPH_MID] == 40.0f);
+  UT_ASSERT(g.graphMax == 80.0f);   /* the record ahead of the playhead counts */
+
+  /* A live feed: read only up to the playhead, so the half after it is
+     empty and the playhead keeps the middle. */
+  lv_lagGraphFill(&g, &t, 15000, 15000);
+  UT_ASSERT(g.graphHas[LV_LAG_GRAPH_MID] && g.graph[LV_LAG_GRAPH_MID] == 40.0f);
+  for (i = LV_LAG_GRAPH_MID + 1; i < LV_LAG_GRAPH_SAMPLES; i++) {
+    UT_ASSERT(!g.graphHas[i]);
+  }
+  UT_ASSERT(g.graphMax == 40.0f);
+  /* A known end before the playhead is taken as the playhead. */
+  lv_lagGraphFill(&g, &t, 15000, 0);
+  UT_ASSERT(g.graphHas[LV_LAG_GRAPH_MID]);
+
+  /* No records: every sample empty, the scale at least 1. */
+  lv_lagTrackClear(&t);
+  lv_lagGraphFill(&g, &t, 15000, 120000);
+  for (i = 0; i < LV_LAG_GRAPH_SAMPLES; i++) {
+    UT_ASSERT(!g.graphHas[i]);
+  }
+  UT_ASSERT(g.graphMax == 1.0f);
+  return 0;
+}
+
 /* A track keeps its records in time order, finds the one in effect at a
  * time, and takes a second read at one time as the same record. */
 int run_lv_lag_track(void) {
@@ -1895,7 +1984,10 @@ typedef struct {
   int      itemPx[2];
   int      lgmItems;      /* builders in the draw list */
   int      lgmMx, lgmPx;  /* the first one's column and pixel */
-  bool     lgmPlaced;     /* lv_playersLgmPlace fitted slot 1's builder there */
+  int      testItems;     /* builders where the server tested them */
+  int      testMx, testPx; /* the first one's column and pixel */
+  bool     lgmPlaced;     /* lv_playersLgmPlace fitted slot 1's builder at the
+                             tested place, as the hit box does */
 } LagDrawSeen;
 static LagDrawSeen s_lagDrawSeen;
 
@@ -1939,14 +2031,32 @@ static void lagDrawHook(screenTanks *tks, screenBullets *sBullet, screenLgm *lgm
     lv_screenLgmGetItem(lgms, 1, &mx, &my, &px, &py, &frame);
     s_lagDrawSeen.lgmMx = mx;
     s_lagDrawSeen.lgmPx = px;
-    {
-      /* The hit box's fit for the builder at the place he is drawn
-         (lagDrawOnce puts the view's left column at 55). */
+  }
+  /* The list the hit boxes are drawn from (lv_drawLGMs): the builders where
+     the server tested them, with the same bounds lv_screenUpdate gives
+     (lagDrawOnce puts the view's left column at 55, top row at 50). */
+  s_lagDrawSeen.testMx = -1;
+  s_lagDrawSeen.testPx = -1;
+  {
+    screenLgm tested;
+    int right = 55 + lv_screenGetSizeX();
+    int bottom = 50 + lv_screenGetSizeY();
+    lv_screenLgmCreate(&tested);
+    lv_playersMakeScreenLgmTested(&tested, 55, (BYTE)(right > 255 ? 255 : right), 50,
+                                  (BYTE)(bottom > 255 ? 255 : bottom));
+    s_lagDrawSeen.testItems = lv_screenLgmGetNumEntries(&tested);
+    if (s_lagDrawSeen.testItems > 0) {
+      BYTE mx, my, px, py, frame;
       double wx = 0.0, wy = 0.0;
+      lv_screenLgmGetItem(&tested, 1, &mx, &my, &px, &py, &frame);
+      s_lagDrawSeen.testMx = mx;
+      s_lagDrawSeen.testPx = px;
+      /* The hit box's fit for the builder at the tested place. */
       s_lagDrawSeen.lgmPlaced =
           lv_playersLgmPlace(1, (BYTE)(mx + 55), (BYTE)(LAG_DRAW_ROW + 1), px, py, &wx, &wy) !=
           FALSE;
     }
+    lv_screenLgmDestroy(&tested);
   }
 }
 
@@ -2002,8 +2112,11 @@ static void lagDrawOnce(void) {
  * B's builder is out every entry, a row below B's tank at the same column.
  *
  * At entry 80, with the view on for A: B is drawn at its entry-75 place,
- * A at its entry-80 place, and B's builder at his entry-76 place, one entry
- * newer, as the server tests builders. A seek back to entry 42 (840 ms) without the
+ * A at its entry-80 place, and B's builder at his entry-73 place, one round
+ * trip back (140 ms in whole entries), with the pillboxes: a client puts a
+ * builder on its screen when the snapshot gets there. B's builder's hit box
+ * stays at his entry-76 place, one entry newer than the tanks, where the
+ * server tested him (shellLgmRewind). A seek back to entry 42 (840 ms) without the
  * early start would restore the entry-39 snapshot, which leaves frames only
  * for entries 40 to 42 and none for entry 37. The early start decodes from
  * the opening snapshot instead, so B is drawn at its entry-37 place.
@@ -2083,20 +2196,29 @@ int run_lv_lag_view_draw(void) {
   UT_ASSERT_MSG(s_lagDrawSeen.itemMx[1] == 19 && s_lagDrawSeen.itemPx[1] == 3,
                 "B's draw list place %d/%d, want 19/3", s_lagDrawSeen.itemMx[1],
                 s_lagDrawSeen.itemPx[1]);
-  /* B's builder one entry newer than his tank, as the server tests builders
-     (shellLgmRewind): entry 76, 1120 + 76 = 1196, column 74 pixel 12, so
-     column 19 on screen. */
+  /* B's builder drawn one round trip back, from the pillboxes' frame
+     (lv_lagRttBackMs: 150 ms is 7 whole entries): entry 73,
+     1120 + 73 = 1193, column 74 pixel 9, so column 19 on screen. */
   UT_ASSERT_MSG(s_lagDrawSeen.lgmItems == 1, "%d builders in the draw list, want 1",
                 s_lagDrawSeen.lgmItems);
-  UT_ASSERT_MSG(s_lagDrawSeen.lgmMx == (int)(lagDrawPlace(1, 76) / 16) - 55 &&
-                    s_lagDrawSeen.lgmPx == (int)(lagDrawPlace(1, 76) % 16),
-                "B's builder drawn at %d/%d, want %d/%d (entry 76)", s_lagDrawSeen.lgmMx,
-                s_lagDrawSeen.lgmPx, (int)(lagDrawPlace(1, 76) / 16) - 55,
+  UT_ASSERT_MSG(s_lagDrawSeen.lgmMx == (int)(lagDrawPlace(1, 73) / 16) - 55 &&
+                    s_lagDrawSeen.lgmPx == (int)(lagDrawPlace(1, 73) % 16),
+                "B's builder drawn at %d/%d, want %d/%d (entry 73, one round trip)",
+                s_lagDrawSeen.lgmMx, s_lagDrawSeen.lgmPx, (int)(lagDrawPlace(1, 73) / 16) - 55,
+                (int)(lagDrawPlace(1, 73) % 16));
+  /* Where the server tested him stays one entry newer than his tank
+     (shellLgmRewind): entry 76, 1120 + 76 = 1196, column 74 pixel 12. */
+  UT_ASSERT_MSG(s_lagDrawSeen.testItems == 1, "%d tested builders, want 1",
+                s_lagDrawSeen.testItems);
+  UT_ASSERT_MSG(s_lagDrawSeen.testMx == (int)(lagDrawPlace(1, 76) / 16) - 55 &&
+                    s_lagDrawSeen.testPx == (int)(lagDrawPlace(1, 76) % 16),
+                "B's builder tested at %d/%d, want %d/%d (entry 76)", s_lagDrawSeen.testMx,
+                s_lagDrawSeen.testPx, (int)(lagDrawPlace(1, 76) / 16) - 55,
                 (int)(lagDrawPlace(1, 76) % 16));
   /* His hit box is fitted at that entry too: at the tanks' entry (75) his
      note has another pixel, and the fit gave up. */
   UT_ASSERT_MSG(s_lagDrawSeen.lgmPlaced,
-                "B's builder hit box not fitted at his drawn place (entry 76)");
+                "B's builder hit box not fitted at his tested place (entry 76)");
 
   /* Seek back to entry 42: the frames are there at once. */
   lv_screenSeekToTimeMs(lagDrawMs(42));
@@ -2491,15 +2613,557 @@ int run_lv_lag_view_own_shells(void) {
                 "the pillbox's shell is not at its entry-65 place");
 
   /* A's shell has ended (entry 78) and the old time still has it (73):
-     it is not drawn, as A's own screen no longer had it. */
+     it is not drawn, as A's own screen no longer had it. The view always
+     draws Screen-True Local Explosions too, so A's early blast is drawn
+     where the shell ended: two items in all. */
   if (lagDrawPlayTo(lv, 78) != 0) return 1;
   lagShellDraw(55, 50);
-  UT_ASSERT_MSG(s_lagShellSeen.n == 1, "%d shells drawn at entry 78, want 1",
+  UT_ASSERT_MSG(s_lagShellSeen.n == 2, "%d items drawn at entry 78, want 2",
                 s_lagShellSeen.n);
   UT_ASSERT(lagShellSeenAt(lagShellPx(), lagShellPy(73)));
+  UT_ASSERT_MSG(!lagShellSeenAt(lagShellAx(), lagShellAy(73)),
+                "A's ended shell is drawn at the old time");
 
   lv_screenLagViewSet(-1);
   lv_screenSetLagFeature(0);
+  lv_decoderDestroy(lv);
+  lv_screenSetHideLobby(savedHide);
+  remove(path);
+  return 0;
+}
+
+/*
+ * A new explosion recorded at frame 7 is drawn with the frame 8 picture on
+ * its first step only (lvHitboxDrawFrame), in the plain view and in the lag
+ * view. A pillbox's explosion, with no tank behind it, is first recorded at
+ * entry 60 at frame 7 and goes down one frame each 3 entries. No shell is
+ * recorded before it, so the empty steps make the step before known.
+ *
+ *   plain view: new at entry 60 only
+ *   lag view for A (rewind 5): the old time's frame, so new at entry 65 only
+ */
+#define LAG_PIC_FIRST 60
+#define LAG_PIC_LAST 80
+static int32_t lagPicX(void) { return 80 * 256 + 5 * 16; }
+static int32_t lagPicY(void) { return 70 * 256 + 9 * 16; }
+static uint8_t lagPicFrame(int k) { return (uint8_t)(7 - (k - LAG_PIC_FIRST) / 3); }
+
+static void putLagBlast(LogBuf *b, int32_t wx, int32_t wy, uint8_t frame) {
+  putU8(b, log_Shell);
+  putU8(b, 0); putU8(b, 4);
+  putU8(b, (uint8_t)(wx / 256));
+  putU8(b, (uint8_t)(wy / 256));
+  putU8(b, (uint8_t)((((wx % 256) / 16) << 4) | ((wy % 256) / 16)));
+  putU8(b, frame);
+}
+
+/* The picture frame the draw gives the explosion at (lagPicX, lagPicY)
+   recorded at frame, after lagShellDraw: 8 when it is new and at frame 7. */
+static int lagPicDrawFrame(uint8_t frame) {
+  const struct LvHitBlastRec *nb = NULL;
+  int n = lv_screenNewBlasts(&nb), i;
+  bool isNew = false;
+  for (i = 0; i < n; i++) {
+    if (nb[i].mx == lagPicX() / 256 && nb[i].my == lagPicY() / 256 &&
+        nb[i].px == (lagPicX() % 256) / 16 && nb[i].py == (lagPicY() % 256) / 16 &&
+        nb[i].frame == frame) {
+      isNew = true;
+    }
+  }
+  return lvHitboxDrawFrame(frame, isNew);
+}
+
+int run_lv_lag_view_first_picture(void) {
+  const char *path = "lv_lag_view_first_picture.wbv";
+  static const uint8_t rec[4] = {0, 0x00, 0x96, 5};   /* A: 150 ms, rewind 5 */
+  LogBuf b;
+  LogViewerState *lv;
+  int savedHide = lv_screenGetHideLobby();
+  int k;
+
+  b.len = 0;
+  putHeader(&b);
+  putLagDrawSnapshot(&b, 0);
+  for (k = 1; k <= 99; k++) {
+    bool blast = (k >= LAG_PIC_FIRST && k <= LAG_PIC_LAST);
+    int events = 2 + (k == 40 ? 1 : 0) + (blast ? 1 : 0);
+    if (k == 39) {
+      putLagDrawSnapshot(&b, k);
+      continue;
+    }
+    putU8(&b, LOG_EVENT);
+    putU8(&b, (uint8_t)events);
+    putLagDrawLocation(&b, 0, k);
+    putLagDrawLocation(&b, 1, k);
+    if (k == 40) {
+      putU8(&b, log_PlayerLag);
+      putU8(&b, 0); putU8(&b, 4);
+      put(&b, rec, sizeof(rec));
+    }
+    if (blast) {
+      putLagBlast(&b, lagPicX(), lagPicY(), lagPicFrame(k));
+    }
+  }
+  putU8(&b, LOG_QUIT);
+
+  lv_screenSetHideLobby(0);
+  lv_screenSetLagFeature(1);
+  lv = loadSynthetic(&b, path);
+  UT_ASSERT_MSG(lv != NULL, "synthetic first picture log failed to build/load");
+
+  /* The plain view: the frame 8 picture on the first step, then the
+     recorded frame. */
+  if (lagDrawPlayTo(lv, LAG_PIC_FIRST - 1) != 0) return 1;
+  lagShellDraw(55, 50);
+  UT_ASSERT_MSG(s_lagShellSeen.n == 0, "%d items before the explosion", s_lagShellSeen.n);
+  for (k = LAG_PIC_FIRST; k <= LAG_PIC_FIRST + 3; k++) {
+    int want = (k == LAG_PIC_FIRST) ? 8 : lagPicFrame(k);
+    if (lagDrawPlayTo(lv, k) != 0) return 1;
+    lagShellDraw(55, 50);
+    UT_ASSERT_MSG(lagShellSeenAt(lagPicX(), lagPicY()), "no explosion at entry %d", k);
+    UT_ASSERT_MSG(lagPicDrawFrame(lagPicFrame(k)) == want,
+                  "plain view, entry %d: picture %d, want %d", k,
+                  lagPicDrawFrame(lagPicFrame(k)), want);
+  }
+
+  /* The lag view for A: the explosion is at the old time, 5 entries back,
+     so its first picture is at entry 65, and nothing is drawn at 64. */
+  if (lagDrawPlayTo(lv, LAG_PIC_FIRST + 4) != 0) return 1;
+  lv_screenLagViewSet(0);
+  UT_ASSERT_MSG(lv_screenLagViewSlot() == 0, "the view did not turn on for A");
+  lagShellDraw(55, 50);
+  UT_ASSERT_MSG(!lagShellSeenAt(lagPicX(), lagPicY()),
+                "the lag view draws the explosion before its old time");
+  for (k = LAG_PIC_FIRST + 5; k <= LAG_PIC_FIRST + 8; k++) {
+    int old = k - 5;
+    int want = (old == LAG_PIC_FIRST) ? 8 : lagPicFrame(old);
+    if (lagDrawPlayTo(lv, k) != 0) return 1;
+    lagShellDraw(55, 50);
+    UT_ASSERT_MSG(lagShellSeenAt(lagPicX(), lagPicY()), "no explosion at entry %d", k);
+    UT_ASSERT_MSG(lagPicDrawFrame(lagPicFrame(old)) == want,
+                  "lag view, entry %d: picture %d, want %d", k,
+                  lagPicDrawFrame(lagPicFrame(old)), want);
+  }
+
+  lv_screenLagViewSet(-1);
+  lv_screenSetLagFeature(0);
+  lv_decoderDestroy(lv);
+  lv_screenSetHideLobby(savedHide);
+  remove(path);
+  return 0;
+}
+
+/*
+ * Which steps give an explosion the dot (the "step before" record in
+ * screen.c, lv_screenShellsReset and lv_screenShellsNewFlags), in forward
+ * play and after a seek. Each explosion is a pillbox's, with no tank behind
+ * it, at its own place in row 70 (newBlastX), and goes down one frame each
+ * 3 entries. No shell is recorded before entry 55, so by then the empty
+ * steps have made the step before known.
+ *
+ *   entries 55..78     A: frame 8 to 1, with no shell at all at entry 57
+ *   entry 90           a snapshot
+ *   entries 91..111    B: first recorded at frame 7, on the first step after
+ *                      the snapshot
+ *   entries 130..153   C: frame 8 to 1; entry 155 a second explosion at C's
+ *                      place, 500 ms after C started
+ *   entry 170          D: frame 8, one record only, and no shell after it
+ *                      until entry 225: a second explosion at D's place,
+ *                      1100 ms after D
+ *   entry 240          E: frame 8, one record only; entry 265 a second
+ *                      explosion at E's place, 500 ms after E
+ *   entry 300          a snapshot, and no shell after it until entry 348:
+ *                      F, frame 8, one record only, 960 ms after the snapshot
+ *   entry 400          a snapshot, and no shell after it until entry 449:
+ *                      G, frame 7, one record only, 980 ms after the snapshot
+ *
+ * Forward play: a dot at entries 55, 91, 130, 155, 170, 225, 240, 348 and
+ * 449 only.
+ * The empty step 57 gives A no second dot. The step after C's last record
+ * (frame 1) is under the new frame 8, so 155 is new. After 1100 ms with no
+ * shell D has surely ended, so 225 is new; 500 ms after E, with no record
+ * between, E's record is still kept and covers 265.
+ * A seek back to entry 91 starts the decode an explosion's life before it,
+ * not at the snapshot of entry 90, so B gets its dot and the frame 8
+ * picture as in forward play; a seek to 92 gives no dot.
+ * A seek back to entry 449 (G) or 348 (F) must not restore the snapshot
+ * 980 or 960 ms before it: after that restore the step before becomes
+ * known only 1000 ms after the snapshot (LV_SHS_SEEK_LEAD_MS in screen.c).
+ * The seek starts at the snapshot before, so G and F get their dots, and G
+ * the frame 8 picture, as in forward play.
+ */
+#define NEW_BLAST_LAST_K 470
+#define NEW_BLAST_SNAP_K 90
+#define NEW_BLAST_SNAP2_K 300
+#define NEW_BLAST_SNAP3_K 400
+#define NEW_BLAST_F_K 348
+#define NEW_BLAST_G_K 449
+static bool newBlastIsSnap(int k) {
+  return k == NEW_BLAST_SNAP_K || k == NEW_BLAST_SNAP2_K || k == NEW_BLAST_SNAP3_K;
+}
+static int32_t newBlastX(int i) { return (76 + 2 * i) * 256 + 5 * 16; }
+static int32_t newBlastY(void) { return 70 * 256 + 9 * 16; }
+
+/* The explosions recorded at entry k, as (place, frame) pairs. Returns how
+   many. */
+static int newBlastAt(int k, int *place, uint8_t *frame) {
+  int n = 0;
+  if (k >= 55 && k <= 78 && k != 57) {
+    place[n] = 0; frame[n++] = (uint8_t)(8 - (k - 55) / 3);
+  }
+  if (k >= 91 && k <= 111) {
+    place[n] = 1; frame[n++] = (uint8_t)(7 - (k - 91) / 3);
+  }
+  if (k >= 130 && k <= 153) {
+    place[n] = 2; frame[n++] = (uint8_t)(8 - (k - 130) / 3);
+  }
+  if (k == 155) {
+    place[n] = 2; frame[n++] = 8;
+  }
+  if (k == 170 || k == 225) {
+    place[n] = 3; frame[n++] = 8;
+  }
+  if (k == 240 || k == 265) {
+    place[n] = 4; frame[n++] = 8;
+  }
+  if (k == NEW_BLAST_F_K) {
+    place[n] = 5; frame[n++] = 8;
+  }
+  if (k == NEW_BLAST_G_K) {
+    place[n] = 6; frame[n++] = 7;
+  }
+  return n;
+}
+
+static bool newBlastWantDot(int k) {
+  return k == 55 || k == 91 || k == 130 || k == 155 || k == 170 || k == 225 || k == 240 ||
+         k == NEW_BLAST_F_K || k == NEW_BLAST_G_K;
+}
+
+/* How many explosions of the present step are new, after a draw of the
+   map; -1 when the drawn map's count (lv_screenNewBlasts) is not the
+   step's (lv_screenShellsNewBlasts). */
+static int newBlastCount(void) {
+  struct LvHitBlastRec out[16];
+  const struct LvHitBlastRec *nb = NULL;
+  int n = lv_screenShellsNewBlasts(out, 16), drawn;
+  lagShellDraw(55, 50);
+  drawn = lv_screenNewBlasts(&nb);
+  if (drawn != n) {
+    fprintf(stderr, "the drawn map has %d new explosions, the step %d\n", drawn, n);
+    return -1;
+  }
+  return n;
+}
+
+int run_lv_new_blast_steps(void) {
+  const char *path = "lv_new_blast_steps.wbv";
+  LogBuf b;
+  LogViewerState *lv;
+  int savedHide = lv_screenGetHideLobby();
+  int k;
+
+  b.len = 0;
+  putHeader(&b);
+  putLagDrawSnapshot(&b, 0);
+  for (k = 1; k <= NEW_BLAST_LAST_K; k++) {
+    int place[4];
+    uint8_t frame[4];
+    int n = newBlastAt(k, place, frame), i;
+    if (newBlastIsSnap(k)) {
+      putLagDrawSnapshot(&b, k);
+      continue;
+    }
+    putU8(&b, LOG_EVENT);
+    putU8(&b, (uint8_t)(2 + n));
+    putLagDrawLocation(&b, 0, k);
+    putLagDrawLocation(&b, 1, k);
+    for (i = 0; i < n; i++) {
+      putLagBlast(&b, newBlastX(place[i]), newBlastY(), frame[i]);
+    }
+  }
+  putU8(&b, LOG_QUIT);
+
+  lv_screenSetHideLobby(0);
+  lv_screenSetLagFeature(0);
+  lv = loadSynthetic(&b, path);
+  UT_ASSERT_MSG(lv != NULL, "synthetic new explosion log failed to build/load");
+
+  /* Forward play: one dot at the start of each new explosion only. */
+  for (k = 1; k <= NEW_BLAST_LAST_K - 1; k++) {
+    int n, want = newBlastWantDot(k) ? 1 : 0;
+    if (newBlastIsSnap(k)) {
+      continue;
+    }
+    if (lagDrawPlayTo(lv, k) != 0) return 1;
+    n = newBlastCount();
+    UT_ASSERT_MSG(n == want, "forward play, entry %d: %d new explosions, want %d", k, n, want);
+  }
+
+  /* A seek back to the first step after the snapshot: as in forward play. */
+  lv_screenSeekToTimeMs(lagDrawMs(NEW_BLAST_SNAP_K + 1));
+  UT_ASSERT_MSG(lv->timeRunning == lagDrawMs(NEW_BLAST_SNAP_K + 1),
+                "the seek is at %u ms, want %u", (unsigned)lv->timeRunning,
+                (unsigned)lagDrawMs(NEW_BLAST_SNAP_K + 1));
+  k = newBlastCount();
+  UT_ASSERT_MSG(k == 1, "%d new explosions after a seek to entry 91, want 1", k);
+  {
+    struct LvHitBlastRec out[4];
+    int n = lv_screenShellsNewBlasts(out, 4);
+    UT_ASSERT(n == 1);
+    UT_ASSERT_MSG(out[0].mx == newBlastX(1) / 256 && out[0].frame == 7,
+                  "the new explosion after the seek is at column %d frame %d", out[0].mx,
+                  out[0].frame);
+    UT_ASSERT_MSG(lvHitboxDrawFrame(out[0].frame, true) == 8,
+                  "B is not drawn with the frame 8 picture after the seek");
+  }
+  lv_screenSeekToTimeMs(lagDrawMs(NEW_BLAST_SNAP_K + 2));
+  UT_ASSERT_MSG(lv->timeRunning == lagDrawMs(NEW_BLAST_SNAP_K + 2),
+                "the seek is at %u ms, want %u", (unsigned)lv->timeRunning,
+                (unsigned)lagDrawMs(NEW_BLAST_SNAP_K + 2));
+  k = newBlastCount();
+  UT_ASSERT_MSG(k == 0, "%d new explosions after a seek to entry 92, want 0", k);
+
+  /* Seeks back to an explosion with no shell before it, 980 ms (G) and
+     960 ms (F) after a snapshot: as in forward play. G first, so that each
+     seek is backward and restores a snapshot. */
+  lv_screenSeekToTimeMs(lagDrawMs(NEW_BLAST_LAST_K - 1));
+  UT_ASSERT(lv->timeRunning == lagDrawMs(NEW_BLAST_LAST_K - 1));
+  lv_screenSeekToTimeMs(lagDrawMs(NEW_BLAST_G_K));
+  UT_ASSERT_MSG(lv->timeRunning == lagDrawMs(NEW_BLAST_G_K), "the seek is at %u ms, want %u",
+                (unsigned)lv->timeRunning, (unsigned)lagDrawMs(NEW_BLAST_G_K));
+  k = newBlastCount();
+  UT_ASSERT_MSG(k == 1, "%d new explosions after a seek to entry %d, want 1", k, NEW_BLAST_G_K);
+  {
+    struct LvHitBlastRec out[4];
+    int n = lv_screenShellsNewBlasts(out, 4);
+    UT_ASSERT(n == 1);
+    UT_ASSERT_MSG(out[0].mx == newBlastX(6) / 256 && out[0].frame == 7,
+                  "the new explosion after the seek is at column %d frame %d", out[0].mx,
+                  out[0].frame);
+    UT_ASSERT_MSG(lvHitboxDrawFrame(out[0].frame, true) == 8,
+                  "G is not drawn with the frame 8 picture after the seek");
+  }
+  lv_screenSeekToTimeMs(lagDrawMs(NEW_BLAST_F_K));
+  UT_ASSERT_MSG(lv->timeRunning == lagDrawMs(NEW_BLAST_F_K), "the seek is at %u ms, want %u",
+                (unsigned)lv->timeRunning, (unsigned)lagDrawMs(NEW_BLAST_F_K));
+  k = newBlastCount();
+  UT_ASSERT_MSG(k == 1, "%d new explosions after a seek to entry %d, want 1", k, NEW_BLAST_F_K);
+
+  lv_decoderDestroy(lv);
+  lv_screenSetHideLobby(savedHide);
+  remove(path);
+  return 0;
+}
+
+/* ---- the builder's hit box dot ------------------------------------------ */
+
+/* What lgmDotHook saw: the builders the hit boxes are drawn from (where the
+ * server tested them, lv_playersMakeScreenLgmTested) and, for the first one,
+ * the dot's place on the target (zoom factor 1) and his world place. drawnAx
+ * is the first drawn builder's place across, in art pixels, -1 for none. */
+typedef struct {
+  int    items;
+  int    drawnAx;
+  bool   placed;
+  int    ax, ay;        /* his recorded place, in art pixels */
+  double wx, wy;        /* lv_playersLgmPlace's place, world units */
+  double dotX, dotY;    /* the dot, target pixels from the view's top left */
+} LgmDotSeen;
+static LgmDotSeen s_lgmDot;
+
+static void lgmDotHook(screenTanks *tks, screenBullets *sBullet, screenLgm *lgms) {
+  screenLgm tested;
+  int right = 55 + lv_screenGetSizeX();
+  int bottom = 50 + lv_screenGetSizeY();
+  (void)tks; (void)sBullet;
+  memset(&s_lgmDot, 0, sizeof(s_lgmDot));
+  s_lgmDot.drawnAx = -1;
+  if (lv_screenLgmGetNumEntries(lgms) > 0) {
+    BYTE mx, my, px, py, frame;
+    lv_screenLgmGetItem(lgms, 1, &mx, &my, &px, &py, &frame);
+    s_lgmDot.drawnAx = (55 + mx) * 16 + px;
+  }
+  /* The list lv_drawLGMs notes the hit boxes from. */
+  lv_screenLgmCreate(&tested);
+  lv_playersMakeScreenLgmTested(&tested, 55, (BYTE)(right > 255 ? 255 : right), 50,
+                                (BYTE)(bottom > 255 ? 255 : bottom));
+  s_lgmDot.items = lv_screenLgmGetNumEntries(&tested);
+  if (s_lgmDot.items > 0) {
+    BYTE mx, my, px, py, frame, slot;
+    int sqMx, sqMy;
+    lv_screenLgmGetItem(&tested, 1, &mx, &my, &px, &py, &frame);
+    slot = lv_screenLgmGetSlot(&tested, 1);
+    sqMx = 55 + mx;
+    sqMy = 50 + my;
+    s_lgmDot.ax = sqMx * 16 + px;
+    s_lgmDot.ay = sqMy * 16 + py;
+    s_lgmDot.placed = lv_playersLgmPlace(slot, (BYTE)sqMx, (BYTE)sqMy, px, py, &s_lgmDot.wx,
+                                         &s_lgmDot.wy) != FALSE;
+    /* As draw.c places it: his square's top left on the target and his
+       place in that square. */
+    s_lgmDot.dotX = lvHitboxLgmDotAt((double)(mx * 16), s_lgmDot.wx - (double)(sqMx * 256), 1);
+    s_lgmDot.dotY = lvHitboxLgmDotAt((double)(my * 16), s_lgmDot.wy - (double)(sqMy * 256), 1);
+  }
+  lv_screenLgmDestroy(&tested);
+}
+
+static void lgmDotDraw(void) {
+  memset(&s_lgmDot, 0, sizeof(s_lgmDot));
+  lv_screenSetOffset(55, 50);
+  g_testLvDrawMainScreenHook = lgmDotHook;
+  lv_screenUpdate(redraw);
+  g_testLvDrawMainScreenHook = NULL;
+}
+
+/* Check the dot is on the builder drawn at entry k: his world place (the
+   place lgmBlastCatches tests) is in his recorded art pixel, and the dot is
+   that place on the target. */
+static int lgmDotCheck(int k, const char *what) {
+  unsigned place = lagDrawPlace(1, k);
+  int ax = (int)place, ay = (LAG_DRAW_ROW + 1) * 16;
+  UT_ASSERT_MSG(s_lgmDot.items == 1, "%s: %d builders drawn, want 1", what, s_lgmDot.items);
+  UT_ASSERT_MSG(s_lgmDot.ax == ax && s_lgmDot.ay == ay, "%s: builder at %d/%d, want %d/%d",
+                what, s_lgmDot.ax, s_lgmDot.ay, ax, ay);
+  UT_ASSERT_MSG(s_lgmDot.placed, "%s: no world place for the builder", what);
+  /* lgmGetPX / PY: the pixel is his place less 1 across and 2 down. */
+  UT_ASSERT_MSG(s_lgmDot.wx >= ax * 16 + 1 && s_lgmDot.wx <= ax * 16 + 16,
+                "%s: world x %.2f not in pixel %d", what, s_lgmDot.wx, ax);
+  UT_ASSERT_MSG(s_lgmDot.wy >= ay * 16 + 2 && s_lgmDot.wy <= ay * 16 + 17,
+                "%s: world y %.2f not in pixel %d", what, s_lgmDot.wy, ay);
+  UT_ASSERT_MSG(fabs(s_lgmDot.dotX - (s_lgmDot.wx - 55.0 * 256.0) / 16.0) < 1e-9 &&
+                    fabs(s_lgmDot.dotY - (s_lgmDot.wy - 50.0 * 256.0) / 16.0) < 1e-9,
+                "%s: dot at %.4f/%.4f is not on his world place", what, s_lgmDot.dotX,
+                s_lgmDot.dotY);
+  return 0;
+}
+
+/*
+ * The builder's hit box dot: on his world place, only while he is out.
+ *
+ *   entry  1..60   B's builder out, a row under B's tank
+ *   entry 61..70   B's builder in his tank (no log_LgmLocation)
+ *   entry 40       A's lag record: rewind 5
+ *
+ * At entry 30 the dot is on the builder's entry-30 place; with "See What
+ * the Selected Player Saw" on for A at entry 50 it is on the place the
+ * server tested him at, entry 46 (one entry newer than the tanks' 45), and
+ * not on the place the view draws him at, entry 43 (one round trip, 150 ms
+ * in whole entries, back, with the pillboxes). At entry 65,
+ * in his tank, there is no builder and no dot.
+ */
+int run_lv_lgm_dot(void) {
+  const char *path = "lv_lgm_dot.wbv";
+  static const uint8_t rec[4] = {0, 0x00, 0x96, 5};   /* A: 150 ms, rewind 5 */
+  LogBuf b;
+  LogViewerState *lv;
+  int savedHide = lv_screenGetHideLobby();
+  int k;
+
+  b.len = 0;
+  putHeader(&b);
+  putLagDrawSnapshot(&b, 0);
+  for (k = 1; k <= 70; k++) {
+    bool out = k <= 60;
+    putU8(&b, LOG_EVENT);
+    putU8(&b, (uint8_t)(2 + (out ? 1 : 0) + (k == 40 ? 1 : 0)));
+    putLagDrawLocation(&b, 0, k);
+    putLagDrawLocation(&b, 1, k);
+    if (out) putLagDrawLgm(&b, 1, k);
+    if (k == 40) {
+      putU8(&b, log_PlayerLag);
+      putU8(&b, 0); putU8(&b, 4);
+      put(&b, rec, sizeof(rec));
+    }
+  }
+  putU8(&b, LOG_QUIT);
+
+  lv_screenSetHideLobby(0);
+  lv_screenSetLagFeature(1);
+  lv = loadSynthetic(&b, path);
+  UT_ASSERT_MSG(lv != NULL, "synthetic builder dot log failed to build/load");
+
+  if (lagDrawPlayTo(lv, 30) != 0) return 1;
+  lgmDotDraw();
+  if (lgmDotCheck(30, "entry 30") != 0) return 1;
+
+  if (lagDrawPlayTo(lv, 50) != 0) return 1;
+  lv_screenLagViewSet(0);
+  UT_ASSERT_MSG(lv_screenLagViewSlot() == 0, "the view did not turn on for A");
+  lgmDotDraw();
+  if (lgmDotCheck(46, "entry 50, the view on") != 0) return 1;
+  UT_ASSERT_MSG(s_lgmDot.drawnAx == (int)lagDrawPlace(1, 43),
+                "entry 50, the view on: builder drawn at %d, want %d (entry 43)",
+                s_lgmDot.drawnAx, (int)lagDrawPlace(1, 43));
+  lv_screenLagViewSet(-1);
+
+  if (lagDrawPlayTo(lv, 65) != 0) return 1;
+  lgmDotDraw();
+  UT_ASSERT_MSG(s_lgmDot.items == 0, "%d builders drawn in his tank, want 0", s_lgmDot.items);
+
+  lv_screenSetLagFeature(0);
+  lv_decoderDestroy(lv);
+  lv_screenSetHideLobby(savedHide);
+  remove(path);
+  return 0;
+}
+
+/*
+ * The two Screen-True options (Screen-True Own Shells, Screen-True Local
+ * Explosions) have no menu item and no preference: the view draws both
+ * always, so they are on exactly while "See What the Selected Player Saw"
+ * is on. The view turns on and off as asked, and goes off with the lag
+ * display. The log is the one of lv_lag_view_draw, with A's lag record at
+ * entry 40.
+ */
+int run_lv_lag_screen_true(void) {
+  const char *path = "lv_lag_screen_true.wbv";
+  static const uint8_t rec[4] = {0, 0x00, 0x96, 5};   /* A: 150 ms, rewind 5 */
+  LogBuf b;
+  LogViewerState *lv;
+  int savedHide = lv_screenGetHideLobby();
+  int k;
+
+  lv_screenLagViewSet(-1);
+  UT_ASSERT_MSG(lv_screenLagViewSlot() < 0, "a view is on with no log");
+
+  b.len = 0;
+  putHeader(&b);
+  putLagDrawSnapshot(&b, 0);
+  for (k = 1; k <= 60; k++) {
+    putU8(&b, LOG_EVENT);
+    putU8(&b, (uint8_t)(k == 40 ? 3 : 2));
+    putLagDrawLocation(&b, 0, k);
+    putLagDrawLocation(&b, 1, k);
+    if (k == 40) {
+      putU8(&b, log_PlayerLag);
+      putU8(&b, 0); putU8(&b, 4);
+      put(&b, rec, sizeof(rec));
+    }
+  }
+  putU8(&b, LOG_QUIT);
+
+  lv_screenSetHideLobby(0);
+  lv_screenSetLagFeature(1);
+  lv = loadSynthetic(&b, path);
+  UT_ASSERT_MSG(lv != NULL, "synthetic Screen-True log failed to build/load");
+  if (lagDrawPlayTo(lv, 50) != 0) return 1;
+  UT_ASSERT_MSG(lv_screenLagViewSlot() < 0, "a view is on before it was asked for");
+
+  lv_screenLagViewSet(0);
+  UT_ASSERT_MSG(lv_screenLagViewSlot() == 0, "the view did not turn on for A");
+
+  lv_screenLagViewSet(-1);
+  UT_ASSERT_MSG(lv_screenLagViewSlot() < 0, "still on after the view was turned off");
+
+  /* The view on again, then the lag display turned off: the view goes
+     off, and the options with it. */
+  lv_screenLagViewSet(0);
+  UT_ASSERT(lv_screenLagViewSlot() == 0);
+  lv_screenSetLagFeature(0);
+  UT_ASSERT_MSG(lv_screenLagViewSlot() < 0, "on after the lag display was turned off");
+
+  lv_screenLagViewSet(-1);
   lv_decoderDestroy(lv);
   lv_screenSetHideLobby(savedHide);
   remove(path);
@@ -3198,5 +3862,451 @@ int run_lv_hitbox_zone_from_version(void) {
      file with no version is a circle game. */
   UT_ASSERT(lvHitboxTankZoneFor(0, 0, 0, true) != LV_HITBOX_TANK_NONE);
   UT_ASSERT(lvHitboxTankZoneFor(1, 9, 1, false) == LV_HITBOX_TANK_SQUARE);
+  return 0;
+}
+
+/*
+ * The Server Check (lv_server_check.h) on a real recording, on ask only:
+ * set WB_LV_SC_WBV to a .wbv and WB_LV_SC_TICK to a server tick
+ * (WB_LV_SC_SPAN, ticks each side, is 30 when not set). It plays the
+ * recording with the hit boxes on and prints each check that starts in the
+ * window, with its label. With WB_LV_SC_WANT set, one label must be that
+ * text. With no file set it skips (UT_SKIP).
+ */
+int run_lv_server_check_recording(void) {
+  const char *path = getenv("WB_LV_SC_WBV");
+  const char *tickText = getenv("WB_LV_SC_TICK");
+  const char *spanText = getenv("WB_LV_SC_SPAN");
+  const char *want = getenv("WB_LV_SC_WANT");
+  static char pathBuf[1024];
+  static LvServerCheck seen[256];
+  int seenN = 0, i;
+  uint32_t tick, span, fromTick, toTick;
+  LogViewerState *lv;
+  int savedHide = lv_screenGetHideLobby();
+  bool found = false;
+  LvServerCheckTexts t;
+
+  if (path == NULL || path[0] == '\0') {
+    UT_SKIP("WB_LV_SC_WBV not set: nothing to check");
+  }
+  t.lives = "LIVES";
+  t.dies = "DIES";
+  t.refused = "HOST REFUSED";
+  t.notTested = "NOT TESTED";
+  t.circleOut = "{string1} {number} > {number2}";
+  t.circleIn = "{string1} {number} <= {number2}";
+  t.boxOut = "{string1} {number} >= {number2}";
+  t.boxIn = "{string1} {number} < {number2}";
+  t.offSquare = "{string1} off square";
+  t.onSquare = "{string1} on square";
+  t.rewind = "(rewind {number})";
+  t.estimate = "estimate";
+  tick = (tickText != NULL) ? (uint32_t)strtoul(tickText, NULL, 10) : 0;
+  span = (spanText != NULL) ? (uint32_t)strtoul(spanText, NULL, 10) : 30;
+  fromTick = tick > span ? tick - span : 0;
+  toTick = tick + span;
+  snprintf(pathBuf, sizeof(pathBuf), "%s", path);
+
+  lv_screenSetHideLobby(0);
+  lv_screenSetServerCheck(1);
+  lv = lv_decoderCreate(false);
+  UT_ASSERT(lv != NULL);
+  lv_screenSetSizeX(30);
+  lv_screenSetSizeY(30);
+  UT_ASSERT_MSG(lv_screenLoadMap(pathBuf, 4) == TRUE, "%s did not load", path);
+  lv->fastForwarding = TRUE;
+  printf("  version %d.%d.%d, rule %s, lgm_blast_shape %d, pill_range %d\n",
+         (int)lv->versionMajor, (int)lv->versionMinor, (int)lv->versionRevision,
+         lvServerCheckRuleFor(lv->versionMajor, lv->versionMinor, lv->versionRevision) ==
+                 LV_SC_RULE_221
+             ? "2.2.1"
+             : "current",
+         (int)lv->rules.lgmBlastShape, (int)lv->rules.pillRange);
+
+  while (lv->isPlaying == TRUE && seenN < (int)(sizeof(seen) / sizeof(seen[0]))) {
+    LvServerCheck now[LV_SC_MAX];
+    uint32_t nowMs = 0, nowTick;
+    int n, k;
+    lv_screenLogTick();
+    nowTick = lv_screenHasServerTick() ? lv_screenServerTickAt(lv->timeRunning)
+                                       : lv->timeRunning / 20u;
+    if (nowTick > toTick + 60u) break;
+    n = lv_screenServerChecks(now, LV_SC_MAX, &nowMs);
+    for (k = 0; k < n; k++) {
+      uint32_t at = lv_screenHasServerTick() ? lv_screenServerTickAt(now[k].startMs)
+                                             : now[k].startMs / 20u;
+      bool dup = false;
+      int j;
+      if (at < fromTick || at > toTick) continue;
+      for (j = 0; j < seenN; j++) {
+        if (seen[j].startMs == now[k].startMs && seen[j].builder == now[k].builder &&
+            seen[j].blastX == now[k].blastX && seen[j].blastY == now[k].blastY) {
+          dup = true;
+          break;
+        }
+      }
+      if (dup) continue;
+      seen[seenN++] = now[k];
+      if (seenN >= (int)(sizeof(seen) / sizeof(seen[0]))) break;
+    }
+  }
+  for (i = 0; i < seenN; i++) {
+    const LvServerCheck *c = &seen[i];
+    char label[160];
+    lvServerCheckLabel(c, &t, label, sizeof(label));
+    printf("  tick %u builder %u shooter %u blast (%d,%d) tested (%d,%d) present (%d,%d) "
+           "solid %d: %s\n",
+           (unsigned)(lv_screenHasServerTick() ? lv_screenServerTickAt(c->startMs)
+                                               : c->startMs / 20u),
+           (unsigned)c->builder, (unsigned)c->shooter, (int)c->blastX, (int)c->blastY,
+           (int)c->testedX, (int)c->testedY, (int)c->presentX, (int)c->presentY,
+           c->solid ? 1 : 0, label);
+    if (want != NULL && strcmp(label, want) == 0) found = true;
+  }
+  lv_screenSetServerCheck(0);
+  lv_decoderDestroy(lv);
+  lv_screenSetHideLobby(savedHide);
+  UT_ASSERT_MSG(want == NULL || found, "no check has the label \"%s\"", want);
+  return 0;
+}
+
+/*
+ * The Server Check estimate for a builder the blast killed, on 2.2.1. The
+ * server moves the builders before the shells, tests the builder in the
+ * blast, and then he dies and drops the pillbox he holds. The recording's
+ * step of the blast has him on his parachute already, far away, and the
+ * pillbox on his square: the estimate takes his place and the pillboxes
+ * of the step before. (Demon1's builder at tick 30516 of the JonnyWar I
+ * game of Nov 19.)
+ *
+ *   entry 0        snapshot: A and B on the map; pillbox 1 in A's tank
+ *   entries 1..49  A's builder out, at A's entry-k place, one row lower
+ *   entry 49       he is at (16144, 15616), on square (63, 61)
+ *   entry 50       a new explosion (a pillbox's shell: no tank behind it)
+ *                  whose blast is at (16176, 15664), 57 away on his
+ *                  square; he is on his parachute at (142, 144); the
+ *                  pillbox is put down on (63, 61) with armour 0
+ *
+ *   entry 60       a new explosion 57 away from B's builder, on his
+ *                  square, and pillbox 2 put down there: a tank the shell
+ *                  killed drops his pillboxes before the test
+ *
+ * One check, at entry 50: builder 0, no shooter, tested at his entry-49
+ * place, open ground (his own pillbox is put down after the test):
+ * "DIES 57 <= 128 estimate". None before it. At entry 60, builder 1: the
+ * pillbox counts, "DIES on square estimate".
+ */
+#define LV_SC_KILL_ENTRY 50
+#define LV_SC_TANK_ENTRY 60
+static void putScLgm(LogBuf *b, int slot, uint8_t frame, int32_t wx, int32_t wy) {
+  putU8(b, log_LgmLocation);
+  putU8(b, 0); putU8(b, 4);
+  putU8(b, (uint8_t)((slot << 4) | frame));
+  putU8(b, (uint8_t)(wx / 256));
+  putU8(b, (uint8_t)(wy / 256));
+  putU8(b, (uint8_t)((((wx % 256) / 16) << 4) | ((wy % 256) / 16)));
+}
+
+int run_lv_server_check_builder_killed(void) {
+  const char *path = "lv_server_check_builder_killed.wbv";
+  /* Two pillboxes: x, y, armour, owner, speed, inTank, reload, justSeen,
+     coolDown. Both are in A's tank. */
+  static const uint8_t pills[20] = {19, 2, 0, 0, 0, 0, 50, 1, 0, 0, 0,
+                                    0, 0, 0, 0, 50, 1, 0, 0, 0};
+  const int32_t lgmX = (int32_t)lagDrawPlace(0, LV_SC_KILL_ENTRY - 1) * 16;
+  const int32_t lgmY = (LAG_DRAW_ROW + 1) * 256;
+  const int32_t explX = lgmX + 32 - 128, explY = lgmY + 48 - 128;
+  const int32_t bLgmX = (int32_t)lagDrawPlace(1, LV_SC_TANK_ENTRY) * 16;
+  const int32_t bExplX = bLgmX + 32 - 128;
+  LogBuf b;
+  LogViewerState *lv;
+  int savedHide = lv_screenGetHideLobby();
+  LvServerCheck got[LV_SC_MAX];
+  uint32_t nowMs = 0;
+  int k, n;
+
+  UT_ASSERT(lgmX == 16144 && lgmY == 15616);
+  b.len = 0;
+  putHeaderVersion(&b, "Test", 2, 2, 1);
+  putLagDrawSnapshotPills(&b, 0, pills, (int)sizeof(pills));
+  for (k = 1; k <= LV_SC_TANK_ENTRY + 3; k++) {
+    bool kill = (k == LV_SC_KILL_ENTRY);
+    bool blast = (k >= LV_SC_KILL_ENTRY && k <= LV_SC_KILL_ENTRY + 3);
+    bool tankKill = (k == LV_SC_TANK_ENTRY);
+    bool bBlast = (k >= LV_SC_TANK_ENTRY);
+    putU8(&b, LOG_EVENT);
+    putU8(&b, (uint8_t)(4 + (blast ? 1 : 0) + (kill ? 3 : 0) + (bBlast ? 1 : 0) +
+                        (tankKill ? 3 : 0)));
+    putLagDrawLocation(&b, 0, k);
+    putLagDrawLocation(&b, 1, k);
+    putScLgm(&b, 1, 0, (int32_t)lagDrawPlace(1, k) * 16, lgmY);
+    if (k < LV_SC_KILL_ENTRY) {
+      putScLgm(&b, 0, 0, (int32_t)lagDrawPlace(0, k) * 16, lgmY);
+    } else {
+      putScLgm(&b, 0, LGM_HELICOPTER_FRAME, 142 * 256, 144 * 256);
+    }
+    if (blast) {
+      putLagBlast(&b, explX, explY, (uint8_t)(8 - (k - LV_SC_KILL_ENTRY)));
+    }
+    if (kill) {
+      putU8(&b, log_PillSetInTank);
+      putU8(&b, 0); putU8(&b, 1);
+      putU8(&b, 0x00);                  /* pillbox 0, not in a tank */
+      putU8(&b, log_PillSetPlace);
+      putU8(&b, 0); putU8(&b, 3);
+      putU8(&b, 0); putU8(&b, (uint8_t)(lgmX / 256)); putU8(&b, (uint8_t)(lgmY / 256));
+      putU8(&b, log_PillSetHealth);
+      putU8(&b, 0); putU8(&b, 1);
+      putU8(&b, 0x00);                  /* v2: pillbox 0, armour 0 */
+    }
+    if (bBlast) {
+      putLagBlast(&b, bExplX, explY, (uint8_t)(8 - (k - LV_SC_TANK_ENTRY)));
+    }
+    if (tankKill) {
+      putU8(&b, log_PillSetInTank);
+      putU8(&b, 0); putU8(&b, 1);
+      putU8(&b, 0x10);                  /* pillbox 1, not in a tank */
+      putU8(&b, log_PillSetPlace);
+      putU8(&b, 0); putU8(&b, 3);
+      putU8(&b, 1); putU8(&b, (uint8_t)(bLgmX / 256)); putU8(&b, (uint8_t)(lgmY / 256));
+      putU8(&b, log_PillSetHealth);
+      putU8(&b, 0); putU8(&b, 1);
+      putU8(&b, 0x10);                  /* v2: pillbox 1, armour 0 */
+    }
+  }
+  putU8(&b, LOG_QUIT);
+
+  lv_screenSetHideLobby(0);
+  lv_screenSetServerCheck(1);
+  lv = loadSynthetic(&b, path);
+  UT_ASSERT_MSG(lv != NULL, "synthetic builder kill log failed to build/load");
+  UT_ASSERT(lvServerCheckRuleFor(lv->versionMajor, lv->versionMinor, lv->versionRevision) ==
+            LV_SC_RULE_221);
+
+  if (lagDrawPlayTo(lv, LV_SC_KILL_ENTRY - 1) != 0) return 1;
+  n = lv_screenServerChecks(got, LV_SC_MAX, &nowMs);
+  UT_ASSERT_MSG(n == 0, "%d checks before the blast", n);
+
+  if (lagDrawPlayTo(lv, LV_SC_KILL_ENTRY) != 0) return 1;
+  UT_ASSERT_MSG(lv->pb->item[0].x == lgmX / 256 && lv->pb->item[0].inTank == FALSE,
+                "the pillbox was not put down: (%u, %u) in tank %d",
+                (unsigned)lv->pb->item[0].x, (unsigned)lv->pb->item[0].y,
+                (int)lv->pb->item[0].inTank);
+  n = lv_screenServerChecks(got, LV_SC_MAX, &nowMs);
+  UT_ASSERT_MSG(n == 1, "%d checks at the blast (want 1)", n);
+  UT_ASSERT(!got[0].exact && got[0].builder == 0 && got[0].shooter == BUILDER_CHECK_NONE);
+  UT_ASSERT_MSG(got[0].startMs == lagDrawMs(LV_SC_KILL_ENTRY), "start %u",
+                (unsigned)got[0].startMs);
+  UT_ASSERT_MSG(got[0].blastX == explX + 128 && got[0].blastY == explY + 128,
+                "blast (%d, %d)", (int)got[0].blastX, (int)got[0].blastY);
+  UT_ASSERT_MSG(got[0].presentX == lgmX && got[0].presentY == lgmY &&
+                    got[0].testedX == lgmX && got[0].testedY == lgmY,
+                "tested (%d, %d) present (%d, %d), want (%d, %d)", (int)got[0].testedX,
+                (int)got[0].testedY, (int)got[0].presentX, (int)got[0].presentY, (int)lgmX,
+                (int)lgmY);
+  UT_ASSERT_MSG(!got[0].solid, "the square is solid: the pillbox put down at the blast "
+                               "counted");
+  UT_ASSERT_MSG(got[0].result == BUILDER_CHECK_DIES, "result %u", (unsigned)got[0].result);
+  {
+    LvServerCheckTexts t;
+    char label[160];
+    t.lives = "LIVES";
+    t.dies = "DIES";
+    t.refused = "HOST REFUSED";
+    t.notTested = "NOT TESTED";
+    t.circleOut = "{string1} {number} > {number2}";
+    t.circleIn = "{string1} {number} <= {number2}";
+    t.boxOut = "{string1} {number} >= {number2}";
+    t.boxIn = "{string1} {number} < {number2}";
+    t.offSquare = "{string1} off square";
+    t.onSquare = "{string1} on square";
+    t.rewind = "(rewind {number})";
+    t.estimate = "estimate";
+    lvServerCheckLabel(&got[0], &t, label, sizeof(label));
+    UT_ASSERT_MSG(strcmp(label, "DIES 57 <= 128 estimate") == 0, "label \"%s\"", label);
+  }
+
+  /* The steps after it make no new check: the explosion is not new. */
+  if (lagDrawPlayTo(lv, LV_SC_KILL_ENTRY + 3) != 0) return 1;
+  n = lv_screenServerChecks(got, LV_SC_MAX, &nowMs);
+  UT_ASSERT_MSG(n == 1, "%d checks after the blast (want 1)", n);
+
+  /* B's builder: the tank's pillbox counts, so the square is solid. */
+  if (lagDrawPlayTo(lv, LV_SC_TANK_ENTRY) != 0) return 1;
+  n = lv_screenServerChecks(got, LV_SC_MAX, &nowMs);
+  {
+    int at = -1, j;
+    for (j = 0; j < n; j++) {
+      if (got[j].startMs == lagDrawMs(LV_SC_TANK_ENTRY)) {
+        UT_ASSERT_MSG(at < 0, "two checks at entry %d", LV_SC_TANK_ENTRY);
+        at = j;
+      }
+    }
+    UT_ASSERT_MSG(at >= 0, "no check at entry %d (%d checks)", LV_SC_TANK_ENTRY, n);
+    UT_ASSERT_MSG(got[at].builder == 1 && got[at].presentX == bLgmX && got[at].solid &&
+                      got[at].onSquare && got[at].result == BUILDER_CHECK_DIES,
+                  "builder %u present %d solid %d on square %d result %u",
+                  (unsigned)got[at].builder, (int)got[at].presentX, (int)got[at].solid,
+                  (int)got[at].onSquare, (unsigned)got[at].result);
+  }
+
+  lv_screenSetServerCheck(0);
+  lv_decoderDestroy(lv);
+  lv_screenSetHideLobby(savedHide);
+  remove(path);
+  return 0;
+}
+
+/* The lag view's notice for one forward step (lv_lagNoticeFor): a line only
+ * when the view drew an older frame than at the step before, naming the
+ * player's lag change and the snapshot hold when there are, and a plain
+ * line when there is neither. */
+int run_lv_lag_notice(void) {
+  LvLagNotice n;
+  LvLagRecord was = {378520, 40, 3};
+  LvLagRecord now = {378540, 41, 4};
+  LvLagHold hold;
+  LvLagHold none;
+
+  memset(&none, 0, sizeof(none));
+  memset(&hold, 0, sizeof(hold));
+  hold.on = true;
+  hold.ms = 60;
+  hold.gameMs = 20;
+  hold.tickFrom = 30498;
+  hold.tickTo = 30500;
+
+  /* The view moved on or stayed: nothing, a hold or not. */
+  lv_lagNoticeFor(&n, true, true, 378440, 378460, &was, &now, &hold);
+  UT_ASSERT(!n.any && !n.back && !n.lag && !n.hold);
+  lv_lagNoticeFor(&n, true, true, 378440, 378440, &was, &now, &hold);
+  UT_ASSERT(!n.any);
+  /* The view off, or no frame noted at the step before: nothing. */
+  lv_lagNoticeFor(&n, false, true, 378440, 378420, &was, &now, &hold);
+  UT_ASSERT(!n.any);
+  lv_lagNoticeFor(&n, true, false, 378440, 378420, &was, &now, &hold);
+  UT_ASSERT(!n.any);
+
+  /* Back 20 ms with the rewind 3 -> 4 and a hold: both lines. */
+  lv_lagNoticeFor(&n, true, true, 378440, 378420, &was, &now, &hold);
+  UT_ASSERT(n.any && n.back && n.backMs == 20);
+  UT_ASSERT(n.lag && n.behindWas == 60 && n.behindNow == 80);
+  UT_ASSERT(n.rttWas == 40 && n.rttNow == 41);
+  UT_ASSERT(n.hold && n.run.ms == 60 && n.run.gameMs == 20);
+  UT_ASSERT(n.run.tickFrom == 30498 && n.run.tickTo == 30500);
+
+  /* Back with no hold: the lag line alone. */
+  lv_lagNoticeFor(&n, true, true, 378440, 378420, &was, &now, &none);
+  UT_ASSERT(n.any && n.lag && !n.hold);
+  lv_lagNoticeFor(&n, true, true, 378440, 378420, &was, &now, NULL);
+  UT_ASSERT(n.any && n.lag && !n.hold);
+
+  /* Back with the same record: no lag line; the hold line, or the plain
+     line alone. */
+  lv_lagNoticeFor(&n, true, true, 378440, 378420, &now, &now, &hold);
+  UT_ASSERT(n.any && n.back && !n.lag && n.hold);
+  lv_lagNoticeFor(&n, true, true, 378440, 378420, &now, &now, &none);
+  UT_ASSERT(n.any && n.back && !n.lag && !n.hold);
+  /* Only the round trip changed: still the lag line. */
+  was.rewind = 4;
+  lv_lagNoticeFor(&n, true, true, 378440, 378420, &was, &now, NULL);
+  UT_ASSERT(n.lag && n.behindWas == 80 && n.behindNow == 80 && n.rttWas == 40);
+  /* No record at the step before: no lag line. */
+  lv_lagNoticeFor(&n, true, true, 378440, 378400, NULL, &now, NULL);
+  UT_ASSERT(n.any && n.backMs == 40 && !n.lag);
+  return 0;
+}
+
+/*
+ * The lag view's notice on a real recording, on ask only: set WB_LV_LN_WBV
+ * to the JonnyWar I game of Nov 19 ("2026-11-19 19.28 JonnyWar I - Demon3,
+ * rooklift, jasanimi, Sethos, Demon1.wbv"). With no file set it skips
+ * (UT_SKIP). The view is on for Demon1 (slot 4). At 378500 the server wrote
+ * the block before a snapshot, at 378520 the snapshot and at 378540 the
+ * server tick: the game moved one step (ticks 30498 to 30500) in 60 ms of
+ * playback, and the view holds at 378500. At 378540 Demon1's rewind goes
+ * 3 -> 4 (60 -> 80 ms behind, round trip 40 -> 41 ms), so the frame drawn
+ * goes from 378440 to 378420. Forward play gives one notice there, with
+ * both lines; a seek back or a long seek forward over it gives none; a one
+ * step seek onto it (the "." key) gives it again.
+ */
+int run_lv_lag_notice_recording(void) {
+  const char *path = getenv("WB_LV_LN_WBV");
+  static char pathBuf[1024];
+  LogViewerState *lv;
+  int savedHide = lv_screenGetHideLobby();
+  LvLagNotice n;
+  uint32_t serial, notices = 0, noticeAt = 0;
+
+  if (path == NULL || path[0] == '\0') {
+    UT_SKIP("WB_LV_LN_WBV not set: nothing to check");
+  }
+  snprintf(pathBuf, sizeof(pathBuf), "%s", path);
+  lv_screenSetHideLobby(0);
+  lv_screenSetLagFeature(1);
+  lv = lv_decoderCreate(false);
+  UT_ASSERT(lv != NULL);
+  lv_screenSetSizeX(30);
+  lv_screenSetSizeY(30);
+  UT_ASSERT_MSG(lv_screenLoadMap(pathBuf, 4) == TRUE, "%s did not load", path);
+  lv->fastForwarding = FALSE;
+  lv_screenSeekToTimeMs(378000);
+  UT_ASSERT(lv->timeRunning == 378000);
+  lv_screenLagViewSet(4);
+  UT_ASSERT(lv_screenLagViewSlot() == 4);
+
+  /* Forward play over the snapshot. */
+  serial = lv_screenLagNotice(NULL);
+  while (lv->isPlaying == TRUE && lv->timeRunning < 378700) {
+    uint32_t s;
+    lv_screenLogTick();
+    s = lv_screenLagNotice(&n);
+    if (s != serial) {
+      serial = s;
+      notices++;
+      noticeAt = lv->timeRunning;
+      printf("  notice at %u: back %u ms, lag %d (%d -> %d behind, %d -> %d rtt), "
+             "hold %d (%u ms, game %u ms, tick %u to %u)\n",
+             (unsigned)n.atMs, (unsigned)n.backMs, (int)n.lag, n.behindWas, n.behindNow,
+             n.rttWas, n.rttNow, (int)n.hold, (unsigned)n.run.ms, (unsigned)n.run.gameMs,
+             (unsigned)n.run.tickFrom, (unsigned)n.run.tickTo);
+    }
+  }
+  UT_ASSERT_MSG(notices == 1 && noticeAt == 378540, "%u notices, the last at %u",
+                (unsigned)notices, (unsigned)noticeAt);
+  lv_screenLagNotice(&n);
+  UT_ASSERT(n.any && n.atMs == 378540 && n.back && n.backMs == 20);
+  UT_ASSERT(n.lag && n.behindWas == 60 && n.behindNow == 80);
+  UT_ASSERT(n.rttWas == 40 && n.rttNow == 41);
+  UT_ASSERT(n.hold && n.run.tickFrom == 30498 && n.run.tickTo == 30500);
+  UT_ASSERT(n.run.ms == 60 && n.run.gameMs == 20);
+
+  /* A seek back, a long seek forward over the step and a step back: none. */
+  lv_screenSeekToTimeMs(378400);
+  lv_screenSeekToTimeMs(378600);
+  lv_screenSeekToTimeMs(378580);
+  UT_ASSERT(lv_screenLagNotice(NULL) == serial);
+  /* A one-step seek onto it, as the "." key makes: the notice again. */
+  lv_screenSeekToTimeMs(378520);
+  UT_ASSERT(lv->timeRunning == 378520);
+  lv_screenSeekToTimeMs(378540);
+  UT_ASSERT_MSG(lv_screenLagNotice(&n) == serial + 1, "a one-step seek gave no notice");
+  UT_ASSERT(n.atMs == 378540 && n.lag && n.hold);
+  /* A change of player gives none: the view moved to another player and
+     back, and forward play from there. */
+  serial = lv_screenLagNotice(NULL);
+  lv_screenSeekToTimeMs(378500);
+  lv_screenLogTick();
+  lv_screenLagViewSet(-1);
+  lv_screenLagViewSet(4);
+  lv_screenLogTick();
+  UT_ASSERT(lv->timeRunning == 378540);
+  UT_ASSERT(lv_screenLagNotice(NULL) == serial);
+
+  lv_screenLagViewSet(-1);
+  lv_screenSetLagFeature(0);
+  lv_decoderDestroy(lv);
+  lv_screenSetHideLobby(savedHide);
   return 0;
 }

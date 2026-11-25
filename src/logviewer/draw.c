@@ -54,9 +54,11 @@
 #include "lv_builder_draw.h"
 #include "lv_pill_numbers.h"
 #include "lv_hitbox.h"
+#include "lv_server_check.h"
 #include "lv_pillbox.h"
 #include "lv_zoom_text.h"
 #include "clientmutex.h"
+#include "../gui/lang.h"
 #include "../gui/sdl3/sdl_bmp.h"
 #include "../gui/sdl3/sprite_positions.h"
 #include "../gui/sdl3/tileloader.h"
@@ -177,6 +179,14 @@ static LvHitLgmPos  s_hitLgmPos[MAX_TANKS];
 static int          s_hitLgmCount = 0;
 /* The zoom factor the places were noted at: target pixels per art pixel. */
 static BYTE         s_hitZoom = 1;
+/* The centre of each explosion lv_drawShells drew, in render-target
+   pixels, for the pulsing dot (lvHitboxBlastCentreInPicture). Noted only
+   while hit boxes are on, and only on the step the explosion is new
+   (lv_screenNewBlasts). */
+#define LV_HIT_BLAST_MAX 256
+static SDL_FPoint   s_hitBlast[LV_HIT_BLAST_MAX];
+static int          s_hitBlastCount = 0;
+static BYTE         s_hitBlastZoom = 1;
 /* The last blit of the map into the window: the slice of the target it took
  * and where it went, in framebuffer pixels. A click on the map is matched
  * against the tanks with these (lv_drawTankAtPoint). */
@@ -188,17 +198,15 @@ static uint32_t g_dwFrameTotal = 0;
 
 /* Stepped zoom table. Up to 1.0 the values are the map editor's
  * (mapeditor.c); above it the viewer has its own, with 1.5 between 1.0
- * and 2.0, and stops at 4.0.
+ * and 2.0, and stops at 16.0 (1600%), where one art pixel is 16 points:
+ * close enough to see the single-pixel marks of Hit Boxes.
  * Below 1.0 the texture target grows so we can show more tiles, then
  * the blit scales it down; at and above 1.0 the texture target stays
  * sized to the visible tile count and the blit scales it up.
  * At 1.5 a map square is 24 points, so the pixels of the art are 1 and 2
  * pixels of the display in turn: sharp, but not all the same width.
  * ZOOM_STEP_1X is the place of 1.0 in the table. */
-static const float g_zoomSteps[] = {
-    0.5f, 0.6f, 0.7f, 0.8f, 0.9f,
-    1.0f, 1.5f, 2.0f, 3.0f, 4.0f
-};
+static const float g_zoomSteps[] = { LV_ZOOM_STEP_LIST };
 #define ZOOM_STEP_COUNT ((int)(sizeof(g_zoomSteps) / sizeof(g_zoomSteps[0])))
 #define ZOOM_STEP_1X    5
 
@@ -557,6 +565,8 @@ static void lvDrawPingsOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
 static void lvDrawPillNumbersOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
 static void lvDrawBaseNumbersOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
 static void lvDrawHitBoxesOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
+static void lvDrawHitDotsOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
+static void lvDrawServerCheckOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
 
 /* Paint the world render target into the viewer's own window.
  *
@@ -634,6 +644,8 @@ static void lvDrawBlitTargetToWindow(void) {
         /* Under the bars and the names: thin lines that should not hide
            them. */
         lvDrawHitBoxesOverBlit(&srcRect, &dstRect);
+        lvDrawHitDotsOverBlit(&srcRect, &dstRect);
+        lvDrawServerCheckOverBlit(&srcRect, &dstRect);
         /* The bars first, so a name is never under one. */
         lvDrawTankBarsOverBlit(&srcRect, &dstRect);
         lvDrawBuilderStatusOverBlit(&srcRect, &dstRect);
@@ -662,7 +674,7 @@ static void lv_drawApplyZoomStep(int newStepIndex, int mouseScreenX, int mouseSc
     BYTE  zf;
     float maxGx, maxGy;
     int   curTexW, curTexH;
-    int   gameW;
+    int   newPxX, newPxY;
     int   mapW = 0;
     int   dockL = 0, dockT = 0, dockR = 0, dockB = 0;
     LvDockMargins dock = { 0, 0, 0, 0 };
@@ -730,21 +742,15 @@ static void lv_drawApplyZoomStep(int newStepIndex, int mouseScreenX, int mouseSc
     anchorTileX = (float)oldOffX + (float)oldSubX / (float)TILE_SIZE_X + gx / oldEffective;
     anchorTileY = (float)oldOffY + (float)oldSubY / (float)TILE_SIZE_Y + gy / oldEffective;
 
-    /* Compute new viewport tile count so the blit fills (approximately)
-     * the available window area at the new zoom. Use the same nearest-
-     * tile rounding the resize handler uses, just in zoomed pixel space. */
-    gameW = windowW;
+    /* Compute new viewport tile count so the blit covers the map's part
+     * of the window at the new zoom. A zoom step does not resize the
+     * window, so the map runs up to its edges: the last square may go a
+     * little way past an edge, or under a sidebar, rather than stop short
+     * (one square is 256 points at 1600%). */
     newEffective = (float)(zf * TILE_SIZE_X) * newZoom;
     if (newEffective <= 0.0f) newEffective = (float)TILE_SIZE_X;
-    newTilesX = (int)(((float)gameW + newEffective * 0.5f) / newEffective);
-    /* Beside a sidebar the map runs up to the sidebar's edge: the last
-     * square may go a little way under it rather than stop short. */
-    if (dockL + dockR > 0) {
-        gameW = mapW;
-        newTilesX = lvFitTilesCover(gameW, newEffective);
-    }
-    newTilesY = (int)(((float)gameH + newEffective * 0.5f) / newEffective);
-    if (dockT + dockB > 0) newTilesY = lvFitTilesCover(gameH, newEffective);
+    newTilesX = lvFitTilesCover(mapW, newEffective);
+    newTilesY = lvFitTilesCover(gameH, newEffective);
     if (newTilesX < 1) newTilesX = 1;
     if (newTilesY < 1) newTilesY = 1;
     if (newTilesX > 255) newTilesX = 255;
@@ -753,6 +759,10 @@ static void lv_drawApplyZoomStep(int newStepIndex, int mouseScreenX, int mouseSc
     /* Place the anchor tile back under the cursor at the new zoom. */
     newOffXf = anchorTileX - gx / newEffective;
     newOffYf = anchorTileY - gy / newEffective;
+    /* The same start in art pixels, with the part of a square kept, so the
+     * point under the cursor stays there to the art pixel. */
+    newPxX = lvZoomStartArtPx(anchorTileX, gx, newEffective);
+    newPxY = lvZoomStartArtPx(anchorTileY, gy, newEffective);
 
     maxOffX = 255 - newTilesX;
     maxOffY = 255 - newTilesY;
@@ -777,10 +787,11 @@ static void lv_drawApplyZoomStep(int newStepIndex, int mouseScreenX, int mouseSc
     if (newTilesY != curTilesY) lv_screenSetSizeY((BYTE)newTilesY);
 
     lv_screenSetOffset((BYTE)newOffX, (BYTE)newOffY);
-    /* Zoom anchors on the cursor's tile, not its sub-tile pixel; reset
-     * sub-pan so the new viewport doesn't carry an offset from the
-     * pre-zoom sub-pixel position. */
     lv_screenSetSubOffset(0, 0);
+    /* Then the start to the art pixel: whole squares and the part of a
+     * square, held inside the map (nothing while no log is open, when the
+     * whole squares above stand). */
+    lv_screenPanToTotalPixels(newPxX, newPxY);
     lv_drawDirtyScreen();
     lv_windowNeedRedraw();
 }
@@ -1672,15 +1683,46 @@ void lv_drawShells(screenBullets *sBullets) {
     int total, count, srcX, srcY, srcW, srcH;
     float fx, fy;
     BYTE px, py, frame, mx, my, zf;
+    const LvHitBlastRec *newBlast = NULL;
+    int newBlastCount = 0;
+    BYTE viewX = 0, viewY = 0;
     
     total = lv_screenBulletsGetNumEntries(sBullets);
     zf = lv_windowGetZoomFactor();
-    
+    s_hitBlastCount = 0;
+    s_hitBlastZoom = zf;
+    /* The explosions that are new on this map, in map squares: the shell
+       list's squares are from the view's top left. They get the frame 8
+       picture (lvHitboxDrawFrame) and, with Hit Boxes on, the dot. */
+    newBlastCount = lv_screenNewBlasts(&newBlast);
+    lv_screenGetOffsets(&viewX, &viewY);
+
     for (count = 1; count <= total; count++) {
         lv_screenBulletsGetItem(sBullets, count, &mx, &my, &px, &py, &frame);
         spritePositionShell(0.0f, 0.0f, GFX_ANIM_CLASSIC, (float)zf, 1,
                             mx, my, px, py, px << 4, py << 4, frame, &fx, &fy);
-        
+        /* The blast point of an explosion, for the pulsing dot: only on the
+           step the explosion is new (lv_screenNewBlasts), not by its
+           frame, which the server can have lowered before it wrote the
+           step. The picture of an explosion has its top left at (fx, fy). */
+        if (newBlastCount > 0 && lvHitboxIsBlastFrame(frame)) {
+            int k;
+            for (k = 0; k < newBlastCount; k++) {
+                const LvHitBlastRec *nb = &newBlast[k];
+                if ((int)nb->mx == (int)viewX + (int)mx && (int)nb->my == (int)viewY + (int)my &&
+                    nb->px == px && nb->py == py && nb->frame == frame) {
+                    if (s_hitBoxes && s_hitBlastCount < LV_HIT_BLAST_MAX) {
+                        float c = (float)zf * (float)lvHitboxBlastCentreInPicture();
+                        s_hitBlast[s_hitBlastCount].x = fx + c;
+                        s_hitBlast[s_hitBlastCount].y = fy + c;
+                        s_hitBlastCount++;
+                    }
+                    frame = lvHitboxDrawFrame(frame, true);
+                    break;
+                }
+            }
+        }
+
         switch (frame) {
         case SHELL_EXPLOSION8: srcX = zf*EXPLOSION8_X; srcY = zf*EXPLOSION8_Y; srcW = zf*TILE_SIZE_X; srcH = zf*TILE_SIZE_Y; break;
         case SHELL_EXPLOSION7: srcX = zf*EXPLOSION7_X; srcY = zf*EXPLOSION7_Y; srcW = zf*TILE_SIZE_X; srcH = zf*TILE_SIZE_Y; break;
@@ -1917,17 +1959,42 @@ void lv_drawLGMs(screenLgm *lgms) {
     total = lv_screenLgmGetNumEntries(lgms);
     zf = lv_windowGetZoomFactor();
     s_hitLgmCount = 0;
-    
+
+    /* The hit areas are what the server tested, so they come from the
+       builders where the server tested them (lv_playersMakeScreenLgmTested),
+       not from the list drawn here: in the lag view the drawn builders are
+       one round trip back, as that player's screen showed them, and the
+       server tested them at its builder rewind (shellLgmRewind). With no lag
+       view the two lists are the same. A builder on his parachute is dead:
+       lgmDeathCheckAtPosition tests no dead builder, so he has no hit area.
+       The areas are noted only while hit boxes are on; turning them on asks
+       for a redraw, which notes them again. */
+    if (s_hitBoxes) {
+        LogViewerState *lv = lv_screenGetState();
+        if (lv != NULL) {
+            screenLgm tested;
+            BYTE tTotal, t;
+            int rightEdge = (int)lv->xOffset + lv_screenGetSizeX();
+            int bottomEdge = (int)lv->yOffset + lv_screenGetSizeY();
+            if (rightEdge > 255) rightEdge = 255;
+            if (bottomEdge > 255) bottomEdge = 255;
+            lv_screenLgmCreate(&tested);
+            lv_playersMakeScreenLgmTested(&tested, lv->xOffset, (BYTE)rightEdge, lv->yOffset,
+                                          (BYTE)bottomEdge);
+            tTotal = lv_screenLgmGetNumEntries(&tested);
+            for (t = 1; t <= tTotal && s_hitLgmCount < MAX_TANKS; t++) {
+                lv_screenLgmGetItem(&tested, t, &mx, &my, &px, &py, &frame);
+                if (frame != LGM_HELICOPTER_FRAME) {
+                    lvDrawNoteLgmHit(mx, my, px, py, lv_screenLgmGetSlot(&tested, t), zf);
+                }
+            }
+            lv_screenLgmDestroy(&tested);
+        }
+    }
+
     for (count = 1; count <= total; count++) {
         int picX, picY;            /* the picture's top left, art pixels into his square */
         lv_screenLgmGetItem(lgms, count, &mx, &my, &px, &py, &frame);
-        /* A builder on his parachute is dead: lgmDeathCheckAtPosition tests
-           no dead builder, so he has no hit area. The area is noted only
-           while hit boxes are on; turning them on asks for a redraw, which
-           notes them again. */
-        if (s_hitBoxes && frame != LGM_HELICOPTER_FRAME && s_hitLgmCount < MAX_TANKS) {
-            lvDrawNoteLgmHit(mx, my, px, py, lv_screenLgmGetSlot(lgms, count), zf);
-        }
         /* A walking builder's picture goes 1 art pixel left of and above his
            recorded pixel, as the game draws it (spritePositionLgm), so it
            sits round his place. The parachute is drawn from its own top
@@ -2473,6 +2540,9 @@ BYTE lv_drawGetBaseNumbers(void) {
 
 void lv_drawSetHitBoxes(BYTE on) {
     s_hitBoxes = on ? TRUE : FALSE;
+    /* The Server Check goes with the hit boxes: screen.c keeps its checks
+       only while they are on. */
+    lv_screenSetServerCheck(on ? 1 : 0);
 }
 
 BYTE lv_drawGetHitBoxes(void) {
@@ -2620,6 +2690,261 @@ static void lvDrawHitBoxesOverBlit(const SDL_FRect *src, const SDL_FRect *dst) {
             SDL_SetRenderDrawColor(sdlRenderer, 255, 230, 0, 255);
         }
         lvDrawHitRuns(0, nRuns, shift);
+    }
+
+    SDL_SetRenderDrawColor(sdlRenderer, oldR, oldG, oldB, oldA);
+    SDL_SetRenderDrawBlendMode(sdlRenderer, oldBlend);
+    SDL_SetRenderClipRect(sdlRenderer, hadClip ? &oldClip : NULL);
+}
+
+/* With hit boxes on, a pulsing dot on the blast point of each explosion on
+   the step it is new (s_hitBlast), the point the engine tests builders
+   against, and on each builder out of his tank (s_hitLgmPos), at the place
+   lgmBlastCatches tests and his hit area goes round. A builder's dot is
+   noted where his picture is drawn, so it follows "See What the Selected
+   Player Saw" as the picture does. Each dot is centred on its exact point,
+   not rounded to a pixel, and its size is lvHitboxDotSize. Its colour goes
+   from blue to purple and back every 2 seconds (lvHitboxDotColour), and it
+   pulses from 35% to 100% solid, one rise and fall a second
+   (lvHitboxPulseAlpha). Both go by the wall clock, so they keep on while
+   playback is paused. src is the slice of the target the blit took, dst
+   where it went. */
+static void lvDrawHitDotsOverBlit(const SDL_FRect *src, const SDL_FRect *dst) {
+    float scale, blastK, lgmK, alpha;
+    double hueR, hueG, hueB;
+    uint64_t now;
+    int i;
+    SDL_Rect clip, oldClip;
+    bool hadClip;
+    SDL_BlendMode oldBlend = SDL_BLENDMODE_NONE;
+    Uint8 oldR, oldG, oldB, oldA;
+
+    if (!s_hitBoxes || (s_hitBlastCount == 0 && s_hitLgmCount == 0)) return;
+    if (src->w <= 0.0f || src->h <= 0.0f) return;
+
+    scale = dst->w / src->w;
+    /* Screen pixels to one world unit, as for the hit areas. */
+    blastK = (float)s_hitBlastZoom * scale / (float)LV_HITBOX_WU_PER_PIXEL;
+    lgmK = (float)s_hitZoom * scale / (float)LV_HITBOX_WU_PER_PIXEL;
+    now = (uint64_t)SDL_GetTicks();
+    alpha = (float)lvHitboxPulseAlpha(now);
+    lvHitboxDotColour(now, &hueR, &hueG, &hueB);
+
+    hadClip = SDL_RenderClipEnabled(sdlRenderer);
+    SDL_GetRenderClipRect(sdlRenderer, &oldClip);
+    clip.x = (int)dst->x;
+    clip.y = (int)dst->y;
+    clip.w = (int)dst->w;
+    clip.h = (int)dst->h;
+    SDL_SetRenderClipRect(sdlRenderer, &clip);
+    SDL_GetRenderDrawBlendMode(sdlRenderer, &oldBlend);
+    SDL_GetRenderDrawColor(sdlRenderer, &oldR, &oldG, &oldB, &oldA);
+    SDL_SetRenderDrawBlendMode(sdlRenderer, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColorFloat(sdlRenderer, (float)hueR, (float)hueG, (float)hueB, alpha);
+
+    for (i = 0; i < s_hitBlastCount; i++) {
+        float cx = dst->x + (s_hitBlast[i].x - src->x) * scale;
+        float cy = dst->y + (s_hitBlast[i].y - src->y) * scale;
+        LvHitDotRect d = lvHitboxDotRect(cx, cy, blastK);
+        SDL_FRect r;
+        r.x = d.x; r.y = d.y; r.w = d.w; r.h = d.h;
+        SDL_RenderFillRect(sdlRenderer, &r);
+    }
+    for (i = 0; i < s_hitLgmCount; i++) {
+        const LvHitLgmPos *h = &s_hitLgmPos[i];
+        float tx = (float)lvHitboxLgmDotAt(h->sqX, h->bx, s_hitZoom);
+        float ty = (float)lvHitboxLgmDotAt(h->sqY, h->by, s_hitZoom);
+        float cx = dst->x + (tx - src->x) * scale;
+        float cy = dst->y + (ty - src->y) * scale;
+        LvHitDotRect d = lvHitboxDotRect(cx, cy, lgmK);
+        SDL_FRect r;
+        r.x = d.x; r.y = d.y; r.w = d.w; r.h = d.h;
+        SDL_RenderFillRect(sdlRenderer, &r);
+    }
+
+    SDL_SetRenderDrawColor(sdlRenderer, oldR, oldG, oldB, oldA);
+    SDL_SetRenderDrawBlendMode(sdlRenderer, oldBlend);
+    SDL_SetRenderClipRect(sdlRenderer, hadClip ? &oldClip : NULL);
+}
+
+/* --- Server Check ------------------------------------------------------
+ * What the server tested when a shell's blast came near a builder who was
+ * out (lv_server_check.h, lv_screenServerChecks), drawn with the hit boxes
+ * for LV_SC_SHOW_MS of playback time from the blast's first step. It fades
+ * by playback time, so it stays as it is while playback is paused. For
+ * each check:
+ *   - the kill area of the rule, in the colour of the pulsing dot: the
+ *     blast's square for a solid hit, else the circle or the box of
+ *     lgm_blast_shape, cut by pill_range (lvServerCheckOpenArea);
+ *   - a line from the blast to the place the server tested;
+ *   - the tested place as an orange dot, the present place as an orange
+ *     ring;
+ *   - the label (lvServerCheckLabel) over the area.
+ * Places are in world units: a world unit is zf / 16 target pixels, from
+ * the view's top left square, as for the hit areas. */
+#define LV_SC_TESTED_R      3.5f   /* the tested dot's radius, screen pixels */
+#define LV_SC_PRESENT_IN    4.5f   /* the present ring's inner radius */
+#define LV_SC_PRESENT_OUT   6.0f   /* the present ring's outer radius */
+#define LV_SC_AREA_HALF_W   1.0f   /* half the width of the area's line */
+static TTF_Font *lvPingNameFont(void);
+
+/* An outline of the box (x0, y0) to (x1, y1), 2 * w pixels wide, in the
+   draw colour. */
+static void lvScOutlineRect(float x0, float y0, float x1, float y1, float w) {
+    SDL_FRect r[4];
+    r[0].x = x0 - w; r[0].y = y0 - w; r[0].w = x1 - x0 + 2.0f * w; r[0].h = 2.0f * w;
+    r[1].x = x0 - w; r[1].y = y1 - w; r[1].w = x1 - x0 + 2.0f * w; r[1].h = 2.0f * w;
+    r[2].x = x0 - w; r[2].y = y0 - w; r[2].w = 2.0f * w; r[2].h = y1 - y0 + 2.0f * w;
+    r[3].x = x1 - w; r[3].y = y0 - w; r[3].w = 2.0f * w; r[3].h = y1 - y0 + 2.0f * w;
+    SDL_RenderFillRects(sdlRenderer, r, 4);
+}
+
+static void lvDrawServerCheckOverBlit(const SDL_FRect *src, const SDL_FRect *dst) {
+    LvServerCheck checks[LV_SC_MAX];
+    LvServerCheckTexts t;
+    uint32_t nowMs = 0;
+    int n, i, j;
+    BYTE offX = 0, offY = 0, zf;
+    float scale, k, baseX, baseY;
+    double hueR, hueG, hueB;
+    SDL_Rect clip, oldClip;
+    bool hadClip;
+    SDL_BlendMode oldBlend = SDL_BLENDMODE_NONE;
+    Uint8 oldR, oldG, oldB, oldA;
+    TTF_Font *font;
+
+    if (!s_hitBoxes || sdlRenderer == NULL) return;
+    if (src->w <= 0.0f || src->h <= 0.0f) return;
+    /* Playback adds the checks on the timer thread, under the client
+       mutex: copy them out under it. */
+    lv_clientMutexWaitFor();
+    n = lv_screenServerChecks(checks, LV_SC_MAX, &nowMs);
+    lv_screenGetOffsets(&offX, &offY);
+    lv_clientMutexRelease();
+    if (n <= 0) return;
+
+    zf = lv_windowGetZoomFactor();
+    scale = dst->w / src->w;
+    /* Screen pixels to one world unit, and the screen place of world unit
+       0 on each axis. */
+    k = (float)zf * scale / (float)LV_HITBOX_WU_PER_PIXEL;
+    baseX = dst->x - src->x * scale - (float)offX * 256.0f * k;
+    baseY = dst->y - src->y * scale - (float)offY * 256.0f * k;
+    lvHitboxDotColour((uint64_t)SDL_GetTicks(), &hueR, &hueG, &hueB);
+
+    t.lives = langGetText(STR_LV_SC_LIVES);
+    t.dies = langGetText(STR_LV_SC_DIES);
+    t.refused = langGetText(STR_LV_SC_REFUSED);
+    t.notTested = langGetText(STR_LV_SC_NOT_TESTED);
+    t.circleOut = langGetText(STR_LV_SC_CIRCLE_OUT);
+    t.circleIn = langGetText(STR_LV_SC_CIRCLE_IN);
+    t.boxOut = langGetText(STR_LV_SC_BOX_OUT);
+    t.boxIn = langGetText(STR_LV_SC_BOX_IN);
+    t.offSquare = langGetText(STR_LV_SC_OFF_SQUARE);
+    t.onSquare = langGetText(STR_LV_SC_ON_SQUARE);
+    t.rewind = langGetText(STR_LV_SC_REWIND);
+    t.estimate = langGetText(STR_LV_SC_ESTIMATE);
+    font = lvPingNameFont();
+
+    hadClip = SDL_RenderClipEnabled(sdlRenderer);
+    SDL_GetRenderClipRect(sdlRenderer, &oldClip);
+    clip.x = (int)dst->x;
+    clip.y = (int)dst->y;
+    clip.w = (int)dst->w;
+    clip.h = (int)dst->h;
+    SDL_SetRenderClipRect(sdlRenderer, &clip);
+    SDL_GetRenderDrawBlendMode(sdlRenderer, &oldBlend);
+    SDL_GetRenderDrawColor(sdlRenderer, &oldR, &oldG, &oldB, &oldA);
+    SDL_SetRenderDrawBlendMode(sdlRenderer, SDL_BLENDMODE_BLEND);
+
+    for (i = 0; i < n; i++) {
+        const LvServerCheck *c = &checks[i];
+        float fade = (float)lvServerCheckAlpha(c->startMs, nowMs);
+        float bx = baseX + (float)c->blastX * k;
+        float by = baseY + (float)c->blastY * k;
+        float tx = baseX + (float)c->testedX * k;
+        float ty = baseY + (float)c->testedY * k;
+        float px = baseX + (float)c->presentX * k;
+        float py = baseY + (float)c->presentY * k;
+        float top = by;
+        SDL_FColor area, orange;
+        int r = 0, half = 0, above = 0;
+        char label[160];
+
+        if (fade <= 0.0f) continue;
+        area.r = (float)hueR; area.g = (float)hueG; area.b = (float)hueB; area.a = fade;
+        orange.r = 1.0f; orange.g = 0.55f; orange.b = 0.0f; orange.a = fade;
+
+        /* The kill area. */
+        SDL_SetRenderDrawColorFloat(sdlRenderer, area.r, area.g, area.b, area.a);
+        if (c->solid) {
+            float sx = baseX + (float)((c->blastX >> 8) << 8) * k;
+            float sy = baseY + (float)((c->blastY >> 8) << 8) * k;
+            lvScOutlineRect(sx, sy, sx + 256.0f * k, sy + 256.0f * k, LV_SC_AREA_HALF_W);
+            top = sy;
+        } else {
+            lvServerCheckOpenArea(c->shape, c->pillRange, &r, &half);
+            if (half > 0) {
+                float h = (float)half * k;
+                lvScOutlineRect(bx - h, by - h, bx + h, by + h, LV_SC_AREA_HALF_W);
+                top = by - h;
+            }
+            if (r > 0) {
+                float rr = (float)r * k;
+                lvDrawRingBand(bx, by, rr - LV_SC_AREA_HALF_W, rr + LV_SC_AREA_HALF_W, area);
+                if (by - rr < top) top = by - rr;
+            }
+        }
+
+        /* The line, then the two places over it. A builder the server did
+           not test has no tested place. */
+        if (c->result != BUILDER_CHECK_NOT_TESTED) {
+            SDL_SetRenderDrawColorFloat(sdlRenderer, 1.0f, 1.0f, 1.0f, 0.8f * fade);
+            SDL_RenderLine(sdlRenderer, bx, by, tx, ty);
+            lvDrawRingBand(tx, ty, 0.0f, LV_SC_TESTED_R, orange);
+        }
+        lvDrawRingBand(px, py, LV_SC_PRESENT_IN, LV_SC_PRESENT_OUT, orange);
+
+        /* The label over the area. The labels of one blast go one over
+           the other. */
+        if (font == NULL) continue;
+        for (j = 0; j < i; j++) {
+            if (checks[j].blastX == c->blastX && checks[j].blastY == c->blastY &&
+                checks[j].startMs == c->startMs) {
+                above++;
+            }
+        }
+        lvServerCheckLabel(c, &t, label, sizeof(label));
+        if (label[0] != '\0') {
+            SDL_Color col = { 255, 255, 255, 255 };
+            SDL_Surface *s;
+            SDL_Texture *tex;
+            if (c->result == BUILDER_CHECK_DIES) {
+                col.r = 255; col.g = 110; col.b = 110;
+            } else if (c->result == BUILDER_CHECK_LIVES) {
+                col.r = 120; col.g = 255; col.b = 120;
+            }
+            s = TTF_RenderText_Blended(font, label, 0, col);
+            if (s == NULL) continue;
+            tex = SDL_CreateTextureFromSurface(sdlRenderer, s);
+            if (tex != NULL) {
+                SDL_FRect d, back;
+                d.w = (float)s->w;
+                d.h = (float)s->h;
+                d.x = SDL_floorf(bx - d.w * 0.5f);
+                d.y = SDL_floorf(top - 4.0f - d.h - (float)above * (d.h + 2.0f));
+                back.x = d.x - 3.0f;
+                back.y = d.y - 1.0f;
+                back.w = d.w + 6.0f;
+                back.h = d.h + 2.0f;
+                SDL_SetRenderDrawColorFloat(sdlRenderer, 0.0f, 0.0f, 0.0f, 0.6f * fade);
+                SDL_RenderFillRect(sdlRenderer, &back);
+                SDL_SetTextureAlphaModFloat(tex, fade);
+                SDL_RenderTexture(sdlRenderer, tex, NULL, &d);
+                SDL_DestroyTexture(tex);
+            }
+            SDL_DestroySurface(s);
+        }
     }
 
     SDL_SetRenderDrawColor(sdlRenderer, oldR, oldG, oldB, oldA);

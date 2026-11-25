@@ -579,4 +579,203 @@ static inline void lvHitboxBuilderOutline(double bx, double by, unsigned solid, 
     }
 }
 
+/* The pulsing dot at the centre of each shell explosion, and on each
+ * builder out of his tank (lvHitboxLgmDotAt).
+ *
+ * The engine tests builders against the shell's own end place (newX, newY
+ * in shellsUpdate, src/bolo/shells.c). The explosion record is put
+ * TANK_SUBTRACT (128) world units up and left of that place and then
+ * rounded down to an art pixel (explosionsAddItem), and the game draws the
+ * explosion's 16 by 16 picture with its top left on that record. So the
+ * blast point is 128 world units plus 0 to 15 more from the picture's top
+ * left on each axis; the middle of those 16, 135.5, is the closest guess,
+ * as for a tank (lvHitboxTankPlace). */
+#define LV_HITBOX_BLAST_OFFSET 128
+/* The dot: one art pixel (16 world units) across while that is small on
+   the screen. Zoomed in, it is LV_HITBOX_DOT_NEAR_WU across, but never less
+   than LV_HITBOX_DOT_MIN_PX screen pixels (lvHitboxDotSize). */
+#define LV_HITBOX_DOT_WU      LV_HITBOX_WU_PER_PIXEL
+#define LV_HITBOX_DOT_NEAR_WU 4
+#define LV_HITBOX_DOT_MIN_PX  2.0f
+#define LV_HITBOX_PULSE_MS   1000u
+#define LV_HITBOX_PULSE_LOW  0.35
+#define LV_HITBOX_PULSE_HIGH 1.0
+
+/* The blast point, in art pixels from the top left of the explosion's
+   picture (the same on both axes). */
+static inline double lvHitboxBlastCentreInPicture(void) {
+    return (lvHitboxTankPlace(0) + LV_HITBOX_BLAST_OFFSET) / (double)LV_HITBOX_WU_PER_PIXEL;
+}
+
+/* How solid the dot is at wall-clock time ms: a cosine, so it rises and
+   falls smoothly with no hard step. It is at LV_HITBOX_PULSE_LOW at the
+   start of each period and at LV_HITBOX_PULSE_HIGH half way. */
+static inline double lvHitboxPulseAlpha(uint64_t ms) {
+    const double twoPi = 2.0 * 3.14159265358979323846;
+    double phase = (double)(ms % LV_HITBOX_PULSE_MS) / (double)LV_HITBOX_PULSE_MS;
+    double rise = 0.5 - 0.5 * cos(phase * twoPi);
+    return LV_HITBOX_PULSE_LOW + (LV_HITBOX_PULSE_HIGH - LV_HITBOX_PULSE_LOW) * rise;
+}
+
+/* The dot's colour goes from blue to purple and back once each
+   LV_HITBOX_HUE_MS, by the wall clock, so it keeps moving while playback is
+   paused. The hue is in degrees on the colour wheel. */
+#define LV_HITBOX_HUE_MS   2000u
+#define LV_HITBOX_HUE_LOW  240.0   /* blue */
+#define LV_HITBOX_HUE_HIGH 285.0   /* purple */
+
+/* The dot's hue at wall-clock time ms: a cosine, so it goes smoothly from
+   LV_HITBOX_HUE_LOW at the start of each period to LV_HITBOX_HUE_HIGH half
+   way, and back. */
+static inline double lvHitboxDotHue(uint64_t ms) {
+    const double twoPi = 2.0 * 3.14159265358979323846;
+    double phase = (double)(ms % LV_HITBOX_HUE_MS) / (double)LV_HITBOX_HUE_MS;
+    double rise = 0.5 - 0.5 * cos(phase * twoPi);
+    return LV_HITBOX_HUE_LOW + (LV_HITBOX_HUE_HIGH - LV_HITBOX_HUE_LOW) * rise;
+}
+
+/* The dot's colour at wall-clock time ms, each part 0..1: the hue of
+   lvHitboxDotHue at full saturation and brightness. From 240 to 300
+   degrees blue is full, green is 0 and red rises from 0 to 1. */
+static inline void lvHitboxDotColour(uint64_t ms, double *r, double *g, double *b) {
+    double h = lvHitboxDotHue(ms);
+    *r = (h - 240.0) / 60.0;
+    if (*r < 0.0) *r = 0.0;
+    if (*r > 1.0) *r = 1.0;
+    *g = 0.0;
+    *b = 1.0;
+}
+
+/* The dot's size in screen pixels, for pxPerWu screen pixels to a world
+   unit: LV_HITBOX_DOT_NEAR_WU world units, but never less than
+   LV_HITBOX_DOT_MIN_PX screen pixels and never more than one art pixel.
+   At 100% zoom and less that is one art pixel. It is never less than one
+   screen pixel, so it still shows at the smallest zoom. */
+static inline float lvHitboxDotSize(float pxPerWu) {
+    float art = (float)LV_HITBOX_DOT_WU * pxPerWu;
+    float s = (float)LV_HITBOX_DOT_NEAR_WU * pxPerWu;
+    if (s < LV_HITBOX_DOT_MIN_PX) s = LV_HITBOX_DOT_MIN_PX;
+    if (s > art) s = art;
+    if (s < 1.0f) s = 1.0f;
+    return s;
+}
+
+/* The dot's square on the screen: size across (lvHitboxDotSize), centred
+   exactly on (cx, cy). It is not rounded to whole pixels or to art pixels,
+   so it keeps the point's full world-unit place. */
+typedef struct LvHitDotRect {
+    float x, y, w, h;
+} LvHitDotRect;
+static inline LvHitDotRect lvHitboxDotRect(float cx, float cy, float pxPerWu) {
+    LvHitDotRect r;
+    float size = lvHitboxDotSize(pxPerWu);
+    r.x = cx - size * 0.5f;
+    r.y = cy - size * 0.5f;
+    r.w = size;
+    r.h = size;
+    return r;
+}
+
+/* A builder's dot, on one axis, in render-target pixels: sq is the top left
+   of his square on the target and b his place in it in world units (the
+   place lgmBlastCatches tests, as his hit area uses it), at zf target pixels
+   to an art pixel. */
+static inline double lvHitboxLgmDotAt(double sq, double b, int zf) {
+    return sq + b * (double)zf / (double)LV_HITBOX_WU_PER_PIXEL;
+}
+
+/* One record of the map's shell list: the square, the art pixel in it and
+   the frame. Frames 1 to 8 are explosions (SHELL_EXPLOSION8 to
+   SHELL_EXPLOSION1): an explosion starts at 8 and counts down. */
+typedef struct LvHitBlastRec {
+    uint8_t mx, my, px, py, frame;
+} LvHitBlastRec;
+
+/* The most records of the step before that lvHitboxNewBlasts can match. */
+#define LV_HITBOX_BLAST_PREV_MAX 256
+
+static inline bool lvHitboxIsBlastFrame(uint8_t frame) {
+    return frame >= 1 && frame <= 8;
+}
+
+/* Which explosions of a recorded step are new, for the dot: isNew[i] is 1
+   when cur[i] is an explosion with no explosion at its place in the step
+   before (prev), and 0 otherwise.
+
+   The dot cannot go by the frame. The server lowers each explosion's frame
+   once every third tick, after it adds the new ones and before it writes
+   the tick to the log, so an explosion can be first recorded at frame 7,
+   and one at frame 8 can stay at 8 for two steps.
+
+   An explosion does not move, and its frame never goes up. So an
+   explosion of the step before at the same place, with a frame the same
+   or higher, is the same one; each one of the step before matches one
+   explosion only. The explosions are matched from the lowest frame up,
+   each to the unused one of the step before with the closest frame, so
+   that one in the middle of a stack does not take the match of a lower
+   one (the step before 7, 5, 3, 1 and this step 7, 6, 4, 2: the 6 is the
+   old 7, and the 7 is new). A new explosion on the place of an older one
+   has a higher frame than it, and so is new.
+
+   havePrev is false when the step before is not known (the first step,
+   or a jump in time), and then no explosion is new: no dot is better than
+   a wrong one. For the same reason no explosion is new when the step
+   before has more records than LV_HITBOX_BLAST_PREV_MAX. */
+static inline void lvHitboxNewBlasts(const LvHitBlastRec *prev, int nPrev, bool havePrev,
+                                     const LvHitBlastRec *cur, int nCur, uint8_t *isNew) {
+    bool used[LV_HITBOX_BLAST_PREV_MAX];
+    int i, k, f;
+
+    if (nCur <= 0 || isNew == NULL) {
+        return;
+    }
+    if (nPrev < 0) nPrev = 0;
+    if (!havePrev || nPrev > LV_HITBOX_BLAST_PREV_MAX) {
+        for (i = 0; i < nCur; i++) {
+            isNew[i] = 0;
+        }
+        return;
+    }
+    for (k = 0; k < nPrev; k++) {
+        used[k] = false;
+    }
+    for (i = 0; i < nCur; i++) {
+        isNew[i] = 0;
+    }
+    for (f = 1; f <= 8; f++) {
+        for (i = 0; i < nCur; i++) {
+            const LvHitBlastRec *c = &cur[i];
+            int best = -1;
+            if (c->frame != f) {
+                continue;
+            }
+            for (k = 0; k < nPrev; k++) {
+                const LvHitBlastRec *p = &prev[k];
+                if (used[k] || !lvHitboxIsBlastFrame(p->frame) || p->mx != c->mx ||
+                    p->my != c->my || p->px != c->px || p->py != c->py ||
+                    p->frame < c->frame) {
+                    continue;
+                }
+                if (best < 0 || p->frame < prev[best].frame) {
+                    best = k;
+                }
+            }
+            if (best >= 0) {
+                used[best] = true;
+            } else {
+                isNew[i] = 1;
+            }
+        }
+    }
+}
+
+/* The frame to draw for an explosion recorded at frame: a new explosion
+   (lvHitboxNewBlasts) recorded at frame 7 is drawn with the frame 8
+   picture on that step, so every explosion starts with its first picture.
+   The server lowered the frame before it wrote the step; the recording is
+   not changed. Every other step draws the recorded frame. */
+static inline uint8_t lvHitboxDrawFrame(uint8_t frame, bool isNew) {
+    return (isNew && frame == 7) ? 8 : frame;
+}
+
 #endif /* LV_HITBOX_H */

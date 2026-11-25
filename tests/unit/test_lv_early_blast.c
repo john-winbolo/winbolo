@@ -4,11 +4,12 @@
  */
 
 /*
- * The Log Viewer's "Screen-True Local Explosions" option
- * (src/logviewer/lv_early_blast.h): when an own
- * shell ends, its early blast, and the match that finds and hides the
- * server's explosion of that shell in the lag view. It works only while
- * "Screen-True Own Shells" is on.
+ * The Log Viewer's "Screen-True Local Explosions"
+ * (src/logviewer/lv_early_blast.h), always on while "See What the Selected
+ * Player Saw" is on: when an own shell ends, its early blast, and the match
+ * that finds and hides the server's explosion of that shell in the lag
+ * view. It starts where the own shells drawn from the present frame
+ * ("Screen-True Own Shells") end.
  */
 #include <stdint.h>
 #include <stdlib.h>
@@ -34,16 +35,6 @@ static LvBlastPt lebExpl(int32_t wx, int32_t wy, uint8_t frame) {
   e.wy = wy;
   e.frame = frame;
   return e;
-}
-
-/* The early blast is drawn only with both lag view toggles on: Toggle
-   Screen-True Local Explosions needs Screen-True Own Shells. */
-int run_lv_early_blast_needs_own_shells(void) {
-  UT_ASSERT(lv_earlyBlastOn(true, true));
-  UT_ASSERT(!lv_earlyBlastOn(true, false));
-  UT_ASSERT(!lv_earlyBlastOn(false, true));
-  UT_ASSERT(!lv_earlyBlastOn(false, false));
-  return 0;
 }
 
 /* The header's numbers are the game's explosion rules. */
@@ -136,6 +127,47 @@ int run_lv_early_blast_match(void) {
   lv_earlyBlastMatch(&b, &c[1], 2020);
   UT_ASSERT(b.matched && b.explX == c[1].wx && b.explY == c[1].wy && b.explMs == 2020);
   UT_ASSERT(!lv_earlyBlastLooking(&b, 2040));
+  return 0;
+}
+
+/* A hit on a pillbox, a base or terrain is at the middle of the hit square
+   in the game, so the early blast moves there when its server explosion is
+   that square middle: on the shell's last square or one step on. A hit on
+   a tank, a square middle farther off, and a place off a square middle
+   leave it at the shell's last place. */
+int run_lv_early_blast_square_hit(void) {
+  LvEarlyBlast b;
+  /* East, last record on square 50, near its east edge. */
+  LvShellPt last = lebPt(50 * 256 + 240, 60 * 256 + 100, 4);
+  LvBlastPt ahead = lebExpl(51 * 256, 60 * 256, 8);  /* middle of 51,60 */
+  LvBlastPt same = lebExpl(50 * 256, 60 * 256, 8);   /* middle of 50,60 */
+  LvBlastPt twoOn = lebExpl(52 * 256, 60 * 256, 8);    /* two squares on */
+  LvBlastPt tank = lebExpl(last.wx - 128 + 32, last.wy - 128, 8);
+
+  memset(&b, 0, sizeof(b));
+  lv_earlyBlastStart(&b, 0, 1000, &last);
+  UT_ASSERT(lv_earlyBlastIsSquareMiddle(ahead.wx, ahead.wy));
+  UT_ASSERT(!lv_earlyBlastIsSquareMiddle(tank.wx, tank.wy));
+  lv_earlyBlastMatch(&b, &ahead, 1000);
+  UT_ASSERT_MSG(b.wx == ahead.wx && b.wy == ahead.wy, "ahead hit drawn at %d,%d, want %d,%d",
+                (int)b.wx, (int)b.wy, (int)ahead.wx, (int)ahead.wy);
+  /* The hide place is the explosion's own. */
+  UT_ASSERT(b.explX == ahead.wx && b.explY == ahead.wy);
+
+  memset(&b, 0, sizeof(b));
+  lv_earlyBlastStart(&b, 0, 1000, &last);
+  lv_earlyBlastMatch(&b, &same, 1000);
+  UT_ASSERT(b.wx == same.wx && b.wy == same.wy);
+
+  memset(&b, 0, sizeof(b));
+  lv_earlyBlastStart(&b, 0, 1000, &last);
+  lv_earlyBlastMatch(&b, &twoOn, 1000);
+  UT_ASSERT(b.wx == last.wx - 128 && b.wy == last.wy - 128);
+
+  memset(&b, 0, sizeof(b));
+  lv_earlyBlastStart(&b, 0, 1000, &last);
+  lv_earlyBlastMatch(&b, &tank, 1000);
+  UT_ASSERT(b.wx == last.wx - 128 && b.wy == last.wy - 128);
   return 0;
 }
 
@@ -306,6 +338,8 @@ int run_lv_early_blast_same_place(void) {
     UT_ASSERT_MSG(l->b[i].matched && l->b[i].explMs == sh[i].endMs,
                   "early blast %d matched %d at %u, want %u", i, (int)l->b[i].matched,
                   (unsigned)l->b[i].explMs, (unsigned)sh[i].endMs);
+    /* Drawn at the square middle, as the game draws a pillbox hit. */
+    UT_ASSERT(l->b[i].wx == sh[i].explX && l->b[i].wy == sh[i].explY);
   }
   free(l);
   return 0;

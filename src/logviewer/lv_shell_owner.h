@@ -7,12 +7,11 @@
  *Name:          Log Viewer shell owner
  *Filename:      lv_shell_owner.h
  *Purpose:
- *  Which player fired each shell. With the Options menu item
- *  "Screen-True Own Shells" on (the default), the lag
- *  view draws the chosen player's own shells from the present
- *  frame, as that player's own screen drew them at once, and
- *  every other shell from the old frame. With it off, every
- *  shell comes from the old frame. The log's shell record
+ *  Which player fired each shell. With "Screen-True Own Shells",
+ *  which is always on while the lag view is on, the lag view
+ *  draws the chosen player's own shells from the present frame,
+ *  as that player's own screen drew them at once, and every
+ *  other shell from the old frame. The log's shell record
  *  (log_Shell) has no owner, so the lag view finds it from
  *  what the recording does hold:
  *

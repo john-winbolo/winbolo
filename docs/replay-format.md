@@ -169,6 +169,7 @@ Selected event types (see the `logitem` enum for the complete list):
 | 70 | `log_MapName` | Pascal-form name of the map the round is played on. Written when the round starts. A log that opens in the lobby writes its header before the host chooses the map, so the header can name the previous round's map; a reader shows this name in its place |
 | 71 | `log_PlayerLag` | One player's network lag: RTT and the rewind the server used (below) |
 | 72 | `log_OverrunStats` | The server's tick timing and each bot's overruns, as the console's overrun lines print them (below) |
+| 74 | `log_BuilderCheck` | What the server tested when a shell's blast came near a builder who was out, and what it found (below). In the `.wbv` only, never in the spectator stream. Code 73 is left for `log_BotHostData`, which another branch adds |
 
 ### `log_GameSettings` payload
 
@@ -751,6 +752,50 @@ record shorter than 44 bytes, or with version 0, is consumed and ignored. A
 viewer made before this record skips it by its framed length, the same as any
 other event it does not know. `tools/wbv_overruns.py` prints a file's records
 as text.
+
+### `log_BuilderCheck` payload
+
+What the server tested when a shell's blast came near a builder, and what it
+found: the builder's tested place, the rule, the rewind and the result. The
+Log Viewer's "Server Check" picture draws it with Hit Boxes on. Built and read
+by `builderCheckRecordEncode` and `builderCheckRecordDecode`
+(`src/bolo/public/builder_check_record.h`). Every multi-byte field is a
+big-endian `u16`. A place is in world units (a map square is 256), the same
+numbers the server tested, with no rounding.
+
+23 bytes:
+
+| Bytes | Field | Notes |
+|---|---|---|
+| 0 | Version | `u8`, 1. A later version adds its fields after the ones below |
+| 1 | Builder | `u8`, the builder's player slot |
+| 2 | Shooter | `u8`, the shell's player slot; 255 for a pillbox's shell |
+| 3 | Pillbox | `u8`, the pillbox index whose shell it was; 255 for none |
+| 4 | Result | `u8`. 0 lives: tested, the blast did not catch him. 1 dies. 2 host refused: caught, and the host (a scenario's `can_die`) refused the death. 3 not tested: the shooter's screen showed no builder, or he was in a tank that could not be hit |
+| 5 | Flags | Bit 0: the square rule (the blast's square is solid, or the shell hit the thing on it). Bit 1: the tested place is on the blast's square. Bit 2: the tested place is from the builder's history, as the shooter's screen had him. Bit 3: he was in his tank on the server. Bit 4: the shell hit a pillbox, wall, forest, boat, shore or bridge |
+| 6 | Shape | `u8`, the `lgm_blast_shape` rule: the open-ground area (0 half-square circle, 1 Mac box, 2 Mac area) |
+| 7 | Rewind | `u8`, game ticks the test went back. 0 is the present |
+| 8 | Shell rewind | `u8`, the shell's own rewind, before the builder's one tick less (`shell_lgm_rewind.h`) |
+| 9–10 | Blast X | `u16` world units |
+| 11–12 | Blast Y | |
+| 13–14 | Tested X | `u16`, where the server tested him |
+| 15–16 | Tested Y | |
+| 17–18 | Present X | `u16`, where he was on the server at that tick, before the test |
+| 19–20 | Present Y | |
+| 21–22 | Pill range | `u16` world units, the `pill_range` rule, which also caps the open-ground area |
+
+Written by the server (`shellsLogBuilderCheck`, `src/bolo/shells.c`) while a
+round log is recorded, once for each builder test of a shell that ended (a
+hit or a shell that ran out), when the builder was out (out now, or out on
+the shooter's screen) and his tested place or his present place is on the
+blast's square or one of its eight neighbours. Mines and tank explosions write
+none. It is written to the `.wbv` only: the spectator stream does not carry it,
+so the network traffic is the same, and it changes nothing in the game.
+
+A reader takes the fields it knows and skips the rest by the framed length. A
+record shorter than 23 bytes, or with version 0, is consumed and ignored. A
+viewer made before this record skips it by its framed length, the same as any
+other event it does not know.
 
 ## Snapshot body
 

@@ -16,6 +16,7 @@
 #include <stdlib.h>
 
 #include "scenario_table.h"  /* ScnTable — the fixture brain's record below */
+#include "builder_check_record.h"  /* BuilderCheckRecord: ut_logBuilderChecks */
 
 #define UT_FAIL(fmt, ...)                                                   \
     do {                                                                    \
@@ -1413,6 +1414,7 @@ int run_log_roundtrip_player_lag_recorded(void);
 /* log_OverrunStats: the record through the writer and back, and a recorded
  * round's records at 0:30, 1:00 and the round end. */
 int run_log_roundtrip_overrun_stats(void);
+int run_log_roundtrip_builder_check(void);
 int run_log_roundtrip_overrun_stats_recorded(void);
 /* The same with two thinking bots: each record has each bot's thinks. */
 int run_log_roundtrip_overrun_stats_bots(void);
@@ -1424,6 +1426,14 @@ int run_server_overrun_stats_due(void);
 int run_lv_player_lag_read(void);
 int run_lv_lag_track(void);
 int run_lv_lag_ring(void);
+/* The Tank panel lag graph: the playhead in the middle, and the value at a
+   time (lv_lagGraphFill in lv_lag.h). */
+int run_lv_lag_graph_window(void);
+/* The lag view's notice when the view moves back, on a real recording
+   (WB_LV_LN_WBV; skips with no file). */
+int run_lv_lag_notice_recording(void);
+/* The lines of that notice for one step (lv_lagNoticeFor in lv_lag.h). */
+int run_lv_lag_notice(void);
 /* The lag view's pillboxes and map, one round trip back (lv_lag.h). */
 int run_lv_lag_rtt_back(void);
 int run_lv_lag_ring_back(void);
@@ -1432,12 +1442,22 @@ int run_lv_lag_view_map(void);
 /* Options > Base Numbers: the bases in the view (test_lv_calibration.c). */
 int run_lv_base_spots(void);
 int run_lv_lag_view_toggle(void);
+/* The Screen-True options are on exactly while the lag view is on
+   (test_lv_calibration.c). */
+int run_lv_lag_screen_true(void);
 int run_lv_lag_feature_default_off(void);
 int run_lv_lag_view_draw(void);
 /* The lag view draws the chosen player's own shells at the present
  * (test_lv_calibration.c), and the shell owner matcher on a recording, on
  * ask only (WB_LV_OWNER_WBV). */
 int run_lv_lag_view_own_shells(void);
+/* A new explosion recorded at frame 7 draws the frame 8 picture on its
+ * first step, in the plain view and in the lag view (test_lv_calibration.c). */
+int run_lv_lag_view_first_picture(void);
+/* Which steps give an explosion the dot of Hit Boxes, in forward play and
+ * after a seek (test_lv_calibration.c). */
+int run_lv_new_blast_steps(void);
+int run_lv_lgm_dot(void);
 int run_lv_lag_view_lost_owner(void);
 int run_lv_lag_view_shell_snapshot(void);
 int run_lv_shell_owner_recording(void);
@@ -1454,8 +1474,17 @@ int run_lv_early_blast_rules(void);
 int run_lv_early_blast_ended(void);
 int run_lv_early_blast_frames(void);
 int run_lv_early_blast_match(void);
+int run_lv_early_blast_square_hit(void);
+/* The Server Check of the hit boxes (test_lv_server_check.c). */
+int run_lv_server_check_rule_version(void);
+int run_lv_server_check_estimate_6830(void);
+int run_lv_server_check_exact_record(void);
+int run_lv_server_check_label(void);
+/* The Server Check on a real recording, on ask only, and for a builder the
+   blast killed (test_lv_calibration.c). */
+int run_lv_server_check_recording(void);
+int run_lv_server_check_builder_killed(void);
 int run_lv_early_blast_hide(void);
-int run_lv_early_blast_needs_own_shells(void);
 int run_lv_early_blast_same_place(void);
 int run_lv_early_blast_many_players(void);
 int run_lv_early_blast_watch_miss(void);
@@ -1788,6 +1817,11 @@ int run_spec_seed_decode_info(void);
 /* Extracts the inner "log.dat" from a .wbv zip into a heap buffer (caller
  * frees). Defined in test_log_roundtrip.c; shared with test_stream_load.c. */
 bool extractLogDat(const char *wbvPath, uint8_t **outBuf, size_t *outLen);
+
+/* Every log_BuilderCheck record in a .wbv, decoded (up to max); the count, or
+ * -1 when the file does not read. Defined in test_log_roundtrip.c; shared
+ * with test_tank_blast_at_tank.c. */
+int ut_logBuilderChecks(const char *wbvPath, BuilderCheckRecord *out, int max);
 
 /* -log path composition (test_log_dir_path.c). Pins -log <dir> auto-naming
  * the replay inside the directory, vs -log <file> / bare -log. */
@@ -3228,6 +3262,7 @@ int run_tank_blast_hit_decision_unchanged(void);
 /* Whether that blast kills a builder is decided on the shooter's screen, not
  * by where he stands now (the same file). */
 int run_tank_blast_builder_on_shooter_screen(void);
+int run_tank_blast_builder_check_record(void);
 int run_tank_blast_absent_builder_lives(void);
 int run_tank_blast_builder_back_in_tank(void);
 int run_tank_blast_pill_shell_builder_now(void);
@@ -4827,6 +4862,8 @@ int run_lv_region_rect_placement(void);
  * and the viewer's own text for the sidebar options and for the arrangement
  * of a sidebar that is off, read back as written and safe on damaged text. */
 int run_lv_dock_fit_sums(void);
+/* The zoom steps up to 16 (test_lv_dock_fit.c, lv_zoom_text.h). */
+int run_lv_zoom_big_sums(void);
 int run_lv_dock_fit_margins(void);
 int run_lv_dock_layout_sides(void);
 int run_lv_dock_layout_tree(void);
@@ -4870,6 +4907,8 @@ int run_lv_tank_bars_sums(void);
 /* The hit areas the log viewer draws round each tank and each builder
  * (test_lv_hitbox.c): the engine's tank circle and builder catch test. */
 int run_lv_hitbox_sums(void);
+/* Which explosions get the dot of Hit Boxes (test_lv_hitbox.c). */
+int run_lv_hitbox_new_blast(void);
 int run_lv_hitbox_lgm_fit(void);
 int run_lv_hitbox_lgm_pick(void);
 int run_lv_hitbox_outline(void);

@@ -22,11 +22,48 @@
 #ifndef LV_ZOOM_TEXT_H
 #define LV_ZOOM_TEXT_H
 
+#include <math.h>
 #include <stddef.h>
 #include <stdio.h>
 
 /* The pixels of the game's art on one side of a map square. */
 #define LV_ZOOM_SQUARE_ART_PX 16.0f
+
+/* The zoom steps of the map, smallest first (g_zoomSteps in draw.c). The
+ * big steps let one pixel of the art be seen: at 16, one pixel of the art is
+ * 16 points and one map square is 256 points. */
+#define LV_ZOOM_STEP_LIST   0.5f, 0.6f, 0.7f, 0.8f, 0.9f, 1.0f, 1.5f, 2.0f, 3.0f, 4.0f, 6.0f, 8.0f, 12.0f, 16.0f
+
+/* The largest zoom at which a resize of a window snaps it to whole squares
+ * (lvHostHandleResize). Above it one square is more than 64 points, so the
+ * window is left the size the user made it, and the map covers it. */
+#define LV_ZOOM_SNAP_MAX 4.0f
+
+/* The view's new start after a zoom step, in pixels of the art from the
+ * map's left (or top) edge, so the point under the cursor stays under it.
+ * anchorSquares is the place under the cursor in map squares (with the part
+ * of a square), cursorPx the cursor's distance from the map's edge in
+ * points, and squarePx one square at the new zoom in points. The part of a
+ * square is kept: rounding the start to a whole square would move the
+ * point by up to half a square (128 points at 16). */
+static inline int lvZoomStartArtPx(float anchorSquares, float cursorPx, float squarePx) {
+  float start;
+  if (squarePx <= 0.0f) squarePx = LV_ZOOM_SQUARE_ART_PX;
+  start = anchorSquares - cursorPx / squarePx;
+  return (int)floorf(start * LV_ZOOM_SQUARE_ART_PX + 0.5f);
+}
+
+/* One frame's pan step, in whole pixels of the art, for a wanted step of
+ * want art pixels. A big zoom makes the wanted step less than one pixel
+ * (0.75 at 16 for the controller), so the part that is cut off is kept in
+ * *carry and added to the next frame's step. Set *carry to 0 when the pan
+ * stops. */
+static inline int lvZoomPanStep(float want, float *carry) {
+  float step = want + *carry;
+  int whole = (int)step;
+  *carry = step - (float)whole;
+  return whole;
+}
 
 /* How long the label on the map stays after a change of the zoom, and how
  * much of that, at the end, it takes to fade out; seconds. */

@@ -19,6 +19,12 @@
  *       art pixel a recording holds, with the builder's 1 and 2 put back,
  *       and the offsets the game draws the tank and builder pictures at.
  *
+ *   lv_hitbox_new_blast — which explosions of a step get the dot
+ *       (lvHitboxNewBlasts): each one on its first recorded step only,
+ *       whether that step shows frame 8 or frame 7, and not again when
+ *       frame 8 lasts two steps; a new explosion on an old one's place is
+ *       new; with the step before unknown, or too big, none is new.
+ *
  *   lv_hitbox_lgm_fit — that the closer guess at a walking builder's place
  *       (lvHitboxLgmFitRange) always holds his true place, is never wider
  *       than his newest pixel, is that whole pixel for a builder standing
@@ -222,6 +228,127 @@ int run_lv_hitbox_sums(void) {
                       lvHitboxBuilderPlaceY(5) < top + 4.0 * 16.0,
                       "his place is inside his picture, down");
     }
+
+    /* The pulsing dot of a shell explosion. The record is the blast point
+       less 128, rounded down to the pixel, so a blast at world 1000 is
+       recorded at (1000 - 128) & ~15 = 864: 136 units, 8.5 pixels, before
+       it. The guess, 8.46875 pixels from the picture's top left, is 135.5
+       units, inside the 16 units the blast can be in (128 to 143). */
+    UT_ASSERT_MSG(LV_HITBOX_BLAST_OFFSET == 128, "explosion record offset");
+    UT_ASSERT_MSG(lvHitboxBlastCentreInPicture() == 8.46875, "blast centre in the picture");
+    {
+        double guess = lvHitboxBlastCentreInPicture() * 16.0;
+        int wx;
+        for (wx = 128; wx < 128 + 64; wx++) {
+            int rec = (wx - 128) & ~15;
+            double err = (double)rec + guess - (double)wx;
+            UT_ASSERT_MSG(err >= -8.0 && err <= 8.0,
+                          "blast at %d: the dot is on it (%.1f off)", wx, err);
+        }
+    }
+    /* A real one, from the Oil Rig log: an explosion recorded at
+       (34016, 30080) whose blast point was about (34146, 30210), 130 units
+       further on each axis. The dot goes 135.5 units on from the record,
+       not on the record (the picture's corner), and so is on the blast
+       point to within half an art pixel. */
+    {
+        double guess = lvHitboxBlastCentreInPicture() * (double)LV_HITBOX_WU_PER_PIXEL;
+        double dotX = 34016.0 + guess, dotY = 30080.0 + guess;
+        UT_ASSERT_MSG(fabs(dotX - 34146.0) <= 8.0, "Oil Rig blast, x: %.1f", dotX);
+        UT_ASSERT_MSG(fabs(dotY - 30210.0) <= 8.0, "Oil Rig blast, y: %.1f", dotY);
+        UT_ASSERT_MSG(guess > 120.0, "the dot is not at the picture's corner");
+    }
+    /* The pulse: smooth, from 35% to 100%, once a second, from the wall
+       clock alone. */
+    UT_ASSERT_MSG(fabs(lvHitboxPulseAlpha(0) - 0.35) < 1e-9, "pulse starts low");
+    UT_ASSERT_MSG(fabs(lvHitboxPulseAlpha(500) - 1.0) < 1e-9, "pulse is full half way");
+    UT_ASSERT_MSG(fabs(lvHitboxPulseAlpha(1000) - 0.35) < 1e-9, "pulse is low again at 1 s");
+    UT_ASSERT_MSG(fabs(lvHitboxPulseAlpha(250) - lvHitboxPulseAlpha(1250)) < 1e-9,
+                  "pulse repeats each second");
+    {
+        uint64_t ms;
+        double prev = lvHitboxPulseAlpha(0);
+        for (ms = 1; ms <= 2000; ms++) {
+            double a = lvHitboxPulseAlpha(ms);
+            UT_ASSERT_MSG(a >= 0.35 - 1e-9 && a <= 1.0 + 1e-9, "pulse in range at %u ms",
+                          (unsigned)ms);
+            /* No hard step: at most a little change each millisecond. */
+            UT_ASSERT_MSG(fabs(a - prev) < 0.005, "pulse is smooth at %u ms", (unsigned)ms);
+            prev = a;
+        }
+    }
+    /* The colour goes from blue (240 degrees) to purple (285) and back
+       every 2 s, smoothly, and never leaves that part of the wheel. */
+    {
+        double r, g, b, pr, pg, pb, lowR = 1.0, highR = 0.0;
+        uint64_t ms;
+        UT_ASSERT_MSG(fabs(lvHitboxDotHue(0) - 240.0) < 1e-9, "hue starts blue");
+        UT_ASSERT_MSG(fabs(lvHitboxDotHue(1000) - 285.0) < 1e-9, "hue is purple at 1 s");
+        UT_ASSERT_MSG(fabs(lvHitboxDotHue(2000) - 240.0) < 1e-9, "hue is blue again at 2 s");
+        UT_ASSERT_MSG(fabs(lvHitboxDotHue(500) - lvHitboxDotHue(1500)) < 1e-9,
+                      "hue goes back the way it came");
+        lvHitboxDotColour(0, &r, &g, &b);
+        UT_ASSERT_MSG(r == 0.0 && g == 0.0 && b == 1.0, "colour starts blue");
+        lvHitboxDotColour(1000, &r, &g, &b);
+        UT_ASSERT_MSG(fabs(r - 0.75) < 1e-9 && g == 0.0 && b == 1.0,
+                      "colour is purple at 1 s: %.3f %.3f %.3f", r, g, b);
+        pr = 0.0; pg = 0.0; pb = 1.0;
+        for (ms = 1; ms <= 4000; ms++) {
+            double h = lvHitboxDotHue(ms);
+            lvHitboxDotColour(ms, &r, &g, &b);
+            UT_ASSERT_MSG(h >= 240.0 - 1e-9 && h <= 285.0 + 1e-9, "hue %.1f at %u ms", h,
+                          (unsigned)ms);
+            UT_ASSERT_MSG(r >= 0.0 && r <= 0.75 + 1e-9 && g == 0.0 && b == 1.0,
+                          "colour blue to purple at %u ms", (unsigned)ms);
+            UT_ASSERT_MSG(fabs(r - pr) < 0.01 && fabs(g - pg) < 0.01 && fabs(b - pb) < 0.01,
+                          "colour is smooth at %u ms", (unsigned)ms);
+            if (r < lowR) lowR = r;
+            if (r > highR) highR = r;
+            pr = r; pg = g; pb = b;
+        }
+        UT_ASSERT_MSG(lowR < 1e-6 && highR > 0.75 - 1e-6, "colour reaches blue and purple");
+    }
+    /* The dot's size, in screen pixels: one art pixel at 100% zoom and
+       less, never less than one screen pixel; zoomed in, 4 world units but
+       never less than 2 screen pixels and never more than one art pixel.
+       The argument is screen pixels to a world unit: the zoom / 16. */
+    UT_ASSERT_MSG(lvHitboxDotSize(0.25f / 16.0f) == 1.0f, "1 pixel at 25%%");
+    UT_ASSERT_MSG(lvHitboxDotSize(0.5f / 16.0f) == 1.0f, "1 pixel at 50%%");
+    UT_ASSERT_MSG(lvHitboxDotSize(1.0f / 16.0f) == 1.0f, "1 pixel (one art pixel) at 100%%");
+    UT_ASSERT_MSG(lvHitboxDotSize(1.5f / 16.0f) == 1.5f, "one art pixel at 150%%");
+    UT_ASSERT_MSG(lvHitboxDotSize(2.0f / 16.0f) == 2.0f, "2 pixels at 200%%");
+    UT_ASSERT_MSG(lvHitboxDotSize(4.0f / 16.0f) == 2.0f, "2 pixels at 400%%");
+    UT_ASSERT_MSG(lvHitboxDotSize(8.0f / 16.0f) == 2.0f, "2 pixels (4 units) at 800%%");
+    UT_ASSERT_MSG(lvHitboxDotSize(12.0f / 16.0f) == 3.0f, "3 pixels (4 units) at 1200%%");
+    UT_ASSERT_MSG(lvHitboxDotSize(16.0f / 16.0f) == 4.0f, "4 pixels (4 units) at 1600%%");
+    {
+        float z;
+        for (z = 0.1f; z <= 32.0f; z += 0.1f) {
+            float k = z / 16.0f, s = lvHitboxDotSize(k);
+            UT_ASSERT_MSG(s >= 1.0f, "never under 1 pixel at zoom %.1f", z);
+            UT_ASSERT_MSG(s <= 16.0f * k + 1e-5f || s == 1.0f,
+                          "never over one art pixel at zoom %.1f", z);
+            UT_ASSERT_MSG(16.0f * k < 2.0f || s >= 2.0f - 1e-5f,
+                          "never under 2 pixels zoomed in, zoom %.1f", z);
+        }
+    }
+    /* The dot is centred on the exact point, not rounded to a pixel. */
+    {
+        LvHitDotRect d = lvHitboxDotRect(100.3f, 57.8f, 16.0f / 16.0f);
+        UT_ASSERT_MSG(fabsf(d.x + d.w * 0.5f - 100.3f) < 1e-4f &&
+                      fabsf(d.y + d.h * 0.5f - 57.8f) < 1e-4f, "dot centred on the point");
+        UT_ASSERT_MSG(d.w == 4.0f && d.h == 4.0f, "dot is 4 by 4 at 1600%%");
+        UT_ASSERT_MSG(fabsf(d.x - 98.3f) < 1e-4f && fabsf(d.y - 55.8f) < 1e-4f,
+                      "dot not rounded: %.2f %.2f", d.x, d.y);
+        d = lvHitboxDotRect(10.25f, 3.75f, 1.0f / 16.0f);
+        UT_ASSERT_MSG(fabsf(d.x - 9.75f) < 1e-4f && fabsf(d.y - 3.25f) < 1e-4f && d.w == 1.0f,
+                      "1 pixel dot centred on the point at 100%%");
+    }
+    /* A builder's dot: his place in his square, at the target's scale. At
+       zoom factor 2 a place 100.5 units in is 12.5625 target pixels on. */
+    UT_ASSERT_MSG(fabs(lvHitboxLgmDotAt(64.0, 100.5, 2) - (64.0 + 12.5625)) < 1e-9,
+                  "builder dot place");
+    UT_ASSERT_MSG(lvHitboxLgmDotAt(32.0, 0.0, 1) == 32.0, "builder dot at the square's corner");
 
     return 0;
 }
@@ -508,5 +635,185 @@ int run_lv_hitbox_outline(void) {
     }
     UT_ASSERT_MSG(outlineHasPoint(&o, 0.0, 0.0) && outlineHasPoint(&o, 256.0, 256.0),
                   "the box outline does not reach its corners");
+    return 0;
+}
+
+/* One step's record, for lv_hitbox_new_blast. */
+static LvHitBlastRec newBlastRec(uint8_t mx, uint8_t my, uint8_t px, uint8_t py,
+                                 uint8_t frame) {
+    LvHitBlastRec r;
+    r.mx = mx;
+    r.my = my;
+    r.px = px;
+    r.py = py;
+    r.frame = frame;
+    return r;
+}
+
+int run_lv_hitbox_new_blast(void) {
+    static LvHitBlastRec prev[LV_HITBOX_BLAST_PREV_MAX + 1];
+    LvHitBlastRec cur[4];
+    uint8_t isNew[4];
+    int i;
+
+    /* Frames 1 to 8 are explosions; 0 and 9 up are not. */
+    UT_ASSERT(!lvHitboxIsBlastFrame(0));
+    UT_ASSERT(lvHitboxIsBlastFrame(1));
+    UT_ASSERT(lvHitboxIsBlastFrame(8));
+    UT_ASSERT(!lvHitboxIsBlastFrame(9));
+
+    /* First recorded at frame 8, with nothing there the step before: new. */
+    cur[0] = newBlastRec(10, 20, 3, 4, 8);
+    isNew[0] = 9;
+    lvHitboxNewBlasts(prev, 0, true, cur, 1, isNew);
+    UT_ASSERT_MSG(isNew[0] == 1, "a frame 8 explosion with nothing before is not new");
+
+    /* First recorded at frame 7 (the server lowered it before it wrote the
+       step): new too. */
+    cur[0] = newBlastRec(10, 20, 3, 4, 7);
+    lvHitboxNewBlasts(prev, 0, true, cur, 1, isNew);
+    UT_ASSERT_MSG(isNew[0] == 1, "a frame 7 explosion with nothing before is not new");
+
+    /* Frame 8 for two steps: the second step is not new. */
+    prev[0] = newBlastRec(10, 20, 3, 4, 8);
+    cur[0] = newBlastRec(10, 20, 3, 4, 8);
+    lvHitboxNewBlasts(prev, 1, true, cur, 1, isNew);
+    UT_ASSERT_MSG(isNew[0] == 0, "frame 8 on its second step is new");
+
+    /* 8 then 7, and 7 then 7: the same explosion, not new. */
+    cur[0] = newBlastRec(10, 20, 3, 4, 7);
+    lvHitboxNewBlasts(prev, 1, true, cur, 1, isNew);
+    UT_ASSERT(isNew[0] == 0);
+    prev[0] = newBlastRec(10, 20, 3, 4, 7);
+    lvHitboxNewBlasts(prev, 1, true, cur, 1, isNew);
+    UT_ASSERT(isNew[0] == 0);
+
+    /* An explosion's frame never goes up, so a frame 8 where a frame 5
+       was is a new explosion on the old one's place. */
+    prev[0] = newBlastRec(10, 20, 3, 4, 5);
+    cur[0] = newBlastRec(10, 20, 3, 4, 8);
+    lvHitboxNewBlasts(prev, 1, true, cur, 1, isNew);
+    UT_ASSERT_MSG(isNew[0] == 1, "a new explosion on an old one's place is not new");
+
+    /* Both: the old one goes on at 4 and the new one starts at 8, in
+       either order. Each old one matches one only. */
+    cur[0] = newBlastRec(10, 20, 3, 4, 4);
+    cur[1] = newBlastRec(10, 20, 3, 4, 8);
+    lvHitboxNewBlasts(prev, 1, true, cur, 2, isNew);
+    UT_ASSERT(isNew[0] == 0 && isNew[1] == 1);
+    cur[0] = newBlastRec(10, 20, 3, 4, 8);
+    cur[1] = newBlastRec(10, 20, 3, 4, 5);
+    lvHitboxNewBlasts(prev, 1, true, cur, 2, isNew);
+    UT_ASSERT(isNew[0] == 1 && isNew[1] == 0);
+
+    /* Two old ones at one place (8 and 3), both going on (8 and 2): the 8
+       takes the 8 and the 2 takes the 3, so neither is new. */
+    prev[0] = newBlastRec(10, 20, 3, 4, 8);
+    prev[1] = newBlastRec(10, 20, 3, 4, 3);
+    cur[0] = newBlastRec(10, 20, 3, 4, 2);
+    cur[1] = newBlastRec(10, 20, 3, 4, 8);
+    lvHitboxNewBlasts(prev, 2, true, cur, 2, isNew);
+    UT_ASSERT(isNew[0] == 0 && isNew[1] == 0);
+
+    /* A stack at one place in the list order of the log: the step before
+       7, 5, 3, 1 and this step 7, 6, 4, 2. The 1 has ended, the others went
+       down one, and the 7 is new. A match in list order would give the 7
+       to the old 7 and call the 6 new. */
+    prev[0] = newBlastRec(10, 20, 3, 4, 7);
+    prev[1] = newBlastRec(10, 20, 3, 4, 5);
+    prev[2] = newBlastRec(10, 20, 3, 4, 3);
+    prev[3] = newBlastRec(10, 20, 3, 4, 1);
+    cur[0] = newBlastRec(10, 20, 3, 4, 7);
+    cur[1] = newBlastRec(10, 20, 3, 4, 6);
+    cur[2] = newBlastRec(10, 20, 3, 4, 4);
+    cur[3] = newBlastRec(10, 20, 3, 4, 2);
+    lvHitboxNewBlasts(prev, 4, true, cur, 4, isNew);
+    UT_ASSERT_MSG(isNew[0] == 1 && isNew[1] == 0 && isNew[2] == 0 && isNew[3] == 0,
+                  "stack: new %d %d %d %d", isNew[0], isNew[1], isNew[2], isNew[3]);
+
+    /* Another place, by one art pixel or one square: new. */
+    prev[0] = newBlastRec(10, 20, 3, 4, 8);
+    cur[0] = newBlastRec(10, 20, 3, 5, 7);
+    cur[1] = newBlastRec(11, 20, 3, 4, 7);
+    cur[2] = newBlastRec(10, 20, 2, 4, 7);
+    cur[3] = newBlastRec(10, 21, 3, 4, 7);
+    lvHitboxNewBlasts(prev, 1, true, cur, 4, isNew);
+    for (i = 0; i < 4; i++) {
+        UT_ASSERT_MSG(isNew[i] == 1, "explosion %d, at another place, is not new", i);
+    }
+
+    /* A shell (frame 9 up) is never new, and a shell of the step before
+       does not hide an explosion. */
+    prev[0] = newBlastRec(10, 20, 3, 4, 12);
+    cur[0] = newBlastRec(10, 20, 3, 4, 12);
+    cur[1] = newBlastRec(10, 20, 3, 4, 8);
+    lvHitboxNewBlasts(prev, 1, true, cur, 2, isNew);
+    UT_ASSERT(isNew[0] == 0 && isNew[1] == 1);
+
+    /* The step before not known (the first step, or a jump): none is new. */
+    cur[0] = newBlastRec(10, 20, 3, 4, 8);
+    isNew[0] = 9;
+    lvHitboxNewBlasts(prev, 0, false, cur, 1, isNew);
+    UT_ASSERT_MSG(isNew[0] == 0, "new with the step before unknown");
+
+    /* The step before has more records than can be matched: none is new,
+       as one of them could be this explosion. */
+    for (i = 0; i <= LV_HITBOX_BLAST_PREV_MAX; i++) {
+        prev[i] = newBlastRec(1, 1, 0, 0, 12);
+    }
+    isNew[0] = 9;
+    lvHitboxNewBlasts(prev, LV_HITBOX_BLAST_PREV_MAX + 1, true, cur, 1, isNew);
+    UT_ASSERT_MSG(isNew[0] == 0, "new with too many records the step before");
+    lvHitboxNewBlasts(prev, LV_HITBOX_BLAST_PREV_MAX, true, cur, 1, isNew);
+    UT_ASSERT_MSG(isNew[0] == 1, "not new with a full step before that has no explosion");
+
+    /* The picture: a new explosion recorded at frame 7 draws the frame 8
+       picture on that step only; every other frame and step draws the
+       recorded frame. */
+    UT_ASSERT(lvHitboxDrawFrame(7, true) == 8);
+    UT_ASSERT(lvHitboxDrawFrame(8, true) == 8);
+    UT_ASSERT(lvHitboxDrawFrame(7, false) == 7);
+    UT_ASSERT(lvHitboxDrawFrame(6, true) == 6);
+    UT_ASSERT(lvHitboxDrawFrame(1, true) == 1);
+    UT_ASSERT(lvHitboxDrawFrame(12, true) == 12);
+
+    /* A run of steps: an explosion first recorded at 8 for two steps, then
+       7 down to 1, gets the dot on its first step only; one first recorded
+       at 7 too. */
+    {
+        static const uint8_t runA[] = {8, 8, 7, 7, 7, 6, 6, 6, 5, 5, 5, 4, 4, 4,
+                                       3, 3, 3, 2, 2, 2, 1, 1, 1};
+        static const uint8_t runB[] = {7, 7, 7, 6, 6, 6, 5, 5, 5, 4, 4, 4,
+                                       3, 3, 3, 2, 2, 2, 1, 1, 1};
+        const uint8_t *runs[2];
+        int lens[2];
+        int r;
+        runs[0] = runA;
+        lens[0] = (int)sizeof(runA);
+        runs[1] = runB;
+        lens[1] = (int)sizeof(runB);
+        for (r = 0; r < 2; r++) {
+            int dots = 0, firstDot = -1, k;
+            int nPrev = 0;
+            for (k = 0; k < lens[r]; k++) {
+                cur[0] = newBlastRec(30, 40, 7, 9, runs[r][k]);
+                lvHitboxNewBlasts(prev, nPrev, true, cur, 1, isNew);
+                /* Every run starts with the frame 8 picture, and after
+                   that draws the recorded frame. */
+                UT_ASSERT_MSG(lvHitboxDrawFrame(cur[0].frame, isNew[0] != 0) ==
+                                  (k == 0 ? 8 : runs[r][k]),
+                              "run %d step %d draws frame %d", r, k,
+                              lvHitboxDrawFrame(cur[0].frame, isNew[0] != 0));
+                if (isNew[0]) {
+                    dots++;
+                    if (firstDot < 0) firstDot = k;
+                }
+                prev[0] = cur[0];
+                nPrev = 1;
+            }
+            UT_ASSERT_MSG(dots == 1 && firstDot == 0, "run %d: %d dots, first at step %d",
+                          r, dots, firstDot);
+        }
+    }
     return 0;
 }

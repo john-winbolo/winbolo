@@ -165,4 +165,12 @@ static inline bool hitRulesBuilderCaught(bool blastSolid, bool blastOnHisSquare,
     return lgmBlastOpenGroundCatches(shape, pillRange, dx, dy);
 }
 
+/* hitRulesBuilderCaught with the shape first. The Log Viewer's Server
+   Check (lv_server_check.h) calls it by this name. */
+static inline bool hitRulesBuilderCaughtShape(int shape, bool blastSolid,
+                                              bool blastOnHisSquare, double dx, double dy,
+                                              int pillRange) {
+    return hitRulesBuilderCaught(blastSolid, blastOnHisSquare, dx, dy, shape, pillRange);
+}
+
 #endif /* HIT_RULES_H */

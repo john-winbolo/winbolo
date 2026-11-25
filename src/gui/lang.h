@@ -1344,15 +1344,9 @@
 #define STR_LV_LAG_MENU                     3119
 #define STR_LV_LAG_MENU_TIP                 3120
 #define STR_LV_LAG_LINE_BOT                 3121
-/* The lag view's shell toggles in the Options menu. Screen-True Own
-   Shells (lv_shell_owner.h) and its tooltip. Screen-True Local
-   Explosions (lv_early_blast.h): its name, its tooltip, and the tooltip
-   while it is off because the first toggle is off. */
-#define STR_LV_SCREEN_TRUE_SHELLS           3472
-#define STR_LV_SCREEN_TRUE_SHELLS_TIP       3474
-#define STR_LV_SCREEN_TRUE_EXPL             3475
-#define STR_LV_SCREEN_TRUE_EXPL_TIP         3476
-#define STR_LV_SCREEN_TRUE_EXPL_OFF_TIP     3477
+#define STR_LV_LAG_GRAPH_AT                 3122
+#define STR_LV_LAG_GRAPH_NONE               3123
+#define STR_LV_LAG_GRAPH_NOW                3124
 /* The viewer's server timing (log_OverrunStats) in the Game Info panel: the
    section's name, the line that says when the record shown was written
    (string1 the round time, m:ss), the record's lines (string1..3 times in ms
@@ -3119,8 +3113,8 @@
  * after those. tank_hit_sets_off_mines took the next free one at the end of
  * the file after that, and man_dead_pill_terrain_speed took the next free one
  * at the end of the file after that. lgm_blast_shape took 3478. The Log
- * Viewer's strings took 3470 to 3472, 3474 to 3477 and 3480 to 3484
- * since, so 3429 to 3469, 3473 and 3479 are left free. The
+ * Viewer's strings took 3470, 3471 and 3480 to 3484 since, so 3429 to
+ * 3469, 3472 to 3477 and 3479 are left free. The
  * order of the block is SIM_RULE_LIST's throughout, which is the order that
  * matters, and a hole in the numbers costs nothing: langTable is searched by
  * id rather than indexed by it. */
@@ -3724,6 +3718,34 @@
  * player left, {string2} the seconds left to rejoin */
 #define STR_REJECT_CAN_REJOIN                    3945
 #define STR_JOIN_AS_NEW                          3946
+
+/* The Server Check of the Log Viewer's hit boxes: the label of what the
+ * server tested when a shell's blast came near a builder. {string1} is one
+ * of the four result words, {number} the builder's distance from the blast
+ * in world units and {number2} the limit of the rule. The rewind and
+ * estimate parts follow the rest, after a space. The ids start at 3960:
+ * 3947 to 3951 are taken by the bot host branch (#652). */
+#define STR_LV_SC_LIVES                          3960
+#define STR_LV_SC_DIES                           3961
+#define STR_LV_SC_REFUSED                        3962
+#define STR_LV_SC_NOT_TESTED                     3963
+#define STR_LV_SC_CIRCLE_OUT                     3964
+#define STR_LV_SC_CIRCLE_IN                      3965
+#define STR_LV_SC_BOX_OUT                        3966
+#define STR_LV_SC_BOX_IN                         3967
+#define STR_LV_SC_OFF_SQUARE                     3968
+#define STR_LV_SC_ON_SQUARE                      3969
+#define STR_LV_SC_REWIND                         3970
+#define STR_LV_SC_ESTIMATE                       3971
+/* The lag view's notice that the view moved back in forward play: the line
+   with no named cause (number the ms), the line for the player's lag change
+   (number the ms, string1 the player, number2 and number3 the screen behind
+   before and after, number4 and string2 the round trip before and after),
+   and the line for a snapshot hold (number the game time, number2 the
+   playback time, number3 and number4 the ticks). */
+#define STR_LV_LAG_NOTICE_BACK                   3972
+#define STR_LV_LAG_NOTICE_LAG                    3973
+#define STR_LV_LAG_NOTICE_HOLD                   3974
 
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler

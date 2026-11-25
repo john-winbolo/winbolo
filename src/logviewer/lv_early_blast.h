@@ -7,24 +7,31 @@
  *Name:          Log Viewer early blast
  *Filename:      lv_early_blast.h
  *Purpose:
- *  The lag view option "Screen-True Local Explosions",
- *  off by default. It shows what the player would see if the
- *  game did this: when a player's own shell ends, that player's
+ *  "Screen-True Local Explosions", always on while "See What
+ *  the Selected Player Saw" is on. It shows what the player
+ *  would see if the game did this: when a player's own shell
+ *  ends, that player's
  *  client draws the explosion at once where its own shell
  *  stopped, and hides the server's later explosion of that
  *  shell.
  *
- *  It works only while the other lag view toggle, "Screen-True
- *  Own Shells" (on by default), is on: that one draws
- *  the chosen player's own shells from the present frame
- *  (lv_shell_owner.h), and every other shell and explosion comes
- *  from the old frame. The early blast starts where those
- *  present-frame own shells end (lv_earlyBlastOn). With both on:
+ *  It works together with "Screen-True Own Shells", which the
+ *  view also always draws: the chosen player's own shells from
+ *  the present frame (lv_shell_owner.h), and every other shell
+ *  and explosion from the old frame. The early blast starts
+ *  where those present-frame own shells end:
  *
  *  - An owned shell of the entry before that no shell of this
  *    entry continues has ended. Its early blast starts at this
  *    entry, at the shell's last place, and is drawn at the
  *    present for the explosion's life.
+ *  - The game puts a hit on a pillbox, a base or terrain at the
+ *    middle of the hit square, on the client (clientEarlyBlastHit)
+ *    and on the server (shellsCalcCollision). So when the server
+ *    explosion found below is at a square middle, on the shell's
+ *    last square or the square one step on, the early blast moves
+ *    to that place. Only a hit on a tank and a shell that runs out
+ *    stay at the shell's last place.
  *  - The server's explosion of that shell is found in the
  *    present frame: a new explosion record (frame 8 or 7) near
  *    where the shell ended, the nearest one not taken. Explosions
@@ -59,14 +66,6 @@
 
 #include "lv_shell_owner.h"
 
-/* Whether the early blast is drawn: "Screen-True Local Explosions"
-   (screenTrueExpl) is on, and so is "Screen-True Own Shells"
-   (screenTrueShells), as the early blast starts where the own shells drawn
-   from the present frame end. */
-static inline bool lv_earlyBlastOn(bool screenTrueShells, bool screenTrueExpl) {
-  return screenTrueShells && screenTrueExpl;
-}
-
 /* The explosion's frames: it starts at 8 (EXPLOSION_START) and goes down
    one each 3 game ticks of 20 ms (EXPLOAD_UPDATE_TIME). */
 #define LV_EARLY_BLAST_START_FRAME 8
@@ -78,7 +77,8 @@ static inline bool lv_earlyBlastOn(bool screenTrueShells, bool screenTrueExpl) {
 
 /* A server explosion matches when it is this near the expected place: the
    shell's last place, plus half a step along its way. A hit on a pillbox,
-   base or terrain is put at the middle of the square. */
+   base or terrain is at the middle of the square, which can be this far
+   from the shell's last place. */
 #define LV_EARLY_BLAST_MATCH_RADIUS 320
 
 /* How long after the end the server explosion may first be found. */
@@ -203,8 +203,38 @@ static inline int lv_earlyBlastPick(const LvEarlyBlast *b, const LvBlastPt *c, i
   return best;
 }
 
-/* Note the found server explosion. */
+/* Whether explosion record place (ex, ey) is the middle of a square: a
+   square middle less LV_EARLY_BLAST_EXPL_OFFSET is a square's corner. */
+static inline bool lv_earlyBlastIsSquareMiddle(int32_t ex, int32_t ey) {
+  return (ex & 0xFF) == 0 && (ey & 0xFF) == 0;
+}
+
+/* Whether the explosion record place (ex, ey) is a square-middle hit of
+   b's shell: the middle of the shell's last square, or of the square one
+   step on along its way (the step the shell hit on). b->wx, b->wy are
+   still the shell's last place as an explosion record. */
+static inline bool lv_earlyBlastSquareHitOf(const LvEarlyBlast *b, int32_t ex, int32_t ey) {
+  int32_t lastX = b->wx + LV_EARLY_BLAST_EXPL_OFFSET;
+  int32_t lastY = b->wy + LV_EARLY_BLAST_EXPL_OFFSET;
+  int32_t aheadX = lastX + 2 * (b->expectX - b->wx);
+  int32_t aheadY = lastY + 2 * (b->expectY - b->wy);
+  int32_t sx = (ex + LV_EARLY_BLAST_EXPL_OFFSET) >> 8;
+  int32_t sy = (ey + LV_EARLY_BLAST_EXPL_OFFSET) >> 8;
+  if (!lv_earlyBlastIsSquareMiddle(ex, ey)) {
+    return false;
+  }
+  return (sx == (lastX >> 8) && sy == (lastY >> 8)) ||
+         (sx == (aheadX >> 8) && sy == (aheadY >> 8));
+}
+
+/* Note the found server explosion. A square-middle hit of the shell (a
+   pillbox, a base or terrain) moves the early blast to that place, as the
+   game draws it. */
 static inline void lv_earlyBlastMatch(LvEarlyBlast *b, const LvBlastPt *e, uint32_t ms) {
+  if (lv_earlyBlastSquareHitOf(b, e->wx, e->wy)) {
+    b->wx = e->wx;
+    b->wy = e->wy;
+  }
   b->matched = true;
   b->explX = e->wx;
   b->explY = e->wy;

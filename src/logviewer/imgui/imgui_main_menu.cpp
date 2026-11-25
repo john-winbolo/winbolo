@@ -241,15 +241,10 @@ void lv_imgui_main_menu_init(struct LogViewerState *lv) {
     /* On until turned off. */
     lv_platform_config_get_string("LOGVIEWER", "Animate Seek", "Yes", val, sizeof(val));
     s_seek_anim = !(val[0] == 'N' || val[0] == 'n');
-    /* Screen-True Own Shells (lv_shell_owner.h): on until turned off. */
-    lv_platform_config_get_string("LOGVIEWER", "Lag View Own Shells At Present", "Yes", val,
-                                  sizeof(val));
-    lv_screenSetScreenTrueShells(!(val[0] == 'N' || val[0] == 'n') ? 1 : 0);
-    /* Screen-True Local Explosions (lv_early_blast.h): off until
-       turned on. */
-    lv_platform_config_get_string("LOGVIEWER", "Screen-True Local Explosions", "No", val,
-                                  sizeof(val));
-    lv_screenSetScreenTrueExplosions((val[0] == 'Y' || val[0] == 'y') ? 1 : 0);
+    /* "Lag View Own Shells At Present" and "Screen-True Local Explosions"
+       were the two Screen-True options. They are on while See What the
+       Selected Player Saw is on and are not read now: a file that still has
+       them loads as before. */
     /* The lag display (lv_lag.h) is read in lvHostSetupCore, which every
        host runs before this. It has no menu item. */
 }
@@ -310,10 +305,6 @@ void lv_imgui_main_menu_save(void) {
     lv_platform_config_set_string("LOGVIEWER", "Animate Seek", s_seek_anim ? "Yes" : "No");
     lv_platform_config_set_string("LOGVIEWER", LV_LAG_PREF_KEY,
                                   lv_screenGetLagFeature() ? "Yes" : "No");
-    lv_platform_config_set_string("LOGVIEWER", "Lag View Own Shells At Present",
-                                  lv_screenGetScreenTrueShells() ? "Yes" : "No");
-    lv_platform_config_set_string("LOGVIEWER", "Screen-True Local Explosions",
-                                  lv_screenGetScreenTrueExplosions() ? "Yes" : "No");
 }
 
 /* The separators of a menu whose items are in groups (the Options menu).
@@ -925,40 +916,10 @@ int lv_imgui_main_menu_bar(void) {
                 if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
                     ImGui::SetTooltip("%s", langGetText(STR_LV_LAG_MENU_TIP));
                 }
-                /* In the lag view, the chosen player's own shells come from
-                 * the present frame, as that player's own screen drew them
-                 * (lv_shell_owner.h). Off draws them at the old time. */
-                const bool ownShells = lv_screenGetScreenTrueShells() != 0;
-                sep.item();
-                if (ImGui::MenuItem(langGetText(STR_LV_SCREEN_TRUE_SHELLS), NULL, ownShells)) {
-                    lv_screenSetScreenTrueShells(ownShells ? 0 : 1);
-                    lv_windowNeedRedraw();
-                    clicked = 1;
-                }
-                if (ImGui::IsItemHovered()) {
-                    ImGui::SetTooltip("%s", langGetText(STR_LV_SCREEN_TRUE_SHELLS_TIP));
-                }
-                /* Screen-True Local Explosions (lv_early_blast.h): in
-                 * the lag view, the chosen player's own shells explode at once
-                 * where they end, and the server's later explosion of each
-                 * is hidden.
-                 * It works only with Screen-True Own Shells on
-                 * (lv_earlyBlastOn), so the item is off and greyed until
-                 * that one is on. The saved choice is kept meanwhile. */
-                const bool explOn = lv_earlyBlastOn(lv_screenGetScreenTrueShells() != 0,
-                                                    lv_screenGetScreenTrueExplosions() != 0);
-                sep.item();
-                if (ImGui::MenuItem(langGetText(STR_LV_SCREEN_TRUE_EXPL), NULL, explOn,
-                                    lv_screenGetScreenTrueShells() != 0)) {
-                    lv_screenSetScreenTrueExplosions(explOn ? 0 : 1);
-                    lv_windowNeedRedraw();
-                    clicked = 1;
-                }
-                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-                    ImGui::SetTooltip("%s", langGetText(lv_screenGetScreenTrueShells()
-                                                            ? STR_LV_SCREEN_TRUE_EXPL_TIP
-                                                            : STR_LV_SCREEN_TRUE_EXPL_OFF_TIP));
-                }
+                /* While the view is on, the chosen player's own shells are
+                 * drawn at the present and explode at once where they end,
+                 * as that player's own screen drew them (lv_shell_owner.h,
+                 * lv_early_blast.h). There is no item to turn that off. */
             }
             sep.end();
 #ifndef __EMSCRIPTEN__

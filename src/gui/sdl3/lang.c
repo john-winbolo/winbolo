@@ -1061,7 +1061,7 @@ static const LangEntry langTable[] = {
     {2832, "Two small bars over each tank: armour on top, shells under it"},
     {3110, "Lag: {number} ms round trip, screen {number2} ms behind"},
     {3111, "Lag: none recorded for this player yet"},
-    {3112, "Round-trip time across the recording, in ms. The highest is {number} ms. The white line is the playhead"},
+    {3112, "Round-trip time in ms, 30 seconds each side of the playhead, which is the strong line in the middle. The top of the graph is {number} ms. Click to move the playhead to a time"},
     {3113, "See what this player saw"},
     {3114, "Draw the other tanks, the builders and the shells where this player's screen showed them: as far back as the server's rewind for this player. The pillboxes and the map are drawn one round trip back, as this player's screen had them. This player's own tank stays at its present place"},
     {3115, "{string1}'s screen, {number} ms behind"},
@@ -1070,14 +1070,15 @@ static const LangEntry langTable[] = {
     {3118, "{string1}, {number} ms round trip"},
     {3119, "See What the Selected Player Saw"},
     {3120, "Draw the round as the selected tank's player saw it on their own screen. The recording must hold lag records"},
-    {3472, "Screen-True Own Shells"},
-    {3474, "On: the selected player's own shells are drawn at the present, as their own screen drew them at once. Off: they are drawn at the old time, as every other shell is"},
-    {3475, "Screen-True Local Explosions"},
-    {3476, "On: the selected player's own shells explode at once where they end, and the server's later explosion of each is hidden. Off: each one explodes when the server's explosion comes"},
-    {3477, "Turn on Screen-True Own Shells first"},
     /* Log viewer Tank panel: the line beside the empty base bars */
     {3480, "No base near"},
     {3121, "Lag: a bot, screen {number} ms behind"},
+    /* The Tank panel's lag graph: the time and tick under the mouse
+       (string1 the time, number the tick), a time with no record, and the
+       value beside the playhead line (number the round trip, ms). */
+    {3122, "{string1}, tick {number}"},
+    {3123, "No lag record for this time"},
+    {3124, "{number} ms"},
     /* The viewer's server timing (log_OverrunStats) in the Game Info panel. */
     {3130, "Server timing"},
     {3131, "Recorded at {string1} of the round"},
@@ -1133,7 +1134,7 @@ static const LangEntry langTable[] = {
     {2869, "{player} captured Neutral Pillbox {number}"},
     {2870, "{player} just stole pillbox {number} from {other}"},
     {3470, "Hit Boxes"},
-    {3471, "Over each tank on the map, the circle a shell must reach to hit it. Over each builder out of his tank, the area an explosion must be in to kill him: a mine, a tank's explosion, or a shell that bursts on open ground. A shell that bursts on forest, a boat, the shore or a bridge kills only a builder on that square"},
+    {3471, "Over each tank on the map, the circle a shell must reach to hit it. Over each builder out of his tank, the area an explosion must be in to kill him: a mine, a tank's explosion, or a shell that bursts on open ground. A shell that bursts on forest, a boat, the shore or a bridge kills only a builder on that square. A pulsing dot that goes from blue to purple marks the exact centre of each explosion on the tick it explodes, and the exact place of each builder out of his tank. When a shell explodes near a builder who is out, the Server Check shows for about a second what the server tested: the kill area of the rule, the place it tested him at (an orange dot), his place now (an orange ring), a line from the explosion to the tested place, and the result, for example \"LIVES 147 > 128 (rewind 2)\". For a recording made before the server wrote these checks, the viewer makes an estimate, and the label ends in \"estimate\"."},
 
     /* Log viewer dialogs */
     {1128, "Assign colours to each player team:"},
@@ -3002,6 +3003,22 @@ static const LangEntry langTable[] = {
     {3478, "The area of open ground round an explosion that kills a builder. 0, \"Half-square circle\", is the WinBolo rule and the default: a circle of radius 128, half a square, edge included. 1, \"Mac Bolo box\", is the Mac Bolo rule: a box that reaches under 128 from the explosion on each axis, so it reaches further on a diagonal. 2, \"Mac Bolo equivalent area circle\", is a circle of radius 144, about the same area as the box. An explosion on a building, a half building, a pillbox or a base still kills only a builder on that square. Every shape also stops at pill_range: a builder further than pill_range from the explosion is safe."},
     {3945, "A player named {player} left this game {string1} seconds ago. Rejoin as that player?\n\nRejoining puts you back on the same team and returns the pillboxes and bases you owned that are still neutral."},
     {3946, "Join as new"},
+    {3960, "LIVES"},
+    {3961, "DIES"},
+    {3962, "HOST REFUSED"},
+    {3963, "NOT TESTED"},
+    {3964, "{string1} {number} > {number2}"},
+    {3965, "{string1} {number} <= {number2}"},
+    {3966, "{string1} {number} >= {number2}"},
+    {3967, "{string1} {number} < {number2}"},
+    {3968, "{string1} off square"},
+    {3969, "{string1} on square"},
+    {3970, "(rewind {number})"},
+    {3971, "estimate"},
+    /* The lag view's notice that the view moved back in forward play. */
+    {3972, "View moved back {number} ms"},
+    {3973, "View moved back {number} ms: {string1}'s lag {number2} -> {number3} ms behind (round trip {number4} -> {string2} ms)"},
+    {3974, "Recording snapshot: game time moved {number} ms in {number2} ms of playback (tick {number3} to {number4})"},
     {2810, "Whether a pillbox may pick a tank as its target."},
     {2860, "+ {number} others"},
     {2861, "+ 1 other"},

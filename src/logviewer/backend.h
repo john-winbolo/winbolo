@@ -886,32 +886,48 @@ void lv_screenOverrunNow(LvOverrunNow *out);
 void lv_screenLagViewSet(int slot);
 int  lv_screenLagViewSlot(void);
 bool lv_screenLagViewStatus(char *name, size_t nameSize, int *behindMs, bool *drawn);
+/* The newest notice that the lag view moved back in forward play
+ * (LvLagNotice in lv_lag.h) into *out (may be NULL). Returns a count that
+ * goes up by one with each new notice; 0 before the first. Hold the client
+ * mutex. */
+uint32_t lv_screenLagNotice(LvLagNotice *out);
 
 /* What the lag view's shell owner matcher (lv_shell_owner.h) did since the
  * viewer started: how many new shells it gave an owner and why the others
  * have none. */
 void lv_screenLagShellOwnerStats(LvShellOwnerStats *out);
 
-/* "Screen-True Own Shells" (lv_shell_owner.h), on by default: in the
- * lag view the chosen player's own shells are drawn from the present frame,
- * as that player's own screen drew them. Off draws them from the old frame,
- * as every other shell is. The value is one bool that lv_screenUpdate
- * and the lag view's capture at each entry (lv_lagEarlyBlastTick) read, so
- * the menu sets and gets it with no client mutex. */
-void lv_screenSetScreenTrueShells(int enabled);
-int  lv_screenGetScreenTrueShells(void);
-
-/* "Screen-True Local Explosions" (lv_early_blast.h), off by
- * default: in the lag view each own shell of the chosen player explodes at the present where it ended, and the
- * server's later explosion of that shell is hidden. It does something only
- * while "Screen-True Own Shells" is on (lv_earlyBlastOn). Stats gives
- * how many own shells ended and how many server explosions were found for
- * them. The toggle is one bool that lv_screenUpdate and the lag view's
- * capture at each entry (lv_lagEarlyBlastTick) read, so the menu sets and
- * gets it with no client mutex; hold the client mutex for the stats. */
-void lv_screenSetScreenTrueExplosions(int enabled);
-int  lv_screenGetScreenTrueExplosions(void);
+/* While "See What the Selected Player Saw" is on, the chosen player's own
+ * shells are always drawn from the present frame ("Screen-True Own Shells",
+ * lv_shell_owner.h), as that player's own screen drew them, and each one
+ * explodes at the present where it ended ("Screen-True Local Explosions",
+ * lv_early_blast.h); the server's later explosion of that shell is hidden.
+ * Stats gives how many own shells ended and how many server explosions
+ * were found for them; hold the client mutex for the stats. */
 void lv_screenEarlyBlastStats(LvEarlyBlastStats *out);
+
+/* The explosions that are new on the map (lvHitboxNewBlasts in
+ * lv_hitbox.h), for the dot of Hit Boxes. lv_screenNewBlasts gives those of
+ * the map lv_screenUpdate drew last, in the lag view too, as map squares and
+ * art pixels; *out points into the viewer's own list. lv_screenShellsNewBlasts
+ * puts those of the present step's shell list into out, at most max. Both
+ * return how many; none when the step before is not known (the first step of
+ * a log, or a seek put playback on a snapshot and read no step since). */
+struct LvHitBlastRec;
+int  lv_screenNewBlasts(const struct LvHitBlastRec **out);
+int  lv_screenShellsNewBlasts(struct LvHitBlastRec *out, int max);
+
+/* The Server Check of the hit boxes (lv_server_check.h): what the server
+ * tested when a shell's blast came near a builder, from the recording's
+ * log_BuilderCheck records, or an estimate for a recording with none.
+ * lv_screenSetServerCheck turns it on and off with the hit boxes
+ * (lv_drawSetHitBoxes); while it is off no check is kept. lv_screenServerChecks
+ * puts the checks shown at the playhead into out, at most max, and the
+ * playhead's time into *nowMs (may be NULL); it returns how many. Hold the
+ * client mutex. */
+struct LvServerCheck;
+void lv_screenSetServerCheck(int on);
+int  lv_screenServerChecks(struct LvServerCheck *out, int max, uint32_t *nowMs);
 
 void lv_screenCentreOnSelectedItem();
 

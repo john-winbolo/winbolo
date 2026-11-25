@@ -430,15 +430,25 @@ void lv_playersGetTankDetails(BYTE playerNumber, BYTE *mx, BYTE *my, BYTE *px, B
  * each tank and builder is now into one frame of the view's history.
  * lv_playersSetLagFrame makes lv_playersMakeScreenTanks and
  * lv_playersMakeScreenLgm draw from frame, every tank but liveSlot's and
- * every builder; NULL draws the present again. lv_playersGetDrawnTankDetails
+ * every builder; NULL draws the present again. It sets both builder frames
+ * of lv_playersSetLagLgmFrames to frame. lv_playersGetDrawnTankDetails
  * gives the place the map draws slot's tank at, so a label sits on it;
  * FALSE when no tank is drawn. */
 void lv_playersLagCapture(LvLagFrame *frame);
 void lv_playersSetLagFrame(const LvLagFrame *frame, int liveSlot);
-/* The frame the lag view draws the builders from, which the server rewinds
- * less far than tanks. Call it after lv_playersSetLagFrame, which sets it to
- * the tanks' frame; NULL keeps the tanks' frame. */
-void lv_playersSetLagLgmFrame(const LvLagFrame *frame);
+/* The lag view's two builder frames. Call it after lv_playersSetLagFrame.
+ * shown is the frame lv_playersMakeScreenLgm draws every builder from: the
+ * pillboxes' frame, one round trip back, since a client puts a builder on
+ * its screen when the snapshot gets there, as it does a pillbox. tested is
+ * the frame of the builders the server tests (shellLgmRewind), which the
+ * hit box is drawn from (lv_playersMakeScreenLgmTested, lv_playersLgmPlace).
+ * NULL for either is the present. */
+void lv_playersSetLagLgmFrames(const LvLagFrame *shown, const LvLagFrame *tested);
+/* As lv_playersMakeScreenLgm, but the builders at the place the server tests
+ * them: in the lag view, the tested frame of lv_playersSetLagLgmFrames, not
+ * the drawn one. With no lag view it is the same list. The hit box is drawn
+ * from this list. */
+void lv_playersMakeScreenLgmTested(screenLgm *value, BYTE leftPos, BYTE rightPos, BYTE top, BYTE bottom);
 bool lv_playersGetDrawnTankDetails(BYTE slot, BYTE *mx, BYTE *my, BYTE *px, BYTE *py, BYTE *frame, bool *onBoat);
 
 

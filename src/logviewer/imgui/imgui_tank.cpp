@@ -69,6 +69,7 @@ extern "C" {
     #include "../lv_builder_status.h"
     #include "../lv_pill_numbers.h"
     #include "../lv_lag.h"
+    #include "../lv_time_fmt.h"
     #include "../../gui/positions.h"
     #include "../../gui/tiles.h"
     #include "../../gui/sdl3/map_colours.h"  /* mapColourTeam */
@@ -86,6 +87,12 @@ extern "C" {
     void lv_screenLagViewSet(int slot);
     int  lv_screenLagViewSlot(void);
     bool lv_screenLagViewStatus(char *name, size_t nameSize, int *behindMs, bool *drawn);
+    void lv_screenSeekToTimeMs(uint32_t ms);
+    uint32_t lv_screenLagNotice(LvLagNotice *out);
+    uint32_t lv_screenGetTimeRunning(void);
+    uint32_t lv_screenWindowStartMs(void);
+    uint32_t lv_screenServerTickAt(uint32_t ms);
+    bool lv_screenHasServerTick(void);
     void lv_drawDirtyScreen(void);
     void lv_windowNeedRedraw(void);
     SDL_Texture *lv_drawGetStatusBackgroundTexture(void);
@@ -1005,12 +1012,140 @@ static LvTankRoom tank_room(const LvTankStatus &st, ImVec2 avail) {
     return r;
 }
 
+/* The time and the tick at playback time ms, as the seek bar's time row
+ * writes them: the time from the start of the part of the log the viewer
+ * shows, with its hundredths, and the server's tick. */
+static void tank_lag_time_text(int64_t ms, char *out, size_t outSize) {
+    char t[LV_TIME_TEXT_MAX];
+    MessageArgs args = {};
+    uint32_t at = (uint32_t)ms;
+    uint32_t start;
+    uint32_t tick;
+    lv_clientMutexWaitFor();
+    start = lv_screenWindowStartMs();
+    tick = lv_screenHasServerTick() ? lv_screenServerTickAt(at) : at / 20u;
+    lv_clientMutexRelease();
+    if (at >= start) {
+        lvTimeFormat(at - start, 1, t, sizeof(t));
+        snprintf(args.string1, sizeof(args.string1), "%s", t);
+    } else {
+        /* A time in the hidden lobby, before the time row's 0. */
+        lvTimeFormat(start - at, 1, t, sizeof(t));
+        snprintf(args.string1, sizeof(args.string1), "-%s", t);
+    }
+    args.number = (int)tick;
+    snprintf(out, outSize, "%s", langGetTextFmt(STR_LV_LAG_GRAPH_AT, &args));
+}
+
+/* The lag graph: the round-trip time over LV_LAG_GRAPH_SPAN_MS with the
+ * playhead in the middle, drawn as a strong line with the value there beside
+ * it. A time with no value is left empty. With the mouse over the graph, a
+ * lighter line follows it and a tooltip gives the time and the lag there; a
+ * click moves the playhead to that time. */
+static void tank_lag_graph(const LvPlayerLag &lag, float w, float graphH) {
+    const ImGuiStyle &style = ImGui::GetStyle();
+    ImDrawList *dl = ImGui::GetWindowDrawList();
+    const ImVec2 g0 = ImGui::GetCursorScreenPos();
+    const ImVec2 g1(g0.x + w, g0.y + graphH);
+    ImGui::InvisibleButton("##lag_graph", ImVec2(w, graphH));
+    const bool hovered = ImGui::IsItemHovered();
+    const bool clicked = ImGui::IsItemClicked(ImGuiMouseButton_Left);
+
+    dl->AddRectFilled(g0, g1, ImGui::GetColorU32(ImGuiCol_FrameBg), style.FrameRounding);
+    /* The inner box the line is drawn in. */
+    const float x0 = g0.x + style.FramePadding.x;
+    const float x1 = g1.x - style.FramePadding.x;
+    const float y0 = g0.y + style.FramePadding.y;
+    const float y1 = g1.y - style.FramePadding.y;
+    const float iw = x1 - x0;
+    auto sampleX = [&](int i) {
+        return x0 + iw * (float)i / (float)(LV_LAG_GRAPH_SAMPLES - 1);
+    };
+    auto sampleY = [&](int i) {
+        float v = lag.graph[i] / lag.graphMax;
+        if (v > 1.0f) v = 1.0f;
+        return y1 - v * (y1 - y0);
+    };
+    const ImU32 lineCol = ImGui::GetColorU32(ImGuiCol_PlotLines);
+    for (int i = 0; i + 1 < LV_LAG_GRAPH_SAMPLES; i++) {
+        if (lag.graphHas[i] && lag.graphHas[i + 1]) {
+            /* A record holds until the next one, so the line steps. */
+            const float xa = sampleX(i), xb = sampleX(i + 1);
+            const float ya = sampleY(i), yb = sampleY(i + 1);
+            dl->AddLine(ImVec2(xa, ya), ImVec2(xb, ya), lineCol, 1.0f);
+            if (yb != ya) {
+                dl->AddLine(ImVec2(xb, ya), ImVec2(xb, yb), lineCol, 1.0f);
+            }
+        }
+    }
+
+    /* The playhead: the middle sample, a strong line in the text colour so
+     * both themes show it, and the value there beside it. */
+    const ImU32 textCol = ImGui::GetColorU32(ImGuiCol_Text);
+    const float mx = floorf(sampleX(LV_LAG_GRAPH_MID)) + 0.5f;
+    dl->AddLine(ImVec2(mx, g0.y + 1.0f), ImVec2(mx, g1.y - 1.0f), textCol, 2.0f);
+    if (lag.graphHas[LV_LAG_GRAPH_MID]) {
+        MessageArgs args = {};
+        args.number = (int)lag.graph[LV_LAG_GRAPH_MID];
+        const char *now = langGetTextFmt(STR_LV_LAG_GRAPH_NOW, &args);
+        const ImVec2 ts = ImGui::CalcTextSize(now);
+        float tx = mx + 4.0f;
+        if (tx + ts.x > x1) {
+            tx = mx - 4.0f - ts.x;   /* no room on the right: on the left */
+        }
+        dl->AddText(ImVec2(tx, g0.y + 1.0f), textCol, now);
+    }
+
+    if (!hovered) {
+        return;
+    }
+    /* The lighter line at the sample under the mouse, and its tooltip. */
+    const float frac = iw > 0.0f ? (ImGui::GetIO().MousePos.x - x0) / iw : 0.0f;
+    const int at = lv_lagGraphSampleAt(frac);
+    const int64_t atMs = lv_lagGraphSampleMs(lag.graphStartMs, at);
+    const float hx = floorf(sampleX(at)) + 0.5f;
+    dl->AddLine(ImVec2(hx, y0), ImVec2(hx, y1), ImGui::GetColorU32(ImGuiCol_Text, 0.4f), 1.0f);
+
+    char when[LANG_MSGARG_STRING_LEN * 2];
+    when[0] = '\0';
+    if (atMs >= 0) {
+        tank_lag_time_text(atMs, when, sizeof(when));
+    }
+    if (ImGui::BeginTooltip()) {
+        if (when[0] != '\0') {
+            ImGui::TextUnformatted(when);
+        }
+        if (lag.graphHas[at]) {
+            MessageArgs args = {};
+            args.number = (int)lag.graph[at];
+            args.number2 = lag.graphBehind[at];
+            ImGui::TextUnformatted(langGetTextFmt(STR_LV_LAG_LINE, &args));
+        } else {
+            ImGui::TextDisabled("%s", langGetText(STR_LV_LAG_GRAPH_NONE));
+        }
+        MessageArgs args = {};
+        args.number = (int)lag.graphMax;
+        ImGui::PushTextWrapPos(ImGui::GetFontSize() * 24.0f);
+        ImGui::TextDisabled("%s", langGetTextFmt(STR_LV_LAG_GRAPH_TIP, &args));
+        ImGui::PopTextWrapPos();
+        ImGui::EndTooltip();
+    }
+    if (clicked && atMs >= 0) {
+        /* The seek clamps a time past the end to the end. */
+        lv_clientMutexWaitFor();
+        lv_drawDirtyScreen();
+        lv_screenSeekToTimeMs((uint32_t)atMs);
+        lv_drawDirtyScreen();
+        lv_clientMutexRelease();
+        lv_windowNeedRedraw();
+    }
+}
+
 /* The selected player's lag: the round-trip time and how far behind the
- * present the player's screen was, the round-trip time across the recording
- * with a line at the playhead, and the check box that shows the map as that
+ * present the player's screen was, the round-trip time around the playhead
+ * (tank_lag_graph), and the check box that shows the map as that
  * player's screen showed it. */
 static void tank_lag(const LvTankStatus &st, const LvPlayerLag &lag, int viewSlot) {
-    const ImGuiStyle &style = ImGui::GetStyle();
     const float graphH = tank_lag_graph_h();
     const float w = ImGui::GetContentRegionAvail().x;
     MessageArgs args = {};
@@ -1029,21 +1164,7 @@ static void tank_lag(const LvTankStatus &st, const LvPlayerLag &lag, int viewSlo
 
     /* The graph is of the round-trip time, which a bot does not have. */
     if (lag.has && !lag.bot && w > 0.0f) {
-        ImVec2 g0 = ImGui::GetCursorScreenPos();
-        ImGui::PlotLines("##lag_graph", lag.graph, LV_LAG_GRAPH_SAMPLES, 0, nullptr, 0.0f,
-                         lag.graphMax, ImVec2(w, graphH));
-        if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) {
-            args = {};
-            args.number = (int)lag.graphMax;
-            ImGui::SetTooltip("%s", langGetTextFmt(STR_LV_LAG_GRAPH_TIP, &args));
-        }
-        /* The playhead, across the plot's inner box. */
-        float x = g0.x + style.FramePadding.x +
-                  lag.playhead * (w - style.FramePadding.x * 2.0f);
-        ImGui::GetWindowDrawList()->AddLine(ImVec2(floorf(x) + 0.5f, g0.y + style.FramePadding.y),
-                                            ImVec2(floorf(x) + 0.5f,
-                                                   g0.y + graphH - style.FramePadding.y),
-                                            IM_COL32(255, 255, 255, 200));
+        tank_lag_graph(lag, w, graphH);
     } else if (!(lag.has && lag.bot)) {
         /* No record yet: keep the graph's room so the panel does not move. */
         ImGui::Dummy(ImVec2(w > 0.0f ? w : 1.0f, graphH));
@@ -1069,17 +1190,75 @@ static void tank_lag(const LvTankStatus &st, const LvPlayerLag &lag, int viewSlo
     }
 }
 
+/* How long the notice that the view moved back stays, in seconds of wall
+ * clock. */
+#define LAG_NOTICE_SECONDS 1.0
+
+/* The lines of the notice n for the player name: why the view moved back.
+ * Returns how many, at most 2. */
+static int lag_notice_lines(const LvLagNotice &n, const char *name,
+                            char lines[2][LANG_MSGARG_STRING_LEN * 4]) {
+    int count = 0;
+    MessageArgs args = {};
+    args.number = (int)n.backMs;
+    if (n.lag) {
+        snprintf(args.string1, sizeof(args.string1), "%s", name);
+        args.number2 = n.behindWas;
+        args.number3 = n.behindNow;
+        args.number4 = n.rttWas;
+        snprintf(args.string2, sizeof(args.string2), "%d", n.rttNow);
+        snprintf(lines[count++], sizeof(lines[0]), "%s",
+                 langGetTextFmt(STR_LV_LAG_NOTICE_LAG, &args));
+    } else {
+        snprintf(lines[count++], sizeof(lines[0]), "%s",
+                 langGetTextFmt(STR_LV_LAG_NOTICE_BACK, &args));
+    }
+    if (n.hold) {
+        args = {};
+        args.number = (int)n.run.gameMs;
+        args.number2 = (int)n.run.ms;
+        args.number3 = (int)n.run.tickFrom;
+        args.number4 = (int)n.run.tickTo;
+        snprintf(lines[count++], sizeof(lines[0]), "%s",
+                 langGetTextFmt(STR_LV_LAG_NOTICE_HOLD, &args));
+    }
+    return count;
+}
+
 void lv_imgui_lag_banner_at(float x, float y, float w) {
     char name[LANG_MSGARG_STRING_LEN];
     int behind = 0;
     bool drawn = false;
     bool on;
+    LvLagNotice notice;
+    uint32_t serial;
+    uint32_t nowMs;
+    /* The notice shown and when it was first seen, by the wall clock. */
+    static uint32_t s_seen_serial = 0;
+    static double s_seen_at = -1.0;
 
     lv_clientMutexWaitFor();
     on = lv_screenLagViewStatus(name, sizeof(name), &behind, &drawn);
+    serial = lv_screenLagNotice(&notice);
+    nowMs = lv_screenGetTimeRunning();
     lv_clientMutexRelease();
+    if (serial != s_seen_serial) {
+        s_seen_serial = serial;
+        s_seen_at = ImGui::GetTime();
+    }
     if (!on) {
         return;
+    }
+    /* A notice is shown for LAG_NOTICE_SECONDS, and not after a seek back
+     * to before its step. */
+    char lines[2][LANG_MSGARG_STRING_LEN * 4];
+    int lineCount = 0;
+    if (serial != 0 && notice.any && s_seen_at >= 0.0 &&
+        ImGui::GetTime() - s_seen_at < LAG_NOTICE_SECONDS && nowMs >= notice.atMs) {
+        lineCount = lag_notice_lines(notice, name, lines);
+        /* A paused game draws no new frame by itself: ask for frames until
+         * the notice has gone. */
+        lv_windowNeedRedraw();
     }
 
     MessageArgs args = {};
@@ -1110,6 +1289,11 @@ void lv_imgui_lag_banner_at(float x, float y, float w) {
             lv_clientMutexRelease();
             lv_drawDirtyScreen();
             lv_windowNeedRedraw();
+        }
+        /* Why the view moved back, in the window's own text colour so both
+         * themes show it. */
+        for (int i = 0; i < lineCount; i++) {
+            ImGui::TextUnformatted(lines[i]);
         }
     }
     ImGui::End();
