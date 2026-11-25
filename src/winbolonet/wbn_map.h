@@ -24,6 +24,10 @@ typedef struct {
   char     name[MAP_STR_SIZE];
   uint8_t *mapData;          /* heap; raw .map bytes (base64-decoded). NULL if !found. */
   size_t   mapDataLen;
+  bool     answered;         /* set by wbnMapFetchByMd5 only: WinBolo.net said
+                                whether it stores the map (a 2xx that parsed,
+                                or a 400/404). false when the request never
+                                got that far, so asking again may succeed. */
 } WbnMapResult;
 
 /*********************************************************
@@ -48,7 +52,9 @@ bool wbnMapParseResponse(const char *json, WbnMapResult *out);
 * Synchronous (blocking) POST {map_md5} to /api/v1/map and fill
 * *out. Returns true on a 200 with a decoded map
 * (out->found == true); false on 404/400/transport/parse error
-* (out zeroed, mapData NULL). Run off the frame loop.
+* (out zeroed, mapData NULL). out->answered tells a false that
+* is WinBolo.net's answer (the map is not stored) from one where
+* the request failed on the way. Run off the frame loop.
 *
 *ARGUMENTS:
 * md5Hex - 32-char hex map md5

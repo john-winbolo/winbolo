@@ -20,7 +20,9 @@
  * Purpose:       Async, session-cached fetch of a stored
  *                map's raw .map bytes by md5, off the frame
  *                loop. Requests dedupe per md5 and results
- *                are cached for the process lifetime.
+ *                are cached for the process lifetime, except
+ *                a lookup WinBolo.net never answered, which
+ *                is asked again after a wait.
  *********************************************************/
 
 #ifndef MAP_PREVIEW_FETCH_H
@@ -33,7 +35,9 @@ enum class MapPreviewFetchState { Pending, Ready, Unavailable };
 
 /* Request an async fetch of the map with this 32-char lowercase-hex md5.
  * No-op if md5Hex is null/empty/not 32 chars, or if a request for it is
- * already pending/cached (dedupe). Safe to call every frame. */
+ * already pending/cached (dedupe). A cached Unavailable that came from a
+ * failed request rather than from WinBolo.net's answer goes back to Pending
+ * and is fetched again once its wait has passed. Safe to call every frame. */
 void mapPreviewFetchRequest(const char *md5Hex);
 
 /* Current state for md5Hex. On Ready, *bytesOut / *lenOut point at the cached

@@ -188,11 +188,17 @@ bool wbnMapFetchByMd5(const char *md5Hex, WbnMapResult *out) {
 
     if (code < 200 || code >= 300) {
         free(resp);
+        /* 404 is "no stored map has this md5" and 400 is "not an md5":
+         * both are the answer. Anything else (no connection, a timeout,
+         * 429, a 5xx) says nothing about the map. */
+        out->answered = (code == 404 || code == 400);
         return false;
     }
 
     bool ok = wbnMapParseResponse(resp, out);
     free(resp);
+    /* wbnMapParseResponse zeroes *out, so set this after it. */
+    out->answered = ok;
     return ok && out->found;
 }
 

@@ -499,7 +499,19 @@ void httpWorkerPoolEnd(void) {
 static int wbn_api_post_impl(const char *endpoint, const char *json_body,
                              const char *extra_header, char **response_out) {
   if (response_out) *response_out = NULL;
-  if (!httpStarted) return -1;
+  /* Start the module when nothing has yet, as wbn_api_get_impl does. The
+   * one-shot auth calls, leaving a game and closing the WinBolo.net map
+   * browser all end in httpDestroy(), and the game finder's map lookup
+   * posts here with no httpCreate() of its own, so without this the lookup
+   * returned -1 whenever one of those had run last. */
+  if (!httpStarted) (void)httpCreate();
+  if (!httpStarted) {
+    WB_LOG_WARN(WB_LOG_CAT_NET,
+        "wbn_api_post [%s]: SKIP — httpStarted=false after lazy httpCreate(); "
+        "curl init or INI Host= is broken",
+        endpoint ? endpoint : "(null)");
+    return -1;
+  }
 
   /* An easy handle must not be used by two threads at once, so the kept
    * handle is taken only by the thread that created it. The GUI-thread
