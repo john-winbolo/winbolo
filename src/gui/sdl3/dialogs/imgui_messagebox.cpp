@@ -90,6 +90,11 @@ static SDL_Texture *captureBackbuffer(SDL_Renderer *renderer) {
     return tex;
 }
 
+/* The Yes and No labels imguiMessageBoxYesNoLabels sets for the box it
+ * shows, or NULL for the plain STR_YES and STR_NO. */
+static const char *s_yesLabel = nullptr;
+static const char *s_noLabel = nullptr;
+
 /* Render the message box content (icon, text, buttons).
  * Returns -1 while open, or a IMGUI_MSG_RESULT_* value when a button is pressed. */
 static int renderMessageBoxContent(const char *message, ImguiMsgButtons buttons,
@@ -138,8 +143,8 @@ static int renderMessageBoxContent(const char *message, ImguiMsgButtons buttons,
     } else if (buttons == IMGUI_MSG_YES_NO) {
         /* 2-button: [No][Yes] — Yes is the affirmative/primary, No is the
          * cancel-equivalent. Matches the spec's [Cancel][Confirm] shape. */
-        int f = WBUI::DialogFooter(langGetText(STR_NO),
-                                   langGetText(STR_YES));
+        int f = WBUI::DialogFooter(s_noLabel ? s_noLabel : langGetText(STR_NO),
+                                   s_yesLabel ? s_yesLabel : langGetText(STR_YES));
         if (f == WBUI::FOOTER_CONFIRM) result = IMGUI_MSG_RESULT_YES;
         else if (f == WBUI::FOOTER_CANCEL) result = IMGUI_MSG_RESULT_NO;
     } else { /* IMGUI_MSG_YES_NO_CANCEL */
@@ -1061,6 +1066,20 @@ extern "C" int imguiMessageBoxRich(const char *title,
     SDL_FlushEvent(SDL_EVENT_QUIT);
     msgBoxFrameLimit(false);
     s_messageBoxActive = false;
+    return result;
+}
+
+extern "C" int imguiMessageBoxYesNoLabels(const char *title,
+                                          const char *message,
+                                          ImguiMsgType type,
+                                          const char *yesLabel,
+                                          const char *noLabel) {
+    int result;
+    s_yesLabel = yesLabel;
+    s_noLabel = noLabel;
+    result = imguiMessageBoxEx(title, message, type, IMGUI_MSG_YES_NO);
+    s_yesLabel = nullptr;
+    s_noLabel = nullptr;
     return result;
 }
 

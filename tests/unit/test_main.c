@@ -498,6 +498,7 @@ static const UnitTestEntry s_tests[] = {
     { "brain_sandbox_hostile_file_jail", run_brain_sandbox_hostile_file_jail },
     { "brain_sandbox_hostile_off_map_terrain", run_brain_sandbox_hostile_off_map_terrain },
     { "brain_sandbox_jit_limits", run_brain_sandbox_jit_limits },
+    { "brain_sandbox_luajit_no_ffi", run_brain_sandbox_luajit_no_ffi },
     { "brain_msgh_budget_kill_no_traceback",     run_brain_msgh_budget_kill_no_traceback     },
     { "brain_msgh_real_error_keeps_traceback",   run_brain_msgh_real_error_keeps_traceback   },
     { "brain_inbox_push_peek_fifo",              run_brain_inbox_push_peek_fifo              },
@@ -541,6 +542,7 @@ static const UnitTestEntry s_tests[] = {
     { "loadbrowser_rename_rejections",           run_loadbrowser_rename_rejections           },
     { "loadbrowser_rename_applies",              run_loadbrowser_rename_applies              },
     { "net_impair",                              run_net_impair                              },
+    { "srv_impair_peer_lanonly",                 run_srv_impair_peer_lanonly                 },
     { "channel_mux",                             run_channel_mux                             },
     { "channel_mux_control_queues_past_window",  run_channel_mux_control_queues_past_window  },
     { "channel_mux_control_backlog_delivers_in_order",
@@ -698,8 +700,33 @@ static const UnitTestEntry s_tests[] = {
     { "lv_player_lag_read", run_lv_player_lag_read },
     { "lv_lag_track", run_lv_lag_track },
     { "lv_lag_ring", run_lv_lag_ring },
+    { "lv_lag_rtt_back", run_lv_lag_rtt_back },
+    { "lv_lag_ring_back", run_lv_lag_ring_back },
+    { "lv_lag_map_undo", run_lv_lag_map_undo },
+    { "lv_lag_view_toggle", run_lv_lag_view_toggle },
     { "lv_lag_feature_default_off", run_lv_lag_feature_default_off },
     { "lv_lag_view_draw", run_lv_lag_view_draw },
+    { "lv_lag_view_own_shells", run_lv_lag_view_own_shells },
+    { "lv_lag_view_lost_owner", run_lv_lag_view_lost_owner },
+    { "lv_lag_view_shell_snapshot", run_lv_lag_view_shell_snapshot },
+    { "lv_lag_view_map", run_lv_lag_view_map },
+    { "lv_base_spots", run_lv_base_spots },
+    { "lv_shell_owner_recording", run_lv_shell_owner_recording },
+    { "lv_shell_owner_rules", run_lv_shell_owner_rules },
+    { "lv_shell_owner_real_flight", run_lv_shell_owner_real_flight },
+    { "lv_shell_owner_start", run_lv_shell_owner_start },
+    { "lv_shell_owner_link", run_lv_shell_owner_link },
+    { "lv_shell_owner_one_line", run_lv_shell_owner_one_line },
+    { "lv_shell_owner_ids", run_lv_shell_owner_ids },
+    { "lv_early_blast_rules", run_lv_early_blast_rules },
+    { "lv_early_blast_ended", run_lv_early_blast_ended },
+    { "lv_early_blast_frames", run_lv_early_blast_frames },
+    { "lv_early_blast_match", run_lv_early_blast_match },
+    { "lv_early_blast_hide", run_lv_early_blast_hide },
+    { "lv_early_blast_needs_own_shells", run_lv_early_blast_needs_own_shells },
+    { "lv_early_blast_same_place", run_lv_early_blast_same_place },
+    { "lv_early_blast_many_players", run_lv_early_blast_many_players },
+    { "lv_early_blast_watch_miss", run_lv_early_blast_watch_miss },
     { "lv_lag_view_rename", run_lv_lag_view_rename },
     { "lv_overrun_read", run_lv_overrun_read },
     { "log_roundtrip_ping",                      run_log_roundtrip_ping                      },
@@ -905,6 +932,52 @@ static const UnitTestEntry s_tests[] = {
                                                  run_team_sides_infection_puts_leaver_back },
     { "team_sides_rejoin_is_a_joiner",
                                                  run_team_sides_rejoin_is_a_joiner },
+    { "team_sides_rejoin_keeps_team",
+                                                 run_team_sides_rejoin_keeps_team },
+    { "team_sides_rejoin_keeps_team_no_pills",
+                                                 run_team_sides_rejoin_keeps_team_no_pills },
+    { "team_sides_rejoin_solo_keeps_team",
+                                                 run_team_sides_rejoin_solo_keeps_team },
+    { "team_sides_join_without_rejoin_is_new",
+                                                 run_team_sides_join_without_rejoin_is_new },
+    { "team_sides_rejoin_next_round_is_new",
+                                                 run_team_sides_rejoin_next_round_is_new },
+    { "team_sides_rejoin_can_ally_refused",
+                                                 run_team_sides_rejoin_can_ally_refused },
+    { "team_sides_rejoin_ranked_keeps_team",
+                                                 run_team_sides_rejoin_ranked_keeps_team },
+    { "team_sides_rejoin_full_table_drops_oldest",
+                                                 run_team_sides_rejoin_full_table_drops_oldest },
+    { "team_sides_rejoin_team_waits_for_rejoiner",
+                                                 run_team_sides_rejoin_team_waits_for_rejoiner },
+    { "team_sides_rejoin_all_numbers_held",
+                                                 run_team_sides_rejoin_all_numbers_held },
+    { "team_sides_rejoin_timed_out_frees_team",
+                                                 run_team_sides_rejoin_timed_out_frees_team },
+    { "team_sides_rejoin_age_counts_frames",
+                                                 run_team_sides_rejoin_age_counts_frames },
+    { "team_sides_rejoin_unsigned_restores_at_join",
+                                                 run_team_sides_rejoin_unsigned_restores_at_join },
+    { "team_sides_rejoin_signed_in_waits",
+                                                 run_team_sides_rejoin_signed_in_waits },
+    { "team_sides_rejoin_signed_in_restored",
+                                                 run_team_sides_rejoin_signed_in_restored },
+    { "team_sides_rejoin_signed_in_solo_keeps_team",
+                                                 run_team_sides_rejoin_signed_in_solo_keeps_team },
+    { "team_sides_rejoin_signed_in_moved_seat_kept",
+                                                 run_team_sides_rejoin_signed_in_moved_seat_kept },
+    { "team_sides_rejoin_signed_in_leave_clears",
+                                                 run_team_sides_rejoin_signed_in_leave_clears },
+    { "team_sides_rejoin_signed_in_outlives_same_name_join",
+                                                 run_team_sides_rejoin_signed_in_outlives_same_name_join },
+    { "team_sides_rejoin_signed_in_outlives_same_name_rejoin",
+                                                 run_team_sides_rejoin_signed_in_outlives_same_name_rejoin },
+    { "team_sides_rejoin_signed_in_keeps_address",
+                                                 run_team_sides_rejoin_signed_in_keeps_address },
+    { "team_sides_rejoin_signed_in_name_taken_restored",
+                                                 run_team_sides_rejoin_signed_in_name_taken_restored },
+    { "team_sides_rejoin_no_record_confirm_changes_nothing",
+                                                 run_team_sides_rejoin_no_record_confirm_changes_nothing },
     { "team_sides_joiner_slot_before_join",
                                                  run_team_sides_joiner_slot_before_join },
     { "team_sides_lobby_joiner_keeps_rule",
@@ -1223,6 +1296,8 @@ static const UnitTestEntry s_tests[] = {
     { "fog_road_edges",                          run_fog_road_edges                          },
     { "fog_road_edge_masks",                     run_fog_road_edge_masks                     },
     { "fullscreen_key_action",                   run_fullscreen_key_action                   },
+    { "status_draw_hold",                        run_status_draw_hold                        },
+    { "text_cache_slot_pick",                    run_text_cache_slot_pick                    },
     { "sight",                                   run_sight                                   },
     { "sight_shadow",                            run_sight_shadow                            },
     { "sight_shadow_cost",                       run_sight_shadow_cost                       },
@@ -1297,6 +1372,13 @@ static const UnitTestEntry s_tests[] = {
     { "lgm_blast_dead_pill_far_corner",          run_lgm_blast_dead_pill_far_corner          },
     { "lgm_blast_live_pill_unchanged",           run_lgm_blast_live_pill_unchanged           },
     { "lgm_blast_pill_kill_shot",                run_lgm_blast_pill_kill_shot                },
+    { "lgm_blast_wall_rubble_shot",              run_lgm_blast_wall_rubble_shot              },
+    { "lgm_blast_forest_shot",                   run_lgm_blast_forest_shot                   },
+    { "lgm_blast_boat_shot",                     run_lgm_blast_boat_shot                     },
+    { "lgm_blast_shore_shot",                    run_lgm_blast_shore_shot                    },
+    { "lgm_blast_bridge_shot",                   run_lgm_blast_bridge_shot                   },
+    { "lgm_blast_road_open_ground",              run_lgm_blast_road_open_ground              },
+    { "lgm_blast_mined_bridge_shot",             run_lgm_blast_mined_bridge_shot             },
     { "lgm_blast_shell_runs_out_dead_pill",      run_lgm_blast_shell_runs_out_dead_pill      },
     { "lgm_blast_shell_hits_tank_dead_pill",     run_lgm_blast_shell_hits_tank_dead_pill     },
     { "lgm_blast_tank_explosion_kills_pill",     run_lgm_blast_tank_explosion_kills_pill     },
@@ -1376,6 +1458,7 @@ static const UnitTestEntry s_tests[] = {
     { "loopback_command_submitted_during_rejoin", run_loopback_command_submitted_during_rejoin },
     { "loopback_channel",                        run_loopback_channel                        },
     { "loopback_hitch_recovers",                 run_loopback_hitch_recovers                 },
+    { "prediction_slow_tank_no_corrections",     run_prediction_slow_tank_no_corrections     },
     { "loopback_quit_keeps_peer",                run_loopback_quit_keeps_peer                },
     { "loopback_join_accept_lost_ready",         run_loopback_join_accept_lost_ready         },
     { "send_drains_channels_multi_frame",        run_send_drains_channels_multi_frame        },
@@ -1437,6 +1520,20 @@ static const UnitTestEntry s_tests[] = {
     { "gate1_host_noop",                         run_gate1_host_noop                         },
     { "interp_jitter_e2e",                       run_interp_jitter_e2e                       },
     { "join_version_gate",                       run_join_version_gate                       },
+    { "join_ask_rejoin_live_record_asks",        run_join_ask_rejoin_live_record_asks        },
+    { "join_ask_rejoin_without_flag_joins",      run_join_ask_rejoin_without_flag_joins      },
+    { "join_ask_rejoin_want_rejoin_joins",       run_join_ask_rejoin_want_rejoin_joins       },
+    { "join_ask_rejoin_no_record_joins",         run_join_ask_rejoin_no_record_joins         },
+    { "join_ask_rejoin_timed_out_joins",         run_join_ask_rejoin_timed_out_joins         },
+    { "join_locked_rejoin_address_seats", run_join_locked_rejoin_address_seats },
+    { "join_locked_rejoin_no_match_rejects", run_join_locked_rejoin_no_match_rejects },
+    { "join_locked_rejoin_wbn_sign_in_not_seated", run_join_locked_rejoin_wbn_sign_in_not_seated },
+    { "join_locked_rejoin_wbn_verified_seats", run_join_locked_rejoin_wbn_verified_seats },
+    { "join_locked_rejoin_wbn_fail_rejects", run_join_locked_rejoin_wbn_fail_rejects },
+    { "join_locked_rejoin_wbn_other_name_rejects", run_join_locked_rejoin_wbn_other_name_rejects },
+    { "join_locked_rejoin_wbn_timeout_rejects", run_join_locked_rejoin_wbn_timeout_rejects },
+    { "join_locked_rejoin_ask_gets_question", run_join_locked_rejoin_ask_gets_question },
+    { "join_locked_rejoin_unlocked_unchanged", run_join_locked_rejoin_unlocked_unchanged },
     { "join_rate_limit",                         run_join_rate_limit                         },
     { "cookie_handshake",                        run_cookie_handshake                        },
     { "map_amp_gate",                            run_map_amp_gate                            },
@@ -1594,6 +1691,11 @@ static const UnitTestEntry s_tests[] = {
     { "man_dead_pill_walk_across_water",         run_man_dead_pill_walk_across_water         },
     { "man_dead_pill_lifted_waits_for_tank",     run_man_dead_pill_lifted_waits_for_tank     },
     { "man_dead_pill_brain_walk",                run_man_dead_pill_brain_walk                },
+    { "lgm_parachute_speed_same_on_every_heading", run_lgm_parachute_speed_same_on_every_heading },
+    { "lgm_parachute_speed_takes_a_fraction",    run_lgm_parachute_speed_takes_a_fraction    },
+    { "lgm_parachute_wide_step_lands",           run_lgm_parachute_wide_step_lands           },
+    { "lgm_parachute_moved_in_flight",           run_lgm_parachute_moved_in_flight           },
+    { "lgm_parachute_put_back_starts_exact",     run_lgm_parachute_put_back_starts_exact     },
     { "lgm_blast_shape_half_square",             run_lgm_blast_shape_half_square             },
     { "lgm_blast_shape_mac_box",                 run_lgm_blast_shape_mac_box                 },
     { "lgm_blast_shape_mac_area",                run_lgm_blast_shape_mac_area                },
@@ -1790,6 +1892,7 @@ static const UnitTestEntry s_tests[] = {
     { "lgm_drop_pill_no_room",                   run_lgm_drop_pill_no_room                   },
     { "util_spiral_north",                       run_util_spiral_north                       },
     { "util_spiral_north_west",                  run_util_spiral_north_west                  },
+    { "util_spiral_rings",                       run_util_spiral_rings                       },
     { "scenario_lgm_dispatch",                   run_scenario_lgm_dispatch                   },
     { "scenario_lgm_recall",                     run_scenario_lgm_recall                     },
     { "scenario_lgm_kill",                       run_scenario_lgm_kill                       },
@@ -2070,6 +2173,9 @@ static const UnitTestEntry s_tests[] = {
     { "scenario_flow_set_game_time",             run_scenario_flow_set_game_time             },
     { "scenario_flow_set_game_time_refusals",    run_scenario_flow_set_game_time_refusals    },
     { "scenario_flow_arm_records",               run_scenario_flow_arm_records               },
+    { "game_time_limit_counts_frames",           run_game_time_limit_counts_frames           },
+    { "game_time_start_delay_counts_frames",     run_game_time_start_delay_counts_frames     },
+    { "game_time_lobby_minutes",                 run_game_time_lobby_minutes                 },
     { "scenario_rule_index_matches_table",       run_scenario_rule_index_matches_table       },
     { "scenario_rule_set",                       run_scenario_rule_set                       },
     { "scenario_rule_set_float",                 run_scenario_rule_set_float                 },
@@ -2728,6 +2834,7 @@ static const UnitTestEntry s_tests[] = {
     { "lv_rule_changes_live_feed",                       run_lv_rule_changes_live_feed                       },
     { "lv_rule_changes_armour_levels",                   run_lv_rule_changes_armour_levels                   },
     { "lv_rule_changes_live_same_tick",                  run_lv_rule_changes_live_same_tick                  },
+    { "lv_rule_changes_lgm_blast_shape_outside",         run_lv_rule_changes_lgm_blast_shape_outside         },
     { "lv_presentation_seek",                            run_lv_presentation_seek                            },
     { "lv_presentation_hostile",                         run_lv_presentation_hostile                         },
     { "lv_presentation_scripted_round",                  run_lv_presentation_scripted_round                  },
@@ -2766,6 +2873,13 @@ static const UnitTestEntry s_tests[] = {
     { "lv_overview_neutral_row",                         run_lv_overview_neutral_row                         },
     { "lv_tank_status_sums",                             run_lv_tank_status_sums                             },
     { "lv_tank_bars_sums",                               run_lv_tank_bars_sums                               },
+    { "lv_hitbox_sums",                                  run_lv_hitbox_sums                                  },
+    { "lv_hitbox_lgm_fit",                               run_lv_hitbox_lgm_fit                               },
+    { "lv_hitbox_lgm_pick",                              run_lv_hitbox_lgm_pick                              },
+    { "lv_hitbox_outline",                               run_lv_hitbox_outline                               },
+    { "lv_hitbox_zone_from_version",                     run_lv_hitbox_zone_from_version                     },
+    { "hit_rules_builder_matches_engine",                run_hit_rules_builder_matches_engine                },
+    { "hit_rules_tank_matches_engine",                   run_hit_rules_tank_matches_engine                   },
     { "lv_tank_pick_sums",                               run_lv_tank_pick_sums                               },
     { "lv_marks_fade",                                   run_lv_marks_fade                                   },
     { "lv_window_size_parse",                            run_lv_window_size_parse                            },
@@ -2775,6 +2889,7 @@ static const UnitTestEntry s_tests[] = {
     { "lv_dock_clear_rects",                             run_lv_dock_clear_rects                             },
     { "lv_dock_clear_map",                               run_lv_dock_clear_map                               },
     { "lv_dock_clear_prefs",                             run_lv_dock_clear_prefs                             },
+    { "lv_dock_clear_room_len",                          run_lv_dock_clear_room_len                          },
     { "lv_dock_default_layout",                          run_lv_dock_default_layout                          },
     { "lv_dump_recorded_round",                          run_lv_dump_recorded_round                          },
     { "lv_spmap_owner_table",                            run_lv_spmap_owner_table                            },
@@ -2828,6 +2943,7 @@ static const UnitTestEntry s_tests[] = {
     { "lv_pill_numbers_list",                            run_lv_pill_numbers_list                            },
     { "lv_pill_numbers_layout",                          run_lv_pill_numbers_layout                          },
     { "lv_pill_numbers_overview",                        run_lv_pill_numbers_overview                        },
+    { "lv_pill_numbers_batched",                         run_lv_pill_numbers_batched                         },
     { "lv_controls_top_row",                             run_lv_controls_top_row                             },
     { "lv_controls_bottom_row",                          run_lv_controls_bottom_row                          },
     { "lv_controls_wheel_step",                          run_lv_controls_wheel_step                          },
@@ -2853,6 +2969,11 @@ static const UnitTestEntry s_tests[] = {
     { "lv_jump_anim_lands",                              run_lv_jump_anim_lands                              },
     { "lv_jump_anim_steps",                              run_lv_jump_anim_steps                              },
     { "lv_jump_anim_time",                               run_lv_jump_anim_time                               },
+    { "lv_jump_anim_retarget",                           run_lv_jump_anim_retarget                           },
+    { "lv_base_near_pick",                               run_lv_base_near_pick                               },
+    { "lv_base_near_range",                              run_lv_base_near_range                              },
+    { "lv_base_near_bars",                               run_lv_base_near_bars                               },
+    { "lv_base_near_game_screen",                        run_lv_base_near_game_screen                        },
     { "scn_presentation_codec_bodies",                   run_scn_presentation_codec_bodies                   },
     { "scn_presentation_codec_refuses_short",            run_scn_presentation_codec_refuses_short            },
     { "scn_presentation_decoder_sets_broadcast",         run_scn_presentation_decoder_sets_broadcast         },
@@ -2987,7 +3108,8 @@ static int run_one(const char *name) {
             s_currentTest = s_tests[i].name;
             int rc = s_tests[i].fn();
             s_currentTest = "none";
-            fprintf(stderr, "%s %s\n", rc == 0 ? "PASS" : "FAIL",
+            fprintf(stderr, "%s %s\n",
+                    rc == 0 ? "PASS" : (rc == UT_SKIP_RC ? "SKIP" : "FAIL"),
                     s_tests[i].name);
             return rc;
         }
@@ -3025,13 +3147,18 @@ int main(int argc, char **argv) {
     /* Several names run in that order in one process, which is how to
      * reproduce a test that passes alone and fails in the full run: give it
      * the tests that ran before it until the failure comes back. The exit
-     * code is the first nonzero one. */
+     * code is the first failure's, else UT_SKIP_RC when a test skipped,
+     * else 0. */
     if (argc >= 3 && strcmp(argv[1], "--test") == 0) {
         int rc = 0;
         int a;
         for (a = 2; a < argc; a++) {
             int one = run_one(argv[a]);
-            if (rc == 0) {
+            if (one == UT_SKIP_RC) {
+                if (rc == 0) {
+                    rc = one;
+                }
+            } else if (one != 0 && (rc == 0 || rc == UT_SKIP_RC)) {
                 rc = one;
             }
         }
@@ -3047,8 +3174,11 @@ int main(int argc, char **argv) {
             printf("SKIP %s (regenerates a committed fixture)\n", s_tests[i].name);
             continue;
         }
-        if (run_one(s_tests[i].name) != 0) {
-            fail = 1;
+        {
+            int one = run_one(s_tests[i].name);
+            if (one != 0 && one != UT_SKIP_RC) {
+                fail = 1;
+            }
         }
     }
     SDL_Quit();

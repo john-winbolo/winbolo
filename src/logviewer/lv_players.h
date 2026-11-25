@@ -435,6 +435,10 @@ void lv_playersGetTankDetails(BYTE playerNumber, BYTE *mx, BYTE *my, BYTE *px, B
  * FALSE when no tank is drawn. */
 void lv_playersLagCapture(LvLagFrame *frame);
 void lv_playersSetLagFrame(const LvLagFrame *frame, int liveSlot);
+/* The frame the lag view draws the builders from, which the server rewinds
+ * less far than tanks. Call it after lv_playersSetLagFrame, which sets it to
+ * the tanks' frame; NULL keeps the tanks' frame. */
+void lv_playersSetLagLgmFrame(const LvLagFrame *frame);
 bool lv_playersGetDrawnTankDetails(BYTE slot, BYTE *mx, BYTE *my, BYTE *px, BYTE *py, BYTE *frame, bool *onBoat);
 
 
@@ -466,6 +470,20 @@ void lv_playersLeaveAlliance(BYTE playerNum);
 void lv_playersAcceptAlliance(BYTE acceptedBy, BYTE newMember);
 
 void lv_playersLgmZero();
+
+/* Note that the builder of the given slot was named at playback time ms, at
+ * the place lv_playersUpdateLgm has just taken. Called once for each
+ * log_LgmLocation, after lv_playersUpdateLgm. */
+void lv_playersLgmNoteTime(BYTE playerNum, uint32_t ms);
+
+/* The closest guess at the place of the slot's builder when he was drawn at
+ * map square mx, my (the map's own, not the screen's) and art pixel px, py:
+ * the middle of what a straight walk through his last recorded pixels
+ * allows (lvHitboxLgmFitRange), in world units from the map's top left,
+ * with the offset lgmGetPX takes off put back. FALSE when his notes have no
+ * entry at that pixel; the caller then takes the middle of the pixel. */
+bool lv_playersLgmPlace(BYTE playerNum, BYTE mx, BYTE my, BYTE px, BYTE py,
+                        double *wx, double *wy);
 
 /* Marks the LGM dead for the given slot. Cleared by the next
  * lv_playersUpdateLgm (i.e. the LGM has respawned and is out again). */

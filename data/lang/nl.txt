@@ -2927,3 +2927,7 @@ STR_CLIPGIF_MOVE_TIP=Sleep om de GIF naar een eerder of later moment te verplaat
 # De optie -size van de Log Viewer, als de tekst geen afmeting is of niet kan worden gehaald
 STR_LV_SIZE_ARG_BAD=-size verwacht een breedte en een hoogte in pixels, bijvoorbeeld -size 1920x1080. Het venster is geopend met de gebruikelijke afmeting.
 STR_LV_SIZE_NOT_MET=Het venster kon niet {string1} pixels groot worden gemaakt, zoals -size vroeg. Het is {string2} pixels: het beeldscherm is misschien te klein om het venster te bevatten.
+
+# De vraag die een Join krijgt als een speler met die naam het spel kort geleden heeft verlaten
+STR_REJECT_CAN_REJOIN=Een speler met de naam {player} heeft dit spel {string1} seconden geleden verlaten. Herjoinen als die speler?\n\nHerjoinen brengt je terug in hetzelfde team en geeft de bunkers en bases terug die je bezat en die nog neutraal zijn.
+STR_JOIN_AS_NEW=Joinen als nieuw

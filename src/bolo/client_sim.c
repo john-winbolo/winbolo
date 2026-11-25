@@ -1387,19 +1387,10 @@ static bool clientShellVisualBlocked(ClientSim *cs, WORLD newX, WORLD newY,
         (void)clientSimDrawnTankWorld(cs, p, &tkX, &tkY);
       }
       /* Match the authoritative shell hit-zone (circle by default; square
-       * under BOLO_LEGACY_SQUARE_COLLISION). See tank_hit_radius. */
-#ifdef BOLO_LEGACY_SQUARE_COLLISION
-      hit = abs((int)newX - (int)tkX) < 128 && abs((int)newY - (int)tkY) < 128;
-#else
-      {
-        int dx = (int)newX - (int)tkX, dy = (int)newY - (int)tkY;
-        /* Bounding-box pre-test bounds dx/dy before squaring; see tankIsTankHit
-         * in tank.c. Never rejects a real hit, prevents int overflow. */
-        const int hitR = (int) cs->sim.rules.tank_hit_radius;
-        hit = abs(dx) < hitR && abs(dy) < hitR &&
-              dx * dx + dy * dy < hitR * hitR;
-      }
-#endif
+       * under BOLO_LEGACY_SQUARE_COLLISION). See tank_hit_radius and
+       * hit_rules.h. */
+      hit = hitRulesTankShellInZone((int)newX - (int)tkX, (int)newY - (int)tkY,
+                                    (int) cs->sim.rules.tank_hit_radius);
       if (hit) {
         if (hitKind != NULL) {
           *hitKind = CLIENT_SHELL_HIT_TANK;
@@ -3078,6 +3069,9 @@ void clientSimResetWorld(ClientSim *cs) {
   cs->reconCountLastSec = 0;
   cs->reconErrAvgPxLast = 0.0f;
   cs->reconErrMaxPxLast = 0.0f;
+  cs->predCorrCount = 0;
+  cs->predCorrPredX = cs->predCorrPredY = 0;
+  cs->predCorrPostX = cs->predCorrPostY = 0;
 
   /* Render-only error offset is predict-scoped too — start fresh. */
   cs->errX = 0.0f;

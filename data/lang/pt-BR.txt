@@ -2928,3 +2928,7 @@ STR_CLIPGIF_MOVE_TIP=Arraste para mover o GIF para um momento anterior ou poster
 # A opção -size do Log Viewer, quando o texto não é um tamanho ou não pode ser atendido
 STR_LV_SIZE_ARG_BAD=-size precisa de uma largura e uma altura em pixels, como -size 1920x1080. A janela foi aberta no tamanho habitual.
 STR_LV_SIZE_NOT_MET=Não foi possível deixar a janela com {string1} pixels, como -size pediu. Ela tem {string2} pixels: a tela pode ser pequena demais para comportá-la.
+
+# A pergunta que Entrar recebe quando um jogador com esse nome saiu do jogo há pouco tempo
+STR_REJECT_CAN_REJOIN=Um jogador chamado {player} saiu deste jogo há {string1} segundos. Reentrar como esse jogador?\n\nReentrar coloca você de volta na mesma equipe e devolve os bunkers e as bases que você possuía e que ainda estão neutros.
+STR_JOIN_AS_NEW=Entrar como novo

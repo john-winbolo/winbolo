@@ -2925,3 +2925,7 @@ STR_CLIPGIF_MOVE_TIP=拖动可把 GIF 移到更早或更晚的时间。长度保
 # The Log Viewer's -size option when its text is not a size or cannot be met
 STR_LV_SIZE_ARG_BAD=-size 需要以像素为单位的宽度和高度，例如 -size 1920x1080。窗口已按通常大小打开。
 STR_LV_SIZE_NOT_MET=无法将窗口设为 -size 所要求的 {string1} 像素。窗口现为 {string2} 像素：显示器可能太小，容纳不下。
+
+# 当有同名玩家不久前离开了游戏时，加入该游戏所收到的询问
+STR_REJECT_CAN_REJOIN=一名名为 {player} 的玩家在 {string1} 秒前离开了这个游戏。要以该玩家的身份重新加入吗？\n\n重新加入会让你回到原来的队伍，并归还你原先拥有且仍为中立的碉堡和基地。
+STR_JOIN_AS_NEW=作为新玩家加入

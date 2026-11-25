@@ -608,7 +608,7 @@ typedef struct {
   I(lgm_cost_pill_new) \
   I(lgm_cost_mine) \
   I(lgm_gather_trees) \
-  I(lgm_helicopter_speed) \
+  F(lgm_helicopter_speed) \
   I(man_speed_road) \
   I(man_speed_grass) \
   I(man_speed_forest) \

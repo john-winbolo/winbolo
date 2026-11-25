@@ -5644,7 +5644,8 @@ static const ScnLuaRow kScnLuaRows[] = {
     { "wall_shots", scnLuaWallShots,
       "wall_shots(x, y) — the shells a wall square still takes before it is "
       "rubble: one more than building_life for a wall no shell has touched, "
-      "what is left for a damaged one, 0 for a square that is not a wall.",
+      "building_life for a half building no shell has touched, what is left "
+      "for a wall the shells have hit, 0 for a square that is not a wall.",
       SCN_OP_PARAMS(wall_shots), SCN_OP_READS },
     { "terrain", scnLuaTerrain,
       "terrain() — every square as one 65,536-byte string, the square at "

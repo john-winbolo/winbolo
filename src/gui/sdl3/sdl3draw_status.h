@@ -63,11 +63,9 @@ void sdl3DrawStatusInit(SDL_Renderer *renderer,
                         TTF_Font *fontTiny,
                         TTF_Font *fontMsg,
                         TTF_Font *fontKD,
-                        TTF_Font *fontLabel,
                         TTF_Font *fallbackFontTiny,
                         TTF_Font *fallbackFontMsg,
                         TTF_Font *fallbackFontKD,
-                        TTF_Font *fallbackFontLabel,
                         SDL_Texture *tankBarsTex,
                         SDL_Texture *baseBarsTex);
 
@@ -76,11 +74,10 @@ void sdl3DrawStatusSetZoom(int zoomFactor);
 void sdl3DrawStatusSetAtlas(SDL_Texture *atlas, int sheetScale);
 
 void sdl3DrawStatusSetFonts(TTF_Font *fontTiny, TTF_Font *fontMsg,
-                            TTF_Font *fontKD,   TTF_Font *fontLabel,
+                            TTF_Font *fontKD,
                             TTF_Font *fallbackFontTiny,
                             TTF_Font *fallbackFontMsg,
-                            TTF_Font *fallbackFontKD,
-                            TTF_Font *fallbackFontLabel);
+                            TTF_Font *fallbackFontKD);
 
 void sdl3DrawStatusSetEdgeOffset(int edgeX, int edgeY);
 
@@ -161,12 +158,6 @@ struct TankLabelCache *sdl3DrawGetTankLabelCache(void);
    cache rather than the one above because both are keyed on the player slot
    and the two hold different text for it — see the note by the definition. */
 struct TankLabelCache *sdl3DrawGetPingNameCache(void);
-/* The faces the pill and base numbers are drawn in — the label font for
-   pills, the tiny font for bases — opened at the main window's zoom. The
-   overview reads them through here and scales what they render to its own
-   zoom. */
-TTF_Font *sdl3DrawGetLabelFont(void);
-TTF_Font *sdl3DrawGetTinyFont(void);
 /* When the newswire text last changed (SDL_GetTicks ms), 0 for never since
    the last reset. The full screen map uses it to slide its newswire strip
    on and off; the classic frame ignores it. */
@@ -176,12 +167,24 @@ Uint64 sdl3DrawGetMessageActivityTick(void);
    1 gone) towards edge, the line it slides off by, and clipped there. The
    lines are drawn as the classic newswire draws its own, in the fixed-width
    font given and showing the rightmost characters that fit, so the scroll
-   moves at one speed and the two lines stay in step. Nothing is drawn while
-   both lines are blank. */
+   moves at one speed and the two lines stay in step. frame, when above zero,
+   is the height of a bar drawn along the strip's top, the backing and the
+   lines starting under it. Nothing is drawn while both lines are blank. */
 void sdl3DrawNewswireStrip(TTF_Font *font, float x, float y, float w,
                            float edge, float slide, Uint8 textAlpha,
-                           Uint8 backAlpha);
+                           Uint8 backAlpha, float frame);
 void sdl3DrawKillsDeaths(int x, int y, int kills, int deaths);
+/* The texture for text in font and colour on the main window's renderer,
+   from a small cache this module keeps, rendered only the first time it is
+   asked for; *outW and *outH get its size in pixels. The cache owns the
+   texture: use it this frame and do not destroy it. NULL, with a size of 0,
+   for no font, no renderer, empty text or a failed render. */
+SDL_Texture *sdl3DrawStatusTextTexture(TTF_Font *font, const char *text,
+                                       SDL_Color fg, int *outW, int *outH);
+/* Draws text with its top-left at (x, y) on the current render target, at
+   the size the face renders it, through the cache above. */
+void sdl3DrawStatusRenderText(TTF_Font *font, const char *text, SDL_Color fg,
+                              float x, float y);
 void sdl3DrawTankLabel(char *str, BYTE playerNum,
                        BYTE mx, BYTE my, BYTE px, BYTE py);
 
@@ -197,6 +200,11 @@ bool sdl3DrawStatusGetShowMicIcons(void);
 /* Lifted from static — flushes the message-line + kills/deaths text
  * caches into the current render target. */
 void sdl3RenderCachedText(void);
+
+/* The cached kills and deaths numbers alone, each with its top left at the
+ * given point of the current render target. */
+void sdl3DrawKillsDeathsAt(float killsX, float killsY,
+                           float deathsX, float deathsY);
 
 #ifdef __cplusplus
 } /* extern "C" */
