@@ -386,7 +386,7 @@ SimRuleValueKind simRulesRuleValueKind(int rule);
 double simRulesClassicValue(int rule);
 
 /* The first version whose classic lgm_blast_shape is 2, the circle of 144.
- * Builds before it played 0, the old WinBolo circle of 128, as classic. */
+ * Releases before it played 0, the old WinBolo circle of 128, as classic. */
 #define SIM_RULES_LGM_BLAST_144_MAJOR    2
 #define SIM_RULES_LGM_BLAST_144_MINOR    2
 #define SIM_RULES_LGM_BLAST_144_REVISION 2
