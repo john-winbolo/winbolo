@@ -818,6 +818,15 @@ bool winbolonetApplyVerifyResult(int status, const char *response,
   return TRUE;
 }
 
+/* The real one stores the key of a player that WinBolo.net accepted before
+ * the seat (the locked game's sign-in check), as the apply above does. */
+void winbolonetSetPlayerKey(BYTE playerNum, const char *playerKey) {
+  if (playerNum < MAX_TANKS) {
+    SDL_strlcpy(wbnStubPlayerKey[playerNum], playerKey ? playerKey : "",
+                WINBOLONET_KEY_LEN);
+  }
+}
+
 uint32_t winbolonetThreadAddUpload(const char *fileName, const char *key) {
   uint32_t id;
   (void)fileName; (void)key;

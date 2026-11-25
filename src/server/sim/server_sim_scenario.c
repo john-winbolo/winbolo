@@ -5802,3 +5802,20 @@ void serverSimScenarioPolicyLeave(ServerSim *sim) {
         sim->inScenarioPolicy--;
     }
 }
+
+bool serverSimScenarioAllowsAlliance(ServerSim *sim, BYTE player, BYTE other) {
+    bool allow;
+
+    if (sim == NULL || sim->scenarioPolicy == NULL ||
+        sim->scenarioPolicy->canAlly == NULL) {
+        return TRUE;
+    }
+    if (player >= MAX_TANKS || other >= MAX_TANKS) {
+        return TRUE;
+    }
+    serverSimScenarioPolicyEnter(sim);
+    allow = sim->scenarioPolicy->canAlly(sim->scenarioPolicy->ctx, player,
+                                         other);
+    serverSimScenarioPolicyLeave(sim);
+    return allow;
+}

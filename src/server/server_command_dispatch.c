@@ -129,28 +129,6 @@ static bool scenarioAllowsExtraTeams(ServerSim *sim, BYTE slot, BYTE team) {
     return allow;
 }
 
-/* Whether the scenario lets player ally with other: player is the one who
- * asked, other the seat asked. Put to the policy at the request and again at
- * the accept, the two places a player makes an alliance. Alliances a script
- * makes itself — set_team, spawning a bot onto a team, seating — go through
- * other paths and are not asked. With no policy, or one with no opinion, the
- * answer is yes. */
-static bool scenarioAllowsAlliance(ServerSim *sim, BYTE player, BYTE other) {
-    bool allow;
-
-    if (sim->scenarioPolicy == NULL || sim->scenarioPolicy->canAlly == NULL) {
-        return TRUE;
-    }
-    if (player >= MAX_TANKS || other >= MAX_TANKS) {
-        return TRUE;
-    }
-    serverSimScenarioPolicyEnter(sim);
-    allow = sim->scenarioPolicy->canAlly(sim->scenarioPolicy->ctx, player,
-                                         other);
-    serverSimScenarioPolicyLeave(sim);
-    return allow;
-}
-
 /* The START_SIDE_* choice of a slot's team; a slot on team 0 has no side. */
 static BYTE lobbySlotStartSide(const ServerSim *sim, BYTE slot) {
     const LobbyPlayer *lp = serverSimGetLobbyPlayer(sim, slot);
@@ -716,7 +694,7 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
         }
         /* Refused here rather than at the accept alone, so nobody is shown
            a request the scenario will not let them take. */
-        if (!scenarioAllowsAlliance(sim, (BYTE)senderSlot, p->toPlayer)) {
+        if (!serverSimScenarioAllowsAlliance(sim, (BYTE)senderSlot, p->toPlayer)) {
             return CMD_REJECT_BAD_STATE;
         }
         /* Recorded so the accept can check it was asked for. */
@@ -749,7 +727,7 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
         /* Asked again: the scenario's answer may have changed since the
            request. The new member is the one who asked. A refusal leaves
            the request in place, as a decline does. */
-        if (!scenarioAllowsAlliance(sim, newMember, (BYTE)senderSlot)) {
+        if (!serverSimScenarioAllowsAlliance(sim, newMember, (BYTE)senderSlot)) {
             return CMD_REJECT_BAD_STATE;
         }
         sim->allianceAskedBy[senderSlot] &= (uint16_t)~asked;

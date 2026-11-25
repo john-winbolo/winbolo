@@ -34,13 +34,6 @@
 -- shot every 5 ticks. WinBolo fires as the count runs out, and floors it
 -- at pill_attack_min_ticks, 6 by default. This part sets it to 5.
 --
--- Pillbox shell range. A Mac Bolo pillbox's shell starts half a square
--- out and flies 32 steps of about a quarter square, so it falls 2143 to
--- 2175 world units (256 to a square) from the pillbox, by direction.
--- WinBolo's starts 160 out and flies pill_fire_length, 8.5 by default,
--- which ends it 2208 out, a quarter square further. This part sets
--- pill_fire_length to 8.25, which ends it 2144 out.
---
 -- Base defence. When a base is shot, every allied pillbox near it gets
 -- angry and fires faster. WinBolo has always counted "near" as a square:
 -- up to 9 map squares away on each axis, edge included, which reaches a
@@ -77,30 +70,26 @@
 -- the lobby has no start for is Mac Bolo's. Turn first_start_lobby off
 -- to give the opening tanks the Mac Bolo pick too.
 --
--- The Mac Bolo pick (randstart) looks only at starts on deep sea with no
--- mine, going round them from a random one. It takes the first with
--- nothing near it at all: no tank and no pillbox, whoever owns them. If
--- every start has something near it, it takes one with no enemy tank and no
--- enemy pillbox near it. If none is free of enemies, it takes the first
--- usable start it looked at, or the map's first start if none is usable.
--- The engine then moves the tank off the start to the nearest clear
--- square, as Mac Bolo does.
+-- The Mac Bolo pick looks only at starts on deep sea with no mine, going
+-- round them from a random one. It takes the first with nothing near it at
+-- all: no tank and no pillbox, whoever owns them. If every start has
+-- something near it, it takes one with no enemy tank and no enemy pillbox
+-- near it. If none is free of enemies, it takes the first usable start it
+-- looked at, or the map's first start if none is usable. The engine then
+-- moves the tank off the start to the nearest clear square, like Mac Bolo.
 --
 -- "Near" is Mac Bolo's own distance: under 16 squares for a tank and under
 -- 9 for a pillbox, measured as a circle. A dead tank does not count. A dead
 -- pillbox does; one being carried does not.
 --
 -- "Enemy" is the game's own alliances, including those made and broken in
--- play. A neutral pillbox counts as an enemy one. Mac Bolo judges every
--- pillbox near a start by the owner of the first one (BOLO BUG 3), so a
--- friendly pillbox there hides an enemy one; the mod judges each pillbox
--- by its own owner.
+-- play. A neutral pillbox counts as an enemy one.
 --
 -- Settings. The host turns each part on or off in the lobby's details
 -- dialog (scenario.settings below). Every part is on by default, and plays
 -- at the numbers above, which the host cannot change. Every setting is a
 -- switch, which keeps the mod well under the 16 settings a script may
--- have; with the five numbers kept, the parts would have reached that cap.
+-- have.
 --
 --   pushback            Mac Bolo shell pushback (tank_slide_mac, with
 --                       tank_slide_step 28, tank_slide_armour_bonus 32
@@ -111,7 +100,6 @@
 --   pill_aim            pillbox aiming and massage (pill_aim_mac).
 --   pill_anger          angry pillbox fire rate
 --                       (pill_attack_min_ticks, 5).
---   pill_shell_range    pillbox shell range (pill_fire_length, 8.25).
 --   base_defence        base defence circle (pill_base_defend_shape, with
 --                       pill_base_defend_range 7).
 --   superboom           superboom threshold
@@ -145,13 +133,12 @@ scenario = {
   name = "Mac Bolo Rules",
   description = "Plays the Mac Bolo shell pushback, pillbox shell cap, " ..
                 "tank clearance, pillbox massage, angry pillbox fire " ..
-                "rate, pillbox shell range, base defence circle, " ..
-                "superboom threshold, parachute speed, builder blast " ..
-                "box and spawn starts. " ..
+                "rate, base defence circle, superboom threshold, " ..
+                "parachute speed, builder blast box and spawn starts. " ..
                 "Each part can be turned off in the lobby.",
   api = 1,
   author = "WinBolo",
-  updated = "2026-11-07T12:00Z",
+  updated = "2026-11-23T14:25Z",
   kind = "mod",
   bound = false,
 
@@ -177,10 +164,6 @@ scenario = {
 
     -- Angry pillbox fire rate: Mac Bolo's fastest, a shot every 5 ticks.
     { id = "pill_anger", label = "Mac Bolo angry pillbox fire rate",
-      type = "bool", default = true },
-
-    -- Pillbox shell range: Mac Bolo's, a quarter square short of WinBolo's.
-    { id = "pill_shell_range", label = "Mac Bolo pillbox shell range",
       type = "bool", default = true },
 
     -- Base defence: a circle of radius 7 round a shot base instead of a
@@ -229,7 +212,6 @@ local SHELL_CAP         = game.setting("shell_cap")
 local TANK_BOXES        = game.setting("tank_boxes")
 local PILL_AIM          = game.setting("pill_aim")
 local PILL_ANGER        = game.setting("pill_anger")
-local PILL_SHELL_RANGE  = game.setting("pill_shell_range")
 local BASE_DEFENCE      = game.setting("base_defence")
 local SUPERBOOM         = game.setting("superboom")
 local PARACHUTE         = game.setting("parachute")
@@ -273,11 +255,6 @@ end
 if PILL_ANGER then
   -- Mac Bolo's fastest angry pillbox: a shot every 5 ticks.
   rules.pill_attack_min_ticks = 5
-end
-
-if PILL_SHELL_RANGE then
-  -- A pillbox shell falls 2144 world units out, as Mac Bolo's do, not 2208.
-  rules.pill_fire_length = 8.25
 end
 
 if BASE_DEFENCE then

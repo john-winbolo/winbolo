@@ -48,6 +48,11 @@
  *      limits of 1000 and 4096; the same work in a VM with LuaJIT's
  *      defaults flushes. Passes with nothing to check on PUC-Lua or with
  *      the compiler off.
+ * run_brain_sandbox_luajit_no_ffi
+ *      the LuaJIT this binary is linked with was built without ffi,
+ *      string.buffer and jit.profile: in a plain VM with no sandbox,
+ *      require fails for each, and an int64 or complex number literal
+ *      does not compile. Passes with nothing to check on PUC-Lua.
  */
 
 #include <stdio.h>
@@ -677,5 +682,44 @@ int run_brain_sandbox_jit_limits(void) {
            "%.0f KB machine code\n", flushes, traces, kb);
     UT_ASSERT_MSG(flushes > 0, "the default VM did not flush, so the work is "
                   "too small to test the limits");
+    return 0;
+}
+
+/* ---- what the linked LuaJIT was built with ------------------------- */
+
+/* The game builds LuaJIT without ffi, string.buffer and jit.profile
+ * (BOLO_LUAJIT_LOCKDOWN_XCFLAGS in cmake/bolo_luajit.cmake), and for ffi
+ * that is the only thing keeping it from a brain. With ffi built in, the
+ * lexer loads the library by itself when it reads a literal such as 1LL,
+ * and puts it back in package.loaded after the sandbox cleared it. So this
+ * looks at the library with no sandbox on it: a build tree that linked a
+ * LuaJIT made without those flags fails here. */
+int run_brain_sandbox_luajit_no_ffi(void) {
+    lua_State *L = luaL_newstate();
+    bool isLuaJit;
+
+    UT_ASSERT(L != NULL);
+    luaL_openlibs(L);
+    lua_getglobal(L, "jit");
+    isLuaJit = lua_istable(L, -1);
+    lua_pop(L, 1);
+    if (!isLuaJit) {
+        printf("  not LuaJIT; nothing to check\n");
+        lua_close(L);
+        return 0;
+    }
+
+    BSH_RUN_OK(L,
+        "for _, name in ipairs({'ffi', 'string.buffer', 'jit.profile'}) do\n"
+        "  local ok = pcall(require, name)\n"
+        "  assert(not ok, 'require(\"' .. name .. '\") loaded: LuaJIT was built with it')\n"
+        "end\n"
+        "assert(loadstring('return 1LL') == nil,\n"
+        "       'an int64 literal compiled: LuaJIT was built with ffi')\n"
+        "assert(loadstring('return 1i') == nil,\n"
+        "       'a complex literal compiled: LuaJIT was built with ffi')\n"
+        "assert(package.loaded.ffi == nil, 'ffi is in package.loaded')\n");
+
+    lua_close(L);
     return 0;
 }

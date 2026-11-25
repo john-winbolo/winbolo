@@ -61,6 +61,7 @@
 #include "lv_bot_chip.h"         /* which chip a bot has in the panels */
 #include "lv_overview.h"
 #include "lv_tank_status.h"
+#include "lv_base_near.h"       /* lvBaseNearPick */
 #include "lv_time_fmt.h"
 #include "lv_event_flash.h"
 #include "lv_dock_clear.h"       /* the middle of the view beside a clear sidebar */
@@ -71,12 +72,16 @@
 #include "cJSON.h"               /* scripts.json, read into g_lv->scripts */
 #include "../common/wb_log.h"      /* the warnings a full index or list gives */
 #include "sim_rules_names.h"     /* simRulesRuleIndex — a rule's name to its index */
+#include "lv_hitbox.h"          /* lvHitboxTankZoneFor */
 #include "lv_builder_status.h"   /* the times each builder was away */
 #include "lv_ping_view.h"        /* the pings of the log, kept by time */
 #include "lv_save_name.h"        /* the players of the whole log, the lobby's map */
 #include "lv_first_view.h"       /* the box round everything that is not deep sea */
 #include "lv_pill_numbers.h"     /* the number of each pillbox on the map */
 #include "lv_lag.h"              /* each player's lag and the lag view's history */
+#include "lv_shell_owner.h"      /* which player fired each shell, for the lag view */
+#include "lv_early_blast.h"      /* own shells explode at once, for the lag view */
+#include "shell_lgm_rewind.h"     /* the builders' shorter rewind */
 
 /* The middle of the visible map from the start of the view (defined with
  * lv_screenSetViewInset). */
@@ -101,18 +106,76 @@ LogViewerState *lv_screenGetState(void) { return g_lv; }
  *
  * The history is a ring of where the map drew each tank, each builder and
  * each shell, one frame for each entry playback plays (lv_screenLogTick).
- * With the view on, the map draws the frame that is the chosen player's
- * rewind older than the playhead: the server rewinds the other tanks by that
- * much when it tests that player's tank shells, so it is the world that
- * player's screen showed. The chosen player's own tank is drawn at the
- * present, where that player's own screen had it. A seek back starts its
- * decode far enough before the target to fill the ring
- * (lv_screenSeekToAbsoluteMs). Where the ring has no frame for the time, the
- * map draws the present and the banner says so. */
+ * Each frame also keeps every pillbox as it was drawn and the map squares
+ * that changed in that entry.
+ *
+ * With the view on, the map draws the tanks, the builders and the shells
+ * from the frame that is the chosen player's rewind older than the playhead:
+ * the server rewinds the other tanks by that much when it tests that
+ * player's tank shells, and that player's client drew them that far back
+ * (it draws them between two snapshots), so it is where that player's screen
+ * showed them. The chosen player's own tank is drawn at the present, where
+ * that player's own screen had it.
+ *
+ * The pillboxes and the map squares are not drawn between two snapshots: a
+ * client puts each change on its screen when the change gets there. So when
+ * the player's input reaches the server at the playhead, the newest of them
+ * that player had was one round trip old, and the view draws them from the
+ * frame that is the player's round trip older than the playhead
+ * (lv_lagRttBackMs). The pillboxes come from that frame. The map is a
+ * drawing copy of the present map with the changes of every newer frame
+ * undone (lv_lagMapUndo); the map itself is never changed. Where one of
+ * those frames had more changes than it keeps (LV_LAG_SQUARES_MAX), the map
+ * is drawn at the present. The bases are drawn at the present.
+ *
+ * A seek back starts its decode far enough before the target to fill the
+ * ring (lv_screenSeekToAbsoluteMs). Where the ring has no frame for the
+ * time, the map draws the present and the banner says so.
+ *
+ * Memory: a frame is 2668 bytes, so the ring of 32 is 85,384 bytes.
+ * The map at the frame before (s_lagMapPrev) and the drawing copy
+ * (s_lagMapDraw) are 65,536 bytes each. */
 #define LV_LAG_HISTORY_MS ((uint32_t) LV_LAG_FRAMES * LV_LAG_ENTRY_MS)
 static LvLagTrack s_lagTracks[LV_LAG_SLOTS];
 static bool       s_lagAny      = FALSE;  /* some record was read */
 static LvLagRing  s_lagRing;
+/* The records round a snapshot that are no game tick. The server writes a
+   snapshot inside one game tick (logWriteSnapshot, logWriteTick in
+   src/bolo/log.c): first the events the tick had queued, its shells among
+   them, as a block of their own; then the snapshot; then a block that holds
+   log_EntityMasks; and at the end of the tick a block with what was queued
+   after the snapshot, which is log_ServerTick. The viewer plays each of
+   these as a 20 ms tick with the shell list cleared (lv_screenLogTick), but
+   the game did not move in the last three: the shells are one step on only
+   in the block after them.
+
+   So those three take no frame in the history: the snapshot, and each block
+   straight after a tick that took none which holds log_EntityMasks or
+   log_ServerTick and no shell. A block with a shell record is always a
+   frame. s_lagSkipFirstMs and s_lagSkipLastMs are the playhead times of the
+   first and the last tick of the newest such run. During the run the lag
+   view draws as at the tick before it (lv_lagNowMs), and the frame after
+   the run finds its shells' owners against the frame before it
+   (lv_lagFindShellOwners). Without this the history had frames with no
+   shells: the chosen player's shells in flight lost their owner, were not
+   drawn for the rewind length, and had a false early explosion. */
+static bool       s_lagSkipped = FALSE;
+static uint32_t   s_lagSkipFirstMs;
+static uint32_t   s_lagSkipLastMs;
+/* What the block of the tick being played held, for the test above. */
+static bool       s_tickSawShell = FALSE;
+static bool       s_tickSawEntityMasks = FALSE;
+static bool       s_tickSawServerTick = FALSE;
+/* The map as the newest frame had it, which the next frame's changed
+   squares are found against (lv_lagMapDiff). It is made the same as the map
+   when the ring starts again. */
+static struct mapObj s_lagMapPrev;
+/* The map as the lag view draws it: the present map with the newer frames'
+   changes undone. Made again for each draw (lv_screenUpdateView). */
+static struct mapObj s_lagMapDraw;
+BOLO_STATIC_ASSERT(sizeof(struct mapObj) == (size_t) LV_LAG_MAP_SIDE * LV_LAG_MAP_SIDE,
+                   lv_lag_map_is_side_by_side);
+BOLO_STATIC_ASSERT(LV_LAG_PILLS_MAX == MAX_PILLS, lv_lag_pills_are_max_pills);
 static int        s_lagViewSlot = -1;     /* the chosen player, -1 for off */
 /* Each slot's joins (log_PlayerJoined), by the time they were read: the
    load walk notes them, and playback notes them again with the duplicate
@@ -192,6 +255,7 @@ static void lv_lagReset(void) {
   }
   s_lagAny = FALSE;
   lv_lagRingClear(&s_lagRing);
+  s_lagSkipped = FALSE;
   s_lagViewSlot = -1;
   s_lagViewJoin = -1;
   for (i = 0; i < LV_LAG_SLOTS; i++) {
@@ -213,13 +277,263 @@ static void lv_lagRecordRead(uint32_t ms, const BYTE *b) {
   }
 }
 
+/* What the shell owner matcher did since the viewer started, for the
+   recording check in the unit tests. */
+static LvShellOwnerStats s_lagOwnerStats;
+
+void lv_screenLagShellOwnerStats(LvShellOwnerStats *out) {
+  if (out != NULL) {
+    *out = s_lagOwnerStats;
+  }
+}
+
+/* A shell or tank place in world units, as the matcher takes it. */
+static int32_t lv_lagWorld(BYTE m, BYTE p) {
+  return (int32_t) m * 256 + (int32_t) p * 16;
+}
+
+/* "Screen-True Own Shells" (lv_shell_owner.h). On by default: the
+   lag view draws the chosen player's own shells from the present frame. */
+static bool s_screenTrueShells = TRUE;
+
+void lv_screenSetScreenTrueShells(int enabled) {
+  s_screenTrueShells = enabled ? TRUE : FALSE;
+}
+
+int lv_screenGetScreenTrueShells(void) { return s_screenTrueShells ? 1 : 0; }
+
+/* "Screen-True Local Explosions" (lv_early_blast.h). Off by
+   default, and drawn only while "Screen-True Own Shells" is on too
+   (lv_earlyBlastOn). It is used from lv_lagFindShellOwners and
+   lv_screenUpdate. */
+static bool              s_screenTrueExpl = FALSE;
+/* Every player's early blasts, so the list is right at once when the view
+   moves to another player. */
+static LvEarlyBlastList  s_earlyBlastList;
+/* The list keeps each early blast for as long as the oldest frame the lag
+   view can draw needs it, for up to LV_EARLY_BLAST_TANKS players. */
+BOLO_STATIC_ASSERT(LV_LAG_HISTORY_MS <= LV_EARLY_BLAST_HISTORY_MS,
+                   lv_early_blast_keeps_lag_history);
+BOLO_STATIC_ASSERT(MAX_TANKS <= LV_EARLY_BLAST_TANKS, lv_early_blast_every_tank);
+
+void lv_screenSetScreenTrueExplosions(int enabled) {
+  s_screenTrueExpl = enabled ? TRUE : FALSE;
+}
+
+int lv_screenGetScreenTrueExplosions(void) { return s_screenTrueExpl ? 1 : 0; }
+
+void lv_screenEarlyBlastStats(LvEarlyBlastStats *out) {
+  if (out != NULL) {
+    *out = s_earlyBlastList.stats;
+  }
+}
+
+/* Note the own shells that ended at the newest frame f, and find the
+   server explosion of each one that is still looked for. prev and cur are
+   the shells of the entry before and of f, as the owner matcher had them;
+   nPrev is 0 when there is no entry before. A frame that starts the ring
+   again (a seek) drops every early blast held. */
+static void lv_lagEarlyBlastTick(const LvLagFrame *f, const LvShellPt *prev,
+                                 const int8_t *prevOwner, int nPrev,
+                                 const LvShellPt *cur, int nCur) {
+  LvBlastPt expl[LV_LAG_SHELLS_MAX];
+  int nExpl = 0, i, missed;
+  uint32_t missMs = 0;
+
+  if (s_lagRing.count <= 1) {
+    lv_earlyBlastListClear(&s_earlyBlastList);
+  }
+  for (i = 0; i < f->shellCount; i++) {
+    if (lv_earlyBlastIsExplFrame(f->shells[i].frame)) {
+      expl[nExpl].wx = lv_lagWorld(f->shells[i].mx, f->shells[i].px);
+      expl[nExpl].wy = lv_lagWorld(f->shells[i].my, f->shells[i].py);
+      expl[nExpl].frame = f->shells[i].frame;
+      nExpl++;
+    }
+  }
+  /* Every player's, but only the viewed player's misses are printed, and
+     only while the view draws early blasts. */
+  missed = lv_earlyBlastListTick(&s_earlyBlastList, f->ms, prev, prevOwner, nPrev, cur, nCur,
+                                 expl, nExpl, s_lagViewSlot, &missMs);
+  if (missed > 0 && s_lagViewSlot >= 0 && lv_earlyBlastOn(s_screenTrueShells, s_screenTrueExpl)) {
+    fprintf(stderr,
+            "logviewer: early blast: no server explosion for player %d's shell at %u ms "
+            "(%u of %u owned shells of all players with none)\n",
+            s_lagViewSlot, (unsigned) missMs, (unsigned) s_earlyBlastList.stats.missed,
+            (unsigned) s_earlyBlastList.stats.ended);
+  }
+}
+
+/* An explosion place as the map's shell list takes it. */
+static BYTE lv_lagMapOf(int32_t w) {
+  return (BYTE) ((w < 0 ? 0 : w) >> 8);
+}
+
+static BYTE lv_lagPixelOf(int32_t w) {
+  return (BYTE) (((w < 0 ? 0 : w) & 255) >> 4);
+}
+
+/* lv_shellOwnerLink sets curOwners only up to LV_SHELL_OWNER_MAX_SHELLS,
+   and the copy back below reads all nCur of them. */
+BOLO_STATIC_ASSERT(LV_LAG_SHELLS_MAX <= LV_SHELL_OWNER_MAX_SHELLS,
+                   lv_lag_shells_fit_owner_link);
+
+/* The id the next new shell is given (LvLagShell.id). */
+static uint16_t s_lagShellIdNext;
+
+/* Make what lv_shellOwnerLinkIds found about the shells before (ev) true
+   in every frame of the history but the newest, which has it already. A
+   shell is drawn from the present frame when its owner is the viewed
+   player and from the old frame otherwise, so its owner must be the same
+   in every frame: a shell whose owner is lost now has none in the old
+   frames too, and two shells that went on as one share one id. */
+static void lv_lagApplyShellIdEvents(const LvShellOwnerIdEvents *ev) {
+  int n, i, k;
+  if (ev->nMerge == 0 && ev->nLost == 0 && !ev->overflow) {
+    return;
+  }
+  for (n = 1; n < s_lagRing.count; n++) {
+    LvLagFrame *g = &s_lagRing.frames[(s_lagRing.newest - n + LV_LAG_FRAMES) % LV_LAG_FRAMES];
+    for (i = 0; i < g->shellCount; i++) {
+      LvLagShell *sh = &g->shells[i];
+      if (ev->overflow) {
+        /* More shells went on as one than the events hold: no shell of
+           the newest frame has an owner, so none here has one either. */
+        sh->owner = LV_SHELL_OWNER_NONE;
+        continue;
+      }
+      for (k = 0; k < ev->nMerge; k++) {
+        if (sh->id == ev->mergeFrom[k]) {
+          sh->id = ev->mergeTo[k];
+        }
+      }
+      for (k = 0; k < ev->nLost; k++) {
+        if (sh->id == ev->lost[k]) {
+          sh->owner = LV_SHELL_OWNER_NONE;
+        }
+      }
+    }
+  }
+}
+
+/* Give the shells of the newest frame f their owners and ids
+   (lv_shell_owner.h), from the frame of the entry before it, and note
+   which tanks fired. With "Screen-True Own Shells" on, the lag view
+   draws the chosen player's own shells at the present, as the player's own
+   client drew them, and every other shell at the old time.
+
+   This runs at every entry while the lag display preference is on, also
+   with no view chosen: a shell's owner comes from its first record, so a
+   shell in flight when the view is turned on must have been followed from
+   its start. The matcher tests each shell only against the shells before
+   with its own direction, which keeps that cheap. */
+static void lv_lagFindShellOwners(LvLagFrame *f) {
+  const LvLagFrame *prev = NULL;
+  static LvShellOwnerIdEvents ev;
+  LvShellPt prevPts[LV_LAG_SHELLS_MAX];
+  int8_t prevOwners[LV_LAG_SHELLS_MAX];
+  uint16_t prevIds[LV_LAG_SHELLS_MAX];
+  LvShellPt curPts[LV_LAG_SHELLS_MAX];
+  int8_t curOwners[LV_LAG_SHELLS_MAX];
+  uint16_t curIds[LV_LAG_SHELLS_MAX];
+  int curIdx[LV_LAG_SHELLS_MAX];
+  LvGunTank guns[LV_SHELL_OWNER_MAX_TANKS];
+  int nPrev = 0, nCur = 0, i;
+
+  if (s_lagRing.count >= 2) {
+    prev = &s_lagRing.frames[(s_lagRing.newest - 1 + LV_LAG_FRAMES) % LV_LAG_FRAMES];
+    /* The entry before, or the one before a run of ticks that took no
+       frame (s_lagSkipFirstMs). */
+    const bool afterSnapshot = s_lagSkipped &&
+                               s_lagSkipFirstMs == prev->ms + LV_LAG_ENTRY_MS &&
+                               f->ms == s_lagSkipLastMs + LV_LAG_ENTRY_MS;
+    if (prev->ms + LV_LAG_ENTRY_MS != f->ms && !afterSnapshot) {
+      prev = NULL;
+    }
+  }
+  memset(guns, 0, sizeof(guns));
+  for (i = 0; i < LV_LAG_SLOTS && i < MAX_TANKS && i < LV_SHELL_OWNER_MAX_TANKS; i++) {
+    LvLagTank *t = &f->tank[i];
+    t->shells = g_lv->tankInv[i].shells;
+    if (prev != NULL) {
+      t->fired = (t->shells < prev->tank[i].shells);
+      /* The drop and the shell's first record are in the same entry; the
+         entry before is let in too, in case they are not. */
+      guns[i].on = t->on;
+      guns[i].wx = lv_lagWorld(t->mx, t->px);
+      guns[i].wy = lv_lagWorld(t->my, t->py);
+      guns[i].dir = (uint8_t) (t->frame & 15);
+      guns[i].fired = t->fired || prev->tank[i].fired;
+    }
+  }
+  for (i = 0; i < f->shellCount; i++) {
+    if (lv_shellOwnerIsShellFrame(f->shells[i].frame)) {
+      curPts[nCur].wx = lv_lagWorld(f->shells[i].mx, f->shells[i].px);
+      curPts[nCur].wy = lv_lagWorld(f->shells[i].my, f->shells[i].py);
+      curPts[nCur].dir = (uint8_t) (f->shells[i].frame - 9);
+      curIdx[nCur++] = i;
+    }
+  }
+  if (prev != NULL) {
+    for (i = 0; i < prev->shellCount; i++) {
+      if (lv_shellOwnerIsShellFrame(prev->shells[i].frame)) {
+        prevPts[nPrev].wx = lv_lagWorld(prev->shells[i].mx, prev->shells[i].px);
+        prevPts[nPrev].wy = lv_lagWorld(prev->shells[i].my, prev->shells[i].py);
+        prevPts[nPrev].dir = (uint8_t) (prev->shells[i].frame - 9);
+        prevIds[nPrev] = prev->shells[i].id;
+        prevOwners[nPrev++] = prev->shells[i].owner;
+      }
+    }
+  }
+  lv_shellOwnerLinkIds(prevPts, prevOwners, prevIds, nPrev, prev != NULL, curPts, nCur, guns,
+                       (prev != NULL) ? LV_SHELL_OWNER_MAX_TANKS : 0,
+                       lv_screenHasTankStock() != 0, curOwners, curIds, &s_lagShellIdNext,
+                       &ev, &s_lagOwnerStats);
+  for (i = 0; i < nCur; i++) {
+    f->shells[curIdx[i]].owner = curOwners[i];
+    f->shells[curIdx[i]].id = curIds[i];
+  }
+  lv_lagApplyShellIdEvents(&ev);
+  lv_lagEarlyBlastTick(f, prevPts, prevOwners, nPrev, curPts, nCur);
+}
+
 /* Note where the map draws everything at this entry, as the history's
    newest frame. */
 static void lv_lagCaptureTick(void) {
   LvLagFrame *f = lv_lagRingPush(&s_lagRing, g_lv->timeRunning);
   shells q;
+  int i;
 
   lv_playersLagCapture(f);
+  for (i = 0; i < LV_LAG_SLOTS && i < MAX_TANKS; i++) {
+    f->tank[i].alive = g_lv->gameViewHud[i].alive;
+  }
+  if (g_lv->pb != NULL) {
+    BYTE count;
+    BYTE total = g_lv->pb->numPills;
+    if (total > LV_LAG_PILLS_MAX) {
+      total = LV_LAG_PILLS_MAX;
+    }
+    f->pillCount = total;
+    for (count = 0; count < total; count++) {
+      const pillbox *p = &g_lv->pb->item[count];
+      LvLagPill *lp = &f->pills[count];
+      lp->x = p->x;
+      lp->y = p->y;
+      lp->owner = p->owner;
+      lp->armour = p->armour;
+      lp->inTank = (p->inTank != FALSE);
+      lp->on = (g_lv->pb->active[count] != FALSE);
+    }
+  }
+  if (g_lv->mp != NULL) {
+    if (s_lagRing.count == 1) {
+      /* The ring starts here, so there is no frame to find changes against. */
+      memcpy(&s_lagMapPrev, g_lv->mp, sizeof(s_lagMapPrev));
+    } else {
+      lv_lagMapDiff(&s_lagMapPrev.mapItem[0][0], &g_lv->mp->mapItem[0][0], f);
+    }
+  }
   for (q = g_lv->shs; q != NULL && f->shellCount < LV_LAG_SHELLS_MAX; q = q->next) {
     LvLagShell *sh = &f->shells[f->shellCount++];
     sh->mx = q->mx;
@@ -227,7 +541,9 @@ static void lv_lagCaptureTick(void) {
     sh->px = q->px;
     sh->py = q->py;
     sh->frame = q->frame;
+    sh->owner = LV_SHELL_OWNER_NONE;
   }
+  lv_lagFindShellOwners(f);
 }
 
 /* TRUE while the chosen player is still the one in the slot. */
@@ -255,20 +571,45 @@ static bool lv_lagViewPlayerHere(void) {
   return lv_lagJoinAt(s_lagViewSlot) == s_lagViewJoin;
 }
 
+/* The chosen player's lag record at the playhead, or NULL when the view is
+   off or its player has no record yet. */
+static const LvLagRecord *lv_lagViewRecord(void) {
+  if (g_lv == NULL || !s_lagFeature || !lv_lagViewPlayerHere()) {
+    return NULL;
+  }
+  return lv_lagTrackAt(&s_lagTracks[s_lagViewSlot], g_lv->timeRunning);
+}
+
+/* The time the lag view takes as the present: the playhead, or in a run of
+   ticks that took no frame (s_lagSkipFirstMs), the tick before the run. So
+   the view draws there as at that tick, not the present. */
+static uint32_t lv_lagNowMs(void) {
+  if (s_lagSkipped && g_lv->timeRunning >= s_lagSkipFirstMs &&
+      g_lv->timeRunning <= s_lagSkipLastMs && s_lagRing.count > 0 &&
+      s_lagRing.frames[s_lagRing.newest].ms + LV_LAG_ENTRY_MS == s_lagSkipFirstMs) {
+    return s_lagSkipFirstMs - LV_LAG_ENTRY_MS;
+  }
+  return g_lv->timeRunning;
+}
+
 /* The frame the lag view draws at the playhead, or NULL to draw the present:
    the view is off, its player has no record yet, or the history holds no
-   frame that old. */
-static const LvLagFrame *lv_lagViewFrame(uint32_t *behindMs) {
+   frame that old. lgmFrame, when not NULL, takes the frame the builders are
+   drawn from: the server tests builders one entry less far back than tanks
+   (shellLgmRewind), so that is a newer frame. It is NULL when the tanks'
+   frame is. */
+static const LvLagFrame *lv_lagViewFrame(uint32_t *behindMs, const LvLagFrame **lgmFrame) {
   const LvLagRecord *rec;
   uint32_t behind;
+  const LvLagFrame *f;
 
   if (behindMs != NULL) {
     *behindMs = 0;
   }
-  if (g_lv == NULL || !s_lagFeature || !lv_lagViewPlayerHere()) {
-    return NULL;
+  if (lgmFrame != NULL) {
+    *lgmFrame = NULL;
   }
-  rec = lv_lagTrackAt(&s_lagTracks[s_lagViewSlot], g_lv->timeRunning);
+  rec = lv_lagViewRecord();
   if (rec == NULL) {
     return NULL;
   }
@@ -278,12 +619,81 @@ static const LvLagFrame *lv_lagViewFrame(uint32_t *behindMs) {
   }
   /* The newest frame must be the playhead's own: a frame noted before a
      seek is of another time. */
-  if (s_lagRing.count == 0 ||
-      s_lagRing.frames[s_lagRing.newest].ms != g_lv->timeRunning ||
-      behind > g_lv->timeRunning) {
+  f = lv_lagRingBack(&s_lagRing, lv_lagNowMs(), behind);
+  if (f != NULL && lgmFrame != NULL) {
+    /* Newer than f, so the ring has it whenever it has f. */
+    uint32_t lgmBehind = (uint32_t) shellLgmRewind(rec->rewind) * LV_LAG_ENTRY_MS;
+    *lgmFrame = lv_lagRingFind(&s_lagRing, lv_lagNowMs() - lgmBehind);
+    if (*lgmFrame == NULL) {
+      *lgmFrame = f;
+    }
+  }
+  return f;
+}
+
+/* The frame the lag view draws the pillboxes and the map from at the
+   playhead: the one that is the chosen player's round trip older than the
+   playhead (lv_lagRttBackMs). NULL to draw them at the present: the view is
+   off, its player has no record yet, or the history holds no frame that
+   old. */
+static const LvLagFrame *lv_lagViewMapFrame(void) {
+  const LvLagRecord *rec = lv_lagViewRecord();
+  if (rec == NULL) {
     return NULL;
   }
-  return lv_lagRingFind(&s_lagRing, g_lv->timeRunning - behind);
+  return lv_lagRingBack(&s_lagRing, lv_lagNowMs(), lv_lagRttBackMs(rec->rttMs));
+}
+
+/* Fill out with the pillboxes as the map draws them: those of the lag
+   view's frame (lv_lagViewMapFrame) while it has one. out starts as a copy
+   of the present pillboxes, so what a frame does not keep is the present's.
+   Returns FALSE, and leaves out alone, when the present is drawn. */
+static bool lv_lagViewPills(struct pillsObj *out) {
+  const LvLagFrame *f;
+  BYTE count;
+
+  if (g_lv == NULL || g_lv->pb == NULL) {
+    return FALSE;
+  }
+  f = lv_lagViewMapFrame();
+  if (f == NULL) {
+    return FALSE;
+  }
+  *out = *g_lv->pb;
+  out->numPills = f->pillCount;
+  for (count = 0; count < MAX_PILLS; count++) {
+    if (count < f->pillCount) {
+      const LvLagPill *lp = &f->pills[count];
+      out->item[count].x = lp->x;
+      out->item[count].y = lp->y;
+      out->item[count].owner = lp->owner;
+      out->item[count].armour = lp->armour;
+      out->item[count].inTank = lp->inTank ? TRUE : FALSE;
+      out->active[count] = lp->on ? TRUE : FALSE;
+    } else {
+      out->active[count] = FALSE;
+    }
+  }
+  return TRUE;
+}
+
+/* Make s_lagMapDraw the map as the lag view draws it: the map at the lag
+   view's frame (lv_lagViewMapFrame). Returns FALSE when the present map is
+   drawn: there is no such frame, no square changed since it, or a newer
+   frame had more changes than it keeps. */
+static bool lv_lagViewMap(void) {
+  const LvLagFrame *f;
+
+  if (g_lv == NULL || g_lv->mp == NULL) {
+    return FALSE;
+  }
+  f = lv_lagViewMapFrame();
+  if (f == NULL || lv_lagMapChangesAfter(&s_lagRing, f) <= 0) {
+    return FALSE;
+  }
+  memcpy(&s_lagMapDraw, g_lv->mp, sizeof(s_lagMapDraw));
+  lv_lagMapUndo(&s_lagRing, f, &s_lagMapDraw.mapItem[0][0]);
+  return TRUE;
 }
 
 bool lv_screenLagRecorded(void) {
@@ -301,6 +711,20 @@ void lv_screenSetLagFeature(int enabled) {
 }
 
 int lv_screenGetLagFeature(void) { return s_lagFeature ? 1 : 0; }
+
+bool lv_screenTankShownAlive(int slot) {
+  const LvLagFrame *f;
+  if (g_lv == NULL || slot < 0 || slot >= MAX_TANKS) {
+    return FALSE;
+  }
+  /* The lag view draws every tank but the chosen player's from its frame
+     (lv_playersSetLagFrame), so the hit box goes by that time too. */
+  f = lv_lagViewFrame(NULL, NULL);
+  if (f != NULL && slot != s_lagViewSlot && slot < LV_LAG_SLOTS) {
+    return f->tank[slot].alive;
+  }
+  return g_lv->gameViewHud[slot].alive;
+}
 
 bool lv_screenLagShown(void) {
   return s_lagFeature && s_lagAny;
@@ -395,7 +819,7 @@ bool lv_screenLagViewStatus(char *name, size_t nameSize, int *behindMs, bool *dr
   if (lv_screenLagViewSlot() < 0) {
     return FALSE;
   }
-  f = lv_lagViewFrame(&behind);
+  f = lv_lagViewFrame(&behind, NULL);
   if (name != NULL && nameSize > 0) {
     /* The name the player has now, so a rename shows at once. */
     name[0] = '\0';
@@ -748,6 +1172,28 @@ static void lv_rulesRefresh(void) {
       lv_screenRuleValueAt(SIM_RULE_base_full_armour, t), 0, 255);
   g_lv->rules.pillMaxArmour  = lv_rulesClampInt(
       lv_screenRuleValueAt(SIM_RULE_pill_max_armour, t), 1, 255);
+  /* The ranges sim_rules.c holds them to. */
+  g_lv->rules.tankHitRadius  = lv_rulesClampInt(
+      lv_screenRuleValueAt(SIM_RULE_tank_hit_radius, t), 1, 255);
+  g_lv->rules.pillRange      = lv_rulesClampInt(
+      lv_screenRuleValueAt(SIM_RULE_pill_range, t), 0, 65535);
+  /* The engine plays a value outside the three shapes as the half-square
+     circle (lgmBlastOpenGroundCatches), so the viewer does too. A NaN is
+     outside them. */
+  {
+    double shape = lv_screenRuleValueAt(SIM_RULE_lgm_blast_shape, t);
+    g_lv->rules.lgmBlastShape =
+        (shape >= LGM_BLAST_SHAPE_HALF_SQUARE && shape <= LGM_BLAST_SHAPE_MAC_AREA)
+            ? (int)shape : LGM_BLAST_SHAPE_CLASSIC;
+  }
+  g_lv->rules.baseStatusRange = lv_rulesClampInt(
+      lv_screenRuleValueAt(SIM_RULE_base_status_range, t), 0, 65535);
+  /* The tank's hit zone: the circle, or the square of games from before it
+     (1.91 and earlier), from the header's version and whether the file has
+     rule records. */
+  g_lv->rules.tankHitZone    = lvHitboxTankZoneFor(
+      g_lv->versionMajor, g_lv->versionMinor, g_lv->versionRevision,
+      g_lv->ruleChangeCount > 0);
 }
 
 int lv_screenGetRuleChanges(const LvRuleChange **out) {
@@ -903,6 +1349,13 @@ void lv_startOfLog();
 void lv_windowRemoveEvents();
 void lv_windowEventsRewound(void);
 
+/* The map and the pillboxes lv_screenCalcSquare makes the view from while
+   lv_screenUpdateView makes it for the lag view: drawing copies as the
+   chosen player's screen had them (lv_lagViewMap, lv_lagViewPills). NULL
+   the rest of the time, for the present ones. */
+static map       *s_viewMp = NULL;
+static pillboxes *s_viewPb = NULL;
+
 /*********************************************************
 *NAME:          lv_screenCalcSquare
 *AUTHOR:        John Morrison
@@ -927,6 +1380,10 @@ BYTE lv_screenCalcSquare(BYTE xValue, BYTE yValue, BYTE scrX, BYTE scrY) {
   BYTE belowLeft;
   BYTE below;
   BYTE belowRight;
+  /* The map and the pillboxes the view is made from: the lag view's
+     drawing copies while lv_screenUpdateView has them, else the present. */
+  map *mp = (s_viewMp != NULL) ? s_viewMp : &g_lv->mp;
+  pillboxes *pb = (s_viewPb != NULL) ? s_viewPb : &g_lv->pb;
 
 /* Stride is sizeX+1 (not sizeX) because the screen buffer carries a
  * one-tile margin column/row beyond the visible viewport, used by the
@@ -938,8 +1395,8 @@ int a = (scrY*(lv_screenGetSizeX()+1))+scrX ;
   }
   *((*g_lv->mineView).mineItem+a) = FALSE;
   /* Set up Items */
-  if ((lv_pillsExistPos(&g_lv->pb,xValue,yValue)) == TRUE) {
-    returnValue = lv_pillsGetScreenHealth(&g_lv->pb, xValue, yValue,
+  if ((lv_pillsExistPos(pb,xValue,yValue)) == TRUE) {
+    returnValue = lv_pillsGetScreenHealth(pb, xValue, yValue,
                                           g_lv->rules.pillMaxArmour);
   } else if ((lv_basesExistPos(&g_lv->bs,xValue,yValue)) == TRUE) {
      ba = lv_basesGetAlliancePos(&g_lv->bs, xValue, yValue);
@@ -966,8 +1423,8 @@ int a = (scrY*(lv_screenGetSizeX()+1))+scrX ;
       returnValue = BASE_EVIL;
     }
   }  else {
-    currentPos = lv_mapGetPos(&g_lv->mp,xValue,yValue);
-    if (lv_mapIsMine(&g_lv->mp, xValue, yValue) == TRUE) {
+    currentPos = lv_mapGetPos(mp,xValue,yValue);
+    if (lv_mapIsMine(mp, xValue, yValue) == TRUE) {
       *((*g_lv->mineView).mineItem+a) = TRUE;
       if (currentPos != DEEP_SEA) {
         currentPos = currentPos - MINE_SUBTRACT;
@@ -979,7 +1436,7 @@ int a = (scrY*(lv_screenGetSizeX()+1))+scrX ;
     if (lv_basesExistPos(&g_lv->bs, (BYTE) (xValue-1), (BYTE) (yValue-1)) == TRUE) {
       aboveLeft = ROAD;
     } else {
-      aboveLeft = lv_mapGetPos(&g_lv->mp,(BYTE) (xValue-1),(BYTE) (yValue-1));
+      aboveLeft = lv_mapGetPos(mp,(BYTE) (xValue-1),(BYTE) (yValue-1));
       if (aboveLeft >= MINE_START && aboveLeft <= MINE_END) {
         aboveLeft = aboveLeft - MINE_SUBTRACT;
       }
@@ -988,7 +1445,7 @@ int a = (scrY*(lv_screenGetSizeX()+1))+scrX ;
     if (lv_basesExistPos(&g_lv->bs, xValue, (BYTE) (yValue-1)) == TRUE) {
       above = ROAD;
     } else {
-      above = lv_mapGetPos(&g_lv->mp,xValue,(BYTE) (yValue-1));
+      above = lv_mapGetPos(mp,xValue,(BYTE) (yValue-1));
       if (above >= MINE_START && above <= MINE_END) {
         above = above - MINE_SUBTRACT;
       }
@@ -997,7 +1454,7 @@ int a = (scrY*(lv_screenGetSizeX()+1))+scrX ;
     if (lv_basesExistPos(&g_lv->bs, (BYTE) (xValue+1), (BYTE) (yValue-1)) == TRUE) {
       aboveRight = ROAD;
     } else {
-      aboveRight = lv_mapGetPos(&g_lv->mp,(BYTE) (xValue+1),(BYTE) (yValue-1));
+      aboveRight = lv_mapGetPos(mp,(BYTE) (xValue+1),(BYTE) (yValue-1));
       if (aboveRight >= MINE_START && aboveRight <= MINE_END) {
         aboveRight = aboveRight - MINE_SUBTRACT;
       }
@@ -1006,7 +1463,7 @@ int a = (scrY*(lv_screenGetSizeX()+1))+scrX ;
     if (lv_basesExistPos(&g_lv->bs, (BYTE) (xValue-1), yValue) == TRUE) {
       leftPos = ROAD;
     } else {
-      leftPos = lv_mapGetPos(&g_lv->mp,(BYTE) (xValue-1),yValue);
+      leftPos = lv_mapGetPos(mp,(BYTE) (xValue-1),yValue);
       if (leftPos >= MINE_START && leftPos <= MINE_END) {
         leftPos = leftPos - MINE_SUBTRACT;
       }
@@ -1015,7 +1472,7 @@ int a = (scrY*(lv_screenGetSizeX()+1))+scrX ;
     if (lv_basesExistPos(&g_lv->bs, (BYTE) (xValue+1), yValue) == TRUE) {
       rightPos = ROAD;
     } else {
-      rightPos = lv_mapGetPos(&g_lv->mp,(BYTE) (xValue+1),yValue);
+      rightPos = lv_mapGetPos(mp,(BYTE) (xValue+1),yValue);
       if (rightPos >= MINE_START && rightPos <= MINE_END) {
         rightPos = rightPos - MINE_SUBTRACT;
       }
@@ -1024,7 +1481,7 @@ int a = (scrY*(lv_screenGetSizeX()+1))+scrX ;
     if (lv_basesExistPos(&g_lv->bs, (BYTE) (xValue-1), (BYTE) (yValue+1)) == TRUE) {
       belowLeft = ROAD;
     } else {
-      belowLeft = lv_mapGetPos(&g_lv->mp,(BYTE) (xValue-1),(BYTE) (yValue+1));
+      belowLeft = lv_mapGetPos(mp,(BYTE) (xValue-1),(BYTE) (yValue+1));
       if (belowLeft >= MINE_START && belowLeft <= MINE_END) {
         belowLeft = belowLeft - MINE_SUBTRACT;
       }
@@ -1034,7 +1491,7 @@ int a = (scrY*(lv_screenGetSizeX()+1))+scrX ;
     if (lv_basesExistPos(&g_lv->bs, xValue, (BYTE) (yValue+1)) == TRUE) {
       below = ROAD;
     } else {
-      below = lv_mapGetPos(&g_lv->mp,xValue,(BYTE) (yValue+1));
+      below = lv_mapGetPos(mp,xValue,(BYTE) (yValue+1));
       if (below >= MINE_START && below <= MINE_END) {
         below = below - MINE_SUBTRACT;
       }
@@ -1043,7 +1500,7 @@ int a = (scrY*(lv_screenGetSizeX()+1))+scrX ;
     if (lv_basesExistPos(&g_lv->bs, (BYTE) (xValue+1), (BYTE) (yValue+1)) == TRUE) {
       belowRight = ROAD;
     } else {
-      belowRight = lv_mapGetPos(&g_lv->mp,(BYTE) (xValue+1),(BYTE) (yValue+1));
+      belowRight = lv_mapGetPos(mp,(BYTE) (xValue+1),(BYTE) (yValue+1));
       if (belowRight >= MINE_START && belowRight <= MINE_END) {
         belowRight = belowRight - MINE_SUBTRACT;
       }
@@ -1095,6 +1552,10 @@ void lv_screenUpdateView(updateType value) {
   int count2;
   int ssx = lv_screenGetSizeX();
   int ssy = lv_screenGetSizeY();
+  /* The lag view's drawing copies (see "Player lag" at the top). */
+  struct pillsObj lagPills;
+  pillboxes lagPb = &lagPills;
+  map lagMp = &s_lagMapDraw;
 
   if (g_lv->logLoaded == FALSE) {
     return;
@@ -1135,11 +1596,15 @@ void lv_screenUpdateView(updateType value) {
    * lv_screenCalcSquare wrap (BYTE +1 of 255 -> 0) but only when
    * subPx == 0, in which case the blit's srcRect clips the margin
    * tile from view, so the wrong adjacency is never user-visible. */
+  s_viewPb = lv_lagViewPills(&lagPills) ? &lagPb : NULL;
+  s_viewMp = lv_lagViewMap() ? &lagMp : NULL;
   for (count=0;count <= ssx; count++) {
     for (count2=0;count2 <= ssy; count2++) {
       *((*g_lv->view).screenItem+((ssx+1)*count2)+count) = lv_screenCalcSquare((BYTE) (count+g_lv->xOffset),(BYTE) (count2+g_lv->yOffset), count, count2);
     }
   }
+  s_viewPb = NULL;
+  s_viewMp = NULL;
 }
 
 
@@ -1282,6 +1747,7 @@ void lv_screenUpdate(updateType value) {
   screenBullets sb;
   screenLgm sl;
   const LvLagFrame *lagFrame; /* the lag view's frame; NULL draws the present */
+  const LvLagFrame *lagLgmFrame; /* the frame its builders are drawn from */
   shells lagShells = NULL;
 
 
@@ -1294,16 +1760,87 @@ void lv_screenUpdate(updateType value) {
   }
 
   lv_screenUpdateView(value);
-  lagFrame = lv_lagViewFrame(NULL);
+  lagFrame = lv_lagViewFrame(NULL, &lagLgmFrame);
   if (lagFrame != NULL) {
     /* The lag view: the other tanks, the builders and the shells where the
-       chosen player's screen showed them. */
+       chosen player's screen showed them. The player's own client drew
+       its own shells at once, from its own tank, so with "Screen-True
+       Own Shells" on those come from the present frame
+       (lv_lagViewFrame has checked the newest frame is the playhead's).
+       With it off they stay at the old time too. A shell with no clear
+       owner stays at the old time. The builders are one entry newer than
+       the tanks (shellLgmRewind), as the server tests them. The pillboxes
+       and the map squares are one round trip back, from the frame
+       lv_screenUpdateView above took them from (lv_lagViewMapFrame). */
+    const LvLagFrame *now = &s_lagRing.frames[s_lagRing.newest];
+    const bool ownAtPresent = s_screenTrueShells;
+    /* Screen-True Local Explosions (lv_early_blast.h): the early blasts. */
+    const bool earlyBlast = lv_earlyBlastOn(s_screenTrueShells, s_screenTrueExpl);
     int i;
     lv_playersSetLagFrame(lagFrame, s_lagViewSlot);
+    lv_playersSetLagLgmFrame(lagLgmFrame);
     lagShells = lv_shellsCreate();
+    /* A frame's shells are in the reverse of the game's draw order (the
+       viewer's shell list is built front first), and lagShells draws in
+       the order items go in. So the kept shells go in from the end of the
+       frame, and the newest explosion is drawn on top, as in the game. */
+    bool keep[LV_LAG_SHELLS_MAX];
+    /* Screen-True Local Explosions (lv_early_blast.h): each early
+       blast of the chosen player hides its server explosion, one record
+       per frame. */
+    LvBlastPt explPts[LV_LAG_SHELLS_MAX];
+    int explIdx[LV_LAG_SHELLS_MAX];
+    bool hidden[LV_LAG_SHELLS_MAX];
+    int nExpl = 0;
     for (i = 0; i < lagFrame->shellCount; i++) {
       const LvLagShell *sh = &lagFrame->shells[i];
-      lv_shellsAddItem(&lagShells, sh->mx, sh->my, sh->px, sh->py, sh->frame);
+      /* The chosen player's own shells come from the present frame. A
+         shell has one owner in every frame (lv_lagApplyShellIdEvents), so
+         each one is drawn from one of the two. */
+      keep[i] = (!ownAtPresent || (int) sh->owner != s_lagViewSlot);
+      if (keep[i] && earlyBlast && lv_earlyBlastIsExplFrame(sh->frame)) {
+        explPts[nExpl].wx = lv_lagWorld(sh->mx, sh->px);
+        explPts[nExpl].wy = lv_lagWorld(sh->my, sh->py);
+        explPts[nExpl].frame = sh->frame;
+        explIdx[nExpl++] = i;
+      }
+    }
+    if (nExpl > 0) {
+      int k;
+      lv_earlyBlastHideRecords(&s_earlyBlastList, s_lagViewSlot, lagFrame->ms, explPts, nExpl,
+                               hidden);
+      for (k = 0; k < nExpl; k++) {
+        if (hidden[k]) {
+          keep[explIdx[k]] = FALSE;
+        }
+      }
+    }
+    for (i = lagFrame->shellCount - 1; i >= 0; i--) {
+      const LvLagShell *sh = &lagFrame->shells[i];
+      if (keep[i]) {
+        lv_shellsAddItem(&lagShells, sh->mx, sh->my, sh->px, sh->py, sh->frame);
+      }
+    }
+    for (i = now->shellCount - 1; i >= 0 && ownAtPresent; i--) {
+      const LvLagShell *sh = &now->shells[i];
+      if ((int) sh->owner == s_lagViewSlot) {
+        lv_shellsAddItem(&lagShells, sh->mx, sh->my, sh->px, sh->py, sh->frame);
+      }
+    }
+    if (earlyBlast) {
+      /* The early blasts, at the present where the own shells ended. */
+      for (i = 0; i < LV_EARLY_BLAST_MAX; i++) {
+        const LvEarlyBlast *b = &s_earlyBlastList.b[i];
+        BYTE frame;
+        if ((int) b->owner != s_lagViewSlot) {
+          continue;
+        }
+        frame = lv_earlyBlastFrameAt(b, now->ms);
+        if (frame != 0) {
+          lv_shellsAddItem(&lagShells, lv_lagMapOf(b->wx), lv_lagMapOf(b->wy),
+                           lv_lagPixelOf(b->wx), lv_lagPixelOf(b->wy), frame);
+        }
+      }
     }
   }
   {
@@ -2940,6 +3477,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
       break;
     }
     case log_Shell:
+      s_tickSawShell = TRUE;
       logReadBytes(&opt1, 1);
       logReadBytes(&opt2, 1);
       logReadBytes(&opt3, 1);
@@ -2955,6 +3493,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
       lv_utilGetNibbles(opt1, &onBoat, &frame);
       lv_utilGetNibbles(opt4, &px, &py);
       lv_playersUpdateLgm(onBoat, opt2, opt3, px, py, frame);
+      lv_playersLgmNoteTime(onBoat, g_lv->timeRunning);
       break;
     case log_MessageAll:
       logReadBytes(&opt1, 1);
@@ -3139,6 +3678,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
       logReadBytes((BYTE *)(mem+1), (unsigned char)mem[0]);
       break;
     case log_ServerTick:
+      s_tickSawServerTick = TRUE;
       /* The server's game tick at this entry, as a big-endian u32. A loaded
          file's anchors were all collected by the load walk; a live feed has
          no walk, and this is how its anchors arrive. The record is consumed
@@ -3309,6 +3849,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
       g_lv->wantScreenUpdate = TRUE;
       break;
     case log_EntityMasks:
+      s_tickSawEntityMasks = TRUE;
       /* Which indices are on the map, as three big-endian 16-bit masks — the
          part the snapshot before this one had nowhere to put. Bit i stands
          for index i counting from zero; a bit at or above a list's own count
@@ -3747,6 +4288,10 @@ bool lv_screenLogTick() {
                            !s_scanGathers);
 
   bool process = FALSE;
+  bool snapshotTick = FALSE;
+  s_tickSawShell = FALSE;
+  s_tickSawEntityMasks = FALSE;
+  s_tickSawServerTick = FALSE;
   s_logTickAtLiveHead = FALSE;
   /* The clocks stop with the log. A tick after the end (the Play button at
      the end of a log, a step key) reads nothing, so it must not move the
@@ -3800,6 +4345,7 @@ bool lv_screenLogTick() {
         if (lv_wtLiveCounts()) {
           lv_wtCountTick(g_lv->timeRunning, FALSE);
         }
+        snapshotTick = TRUE;
         lv_processSnapshot();
         returnValue = TRUE;
         break;
@@ -3868,6 +4414,21 @@ bool lv_screenLogTick() {
     }
   }
   if (lagCapture) {
+    /* A tick that is no game tick takes no frame in the lag view's history
+       (s_lagSkipFirstMs): a snapshot, and a block straight after such a
+       tick that holds the entity masks or the server tick and no shell. */
+    const bool afterSkip = s_lagSkipped &&
+                           s_lagSkipLastMs + LV_LAG_ENTRY_MS == g_lv->timeRunning;
+    if (snapshotTick ||
+        (afterSkip && process == TRUE && !s_tickSawShell &&
+         (s_tickSawEntityMasks || s_tickSawServerTick))) {
+      if (!afterSkip) {
+        s_lagSkipFirstMs = g_lv->timeRunning;
+      }
+      s_lagSkipLastMs = g_lv->timeRunning;
+      s_lagSkipped = TRUE;
+      return returnValue;
+    }
     lv_lagCaptureTick();
   }
   return returnValue;
@@ -5519,9 +6080,13 @@ static LvLoadStage s_loadStage   = LV_LOAD_UNZIP;
 static uint32_t    s_loadPlayTo  = 0;
 static bool        s_loadPlaying = FALSE;
 
+static void lv_screenHoverBaseReset(void);
+
 /* Drop the previous log and everything that belongs to it. */
 static void lv_screenLoadPrepare(void) {
   s_loadActive = FALSE;
+  /* The old recording's base hover, so its selection cannot come back. */
+  lv_screenHoverBaseReset();
   lv_blocksDestroy();
   lv_screenDestroy();
   lv_screenSetup();
@@ -5995,6 +6560,10 @@ LogViewerState *lv_decoderCreate(bool fromMainMenu) {
   lv->rules.baseFullMines  = 90;
   lv->rules.baseFullArmour = 90;
   lv->rules.pillMaxArmour  = 15;
+  lv->rules.tankHitRadius  = 112;   /* TANK_HIT_RADIUS */
+  lv->rules.pillRange      = 2048;  /* PILLBOX_RANGE */
+  lv->rules.lgmBlastShape  = LGM_BLAST_SHAPE_CLASSIC;
+  lv->rules.baseStatusRange = 1792; /* BASE_STATUS_RANGE */
 
   lv->fromMainMenu = fromMainMenu;
   lv->screenSizeX = MAIN_SCREEN_SIZE_X + 15; /* default 30 */
@@ -7006,6 +7575,88 @@ void lv_screenOverviewSnapshot(LvOverview *out) {
   }
 }
 
+/* The base (0 up) the game shows the stock of for the tank in slot, or
+ * LV_BASE_NEAR_NONE (lv_base_near.h): picked as the player's own client picks
+ * it, against that player's alliances at the playhead and the
+ * base_status_range in force there. A dead tank has none, as it has no place
+ * on the map. The Tank panel's near base and the game screen's base bars
+ * both come from here. */
+static int screenNearBaseIndex(BYTE slot) {
+  LvBaseNearItem items[MAX_BASES];
+  BYTE mx = 0, my = 0, px = 0, py = 0, frame = 0;
+  bool onBoat = FALSE;
+  BYTE total;
+  BYTE count;
+
+  if (g_lv == NULL || g_lv->bs == NULL || slot >= MAX_TANKS ||
+      !g_lv->gameViewHud[slot].alive) {
+    return LV_BASE_NEAR_NONE;
+  }
+  lv_playersGetTankDetails(slot, &mx, &my, &px, &py, &frame, &onBoat);
+  if (mx == 0 && my == 0) {
+    return LV_BASE_NEAR_NONE;
+  }
+  total = lv_basesGetNumBases(&g_lv->bs);
+  if (total > MAX_BASES) {
+    total = MAX_BASES;
+  }
+  for (count = 0; count < total; count++) {
+    const base *b = &g_lv->bs->item[count];
+    items[count].active = lv_basesIsActive(&g_lv->bs, (BYTE) (count + 1)) != FALSE;
+    items[count].friendly = (b->owner == NEUTRAL ||
+                             lv_playersIsAllie(slot, b->owner) != FALSE);
+    items[count].mapX = b->x;
+    items[count].mapY = b->y;
+  }
+  /* The tank's world place, as the viewer has it: to a 16th of a square. */
+  return lvBaseNearPick(items, total, ((long) mx << 8) + ((long) px << TANK_SHIFT_RIGHT2),
+                        ((long) my << 8) + ((long) py << TANK_SHIFT_RIGHT2),
+                        g_lv->rules.baseStatusRange);
+}
+
+/* The near base of the Tank panel (screenNearBaseIndex), into out. */
+static void screenTankNearBase(int slot, LvTankStatus *out) {
+  int pick = screenNearBaseIndex((BYTE) slot);
+  if (pick == LV_BASE_NEAR_NONE) {
+    return;
+  }
+  {
+    const base *b = &g_lv->bs->item[pick];
+    out->baseNear = 1;
+    out->baseNum = (unsigned char) (pick + 1);
+    out->baseValue[LV_BASE_GAUGE_SHELLS] = b->shells;
+    out->baseValue[LV_BASE_GAUGE_MINES]  = b->mines;
+    out->baseValue[LV_BASE_GAUGE_ARMOUR] = b->armour;
+    out->baseFull[LV_BASE_GAUGE_SHELLS] = g_lv->rules.baseFullShells;
+    out->baseFull[LV_BASE_GAUGE_MINES]  = g_lv->rules.baseFullMines;
+    out->baseFull[LV_BASE_GAUGE_ARMOUR] = g_lv->rules.baseFullArmour;
+  }
+}
+
+/* What the game screen's base bars show for the tank in slot: the stock of
+ * the same base as the Tank panel's near base (screenNearBaseIndex), at the
+ * playhead. Returns FALSE, with all three at 0, when no base is near or no
+ * log is loaded; the bars then draw empty, as the game's do. The caller holds
+ * the client mutex. */
+bool lv_screenNearBaseStock(BYTE slot, BYTE *shells, BYTE *mines, BYTE *armour) {
+  int pick = LV_BASE_NEAR_NONE;
+  BYTE s = 0, m = 0, a = 0;
+
+  if (g_lv != NULL && g_lv->logLoaded != FALSE) {
+    pick = screenNearBaseIndex(slot);
+  }
+  if (pick != LV_BASE_NEAR_NONE) {
+    const base *b = &g_lv->bs->item[pick];
+    s = b->shells;
+    m = b->mines;
+    a = b->armour;
+  }
+  if (shells) *shells = s;
+  if (mines)  *mines  = m;
+  if (armour) *armour = a;
+  return pick != LV_BASE_NEAR_NONE;
+}
+
 /* Copy out what the Tank panel shows (lv_tank_status.h): the selected tank's
    stocks against their caps, its builder and the pillboxes it carries. The
    selected tank is the viewer's own slot for it (lv_playersGetSelected), not
@@ -7076,22 +7727,30 @@ void lv_screenTankStatusSnapshot(LvTankStatus *out) {
       out->carriedPillNumbers |= lvPillNumberBit(lvPillNumber(count));
     }
   }
+  screenTankNearBase(slot, out);
 }
 
 int lv_screenPillSpots(LvPillSpot *out, int max) {
   BYTE count;
   BYTE total;
   int found = 0;
+  /* The pillboxes the map draws: in the lag view, as the chosen player's
+     screen had them (lv_lagViewPills), so each number stays on its
+     pillbox. */
+  struct pillsObj lagPills;
+  pillboxes lagPb = &lagPills;
+  pillboxes *pb;
 
   if (out == NULL || max <= 0 || g_lv == NULL || g_lv->logLoaded == FALSE ||
       g_lv->pb == NULL) {
     return 0;
   }
-  total = lv_pillsGetNumPills(&g_lv->pb);
+  pb = lv_lagViewPills(&lagPills) ? &lagPb : &g_lv->pb;
+  total = lv_pillsGetNumPills(pb);
   for (count = 0; count < total && found < max; count++) {
-    const pillbox *p = &g_lv->pb->item[count];
+    const pillbox *p = &(*pb)->item[count];
     int vx = 0, vy = 0;
-    if (!lvPillLabelShown(lv_pillsIsActive(&g_lv->pb, (BYTE) (count + 1)) != FALSE,
+    if (!lvPillLabelShown(lv_pillsIsActive(pb, (BYTE) (count + 1)) != FALSE,
                           p->inTank != FALSE)) {
       continue;
     }
@@ -7107,6 +7766,119 @@ int lv_screenPillSpots(LvPillSpot *out, int max) {
     found++;
   }
   return found;
+}
+
+int lv_screenBaseSpots(LvPillSpot *out, int max) {
+  BYTE count;
+  BYTE total;
+  int found = 0;
+
+  if (out == NULL || max <= 0 || g_lv == NULL || g_lv->logLoaded == FALSE ||
+      g_lv->bs == NULL) {
+    return 0;
+  }
+  total = lv_basesGetNumBases(&g_lv->bs);
+  if (total > MAX_BASES) {
+    total = MAX_BASES;
+  }
+  for (count = 0; count < total && found < max; count++) {
+    const base *b = &g_lv->bs->item[count];
+    int vx = 0, vy = 0;
+    if (lv_basesIsActive(&g_lv->bs, (BYTE) (count + 1)) == FALSE) {
+      continue;
+    }
+    /* The same sums as the pillbox numbers: the view paints one square more
+       on the right and at the bottom. */
+    if (!lvPillViewSquare(b->x, b->y, g_lv->xOffset, g_lv->yOffset,
+                          lv_screenGetSizeX(), lv_screenGetSizeY(), &vx, &vy)) {
+      continue;
+    }
+    out[found].viewX = vx;
+    out[found].viewY = vy;
+    out[found].number = count + 1;
+    found++;
+  }
+  return found;
+}
+
+/* The base the mouse over the Tank panel's base bars has selected (from 1),
+   0 when the mouse is not over them; and the selection from before, which
+   comes back when the mouse leaves. Only this selection gets the mark on
+   the map (lv_screenSelectedBaseSquare). */
+static int  s_hoverBase = 0;
+static BYTE s_hoverPrevType = 0;
+static BYTE s_hoverPrevItem = 0;
+
+/* A new recording has no hover: the selection kept from the old one must
+   not come back in it (lv_screenLoadPrepare). */
+static void lv_screenHoverBaseReset(void) {
+  s_hoverBase = 0;
+  s_hoverPrevType = 0;
+  s_hoverPrevItem = 0;
+}
+
+/* An item of the selection kept from before the hover, if the log still has
+   it on the map. */
+static bool screenItemStillThere(BYTE itemType, BYTE itemNum) {
+  if (itemType == 1) {
+    return g_lv->bs != NULL && itemNum < lv_basesGetNumBases(&g_lv->bs) &&
+           lv_basesIsActive(&g_lv->bs, (BYTE) (itemNum + 1)) == TRUE;
+  }
+  if (itemType == 2) {
+    return g_lv->pb != NULL && itemNum < lv_pillsGetNumPills(&g_lv->pb) &&
+           lv_pillsIsActive(&g_lv->pb, (BYTE) (itemNum + 1)) == TRUE;
+  }
+  return false;
+}
+
+/* The Tank panel calls this each frame with the base under the mouse (from
+   1), or 0 when the mouse is not over the bars, the bars are empty or the
+   panel is not drawn. The base is selected while the mouse stays; when it
+   leaves, the selection from before comes back. The caller holds the
+   client mutex. */
+void lv_screenHoverBase(int baseNum) {
+  if (g_lv == NULL || g_lv->logLoaded == FALSE) {
+    s_hoverBase = 0;
+    return;
+  }
+  if (baseNum == s_hoverBase) {
+    return;
+  }
+  if (baseNum > 0) {
+    if (s_hoverBase == 0) {
+      s_hoverPrevType = g_lv->selectedItemType;
+      s_hoverPrevItem = g_lv->selectedItem;
+    }
+    s_hoverBase = baseNum;
+    lv_screenSelectItem(1, (BYTE) (baseNum - 1));
+    return;
+  }
+  s_hoverBase = 0;
+  if (screenItemStillThere(s_hoverPrevType, s_hoverPrevItem)) {
+    g_lv->selectedItemType = s_hoverPrevType;
+    g_lv->selectedItem = s_hoverPrevItem;
+  } else {
+    g_lv->selectedItemType = 0;
+    g_lv->selectedItem = 0;
+  }
+  screenShowSelectedItem();
+}
+
+bool lv_screenSelectedBaseSquare(int *viewX, int *viewY) {
+  const base *b;
+
+  if (g_lv == NULL || g_lv->logLoaded == FALSE || g_lv->bs == NULL ||
+      s_hoverBase == 0 || g_lv->selectedItemType != 1 ||
+      g_lv->selectedItem != (BYTE) (s_hoverBase - 1) ||
+      g_lv->selectedItem >= lv_basesGetNumBases(&g_lv->bs) ||
+      lv_basesIsActive(&g_lv->bs, (BYTE) (g_lv->selectedItem + 1)) == FALSE) {
+    return FALSE;
+  }
+  b = &g_lv->bs->item[g_lv->selectedItem];
+  /* The same sums as the pillbox numbers: the view paints one square more
+     on the right and at the bottom. */
+  return lvPillViewSquare(b->x, b->y, g_lv->xOffset, g_lv->yOffset,
+                          lv_screenGetSizeX(), lv_screenGetSizeY(), viewX, viewY);
 }
 
 int lv_screenPillAt(int xPos, int yPos, BYTE *owner, BYTE *armour, int *team) {

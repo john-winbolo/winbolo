@@ -36,16 +36,57 @@ void setClientTypeFlagsInternal(ServerSim *sim, BYTE slot,
 void fillAndPublishPlayerJoin(ServerSim *sim, BYTE slot);
 
 /* A person who joins a running round is put on a side of their own: the
- * lowest team id nobody is on (serverSimFreeTeam), or no team when every id
- * has somebody (#424, D3). A rejoin is a join and takes the same path; only
- * the pills and bases that are neutral now come back. The seat's lobby slot
- * goes out here, ahead of its CTRL_PLAYER_JOIN, so a script's on_player_join
- * sees the team before it places the seat. In the lobby the smallest-team
- * pick addPlayerInternal makes stays, and nothing is published. Call it from
- * a human join path between addPlayerInternal and fillAndPublishPlayerJoin.
+ * lowest team id nobody is on and no rejoin record holds
+ * (serverSimFreeTeam), or no team when every id has somebody (#424, D3). A
+ * rejoin is a join and takes the same path; only the pills and bases that
+ * are neutral now come back. A rejoiner whose old team has nobody on it
+ * goes straight back onto it, because the rejoin record held the number. A
+ * rejoiner whose old team still has a player is left on no team here, and
+ * serverSimRestoreRejoinTeam puts them back on that team. A rejoiner under
+ * the name of a player who was signed in to WinBolo.net gets a side of
+ * their own here, and serverSimRejoinSignedIn does the rest later. The
+ * seat's lobby slot goes out here, ahead of its CTRL_PLAYER_JOIN, so a
+ * script's on_player_join sees the team before it places the seat. For a
+ * rejoiner whose old team still has a player that team is 0:
+ * on_player_join sees team 0, and the seat moves onto the old team only
+ * after the hook returns. In the lobby the smallest-team pick
+ * addPlayerInternal makes stays, and nothing is published. Call it from a
+ * human join path between addPlayerInternal and fillAndPublishPlayerJoin.
  * Bots keep the team their own add path gives them. Defined in
  * server_sim_players.c. */
 void serverSimPlaceJoiner(ServerSim *sim, BYTE slot);
+
+/* Puts a rejoining person back on the team they were on when leaving, when
+ * that team still has a player (human or bot) and the rejoin record had not
+ * timed out. It takes the alliance accept path (serverSimAcceptAlliance),
+ * so the alliance table, every client and the round log see the move. The
+ * accept obeys the script's can_ally (serverSimScenarioAllowsAlliance), as
+ * a player's own accept does: when it refuses, the rejoiner gets a team of
+ * their own, as any other joiner does. It acts only on a seat that is
+ * still on the team the join gave it, so a script that moved the seat in
+ * on_player_join keeps its choice. It does nothing for a seat that waits
+ * for WinBolo.net. Any other join is left as serverSimPlaceJoiner put it.
+ * Call it from a human join path right after fillAndPublishPlayerJoin, so
+ * clients know the seat before its alliance arrives. Defined in
+ * server_sim_players.c. */
+void serverSimRestoreRejoinTeam(ServerSim *sim, BYTE slot);
+
+/* Call it when WinBolo.net confirms the name of the player in slot. When
+ * the slot rejoined under the name of a player who was signed in when
+ * leaving, and the rejoin record is still under the name just confirmed,
+ * the pillboxes and bases that are neutral now come back, and
+ * serverSimRestoreRejoinTeam puts the slot back on its old team. The
+ * slot must still be on the team the join gave it, alone. If the check
+ * fails or never comes, the slot stays on its own team. Defined in
+ * server_sim_players.c. */
+void serverSimRejoinSignedIn(ServerSim *sim, BYTE slot);
+
+/* Gives the sim the IPv4 address (network byte order, no port) of the
+ * person in slot. The rejoin record made when the seat leaves keeps it.
+ * The transport calls it at the join and again just before the seat is
+ * removed, so the record has the address the player had when leaving.
+ * Defined in server_sim_players.c. */
+void serverSimSetRejoinAddress(ServerSim *sim, BYTE slot, uint32_t ipv4);
 
 /* Gives the lobby host role to a person who has just joined, when
  * -firstjoinhost is on and the slot holding the role holds a bot or holds

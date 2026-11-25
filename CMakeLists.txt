@@ -4597,6 +4597,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_client_frontend_tick.c
     tests/unit/test_await_join.c
     tests/unit/test_net_impair.c
+    tests/unit/test_srv_impair_peer.c
     tests/unit/test_lobby_runtime_fixes.c
     tests/unit/test_bot_chat_routing.c
     tests/unit/test_bot_ping.c
@@ -4791,6 +4792,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     # A server hitch and its catch-up burst, over an impaired path: the slot
     # it locks out has to start applying real inputs again and keep doing it.
     tests/unit/test_loopback_hitch.c
+    tests/unit/test_prediction_slow_tank.c
     # A client-initiated quit while a peer is playing: the peer keeps its
     # session and its inputs keep applying.
     tests/unit/test_loopback_quit_keeps_peer.c
@@ -4839,6 +4841,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_gate1_integration.c
     tests/unit/test_interp_jitter_e2e.c
     tests/unit/test_join_version_gate.c
+    tests/unit/test_join_ask_rejoin.c
+    tests/unit/test_join_locked_rejoin.c
     tests/unit/test_join_rate_limit.c
     # A password-protected server: the INFO ping flag, the incorrect-password
     # reject's langid at the client, and a join with the right password.
@@ -5206,6 +5210,11 @@ set(WINBOLO_UNITTESTS_SOURCES
     # clip-time fit resolves base cells from the log's own snapshots
     # (test_lv_calibration.c).
     tests/unit/test_lv_calibration.c
+    # The lag view's shell owner matcher against the game's shell code
+    # (test_lv_shell_owner.c).
+    tests/unit/test_lv_shell_owner.c
+    # The lag view's early blast toggle (test_lv_early_blast.c).
+    tests/unit/test_lv_early_blast.c
     # Log viewer snapshot index: time lookups and a ten-day log's worth of
     # entries (test_lv_snapshot_index.c).
     tests/unit/test_lv_snapshot_index.c
@@ -5294,6 +5303,11 @@ set(WINBOLO_UNITTESTS_SOURCES
     # The bars the viewer draws over each tank: where they go, how full
     # they are and their colours (lv_tank_bars.h, header only).
     tests/unit/test_lv_tank_bars.c
+    # The hit areas the viewer draws round each tank and each builder: the
+    # engine's own rules (lv_hitbox.h and hit_rules.h, header only).
+    tests/unit/test_lv_hitbox.c
+    # The hit rules the engine and the log viewer share (hit_rules.h).
+    tests/unit/test_hit_rules.c
     # A click on a tank on the viewer's map: which tank a point is on and
     # the mark round the selected one (lv_tank_pick.h, header only).
     tests/unit/test_lv_tank_pick.c
@@ -5344,6 +5358,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # how many steps, the log time of each and which is due when
     # (lv_jump_anim.h, header only).
     tests/unit/test_lv_jump_anim.c
+    # The base the viewer's Tank panel shows under the gauges: picked as
+    # the game picks it, and its bars (lv_base_near.h, header only).
+    tests/unit/test_lv_base_near.c
     # The builder marker over each tank on the viewer's map: where it goes,
     # the arrow's direction, the countdown and the table of the times a
     # builder was away (lv_builder_status.h, header only).
@@ -5996,6 +6013,7 @@ set(_unit_test_names
     brain_sandbox_hostile_pack_encode
     brain_sandbox_hostile_pack_decode
     brain_sandbox_jit_limits
+    brain_sandbox_luajit_no_ffi
     brain_msgh_budget_kill_no_traceback
     brain_msgh_real_error_keeps_traceback
     brain_inbox_push_peek_fifo
@@ -6137,8 +6155,33 @@ set(_unit_test_names
     lv_player_lag_read
     lv_lag_track
     lv_lag_ring
+    lv_lag_rtt_back
+    lv_lag_ring_back
+    lv_lag_map_undo
+    lv_lag_view_toggle
     lv_lag_feature_default_off
     lv_lag_view_draw
+    lv_lag_view_own_shells
+    lv_lag_view_lost_owner
+    lv_lag_view_shell_snapshot
+    lv_lag_view_map
+    lv_base_spots
+    lv_shell_owner_recording
+    lv_shell_owner_rules
+    lv_shell_owner_real_flight
+    lv_shell_owner_start
+    lv_shell_owner_link
+    lv_shell_owner_one_line
+    lv_shell_owner_ids
+    lv_early_blast_rules
+    lv_early_blast_ended
+    lv_early_blast_frames
+    lv_early_blast_match
+    lv_early_blast_hide
+    lv_early_blast_needs_own_shells
+    lv_early_blast_same_place
+    lv_early_blast_many_players
+    lv_early_blast_watch_miss
     lv_lag_view_rename
     lv_overrun_read
     log_roundtrip_ping
@@ -6311,6 +6354,29 @@ set(_unit_test_names
     team_sides_panels_follow_team
     team_sides_infection_puts_leaver_back
     team_sides_rejoin_is_a_joiner
+    team_sides_rejoin_keeps_team
+    team_sides_rejoin_keeps_team_no_pills
+    team_sides_rejoin_solo_keeps_team
+    team_sides_join_without_rejoin_is_new
+    team_sides_rejoin_next_round_is_new
+    team_sides_rejoin_can_ally_refused
+    team_sides_rejoin_ranked_keeps_team
+    team_sides_rejoin_full_table_drops_oldest
+    team_sides_rejoin_team_waits_for_rejoiner
+    team_sides_rejoin_all_numbers_held
+    team_sides_rejoin_timed_out_frees_team
+    team_sides_rejoin_age_counts_frames
+    team_sides_rejoin_unsigned_restores_at_join
+    team_sides_rejoin_signed_in_waits
+    team_sides_rejoin_signed_in_restored
+    team_sides_rejoin_signed_in_solo_keeps_team
+    team_sides_rejoin_signed_in_moved_seat_kept
+    team_sides_rejoin_signed_in_leave_clears
+    team_sides_rejoin_signed_in_outlives_same_name_join
+    team_sides_rejoin_signed_in_outlives_same_name_rejoin
+    team_sides_rejoin_signed_in_keeps_address
+    team_sides_rejoin_signed_in_name_taken_restored
+    team_sides_rejoin_no_record_confirm_changes_nothing
     team_sides_joiner_slot_before_join
     team_sides_lobby_joiner_keeps_rule
     team_sides_lobby_drops_empty_teams
@@ -6832,6 +6898,7 @@ set(_unit_test_names
     loopback_command_submitted_during_rejoin
     loopback_channel
     loopback_hitch_recovers
+    prediction_slow_tank_no_corrections
     loopback_quit_keeps_peer
     loopback_join_accept_lost_ready
     send_drains_channels_multi_frame
@@ -6894,6 +6961,20 @@ set(_unit_test_names
     gate1_host_noop
     interp_jitter_e2e
     join_version_gate
+    join_ask_rejoin_live_record_asks
+    join_ask_rejoin_without_flag_joins
+    join_ask_rejoin_want_rejoin_joins
+    join_ask_rejoin_no_record_joins
+    join_ask_rejoin_timed_out_joins
+    join_locked_rejoin_address_seats
+    join_locked_rejoin_no_match_rejects
+    join_locked_rejoin_wbn_sign_in_not_seated
+    join_locked_rejoin_wbn_verified_seats
+    join_locked_rejoin_wbn_fail_rejects
+    join_locked_rejoin_wbn_other_name_rejects
+    join_locked_rejoin_wbn_timeout_rejects
+    join_locked_rejoin_ask_gets_question
+    join_locked_rejoin_unlocked_unchanged
     join_rate_limit
     cookie_handshake
     map_amp_gate
@@ -7095,6 +7176,7 @@ set(_unit_test_names
     md5_block_boundaries
     md5_streaming_matches_oneshot
     net_impair
+    srv_impair_peer_lanonly
     lobby_time_minutes_valid
     lobby_time_limit_reaches_round
     lobby_time_limit_removed_reaches_round
@@ -7302,6 +7384,7 @@ set(_unit_test_names
     lgm_drop_pill_no_room
     util_spiral_north
     util_spiral_north_west
+    util_spiral_rings
     scenario_lgm_dispatch
     scenario_lgm_recall
     scenario_lgm_kill
@@ -8081,6 +8164,7 @@ set(_unit_test_names
     lv_rule_changes_live_feed
     lv_rule_changes_armour_levels
     lv_rule_changes_live_same_tick
+    lv_rule_changes_lgm_blast_shape_outside
     lv_presentation_seek
     lv_presentation_hostile
     lv_presentation_scripted_round
@@ -8119,6 +8203,13 @@ set(_unit_test_names
     lv_overview_neutral_row
     lv_tank_status_sums
     lv_tank_bars_sums
+    lv_hitbox_sums
+    lv_hitbox_lgm_fit
+    lv_hitbox_lgm_pick
+    lv_hitbox_outline
+    lv_hitbox_zone_from_version
+    hit_rules_builder_matches_engine
+    hit_rules_tank_matches_engine
     lv_tank_pick_sums
     lv_marks_fade
     lv_window_size_parse
@@ -8128,6 +8219,7 @@ set(_unit_test_names
     lv_dock_clear_rects
     lv_dock_clear_map
     lv_dock_clear_prefs
+    lv_dock_clear_room_len
     lv_dock_default_layout
     lv_dump_recorded_round
     lv_spmap_owner_table
@@ -8207,6 +8299,11 @@ set(_unit_test_names
     lv_jump_anim_lands
     lv_jump_anim_steps
     lv_jump_anim_time
+    lv_jump_anim_retarget
+    lv_base_near_pick
+    lv_base_near_range
+    lv_base_near_bars
+    lv_base_near_game_screen
     scn_presentation_codec_bodies
     scn_presentation_codec_refuses_short
     scn_presentation_decoder_sets_broadcast
@@ -8330,6 +8427,9 @@ endforeach()
 # A 4 MiB package over the loopback bulk channel is a few thousand pumps of
 # at least a millisecond each; give it room on a loaded machine.
 set_tests_properties(unit.loopback_script_upload_at_cap PROPERTIES TIMEOUT 180)
+# A test that needs an input given on ask returns UT_SKIP_RC (test_harness.h)
+# without it, which CTest then shows as skipped.
+set_tests_properties(unit.lv_shell_owner_recording PROPERTIES SKIP_RETURN_CODE 77)
 
 # ---------------------------------------------------------------------------
 # WinBoloWbnTests -- the WinBolo.net HTTP layer against a local TCP listener.

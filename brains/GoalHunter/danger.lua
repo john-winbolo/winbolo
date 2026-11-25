@@ -321,9 +321,9 @@ end
 --    impact reality quicker than 63 ticks but it's a good start."
 --
 -- WHY 63, AND IN WHAT UNIT. shells.c shellLifeTicks is
--- `1 + 8 x range_tiles - 6` ENGINE ticks; a pillbox fires at
--- PILLBOX_FIRE_DISTANCE 8.5 tiles, so 1 + 68 - 6 = 63 is the longest a shell
--- can possibly live, and a tank's own shot lives 51. EVERY tick count in this
+-- `1 + 8 x range_tiles - 5` ENGINE ticks; a pillbox fires at
+-- PILLBOX_FIRE_DISTANCE 8.375 tiles, so 1 + 67 - 5 = 63 is the longest a shell
+-- can possibly live, and a tank's own shot lives 52. EVERY tick count in this
 -- function is an ENGINE tick -- the shell moves SHELL_SPEED (32 WU) per engine
 -- tick and the LGM walk sim counts engine ticks too. The brain thinks every
 -- SECOND engine tick, so `now` (a brain tick) never appears in here.

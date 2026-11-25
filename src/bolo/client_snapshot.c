@@ -1302,6 +1302,12 @@ void clientApplySnapshot(ClientSim *csPtr,
             tankSetFirstLeft(&MY_TANK(csPtr), tanks[i].firstLeft);
             tankSetFirstRight(&MY_TANK(csPtr), tanks[i].firstRight);
             tankSetReload(&MY_TANK(csPtr), tanks[i].reload);
+            /* The replay starts from the speed the server's tank had saved
+             * up towards its next move. Left at this client's newest value
+             * instead, a tank slower than tank_min_move replays its moves on
+             * other ticks than the server's and every snapshot shifts it a
+             * tick's travel one way and then back. */
+            tankSetResidualSpeed(&MY_TANK(csPtr), tanks[i].residualSpeed);
 
             /* Replay unacknowledged inputs (suppress sounds/side effects) */
             csPtr->sim.isPredicting = TRUE;
@@ -1378,6 +1384,13 @@ void clientApplySnapshot(ClientSim *csPtr,
                                    : CLIENT_ERR_POS_CLAMP;
               tankGetWorld(&MY_TANK(csPtr), &postX, &postY);
               postAngle = tankGetAngle(&MY_TANK(csPtr));
+              if (postX != predX || postY != predY) {
+                csPtr->predCorrCount++;
+                csPtr->predCorrPredX = predX;
+                csPtr->predCorrPredY = predY;
+                csPtr->predCorrPostX = postX;
+                csPtr->predCorrPostY = postY;
+              }
               clientErrSmoothAccumulate(&csPtr->errX, &csPtr->errY,
                                         &csPtr->errAngle,
                                         (float)predX - (float)postX,
