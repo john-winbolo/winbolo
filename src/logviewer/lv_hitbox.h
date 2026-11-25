@@ -728,4 +728,13 @@ static inline void lvHitboxNewBlasts(const LvHitBlastRec *prev, int nPrev, bool 
     }
 }
 
+/* The frame to draw for an explosion recorded at frame: a new explosion
+   (lvHitboxNewBlasts) recorded at frame 7 is drawn with the frame 8
+   picture on that step, so every explosion starts with its first picture.
+   The server lowered the frame before it wrote the step; the recording is
+   not changed. Every other step draws the recorded frame. */
+static inline uint8_t lvHitboxDrawFrame(uint8_t frame, bool isNew) {
+    return (isNew && frame == 7) ? 8 : frame;
+}
+
 #endif /* LV_HITBOX_H */

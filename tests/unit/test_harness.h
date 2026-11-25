@@ -1441,6 +1441,9 @@ int run_lv_lag_view_draw(void);
  * (test_lv_calibration.c), and the shell owner matcher on a recording, on
  * ask only (WB_LV_OWNER_WBV). */
 int run_lv_lag_view_own_shells(void);
+/* A new explosion recorded at frame 7 draws the frame 8 picture on its
+ * first step, in the plain view and in the lag view (test_lv_calibration.c). */
+int run_lv_lag_view_first_picture(void);
 int run_lv_lag_view_lost_owner(void);
 int run_lv_lag_view_shell_snapshot(void);
 int run_lv_shell_owner_recording(void);
