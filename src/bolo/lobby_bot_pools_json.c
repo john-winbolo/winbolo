@@ -190,3 +190,100 @@ bool lobbyBotPoolsLoadDefault(LobbyBotPoolLoadStats *stats) {
 
     return false;
 }
+
+/* Labels of the active themed pools, joined with ", ", into buf. */
+static void joinActiveLabels(char *buf, size_t cap) {
+    int i;
+    int themed = lobbyBotPoolCount() - 1;   /* not "Numbered Bots" */
+    size_t used = 0;
+    if (cap == 0) return;
+    buf[0] = '\0';
+    for (i = 0; i < themed; i++) {
+        int w = snprintf(buf + used, cap - used, "%s%s",
+                         i > 0 ? ", " : "", lobbyBotPoolLabel(i));
+        if (w < 0 || (size_t)w >= cap - used) break;
+        used += (size_t)w;
+    }
+}
+
+static bool fileExists(const char *path) {
+    FILE *f = fopen(path, "rb");
+    if (!f) return false;
+    fclose(f);
+    return true;
+}
+
+static bool asciiEqualsNoCase(const char *a, const char *b) {
+    for (; *a && *b; a++, b++) {
+        int ca = (*a >= 'A' && *a <= 'Z') ? *a + 32 : *a;
+        int cb = (*b >= 'A' && *b <= 'Z') ? *b + 32 : *b;
+        if (ca != cb) return false;
+    }
+    return *a == *b;
+}
+
+bool lobbyBotPoolsLoadFromArg(const char *arg, const char *defaultPath,
+                              FILE *warn, LobbyBotPoolLoadStats *stats) {
+    LobbyBotPoolLoadStats st;
+    LobbyBotPoolFilterResult fr;
+    char labels[4096];
+    bool loaded;
+    int i;
+
+    memset(&st, 0, sizeof(st));
+
+    /* A pool file: an existing file, or a value that looks like a path
+     * (a missing file is not tried as a label). Same as before labels. */
+    if (arg != NULL &&
+        (arg[0] == '\0' || fileExists(arg) ||
+         lobbyBotNamesArgLooksLikePath(arg))) {
+        loaded = lobbyBotPoolsLoadFromFile(arg, &st);
+        if (!loaded && warn) {
+            fprintf(warn,
+                    "Warning: -botnames '%s' could not be loaded; "
+                    "using built-in bot names\n", arg);
+        }
+        if (stats) *stats = st;
+        return loaded;
+    }
+
+    /* No -botnames, or labels: start from the shipped file. */
+    loaded = defaultPath ? lobbyBotPoolsLoadFromFile(defaultPath, &st)
+                         : lobbyBotPoolsLoadDefault(&st);
+    if (arg == NULL) {
+        if (stats) *stats = st;
+        return loaded;
+    }
+    if (!loaded && warn) {
+        fprintf(warn, "Warning: -botnames: the shipped bot names file "
+                      "could not be loaded; choosing from the built-in "
+                      "pools\n");
+    }
+
+    joinActiveLabels(labels, sizeof(labels));
+    if (asciiEqualsNoCase(arg, "?") || asciiEqualsNoCase(arg, "list")) {
+        if (warn) fprintf(warn, "Bot name pools: %s\n", labels);
+        if (stats) *stats = st;
+        return loaded;
+    }
+
+    lobbyBotPoolsFilterByLabels(arg, &fr);
+    if (warn) {
+        for (i = 0; i < fr.unknownCount &&
+                    i < LOBBY_BOT_POOL_FILTER_MAX_UNKNOWN; i++) {
+            fprintf(warn, "Warning: -botnames: no pool named '%s'; "
+                          "pools are: %s\n", fr.unknown[i], labels);
+        }
+        if (fr.poolsKept == 0) {
+            fprintf(warn, "Warning: -botnames: no pool matched '%s'; "
+                          "using all pools\n", arg);
+        } else {
+            char kept[4096];
+            joinActiveLabels(kept, sizeof(kept));
+            fprintf(warn, "Bot name pools chosen: %s\n", kept);
+        }
+    }
+    if (fr.poolsKept > 0) st.poolsKept = fr.poolsKept;
+    if (stats) *stats = st;
+    return loaded;
+}

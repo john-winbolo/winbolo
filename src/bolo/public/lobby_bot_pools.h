@@ -41,6 +41,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdio.h>
 
 #include "global.h"
 
@@ -156,6 +157,65 @@ bool lobbyBotPoolsLoadFromFile(const char *path,
  * executable's base path, then the CWD as a fallback.  Returns true
  * on success; on failure the built-in defaults remain active. */
 bool lobbyBotPoolsLoadDefault(LobbyBotPoolLoadStats *stats);
+
+/* ── Choosing pools by label (WinBoloDS -botnames "<label>,...") ────
+ *
+ * How many pools a random pool draw may pick from: indices
+ * 0..lobbyBotPoolDrawCount()-1. Normally this is lobbyBotPoolCount(),
+ * so the generated "Numbered Bots" pool can be drawn as it always
+ * could. After lobbyBotPoolsFilterByLabels keeps some pools, it is the
+ * themed count only, so draws pick only from the chosen pools. Any
+ * install or reset puts it back to lobbyBotPoolCount(). */
+int  lobbyBotPoolDrawCount(void);
+
+/* Unknown labels a filter call can report by name (more are counted). */
+#define LOBBY_BOT_POOL_FILTER_MAX_UNKNOWN 16
+
+typedef struct {
+    int  labelsGiven;     /* non-empty labels in the list */
+    int  labelsMatched;   /* of those, labels that named an active pool */
+    int  poolsKept;       /* themed pools active after the call (0 = none
+                           * matched, pools left as they were) */
+    int  unknownCount;    /* labels that named no pool */
+    char unknown[LOBBY_BOT_POOL_FILTER_MAX_UNKNOWN]
+                [LOBBY_BOT_POOL_MAX_LABEL_BYTES + 1];  /* as typed, trimmed */
+} LobbyBotPoolFilterResult;
+
+/* Keep only the active themed pools whose label is in labelList, a
+ * comma-separated list ("Classic AI, famous painters"). Spaces and tabs
+ * around each label are trimmed; matching ignores ASCII case. The kept
+ * pools stay in their file order, and random draws then pick only from
+ * them (see lobbyBotPoolDrawCount). If no label matches, the active
+ * pools are left as they were and 0 is returned. Returns the number of
+ * themed pools kept. `res` is nullable. */
+int  lobbyBotPoolsFilterByLabels(const char *labelList,
+                                 LobbyBotPoolFilterResult *res);
+
+/* True when a -botnames value looks like a file path: it has a '/' or
+ * '\\' in it, or ends in ".json" (any case). Such a value is never read
+ * as a list of labels. */
+bool lobbyBotNamesArgLooksLikePath(const char *arg);
+
+/* WinBoloDS -botnames handling, in one place so it can be tested.
+ *   arg NULL          — load the shipped file (as with no -botnames).
+ *   an existing file,
+ *   or a path-looking
+ *   value             — load it as a pool file; if that fails, warn and
+ *                       keep the built-in names (the rule from before
+ *                       labels were allowed).
+ *   "?" or "list"     — load the shipped file, print its labels, and use
+ *                       all pools.
+ *   anything else     — load the shipped file, then keep only the pools
+ *                       the comma-separated labels name. Each unknown
+ *                       label gets a warning that lists the pools; if no
+ *                       label matches, all pools are used and the warning
+ *                       says so.
+ * defaultPath is the shipped file to use (NULL = lobbyBotPoolsLoadDefault;
+ * tests pass their own). Warnings go to `warn` (nullable = silent).
+ * Returns true when pools were loaded from a file; stats->poolsKept is
+ * then the number of themed pools now active. */
+bool lobbyBotPoolsLoadFromArg(const char *arg, const char *defaultPath,
+                              FILE *warn, LobbyBotPoolLoadStats *stats);
 
 /* ── Wire catalog (server → client) ──────────────────────────────
  *
