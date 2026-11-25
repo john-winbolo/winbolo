@@ -26,6 +26,13 @@
 --    from the stop square's middle, cannot be killed. A builder on the far
 --    edge of the stop square can.
 -- 6. A boat stops the shell as a forest does.
+-- 7. A tank on a forest square: its own square does not stop its shell
+--    (the engine first tests it 192 wu out), so a builder 3 squares out
+--    on open ground can be killed.
+-- 8. A tank whose line clips a forest within 160 wu: the engine never
+--    tests there, so the same builder can be killed.
+-- 9. The far end: the burst place (128 * sight + 32) is tested.
+-- 10. lgm_shell_gate tests our hull before a forest, as the engine does.
 -- =========================================================================
 
 package.path = "./?.lua;" .. package.path
@@ -160,6 +167,120 @@ do
   check("and the stop is a hit on the boat's square", sqx == 103, sqx)
   check("a man past the boat cannot be killed",
         not killable(OY1, 105 * 256 + 128, OY1))
+end
+
+-- 7..9: where the engine first and last tests a tank's shell (shells.c).
+-- shellsAddItem puts it shell_start_add steps out (5 x 32 = 160 wu), and
+-- shellsUpdate moves it one step before each test, so the first test is at
+-- 192 wu and the last at 128 * sight + 32 (the burst, kill_lgm.shell_travel
+-- with LGM_SHELL_MODEL_RULES on). Nothing nearer than 192 is tested.
+local KL = require("kill_lgm")
+
+print("7. tank on a forest square, open ground ahead")
+set_map({ [key(100, 100)] = C.T_FOREST })
+knobs(true)
+do
+  check("the first test is 192 wu out", D.tank_shell_first_test_wu() == 192,
+        D.tank_shell_first_test_wu())
+  check("the tank's own forest square does not stop its shell",
+        D.forest_boat_stop(OX, OY1, HX, HY, MAX_ALONG) == nil)
+  check("an enemy builder 3 squares out can be killed",
+        killable(OY1, 103 * 256 + 128, OY1))
+  local ex, ey, sqx = D.capture_shot_end(OX, OY1, HX, HY, 3 * 256)
+  check("a shot aimed at him lands at him, not on the tank's square",
+        ex == OX + 3 * 256 and ey == OY1 and sqx == nil, ex)
+  local t = D.forest_boat_stop(OX, OY1, HX, HY, MAX_ALONG, 32)
+  check("a walk told to start at 32 still finds the tank's square", t == 32, t)
+end
+
+print("8. tank within 160 wu of a forest, open ground past it")
+do
+  -- Heading north-east from 28 above the middle of (100,100). The line is
+  -- in (100,99) from t = 141 to t = 181 only: the old walk tested it at
+  -- t = 160, the engine's first test at t = 192 is already in (101,99).
+  set_map({ [key(100, 99)] = C.T_FOREST })
+  local s = math.sqrt(0.5)
+  local hx, hy = s, -s
+  local ox, oy = 100 * 256 + 128, 100 * 256 + 100
+  check("the line clips (100,99) at t = 160",
+        bit.rshift(math.floor(ox + hx * 160), 8) == 100
+        and bit.rshift(math.floor(oy + hy * 160), 8) == 99)
+  check("no stop is found: the engine never tests (100,99)",
+        D.forest_boat_stop(ox, oy, hx, hy, MAX_ALONG) == nil)
+  local along = 3 * 256
+  local mwx = math.floor(ox + hx * along)
+  local mwy = math.floor(oy + hy * along)
+  local cmx, cmy = bit.rshift(mwx, 8), bit.rshift(mwy, 8)
+  check("an enemy builder 3 squares out can be killed",
+        D.capture_man_killable(ox, oy, hx, hy, MAX_ALONG, cmx, cmy, mwx, mwy,
+                               0, along, false))
+end
+
+print("9. the far end: the burst place is tested")
+do
+  -- Sight 14: the burst is 128 * 14 + 32 = 1824 out. From 230 into
+  -- (100,100), 1792 out is in (107,100) and 1824 out is in (108,100).
+  local ox = 100 * 256 + 230
+  local burst = KL.shell_travel(14, true)
+  check("the burst is 1824 out", burst == 1824, burst)
+  set_map({ [key(108, 100)] = C.T_FOREST })
+  local t, smx = D.forest_boat_stop(ox, OY1, HX, HY, burst)
+  check("a forest on the burst square stops the shell", smx == 108 and t == burst, t)
+  local _, _, sqx = D.capture_shot_end(ox, OY1, HX, HY, burst)
+  check("and the shot is a hit on (108,100)", sqx == 108, sqx)
+end
+
+-- 10. danger.lgm_shell_gate tests the tanks before the terrain, as
+-- shellsCalcCollision does. An enemy shell that reaches our hull over a
+-- forest is a tank hit: an open-ground blast at the shell's place, which
+-- catches a builder near it on another square.
+print("10. lgm_shell_gate: the hull before the forest")
+do
+  _G.OBJECT_SHOT = _G.OBJECT_SHOT or 1
+  local walk_x, walk_y
+  _G.cpf_lgm_walk_path = function(_, _, _, _, _, _, _, _, out)
+    out[1], out[2] = walk_x, walk_y
+    return 1
+  end
+  C.BUILDER_POOL_SHELL_GATE = true
+  local Y = 100 * 256 + 128
+  -- One shell that is at (nx, Y) after its next step, angle a.
+  local function gate(tank_x, owner, a, nx)
+    local vx = U.bsin_f(a) * C.SHELL_SPEED
+    local info = {
+      tankx = tank_x, tanky = Y, player_number = 0,
+      objects = { { type = OBJECT_SHOT, owner = owner, angle = a, life = 5,
+                    x = nx - vx, y = Y } },
+    }
+    return D.lgm_shell_gate({}, info, 104, 100)
+  end
+  -- a) Tank on grass 72 from the forest (101,100); the builder steps to
+  -- 52 short of the forest. An enemy shell flying west is at 20 into the
+  -- forest: 76 from the tank (a hull hit), 96 from him.
+  set_map({ [key(101, 100)] = C.T_FOREST })
+  walk_x, walk_y = 100 * 256 + 180, Y
+  local h = gate(100 * 256 + 200, 3, 192, 101 * 256 + 20)
+  check("a) the hull hit over the forest catches him",
+        h ~= nil and h.how == "tank", h and h.how)
+  -- b) Tank on a forest square (100,100), 60 into it; the builder has
+  -- walked west onto the grass (99,100). An enemy shell flying east is 10
+  -- into the forest: 50 from the tank, 36 from him.
+  set_map({ [key(100, 100)] = C.T_FOREST })
+  walk_x, walk_y = 99 * 256 + 230, Y
+  h = gate(100 * 256 + 60, 3, 64, 100 * 256 + 10)
+  check("b) tank on forest: the hull hit catches him off the square",
+        h ~= nil and h.how == "tank", h and h.how)
+  -- c) Our own shell does not hit our hull: it stops on the forest, a
+  -- hit on that square, and he is not on it.
+  h = gate(100 * 256 + 60, 0, 64, 100 * 256 + 10)
+  check("c) our own shell stops on the forest and spares him", h == nil,
+        h and h.how)
+  -- d) The forest far from the tank still stops the shell first.
+  set_map({ [key(102, 100)] = C.T_FOREST })
+  walk_x, walk_y = 100 * 256 + 180, Y
+  h = gate(100 * 256 + 128, 3, 192, 102 * 256 + 20)
+  check("d) a forest stop away from the hull spares him", h == nil,
+        h and h.how)
 end
 
 print(string.format("\n%d passed, %d failed", pass, fail))
