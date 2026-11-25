@@ -25,6 +25,13 @@
  *    entry continues has ended. Its early blast starts at this
  *    entry, at the shell's last place, and is drawn at the
  *    present for the explosion's life.
+ *  - The game puts a hit on a pillbox, a base or terrain at the
+ *    middle of the hit square, on the client (clientEarlyBlastHit)
+ *    and on the server (shellsCalcCollision). So when the server
+ *    explosion found below is at a square middle, on the shell's
+ *    last square or the square one step on, the early blast moves
+ *    to that place. Only a hit on a tank and a shell that runs out
+ *    stay at the shell's last place.
  *  - The server's explosion of that shell is found in the
  *    present frame: a new explosion record (frame 8 or 7) near
  *    where the shell ended, the nearest one not taken. Explosions
@@ -70,7 +77,8 @@
 
 /* A server explosion matches when it is this near the expected place: the
    shell's last place, plus half a step along its way. A hit on a pillbox,
-   base or terrain is put at the middle of the square. */
+   base or terrain is at the middle of the square, which can be this far
+   from the shell's last place. */
 #define LV_EARLY_BLAST_MATCH_RADIUS 320
 
 /* How long after the end the server explosion may first be found. */
@@ -195,8 +203,38 @@ static inline int lv_earlyBlastPick(const LvEarlyBlast *b, const LvBlastPt *c, i
   return best;
 }
 
-/* Note the found server explosion. */
+/* Whether explosion record place (ex, ey) is the middle of a square: a
+   square middle less LV_EARLY_BLAST_EXPL_OFFSET is a square's corner. */
+static inline bool lv_earlyBlastIsSquareMiddle(int32_t ex, int32_t ey) {
+  return (ex & 0xFF) == 0 && (ey & 0xFF) == 0;
+}
+
+/* Whether the explosion record place (ex, ey) is a square-middle hit of
+   b's shell: the middle of the shell's last square, or of the square one
+   step on along its way (the step the shell hit on). b->wx, b->wy are
+   still the shell's last place as an explosion record. */
+static inline bool lv_earlyBlastSquareHitOf(const LvEarlyBlast *b, int32_t ex, int32_t ey) {
+  int32_t lastX = b->wx + LV_EARLY_BLAST_EXPL_OFFSET;
+  int32_t lastY = b->wy + LV_EARLY_BLAST_EXPL_OFFSET;
+  int32_t aheadX = lastX + 2 * (b->expectX - b->wx);
+  int32_t aheadY = lastY + 2 * (b->expectY - b->wy);
+  int32_t sx = (ex + LV_EARLY_BLAST_EXPL_OFFSET) >> 8;
+  int32_t sy = (ey + LV_EARLY_BLAST_EXPL_OFFSET) >> 8;
+  if (!lv_earlyBlastIsSquareMiddle(ex, ey)) {
+    return false;
+  }
+  return (sx == (lastX >> 8) && sy == (lastY >> 8)) ||
+         (sx == (aheadX >> 8) && sy == (aheadY >> 8));
+}
+
+/* Note the found server explosion. A square-middle hit of the shell (a
+   pillbox, a base or terrain) moves the early blast to that place, as the
+   game draws it. */
 static inline void lv_earlyBlastMatch(LvEarlyBlast *b, const LvBlastPt *e, uint32_t ms) {
+  if (lv_earlyBlastSquareHitOf(b, e->wx, e->wy)) {
+    b->wx = e->wx;
+    b->wy = e->wy;
+  }
   b->matched = true;
   b->explX = e->wx;
   b->explY = e->wy;
