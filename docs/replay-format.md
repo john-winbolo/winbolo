@@ -169,7 +169,7 @@ Selected event types (see the `logitem` enum for the complete list):
 | 70 | `log_MapName` | Pascal-form name of the map the round is played on. Written when the round starts. A log that opens in the lobby writes its header before the host chooses the map, so the header can name the previous round's map; a reader shows this name in its place |
 | 71 | `log_PlayerLag` | One player's network lag: RTT and the rewind the server used (below) |
 | 72 | `log_OverrunStats` | The server's tick timing and each bot's overruns, as the console's overrun lines print them (below) |
-| 73 | `log_SlowTick` | One server frame that took more than 20 ms, or started late, and the time of each of its parts (below) |
+| 75 | `log_SlowTick` | One server frame that took more than 20 ms, or started late, and the time of each of its parts (below) |
 
 ### `log_GameSettings` payload
 
