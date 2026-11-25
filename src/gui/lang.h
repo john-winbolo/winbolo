@@ -3731,18 +3731,19 @@
  * ms; the line puts them after SLOW_TICK in brackets, split by commas. LATE
  * goes after the brackets: {number} the ms from the start of the frame
  * before, {number2} the ms between the two frames. HIDE_SMALL is the events
- * panel's checkbox. */
-#define STR_LV_SLOW_TICK                         3947
-#define STR_LV_SLOW_TICK_PART_NET_RECV           3948
-#define STR_LV_SLOW_TICK_PART_LOCK               3949
-#define STR_LV_SLOW_TICK_PART_BOTS               3950
-#define STR_LV_SLOW_TICK_PART_SIM                3951
-#define STR_LV_SLOW_TICK_PART_SCENARIO           3952
-#define STR_LV_SLOW_TICK_PART_RECORDING          3953
-#define STR_LV_SLOW_TICK_PART_NET_SEND           3954
-#define STR_LV_SLOW_TICK_PART_OTHER              3955
-#define STR_LV_SLOW_TICK_LATE                    3956
-#define STR_LV_SLOW_TICK_HIDE_SMALL              3957
+ * panel's checkbox. The ids start at 3990: 3947 to 3974 are taken by
+ * other branches. */
+#define STR_LV_SLOW_TICK                         3990
+#define STR_LV_SLOW_TICK_PART_NET_RECV           3991
+#define STR_LV_SLOW_TICK_PART_LOCK               3992
+#define STR_LV_SLOW_TICK_PART_BOTS               3993
+#define STR_LV_SLOW_TICK_PART_SIM                3994
+#define STR_LV_SLOW_TICK_PART_SCENARIO           3995
+#define STR_LV_SLOW_TICK_PART_RECORDING          3996
+#define STR_LV_SLOW_TICK_PART_NET_SEND           3997
+#define STR_LV_SLOW_TICK_PART_OTHER              3998
+#define STR_LV_SLOW_TICK_LATE                    3999
+#define STR_LV_SLOW_TICK_HIDE_SMALL              4000
 
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
