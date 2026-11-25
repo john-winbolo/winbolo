@@ -767,17 +767,9 @@ static void botManagerBrainNameFromPath(const char *brainPath,
         }
         return;
     }
-    /* Walk back through the separator and grab the previous segment. */
-    const char *dirEnd   = fname - 1;
-    const char *dirStart = dirEnd;
-    while (dirStart > brainPath &&
-           dirStart[-1] != '/' && dirStart[-1] != '\\') {
-        dirStart--;
-    }
-    size_t dirLen = (size_t)(dirEnd - dirStart);
-    if (dirLen >= outCap) dirLen = outCap - 1;
-    memcpy(out, dirStart, dirLen);
-    out[dirLen] = '\0';
+    /* The directory segment, with a stripped opt/ copy named for the brain
+     * above it ("Brains/GoalHunter/opt/init.lua" -> "GoalHunter"). */
+    brainListNameFromPath(brainPath, out, outCap);
 }
 
 /* Tear down a bot's brain instance and re-load it from `brainPath`.
@@ -2354,15 +2346,12 @@ bool botManagerGetBotInfo(const ServerSim *sim, BYTE playerNum, BotInfo *out) {
          * "init", which is unhelpful — walk up to the parent directory
          * for the actual brain identity. */
         if (sep != NULL && SDL_strcmp(out->brainName, "init") == 0) {
-            const char *parentEnd   = sep;
-            const char *parentStart = bot->brainPath;
-            for (const char *p = bot->brainPath; p < parentEnd; p++) {
-                if (*p == '/' || *p == '\\') parentStart = p + 1;
-            }
-            size_t parentLen = (size_t)(parentEnd - parentStart);
-            if (parentLen > 0 && parentLen < sizeof(out->brainName)) {
-                memcpy(out->brainName, parentStart, parentLen);
-                out->brainName[parentLen] = '\0';
+            /* brainListNameFromPath also names a stripped opt/ copy for the
+             * brain above it, so the [BOT] line reads GoalHunter, not opt. */
+            char parent[sizeof(out->brainName)];
+            if (brainListNameFromPath(bot->brainPath, parent, sizeof(parent)) &&
+                parent[0] != '\0') {
+                SDL_strlcpy(out->brainName, parent, sizeof(out->brainName));
             }
             /* If the parent-dir lookup fails (e.g. just "init.lua" with
              * no parent), leave brainName as "init" — still better than

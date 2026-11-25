@@ -648,6 +648,7 @@ int run_brain_modes_counts_clamped(void);
 int run_brain_modes_open_default(void);
 int run_brain_modes_about(void);
 int run_brain_modes_standard_levels(void);
+int run_brain_modes_opt_path(void);
 
 /* The brain's terrain window at the map edge (test_brain_view_data.c): the
  * rect brainDataMakeInfo builds is inclusive, so a tank on row or column 240
@@ -3144,6 +3145,7 @@ int run_dialog_quit(void);
  * -difficulty flag and the "Chosen Difficulty" preference share. */
 int run_bot_init_arg_difficulty_token(void);
 int run_bot_init_arg_mode_tokens(void);
+int run_bot_init_arg_opt_brain_path(void);
 int run_bot_difficulty_names(void);
 
 /* mDNS LAN discovery (test_mdns_discovery.c): unicast-loopback round-trip of
