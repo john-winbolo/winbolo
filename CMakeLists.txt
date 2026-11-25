@@ -6242,6 +6242,7 @@ set(_unit_test_names
     team_sides_rejoin_team_waits_for_rejoiner
     team_sides_rejoin_all_numbers_held
     team_sides_rejoin_timed_out_frees_team
+    team_sides_rejoin_age_counts_frames
     team_sides_rejoin_unsigned_restores_at_join
     team_sides_rejoin_signed_in_waits
     team_sides_rejoin_signed_in_restored

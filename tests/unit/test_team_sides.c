@@ -1513,6 +1513,25 @@ int run_team_sides_rejoin_timed_out_frees_team(void) {
    leaves; signedIn says whether WinBolo.net had confirmed player 1. The
    pill goes to player 0, its ally, and is then put back to neutral, so a
    restore can give it back. */
+/* A rejoin record's age goes up once a server frame, 50 a second, so
+   MAX_REJOIN_TIME is the 5 minutes it is written as. Player 1 leaves, and
+   the server runs one second of frames: the record is one second old. */
+int run_team_sides_rejoin_age_counts_frames(void) {
+    const BYTE teams[3] = { 2, 1, 3 };
+    ServerSim *sim = tsRunningSim(teams, 3);
+    int i;
+
+    UT_ASSERT(sim != NULL);
+    serverSimRemovePlayer(sim, 1);
+    UT_ASSERT(playersRejoinGetAge("P1") == 0);
+    for (i = 0; i < REJOIN_TICKS_PER_SECOND; i++) serverSimTick(sim);
+    UT_ASSERT_MSG(playersRejoinGetAge("P1") == REJOIN_TICKS_PER_SECOND,
+                  "after one second of frames the record's age is %d, not %d",
+                  playersRejoinGetAge("P1"), REJOIN_TICKS_PER_SECOND);
+    serverSimDestroy(sim);
+    return 0;
+}
+
 static ServerSim *tsRejoinLeaver(bool signedIn) {
     const BYTE teams[3] = { 1, 1, 2 };
     ServerSim *sim = tsRunningSim(teams, 3);

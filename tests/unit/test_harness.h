@@ -1356,6 +1356,7 @@ int run_team_sides_rejoin_full_table_drops_oldest(void);
 int run_team_sides_rejoin_team_waits_for_rejoiner(void);
 int run_team_sides_rejoin_all_numbers_held(void);
 int run_team_sides_rejoin_timed_out_frees_team(void);
+int run_team_sides_rejoin_age_counts_frames(void);
 int run_team_sides_rejoin_unsigned_restores_at_join(void);
 int run_team_sides_rejoin_signed_in_waits(void);
 int run_team_sides_rejoin_signed_in_restored(void);
