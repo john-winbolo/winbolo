@@ -1133,7 +1133,7 @@ static const LangEntry langTable[] = {
     {2869, "{player} captured Neutral Pillbox {number}"},
     {2870, "{player} just stole pillbox {number} from {other}"},
     {3470, "Hit Boxes"},
-    {3471, "Over each tank on the map, the circle a shell must reach to hit it. Over each builder out of his tank, the area an explosion must be in to kill him: a mine, a tank's explosion, or a shell that bursts on open ground. A shell that bursts on forest, a boat, the shore or a bridge kills only a builder on that square"},
+    {3471, "Over each tank on the map, the circle a shell must reach to hit it. Over each builder out of his tank, the area an explosion must be in to kill him: a mine, a tank's explosion, or a shell that bursts on open ground. A shell that bursts on forest, a boat, the shore or a bridge kills only a builder on that square. A soft pulsing dot marks the exact centre of each shell explosion"},
 
     /* Log viewer dialogs */
     {1128, "Assign colours to each player team:"},

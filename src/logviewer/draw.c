@@ -177,6 +177,13 @@ static LvHitLgmPos  s_hitLgmPos[MAX_TANKS];
 static int          s_hitLgmCount = 0;
 /* The zoom factor the places were noted at: target pixels per art pixel. */
 static BYTE         s_hitZoom = 1;
+/* The centre of each shell explosion lv_drawShells drew, in render-target
+   pixels, for the pulsing dot (lvHitboxBlastCentreInPicture). Noted only
+   while hit boxes are on, and for as long as the explosion is drawn. */
+#define LV_HIT_BLAST_MAX 256
+static SDL_FPoint   s_hitBlast[LV_HIT_BLAST_MAX];
+static int          s_hitBlastCount = 0;
+static BYTE         s_hitBlastZoom = 1;
 /* The last blit of the map into the window: the slice of the target it took
  * and where it went, in framebuffer pixels. A click on the map is matched
  * against the tanks with these (lv_drawTankAtPoint). */
@@ -557,6 +564,7 @@ static void lvDrawPingsOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
 static void lvDrawPillNumbersOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
 static void lvDrawBaseNumbersOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
 static void lvDrawHitBoxesOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
+static void lvDrawBlastCentresOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
 
 /* Paint the world render target into the viewer's own window.
  *
@@ -634,6 +642,7 @@ static void lvDrawBlitTargetToWindow(void) {
         /* Under the bars and the names: thin lines that should not hide
            them. */
         lvDrawHitBoxesOverBlit(&srcRect, &dstRect);
+        lvDrawBlastCentresOverBlit(&srcRect, &dstRect);
         /* The bars first, so a name is never under one. */
         lvDrawTankBarsOverBlit(&srcRect, &dstRect);
         lvDrawBuilderStatusOverBlit(&srcRect, &dstRect);
@@ -1675,12 +1684,23 @@ void lv_drawShells(screenBullets *sBullets) {
     
     total = lv_screenBulletsGetNumEntries(sBullets);
     zf = lv_windowGetZoomFactor();
-    
+    s_hitBlastCount = 0;
+    s_hitBlastZoom = zf;
+
     for (count = 1; count <= total; count++) {
         lv_screenBulletsGetItem(sBullets, count, &mx, &my, &px, &py, &frame);
         spritePositionShell(0.0f, 0.0f, GFX_ANIM_CLASSIC, (float)zf, 1,
                             mx, my, px, py, px << 4, py << 4, frame, &fx, &fy);
-        
+        /* The blast point of an explosion, for the pulsing dot. The picture
+           of an explosion has its top left at (fx, fy). */
+        if (s_hitBoxes && frame >= SHELL_EXPLOSION8 && frame <= SHELL_EXPLOSION1 &&
+            s_hitBlastCount < LV_HIT_BLAST_MAX) {
+            float c = (float)zf * (float)lvHitboxBlastCentreInPicture();
+            s_hitBlast[s_hitBlastCount].x = fx + c;
+            s_hitBlast[s_hitBlastCount].y = fy + c;
+            s_hitBlastCount++;
+        }
+
         switch (frame) {
         case SHELL_EXPLOSION8: srcX = zf*EXPLOSION8_X; srcY = zf*EXPLOSION8_Y; srcW = zf*TILE_SIZE_X; srcH = zf*TILE_SIZE_Y; break;
         case SHELL_EXPLOSION7: srcX = zf*EXPLOSION7_X; srcY = zf*EXPLOSION7_Y; srcW = zf*TILE_SIZE_X; srcH = zf*TILE_SIZE_Y; break;
@@ -2620,6 +2640,60 @@ static void lvDrawHitBoxesOverBlit(const SDL_FRect *src, const SDL_FRect *dst) {
             SDL_SetRenderDrawColor(sdlRenderer, 255, 230, 0, 255);
         }
         lvDrawHitRuns(0, nRuns, shift);
+    }
+
+    SDL_SetRenderDrawColor(sdlRenderer, oldR, oldG, oldB, oldA);
+    SDL_SetRenderDrawBlendMode(sdlRenderer, oldBlend);
+    SDL_SetRenderClipRect(sdlRenderer, hadClip ? &oldClip : NULL);
+}
+
+/* With hit boxes on, a dot one art pixel across on the blast point of each
+   shell explosion drawn (s_hitBlast): the point the engine tests builders
+   against. It is pale cyan and pulses slowly from 35% to 100% solid, one
+   rise and fall a second (lvHitboxPulseAlpha). The pulse goes by the wall
+   clock, so it keeps on while playback is paused. src is the slice of the
+   target the blit took, dst where it went. */
+static void lvDrawBlastCentresOverBlit(const SDL_FRect *src, const SDL_FRect *dst) {
+    float scale, size, alpha;
+    int i;
+    SDL_Rect clip, oldClip;
+    bool hadClip;
+    SDL_BlendMode oldBlend = SDL_BLENDMODE_NONE;
+    Uint8 oldR, oldG, oldB, oldA;
+
+    if (!s_hitBoxes || s_hitBlastCount == 0) return;
+    if (src->w <= 0.0f || src->h <= 0.0f) return;
+
+    scale = dst->w / src->w;
+    /* Screen pixels to one world unit, as for the hit areas. */
+    size = lvHitboxBlastDotSize((float)s_hitBlastZoom * scale /
+                                (float)LV_HITBOX_WU_PER_PIXEL);
+    /* Whole screen pixels, so a dot of one pixel is not lost between two. */
+    size = SDL_roundf(size);
+    if (size < 1.0f) size = 1.0f;
+    alpha = (float)lvHitboxPulseAlpha((uint64_t)SDL_GetTicks());
+
+    hadClip = SDL_RenderClipEnabled(sdlRenderer);
+    SDL_GetRenderClipRect(sdlRenderer, &oldClip);
+    clip.x = (int)dst->x;
+    clip.y = (int)dst->y;
+    clip.w = (int)dst->w;
+    clip.h = (int)dst->h;
+    SDL_SetRenderClipRect(sdlRenderer, &clip);
+    SDL_GetRenderDrawBlendMode(sdlRenderer, &oldBlend);
+    SDL_GetRenderDrawColor(sdlRenderer, &oldR, &oldG, &oldB, &oldA);
+    SDL_SetRenderDrawBlendMode(sdlRenderer, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColorFloat(sdlRenderer, 200.0f / 255.0f, 240.0f / 255.0f, 1.0f, alpha);
+
+    for (i = 0; i < s_hitBlastCount; i++) {
+        SDL_FRect r;
+        float cx = dst->x + (s_hitBlast[i].x - src->x) * scale;
+        float cy = dst->y + (s_hitBlast[i].y - src->y) * scale;
+        r.x = SDL_roundf(cx - size * 0.5f);
+        r.y = SDL_roundf(cy - size * 0.5f);
+        r.w = size;
+        r.h = size;
+        SDL_RenderFillRect(sdlRenderer, &r);
     }
 
     SDL_SetRenderDrawColor(sdlRenderer, oldR, oldG, oldB, oldA);
