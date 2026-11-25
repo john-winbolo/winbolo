@@ -294,6 +294,18 @@ bool lv_pillsExistPos(pillboxes *value, BYTE xValue, BYTE yValue) {
   return returnValue;
 }
 
+bool lv_pillsIsPillHit(pillboxes *value, BYTE xValue, BYTE yValue) {
+  BYTE count;       /* Looping Variable */
+
+  for (count = 0; count < (*value)->numPills; count++) {
+    if ((*value)->active[count] != FALSE && (*value)->item[count].x == xValue &&
+        (*value)->item[count].y == yValue && (*value)->item[count].armour > 0 &&
+        (*value)->item[count].inTank == FALSE) {
+      return TRUE;
+    }
+  }
+  return FALSE;
+}
 
 // Assumes that the pillbox exists otherwise returns 0
 BYTE lv_pillsItemNumAt(pillboxes *value, BYTE xValue, BYTE yValue) {

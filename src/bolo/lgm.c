@@ -1737,6 +1737,10 @@ static bool lgmBlastCatches(GameSim *sim, WORLD lgmWorldX, WORLD lgmWorldY, WORL
                                     sim->rules.pill_range);
 }
 
+/* hit_rules.h measures the half-square circle in HIT_RULES_HALF_SQUARE. */
+BOLO_STATIC_ASSERT(HIT_RULES_HALF_SQUARE == MAP_SQUARE_MIDDLE,
+                   hit_rules_half_square_is_map_square_middle);
+
 void lgmDeathCheckAtPosition(GameSim *sim, lgm *lgman, WORLD lgmWorldX, WORLD lgmWorldY, WORLD wx, WORLD wy, BYTE owner, BYTE attacker, BYTE cause, BYTE pill, tank *tnk, bool squareHit) {
   bool isServer = sim->isServer;
   bool dead;                        /* Are we dead */

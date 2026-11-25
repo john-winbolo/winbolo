@@ -332,14 +332,23 @@ static inline double lvHitboxTankCentreInPicture(void) {
     return (lvHitboxTankPlace(0) + LV_HITBOX_TANK_HALF) / (double)LV_HITBOX_WU_PER_PIXEL;
 }
 
-/* The distance an explosion on open ground catches a builder at. The engine
-   asks for distance <= 128, but the distance it reads is the one
-   utilIsItemInRange gives with pill_range as its limit: past the limit it
-   gives WORLD_MAX, which never passes. So the catch distance is the smaller
-   of the two. */
-static inline int lvHitboxBuilderReach(int pillRange) {
+/* The radius of the circle on the edge of the builder's area on open
+   ground, for the lgm_blast_shape rule shape and the pill_range rule, or 0
+   when the edge has no circle. The half-square circle (and a shape outside
+   the three, which plays as it) is 128 and the area circle 144, each cut to
+   pill_range when pill_range is less. The box has a circle only when
+   pill_range cuts its corners off: pill_range under the corner's distance,
+   128 times the square root of 2. */
+static inline int lvHitboxBuilderReach(int shape, int pillRange) {
+    int full;
     if (pillRange < 0) return 0;
-    return pillRange < LV_HITBOX_BUILDER_REACH ? pillRange : LV_HITBOX_BUILDER_REACH;
+    if (shape == LGM_BLAST_SHAPE_MAC_BOX) {
+        return ((double)pillRange * pillRange <
+                2.0 * LGM_BLAST_MAC_BOX_HALF * LGM_BLAST_MAC_BOX_HALF) ? pillRange : 0;
+    }
+    full = (shape == LGM_BLAST_SHAPE_MAC_AREA) ? LGM_BLAST_MAC_AREA_RADIUS
+                                               : HIT_RULES_HALF_SQUARE;
+    return pillRange < full ? pillRange : full;
 }
 
 /* Whether a pillbox makes its square solid for the builder test: it is on

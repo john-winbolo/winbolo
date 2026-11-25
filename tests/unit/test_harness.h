@@ -24,6 +24,17 @@
         return 1;                                                           \
     } while (0)
 
+/* A test that has nothing to check here (an input it needs is not given)
+ * returns UT_SKIP_RC through UT_SKIP. The runner prints SKIP for it, it is
+ * not a failure, and CTest shows it as skipped for a test with
+ * SKIP_RETURN_CODE set to this value in CMakeLists.txt. */
+#define UT_SKIP_RC 77
+#define UT_SKIP(fmt, ...)                                                   \
+    do {                                                                    \
+        fprintf(stderr, "  skipped: " fmt "\n", ##__VA_ARGS__);             \
+        return UT_SKIP_RC;                                                  \
+    } while (0)
+
 #define UT_ASSERT(cond)                                                     \
     do {                                                                    \
         if (!(cond)) {                                                      \
@@ -1697,6 +1708,7 @@ int run_lv_lag_view_draw(void);
  * ask only (WB_LV_OWNER_WBV). */
 int run_lv_lag_view_own_shells(void);
 int run_lv_lag_view_lost_owner(void);
+int run_lv_lag_view_shell_snapshot(void);
 int run_lv_shell_owner_recording(void);
 /* The shell owner matcher (lv_shell_owner.h), against the game's shell code
  * (test_lv_shell_owner.c). */
@@ -5142,6 +5154,7 @@ int run_lv_rule_changes_hostile(void);
 int run_lv_rule_changes_live_feed(void);
 int run_lv_rule_changes_armour_levels(void);
 int run_lv_rule_changes_live_same_tick(void);
+int run_lv_rule_changes_lgm_blast_shape_outside(void);
 /* The log viewer's scenario panels, scores, announcement and markers at the
  * playhead (test_lv_presentation.c, with the presentation round recorded by
  * lv_scripts_fixture.c): a hand-written log played through and seeked both
@@ -5236,7 +5249,8 @@ int run_lv_hitbox_square_hit_by_version(void);
 /* The tank's hit zone from a recording's version (test_lv_calibration.c). */
 int run_lv_hitbox_zone_from_version(void);
 /* The hit rules the engine and the log viewer share (test_hit_rules.c):
- * the same answers as the engine's sums before they moved to hit_rules.h. */
+ * the builder rule against the engine's death test today, and the tank
+ * rule against the engine's sums before they moved to hit_rules.h. */
 int run_hit_rules_builder_matches_engine(void);
 int run_hit_rules_tank_matches_engine(void);
 /* A click on a tank on the log viewer's map (test_lv_tank_pick.c): which

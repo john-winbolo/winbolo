@@ -2511,8 +2511,9 @@ BYTE lv_drawGetHitBoxes(void) {
 static void lvDrawRingBand(float cx, float cy, float rIn, float rOut, SDL_FColor col);
 
 /* Each builder's outline (lvHitboxBuilderOutlineShape) on the screen, worked out
-   once each time the hit areas are drawn and then drawn twice, dark and in
-   its colour. */
+   again every frame the hit areas are drawn (not kept from one frame to the
+   next) and then drawn twice, dark and in its colour. The cost is small:
+   one outline for each builder out of his tank, a few hundred tests each. */
 #define LV_HIT_SCREEN_PTS (MAX_TANKS * LV_HITBOX_OUTLINE_MAX_PTS)
 #define LV_HIT_SCREEN_RUNS (MAX_TANKS * LV_HITBOX_OUTLINE_MAX_RUNS)
 static SDL_FPoint s_hitPts[LV_HIT_SCREEN_PTS];
@@ -2562,7 +2563,7 @@ static void lvDrawHitBoxesOverBlit(const SDL_FRect *src, const SDL_FRect *dst) {
     /* What playback writes, copied out under its mutex, as the bars do. */
     lv_clientMutexWaitFor();
     for (i = 0; i < MAX_TANKS; i++) {
-        alive[i] = lv->gameViewHud[i].alive;
+        alive[i] = lv_screenTankShownAlive(i);
     }
     tankZone = lv->rules.tankHitZone;
     tankSize = lvHitboxTankZoneSize(tankZone, lv->rules.tankHitRadius);
@@ -2660,10 +2661,13 @@ static void lvDrawHitBoxesOverBlit(const SDL_FRect *src, const SDL_FRect *dst) {
    (lvPillLabelLayout): white digits with a black edge, the builder
    marker's, drawn over the blit at the screen's own pixels so they are
    sharp and of a size to read at every zoom. The pillbox numbers and the
-   base numbers both use it. */
+   base numbers both use it. Each number's place is worked out once, and
+   lvBuilderDrawNumbers draws them all with one fill call a pass, the same
+   code the game draws its pillbox and base numbers with. */
+#define LV_MAP_NUMBERS_MAX ((MAX_PILLS > MAX_BASES) ? MAX_PILLS : MAX_BASES)
 static void lvDrawMapNumbersOverBlit(const LvPillSpot *spots, int n, const SDL_FRect *src,
                                      const SDL_FRect *dst) {
-    LvBuilderNumber nums[MAX_PILLS > MAX_BASES ? MAX_PILLS : MAX_BASES];
+    LvBuilderNumber nums[LV_MAP_NUMBERS_MAX];
     float scale, tilePx, pxScale, edge;
     int i, count = 0;
     BYTE zf;
@@ -2671,7 +2675,7 @@ static void lvDrawMapNumbersOverBlit(const LvPillSpot *spots, int n, const SDL_F
     bool hadClip;
 
     if (n <= 0) return;
-    if (n > (int)(sizeof(nums) / sizeof(nums[0]))) n = (int)(sizeof(nums) / sizeof(nums[0]));
+    if (n > LV_MAP_NUMBERS_MAX) n = LV_MAP_NUMBERS_MAX;
 
     zf = lv_windowGetZoomFactor();
     scale = dst->w / src->w;

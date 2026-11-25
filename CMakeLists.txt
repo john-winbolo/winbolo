@@ -6898,6 +6898,7 @@ set(_unit_test_names
     lv_lag_view_draw
     lv_lag_view_own_shells
     lv_lag_view_lost_owner
+    lv_lag_view_shell_snapshot
     lv_lag_view_map
     lv_base_spots
     lv_shell_owner_recording
@@ -8959,6 +8960,7 @@ set(_unit_test_names
     lv_rule_changes_live_feed
     lv_rule_changes_armour_levels
     lv_rule_changes_live_same_tick
+    lv_rule_changes_lgm_blast_shape_outside
     lv_presentation_seek
     lv_presentation_hostile
     lv_presentation_scripted_round
@@ -9222,6 +9224,9 @@ endforeach()
 # A 4 MiB package over the loopback bulk channel is a few thousand pumps of
 # at least a millisecond each; give it room on a loaded machine.
 set_tests_properties(unit.loopback_script_upload_at_cap PROPERTIES TIMEOUT 180)
+# A test that needs an input given on ask returns UT_SKIP_RC (test_harness.h)
+# without it, which CTest then shows as skipped.
+set_tests_properties(unit.lv_shell_owner_recording PROPERTIES SKIP_RETURN_CODE 77)
 
 # ---------------------------------------------------------------------------
 # WinBoloWbnTests -- the WinBolo.net HTTP layer against a local TCP listener.

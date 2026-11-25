@@ -222,13 +222,25 @@ static inline int lv_shellOwnerStartMatch(const LvShellPt *s, const LvGunTank *t
            owner: each mergeFrom id is now mergeTo.
    lost    shells of the entry before went on as one shell whose owner is
            not clear (stats->continuedLost): each lost id now has no owner,
-           in every entry. */
+           in every entry.
+   overflow more of these than LV_SHELL_OWNER_MAX_ID_EVENTS at one entry.
+           A real game has one or two at most: shells seldom go on as one.
+           The caller changes every shell of every frame for each one, so a
+           recording made to have hundreds at every entry would cost
+           millions of compares an entry. Past the most, no more are kept,
+           and every shell of this entry is given no owner; the caller
+           takes the owner off every shell of the entries before too. All
+           shells are then drawn from the old frame, as shells with no
+           clear owner always are. */
+#define LV_SHELL_OWNER_MAX_ID_EVENTS 16
+
 typedef struct {
   int      nMerge;
-  uint16_t mergeFrom[LV_SHELL_OWNER_MAX_SHELLS];
-  uint16_t mergeTo[LV_SHELL_OWNER_MAX_SHELLS];
+  uint16_t mergeFrom[LV_SHELL_OWNER_MAX_ID_EVENTS];
+  uint16_t mergeTo[LV_SHELL_OWNER_MAX_ID_EVENTS];
   int      nLost;
-  uint16_t lost[LV_SHELL_OWNER_MAX_SHELLS];
+  uint16_t lost[LV_SHELL_OWNER_MAX_ID_EVENTS];
+  bool     overflow;
 } LvShellOwnerIdEvents;
 
 /* How far cur is from the place prev moves to in one entry, squared. */
@@ -280,6 +292,7 @@ static inline void lv_shellOwnerLinkIds(const LvShellPt *prev, const int8_t *pre
   if (ev != NULL) {
     ev->nMerge = 0;
     ev->nLost = 0;
+    ev->overflow = false;
   }
   if (nPrev > LV_SHELL_OWNER_MAX_SHELLS) nPrev = LV_SHELL_OWNER_MAX_SHELLS;
   if (nCur > LV_SHELL_OWNER_MAX_SHELLS) nCur = LV_SHELL_OWNER_MAX_SHELLS;
@@ -349,9 +362,13 @@ static inline void lv_shellOwnerLinkIds(const LvShellPt *prev, const int8_t *pre
     if (ids && ev != NULL && nFrom[i] > 1) {
       for (j = 0; j < nPrev; j++) {
         if (win[j] != i) continue;
-        if (!same) {
-          if (prevOwner[j] != LV_SHELL_OWNER_NONE) ev->lost[ev->nLost++] = prevId[j];
-        } else if (prevId[j] != outId[i]) {
+        if (!same && prevOwner[j] == LV_SHELL_OWNER_NONE) continue;
+        if (same && prevId[j] == outId[i]) continue;
+        if (ev->nMerge + ev->nLost >= LV_SHELL_OWNER_MAX_ID_EVENTS) {
+          ev->overflow = true;
+        } else if (!same) {
+          ev->lost[ev->nLost++] = prevId[j];
+        } else {
           ev->mergeFrom[ev->nMerge] = prevId[j];
           ev->mergeTo[ev->nMerge++] = outId[i];
         }
@@ -383,6 +400,11 @@ static inline void lv_shellOwnerLinkIds(const LvShellPt *prev, const int8_t *pre
     } else if (stats != NULL) {
       stats->startOwned++;
     }
+  }
+  /* Too many shells went on as one at this entry (LvShellOwnerIdEvents):
+     no shell of it has an owner. */
+  if (ev != NULL && ev->overflow) {
+    for (i = 0; i < nCur; i++) outOwner[i] = LV_SHELL_OWNER_NONE;
   }
 }
 

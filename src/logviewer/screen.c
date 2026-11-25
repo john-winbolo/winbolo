@@ -132,14 +132,25 @@ LogViewerState *lv_screenGetState(void) { return g_lv; }
  * ring (lv_screenSeekToAbsoluteMs). Where the ring has no frame for the
  * time, the map draws the present and the banner says so.
  *
- * Memory: a frame is 2652 bytes (2296 before the pillboxes and the map
- * squares were kept), so the ring of 32 is 84,872 bytes (73,480 before).
+ * Memory: a frame is 2668 bytes, so the ring of 32 is 85,384 bytes.
  * The map at the frame before (s_lagMapPrev) and the drawing copy
  * (s_lagMapDraw) are 65,536 bytes each. */
 #define LV_LAG_HISTORY_MS ((uint32_t) LV_LAG_FRAMES * LV_LAG_ENTRY_MS)
 static LvLagTrack s_lagTracks[LV_LAG_SLOTS];
 static bool       s_lagAny      = FALSE;  /* some record was read */
 static LvLagRing  s_lagRing;
+/* A snapshot record is played as a tick of its own, with the shell list
+   cleared (lv_screenLogTick), but the server wrote it with no tick of its
+   own (logWriteSnapshot): it is no entry for the history. So it takes no
+   frame. s_lagSnapshotMs is the playhead time of the last such tick. At
+   that time the lag view draws as at the tick before (lv_lagNowMs), and the
+   next frame finds its shells' owners against the frame before the
+   snapshot (lv_lagFindShellOwners). Without
+   this the history had a frame with no shells: the chosen player's shells
+   in flight lost their owner, were not drawn for the rewind length, and
+   had a false early explosion. */
+static bool       s_lagSnapshotSkipped = FALSE;
+static uint32_t   s_lagSnapshotMs;
 /* The map as the newest frame had it, which the next frame's changed
    squares are found against (lv_lagMapDiff). It is made the same as the map
    when the ring starts again. */
@@ -256,6 +267,7 @@ static void lv_lagReset(void) {
   }
   s_lagAny = FALSE;
   lv_lagRingClear(&s_lagRing);
+  s_lagSnapshotSkipped = FALSE;
   s_lagViewSlot = -1;
   s_lagViewJoin = -1;
   for (i = 0; i < LV_LAG_SLOTS; i++) {
@@ -390,13 +402,19 @@ static uint16_t s_lagShellIdNext;
    frames too, and two shells that went on as one share one id. */
 static void lv_lagApplyShellIdEvents(const LvShellOwnerIdEvents *ev) {
   int n, i, k;
-  if (ev->nMerge == 0 && ev->nLost == 0) {
+  if (ev->nMerge == 0 && ev->nLost == 0 && !ev->overflow) {
     return;
   }
   for (n = 1; n < s_lagRing.count; n++) {
     LvLagFrame *g = &s_lagRing.frames[(s_lagRing.newest - n + LV_LAG_FRAMES) % LV_LAG_FRAMES];
     for (i = 0; i < g->shellCount; i++) {
       LvLagShell *sh = &g->shells[i];
+      if (ev->overflow) {
+        /* More shells went on as one than the events hold: no shell of
+           the newest frame has an owner, so none here has one either. */
+        sh->owner = LV_SHELL_OWNER_NONE;
+        continue;
+      }
       for (k = 0; k < ev->nMerge; k++) {
         if (sh->id == ev->mergeFrom[k]) {
           sh->id = ev->mergeTo[k];
@@ -437,7 +455,12 @@ static void lv_lagFindShellOwners(LvLagFrame *f) {
 
   if (s_lagRing.count >= 2) {
     prev = &s_lagRing.frames[(s_lagRing.newest - 1 + LV_LAG_FRAMES) % LV_LAG_FRAMES];
-    if (prev->ms + LV_LAG_ENTRY_MS != f->ms) {
+    /* The entry before, or the one before a snapshot tick that took no
+       frame (s_lagSnapshotMs). */
+    const bool afterSnapshot = s_lagSnapshotSkipped &&
+                               s_lagSnapshotMs == prev->ms + LV_LAG_ENTRY_MS &&
+                               f->ms == s_lagSnapshotMs + LV_LAG_ENTRY_MS;
+    if (prev->ms + LV_LAG_ENTRY_MS != f->ms && !afterSnapshot) {
       prev = NULL;
     }
   }
@@ -492,8 +515,12 @@ static void lv_lagFindShellOwners(LvLagFrame *f) {
 static void lv_lagCaptureTick(void) {
   LvLagFrame *f = lv_lagRingPush(&s_lagRing, g_lv->timeRunning);
   shells q;
+  int i;
 
   lv_playersLagCapture(f);
+  for (i = 0; i < LV_LAG_SLOTS && i < MAX_TANKS; i++) {
+    f->tank[i].alive = g_lv->gameViewHud[i].alive;
+  }
   if (g_lv->pb != NULL) {
     BYTE count;
     BYTE total = g_lv->pb->numPills;
@@ -566,6 +593,17 @@ static const LvLagRecord *lv_lagViewRecord(void) {
   return lv_lagTrackAt(&s_lagTracks[s_lagViewSlot], g_lv->timeRunning);
 }
 
+/* The time the lag view takes as the present: the playhead, or on a
+   snapshot tick, which took no frame (s_lagSnapshotMs), the tick before.
+   So the view draws there as at the tick before, not the present. */
+static uint32_t lv_lagNowMs(void) {
+  if (s_lagSnapshotSkipped && g_lv->timeRunning == s_lagSnapshotMs && s_lagRing.count > 0 &&
+      s_lagRing.frames[s_lagRing.newest].ms + LV_LAG_ENTRY_MS == s_lagSnapshotMs) {
+    return s_lagSnapshotMs - LV_LAG_ENTRY_MS;
+  }
+  return g_lv->timeRunning;
+}
+
 /* The frame the lag view draws at the playhead, or NULL to draw the present:
    the view is off, its player has no record yet, or the history holds no
    frame that old. lgmFrame, when not NULL, takes the frame the builders are
@@ -593,11 +631,11 @@ static const LvLagFrame *lv_lagViewFrame(uint32_t *behindMs, const LvLagFrame **
   }
   /* The newest frame must be the playhead's own: a frame noted before a
      seek is of another time. */
-  f = lv_lagRingBack(&s_lagRing, g_lv->timeRunning, behind);
+  f = lv_lagRingBack(&s_lagRing, lv_lagNowMs(), behind);
   if (f != NULL && lgmFrame != NULL) {
     /* Newer than f, so the ring has it whenever it has f. */
     uint32_t lgmBehind = (uint32_t) shellLgmRewind(rec->rewind) * LV_LAG_ENTRY_MS;
-    *lgmFrame = lv_lagRingFind(&s_lagRing, g_lv->timeRunning - lgmBehind);
+    *lgmFrame = lv_lagRingFind(&s_lagRing, lv_lagNowMs() - lgmBehind);
     if (*lgmFrame == NULL) {
       *lgmFrame = f;
     }
@@ -615,7 +653,7 @@ static const LvLagFrame *lv_lagViewMapFrame(void) {
   if (rec == NULL) {
     return NULL;
   }
-  return lv_lagRingBack(&s_lagRing, g_lv->timeRunning, lv_lagRttBackMs(rec->rttMs));
+  return lv_lagRingBack(&s_lagRing, lv_lagNowMs(), lv_lagRttBackMs(rec->rttMs));
 }
 
 /* Fill out with the pillboxes as the map draws them: those of the lag
@@ -685,6 +723,20 @@ void lv_screenSetLagFeature(int enabled) {
 }
 
 int lv_screenGetLagFeature(void) { return s_lagFeature ? 1 : 0; }
+
+bool lv_screenTankShownAlive(int slot) {
+  const LvLagFrame *f;
+  if (g_lv == NULL || slot < 0 || slot >= MAX_TANKS) {
+    return FALSE;
+  }
+  /* The lag view draws every tank but the chosen player's from its frame
+     (lv_playersSetLagFrame), so the hit box goes by that time too. */
+  f = lv_lagViewFrame(NULL, NULL);
+  if (f != NULL && slot != s_lagViewSlot && slot < LV_LAG_SLOTS) {
+    return f->tank[slot].alive;
+  }
+  return g_lv->gameViewHud[slot].alive;
+}
 
 bool lv_screenLagShown(void) {
   return s_lagFeature && s_lagAny;
@@ -1840,8 +1892,8 @@ void lv_screenUpdate(updateType value) {
   if (lagFrame != NULL) {
     /* The lag view: the other tanks, the builders and the shells where the
        chosen player's screen showed them. The player's own client drew
-       its own shells at once, from its own tank, so with "Toggle
-       Screen-True Own Shells" on those come from the present frame
+       its own shells at once, from its own tank, so with "Screen-True
+       Own Shells" on those come from the present frame
        (lv_lagViewFrame has checked the newest frame is the playhead's).
        With it off they stay at the old time too. A shell with no clear
        owner stays at the old time. The builders are one entry newer than
@@ -4369,6 +4421,7 @@ bool lv_screenLogTick() {
                            !s_scanGathers);
 
   bool process = FALSE;
+  bool snapshotTick = FALSE;
   s_logTickAtLiveHead = FALSE;
   /* The clocks stop with the log. A tick after the end (the Play button at
      the end of a log, a step key) reads nothing, so it must not move the
@@ -4422,6 +4475,7 @@ bool lv_screenLogTick() {
         if (lv_wtLiveCounts()) {
           lv_wtCountTick(g_lv->timeRunning, FALSE);
         }
+        snapshotTick = TRUE;
         lv_processSnapshot();
         returnValue = TRUE;
         break;
@@ -4489,7 +4543,11 @@ bool lv_screenLogTick() {
       }
     }
   }
-  if (lagCapture) {
+  if (lagCapture && snapshotTick) {
+    /* No frame for the lag view's history (s_lagSnapshotMs). */
+    s_lagSnapshotSkipped = TRUE;
+    s_lagSnapshotMs = g_lv->timeRunning;
+  } else if (lagCapture) {
     lv_lagCaptureTick();
   }
   return returnValue;
@@ -6149,9 +6207,13 @@ static LvLoadStage s_loadStage   = LV_LOAD_UNZIP;
 static uint32_t    s_loadPlayTo  = 0;
 static bool        s_loadPlaying = FALSE;
 
+static void lv_screenHoverBaseReset(void);
+
 /* Drop the previous log and everything that belongs to it. */
 static void lv_screenLoadPrepare(void) {
   s_loadActive = FALSE;
+  /* The old recording's base hover, so its selection cannot come back. */
+  lv_screenHoverBaseReset();
   lv_blocksDestroy();
   lv_screenDestroy();
   lv_screenSetup();
@@ -7873,6 +7935,14 @@ int lv_screenBaseSpots(LvPillSpot *out, int max) {
 static int  s_hoverBase = 0;
 static BYTE s_hoverPrevType = 0;
 static BYTE s_hoverPrevItem = 0;
+
+/* A new recording has no hover: the selection kept from the old one must
+   not come back in it (lv_screenLoadPrepare). */
+static void lv_screenHoverBaseReset(void) {
+  s_hoverBase = 0;
+  s_hoverPrevType = 0;
+  s_hoverPrevItem = 0;
+}
 
 /* An item of the selection kept from before the hover, if the log still has
    it on the map. */

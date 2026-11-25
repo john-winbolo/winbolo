@@ -903,6 +903,7 @@ static const UnitTestEntry s_tests[] = {
     { "lv_lag_view_draw", run_lv_lag_view_draw },
     { "lv_lag_view_own_shells", run_lv_lag_view_own_shells },
     { "lv_lag_view_lost_owner", run_lv_lag_view_lost_owner },
+    { "lv_lag_view_shell_snapshot", run_lv_lag_view_shell_snapshot },
     { "lv_lag_view_map", run_lv_lag_view_map },
     { "lv_base_spots", run_lv_base_spots },
     { "lv_shell_owner_recording", run_lv_shell_owner_recording },
@@ -3107,6 +3108,7 @@ static const UnitTestEntry s_tests[] = {
     { "lv_rule_changes_live_feed",                       run_lv_rule_changes_live_feed                       },
     { "lv_rule_changes_armour_levels",                   run_lv_rule_changes_armour_levels                   },
     { "lv_rule_changes_live_same_tick",                  run_lv_rule_changes_live_same_tick                  },
+    { "lv_rule_changes_lgm_blast_shape_outside",         run_lv_rule_changes_lgm_blast_shape_outside         },
     { "lv_presentation_seek",                            run_lv_presentation_seek                            },
     { "lv_presentation_hostile",                         run_lv_presentation_hostile                         },
     { "lv_presentation_scripted_round",                  run_lv_presentation_scripted_round                  },
@@ -3382,7 +3384,8 @@ static int run_one(const char *name) {
             s_currentTest = s_tests[i].name;
             int rc = s_tests[i].fn();
             s_currentTest = "none";
-            fprintf(stderr, "%s %s\n", rc == 0 ? "PASS" : "FAIL",
+            fprintf(stderr, "%s %s\n",
+                    rc == 0 ? "PASS" : (rc == UT_SKIP_RC ? "SKIP" : "FAIL"),
                     s_tests[i].name);
             return rc;
         }
@@ -3420,13 +3423,18 @@ int main(int argc, char **argv) {
     /* Several names run in that order in one process, which is how to
      * reproduce a test that passes alone and fails in the full run: give it
      * the tests that ran before it until the failure comes back. The exit
-     * code is the first nonzero one. */
+     * code is the first failure's, else UT_SKIP_RC when a test skipped,
+     * else 0. */
     if (argc >= 3 && strcmp(argv[1], "--test") == 0) {
         int rc = 0;
         int a;
         for (a = 2; a < argc; a++) {
             int one = run_one(argv[a]);
-            if (rc == 0) {
+            if (one == UT_SKIP_RC) {
+                if (rc == 0) {
+                    rc = one;
+                }
+            } else if (one != 0 && (rc == 0 || rc == UT_SKIP_RC)) {
                 rc = one;
             }
         }
@@ -3442,8 +3450,11 @@ int main(int argc, char **argv) {
             printf("SKIP %s (regenerates a committed fixture)\n", s_tests[i].name);
             continue;
         }
-        if (run_one(s_tests[i].name) != 0) {
-            fail = 1;
+        {
+            int one = run_one(s_tests[i].name);
+            if (one != 0 && one != UT_SKIP_RC) {
+                fail = 1;
+            }
         }
     }
     SDL_Quit();

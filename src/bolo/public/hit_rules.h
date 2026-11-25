@@ -34,6 +34,7 @@
 #define HIT_RULES_H
 
 #include <stdbool.h>
+#include <stdint.h>
 
 /* Define BOLO_LEGACY_SQUARE_COLLISION (compile time only, there is no
  * runtime toggle) to go back to the original Bolo behaviour: the square

@@ -116,8 +116,9 @@ typedef struct {
      world units, for the hit areas (lv_hitbox.h). */
   int  tankHitRadius;
   int  pillRange;
-  /* lgm_blast_shape: the shape of the builder's open-ground area, 0 to 2
-     (LV_HITBOX_BUILDER_SHAPE_* in lv_hitbox.h). */
+  /* lgm_blast_shape: the area of open ground an explosion catches a
+     builder in, LGM_BLAST_SHAPE_* (hit_rules.h), for the builder's hit
+     area. */
   int  lgmBlastShape;
   /* base_status_range: how near a base has to be for the game to show its
      stock, in world units (the Tank panel's near base, lv_base_near.h). */
