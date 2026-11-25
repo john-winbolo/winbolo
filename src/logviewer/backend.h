@@ -892,16 +892,13 @@ bool lv_screenLagViewStatus(char *name, size_t nameSize, int *behindMs, bool *dr
  * have none. */
 void lv_screenLagShellOwnerStats(LvShellOwnerStats *out);
 
-/* The two Screen-True options, "Screen-True Own Shells" (lv_shell_owner.h)
- * and "Screen-True Local Explosions" (lv_early_blast.h), are on exactly
- * while "See What the Selected Player Saw" is on. Then the chosen player's
- * own shells are drawn from the present frame, as that player's own screen
- * drew them, and each one explodes at the present where it ended; the
- * server's later explosion of that shell is hidden. lv_screenScreenTrueOn
- * gives 1 while they are on. It reads one value with no client mutex.
+/* While "See What the Selected Player Saw" is on, the chosen player's own
+ * shells are always drawn from the present frame ("Screen-True Own Shells",
+ * lv_shell_owner.h), as that player's own screen drew them, and each one
+ * explodes at the present where it ended ("Screen-True Local Explosions",
+ * lv_early_blast.h); the server's later explosion of that shell is hidden.
  * Stats gives how many own shells ended and how many server explosions
  * were found for them; hold the client mutex for the stats. */
-int  lv_screenScreenTrueOn(void);
 void lv_screenEarlyBlastStats(LvEarlyBlastStats *out);
 
 /* The explosions that are new on the map (lvHitboxNewBlasts in

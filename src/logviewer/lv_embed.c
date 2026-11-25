@@ -39,6 +39,7 @@
 #include "logviewer.h"
 #include "lv_host.h"
 #include "lv_lag.h"        /* LV_LAG_PREF_KEY, lv_lagPrefIsOn */
+#include "lv_dock_fit.h"   /* lvFitTilesCover */
 #include "lv_spec_feed.h"   /* the embedded spectator's seed and records */
 
 #include <SDL3/SDL.h>
@@ -553,12 +554,10 @@ void lvEmbedSetViewportSize(int viewW, int viewH) {
     if (zoom <= 0.0f) zoom = 1.0f;
     tilePxX = (float)TILE_SIZE_X * zoom;
     tilePxY = (float)TILE_SIZE_Y * zoom;
-    newTilesX = (int)(((float)viewW + tilePxX * 0.5f) / tilePxX);
-    newTilesY = (int)(((float)viewH + tilePxY * 0.5f) / tilePxY);
-    if (newTilesX < 1) newTilesX = 1;
-    if (newTilesY < 1) newTilesY = 1;
-    if (newTilesX > 255) newTilesX = 255;
-    if (newTilesY > 255) newTilesY = 255;
+    /* Enough squares to reach the far edges, as a zoom step gives
+     * (lv_drawApplyZoomStep), so the map fills the rectangle at every zoom. */
+    newTilesX = lvFitTilesCover(viewW, tilePxX);
+    newTilesY = lvFitTilesCover(viewH, tilePxY);
 
     if ((BYTE)newTilesX == lv_screenGetSizeX() &&
         (BYTE)newTilesY == lv_screenGetSizeY()) {
