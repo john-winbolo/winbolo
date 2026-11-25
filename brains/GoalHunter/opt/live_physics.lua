@@ -682,7 +682,10 @@ local ENTRIES = {
   -- the three shapes plays as the half-square circle (0) in the engine, so
   -- it reads 0 here too. No rule sent reads the classic 2. Classic rules:
   -- shape 2 and pill_range 2048, the base values, so nothing changes.
-  -- U.lgm_open_blast_catches reads both.
+  -- U.lgm_open_blast_catches reads both. Note: rule_of gives the classic 2
+  -- for a value below 0, so a negative value reads as 2 here. No game can
+  -- send one: the server keeps the rule in 0 to 2, the wire byte is
+  -- unsigned, and the client refuses a rules table out of range.
   { "LGM_BLAST_SHAPE", "BLAST",
     function(b, x)
       local s = x.lgm_blast_shape
