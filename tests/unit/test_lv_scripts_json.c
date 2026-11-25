@@ -27,11 +27,13 @@
  *       playhead while the recording is open, and reads classic again once it
  *       is closed.
  *   lv_scripts_json_blast_shape_by_version — a recording with no
- *       lgm_blast_shape reads the shape its version played: 2 (the circle of
- *       144) for one this build wrote, 0 (the circle of 128) for the same
- *       round with 2.2.1 in its header, both at the playhead and in the
- *       shape the hit box is drawn from, and this build's classic value once
- *       the file is closed.
+ *       lgm_blast_shape reads the shape its version played. The test writes
+ *       two copies of one plain round: 0 (the circle of 128) for the copy
+ *       with 2.2.1 in its header, 2 (the circle of 144) for the copy with
+ *       2.2.2. Each copy is checked at the playhead, in the shape the hit box
+ *       is drawn from and in the "Classic" column's value
+ *       (lv_screenRuleUnsetValue), and this build's classic value is checked
+ *       once the file is closed.
  *
  * The members of the last four are written by hand below and added to a
  * plain recording with minizip's append mode; none is produced by the
@@ -463,8 +465,8 @@ int run_lv_scripts_json_close_clears(void) {
  * once it is closed. It takes ownership of data, as
  * lv_screenLoadMapFromMemory does. */
 static bool lvsjShapeOf(uint8_t *data, size_t len, double *open, int *drawn,
-                        double *closed, unsigned *major, unsigned *minor,
-                        unsigned *revision) {
+                        double *unset, double *closed, unsigned *major,
+                        unsigned *minor, unsigned *revision) {
     LogViewerState *lv;
     bool            loaded;
     int             rule = simRulesRuleIndex("lgm_blast_shape");
@@ -477,6 +479,7 @@ static bool lvsjShapeOf(uint8_t *data, size_t len, double *open, int *drawn,
     *revision = lv->versionRevision;
     *open     = lv_screenRuleValueAt(rule, 0);
     *drawn    = lv->rules.lgmBlastShape;
+    *unset    = lv_screenRuleUnsetValue(rule);
     lv_screenCloseLog();
     *closed   = lv_screenRuleValueAt(rule, 0);
     lv_decoderDestroy(lv);
@@ -573,15 +576,15 @@ static bool lvsjCopyWithVersion(const char *from, const char *to, uint8_t major,
 static int lvsjCheckShapeCopy(uint8_t *data, size_t len, unsigned wantMajor,
                               unsigned wantMinor, unsigned wantRevision,
                               int want) {
-    double   open, closed;
+    double   open, unset, closed;
     int      drawn;
     unsigned major, minor, revision;
     bool     loaded;
 
     UT_ASSERT_MSG(data != NULL, "could not read the %u.%u.%u copy", wantMajor,
                   wantMinor, wantRevision);
-    loaded = lvsjShapeOf(data, len, &open, &drawn, &closed, &major, &minor,
-                         &revision);
+    loaded = lvsjShapeOf(data, len, &open, &drawn, &unset, &closed, &major,
+                         &minor, &revision);
     UT_ASSERT_MSG(loaded, "the %u.%u.%u copy did not open", wantMajor,
                   wantMinor, wantRevision);
     UT_ASSERT_MSG(major == wantMajor && minor == wantMinor &&
@@ -593,6 +596,11 @@ static int lvsjCheckShapeCopy(uint8_t *data, size_t len, unsigned wantMajor,
                   major, minor, revision, open, want);
     UT_ASSERT_MSG(drawn == want, "the %u.%u.%u copy draws shape %d (want %d)",
                   major, minor, revision, drawn, want);
+    /* A recording loaded from memory takes the unset value from the version
+       in its header, as one from a file does. The "Classic" column shows it. */
+    UT_ASSERT_MSG(unset == (double)want,
+                  "the %u.%u.%u copy's unset lgm_blast_shape is %g (want %d)",
+                  major, minor, revision, unset, want);
     /* With no recording open the answer is this build's classic shape. */
     UT_ASSERT_MSG(closed == (double)LGM_BLAST_SHAPE_CLASSIC,
                   "lgm_blast_shape read %g after the close (want the classic %d)",
