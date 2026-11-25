@@ -169,7 +169,7 @@ Selected event types (see the `logitem` enum for the complete list):
 | 70 | `log_MapName` | Pascal-form name of the map the round is played on. Written when the round starts. A log that opens in the lobby writes its header before the host chooses the map, so the header can name the previous round's map; a reader shows this name in its place |
 | 71 | `log_PlayerLag` | One player's network lag: RTT and the rewind the server used (below) |
 | 72 | `log_OverrunStats` | The server's tick timing and each bot's overruns, as the console's overrun lines print them (below) |
-| 73 | `log_BuilderCheck` | What the server tested when a shell's blast came near a builder who was out, and what it found (below). In the `.wbv` only, never in the spectator stream |
+| 74 | `log_BuilderCheck` | What the server tested when a shell's blast came near a builder who was out, and what it found (below). In the `.wbv` only, never in the spectator stream. Code 73 is left for `log_BotHostData`, which another branch adds |
 
 ### `log_GameSettings` payload
 

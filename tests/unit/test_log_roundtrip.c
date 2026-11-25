@@ -1161,6 +1161,8 @@ int run_log_roundtrip_builder_check(void) {
     uint8_t payload[BUILDER_CHECK_RECORD_BYTES + 4];
     int len;
 
+    /* The record code is fixed: 73 is left for log_BotHostData. */
+    UT_ASSERT(log_BuilderCheck == 74);
     mkTempPath(fname, sizeof(fname), "buildercheck");
     remove(fname);
 
