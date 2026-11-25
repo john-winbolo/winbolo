@@ -739,7 +739,8 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
                 (pillBits != 0 || baseBits != 0 || team != 0)) {
                 playersRejoinAddPlayer(pName, pillBits, baseBits, team,
                                        signedIn);
-                playersRejoinSetAddress(pName, sim->rejoinAddr[playerNum]);
+                playersRejoinSetAddress(pName, signedIn,
+                                        sim->rejoinAddr[playerNum]);
             }
         }
     }

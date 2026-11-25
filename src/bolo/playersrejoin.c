@@ -106,6 +106,31 @@ void playersRejoinUpdate() {
   }
 }
 
+/* The record in use under playerName, or -1 when there is none. A player
+   who was signed in to WinBolo.net and a player who was not can each have
+   a record under one name. They are two players, so the two records are
+   kept apart, and the signed-in one is the one found: a seat gets it only
+   once WinBolo.net has confirmed that name. */
+static int rejoinFindRecord(const char *playerName) {
+  int count;      /* Looping variable */
+  int found = -1; /* A record of a player who was not signed in */
+
+  if (playerName == NULL) {
+    return -1;
+  }
+  for (count = 0; count < MAX_TANKS; count++) {
+    if (rejoin.item[count].inUse == TRUE && strcmp(rejoin.item[count].playerName, playerName) == 0) {
+      if (rejoin.item[count].signedIn) {
+        return count;
+      }
+      if (found < 0) {
+        found = count;
+      }
+    }
+  }
+  return found;
+}
+
 /*********************************************************
 *NAME:          playersAddPlayer
 *AUTHOR:        John Morrison
@@ -129,10 +154,14 @@ void playersRejoinAddPlayer(char *playerName, PlayerBitMap pills, PlayerBitMap b
   /* With every record in use, the oldest one (the largest timeOut) is
      the one replaced. */
   timeBest = -1;
-  /* A record already kept under this name is replaced, so a player who
-     leaves twice has one record, the newest. */
+  /* A record already kept under this name, from a player with the same
+     signed-in state, is replaced, so a player who leaves twice has one
+     record, the newest. A record from a player who was signed in to
+     WinBolo.net is never replaced by one from a player who was not, or
+     the other way: they are two players with one name. */
   while (count < MAX_TANKS && done == FALSE) {
-    if (rejoin.item[count].inUse == TRUE && strcmp(rejoin.item[count].playerName, playerName) == 0) {
+    if (rejoin.item[count].inUse == TRUE && strcmp(rejoin.item[count].playerName, playerName) == 0 &&
+        rejoin.item[count].signedIn == signedIn) {
       done = TRUE;
       best = count;
     }
@@ -165,13 +194,15 @@ void playersRejoinAddPlayer(char *playerName, PlayerBitMap pills, PlayerBitMap b
 *NAME:          playersRejoinSetAddress
 *PURPOSE:
 * Puts the IPv4 address the player had when leaving in the
-* record for that name. Does nothing when there is no record.
+* record for that name and signed-in state. Does nothing when
+* there is no such record.
 *
 *ARGUMENTS:
 *  playerName - The player name
+*  signedIn   - The signed-in state the record was added with
 *  ipv4       - The address (network byte order), 0 for none
 *********************************************************/
-void playersRejoinSetAddress(const char *playerName, uint32_t ipv4) {
+void playersRejoinSetAddress(const char *playerName, bool signedIn, uint32_t ipv4) {
   BYTE count; /* Looping variable */
 
   if (playerName == NULL) {
@@ -179,7 +210,8 @@ void playersRejoinSetAddress(const char *playerName, uint32_t ipv4) {
   }
   count = 0;
   while (count < MAX_TANKS) {
-    if (rejoin.item[count].inUse == TRUE && strcmp(rejoin.item[count].playerName, playerName) == 0) {
+    if (rejoin.item[count].inUse == TRUE && strcmp(rejoin.item[count].playerName, playerName) == 0 &&
+        rejoin.item[count].signedIn == signedIn) {
       rejoin.item[count].ipv4 = ipv4;
       return;
     }
@@ -197,19 +229,12 @@ void playersRejoinSetAddress(const char *playerName, uint32_t ipv4) {
 *  playerName - The player name
 *********************************************************/
 uint32_t playersRejoinGetAddress(const char *playerName) {
-  BYTE count; /* Looping variable */
+  int num = rejoinFindRecord(playerName);
 
-  if (playerName == NULL) {
+  if (num < 0) {
     return 0;
   }
-  count = 0;
-  while (count < MAX_TANKS) {
-    if (rejoin.item[count].inUse == TRUE && strcmp(rejoin.item[count].playerName, playerName) == 0) {
-      return rejoin.item[count].ipv4;
-    }
-    count++;
-  }
-  return 0;
+  return rejoin.item[num].ipv4;
 }
 
 /*********************************************************
@@ -230,21 +255,13 @@ uint32_t playersRejoinGetAddress(const char *playerName) {
 *********************************************************/
 void playersRejoinRequest(GameSim *sim, char *playerName, BYTE playerNum, pillboxes *pb) {
   BYTE count;    /* Looping variable */
-  BYTE num = 255;      /* Number player is at */
+  int num;       /* Number player is at, -1 for none */
   unsigned long testItem; /* Pill base item we are testing */
   base ba;
  
-  count = 0;
-  while (count < MAX_TANKS) {
-    if (rejoin.item[count].inUse == TRUE && strcmp(rejoin.item[count].playerName, playerName) == 0) {
-      /* Found them */
-      num = count;
-      break;
-    }
-    count++;
-  }
+  num = rejoinFindRecord(playerName);
 
-  if (num < 255) {
+  if (num >= 0) {
     /* They did exist */
     count = 0;
     logAddEvent(log_PlayerRejoin, playerNum, 0, 0, 0, 0, NULL);
@@ -306,23 +323,16 @@ BYTE playersRejoinGetTeam(const char *playerName) {
 *  signedIn   - Set to the record's signed-in state
 *********************************************************/
 bool playersRejoinFind(const char *playerName, BYTE *team, bool *signedIn) {
-  BYTE count; /* Looping variable */
+  int num = rejoinFindRecord(playerName);
 
   *team = 0;
   *signedIn = FALSE;
-  if (playerName == NULL) {
+  if (num < 0) {
     return FALSE;
   }
-  count = 0;
-  while (count < MAX_TANKS) {
-    if (rejoin.item[count].inUse == TRUE && strcmp(rejoin.item[count].playerName, playerName) == 0) {
-      *team = rejoin.item[count].team;
-      *signedIn = rejoin.item[count].signedIn;
-      return TRUE;
-    }
-    count++;
-  }
-  return FALSE;
+  *team = rejoin.item[num].team;
+  *signedIn = rejoin.item[num].signedIn;
+  return TRUE;
 }
 
 /*********************************************************
@@ -336,19 +346,12 @@ bool playersRejoinFind(const char *playerName, BYTE *team, bool *signedIn) {
 *  playerName - The player name
 *********************************************************/
 int playersRejoinGetAge(const char *playerName) {
-  BYTE count; /* Looping variable */
+  int num = rejoinFindRecord(playerName);
 
-  if (playerName == NULL) {
+  if (num < 0) {
     return -1;
   }
-  count = 0;
-  while (count < MAX_TANKS) {
-    if (rejoin.item[count].inUse == TRUE && strcmp(rejoin.item[count].playerName, playerName) == 0) {
-      return rejoin.item[count].timeOut;
-    }
-    count++;
-  }
-  return -1;
+  return rejoin.item[num].timeOut;
 }
 
 /*********************************************************

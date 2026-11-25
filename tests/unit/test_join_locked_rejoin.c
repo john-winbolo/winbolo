@@ -310,7 +310,7 @@ static void lrStop(LoopbackHarness *h) {
  * address. */
 static void lrAddRecord(bool signedIn, const char *addr) {
     playersRejoinAddPlayer(LR_NAME, 0, 0, LR_TEAM, signedIn);
-    playersRejoinSetAddress(LR_NAME, (uint32_t)inet_addr(addr));
+    playersRejoinSetAddress(LR_NAME, signedIn, (uint32_t)inet_addr(addr));
 }
 
 /* True when the record for LR_NAME is still as lrAddRecord made it. */
@@ -672,7 +672,7 @@ int run_join_locked_rejoin_wbn_timeout_rejects(void) {
         UT_FAIL("%s", why);
     }
     /* The owner comes back from the address the record has. */
-    playersRejoinSetAddress(LR_NAME, (uint32_t)inet_addr("127.0.0.1"));
+    playersRejoinSetAddress(LR_NAME, TRUE, (uint32_t)inet_addr("127.0.0.1"));
     if (!lrJoin(&h, LR_WBN_FLAGS, &r) || !r.accept) {
         lrStop(&h);
         UT_FAIL("the owner could not rejoin after the timeout "

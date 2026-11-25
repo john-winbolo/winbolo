@@ -1692,6 +1692,91 @@ int run_team_sides_rejoin_signed_in_leave_clears(void) {
     return 0;
 }
 
+/* The signed-in player P1 (team 1 with player 0, one pill) has left. A
+   player who is not signed in takes the seat under the name P1, with
+   wantRejoin as given, and leaves. Then the signed-in P1 rejoins and
+   WinBolo.net confirms the seat. Returns 0 when the signed-in record was
+   still there and gave back team 1 and the pill, and the record of the
+   player who was not signed in is still there, apart from it. */
+static int tsSignedInRecordOutlivesSameName(bool otherWantsRejoin) {
+    ServerSim *sim = tsRejoinLeaver(true);
+    BYTE team;
+    bool signedIn;
+
+    UT_ASSERT(sim != NULL);
+    /* The other player, not signed in, under the same name. */
+    serverSimAddPlayer(sim, 1, "P1", otherWantsRejoin);
+    playersSetClientFlags(&sim->sim.plyrs, 1, 0);
+    UT_ASSERT_MSG(sim->sim.pb->item[0].owner == NEUTRAL,
+                  "the pill went to the player who is not signed in");
+    serverSimRemovePlayer(sim, 1);
+
+    /* The signed-in record is as the signed-in player left it. */
+    UT_ASSERT(playersRejoinFind("P1", &team, &signedIn));
+    UT_ASSERT_MSG(signedIn, "the signed-in record was replaced by the "
+                            "record of a player who is not signed in");
+    UT_ASSERT_MSG(team == 1, "the signed-in record has team %u",
+                  (unsigned)team);
+
+    /* The signed-in player rejoins, and WinBolo.net confirms the seat. */
+    serverSimAddPlayer(sim, 1, "P1", true);
+    UT_ASSERT(sim->rejoinAwaitSignIn[1]);
+    playersSetClientFlags(&sim->sim.plyrs, 1, PLAYER_FLAG_WBN_VERIFIED);
+    serverSimRejoinSignedIn(sim, 1);
+    UT_ASSERT_MSG(tsTeam(sim, 1) == 1, "the signed-in rejoiner is on team %u",
+                  (unsigned)tsTeam(sim, 1));
+    UT_ASSERT(tsAllied(sim, 0, 1) && tsAllied(sim, 1, 0));
+    UT_ASSERT_MSG(sim->sim.pb->item[0].owner == 1, "the pill went to %u",
+                  (unsigned)sim->sim.pb->item[0].owner);
+
+    /* The other player's record is a record of its own, and is left. */
+    UT_ASSERT(playersRejoinFind("P1", &team, &signedIn));
+    UT_ASSERT_MSG(!signedIn, "the signed-in record was not used up");
+    UT_ASSERT(team != 1);
+    UT_ASSERT(serverSimSidesAgree(sim));
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* A player who is not signed in joins as new under the name of a signed-in
+   player who left, and leaves. The signed-in player's record stays, and
+   gives back the team and the pill. */
+int run_team_sides_rejoin_signed_in_outlives_same_name_join(void) {
+    return tsSignedInRecordOutlivesSameName(false);
+}
+
+/* The same, when the player who is not signed in pressed Rejoin and left
+   while the seat waited for WinBolo.net. */
+int run_team_sides_rejoin_signed_in_outlives_same_name_rejoin(void) {
+    return tsSignedInRecordOutlivesSameName(true);
+}
+
+/* A signed-in player leaves from one address. A player who is not signed
+   in joins under the same name from another address and leaves. The
+   signed-in record keeps the signed-in player's address. */
+int run_team_sides_rejoin_signed_in_keeps_address(void) {
+    const BYTE teams[3] = { 1, 1, 2 };
+    ServerSim *sim = tsRunningSim(teams, 3);
+    const uint32_t signedAddr = 0x0100000aU;
+    const uint32_t otherAddr = 0x0200000aU;
+
+    UT_ASSERT(sim != NULL);
+    playersSetClientFlags(&sim->sim.plyrs, 1, PLAYER_FLAG_WBN_VERIFIED);
+    serverSimSetRejoinAddress(sim, 1, signedAddr);
+    serverSimRemovePlayer(sim, 1);
+    UT_ASSERT(playersRejoinGetAddress("P1") == signedAddr);
+
+    serverSimAddPlayer(sim, 1, "P1", false);
+    playersSetClientFlags(&sim->sim.plyrs, 1, 0);
+    serverSimSetRejoinAddress(sim, 1, otherAddr);
+    serverSimRemovePlayer(sim, 1);
+    UT_ASSERT_MSG(playersRejoinGetAddress("P1") == signedAddr,
+                  "the signed-in record has the address %08x",
+                  (unsigned)playersRejoinGetAddress("P1"));
+    serverSimDestroy(sim);
+    return 0;
+}
+
 /* A joiner's lobby slot goes out before its join, so a script placing it in
    on_player_join already sees the team the server gave it. */
 int run_team_sides_joiner_slot_before_join(void) {

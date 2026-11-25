@@ -6249,6 +6249,9 @@ set(_unit_test_names
     team_sides_rejoin_signed_in_solo_keeps_team
     team_sides_rejoin_signed_in_moved_seat_kept
     team_sides_rejoin_signed_in_leave_clears
+    team_sides_rejoin_signed_in_outlives_same_name_join
+    team_sides_rejoin_signed_in_outlives_same_name_rejoin
+    team_sides_rejoin_signed_in_keeps_address
     team_sides_joiner_slot_before_join
     team_sides_lobby_joiner_keeps_rule
     team_sides_lobby_drops_empty_teams
