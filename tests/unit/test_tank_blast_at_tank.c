@@ -78,7 +78,6 @@
 #include "server_sim_lifecycle.h"  /* serverSimSetLobbyEnabled, StartGame */
 #include "input_packet.h"          /* EVENT_EXPLOSION, EVENT_SOUND_TANK_HIT */
 #include "game_sim.h"
-#include "hit_rules.h"              /* LGM_BLAST_MAC_AREA_RADIUS */
 #include "bases.h"
 #include "bolo_map.h"
 #include "lgm.h"
@@ -123,14 +122,14 @@
 #define TBT_SHELL_STOP_SHORT 96
 
 /* Builders beside the hit tank, in world units along the lane from the
-   tank's centre. A blast kills a builder on open ground within the classic
-   lgm_blast_shape's circle (LGM_BLAST_MAC_AREA_RADIUS, 144, edge included) of
-   it, and the blast is TBT_SHELL_STOP_SHORT west of the centre. The near
-   builder is 196 west of the centre, 100 from the blast: he dies. The far
-   builder is 56 east of the centre, 152 from the blast: he lives. He is only
-   56 from the centre, so a blast at the centre would kill him. */
+   tank's centre. A blast kills a builder on open ground within half a square
+   (MAP_SQUARE_MIDDLE, 128) of it, and the blast is TBT_SHELL_STOP_SHORT west
+   of the centre. The near builder is 196 west of the centre, 100 from the
+   blast: he dies. The far builder is 48 east of the centre, 144 from the
+   blast: he lives. He is only 48 from the centre, so a blast at the centre
+   would kill him. */
 #define TBT_NEAR_WEST 196
-#define TBT_FAR_EAST  56
+#define TBT_FAR_EAST  48
 
 /* What the shell-death callback was told. */
 static int     tbtDeaths;
@@ -450,9 +449,9 @@ int run_tank_blast_zero_rewind_unchanged(void) {
     UT_ASSERT_MSG(sim != NULL, "setup: no sim, tanks or clear lane");
     gs = &sim->sim;
     UT_CHECK(gs->lgmen[TBT_SHOOTER] != NULL && gs->lgmen[TBT_TARGET] != NULL);
-    UT_CHECK(TBT_NEAR_WEST - TBT_SHELL_STOP_SHORT <= LGM_BLAST_MAC_AREA_RADIUS);
-    UT_CHECK(TBT_FAR_EAST + TBT_SHELL_STOP_SHORT > LGM_BLAST_MAC_AREA_RADIUS);
-    UT_CHECK(TBT_FAR_EAST <= LGM_BLAST_MAC_AREA_RADIUS);
+    UT_CHECK(TBT_NEAR_WEST - TBT_SHELL_STOP_SHORT <= MAP_SQUARE_MIDDLE);
+    UT_CHECK(TBT_FAR_EAST + TBT_SHELL_STOP_SHORT > MAP_SQUARE_MIDDLE);
+    UT_CHECK(TBT_FAR_EAST <= MAP_SQUARE_MIDDLE);
 
     /* (a) A hit. The blast point is the shell's point: on the lane, 96 short
        of the tank's centre, on the west side of the tank. */
@@ -487,7 +486,7 @@ int run_tank_blast_zero_rewind_unchanged(void) {
                  "a builder 100 units from the shell's point, on the hit side "
                  "of the tank, survived");
     UT_CHECK_MSG(gs->lgmen[TBT_TARGET]->isDead == FALSE,
-                 "a builder on the far side of the tank, 152 units from the "
+                 "a builder on the far side of the tank, 144 units from the "
                  "shell's point, was killed");
     tbtEnd(sim);
 

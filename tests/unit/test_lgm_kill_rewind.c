@@ -25,10 +25,11 @@
  *
  *   The kill test itself, lgmBlastCatches (src/bolo/lgm.c): on open ground
  *   it asks lgmBlastOpenGroundCatches (src/bolo/internal/lgm.h) with the
- *   lgm_blast_shape rule. The default (LGM_BLAST_SHAPE_CLASSIC, which is
- *   LGM_BLAST_SHAPE_MAC_AREA) is a circle of radius
- *   LGM_BLAST_MAC_AREA_RADIUS (144 world units), edge included, cut off at
- *   pill_range (2048 by default, so no cut here). Every run checks that its
+ *   lgm_blast_shape rule. Every run sets that rule to
+ *   LGM_BLAST_SHAPE_MAC_AREA itself (lkr_build_arena), whatever the classic
+ *   table plays: a circle of radius LGM_BLAST_MAC_AREA_RADIUS (144 world
+ *   units), edge included, cut off at pill_range (2048 by default, so no cut
+ *   here). Every run checks that its
  *   rules play that shape before it starts. On a solid square (building,
  *   pill, base) he dies only when the tested position is on that same square.
  *   The explosion point is the shell's own position; every explosion in this
@@ -207,8 +208,9 @@
 #define LKR_SHELLS_MAX    8
 
 #define LKR_MAN_SPEED   MAP_MANSPEED_TGRASS   /* world units a frame on grass */
-/* The open-ground kill radius: the classic lgm_blast_shape, a circle of
- * radius LGM_BLAST_MAC_AREA_RADIUS (144), edge included
+/* The open-ground kill radius: lgm_blast_shape LGM_BLAST_SHAPE_MAC_AREA,
+ * which lkr_build_arena sets, a circle of radius LGM_BLAST_MAC_AREA_RADIUS
+ * (144), edge included
  * (lgmBlastOpenGroundCatches, src/bolo/internal/lgm.h). lkr_rules_ok checks
  * that each run's rules play that shape. */
 #define LKR_KILL        LGM_BLAST_MAC_AREA_RADIUS
@@ -330,6 +332,10 @@ static void lkr_build_arena(LoopbackHarness *h, void *user) {
     int x, y, i;
 
     a->ok = false;
+    /* The geometry of every run is worked out for the circle of 144, so set
+     * it here, before the clients join, and do not lean on the classic
+     * table's value. lkr_rules_ok checks it held. */
+    gs->rules.lgm_blast_shape = LGM_BLAST_SHAPE_MAC_AREA;
     a->startNum = lkr_pick_start(gs, a, &a->startX, &a->startY, &a->overBases);
     if (a->startNum == 0) {
         return;

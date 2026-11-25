@@ -3277,8 +3277,6 @@ int run_lgm_blast_shape_mac_area(void);
 int run_lgm_blast_shape_solid_square(void);
 int run_lgm_blast_shape_classic_matches_old(void);
 int run_lgm_blast_shape_pill_range(void);
-int run_lgm_blast_shape_classic_144(void);
-int run_lgm_blast_shape_for_version(void);
 int run_teleport_erases_tank_rewind_record(void);
 int run_teleport_shell_hits_new_place(void);
 int run_teleport_rewind_refills(void);
@@ -4780,7 +4778,6 @@ int run_lv_scripts_json_wrong_version(void);
 int run_lv_scripts_json_hostile_values(void);
 int run_lv_scripts_json_over_cap(void);
 int run_lv_scripts_json_close_clears(void);
-int run_lv_scripts_json_blast_shape_by_version(void);
 /* The log viewer's rules at the playhead (test_lv_rule_changes.c, with the
  * rule-change round recorded by lv_scripts_fixture.c): a mid-round change
  * collected at load, LvRules right after seeking either way, a plain round

@@ -269,8 +269,7 @@ typedef struct SimRules {
                                         catches a builder in: 0 the
                                         half-square circle, 1 the Mac Bolo
                                         box, 2 the Mac Bolo equivalent area
-                                        circle, the classic value
-                                        (LGM_BLAST_SHAPE_*) */
+                                        circle (LGM_BLAST_SHAPE_*) */
 
 } SimRules;
 

@@ -6791,8 +6791,6 @@ set(_unit_test_names
     lgm_blast_shape_solid_square
     lgm_blast_shape_classic_matches_old
     lgm_blast_shape_pill_range
-    lgm_blast_shape_classic_144
-    lgm_blast_shape_for_version
     teleport_erases_tank_rewind_record
     teleport_shell_hits_new_place
     teleport_rewind_refills
@@ -8083,7 +8081,6 @@ set(_unit_test_names
     lv_scripts_json_hostile_values
     lv_scripts_json_over_cap
     lv_scripts_json_close_clears
-    lv_scripts_json_blast_shape_by_version
     lv_rule_changes_collected
     lv_rule_changes_seek
     lv_rule_changes_plain_round
