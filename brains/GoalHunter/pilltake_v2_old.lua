@@ -926,6 +926,13 @@ function M.world_env(world, C, U, PC)
   -- took from its cache to U.ttype's counter.
   env.base_at = world.base_at
   env.count_reads = function(n) require("metrics").inc("get_terrain", n) end
+  -- PT2_READ_CACHE_XPLAN: gh_pt2_v2.c may skip a U.ttype call when
+  -- U.terrain_prev already holds the square's live terrain (the call would
+  -- change nothing; count_reads adds it to the counter). tt_f: the ttype
+  -- these belong to (the C checks it is env.ttype).
+  if C.PT2_READ_CACHE_XPLAN ~= false and U.terrain_prev and rawget(_G, "TERRAIN_MASK") then
+    env.tt_prev, env.tt_f, env.tt_mask = U.terrain_prev, U.ttype, TERRAIN_MASK
+  end
   return env
 end
 
@@ -1067,6 +1074,15 @@ function M.world_inp(world, C, U, PC, cpf, inp, no_builder)
   inp.lgm_reach = function(omx, omy, mx, my)
     if abs(mx - omx) + abs(my - omy) <= 1 then return true end
     return cpf.lgm_travel_ticks_map(omx, omy, mx, my, 0, 0, 2000, 150) ~= -1
+  end
+  -- PT2_REACH_CACHE: gh_pt2_v2.c keeps lgm_reach's answers across
+  -- evaluates while cpf.lgm_reach_key (the change count of the walk's
+  -- inputs: map, LGM blocks, man speeds) stays the same. reach_f: the
+  -- lgm_reach they belong to (a wrapper put in its place turns it off).
+  if C.PT2_REACH_CACHE ~= false and cpf.lgm_reach_key then
+    inp.reach_key, inp.reach_f = cpf.lgm_reach_key, inp.lgm_reach
+  else
+    inp.reach_key, inp.reach_f = nil, nil
   end
   return inp
 end

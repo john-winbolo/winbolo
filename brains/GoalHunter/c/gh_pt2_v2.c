@@ -330,6 +330,9 @@ enum {
     C_tg_build,
     C_ring_points,
     C_steps,
+    C_ttx_hit,
+    C_rc_hit,
+    C_rc_clear,
     C_N
 };
 static const char *s_pc_name[] = {
@@ -346,7 +349,10 @@ static const char *s_pc_name[] = {
     "tg_hit",
     "tg_build",
     "ring_points",
-    "steps"
+    "steps",
+    "ttx_hit",
+    "rc_hit",
+    "rc_clear"
 };
 #define PF_DEPTH 64
 typedef struct {
@@ -590,6 +596,12 @@ typedef struct {
     int       cg_par_set;
     int       cg_off, cg_check;
     Offs     *offs; int n_offs, cap_offs;
+    /* PT2_REACH_CACHE: lgm_reach answers across evaluates, while the
+     * walk's inputs keep the same change count (inp.reach_key) */
+    uint32_t *rc_k;         /* key + 1 (0 = free): omx, omy, mx, my bytes */
+    uint8_t  *rc_v;
+    int       rc_n, rc_set;
+    double    rc_gen;
     uint32_t  mgen;         /* output generation */
     Pt2Prof   pf;           /* PT2_C_PROF (gh_pt2_v2.prof) */
 } Pt2Ctx;
@@ -784,7 +796,8 @@ enum {
     S_SCORE_FN, S_BANNED, S_ANGER_OF, S_CHAIN_SKIP, S_BASE_AT,
     S_PILL_NAME, S_COUNT_READS, S_LGM_TICKS, S_PILL_INTERVAL, S_WKEY,
     S_WMT, S_WM, S_SLICE, S_CLK, S_JOB, S_SQF,
-    S_TOP = S_SQF
+    S_TT_PREV, S_TT_F, S_RCH_KEY, S_RCH_F,
+    S_TOP = S_RCH_F
 };
 #define N_SLOTS (S_TOP - S_INP + 1)
 
@@ -848,6 +861,11 @@ struct St {
     int    forest_transparent;
     double sh_speed, sh_add, sh_life, sh_hit_r, pill_len;
     int    cg_on;
+    int    ttx_on;                 /* PT2_READ_CACHE_XPLAN: env.tt_prev in use */
+    const uint8_t *ttx_w;          /* the bot's map bytes (get_terrain's) */
+    int    ttx_mask;
+    int    rc_on;                  /* PT2_REACH_CACHE: the ctx table in use */
+    int    geom_mode;              /* PT2_GEOM_CACHE_MODE: 0 both tables, 1 cast only, 2 none */
     int    ts_boats, ts_nt;
     double ts_t[2 * PT2_TS_MAX_TANKS];
     int    om_set, om_sent;
@@ -1254,6 +1272,23 @@ static double ttype(Ev *e, double mx, double my) {
         int k = (int)my * 256 + (int)mx;
         Pt2Ctx *c = e->c;
         if (c->tt_stamp[k] == c->gen) { e->tt_hits += 1; return c->tt_val[k]; }
+        if (e->ttx_on) {
+            /* U.ttype's answer is raw & mask, and its only other work is
+             * terrain_prev[k] = that and a change note when they differ:
+             * when terrain_prev[k] is already that value, the call would
+             * change nothing but the get_terrain count (count_reads). */
+            double tv = (double)(e->ttx_w[k] & e->ttx_mask);
+            lua_rawgeti(e->L, S_TT_PREV, k);
+            int same = lua_type(e->L, -1) == LUA_TNUMBER && lua_tonumber(e->L, -1) == tv;
+            lua_pop(e->L, 1);
+            if (same) {
+                PC(C_ttx_hit, 1);
+                e->tt_hits += 1;
+                c->tt_stamp[k] = c->gen;
+                c->tt_val[k] = tv;
+                return tv;
+            }
+        }
         double v = call_ttype(e, mx, my);
         PC(C_tt_miss, 1);
         c->tt_stamp[k] = c->gen;
@@ -1730,7 +1765,7 @@ static Ray *cg_cast(Ev *e, Arena *a, const CGeom *g, int bx, int by, double sx, 
 
 static Ray *cast__p(Ev *e, Arena *a, double sx, double sy, double tx, double ty, double len,
                  const Extra *extra, int keep, Ray *scratch) {
-    if (!keep || !e->cg_on || len != e->pill_len)
+    if (!keep || !e->cg_on || e->geom_mode == 2 || len != e->pill_len)
         return cast_walk(e, a, sx, sy, tx, ty, len, extra, keep, scratch);
     double bxd = (sx - 128) / 256, byd = (sy - 128) / 256;
     double dx = tx - sx, dy = ty - sy;
@@ -1812,7 +1847,7 @@ static int cg_tshot(Ev *e, const CGeom *g, int bx, int by, const Extra *extra, L
 /* shadow.tank_shot: the table when the shot fits it, else the walk. */
 static int tank_shot__p(Ev *e, double ox, double oy, double ax, double ay, double tmx, double tmy,
                      const Extra *extra, Lane **lane_out) {
-    if (!e->cg_on) return tank_shot_walk(e, ox, oy, ax, ay, tmx, tmy, extra, lane_out);
+    if (!e->cg_on || e->geom_mode != 0) return tank_shot_walk(e, ox, oy, ax, ay, tmx, tmy, extra, lane_out);
     if (e->ts_nt > 0 && ts_tank_near(e, ox, oy, ax, ay))
         return tank_shot_walk(e, ox, oy, ax, ay, tmx, tmy, extra, lane_out);
     double dx = ax - ox, dy = ay - oy;
@@ -2634,6 +2669,29 @@ static int list_has(const int64_t *v, int n, int64_t s) {
     return 0;
 }
 
+/* PT2_REACH_CACHE table: open addressing on the key, cleared when 3/4
+ * full or when the walk's inputs change (rc_step). */
+#define RC_SLOTS 32768   /* a power of 2 */
+static int rc_get(Pt2Ctx *c, uint32_t ck, int *v) {
+    uint32_t m = RC_SLOTS - 1, i = cg_hash((int32_t)ck, 0, 0) & m;
+    for (;;) {
+        if (c->rc_k[i] == 0) return 0;
+        if (c->rc_k[i] == ck) { *v = c->rc_v[i]; return 1; }
+        i = (i + 1) & m;
+    }
+}
+static void rc_put(Pt2Ctx *c, uint32_t ck, int v) {
+    if (c->rc_n >= RC_SLOTS / 4 * 3) {
+        memset(c->rc_k, 0, sizeof(uint32_t) * RC_SLOTS);
+        c->rc_n = 0;
+    }
+    uint32_t m = RC_SLOTS - 1, i = cg_hash((int32_t)ck, 0, 0) & m;
+    while (c->rc_k[i] != 0 && c->rc_k[i] != ck) i = (i + 1) & m;
+    if (c->rc_k[i] == 0) c->rc_n++;
+    c->rc_k[i] = ck;
+    c->rc_v[i] = (uint8_t)(v ? 1 : 0);
+}
+
 /* slot_ok: may a planned blocker go on square k (0-based) of ray r? */
 static int slot_ok__p(Ev *e, Rec *rec, Ray *r, int k, const Lane *lane, const int64_t *forbid, int nf) {
     lua_State *L = e->L;
@@ -2663,8 +2721,20 @@ static int slot_ok__p(Ev *e, Rec *rec, Ray *r, int k, const Lane *lane, const in
     double rk = ((om ? rec->omx : 0) * 256 + (om ? rec->omy : 0)) * 65536 + (double)sq;
     HVal *hv = hm_find(&e->reach, dbits(rk), 0);
     int rc;
+    uint32_t ck = 0;
+    if (e->rc_on && om && rec->omx >= 0 && rec->omx <= 255 && rec->omy >= 0 && rec->omy <= 255
+        && rec->omx == floor(rec->omx) && rec->omy == floor(rec->omy)) {
+        ck = ((uint32_t)rec->omx << 24 | (uint32_t)rec->omy << 16 | (uint32_t)my << 8 | (uint32_t)mx) + 1u;
+        if (ck == 0) ck = 0;   /* 0xFFFFFFFF + 1: not kept */
+    }
     if (hv) rc = (int)hv->i;
-    else {
+    else if (ck && rc_get(e->c, ck, &rc)) {
+        PC(C_rc_hit, 1);
+        int isnew;
+        hv = hm_put(L, &e->reach, dbits(rk), 0, &isnew);
+        hv->i = rc;
+        e->reach_calls += 1;
+    } else {
         lua_pushvalue(L, S_LGM_REACH);
         if (om) { lua_pushnumber(L, rec->omx); lua_pushnumber(L, rec->omy); }
         else { lua_pushnil(L); lua_pushnil(L); }
@@ -2677,6 +2747,7 @@ static int slot_ok__p(Ev *e, Rec *rec, Ray *r, int k, const Lane *lane, const in
         hv = hm_put(L, &e->reach, dbits(rk), 0, &isnew);
         hv->i = rc;
         e->reach_calls += 1;
+        if (ck) rc_put(e->c, ck, rc);
     }
     return rc;
 }
@@ -4698,6 +4769,7 @@ static int ctx_gc(lua_State *L) {
     Pt2Ctx *c = (Pt2Ctx *)lua_touserdata(L, 1);
     free(c->tt_stamp); free(c->tt_val); free(c->po_stamp); free(c->po_val); free(c->ba_stamp);
     free(c->cg); free(c->tg);
+    free(c->rc_k); free(c->rc_v);
     for (int i = 0; i < c->n_offs; i++) free(c->offs[i].o);
     free(c->offs);
     memset(c, 0, sizeof(*c));
@@ -4739,6 +4811,50 @@ static void job_new(lua_State *L) {
 }
 
 /* Each step: the map reads are cached for this step only. */
+/* Each step: PT2_READ_CACHE_XPLAN (env.tt_prev is U.terrain_prev and
+ * env.tt_f the env's ttype, the map bytes are get_terrain's) and
+ * PT2_REACH_CACHE (inp.reach_f is inp.lgm_reach, inp.reach_key gives
+ * the walk's change count: a new count clears the table). */
+static void xplan_ready(Ev *e) {
+    lua_State *L = e->L;
+    Pt2Ctx *c = e->c;
+    e->ttx_on = 0;
+    if (lua_istable(L, S_TT_PREV) && lua_toboolean(L, S_TT_F) && lua_rawequal(L, S_TT_F, S_TTYPE)) {
+        lua_getfield(L, LUA_REGISTRYINDEX, "winbolo_world_ptr_ptr");
+        const uint8_t **wpp = (const uint8_t **)lua_touserdata(L, -1);
+        lua_pop(L, 1);
+        int h;
+        double mk = getnum(L, S_ENV, "tt_mask", 0, &h);
+        if (wpp && *wpp && h && mk >= 1 && mk <= 255 && mk == floor(mk)) {
+            e->ttx_on = 1; e->ttx_w = *wpp; e->ttx_mask = (int)mk;
+        }
+    }
+    e->rc_on = 0;
+    if (lua_isfunction(L, S_RCH_KEY) && lua_toboolean(L, S_RCH_F) && lua_rawequal(L, S_RCH_F, S_LGM_REACH)) {
+        lua_pushvalue(L, S_RCH_KEY);
+        lua_call(L, 0, 1);
+        int has = lua_type(L, -1) == LUA_TNUMBER;
+        double g = has ? lua_tonumber(L, -1) : 0;
+        lua_pop(L, 1);
+        if (has) {
+            if (!c->rc_k) {
+                c->rc_k = (uint32_t *)calloc(RC_SLOTS, sizeof(uint32_t));
+                c->rc_v = (uint8_t *)calloc(RC_SLOTS, 1);
+                if (!c->rc_k || !c->rc_v) { free(c->rc_k); free(c->rc_v); c->rc_k = NULL; c->rc_v = NULL; }
+                c->rc_n = 0; c->rc_set = 0;
+            }
+            if (c->rc_k) {
+                if (!c->rc_set || c->rc_gen != g) {
+                    memset(c->rc_k, 0, sizeof(uint32_t) * RC_SLOTS);
+                    c->rc_n = 0; c->rc_gen = g; c->rc_set = 1;
+                    PC(C_rc_clear, 1);
+                }
+                e->rc_on = 1;
+            }
+        }
+    }
+}
+
 static void step_reads__p(Ev *e) {
     lua_State *L = e->L;
     Pt2Ctx *c = e->c;
@@ -4752,6 +4868,7 @@ static void step_reads__p(Ev *e) {
     e->om_sent = 0;
     e->tt_hits = 0;
     e->cg_on = cg_ready(e);
+    xplan_ready(e);
     e->bs_on = lua_toboolean(L, S_BASE_STOPS);
     e->ba_tab = lua_istable(L, S_BASE_AT);
     if (e->bs_on && e->ba_tab) {
@@ -4881,6 +4998,15 @@ static void ev_read_inp__p(Ev *e) {
         e->naims = e->aim9 ? 9 : 5;
     }
     e->wall_memo = getbool(L, S_INP, "wall_memo");
+    /* PT2_GEOM_CACHE_MODE (inp.geom_cache): "cast" = the cast() table only,
+     * "off" = no table; any other value (or none) = both tables. The
+     * tables give the same answer as the walk, so only the time moves. */
+    {
+        lua_getfield(L, S_INP, "geom_cache");
+        const char *gm = lua_type(L, -1) == LUA_TSTRING ? lua_tostring(L, -1) : NULL;
+        e->geom_mode = !gm ? 0 : strcmp(gm, "cast") == 0 ? 1 : strcmp(gm, "off") == 0 ? 2 : 0;
+        lua_pop(L, 1);
+    }
     e->wall_memo_max = getnum(L, S_INP, "wall_memo_max", 2000, NULL);
     e->has_clk = lua_toboolean(L, S_CLK);
     e->T_BUILDING = getnum(L, S_ENV, "T_BUILDING", NAN, NULL);
@@ -4956,6 +5082,7 @@ static void ev_read_inp(Ev *e) { PB(P_ev_read_inp); ev_read_inp__p(e); PE(); }
 /* The slots of a step, from the state's table (fenv) */
 static void slots_push__p(lua_State *L) {
     lua_settop(L, 2);
+    if (!lua_checkstack(L, S_TOP + 40)) luaL_error(L, "gh_pt2_v2: stack");
     lua_getfenv(L, S_ST);
     int t = lua_gettop(L);
     for (int i = S_INP; i <= S_TOP; i++) lua_rawgeti(L, t, i);
@@ -5564,6 +5691,8 @@ static int l_begin__p(lua_State *L) {
         { 0, "banned", S_BANNED }, { 0, "anger_of", S_ANGER_OF }, { 0, "chain_skip", S_CHAIN_SKIP },
         { 1, "base_at", S_BASE_AT }, { 1, "count_reads", S_COUNT_READS }, { 0, "lgm_ticks", S_LGM_TICKS },
         { 0, "pill_interval", S_PILL_INTERVAL }, { 0, "v2_wkey", S_WKEY }, { 0, "v2_clock", S_CLK },
+        { 1, "tt_prev", S_TT_PREV }, { 1, "tt_f", S_TT_F },
+        { 0, "reach_key", S_RCH_KEY }, { 0, "reach_f", S_RCH_F },
         { 0, NULL, 0 }
     };
     for (int i = 0; fs[i].k; i++) {
@@ -5656,6 +5785,7 @@ static int l_step__p(lua_State *L) {
         /* the first step goes on from the setup's reads */
         e->om_sent = 0;
         e->cg_on = cg_ready(e);
+        xplan_ready(e);
     }
     if (!ev_run(e)) { lua_pushboolean(L, 0); return 1; }
     step_end(e);

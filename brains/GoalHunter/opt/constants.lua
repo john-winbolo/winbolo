@@ -1497,6 +1497,38 @@ M.PT2_WALL_MEMO_MAX = 20000
 -- one the Lua gives (test_gh_pt2_v2_parity), with PT2_V2_SPLIT too. An
 -- older exe has no C copy and the Lua runs. false = the Lua copy.
 M.PT2_V2_C = true
+-- PT2_REACH_CACHE (Nov 25, speed only): the C copy keeps the builder
+-- reach answers (lgm_reach) across evaluates and plans while the LGM
+-- walk's inputs (map bytes, LGM blocks, man speeds:
+-- cpf.lgm_reach_key) do not change. The same answers, so the same
+-- decisions. Measured Nov 25 (19 arena games): lgm_reach calls 6597 to
+-- 3577 (-46 %); PT2 time 11.3 to 11.2 ms per evaluate (-1 %, inside the
+-- run-to-run noise). false = one memo per evaluate.
+M.PT2_REACH_CACHE = true
+-- PT2_READ_CACHE_XPLAN (Nov 25, speed only): the C copy skips a terrain
+-- read (U.ttype) when U.terrain_prev already holds the square's live
+-- terrain: that call would change nothing but the read counter, which
+-- count_reads still adds. The same answers. Measured Nov 25 (19 arena
+-- games): U.ttype calls 40022 to 5089 (-87 %); PT2 time 11.3 to 11.1 ms
+-- per evaluate (-2 %, inside the noise). false = every
+-- step reads each square through U.ttype.
+M.PT2_READ_CACHE_XPLAN = true
+-- PT2_GEOM_CACHE_MODE (Nov 25, speed only): the C copy's shell walk
+-- tables. "both" = the cast and tank shot tables, "cast" = the cast
+-- table only, "off" = no table (every shell walks). The tables give the
+-- walk's answer, but few lookups hit (bench: cast 0.5 %, tank shot
+-- 13 %), so a table entry costs more than the walk it saves. Measured
+-- Nov 25 with "off" against "both": bench 2.81 to 2.54 ms median per
+-- evaluate (-10 %), bench lanes 4.48 to 4.04 ms (-10 %), 19 arena games
+-- 11.3 to 10.2 ms per evaluate (-10 %). "cast" is between them.
+M.PT2_GEOM_CACHE_MODE = "off"
+-- PP_FRONT_C (Nov 25, speed only): pill_portfolio's front tests
+-- (on_front_line, near_front, the aggro neighbour count) run in C
+-- (braincore.c) on the same influence grid. The same answers. Measured
+-- Nov 25 (19 arena games, 548 replans): replan 1.20 to 0.87 ms mean
+-- (-28 %), p95 4.13 to 1.82 ms.
+-- false = the Lua loops over cpf.influence_at.
+M.PP_FRONT_C = true
 -- SHIELD_SCAN_PENDING_SURVIVES_V2 (Nov 22, Andrew: "Fix it"): with
 -- PT2_AFTER_SCAN_SPLIT off, v2 runs in one go on the plan tick. true: keep
 -- goal._shield_scan_pending until goal._shield_scan is set, so a budget kill

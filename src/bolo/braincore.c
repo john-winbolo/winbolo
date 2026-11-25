@@ -1897,6 +1897,63 @@ static int l_cpf_influence_at(lua_State *L) {
   return 1;
 }
 
+/* pill_portfolio.lua's front tests in C (PP_FRONT_C), on the same grid
+ * as cpf_influence_at. A square's numbers are truncated to integers as
+ * luaL_checkinteger does in cpf_influence_at. */
+static int cpfOnFrontLine(BrainPathfinder *pf, double tx, double ty) {
+  if (tx < 1 || tx > 254 || ty < 1 || ty > 254) return 0;
+  int x = (int)tx, y = (int)ty;
+  int v = brainPathfinderInfluenceAt(pf, x, y);
+  if (v == 0) return 0;
+  int n = brainPathfinderInfluenceAt(pf, x, (int)(ty - 1));
+  int s = brainPathfinderInfluenceAt(pf, x, (int)(ty + 1));
+  int w = brainPathfinderInfluenceAt(pf, (int)(tx - 1), y);
+  int e = brainPathfinderInfluenceAt(pf, (int)(tx + 1), y);
+  if (v > 0) return n < 0 || s < 0 || w < 0 || e < 0;
+  return n > 0 || s > 0 || w > 0 || e > 0;
+}
+
+/* cpf_on_front_line(tx, ty) -> bool: PP.on_front_line */
+static int l_cpf_on_front_line(lua_State *L) {
+  CPF_GET(L);
+  lua_pushboolean(L, cpfOnFrontLine(pf, luaL_checknumber(L, 1), luaL_checknumber(L, 2)));
+  return 1;
+}
+
+/* cpf_near_front(mx, my, r) -> bool: PP.near_front, the same loops
+ * (dy, then dx, from -r to r by 1) */
+static int l_cpf_near_front(lua_State *L) {
+  CPF_GET(L);
+  double mx = luaL_checknumber(L, 1), my = luaL_checknumber(L, 2);
+  double r = luaL_checknumber(L, 3);
+  double r2 = r * r;
+  for (double dy = -r; dy <= r; dy += 1) {
+    for (double dx = -r; dx <= r; dx += 1) {
+      if (dx * dx + dy * dy <= r2 && cpfOnFrontLine(pf, mx + dx, my + dy)) {
+        lua_pushboolean(L, 1);
+        return 1;
+      }
+    }
+  }
+  lua_pushboolean(L, 0);
+  return 1;
+}
+
+/* cpf_neg_neighbours(mx, my) -> n: how many of the 8 squares around
+ * (mx, my) have influence < 0 (PP after_front) */
+static int l_cpf_neg_neighbours(lua_State *L) {
+  CPF_GET(L);
+  double mx = luaL_checknumber(L, 1), my = luaL_checknumber(L, 2);
+  int neg = 0;
+  for (int dy = -1; dy <= 1; dy++)
+    for (int dx = -1; dx <= 1; dx++)
+      if (!(dx == 0 && dy == 0)
+          && brainPathfinderInfluenceAt(pf, (int)(mx + dx), (int)(my + dy)) < 0)
+        neg++;
+  lua_pushinteger(L, neg);
+  return 1;
+}
+
 static int l_cpf_clear_neutral_zones(lua_State *L) {
   CPF_GET(L);
   brainPathfinderClearNeutralZones(pf);
@@ -2703,6 +2760,18 @@ static int l_cpf_lgm_travel_ticks(lua_State *L) {
   return 1;
 }
 
+/* cpf_lgm_reach_key() -> n or nil: the change count of the LGM walk's
+ * inputs (brainPathfinderLgmReachGen). The same n means
+ * cpf_lgm_travel_ticks_map gives the same answers. nil: no map, or the
+ * abort flag is set. */
+static int l_cpf_lgm_reach_key(lua_State *L) {
+  CPF_GET(L);
+  long g = brainPathfinderLgmReachGen(pf);
+  if (g < 0) return 0;
+  lua_pushinteger(L, (lua_Integer)g);
+  return 1;
+}
+
 static int l_cpf_lgm_travel_ticks_map(lua_State *L) {
   CPF_GET(L);
   BYTE smx = (BYTE)luaL_checkinteger(L, 1);
@@ -3031,6 +3100,9 @@ void brainCoreRegisterPathfinder(lua_State *L, BrainPathfinder **pfPtr) {
     { "cpf_clear_influence",   l_cpf_clear_influence },
     { "cpf_stamp_influence",   l_cpf_stamp_influence },
     { "cpf_influence_at",      l_cpf_influence_at },
+    { "cpf_on_front_line",     l_cpf_on_front_line },
+    { "cpf_near_front",        l_cpf_near_front },
+    { "cpf_neg_neighbours",    l_cpf_neg_neighbours },
     { "cpf_clear_neutral_zones",    l_cpf_clear_neutral_zones },
     { "cpf_stamp_neutral_zone",     l_cpf_stamp_neutral_zone },
     { "cpf_rebuild_influence_tail", l_cpf_rebuild_influence_tail },
@@ -3068,6 +3140,7 @@ void brainCoreRegisterPathfinder(lua_State *L, BrainPathfinder **pfPtr) {
     { "cpf_danger_at",             l_cpf_danger_at },
     { "cpf_lgm_travel_ticks",      l_cpf_lgm_travel_ticks },
     { "cpf_lgm_travel_ticks_map",  l_cpf_lgm_travel_ticks_map },
+    { "cpf_lgm_reach_key",         l_cpf_lgm_reach_key },
     { "cpf_lgm_walk_path",         l_cpf_lgm_walk_path },
     { "cpf_lgm_walk_path_wu",      l_cpf_lgm_walk_path_wu },
     { "cpf_lgm_man_speed",         l_cpf_lgm_man_speed },

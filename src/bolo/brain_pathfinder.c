@@ -4509,6 +4509,25 @@ int brainPathfinderLgmTravelTicksMap(BrainPathfinder *pf,
                                         blessX, blessY, maxTicks, stuckTicks);
 }
 
+long brainPathfinderLgmReachGen(BrainPathfinder *pf) {
+  uint8_t sp[17];
+  if (!pf || !pf->map) return -1;
+  if (BRAIN_PF_ABORTED(pf)) return -1;
+  memcpy(sp, pf->man_speed, 16);
+  sp[16] = pf->man_speed_blessed;
+  if (!pf->lr_set
+      || memcmp(pf->lr_map, pf->map, sizeof(pf->lr_map)) != 0
+      || memcmp(pf->lr_block, pf->lgm_block, sizeof(pf->lr_block)) != 0
+      || memcmp(pf->lr_speed, sp, sizeof(sp)) != 0) {
+    memcpy(pf->lr_map, pf->map, sizeof(pf->lr_map));
+    memcpy(pf->lr_block, pf->lgm_block, sizeof(pf->lr_block));
+    memcpy(pf->lr_speed, sp, sizeof(sp));
+    pf->lr_set = 1;
+    pf->lr_gen++;
+  }
+  return (long)(pf->lr_gen & 0x3FFFFFFF);
+}
+
 int brainPathfinderLgmWalkPathMap(BrainPathfinder *pf,
                                    BYTE smx, BYTE smy, BYTE dmx, BYTE dmy,
                                    BYTE blessX, BYTE blessY,

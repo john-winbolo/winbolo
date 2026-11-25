@@ -131,9 +131,31 @@ function M.targets_label()
     M.targets_source)
 end
 
+-- PP_FRONT_C: the C copies of on_front_line, near_front and the
+-- after_front neighbour count (braincore.c cpf_on_front_line,
+-- cpf_near_front, cpf_neg_neighbours). They read the same grid as
+-- cpf.influence_at, so the C is used only while cpf.influence_at is the
+-- module's own function (a test may put its own in its place) and the
+-- exe has the C copies.
+local c_on_front = rawget(_G, "cpf_on_front_line")
+local c_near_front = rawget(_G, "cpf_near_front")
+local c_neg_nb = rawget(_G, "cpf_neg_neighbours")
+local own_influence_at = cpf.influence_at
+-- f itself, or the function inside it when f is a REPLAN_PROF timer
+local function unwrapped(f)
+  local rp = package.loaded["replan_prof"]
+  local o = type(rp) == "table" and rp.orig and rp.orig[f]
+  return o or f
+end
+local function front_c()
+  return C.PP_FRONT_C ~= false and c_near_front ~= nil
+    and rawequal(unwrapped(cpf.influence_at), own_influence_at)
+end
+
 -- A tile is on the front line if it has influence AND an orthogonal neighbor
 -- of opposite sign (mirrors brainPathfinderFindFrontLine / the "3" overlay).
 function M.on_front_line(tx, ty)
+  if front_c() then return c_on_front(tx, ty) end
   if tx < 1 or tx > 254 or ty < 1 or ty > 254 then return false end
   local v = cpf.influence_at(tx, ty)
   if v == 0 then return false end
@@ -145,8 +167,13 @@ function M.on_front_line(tx, ty)
   return n > 0 or s > 0 or w > 0 or e > 0
 end
 
+local own_on_front_line = M.on_front_line
+
 function M.near_front(mx, my, r)
   r = r or FRONT_NEAR_RADIUS
+  if front_c() and rawequal(unwrapped(M.on_front_line), own_on_front_line) then
+    return c_near_front(mx, my, r)
+  end
   local r2 = r * r
   for dy = -r, r do
     for dx = -r, r do
@@ -165,6 +192,9 @@ end
 local function after_front(mx, my, inf)
   if inf < 0 then return "aggro" end
   local neg = 0
+  if front_c() then
+    neg = c_neg_nb(mx, my)
+  else
   for dy = -1, 1 do
     for dx = -1, 1 do
       if not (dx == 0 and dy == 0)
@@ -172,6 +202,7 @@ local function after_front(mx, my, inf)
         neg = neg + 1
       end
     end
+  end
   end
   if neg >= (C.AGGRO_NEG_NEIGHBORS or 5) then return "aggro" end
   if inf > 0 then return "back" end

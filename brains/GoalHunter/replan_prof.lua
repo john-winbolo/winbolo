@@ -64,12 +64,19 @@ local function pop_ret(...)
   return ...
 end
 
+-- M.orig[timer] = the function inside it, so that code which checks "is
+-- this still the module's own function?" (pill_portfolio PP_FRONT_C) can
+-- look through a timer. Weak keys: it keeps no function alive.
+M.orig = setmetatable({}, { __mode = "k" })
+
 local function wrap(name, f)
-  return function(...)
+  local w = function(...)
     if not ACTIVE then return f(...) end
     push(name)
     return pop_ret(f(...))
   end
+  M.orig[w] = f
+  return w
 end
 
 local MODULES = { "goals", "pathfinder", "cpathfinder", "threat", "danger", "attack",
