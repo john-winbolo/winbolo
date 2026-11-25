@@ -324,6 +324,7 @@ enum {
     C_po_miss,
     C_ring_points,
     C_steps,
+    C_ts_reuse,
     C_N
 };
 static const char *s_pc_name[] = {
@@ -334,7 +335,8 @@ static const char *s_pc_name[] = {
     "po_hit",
     "po_miss",
     "ring_points",
-    "steps"
+    "steps",
+    "ts_reuse"
 };
 #define PF_DEPTH 64
 typedef struct {
@@ -822,6 +824,14 @@ struct St {
     int    finish;
     double tt_hits;
     int    bs_on, ba_tab;
+    /* the tank shot walk: its life (once per evaluate), the origin square
+     * of the last origin, and the last walk's result for the reuse */
+    double ts_life;
+    int    om_has; uint64_t om_kx, om_ky; double om_mx, om_my;
+    double tt_miss_n;           /* in-map ttype misses (stamped) */
+    double unc_n;               /* Lua reads a stamp does not keep */
+    uint64_t walk_serial;
+    Pt2wKey tsm_key; int tsm_ok, tsm_why; double tsm_tt;
     HMap   reach;           /* reach_cache */
     HMap   lgt;             /* lgm_ticks memo: value 0 = false, else t + 1 */
     HMap   lgt_v;
@@ -1031,8 +1041,16 @@ static void sb_str(SBuf *b, const char *s) { sb_add(b, s, strlen(s)); }
 static void sb_num(SBuf *b, double v) { char t[64]; fmt_num(t, sizeof(t), v); sb_str(b, t); }
 
 /* ── Lua calls ──────────────────────────────────────────────────────── */
+#if PT2_WALK_CHECK
+static uint64_t s_wc_lua;       /* Lua callbacks made (the walk check build) */
+#define WC_LUA() (s_wc_lua++)
+#else
+#define WC_LUA() ((void)0)
+#endif
+
 static int call_b2(Ev *e, int fn, double a, double b) {
     lua_State *L = e->L;
+    WC_LUA();
     lua_pushvalue(L, fn);
     lua_pushnumber(L, a);
     lua_pushnumber(L, b);
@@ -1205,6 +1223,7 @@ static int chain_skip(Ev *e, int k) {
 
 static double call_ttype(Ev *e, double mx, double my) {
     lua_State *L = e->L;
+    WC_LUA();
     lua_pushvalue(L, S_TTYPE);
     lua_pushnumber(L, mx);
     lua_pushnumber(L, my);
@@ -1221,15 +1240,18 @@ static double ttype(Ev *e, double mx, double my) {
         if (c->tt_stamp[k] == c->gen) { e->tt_hits += 1; return c->tt_val[k]; }
         double v = call_ttype(e, mx, my);
         PC(C_tt_miss, 1);
+        e->tt_miss_n += 1;
         c->tt_stamp[k] = c->gen;
         c->tt_val[k] = v;
         return v;
     }
+    e->unc_n += 1;
     return call_ttype(e, mx, my);
 }
 
 static int call_pill_on(Ev *e, double mx, double my) {
     lua_State *L = e->L;
+    WC_LUA();
     lua_pushvalue(L, S_PILL_ON);
     lua_pushnumber(L, mx);
     lua_pushnumber(L, my);
@@ -1251,6 +1273,7 @@ static int pill_on(Ev *e, double mx, double my) {
         c->po_val[k] = v;
         return v;
     }
+    e->unc_n += 1;
     return call_pill_on(e, mx, my);
 }
 
@@ -1263,6 +1286,7 @@ static int base_stops(Ev *e, double mx, double my) {
         if (key >= 0 && key < PT2_MAP_SQ && key == floor(key)) {
             has = e->c->ba_stamp[(int)key] == e->c->gen;
         } else {
+            e->unc_n += 1;
             lua_pushnumber(L, key);
             lua_rawget(L, S_BASE_AT);
             has = !lua_isnil(L, -1);
@@ -1270,6 +1294,7 @@ static int base_stops(Ev *e, double mx, double my) {
         }
         if (!has) return 0;
     }
+    e->unc_n += 1;
     sync_om(e);
     return call_b2(e, S_BASE_STOPS, mx, my);
 }
@@ -1568,6 +1593,12 @@ static struct {
     double   wall0;
     int      started;
     uint64_t why_n[TS_NARROW + 1];
+    /* idea 3: the life ticks and origin square kept */
+    uint64_t lo_cmp, lo_bad, tsc_ru_walk;
+    /* idea 4: the reuse against a new walk */
+    uint64_t ru_cmp, ru_bad, ru_why[TS_NARROW + 1];
+    /* the last walk's stop and lane (for the reuse compare) */
+    TsStop   m_st; int m_nl; int64_t m_lane[PT2_MAX_T];
 } s_wc;
 static double wc_wall(void) { struct timespec ts; timespec_get(&ts, TIME_UTC); return ts.tv_sec + ts.tv_nsec * 1e-9; }
 static void wc_report(void) {
@@ -1583,9 +1614,91 @@ static void wc_report(void) {
             (unsigned long long)s_wc.why_n[TS_WALL], (unsigned long long)s_wc.why_n[TS_PILL],
             (unsigned long long)s_wc.why_n[TS_BASE], (unsigned long long)s_wc.why_n[TS_PLANNED],
             (unsigned long long)s_wc.why_n[TS_BOAT], (unsigned long long)s_wc.why_n[TS_TANK]);
+    double rn = s_wc.ru_cmp ? (double)s_wc.ru_cmp : 1;
+    fprintf(stderr, "PT2_WALK_CHECK3 life_origin_compared=%llu life_origin_mismatches=%llu\n",
+            (unsigned long long)s_wc.lo_cmp, (unsigned long long)s_wc.lo_bad);
+    fprintf(stderr, "PT2_WALK_CHECK4 skipped_walk_ns=%.1f\n", tpu > 0 ? s_wc.tsc_ru_walk / rn / tpu * 1000 : 0);
+    fprintf(stderr, "PT2_WALK_CHECK4 reuse_compared=%llu reuse_mismatches=%llu ok=%llu short=%llu pill=%llu"
+            " planned=%llu other=%llu\n",
+            (unsigned long long)s_wc.ru_cmp, (unsigned long long)s_wc.ru_bad,
+            (unsigned long long)s_wc.ru_why[TS_OK], (unsigned long long)s_wc.ru_why[TS_SHORT],
+            (unsigned long long)s_wc.ru_why[TS_PILL], (unsigned long long)s_wc.ru_why[TS_PLANNED],
+            (unsigned long long)(s_wc.ru_cmp - s_wc.ru_why[TS_OK] - s_wc.ru_why[TS_SHORT]
+                                 - s_wc.ru_why[TS_PILL] - s_wc.ru_why[TS_PLANNED]));
     fflush(stderr);
 }
+
+/* idea 3: the evaluate's life and the kept origin square against fresh ones. */
+static void wc_life_origin_check(Ev *e, double n, double ox, double oy, double omx, double omy) {
+    double f[3] = { life_ticks(e, PT2_TANK_FIRE_LEN), rsh8(ox), rsh8(oy) }, k[3] = { n, omx, omy };
+    s_wc.lo_cmp++;
+    if (memcmp(f, k, sizeof(f)) != 0) {
+        s_wc.lo_bad++;
+        if (s_wc.lo_bad <= 20)
+            fprintf(stderr, "PT2_WALK_CHECK3 MISMATCH life/origin kept=(%.17g,%g,%g) fresh=(%.17g,%g,%g)\n",
+                    n, omx, omy, f[0], f[1], f[2]);
+    }
+}
+
+static void wc_memo_keep(Ev *e, const TsStop *st, int nl, const int64_t *lane) {
+    (void)e;
+    s_wc.m_st = *st; s_wc.m_nl = nl;
+    memcpy(s_wc.m_lane, lane, sizeof(int64_t) * (size_t)(nl < PT2_MAX_T ? nl : PT2_MAX_T));
+}
+
+static int tank_shot_walk_angle(Ev *e, double ox, double oy, double angle, double tmx, double tmy,
+                                const Extra *extra, Lane **lane_out);
+
+/* idea 4: a reuse is checked against a new walk made in its place: the
+ * same stop reason, stop tick and square, lane, the same tt_hits added,
+ * and no Lua callback in the new walk. The new walk's result is used. */
+static int wc_reuse_check(Ev *e, double ox, double oy, double angle, double tmx, double tmy,
+                          const Extra *extra) {
+    int why0 = e->tsm_why;
+    double tt0 = e->tsm_tt;
+    TsStop st0 = s_wc.m_st;
+    int nl0 = s_wc.m_nl;
+    int64_t lane0[PT2_MAX_T];
+    memcpy(lane0, s_wc.m_lane, sizeof(lane0));
+    double h0 = e->tt_hits;
+    uint64_t lua0 = s_wc_lua;
+    uint64_t t0 = wc_tsc();
+    int why = tank_shot_walk_angle(e, ox, oy, angle, tmx, tmy, extra, NULL);
+    s_wc.tsc_ru_walk += wc_tsc() - t0;
+    int same = why == why0 && s_wc.m_nl == nl0 && memcmp(&s_wc.m_st, &st0, sizeof(st0)) == 0
+               && e->tt_hits - h0 == tt0 && s_wc_lua == lua0;
+    for (int i = 0; same && i < nl0 && i < PT2_MAX_T; i++) same = s_wc.m_lane[i] == lane0[i];
+    s_wc.ru_cmp++;
+    s_wc.ru_why[why]++;
+    if (!same) {
+        s_wc.ru_bad++;
+        if (s_wc.ru_bad <= 20)
+            fprintf(stderr, "PT2_WALK_CHECK4 MISMATCH o=(%g,%g) angle=%.9g tm=(%g,%g) kept: why=%d t=%g sq=(%g,%g) nl=%d tt=%g"
+                    "  new: why=%d t=%g sq=(%g,%g) nl=%d tt=%g lua=%llu\n", ox, oy, angle, tmx, tmy,
+                    why0, st0.t, st0.mx, st0.my, nl0, tt0, why, s_wc.m_st.t, s_wc.m_st.mx, s_wc.m_st.my,
+                    s_wc.m_nl, e->tt_hits - h0, (unsigned long long)(s_wc_lua - lua0));
+    }
+    return why;
+}
 #endif
+
+/* rsh8 of the origin, kept for the last origin. */
+static void ts_origin(Ev *e, double ox, double oy, double *omx, double *omy) {
+    uint64_t kx = pt2w_bits(ox), ky = pt2w_bits(oy);
+    if (!(e->om_has && e->om_kx == kx && e->om_ky == ky)) {
+        e->om_has = 1; e->om_kx = kx; e->om_ky = ky;
+        e->om_mx = rsh8(ox); e->om_my = rsh8(oy);
+    }
+    *omx = e->om_mx; *omy = e->om_my;
+}
+
+static void ts_key(const Ev *e, double ox, double oy, double angle, double tmx, double tmy,
+                   const Extra *extra, uint64_t serial, Pt2wKey *k) {
+    k->ox = pt2w_bits(ox); k->oy = pt2w_bits(oy); k->angle = pt2w_bits(angle);
+    k->tmx = pt2w_bits(tmx); k->tmy = pt2w_bits(tmy);
+    k->extra = extra; k->extra_n = extra ? extra->n : -1;
+    k->gen = e->c->gen; k->serial = serial;
+}
 
 /* shadow.tank_shot_angle: the shot at gun angle angle (brad, float). */
 static int tank_shot_walk_angle__p(Ev *e, double ox, double oy, double angle, double tmx, double tmy,
@@ -1596,10 +1709,15 @@ static int tank_shot_walk_angle__p(Ev *e, double ox, double oy, double angle, do
     calc_distance_both(angle, e->sh_speed, &xa, &ya, &xs, &ys);
     Walk w;
     walk_init(&w, ox + e->sh_add * xa, oy + e->sh_add * ya, xs, ys);
-    double n = life_ticks(e, PT2_TANK_FIRE_LEN);
-    double omx = rsh8(ox), omy = rsh8(oy);
+    double n = e->ts_life;
+    double omx, omy;
+    ts_origin(e, ox, oy, &omx, &omy);
+#if PT2_WALK_CHECK
+    wc_life_origin_check(e, n, ox, oy, omx, omy);
+#endif
     int nl, why;
     TsStop st;
+    double tt0 = e->tt_hits, tm0 = e->tt_miss_n, unc0 = e->unc_n;
     /* n <= PT2W_MAX_T is false for a NaN life (no ticks either way). */
     int jump = w.fast && e->ts_nt <= 0 && n <= PT2W_MAX_T;
 #if PT2_WALK_CHECK
@@ -1641,6 +1759,17 @@ static int tank_shot_walk_angle__p(Ev *e, double ox, double oy, double angle, do
     if (jump) why = ts_walk_jump(e, &w, (int32_t)n, omx, omy, tmx, tmy, extra, lane, &nl, &st);
     else why = ts_walk_ticks(e, &w, n, omx, omy, tmx, tmy, extra, lane, &nl, &st);
 #endif
+    /* Kept for the reuse: a walk again with the same key reads the same
+     * squares, all from the stamps (every read here was stamped), so it
+     * would add this walk's ttype reads to tt_hits and stop the same way. */
+    e->walk_serial++;
+    ts_key(e, ox, oy, angle, tmx, tmy, extra, e->walk_serial, &e->tsm_key);
+    e->tsm_ok = e->unc_n == unc0;
+    e->tsm_why = why;
+    e->tsm_tt = (e->tt_hits - tt0) + (e->tt_miss_n - tm0);
+#if PT2_WALK_CHECK
+    wc_memo_keep(e, &st, nl, lane);
+#endif
     if (why == TS_OK && lane_out) {
         if (nl > PT2_MAX_T) luaL_error(e->L, "gh_pt2_v2: lane too long");
         *lane_out = lane_make(e, lane, nl);
@@ -1649,6 +1778,27 @@ static int tank_shot_walk_angle__p(Ev *e, double ox, double oy, double angle, do
 }
 
 static int tank_shot_walk_angle(Ev *e, double ox, double oy, double angle, double tmx, double tmy, const Extra *extra, Lane **lane_out) { PB(P_tank_shot_walk_angle); int r_ = tank_shot_walk_angle__p(e, ox, oy, angle, tmx, tmy, extra, lane_out); PE(); return r_; }
+
+/* The same walk, when the last walk made had the same key (aim_wide's
+ * centre walk right after tank_shot's walk at the same angle): its stop
+ * reason, with the ttype reads it would count. Else a new walk. */
+static int tank_shot_walk_again(Ev *e, double ox, double oy, double angle, double tmx, double tmy,
+                                const Extra *extra) {
+    if (e->tsm_ok) {
+        Pt2wKey k;
+        ts_key(e, ox, oy, f32(angle), tmx, tmy, extra, e->walk_serial, &k);
+        if (pt2w_key_same(&k, &e->tsm_key)) {
+#if PT2_WALK_CHECK
+            return wc_reuse_check(e, ox, oy, angle, tmx, tmy, extra);
+#else
+            PC(C_ts_reuse, 1);
+            e->tt_hits += e->tsm_tt;
+            return e->tsm_why;
+#endif
+        }
+    }
+    return tank_shot_walk_angle(e, ox, oy, angle, tmx, tmy, extra, NULL);
+}
 
 static int tank_shot_walk__p(Ev *e, double ox, double oy, double ax, double ay, double tmx, double tmy,
                           const Extra *extra, Lane **lane_out) {
@@ -2156,7 +2306,7 @@ static int aim_wide__p(Ev *e, double px, double py, int ai, const Extra *extra) 
     double a0 = luamod(atan2(dx, -dy) * 256 / PT2_TWO_PI, 256);
     const double step = 1.0 / 16.0;
     e->n_shot += 1;
-    if (tank_shot_walk_angle(e, px, py, luamod(a0, 256), A->mx, A->my, extra, NULL) != TS_OK) return 0;
+    if (tank_shot_walk_again(e, px, py, luamod(a0, 256), A->mx, A->my, extra) != TS_OK) return 0;
     double n = ceil(mlb / step - 1e-9);
     double reach[2];
     for (int s = 0; s < 2; s++) {
@@ -4722,6 +4872,8 @@ static void ev_read_inp__p(Ev *e) {
     /* shell_range(env, len) for the tank and the pill */
     {
         double lt = life_ticks(e, PT2_TANK_FIRE_LEN), lp = life_ticks(e, e->pill_len);
+        e->ts_life = lt;
+        e->tsm_ok = 0;
         e->ts_s1 = (e->sh_add + 1) * e->sh_speed; e->ts_slast = (e->sh_add + lt) * e->sh_speed;
         e->ts_step = e->sh_speed; e->ts_hit = e->sh_hit_r;
         e->ps_s1 = (e->sh_add + 1) * e->sh_speed; e->ps_slast = (e->sh_add + lp) * e->sh_speed;
