@@ -568,77 +568,92 @@ static bool lvsjCopyWithVersion(const char *from, const char *to, uint8_t major,
     return ok && patched;
 }
 
+/* One copy of a recording, with the version its header holds and the
+   shape (and so the hit box) the Log Viewer must read for it. */
+static int lvsjCheckShapeCopy(uint8_t *data, size_t len, unsigned wantMajor,
+                              unsigned wantMinor, unsigned wantRevision,
+                              int want) {
+    double   open, closed;
+    int      drawn;
+    unsigned major, minor, revision;
+    bool     loaded;
+
+    UT_ASSERT_MSG(data != NULL, "could not read the %u.%u.%u copy", wantMajor,
+                  wantMinor, wantRevision);
+    loaded = lvsjShapeOf(data, len, &open, &drawn, &closed, &major, &minor,
+                         &revision);
+    UT_ASSERT_MSG(loaded, "the %u.%u.%u copy did not open", wantMajor,
+                  wantMinor, wantRevision);
+    UT_ASSERT_MSG(major == wantMajor && minor == wantMinor &&
+                      revision == wantRevision,
+                  "the copy says %u.%u.%u, not %u.%u.%u", major, minor,
+                  revision, wantMajor, wantMinor, wantRevision);
+    UT_ASSERT_MSG(open == (double)want,
+                  "the %u.%u.%u copy read lgm_blast_shape %g (want %d)",
+                  major, minor, revision, open, want);
+    UT_ASSERT_MSG(drawn == want, "the %u.%u.%u copy draws shape %d (want %d)",
+                  major, minor, revision, drawn, want);
+    /* With no recording open the answer is this build's classic shape. */
+    UT_ASSERT_MSG(closed == (double)LGM_BLAST_SHAPE_CLASSIC,
+                  "lgm_blast_shape read %g after the close (want the classic %d)",
+                  closed, LGM_BLAST_SHAPE_CLASSIC);
+    return 0;
+}
+
 int run_lv_scripts_json_blast_shape_by_version(void) {
     char          oldPath[600];
+    char          newPath[600];
     ReplayHarness h;
-    uint8_t      *data;
     uint8_t      *oldData = NULL;
-    size_t        len = 0;
+    uint8_t      *newData = NULL;
     size_t        oldLen = 0;
-    double        open, closed;
-    int           drawn;
-    unsigned      major, minor, revision;
-    bool          loaded;
-    bool          copied;
+    size_t        newLen = 0;
+    bool          oldCopied;
+    bool          newCopied;
     int           rule = simRulesRuleIndex("lgm_blast_shape");
+    int           failed;
 
     UT_ASSERT_MSG(rule >= 0, "lgm_blast_shape has no index");
     UT_ASSERT_MSG(simRulesClassicValue(rule) == (double)LGM_BLAST_SHAPE_CLASSIC,
                   "the classic lgm_blast_shape is %g, not %d",
                   simRulesClassicValue(rule), LGM_BLAST_SHAPE_CLASSIC);
 
-    /* A plain round this build wrote: its header holds this version. The
-       same recording with 2.2.1 in its header stands for one written before
-       2.2.2, so the case does not depend on the version of a committed
-       fixture. */
+    /* A plain round, written twice with a fixed version in its header: 2.2.1
+       stands for a recording made before 2.2.2, and 2.2.2 for one made from
+       2.2.2 on. The test does not read the version this build writes, so it
+       gives the same answer whatever this build's version is. */
     if (!lvsjPlainRound(&h, "lvScriptsBlastNew")) {
         replayHarnessStop(&h);
         UT_FAIL("could not record the plain round");
     }
-    data = lvsjReadFile(h.path, &len);
     snprintf(oldPath, sizeof(oldPath), "%s.221.wbv", h.path);
-    copied = lvsjCopyWithVersion(h.path, oldPath, 2, 2, 1);
+    snprintf(newPath, sizeof(newPath), "%s.222.wbv", h.path);
+    oldCopied = lvsjCopyWithVersion(h.path, oldPath, 2, 2, 1);
+    newCopied = lvsjCopyWithVersion(h.path, newPath, 2, 2, 2);
     replayHarnessStop(&h);
-    /* Read the 2.2.1 copy and delete it now, so a failed assert below does
-       not leave it on disk. */
-    if (copied) {
+    /* Read the copies and delete them now, so a failed assert below does
+       not leave them on disk. */
+    if (oldCopied) {
         oldData = lvsjReadFile(oldPath, &oldLen);
     }
+    if (newCopied) {
+        newData = lvsjReadFile(newPath, &newLen);
+    }
     remove(oldPath);
-    UT_ASSERT_MSG(data != NULL, "could not read the recording back");
-    loaded = lvsjShapeOf(data, len, &open, &drawn, &closed, &major, &minor,
-                         &revision);
-    UT_ASSERT_MSG(loaded, "the new recording did not open");
-    UT_ASSERT_MSG(simRulesLgmBlastShapeForVersion(major, minor, revision) ==
-                      LGM_BLAST_SHAPE_CLASSIC,
-                  "this build writes %u.%u.%u, a version before 2.2.2",
-                  major, minor, revision);
-    UT_ASSERT_MSG(open == (double)LGM_BLAST_SHAPE_CLASSIC,
-                  "a %u.%u.%u recording read lgm_blast_shape %g (want %d)",
-                  major, minor, revision, open, LGM_BLAST_SHAPE_CLASSIC);
-    UT_ASSERT_MSG(drawn == LGM_BLAST_SHAPE_CLASSIC,
-                  "a %u.%u.%u recording draws shape %d (want %d)",
-                  major, minor, revision, drawn, LGM_BLAST_SHAPE_CLASSIC);
-    UT_ASSERT_MSG(closed == (double)LGM_BLAST_SHAPE_CLASSIC,
-                  "lgm_blast_shape read %g after the close (want the classic %d)",
-                  closed, LGM_BLAST_SHAPE_CLASSIC);
+    remove(newPath);
+    if (!oldCopied || !newCopied) {
+        free(oldData);
+        free(newData);
+        UT_FAIL("could not write the 2.2.1 and 2.2.2 copies");
+    }
 
-    /* The same round as a 2.2.1 recording. */
-    UT_ASSERT_MSG(copied, "could not write the 2.2.1 copy %s", oldPath);
-    UT_ASSERT_MSG(oldData != NULL, "could not read %s", oldPath);
-    loaded = lvsjShapeOf(oldData, oldLen, &open, &drawn, &closed, &major, &minor,
-                         &revision);
-    UT_ASSERT_MSG(loaded, "the 2.2.1 copy did not open");
-    UT_ASSERT_MSG(major == 2 && minor == 2 && revision == 1,
-                  "the copy says %u.%u.%u, not 2.2.1", major, minor, revision);
-    UT_ASSERT_MSG(open == (double)LGM_BLAST_SHAPE_HALF_SQUARE,
-                  "the 2.2.1 copy read lgm_blast_shape %g "
-                  "(want 0, the circle of 128)", open);
-    UT_ASSERT_MSG(drawn == LGM_BLAST_SHAPE_HALF_SQUARE,
-                  "the 2.2.1 copy draws shape %d (want 0, the circle of 128)",
-                  drawn);
-    UT_ASSERT_MSG(closed == (double)LGM_BLAST_SHAPE_CLASSIC,
-                  "lgm_blast_shape read %g after the close (want the classic %d)",
-                  closed, LGM_BLAST_SHAPE_CLASSIC);
-    return 0;
+    /* lvsjShapeOf takes ownership of each buffer it is given. */
+    failed = lvsjCheckShapeCopy(oldData, oldLen, 2, 2, 1,
+                                LGM_BLAST_SHAPE_HALF_SQUARE);
+    if (failed != 0) {
+        free(newData);
+        return failed;
+    }
+    return lvsjCheckShapeCopy(newData, newLen, 2, 2, 2,
+                              LGM_BLAST_SHAPE_MAC_AREA);
 }
