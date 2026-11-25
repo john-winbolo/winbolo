@@ -525,22 +525,64 @@ bool brainListLoadTexts(const char *brainDir,
     return (a > 0 || d > 0);
 }
 
-/* "<dir>/init.lua" -> "<dir>". False when the path carries no directory part
- * or will not fit. The catalogue stores the init.lua (brainListScanParent),
- * and the two texts sit beside it. */
-static bool brainListDirOfPath(const char *brainPath, char *dir, size_t dirSz) {
+/* The length of the brain directory part of an init.lua path:
+ * "Brains/GoalHunter/init.lua" -> strlen("Brains/GoalHunter"). The stripped
+ * production copy lives one folder down, "Brains/GoalHunter/opt/init.lua"
+ * (luaBrainsCreate picks it when debug is off), and it is the same brain: its
+ * modes.txt, announce.txt and commands.txt sit in the folder above opt/. So a
+ * holding folder named opt (any case) gives way to its parent when there is
+ * one. 0 when the path carries no directory part. */
+static size_t brainListBrainDirLen(const char *brainPath) {
     const char *fname;
+    const char *segStart;
     size_t dirLen;
-    if (!brainPath || !brainPath[0]) return false;
+    if (!brainPath || !brainPath[0]) return 0;
     fname = brainPath + strlen(brainPath);
     while (fname > brainPath && fname[-1] != '/' && fname[-1] != '\\') {
         fname--;
     }
-    if (fname == brainPath) return false;      /* no directory part */
+    if (fname == brainPath) return 0;          /* no directory part */
     dirLen = (size_t)(fname - 1 - brainPath);  /* drop the separator */
-    if (dirLen == 0 || dirLen >= dirSz) return false;
+    segStart = brainPath + dirLen;
+    while (segStart > brainPath &&
+           segStart[-1] != '/' && segStart[-1] != '\\') {
+        segStart--;
+    }
+    if ((size_t)(brainPath + dirLen - segStart) == 3 &&
+        SDL_strncasecmp(segStart, "opt", 3) == 0 &&
+        segStart > brainPath + 1) {
+        dirLen = (size_t)(segStart - 1 - brainPath);
+    }
+    return dirLen;
+}
+
+bool brainListDirFromPath(const char *brainPath, char *dir, size_t dirSz) {
+    size_t dirLen = brainListBrainDirLen(brainPath);
+    if (dir && dirSz) dir[0] = '\0';
+    if (!dir || dirLen == 0 || dirLen >= dirSz) return false;
     memcpy(dir, brainPath, dirLen);
     dir[dirLen] = '\0';
+    return true;
+}
+
+bool brainListNameFromPath(const char *brainPath, char *name, size_t nameSz) {
+    size_t dirLen = brainListBrainDirLen(brainPath);
+    const char *dirEnd;
+    const char *dirStart;
+    size_t len;
+    if (!name || nameSz == 0) return false;
+    name[0] = '\0';
+    if (dirLen == 0) return false;
+    dirEnd = brainPath + dirLen;
+    dirStart = dirEnd;
+    while (dirStart > brainPath &&
+           dirStart[-1] != '/' && dirStart[-1] != '\\') {
+        dirStart--;
+    }
+    len = (size_t)(dirEnd - dirStart);
+    if (len >= nameSz) len = nameSz - 1;
+    memcpy(name, dirStart, len);
+    name[len] = '\0';
     return true;
 }
 
@@ -552,7 +594,7 @@ bool brainListLoadTextsForPath(const char *brainPath,
     if (announce && announceSz) announce[0] = '\0';
     if (docs && docsSz) docs[0] = '\0';
     if (truncated) *truncated = false;
-    if (!brainListDirOfPath(brainPath, dir, sizeof(dir))) return false;
+    if (!brainListDirFromPath(brainPath, dir, sizeof(dir))) return false;
     return brainListLoadTexts(dir, announce, announceSz, docs, docsSz,
                               truncated);
 }
@@ -564,7 +606,7 @@ int64_t brainListTextsMtimeForPath(const char *brainPath) {
     int i;
     static const char *const names[2] = { "announce.txt", "commands.txt" };
 
-    if (!brainListDirOfPath(brainPath, dir, sizeof(dir))) return 0;
+    if (!brainListDirFromPath(brainPath, dir, sizeof(dir))) return 0;
     for (i = 0; i < 2; i++) {
         SDL_PathInfo info;
 #if defined(_WIN32)
@@ -923,29 +965,13 @@ int brainModesStartMode(const BrainModes *modes, bool openGame) {
 }
 
 /* Recover a brain's directory name from its init.lua path — the same
- * "Brains/<DirName>/init.lua" convention bot_manager uses — so callers
- * holding a path don't each re-implement the split. */
+ * "Brains/<DirName>/init.lua" convention bot_manager uses, opt/ included
+ * (brainListNameFromPath) — so callers holding a path don't each
+ * re-implement the split. */
 bool brainListLoadModesForPath(const char *brainPath, BrainModes *out) {
     if (!out) return false;
     char name[BRAIN_LIST_NAME_LEN];
-    name[0] = '\0';
-    if (brainPath && brainPath[0]) {
-        const char *end = brainPath + strlen(brainPath);
-        /* Back over the file name ... */
-        const char *fname = end;
-        while (fname > brainPath && fname[-1] != '/' && fname[-1] != '\\') fname--;
-        /* ... then over the directory that holds it. */
-        if (fname > brainPath) {
-            const char *dirEnd   = fname - 1;
-            const char *dirStart = dirEnd;
-            while (dirStart > brainPath &&
-                   dirStart[-1] != '/' && dirStart[-1] != '\\') dirStart--;
-            size_t dirLen = (size_t)(dirEnd - dirStart);
-            if (dirLen >= sizeof(name)) dirLen = sizeof(name) - 1;
-            memcpy(name, dirStart, dirLen);
-            name[dirLen] = '\0';
-        }
-    }
+    brainListNameFromPath(brainPath, name, sizeof(name));
     return brainListLoadModes(name, out);
 }
 
