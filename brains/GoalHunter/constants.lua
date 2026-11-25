@@ -1540,6 +1540,14 @@ M.PT2_CAPTURE_FILE = ""
 -- PT2_DBL_PROF line to print2. The timers cost time, so it is off by
 -- default. It does not change any result.
 M.PT2_PROF_LOG = false
+-- REPLAN_PROF_LOG (debug or -brain-profile-log only): true = each goal
+-- replan times its parts (replan_prof.lua: the pool evaluators, goals,
+-- path searches, threat, ...) as self times and writes a REPLAN_PROF line;
+-- REPLAN_PROF_GAME (the game's sums) every REPLAN_PROF_GAME_EVERY
+-- replans. The timers cost time, so it is off by default. It does not
+-- change any decision.
+M.REPLAN_PROF_LOG = false
+M.REPLAN_PROF_GAME_EVERY = 10
 -- SHOT_PATH_SKIP_DEAD_PILLS: v1's shot-path checks (attack.lua
 -- standoff_shot_obstacle, attack_shield.lua score_aim outgoing ray,
 -- pathfinder.lua pill_shots_clear) count only a LIVE pill (health > 0, not

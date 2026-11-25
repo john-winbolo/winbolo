@@ -98,7 +98,33 @@ local function lgm_ticks(ox, oy, mx, my, bmx, bmy)
   return t
 end
 
+local build_inp_body
 function M.build_inp(state, goal, info, world, pill, no_builder, npb, radius, now)
+  -- PT2_C_PROF (C.PT2_PROF_LOG, debug only): build_inp's time goes into
+  -- the plan and game sums of pilltake_v2 as the Lua row build_inp
+  if not (BRAIN_DEBUG_MODE and C.PT2_PROF_LOG) then
+    return build_inp_body(state, goal, info, world, pill, no_builder, npb, radius, now)
+  end
+  local tb = clock_us()
+  local inp = build_inp_body(state, goal, info, world, pill, no_builder, npb, radius, now)
+  local us = clock_us() - tb
+  local NV = package.loaded["pilltake_v2"]
+  if NV and NV.cprof_plan then
+    for _, acc in ipairs({ NV.cprof_plan, NV.cprof_game }) do
+      for k, v in pairs({ lua_build_inp = us, lua_world_inp = M.prof_world_us or 0 }) do
+        local a = acc.lua and acc.lua[k]
+        if not acc.lua then acc.lua = {} end
+        a = acc.lua[k] or { n = 0, us = 0 }
+        a.n = a.n + 1; a.us = a.us + v
+        acc.lua[k] = a
+      end
+    end
+  end
+  if inp then inp.v2_prof = true end
+  return inp
+end
+
+build_inp_body = function(state, goal, info, world, pill, no_builder, npb, radius, now)
   -- P2: the tier row's evaluator (pt2_eval.use), kept in the inp
   V2.use(state)
   local inp = V2.knob_inp(C, {})
@@ -1073,6 +1099,15 @@ function M.bg_wall(goal, world)
   return nil
 end
 
+-- PT2_C_PROF: the end of one take plan's v2 run
+local function cprof_plan_end(now, pill)
+  if not (BRAIN_DEBUG_MODE and C.PT2_PROF_LOG) then return end
+  local NV = package.loaded["pilltake_v2"]
+  if not (NV and NV.cprof_plan_end) then return end
+  NV.cprof_plan_end(string.format("t=%s pill=(%s,%s) ", tostring(now),
+    tostring(pill and pill.mx), tostring(pill and pill.my)))
+end
+
 function M.after_scan(a)
   if not v2_wanted(a.goal) then return a.sscan end
   local t0 = clock_us()
@@ -1092,7 +1127,9 @@ function M.after_scan(a)
     return a.sscan
   end
   if not inp or not res then return a.sscan end
-  return finish(a, inp, res, clock_us() - t0)
+  local out = finish(a, inp, res, clock_us() - t0)
+  cprof_plan_end(a.now, a.pill)
+  return out
 end
 
 -- ── SHIELD_SCAN_PENDING_SURVIVES_V2: v2 in one go, across a budget kill ──
@@ -1427,6 +1464,7 @@ function M.split_step(sp, a, key)
       now, a.pill.mx, a.pill.my, sp.n, table.concat(ms, ","), sp.us / 1000, now - sp.t0, sp.work, sp.n_kill, sp.t0))
   end
   goal._pt2_split_drops = nil
+  cprof_plan_end(now, a.pill)
   return out, true
 end
 

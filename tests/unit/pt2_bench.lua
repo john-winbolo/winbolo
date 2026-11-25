@@ -12,6 +12,9 @@
 --   reps=<n>                  timed runs per case (default 5; the median
 --                             is the case's time)
 --   prof=1                    also run once per case with gh_pt2_old.prof on
+--   cprof=1                   with eval=v2c: every run has inp.v2_prof on
+--                             (PT2_C_PROF, gh_pt2_v2.prof); prints the C
+--                             sections' self time, summed (use reps=1)
 --                             and print the C part / callback breakdown
 --   dump=<file>               write each case's result digest to the file
 --   keep_all=1                inp.keep_all on (every spot in the result)
@@ -257,6 +260,7 @@ local function game_inp(case)
     inp.anger_of = function() return v end
   end
   inp.keep_all = args.keep_all == "1" or nil
+  if args.cprof == "1" then inp.v2_prof = true end
   -- drop1=1: the first confirm at each point fails (tests the S6 retry)
   if args.drop1 == "1" then
     local seen = setmetatable({}, { __mode = "k" })
@@ -1025,6 +1029,25 @@ print(fmt("pt2_bench: %d cases (%d errors), %s, reps %d: evaluate ms median %.3f
   n_case, n_err, USE_LUA and "Lua" or "C", REPS, q(times, 0.5) / 1000, q(times, 0.9) / 1000,
   q(times, 1) / 1000, q(spots, 0.5), q(spots, 0.9), q(spots, 1), tot_us / 1000,
   tot_us > 0 and tot_sp / tot_us or 0, tot_sp > 0 and tot_us / tot_sp or 0))
+if args.cprof == "1" and NV and NV.cprof_game then
+  local acc = NV.cprof_game
+  local rows = {}
+  for k, v in pairs(acc.sec) do rows[#rows + 1] = { k, v } end
+  table.sort(rows, function(a, b) return a[2].us > b[2].us end)
+  print(fmt("pt2_bench cprof (PT2_C_PROF, self us): %d evaluates, %d steps, %d yields;"
+    .. " begin+step %.1f ms, C sections %.1f ms, Lua glue %.1f ms",
+    acc.evals, acc.steps, acc.yields, acc.us / 1000, acc.c_us / 1000, (acc.us - acc.c_us) / 1000))
+  for _, r in ipairs(rows) do
+    print(fmt("  %-22s n=%-10d ms=%-10.2f %5.1f%%  %.3f us/call", r[1], r[2].n, r[2].us / 1000,
+      acc.us > 0 and 100 * r[2].us / acc.us or 0, r[2].n > 0 and r[2].us / r[2].n or 0))
+  end
+  print(fmt("  %-22s %24s ms=%-10.2f %5.1f%%", "lua_glue", "", (acc.us - acc.c_us) / 1000,
+    acc.us > 0 and 100 * (acc.us - acc.c_us) / acc.us or 0))
+  local cn = {}
+  for k, v in pairs(acc.count) do cn[#cn + 1] = fmt("%s=%d", k, v) end
+  table.sort(cn)
+  print("pt2_bench cprof counts: " .. table.concat(cn, " "))
+end
 if next(prof) then
   local tot = prof.total and prof.total.us or 0
   local rows = {}
