@@ -6529,6 +6529,25 @@ function Brain.think(info)
           end
         end
       end
+      -- Our passed reposition vote on a blocker of our own take: drop the
+      -- approval and its guard. The guard (reposition_vote.lua, refreshed
+      -- from the approval every tick) makes the builder pool refuse the
+      -- blocker's repair (dt_demo d1 beside_n, Nov 24: vote passed at t=16,
+      -- "skip:pool(discovery:repos)" at aim, approval consumed only at t=706).
+      local _ap = C.PT2_BLOCKER_MARK and state._repo_approved_pid
+      local _apl = _ap and world.pills and world.pills[_ap]
+      if _apl and (_apl.health or 0) > 0 and not _apl.in_tank and state._blocker_tiles then
+        local _at = _apl.my * 256 + _apl.mx
+        for _, _ti in ipairs(state._blocker_tiles) do
+          if _ti == _at then
+            print2(string.format("REPO_VOTE t=%d approval pill#%d dropped (blocker of our own take plan)", now, _ap))
+            state._repo_approved_pid  = nil
+            state._repo_approved_used = nil
+            if state._repos_guard then state._repos_guard[_at] = nil end
+            break
+          end
+        end
+      end
     end
 
     -- Unapproved reposition BID watchdog. steering refuses to demolish until the

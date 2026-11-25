@@ -1452,8 +1452,13 @@ function M.first_hold(state, world, info, now, goal)
   local tag = FIRST_HOLD[qr.result]
   local why
   if tag == "man" then
+    -- Hold for the builder only when he is out on this blocker's repair
+    -- (dt_demo d1 beside_n, Nov 24: a wall_shield BUILD trip held the aim
+    -- from t=315 to t=482 as if it were the repair).
+    local j = state._bp_job
     if info.man_status == C.LGM_DEAD then tag, why = nil, "man_dead"
-    elseif info.inboat then tag, why = nil, "boat" end
+    elseif info.inboat then tag, why = nil, "boat"
+    elseif not j or j.mx ~= qr.mx or j.my ~= qr.my then tag, why = nil, "man_busy" end
   elseif tag == "send" then
     local row = pool_quick_row(state, now, qr.mx, qr.my)
     if row and row.reject and not row.shell_hit then

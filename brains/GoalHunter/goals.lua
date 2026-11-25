@@ -6976,7 +6976,13 @@ local function eval_reposition_pill(state, world, info, tmx, tmy, boat, ammo, sc
     c.travel = (tv == math.huge) and 1e7 or (tv * DIST_W)
     c.score  = c.pos + c.travel
     local lp = world.pills[c.pid]
+    -- The scan (above) skips an _in_use / _take_pend pill, but the cached
+    -- candidates live until the next scan, and a forced replan every tick
+    -- starves it (dt_demo d1 beside_sw, Nov 24: our take's blocker came back
+    -- each tick from t=16 to t=103, BLOCKER_YIELD 86 times, and our own
+    -- reposition shells took it from 9 to 5 hp). Check the marks here too.
     if c.eligible and lp and (lp.health or 0) > 0
+       and not lp._in_use and not lp._take_pend
        and (not best_total or c.score < best_total) then
       best_total = c.score; best_pid = c.pid; best_pill = lp; best_cand = c
     end

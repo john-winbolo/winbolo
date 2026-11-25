@@ -887,7 +887,12 @@ function M.bg_trip_ok(state, goal, world, info, now, w)
   if not C.PT2_START_BUILDER_SAFE then return true end
   local x = require("live_physics").context(info, {})
   local tmx, tmy = bit.rshift(info.tankx or 0, 8), bit.rshift(info.tanky or 0, 8)
-  local hit = M.builder_trip_hit(goal, world, info, now, { w }, tmx, tmy, x, { fire = true })
+  -- The guns fire at the tank where it is now (as the fire hold and
+  -- shield_wall_ok judge it), not at the start record's point (dt_demo d1
+  -- beside_sw, Nov 24: judged from (119,124) "safe" at t=329, the tank at
+  -- (120,122); the fire hold at t=330 saw pill #0's shell hit him at +65t).
+  local hit = M.builder_trip_hit(goal, world, info, now, { w }, tmx, tmy, x,
+    { fire = true, tx = (info.tankx or 0) / 256.0, ty = (info.tanky or 0) / 256.0 })
   bsafe_log(goal, now, string.format("bg_wall=(%d,%d)", w.mx, w.my), hit)
   return hit == nil
 end

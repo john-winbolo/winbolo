@@ -269,6 +269,7 @@ do
 
   -- The builder walks out (man moving), then the repair lands.
   inf.man_status = C.LGM_MOVING
+  st._bp_job = { type = "topup", mx = BX, my = BY, quick = true }
   QR.evaluate(st, w, inf, NOW + 2)
   check("builder out on it: hold", QR.first_hold(st, w, inf, NOW + 3, st.goal) == true)
   if HAS_LOGS then
@@ -281,6 +282,24 @@ do
   if HAS_LOGS then
     check("log: done line", LOG[#LOG]:find("hp=15/15 -> done (held 98t", 1, true) ~= nil, LOG[#LOG])
   end
+
+  -- dt_demo d1 beside_n, Nov 24: at aim (t=315) the builder went out on a
+  -- wall_shield BUILD at (122,116), not on the blocker's repair. wait:man
+  -- held the aim to t=482. Out on another trip: no hold.
+  reset(true)
+  st, w, inf = mk({ man = C.LGM_MOVING })
+  QR.evaluate(st, w, inf, NOW)
+  check("out, no pool job (wall trip): no hold",
+        QR.first_hold(st, w, inf, NOW + 1, st.goal) == false)
+  if HAS_LOGS then
+    check("log: skip:man_busy", LOG[#LOG]:find("-> skip:man_busy", 1, true) ~= nil, LOG[#LOG])
+  end
+  reset(true)
+  st, w, inf = mk({ man = C.LGM_MOVING })
+  st._bp_job = { type = "topup", mx = 122, my = 116 }
+  QR.evaluate(st, w, inf, NOW)
+  check("out on a job at another square: no hold",
+        QR.first_hold(st, w, inf, NOW + 1, st.goal) == false)
 
   reset(true)
   h = hold_after({ trees = 1 })
@@ -365,6 +384,31 @@ do
   local c = a and src:find('goal.substate = "charge"', a, true)
   check("aim calls first_hold", h ~= nil)
   check("before the anger gate and the charge", h and g and c and h < g and h < c)
+end
+
+-- ── 8. Nov 24 arena fixes (source checks) ────────────────────────────────
+print("8. arena fixes")
+do
+  local function read(fn)
+    local f = io.open(fn, "r"); local t = f and f:read("*a") or ""
+    if f then f:close() end
+    return t
+  end
+  -- goals.lua: the reposition read path skips a pill our take marked.
+  local g = read("goals.lua")
+  local r = g:find("Read path (every replan)", 1, true)
+  local m = r and g:find("and not lp._in_use and not lp._take_pend", r, true)
+  check("reposition read path skips _in_use / _take_pend", m ~= nil)
+  -- init.lua: our approval on a blocker of our own take is dropped.
+  local i = read("init.lua")
+  check("own-blocker approval drop",
+        i:find("dropped (blocker of our own take plan)", 1, true) ~= nil)
+  -- pt2_attack.lua: bg_trip_ok judges the guns at the tank now.
+  local p = read("pt2_attack.lua")
+  local b = p:find("function M.bg_trip_ok", 1, true)
+  local e = b and p:find("\nend", b, true)
+  local t = b and p:find("tx = (info.tankx or 0) / 256.0", b, true)
+  check("bg_trip_ok passes the tank point", t and e and t < e)
 end
 
 print(string.format("\n%d passed, %d failed", pass, fail))
