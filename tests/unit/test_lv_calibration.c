@@ -47,6 +47,7 @@
 #include "blocks.h"
 #include "lv_bolo_map.h"
 #include "lv_presentation.h" /* lv_screenServerTickAt */
+#include "lv_server_check.h" /* LvServerCheck, lvServerCheckLabel */
 #include "test_harness.h"
 #include "zip.h"
 
@@ -3949,5 +3950,111 @@ int run_lv_hitbox_zone_from_version(void) {
      file with no version is a circle game. */
   UT_ASSERT(lvHitboxTankZoneFor(0, 0, 0, true) != LV_HITBOX_TANK_NONE);
   UT_ASSERT(lvHitboxTankZoneFor(1, 9, 1, false) == LV_HITBOX_TANK_SQUARE);
+  return 0;
+}
+
+/*
+ * The Server Check (lv_server_check.h) on a real recording, on ask only:
+ * set WB_LV_SC_WBV to a .wbv and WB_LV_SC_TICK to a server tick
+ * (WB_LV_SC_SPAN, ticks each side, is 30 when not set). It plays the
+ * recording with the hit boxes on and prints each check that starts in the
+ * window, with its label. With WB_LV_SC_WANT set, one label must be that
+ * text. With no file set it skips (UT_SKIP).
+ */
+int run_lv_server_check_recording(void) {
+  const char *path = getenv("WB_LV_SC_WBV");
+  const char *tickText = getenv("WB_LV_SC_TICK");
+  const char *spanText = getenv("WB_LV_SC_SPAN");
+  const char *want = getenv("WB_LV_SC_WANT");
+  static char pathBuf[1024];
+  static LvServerCheck seen[256];
+  int seenN = 0, i;
+  uint32_t tick, span, fromTick, toTick;
+  LogViewerState *lv;
+  int savedHide = lv_screenGetHideLobby();
+  bool found = false;
+  LvServerCheckTexts t;
+
+  if (path == NULL || path[0] == '\0') {
+    UT_SKIP("WB_LV_SC_WBV not set: nothing to check");
+  }
+  t.lives = "LIVES";
+  t.dies = "DIES";
+  t.refused = "HOST REFUSED";
+  t.notTested = "NOT TESTED";
+  t.circleOut = "{string1} {number} > {number2}";
+  t.circleIn = "{string1} {number} <= {number2}";
+  t.boxOut = "{string1} {number} >= {number2}";
+  t.boxIn = "{string1} {number} < {number2}";
+  t.offSquare = "{string1} off square";
+  t.onSquare = "{string1} on square";
+  t.rewind = "(rewind {number})";
+  t.estimate = "estimate";
+  tick = (tickText != NULL) ? (uint32_t)strtoul(tickText, NULL, 10) : 0;
+  span = (spanText != NULL) ? (uint32_t)strtoul(spanText, NULL, 10) : 30;
+  fromTick = tick > span ? tick - span : 0;
+  toTick = tick + span;
+  snprintf(pathBuf, sizeof(pathBuf), "%s", path);
+
+  lv_screenSetHideLobby(0);
+  lv_screenSetServerCheck(1);
+  lv = lv_decoderCreate(false);
+  UT_ASSERT(lv != NULL);
+  lv_screenSetSizeX(30);
+  lv_screenSetSizeY(30);
+  UT_ASSERT_MSG(lv_screenLoadMap(pathBuf, 4) == TRUE, "%s did not load", path);
+  lv->fastForwarding = TRUE;
+  printf("  version %d.%d.%d, rule %s, lgm_blast_shape %d, pill_range %d\n",
+         (int)lv->versionMajor, (int)lv->versionMinor, (int)lv->versionRevision,
+         lvServerCheckRuleFor(lv->versionMajor, lv->versionMinor, lv->versionRevision) ==
+                 LV_SC_RULE_221
+             ? "2.2.1"
+             : "current",
+         (int)lv->rules.lgmBlastShape, (int)lv->rules.pillRange);
+
+  while (lv->isPlaying == TRUE && seenN < (int)(sizeof(seen) / sizeof(seen[0]))) {
+    LvServerCheck now[LV_SC_MAX];
+    uint32_t nowMs = 0, nowTick;
+    int n, k;
+    lv_screenLogTick();
+    nowTick = lv_screenHasServerTick() ? lv_screenServerTickAt(lv->timeRunning)
+                                       : lv->timeRunning / 20u;
+    if (nowTick > toTick + 60u) break;
+    n = lv_screenServerChecks(now, LV_SC_MAX, &nowMs);
+    for (k = 0; k < n; k++) {
+      uint32_t at = lv_screenHasServerTick() ? lv_screenServerTickAt(now[k].startMs)
+                                             : now[k].startMs / 20u;
+      bool dup = false;
+      int j;
+      if (at < fromTick || at > toTick) continue;
+      for (j = 0; j < seenN; j++) {
+        if (seen[j].startMs == now[k].startMs && seen[j].builder == now[k].builder &&
+            seen[j].blastX == now[k].blastX && seen[j].blastY == now[k].blastY) {
+          dup = true;
+          break;
+        }
+      }
+      if (dup) continue;
+      seen[seenN++] = now[k];
+      if (seenN >= (int)(sizeof(seen) / sizeof(seen[0]))) break;
+    }
+  }
+  for (i = 0; i < seenN; i++) {
+    const LvServerCheck *c = &seen[i];
+    char label[160];
+    lvServerCheckLabel(c, &t, label, sizeof(label));
+    printf("  tick %u builder %u shooter %u blast (%d,%d) tested (%d,%d) present (%d,%d) "
+           "solid %d: %s\n",
+           (unsigned)(lv_screenHasServerTick() ? lv_screenServerTickAt(c->startMs)
+                                               : c->startMs / 20u),
+           (unsigned)c->builder, (unsigned)c->shooter, (int)c->blastX, (int)c->blastY,
+           (int)c->testedX, (int)c->testedY, (int)c->presentX, (int)c->presentY,
+           c->solid ? 1 : 0, label);
+    if (want != NULL && strcmp(label, want) == 0) found = true;
+  }
+  lv_screenSetServerCheck(0);
+  lv_decoderDestroy(lv);
+  lv_screenSetHideLobby(savedHide);
+  UT_ASSERT_MSG(want == NULL || found, "no check has the label \"%s\"", want);
   return 0;
 }

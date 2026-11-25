@@ -612,6 +612,34 @@ void lgmDeathCheckAtPosition(struct GameSim *sim, lgm *lgman, WORLD lgmWorldX, W
 *********************************************************/
 void lgmDeathCheckSeenOut(struct GameSim *sim, lgm *lgman, WORLD lgmWorldX, WORLD lgmWorldY, WORLD wx, WORLD wy, BYTE owner, BYTE attacker, BYTE cause, BYTE pill, tank *tnk, bool squareHit);
 
+/* What one builder blast test found, for the round log's log_BuilderCheck
+   (shells.c, shellsBlastTestBuilder). The game reads none of it.
+   tested:   the test ran (he was out, or in a tank that could be hit)
+   caught:   the blast caught him at the tested place
+   solid:    the square rule was used (a solid square, or a hit on it)
+   onSquare: the tested place is on the blast's square
+   refused:  caught, and the host refused the death
+   died:     caught and killed */
+typedef struct {
+  bool tested;
+  bool caught;
+  bool solid;
+  bool onSquare;
+  bool refused;
+  bool died;
+} LgmBlastOutcome;
+
+/*********************************************************
+*NAME:          lgmDeathCheckAtPositionReport
+*NAME:          lgmDeathCheckSeenOutReport
+*PURPOSE:
+*  lgmDeathCheckAtPosition and lgmDeathCheckSeenOut, which
+*  also fill out (when it is not NULL) with what the test
+*  found. The game is the same with or without out.
+*********************************************************/
+void lgmDeathCheckAtPositionReport(struct GameSim *sim, lgm *lgman, WORLD lgmWorldX, WORLD lgmWorldY, WORLD wx, WORLD wy, BYTE owner, BYTE attacker, BYTE cause, BYTE pill, tank *tnk, bool squareHit, LgmBlastOutcome *out);
+void lgmDeathCheckSeenOutReport(struct GameSim *sim, lgm *lgman, WORLD lgmWorldX, WORLD lgmWorldY, WORLD wx, WORLD wy, BYTE owner, BYTE attacker, BYTE cause, BYTE pill, tank *tnk, bool squareHit, LgmBlastOutcome *out);
+
 /*********************************************************
 *NAME:          lgmKillInTank
 *AUTHOR:        John Morrison

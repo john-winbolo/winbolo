@@ -44,6 +44,10 @@
  *       is far from it now, and one it showed outside the blast lives though
  *       he stands inside it now; the shooter's own builder is treated the
  *       same
+ *   run_tank_blast_builder_check_record       - recorded, the first case
+ *       above writes one log_BuilderCheck record for each builder: he dies,
+ *       tested where the shooter's screen showed him, with his present place
+ *       and the rewind the test used
  *   run_tank_blast_absent_builder_lives        - a builder who was inside
  *       his tank on the frame the shooter saw is not killed by the blast on
  *       that tank, though he stands beside the hit side now; with the record
@@ -91,6 +95,8 @@
 #include "explosions.h"
 #include "minesexp.h"
 #include "everard_map.h"
+#include "log.h"                   /* logStart: the record test */
+#include "builder_check_record.h"  /* log_BuilderCheck payload */
 #include "test_harness.h"
 
 #define TBT_SHOOTER 0
@@ -903,6 +909,101 @@ done:
         }
     }
     return 0;
+}
+
+/* ================================================================
+ * 5b. The round log writes what the builder test checked.
+ *
+ * The first case of section 5, recorded: the shooter's screen showed both
+ * builders inside the blast, and both stand far from it now. Each one gets
+ * one log_BuilderCheck record that says he dies, tested at the place the
+ * shooter's screen showed him, with his present place and the rewind the
+ * test used. The game does what section 5 checks; the record only reports.
+ * ================================================================ */
+int run_tank_blast_builder_check_record(void) {
+    const char        *fname = "test_tank_blast_builder_check.wbv";
+    BYTE               lx = 0, ly = 0;
+    ServerSim         *sim;
+    GameSim           *gs;
+    TbtHit             g;
+    BuilderCheckRecord recs[8];
+    const BuilderCheckRecord *forTarget = NULL, *forShooter = NULL;
+    int                n, i;
+    int                rc = 0;
+
+    remove(fname);
+    sim = tbtSim(&lx, &ly);
+    UT_ASSERT_MSG(sim != NULL, "setup: no sim, tanks or clear lane");
+    gs = &sim->sim;
+    UT_CHECK(gs->lgmen[TBT_SHOOTER] != NULL && gs->lgmen[TBT_TARGET] != NULL);
+    tbtRewoundHit(sim, lx, ly, &g);
+    tbtBuilder(sim, TBT_TARGET,
+               true, (WORLD)(g.blastX - TBT_IN_BLAST), g.blastY,
+               true, (WORLD)(g.blastX + TBT_OUT_BLAST), g.blastY);
+    tbtBuilder(sim, TBT_SHOOTER,
+               true, g.blastX, (WORLD)(g.blastY + TBT_IN_BLAST),
+               true, (WORLD)(g.blastX + TBT_OUT_BLAST),
+               (WORLD)(g.blastY + TBT_IN_BLAST));
+
+    logSetStopHook(NULL);
+    logCreate();
+    if (!logStart((char *)fname, sim, 0, MAX_TANKS, FALSE)) {
+        logDestroy();
+        UT_CHECK_MSG(false, "logStart failed");
+    }
+    tbtFire(sim, lx, ly, TBT_COMP);
+    i = tbtFly(sim);
+    logWriteTick();
+    logStop();
+    logDestroy();
+    if (tbtCheckRewoundHit(&g, i, SHELL_OUTCOME_TANK_HIT) != 0) {
+        rc = 1;
+        goto done;
+    }
+    UT_CHECK_MSG(gs->lgmen[TBT_TARGET]->isDead == TRUE &&
+                 gs->lgmen[TBT_SHOOTER]->isDead == TRUE,
+                 "setup: both builders should die, as in section 5");
+
+    n = ut_logBuilderChecks(fname, recs, 8);
+    UT_CHECK_MSG(n == 2, "%d log_BuilderCheck records (want 2)", n);
+    for (i = 0; i < n; i++) {
+        if (recs[i].builder == TBT_TARGET) forTarget = &recs[i];
+        if (recs[i].builder == TBT_SHOOTER) forShooter = &recs[i];
+    }
+    UT_CHECK_MSG(forTarget != NULL && forShooter != NULL,
+                 "no record for one of the two builders");
+    for (i = 0; i < 2; i++) {
+        const BuilderCheckRecord *r = (i == 0) ? forTarget : forShooter;
+        WORLD seenX = (i == 0) ? (WORLD)(g.blastX - TBT_IN_BLAST) : g.blastX;
+        WORLD seenY = (i == 0) ? g.blastY : (WORLD)(g.blastY + TBT_IN_BLAST);
+        WORLD nowY = (i == 0) ? g.blastY : (WORLD)(g.blastY + TBT_IN_BLAST);
+        UT_CHECK(r->version == BUILDER_CHECK_RECORD_VERSION);
+        UT_CHECK_MSG(r->shooter == TBT_SHOOTER && r->pill == BUILDER_CHECK_NONE,
+                     "shooter %u pill %u", (unsigned)r->shooter, (unsigned)r->pill);
+        UT_CHECK_MSG(r->result == BUILDER_CHECK_DIES, "result %u", (unsigned)r->result);
+        UT_CHECK_MSG((r->flags & BUILDER_CHECK_FLAG_REWOUND) != 0 &&
+                     (r->flags & (BUILDER_CHECK_FLAG_SOLID |
+                                  BUILDER_CHECK_FLAG_SQUARE_HIT |
+                                  BUILDER_CHECK_FLAG_IN_TANK)) == 0,
+                     "flags 0x%02x", (unsigned)r->flags);
+        UT_CHECK_MSG(r->rewind == TBT_COMP - 1 && r->shellRewind == TBT_COMP,
+                     "rewind %u, shell rewind %u", (unsigned)r->rewind,
+                     (unsigned)r->shellRewind);
+        UT_CHECK_MSG(r->blastX == g.blastX && r->blastY == g.blastY,
+                     "blast (%u,%u), want (%u,%u)", (unsigned)r->blastX,
+                     (unsigned)r->blastY, (unsigned)g.blastX, (unsigned)g.blastY);
+        UT_CHECK_MSG(r->testedX == seenX && r->testedY == seenY,
+                     "tested (%u,%u), want (%u,%u)", (unsigned)r->testedX,
+                     (unsigned)r->testedY, (unsigned)seenX, (unsigned)seenY);
+        UT_CHECK_MSG(r->presentX == (WORLD)(g.blastX + TBT_OUT_BLAST) &&
+                     r->presentY == nowY,
+                     "present (%u,%u)", (unsigned)r->presentX, (unsigned)r->presentY);
+        UT_CHECK(r->shape == (uint8_t)gs->rules.lgm_blast_shape);
+    }
+done:
+    tbtEnd(sim);
+    remove(fname);
+    return rc;
 }
 
 /* ================================================================

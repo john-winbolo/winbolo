@@ -16,6 +16,7 @@
 #include <stdlib.h>
 
 #include "scenario_table.h"  /* ScnTable — the fixture brain's record below */
+#include "builder_check_record.h"  /* BuilderCheckRecord: ut_logBuilderChecks */
 
 #define UT_FAIL(fmt, ...)                                                   \
     do {                                                                    \
@@ -1696,6 +1697,7 @@ int run_overrun_record_sections(void);
 /* log_BotHostData through the round log, and nothing with the option off. */
 int run_log_roundtrip_bothost_data(void);
 int run_bothost_record_off_writes_nothing(void);
+int run_log_roundtrip_builder_check(void);
 int run_log_roundtrip_overrun_stats_recorded(void);
 /* The same with two thinking bots: each record has each bot's thinks. */
 int run_log_roundtrip_overrun_stats_bots(void);
@@ -1747,6 +1749,14 @@ int run_lv_early_blast_rules(void);
 int run_lv_early_blast_ended(void);
 int run_lv_early_blast_frames(void);
 int run_lv_early_blast_match(void);
+int run_lv_early_blast_square_hit(void);
+/* The Server Check of the hit boxes (test_lv_server_check.c). */
+int run_lv_server_check_rule_version(void);
+int run_lv_server_check_estimate_6830(void);
+int run_lv_server_check_exact_record(void);
+int run_lv_server_check_label(void);
+/* The Server Check on a real recording, on ask only (test_lv_calibration.c). */
+int run_lv_server_check_recording(void);
 int run_lv_early_blast_hide(void);
 int run_lv_early_blast_same_place(void);
 int run_lv_early_blast_many_players(void);
@@ -2129,6 +2139,11 @@ int run_spec_seed_decode_info(void);
 /* Extracts the inner "log.dat" from a .wbv zip into a heap buffer (caller
  * frees). Defined in test_log_roundtrip.c; shared with test_stream_load.c. */
 bool extractLogDat(const char *wbvPath, uint8_t **outBuf, size_t *outLen);
+
+/* Every log_BuilderCheck record in a .wbv, decoded (up to max); the count, or
+ * -1 when the file does not read. Defined in test_log_roundtrip.c; shared
+ * with test_tank_blast_at_tank.c. */
+int ut_logBuilderChecks(const char *wbvPath, BuilderCheckRecord *out, int max);
 
 /* -log path composition (test_log_dir_path.c). Pins -log <dir> auto-naming
  * the replay inside the directory, vs -log <file> / bare -log. */
@@ -3595,6 +3610,7 @@ int run_tank_blast_hit_decision_unchanged(void);
 /* Whether that blast kills a builder is decided on the shooter's screen, not
  * by where he stands now (the same file). */
 int run_tank_blast_builder_on_shooter_screen(void);
+int run_tank_blast_builder_check_record(void);
 int run_tank_blast_absent_builder_lives(void);
 int run_tank_blast_builder_back_in_tank(void);
 int run_tank_blast_pill_shell_builder_now(void);

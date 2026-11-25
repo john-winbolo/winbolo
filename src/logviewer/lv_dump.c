@@ -39,6 +39,7 @@
 #include "lv_event_kind.h"
 #include "lv_presentation.h"
 #include "lv_dump.h"
+#include "builder_check_record.h"
 
 /* Playback time per decoder step. */
 #define DUMP_STEP_MS      20u
@@ -181,6 +182,7 @@ static const char *dumpRecordName(BYTE code) {
     DUMP_REC(ServerTick);       DUMP_REC(ScnStatus);       DUMP_REC(VoiceEveryone);
     DUMP_REC(MapName);          DUMP_REC(PlayerLag);       DUMP_REC(OverrunStats);
     DUMP_REC(BotHostData);
+    DUMP_REC(BuilderCheck);
 #undef DUMP_REC
     default: return "Unknown";
   }
@@ -421,6 +423,18 @@ static void dumpRecordFields(DumpCtx *c, BYTE code, const BYTE *b, int len) {
         default:
           break;
         }
+      }
+      break;
+    }
+    /* Places in world units, as the server tested them. */
+    case log_BuilderCheck: {
+      BuilderCheckRecord rec;
+      if (builderCheckRecordDecode(b, len, &rec)) {
+        fprintf(out, " version=%u builder=%u shooter=%u pill=%u result=%u flags=0x%02X"
+                " shape=%u rewind=%u shell_rewind=%u blast=%u,%u tested=%u,%u present=%u,%u"
+                " pill_range=%u", rec.version, rec.builder, rec.shooter, rec.pill, rec.result,
+                rec.flags, rec.shape, rec.rewind, rec.shellRewind, rec.blastX, rec.blastY,
+                rec.testedX, rec.testedY, rec.presentX, rec.presentY, rec.pillRange);
       }
       break;
     }

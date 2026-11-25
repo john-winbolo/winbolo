@@ -82,6 +82,8 @@
 #include "lv_shell_owner.h"      /* which player fired each shell, for the lag view */
 #include "lv_early_blast.h"      /* own shells explode at once, for the lag view */
 #include "shell_lgm_rewind.h"     /* the builders' shorter rewind */
+#include "lv_server_check.h"      /* the Server Check of the hit boxes */
+#include "builder_check_record.h" /* log_BuilderCheck payload */
 
 /* The middle of the visible map from the start of the view (defined with
  * lv_screenSetViewInset). */
@@ -273,8 +275,11 @@ const LvBotHostTrack *lv_screenBotHostTrack(void) {
   return &s_botHostTrack;
 }
 
+static void lv_scReset(void);   /* the Server Check, below */
+
 /* Drop the records, the history and the view, as every load and close
-   does. The overrun and bot host records go with them. */
+   does. The overrun and bot host records go with them, and the Server
+   Check's checks. */
 static void lv_lagReset(void) {
   int i;
   for (i = 0; i < LV_LAG_SLOTS; i++) {
@@ -290,6 +295,7 @@ static void lv_lagReset(void) {
   }
   lv_overrunTrackClear(&s_overrunTrack);
   lv_botHostTrackClear(&s_botHostTrack);
+  lv_scReset();
 }
 
 /* Take one log_PlayerLag payload's first four bytes (the player, the RTT as
@@ -373,6 +379,221 @@ static void lv_lagEarlyBlastTick(const LvLagFrame *f, const LvShellPt *prev,
             "(%u of %u owned shells of all players with none)\n",
             s_lagViewSlot, (unsigned) missMs, (unsigned) s_earlyBlastList.stats.missed,
             (unsigned) s_earlyBlastList.stats.ended);
+  }
+}
+
+/* --- Server Check ---------------------------------------------------------
+ * What the server tested when a shell's blast came near a builder
+ * (lv_server_check.h), drawn with the hit boxes (draw.c). A recording with
+ * log_BuilderCheck records gives the exact checks: playback adds each one
+ * at the time it is read. A recording with none gets an estimate, made as
+ * the lag history takes each frame (lv_scEstimateTick). Each check stays
+ * for LV_SC_SHOW_MS of playback time. */
+static LvServerCheck s_scList[LV_SC_MAX];
+static int           s_scN = 0;
+/* The recording has log_BuilderCheck records: the load's walk found one,
+   or playback read one. No estimate is made then. */
+static bool          s_scRecorded = FALSE;
+/* The hit boxes are on: checks are kept and the lag history takes frames
+   for the estimate. */
+static bool          s_scOn = FALSE;
+
+void lv_screenSetServerCheck(int on) {
+  s_scOn = on ? TRUE : FALSE;
+  if (!s_scOn) {
+    s_scN = 0;
+  }
+}
+
+/* Drop the checks, for a load and a close. */
+static void lv_scReset(void) {
+  s_scN = 0;
+  s_scRecorded = FALSE;
+}
+
+/* Keep check c. Checks that have ended, or that start after c (playback
+   went back), go first. A check the same as one held (a seek decodes the
+   same records again) is not kept twice. When the list is full, the
+   oldest goes. */
+static void lv_scAdd(const LvServerCheck *c) {
+  int i, n = 0, oldest = 0;
+  for (i = 0; i < s_scN; i++) {
+    const LvServerCheck *h = &s_scList[i];
+    if (h->startMs > c->startMs || c->startMs - h->startMs >= LV_SC_SHOW_MS) {
+      continue;
+    }
+    if (h->startMs == c->startMs && h->builder == c->builder && h->blastX == c->blastX &&
+        h->blastY == c->blastY && h->exact == c->exact) {
+      return;
+    }
+    s_scList[n++] = *h;
+  }
+  s_scN = n;
+  if (s_scN >= LV_SC_MAX) {
+    for (i = 1; i < s_scN; i++) {
+      if (s_scList[i].startMs < s_scList[oldest].startMs) {
+        oldest = i;
+      }
+    }
+    s_scList[oldest] = *c;
+    return;
+  }
+  s_scList[s_scN++] = *c;
+}
+
+/* Read one log_BuilderCheck payload of evLen bytes at the cursor, at ms.
+   The caller sets the cursor to the frame's end after. */
+static void lv_scReadRecord(uint32_t ms, unsigned short evLen) {
+  BYTE b[64];
+  int want = evLen < (unsigned short) sizeof(b) ? (int) evLen : (int) sizeof(b);
+  BuilderCheckRecord r;
+  LvServerCheck c;
+
+  s_scRecorded = TRUE;
+  if (!s_scOn || want < BUILDER_CHECK_RECORD_BYTES || logReadBytes(b, want) != want) {
+    return;
+  }
+  if (builderCheckRecordDecode(b, want, &r)) {
+    lvServerCheckFromRecord(&r, ms, &c);
+    lv_scAdd(&c);
+  }
+}
+
+int lv_screenServerChecks(LvServerCheck *out, int max, uint32_t *nowMs) {
+  int i, n = 0;
+  if (g_lv == NULL || !s_scOn) {
+    return 0;
+  }
+  if (nowMs != NULL) {
+    *nowMs = g_lv->timeRunning;
+  }
+  for (i = 0; i < s_scN && n < max; i++) {
+    if (lvServerCheckAlpha(s_scList[i].startMs, g_lv->timeRunning) > 0.0) {
+      out[n++] = s_scList[i];
+    }
+  }
+  return n;
+}
+
+/* The terrain square (x, y) had before frame f: the was of f's change of
+   that square, or the map now when f did not change it. */
+static BYTE lv_scSquareBefore(const LvLagFrame *f, BYTE x, BYTE y) {
+  int i;
+  for (i = 0; i < (int) f->squareCount && i < LV_LAG_SQUARES_MAX; i++) {
+    if (f->squares[i].x == x && f->squares[i].y == y) {
+      return f->squares[i].was;
+    }
+  }
+  return lv_mapGetPos(&g_lv->mp, x, y);
+}
+
+/* A builder's place in a frame, in world units, and whether he is out:
+   out of his tank, and not on his parachute. */
+static bool lv_scLgmAt(const LvLagFrame *f, int slot, int32_t *wx, int32_t *wy) {
+  const LvLagLgm *l = &f->lgm[slot];
+  *wx = lv_lagWorld(l->mx, l->px);
+  *wy = lv_lagWorld(l->my, l->py);
+  return l->out && l->frame != LGM_HELICOPTER_FRAME;
+}
+
+/* The estimate for frame f, the newest of the lag history, for a recording
+   with no log_BuilderCheck records. Each explosion new at f is a blast: its
+   point is the explosion record and half a square. The early blast list
+   gives the shooter of a player's shell; an explosion it does not match
+   has no shooter and no rewind, as a pillbox's shell. The rewind is the
+   shooter's PlayerLag rewind at f, less SHELL_LGM_REWIND_LESS, and the
+   tested place is the builder's place that many entries back. For every
+   builder out (now, or at the tested frame) whose tested or present place
+   is on the blast's square or one of its eight neighbours, the engine's
+   test is made again (lvServerCheckEstimate) by the rule of the
+   recording's version. */
+static void lv_scEstimateTick(const LvLagFrame *f) {
+  int i, k, slot, rule;
+  if (!s_scOn || s_scRecorded || g_lv->mp == NULL) {
+    return;
+  }
+  rule = lvServerCheckRuleFor(g_lv->versionMajor, g_lv->versionMinor, g_lv->versionRevision);
+  for (i = 0; i < f->shellCount; i++) {
+    const LvLagShell *sh = &f->shells[i];
+    int32_t ex, ey, bx, by;
+    uint8_t shooter = BUILDER_CHECK_NONE;
+    int rewind = 0;
+    bool squareHit, solid;
+    BYTE sx, sy, pos;
+    const LvLagFrame *back = NULL;
+
+    if (!sh->isNew) {
+      continue;
+    }
+    ex = lv_lagWorld(sh->mx, sh->px);
+    ey = lv_lagWorld(sh->my, sh->py);
+    bx = ex + LV_EARLY_BLAST_EXPL_OFFSET;
+    by = ey + LV_EARLY_BLAST_EXPL_OFFSET;
+    if (bx < 0 || by < 0 || bx > 0xFFFF || by > 0xFFFF) {
+      continue;
+    }
+    squareHit = lv_earlyBlastIsSquareMiddle(ex, ey);
+    for (k = 0; k < LV_EARLY_BLAST_MAX; k++) {
+      const LvEarlyBlast *b = &s_earlyBlastList.b[k];
+      if (b->used && b->matched && b->explMs == f->ms && b->explX == ex && b->explY == ey &&
+          b->owner >= 0 && b->owner < MAX_TANKS) {
+        shooter = (uint8_t) b->owner;
+        /* A player's shell hit the thing on a square when its early blast
+           moved to the square middle (lv_earlyBlastMatch). */
+        squareHit = squareHit && b->wx == ex && b->wy == ey;
+        break;
+      }
+    }
+    if (shooter != BUILDER_CHECK_NONE) {
+      const LvLagRecord *rec = lv_lagTrackAt(&s_lagTracks[shooter], f->ms);
+      if (rec != NULL) {
+        rewind = (int) shellLgmRewind(rec->rewind);
+      }
+    }
+    if (rewind > 0 && f->ms >= (uint32_t) rewind * LV_LAG_ENTRY_MS) {
+      back = lv_lagRingFind(&s_lagRing, f->ms - (uint32_t) rewind * LV_LAG_ENTRY_MS);
+      if (back != NULL && back->ms != f->ms - (uint32_t) rewind * LV_LAG_ENTRY_MS) {
+        back = NULL;   /* no frame of that entry: the server tests the present */
+      }
+    }
+    sx = (BYTE) (bx >> 8);
+    sy = (BYTE) (by >> 8);
+    pos = lv_scSquareBefore(f, sx, sy);
+    solid = lvServerCheckSolid(rule, squareHit, pos == BUILDING || pos == HALFBUILDING,
+                               lv_pillsExistPos(&g_lv->pb, sx, sy) != FALSE,
+                               lv_pillsIsPillHit(&g_lv->pb, sx, sy) != FALSE,
+                               lv_basesExistPos(&g_lv->bs, sx, sy) != FALSE);
+    for (slot = 0; slot < LV_LAG_SLOTS && slot < MAX_TANKS; slot++) {
+      int32_t px, py, tx, ty;
+      bool nowOut = lv_scLgmAt(f, slot, &px, &py);
+      bool seenOut = nowOut;
+      LvServerCheck c;
+
+      tx = px;
+      ty = py;
+      if (back != NULL) {
+        seenOut = lv_scLgmAt(back, slot, &tx, &ty);
+        if (!seenOut) {
+          tx = px;
+          ty = py;
+        }
+      }
+      if (!nowOut && !seenOut) {
+        continue;
+      }
+      if (!builderCheckNearSquare(tx >> 8, ty >> 8, sx, sy) &&
+          !builderCheckNearSquare(px >> 8, py >> 8, sx, sy)) {
+        continue;
+      }
+      lvServerCheckEstimate(&c, (uint8_t) slot, shooter, back != NULL ? rewind : 0, bx, by,
+                            tx, ty, px, py, solid, g_lv->rules.lgmBlastShape,
+                            g_lv->rules.pillRange, f->ms);
+      if (back != NULL && !seenOut) {
+        /* The shooter's screen showed him in his tank: no test. */
+        c.result = BUILDER_CHECK_NOT_TESTED;
+      }
+      lv_scAdd(&c);
+    }
   }
 }
 
@@ -751,6 +972,7 @@ static void lv_lagCaptureTick(void) {
     }
   }
   lv_lagFindShellOwners(f);
+  lv_scEstimateTick(f);
 }
 
 /* TRUE while the chosen player is still the one in the slot. */
@@ -4121,6 +4343,15 @@ void lv_screenProcessLog(unsigned short numEvents) {
         lv_botHostReadPayload(g_lv->timeRunning, evLen);
       }
       break;
+    case log_BuilderCheck:
+      /* What the server tested when a shell's blast came near a builder,
+         for the Server Check of the hit boxes. Only a framed file has
+         them; the frame's length ends the record. The text dump and the
+         load's scans keep none. */
+      if (isV2 && !s_eventScan && !s_scanGathers) {
+        lv_scReadRecord(g_lv->timeRunning, evLen);
+      }
+      break;
     case log_BaseSetOwner:
       logReadBytes(&opt1, 1);
       logReadBytes(&opt2, 1);
@@ -4680,8 +4911,8 @@ bool lv_screenLogTick() {
   unsigned short len = 0;
   /* The tick moves the playhead on, so the lag view's history takes a frame
      at its end. The text dump and the load only read ahead and take none. */
-  const bool lagCapture = (s_lagFeature && g_lv->isPlaying == TRUE && !s_eventScan &&
-                           !s_scanGathers);
+  const bool lagCapture = ((s_lagFeature || s_scOn) && g_lv->isPlaying == TRUE &&
+                           !s_eventScan && !s_scanGathers);
 
   bool process = FALSE;
   bool snapshotTick = FALSE;
@@ -5769,6 +6000,10 @@ static bool walkScanEvents(LvLoadWalk *w, unsigned short numEvents, uint32_t ms)
         if (!lv_botHostReadPayload(ms, evLen)) {
           w->botHost = FALSE;
         }
+      }
+      if (code == log_BuilderCheck) {
+        /* The Server Check uses the records, and makes no estimate. */
+        s_scRecorded = TRUE;
       }
       if (w->pres &&
           (code == log_ScnPanel || code == log_ScnScore ||

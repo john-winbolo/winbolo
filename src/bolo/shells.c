@@ -39,6 +39,8 @@
 #include "global.h"
 #include "grass.h"
 #include "lgm.h"
+#include "log.h"
+#include "builder_check_record.h"
 #include "minesexp.h"
 #include "players.h"
 #include "pillbox.h"
@@ -400,11 +402,83 @@ void shellsAddItem(GameSim *sim, shells *value, WORLD x, WORLD y, TURNTYPE angle
  * A blast on a dead pill's square that did not hit the pill (the shell ran
  * out there, or hit a tank there) is FALSE and uses the open-ground rule
  * (lgmBlastCatches). */
+/* The round log's log_BuilderCheck for one builder blast test (see
+ * builder_check_record.h): written on the server while a .wbv is recorded,
+ * when the builder was out (out now, or out on the shooter's screen) and his
+ * tested place or his present place is on the blast's square or one of its
+ * eight neighbours. It only writes to the log: the game does not change.
+ * presentX, presentY, presentOut and presentInTank are as he was before the
+ * test. */
+static void shellsLogBuilderCheck(GameSim *sim, shells shell, BYTE builder,
+                                  PosHistoryLookup seen, uint8_t rewindTicks,
+                                  WORLD testedX, WORLD testedY,
+                                  WORLD blastX, WORLD blastY, bool squareHit,
+                                  WORLD presentX, WORLD presentY,
+                                  bool presentOut, bool presentInTank,
+                                  const LgmBlastOutcome *out) {
+	BuilderCheckRecord rec;
+	BYTE payload[BUILDER_CHECK_RECORD_BYTES];
+	int len;
+	int bx = (int)(blastX >> 8), by = (int)(blastY >> 8);
+
+	if (sim->isServer == FALSE || logIsRecording() == FALSE) {
+		return;
+	}
+	if (presentOut == FALSE && seen != POS_HISTORY_PRESENT) {
+		return;
+	}
+	if (!builderCheckNearSquare((int)(testedX >> 8), (int)(testedY >> 8), bx, by) &&
+	    !builderCheckNearSquare((int)(presentX >> 8), (int)(presentY >> 8), bx, by)) {
+		return;
+	}
+	memset(&rec, 0, sizeof(rec));
+	rec.builder = builder;
+	rec.shooter = (shell->owner == NEUTRAL) ? BUILDER_CHECK_NONE : shell->owner;
+	rec.pill = (shell->pill == DMG_NO_PILL) ? BUILDER_CHECK_NONE : (uint8_t)shell->pill;
+	if (out->died) {
+		rec.result = BUILDER_CHECK_DIES;
+	} else if (out->refused) {
+		rec.result = BUILDER_CHECK_REFUSED;
+	} else if (out->tested) {
+		rec.result = BUILDER_CHECK_LIVES;
+	} else {
+		rec.result = BUILDER_CHECK_NOT_TESTED;
+	}
+	if (out->solid) rec.flags |= BUILDER_CHECK_FLAG_SOLID;
+	if (out->onSquare) rec.flags |= BUILDER_CHECK_FLAG_ON_SQUARE;
+	if (seen == POS_HISTORY_PRESENT) rec.flags |= BUILDER_CHECK_FLAG_REWOUND;
+	if (presentInTank) rec.flags |= BUILDER_CHECK_FLAG_IN_TANK;
+	if (squareHit) rec.flags |= BUILDER_CHECK_FLAG_SQUARE_HIT;
+	rec.shape = (uint8_t)sim->rules.lgm_blast_shape;
+	rec.rewind = (seen == POS_HISTORY_PRESENT) ? rewindTicks : 0;
+	rec.shellRewind = (uint8_t)shell->compensationTicks;
+	rec.blastX = (uint16_t)blastX;
+	rec.blastY = (uint16_t)blastY;
+	rec.testedX = (uint16_t)testedX;
+	rec.testedY = (uint16_t)testedY;
+	rec.presentX = (uint16_t)presentX;
+	rec.presentY = (uint16_t)presentY;
+	rec.pillRange = (uint16_t)(sim->rules.pill_range < 0 ? 0 :
+	                           sim->rules.pill_range > 0xFFFF ? 0xFFFF : sim->rules.pill_range);
+	len = builderCheckRecordEncode(&rec, payload, (int)sizeof(payload));
+	if (len > 0) {
+		logAddEvent(log_BuilderCheck, 0, 0, 0, 0, (unsigned short)len, (char *)payload);
+	}
+}
+
 static void shellsBlastTestBuilder(GameSim *sim, shells shell, lgm *lgman, tank *tnk, WORLD nowX, WORLD nowY, WORLD seenX, WORLD seenY, bool squareHit) {
 	BYTE lgmOwner = (*lgman)->playerNum;
 	uint8_t rewindTicks;
 	WORLD lgmHitX = 0, lgmHitY = 0;
 	PosHistoryLookup seen = POS_HISTORY_NO_RECORD;
+	/* For log_BuilderCheck only: he as he was before the test, and what the
+	 * test found. */
+	WORLD presentX = (*lgman)->x, presentY = (*lgman)->y;
+	bool presentOut = ((*lgman)->isDead == FALSE && (*lgman)->inTank == FALSE);
+	bool presentInTank = ((*lgman)->inTank == TRUE);
+	LgmBlastOutcome outcome;
+
+	memset(&outcome, 0, sizeof(outcome));
 
 	if (shell->compensationTicks > 0) {
 		/* Any builder: the shooter's client draws builders from the newest
@@ -424,24 +498,36 @@ static void shellsBlastTestBuilder(GameSim *sim, shells shell, lgm *lgman, tank 
 
 	if (seen == POS_HISTORY_ABSENT) {
 		/* The shooter's screen showed no builder: no test, no kill. */
+		shellsLogBuilderCheck(sim, shell, lgmOwner, seen, rewindTicks,
+		                      presentX, presentY, nowX, nowY, squareHit,
+		                      presentX, presentY, presentOut, presentInTank,
+		                      &outcome);
 	} else if (seen == POS_HISTORY_PRESENT) {
 		/* The shooter's screen showed him out, here: against the blast as
 		 * the shooter's screen had it. */
-		lgmDeathCheckSeenOut(sim, lgman,
-		                     lgmHitX, lgmHitY,
-		                     seenX, seenY,
-		                     shell->owner, shell->owner,
-		                     DMG_SRC_SHELL, shell->pill,
-		                     tnk, squareHit);
+		lgmDeathCheckSeenOutReport(sim, lgman,
+		                           lgmHitX, lgmHitY,
+		                           seenX, seenY,
+		                           shell->owner, shell->owner,
+		                           DMG_SRC_SHELL, shell->pill,
+		                           tnk, squareHit, &outcome);
+		shellsLogBuilderCheck(sim, shell, lgmOwner, seen, rewindTicks,
+		                      lgmHitX, lgmHitY, seenX, seenY, squareHit,
+		                      presentX, presentY, presentOut, presentInTank,
+		                      &outcome);
 	} else {
 		/* No rewind, or no record as old as the shooter's screen: where he
 		 * is now, against the blast where it is now. */
-		lgmDeathCheckAtPosition(sim, lgman,
-		                        (*lgman)->x, (*lgman)->y,
-		                        nowX, nowY,
-		                        shell->owner, shell->owner,
-		                        DMG_SRC_SHELL, shell->pill, tnk,
-		                        squareHit);
+		lgmDeathCheckAtPositionReport(sim, lgman,
+		                              presentX, presentY,
+		                              nowX, nowY,
+		                              shell->owner, shell->owner,
+		                              DMG_SRC_SHELL, shell->pill, tnk,
+		                              squareHit, &outcome);
+		shellsLogBuilderCheck(sim, shell, lgmOwner, seen, rewindTicks,
+		                      presentX, presentY, nowX, nowY, squareHit,
+		                      presentX, presentY, presentOut, presentInTank,
+		                      &outcome);
 	}
 }
 

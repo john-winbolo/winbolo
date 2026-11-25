@@ -3879,6 +3879,25 @@
 #define STR_REJECT_CAN_REJOIN                    3945
 #define STR_JOIN_AS_NEW                          3946
 
+/* The Server Check of the Log Viewer's hit boxes: the label of what the
+ * server tested when a shell's blast came near a builder. {string1} is one
+ * of the four result words, {number} the builder's distance from the blast
+ * in world units and {number2} the limit of the rule. The rewind and
+ * estimate parts follow the rest, after a space. The ids start at 3960:
+ * 3947 to 3951 are taken by the bot host branch (#652). */
+#define STR_LV_SC_LIVES                          3960
+#define STR_LV_SC_DIES                           3961
+#define STR_LV_SC_REFUSED                        3962
+#define STR_LV_SC_NOT_TESTED                     3963
+#define STR_LV_SC_CIRCLE_OUT                     3964
+#define STR_LV_SC_CIRCLE_IN                      3965
+#define STR_LV_SC_BOX_OUT                        3966
+#define STR_LV_SC_BOX_IN                         3967
+#define STR_LV_SC_OFF_SQUARE                     3968
+#define STR_LV_SC_ON_SQUARE                      3969
+#define STR_LV_SC_REWIND                         3970
+#define STR_LV_SC_ESTIMATE                       3971
+
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
  * ------------------------------------------------------- */

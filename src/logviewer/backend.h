@@ -920,6 +920,18 @@ struct LvHitBlastRec;
 int  lv_screenNewBlasts(const struct LvHitBlastRec **out);
 int  lv_screenShellsNewBlasts(struct LvHitBlastRec *out, int max);
 
+/* The Server Check of the hit boxes (lv_server_check.h): what the server
+ * tested when a shell's blast came near a builder, from the recording's
+ * log_BuilderCheck records, or an estimate for a recording with none.
+ * lv_screenSetServerCheck turns it on and off with the hit boxes
+ * (lv_drawSetHitBoxes); while it is off no check is kept. lv_screenServerChecks
+ * puts the checks shown at the playhead into out, at most max, and the
+ * playhead's time into *nowMs (may be NULL); it returns how many. Hold the
+ * client mutex. */
+struct LvServerCheck;
+void lv_screenSetServerCheck(int on);
+int  lv_screenServerChecks(struct LvServerCheck *out, int max, uint32_t *nowMs);
+
 void lv_screenCentreOnSelectedItem();
 
 /* Move the camera onto the followed tank at native-pixel precision (tile

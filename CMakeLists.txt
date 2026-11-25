@@ -5768,6 +5768,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_lv_shell_owner.c
     # The lag view's early blast toggle (test_lv_early_blast.c).
     tests/unit/test_lv_early_blast.c
+    # The Server Check of the hit boxes (test_lv_server_check.c).
+    tests/unit/test_lv_server_check.c
     # Log viewer snapshot index: time lookups and a ten-day log's worth of
     # entries (test_lv_snapshot_index.c).
     tests/unit/test_lv_snapshot_index.c
@@ -6890,6 +6892,7 @@ set(_unit_test_names
     overrun_record_sections
     log_roundtrip_bothost_data
     bothost_record_off_writes_nothing
+    log_roundtrip_builder_check
     log_roundtrip_overrun_stats_recorded
     log_roundtrip_overrun_stats_bots
     log_roundtrip_overrun_stats_every_30s
@@ -6925,6 +6928,12 @@ set(_unit_test_names
     lv_early_blast_ended
     lv_early_blast_frames
     lv_early_blast_match
+    lv_early_blast_square_hit
+    lv_server_check_rule_version
+    lv_server_check_estimate_6830
+    lv_server_check_exact_record
+    lv_server_check_label
+    lv_server_check_recording
     lv_early_blast_hide
     lv_early_blast_same_place
     lv_early_blast_many_players
@@ -7623,6 +7632,7 @@ set(_unit_test_names
     tank_blast_zero_rewind_unchanged
     tank_blast_hit_decision_unchanged
     tank_blast_builder_on_shooter_screen
+    tank_blast_builder_check_record
     tank_blast_absent_builder_lives
     tank_blast_builder_back_in_tank
     tank_blast_pill_shell_builder_now
@@ -9248,6 +9258,7 @@ set_tests_properties(unit.loopback_script_upload_at_cap PROPERTIES TIMEOUT 180)
 # A test that needs an input given on ask returns UT_SKIP_RC (test_harness.h)
 # without it, which CTest then shows as skipped.
 set_tests_properties(unit.lv_shell_owner_recording PROPERTIES SKIP_RETURN_CODE 77)
+set_tests_properties(unit.lv_server_check_recording PROPERTIES SKIP_RETURN_CODE 77)
 
 # ---------------------------------------------------------------------------
 # WinBoloWbnTests -- the WinBolo.net HTTP layer against a local TCP listener.
