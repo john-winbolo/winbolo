@@ -7232,6 +7232,8 @@ function Brain.think(info)
       -- still counted as a replan attempt, and must not be free to retry next
       -- tick. (The kill unwinds everything after this point.)
       state._last_full_replan_tick = now
+      local _rpf = goals._rpf  -- REPLAN_PROF (replan_prof.lua): log only
+      if _rpf and _rpf.want() then _rpf.begin(state, now) end
       if BRAIN_DEBUG_MODE then print2("ENTERING REPLAN") end
       -- Always use cached/partial data — never run the expensive
       -- fill_pool_cache.  The rolling queue refines over ~14 ticks.
@@ -7566,6 +7568,7 @@ function Brain.think(info)
         -- cost-related to carry across.
       -- (bpc_pill block removed — unified into attack_pill above)
       end
+      if goals._rpf and goals._rpf.is_active() then goals._rpf.finish(state, now) end
     end
 
     -- Legacy aIndy /info pt + /info gbt claim broadcasts removed:

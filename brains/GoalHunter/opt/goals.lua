@@ -6846,6 +6846,13 @@ local POOL_EVALUATORS = {
 }
 -- Test hook (test_defend_boost.lua): the defend_pill pool on its own.
 M._eval_defend_pill = eval_defend_pill
+-- REPLAN_PROF (replan_prof.lua, debug only): the list and its names, so
+-- the profiler can time each pool evaluator
+M._POOL_EVALUATORS = POOL_EVALUATORS
+M._POOL_EVALUATOR_NAMES = { "eval_refuel", "eval_defend_pill", "eval_capture_base",
+  "eval_capture_pill", "eval_repair_pill", "eval_attack_pill", "eval_attack_base",
+  "eval_place_pill_strategic", "eval_attack_tank", "eval_reposition_pill" }
+M._rpf = require("replan_prof")
 
 -- Phase weight keys for each pool evaluator (maps into C.PHASE_WEIGHTS[phase]).
 -- nil = no phase weighting (always critical, e.g. refuel/attack_tank).

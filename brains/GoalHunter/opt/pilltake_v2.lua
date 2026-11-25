@@ -2351,6 +2351,71 @@ end
 -- An exe with no gh_pt2_v2 (an older exe) runs the Lua; so do the
 -- debug checks the C does not have (v2_mask_stats, v2_loss_check,
 -- v2_confirm_check, v2_confirm_drop).
+-- PT2_C_PROF (inp.v2_prof: C.PT2_PROF_LOG in a debug brain, or the bench's
+-- cprof=1): the C evaluator's section profile (gh_pt2_v2.prof). Log only:
+-- it changes no result. Each evaluate writes one PT2_C_PROF line; the
+-- sums of a take plan (pt2_attack) and of the game are kept here:
+--   M.cprof_plan, M.cprof_game  { evals, us, c_us, steps, yields,
+--     sec = { [name] = { n, us } }, count = { [name] = n } }
+-- us = the wall time in begin and step (the yields left out); c_us = the
+-- sum of the C sections; us - c_us is the Lua glue around the C (the
+-- loop in M.evaluate_c, the calls into the C).
+local cprof_clock = rawget(_G, "clock_us") or rawget(_G, "bench_clock_us")
+  or function() return os.clock() * 1e6 end
+local function cprof_new() return { evals = 0, us = 0, c_us = 0, steps = 0, yields = 0, sec = {}, count = {} } end
+M.cprof_plan, M.cprof_game = cprof_new(), cprof_new()
+M.cprof_new = cprof_new
+function M.cprof_add(acc, us, c, steps, yields)
+  acc.evals = acc.evals + 1
+  acc.us = acc.us + us
+  acc.steps = acc.steps + steps
+  acc.yields = acc.yields + yields
+  for k, v in pairs(c) do
+    if k == "count" then
+      for ck, cv in pairs(v) do acc.count[ck] = (acc.count[ck] or 0) + cv end
+    else
+      local a = acc.sec[k]
+      if not a then a = { n = 0, us = 0 }; acc.sec[k] = a end
+      a.n = a.n + v.n
+      a.us = a.us + v.us
+      acc.c_us = acc.c_us + v.us
+    end
+  end
+end
+-- one line: the totals, then each section as name=calls/us (most time
+-- first), then the counts
+function M.cprof_line(tag, acc, head)
+  local rows = {}
+  for k, v in pairs(acc.sec) do rows[#rows + 1] = { k, v.n, v.us } end
+  table.sort(rows, function(a, b) if a[3] ~= b[3] then return a[3] > b[3] end return a[1] < b[1] end)
+  local parts = {}
+  for i, r in ipairs(rows) do parts[i] = string.format("%s=%d/%.0f", r[1], r[2], r[3]) end
+  local cn = {}
+  for k, v in pairs(acc.count) do if v ~= 0 then cn[#cn + 1] = string.format("%s=%d", k, v) end end
+  table.sort(cn)
+  -- the Lua rows outside the evaluate (pt2_attack.build_inp)
+  local lu = {}
+  for k, v in pairs(acc.lua or {}) do lu[#lu + 1] = string.format("%s=%d/%.0f", k, v.n, v.us) end
+  table.sort(lu)
+  return string.format("%s %sevals=%d us=%.0f c_us=%.0f glue_us=%.0f steps=%d yields=%d | %s | %s | %s",
+    tag, head or "", acc.evals, acc.us, acc.c_us, acc.us - acc.c_us, acc.steps, acc.yields,
+    table.concat(parts, " "), table.concat(cn, " "), table.concat(lu, " "))
+end
+local cprof_print2 = nil
+function M.cprof_print(line)
+  if not BRAIN_DEBUG_MODE then return end
+  cprof_print2 = cprof_print2 or require("print2")
+  cprof_print2(line)
+end
+-- the end of a take plan (pt2_attack): the plan's line and the game's sum
+function M.cprof_plan_end(head)
+  local pl = M.cprof_plan
+  if pl.evals == 0 then return end
+  M.cprof_print(M.cprof_line("PT2_C_PROF_PLAN", pl, head))
+  M.cprof_print(M.cprof_line("PT2_C_PROF_GAME", M.cprof_game, head))
+  M.cprof_plan = cprof_new()
+end
+
 function M.evaluate_c(inp)
   local g = rawget(_G, "gh_pt2_v2")
   if not g then
@@ -2370,17 +2435,45 @@ function M.evaluate_c(inp)
   local fn = inp.v2_slice
   local s = fn and SLICERS[fn]
   if fn and not s then return M.evaluate_lua(inp) end
+  local pf = inp.v2_prof and g.prof_take
+  if pf then
+    g.prof(true)
+    g.prof_take()
+  end
+  local t0 = pf and cprof_clock()
+  local paused, steps, yields = 0, 0, 0
   local st = g.begin(inp, M, OLD, s and s.ticks or nil)
   while true do
     local done, res = g.step(st)
+    steps = steps + 1
     if done then
       if s then
         local info = g.slices(st)
         s.slices, s.wu, s.over, s.budget = info.slices, info.wu, info.over, info.budget
       end
+      if pf then
+        local us = cprof_clock() - t0 - paused
+        local c = g.prof_take()
+        g.prof(false)
+        local one = cprof_new()
+        M.cprof_add(one, us, c, steps, yields)
+        M.cprof_add(M.cprof_plan, us, c, steps, yields)
+        M.cprof_add(M.cprof_game, us, c, steps, yields)
+        M.last_cprof = one
+        local A = inp.A
+        M.cprof_print(M.cprof_line("PT2_C_PROF", one, string.format("A=(%s,%s) ",
+          tostring(A and A.mx), tostring(A and A.my))))
+      end
       return res
     end
-    s.yield()
+    if pf then
+      local ty = cprof_clock()
+      s.yield()
+      paused = paused + (cprof_clock() - ty)
+      yields = yields + 1
+    else
+      s.yield()
+    end
   end
 end
 
