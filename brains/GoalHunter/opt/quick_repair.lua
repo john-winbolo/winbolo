@@ -25,8 +25,8 @@ local bit = require('bitcompat')
 --              Otherwise unknown -> wait:nokill.
 --   T_safe   = max(T_kill, landing tick of every non-friendly shell in the
 --              air whose flight reaches the blocker tile).
---   T_repair = now + 1 + walk. The builder leaves on the tick after the
---              order (+1) and walks `walk` ticks (the C walk sim). The pill's
+--   T_repair = now + D + walk. The builder leaves D ticks after the
+--              order (D = M.lag_d: 1 inside the server) and walks `walk` ticks (the C walk sim). The pill's
 --              armour comes back ON ARRIVAL, not after the build dwell: in
 --              lgm.c lgmMoveAway the arrival test calls lgmDoWork at once
 --              (pillsRepairPos for LGM_PILL_REQUEST with no pill carried) and
@@ -77,6 +77,18 @@ local print2 = require("print2")
 local viz    = require("viz")
 
 local M = {}
+
+-- C.QUICK_REPAIR_LAG_AWARE: the key delay D (lgm_aim.delay: the thinks from
+-- our keys to the tank we see; 1 for a bot inside the server). The builder
+-- leaves, and our next shot leaves, D thinks after the order. Off, or no
+-- measure yet: 1, the old "now + 1".
+function M.lag_d(state)
+  if not C.QUICK_REPAIR_LAG_AWARE then return 1 end
+  local LA = package.loaded["lgm_aim"] or require("lgm_aim")
+  local d = LA.delay(state)
+  if type(d) ~= "number" or d < 1 then return 1 end
+  return math.floor(d)
+end
 
 -- Reused across calls.
 local WALK = {}
@@ -153,10 +165,13 @@ end
 -- steps.
 function M.shot_near_tick(s, mx, my, now)
   local x, y = s.cur_fx, s.cur_fy
+  local sx, sy = s.step_x or 0, s.step_y or 0
   if s.matched and s.closest_fx and s.closest_fy then
     x, y = s.closest_fx, s.closest_fy
+    -- C.QUICK_REPAIR_LAG_AWARE: the shell we see is s.lag steps late.
+    local L = C.QUICK_REPAIR_LAG_AWARE and s.lag or 0
+    if L > 0 then x, y = x + L * sx, y + L * sy end
   end
-  local sx, sy = s.step_x or 0, s.step_y or 0
   local x0, y0, x1, y1 = mx * 256, my * 256, mx * 256 + 255, my * 256 + 255
   local best, bk
   for k = 0, 72 do
@@ -842,7 +857,7 @@ end
 -- Rule 2: the first conflicting predicted shot, or nil.
 --   rb        the repair blocker ({mx, my}, man_mx/man_my while out).
 --   bx0, by0  where the builder starts (tiles: the tank, or the man now).
---   t0        the tick he leaves (now + 1), or now when he is out.
+--   t0        the tick he leaves (now + D), or now when he is out.
 --             bx0, by0 and t0 are not read since the stay window
 --             (2026-11-24): his walk is not tested here.
 --   t_arr     the tick he reaches the blocker; the stay window is
@@ -1063,13 +1078,28 @@ end
 
 -- T_kill, its source, and the parts it was made of (for the log and the
 -- overlay). nil when unknown.
-function M.kill_tick(goal, target, info, now)
+-- d: the key delay (M.lag_d); nil = 1. A target seen dead counts as dead
+-- d - 1 thinks after the tick it was first seen dead (goal._qr_dead_seen):
+-- the view is late, so a shell can still be on its way.
+function M.kill_tick(goal, target, info, now, d)
+  d = d or 1
   local hp = target.health or 0
   local k = { hp = hp, n_inflight = 0 }
   if hp <= 0 then
-    k.t, k.src = now, "dead"
+    local t = now
+    if d > 1 then
+      local key = (goal.my or 0) * 256 + (goal.mx or 0)
+      local ds = goal._qr_dead_seen
+      if not ds or ds.key ~= key then
+        ds = { key = key, tick = now }
+        goal._qr_dead_seen = ds
+      end
+      t = math.max(now, ds.tick + d - 1)
+    end
+    k.t, k.src = t, "dead"
     return k
   end
+  goal._qr_dead_seen = nil
   local land = {}
   if goal._on_target_land and goal._on_target_land_tick == now then
     for i = 1, #goal._on_target_land do land[i] = goal._on_target_land[i] end
@@ -1094,11 +1124,11 @@ function M.kill_tick(goal, target, info, now)
   -- last shot (tank.c: reload counts down once a tick and the gun fires on
   -- the tick it reaches 0), not R ticks from now. A full R from now is only
   -- the answer when the last shot is not known.
-  local first = now + 1
+  local first = now + d
   if info.reload then
     local lf = goal._on_target_land_tick == now and goal._last_fire_tick or nil
     if lf then
-      first = math.max(now + 1, lf + R)
+      first = math.max(now + d, lf + R)
     else
       first = now + R
     end
@@ -1242,7 +1272,7 @@ function M.side_and_fire(state, world, info, now, goal, k, p, qr, dry)
     qr.window = { wa, wb }
     local cf = M.fire_conflict(world, info, now, goal, k, rb,
                                info.tankx / 256.0, info.tanky / 256.0,
-                               now + 1, qr.t_repair, sd, sw, org)
+                               now + M.lag_d(state), qr.t_repair, sd, sw, org)
     if cf then
       qr.fire = cf
       return cf.target and "wait:fire_predict" or "wait:other_pill"
@@ -1293,7 +1323,7 @@ function M.dead_pill_send_ok(state, world, info, now, p, walk)
           and goal.mx and goal.my) then
     return false, "no_take", nil
   end
-  local qr = { t_repair = now + 1 + walk }
+  local qr = { t_repair = now + M.lag_d(state) + walk }
   local r = M.send_checks(state, world, info, now, goal, q0.kill, p, qr, true)
   return r == "send", r, qr
 end
@@ -1538,7 +1568,8 @@ function M.evaluate(state, world, info, now)
                hp = p.health or 0, target_mx = goal.mx, target_my = goal.my,
                margin = margin, dwell = 0,
                build_after = C.LGM_BUILD_TIME or 20 }
-  local k = M.kill_tick(goal, target, info, now)
+  local d = M.lag_d(state)
+  local k = M.kill_tick(goal, target, info, now, d)
   -- PT2_REPAIR_BLOCKER_FIRST: before the first shot there is no kill to
   -- wait for; only the hostile shells on the blocker set T_safe.
   if first then
@@ -1558,7 +1589,8 @@ function M.evaluate(state, world, info, now)
   end
   qr.t_safe = t_safe
   qr.walk = M.walk_ticks(info, p.mx, p.my)
-  qr.t_repair = qr.walk and (now + 1 + qr.walk) or nil
+  qr.t_repair = qr.walk and (now + d + qr.walk) or nil
+  qr.d = d
   qr.trees_need = M.trees_need(p)
 
   -- SWERVE_AVOID_REPAIR_SIDE: the committed side lives until its job ends.

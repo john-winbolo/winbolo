@@ -6697,6 +6697,30 @@ M.QUICK_REPAIR_DEATH_TICK_SHOT = true
 -- seen was 2 late in beside_w (507 / 509), 1 late in beside_e, else on
 -- time or early. 0 = old rule. MAST: 0.
 M.QUICK_REPAIR_KILL_SLOP_TICKS = 2
+-- QUICK_REPAIR_LAG_AWARE (Nov 25): the quick repair under network lag.
+-- A bot that plays through the network sees its own tank where its keys
+-- put it, but every shell it sees is a round trip late. Two parts:
+--   1. shot_tracker: our own shell shows in the view only a round trip
+--      after the press, that many steps behind the shot we predict. The old
+--      test lost it in flight (60 ms) or never found it (150 ms), so the
+--      take's in-flight shells came and went and T_kill moved by one reload
+--      from tick to tick: L060_rb2_v_sw sent at t=618 (T_kill 680), the
+--      next tick said 693, the outbound check aborted at 624 and the
+--      builder died at 633. Now each shot finds the lag its real shell has
+--      (the nearest match 0 .. age - 1 steps behind) and keeps it.
+--   2. quick_repair, builder_pool, init: the builder leaves D thinks after
+--      the order, our next shot too, and a target seen dead counts as dead
+--      D - 1 thinks later. D is lgm_aim.delay (the key delay the bot
+--      measures; 1 inside the server). With D = 1 this part is the old rule.
+-- Arena, 27 take cases (pt2_grass_double_take_demo) at 0 / 60 / 150 ms:
+--   old rule: builder deaths 0 / 2 / 7, quick repairs sent 26 / 16 / 14,
+--             aborts 8 / 10 / 12.
+--   this rule: builder deaths 0 / 0 / 1, quick repairs sent 26 / 26 / 27,
+--             aborts 8 / 8 / 4. No tank deaths in either. 0 ms is the old
+--             game line for line. The bot measures D = 1 there (the arena
+--             bot predicts its own tank), so part 2 did not act; part 1 did.
+-- false = the old rule. MAST: false.
+M.QUICK_REPAIR_LAG_AWARE = true
 -- How far (tiles) past the blocker's square a shell's ray may pass and
 -- still count as a hit, for both rules above; for the builder, how much
 -- nearer to him a shell's explosion counts (the engine's blast area is used
@@ -9101,6 +9125,7 @@ M.PRESETS.mast = {
   QUICK_REPAIR_WAIT_ALL_PILLS       = false,  -- 2.2.1 had no quick repair
   QUICK_REPAIR_DEATH_TICK_SHOT      = false,  -- 2.2.1 had no quick repair
   QUICK_REPAIR_KILL_SLOP_TICKS      = 0,      -- 2.2.1 had no quick repair
+  QUICK_REPAIR_LAG_AWARE            = false,  -- 2.2.1 had no quick repair
   PT2_START_BUILDER_SAFE            = false,  -- 2.2.1 had no pill take v2
   POST_KILL_WAIT_TICKS              = 15,
   CARRY_APPROACH_MIN_ARMOUR_ONE     = 30,
