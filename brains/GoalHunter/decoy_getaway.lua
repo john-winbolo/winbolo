@@ -804,8 +804,8 @@ end
 --   wall (full)    the first shell makes it a damaged wall and gives it a
 --                  life of building_life; each shell after takes one life,
 --                  and at 0 it is rubble.  building_life + 1 shells.
---   wall_damaged   its life left: 1 .. building_life, or building_life + 1
---                  for a damaged wall that no shell has touched yet.  The
+--   wall_damaged   its life left: 1 .. building_life (building_life too
+--                  for a damaged wall that no shell has touched yet).  The
 --                  life is the engine's own list and the brain cannot see
 --                  it, so the SMALLEST value is used: 1 (move sooner).
 --   pill           its armour, pill_shell_damage (1) off per shell:

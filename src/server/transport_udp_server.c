@@ -100,6 +100,7 @@ UdpServerState udpServer;
 void srvSendTo(const uint8_t *buf, int len,
                const struct sockaddr_in *addr) {
     if (netImpairEnabled(&srvImpairOut) &&
+        srvImpairPeer(&srvImpairOut, addr) &&
         netImpairOffer(&srvImpairOut, buf, len, addr, srvNow())) {
         return;
     }

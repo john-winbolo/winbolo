@@ -86,8 +86,9 @@ struct GameSim;
  * Define BOLO_LEGACY_SQUARE_COLLISION (compile time only — there is no
  * runtime toggle) to revert BOTH to the original Bolo behaviour: the
  * square `abs(dx) < 128 && abs(dy) < 128` hit-zone and the legacy
- * direction-dependent bounding-box grid-snap building nudge. */
-/* #define BOLO_LEGACY_SQUARE_COLLISION */
+ * direction-dependent bounding-box grid-snap building nudge. The define
+ * itself is in hit_rules.h, which the Log Viewer reads too. */
+#include "hit_rules.h"
 
 /* Hit-circle radius in WORLD units. The map-square mid-radius
  * (MAP_SQUARE_MIDDLE) is 128 — a one-tile-diameter circle. This is set one
@@ -1705,6 +1706,13 @@ BYTE tankGetFirstRight(tank *value);
 void tankSetFirstLeft(tank *value, BYTE val);
 void tankSetFirstRight(tank *value, BYTE val);
 
+/* The speed a tank moving slower than tank_min_move has saved up towards its
+ * next move. The server sends it to the tank's owner in each snapshot
+ * (TankSnapshot.residualSpeed) and the owning client sets it before replaying
+ * its unacknowledged inputs. */
+BYTE tankGetResidualSpeed(tank *value);
+void tankSetResidualSpeed(tank *value, BYTE val);
+
 /*********************************************************
 *NAME:          tankSetLastTankDeath
 *AUTHOR:        Chris Lesnieski
@@ -1763,33 +1771,5 @@ int tankCalcCRCSetup(tank *value);
  *  src - The tank to copy (may be NULL)
  *********************************************************/
 tank tankDeepCopy(tank src);
-
-/*********************************************************
- *NAME:          tankSnapToServer
- *PURPOSE:
- *  Copies all state from a server-authoritative tank into
- *  the predicted tank. Preserves client-only settings
- *  (autoSlowdown, autoHideGunsight, sightLen, showSight).
- *  Deep-copies the carried pills linked list.
- *
- *ARGUMENTS:
- *  dst - The predicted tank (destination)
- *  src - The server's authoritative tank (source)
- *********************************************************/
-void tankSnapToServer(tank dst, tank src);
-
-/*********************************************************
- *NAME:          tankSyncResources
- *PURPOSE:
- *  Copies server-authoritative resource and status fields
- *  (armour, shells, mines, trees, kills, deaths, etc.)
- *  into the predicted tank without touching position or
- *  physics state.
- *
- *ARGUMENTS:
- *  dst - The predicted tank (destination)
- *  src - The server's authoritative tank (source)
- *********************************************************/
-void tankSyncResources(tank dst, tank src);
 
 #endif

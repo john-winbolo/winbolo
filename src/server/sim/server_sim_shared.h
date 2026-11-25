@@ -360,11 +360,14 @@ bool serverSimSidesAgree(const ServerSim *sim);
  * again. It changes nothing. */
 void serverSimSidesCheck(ServerSim *sim);
 
-/* The lowest team id in 1..MAX_TANKS-1 that no connected seat is on, or 0
- * when every id has somebody. A team not in use is set up first: named
- * "Team N", on no start side, with the colour the fewest teams in use have
- * (the lowest on a tie), and published. A team still in use (a lobby or
- * scenario team that emptied) keeps its name, colour and start side. */
+/* The lowest team id in 1..MAX_TANKS-1 that no connected seat is on and no
+ * rejoin record holds. When every id has a seat or a record, the id of the
+ * oldest record that no seat is on, which is then cleared from every
+ * record. 0 when every id has a seat. A team not in use is set up first:
+ * named "Team N", on no start side, with the colour the fewest teams in
+ * use have (the lowest on a tie), and published. A team still in use (a
+ * lobby or scenario team that emptied) keeps its name, colour and start
+ * side. */
 BYTE serverSimFreeTeam(ServerSim *sim);
 
 /* Tell everyone that seat slot's team changed from oldTeam: publish its
