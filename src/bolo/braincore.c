@@ -2760,18 +2760,6 @@ static int l_cpf_lgm_travel_ticks(lua_State *L) {
   return 1;
 }
 
-/* cpf_lgm_reach_key() -> n or nil: the change count of the LGM walk's
- * inputs (brainPathfinderLgmReachGen). The same n means
- * cpf_lgm_travel_ticks_map gives the same answers. nil: no map, or the
- * abort flag is set. */
-static int l_cpf_lgm_reach_key(lua_State *L) {
-  CPF_GET(L);
-  long g = brainPathfinderLgmReachGen(pf);
-  if (g < 0) return 0;
-  lua_pushinteger(L, (lua_Integer)g);
-  return 1;
-}
-
 static int l_cpf_lgm_travel_ticks_map(lua_State *L) {
   CPF_GET(L);
   BYTE smx = (BYTE)luaL_checkinteger(L, 1);
@@ -3140,7 +3128,6 @@ void brainCoreRegisterPathfinder(lua_State *L, BrainPathfinder **pfPtr) {
     { "cpf_danger_at",             l_cpf_danger_at },
     { "cpf_lgm_travel_ticks",      l_cpf_lgm_travel_ticks },
     { "cpf_lgm_travel_ticks_map",  l_cpf_lgm_travel_ticks_map },
-    { "cpf_lgm_reach_key",         l_cpf_lgm_reach_key },
     { "cpf_lgm_walk_path",         l_cpf_lgm_walk_path },
     { "cpf_lgm_walk_path_wu",      l_cpf_lgm_walk_path_wu },
     { "cpf_lgm_man_speed",         l_cpf_lgm_man_speed },

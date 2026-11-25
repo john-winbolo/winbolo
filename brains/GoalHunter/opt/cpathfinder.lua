@@ -267,13 +267,6 @@ function M.influence_at(x, y)
   return cpf_influence_at(x, y)
 end
 
---- The change count of the LGM walk's inputs (map, LGM blocks, man
---- speeds): the same count, the same lgm_travel_ticks_map answers. nil
---- when the exe has no cpf_lgm_reach_key (M.lgm_reach_key is then nil).
-M.lgm_reach_key = rawget(_G, "cpf_lgm_reach_key") and function()
-  return cpf_lgm_reach_key()
-end or nil
-
 --- Influence tail (see brainPathfinderRebuildInfluenceTail). Rebuild reads the
 --- stamped grid, so call it after the stamps and before merge; merge every tick.
 --- deep_margin (optional, 0 = off) keeps the tail off tiles within that many
