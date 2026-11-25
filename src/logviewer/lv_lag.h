@@ -207,6 +207,8 @@ typedef struct {
     uint8_t mx, my, px, py, frame;
     int8_t  owner;   /* the player who fired it, or LV_SHELL_OWNER_NONE */
     uint16_t id;     /* the same for one shell in every frame (lv_shellOwnerLinkIds) */
+    bool    isNew;   /* an explosion new at this step, as the map found it when
+                        the frame was taken: the dot and the frame 8 picture */
 } LvLagShell;
 
 /* One pillbox as the map drew it at one entry: what the pillbox drawing and

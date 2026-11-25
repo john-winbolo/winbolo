@@ -1687,12 +1687,11 @@ void lv_drawShells(screenBullets *sBullets) {
     zf = lv_windowGetZoomFactor();
     s_hitBlastCount = 0;
     s_hitBlastZoom = zf;
-    if (s_hitBoxes) {
-        /* The explosions that are new on this map, in map squares: the
-           shell list's squares are from the view's top left. */
-        newBlastCount = lv_screenNewBlasts(&newBlast);
-        lv_screenGetOffsets(&viewX, &viewY);
-    }
+    /* The explosions that are new on this map, in map squares: the shell
+       list's squares are from the view's top left. They get the frame 8
+       picture (lvHitboxDrawFrame) and, with Hit Boxes on, the dot. */
+    newBlastCount = lv_screenNewBlasts(&newBlast);
+    lv_screenGetOffsets(&viewX, &viewY);
 
     for (count = 1; count <= total; count++) {
         lv_screenBulletsGetItem(sBullets, count, &mx, &my, &px, &py, &frame);
@@ -1702,17 +1701,19 @@ void lv_drawShells(screenBullets *sBullets) {
            step the explosion is new (lv_screenNewBlasts), not by its
            frame, which the server can have lowered before it wrote the
            step. The picture of an explosion has its top left at (fx, fy). */
-        if (newBlastCount > 0 && lvHitboxIsBlastFrame(frame) &&
-            s_hitBlastCount < LV_HIT_BLAST_MAX) {
+        if (newBlastCount > 0 && lvHitboxIsBlastFrame(frame)) {
             int k;
             for (k = 0; k < newBlastCount; k++) {
                 const LvHitBlastRec *nb = &newBlast[k];
                 if ((int)nb->mx == (int)viewX + (int)mx && (int)nb->my == (int)viewY + (int)my &&
                     nb->px == px && nb->py == py && nb->frame == frame) {
-                    float c = (float)zf * (float)lvHitboxBlastCentreInPicture();
-                    s_hitBlast[s_hitBlastCount].x = fx + c;
-                    s_hitBlast[s_hitBlastCount].y = fy + c;
-                    s_hitBlastCount++;
+                    if (s_hitBoxes && s_hitBlastCount < LV_HIT_BLAST_MAX) {
+                        float c = (float)zf * (float)lvHitboxBlastCentreInPicture();
+                        s_hitBlast[s_hitBlastCount].x = fx + c;
+                        s_hitBlast[s_hitBlastCount].y = fy + c;
+                        s_hitBlastCount++;
+                    }
+                    frame = lvHitboxDrawFrame(frame, true);
                     break;
                 }
             }

@@ -723,6 +723,16 @@ int run_lv_hitbox_new_blast(void) {
     lvHitboxNewBlasts(prev, LV_HITBOX_BLAST_PREV_MAX, true, cur, 1, isNew);
     UT_ASSERT_MSG(isNew[0] == 1, "not new with a full step before that has no explosion");
 
+    /* The picture: a new explosion recorded at frame 7 draws the frame 8
+       picture on that step only; every other frame and step draws the
+       recorded frame. */
+    UT_ASSERT(lvHitboxDrawFrame(7, true) == 8);
+    UT_ASSERT(lvHitboxDrawFrame(8, true) == 8);
+    UT_ASSERT(lvHitboxDrawFrame(7, false) == 7);
+    UT_ASSERT(lvHitboxDrawFrame(6, true) == 6);
+    UT_ASSERT(lvHitboxDrawFrame(1, true) == 1);
+    UT_ASSERT(lvHitboxDrawFrame(12, true) == 12);
+
     /* A run of steps: an explosion first recorded at 8 for two steps, then
        7 down to 1, gets the dot on its first step only; one first recorded
        at 7 too. */
@@ -744,6 +754,12 @@ int run_lv_hitbox_new_blast(void) {
             for (k = 0; k < lens[r]; k++) {
                 cur[0] = newBlastRec(30, 40, 7, 9, runs[r][k]);
                 lvHitboxNewBlasts(prev, nPrev, true, cur, 1, isNew);
+                /* Every run starts with the frame 8 picture, and after
+                   that draws the recorded frame. */
+                UT_ASSERT_MSG(lvHitboxDrawFrame(cur[0].frame, isNew[0] != 0) ==
+                                  (k == 0 ? 8 : runs[r][k]),
+                              "run %d step %d draws frame %d", r, k,
+                              lvHitboxDrawFrame(cur[0].frame, isNew[0] != 0));
                 if (isNew[0]) {
                     dots++;
                     if (firstDot < 0) firstDot = k;
