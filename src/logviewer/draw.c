@@ -1464,6 +1464,17 @@ void lv_drawMainScreen(screen *value, screenMines *mineView, screenTanks *tks, s
     (void)isPillView; (void)edgeX; (void)edgeY; (void)useCursor;
     (void)cursorLeft; (void)cursorTop;
 
+    /* Point sampling for the map's sprite sheets, set again every frame.
+     * The viewer's panels draw these same textures through ImGui::Image,
+     * and the ImGui SDL renderer backend writes its own scale mode (LINEAR
+     * unless a draw callback says otherwise) into every texture it binds
+     * (imgui_impl_sdlrenderer3.cpp). The mode stays on the texture after
+     * ImGui is done, so without this the map samples them LINEAR: a sprite
+     * that does not sit on whole pixels (the N, E, S and W shells, and the
+     * zoomed shells over the blit) comes out smeared. The game view draws
+     * the same tile sheet, so this is set before the game view returns. */
+    lvDrawSpriteSheetsNearest();
+
     /* Game-view path: routes the same per-frame pointers lv_screenUpdate
      * built into the direct-render game-look frame. Serves both the
      * standalone viewer and the embedded "Watch a Log" flow — game-view
@@ -1503,16 +1514,6 @@ void lv_drawMainScreen(screen *value, screenMines *mineView, screenTanks *tks, s
      * be rendering to a target of its own. */
     SDL_Texture *prevTarget = SDL_GetRenderTarget(sdlRenderer);
     SDL_SetRenderTarget(sdlRenderer, textureTarget);
-
-    /* Point sampling for the map's sprite sheets, set again every frame.
-     * The viewer's panels draw these same textures through ImGui::Image,
-     * and the ImGui SDL renderer backend writes its own scale mode (LINEAR
-     * unless a draw callback says otherwise) into every texture it binds
-     * (imgui_impl_sdlrenderer3.cpp). The mode stays on the texture after
-     * ImGui is done, so without this the map samples them LINEAR: a sprite
-     * that does not sit on whole pixels (the N, E, S and W shells, and the
-     * zoomed shells over the blit) comes out smeared. */
-    lvDrawSpriteSheetsNearest();
 
     for (x = 0, y = 0, done = FALSE; !done; ) {
         pos = lv_screenGetPos(value, x, y);
@@ -1702,15 +1703,18 @@ int lv_drawGetFrameRate(void) { return (int)g_dwFrameTotal; }
  * offset, as in the game.
  *
  * The game calls spritePositionShell at its own zoom, straight onto the
- * screen, so the half-pixel tip offsets (1.5 for N, E, S and W) are a whole
- * number of screen pixels at 2x. The render target here is at 1x, and a
- * shell drawn into it at x.5 is smeared over two pixels when the map is
- * zoomed. So in the viewer's own window the flying shells are not drawn
+ * screen, so a shell is placed as the game places it at that zoom, half-pixel
+ * tip offsets (1.5 for N, E, S and W) included. The sprite sheet is sampled
+ * NEAREST, which keeps the picture sharp. The render target here is at 1x,
+ * and a shell drawn into it at x.5 is smeared over two pixels when the map
+ * is zoomed. So in the viewer's own window the flying shells are not drawn
  * into the target: they are noted here and drawn over the zoomed map by
  * lvDrawShellsOverBlit, with the same call at the zoom the map shows at.
  * Where the target itself is the picture (embedded, a GIF capture) they go
  * into the target at the pixel the game's renderer fills for x.5 at 1x: the
- * floor. Explosions are whole tiles with no offset and stay in the target. */
+ * floor. Explosions are whole tiles with no offset and stay in the target.
+ * A shell past the list's cap also goes into the target, floored, so that
+ * it is not lost. */
 typedef struct {
     BYTE mx, my, px, py, frame;
     int srcX, srcY, srcW, srcH;
@@ -1842,24 +1846,27 @@ void lv_drawShells(screenBullets *sBullets) {
         if (frame >= SHELL_EXPLOSION8 && frame <= SHELL_EXPLOSION1) {
             lv_drawMarkRedraw(mx, my, px, py, 0);
         } else {
-            /* The tip offset moves the picture up to 4 art pixels left of
-               and above px, py, which can be in the square before: mark
-               every square the picture is on, one pixel more each way for
-               the half-pixel offsets. */
-            int left = (int)floorf(fx / (float)zf) - mx * TILE_SIZE_X;
-            int top  = (int)floorf(fy / (float)zf) - my * TILE_SIZE_Y;
-            lv_drawMarkRedrawRect(mx, my, left, top,
-                                  srcW / zf + 1, srcH / zf + 1);
-            if (!inTarget) {
-                if (s_shellSpriteCount < LV_MAX_SHELL_SPRITES) {
-                    LvShellSprite *s = &s_shellSprite[s_shellSpriteCount++];
-                    s->mx = mx; s->my = my; s->px = px; s->py = py;
-                    s->frame = frame;
-                    s->srcX = srcX; s->srcY = srcY;
-                    s->srcW = srcW; s->srcH = srcH;
-                }
+            int left, top;
+            if (!inTarget && s_shellSpriteCount < LV_MAX_SHELL_SPRITES) {
+                /* Drawn over the blit, not into the target: nothing is
+                   left in the target to clear, so no redraw marks. */
+                LvShellSprite *s = &s_shellSprite[s_shellSpriteCount++];
+                s->mx = mx; s->my = my; s->px = px; s->py = py;
+                s->frame = frame;
+                s->srcX = srcX; s->srcY = srcY;
+                s->srcW = srcW; s->srcH = srcH;
                 continue;
             }
+            /* Into the target: an embedded viewer, a GIF capture, or a
+               shell past the list's cap, which is drawn here floored
+               rather than not at all. The tip offset moves the picture up
+               to 4 art pixels left of and above px, py, which can be in the
+               square before: mark every square the picture is on, one pixel
+               more each way for the half-pixel offsets. */
+            left = (int)floorf(fx / (float)zf) - mx * TILE_SIZE_X;
+            top  = (int)floorf(fy / (float)zf) - my * TILE_SIZE_Y;
+            lv_drawMarkRedrawRect(mx, my, left, top,
+                                  srcW / zf + 1, srcH / zf + 1);
             fx = floorf(fx);
             fy = floorf(fy);
         }
