@@ -47,6 +47,7 @@ typedef enum {
     CLIENT_FRONT_PAUSE_DECK,            /* the pause menu (Start / Escape) */
     CLIENT_FRONT_PAUSE_TUTORIAL,        /* a popup in a shipped tutorial */
     CLIENT_FRONT_PAUSE_SAVE_DIALOG,     /* the native save-map dialog */
+    CLIENT_FRONT_PAUSE_USER,            /* the host's Pause Game item */
     CLIENT_FRONT_PAUSE_COUNT
 } ClientFrontPause;
 
@@ -78,6 +79,10 @@ void clientFrontResumeEnd(struct ClientSim *cs);
 
 /* Whether any freeze or the suspend is on: the driver runs no game ticks. */
 bool clientFrontAnyPause(void);
+
+/* Whether one freeze is on. The Pause Game item reads its own one, to show
+ * "Resume Game" and the on-screen note. */
+bool clientFrontPauseIsOn(ClientFrontPause which);
 
 /* Once a frame in a single-player game, with the client mutex free:
  *   - hide the main menu's Tutorial button, and save that, once a shipped

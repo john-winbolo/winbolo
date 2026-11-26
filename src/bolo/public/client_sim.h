@@ -975,6 +975,18 @@ int clientSimGetPings(const ClientSim *cs, uint32_t nowMs,
 void clientSimSetPingMuted(ClientSim *cs, uint8_t player, bool muted);
 bool clientSimIsPingMuted(const ClientSim *cs, uint8_t player);
 
+/* How old the server's last pause notice may be before the client stops
+ * believing it. The server repeats it every second while a pause is on. */
+#define CLIENT_PAUSE_NOTICE_STALE_MS 3000u
+
+/* The server's pause state as the client was last told it: SIM_PAUSE_FLAG_*
+ * (server_sim.h), bit 0 the bots, bit 1 the whole game. 0 when nothing is
+ * paused, when no notice came, or when the last one is older than
+ * CLIENT_PAUSE_NOTICE_STALE_MS at nowMs (the caller's SDL_GetTicks()). */
+uint8_t clientSimGetServerPauseFlags(const ClientSim *cs, uint64_t nowMs);
+/* Record a pause notice; called by the snapshot event path. */
+void clientSimNoteServerPause(ClientSim *cs, uint8_t flags, uint64_t nowMs);
+
 /* The overview's fog memory: the tile every square carried the last time the
  * player could see it, plus the regions they can see right now. Maintained
  * every display tick. NULL when cs is NULL. */

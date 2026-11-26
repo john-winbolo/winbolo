@@ -56,6 +56,14 @@ typedef enum {
   CMD_OP_REAPPLY_ALLIANCES,
   CMD_OP_SHUTDOWN,
   CMD_OP_EXIT,
+  /* WinBoloDS only: the manual pause of the bots or of the whole game,
+   * and a status line on stderr. While the game is paused its tick stands
+   * still, so a resume_game line is taken at once, whatever its tick. */
+  CMD_OP_PAUSE_BOTS,
+  CMD_OP_RESUME_BOTS,
+  CMD_OP_PAUSE_GAME,
+  CMD_OP_RESUME_GAME,
+  CMD_OP_PAUSE_STATUS,
   CMD_OP__COUNT
 } CmdOp;
 

@@ -548,5 +548,11 @@ static inline int gameEventDataSize(uint8_t type) {
 /* EVENT_SERVER_MSG message IDs */
 #define SERVER_MSG_GAME_LOCKED   1
 #define SERVER_MSG_GAME_UNLOCKED 2
+/* The pause state (server_sim.h, SIM_PAUSE_FLAG_*). The event has one data
+ * byte on the wire, so the flags ride in the message id: id = BASE + flags,
+ * 3 (nothing paused) to 6 (bots and game). A client older than this ignores
+ * an id it does not know. */
+#define SERVER_MSG_PAUSE_STATE_BASE 3
+#define SERVER_MSG_PAUSE_STATE_LAST 6
 
 #endif /* INPUT_PACKET_H */

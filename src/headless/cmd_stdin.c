@@ -39,6 +39,11 @@ static const char *kOpNames[CMD_OP__COUNT] = {
   "reapply_alliances",
   "shutdown",
   "exit",
+  "pause_bots",
+  "resume_bots",
+  "pause_game",
+  "resume_game",
+  "pause_status",
 };
 
 const char *cmdOpName(CmdOp op) {

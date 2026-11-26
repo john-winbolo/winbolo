@@ -884,6 +884,22 @@ static bool cmdDispatchFast(const CmdLine *cmd) {
     case CMD_OP_REAPPLY_ALLIANCES:
       serverSimReapplyTeamAlliances(fastServerSim);
       return true;
+    case CMD_OP_PAUSE_BOTS:
+    case CMD_OP_RESUME_BOTS:
+    case CMD_OP_PAUSE_GAME:
+    case CMD_OP_RESUME_GAME:
+      (void)serverSimSetManualPause(
+          fastServerSim,
+          (cmd->op == CMD_OP_PAUSE_GAME || cmd->op == CMD_OP_RESUME_GAME)
+              ? SIM_PAUSE_GAME : SIM_PAUSE_BOTS,
+          cmd->op == CMD_OP_PAUSE_BOTS || cmd->op == CMD_OP_PAUSE_GAME);
+      return true;
+    case CMD_OP_PAUSE_STATUS: {
+      char line[256];
+      serverSimFormatPauseStatus(fastServerSim, line, sizeof(line));
+      fprintf(stderr, "cmd-stdin: pause status: %s\n", line);
+      return true;
+    }
     case CMD_OP_SHUTDOWN:
       /* No symmetric "stop now" path on the in-process sim — the
        * server is destroyed at process exit. Treat as a no-op. */
@@ -944,6 +960,17 @@ static bool cmdDispatchServer(const CmdLine *cmd) {
       return true;
     case CMD_OP_CHAT:
       clientSimNetSendChat(humanSim, cmd->dest, cmd->body);
+      return true;
+    case CMD_OP_PAUSE_BOTS:
+    case CMD_OP_RESUME_BOTS:
+    case CMD_OP_PAUSE_GAME:
+    case CMD_OP_RESUME_GAME:
+      /* The admin channel: PACKET_PAUSE_SET. The server takes it only from
+       * a player who may edit the lobby. */
+      clientSimNetSendPauseSet(
+          humanSim,
+          (cmd->op == CMD_OP_PAUSE_GAME || cmd->op == CMD_OP_RESUME_GAME) ? 1 : 0,
+          cmd->op == CMD_OP_PAUSE_BOTS || cmd->op == CMD_OP_PAUSE_GAME);
       return true;
     case CMD_OP_START_GAME:
     case CMD_OP_REAPPLY_ALLIANCES:

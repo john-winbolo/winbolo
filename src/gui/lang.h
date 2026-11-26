@@ -3725,6 +3725,15 @@
 #define STR_REJECT_CAN_REJOIN                    3945
 #define STR_JOIN_AS_NEW                          3946
 
+/* The host's pause of the AI players or of the whole game: the Players
+ * menu items and the note on the screen while a pause is on */
+#define STR_MENU_PAUSE_AI                        3947
+#define STR_MENU_RESUME_AI                       3948
+#define STR_MENU_PAUSE_GAME                      3949
+#define STR_MENU_RESUME_GAME                     3950
+#define STR_PAUSE_NOTE_AI                        3951
+#define STR_PAUSE_NOTE_GAME                      3952
+
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
  * ------------------------------------------------------- */

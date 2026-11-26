@@ -480,6 +480,15 @@ void clientSimNetSendPlayerPingMute(ClientSim *cs, BYTE targetPlayer,
   clientSimSubmitCommand(cs, &cmd);
 }
 
+void clientSimNetSendPauseSet(ClientSim *cs, uint8_t target, bool paused) {
+  if (cs == NULL || !cs->hasTransport) return;
+  if (clientSimIsSpectator(cs)) return;
+  ClientCommand cmd = { .type = CMD_PAUSE_SET };
+  cmd.u.pauseSet.target = target;
+  cmd.u.pauseSet.paused = paused;
+  clientSimSubmitCommand(cs, &cmd);
+}
+
 void clientSimNetSendVoiceState(ClientSim *cs, bool hasMic, bool selfMuted) {
   if (cs == NULL || !cs->hasTransport) return;
   ClientCommand cmd = { .type = CMD_VOICE_STATE };

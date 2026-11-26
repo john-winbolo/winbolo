@@ -865,6 +865,16 @@ static void clientApplyGameEventsInner(ClientSim *csPtr,
           case SERVER_MSG_GAME_UNLOCKED:
             clientSimNetStatusMessage(csPtr, "This game is now unlocked to new players (server unlock)");
             break;
+          default:
+            /* The pause state: the flags ride in the id. */
+            if (events[i].data[0] >= SERVER_MSG_PAUSE_STATE_BASE &&
+                events[i].data[0] <= SERVER_MSG_PAUSE_STATE_LAST) {
+              clientSimNoteServerPause(
+                  csPtr,
+                  (uint8_t)(events[i].data[0] - SERVER_MSG_PAUSE_STATE_BASE),
+                  SDL_GetTicks());
+            }
+            break;
           }
         }
         break;

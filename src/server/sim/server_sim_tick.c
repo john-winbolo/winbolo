@@ -1434,6 +1434,56 @@ void serverSimTick(ServerSim *sim) {
     }
 }
 
+/* A running frame while the game is paused (server_sim.h). The same event
+ * clear as the top of a running serverSimTick, so the UDP drain after this
+ * sends only what the frame adds (the pause notice), and nothing else of
+ * serverSimTick: no half-step, no scenario hook, no tick count, no log
+ * entry. The map changes and pings queued between frames stay queued and
+ * go out in the first frame after the resume.
+ *
+ * Each player's queued inputs are taken off and dropped, and the newest
+ * tick among them is counted as processed. The client keeps sending while
+ * the game is paused; without this the queue would fill, and on the resume
+ * the backlog would run as a burst of old movement. Counting the dropped
+ * ticks as processed also keeps each client's unacknowledged history short,
+ * so its prediction has little to replay. A mine or build in a dropped
+ * input is dropped too: nothing acts while the game is paused. The held
+ * buttons go to zero, so a stall right after the resume coasts and does not
+ * repeat a turn from before the pause. The jitter buffer fills again from
+ * empty, as it does after any dry spell. */
+void serverSimPausedGameFrame(ServerSim *sim) {
+    BYTE p;
+    if (sim == NULL) {
+        return;
+    }
+    sim->eventCount = 0;
+    sim->mapEventCount = 0;
+    for (p = 0; p < MAX_TANKS; p++) {
+        uint32_t newest = 0;
+        while (sim->inputQueueHead[p] != sim->inputQueueTail[p]) {
+            uint8_t tail = sim->inputQueueTail[p] & (SERVER_INPUT_QUEUE_SIZE - 1);
+            if (sim->inputQueue[p][tail].tick > newest) {
+                newest = sim->inputQueue[p][tail].tick;
+            }
+            sim->inputQueueTail[p]++;
+        }
+        if (newest > sim->lastProcessedInput[p]) {
+            sim->lastProcessedInput[p] = newest;
+        }
+        if (newest > sim->newestDequeuedTick[p]) {
+            sim->newestDequeuedTick[p] = newest;
+        }
+        if (newest > sim->lastActionAppliedTick[p]) {
+            sim->lastActionAppliedTick[p] = newest;
+        }
+        sim->pendingHarvestActions[p] = 0;
+        sim->pendingHarvestBuildAction[p] = 0;
+        sim->lastInputButtons[p] = 0;
+        sim->inputDryTicks[p] = 0;
+        sim->inputBufferFilled[p] = 0;
+    }
+}
+
 /* Should intake admit this input although it is stale?
  *
  * A slot whose stream has fallen behind is stall-advanced every half-step

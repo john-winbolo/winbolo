@@ -1187,6 +1187,10 @@ void windowDeckPause(ClientSim *cs, bool active) {
 void windowTutorialPause(ClientSim *cs, bool active) {
     iosSoloPause(cs, CLIENT_FRONT_PAUSE_TUTORIAL, active);
 }
+/* The host's Pause Game item. */
+void windowUserPause(ClientSim *cs, bool active) {
+    iosSoloPause(cs, CLIENT_FRONT_PAUSE_USER, active);
+}
 
 /* -------------------------------------------------------
  * Frontend callbacks (matching Android android_frontend.c)

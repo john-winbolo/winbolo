@@ -40,7 +40,7 @@ void strlower(char *s) {
 }
 
 void serverConsolePrintHelp(void) {
-  fprintf(stderr, "Help:\n Lock - Locks the server and stops new players from joining.\n Unlock - Unlocks the server and allows new players to join.\n savemap <map file> - Save the map file to path and file <map file>\n Say <text> - Sends this message to all players in the game unless they have turned off server messages.\n Quit - Exits the server.\n Info - Provide information about the current game\n Kick - Kicks a player. Case insensitive, prefix a * for WBN players.\n Host - Transfers the host role to a player. Case insensitive.\n Status - Returns list of players who aren't locked.\n Reload - Re-reads the scenario file beside the map. Takes effect at the next round.\n Mem - Writes a memory report line: process memory, each bot's Lua heap, world list sizes.\n MemDeep - Mem plus the biggest Lua tables of each bot. Pauses the game while it walks. The walk allocates inside each bot's Lua state, so do not use it in seeded repro runs.\n");
+  fprintf(stderr, "Help:\n Lock - Locks the server and stops new players from joining.\n Unlock - Unlocks the server and allows new players to join.\n savemap <map file> - Save the map file to path and file <map file>\n Say <text> - Sends this message to all players in the game unless they have turned off server messages.\n Quit - Exits the server.\n Info - Provide information about the current game\n Kick - Kicks a player. Case insensitive, prefix a * for WBN players.\n Host - Transfers the host role to a player. Case insensitive.\n Status - Returns list of players who aren't locked.\n Reload - Re-reads the scenario file beside the map. Takes effect at the next round.\n Mem - Writes a memory report line: process memory, each bot's Lua heap, world list sizes.\n MemDeep - Mem plus the biggest Lua tables of each bot. Pauses the game while it walks. The walk allocates inside each bot's Lua state, so do not use it in seeded repro runs.\n PauseBots - Stops every bot: no brain thinks and the tanks brake to a stop. Humans and the game go on. Stays until ResumeBots; a human joining does not resume it.\n ResumeBots - Ends a PauseBots.\n PauseGame - Stops the whole game for everyone: nothing moves, and the game clock and -ticklimit stand still. Players stay connected and can chat. Stays until ResumeGame.\n ResumeGame - Ends a PauseGame.\n PauseStatus (or BotStatus) - Shows what is paused, why (manual or idle), for how many seconds, and the -idlepause setting.\n");
 }
 
 /* savemap <file>: step over the command word and any whitespace, append
@@ -107,6 +107,31 @@ void serverConsoleDispatch(const ServerConsoleOps *ops, char *keyBuff,
 
   if (strncmp(keyBuff, "help", 4) == 0) {
     serverConsolePrintHelp();
+  } else if (strncmp(keyBuff, "pausebots", 9) == 0 ||
+             strncmp(keyBuff, "resumebots", 10) == 0 ||
+             strncmp(keyBuff, "pausegame", 9) == 0 ||
+             strncmp(keyBuff, "resumegame", 10) == 0) {
+    /* pause<target> or resume<target>: the target word follows the verb. */
+    bool paused = (keyBuff[0] == 'p');
+    int  target = (strncmp(keyBuff + (paused ? 5 : 6), "game", 4) == 0) ? 1 : 0;
+    char msg[SERVER_CONSOLE_LINE];
+    msg[0] = '\0';
+    if (ops->setPause == NULL) {
+      fprintf(stderr, "Pausing is not available on this server\n");
+    } else {
+      ops->setPause(target, paused, msg, sizeof(msg));
+      printf("%s\n", msg);
+    }
+  } else if (strncmp(keyBuff, "pausestatus", 11) == 0 ||
+             strncmp(keyBuff, "botstatus", 9) == 0) {
+    char msg[SERVER_CONSOLE_LINE];
+    msg[0] = '\0';
+    if (ops->pauseStatus == NULL) {
+      fprintf(stderr, "Pausing is not available on this server\n");
+    } else {
+      ops->pauseStatus(msg, sizeof(msg));
+      printf("%s\n", msg);
+    }
   } else if (strncmp(keyBuff, "unlock", 6) == 0) {
     ops->setLock(false);
   } else if (strncmp(keyBuff, "lock", 4) == 0) {

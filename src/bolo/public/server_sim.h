@@ -1467,6 +1467,77 @@ BYTE serverSimGetNumPlayers(ServerSim *sim);
  *********************************************************/
 BYTE serverSimGetNumHumans(ServerSim *sim);
 
+/* ---- Bot pause and game pause (server_sim_pause.c) ----
+ *
+ * Two pause targets. SIM_PAUSE_BOTS stops every bot: its brain does not
+ * think and its tank is sent a brake-only input, so it slows to a stop and
+ * does not fire. Humans and the sim go on. SIM_PAUSE_GAME stops the whole
+ * sim: no tank, shell, builder or pill moves, the game clock, -ticklimit,
+ * the round time and the scenario on_tick hook do not go on, and no bot
+ * thinks. Clients stay connected and are told about it.
+ *
+ * A pause has a reason. A manual pause (host, console, admin channel,
+ * script) stays until a manual resume of the same target. The idle pause
+ * (-idlepause) starts when no human has been in the server for the set
+ * seconds and stops at once when a human is back; it never ends a manual
+ * pause. A paused bot is never killed by the brain time budget, and it is
+ * given no backlog of think time on resume. */
+typedef enum {
+    SIM_PAUSE_BOTS = 0,
+    SIM_PAUSE_GAME = 1,
+    SIM_PAUSE_TARGET_COUNT
+} SimPauseTarget;
+
+/* Bits of the pause state as clients are told it (EVENT_SERVER_MSG,
+ * SERVER_MSG_PAUSE_STATE, data[1]). */
+#define SIM_PAUSE_FLAG_BOTS 0x01u
+#define SIM_PAUSE_FLAG_GAME 0x02u
+
+/* Frames (20 ms) between repeats of the pause notice while a pause is on.
+ * The notice rides the snapshot event stream, so a lost one or a client
+ * that joins during the pause is put right by the next repeat. */
+#define SIM_PAUSE_NOTIFY_FRAMES 50u
+
+/* Turn a manual pause of one target on or off. Returns true when the
+ * manual state changed. */
+bool serverSimSetManualPause(ServerSim *sim, SimPauseTarget target, bool on);
+/* True when a manual pause of the target is on. */
+bool serverSimIsManualPause(const ServerSim *sim, SimPauseTarget target);
+/* True when the bots are paused, by either reason. A game pause is not
+ * counted here: serverSimIsGamePaused covers it. */
+bool serverSimAreBotsPaused(const ServerSim *sim);
+/* True when the whole game is paused, by either reason. */
+bool serverSimIsGamePaused(const ServerSim *sim);
+/* SIM_PAUSE_FLAG_* for the pauses on now. */
+uint8_t serverSimGetPauseFlags(const ServerSim *sim);
+/* The idle pause setting. seconds -1 = never (the default), 0 = at once
+ * when no human is in the server. target is the pause it uses. Turning the
+ * setting to -1 also stops an idle pause that is on. */
+void serverSimSetIdlePause(ServerSim *sim, int seconds, SimPauseTarget target);
+int  serverSimGetIdlePauseSeconds(const ServerSim *sim);
+SimPauseTarget serverSimGetIdlePauseTarget(const ServerSim *sim);
+/* True when the idle pause is on now. */
+bool serverSimIsIdlePauseActive(const ServerSim *sim);
+/* Whole seconds the target has been paused, by either reason; 0 when it is
+ * not paused. */
+uint32_t serverSimGetPauseSeconds(const ServerSim *sim, SimPauseTarget target);
+/* One line of text for the console and admin "pausestatus" command, for
+ * example "bots: paused (manual, 12 s); game: running; idle pause: 30 s,
+ * mode bots, waiting". */
+void serverSimFormatPauseStatus(const ServerSim *sim, char *buf, size_t bufSize);
+/* Once a frame, from serverSimLocalTick, in every state: counts the frames
+ * with no human and turns the idle pause on and off. */
+void serverSimPauseFrame(ServerSim *sim);
+/* A running frame of a paused game, in place of the bot tick and
+ * serverSimTick: clears the frame's event buffers and takes every queued
+ * input off without running it, so the tanks stay still and nothing builds
+ * up for the resume. */
+void serverSimPausedGameFrame(ServerSim *sim);
+/* Adds the pause notice to the frame's events when the pause state has
+ * changed, or every SIM_PAUSE_NOTIFY_FRAMES while a pause is on. Running
+ * state only; the caller runs it after the frame's events are made. */
+void serverSimPauseNotify(ServerSim *sim);
+
 /*********************************************************
  *NAME:          serverSimGetNumFielded
  *PURPOSE:

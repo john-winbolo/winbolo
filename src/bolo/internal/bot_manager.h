@@ -294,6 +294,15 @@ typedef struct BotManager {
      * re-seeding, loop the server to death). */
     BYTE         removingBotSlot;
 
+    /* The bot pause (server_sim.h, SIM_PAUSE_BOTS), set by the sim's pause
+     * module. While it is on, botManagerTick still syncs each bot's view of
+     * the game, so the bot comes back with a current map, but it runs no
+     * brain think and arms no budget hook. Each bot is sent a brake-only
+     * input instead, so its tank slows to a stop and never fires. No think
+     * time, overrun or budget kill is counted, and no pool breakdown or
+     * decision record is taken. */
+    bool         paused;
+
     /* Total concurrent brain-tick runners including the producer thread.
      * Saved by botManagerInit after validation; read by the budget formula
      * to scale per-bot time when more bots than runners are active. */

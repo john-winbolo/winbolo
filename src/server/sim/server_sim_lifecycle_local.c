@@ -245,6 +245,22 @@ ServerLocalEdge serverSimLocalTick(ServerSim *sim, uint32_t tickCount,
         *outSimMs = 0.0;
     }
 
+    /* The idle pause counts frames with no human in every state, so a
+     * server that empties in the lobby is already paused when a round
+     * starts there. */
+    serverSimPauseFrame(sim);
+
+    if (preTickState == serverStateRunning && serverSimIsGamePaused(sim)) {
+        /* The whole game is paused: no bot think, no sim tick, so the
+         * clock, -ticklimit, the round time, the scenario hook and the
+         * recording all stand still. The caller's network work goes on
+         * (receive, snapshots, timeouts), and the frame's only event is
+         * the pause notice. */
+        serverSimPausedGameFrame(sim);
+        serverSimPauseNotify(sim);
+        return edge;
+    }
+
     if (preTickState == serverStateRunning) {
         /* Run brain AI bots — queues two InputPackets per bot (keys + game) */
         serverSimLocalBotTick(sim);
@@ -259,6 +275,10 @@ ServerLocalEdge serverSimLocalTick(ServerSim *sim, uint32_t tickCount,
             *outSimMs = (double)(simEnd - simStart) * 1000.0 /
                         (double)SDL_GetPerformanceFrequency();
         }
+        /* After the tick, which cleared the frame's events and wrote the
+         * recording entry: the notice goes to clients and not into the
+         * .wbv. */
+        serverSimPauseNotify(sim);
         /* If game ended during this tick, publish game-over events */
         if (sim->state == serverStateGameOver) {
             edge = serverLocalEdgeGameOver;

@@ -3089,3 +3089,21 @@ STR_LV_SIZE_NOT_MET=The window could not be made {string1} pixels, as -size aske
 STR_REJECT_CAN_REJOIN=A player named {player} left this game {string1} seconds ago. Rejoin as that player?\n\nRejoining puts you back on the same team and returns the pillboxes and bases you owned that are still neutral.
 STR_JOIN_AS_NEW=Join as new
 
+
+# Players menu: stop every bot (single-player host only)
+STR_MENU_PAUSE_AI=Pause AI Players
+
+# Players menu: let the bots think again
+STR_MENU_RESUME_AI=Resume AI Players
+
+# Players menu: stop the whole game (single-player host only)
+STR_MENU_PAUSE_GAME=Pause Game
+
+# Players menu: go on with the game
+STR_MENU_RESUME_GAME=Resume Game
+
+# On-screen note while the bots are paused
+STR_PAUSE_NOTE_AI=AI players paused
+
+# On-screen note while the whole game is paused
+STR_PAUSE_NOTE_GAME=Game paused

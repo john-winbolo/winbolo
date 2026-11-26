@@ -1285,6 +1285,18 @@ static void windowSaveDialogPause(ClientSim *cs, bool active) {
   }
 }
 
+/* The host's Pause Game item (Players menu, Ctrl+Shift+G) on or off. Solo
+   sessions only: a single-player game's server runs in this process, and
+   this is the same freeze the pause menu uses, so the client and the server
+   both stop. Rebases the catch-up wallclock on resume, mirroring
+   windowDeckPause, so the paused time is not run in one burst. */
+void windowUserPause(ClientSim *cs, bool active) {
+  if (clientFrontSoloPause(cs, CLIENT_FRONT_PAUSE_USER, active)) {
+    oldTick = SDL_GetTicks();
+    ttick = oldTick;
+  }
+}
+
 /* -------------------------------------------------------
  * windowReCreate — prepare for game run
  * ------------------------------------------------------- */

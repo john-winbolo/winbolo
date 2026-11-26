@@ -92,6 +92,35 @@ file instead. Running `WinBoloDS` without the required arguments prints the
 full list of options. A client can also host a game itself
 from the in-game menu, without a separate server.
 
+### Pausing the AI players or the game
+
+A server can stop its bots, or the whole game, when no human is in it:
+
+- `-idlepause <seconds>` pauses after that many seconds with no human.
+  `0` pauses at once. `-1` never pauses (the default). The pause ends at
+  once when a human joins.
+- `-idlepausemode bots|game` sets what stops. `bots` (the default): no
+  brain thinks and the bot tanks brake to a stop. The game clock and
+  `-ticklimit` go on. `game`: nothing moves, and the game clock,
+  `-ticklimit`, the round time and the recording stand still. Players stay
+  connected and can chat.
+
+The server console has these commands:
+
+| Command | What it does |
+|---|---|
+| `pausebots` / `resumebots` | Stop or restart every bot |
+| `pausegame` / `resumegame` | Stop or restart the whole game for everyone |
+| `pausestatus` (or `botstatus`) | Show what is paused, why (manual or idle), for how many seconds, and the `-idlepause` setting |
+
+A manual pause stays on until the matching resume command. A human who
+joins does not end a manual pause. Bots count as players for `-autoclose`
+and the empty-server reset, so a paused bot game does not close or reset.
+`-cmd-stdin` takes the same commands as `pause_bots`, `resume_bots`,
+`pause_game`, `resume_game` and `pause_status`. In a single-player game,
+the host has Pause AI Players (Ctrl+Shift+B) and Pause Game
+(Ctrl+Shift+G) in the Players menu.
+
 ## Tests
 
 The unit tests and the baseline tests (scripted games played by headless bots,

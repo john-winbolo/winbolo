@@ -280,6 +280,10 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     sim->emptyResetEnabled = TRUE;
     sim->emptyResetMinutes = 5;
     sim->emptyResetTicks = -1;
+    /* No idle pause unless -idlepause asks for one. The rest of the pause
+     * state is the zero the memset above left: nothing paused. */
+    sim->pause.idleSeconds = -1;
+    sim->pause.idleTarget = SIM_PAUSE_BOTS;
     sim->hasPassword = FALSE;
     sim->wantLogging = FALSE;
     memset(sim->userLogFileName, 0, sizeof(sim->userLogFileName));

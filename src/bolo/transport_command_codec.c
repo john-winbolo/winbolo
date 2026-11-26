@@ -536,6 +536,29 @@ static bool commandDecodeLockToggle(const uint8_t *buf, size_t len,
     return true;
 }
 
+/* CMD_PAUSE_SET — PACKET_PAUSE_SET
+ * Wire: [header 8] [cmdSeq 4] [target 1] [paused 1] */
+static bool commandEncodePauseSet(const ClientCommand *cmd,
+                                  uint8_t *buf, size_t bufCap,
+                                  size_t *outLen) {
+    const size_t needed = CMD_PACKET_BODY_OFFSET + 2;
+    if (bufCap < needed) return false;
+    packHeader(buf, PACKET_PAUSE_SET, 0);
+    buf[CMD_PACKET_BODY_OFFSET]     = cmd->u.pauseSet.target;
+    buf[CMD_PACKET_BODY_OFFSET + 1] = cmd->u.pauseSet.paused ? 1 : 0;
+    *outLen = needed;
+    return true;
+}
+
+static bool commandDecodePauseSet(const uint8_t *buf, size_t len,
+                                  ClientCommand *cmd) {
+    if (len < CMD_PACKET_BODY_OFFSET + 2) return false;
+    cmd->type = CMD_PAUSE_SET;
+    cmd->u.pauseSet.target = buf[CMD_PACKET_BODY_OFFSET];
+    cmd->u.pauseSet.paused = buf[CMD_PACKET_BODY_OFFSET + 1] != 0;
+    return true;
+}
+
 /* CMD_LOBBY_ADD_BOT — PACKET_LOBBY_ADD_BOT
  * Wire: [header 8] [teamNumber 1] [pathLen 1 = 0] [nameLen 1] [name N]
  * Server keeps the [pathLen][path] pair on the wire for back-compat but
@@ -1252,6 +1275,7 @@ bool commandCodecEncode(const ClientCommand *cmd,
         case CMD_MAP_SKIP_VOTE:         ok = commandEncodeMapSkipVote(cmd, buf, bufCap, outLen); break;
         case CMD_NAME_CHANGE:           ok = commandEncodeNameChange(cmd, buf, bufCap, outLen); break;
         case CMD_LOCK_TOGGLE:           ok = commandEncodeLockToggle(cmd, buf, bufCap, outLen); break;
+        case CMD_PAUSE_SET:             ok = commandEncodePauseSet(cmd, buf, bufCap, outLen); break;
         case CMD_LOBBY_ADD_BOT:         ok = commandEncodeLobbyAddBot(cmd, buf, bufCap, outLen); break;
         case CMD_LOBBY_SET_MAP:         ok = commandEncodeLobbySetMap(cmd, buf, bufCap, outLen); break;
         case CMD_SET_SCRIPT_LIST:       ok = commandEncodeSetScriptList(cmd, buf, bufCap, outLen); break;
@@ -1307,6 +1331,7 @@ bool commandCodecDecode(const uint8_t *buf, size_t len,
         case PACKET_MAP_SKIP_VOTE:         return commandDecodeMapSkipVote(buf, len, cmd);
         case PACKET_NAME_CHANGE:           return commandDecodeNameChange(buf, len, cmd);
         case PACKET_LOCK_TOGGLE:           return commandDecodeLockToggle(buf, len, cmd);
+        case PACKET_PAUSE_SET:             return commandDecodePauseSet(buf, len, cmd);
         case PACKET_LOBBY_ADD_BOT:         return commandDecodeLobbyAddBot(buf, len, cmd);
         case PACKET_LOBBY_SET_MAP:         return commandDecodeLobbySetMap(buf, len, cmd);
         case PACKET_SET_SCRIPT_LIST:       return commandDecodeSetScriptList(buf, len, cmd);

@@ -2844,6 +2844,25 @@ void clientSimSetPingMuted(ClientSim *cs, uint8_t player, bool muted) {
   }
 }
 
+uint8_t clientSimGetServerPauseFlags(const ClientSim *cs, uint64_t nowMs) {
+  if (cs == NULL || cs->serverPauseFlags == 0) {
+    return 0;
+  }
+  if (nowMs >= cs->serverPauseSeenMs &&
+      nowMs - cs->serverPauseSeenMs > CLIENT_PAUSE_NOTICE_STALE_MS) {
+    return 0;
+  }
+  return cs->serverPauseFlags;
+}
+
+void clientSimNoteServerPause(ClientSim *cs, uint8_t flags, uint64_t nowMs) {
+  if (cs == NULL) {
+    return;
+  }
+  cs->serverPauseFlags  = flags;
+  cs->serverPauseSeenMs = nowMs;
+}
+
 bool clientSimIsPingMuted(const ClientSim *cs, uint8_t player) {
   if (cs == NULL || player >= MAX_TANKS) {
     return false;

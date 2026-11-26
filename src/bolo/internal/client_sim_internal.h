@@ -1247,6 +1247,14 @@ struct ClientSim {
      * the team rows is unused and stays invalid. */
     ClientScnScore scnPlayerScores[MAX_TANKS];
     ClientScnScore scnTeamScores[MAX_TANKS];
+
+    /* The server's pause state (SIM_PAUSE_FLAG_*), from the last
+     * SERVER_MSG_PAUSE_STATE notice, and the SDL_GetTicks time it came.
+     * The server repeats the notice every second while a pause is on, so a
+     * notice older than CLIENT_PAUSE_NOTICE_STALE_MS reads as no pause: a
+     * lost resume notice cannot leave the note up. */
+    uint8_t      serverPauseFlags;
+    uint64_t     serverPauseSeenMs;
 };
 
 BOLO_STATIC_ASSERT(offsetof(struct ClientSim, sim) == 0,
