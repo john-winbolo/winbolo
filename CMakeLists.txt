@@ -7250,6 +7250,8 @@ set(_unit_test_names
     sim_pause_game_state_frozen
     sim_pause_recording_round_trip
     sim_pause_determinism
+    client_pause_notice_age
+    loopback_game_pause_prediction
     memreport_flags
     memreport_process_na
     memreport_deep_walk_cap

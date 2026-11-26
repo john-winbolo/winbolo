@@ -3512,6 +3512,8 @@ int run_sim_pause_bots_no_budget_kill(void);
 int run_sim_pause_game_state_frozen(void);
 int run_sim_pause_recording_round_trip(void);
 int run_sim_pause_determinism(void);
+int run_client_pause_notice_age(void);
+int run_loopback_game_pause_prediction(void);
 int run_memreport_flags(void);
 int run_memreport_process_na(void);
 int run_memreport_deep_walk_cap(void);

@@ -27,12 +27,17 @@
  *    inputs are taken off, and the clock stands still;
  *  - a recording with a game pause in it plays back to the same world and
  *    the same length as one without;
- *  - a game with the pause code idle plays out the same as one without. */
+ *  - a game with the pause code idle plays out the same as one without,
+ *    with bots in it;
+ *  - the client: the notice ages by snapshot frames, not by time, and
+ *    a remote tank is not predicted (and pulled back) in a game pause. */
 
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#include <SDL3/SDL.h>
 
 #include "global.h"
 #include "bolo_rand.h"
@@ -52,8 +57,14 @@
 #include "server_sim_lifecycle.h"
 #include "transport_command_codec.h"
 #include "threads.h"
+#include "client_sim.h"
+#include "client_sim_internal.h"
+#include "client_net.h"
+#include "client_connect_state.h"
+#include "client_enums.h"
 #include "replay_harness.h"
 #include "test_harness.h"
+#include "loopback_harness.h"
 
 /* Frames a second, as server_sim_pause.c counts them. */
 #define FPS 50u
@@ -344,7 +355,7 @@ int run_sim_pause_notice(void) {
 
 /* Two paused bots: an old think time far over the target is not counted
  * as an overrun, no bot is dropped, and each frame queues a brake-only
- * input for each bot. */
+ * input for each bot. A paused bot whose tank is dead sends nothing. */
 int run_sim_pause_bots_no_budget_kill(void) {
     static const BYTE kBots[2] = { 1, 2 };
     ServerSim *sim = ut_make_running_sim("Human");
@@ -385,6 +396,28 @@ int run_sim_pause_bots_no_budget_kill(void) {
         serverSimTick(sim);
     }
     UT_ASSERT_MSG(brakeOnly, "a paused bot must send a brake and nothing else");
+
+    /* A dead tank gets no input in a pause, as in the normal job. The
+     * death wait is set on the server's tank, which the bot tick copies to
+     * the bot's own view of its tank, and on that view too. */
+    {
+        BotContext *dead = &sim->botMgr.bots[kBots[0]];
+        BotContext *live = &sim->botMgr.bots[kBots[1]];
+        UT_ASSERT(dead->cs != NULL && MY_TANK(dead->cs) != NULL);
+        tankSetDeathWait(&sim->sim.tanks[kBots[0]], 100);
+        tankSetDeathWait(&MY_TANK(dead->cs), 100);
+        uint8_t deadHead = sim->inputQueueHead[kBots[0]];
+        uint8_t liveHead = sim->inputQueueHead[kBots[1]];
+        serverSimBotTick(sim, aiNone);
+        UT_ASSERT_MSG(sim->inputQueueHead[kBots[0]] == deadHead,
+                      "a paused bot with a dead tank must send no input");
+        UT_ASSERT_MSG(sim->inputQueueHead[kBots[1]] != liveHead ||
+                      live->cs == NULL,
+                      "a paused bot with a live tank must still brake");
+        tankSetDeathWait(&sim->sim.tanks[kBots[0]], 0);
+        tankSetDeathWait(&MY_TANK(dead->cs), 0);
+        serverSimTick(sim);
+    }
     for (int i = 0; i < 2; i++) {
         UT_ASSERT_MSG(sim->botMgr.bots[kBots[i]].overrunCount == 0,
                       "a paused bot must not count an overrun (bot %d: %u)",
@@ -584,41 +617,277 @@ int run_sim_pause_recording_round_trip(void) {
     return 0;
 }
 
-/* The pause code, when it does not pause, changes nothing: the same seeded
- * game played with the idle pause off, and with it on but a human there
- * the whole time (so it never starts), ends in the same world. */
-static void playSeeded(bool idleArmed, PauseWorld *out) {
+/* The pause code, when it does not pause, changes nothing. The same seeded
+ * game, with a human and two bots, is played three ways: with the idle
+ * pause off, with the bots-mode idle pause on and with the game-mode idle
+ * pause on. The human is there the whole time, so neither idle pause ever
+ * starts, and all three must end in the same world. The bots run the stub
+ * brain (a unit test has no Lua brain), so their inputs come from the
+ * normal bot job and its no-input path; the paused job never runs.
+ *
+ * A unit test cannot run the code from before this change. The no-pause
+ * path through serverSimLocalTick adds one counter per frame and one flag
+ * read per bot, and this test shows that neither changes the game. */
+typedef enum { DET_IDLE_OFF, DET_IDLE_BOTS, DET_IDLE_GAME } DetIdle;
+
+static void playSeeded(DetIdle idle, PauseWorld *out) {
     static const BoloRandState kSeed = { { 0x12345678u, 0x9abcdef0u,
                                            0x0fedcba9u, 0x87654321u } };
+    static const BYTE kBots[2] = { 1, 2 };
     bolo_rand_restore(&kSeed);
     ServerSim *sim = ut_make_running_sim("Driver");
     if (sim == NULL) {
         memset(out, 0xff, sizeof(*out));
         return;
     }
-    if (idleArmed) {
-        serverSimSetIdlePause(sim, 0, SIM_PAUSE_GAME);
+    ut_brain_stub_arm(true);
+    ut_brain_stub_lua(true);
+    ut_brain_stub_tick_ok(true);
+    bool added = true;
+    for (int i = 0; i < 2; i++) {
+        added = added && serverSimCreateBot(sim, kBots[i], "brains/GoalHunter/init.lua",
+                                            i == 0 ? "BotA" : "BotB", aiNone, gameOpen,
+                                            false, 0, NULL);
     }
-    uint32_t nextTick = serverSimGetTick(sim) + 1;
-    for (uint32_t f = 0; f < 500; f++) {
-        queueDriveInput(sim, &nextTick);
-        serverSimLocalTick(sim, f, NULL, NULL);
+    if (!added) {
+        memset(out, 0xfe, sizeof(*out));
+    } else {
+        if (idle == DET_IDLE_BOTS) {
+            serverSimSetIdlePause(sim, 0, SIM_PAUSE_BOTS);
+        } else if (idle == DET_IDLE_GAME) {
+            serverSimSetIdlePause(sim, 0, SIM_PAUSE_GAME);
+        }
+        uint32_t nextTick = serverSimGetTick(sim) + 1;
+        for (uint32_t f = 0; f < 500; f++) {
+            queueDriveInput(sim, &nextTick);
+            serverSimLocalTick(sim, f, NULL, NULL);
+        }
+        captureWorld(sim, out);
+        if (serverSimGetPauseFlags(sim) != 0) {
+            out->tick = 0;
+        }
     }
-    captureWorld(sim, out);
+    serverSimDestroyBots(sim);
+    ut_brain_stub_tick_ok(false);
+    ut_brain_stub_lua(false);
+    ut_brain_stub_arm(false);
     serverSimDestroy(sim);
 }
 
 int run_sim_pause_determinism(void) {
     PauseWorld *plain = (PauseWorld *)malloc(sizeof(PauseWorld));
-    PauseWorld *armed = (PauseWorld *)malloc(sizeof(PauseWorld));
-    UT_ASSERT(plain != NULL && armed != NULL);
-    playSeeded(false, plain);
-    playSeeded(true, armed);
-    bool same = memcmp(plain, armed, sizeof(PauseWorld)) == 0;
+    PauseWorld *bots  = (PauseWorld *)malloc(sizeof(PauseWorld));
+    PauseWorld *game  = (PauseWorld *)malloc(sizeof(PauseWorld));
+    UT_ASSERT(plain != NULL && bots != NULL && game != NULL);
+    playSeeded(DET_IDLE_OFF, plain);
+    playSeeded(DET_IDLE_BOTS, bots);
+    playSeeded(DET_IDLE_GAME, game);
+    bool sameBots = memcmp(plain, bots, sizeof(PauseWorld)) == 0;
+    bool sameGame = memcmp(plain, game, sizeof(PauseWorld)) == 0;
     uint32_t tick = plain->tick;
+    bool botTanks = plain->tanks[1].inUse && plain->tanks[2].inUse;
     free(plain);
-    free(armed);
+    free(bots);
+    free(game);
     UT_ASSERT_MSG(tick >= 500, "the game must have run (tick %u)", (unsigned)tick);
-    UT_ASSERT_MSG(same, "an idle pause that never starts changed the game");
+    UT_ASSERT_MSG(botTanks, "both bots must have a tank in the game");
+    UT_ASSERT_MSG(sameBots, "a bots-mode idle pause that never starts changed the game");
+    UT_ASSERT_MSG(sameGame, "a game-mode idle pause that never starts changed the game");
+    return 0;
+}
+
+/* The client side of the notice. A notice sets the flags; each applied
+ * snapshot frame ages them; a game pause sends one every 50 frames, so the
+ * flags last 150 frames with no new notice and then read as 0. With no
+ * frame at all (a solo freeze: the server does not tick) they do not age.
+ * A notice with no flags clears them at once. */
+int run_client_pause_notice_age(void) {
+    ClientSim *cs = clientSimAlloc();
+    UT_ASSERT(cs != NULL);
+    clientSimCreate(cs);
+    UT_ASSERT(clientSimGetServerPauseFlags(cs) == 0);
+
+    clientSimNoteServerPause(cs, SERVER_PAUSE_FLAG_BOTS);
+    UT_ASSERT(clientSimGetServerPauseFlags(cs) == SERVER_PAUSE_FLAG_BOTS);
+    for (uint32_t f = 0; f < CLIENT_PAUSE_NOTICE_STALE_FRAMES; f++) {
+        clientSimServerPauseFrameApplied(cs);
+    }
+    UT_ASSERT_MSG(clientSimGetServerPauseFlags(cs) == SERVER_PAUSE_FLAG_BOTS,
+                  "the flags must last %u frames",
+                  (unsigned)CLIENT_PAUSE_NOTICE_STALE_FRAMES);
+    clientSimServerPauseFrameApplied(cs);
+    UT_ASSERT_MSG(clientSimGetServerPauseFlags(cs) == 0,
+                  "the flags must go stale after %u frames with no notice",
+                  (unsigned)CLIENT_PAUSE_NOTICE_STALE_FRAMES);
+
+    /* A new notice brings them back, and a repeat every 50 frames keeps
+     * them for as long as it comes. */
+    clientSimNoteServerPause(cs, SERVER_PAUSE_FLAG_BOTS | SERVER_PAUSE_FLAG_GAME);
+    for (int r = 0; r < 20; r++) {
+        for (int f = 0; f < 50; f++) {
+            clientSimServerPauseFrameApplied(cs);
+        }
+        clientSimNoteServerPause(cs, SERVER_PAUSE_FLAG_BOTS | SERVER_PAUSE_FLAG_GAME);
+    }
+    UT_ASSERT(clientSimGetServerPauseFlags(cs) ==
+              (SERVER_PAUSE_FLAG_BOTS | SERVER_PAUSE_FLAG_GAME));
+
+    /* No frame: no aging, however long the wait. */
+    SDL_Delay(50);
+    UT_ASSERT_MSG(clientSimGetServerPauseFlags(cs) != 0,
+                  "with no frame applied the flags must not age by time");
+
+    clientSimNoteServerPause(cs, 0);
+    UT_ASSERT(clientSimGetServerPauseFlags(cs) == 0);
+    clientSimDestroy(cs);
+    return 0;
+}
+
+/* A remote client holds accelerate and turn through a game pause on a real
+ * UDP loopback server. The server tank must not move, the client must see
+ * the game flag, and once the notice is in, the client's own tank must stay
+ * where the server has it: no predicted move that the next snapshot pulls
+ * back. After the resume the tank moves again on both sides. */
+#define GP_CONNECT_MAX   600
+#define GP_ESTABLISH_MAX 600
+#define GP_SETTLE        60
+#define GP_PAUSE_PUMPS   300
+#define GP_NOTICE_MAX    60
+#define GP_RESUME_PUMPS  60
+
+static uint32_t gpClientTick;
+
+static bool gpConnected(LoopbackHarness *h, void *user) {
+    (void)user;
+    return clientSimGetConnectState(h->cs) == CLIENT_CONNECT_CONNECTED;
+}
+
+static bool gpHaveTank(LoopbackHarness *h, void *user) {
+    BYTE mx = 0, my = 0;
+    (void)user;
+    return clientSimGetMyTankMapPos(h->cs, &mx, &my) == TRUE;
+}
+
+static void gpFeedOne(LoopbackHarness *h, tankButton tb, bool isGameTick) {
+    InputPacket pkt;
+    BYTE slot = clientSimGetMyPlayerNum(h->cs);
+    clientBuildInputPacket(h->cs, &pkt, tb, false, false, false, isGameTick,
+                           slot, gpClientTick);
+    if (isGameTick) {
+        clientSimGameTick(h->cs, &pkt, false);
+    } else {
+        clientSimKeysTick(h->cs, &pkt);
+    }
+    clientSimNetSendInput(h->cs, &pkt);
+    gpClientTick++;
+}
+
+static void gpFeedFrame(LoopbackHarness *h, tankButton tb) {
+    gpFeedOne(h, tb, false);
+    gpFeedOne(h, tb, true);
+}
+
+int run_loopback_game_pause_prediction(void) {
+    LoopbackHarness h;
+    int at;
+    BYTE slot;
+    WORLD sx0, sy0, sx, sy, cx, cy;
+
+    memset(&h, 0, sizeof(h));
+    gpClientTick = 1;
+    if (!loopbackHarnessStart(&h, "Pauser", false, NULL, 0x9A05Eu)) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("harness start failed");
+    }
+    loopbackHarnessUseVirtualClock(&h, true);
+    if (loopbackHarnessPumpUntil(&h, GP_CONNECT_MAX, gpConnected, NULL) < 0 ||
+        loopbackHarnessPumpUntil(&h, GP_ESTABLISH_MAX, gpHaveTank, NULL) < 0) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("the client never reached a running game with a tank");
+    }
+    slot = clientSimGetMyPlayerNum(h.cs);
+    at = -1;
+    for (int i = 0; i < GP_ESTABLISH_MAX; i++) {
+        gpFeedFrame(&h, TLEFTACCEL);
+        loopbackHarnessPump(&h);
+        if (h.sim->lastProcessedInput[slot] > 0) {
+            at = i;
+            break;
+        }
+    }
+    if (at < 0 || MY_TANK(h.cs) == NULL) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("the input stream never started");
+    }
+    for (int i = 0; i < GP_SETTLE; i++) {
+        gpFeedFrame(&h, TLEFTACCEL);
+        loopbackHarnessPump(&h);
+    }
+    if (tankGetSpeed(&h.sim->sim.tanks[slot]) == 0) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("the tank must be moving before the pause");
+    }
+
+    serverSimSetManualPause(h.sim, SIM_PAUSE_GAME, true);
+    tankGetWorld(&h.sim->sim.tanks[slot], &sx0, &sy0);
+    int noticeAt = -1;
+    int offPumps = 0;
+    int checked = 0;
+    int maxOff = 0;
+    for (int i = 0; i < GP_PAUSE_PUMPS; i++) {
+        gpFeedFrame(&h, TLEFTACCEL);
+        loopbackHarnessPump(&h);
+        tankGetWorld(&h.sim->sim.tanks[slot], &sx, &sy);
+        if (sx != sx0 || sy != sy0) {
+            loopbackHarnessStop(&h);
+            UT_FAIL("the server tank moved in a game pause (pump %d)", i);
+        }
+        if (noticeAt < 0 &&
+            (clientSimGetServerPauseFlags(h.cs) & SERVER_PAUSE_FLAG_GAME) != 0) {
+            noticeAt = i;
+        }
+        /* A few pumps for the inputs sent before the notice to come back. */
+        if (noticeAt >= 0 && i > noticeAt + 10) {
+            tankGetWorld(&MY_TANK(h.cs), &cx, &cy);
+            int off = abs((int)cx - (int)sx) + abs((int)cy - (int)sy);
+            checked++;
+            if (off != 0) {
+                offPumps++;
+            }
+            if (off > maxOff) {
+                maxOff = off;
+            }
+        }
+    }
+    fprintf(stderr, "  game pause: notice after %d pump(s); client tank off "
+                    "the server tank in %d of %d pumps, by up to %d world "
+                    "units\n", noticeAt, offPumps, checked, maxOff);
+    if (noticeAt < 0 || noticeAt > GP_NOTICE_MAX) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("the client must see the game pause within %d pumps (got %d)",
+                GP_NOTICE_MAX, noticeAt);
+    }
+    if (offPumps != 0) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("the client tank left the server tank in %d of %d pumps (up "
+                "to %d world units): a predicted move that a snapshot pulls "
+                "back", offPumps, checked, maxOff);
+    }
+
+    serverSimSetManualPause(h.sim, SIM_PAUSE_GAME, false);
+    for (int i = 0; i < GP_RESUME_PUMPS; i++) {
+        gpFeedFrame(&h, TLEFTACCEL);
+        loopbackHarnessPump(&h);
+    }
+    tankGetWorld(&h.sim->sim.tanks[slot], &sx, &sy);
+    tankGetWorld(&MY_TANK(h.cs), &cx, &cy);
+    bool serverMoved = (sx != sx0 || sy != sy0);
+    bool clientMoved = (cx != sx0 || cy != sy0);
+    bool flagsClear  = clientSimGetServerPauseFlags(h.cs) == 0;
+    loopbackHarnessStop(&h);
+    UT_ASSERT_MSG(flagsClear, "the resume must clear the client's flags");
+    UT_ASSERT_MSG(serverMoved && clientMoved,
+                  "the tank must move again after the resume (server %d, "
+                  "client %d)", (int)serverMoved, (int)clientMoved);
     return 0;
 }
