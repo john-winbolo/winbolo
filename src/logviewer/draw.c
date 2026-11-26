@@ -569,6 +569,13 @@ static void lvDrawHitDotsOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
 static void lvDrawServerCheckOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
 static void lvDrawShellsOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
 
+static void lvDrawSpriteSheetsNearest(void) {
+    if (textureTiles) SDL_SetTextureScaleMode(textureTiles, SDL_SCALEMODE_NEAREST);
+    if (textureTanks) SDL_SetTextureScaleMode(textureTanks, SDL_SCALEMODE_NEAREST);
+    if (textureBoats) SDL_SetTextureScaleMode(textureBoats, SDL_SCALEMODE_NEAREST);
+    if (textureItems) SDL_SetTextureScaleMode(textureItems, SDL_SCALEMODE_NEAREST);
+}
+
 /* Paint the world render target into the viewer's own window.
  *
  * Sampling: at zoom >= 1 the blit is a whole-number magnification of pixel
@@ -1497,6 +1504,16 @@ void lv_drawMainScreen(screen *value, screenMines *mineView, screenTanks *tks, s
     SDL_Texture *prevTarget = SDL_GetRenderTarget(sdlRenderer);
     SDL_SetRenderTarget(sdlRenderer, textureTarget);
 
+    /* Point sampling for the map's sprite sheets, set again every frame.
+     * The viewer's panels draw these same textures through ImGui::Image,
+     * and the ImGui SDL renderer backend writes its own scale mode (LINEAR
+     * unless a draw callback says otherwise) into every texture it binds
+     * (imgui_impl_sdlrenderer3.cpp). The mode stays on the texture after
+     * ImGui is done, so without this the map samples them LINEAR: a sprite
+     * that does not sit on whole pixels (the N, E, S and W shells, and the
+     * zoomed shells over the blit) comes out smeared. */
+    lvDrawSpriteSheetsNearest();
+
     for (x = 0, y = 0, done = FALSE; !done; ) {
         pos = lv_screenGetPos(value, x, y);
         shouldDraw = (lv_drawLast[x][y] == 10000) ||
@@ -1717,6 +1734,7 @@ static void lvDrawShellsOverBlit(const SDL_FRect *src, const SDL_FRect *dst) {
     bool hadClip;
 
     if (s_shellSpriteCount == 0 || textureTiles == NULL) return;
+    SDL_SetTextureScaleMode(textureTiles, SDL_SCALEMODE_NEAREST);
     if (src == NULL || dst == NULL || src->w <= 0.0f || src->h <= 0.0f) return;
     scale = dst->w / src->w;
 
