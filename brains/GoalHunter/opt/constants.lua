@@ -1568,6 +1568,11 @@ M.PT2_V2_CACHE_CHECK_NOMEMO = false
 -- not kept (tmp=); each is set against the first run with no cache.
 M.PT2_V2_CACHE_CHECK_TWICE = false
 M.PT2_V2_CACHE_CHECK_TMP = false
+-- PT2_V2_CACHE_DROP_LOG (log only, Nov 26): one PT2_V2_CACHE_DROP line
+-- (stderr) per store lookup: the tick, player, source, goal pill, result
+-- (kept, drop, new, full) and for a drop what changed (the pill or base
+-- field, the squares with their old and new tiles, the rules, the age).
+M.PT2_V2_CACHE_DROP_LOG = false
 -- PP_FRONT_C (Nov 25, speed only): pill_portfolio's front tests
 -- (on_front_line, near_front, the aggro neighbour count) run in C
 -- (braincore.c) on the same influence grid. The same answers. Measured

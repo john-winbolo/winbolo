@@ -3082,7 +3082,8 @@ local function pc_take(inp, w)
       -- finish is in the C key; an ally's cover is its own field)
       P[#P + 1] = { mx, my, string.format("%d,%d,%s,%s,%s,%s,%s", mx, my, tostring((p.health or 0) > 0),
         tostring(p.in_tank), tostring(p.pos_unknown), tostring(p.owner),
-        tostring(env.cover_of_pill and env.cover_of_pill(p))) }
+        tostring(env.cover_of_pill and env.cover_of_pill(p))),
+        PCK.PT2_V2_CACHE_DROP_LOG and inp.ids and inp.ids[p] or nil }
     end
   end
   local B = {}
@@ -3116,6 +3117,127 @@ local function pc_free(e)
   if j and f then f(j) end
 end
 
+-- PT2_V2_CACHE_DROP_LOG (log only): a PT2_V2_CACHE_DROP line per lookup.
+-- PCH[src][key] = { t, why }: how the goal pill's last entry went.
+local PCH = {}
+local PCL_T = { [0] = "building", "river", "swamp", "crater", "road", "forest", "rubble", "grass",
+  "halfbuilding", "boat", "mine_swamp", "mine_crater", "mine_road", "mine_forest", "mine_rubble",
+  "mine_grass", [255] = "sea" }
+local PCL_PF = { "mx", "my", "alive", "in_tank", "pos_unknown", "owner", "cover" }
+local PCL_BF = { "k", "owner", "dead", "cap" }
+local PCL_SF = { "inboat", "hit", "cap" }
+local function pcl_split(str, sep)
+  local t = {}
+  for v in string.gmatch(str .. sep, "([^" .. sep .. "]*)" .. sep) do t[#t + 1] = v end
+  return t
+end
+-- the fields of a and b that differ, as items "what@x,y:field:old>new"
+local function pcl_fields(out, what, sq, a, b, sep, names, from)
+  local fa, fb = pcl_split(a, sep), pcl_split(b, sep)
+  for i = from, #names do
+    if fa[i] ~= fb[i] then
+      out[#out + 1] = string.format("%s@%s:%s:%s>%s", what, sq, names[i], tostring(fa[i]), tostring(fb[i]))
+    end
+  end
+end
+-- the watched pills of the entry's last start (Pf) against now (P), by
+-- the world pill id (x[4]); a pill that leaves or joins the watch is a
+-- "place" change, a pill with no old copy is "new"
+local function pcl_pills(Pf, P, W)
+  local wq = gh_pt2_v2.pc_wq
+  local o, n, ids = {}, {}, {}
+  for _, x in ipairs(Pf or {}) do
+    local id = x[4] or -1
+    o[id] = x; ids[id] = true
+  end
+  for _, x in ipairs(P) do
+    local id = x[4] or -1
+    n[id] = x; ids[id] = true
+  end
+  local list = {}
+  for id in pairs(ids) do list[#list + 1] = id end
+  table.sort(list)
+  local out = {}
+  for _, id in ipairs(list) do
+    local a, b = o[id], n[id]
+    local wa = a and wq(W, a[1], a[2]) ~= 0
+    local wb = b and wq(W, b[1], b[2]) ~= 0
+    if wa or wb then
+      if wa and wb then
+        if a[3] ~= b[3] then
+          local sq = a[1] .. "," .. a[2]
+          if a[1] ~= b[1] or a[2] ~= b[2] then
+            out[#out + 1] = string.format("pill%d@%s:place:%s>%d,%d", id, sq, sq, b[1], b[2])
+          end
+          pcl_fields(out, "pill" .. id, sq, a[3], b[3], ",", PCL_PF, 3)
+        end
+      elseif wa then
+        out[#out + 1] = string.format("pill%d@%d,%d:place:%d,%d>%s", id, a[1], a[2], a[1], a[2],
+          b and (b[1] .. "," .. b[2] .. "(unwatched)") or "gone")
+      elseif a then
+        out[#out + 1] = string.format("pill%d@%d,%d:place:%d,%d(unwatched)>%d,%d", id, b[1], b[2], a[1], a[2], b[1], b[2])
+      else
+        out[#out + 1] = string.format("pill%d@%d,%d:new:none>%s", id, b[1], b[2], b[3])
+      end
+    end
+  end
+  return out
+end
+local function pcl_bases(Bf, B, W)
+  local wq = gh_pt2_v2.pc_wq
+  local o, n, ks = {}, {}, {}
+  for _, x in ipairs(Bf or {}) do
+    if wq(W, x[1], x[2]) % 2 == 1 then local k = x[2] * 256 + x[1]; o[k] = x; ks[k] = true end
+  end
+  for _, x in ipairs(B) do
+    if wq(W, x[1], x[2]) % 2 == 1 then local k = x[2] * 256 + x[1]; n[k] = x; ks[k] = true end
+  end
+  local list = {}
+  for k in pairs(ks) do list[#list + 1] = k end
+  table.sort(list)
+  local out = {}
+  for _, k in ipairs(list) do
+    local a, b = o[k], n[k]
+    local sq = (k % 256) .. "," .. math.floor(k / 256)
+    if a and b then
+      if a[3] ~= b[3] then pcl_fields(out, "base", sq, a[3], b[3], ":", PCL_BF, 2) end
+    else
+      out[#out + 1] = string.format("base@%s:%s:%s>%s", sq, a and "gone" or "new", a and a[3] or "none", b and b[3] or "none")
+    end
+  end
+  return out
+end
+-- the changed watched squares (at most 8 listed), "sq@x,y:terrain|forest:old>new"
+local function pcl_squares(W)
+  local n, nt, nf, l = gh_pt2_v2.pc_wdiff(W, 8)
+  local out = {}
+  if not n then return out, 0 end
+  for _, x in ipairs(l) do
+    out[#out + 1] = string.format("sq@%d,%d:%s:%s>%s", x[1] % 256, math.floor(x[1] / 256),
+      x[4] == 1 and "terrain" or "forest", PCL_T[x[2]] or tostring(x[2]), PCL_T[x[3]] or tostring(x[3]))
+  end
+  return out, n
+end
+local function pcl_line(inp, src, key, res, why, age, items, n, extra)
+  local now = inp._v2_pc_now or 0
+  local gs = math.floor(now * 2 / 100)
+  M.cprof_err(string.format("PT2_V2_CACHE_DROP t=%d gt=%d:%02d p=%s src=%s goal=%d,%d res=%s why=%s age=%s n=%d%s d=%s",
+    now, math.floor(gs / 60), gs % 60, tostring(inp._v2_pc_pn), src, math.floor(key / 256), key % 256,
+    res, why or "-", tostring(age or "-"), n or #items, extra or "", #items > 0 and table.concat(items, ";") or "-"))
+end
+-- a drop's items and their count
+local function pcl_detail(e, why, P, B, ss)
+  if why == "pill" then local t = pcl_pills(e.Pf, P, e.W); return t, #t end
+  if why == "base" then local t = pcl_bases(e.Bf, B, e.W); return t, #t end
+  if why == "rules" then
+    local t = {}
+    pcl_fields(t, "rules", "-", e.ss or "", ss or "", ",", PCL_SF, 1)
+    return t, #t
+  end
+  if why == "terrain" or why == "forest" then return pcl_squares(e.W) end
+  return {}, 0
+end
+
 -- The cache table for a group job on inp.A.
 local function pc_cache(inp)
   inp.v2_pcache = nil
@@ -3142,14 +3264,26 @@ local function pc_cache(inp)
   end
   local cnt = M.pc_count
   local maxage = PCK.PT2_V2_CACHE_MAX_AGE_TICKS or 3000
+  local dlog = PCK.PT2_V2_CACHE_DROP_LOG
+  local hist = dlog and (PCH[src] or {})
+  if dlog then PCH[src] = hist end
+  -- the goal pill by its square: each run's pill tables are new tables
+  local key = (A.mx or -1) * 256 + (A.my or -1)
+  local aged
   -- entries past the age go (their goal pill may not run again)
   for i = #list, 1, -1 do
     local x = list[i]
-    if now - x.tick > maxage then cnt.age = cnt.age + 1; pc_free(x); table.remove(list, i) end
+    if now - x.tick > maxage then
+      cnt.age = cnt.age + 1
+      if dlog then
+        hist[x.key] = { t = now, why = "age" }
+        if x.key == key then aged = now - x.tick
+        else pcl_line(inp, src, x.key, "evict", "age", now - x.tick, {}, 0) end
+      end
+      pc_free(x); table.remove(list, i)
+    end
   end
   local e, at
-  -- the goal pill by its square: each run's pill tables are new tables
-  local key = (A.mx or -1) * 256 + (A.my or -1)
   for i, x in ipairs(list) do if x.key == key then e, at = x, i; break end end
   local why, hf
   if e then
@@ -3165,13 +3299,27 @@ local function pc_cache(inp)
       elseif e.hf ~= hf and inp.env.forest_transparent == false then why = "terrain" end
     end
     table.remove(list, at)
+    if why and dlog then
+      -- a forest only change with PT2_FOREST_TRANSPARENT off is "forest"
+      local lw = (why == "terrain" and e.ht == gh_pt2_v2.pc_wsig(e.W, false)) and "forest" or why
+      local items, n = pcl_detail(e, lw, P, B, ss)
+      local ex = (lw == "open") and string.format(" run_t=%s", tostring(e.run_t)) or nil
+      pcl_line(inp, src, key, "drop", lw, now - e.tick, items, n, ex)
+      hist[key] = { t = now, why = lw }
+    end
     if why then cnt[why] = cnt[why] + 1; pc_free(e); e = nil end
   end
+  if dlog and aged then pcl_line(inp, src, key, "drop", "age", aged, {}, 0) end
   if e then
     cnt.kept = cnt.kept + 1
     if e.hf ~= hf then
       cnt.forest = cnt.forest + 1
       e.cache.pc_drop_plans = true
+    end
+    if dlog then
+      local items, n = {}, 0
+      if e.hf ~= hf then items, n = pcl_squares(e.W) end
+      pcl_line(inp, src, key, "kept", e.hf ~= hf and "forest_plans" or nil, now - e.tick, items, n)
     end
   else
     -- full (entries or bytes): this run has no store, and the kept
@@ -3182,15 +3330,29 @@ local function pc_cache(inp)
     local maxb = PCK.PT2_V2_CACHE_MAX_TOTAL_BYTES or 0
     if #list >= (PCK.PT2_V2_CACHE_MAX_ENTRIES or 16) or (maxb > 0 and tot >= maxb) then
       cnt.full = cnt.full + 1
+      if dlog then
+        local h = hist[key]
+        pcl_line(inp, src, key, "full", (#list >= (PCK.PT2_V2_CACHE_MAX_ENTRIES or 16)) and "entries" or "bytes",
+          nil, {}, 0, string.format(" entries=%d bytes=%d prev=%s", #list, tot,
+            h and (h.why .. "@" .. h.t) or "first"))
+        if not (h and h.t == now) then hist[key] = { t = now, why = "full" } end
+      end
       return new_cache()
     end
     cnt.new = cnt.new + 1
+    if dlog then
+      local h = hist[key]
+      pcl_line(inp, src, key, "new", h and ("after_" .. h.why) or "first", nil, {}, 0,
+        h and string.format(" prev_t=%d", h.t) or nil)
+    end
     e = { key = key, tick = now, W = W0, cache = new_cache() }
   end
   -- this run's start: the strings and the map that pc_finish hashes
   gh_pt2_v2.pc_snap(e.W)
   e.P, e.B, e.ss, e.open = P, B, ss, true
   e.why = why
+  -- PT2_V2_CACHE_DROP_LOG: this start's lists, for the next lookup's diff
+  if dlog then e.Pf, e.Bf, e.run_t = P, B, now end
   list[#list + 1] = e
   e.cache.pc_max_bytes = PCK.PT2_V2_CACHE_MAX_BYTES or 0
   inp.v2_pcache = true

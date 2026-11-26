@@ -244,6 +244,7 @@ build_inp_body = function(state, goal, info, world, pill, no_builder, npb, radiu
   -- PT2_V2_CACHE: the tick (the store's age) and the log head of the check
   if C.PT2_V2_CACHE then
     inp._v2_pc_now = now
+    inp._v2_pc_pn = info and info.player_number
     inp._v2_pc_head = string.format("p=%s t=%s", tostring(info and info.player_number), tostring(now))
   end
   return inp

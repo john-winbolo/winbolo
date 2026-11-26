@@ -7250,6 +7250,40 @@ static int l_pc_wsig(lua_State *L) {
     return 2;
 }
 
+/* pc_wdiff(W, max) (log only, PT2_V2_CACHE_DROP_LOG): the PCW_TERRAIN
+ * squares where the map now differs from W's snap, as pc_wsig reads them.
+ * Returns n (all changed), nt (terrain hash changes), nf (forest only) and
+ * a list of at most max { k, old, new, kind } (kind 1 = terrain, 2 =
+ * forest only; old/new are the tile type, m & 0x0F, or 255 for the sea). */
+static int l_pc_wdiff(lua_State *L) {
+    PWatch *w = (PWatch *)luaL_checkudata(L, 1, "gh_pt2_v2_watch_mt");
+    int mx = (int)luaL_optinteger(L, 2, 8);
+    const unsigned char *m = pc_world(L);
+    if (!m || !w->has_snap) { lua_pushnil(L); return 1; }
+    int n = 0, nt = 0, nf = 0, i = 0;
+    lua_createtable(L, mx > 0 ? mx : 0, 0);
+    for (int k = 0; k < PT2_MAP_SQ; k++) {
+        if (!(w->wm[k] & PCW_TERRAIN)) continue;
+        unsigned a = w->snap[k] & 0x0F, b = m[k] & 0x0F;
+        int fa = (a == 5 || a == 13), fb = (b == 5 || b == 13);
+        unsigned ga = fa ? a + 2 : a, gb = fb ? b + 2 : b;
+        int kind = (ga != gb) ? 1 : (fa != fb) ? 2 : 0;
+        if (!kind) continue;
+        n++; if (kind == 1) nt++; else nf++;
+        if (i < mx) {
+            lua_createtable(L, 4, 0);
+            lua_pushinteger(L, k); lua_rawseti(L, -2, 1);
+            lua_pushinteger(L, w->snap[k] == 0xFF ? 255 : (int)a); lua_rawseti(L, -2, 2);
+            lua_pushinteger(L, m[k] == 0xFF ? 255 : (int)b); lua_rawseti(L, -2, 3);
+            lua_pushinteger(L, kind); lua_rawseti(L, -2, 4);
+            lua_rawseti(L, -2, ++i);
+        }
+    }
+    lua_pushinteger(L, n); lua_pushinteger(L, nt); lua_pushinteger(L, nf);
+    lua_pushvalue(L, -4);
+    return 4;
+}
+
 /* pc_wq(W, mx, my): the watch bits of a square (0 off the map) */
 static int l_pc_wq(lua_State *L) {
     PWatch *w = (PWatch *)luaL_checkudata(L, 1, "gh_pt2_v2_watch_mt");
@@ -7339,6 +7373,7 @@ static const luaL_Reg gh_pt2_v2_lib[] = {
     { "pc_snap", l_pc_snap },
     { "pc_wsig", l_pc_wsig },
     { "pc_wq", l_pc_wq },
+    { "pc_wdiff", l_pc_wdiff },
     { "pc_watch", l_pc_watch },
     { "pc_free", l_pc_free },
     { "begin", l_begin },
