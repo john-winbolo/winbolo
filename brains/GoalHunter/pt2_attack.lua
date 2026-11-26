@@ -124,6 +124,10 @@ function M.build_inp(state, goal, info, world, pill, no_builder, npb, radius, no
   end
   if inp then
     inp.v2_prof = true
+    -- PT2_PROF_ZONES false: the evaluate is timed with the C sections off
+    if C.PT2_PROF_ZONES == false then inp.v2_nozones = true end
+    -- PT2_CPROF_LOG: each evaluate's section table on stderr (PT2ZONES)
+    if C.PT2_CPROF_LOG then inp.v2_zone_log = true end
     inp._prof_head = string.format("p=%s t=%s", tostring(info and info.player_number), tostring(now))
   end
   return inp

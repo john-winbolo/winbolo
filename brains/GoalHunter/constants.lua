@@ -1549,6 +1549,17 @@ M.PT2_CAPTURE_FILE = ""
 -- -brain-debug. The timers cost time, so it is off by default. It does not
 -- change any result.
 M.PT2_PROF_LOG = false
+-- PT2_CPROF_LOG (log only, with PT2_PROF_LOG): true = each v2 evaluate
+-- writes the C evaluator's section table of that evaluate to stderr as one
+-- PT2ZONES line (name=calls/us, most time first), with or without
+-- -brain-debug. Add the lines of a game to get the game's table. Off by
+-- default. It does not change any result.
+M.PT2_CPROF_LOG = false
+-- PT2_PROF_ZONES (log only, with PT2_PROF_LOG): false = time each evaluate
+-- (PT2EVAL ms) with the C section profiler off, to see what the profiler
+-- itself costs. The section columns (walks, c_ms) are then 0. It does not
+-- change any result.
+M.PT2_PROF_ZONES = true
 -- REPLAN_PROF_LOG (debug or -brain-profile-log only): true = each goal
 -- replan times its parts (replan_prof.lua: the pool evaluators, goals,
 -- path searches, threat, ...) as self times and writes a REPLAN_PROF line;

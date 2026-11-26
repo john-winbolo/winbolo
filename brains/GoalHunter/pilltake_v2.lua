@@ -2530,7 +2530,9 @@ function M.evaluate_c(inp)
   local s = fn and SLICERS[fn]
   if fn and not s then return M.evaluate_lua(inp) end
   local pf = inp.v2_prof and g.prof_take
-  if pf then
+  -- v2_nozones (C.PT2_PROF_ZONES false): timed, but the C sections off
+  local zones = pf and not inp.v2_nozones
+  if zones then
     g.prof(true)
     g.prof_take()
   end
@@ -2547,8 +2549,11 @@ function M.evaluate_c(inp)
       end
       if pf then
         local us = cprof_clock() - t0 - paused
-        local c = g.prof_take()
-        g.prof(false)
+        local c = {}
+        if zones then
+          c = g.prof_take()
+          g.prof(false)
+        end
         local one = cprof_new()
         M.cprof_add(one, us, c, steps, yields)
         M.cprof_add(M.cprof_plan, us, c, steps, yields)
@@ -2562,6 +2567,12 @@ function M.evaluate_c(inp)
             "PT2EVAL %s A=(%s,%s) ms=%.3f steps=%d slice_ms=%.3f yields=%d c_ms=%.3f walks=%d walk_ms=%.3f",
             inp._prof_head, tostring(A and A.mx), tostring(A and A.my), us / 1000, steps,
             us / 1000 / steps, yields, one.c_us / 1000, w and w.n or 0, (w and w.us or 0) / 1000))
+          -- inp.v2_zone_log (C.PT2_CPROF_LOG): this evaluate's section
+          -- table as one PT2ZONES line; the lines of a game add up to the
+          -- game's table
+          if zones and inp.v2_zone_log then
+            M.cprof_err(M.cprof_line("PT2ZONES", one, inp._prof_head .. " "))
+          end
         end
         M.cprof_print(M.cprof_line("PT2_C_PROF", one, string.format("A=(%s,%s) ",
           tostring(A and A.mx), tostring(A and A.my))))
