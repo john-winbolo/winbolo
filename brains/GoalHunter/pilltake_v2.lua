@@ -2535,6 +2535,7 @@ function M.evaluate_c(inp)
   if zones then
     g.prof(true)
     g.prof_take()
+    if g.prof_cut then g.prof_cut() end
   end
   local t0 = pf and cprof_clock()
   local paused, steps, yields = 0, 0, 0
@@ -2572,6 +2573,12 @@ function M.evaluate_c(inp)
           -- game's table
           if zones and inp.v2_zone_log then
             M.cprof_err(M.cprof_line("PT2ZONES", one, inp._prof_head .. " "))
+            -- cache study (log only): stub / record set hashes and the
+            -- planned singles of this evaluate (gh_pt2_v2.prof_cut)
+            if g.prof_cut then
+              M.cprof_err(string.format("PT2CUT %s A=(%s,%s) %s", inp._prof_head,
+                tostring(A and A.mx), tostring(A and A.my), g.prof_cut()))
+            end
           end
         end
         M.cprof_print(M.cprof_line("PT2_C_PROF", one, string.format("A=(%s,%s) ",

@@ -401,6 +401,52 @@ enum {
     C_zw_ns_qpc,
     C_zw_ns_rewalk,
     C_zw_tsc_mhz,
+    /* the cache study parts (log only): *_t are times (pf ticks here,
+     * us in prof_take), the rest are counts; see PT_ENTER */
+    C_pt_evals,
+    C_pt_lazy_evals,
+    C_pt_filter_t,
+    C_pt_ring_t,
+    C_pt_shot_t,
+    C_pt_stub_t,
+    C_pt_ray_t,
+    C_pt_rej_t,
+    C_pt_score_fn_t,
+    C_pt_full_of_t,
+    C_pt_plan_t,
+    C_pt_plan_empty_t,
+    C_pt_score_of_t,
+    C_pt_rerank_t,
+    C_pt_leeway_t,
+    C_pt_sort_t,
+    C_pt_hold_t,
+    C_pt_ring_n,
+    C_pt_shot_ok,
+    C_pt_stub_n,
+    C_pt_must_cut,
+    C_pt_lazy_n,
+    C_pt_full_rec,
+    C_pt_rej_n,
+    C_pt_tank_pts,
+    C_pt_tank_rej,
+    C_pt_score_fn_n,
+    C_pt_full_of_n,
+    C_pt_singles,
+    C_pt_single_plans,
+    C_pt_plan_skipped,
+    C_pt_plan_cut,
+    C_pt_plan_n,
+    C_pt_plan_ph1,
+    C_pt_plan_ph2,
+    C_pt_plan_ph3,
+    C_pt_plan_ph4,
+    C_pt_plan_ph5,
+    C_pt_plan_ph1_t,
+    C_pt_plan_ph2_t,
+    C_pt_plan_ph3_t,
+    C_pt_plan_ph4_t,
+    C_pt_plan_ph5_t,
+    C_pt_leeway_n,
     C_N
 };
 static const char *s_pc_name[] = {
@@ -452,7 +498,51 @@ static const char *s_pc_name[] = {
     "zw_ns_timer",
     "zw_ns_qpc",
     "zw_ns_rewalk",
-    "zw_tsc_mhz"
+    "zw_tsc_mhz",
+    "pt_evals",
+    "pt_lazy_evals",
+    "pt_filter_t",
+    "pt_ring_t",
+    "pt_shot_t",
+    "pt_stub_t",
+    "pt_ray_t",
+    "pt_rej_t",
+    "pt_score_fn_t",
+    "pt_full_of_t",
+    "pt_plan_t",
+    "pt_plan_empty_t",
+    "pt_score_of_t",
+    "pt_rerank_t",
+    "pt_leeway_t",
+    "pt_sort_t",
+    "pt_hold_t",
+    "pt_ring_n",
+    "pt_shot_ok",
+    "pt_stub_n",
+    "pt_must_cut",
+    "pt_lazy_n",
+    "pt_full_rec",
+    "pt_rej_n",
+    "pt_tank_pts",
+    "pt_tank_rej",
+    "pt_score_fn_n",
+    "pt_full_of_n",
+    "pt_singles",
+    "pt_single_plans",
+    "pt_plan_skipped",
+    "pt_plan_cut",
+    "pt_plan_n",
+    "pt_plan_ph1",
+    "pt_plan_ph2",
+    "pt_plan_ph3",
+    "pt_plan_ph4",
+    "pt_plan_ph5",
+    "pt_plan_ph1_t",
+    "pt_plan_ph2_t",
+    "pt_plan_ph3_t",
+    "pt_plan_ph4_t",
+    "pt_plan_ph5_t",
+    "pt_leeway_n"
 };
 typedef char pt2_pc_names_ok[(sizeof(s_pc_name) / sizeof(s_pc_name[0]) == C_N) ? 1 : -1];
 #define PF_DEPTH 64
@@ -465,6 +555,11 @@ typedef struct {
     double  n[P_N];
     double  cnt[C_N];
     uint64_t zw_n;              /* walks seen, for the 1 in ZW_SAMPLE pick */
+    /* the cache study (log only): planned single keys, stub and record set hashes */
+#define PT_CUT_MAX 2048
+    int      pt_ncut;
+    int      pt_cut[PT_CUT_MAX];
+    uint64_t pt_stub_h, pt_rec_h;
     int64_t  zw_tsc0, zw_qpc0;  /* the TSC calibration start */
 } Pt2Prof;
 #if defined(_WIN32)
@@ -491,6 +586,9 @@ static double pf_tick_us(void) { return 1e-3; }
 #define PF_TLS __thread
 #endif
 static PF_TLS Pt2Prof *t_pf;
+/* the cache study parts (log only): see PT_ENTER */
+static PF_TLS int t_pt_part, t_pt_tank, t_pt_ph;
+static PF_TLS int64_t t_pt_aim;
 /* The walk split timer: the TSC on x86 (a few ns a read), else pf_clock.
  * prof_take turns the TSC sums to ns by the TSC rate against pf_clock
  * since the first sample. */
@@ -529,6 +627,7 @@ static void pf_pop(void) {
  * yield left it as it was) and root is the section of no function */
 static void pf_enter(Pt2Prof *p, int root) {
     t_pf = p->on ? p : NULL;
+    t_pt_part = 0; t_pt_ph = 0;
     if (!t_pf) return;
     p->sp = 0; p->skip = 0; p->stk[0] = root;
     p->n[root] += 1;
@@ -546,6 +645,24 @@ static void pf_leave(void) {
 #define PE() do { if (t_pf) pf_pop(); } while (0)
 #define PC(c, k) do { if (t_pf) t_pf->cnt[c] += (k); } while (0)
 #define PLC(s, L, na, nr) do { PB(s); lua_call((L), (na), (nr)); PE(); } while (0)
+/* The cache study parts (log only, with the profiler on): the time of the
+ * outermost part function on the stack goes to its C_pt_*_t counter; a
+ * part function called inside another part adds nothing. t_pt_part is 0
+ * outside every part. Inside a ring point (point_of_ring) eval_point also
+ * marks the end of the shot test (t_pt_aim) and a tank stop (t_pt_tank),
+ * and score_fn is timed on its own. t_pt_ph tags the plan_point calls by
+ * the ev_run branch. gh_pt2_v2.prof_cut() gives the planned singles of the
+ * evaluate. None of it changes a result. */
+#define PT_ENTER(c) int64_t pt0_ = 0; int pt_mine_ = 0; \
+    if (t_pf && !t_pt_part) { t_pt_part = (c); pt_mine_ = 1; pt0_ = pf_clock(); }
+#define PT_LEAVE(c) do { if (pt_mine_) { t_pf->cnt[c] += (double)(pf_clock() - pt0_); t_pt_part = 0; } } while (0)
+#define PT_PH(x) do { if (t_pf) t_pt_ph = (x); } while (0)
+#define PT_KEY(e, deg) ((e)->ri * 4096 + (int)floor((deg) * 8 + 0.5))
+static uint64_t pt_mix(uint64_t k) {
+    k += 0x9E3779B97F4A7C15ull; k ^= k >> 30; k *= 0xBF58476D1CE4E5B9ull;
+    k ^= k >> 27; k *= 0x94D049BB133111EBull; k ^= k >> 31;
+    return k;
+}
 
 
 /* ── Arena ──────────────────────────────────────────────────────────── */
@@ -2292,7 +2409,7 @@ static void auxsort(lua_State *L, void **a, int l, int u, LtFn lt, void *cx) {
     }
 }
 /* table.sort(list) of n entries at a[1..n] */
-static void lsort(lua_State *L, void **a, int n, LtFn lt, void *cx) { PB(P_lsort); auxsort(L, a, 1, n, lt, cx); PE(); }
+static void lsort(lua_State *L, void **a, int n, LtFn lt, void *cx) { PT_ENTER(C_pt_sort_t); PB(P_lsort); auxsort(L, a, 1, n, lt, cx); PE(); PT_LEAVE(C_pt_sort_t); }
 
 /* ── Wedges ─────────────────────────────────────────────────────────── */
 static double bearing(double dx, double dy) { return atan2(dx, -dy); }
@@ -2994,6 +3111,7 @@ static Rec *eval_point__p(Ev *e, double px, double py, Extra *extra, int aim_fix
         int w = tank_shot(e, px, py, A->mx * 256 + s_aims9[ai - 1][0], A->my * 256 + s_aims9[ai - 1][1],
                           A->mx, A->my, extra, &ln);
         e->n_shot += 1;
+        if (t_pf && w == TS_TANK) t_pt_tank = 1;
         if (w == TS_OK) aw_note(e, px, py, e->ts_last_angle, PI(e, e->A)->mx, PI(e, e->A)->my, extra);
         if (w == TS_OK && !aim_wide(e, px, py, ai, extra)) w = TS_NARROW;
         if (w == TS_OK) { aim_idx = ai; lane = ln; break; }
@@ -3011,6 +3129,7 @@ static Rec *eval_point__p(Ev *e, double px, double py, Extra *extra, int aim_fix
             set_om(e, floor(px / 256), floor(py / 256));
         }
     }
+    if (t_pf) t_pt_aim = pf_clock();
     if (!aim_idx) { *why = W_OUTGOING; *why_arg = why_out; return NULL; }
     PList *T = pills_in_range(e, px, py);
     int A = e->A;
@@ -3022,6 +3141,7 @@ static Rec *eval_point__p(Ev *e, double px, double py, Extra *extra, int aim_fix
             int Y = pr.link;
             if (pr.sure && !(Y && pr.used && Y != A && !chain_skip(e, Y))) {
                 e->must_cut += 1;
+                PC(C_pt_must_cut, 1);
                 Rec *s = rec_new(e);
                 s->flags = RF_LAZY;
                 s->px = px; s->py = py; s->nudge_wu = nudge_wu; s->T = T; s->aim_idx = aim_idx;
@@ -3035,6 +3155,7 @@ static Rec *eval_point__p(Ev *e, double px, double py, Extra *extra, int aim_fix
         int nxt = (e->chains && e->max_chain >= 2 && !vA->cut) ? vA->link : 0;
         if (!nxt || nxt == A || chain_skip(e, nxt)) {
             e->lazy_n += 1;
+            PC(C_pt_lazy_n, 1);
             Rec *s = rec_new(e);
             s->flags = RF_LAZY | RF_ANEED;
             s->px = px; s->py = py; s->nudge_wu = nudge_wu; s->T = T; s->aim_idx = aim_idx;
@@ -4392,7 +4513,7 @@ static void extra_cover__p(Ev *e, Rec *rec) {
     }
     rec->n_xc = m;
 }
-static void extra_cover(Ev *e, Rec *rec) { PB(P_extra_cover); extra_cover__p(e, rec); PE(); }
+static void extra_cover(Ev *e, Rec *rec) { PT_ENTER(C_pt_hold_t); PB(P_extra_cover); extra_cover__p(e, rec); PE(); PT_LEAVE(C_pt_hold_t); }
 
 /* ── Plans ──────────────────────────────────────────────────────────── */
 static int same_chain(const PList *a, const PList *b) {
@@ -4430,7 +4551,7 @@ static void plan_empty__p(Ev *e, Rec *rec) {
     rec->extra = extra_new(e);
     rec->flags |= RF_PLAN;
 }
-static void plan_empty(Ev *e, Rec *rec) { PB(P_plan_empty); plan_empty__p(e, rec); PE(); }
+static void plan_empty(Ev *e, Rec *rec) { PT_ENTER(C_pt_plan_empty_t); PB(P_plan_empty); plan_empty__p(e, rec); PE(); PT_LEAVE(C_pt_plan_empty_t); }
 
 /* the items of solution so in its trip order */
 static PlanE *sol_items(Ev *e, const Sol *so) {
@@ -4586,7 +4707,18 @@ static Rec *plan_point__p(Ev *e, Rec *rec) {
     plan_empty(e, rec);
     return rec;
 }
-static Rec *plan_point(Ev *e, Rec *rec) { PB(P_plan_point); Rec * r_ = plan_point__p(e, rec); PE(); return r_; }
+static Rec *plan_point(Ev *e, Rec *rec) {
+    PT_ENTER(C_pt_plan_t);
+    PB(P_plan_point); Rec * r_ = plan_point__p(e, rec); PE();
+    if (pt_mine_) {
+        double dt = (double)(pf_clock() - pt0_);
+        int ph = (t_pt_ph >= 1 && t_pt_ph <= 5) ? t_pt_ph : 0;
+        t_pf->cnt[C_pt_plan_n] += 1;
+        if (ph) { t_pf->cnt[C_pt_plan_ph1 + ph - 1] += 1; t_pf->cnt[C_pt_plan_ph1_t + ph - 1] += dt; }
+    }
+    PT_LEAVE(C_pt_plan_t);
+    return r_;
+}
 
 /* ── Leeway ─────────────────────────────────────────────────────────── */
 static void nb_init(void) {
@@ -4621,7 +4753,7 @@ static double leeway__p(Ev *e, Rec *rec, double ring_wu, LeePt **out) {
     *out = res;
     return n;
 }
-static double leeway(Ev *e, Rec *rec, double ring_wu, LeePt **out) { PB(P_leeway); double r_ = leeway__p(e, rec, ring_wu, out); PE(); return r_; }
+static double leeway(Ev *e, Rec *rec, double ring_wu, LeePt **out) { PT_ENTER(C_pt_leeway_t); if (pt_mine_) t_pf->cnt[C_pt_leeway_n] += 1; PB(P_leeway); double r_ = leeway__p(e, rec, ring_wu, out); PE(); PT_LEAVE(C_pt_leeway_t); return r_; }
 
 /* PT2_FAVOR_BLOCKER_PLACE (Nov 24, Andrew's yes): blocker_place as the
  * Lua. bp_tier from the record's friendly blocker pills (its planned pill
@@ -4682,7 +4814,7 @@ static void score_of__p(Ev *e, Rec *fin) {
     blocker_place(e, fin);
     if (e->swb && fin->safe) start_check(e, fin);
 }
-static void score_of(Ev *e, Rec *fin) { PB(P_score_of); score_of__p(e, fin); PE(); }
+static void score_of(Ev *e, Rec *fin) { PT_ENTER(C_pt_score_of_t); PB(P_score_of); score_of__p(e, fin); PE(); PT_LEAVE(C_pt_score_of_t); }
 
 static void carry(Rec *fin, const Rec *rec) {
     fin->deg = rec->deg; fin->cx = rec->cx; fin->cy = rec->cy; fin->mx = rec->mx; fin->my = rec->my;
@@ -4819,7 +4951,7 @@ static void rerank__p(Ev *e) {
     set_band(e, e->scored, e->nscored);
     lsort(e->L, (void **)e->scored, e->nscored, better_lt, e);
 }
-static void rerank(Ev *e) { PB(P_rerank); rerank__p(e); PE(); }
+static void rerank(Ev *e) { PT_ENTER(C_pt_rerank_t); PB(P_rerank); rerank__p(e); PE(); PT_LEAVE(C_pt_rerank_t); }
 
 static int pre_rank(void *cx, void *pa, void *pb) {
     (void)cx;
@@ -4881,7 +5013,7 @@ static Hold *hold_point__p(Ev *e, Rec *b) {
     h->why_pill = first_why;
     return h;
 }
-static Hold *hold_point(Ev *e, Rec *b) { PB(P_hold_point); Hold * r_ = hold_point__p(e, b); PE(); return r_; }
+static Hold *hold_point(Ev *e, Rec *b) { PT_ENTER(C_pt_hold_t); PB(P_hold_point); Hold * r_ = hold_point__p(e, b); PE(); PT_LEAVE(C_pt_hold_t); return r_; }
 
 /* ── Output ─────────────────────────────────────────────────────────── */
 /* An object goes out once per output; later places get the same table. */
@@ -5699,7 +5831,9 @@ static double score_fn(Ev *e, double deg, double mx, double my, double cx, doubl
     lua_pushvalue(L, S_SCORE_FN);
     lua_pushnumber(L, deg); lua_pushnumber(L, mx); lua_pushnumber(L, my);
     lua_pushnumber(L, cx); lua_pushnumber(L, cy);
+    int64_t pt_s0 = t_pf ? pf_clock() : 0;
     PLC(P_cb_score_fn, L, 5, 1);
+    if (t_pf) { t_pf->cnt[C_pt_score_fn_t] += (double)(pf_clock() - pt_s0); t_pf->cnt[C_pt_score_fn_n] += 1; }
     double v = lua_tonumber(L, -1);
     lua_pop(L, 1);
     return v;
@@ -5746,7 +5880,7 @@ static void points_of_ring__p(Ev *e) {
         }
     }
 }
-static void points_of_ring(Ev *e) { PB(P_points_of_ring); points_of_ring__p(e); PE(); }
+static void points_of_ring(Ev *e) { PT_ENTER(C_pt_filter_t); PB(P_points_of_ring); points_of_ring__p(e); PE(); PT_LEAVE(C_pt_filter_t); }
 
 static void point_of_ring__p(Ev *e, int q) {
     double deg = e->pp_deg[q], cx = e->pp_cx[q], cy = e->pp_cy[q], mx = e->pp_mx[q], my = e->pp_my[q];
@@ -5755,7 +5889,23 @@ static void point_of_ring__p(Ev *e, int q) {
     int why = W_NONE, wa = 0;
     if (!e->pp_hasA[q]) why = W_A_OUT;
     else if (e->pp_cant[q]) why = W_CANT;
-    else rec = eval_point(e, px, py, NULL, 0, 1, 0, e->lazy, &why, &wa);
+    else {
+        int64_t pt_e0 = t_pf ? pf_clock() : 0;
+        if (t_pf) { t_pt_tank = 0; t_pt_aim = 0; }
+        rec = eval_point(e, px, py, NULL, 0, 1, 0, e->lazy, &why, &wa);
+        if (t_pf) {
+            int64_t pt_e1 = pf_clock();
+            int64_t pa = t_pt_aim ? t_pt_aim : pt_e1;
+            double *k = t_pf->cnt;
+            uint64_t key = (uint64_t)PT_KEY(e, deg);
+            k[C_pt_shot_t] += (double)(pa - pt_e0);
+            if (!rec) { k[C_pt_rej_t] += (double)(pt_e1 - pa); k[C_pt_rej_n] += 1; }
+            else if (rec->flags & RF_LAZY) { k[C_pt_stub_t] += (double)(pt_e1 - pa); k[C_pt_stub_n] += 1; t_pf->pt_stub_h ^= pt_mix(key); }
+            else { k[C_pt_ray_t] += (double)(pt_e1 - pa); k[C_pt_full_rec] += 1; t_pf->pt_rec_h ^= pt_mix(key); }
+            if (rec) k[C_pt_shot_ok] += 1;
+            if (t_pt_tank) { k[C_pt_tank_pts] += 1; if (!rec) k[C_pt_tank_rej] += 1; }
+        }
+    }
     if (rec) {
         if (rec->nudge_wu > 0) {
             cx = rec->px / 256; cy = rec->py / 256;
@@ -5778,7 +5928,7 @@ static void point_of_ring__p(Ev *e, int q) {
         }
     }
 }
-static void point_of_ring(Ev *e, int q) { PB(P_point_of_ring); point_of_ring__p(e, q); PE(); }
+static void point_of_ring(Ev *e, int q) { PT_ENTER(C_pt_ring_t); if (t_pf) t_pf->cnt[C_pt_ring_n] += 1; PB(P_point_of_ring); point_of_ring__p(e, q); PE(); PT_LEAVE(C_pt_ring_t); }
 
 /* the full record of a lazy stub q */
 static Rec *full_of__p(Ev *e, Rec *q) {
@@ -5792,7 +5942,7 @@ static Rec *full_of__p(Ev *e, Rec *q) {
     full->omx = q->omx; full->omy = q->omy; full->flags |= RF_OMXY;
     return full;
 }
-static Rec *full_of(Ev *e, Rec *q) { PB(P_full_of); Rec * r_ = full_of__p(e, q); PE(); return r_; }
+static Rec *full_of(Ev *e, Rec *q) { PT_ENTER(C_pt_full_of_t); if (pt_mine_) t_pf->cnt[C_pt_full_of_n] += 1; PB(P_full_of); Rec * r_ = full_of__p(e, q); PE(); PT_LEAVE(C_pt_full_of_t); return r_; }
 
 static double qsf_key(const Rec *r) { return (r->safe ? 1000 : 0) + r->kills; }
 static int qsf_on(Ev *e) { return e->qsf && e->has_band && e->band > 0; }
@@ -5823,6 +5973,10 @@ static int ev_run(Ev *e) {
         for (e->ri = 0; e->ri < (e->far ? e->nring : e->nradii); e->ri++) {
             e->R = e->far ? e->ring[e->ri] : e->radius + e->radii[e->ri];
             e->ncands = 0;
+            if (t_pf && e->ri == 0) {
+                t_pf->cnt[C_pt_evals] += 1;
+                if (e->lazy) t_pf->cnt[C_pt_lazy_evals] += 1;
+            }
             points_of_ring(e);
             if (!e->has_surv1) {
                 e->surv1 = e->survive; e->has_surv1 = 1;
@@ -5843,6 +5997,7 @@ static int ev_run(Ev *e) {
                 for (e->ci = 1; e->ci <= e->ncands; e->ci++) {
                     rec = e->cands[e->ci];
                     if (rec->flags & RF_LAZY) { e->singles[++e->nsingles] = rec; continue; }
+                    PT_PH(1);
                     fin = plan_point(e, rec);
                     carry(fin, rec);
                     score_of(e, fin);
@@ -5861,14 +6016,21 @@ static int ev_run(Ev *e) {
                     }
                 }
                 lsort(e->L, (void **)e->singles, e->nsingles, single_lt, NULL);
+                if (t_pf) t_pf->cnt[C_pt_singles] += e->nsingles;
                 e->has_m = 0;
                 if (!e->co) {
                     for (e->ci = 1; e->ci <= e->nsingles; e->ci++) {
                         Rec *q = e->singles[e->ci];
                         if (e->has_m && q->lb > e->m + e->band) {
                             e->plan_skipped += e->nsingles - e->ci + 1;
+                            if (t_pf) t_pf->cnt[C_pt_plan_skipped] += e->nsingles - e->ci + 1;
                             break;
                         }
+                        if (t_pf) {
+                            t_pf->cnt[C_pt_single_plans] += 1;
+                            if (t_pf->pt_ncut < PT_CUT_MAX) t_pf->pt_cut[t_pf->pt_ncut++] = PT_KEY(e, q->deg);
+                        }
+                        PT_PH(2);
                         Rec *full = full_of(e, q);
                         fin = NULL;
                         if (!full->covered && e->has_m && e->co_bc > 0) {
@@ -5882,6 +6044,7 @@ static int ev_run(Ev *e) {
                             if (km > kmax) {
                                 plan_empty(e, full);
                                 e->plan_cut += 1;
+                                if (t_pf) t_pf->cnt[C_pt_plan_cut] += 1;
                                 fin = full;
                             } else {
                                 full->kmax = kmax; full->flags |= RF_KMAX;
@@ -5913,6 +6076,7 @@ static int ev_run(Ev *e) {
                 for (e->ci = 1; e->ci <= e->norder; e->ci++) {
                     rec = e->order[e->ci];
                     if (e->has_m && rec->base > e->m + e->band) break;
+                    PT_PH(3);
                     fin = plan_point(e, rec);
                     carry(fin, rec);
                     score_of(e, fin);
@@ -5929,12 +6093,14 @@ static int ev_run(Ev *e) {
                         fin->flags |= RF_UNSEARCH;
                         score_of(e, fin);
                         e->plan_skipped += 1;
+                        if (t_pf) t_pf->cnt[C_pt_plan_skipped] += 1;
                     }
                     scored_push(e, fin);
                 }
             } else {
                 for (e->ci = 1; e->ci <= e->ncands; e->ci++) {
                     rec = e->cands[e->ci];
+                    PT_PH(4);
                     fin = plan_point(e, rec);
                     carry(fin, rec);
                     score_of(e, fin);
@@ -6015,6 +6181,9 @@ static int ev_run(Ev *e) {
                     for (e->ci = 1; e->ci <= e->nsingles; e->ci++) {
                         e->co_single_eval += 1;
                         {
+                            PT_PH(5);
+                            if (t_pf && t_pf->pt_ncut < PT_CUT_MAX)
+                                t_pf->pt_cut[t_pf->pt_ncut++] = (1 << 20) + PT_KEY(e, e->singles[e->ci]->deg);
                             Rec *full = full_of(e, e->singles[e->ci]);
                             fin = plan_point(e, full);
                             carry(fin, full);
@@ -6369,6 +6538,14 @@ static int l_prof_take(lua_State *L) {
     for (int i = C_zw_ns_setup; i <= C_zw_ns_rewalk; i++)
         p->cnt[i] = tpu > 0 ? floor(p->cnt[i] * 1000.0 / tpu + 0.5) : 0;
     p->cnt[C_zw_tsc_mhz] = p->cnt[C_zw_smp] > 0 ? floor(tpu + 0.5) : 0;
+    {
+        static const int pt_t[] = { C_pt_filter_t, C_pt_ring_t, C_pt_shot_t, C_pt_stub_t, C_pt_ray_t,
+            C_pt_rej_t, C_pt_score_fn_t, C_pt_full_of_t, C_pt_plan_t, C_pt_plan_empty_t, C_pt_score_of_t,
+            C_pt_rerank_t, C_pt_leeway_t, C_pt_sort_t, C_pt_hold_t, C_pt_plan_ph1_t, C_pt_plan_ph2_t,
+            C_pt_plan_ph3_t, C_pt_plan_ph4_t, C_pt_plan_ph5_t };
+        for (size_t i = 0; i < sizeof(pt_t) / sizeof(pt_t[0]); i++)
+            p->cnt[pt_t[i]] = floor(p->cnt[pt_t[i]] * us + 0.5);
+    }
     lua_createtable(L, 0, C_N);
     for (int i = 0; i < C_N; i++) {
         lua_pushnumber(L, p->cnt[i]);
@@ -6378,6 +6555,29 @@ static int l_prof_take(lua_State *L) {
     memset(p->tk, 0, sizeof(p->tk));
     memset(p->n, 0, sizeof(p->n));
     memset(p->cnt, 0, sizeof(p->cnt));
+    return 1;
+}
+
+/* gh_pt2_v2.prof_cut() (log only, cache study): "stub_h rec_h k1,k2,..."
+ * for the ring points since the last call: the hash of the stub keys, the
+ * hash of the full record keys, and the keys of the singles that were
+ * planned (full_of in the lazy loop). key = ring index * 4096 + deg * 8;
+ * a single planned in the co block has 1 << 20 added.
+ * Then all are zero. */
+static int l_prof_cut(lua_State *L) {
+    Pt2Prof *p = &get_ctx(L)->pf;
+    luaL_Buffer b;
+    char tmp[64];
+    luaL_buffinit(L, &b);
+    snprintf(tmp, sizeof(tmp), "%016llx %016llx ", (unsigned long long)p->pt_stub_h, (unsigned long long)p->pt_rec_h);
+    luaL_addstring(&b, tmp);
+    for (int i = 0; i < p->pt_ncut; i++) {
+        snprintf(tmp, sizeof(tmp), i ? ",%d" : "%d", p->pt_cut[i]);
+        luaL_addstring(&b, tmp);
+    }
+    if (p->pt_ncut == 0) luaL_addstring(&b, "-");
+    luaL_pushresult(&b);
+    p->pt_ncut = 0; p->pt_stub_h = 0; p->pt_rec_h = 0;
     return 1;
 }
 
@@ -6416,6 +6616,7 @@ static const luaL_Reg gh_pt2_v2_lib[] = {
     { "slices", l_slices },
     { "prof", l_prof },
     { "prof_take", l_prof_take },
+    { "prof_cut", l_prof_cut },
     { NULL, NULL }
 };
 

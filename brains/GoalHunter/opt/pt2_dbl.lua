@@ -74,6 +74,7 @@ end
 
 -- Wall squares changed this tick (threat.update's terrain loop): drop the
 -- entries with a chain pill in pill range of the square.
+local logline
 function M.on_tile(state, tx, ty, ntt)
   local s = state and state._pt2_dbl
   if not s then return end
@@ -83,6 +84,11 @@ function M.on_tile(state, tx, ty, ntt)
     for _, p in ipairs(e.pos) do
       if math.abs(p[1] - tx) <= R and math.abs(p[2] - ty) <= R then
         s.by_id[id] = nil
+        -- cache study (log only)
+        if (C.PT2_DBL_STDERR_LOG) then
+          logline(string.format("PT2_DBL_STALE p=%s t=%s pill#%s why=wall age=-1 sq=%d,%d",
+            tostring(s.pn), tostring(s.t_cur or -1), tostring(id), tx, ty))
+        end
         break
       end
     end
@@ -102,7 +108,7 @@ end
 -- with PT2_DBL_STDERR_LOG a plain print() (a release DS drops it), and with
 -- PT2_DBL_EVENT_FILE set to a file name, also a line in
 -- <brain dir>/fs_events/<name> (as FOCUS_SPIKE_EVENT_FILE). Log only.
-local function logline(line)
+logline = function(line)
   if not C.PT2_DBL_STDERR_LOG then return end
   print(line)
   local L = C.PT2_DBL_EVENT_FILE
@@ -155,6 +161,8 @@ local function make_inp(state, world, info, pill, now)
   -- PT2_CHAINS_ONLY (S10): the entry counts only as a safe chain, so v2
   -- plans no single take here (the old evaluator ignores the field)
   if inp and inp.chains_only_runs then inp.chains_only = true end
+  -- cache study (log only): the profile lines of this run say src=dbl
+  if inp and inp._prof_head then inp._prof_head = inp._prof_head .. " src=dbl" end
   return inp
 end
 
@@ -274,6 +282,57 @@ local function job_why(job, world, info, now)
     return "cap"
   end
   return nil
+end
+
+-- Cache study (log only, PT2_DBL_STDERR_LOG): hashes of a job's inputs at
+-- its start. The area is the box of the target (and of the group pills
+-- when the group list is known; at the start it is not), 10 squares out
+-- on each side. sig_t: the terrain types in the area (read
+-- with U.ttype_peek, which primes nothing); sig_p: each pill in the area
+-- (id, health, owner, carried); sig_a: the anger now of each pill in the
+-- area, to 0.001; nban: the banned angles still in force on the group
+-- pills. tank: our tank's square.
+local function h32(h, v)
+  return (h * 31 + v) % 4294967296
+end
+local function job_sig(state, info, inp, g, now)
+  local U = require("util")
+  local PA = package.loaded["pt2_attack"]
+  local list = { inp.A }
+  for _, p in ipairs((g and g.list) or {}) do list[#list + 1] = p end
+  local x0, y0, x1, y1 = 255, 255, 0, 0
+  for _, p in ipairs(list) do
+    if p.mx < x0 then x0 = p.mx end
+    if p.my < y0 then y0 = p.my end
+    if p.mx > x1 then x1 = p.mx end
+    if p.my > y1 then y1 = p.my end
+  end
+  x0, y0 = math.max(0, x0 - 10), math.max(0, y0 - 10)
+  x1, y1 = math.min(255, x1 + 10), math.min(255, y1 + 10)
+  local ht = 17
+  for y = y0, y1 do
+    for x = x0, x1 do ht = h32(ht, U.ttype_peek(x, y) + 1) end
+  end
+  local hp, ha = 17, 17
+  for _, p in ipairs(inp.pills or {}) do
+    if p.mx >= x0 and p.mx <= x1 and p.my >= y0 and p.my <= y1 then
+      local ow = p.owner == "hostile" and 1 or p.owner == "neutral" and 2 or p.owner == "friendly" and 3 or 4
+      hp = h32(hp, (p.my * 256 + p.mx) * 1009 + (p.health or 0) * 101 + ow * 7 + (p.in_tank and 1 or 0))
+      local a = PA and PA.anger_now(p, now) or 0
+      ha = h32(ha, (p.my * 256 + p.mx) * 1009 + floor(a * 1000 + 0.5))
+    end
+  end
+  local nban = 0
+  local bp = state.banned_pill_angles
+  if bp then
+    for _, p in ipairs(list) do
+      local bans = bp[p.my * 256 + p.mx]
+      if bans then for _, exp in pairs(bans) do if now < exp then nban = nban + 1 end end end
+    end
+  end
+  return string.format(" sig_t=%08x sig_p=%08x sig_a=%08x nban=%d area=%d,%d,%d,%d tank=%d,%d gpills=%d",
+    ht % 4294967296, hp % 4294967296, ha % 4294967296, nban, x0, y0, x1, y1,
+    floor((info.tankx or 0) / 256), floor((info.tanky or 0) / 256), #list)
 end
 
 -- The cost of the next part in ms: the EWMA of our parts. Before our first
@@ -402,6 +461,7 @@ local function job_part(s, state, job, now)
       e.pills, e.carried, e.walls, e.trees, e.trees_need, job.us, job.n, ticks,
       br and br.lastThinkMs or 0, br and br.targetMs or 0, s.est_part_ms)
     if job.slices then line = line .. string.format(" slices=%d", job.slices) end
+    if job.sig then line = line .. string.format(" t0=%d", job.t0) .. job.sig end
     logline(line)
   end
 end
@@ -449,6 +509,7 @@ local function start_job(s, state, world, info, id, pill, now)
   if not inp then s.by_id[id] = e; return e end
   local job = { id = id, state = state, t0 = now, e = e, inp = inp, snap = snap_pills(inp),
                 g = V2.group_begin(inp), us = clock_us() - t0, n = 0, total = nil }
+  if (C.PT2_DBL_STDERR_LOG) then job.sig = job_sig(state, info, inp, job.g, now) end
   s.job = job
   s.n_jobs = s.n_jobs + 1
   job_part(s, state, job, now)
@@ -492,7 +553,13 @@ function M.get(state, world, info, id, pill, now)
   local s = store(state)
   s.pn = info.player_number
   local e = s.by_id[id]
-  if e and stale_why(e, world, info, now, state) then
+  local why = e and stale_why(e, world, info, now, state)
+  if why then
+    -- cache study (log only): why the entry went, and its age
+    if (C.PT2_DBL_STDERR_LOG) then
+      logline(string.format("PT2_DBL_STALE p=%s t=%d pill#%s why=%s age=%d",
+        tostring(s.pn), now, tostring(id), why, now - e.tick))
+    end
     s.by_id[id] = nil
     e = nil
   end
