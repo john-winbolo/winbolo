@@ -932,6 +932,48 @@ static const ServerSimLocalTickHooks s_localTickHooks = {
   lifecycleBeforeReturnToLobby,
 };
 
+/* WINBOLO_TICKPROF_LOG=<file> (log only, off when unset): one line per
+ * running frame with that frame's wall-clock split, for profiling a real
+ * game without the brain profiler. Columns: frame, game tick, whole tick
+ * ms, serverSimTick ms (engine), brain dispatch ms, bot serial ms (prep +
+ * input send), per-bot target ms, then per bot "slot:think_ms:thinks:
+ * overruns". Whole minus the three parts is network and the rest. Reads
+ * numbers the tick already measured; it changes nothing in the game. */
+static FILE    *s_tickProf = NULL;
+static bool     s_tickProfTried = false;
+static uint32_t s_tickProfFrame = 0;
+
+static void serverTickProfWrite(ServerSim *sim, double tickMs) {
+  if (!s_tickProfTried) {
+    const char *path = getenv("WINBOLO_TICKPROF_LOG");
+    s_tickProfTried = true;
+    if (path != NULL && path[0] != '\0') {
+      s_tickProf = fopen(path, "w");
+      if (s_tickProf != NULL) {
+        setvbuf(s_tickProf, NULL, _IOFBF, 1 << 20);
+        fprintf(s_tickProf, "# frame gametick tick_ms sim_ms brain_ms "
+                "serial_ms target_ms slot:think_ms:thinks:overruns...\n");
+      }
+    }
+  }
+  if (s_tickProf == NULL) return;
+  BotPoolStats ps;
+  memset(&ps, 0, sizeof(ps));
+  botManagerGetPoolStats(sim, &ps);
+  fprintf(s_tickProf, "%u %u %.3f %.3f %.3f %.3f %.2f",
+          (unsigned)s_tickProfFrame++, (unsigned)serverSimGetTick(sim),
+          tickMs, s_lastSimMs, ps.lastBrainPhaseMs, ps.lastSerialMs,
+          ps.currentTargetMs);
+  for (BYTE i = 0; i < MAX_TANKS; i++) {
+    BotInfo bi;
+    if (!botManagerGetBotInfo(sim, i, &bi) || !bi.hasBrain) continue;
+    fprintf(s_tickProf, " %u:%.3f:%u:%u", (unsigned)i, bi.lastThinkMs,
+            (unsigned)bi.thinkCount, (unsigned)bi.overrunCount);
+  }
+  fputc('\n', s_tickProf);
+  if ((s_tickProfFrame % 250u) == 0u) fflush(s_tickProf);
+}
+
 void serverInstanceTick(ServerSim *sim) {
   /* Measure the entire tick wall-clock — outside the mutex acquire so
    * the EWMA captures contention wait time too. Single bottom-of-function
@@ -1263,6 +1305,9 @@ void serverInstanceTick(ServerSim *sim) {
   double freq = (double)SDL_GetPerformanceFrequency();
   double tickMs = (double)(tickEnd - tickStart) * 1000.0 / freq;
   serverLifecycleRecordTickMs(tickMs);
+  if (preTickState == serverStateRunning && sim->state == serverStateRunning) {
+    serverTickProfWrite(sim, tickMs);
+  }
 
   /* The overrun lines on the console, once a minute into the round and then
    * every five minutes, and the overrun record in the round log, every 30
@@ -1279,6 +1324,10 @@ void serverInstanceTick(ServerSim *sim) {
 }
 
 void serverInstanceShutdown(ServerSim *sim) {
+  if (s_tickProf != NULL) {
+    fclose(s_tickProf);
+    s_tickProf = NULL;
+  }
   /* Unregister + free the live ring first, so nothing taps it during the rest
    * of teardown. NULL-safe — a no-op for a sim that never had a ring. */
   serverInstanceDestroySpectatorRing();
