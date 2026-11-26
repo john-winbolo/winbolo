@@ -2403,6 +2403,7 @@ int run_overview_snapshot_removed_item_has_no_label(void);
  * under the tank, not the hidden corner block its sprite starts in. */
 int run_overview_snapshot_corner_keeps_self(void);
 int run_overview_snapshot_fogged_pill_keeps_number(void);
+int run_item_labels_not_found(void);
 
 /* Sprite placement at a float scale (test_mapview_sprite_scale.c): the
  * arithmetic behind mapViewDrawShells / Tanks / LGMs, shared by the classic

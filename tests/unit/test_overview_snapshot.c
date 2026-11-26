@@ -48,6 +48,8 @@
 #include "explosions.h"          /* explosionsAddItem — a bullet-list entry to place */
 #include "overview_camera.h"     /* overviewEntityIsVisible — the renderer's filter */
 #include "map_colours.h"         /* mapColourItemNumberOnTile — which squares carry a number */
+#include "item_labels.h"         /* mapViewPickItemLabels, mapViewItemLabelNumber — the views' picks */
+#include "bases.h"               /* BASE_NOT_FOUND, basesGetBaseNum */
 #include "test_harness.h"
 
 /* Rounds of the input-pair warm-up to run before the client's tank is
@@ -1131,32 +1133,140 @@ int run_overview_snapshot_fogged_pill_keeps_number(void) {
                   (unsigned)wallX, (unsigned)pillY,
                   (unsigned)om->tile[wallX][pillY]);
 
-    /* The snapshot still lists the pill, at its square, as pill 1. */
+    /* The pick the full screen map and the map overview draw from keeps the
+     * fogged pill, as pill 1. This is the loop overview_view.cpp runs: if the
+     * live check comes back, the pill is dropped here and the test fails. */
     {
         int total = overviewSnapshotItemLabelCount(f.snap);
         const OverviewItemLabel *labels = overviewSnapshotItemLabels(f.snap);
+        OverviewItemLabel picked[MAX_PILLS + MAX_BASES];
+        int n = mapViewPickItemLabels(om, labels, total, true, true, picked,
+                                      MAX_PILLS + MAX_BASES);
         bool found = false;
         int i;
-        for (i = 0; i < total; i++) {
-            if (labels[i].isBase == false && labels[i].mapX == pillX &&
-                labels[i].mapY == pillY) {
-                UT_ASSERT_MSG(labels[i].number == 0,
+        for (i = 0; i < n; i++) {
+            if (picked[i].isBase == false && picked[i].mapX == pillX &&
+                picked[i].mapY == pillY) {
+                UT_ASSERT_MSG(picked[i].number == 0,
                               "the fogged pill is numbered %u, wanted 0 "
-                              "(pill 1)", (unsigned)labels[i].number);
+                              "(pill 1)", (unsigned)picked[i].number);
                 found = true;
             }
         }
-        UT_ASSERT_MSG(found, "the snapshot has no number for the fogged pill "
+        UT_ASSERT_MSG(found, "the pick drew no number for the fogged pill "
                              "at %u,%u", (unsigned)pillX, (unsigned)pillY);
+
+        /* With the Pillbox Labels switch off, no pill number is picked. */
+        n = mapViewPickItemLabels(om, labels, total, false, true, picked,
+                                  MAX_PILLS + MAX_BASES);
+        for (i = 0; i < n; i++) {
+            UT_ASSERT_MSG(picked[i].isBase,
+                          "the Pillbox Labels switch is off, yet pill %u at "
+                          "%u,%u was picked", (unsigned)picked[i].number + 1u,
+                          (unsigned)picked[i].mapX, (unsigned)picked[i].mapY);
+        }
+
+        /* A pill tile with no pill in the list: the pill was moved, and the
+         * client was told its new square (grass in the memory). The old
+         * square keeps its remembered pill tile but gets no number, and the
+         * grass square gets none either. */
+        {
+            OverviewItemLabel moved[MAX_PILLS + MAX_BASES];
+            BYTE newX = (BYTE)((int)f.tankMX - dir);
+            int m = total < MAX_PILLS + MAX_BASES ? total : MAX_PILLS + MAX_BASES;
+            memcpy(moved, labels, (size_t)m * sizeof(moved[0]));
+            for (i = 0; i < m; i++) {
+                if (moved[i].isBase == false && moved[i].mapX == pillX &&
+                    moved[i].mapY == pillY) {
+                    moved[i].mapX = newX;
+                }
+            }
+            UT_ASSERT_MSG(!mapColourItemNumberOnTile(om->tile[newX][pillY], false),
+                          "the square %u,%u the pill moved to is not ground "
+                          "(tile %u)", (unsigned)newX, (unsigned)pillY,
+                          (unsigned)om->tile[newX][pillY]);
+            n = mapViewPickItemLabels(om, moved, m, true, true, picked,
+                                      MAX_PILLS + MAX_BASES);
+            for (i = 0; i < n; i++) {
+                UT_ASSERT_MSG(picked[i].isBase,
+                              "the pill moved to %u,%u, yet pill %u was "
+                              "picked at %u,%u", (unsigned)newX,
+                              (unsigned)pillY, (unsigned)picked[i].number + 1u,
+                              (unsigned)picked[i].mapX,
+                              (unsigned)picked[i].mapY);
+            }
+        }
     }
 
-    /* The classic view's lookup by square finds the remembered pill too. */
-    UT_ASSERT_MSG(pillsGetViewPillNum(&f.gs->pb, pillX, pillY, FALSE, FALSE) == 1,
-                  "the classic view's lookup finds pill %u at the fogged "
-                  "square, wanted 1",
-                  (unsigned)pillsGetViewPillNum(&f.gs->pb, pillX, pillY,
-                                                FALSE, FALSE));
+    /* The classic view's lookup by square finds the remembered pill, and
+     * numbers it 0. */
+    UT_ASSERT_MSG(mapViewItemLabelNumber(
+                      pillsGetViewPillNum(&f.gs->pb, pillX, pillY, FALSE, FALSE),
+                      false) == 0,
+                  "the classic view gives the fogged pill no number 0");
+
+    /* Then the pill is moved, and the client is told: its record goes to a
+     * new square. The hidden square still shows the remembered pill tile,
+     * but the lookup there finds no pill, so the classic view draws no
+     * number on it (before, it drew 252). */
+    f.gs->pb->item[0].x = (BYTE)((int)f.tankMX - dir);
+    {
+        BYTE got = pillsGetViewPillNum(&f.gs->pb, pillX, pillY, FALSE, FALSE);
+        UT_ASSERT_MSG(got > MAX_PILLS,
+                      "the lookup found pill %u at %u,%u after it moved",
+                      (unsigned)got, (unsigned)pillX, (unsigned)pillY);
+        UT_ASSERT_MSG(mapViewItemLabelNumber(got, false) == -1,
+                      "the classic view draws %d on the square the pill left",
+                      mapViewItemLabelNumber(got, false));
+    }
 
     snapFixtureStop(&f);
+    return 0;
+}
+
+/* The classic view turns the sim's lookup by square into the number it
+ * draws. A lookup that finds nothing gives a value past the pill or base
+ * range (PILL_NOT_FOUND - 1 for a pill, BASE_NOT_FOUND for a base), and the
+ * square gets no number. A found item 1..16 is drawn as 0..15. */
+int run_item_labels_not_found(void) {
+    UT_ASSERT_MSG(mapViewItemLabelNumber((BYTE)(PILL_NOT_FOUND - 1), false) == -1,
+                  "a pill lookup that found nothing (%u) gives number %d",
+                  (unsigned)(PILL_NOT_FOUND - 1),
+                  mapViewItemLabelNumber((BYTE)(PILL_NOT_FOUND - 1), false));
+    UT_ASSERT_MSG(mapViewItemLabelNumber((BYTE)PILL_NOT_FOUND, false) == -1,
+                  "PILL_NOT_FOUND gives a pill number");
+    UT_ASSERT_MSG(mapViewItemLabelNumber((BYTE)BASE_NOT_FOUND, true) == -1,
+                  "a base lookup that found nothing (%u) gives number %d",
+                  (unsigned)BASE_NOT_FOUND,
+                  mapViewItemLabelNumber((BYTE)BASE_NOT_FOUND, true));
+    UT_ASSERT_MSG(mapViewItemLabelNumber(0, false) == -1 &&
+                      mapViewItemLabelNumber(0, true) == -1,
+                  "a lookup of 0 gives a number");
+    UT_ASSERT_MSG(mapViewItemLabelNumber(MAX_PILLS + 1, false) == -1 &&
+                      mapViewItemLabelNumber(MAX_BASES + 1, true) == -1,
+                  "a lookup past the last item gives a number");
+    UT_ASSERT_MSG(mapViewItemLabelNumber(1, false) == 0 &&
+                      mapViewItemLabelNumber(1, true) == 0,
+                  "item 1 is not drawn as 0");
+    UT_ASSERT_MSG(mapViewItemLabelNumber(MAX_PILLS, false) == MAX_PILLS - 1 &&
+                      mapViewItemLabelNumber(MAX_BASES, true) == MAX_BASES - 1,
+                  "the last item is not drawn as its number less one");
+
+    /* The real lookups on empty pill and base lists give not-found values,
+     * and those draw no number. */
+    {
+        bases bs = NULL;
+        pillboxes pb = NULL;
+        basesCreate(&bs);
+        pillsCreate(&pb);
+        UT_ASSERT_MSG(mapViewItemLabelNumber(basesGetBaseNum(&bs, 10, 10), true) == -1,
+                      "an empty base list gives a base number");
+        UT_ASSERT_MSG(mapViewItemLabelNumber(
+                          pillsGetViewPillNum(&pb, 10, 10, FALSE, FALSE),
+                          false) == -1,
+                      "an empty pill list gives a pill number");
+        basesDestroy(&bs);
+        pillsDestroy(&pb);
+    }
     return 0;
 }

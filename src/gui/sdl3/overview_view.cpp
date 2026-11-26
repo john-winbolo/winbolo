@@ -68,6 +68,7 @@ extern "C" {
 #include "tilenum.h"
 #include "mapview.h"         /* MapViewCtx */
 #include "mapview_overlay.h" /* mapViewDrawOverlay — the whole entity layer */
+#include "item_labels.h"     /* mapViewPickItemLabels — which numbers are drawn */
 #include "gfx_settings.h"    /* gfxGetFogStyle — the player's fog of war look */
 #include "../ping_kinds.h"   /* pingDisplayAlpha */
 #include "gfx_settings.h"   /* the simplified view setting */
@@ -943,23 +944,14 @@ static void overviewViewDrawItemViewBorder(SDL_Renderer *r, int viewW, int viewH
  * remembered tile on a hidden square. A square whose memory shows no pill or
  * base tile, such as the one a carried pill left, shows no number. The
  * Pillbox Labels and Base Labels switches apply as they do in the classic
- * view. */
+ * view. The pick itself is mapViewPickItemLabels (item_labels.h), so the unit
+ * tests run the same loop. */
 static int overviewViewPickItemLabels(const OverviewSnapshot *snap,
                                       OverviewItemLabel *out, int cap) {
-    const OverviewMap *om = overviewSnapshotMap(snap);
-    if (om == NULL) return 0;
-
-    int total = overviewSnapshotItemLabelCount(snap);
-    const OverviewItemLabel *all = overviewSnapshotItemLabels(snap);
-    int n = 0;
-    for (int i = 0; i < total && n < cap; i++) {
-        const OverviewItemLabel *l = &all[i];
-        bool wanted = l->isBase ? showBaseLabels : showPillLabels;
-        if (!wanted) continue;
-        if (!mapColourItemNumberOnTile(om->tile[l->mapX][l->mapY], l->isBase)) continue;
-        out[n++] = *l;
-    }
-    return n;
+    return mapViewPickItemLabels(overviewSnapshotMap(snap),
+                                 overviewSnapshotItemLabels(snap),
+                                 overviewSnapshotItemLabelCount(snap),
+                                 showPillLabels, showBaseLabels, out, cap);
 }
 
 /* The sprite overlay: everything that moves, on the squares the player can

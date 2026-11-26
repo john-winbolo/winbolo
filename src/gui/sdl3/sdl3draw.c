@@ -52,6 +52,7 @@
 #include "cursor.h"
 #include "mapview.h"
 #include "mapview_overlay.h"
+#include "item_labels.h"     /* mapViewItemLabelNumber — no number when the lookup finds none */
 #include "newswire_slide.h"
 #include "overview_hud_layout.h"
 #include "overview_view.h"
@@ -3635,7 +3636,9 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
       /* The pill and base numbers, from the 17x17 screen buffer: a square
          showing a pill or base tile asks the sim which one it is. The
          shared pass below draws them, in the Log Viewer's small digits, so
-         no font is needed. */
+         no font is needed. A hidden square can show a remembered pill tile
+         after its pill moved away; the lookup then finds no pill, and the
+         square gets no number. */
       OverviewItemLabel itemLabels[MAX_PILLS + MAX_BASES];
       int itemLabelCount = 0;
       {
@@ -3647,9 +3650,9 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
           bool isBase = mapViewTileIsBase(pos);
           int labelNum = -1;
           if (isPill && showPillLabels) {
-            labelNum = clientSimGetPillNumPos(cs, lx, ly) - 1;
+            labelNum = mapViewItemLabelNumber(clientSimGetPillNumPos(cs, lx, ly), false);
           } else if (isBase && showBaseLabels) {
-            labelNum = clientSimGetBaseNumPos(cs, lx, ly) - 1;
+            labelNum = mapViewItemLabelNumber(clientSimGetBaseNumPos(cs, lx, ly), true);
           }
           if (labelNum >= 0 && itemLabelCount < (int)(MAX_PILLS + MAX_BASES)) {
             OverviewItemLabel *l = &itemLabels[itemLabelCount++];
