@@ -248,8 +248,7 @@ bool lobbyBotPoolsLoadFromArg(const char *arg, const char *defaultPath,
  * pools by label, so random pool draws skip "Numbered Bots"; a client
  * that installs the catalogue then gets the same lobbyBotPoolDrawCount.
  * The byte is left out when no flag is set, so such a catalogue and its
- * id are the same as before flags. Older clients stop reading after the
- * last pool and ignore the byte.
+ * id are the same as a catalogue with no flags byte.
  */
 #define LOBBY_BOT_CATALOG_FLAG_THEMED_ONLY 0x01u
 

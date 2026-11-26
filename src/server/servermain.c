@@ -875,10 +875,8 @@ void printArgs() {
   fprintf(stderr, "                -botnames \"Classic AI,Famous Painters\". Each team then\n");
   fprintf(stderr, "                draws its pool only from those, for bots started with\n");
   fprintf(stderr, "                -bots and for bots added in the lobby (a player can still\n");
-  fprintf(stderr, "                pick Numbered Bots by hand, and a client older than this\n");
-  fprintf(stderr, "                server can still draw it for the first bot it adds to a\n");
-  fprintf(stderr, "                team). -botnames list prints the labels. Default: every\n");
-  fprintf(stderr, "                pool in data/bot_names.json.\n");
+  fprintf(stderr, "                pick Numbered Bots by hand). -botnames list prints the\n");
+  fprintf(stderr, "                labels. Default: every pool in data/bot_names.json.\n");
   fprintf(stderr, "-allybots [N] - Place all -bots on the same team (1-16, default 1) so\n");
   fprintf(stderr, "                they start allied. Pick the same team in the lobby to join\n");
   fprintf(stderr, "                them, or a different one to fight against them.\n");

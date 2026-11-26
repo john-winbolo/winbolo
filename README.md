@@ -96,9 +96,8 @@ Bots get their names from the themed pools in `data/bot_names.json`. To use
 only some of them, give `-botnames` one or more pool labels, comma separated
 (case and spaces around each label do not matter). Bots that the server
 starts with `-bots`, and bots that players add in the lobby, then get names
-only from those pools. Two exceptions: a player can still pick the "Numbered
-Bots" pool for a team by hand, and a client older than the server can still
-give it to the first bot it adds to a team.
+only from those pools. One exception: a player can still pick the "Numbered
+Bots" pool for a team by hand.
 
 ```bash
 ./build/WinBoloDS -inbuilt -bots 4 -botnames "Classic AI"
