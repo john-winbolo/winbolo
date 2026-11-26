@@ -404,6 +404,7 @@ set(ANDROID_SOURCES
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_wbn_browser.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/wbn_browser_sort.c
     ${PROJ_ROOT}/src/gui/sdl3/map_preview_fetch.cpp
+    ${PROJ_ROOT}/src/gui/sdl3/local_map_index.c
     ${PROJ_ROOT}/src/gui/sdl3/wbn_map_source.cpp
     ${PROJ_ROOT}/src/steam/steam_wrapper_stub.c
 

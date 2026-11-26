@@ -2,10 +2,10 @@
  * Tests for the pure cJSON parser in wbn_map.c: wbnMapParseResponse
  * (POST /api/v1/map 200 body), including its base64 decode of map_data.
  *
- * Parser-only: no network. The module references wbn_api_post (in
- * http.c) only from wbnMapFetchByMd5, which is stubbed in test_stubs.c
- * so the binary links without curl. wbnMapFetchByMd5 itself is
- * validated live, not here.
+ * No network. wbn_api_post (in http.c) is stubbed in test_stubs.c so the
+ * binary links without curl; fetch_reports_answered sets the stub's status
+ * and body to check which failures wbnMapFetchByMd5 reports as WinBolo.net's
+ * answer and which as a request that never got one.
  */
 
 #include <string.h>
@@ -132,11 +132,86 @@ static int parse_map_size_cap(void) {
     return 0;
 }
 
+/* The stub in test_stubs.c: status and body the next wbn_api_post returns. */
+extern int         g_stubWbnApiPostCode;
+extern const char *g_stubWbnApiPostBody;
+
+/* The game finder keeps "WinBolo.net does not store this map" for the
+ * session and asks again after any other failure, so answered has to be
+ * false for every failure that says nothing about the map. */
+static int fetch_reports_answered(void) {
+    const char *md5 = "0123456789abcdef0123456789abcdef";
+    WbnMapResult r;
+    int rc = 0;
+
+    /* No connection. */
+    g_stubWbnApiPostCode = -1;
+    g_stubWbnApiPostBody = NULL;
+    if (wbnMapFetchByMd5(md5, &r) || r.answered) rc = 1;
+    wbnMapResultFree(&r);
+
+    /* Server error and rate limit. */
+    g_stubWbnApiPostCode = 500;
+    g_stubWbnApiPostBody = "{\"error\":\"oops\"}";
+    if (wbnMapFetchByMd5(md5, &r) || r.answered) rc = 2;
+    wbnMapResultFree(&r);
+    g_stubWbnApiPostCode = 429;
+    if (wbnMapFetchByMd5(md5, &r) || r.answered) rc = 3;
+    wbnMapResultFree(&r);
+
+    /* A 200 whose body is not JSON. */
+    g_stubWbnApiPostCode = 200;
+    g_stubWbnApiPostBody = "<html>";
+    if (wbnMapFetchByMd5(md5, &r) || r.answered) rc = 4;
+    wbnMapResultFree(&r);
+
+    /* A request timeout from the server: it asks for a retry. */
+    g_stubWbnApiPostCode = 408;
+    g_stubWbnApiPostBody = "{}";
+    if (wbnMapFetchByMd5(md5, &r) || r.answered) rc = 7;
+    wbnMapResultFree(&r);
+
+    /* Not stored: the answer. */
+    g_stubWbnApiPostCode = 404;
+    g_stubWbnApiPostBody = "{\"error\":\"Map not found\"}";
+    if (wbnMapFetchByMd5(md5, &r) || !r.answered) rc = 5;
+    wbnMapResultFree(&r);
+
+    /* A signature WinBolo.net will not take gets the same reply every
+     * time. These used to be asked again every wait with no limit. */
+    g_stubWbnApiPostCode = 401;
+    g_stubWbnApiPostBody = "{\"error\":\"bad signature\"}";
+    if (wbnMapFetchByMd5(md5, &r) || !r.answered) rc = 8;
+    wbnMapResultFree(&r);
+    g_stubWbnApiPostCode = 403;
+    if (wbnMapFetchByMd5(md5, &r) || !r.answered) rc = 9;
+    wbnMapResultFree(&r);
+
+    /* Stored, but the data is not base64: no preview, and the same reply
+     * next time, so it is not asked for again either. */
+    g_stubWbnApiPostCode = 200;
+    g_stubWbnApiPostBody = "{\"found\":true,\"map_data\":\"!!!!\"}";
+    if (wbnMapFetchByMd5(md5, &r) || !r.answered) rc = 10;
+    wbnMapResultFree(&r);
+
+    /* Stored. */
+    g_stubWbnApiPostCode = 200;
+    g_stubWbnApiPostBody = "{\"found\":true,\"map_data\":\"Qk9MTw==\"}";
+    if (!wbnMapFetchByMd5(md5, &r) || !r.answered || r.mapDataLen != 4) rc = 6;
+    wbnMapResultFree(&r);
+
+    g_stubWbnApiPostCode = -1;
+    g_stubWbnApiPostBody = NULL;
+    UT_ASSERT_MSG(rc == 0, "fetch_reports_answered case %d", rc);
+    return 0;
+}
+
 int run_wbn_map_parse(void) {
     int rc;
     rc = parse_found_and_decode(); if (rc) return rc;
     rc = parse_not_found();        if (rc) return rc;
     rc = parse_tolerant_b64();     if (rc) return rc;
     rc = parse_map_size_cap();     if (rc) return rc;
+    rc = fetch_reports_answered(); if (rc) return rc;
     return 0;
 }

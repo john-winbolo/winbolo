@@ -486,6 +486,8 @@ static const UnitTestEntry s_tests[] = {
     { "wbn_serverlist_server_text",              run_wbn_serverlist_server_text              },
     { "wbn_map_parse",                           run_wbn_map_parse                           },
     { "wbn_map_fetch_policy",                    run_wbn_map_fetch_policy                    },
+    { "map_preview_fetch_policy",                run_map_preview_fetch_policy                },
+    { "local_map_index",                         run_local_map_index                         },
     { "brain_crash_log_writes_file",             run_brain_crash_log_writes_file             },
     { "brain_crash_log_falls_back_to_luaptr",    run_brain_crash_log_falls_back_to_luaptr    },
     { "brain_push_rules_written_on_change",      run_brain_push_rules_written_on_change      },
