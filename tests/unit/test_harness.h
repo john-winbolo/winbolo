@@ -517,6 +517,17 @@ int run_await_join_lobby_latch(void);
 int run_await_join_timeout_and_error(void);
 int run_bot_pool_wire_chunk_transport(void);
 int run_bot_pool_catalog_id(void);
+int run_bot_pool_label_one(void);
+int run_bot_pool_label_several_spaces_case(void);
+int run_bot_pool_label_unknown_falls_back(void);
+int run_bot_pool_label_mixed_known_unknown(void);
+int run_bot_pool_label_file_path_still_loads(void);
+int run_bot_pool_label_path_missing_not_label(void);
+int run_bot_pool_label_none_same_draws(void);
+int run_bot_pool_label_dir_not_file(void);
+int run_bot_pool_label_shipped_missing(void);
+int run_bot_pool_label_catalog_carries_filter(void);
+int run_bot_pool_label_unknown_cut_utf8(void);
 int run_lobby_map_list_chunked(void);
 /* The scripted byte on a map-list entry: the layout by hand-written bytes,
  * and a list carrying a mix of scripted and plain maps. */
@@ -2779,6 +2790,7 @@ int run_lobby_bot_pool_join_sends_only_the_id(void);
 int run_loopback_bot_pool_fetch(void);
 int run_loopback_bot_pool_same_not_fetched(void);
 int run_bot_pool_refresh_retakes_catalogue(void);
+int run_bot_pool_label_team_picks_only_chosen(void);
 int run_loopback_bot_pool_survives_bulk_rebase(void);
 int run_loopback_brain_docs_survives_bulk_rebase(void);
 /* Client->server map upload over CHANNEL_BULK (test_loopback_upload.c): a map
