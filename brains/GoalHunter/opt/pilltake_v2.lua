@@ -3033,19 +3033,33 @@ end
 -- PT2_V2_CACHE_MAX_ENTRIES per source. The source is "dbl" (pt2_dbl's
 -- shadow double-take runs) or "take" (the real take, pt2_attack). An
 -- entry is dropped when an input that v2's kept parts read has changed
--- in the area (the goal pill +- PT2_V2_CACHE_AREA squares): a pill (place,
--- alive, in tank, place unknown, owner, cover), a base (owner, dead,
--- capture armour), the shell rules (in boat, base hit, base capture), the
--- terrain (a forest square read as grass) or the age
--- (PT2_V2_CACHE_MAX_AGE_TICKS). A forest change only (cut or grown)
--- drops the kept plans (the builder's walk reads forest), and the rays
--- stay: PT2_FOREST_TRANSPARENT. With PT2_FOREST_TRANSPARENT off a forest
--- change drops the entry. Knob off: a new cache table for each job, as
--- before.
+-- in its watch area: a pill (place, alive, in tank, place unknown, owner,
+-- cover), a base (owner, dead, capture armour), the shell rules (in boat,
+-- base hit, base capture), the terrain (a forest square read as grass) or
+-- the age (PT2_V2_CACHE_MAX_AGE_TICKS). A forest change only (cut or
+-- grown) drops the kept plans (the builder's walk reads forest), and the
+-- rays stay: PT2_FOREST_TRANSPARENT. With PT2_FOREST_TRANSPARENT off a
+-- forest change drops the entry. Knob off: a new cache table for each
+-- job, as before.
+--
+-- The watch area (PT2_V2_CACHE_MARGIN, gh_pt2_v2.c l_pc_watch) is made at
+-- the end of each group run from what the C marked. The watched pills are
+-- the group's pills (each run's A) and each pill within reach + margin of
+-- a ring point (reach = pill_range + range_margin, as v2's). The terrain
+-- and the bases watched: those pills' disks (reach + margin), a disk of
+-- margin round each ring point and builder origin, and each square a run
+-- read. The pills watched: a pill on any watched square, or on a square
+-- within reach + margin of a ring point (a new pill there drops it).
+-- A group run can span ticks: the pills, the bases and the map are taken
+-- at the run's start, and the entry's strings and hashes come from that
+-- start, over the watch area made at the run's end. An entry whose last
+-- run did not end is dropped ("open").
 local PCK = require("constants")
 local PCS = {}                    -- [src] = { entry, ... }
 M.pc_count = { checks = 0, diffs = 0, kept = 0, new = 0, age = 0, pill = 0, base = 0,
-               rules = 0, terrain = 0, forest = 0, full = 0 }
+               rules = 0, terrain = 0, forest = 0, full = 0, open = 0,
+               w_n = 0, w_pills = 0, w_sq = 0, w_ring = 0,
+               w_out = { tt = 0, po = 0, sqf = 0, base = 0, walk = 0 }, w_out_max = 0 }
 
 local function pc_src(inp)
   if inp._v2_pc_off or not PCK.PT2_V2_CACHE or not inp.v2_c then return nil end
@@ -3057,39 +3071,41 @@ local function pc_src(inp)
   return src
 end
 
--- The area's input strings (pills, bases, shell rules) and terrain hashes.
-local function pc_sigs(inp, w, A)
-  local R = PCK.PT2_V2_CACHE_AREA or 28
-  local x0, y0, x1, y1 = A.mx - R, A.my - R, A.mx + R, A.my + R
+-- The pills, bases and shell rules now: { mx, my, string } lists.
+local function pc_take(inp, w)
   local env = inp.env
-  local t = {}
+  local P = {}
   for _, p in ipairs(inp.pills or {}) do
-    local mx, my = p.mx or -1, p.my or -1
-    if mx >= x0 and mx <= x1 and my >= y0 and my <= y1 then
+    local mx, my = p.mx, p.my
+    if mx and my then
       -- health as alive only: v2 reads no other health (A's 1 health for
       -- finish is in the C key; an ally's cover is its own field)
-      t[#t + 1] = string.format("%d,%d,%s,%s,%s,%s,%s", mx, my, tostring((p.health or 0) > 0),
+      P[#P + 1] = { mx, my, string.format("%d,%d,%s,%s,%s,%s,%s", mx, my, tostring((p.health or 0) > 0),
         tostring(p.in_tank), tostring(p.pos_unknown), tostring(p.owner),
-        tostring(env.cover_of_pill and env.cover_of_pill(p)))
+        tostring(env.cover_of_pill and env.cover_of_pill(p))) }
     end
   end
-  local sp = table.concat(t, ";")
-  local b = {}
+  local B = {}
   local capmin = PCK.BASE_MIN_ARMOUR_CAPTURE or 0
   for k, e in pairs(w.base_at or {}) do
-    local bx, by = k % 256, math.floor(k / 256)
-    if bx >= x0 and bx <= x1 and by >= y0 and by <= y1 then
-      local bs = e and e.base
-      b[#b + 1] = string.format("%d:%s:%s:%s", k, tostring(bs and bs.owner),
-        tostring(bs and (bs.health or 1) <= 0), tostring(bs and (bs.health or 0) > capmin))
-    end
+    local bs = e and e.base
+    B[#B + 1] = { k % 256, math.floor(k / 256), string.format("%d:%s:%s:%s", k, tostring(bs and bs.owner),
+      tostring(bs and (bs.health or 1) <= 0), tostring(bs and (bs.health or 0) > capmin)) }
   end
-  table.sort(b)
-  local sb = table.concat(b, ";")
   local sr = w._shell_rules
   local ss = sr and (tostring(sr.inboat) .. "," .. tostring(sr.hit) .. "," .. tostring(sr.cap)) or "-"
-  local ht, hf = rawget(_G, "gh_pt2_v2").area_sig(x0, y0, x1, y1)
-  return sp, sb, ss, ht, hf
+  return P, B, ss
+end
+
+-- The pill and base strings over a watch W (sorted, so the order of the
+-- lists does not count).
+local function pc_wstr(P, B, W)
+  local wq = gh_pt2_v2.pc_wq
+  local t, b = {}, {}
+  for _, x in ipairs(P) do if wq(W, x[1], x[2]) ~= 0 then t[#t + 1] = x[3] end end
+  for _, x in ipairs(B) do if wq(W, x[1], x[2]) % 2 == 1 then b[#b + 1] = x[3] end end
+  table.sort(t); table.sort(b)
+  return table.concat(t, ";"), table.concat(b, ";")
 end
 
 -- A dropped entry's C store is freed now: Lua does not see that memory, so
@@ -3109,12 +3125,16 @@ local function pc_cache(inp)
   local now = inp._v2_pc_now or 0
   local list = PCS[src]
   if not list then list = {}; PCS[src] = list end
-  local sp, sb, ss, ht, hf = pc_sigs(inp, w, A)
   -- no engine map (a test's world): no store
-  if ht == nil then return new_cache() end
+  if not gh_pt2_v2.pc_watch_new then return new_cache() end
+  local W0 = gh_pt2_v2.pc_watch_new()
+  if W0 == nil then return new_cache() end
+  local P, B, ss = pc_take(inp, w)
   -- PT2_V2_CACHE_CHECK_TMP (log only): a new entry that is not kept
   if inp._v2_pc_tmp then
-    local e = { key = -1, tick = now, sp = sp, sb = sb, ss = ss, ht = ht, hf = hf, cache = new_cache() }
+    local e = { key = -1, tick = now, W = W0, cache = new_cache() }
+    gh_pt2_v2.pc_snap(W0)
+    e.P, e.B, e.ss, e.open = P, B, ss, true
     e.cache.pc_max_bytes = PCK.PT2_V2_CACHE_MAX_BYTES or 0
     inp.v2_pcache = true
     inp._v2_pc_entry = e
@@ -3131,13 +3151,19 @@ local function pc_cache(inp)
   -- the goal pill by its square: each run's pill tables are new tables
   local key = (A.mx or -1) * 256 + (A.my or -1)
   for i, x in ipairs(list) do if x.key == key then e, at = x, i; break end end
-  local why
+  local why, hf
   if e then
-    if e.sp ~= sp then why = "pill"
-    elseif e.sb ~= sb then why = "base"
+    if e.open then why = "open"
     elseif e.ss ~= ss then why = "rules"
-    elseif e.ht ~= ht then why = "terrain"
-    elseif e.hf ~= hf and inp.env.forest_transparent == false then why = "terrain" end
+    else
+      local sp, sb = pc_wstr(P, B, e.W)
+      local ht
+      ht, hf = gh_pt2_v2.pc_wsig(e.W, false)
+      if e.sp ~= sp then why = "pill"
+      elseif e.sb ~= sb then why = "base"
+      elseif e.ht ~= ht then why = "terrain"
+      elseif e.hf ~= hf and inp.env.forest_transparent == false then why = "terrain" end
+    end
     table.remove(list, at)
     if why then cnt[why] = cnt[why] + 1; pc_free(e); e = nil end
   end
@@ -3146,7 +3172,6 @@ local function pc_cache(inp)
     if e.hf ~= hf then
       cnt.forest = cnt.forest + 1
       e.cache.pc_drop_plans = true
-      e.hf = hf
     end
   else
     -- full (entries or bytes): this run has no store, and the kept
@@ -3160,18 +3185,68 @@ local function pc_cache(inp)
       return new_cache()
     end
     cnt.new = cnt.new + 1
-    e = { key = key, tick = now, sp = sp, sb = sb, ss = ss, ht = ht, hf = hf, cache = new_cache() }
+    e = { key = key, tick = now, W = W0, cache = new_cache() }
   end
+  -- this run's start: the strings and the map that pc_finish hashes
+  gh_pt2_v2.pc_snap(e.W)
+  e.P, e.B, e.ss, e.open = P, B, ss, true
   e.why = why
   list[#list + 1] = e
   e.cache.pc_max_bytes = PCK.PT2_V2_CACHE_MAX_BYTES or 0
   inp.v2_pcache = true
   inp._v2_pc_entry = e
+  -- log only: count the walk memo answers that the store runs skip
+  inp._v2_pc_lost = (PCK.PT2_CPROF_LOG or PCK.PT2_V2_CACHE_CHECK) and true or nil
   return e.cache
 end
 
+-- The pc_* counters of a run's stat (gh_pt2_v2.c push_result).
+local PC_F = { "pc_eh", "pc_em", "pc_et", "pc_en", "pc_ph", "pc_pm", "pc_pt", "pc_pn", "pc_wdrop",
+               "pc_lost_ts", "pc_lost_aw", "pc_lost_ts_us" }
+
+-- The end of a group run with a store: the entry's watch area from the
+-- C's marks, and its strings and hashes from the run's start.
+local function pc_finish(job)
+  local e = job.pc_entry
+  if not (e and e.open and e.P) then return end
+  local inp = job.inp
+  local j = e.cache and e.cache.c_job
+  local cnt = M.pc_count
+  if j then
+    local xy = {}
+    for _, x in ipairs(e.P) do xy[#xy + 1] = x[1]; xy[#xy + 1] = x[2] end
+    local reach = ((inp.pill_range or 0) + (inp.range_margin or 0)) / 256
+    local ns, nt, nr, out = gh_pt2_v2.pc_watch(j, e.W, reach, PCK.PT2_V2_CACHE_MARGIN or 3, xy)
+    cnt.w_n = cnt.w_n + 1
+    cnt.w_pills, cnt.w_sq, cnt.w_ring = cnt.w_pills + ns, cnt.w_sq + nt, cnt.w_ring + nr
+    local o = 0
+    for k, v in pairs(out) do cnt.w_out[k] = cnt.w_out[k] + v; o = o + v end
+    if o > cnt.w_out_max then cnt.w_out_max = o end
+    e.w_sq, e.w_out = nt, o
+  end
+  e.sp, e.sb = pc_wstr(e.P, e.B, e.W)
+  e.ht, e.hf = gh_pt2_v2.pc_wsig(e.W, true)
+  e.P, e.B, e.open = nil, nil, nil
+  -- PT2_CPROF_LOG (log only): the store's sums, a line each 100 ends
+  if PCK.PT2_CPROF_LOG and job.pcst and e.key ~= -1 then
+    local T = M.pc_tot or {}
+    M.pc_tot = T
+    for _, k in ipairs(PC_F) do T[k] = (T[k] or 0) + (job.pcst[k] or 0) end
+    T.n = (T.n or 0) + 1
+    if T.n % 100 == 0 then
+      local o = cnt.w_out
+      M.cprof_err(string.format("PT2_V2_CACHE_SUM %s runs=%d eh=%d em=%d ph=%d pm=%d wd=%d lt=%d la=%d ltu=%.0f"
+          .. " kept=%d new=%d age=%d pill=%d base=%d rules=%d terrain=%d forest=%d full=%d open=%d"
+          .. " w_n=%d w_pills=%d w_sq=%d w_ring=%d out_tt=%d out_po=%d out_sqf=%d out_base=%d out_walk=%d out_max=%d",
+        tostring(inp._prof_head or inp._v2_pc_head), T.n, T.pc_eh, T.pc_em, T.pc_ph, T.pc_pm, T.pc_wdrop,
+        T.pc_lost_ts, T.pc_lost_aw, T.pc_lost_ts_us, cnt.kept, cnt.new, cnt.age, cnt.pill, cnt.base, cnt.rules,
+        cnt.terrain, cnt.forest, cnt.full, cnt.open, cnt.w_n, cnt.w_pills, cnt.w_sq, cnt.w_ring,
+        o.tt, o.po, o.sqf, o.base, o.walk, cnt.w_out_max))
+    end
+  end
+end
+
 -- The pc_* counters of a run's stat (gh_pt2_v2.c push_result) into job.pcst.
-local PC_F = { "pc_eh", "pc_em", "pc_et", "pc_en", "pc_ph", "pc_pm", "pc_pt", "pc_pn", "pc_wdrop" }
 local function pc_add(job, r)
   local st = r and r.v2 and r.v2.stat
   if not (job.pcst and st) then return end
@@ -3247,12 +3322,14 @@ local function pc_check(inp, job)
   local e, s = inp._v2_pc_entry, job.pcst or {}
   M.cprof_err(string.format("PT2_V2_CACHE_CHK %s %s src=%s why=%s eh=%d em=%d et=%d en=%d ph=%d pm=%d pt=%d pn=%d wd=%d"
       .. " bytes=%d checks=%d diffs=%d kept=%d new=%d age=%d pill=%d base=%d rules=%d terrain=%d forest=%d full=%d"
+      .. " open=%d wsq=%s wout=%s lt=%d la=%d ltu=%.0f"
       .. " key=%s list=%s%s cached={%s}%s",
     tostring(inp._prof_head or inp._v2_pc_head), same and "same" or "DIFF", tostring(inp._v2_pc_src or "take"),
     tostring(e and e.why), s.pc_eh or 0, s.pc_em or 0, s.pc_et or 0, s.pc_en or 0,
     s.pc_ph or 0, s.pc_pm or 0, s.pc_pt or 0, s.pc_pn or 0, s.pc_wdrop or 0, s.bytes or 0,
     cnt.checks, cnt.diffs, cnt.kept, cnt.new, cnt.age, cnt.pill, cnt.base, cnt.rules, cnt.terrain,
-    cnt.forest, cnt.full, tostring(e and e.key), pc_list_str(inp._v2_pc_src or "take"), extra, a,
+    cnt.forest, cnt.full, cnt.open, tostring(e and e.w_sq), tostring(e and e.w_out),
+    s.pc_lost_ts or 0, s.pc_lost_aw or 0, s.pc_lost_ts_us or 0, tostring(e and e.key), pc_list_str(inp._v2_pc_src or "take"), extra, a,
     same and "" or (" fresh={" .. b .. "}")))
 end
 
@@ -3276,7 +3353,8 @@ function M.group_begin(inp)
   if inp.wall_memo then M.wall_memo_check(inp, inp.A) end
   local job = { inp = inp, goalA = inp.A, list = nil, i = 1, res = nil, cache = pc_cache(inp) }
   if inp.v2_pcache then
-    job.pcst = { pc_eh = 0, pc_em = 0, pc_et = 0, pc_en = 0, pc_ph = 0, pc_pm = 0, pc_pt = 0, pc_pn = 0, pc_wdrop = 0 }
+    job.pcst = { pc_eh = 0, pc_em = 0, pc_et = 0, pc_en = 0, pc_ph = 0, pc_pm = 0, pc_pt = 0, pc_pn = 0, pc_wdrop = 0,
+                 pc_lost_ts = 0, pc_lost_aw = 0, pc_lost_ts_us = 0 }
     job.pc_entry = inp._v2_pc_entry
   end
   return job
@@ -3299,7 +3377,12 @@ end
 
 -- E5-13: the extra walls of the group's final result, with the result's
 -- A (as its own run had it) and the job's cache.
+local job_done_x
 local function job_done(job)
+  job_done_x(job)
+  if job.pc_entry then pc_finish(job) end
+end
+job_done_x = function(job)
   local inp, res = job.inp, job.res
   res.n_eval, res.n_reject = job.n_eval, job.n_reject
   local b = res.best

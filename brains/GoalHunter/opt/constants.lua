@@ -1514,7 +1514,8 @@ M.PT2_V2_C = true
 -- score_fn, the sort, the band cut, score_of, rerank, leeway and the start
 -- checks run fresh each run. A part is made again when a tank we see is
 -- in the box of its shot walks. The entry is dropped when a pill, a base,
--- the shell rules or the terrain in the area change, or at
+-- the shell rules or the terrain in its watch area (PT2_V2_CACHE_MARGIN)
+-- change, or at
 -- PT2_V2_CACHE_MAX_AGE_TICKS. A forest change only (cut or grown) drops
 -- the kept plans and keeps the rest (PT2_FOREST_TRANSPARENT). A change of a
 -- run input that the kept rays and square reads use (the builder dead or
@@ -1540,11 +1541,17 @@ M.PT2_V2_CACHE_MAX_TOTAL_BYTES = 160 * 1024 * 1024
 -- cleared (its points and plans are made again). 0 = no cap. Proposal,
 -- awaiting Andrew's value.
 M.PT2_V2_CACHE_MAX_BYTES = 32 * 1024 * 1024
--- PT2_V2_CACHE_AREA: the area (squares from the goal pill, each way) whose
--- pills, bases and terrain the entry checks. A chain pill is up to 8.5
--- squares from the goal, its ring 7 more, and that ring's pills 8.5 more.
--- Proposal, awaiting Andrew's value.
-M.PT2_V2_CACHE_AREA = 28
+-- PT2_V2_CACHE_MARGIN (Andrew's value, Nov 26): the entry's watch area
+-- is the shooting disks (pill reach: PILL_RANGE + PT2_RANGE_MARGIN_WU) of
+-- the watched pills, made this many squares wider. The watched pills: the
+-- group's pills (the goal and its chain pills), and each pill within
+-- reach + margin of a ring point. Each ring point (and its builder origin)
+-- gets a disk of this many squares too, and each square a kept part read
+-- (shot walks, square flags, builder walk boxes) is watched as well. A
+-- terrain or base change in the watch area drops the entry (a forest
+-- change only: the plans), a pill change there drops it, and a change
+-- outside it drops nothing.
+M.PT2_V2_CACHE_MARGIN = 3
 -- PT2_V2_CACHE_TAKE: the real take (pt2_attack) uses the cache too ("take"
 -- entries). false = only the shadow double-take runs.
 M.PT2_V2_CACHE_TAKE = true

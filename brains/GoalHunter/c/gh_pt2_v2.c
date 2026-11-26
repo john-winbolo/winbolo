@@ -1006,7 +1006,18 @@ typedef struct {
      * -> PPlan *, flt: ring point key -> the quick filter's answer. */
     Arena  par;
     HMap   pts, pls, flt;
+    /* PT2_V2_CACHE watch area (pilltake_v2.lua pc_finish, l_pc_watch):
+     * rpm, per square, what the entry's runs (pc_on) read there: the
+     * PCM_* bits below. */
+    unsigned char *rpm;
+    int    rp_n;
 } Job;
+
+/* rpm bits: a ring point (raw, nudged or the builder's origin); a group
+ * pill (an evaluate's A); the reads: ttype, pill_on, the square flags
+ * (sqf), base_stops, a builder walk's box (lgm_reach) */
+enum { PCM_RING = 1, PCM_GROUP = 2, PCM_TT = 4, PCM_PO = 8, PCM_SQF = 16, PCM_BASE = 32, PCM_WALK = 64 };
+#define PCM_READS (PCM_TT | PCM_PO | PCM_SQF | PCM_BASE | PCM_WALK)
 
 /* ── The Lua stack of one step ─────────────────────────────────────── */
 /* step(st, paused): 1 = the state, 2 = paused; then the slots below, in
@@ -1191,7 +1202,9 @@ struct St {
     int    pc_on;
     uint64_t csig;
     int    rb_on, rb_inf, rb_any;
+    double pc_lost_ts, pc_lost_aw, pc_lost_ts_us;  /* fill runs: walks a memo would have given (log only) */
     int    pc_wdrop;      /* this run dropped the kept job's rays, sqm and sqf (pc_csig(e, 1) changed) */
+    int    pc_lost;       /* inp._v2_pc_lost (log only): count the memo answers a store run skips */
     int    pc_nomemo;     /* inp._v2_pc_nomemo (check runs, log only): as rb_on for the memos */
     double rb_x0, rb_y0, rb_x1, rb_y1;
     /* store stats: evaluate hits / misses / tank misses / not kept; plan
@@ -1361,14 +1374,15 @@ static int call_b2(Ev *e, int fn, double a, double b) {
 
 static double ttype(Ev *e, double mx, double my);
 static int pill_on(Ev *e, double mx, double my);
+static void pc_mark(Ev *e, double mx, double my, int bit);
 
 static int in_map(Ev *e, double mx, double my) {
-    if (!e->n_map) return call_b2(e, S_IN_MAP, mx, my);
+    if (!e->n_map) { pc_mark(e, mx, my, PCM_SQF); return call_b2(e, S_IN_MAP, mx, my); }
     return mx >= 0 && mx <= 255 && my >= 0 && my <= 255;
 }
 
 static int stay_in(Ev *e, double mx, double my) {
-    if (!e->n_stay) return call_b2(e, S_STAY_IN, mx, my);
+    if (!e->n_stay) { pc_mark(e, mx, my, PCM_SQF); return call_b2(e, S_STAY_IN, mx, my); }
     if (e->st_n == 0) return 1;
     for (int i = 0; i < e->st_n; i++) {
         const double *r = e->st_r + 4 * i;
@@ -1378,14 +1392,14 @@ static int stay_in(Ev *e, double mx, double my) {
 }
 
 static int standable(Ev *e, double mx, double my) {
-    if (!e->n_std) return call_b2(e, S_STANDABLE, mx, my);
+    if (!e->n_std) { pc_mark(e, mx, my, PCM_SQF); return call_b2(e, S_STANDABLE, mx, my); }
     double tt = ttype(e, mx, my);
     if (!(tt >= 0 && tt < PT2_TT_N && tt == floor(tt)) || !e->std_ok[(int)tt]) return 0;
     return pill_on(e, mx, my) == 0;
 }
 
 static int buildable(Ev *e, double mx, double my) {
-    if (!e->n_bld) return call_b2(e, S_BUILDABLE, mx, my);
+    if (!e->n_bld) { pc_mark(e, mx, my, PCM_SQF); return call_b2(e, S_BUILDABLE, mx, my); }
     if (e->no_builder) return 0;
     double tt = ttype(e, mx, my);
     for (int i = 0; i < e->nb_n; i++) if (tt == e->nb[i]) return 0;
@@ -1466,6 +1480,21 @@ static int pill_index__p(Ev *e, int idx) {
 }
 static int pill_index(Ev *e, int idx) { PB(P_pill_index); int r_ = pill_index__p(e, idx); PE(); return r_; }
 
+/* PT2_V2_CACHE: mark what a store run reads on a square (rpm) */
+static void pc_mark(Ev *e, double mx, double my, int bit) {
+    if (!e->pc_on || !e->job || !e->job->rpm) return;
+    if (!(mx >= 0 && mx <= 255 && my >= 0 && my <= 255)) return;
+    unsigned char *q = &e->job->rpm[(int)my * 256 + (int)mx];
+    if (!*q) e->job->rp_n += 1;
+    *q |= (unsigned char)bit;
+}
+static void pc_mark_box(Ev *e, double ax, double ay, double bx, double by) {
+    if (!e->pc_on || !e->job || !e->job->rpm) return;
+    double x0 = (ax < bx ? ax : bx) - 1, x1 = (ax < bx ? bx : ax) + 1;
+    double y0 = (ay < by ? ay : by) - 1, y1 = (ay < by ? by : ay) + 1;
+    for (double y = y0; y <= y1; y++) for (double x = x0; x <= x1; x++) pc_mark(e, x, y, PCM_WALK);
+}
+
 static Pill *PI(Ev *e, int k) {
     Pill *p = e->job->pills[k];
     if (p->gen != e->c->gen) { p->gen = e->c->gen; p->ally = -1; p->skip = -1; p->cover_set = 0; }
@@ -1540,6 +1569,7 @@ static double ttype(Ev *e, double mx, double my) {
         Pt2Ctx *c = e->c;
         if (c->tt_stamp[k] == c->gen) { e->tt_hits += 1; return c->tt_val[k]; }
         double v = call_ttype(e, mx, my);
+        pc_mark(e, mx, my, PCM_TT);
         PC(C_tt_miss, 1);
         e->tt_miss_n += 1;
         c->tt_stamp[k] = c->gen;
@@ -1570,6 +1600,7 @@ static int pill_on(Ev *e, double mx, double my) {
         if (c->po_stamp[k] == c->gen) { PC(C_po_hit, 1); return c->po_val[k]; }
         PC(C_po_miss, 1);
         int v = call_pill_on(e, mx, my);
+        pc_mark(e, mx, my, PCM_PO);
         c->po_stamp[k] = c->gen;
         c->po_val[k] = v;
         return v;
@@ -1598,6 +1629,7 @@ static int base_stops(Ev *e, double mx, double my) {
     }
     PC(C_zw_bs_lua, 1);
     e->unc_n += 1;
+    pc_mark(e, mx, my, PCM_BASE);
     sync_om(e);
     return call_b2(e, S_BASE_STOPS, mx, my);
 }
@@ -2398,6 +2430,17 @@ static int tank_shot_walk_again(Ev *e, double ox, double oy, double angle, doubl
                                 const Extra *extra) {
     /* PT2_V2_CACHE: a part made for the store walks each shot, so its
      * box has every walk (the walk gives the same stop reason) */
+    if (e->tsm_ok && e->rb_on && e->pc_lost) {
+        /* log only: would the memo have given this walk? (the walk runs) */
+        Pt2wKey k;
+        ts_key(e, ox, oy, f32(angle), tmx, tmy, extra, e->walk_serial, &k);
+        if (pt2w_key_same(&k, &e->tsm_key)) {
+            int64_t t0 = pf_clock();
+            int r = tank_shot_walk_angle(e, ox, oy, angle, tmx, tmy, extra, NULL);
+            e->pc_lost_ts += 1; e->pc_lost_ts_us += (double)(pf_clock() - t0) * pf_tick_us();
+            return r;
+        }
+    }
     if (e->tsm_ok && !e->rb_on && !e->pc_nomemo) {
         Pt2wKey k;
         ts_key(e, ox, oy, f32(angle), tmx, tmy, extra, e->walk_serial, &k);
@@ -2937,11 +2980,19 @@ static double aw_diff(double b, double c) { return luamod(b - c + 128, 256) - 12
  * Blockers are whole squares and the shells are checked every 32 wu, so
  * no blocker stops a shell between two shells that reach A: every shot
  * from c out to that shot, f and the samples before f too, reaches A. */
-static int aw_hit(const Ev *e, double px, double py, double tmx, double tmy, const Extra *x,
+static int aw_hit_test(const Ev *e, double px, double py, double tmx, double tmy, const Extra *x,
+                       double c, double f, double side);
+static int aw_hit(Ev *e, double px, double py, double tmx, double tmy, const Extra *x,
                   double c, double f, double side) {
     if (e->ts_nt > 0 || !e->awm_on) return 0;
-    /* PT2_V2_CACHE: a part made for the store walks each shot (its box) */
-    if (e->rb_on || e->pc_nomemo) return 0;
+    /* PT2_V2_CACHE: a part made for the store walks each shot (its box);
+     * log only: count the answers the memo would have given */
+    if (e->rb_on) { if (e->pc_lost && aw_hit_test(e, px, py, tmx, tmy, x, c, f, side)) e->pc_lost_aw += 1; return 0; }
+    if (e->pc_nomemo) return 0;
+    return aw_hit_test(e, px, py, tmx, tmy, x, c, f, side);
+}
+static int aw_hit_test(const Ev *e, double px, double py, double tmx, double tmy, const Extra *x,
+                       double c, double f, double side) {
     if (!(e->awm_ox == pt2w_bits(px) && e->awm_oy == pt2w_bits(py) && e->awm_tmx == tmx && e->awm_tmy == tmy
           && e->awm_x == x && e->awm_xn == (x ? x->n : -1) && e->awm_gen == e->c->gen)) return 0;
     double df = side * aw_diff(f, c);
@@ -3359,6 +3410,7 @@ static int sqf_get__p(Ev *e, int64_t sq, double mx, double my) {
         lua_pop(L, 1);
     }
     if (f == SF_NIL) {
+        pc_mark(e, mx, my, PCM_SQF);
         if (!in_map(e, mx, my) || !stay_in(e, mx, my)) f = SF_AREA;
         else if (pill_on(e, mx, my)) f = SF_PILL;
         else {
@@ -3485,6 +3537,11 @@ static int slot_ok__p(Ev *e, Rec *rec, Ray *r, int k, const Lane *lane, const in
     int rc;
     if (hv) rc = (int)hv->i;
     else {
+        /* the builder's walk (brainPathfinderLgmTravelTicksMap) heads
+         * straight at the square and slides on walls: it stays in the
+         * box of its two ends, +1 */
+        if (om) pc_mark_box(e, rec->omx, rec->omy, mx, my);
+        else pc_mark(e, mx, my, PCM_WALK);
         if (!(om && e->cr_on && cr_reach(e, rec->omx, rec->omy, mx, my, &rc))) {
             lua_pushvalue(L, S_LGM_REACH);
             if (om) { lua_pushnumber(L, rec->omx); lua_pushnumber(L, rec->omy); }
@@ -5536,9 +5593,16 @@ static int ctx_gc(lua_State *L) {
     return 0;
 }
 
+static void job_watch_free(Job *j) {
+    free(j->rpm);
+    j->rpm = NULL;
+    j->rp_n = 0;
+}
+
 static int job_gc(lua_State *L) {
     Job *j = (Job *)lua_touserdata(L, 1);
     if (j->freed) return 0;
+    job_watch_free(j);
     ar_free(&j->ar);
     hm_free(&j->rays); hm_free(&j->sqm); hm_free(&j->sqf);
     free(j->pills); free(j->sqf_new);
@@ -6171,6 +6235,7 @@ static void points_of_ring__p(Ev *e) {
         double cx = e->pcx + sin(deg * PT2_LUA_RAD) * e->R;
         double cy = e->pcy - cos(deg * PT2_LUA_RAD) * e->R;
         double mx = floor(cx), my = floor(cy);
+        pc_mark(e, mx, my, PCM_RING);
         /* PT2_V2_CACHE: the quick filter's answer for this ring point
          * (bit 1 kept, 2 the point passes, 4 hasA, 8 cant); banned above
          * stays fresh; a Lua stay_in or standable (no C list) stays fresh */
@@ -6251,6 +6316,8 @@ static void point_of_ring__p(Ev *e, int q) {
         double ax = cx + sin(deg * PT2_LUA_RAD) * e->approach_offset;
         double ay = cy - cos(deg * PT2_LUA_RAD) * e->approach_offset;
         rec->omx = floor(ax); rec->omy = floor(ay); rec->flags |= RF_OMXY;
+        pc_mark(e, mx, my, PCM_RING);
+        pc_mark(e, rec->omx, rec->omy, PCM_RING);
         vec_push(e, &e->cands, &e->ncands, &e->cap_cands, rec);
     } else {
         e->n_reject += 1;
@@ -6638,6 +6705,8 @@ static void push_result__p(Ev *e) {
         stat_put(L, "pc_pt", e->pc_pt); stat_put(L, "pc_pn", e->pc_pn);
         stat_put(L, "pc_bytes", ar_bytes(&e->job->par));
         stat_put(L, "pc_wdrop", e->pc_wdrop);
+        stat_put(L, "pc_lost_ts", e->pc_lost_ts); stat_put(L, "pc_lost_aw", e->pc_lost_aw);
+        stat_put(L, "pc_lost_ts_us", e->pc_lost_ts_us);
     }
     lua_setfield(L, -2, "stat");
     {
@@ -6756,6 +6825,9 @@ static int l_begin__p(lua_State *L) {
     lua_getfield(L, S_INP, "_v2_pc_nomemo");
     e->pc_nomemo = lua_toboolean(L, -1);
     lua_pop(L, 1);
+    lua_getfield(L, S_INP, "_v2_pc_lost");
+    e->pc_lost = lua_toboolean(L, -1);
+    lua_pop(L, 1);
     if (e->pc_on) {
         lua_getfield(L, S_INP, "_v2_cache");
         if (lua_istable(L, -1)) {
@@ -6867,6 +6939,9 @@ static int l_begin__p(lua_State *L) {
             lua_pop(L, 1);
         }
         j->wsig = ws; j->wsig_set = 1;
+        if (!j->rpm) j->rpm = (unsigned char *)calloc(PT2_MAP_SQ, 1);
+        Pill *GA = PI(e, e->A);
+        pc_mark(e, GA->mx, GA->my, PCM_GROUP);
     }
     e->asets = aim_wedges(e, e->A);
     step_end(e);
@@ -7038,6 +7113,7 @@ static int l_pc_free(lua_State *L) {
     if (j->freed || j->busy) { lua_pushboolean(L, 0); return 1; }
     hm_free(&j->pts); hm_free(&j->pls); hm_free(&j->flt);
     ar_free(&j->par);
+    job_watch_free(j);
     lua_pushboolean(L, 1);
     return 1;
 }
@@ -7115,8 +7191,155 @@ static int l_area_sig(lua_State *L) {
     return 2;
 }
 
+
+/* ── PT2_V2_CACHE watch area ────────────────────────────────────────
+ * An entry's watch (pilltake_v2.lua pc_cache, pc_finish): wm per square,
+ * PCW_TERRAIN = a terrain or base change here drops the entry,
+ * PCW_PILL = a pill here (or a pill change here) drops it; snap the map
+ * at the group run's start. */
+enum { PCW_TERRAIN = 1, PCW_PILL = 2 };
+typedef struct { unsigned char wm[PT2_MAP_SQ]; unsigned char snap[PT2_MAP_SQ]; int has_snap; } PWatch;
+
+static const unsigned char *pc_world(lua_State *L) {
+    lua_getfield(L, LUA_REGISTRYINDEX, "winbolo_world_ptr_ptr");
+    const unsigned char **wpp = (const unsigned char **)lua_touserdata(L, -1);
+    lua_pop(L, 1);
+    return (wpp && *wpp) ? *wpp : NULL;
+}
+
+/* pc_watch_new(): a new watch (no map: nil) */
+static int l_pc_watch_new(lua_State *L) {
+    if (!pc_world(L)) { lua_pushnil(L); return 1; }
+    PWatch *w = (PWatch *)lua_newuserdata(L, sizeof(PWatch));
+    memset(w, 0, sizeof(*w));
+    luaL_newmetatable(L, "gh_pt2_v2_watch_mt");
+    lua_setmetatable(L, -2);
+    return 1;
+}
+
+/* pc_snap(W): the map now into W's snap; false with no map */
+static int l_pc_snap(lua_State *L) {
+    PWatch *w = (PWatch *)luaL_checkudata(L, 1, "gh_pt2_v2_watch_mt");
+    const unsigned char *m = pc_world(L);
+    if (!m) { lua_pushboolean(L, 0); return 1; }
+    memcpy(w->snap, m, PT2_MAP_SQ);
+    w->has_snap = 1;
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
+/* pc_wsig(W, snap): the terrain hash over the PCW_TERRAIN squares (forest
+ * read as grass) and the forest squares' hash; of the snap or the map now */
+static int l_pc_wsig(lua_State *L) {
+    PWatch *w = (PWatch *)luaL_checkudata(L, 1, "gh_pt2_v2_watch_mt");
+    const unsigned char *m = lua_toboolean(L, 2) ? (w->has_snap ? w->snap : NULL) : pc_world(L);
+    if (!m) { lua_pushnil(L); return 1; }
+    uint32_t ht = 2166136261u, hf = 2166136261u;
+    for (int k = 0; k < PT2_MAP_SQ; k++) {
+        if (!(w->wm[k] & PCW_TERRAIN)) continue;
+        unsigned t = m[k] & 0x0F;
+        if (t == 5 || t == 13) {               /* FOREST, MINE_FOREST */
+            hf = (hf ^ (uint32_t)k) * 16777619u;
+            t += 2;                            /* GRASS, MINE_GRASS */
+        }
+        ht = (ht ^ (uint32_t)k) * 16777619u;
+        ht = (ht ^ t) * 16777619u;
+    }
+    lua_pushnumber(L, (double)ht);
+    lua_pushnumber(L, (double)hf);
+    return 2;
+}
+
+/* pc_wq(W, mx, my): the watch bits of a square (0 off the map) */
+static int l_pc_wq(lua_State *L) {
+    PWatch *w = (PWatch *)luaL_checkudata(L, 1, "gh_pt2_v2_watch_mt");
+    double mx = luaL_checknumber(L, 2), my = luaL_checknumber(L, 3);
+    int v = 0;
+    if (mx >= 0 && mx <= 255 && my >= 0 && my <= 255 && mx == floor(mx) && my == floor(my))
+        v = w->wm[(int)my * 256 + (int)mx];
+    lua_pushinteger(L, v);
+    return 1;
+}
+
+static void pc_disk(PWatch *w, int cx, int cy, double r, int bit) {
+    int ri = (int)ceil(r);
+    double r2 = r * r;
+    for (int dy = -ri; dy <= ri; dy++) {
+        int y = cy + dy;
+        if (y < 0 || y > 255) continue;
+        for (int dx = -ri; dx <= ri; dx++) {
+            int x = cx + dx;
+            if (x < 0 || x > 255) continue;
+            if ((double)(dx * dx + dy * dy) <= r2) w->wm[y * 256 + x] |= (unsigned char)bit;
+        }
+    }
+}
+
+/* pc_watch(job, W, reach, margin, pills): W's watch from the job's marks.
+ * reach: the pill reach in squares (pill_range + range_margin); margin:
+ * PT2_V2_CACHE_MARGIN; pills: { x1, y1, x2, y2, ... } the placed pills'
+ * squares (at the run's start). The watched pills: the group pills, and
+ * each pill within reach + margin of a ring point. PCW_TERRAIN: each
+ * watched pill's disk (reach + margin), each ring point's disk (margin),
+ * and every square a store run read. PCW_PILL: the watched pills' squares
+ * and every square within reach + margin of a ring point (a pill that
+ * comes there can shoot it). Returns the watched pills, the PCW_TERRAIN
+ * squares, and per read kind the read squares outside the disks. */
+static int l_pc_watch(lua_State *L) {
+    Job *j = (Job *)luaL_checkudata(L, 1, "gh_pt2_v2_job_mt");
+    PWatch *w = (PWatch *)luaL_checkudata(L, 2, "gh_pt2_v2_watch_mt");
+    double reach = luaL_checknumber(L, 3), margin = luaL_checknumber(L, 4);
+    luaL_checktype(L, 5, LUA_TTABLE);
+    memset(w->wm, 0, PT2_MAP_SQ);
+    const unsigned char *rp = j->rpm;
+    double R1 = reach + margin;
+    int ns = 0, nt = 0, nring = 0;
+    int out[7] = { 0, 0, 0, 0, 0, 0, 0 };
+    if (rp) {
+        for (int k = 0; k < PT2_MAP_SQ; k++) {
+            if (rp[k] & PCM_RING) { pc_disk(w, k & 255, k >> 8, R1, PCW_PILL); nring++; }
+        }
+        /* the watched pills: their disks */
+        int n = (int)lua_objlen(L, 5);
+        for (int i = 1; i + 1 <= n; i += 2) {
+            lua_rawgeti(L, 5, i); lua_rawgeti(L, 5, i + 1);
+            double px = lua_tonumber(L, -2), py = lua_tonumber(L, -1);
+            lua_pop(L, 2);
+            if (!(px >= 0 && px <= 255 && py >= 0 && py <= 255)) continue;
+            int k = (int)py * 256 + (int)px;
+            if ((w->wm[k] & PCW_PILL) || (rp[k] & PCM_GROUP)) { pc_disk(w, (int)px, (int)py, R1, PCW_TERRAIN); ns++; }
+        }
+        for (int k = 0; k < PT2_MAP_SQ; k++) {
+            if (rp[k] & PCM_GROUP) { w->wm[k] |= PCW_PILL; pc_disk(w, k & 255, k >> 8, R1, PCW_TERRAIN); }
+            if (rp[k] & PCM_RING) pc_disk(w, k & 255, k >> 8, margin, PCW_TERRAIN);
+        }
+        /* the reads outside the disks (by kind), then watched too */
+        for (int k = 0; k < PT2_MAP_SQ; k++) {
+            int r = rp[k] & PCM_READS;
+            if (!r) continue;
+            if (!(w->wm[k] & PCW_TERRAIN)) {
+                for (int b = 2; b < 7; b++) if (r & (1 << b)) out[b] += 1;
+                w->wm[k] |= PCW_TERRAIN | PCW_PILL;
+            }
+        }
+        for (int k = 0; k < PT2_MAP_SQ; k++) if (w->wm[k] & PCW_TERRAIN) { nt++; w->wm[k] |= PCW_PILL; }
+    }
+    lua_pushinteger(L, ns);
+    lua_pushinteger(L, nt);
+    lua_pushinteger(L, nring);
+    lua_createtable(L, 0, 5);
+    static const char *nm[7] = { NULL, NULL, "tt", "po", "sqf", "base", "walk" };
+    for (int b = 2; b < 7; b++) { lua_pushinteger(L, out[b]); lua_setfield(L, -2, nm[b]); }
+    return 4;
+}
+
 static const luaL_Reg gh_pt2_v2_lib[] = {
     { "area_sig", l_area_sig },
+    { "pc_watch_new", l_pc_watch_new },
+    { "pc_snap", l_pc_snap },
+    { "pc_wsig", l_pc_wsig },
+    { "pc_wq", l_pc_wq },
+    { "pc_watch", l_pc_watch },
     { "pc_free", l_pc_free },
     { "begin", l_begin },
     { "step", l_step },
