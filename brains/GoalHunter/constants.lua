@@ -1362,6 +1362,16 @@ M.PT2_DBL_SPREAD_TICKS = 5
 -- new job later. 2 x PT2_DBL_SPREAD_TICKS (Andrew, Nov 18). The tier
 -- row's dbl_split wins over this knob.
 M.PT2_DBL_SPLIT_MAX_TICKS = 10
+-- PT2_DBL_PART_SLICE_TICKS (Nov 26, overnight CPU step 3b): one part of a
+-- split job (one v2 evaluate) runs in a coroutine over up to this many
+-- calls, as PT2_V2_SPLIT does for the real take: pilltake_v2.slicer yields
+-- when the part's work for this tick is used (fixed work units, no timers,
+-- so the split is the same on every machine), and the next tick's pump
+-- resumes it. A yielded part goes on before a new part starts; a part that
+-- yields ends the tick's double-take work. The answer can differ from the
+-- part in one call only when the map changes between two slices. 0 = off,
+-- the part in one call (KEEL / MAST).
+M.PT2_DBL_PART_SLICE_TICKS = 0
 -- Bench log: PT2_DBL_CPU / PT2_DBL_RUN / PT2_DBL_DROP as plain print()
 -- lines without -brain-debug (log only, no play change). A release DS
 -- drops print(): with PT2_DBL_EVENT_FILE set to a file name the lines also

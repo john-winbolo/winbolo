@@ -328,11 +328,45 @@ local function part_due(job, now)
 end
 M._part_due = part_due
 
--- Run one part of the job. Stores the entry when the job is done.
+-- PT2_DBL_PART_SLICE_TICKS: is a part of this job sliced? Only an
+-- evaluator with a slicer (pilltake_v2) is sliced.
+local function slice_ticks(job)
+  local n = C.PT2_DBL_PART_SLICE_TICKS or 0
+  if n <= 0 or coroutine == nil then return 0 end
+  local g = job.g
+  if not (g and g.ev and g.ev.slicer) then return 0 end
+  return n
+end
+
+-- One call of a part. Sliced: the part runs in a coroutine and the
+-- slicer (pilltake_v2.slicer, fixed work units, no timers) yields when
+-- the part's work for this tick is used; the next call resumes it.
+-- Returns ok, done, yielded.
+local function part_call(job, V2)
+  local n = slice_ticks(job)
+  if n <= 0 and not job.co then
+    local ok, done = pcall(V2.group_step, job.g)
+    return ok, done, false
+  end
+  if not job.co then
+    local g = job.g
+    job.co = coroutine.create(function() return V2.group_step(g) end)
+    job.inp.v2_slice = g.ev.slicer(job.inp, n, coroutine.yield).fn
+    job.slices = (job.slices or 0)
+  end
+  local ok, done = coroutine.resume(job.co)
+  job.slices = job.slices + 1
+  if ok and coroutine.status(job.co) ~= "dead" then return true, false, true end
+  job.co, job.inp.v2_slice = nil, nil
+  return ok, done, false
+end
+
+-- Run one part of the job (PT2_DBL_PART_SLICE_TICKS: one slice of it).
+-- Stores the entry when the job is done.
 local function job_part(s, state, job, now)
   local V2 = require("pt2_eval")
   local t0 = clock_us()
-  local ok, done = pcall(V2.group_step, job.g)
+  local ok, done, yielded = part_call(job, V2)
   local us = clock_us() - t0
   if s.rest_part_us then s.rest_part_us = s.rest_part_us + us end
   local a = C.CAPACITY_EWMA_ALPHA or 0.2
@@ -341,7 +375,9 @@ local function job_part(s, state, job, now)
   s.part_us_sum = s.part_us_sum + us
   if us > s.part_us_max then s.part_us_max = us end
   if us > 2000 then s.n_big, s.big_us_sum = s.n_big + 1, s.big_us_sum + us end  -- log only
-  job.us, job.n = job.us + us, job.n + 1
+  job.us = job.us + us
+  if yielded then job.slice_tick = now; return end   -- the part goes on next tick
+  job.n = job.n + 1
   if not ok then
     s.job = nil
     local msg = tostring(done)
@@ -359,6 +395,15 @@ local function job_part(s, state, job, now)
   if job.us > s.run_us_max then s.run_us_max = job.us end
   local ticks = now - job.t0 + 1
   s.job_ticks[ticks] = (s.job_ticks[ticks] or 0) + 1
+  if (BRAIN_DEBUG_MODE or C.PT2_DBL_STDERR_LOG) then
+    local br = _G.brain
+    local line = string.format("PT2_DBL_RUN p=%s t=%d pill#%s chain=%s safe=%s kills=%d have=%d need=%d pills=%d/%d walls=%d trees=%d/%d us=%d parts=%d ticks=%d last_ms=%.2f tgt_ms=%.2f est_part_ms=%.2f",
+      tostring(s.pn), now, tostring(job.id), table.concat(e.ids, "-"), tostring(e.safe), e.kills, e.have, e.need,
+      e.pills, e.carried, e.walls, e.trees, e.trees_need, job.us, job.n, ticks,
+      br and br.lastThinkMs or 0, br and br.targetMs or 0, s.est_part_ms)
+    if job.slices then line = line .. string.format(" slices=%d", job.slices) end
+    logline(line)
+  end
 end
 
 -- PT2_DBL_SPLIT: run the open job's due parts. goals.lua calls it once per
@@ -376,10 +421,19 @@ function M.pump(state, world, info, now)
     s.job = nil
     s.n_drop = s.n_drop + 1
     if why == "cap" then s.n_drop_cap = s.n_drop_cap + 1 end
+    if (BRAIN_DEBUG_MODE or C.PT2_DBL_STDERR_LOG) then
+      local line = string.format("PT2_DBL_DROP p=%s t=%d pill#%s why=%s parts=%d/%d ticks=%d us=%d",
+        tostring(s.pn), now, tostring(job.id), why, job.n, job.total or 0, now - job.t0, job.us)
+      logline(line)
+    end
   else
-    while s.job == job and part_due(job, now) do
+    -- PT2_DBL_PART_SLICE_TICKS: a part that yielded on an earlier tick
+    -- goes on first (it is due: it started); a part that yields ends this
+    -- tick's work.
+    while s.job == job and (job.co and job.slice_tick ~= now or not job.co and part_due(job, now)) do
       if not may_part(s, state) then s.n_wait = s.n_wait + 1; break end
       job_part(s, state, job, now)
+      if job.co then break end
     end
   end
   M.charge(state, now, clock_us() - t0)
