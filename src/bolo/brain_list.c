@@ -531,7 +531,9 @@ bool brainListLoadTexts(const char *brainDir,
  * (luaBrainsCreate picks it when debug is off), and it is the same brain: its
  * modes.txt, announce.txt and commands.txt sit in the folder above opt/. So a
  * holding folder named opt (any case) gives way to its parent when there is
- * one. 0 when the path carries no directory part. */
+ * one that looks like a brain folder (not empty, ".", ".." or a drive such
+ * as "C:"). So no brain folder can itself be named opt. 0 when the path
+ * carries no directory part. */
 static size_t brainListBrainDirLen(const char *brainPath) {
     const char *fname;
     const char *segStart;
@@ -551,7 +553,25 @@ static size_t brainListBrainDirLen(const char *brainPath) {
     if ((size_t)(brainPath + dirLen - segStart) == 3 &&
         SDL_strncasecmp(segStart, "opt", 3) == 0 &&
         segStart > brainPath + 1) {
-        dirLen = (size_t)(segStart - 1 - brainPath);
+        /* The folder above opt/ must look like a brain folder: not empty
+         * ("//opt"), not "." or "..", and not a drive ("C:"). Otherwise
+         * opt/ stays the brain folder, so no bad name such as "C:" or ".."
+         * comes out and no lookup reads "brains/../modes.txt". */
+        const char *parentEnd = segStart - 1;
+        const char *parentStart = parentEnd;
+        size_t parentLen;
+        while (parentStart > brainPath &&
+               parentStart[-1] != '/' && parentStart[-1] != '\\') {
+            parentStart--;
+        }
+        parentLen = (size_t)(parentEnd - parentStart);
+        if (parentLen > 0 &&
+            !(parentLen == 1 && parentStart[0] == '.') &&
+            !(parentLen == 2 && parentStart[0] == '.' &&
+              parentStart[1] == '.') &&
+            parentEnd[-1] != ':') {
+            dirLen = (size_t)(parentEnd - brainPath);
+        }
     }
     return dirLen;
 }
@@ -783,18 +803,14 @@ int brainModeFindLevel(const BrainMode *mode, const char *key) {
     return -1;
 }
 
-bool brainListLoadModes(const char *name, BrainModes *out) {
-    if (!out) return false;
-    brainModesSynthesizeDefault(out);
-    if (!name || !name[0]) return false;
+/* 8 KB: the file is mostly comments, and a longer file is cut off
+ * silently, which would drop its last sections. */
+#define BRAIN_MODES_BLOB_LEN 8192
 
-    /* 8 KB: the file is mostly comments, and a longer file is cut off
-     * silently, which would drop its last sections. */
-    char blob[8192];
-    if (!brainListReadSidecarAny(name, "modes.txt", blob, sizeof(blob))) {
-        return false;
-    }
-
+/* Parse a modes.txt already read into blob (edited in place). *out must
+ * already hold the synthesized default; it keeps it when blob yields no
+ * usable mode. */
+static bool brainListParseModes(char *blob, BrainModes *out) {
     /* Parsed into a scratch list first: a manifest that turns out to hold
      * no usable mode leaves the caller with the synthesized default rather
      * than an empty list nothing can render. */
@@ -942,6 +958,18 @@ bool brainListLoadModes(const char *name, BrainModes *out) {
     return true;
 }
 
+bool brainListLoadModes(const char *name, BrainModes *out) {
+    if (!out) return false;
+    brainModesSynthesizeDefault(out);
+    if (!name || !name[0]) return false;
+
+    char blob[BRAIN_MODES_BLOB_LEN];
+    if (!brainListReadSidecarAny(name, "modes.txt", blob, sizeof(blob))) {
+        return false;
+    }
+    return brainListParseModes(blob, out);
+}
+
 bool brainModeUsesStandardLevels(const BrainMode *mode) {
     static const char *const kStandard[3] = { "easy", "medium", "hard" };
     if (mode == NULL) return false;
@@ -964,12 +992,25 @@ int brainModesStartMode(const BrainModes *modes, bool openGame) {
     return modes->openDefaultMode;
 }
 
-/* Recover a brain's directory name from its init.lua path — the same
- * "Brains/<DirName>/init.lua" convention bot_manager uses, opt/ included
- * (brainListNameFromPath) — so callers holding a path don't each
- * re-implement the split. */
+/* The modes.txt in the folder the path itself points to comes first
+ * (brainListDirFromPath, opt/ included), the same folder the announce and
+ * commands lookup reads, so a brain outside the fixed brains folders gets its
+ * own list and a same-named copy in a fixed folder cannot stand in for it.
+ * Only when that file is absent (or empty, the same rule the name lookup
+ * uses) does the lookup fall back to the brain's name in the fixed folders. */
 bool brainListLoadModesForPath(const char *brainPath, BrainModes *out) {
     if (!out) return false;
+    {
+        char dir[1024];
+        if (brainListDirFromPath(brainPath, dir, sizeof(dir))) {
+            char blob[BRAIN_MODES_BLOB_LEN];
+            if (brainListReadDirFile(dir, "modes.txt", blob, sizeof(blob),
+                                     NULL) > 0) {
+                brainModesSynthesizeDefault(out);
+                return brainListParseModes(blob, out);
+            }
+        }
+    }
     char name[BRAIN_LIST_NAME_LEN];
     brainListNameFromPath(brainPath, name, sizeof(name));
     return brainListLoadModes(name, out);

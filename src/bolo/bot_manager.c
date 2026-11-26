@@ -826,6 +826,18 @@ bool botInitArgHasKey(const char *arg, const char *key) {
     }
 }
 
+/* The gate and append of botManagerStageInitArg (see bot_manager.h). */
+void botInitArgAppendForBrainPath(char *arg, size_t argSz,
+                                  const char *brainPath,
+                                  uint8_t modeIdx, uint8_t levelIdx,
+                                  int playerNumForLog) {
+    BrainModes modes;
+    if (brainListLoadModesForPath(brainPath, &modes)) {
+        botInitArgAppendModeTokens(arg, argSz, &modes, modeIdx, levelIdx,
+                                   playerNumForLog);
+    }
+}
+
 /* Stage BRAIN_INIT_ARG for the brain create that follows: whatever the
  * caller already staged, plus this slot's mode and difficulty as the token
  * pair above, read against the manifest of the brain at `brainPath`.
@@ -838,7 +850,6 @@ void botManagerBuildInitArg(struct ServerSim *sim, BYTE playerNum,
                             char *arg, size_t argSz) {
     uint8_t modeIdx  = 0;
     uint8_t levelIdx = BOT_DIFFICULTY_HARD;
-    BrainModes modes;
 
     if (sim != NULL && playerNum < MAX_TANKS) {
         modeIdx  = sim->botConfigs[playerNum].mode;
@@ -852,10 +863,8 @@ void botManagerBuildInitArg(struct ServerSim *sim, BYTE playerNum,
      * nothing else — and appending to it would break that parse. Such a
      * brain still shows the synthesized Default mode in the lobby; picking
      * a level there changes nothing, which is the honest outcome. */
-    if (brainListLoadModesForPath(brainPath, &modes)) {
-        botInitArgAppendModeTokens(arg, argSz, &modes, modeIdx,
-                                   levelIdx, (int)playerNum);
-    }
+    botInitArgAppendForBrainPath(arg, argSz, brainPath, modeIdx,
+                                 levelIdx, (int)playerNum);
 }
 
 static void botManagerStageInitArg(struct ServerSim *sim, BYTE playerNum,

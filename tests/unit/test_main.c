@@ -531,6 +531,7 @@ static const UnitTestEntry s_tests[] = {
     { "brain_modes_about",                       run_brain_modes_about                       },
     { "brain_modes_standard_levels",             run_brain_modes_standard_levels             },
     { "brain_modes_opt_path",                    run_brain_modes_opt_path                    },
+    { "brain_modes_path_folder_first",           run_brain_modes_path_folder_first           },
     { "brain_view_data_edge_rect",               run_brain_view_data_edge_rect               },
     { "bolo_rand_golden_sequence",               run_bolo_rand_golden_sequence               },
     { "pf_dijkstra_no_solid_corner_cut",         run_pf_dijkstra_no_solid_corner_cut         },

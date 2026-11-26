@@ -291,6 +291,10 @@ bool brainListLoadModesForPath(const char *brainPath, BrainModes *out);
  * copy "Brains/GoalHunter/opt/init.lua" gives the SAME dir and name: a
  * holding folder called opt (any case) gives way to the folder above it,
  * where modes.txt, announce.txt and commands.txt live. Either slash works.
+ * Because of this rule a brain folder cannot be named opt: "Brains/opt/
+ * init.lua" gives dir and name "Brains". The rule does not go up when the
+ * folder above opt is empty, ".", ".." or ends with ':' ("C:\opt\init.lua",
+ * "./opt/init.lua", "../opt/init.lua" keep dir ".../opt" and name "opt").
  * Both return false (and an empty string) when the path has no directory
  * part; DirFromPath also fails when the dir will not fit, NameFromPath
  * truncates. */
