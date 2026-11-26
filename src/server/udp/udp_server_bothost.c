@@ -109,6 +109,7 @@
 #include "machine_id.h"     /* machineIdGet, the same-computer salt */
 #include "bot_host_machine.h" /* the same-computer groups, the slot override */
 #include "bot_host_guard.h" /* what a Bot Host may run: official brains, tokens */
+#include "bot_host_lockstep.h" /* the wait for the server's own child */
 #ifndef _WIN32
 #include <ifaddrs.h>        /* getifaddrs: the server's own addresses */
 #endif
@@ -120,7 +121,7 @@
  * at most one each 500 ticks (10 s) for each host. */
 #define BOT_HOST_CPU_LOG_TICKS 500
 /* Ticks a seat waits for its bot connection after the assign. */
-#define BOT_SEAT_PENDING_TICKS   500
+/* The pending timeout: botHostPendingExpired (bot_host_lockstep.h). */
 /* Ticks between checks of a remote seat's brain, AI level, team and init
  * argument against what its host was last sent. */
 #define BOT_SEAT_POLL_TICKS      50
@@ -519,6 +520,17 @@ static int botHostUsedSlots(int h) {
     return used;
 }
 
+bool serverBotHostIdleReleasable(int h) {
+    const BotHostConn *hc;
+    if (h < 0 || h >= MAX_BOT_HOSTS) return false;
+    hc = &udpServer.botHosts[h];
+    /* The server's own child stays: it is connected with no bots when the
+     * game has none, and a kick only makes it join again. A host sending
+     * recordings stays until it is done. */
+    if (!hc->connected || hc->playerHost || hc->localChild) return false;
+    return botHostUsedSlots(h) == 0 && !serverBotRecBusy(h);
+}
+
 /* ── Brain sync ────────────────────────────────────────────────────────── */
 
 /* The sync limits, BOT_HOST_SYNC_LIMIT_TICKS (60 s) and
@@ -587,13 +599,22 @@ static bool botHostSendEvent(int h, const ControlEvent *evt);
 
 /* The slots host h may be given: what it offers, lowered by its row's
  * override, and 0 when another host on its computer (or the server, for a
- * player's host) has them. */
+ * player's host) has them. The server's own child is also capped at the
+ * server's slots (botHostChildSlots): those count the server's process and
+ * the child together. */
 static int botHostEffSlots(int h) {
     const BotHostConn *hc = &udpServer.botHosts[h];
+    int slots;
     if (!hc->connected) return 0;
-    return botHostMachineSlots(botHostMachineKnown[h], &botHostMachine[h],
-                               botHostSlotsEffective((int)hc->slots,
-                                                     hc->slotOvr.override));
+    slots = botHostMachineSlots(botHostMachineKnown[h], &botHostMachine[h],
+                                botHostSlotsEffective((int)hc->slots,
+                                                      hc->slotOvr.override));
+    if (hc->localChild) {
+        /* The last server slots worked out (botHostServerSlots); -1
+         * before the first: no cap until then. */
+        slots = botHostChildSlots(slots, botHostSrvSlots.logged);
+    }
+    return slots;
 }
 
 /* The bots of the game: the bot seats, fielded or held for the start. */
@@ -805,7 +826,7 @@ static void botHostMachineUpdate(void) {
     botHostOwnIpsRefresh();
     for (h = 0; h < MAX_BOT_HOSTS; h++) {
         const BotHostConn *hc = &udpServer.botHosts[h];
-        if (!hc->connected) continue;
+        if (!hc->connected || hc->localChild) continue;
         if (!hc->machineHave || hc->machineSeq != botHostSaltSeq) all = false;
     }
     waiting = !all && botHostSaltHave &&
@@ -816,6 +837,7 @@ static void botHostMachineUpdate(void) {
     for (h = 0; h < MAX_BOT_HOSTS; h++) {
         const BotHostConn *hc = &udpServer.botHosts[h];
         if (!hc->connected) continue;
+        if (hc->localChild) continue;   /* set after the step */
         in[h].present = true;
         in[h].playerHost = hc->playerHost;
         in[h].addrServer = !otherComputer && botHostAddrIsServerMachine(
@@ -830,6 +852,19 @@ static void botHostMachineUpdate(void) {
                        botHostServerHashHave && !otherComputer
                            ? botHostServerHash : NULL,
                        waiting, botHostMachine, botHostMachineKnown);
+    for (h = 0; h < MAX_BOT_HOSTS; h++) {
+        /* The server's own child is the server's own process: never in a
+         * group, never 0 slots. */
+        if (!udpServer.botHosts[h].connected ||
+            !udpServer.botHosts[h].localChild) {
+            continue;
+        }
+        botHostMachine[h].kind = BOT_HOST_MACHINE_SERVER;
+        botHostMachine[h].other = -1;
+        botHostMachine[h].how = BOT_HOST_MACHINE_HOW_ADDRESS;
+        botHostMachine[h].zero = false;
+        botHostMachineKnown[h] = true;
+    }
     if (!waiting) botHostMachineLog();
 }
 
@@ -875,6 +910,8 @@ static void botHostUpdateGameBotLimit(ServerSim *sim) {
         counted[h] = 0;
         if (!udpServer.botHosts[h].connected) continue;
         any = true;
+        /* The server's own child runs on the server's own slots. */
+        if (udpServer.botHosts[h].localChild) continue;
         if (botHostTakesBots(sim, h)) {
             /* Dynamic slots: the live limit, not the ceiling. */
             counted[h] = botHostEffSlots(h);
@@ -2598,6 +2635,20 @@ static void botSeatReset(int s, bool noReturn) {
     seat->noReturn = noReturn;
 }
 
+/* True while the server's own child Bot Host is linked. Then the
+ * server's process is not capped at its slots: a bot the child does
+ * not run thinks in the server's process (the DS rule). */
+static bool botHostDsChildLinked(void) {
+    int h;
+    for (h = 0; h < MAX_BOT_HOSTS; h++) {
+        if (udpServer.botHosts[h].connected &&
+            udpServer.botHosts[h].localChild) {
+            return true;
+        }
+    }
+    return false;
+}
+
 /* A seat leaves its host and its brain comes back in-process. */
 static void botSeatFallBack(ServerSim *sim, int s, const char *why,
                             bool tellHost) {
@@ -2724,6 +2775,82 @@ void serverAcceptBotHost(ServerSim *sim, const struct sockaddr_in *fromAddr,
     }
     if (extraLen >= baseLen + 2) {
         listenPort = unpackU16(extra + baseLen);
+    }
+    if (extraLen >= baseLen + 2 + JOIN_BOT_HOST_PLAYER_LEN &&
+        extra[baseLen + 2] == JOIN_BOT_HOST_DS_CHILD_MARK) {
+        /* The server's own Bot Host child (src/server/ds_bot_child.c): the
+         * server's secret, from this computer. It counts as the server's
+         * own process: lag 0, no same-computer rule, no game bot limit of
+         * its own. The key, the list and -noplayerbothosts do not apply. */
+        const uint8_t *pm = extra + baseLen + 2;
+        botHostOwnIpsRefresh();
+        if (!udpServer.botHostEnabled || !udpServer.dsChildHaveSecret ||
+            !botHostAddrIsServerMachine(fromAddr->sin_addr.s_addr,
+                                        botHostOwnIp, botHostOwnIpCount) ||
+            !botHostBytesEqual(pm + 2, udpServer.dsChildSecret,
+                               BOT_HOST_TICKET_LEN)) {
+            fprintf(stderr, "[bothost] server Bot Host child join from %s "
+                            "refused: no such child\n", addr);
+            WB_LOG_WARN(WB_LOG_CAT_NET, "[bothost] server Bot Host child "
+                        "join from %s refused", addr);
+            serverSendJoinReject(fromAddr, STR_REJECT_INCORRECT_PASSWORD, 0,
+                                 NULL);
+            return;
+        }
+        for (h = 0; h < MAX_BOT_HOSTS; h++) {
+            /* One child: a new one replaces the old. */
+            if (udpServer.botHosts[h].connected &&
+                udpServer.botHosts[h].localChild) {
+                botHostDrop(sim, h, "the server's Bot Host child joined "
+                                    "again");
+            }
+        }
+        slots = extra[JOIN_BOT_HOST_KEY_LEN];
+        if (slots > BOT_HOST_MAX_SLOTS) slots = BOT_HOST_MAX_SLOTS;
+        memcpy(hostName, extra + JOIN_BOT_HOST_KEY_LEN + 1, sizeof(hostName));
+        hostName[sizeof(hostName) - 1] = '\0';
+        if (hostName[0] == '\0') {
+            SDL_strlcpy(hostName, "server child", sizeof(hostName));
+        }
+        for (h = 0; h < MAX_BOT_HOSTS; h++) {
+            if (!udpServer.botHosts[h].connected) {
+                freeIdx = h;
+                break;
+            }
+        }
+        if (freeIdx < 0) {
+            fprintf(stderr, "[bothost] server Bot Host child refused: %d Bot "
+                            "Hosts already connected\n", MAX_BOT_HOSTS);
+            serverSendJoinReject(fromAddr, STR_REJECT_SERVER_FULL, 0, NULL);
+            return;
+        }
+        {
+            BotHostConn *hc = &udpServer.botHosts[freeIdx];
+            memset(hc, 0, sizeof(*hc));
+            hc->addr = *fromAddr;
+            hc->connected = true;
+            hc->connId = serverNextConnId();
+            SDL_strlcpy(hc->name, hostName, sizeof(hc->name));
+            hc->slots = slots;
+            hc->cpu = (uint8_t)BOT_HOST_CPU_UNKNOWN;
+            hc->cpuFree = (uint8_t)BOT_HOST_FREE_UNKNOWN;
+            botHostOvrResetHost(freeIdx + 1);
+            hc->lagKnown = true;
+            hc->lagMs = 0.0;
+            hc->lagConnTick = udpServer.tickCount;
+            hc->localChild = true;
+            hc->lastReceivedTick = udpServer.tickCount;
+            hc->outSequence = 1;
+            channelMuxInit(&hc->channelMux);
+            bulkSenderInit(&hc->bulk);
+        }
+        fprintf(stderr, "[bothost] the server's Bot Host child \"%s\" "
+                        "connected from %s with %u slots\n",
+                hostName, addr, (unsigned)slots);
+        WB_LOG_INFO(WB_LOG_CAT_NET, "[bothost] server Bot Host child \"%s\" "
+                    "connected from %s slots=%u", hostName, addr,
+                    (unsigned)slots);
+        goto accepted;
     }
     if (extraLen >= baseLen + 2 + JOIN_BOT_HOST_PLAYER_LEN &&
         extra[baseLen + 2] == JOIN_BOT_HOST_PLAYER_MARK) {
@@ -3176,6 +3303,20 @@ void serverBindBotSlot(ServerSim *sim, const struct sockaddr_in *fromAddr,
 
     seat->state = BOT_SEAT_BOUND;
     seat->sinceTick = udpServer.tickCount;
+    {
+        /* The host connects its bots one by one (each brain loads first).
+         * A bind is progress: the host's other pending seats wait again
+         * from now, so a long queue does not time out behind it. */
+        int o;
+        for (o = 0; o < MAX_TANKS; o++) {
+            BotHostSeat *other = &udpServer.botSeats[o];
+            if (o != s && other->state == BOT_SEAT_PENDING &&
+                other->host == seat->host) {
+                other->sinceTick = udpServer.tickCount;
+                other->sinceMs = SDL_GetTicks();
+            }
+        }
+    }
     seat->mineSeedDone = false;
     seat->mineSeedColumn = 0;
     fprintf(stderr, "[bothost] bot %d \"%s\" bound to Bot Host \"%s\" from %s\n",
@@ -3376,7 +3517,8 @@ static void botHostApplySettings(ServerSim *sim) {
     bool want;
 
     udpServer.botHostOpen = botHostOpenToAll();
-    want = udpServer.botHostOpen || !udpServer.noPlayerBotHosts;
+    want = udpServer.botHostOpen || !udpServer.noPlayerBotHosts ||
+           udpServer.dsChildWanted;
     if (!want) {
         udpServer.botHostEnabled = false;
         botManagerSetRemoteHooks(sim, NULL);
@@ -3511,6 +3653,143 @@ void transportUdpServerSetPlayerBotHosts(ServerSim *sim, bool on) {
         }
     }
     botHostApplySettings(sim);
+}
+
+/* ── The server's own Bot Host child ─────────────────────────────────── */
+
+bool transportUdpServerDsChildBegin(ServerSim *sim,
+                                    uint8_t *secretOut) {
+    if (sim == NULL || secretOut == NULL) return false;
+    botHostSim = sim;
+    if (!serverFillRandomBytes(udpServer.dsChildSecret, BOT_HOST_TICKET_LEN)) {
+        return false;
+    }
+    memcpy(secretOut, udpServer.dsChildSecret, BOT_HOST_TICKET_LEN);
+    udpServer.dsChildHaveSecret = true;
+    udpServer.dsChildWanted = true;
+    botHostApplySettings(sim);
+    return udpServer.botHostEnabled;
+}
+
+void transportUdpServerDsChildEnd(ServerSim *sim, const char *why) {
+    int h;
+    udpServer.dsChildHaveSecret = false;
+    memset(udpServer.dsChildSecret, 0, sizeof(udpServer.dsChildSecret));
+    if (sim == NULL) return;
+    for (h = 0; h < MAX_BOT_HOSTS; h++) {
+        if (udpServer.botHosts[h].connected &&
+            udpServer.botHosts[h].localChild) {
+            botHostDrop(sim, h, why != NULL ? why
+                                            : "the server's Bot Host child "
+                                              "stopped");
+        }
+    }
+    /* dsChildWanted stays: a restart begins again with a new secret.
+     * transportUdpServerDsChildGiveUp clears it. */
+}
+
+void transportUdpServerDsChildGiveUp(ServerSim *sim) {
+    udpServer.dsChildWanted = false;
+    if (sim != NULL) botHostApplySettings(sim);
+}
+
+bool serverDsChildJoinSource(const struct sockaddr_in *fromAddr) {
+    if (!udpServer.dsChildWanted || fromAddr == NULL) return false;
+    botHostOwnIpsRefresh();
+    return botHostAddrIsServerMachine(fromAddr->sin_addr.s_addr,
+                                      botHostOwnIp, botHostOwnIpCount);
+}
+
+bool transportUdpServerDsChildConnected(void) {
+    int h;
+    for (h = 0; h < MAX_BOT_HOSTS; h++) {
+        if (udpServer.botHosts[h].connected &&
+            udpServer.botHosts[h].localChild) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/* The lockstep wait (bot_host_lockstep.h). */
+static BotHostLockstep dsLock;
+static bool dsLockArmed;
+static int dsLockWaitMs = TRANSPORT_UDP_LOCKSTEP_WAIT_MS_DEFAULT;
+static uint32_t dsLockStatArmed, dsLockStatMet, dsLockStatLate;
+static double dsLockStatWaitMs;
+
+void transportUdpServerSetLockstepWaitMs(int ms) {
+    dsLockWaitMs = ms < 0 ? 0 : ms;
+}
+
+int transportUdpServerGetLockstepWaitMs(void) {
+    return dsLockWaitMs;
+}
+
+static void dsLockCounts(uint32_t *cnt) {
+    int s;
+    for (s = 0; s < MAX_TANKS; s++) {
+        cnt[s] = udpServer.clients[s].inputNewCount;
+    }
+}
+
+void transportUdpServerLockstepArm(ServerSim *sim) {
+    bool on[MAX_TANKS];
+    uint32_t cnt[MAX_TANKS];
+    int s;
+    dsLockArmed = false;
+    if (sim == NULL || dsLockWaitMs <= 0 || !udpServer.botHostEnabled ||
+        serverSimGetState(sim) != serverStateRunning) {
+        return;
+    }
+    for (s = 0; s < MAX_TANKS; s++) {
+        const BotHostSeat *seat = &udpServer.botSeats[s];
+        on[s] = seat->state == BOT_SEAT_REMOTE && seat->host >= 0 &&
+                seat->host < MAX_BOT_HOSTS &&
+                udpServer.botHosts[seat->host].connected &&
+                udpServer.botHosts[seat->host].localChild &&
+                udpServer.clients[s].connected && udpServer.clients[s].botSlot;
+    }
+    dsLockCounts(cnt);
+    botHostLockstepArm(&dsLock, on, cnt, MAX_TANKS);
+    dsLockArmed = dsLock.wanted > 0;
+}
+
+double transportUdpServerLockstepWait(ServerSim *sim) {
+    Uint64 start, freq;
+    double waited = 0.0;
+    uint32_t cnt[MAX_TANKS];
+    BotHostLockstepStep step;
+    if (!dsLockArmed || sim == NULL) return 0.0;
+    dsLockArmed = false;
+    if (serverSimGetState(sim) != serverStateRunning) return 0.0;
+    dsLockStatArmed++;
+    start = SDL_GetPerformanceCounter();
+    freq = SDL_GetPerformanceFrequency();
+    for (;;) {
+        dsLockCounts(cnt);
+        waited = (double)(SDL_GetPerformanceCounter() - start) * 1000.0 /
+                 (double)freq;
+        step = botHostLockstepStep(
+            botHostLockstepMissing(&dsLock, cnt, MAX_TANKS), dsLock.wanted,
+            waited, dsLockWaitMs);
+        if (step != BOT_HOST_LOCKSTEP_WAIT) break;
+        SDL_DelayNS(200000);   /* 0.2 ms */
+        /* The packets only: this is still the same tick. */
+        transportUdpServerRecvPacketsOnly(sim);
+    }
+    if (step == BOT_HOST_LOCKSTEP_MET) dsLockStatMet++;
+    if (step == BOT_HOST_LOCKSTEP_LATE) dsLockStatLate++;
+    dsLockStatWaitMs += waited;
+    return waited;
+}
+
+void transportUdpServerLockstepStats(uint32_t *armed, uint32_t *met,
+                                     uint32_t *late, double *waitMs) {
+    if (armed) *armed = dsLockStatArmed;
+    if (met) *met = dsLockStatMet;
+    if (late) *late = dsLockStatLate;
+    if (waitMs) *waitMs = dsLockStatWaitMs;
 }
 
 /* ── Placement settings ───────────────────────────────────────────────── */
@@ -3882,6 +4161,7 @@ static bool botSeatOffer(ServerSim *sim, int s, int h, const char *why) {
     seat->state = BOT_SEAT_PENDING;
     seat->host = (int8_t)h;
     seat->sinceTick = udpServer.tickCount;
+    seat->sinceMs = SDL_GetTicks();
     seat->reloadOwed = false;
     botSeatSendAssign(sim, s, false);
     fprintf(stderr, "[bothost] bot %d \"%s\" offered to Bot Host \"%s\" "
@@ -3898,11 +4178,17 @@ static bool botSeatOffer(ServerSim *sim, int s, int h, const char *why) {
 /* Brings the smoothed lag of host h up to date, once a tick. */
 static void botHostUpdateLag(int h) {
     BotHostConn *hc = &udpServer.botHosts[h];
+    uint16_t raw;
+    if (hc->localChild) {
+        /* The server's own child: the same computer, lag 0. */
+        hc->lagMs = 0.0;
+        hc->lagKnown = true;
+        return;
+    }
     /* A player host counts its player's game ping, which is not smoothed
      * (one round trip per pong), so the smoothing below stays; with no
      * player ping yet it counts its own measured lag. */
-    uint16_t raw = botHostLagRaw(hc->playerHost, botHostOwnerPing(hc),
-                                 hc->pingMs);
+    raw = botHostLagRaw(hc->playerHost, botHostOwnerPing(hc), hc->pingMs);
     /* 0 is the value before the first pong: count it only once the host
      * has been here long enough to have one (a LAN round trip can be
      * under 1 ms). */
@@ -5055,7 +5341,7 @@ static void botHostTellAll(ServerSim *sim, langid id, int argCount,
 static void botHostOverStep(ServerSim *sim, const BotHostPlaceHost *raw,
                             const BotHostPlaceHost *hosts, bool anyPending) {
     bool hostTakes;
-    int s;
+    int s, h, child = -1, overBots, overSlots;
 
     for (s = 0; s < MAX_TANKS; s++) {
         if (udpServer.botSeats[s].state != BOT_SEAT_LOCAL) continue;
@@ -5072,12 +5358,24 @@ static void botHostOverStep(ServerSim *sim, const BotHostPlaceHost *raw,
                 botHostPlaceGoodHost(hosts, 1 + MAX_BOT_HOSTS,
                                      botHostSmallSlots, botHostSmallBias,
                                      &botHostLag) >= 1;
-    if (botHostOverWarnStep(&botHostOverWarn, raw[0].bots, raw[0].slots,
+    /* With the server's own child linked, raw[0] keeps only the slots the
+     * child does not take: count the server's full slots against the bots
+     * of the server's process plus the child's. */
+    for (h = 0; h < MAX_BOT_HOSTS; h++) {
+        if (udpServer.botHosts[h].connected &&
+            udpServer.botHosts[h].localChild) {
+            child = h + 1;
+            break;
+        }
+    }
+    botHostOverCount(raw, 1 + MAX_BOT_HOSTS, botHostServerSlots(sim), child,
+                     &overBots, &overSlots);
+    if (botHostOverWarnStep(&botHostOverWarn, overBots, overSlots,
                             hostTakes)) {
         char bots[12], slots[12];
         const char *args[4];
-        snprintf(bots, sizeof(bots), "%d", raw[0].bots);
-        snprintf(slots, sizeof(slots), "%d", raw[0].slots);
+        snprintf(bots, sizeof(bots), "%d", overBots);
+        snprintf(slots, sizeof(slots), "%d", overSlots);
         args[0] = "";
         args[1] = "";
         args[2] = bots;
@@ -5085,7 +5383,7 @@ static void botHostOverStep(ServerSim *sim, const BotHostPlaceHost *raw,
         fprintf(stderr, "[bothost] the server runs %d bots for its %d slots "
                         "and no Bot Host has a slot: every bot runs on the "
                         "server, and they may play worse (game tick %u)\n",
-                raw[0].bots, raw[0].slots, (unsigned)serverSimGetTick(sim));
+                overBots, overSlots, (unsigned)serverSimGetTick(sim));
         botHostTellAll(sim, STR_BOTHOST_OVER_SLOTS, 4, args);
     }
 }
@@ -5124,6 +5422,8 @@ static void botHostPlaceStep(ServerSim *sim, ServerState st) {
     botHostPlace.lastSt = st;
 
     memset(hosts, 0, sizeof(hosts));
+    /* The server's slots first: the child's slots are capped at them. */
+    hosts[0].slots = botHostServerSlots(sim);
     for (h = 0; h < MAX_BOT_HOSTS; h++) {
         BotHostConn *hc = &udpServer.botHosts[h];
         hostCount[h] = 0;
@@ -5138,12 +5438,23 @@ static void botHostPlaceStep(ServerSim *sim, ServerState st) {
         if (hosts[h + 1].open) anyHost = true;
     }
 
-    hosts[0].slots = botHostServerSlots(sim);
+    for (h = 0; h < MAX_BOT_HOSTS; h++) {
+        /* The server's own child takes the server's slots (at most all of
+         * them): the server's process keeps only what the child does not
+         * take. */
+        if (udpServer.botHosts[h].connected &&
+            udpServer.botHosts[h].localChild && hosts[h + 1].open) {
+            int left = (int)hosts[0].slots - (int)hosts[h + 1].slots;
+            hosts[0].slots = left > 0 ? left : 0;
+        }
+    }
     hosts[0].bots = serverBotHostServerBots(sim);
     hosts[0].open = true;
     hosts[0].unlimited = true;
-    /* -bothost-enforce-server-limit: no bot past its slots after all. */
-    hosts[0].capped = botHostEnforceServerLimit;
+    /* -bothost-enforce-server-limit: no bot past its slots after all. Not
+     * with the server's own child linked: then the server's process is not
+     * capped at its slots. */
+    hosts[0].capped = botHostEnforceServerLimit && !botHostDsChildLinked();
     hosts[0].lagMs = 0.0;  /* the server's own process */
     /* Dynamic slots: each place's start, ceiling and reserve. */
     botHostDynSetup(hosts);
@@ -5571,7 +5882,12 @@ void serverServiceBotHosts(ServerSim *sim) {
             continue;
         }
         if (seat->state == BOT_SEAT_PENDING) {
-            if (udpServer.tickCount - seat->sinceTick > BOT_SEAT_PENDING_TICKS) {
+            /* The server's own child has no pending timeout: it loads its
+             * brains one by one at low priority, and the link timeout
+             * ("gone") covers a child that hangs. */
+            if (!udpServer.botHosts[seat->host].localChild &&
+                botHostPendingExpired(udpServer.tickCount, seat->sinceTick,
+                                      SDL_GetTicks(), seat->sinceMs)) {
                 fprintf(stderr, "[bothost] bot %d: Bot Host \"%s\" did not "
                                 "connect it; it stays in-process\n",
                         s, udpServer.botHosts[seat->host].name);
@@ -5690,12 +6006,7 @@ void serverServiceBotHosts(ServerSim *sim) {
                    BOT_HOST_IDLE_RELEASE_TICKS) {
             for (h = 0; h < MAX_BOT_HOSTS; h++) {
                 uint8_t kbuf[PACKET_HEADER_SIZE];
-                if (!udpServer.botHosts[h].connected ||
-                    udpServer.botHosts[h].playerHost ||
-                    botHostUsedSlots(h) > 0 || serverBotRecBusy(h)) {
-                    /* A host sending recordings stays until it is done. */
-                    continue;
-                }
+                if (!serverBotHostIdleReleasable(h)) continue;
                 packHeader(kbuf, PACKET_KICKED, 0);
                 srvSendTo(kbuf, sizeof(kbuf), &udpServer.botHosts[h].addr);
                 botHostDrop(sim, h, "not needed now: no player and no bot");

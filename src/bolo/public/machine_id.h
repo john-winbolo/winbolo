@@ -85,6 +85,21 @@ bool machineIdGet(uint8_t out[MACHINE_ID_LEN]);
 bool machineIdAnswerSalt(const uint8_t salt[MACHINE_SALT_LEN],
                          uint8_t out[MACHINE_HASH_LEN]);
 
+/* For a program that cannot read the id file (the Bot Host child in its
+ * file sandbox, bothost_child.h): use this id and these answered salts,
+ * with no files. The program that gave them keeps the files. */
+void machineIdUseGiven(const uint8_t id[MACHINE_ID_LEN],
+                       const MachineSaltMemory *salts);
+/* A copy of the answered salts, to give to such a program. */
+void machineIdSaltSnapshot(MachineSaltMemory *out);
+/* A salt such a program answered: kept in memory and in the salt file, so
+ * no program on this computer answers it again. */
+void machineIdNoteSalt(const uint8_t salt[MACHINE_SALT_LEN]);
+/* Called (outside the lock) after each salt this program answers. NULL:
+ * none. */
+typedef void (*MachineSaltObserver)(const uint8_t salt[MACHINE_SALT_LEN]);
+void machineIdSetSaltObserver(MachineSaltObserver fn);
+
 /* The folder of the id file, after machineIdInit ("" when none). */
 const char *machineIdDir(void);
 

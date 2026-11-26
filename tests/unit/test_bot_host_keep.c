@@ -58,6 +58,12 @@
  *      full, bad or takes no bots.
  *  17. bot_host_enforce_off_keeps_fall_back: -bothost-enforce-server-limit
  *      0: the server takes bots past its slots, as before.
+ *  18. bot_host_enforce_over_child_count: the over-slots warning counts
+ *      the server's full slots, and the bots of the server's process plus
+ *      those of its linked child Bot Host; with no child, the server's.
+ *  19. bot_host_child_slots_cap: the server's own child gets at most the
+ *      lobby's Server bot slots (server and child together), and the
+ *      over-slots warning names the same count.
  */
 
 #include <stdint.h>
@@ -1029,6 +1035,111 @@ int run_bot_host_enforce_over_warns(void) {
         h[0].capped = true;
         UT_ASSERT(!keepStep(h, 2, false, &from, &to, &why) || to != 0);
     }
+    return 0;
+}
+
+enum { OC_N = 5 };  /* the server and four Bot Hosts */
+
+int run_bot_host_enforce_over_child_count(void) {
+    BotHostPlaceHost raw[OC_N];
+    int bots = -1, slots = -1;
+
+    /* No child: the server's own bots against its slots. */
+    memset(raw, 0, sizeof(raw));
+    raw[0].slots = 11;
+    raw[0].bots = 13;
+    raw[2].slots = 4;
+    raw[2].bots = 4;
+    botHostOverCount(raw, OC_N, 11, -1, &bots, &slots);
+    UT_ASSERT_MSG(bots == 13 && slots == 11, "no child: %d bots, %d slots",
+                  bots, slots);
+
+    /* The review's case: the child (Bot Host 0) has the server's 11 slots
+     * and runs 11 bots; the server's process runs 2 and keeps 0 slots. The
+     * line names 13 bots and 11 slots, not 2 and 0. Another Bot Host's
+     * bots do not count. */
+    memset(raw, 0, sizeof(raw));
+    raw[0].slots = 0;
+    raw[0].bots = 2;
+    raw[1].slots = 11;
+    raw[1].bots = 11;
+    raw[2].slots = 4;
+    raw[2].bots = 4;
+    botHostOverCount(raw, OC_N, 11, 1, &bots, &slots);
+    UT_ASSERT_MSG(bots == 13 && slots == 11, "child: %d bots, %d slots",
+                  bots, slots);
+
+    /* The child is a bad place and its bots came back: the server's
+     * process runs all 13; still 13 bots and 11 slots. */
+    raw[0].slots = 11;
+    raw[0].bots = 13;
+    raw[1].bots = 0;
+    botHostOverCount(raw, OC_N, 11, 1, &bots, &slots);
+    UT_ASSERT_MSG(bots == 13 && slots == 11, "child back: %d bots, %d slots",
+                  bots, slots);
+
+    /* At its slots with the child: no warning. */
+    {
+        BotHostOverWarn w;
+        raw[0].slots = 0;
+        raw[0].bots = 0;
+        raw[1].bots = 11;
+        botHostOverCount(raw, OC_N, 11, 1, &bots, &slots);
+        UT_ASSERT(bots == 11 && slots == 11);
+        botHostOverWarnInit(&w);
+        UT_ASSERT(!botHostOverWarnStep(&w, bots, slots, false));
+    }
+
+    /* A child index out of the table counts as no child. */
+    raw[0].slots = 11;
+    raw[0].bots = 3;
+    botHostOverCount(raw, OC_N, 11, OC_N, &bots,
+                     &slots);
+    UT_ASSERT(bots == 3 && slots == 11);
+    botHostOverCount(raw, OC_N, 11, 0, &bots, &slots);
+    UT_ASSERT(bots == 3 && slots == 11);
+    return 0;
+}
+
+int run_bot_host_child_slots_cap(void) {
+    BotHostPlaceHost raw[OC_N];
+    BotHostOverWarn w;
+    int bots = -1, slots = -1, child;
+
+    /* What the child offers, never more than the server's slots. */
+    UT_ASSERT(botHostChildSlots(11, 4) == 4);
+    UT_ASSERT(botHostChildSlots(3, 4) == 3);
+    UT_ASSERT(botHostChildSlots(4, 4) == 4);
+    UT_ASSERT(botHostChildSlots(11, 0) == 0);
+    /* Server slots not known yet: what it offers. */
+    UT_ASSERT(botHostChildSlots(11, -1) == 11);
+    UT_ASSERT(botHostChildSlots(-3, 4) == 0);
+
+    /* Andrew's case: 4 server bot slots, a child that offers 11, and 13
+     * bots with no other Bot Host. The child gets 4 slots and runs 4; the
+     * server's process keeps 0 slots and runs the other 9 (no bot is
+     * held). The warning names 13 bots for 4 slots. */
+    child = botHostChildSlots(11, 4);
+    memset(raw, 0, sizeof(raw));
+    raw[1].slots = (uint8_t)child;
+    raw[1].bots = child;
+    raw[0].slots = (uint8_t)(4 - child);
+    raw[0].bots = 13 - child;
+    botHostOverCount(raw, OC_N, 4, 1, &bots, &slots);
+    UT_ASSERT_MSG(raw[1].slots == 4 && raw[0].slots == 0,
+                  "child %d slots, server %d", raw[1].slots, raw[0].slots);
+    UT_ASSERT_MSG(bots == 13 && slots == 4, "%d bots, %d slots", bots,
+                  slots);
+    botHostOverWarnInit(&w);
+    UT_ASSERT(botHostOverWarnStep(&w, bots, slots, false));
+
+    /* 4 bots: the child runs all 4, at the slots: no warning. */
+    raw[1].bots = 4;
+    raw[0].bots = 0;
+    botHostOverCount(raw, OC_N, 4, 1, &bots, &slots);
+    UT_ASSERT(bots == 4 && slots == 4);
+    botHostOverWarnInit(&w);
+    UT_ASSERT(!botHostOverWarnStep(&w, bots, slots, false));
     return 0;
 }
 

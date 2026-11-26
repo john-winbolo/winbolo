@@ -410,16 +410,65 @@ bool machineIdGet(uint8_t out[MACHINE_ID_LEN]) {
     return have;
 }
 
+static MachineSaltObserver s_saltObserver;
+
 bool machineIdAnswerSalt(const uint8_t salt[MACHINE_SALT_LEN],
                          uint8_t out[MACHINE_HASH_LEN]) {
     bool ok;
+    MachineSaltObserver obs;
     if (salt == NULL || out == NULL) return false;
     SDL_LockSpinlock(&s_lock);
     machineInitLocked();
     ok = s_haveId && machineSaltAnswer(&s_salts, s_id, salt, out);
     if (ok) machineSaveSalt(salt);
+    obs = s_saltObserver;
     SDL_UnlockSpinlock(&s_lock);
+    if (ok && obs != NULL) obs(salt);
     return ok;
+}
+
+void machineIdUseGiven(const uint8_t id[MACHINE_ID_LEN],
+                       const MachineSaltMemory *salts) {
+    if (id == NULL) return;
+    SDL_LockSpinlock(&s_lock);
+    s_inited = true;
+    s_haveId = true;
+    memcpy(s_id, id, MACHINE_ID_LEN);
+    if (salts != NULL) {
+        s_salts = *salts;
+    } else {
+        memset(&s_salts, 0, sizeof(s_salts));
+    }
+    /* No files: the program that gave the id keeps them. */
+    s_dir[0] = '\0';
+    s_saltPath[0] = '\0';
+    s_saltRecords = 0;
+    SDL_UnlockSpinlock(&s_lock);
+}
+
+void machineIdSaltSnapshot(MachineSaltMemory *out) {
+    if (out == NULL) return;
+    SDL_LockSpinlock(&s_lock);
+    machineInitLocked();
+    *out = s_salts;
+    SDL_UnlockSpinlock(&s_lock);
+}
+
+void machineIdNoteSalt(const uint8_t salt[MACHINE_SALT_LEN]) {
+    if (salt == NULL) return;
+    SDL_LockSpinlock(&s_lock);
+    machineInitLocked();
+    if (!machineSaltMemorySeen(&s_salts, salt)) {
+        machineSaltMemoryAdd(&s_salts, salt);
+        machineSaveSalt(salt);
+    }
+    SDL_UnlockSpinlock(&s_lock);
+}
+
+void machineIdSetSaltObserver(MachineSaltObserver fn) {
+    SDL_LockSpinlock(&s_lock);
+    s_saltObserver = fn;
+    SDL_UnlockSpinlock(&s_lock);
 }
 
 const char *machineIdDir(void) {

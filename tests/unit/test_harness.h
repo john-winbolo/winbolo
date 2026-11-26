@@ -967,6 +967,33 @@ int run_brain_capacity_memory_limit(void);
 int run_bot_host_reset_limit(void);
 int run_bot_host_brain_name_opt(void);
 
+/* The built-in Bot Host as a child process (test_bothost_child.c). */
+int run_bothost_child_args(void);
+int run_bothost_child_quote(void);
+int run_bothost_child_codec(void);
+int run_bothost_child_restart(void);
+int run_bothost_child_job_limits(void);
+int run_bothost_child_relay_codec(void);
+int run_bothost_child_sandbox_files(void);
+int run_bothost_child_sandbox_net(void);
+int run_bothost_child_relay(void);
+int run_bothost_child_machine_id(void);
+int run_bothost_child_no_unsafe(void);
+int run_bothost_child_copy_tree(void);
+int run_bothost_child_fail_rule(void);
+int run_bothost_child_copy_wanted(void);
+int run_bothost_child_env_keep(void);
+int run_bothost_ds_child_where(void);
+int run_bothost_ds_child_first_lines(void);
+int run_bot_host_lockstep(void);
+int run_bothost_child_seccomp(void);
+int run_bothost_child_stdin_full(void);
+int run_bothost_child_dgram_ring(void);
+int run_bothost_child_get_line(void);
+int run_bothost_child_kill_reap(void);
+int run_bothost_child_line_cap(void);
+int run_bothost_ds_child_idle_keep(void);
+
 /* Bot Host link: announce, query, invite, lists (test_bot_host_link.c). */
 int run_bot_host_link_announce_codec(void);
 int run_bot_host_link_addr_list(void);
@@ -992,6 +1019,8 @@ int run_bot_host_place_keep_batch_slot_limit(void);
 int run_bot_host_place_keep_batch_cpu_limit(void);
 int run_bot_host_enforce_over_warns(void);
 int run_bot_host_enforce_good_host(void);
+int run_bot_host_enforce_over_child_count(void);
+int run_bot_host_child_slots_cap(void);
 int run_bot_host_enforce_off_keeps_fall_back(void);
 /* A Bot Host that joins a game in progress (test_bot_host_midgame.c). */
 int run_bot_host_place_keep_lag_join(void);
@@ -3099,6 +3128,9 @@ int run_join_locked_rejoin_unlocked_unchanged(void);
  * JOINs from distinct loopback ephemeral ports (one source IP) draws at most
  * JOIN_RL_BURST accepts, while a JOIN from a distinct source IP is unaffected. */
 int run_join_rate_limit(void);
+/* The server's own Bot Host child joins from this computer with no rate
+ * limit; after a give-up the limit applies again. */
+int run_join_rate_limit_ds_child(void);
 
 /* JOIN address-proof cookie handshake (test_cookie_handshake.c): a cookie-less
  * JOIN draws a PACKET_JOIN_CHALLENGE and no slot; echoing the challenge cookie

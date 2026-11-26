@@ -40,6 +40,7 @@
 #include "platform_net.h"
 #include "transport.h"
 #include "transport_udp.h"
+#include "udp_socket_hooks.h"
 #include "netpacks.h"
 #include "input_packet.h"
 #include "gametype.h"
@@ -221,5 +222,9 @@ void udpSendTo(SOCKET sock, const uint8_t *buf, int len,
                const struct sockaddr_in *addr);
 int udpRecvFrom(SOCKET sock, uint8_t *buf, int maxLen,
                 struct sockaddr_in *fromAddr);
+/* Close a socket from createUdpSocket. */
+void udpCloseSocket(SOCKET sock);
+
+/* The socket hooks (udp_socket_hooks.h) replace these four. */
 
 #endif /* TRANSPORT_UDP_INTERNAL_H */
