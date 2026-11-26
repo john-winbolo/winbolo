@@ -1143,14 +1143,21 @@ void printArgs() {
   fprintf(stderr, "                fresh round. Never auto-quits (Ctrl-C / quit only). Implies\n");
   fprintf(stderr, "                -nolobby and requires -mapdir.\n");
   fprintf(stderr, "-noemptyreset - Disable the automatic reset when no human player is connected\n");
-  fprintf(stderr, "                (enabled by default, resets after 5 minutes). Bots and\n");
+  fprintf(stderr, "                (with a lobby: on by default, 5 minutes; with -nolobby:\n");
+  fprintf(stderr, "                off unless -emptyresetmins is given). Bots and\n");
   fprintf(stderr, "                spectators do not count as players. With a lobby the\n");
   fprintf(stderr, "                server goes back to the lobby; with -nolobby it starts a\n");
-  fprintf(stderr, "                new round (next -mapdir map, or the same map reloaded)\n");
-  fprintf(stderr, "                and does so again every N minutes while nobody joins.\n");
+  fprintf(stderr, "                new round (next -mapdir map, or the same map reloaded).\n");
   fprintf(stderr, "-emptyresetmins <N> - Minutes with no human player before the reset (default: 5)\n");
   fprintf(stderr, "                With -nolobby the reset is off unless this is given.\n");
+  fprintf(stderr, "                With -nolobby, a server that nobody joins starts a new\n");
+  fprintf(stderr, "                round every N minutes, with no end. Each new round starts\n");
+  fprintf(stderr, "                a new round log (and, with -brain-debug, a new recording\n");
+  fprintf(stderr, "                folder). With WinBolo.net on, each one also ends the\n");
+  fprintf(stderr, "                session, uploads the round log and registers again.\n");
   fprintf(stderr, "                Not used with -maprotate, which has its own empty rotation.\n");
+  fprintf(stderr, "                A value that is not a whole number from 1 to 715827 is\n");
+  fprintf(stderr, "                ignored, with a warning.\n");
   fprintf(stderr, "-ticks <N>    - Exit cleanly after N game-ticks of running play.\n");
   fprintf(stderr, "                \"0\" or omitted means unlimited (default).\n");
   fprintf(stderr, "-ticklimit <N> - End the current game (transition to GAME_OVER) after N\n");
@@ -2738,11 +2745,25 @@ int main(int argc, char **argv) {
   {
     int argNum = findArg(argc, argv, "emptyresetmins");
     if (argNum != ARG_NOT_FOUND) {
-      int mins = atoi((char *)argv[argNum]);
-      if (mins > 0) {
-        serverSimSetEmptyResetMinutes(serverSim, mins);
+      /* A whole number of minutes, 1 or more. The timer counts frames in an
+       * int (minutes * 60 * 50), so the top limit keeps that from wrapping. */
+      const char *text = (const char *)argv[argNum];
+      char       *end  = NULL;
+      long        mins = strtol(text, &end, 10);
+      if (end != text && *end == '\0' && mins > 0 && mins <= 715827L) {
+        serverSimSetEmptyResetMinutes(serverSim, (int)mins);
         emptyResetMinsGiven = true;
+      } else {
+        fprintf(stderr,
+                "Warning: -emptyresetmins '%s' is not a whole number of "
+                "minutes from 1 to 715827; the value is ignored (with a "
+                "lobby the reset stays at 5 minutes, with -nolobby it stays "
+                "off)\n", text);
       }
+    } else if (argExist(argc, argv, "emptyresetmins") == TRUE) {
+      fprintf(stderr,
+              "Warning: -emptyresetmins needs a number of minutes after it; "
+              "it is ignored\n");
     }
   }
 

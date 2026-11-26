@@ -825,8 +825,10 @@ bool serverInstanceStartup(ServerSim *sim, const ServerInstanceConfig *cfg) {
  *
  * bootClients is false for the no-lobby empty reset. That fires only when no
  * human is connected, so there is nobody to boot, and the boot-all would only
- * send the round-over shutdown to the clients that remain: spectators, and a
- * Bot Host's connections for its bot seats, which the next round keeps. */
+ * send the round-over shutdown to the clients that remain: spectators, which
+ * the next round keeps. Once the server has Bot Host connections, a Bot
+ * Host's connections for its bot seats are among those clients too; no test
+ * here covers that case, as this code has no Bot Host connections yet. */
 static void serverLifecycleRotateRound(ServerSim *sim, bool bootClients) {
   /* Boot everyone first — the round is over and nobody carries forward. */
   if (bootClients && instanceAcceptRemoteClients) {
@@ -838,7 +840,9 @@ static void serverLifecycleRotateRound(ServerSim *sim, bool bootClients) {
   /* Sim-core reset: opens the WBN rotation window, picks the next map and
    * starts a fresh running round (state -> running). serverSimStartGame inside
    * recreated the server-side tanks for every still-connected player, which
-   * after the disconnect-all above is just the bots (humans were booted). */
+   * after the disconnect-all above is just the bots (humans were booted). For
+   * the empty reset nobody was booted, but no person is connected, so it is
+   * again just the bots (spectators hold no player seat). */
   serverSimMapRotateRound(sim);
 
   /* Re-arm any kept bots for the new round: reload their ClientSim map from the
@@ -863,8 +867,9 @@ static void serverLifecycleRotateRound(ServerSim *sim, bool bootClients) {
     /* Flush any WBN events still queued from the finished round (win
      * crediting, final kills) against the live key before tearing the
      * session down — mirrors the gameOver->lobby block's pre-EndSession
-     * flush. Player counts read 0 here (everyone was just booted); only
-     * the queued events matter. */
+     * flush. The player count here is the bots only (every person was just
+     * booted or, for the empty reset, none is connected); only the queued
+     * events matter. */
     winbolonetServerUpdate(serverSimGetNumPlayers(sim),
                            serverSimGetNumNeutralBases(sim),
                            serverSimGetNumNeutralPills(sim), TRUE);
@@ -1345,28 +1350,65 @@ void serverInstanceTick(ServerSim *sim) {
      * GAME_OVER, so handleGameOver never stashed the in-flight round.
      * Do it here so the upload below picks it up. */
     roundLogStash();
-    /* Empty-reset bypasses serverSimReturnToLobby, so the release of the
-     * round's parked runners is this path's to make. A parked brain keeps
-     * its state table, and the round it remembers is the one ending here. */
-    botManagerReleaseParkedRunners(sim);
     /* The same for the recording block: no game-over hook on this path. */
     lifecycleCloseBraindbgBlock();
-    serverSimResetGameWorld(sim);
-    sim->state = serverStateLobby;
-    sim->gameLength = sim->originalGameLength;
-    serverSimScenarioApplyLobbyFixes(sim, false);
-    sim->hadPlayersEver = FALSE;
-    sim->emptyResetTicks = -1;
-    /* Pick next map from rotation if mapdir is configured. The seats the
-     * round fielded go back to the template's own lobby, as they do in
-     * serverSimMapRotateRound (see the comment there): the server is empty,
-     * so there is no host edit to keep. Where no map loads, the lobby is
-     * the one it was and the flag goes back to what it said about it. */
-    if (sim->mapDirFiles != NULL) {
-      bool wasSeated = sim->scenarioLobbySeated;
-      sim->scenarioLobbySeated = false;
-      if (!serverSimMapDirPickRandom(sim)) {
-        sim->scenarioLobbySeated = wasSeated;
+    /* The reset fires with no person connected, but bots can be: a round
+     * that only bots played (a start_game with no person in the lobby) is
+     * empty by the people-only count. serverSimResetGameWorld marks every
+     * slot free, while the bot manager keeps its bots, so a bot's seat would
+     * read as free and the next joiner could be given it. Keep the seats as
+     * serverSimReturnToLobby keeps them for a round that only bots played:
+     * save the connection and lobby arrays over the reset, put them back,
+     * unready, with the bots ready again. With no seat connected this keeps
+     * nothing, as before. */
+    {
+      bool        keptConnected[MAX_TANKS];
+      LobbyPlayer keptLobby[MAX_TANKS];
+      bool        keptSeats = (serverSimGetNumPlayers(sim) > 0);
+      BYTE        si;
+      for (si = 0; si < MAX_TANKS; si++) {
+        keptConnected[si] = sim->playerConnected[si];
+        keptLobby[si]     = sim->lobbyPlayers[si];
+      }
+      serverSimResetGameWorld(sim);
+      for (si = 0; si < MAX_TANKS; si++) {
+        sim->playerConnected[si]    = keptConnected[si];
+        sim->lobbyPlayers[si]       = keptLobby[si];
+        sim->lobbyPlayers[si].ready = sim->lobbyPlayers[si].isBot;
+      }
+      sim->state = serverStateLobby;
+      if (keptSeats) {
+        /* As serverSimReturnToLobby does with the seats it keeps: the
+         * scenario's lobby is brought into line with them, and the seats
+         * the script fielded go back to being held. */
+        serverSimScenarioReconcileLobby(sim);
+      }
+      /* Empty-reset bypasses serverSimReturnToLobby, so the release of the
+       * round's parked runners is this path's to make. A parked brain keeps
+       * its state table, and the round it remembers is the one ending here.
+       * After the reconcile, which parks the runner of each seat it takes
+       * off the field (see serverSimReturnToLobby). */
+      botManagerReleaseParkedRunners(sim);
+      sim->gameLength = sim->originalGameLength;
+      serverSimScenarioApplyLobbyFixes(sim, false);
+      sim->hadPlayersEver = FALSE;
+      sim->emptyResetTicks = -1;
+      /* Pick next map from rotation if mapdir is configured. With no seat
+       * kept, the seats the round fielded go back to the template's own
+       * lobby, as they do in serverSimMapRotateRound (see the comment
+       * there): the server is empty, so there is no host edit to keep.
+       * With bot seats kept the pick leaves the flag alone, as the
+       * game-over → lobby pick does, so the template is not seated a
+       * second time beside them. Where no map loads, the lobby is the one
+       * it was and the flag goes back to what it said about it. */
+      if (sim->mapDirFiles != NULL) {
+        bool wasSeated = sim->scenarioLobbySeated;
+        if (!keptSeats) {
+          sim->scenarioLobbySeated = false;
+        }
+        if (!serverSimMapDirPickRandom(sim)) {
+          sim->scenarioLobbySeated = wasSeated;
+        }
       }
     }
     /* End the WBN session, upload the round's log against the just-
