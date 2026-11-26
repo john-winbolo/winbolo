@@ -120,7 +120,7 @@ void serverConsoleDispatch(const ServerConsoleOps *ops, char *keyBuff,
       fprintf(stderr, "Pausing is not available on this server\n");
     } else {
       ops->setPause(target, paused, msg, sizeof(msg));
-      printf("%s\n", msg);
+      fprintf(stderr, "%s\n", msg);
     }
   } else if (strncmp(keyBuff, "pausestatus", 11) == 0 ||
              strncmp(keyBuff, "botstatus", 9) == 0) {
@@ -130,7 +130,7 @@ void serverConsoleDispatch(const ServerConsoleOps *ops, char *keyBuff,
       fprintf(stderr, "Pausing is not available on this server\n");
     } else {
       ops->pauseStatus(msg, sizeof(msg));
-      printf("%s\n", msg);
+      fprintf(stderr, "%s\n", msg);
     }
   } else if (strncmp(keyBuff, "unlock", 6) == 0) {
     ops->setLock(false);

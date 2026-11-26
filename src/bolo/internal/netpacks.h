@@ -998,8 +998,11 @@ static inline ServerVoiceMode infoPacketReadVoiceMode(BYTE flags) {
                                               1). The answer is the pause
                                               notice (EVENT_SERVER_MSG ids
                                               SERVER_MSG_PAUSE_STATE_*). A
-                                              server without it skips the
-                                              command, so a client sends it
+                                              server older than this cannot
+                                              decode it, so its command
+                                              sequence does not go on and it
+                                              drops every later command from
+                                              that client. A client sends it
                                               only on the host's own order. */
 
 #define PACKET_LOBBY_BOT_POOL_REQ      231  /* client -> server

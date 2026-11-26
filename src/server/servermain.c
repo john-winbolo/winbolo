@@ -323,7 +323,7 @@ static void consoleOpSetPause(int target, bool paused, char *msg, size_t msgLen)
     snprintf(msg, msgLen, "The %s had no manual pause.", what);
   } else if (idle) {
     snprintf(msg, msgLen, "Manual pause of the %s is off. The idle pause "
-             "keeps them stopped until a human joins.", what);
+             "keeps the %s paused until a human joins.", what, what);
   } else {
     snprintf(msg, msgLen, "Manual pause of the %s is off.", what);
   }
@@ -528,10 +528,12 @@ static void processCmdStdin(CmdStdin *cs) {
         }
 
         uint32_t serverTick = serverSimGetTick(serverSim);
-        /* A paused game's tick stands still, so a resume_game queued for a
-         * later tick would never come due. It is taken at once instead. */
-        bool dueNow = (cmd.op == CMD_OP_RESUME_GAME &&
-                       serverSimIsGamePaused(serverSim));
+        /* A paused game's tick stands still, so a line queued for a later
+         * tick would never come due: a resume_game, an exit or a shutdown
+         * would wait for ever. While the game is paused, every queued line
+         * is taken at once, in file order. A script that wants game time
+         * between two lines puts the resume_game first. */
+        bool dueNow = serverSimIsGamePaused(serverSim);
         if (cmd.tick > serverTick && !dueNow) {
 #ifdef _WIN32
             Sleep(isAsap ? 0 : 10);

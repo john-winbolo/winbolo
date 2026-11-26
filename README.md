@@ -130,12 +130,25 @@ The server console has these commands:
 | `pausestatus` (or `botstatus`) | Show what is paused, why (manual or idle), for how many seconds, and the `-idlepause` setting |
 
 A manual pause stays on until the matching resume command. A human who
-joins does not end a manual pause. Bots count as players for `-autoclose`
-and the empty-server reset, so a paused bot game does not close or reset.
+joins does not end a manual pause. A manual pause also stays on over a
+round end, a map change and a return to the lobby: the next round starts
+paused. A manual game pause stops the return to the lobby when the last
+human leaves, because that return is part of the game tick. Bots count as
+players for `-autoclose` and the empty-server reset, so a paused bot game
+does not close or reset.
+
 `-cmd-stdin` takes the same commands as `pause_bots`, `resume_bots`,
-`pause_game`, `resume_game` and `pause_status`. In a single-player game,
-the host has Pause AI Players (Ctrl+Shift+B) and Pause Game
-(Ctrl+Shift+G) in the Players menu.
+`pause_game`, `resume_game` and `pause_status`. While the game is paused,
+its tick stands still, so every queued line runs at once, in file order.
+Put a `resume_game` line first if a later line needs game time.
+`WinBoloHeadless --fast` has no pause step and refuses the four pause
+commands. `WinBoloHeadless --server` sends them to the server, which must
+be of this version: an older server drops them and every later command.
+
+In a single-player game, the host has Pause AI Players (Ctrl+Shift+B) and
+Pause Game (Ctrl+Shift+G) in the Players menu. On macOS the in-window menu
+and these keys are not there, and the macOS menu bar has no pause items
+yet. The web version has Pause AI Players but not Pause Game.
 
 ## Tests
 

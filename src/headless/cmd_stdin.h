@@ -56,9 +56,13 @@ typedef enum {
   CMD_OP_REAPPLY_ALLIANCES,
   CMD_OP_SHUTDOWN,
   CMD_OP_EXIT,
-  /* WinBoloDS only: the manual pause of the bots or of the whole game,
-   * and a status line on stderr. While the game is paused its tick stands
-   * still, so a resume_game line is taken at once, whatever its tick. */
+  /* The manual pause of the bots or of the whole game, and a status line
+   * on stderr. WinBoloDS applies them to its own sim. While its game is
+   * paused the tick stands still, so every queued line is taken at once,
+   * whatever its tick. WinBoloHeadless --server sends the four pause ops to
+   * the server (PACKET_PAUSE_SET, a server of this version only) and has no
+   * pause_status. WinBoloHeadless --fast ticks the sim with no pause step,
+   * so it refuses the four pause ops with an error line. */
   CMD_OP_PAUSE_BOTS,
   CMD_OP_RESUME_BOTS,
   CMD_OP_PAUSE_GAME,

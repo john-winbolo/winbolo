@@ -888,11 +888,12 @@ static bool cmdDispatchFast(const CmdLine *cmd) {
     case CMD_OP_RESUME_BOTS:
     case CMD_OP_PAUSE_GAME:
     case CMD_OP_RESUME_GAME:
-      (void)serverSimSetManualPause(
-          fastServerSim,
-          (cmd->op == CMD_OP_PAUSE_GAME || cmd->op == CMD_OP_RESUME_GAME)
-              ? SIM_PAUSE_GAME : SIM_PAUSE_BOTS,
-          cmd->op == CMD_OP_PAUSE_BOTS || cmd->op == CMD_OP_PAUSE_GAME);
+      /* --fast ticks the sim with serverSimTick and runs no pause step and
+       * no server bot tick, so a pause would only look set. Refuse it. */
+      fprintf(stderr,
+              "cmd-stdin: line %d: %s does nothing in --fast mode (it has no "
+              "pause step); line ignored. Use WinBoloDS -cmd-stdin.\n",
+              cmd->lineNumber, cmdOpName(cmd->op));
       return true;
     case CMD_OP_PAUSE_STATUS: {
       char line[256];
@@ -966,7 +967,13 @@ static bool cmdDispatchServer(const CmdLine *cmd) {
     case CMD_OP_PAUSE_GAME:
     case CMD_OP_RESUME_GAME:
       /* The admin channel: PACKET_PAUSE_SET. The server takes it only from
-       * a player who may edit the lobby. */
+       * a player who may edit the lobby. An older server cannot decode it
+       * and then drops every later command from this client; the client
+       * cannot tell the server's version, so say so on each one. */
+      fprintf(stderr,
+              "cmd-stdin: line %d: %s sent. It needs a server of this "
+              "version: an older one drops it and every later command.\n",
+              cmd->lineNumber, cmdOpName(cmd->op));
       clientSimNetSendPauseSet(
           humanSim,
           (cmd->op == CMD_OP_PAUSE_GAME || cmd->op == CMD_OP_RESUME_GAME) ? 1 : 0,
@@ -2138,7 +2145,10 @@ static void printUsage(const char *prog) {
     "  --log-state binary  Binary observation frames to stdout (little-endian)\n"
     "  --log-events FILE Log one JSON line per ControlEvent (- for stdout)\n"
     "  --cmd-stdin FILE  Read scripted commands (JSON-per-line) and dispatch at\n"
-    "                    each command's tick (- for stdin)\n"
+    "                    each command's tick (- for stdin). With --server, the\n"
+    "                    pause_bots, resume_bots, pause_game and resume_game\n"
+    "                    ops need a server of this version: an older one\n"
+    "                    drops them and every later command\n"
     "  --seed N          Seed the RNG with N for reproducible runs\n"
     "  --quiet           Suppress non-error output\n"
     "  -nocrashreporting Do not start the crash reporter (same flag as\n"
