@@ -6864,6 +6864,9 @@ set(_unit_test_names
     loopback_bot_pool_same_not_fetched
     bot_pool_refresh_retakes_catalogue
     loopback_bot_pool_survives_bulk_rebase
+    bot_pool_ds_teams_skip_numbered_custom
+    bot_pool_ds_teams_skip_numbered_default
+    bot_pool_ds_start_names_from_pools
     loopback_brain_docs_survives_bulk_rebase
     loopback_map_upload
     loopback_map_change_busy_lifts

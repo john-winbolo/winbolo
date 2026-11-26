@@ -870,6 +870,10 @@ void printArgs() {
   fprintf(stderr, "                -brain. E.g. -bot-init 0-3=brains/A/init.lua,4=brains/B/init.lua[llm]\n");
   fprintf(stderr, "-botnames <path> - JSON file of bot name pools (themed name lists) for\n");
   fprintf(stderr, "                naming auto-added bots. Defaults to data/bot_names.json.\n");
+  fprintf(stderr, "                Bots started with -bots never get Numbered Bots names:\n");
+  fprintf(stderr, "                with fewer pools than teams, teams share a pool, and a\n");
+  fprintf(stderr, "                pool that runs out of names gives \"<label> 1\",\n");
+  fprintf(stderr, "                \"<label> 2\" and so on.\n");
   fprintf(stderr, "-allybots [N] - Place all -bots on the same team (1-16, default 1) so\n");
   fprintf(stderr, "                they start allied. Pick the same team in the lobby to join\n");
   fprintf(stderr, "                them, or a different one to fight against them.\n");
@@ -3473,19 +3477,14 @@ int main(int argc, char **argv) {
         }
       }
       /* Draw themed names so a -bots server gets varied names instead of
-       * "Bot 1..N". Each team that gets bots draws a random pool of its
-       * own, one no other team holds where a free pool is left (the
-       * lobby's rule), and the pool is
+       * "Bot 1..N". Each team that gets bots draws a random themed pool of
+       * its own (never the generated "Numbered Bots" pool), and the pool is
        * stored on the team so the lobby's "Bot naming" label and Add Bot
-       * use the same pool as these names. Bots on no team share one random
-       * pool. The draws are wrapped in a bolo_rand save/restore so this
-       * cosmetic randomness leaves the deterministic game stream (tank
-       * placement, etc.) untouched for a given -seed — only the game sim
-       * should advance the shared PRNG. Names are picked up front, then the
-       * bots are added with them. usedStore backs the uniqueness list
-       * handed to lobbyBotPoolPick. (numBots is clamped to MAX_TANKS above,
-       * so botNames is always in bounds.) */
-      char botNames[MAX_TANKS][64];
+       * use the same pool as these names. serverSimDrawStartBotNames has
+       * the rules; its draws leave the game's random stream for a -seed
+       * untouched. (numBots is clamped to MAX_TANKS above, so botNames is
+       * always in bounds.) */
+      char botNames[MAX_TANKS][SERVER_START_BOT_NAME_LEN];
       /* The team each bot goes on: the -allybots team, or the -teams
        * block or round-robin team, which replaces it. This one table
        * tells the naming which pool to use and tells the placement below
@@ -3493,48 +3492,7 @@ int main(int argc, char **argv) {
       int botTeam[MAX_TANKS];
       serverSimStartBotTeams(numBots, allyTeam, teamSizes, numTeamSizes,
                              numTeams, botTeam);
-      {
-        static char usedStore[MAX_TANKS][64];
-        const char *usedNames[MAX_TANKS];
-        int usedCount = 0;
-        BoloRandState rngBeforeNaming;
-        int teamPool[MAX_TANKS];
-        int noTeamPool = -1;
-        for (i = 0; i < MAX_TANKS; i++) {
-          teamPool[i] = -1;
-        }
-        bolo_rand_save(&rngBeforeNaming);
-        for (i = 0; i < numBots; i++) {
-          char picked[64];
-          int team = botTeam[i];
-          int botPool;
-          if (team == 0) {
-            if (noTeamPool < 0) {
-              noTeamPool = (int)bolo_rand_below((uint32_t)lobbyBotPoolCount());
-            }
-            botPool = noTeamPool;
-          } else {
-            if (teamPool[team] < 0) {
-              teamPool[team] = (int)serverSimPickTeamNamingPool(
-                  serverSim, (BYTE)team, bolo_rand_below(0x10000u));
-            }
-            botPool = teamPool[team];
-          }
-          lobbyBotPoolPick(botPool, usedNames, usedCount, picked, sizeof(picked));
-          if (picked[0] != '\0') {
-            snprintf(botNames[i], sizeof(botNames[i]), "%s", picked);
-          } else {
-            snprintf(botNames[i], sizeof(botNames[i]), "Bot %d", i + 1);
-          }
-          if (usedCount < MAX_TANKS) {
-            snprintf(usedStore[usedCount], sizeof(usedStore[usedCount]),
-                     "%s", botNames[i]);
-            usedNames[usedCount] = usedStore[usedCount];
-            usedCount++;
-          }
-        }
-        bolo_rand_restore(&rngBeforeNaming);
-      }
+      serverSimDrawStartBotNames(serverSim, numBots, botTeam, botNames);
       for (i = 0; i < numBots; i++) {
         /* This bot's init table and resolved brain path go down the create
          * call, so each bot gets its own. The name was pre-picked into

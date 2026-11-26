@@ -36,7 +36,8 @@
 #include "server_sim_join.h"        /* serverSimRepickAllLobbyStarts — the start re-pick when a team's side changes */
 #include "netpacks.h"               /* lobbyTimeMinutesIsValid — the LST_TIME_MINUTES range check */
 #include "wire_limits.h"            /* the LST_* selectors carried in PACKET_LOBBY_SET_SETTING */
-#include "lobby_bot_pools.h"        /* lobbyBotPoolCount — the per-team naming-pool uniqueness pass */
+#include "lobby_bot_pools.h"        /* lobbyBotPoolThemedCount / Pick — the per-team naming pools */
+#include "bolo_rand.h"              /* bolo_rand_save / restore around the -bots name draws */
 #include "brain_list.h"             /* BrainModes — the remembered mode/level keys */
 #include "start_sides.h"            /* START_SIDE_ANY / START_SIDE_COUNT — the team start-side range */
 
@@ -897,9 +898,11 @@ void serverSimSetTeamMeta(ServerSim *sim, BYTE teamId,
     /* Per-team uniqueness on namingPool: if another in_use team
      * already owns this pool, pick the lowest pool index not
      * used by any other team. Falls back to the requested value
-     * if every pool is taken. */
+     * if every pool is taken. Only the themed pools are tried, so a
+     * team is never moved onto the generated "Numbered Bots" pool; a
+     * host can still pick that pool by hand. */
     {
-        int poolCount = lobbyBotPoolCount();
+        int poolCount = lobbyBotPoolThemedCount();
         if (lobbyPoolHeldByOtherTeam(sim, teamId, namingPool) && poolCount > 0) {
             for (int p = 0; p < poolCount; p++) {
                 if (!lobbyPoolHeldByOtherTeam(sim, teamId, p)) {
@@ -941,7 +944,8 @@ void serverSimSetTeamMeta(ServerSim *sim, BYTE teamId,
 
 uint8_t serverSimPickTeamNamingPool(ServerSim *sim, BYTE teamId, uint32_t choice) {
     TeamMetadata *t;
-    int           poolCount = lobbyBotPoolCount();
+    /* Themed pools only: a -bots team never draws "Numbered Bots". */
+    int           poolCount = lobbyBotPoolThemedCount();
     int           freeCount = 0;
     int           want      = 0;
     int           p;
@@ -990,6 +994,55 @@ uint8_t serverSimPickTeamNamingPool(ServerSim *sim, BYTE teamId, uint32_t choice
     serverSimSetTeamMeta(sim, teamId, color, (uint8_t)want, t->startSide,
                          (const uint8_t *)name, nameLen);
     return t->namingPool;
+}
+
+void serverSimDrawStartBotNames(ServerSim *sim, int numBots,
+                                const int *botTeam,
+                                char names[][SERVER_START_BOT_NAME_LEN]) {
+    static char   usedStore[MAX_TANKS][SERVER_START_BOT_NAME_LEN];
+    const char   *usedNames[MAX_TANKS];
+    int           usedCount = 0;
+    int           teamPool[MAX_TANKS];
+    int           noTeamPool = -1;
+    int           themed = lobbyBotPoolThemedCount();
+    BoloRandState rngBeforeNaming;
+    int           i;
+
+    if (numBots > MAX_TANKS) numBots = MAX_TANKS;
+    if (numBots <= 0 || botTeam == NULL || names == NULL) return;
+    for (i = 0; i < MAX_TANKS; i++) {
+        teamPool[i] = -1;
+    }
+    bolo_rand_save(&rngBeforeNaming);
+    for (i = 0; i < numBots; i++) {
+        char picked[SERVER_START_BOT_NAME_LEN];
+        int  team = botTeam[i];
+        int  botPool;
+        if (team <= 0 || team >= MAX_TANKS) {
+            if (noTeamPool < 0) {
+                noTeamPool = (themed > 0)
+                    ? (int)bolo_rand_below((uint32_t)themed) : 0;
+            }
+            botPool = noTeamPool;
+        } else {
+            if (teamPool[team] < 0) {
+                teamPool[team] = (int)serverSimPickTeamNamingPool(
+                    sim, (BYTE)team, bolo_rand_below(0x10000u));
+            }
+            botPool = teamPool[team];
+        }
+        lobbyBotPoolPick(botPool, usedNames, usedCount, picked, sizeof(picked));
+        if (picked[0] != '\0') {
+            SDL_snprintf(names[i], SERVER_START_BOT_NAME_LEN, "%s", picked);
+        } else {
+            SDL_snprintf(names[i], SERVER_START_BOT_NAME_LEN, "Bot %d", i + 1);
+        }
+        SDL_snprintf(usedStore[usedCount], sizeof(usedStore[usedCount]),
+                     "%s", names[i]);
+        usedNames[usedCount] = usedStore[usedCount];
+        usedCount++;
+    }
+    bolo_rand_restore(&rngBeforeNaming);
 }
 
 void serverSimStartBotTeams(int numBots, int allyTeam,

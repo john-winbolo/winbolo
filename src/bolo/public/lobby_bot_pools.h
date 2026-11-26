@@ -63,6 +63,12 @@
  * one for the always-present generated "Numbered Bots" pool. */
 int  lobbyBotPoolCount(void);
 
+/* Number of themed pools: indices 0..n-1, which never include the
+ * generated "Numbered Bots" pool (it is index n). The dedicated server's
+ * -bots start-up draws team pools from these only, so a server-started
+ * team never gets "Numbered Bots" names by chance. */
+int  lobbyBotPoolThemedCount(void);
+
 /* Display label for the pool dropdown (e.g. "Famous Painters").
  * Returns "Unknown" for out-of-range indices. */
 const char *lobbyBotPoolLabel(int poolIdx);
