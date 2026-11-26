@@ -522,12 +522,19 @@ void brainRecordTick(ServerSim *sim) {
     }
     wr_u8((uint8_t)botCount);
 
+    /* While the bots are paused no brain runs. The world part of the frame
+     * above is still written, so a human's play during a bot pause is in
+     * the recording. Each bot's part is written with a think time of 0, no
+     * overlay and no pool, so the viewer shows no stale decision. The goal
+     * is the one from the last think. */
+    bool botsPaused = serverSimAreBotsPaused(sim);
+
     for (int i = 0; i < MAX_TANKS; i++) {
         if (!serverSimIsBot(sim, (BYTE)i)) continue;
         BYTE slot = (BYTE)i;
 
         wr_u8(slot);
-        double thinkMs = serverSimGetBotLastThinkMs(sim, slot);
+        double thinkMs = botsPaused ? 0.0 : serverSimGetBotLastThinkMs(sim, slot);
         g_pfThinkMs += thinkMs;
         wr_f32((float)thinkMs);
 
@@ -539,7 +546,7 @@ void brainRecordTick(ServerSim *sim) {
          * -bd-noviz: write an empty block (the brain also stops emitting,
          * so ocount is 0 anyway — this keeps the file valid regardless). */
         uint64_t _tb0 = SDL_GetPerformanceCounter();
-        if (!g_recViz) {
+        if (!g_recViz || botsPaused) {
             wr_u32(0);
         } else {
             OverlayCmdBuffer *ovl = serverSimGetBotOverlayCmds(sim, slot);
@@ -571,7 +578,7 @@ void brainRecordTick(ServerSim *sim) {
          * parallel right after its think — see runBotThinkJob), so this
          * serial section only writes; the inline eval is the fallback for
          * a budget-killed think or a bot that skipped its job. */
-        if (!brainRecordPoolCaptureWanted(sim, slot)) {
+        if (botsPaused || !brainRecordPoolCaptureWanted(sim, slot)) {
             wr_u32(0);
         } else {
             char *pj = g_poolStash[slot];

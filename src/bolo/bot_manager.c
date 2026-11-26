@@ -1608,6 +1608,14 @@ static void runBotThinkJobImpl(BotJobCtx *j, BotContext *bot, Uint64 t0) {
  * orders. */
 static void runBotPausedJob(BotJobCtx *j, BotContext *bot) {
     ServerSim *sim = j->sim;
+    /* A dead tank gets no input, as in the normal job: it cannot act. The
+     * normal job clears newTank after a think, so the brain sees a respawn
+     * once. No think runs here, so newTank is left for the first think
+     * after the resume to see. */
+    if (MY_TANK(bot->cs) == NULL ||
+        tankGetDeathWait(&MY_TANK(bot->cs)) > 0) {
+        return;
+    }
     unsigned long hold = 0;
     setkey(hold, KEY_slower);
     *clientSimGetBrainHoldKeys(bot->cs) = (uint32_t)hold;
@@ -1931,11 +1939,10 @@ void botManagerTick(ServerSim *sim, aiType ai) {
     /* Brain-decision recorder (winbolods -braindebug). Inert unless enabled.
      * Runs here, after the worker pool joined and input was dispatched, so
      * every bot's overlay buffer + Lua state is settled and single-thread
-     * safe to read/eval. Not while the bots are paused: no brain ran, so
-     * there is no decision to record. */
-    if (!sim->botMgr.paused) {
-        brainRecordTick(sim);
-    }
+     * safe to read/eval. It runs while the bots are paused too, so the world
+     * (and a human's play) stays in the recording; brainRecordTick writes no
+     * decision data for a paused bot. */
+    brainRecordTick(sim);
 
     (void)ai;
 }
