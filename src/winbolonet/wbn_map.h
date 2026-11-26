@@ -24,10 +24,11 @@ typedef struct {
   char     name[MAP_STR_SIZE];
   uint8_t *mapData;          /* heap; raw .map bytes (base64-decoded). NULL if !found. */
   size_t   mapDataLen;
-  bool     answered;         /* set by wbnMapFetchByMd5 only: WinBolo.net said
-                                whether it stores the map (a 2xx that parsed,
-                                or a 400/404). false when the request never
-                                got that far, so asking again may succeed. */
+  bool     answered;         /* set by wbnMapFetchByMd5 only: WinBolo.net gave
+                                a reply that asking again will not change (a
+                                2xx with a JSON body, or a 4xx other than 408
+                                and 429). false when the request never got
+                                that far, so asking again may succeed. */
 } WbnMapResult;
 
 /*********************************************************

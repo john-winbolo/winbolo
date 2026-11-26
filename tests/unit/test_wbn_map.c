@@ -165,10 +165,33 @@ static int fetch_reports_answered(void) {
     if (wbnMapFetchByMd5(md5, &r) || r.answered) rc = 4;
     wbnMapResultFree(&r);
 
+    /* A request timeout from the server: it asks for a retry. */
+    g_stubWbnApiPostCode = 408;
+    g_stubWbnApiPostBody = "{}";
+    if (wbnMapFetchByMd5(md5, &r) || r.answered) rc = 7;
+    wbnMapResultFree(&r);
+
     /* Not stored: the answer. */
     g_stubWbnApiPostCode = 404;
     g_stubWbnApiPostBody = "{\"error\":\"Map not found\"}";
     if (wbnMapFetchByMd5(md5, &r) || !r.answered) rc = 5;
+    wbnMapResultFree(&r);
+
+    /* A signature WinBolo.net will not take gets the same reply every
+     * time. These used to be asked again every wait with no limit. */
+    g_stubWbnApiPostCode = 401;
+    g_stubWbnApiPostBody = "{\"error\":\"bad signature\"}";
+    if (wbnMapFetchByMd5(md5, &r) || !r.answered) rc = 8;
+    wbnMapResultFree(&r);
+    g_stubWbnApiPostCode = 403;
+    if (wbnMapFetchByMd5(md5, &r) || !r.answered) rc = 9;
+    wbnMapResultFree(&r);
+
+    /* Stored, but the data is not base64: no preview, and the same reply
+     * next time, so it is not asked for again either. */
+    g_stubWbnApiPostCode = 200;
+    g_stubWbnApiPostBody = "{\"found\":true,\"map_data\":\"!!!!\"}";
+    if (wbnMapFetchByMd5(md5, &r) || !r.answered) rc = 10;
     wbnMapResultFree(&r);
 
     /* Stored. */

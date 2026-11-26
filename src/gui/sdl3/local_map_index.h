@@ -74,7 +74,9 @@ int localMapIndexCount(const LocalMapIndex *idx);
 
 /* The path of a file whose md5 is md5Hex (32 hex characters, either case),
  * or NULL. The pointer is good until the next scan or destroy. When two
- * files share an md5 the one from the earlier root is returned. */
+ * files share an md5 the one the index met first is returned: the earlier
+ * root's when one scan found both, the older entry when a later scan added
+ * the other. Their bytes are the same, so either draws the same map. */
 const char *localMapIndexFind(const LocalMapIndex *idx, const char *md5Hex);
 
 /* Finds md5Hex and reads that file. The bytes are hashed again after the

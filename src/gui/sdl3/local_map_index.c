@@ -88,10 +88,17 @@ static void hashMapFile(const char *path, char out[33]) {
     SDL_free(data);
 }
 
-static LocalMapEntry *findByPath(LocalMapIndex *idx, const char *path) {
-    int i;
-    for (i = 0; i < idx->count; i++) {
+/* The entry for `path`, or NULL. *hint is where the search starts and is
+ * left one past a match. A rescan meets the files in the order the last
+ * scan stored them, so each lookup then costs one comparison instead of a
+ * pass over the whole index; a file that is new costs one full pass. */
+static LocalMapEntry *findByPath(LocalMapIndex *idx, const char *path,
+                                 int *hint) {
+    int n;
+    for (n = 0; n < idx->count; n++) {
+        int i = (*hint + n) % idx->count;
         if (SDL_strcmp(idx->entries[i].path, path) == 0) {
+            *hint = i + 1;
             return &idx->entries[i];
         }
     }
@@ -122,8 +129,9 @@ static bool appendEntry(LocalMapIndex *idx, char *path, Uint64 size,
     return true;
 }
 
-/* Scans one root. Returns how many files it hashed. */
-static int scanRoot(LocalMapIndex *idx, const char *root) {
+/* Scans one root. Returns how many files it hashed. *hint is findByPath's,
+ * carried from one root to the next. */
+static int scanRoot(LocalMapIndex *idx, const char *root, int *hint) {
     int    hashed = 0;
     int    n = 0;
     int    i;
@@ -155,7 +163,7 @@ static int scanRoot(LocalMapIndex *idx, const char *root) {
             SDL_free(path);
             continue;
         }
-        e = findByPath(idx, path);
+        e = findByPath(idx, path, hint);
         if (e != NULL) {
             SDL_free(path);
             e->seen = true;
@@ -182,6 +190,7 @@ int localMapIndexScan(LocalMapIndex *idx, const char *const *roots,
                       int rootCount) {
     int hashed = 0;
     int kept = 0;
+    int hint = 0;
     int i;
 
     if (idx == NULL) {
@@ -191,10 +200,10 @@ int localMapIndexScan(LocalMapIndex *idx, const char *const *roots,
         idx->entries[i].seen = false;
     }
     for (i = 0; roots != NULL && i < rootCount; i++) {
-        hashed += scanRoot(idx, roots[i]);
+        hashed += scanRoot(idx, roots[i], &hint);
     }
-    /* Drop what no root holds any more, keeping the order of the rest: a
-     * file from an earlier root stays ahead of its copy in a later one. */
+    /* Drop what no root holds any more, keeping the order of the rest, which
+     * is the order the next scan will meet them in (see findByPath). */
     for (i = 0; i < idx->count; i++) {
         if (idx->entries[i].seen) {
             if (kept != i) {

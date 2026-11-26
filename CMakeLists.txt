@@ -8388,6 +8388,7 @@ add_executable(WinBoloWbnTests
     tests/wbn/test_wbn_forced_update_full_queue.c
     tests/wbn/test_wbn_scenario_fields.c
     tests/wbn/test_wbn_map_lookup_restarts_http.c
+    tests/wbn/test_wbn_stop_during_lookup.c
     src/bolo/global.c
     src/common/prefs.c
     src/common/prefs_doc.c
@@ -8476,6 +8477,13 @@ set_tests_properties(wbn.scenario_fields PROPERTIES TIMEOUT 60)
 add_test(NAME wbn.map_lookup_restarts_http
          COMMAND $<TARGET_FILE:WinBoloWbnTests> map_lookup_restarts_http)
 set_tests_properties(wbn.map_lookup_restarts_http PROPERTIES TIMEOUT 60)
+
+# httpDestroy, and a whole start and stop, while a map lookup is held open by
+# the listener: what joining or leaving a game does to a preview still on its
+# way. One 1.5 s hold.
+add_test(NAME wbn.stop_during_lookup
+         COMMAND $<TARGET_FILE:WinBoloWbnTests> stop_during_lookup)
+set_tests_properties(wbn.stop_during_lookup PROPERTIES TIMEOUT 60)
 
 # ---- Include-rule check: the scenario surface is invisible to a frontend --
 # src/bolo/scenario_api/ is on the include path of scenario_host, sim_owner

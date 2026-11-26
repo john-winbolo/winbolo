@@ -447,13 +447,15 @@ int main(int argc, char **argv) {
     ok = wbnTestScenarioFields();
   } else if (strcmp(name, "map_lookup_restarts_http") == 0) {
     ok = wbnTestMapLookupRestartsHttp();
+  } else if (strcmp(name, "stop_during_lookup") == 0) {
+    ok = wbnTestStopDuringLookup();
   } else {
     fprintf(stderr,
             "usage: %s posts_share_connection|leave_returns_at_once|"
             "worker_outlives_session|job_result_returns|log_upload_runs|"
             "key_stamped_at_fire_time|queue_cap_refuses_posts|"
             "forced_update_full_queue|scenario_fields|"
-            "map_lookup_restarts_http\n",
+            "map_lookup_restarts_http|stop_during_lookup\n",
             argv[0]);
     SDL_Quit();
     bolo_net_cleanup();

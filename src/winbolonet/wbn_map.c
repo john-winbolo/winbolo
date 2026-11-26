@@ -188,17 +188,31 @@ bool wbnMapFetchByMd5(const char *md5Hex, WbnMapResult *out) {
 
     if (code < 200 || code >= 300) {
         free(resp);
-        /* 404 is "no stored map has this md5" and 400 is "not an md5":
-         * both are the answer. Anything else (no connection, a timeout,
-         * 429, a 5xx) says nothing about the map. */
-        out->answered = (code == 404 || code == 400);
+        /* A 4xx is WinBolo.net refusing this request as it stands: 404 is
+         * "no stored map has this md5", 400 "not an md5", 401 and 403 a
+         * signature it will not take. Sending the same request again gets
+         * the same reply, so each is the answer. 408 and 429 are the two
+         * that ask for a retry. Anything else (no connection, a timeout, a
+         * 5xx) says nothing about the map. */
+        out->answered = (code >= 400 && code < 500 &&
+                         code != 408 && code != 429);
         return false;
     }
 
     bool ok = wbnMapParseResponse(resp, out);
+    /* wbnMapParseResponse zeroes *out, so set this after it. A body that
+     * is JSON but holds a map this build cannot take (over the size cap,
+     * or not base64) is still WinBolo.net's answer and will be the same
+     * next time; a body that is not JSON at all (a captive portal's page)
+     * is not. */
+    if (ok) {
+        out->answered = true;
+    } else {
+        cJSON *probe = (resp != NULL) ? cJSON_Parse(resp) : NULL;
+        out->answered = (probe != NULL);
+        cJSON_Delete(probe);
+    }
     free(resp);
-    /* wbnMapParseResponse zeroes *out, so set this after it. */
-    out->answered = ok;
     return ok && out->found;
 }
 
