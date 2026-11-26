@@ -214,8 +214,9 @@ void serverSimSetTeamMeta(ServerSim *sim, BYTE teamId,
  * return the pool the team then has. choice selects one of the free
  * pools (choice modulo the number of free pools), so a caller passes a
  * random number to get a random free pool. Only the themed pools are
- * offered (lobbyBotPoolThemedCount), never the generated "Numbered
- * Bots" pool; when every themed pool is held, the team shares one. The
+ * offered (lobbyBotPoolThemedCount: every themed pool, or only the ones
+ * -botnames named by label), never the generated "Numbered Bots" pool;
+ * when every themed pool is held, the team shares one. The
  * write goes through
  * serverSimSetTeamMeta with the team's own colour, side and name, so
  * clients get the pool in CTRL_LOBBY_TEAM_META; a team not in use yet is

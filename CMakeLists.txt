@@ -6863,6 +6863,7 @@ set(_unit_test_names
     loopback_bot_pool_fetch
     loopback_bot_pool_same_not_fetched
     bot_pool_refresh_retakes_catalogue
+    bot_pool_label_team_picks_only_chosen
     loopback_bot_pool_survives_bulk_rebase
     bot_pool_ds_teams_skip_numbered_custom
     bot_pool_ds_teams_skip_numbered_default
@@ -7184,6 +7185,17 @@ set(_unit_test_names
     empty_return_to_lobby_removes_bots_and_unlocks
     bot_pool_wire_chunk_transport
     bot_pool_catalog_id
+    bot_pool_label_one
+    bot_pool_label_several_spaces_case
+    bot_pool_label_unknown_falls_back
+    bot_pool_label_mixed_known_unknown
+    bot_pool_label_file_path_still_loads
+    bot_pool_label_path_missing_not_label
+    bot_pool_label_none_same_draws
+    bot_pool_label_dir_not_file
+    bot_pool_label_shipped_missing
+    bot_pool_label_catalog_carries_filter
+    bot_pool_label_unknown_cut_utf8
     voice_core_roundtrip
     voice_core_reset_matches_fresh
     voice_core_fade_apply

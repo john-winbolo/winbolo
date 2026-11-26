@@ -98,6 +98,22 @@ the numbered names ("Bot-01", "Bot-02"). Each team gets a pool of its own
 while there are free pools; with more teams than pools, teams share a pool.
 A pool that runs out of names gives "<label> 1", "<label> 2" and so on.
 
+Bots get their names from the themed pools in `data/bot_names.json`. To use
+only some of them, give `-botnames` one or more pool labels, comma separated
+(case and spaces around each label do not matter). Bots that the server
+starts with `-bots`, and bots that players add in the lobby, then get names
+only from those pools. One exception: a player can still pick the "Numbered
+Bots" pool for a team by hand.
+
+```bash
+./build/WinBoloDS -inbuilt -bots 4 -botnames "Classic AI"
+./build/WinBoloDS -inbuilt -bots 8 -teams 2 -botnames "Famous Painters, Planes"
+```
+
+`-botnames list` prints the labels. A value that is an existing file, or
+that looks like a path (it has `/` or `\` in it, or ends in `.json`), is
+loaded as your own pool file in the same format instead.
+
 ## Tests
 
 The unit tests and the baseline tests (scripted games played by headless bots,

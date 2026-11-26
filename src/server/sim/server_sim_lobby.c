@@ -898,7 +898,8 @@ void serverSimSetTeamMeta(ServerSim *sim, BYTE teamId,
     /* Per-team uniqueness on namingPool: if another in_use team
      * already owns this pool, pick the lowest pool index not
      * used by any other team. Falls back to the requested value
-     * if every pool is taken. Only the themed pools are tried, so a
+     * if every pool is taken. Only the themed pools are tried (every
+     * themed pool, or only the ones -botnames named by label), so a
      * team is never moved onto the generated "Numbered Bots" pool; a
      * host can still pick that pool by hand. */
     {
@@ -944,7 +945,8 @@ void serverSimSetTeamMeta(ServerSim *sim, BYTE teamId,
 
 uint8_t serverSimPickTeamNamingPool(ServerSim *sim, BYTE teamId, uint32_t choice) {
     TeamMetadata *t;
-    /* Themed pools only: a -bots team never draws "Numbered Bots". */
+    /* Themed pools only (after -botnames labels, only the chosen
+     * ones): a -bots team never draws "Numbered Bots". */
     int           poolCount = lobbyBotPoolThemedCount();
     int           freeCount = 0;
     int           want      = 0;

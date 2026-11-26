@@ -494,6 +494,82 @@ int run_loopback_bot_pool_survives_bulk_rebase(void) {
     return 0;
 }
 
+/* ── Team pools after -botnames labels ──────────────────────────────── */
+
+static bool installThreeLabelPools(void) {
+    static const char *const a[] = { "HAL", "Skynet" };
+    static const char *const b[] = { "Monet", "Dali" };
+    static const char *const c[] = { "Spitfire", "Mustang" };
+    LobbyBotPoolDef defs[3];
+    defs[0].label = "Classic AI";      defs[0].names = a; defs[0].nameCount = 2;
+    defs[1].label = "Famous Painters"; defs[1].names = b; defs[1].nameCount = 2;
+    defs[2].label = "Planes";          defs[2].names = c; defs[2].nameCount = 2;
+    return lobbyBotPoolsInstall(defs, 3, NULL) == 3;
+}
+
+/* A team draws its pool only from the pools -botnames named, and is never
+ * moved onto the generated "Numbered Bots" pool. With every pool kept the
+ * draw is over every themed pool, and it never lands on that pool either
+ * (bots-real-name-pools); lobbyBotPoolDrawCount still counts it for the
+ * client's Add Bot draw. */
+int run_bot_pool_label_team_picks_only_chosen(void) {
+    BYTE       emap[6000] = E_MAP;
+    ServerSim *sim;
+    uint32_t   choice;
+
+    if (!threadsCreate(TRUE)) UT_FAIL("threadsCreate failed");
+
+    /* All pools (no -botnames): team 1 is never given the numbered pool. */
+    lobbyBotPoolsReset();
+    UT_ASSERT(installThreeLabelPools());
+    UT_ASSERT(lobbyBotPoolDrawCount() == 4);
+    sim = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island", gameOpen,
+                                    false, 0, -1);
+    UT_ASSERT(sim != NULL);
+    /* Team 2 holds pool 0, so team 1's free themed pools are 1 and 2;
+     * choice 2 names the first of them. Pool 3 (numbered) is not offered. */
+    UT_ASSERT_MSG(serverSimPickTeamNamingPool(sim, 1, 2) == 1,
+                  "without labels team 1 should take free themed pool 1");
+    serverSimDestroy(sim);
+
+    /* One label: every team gets it. */
+    lobbyBotPoolsReset();
+    UT_ASSERT(installThreeLabelPools());
+    UT_ASSERT(lobbyBotPoolsFilterByLabels("planes", NULL) == 1);
+    sim = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island", gameOpen,
+                                    false, 0, -1);
+    UT_ASSERT(sim != NULL);
+    for (choice = 0; choice < 8; choice++) {
+        BYTE team = (BYTE)(1 + choice % 4);
+        uint8_t got = serverSimPickTeamNamingPool(sim, team, choice);
+        UT_ASSERT_MSG(got == 0, "team %u got pool %u, want 0 (Planes)",
+                      (unsigned)team, (unsigned)got);
+    }
+    UT_ASSERT(strcmp(lobbyBotPoolLabel(0), "Planes") == 0);
+    serverSimDestroy(sim);
+
+    /* Two labels: teams spread over them and never reach pool 2. */
+    lobbyBotPoolsReset();
+    UT_ASSERT(installThreeLabelPools());
+    UT_ASSERT(lobbyBotPoolsFilterByLabels("Classic AI, Planes", NULL) == 2);
+    sim = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island", gameOpen,
+                                    false, 0, -1);
+    UT_ASSERT(sim != NULL);
+    UT_ASSERT_MSG(serverSimPickTeamNamingPool(sim, 1, 2) == 1,
+                  "team 1 should take the free chosen pool");
+    for (choice = 0; choice < 8; choice++) {
+        BYTE team = (BYTE)(2 + choice % 3);
+        uint8_t got = serverSimPickTeamNamingPool(sim, team, choice);
+        UT_ASSERT_MSG(got < 2, "team %u got pool %u, outside the chosen two",
+                      (unsigned)team, (unsigned)got);
+    }
+    serverSimDestroy(sim);
+
+    threadsDestroy();
+    lobbyBotPoolsReset();
+    return 0;
+}
+
 /* ── -bots teams never draw "Numbered Bots" ─────────────────────────
  *
  * Players reported a -bots 6 -teams 2 server where one team's bots had
