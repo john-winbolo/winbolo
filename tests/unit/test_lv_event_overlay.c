@@ -555,7 +555,7 @@ int run_lv_event_kinds_filter(void) {
         UT_ASSERT_MSG(!lvEventKindTicked(LV_OVERLAY_ALL_MASK & ~(1u << kind), kind),
                       "every kind but %d", kind);
     }
-    UT_ASSERT_MSG(LV_EVK_COUNT == 10, "ten kinds (%d)", (int)LV_EVK_COUNT);
+    UT_ASSERT_MSG(LV_EVK_COUNT == 11, "eleven kinds (%d)", (int)LV_EVK_COUNT);
     /* A kind out of range is never shown, whatever the bits say. */
     UT_ASSERT_MSG(!lvEventKindTicked(0xFFFFFFFFu, -1), "kind -1");
     UT_ASSERT_MSG(!lvEventKindTicked(0xFFFFFFFFu, LV_EVK_COUNT), "one past the last kind");

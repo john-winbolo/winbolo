@@ -1464,6 +1464,13 @@ int run_lv_early_blast_watch_miss(void);
 int run_lv_lag_view_rename(void);
 /* The viewer reads log_OverrunStats records and gives the one at the playhead. */
 int run_lv_overrun_read(void);
+/* log_SlowTick: one slow server frame through the writer and back, the rule
+ * for which frames get one, and the viewer reading them (and a file with
+ * none). */
+int run_log_roundtrip_slow_tick(void);
+int run_slow_tick_record_rule(void);
+int run_slow_tick_forget(void);
+int run_lv_slow_tick_read(void);
 /* log_Ping's six payload bytes: sender, kind, and two big-endian u16 WORLD
  * coordinates, byte for byte through the writer and back. */
 int run_log_roundtrip_ping(void);
@@ -4964,6 +4971,7 @@ int run_lv_ping_store(void);
 int run_lv_ping_marker(void);
 int run_lv_ping_phase(void);
 int run_lv_dump_ping(void);
+int run_lv_dump_slow_tick(void);
 /* The log viewer's playback times as text and the ring flashed round an
  * event's place (test_lv_time_fmt.c); and a jump to an event stopping on the
  * event's own tick (test_lv_presentation.c). */

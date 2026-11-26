@@ -47,6 +47,7 @@
 #include "blocks.h"
 #include "lv_bolo_map.h"
 #include "lv_presentation.h" /* lv_screenServerTickAt */
+#include "lv_event_kind.h"   /* LV_EVK_OVERRUN */
 #include "test_harness.h"
 #include "zip.h"
 
@@ -3148,6 +3149,155 @@ int run_lv_overrun_read(void) {
   UT_ASSERT_MSG(lv != NULL, "synthetic plain log failed to build/load");
   lv_screenOverrunNow(&now);
   UT_ASSERT_MSG(!now.recorded && !now.has, "a file with no record has one");
+  lv_decoderDestroy(lv);
+  remove(path);
+  return 0;
+}
+
+/* A log_SlowTick payload for the viewer test: a long frame at tick, of
+ * totalMs, with 50 ms of recording in it. */
+static int slowTickTestPayload(uint8_t *out, int cap, uint32_t tick, double totalMs) {
+  SlowTickRecord rec;
+  SlowTickParts parts;
+  memset(&parts, 0, sizeof(parts));
+  parts.bots = 4.0;
+  parts.sim = 2.0;
+  parts.recording = 50.0;
+  slowTickRecordFill(&rec, SLOW_TICK_FLAG_LONG, tick, totalMs, totalMs, 0.0, &parts);
+  return slowTickRecordEncode(&rec, out, cap);
+}
+
+extern int g_lvStubEventsAdded;
+extern int g_lvStubLastEventKind;
+
+/* The viewer reads log_SlowTick records into a track, from the load's walk
+ * and from playback, and lv_screenSlowTickNear gives the one near a time.
+ * Playback posts each record as one events panel line. A record shorter
+ * than version 1, or of version 0, is consumed and ignored, bytes a later
+ * version adds are skipped, and the log_OverrunStats record after them is
+ * still read. A recording made before the record (none in it) says it has
+ * none. */
+int run_lv_slow_tick_read(void) {
+  const char *path = "lv_slow_tick_read.wbv";
+  uint8_t first[SLOW_TICK_RECORD_BYTES];
+  uint8_t last[SLOW_TICK_RECORD_BYTES + 4];
+  uint8_t zeroVersion[SLOW_TICK_RECORD_BYTES];
+  uint8_t overrun[OVERRUN_RECORD_MAX_BYTES];
+  static const uint8_t shortRec[10] = {1, 1, 0, 0, 0x77, 0x22, 0, 0, 2, 0x64};
+  int firstLen;
+  int lastLen;
+  int zeroLen;
+  int overrunLen;
+  int linesBefore;
+  LogBuf b;
+  LogViewerState *lv;
+  LvSlowTickNow now;
+  LvOverrunNow ovr;
+  int i;
+
+  firstLen = slowTickTestPayload(first, (int)sizeof(first), 30498u, 61.2);
+  zeroLen = slowTickTestPayload(zeroVersion, (int)sizeof(zeroVersion), 30600u, 99.0);
+  zeroVersion[0] = 0;
+  lastLen = slowTickTestPayload(last, (int)sizeof(last), 30700u, 25.0);
+  UT_ASSERT(firstLen == SLOW_TICK_RECORD_BYTES && zeroLen == firstLen && lastLen == firstLen);
+  /* A later version: its own version byte and four bytes after the fields. */
+  last[0] = 2;
+  memset(last + lastLen, 0xEE, 4);
+  lastLen += 4;
+  overrunLen = overrunTestPayload(overrun, (int)sizeof(overrun), 3000u,
+                                  OVERRUN_RECORD_FLAG_BOTS, 52);
+
+  b.len = 0;
+  putHeader(&b);
+  putSnapshot(&b, true);
+  putNoEvents(&b, 50);
+  putEventFrame(&b, log_SlowTick, first, (uint16_t)firstLen);
+  putNoEvents(&b, 50);
+  putEventFrame(&b, log_SlowTick, shortRec, (uint16_t)sizeof(shortRec));
+  putEventFrame(&b, log_SlowTick, zeroVersion, (uint16_t)zeroLen);
+  putNoEvents(&b, 50);
+  putEventFrame(&b, log_SlowTick, last, (uint16_t)lastLen);
+  putEventFrame(&b, log_OverrunStats, overrun, (uint16_t)overrunLen);
+  putNoEvents(&b, 50);
+  putU8(&b, LOG_QUIT);
+
+  lv = loadSynthetic(&b, path);
+  UT_ASSERT_MSG(lv != NULL, "synthetic slow tick log failed to build/load");
+  UT_ASSERT_MSG(lv_screenSlowTickCount() == 2, "the walk's track has %d records (want 2)",
+                lv_screenSlowTickCount());
+
+  /* The load's walk has every record before playback reaches it. */
+  UT_ASSERT_MSG(lv_screenSlowTickNear(1000, 200, &now), "the walk missed the first record");
+  UT_ASSERT(now.recorded && now.has);
+  UT_ASSERT_MSG(now.rec.tick == 30498u && now.rec.total == 612u && now.rec.recording == 500u,
+                "first record: tick %u total %u (want 30498, 612)",
+                (unsigned)now.rec.tick, (unsigned)now.rec.total);
+  UT_ASSERT(now.rec.flags == SLOW_TICK_FLAG_LONG);
+  /* The short record and the version 0 one at about 2 s are ignored. */
+  UT_ASSERT_MSG(!lv_screenSlowTickNear(2000, 200, &now) && now.recorded,
+                "an ignored record is in the track: tick %u", (unsigned)now.rec.tick);
+  UT_ASSERT_MSG(lv_screenSlowTickNear(3000, 200, &now) && now.rec.tick == 30700u &&
+                now.rec.version == 2 && now.rec.total == 250u,
+                "last record: has %d tick %u version %u", (int)now.has,
+                (unsigned)now.rec.tick, (unsigned)now.rec.version);
+  /* Nothing within 50 ms of 500 ms. */
+  UT_ASSERT(!lv_screenSlowTickNear(500, 50, &now));
+
+  /* Playback: one events panel line for each record taken, none for the two
+   * ignored ones. */
+  linesBefore = g_lvStubEventsAdded;
+  for (i = 0; i < 80; i++) {
+    lv_screenLogTick();
+  }
+  UT_ASSERT_MSG(g_lvStubEventsAdded - linesBefore == 1,
+                "%d lines for the first record (want 1)", g_lvStubEventsAdded - linesBefore);
+  /* The line is of its own kind, so the events filter can hide it. */
+  UT_ASSERT_MSG(g_lvStubLastEventKind == LV_EVK_OVERRUN, "the line's kind is %d (want %d)",
+                g_lvStubLastEventKind, (int)LV_EVK_OVERRUN);
+  linesBefore = g_lvStubEventsAdded;
+  for (i = 0; i < 60; i++) {
+    lv_screenLogTick();
+  }
+  UT_ASSERT_MSG(g_lvStubEventsAdded - linesBefore == 0,
+                "%d lines for the ignored records (want 0)", g_lvStubEventsAdded - linesBefore);
+  /* 40 frames: past the last record, short of the file end and its line. */
+  linesBefore = g_lvStubEventsAdded;
+  for (i = 0; i < 40; i++) {
+    lv_screenLogTick();
+  }
+  UT_ASSERT_MSG(g_lvStubEventsAdded - linesBefore == 1,
+                "%d lines for the last record (want 1)", g_lvStubEventsAdded - linesBefore);
+  /* The later version's bytes were skipped: the next record is read. */
+  lv_screenOverrunNow(&ovr);
+  UT_ASSERT_MSG(ovr.has && ovr.rec.roundFrames == 3000u,
+                "the overrun record after the slow tick record was not read");
+  /* Playback read the same records again: the track still has two. */
+  UT_ASSERT_MSG(lv_screenSlowTickCount() == 2, "after playback the track has %d records (want 2)",
+                lv_screenSlowTickCount());
+  UT_ASSERT(lv_screenSlowTickNear(1000, 200, &now) && now.rec.tick == 30498u);
+  UT_ASSERT(!lv_screenSlowTickNear(2000, 200, &now));
+
+  lv_decoderDestroy(lv);
+  remove(path);
+
+  /* A recording made before the record: none in it. */
+  b.len = 0;
+  putHeader(&b);
+  putSnapshot(&b, true);
+  putNoEvents(&b, 50);
+  putEventFrame(&b, log_OverrunStats, overrun, (uint16_t)overrunLen);
+  putNoEvents(&b, 50);
+  putU8(&b, LOG_QUIT);
+  lv = loadSynthetic(&b, path);
+  UT_ASSERT_MSG(lv != NULL, "synthetic plain log failed to build/load");
+  UT_ASSERT(!lv_screenSlowTickNear(1000, 100000, &now));
+  UT_ASSERT_MSG(!now.recorded && !now.has, "a file with no record has one");
+  for (i = 0; i < 100; i++) {
+    lv_screenLogTick();
+  }
+  lv_screenOverrunNow(&ovr);
+  UT_ASSERT_MSG(ovr.has && ovr.rec.roundFrames == 3000u, "the old file's overrun record was not read");
+  UT_ASSERT(!lv_screenSlowTickNear(1000, 100000, &now) && !now.recorded);
   lv_decoderDestroy(lv);
   remove(path);
   return 0;

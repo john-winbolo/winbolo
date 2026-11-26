@@ -52,6 +52,7 @@
 #include "spectator_ring.h"
 #include "log_internal.h"   /* logSetSpectatorRing */
 #include "log.h"            /* logSetStopHook — the round-end overrun record */
+#include "slow_tick_record.h" /* the log_SlowTick record of a slow frame */
 
 /* Round-end log hooks installed by WinBoloDS via
  * serverLifecycleSetRoundLogHooks. NULL on every other binary that
@@ -463,6 +464,79 @@ static void serverLifecycleRecordSimMs(double ms) {
 void serverLifecycleGetSimStats(double *outLastMs, double *outEwmaMs) {
   if (outLastMs)  *outLastMs  = s_lastSimMs;
   if (outEwmaMs)  *outEwmaMs  = s_simMsEwma;
+}
+
+/* The start and end of the frame before, in SDL_GetPerformanceCounter
+ * counts, for the log_SlowTick record's gap and pause. 0 until the first
+ * frame ends, and again after serverLifecycleSlowTickForget. */
+static Uint64 s_prevTickStart = 0;
+static Uint64 s_prevTickEnd   = 0;
+
+/* FALSE: no log_SlowTick records (serverLifecycleSetSlowTickRecord). */
+static bool s_slowTickRecordOn = TRUE;
+
+/* Counts to ms. */
+static double serverLifecycleCountsMs(Uint64 counts, double freq) {
+  return (double)counts * 1000.0 / freq;
+}
+
+void serverLifecycleSlowTickForget(void) {
+  s_prevTickStart = 0;
+  s_prevTickEnd   = 0;
+}
+
+void serverLifecycleSetSlowTickRecord(bool on) {
+  s_slowTickRecordOn = on;
+}
+
+void serverLifecycleSlowTickGap(uint64_t tickStart, uint64_t tickEnd, double freq,
+                                double *outGapMs, double *outPauseMs) {
+  double gapMs   = 0.0;
+  double pauseMs = 0.0;
+
+  if (s_prevTickStart != 0 && tickStart >= s_prevTickEnd) {
+    gapMs   = serverLifecycleCountsMs(tickStart - s_prevTickStart, freq);
+    pauseMs = serverLifecycleCountsMs(tickStart - s_prevTickEnd, freq);
+  }
+  s_prevTickStart = tickStart;
+  s_prevTickEnd   = tickEnd;
+  if (outGapMs)   *outGapMs   = gapMs;
+  if (outPauseMs) *outPauseMs = pauseMs;
+}
+
+/* The log_SlowTick record for the frame that has just ended, when it took
+ * more than 20 ms or started late (slowTickRecordReason). Called after the
+ * frame's end is measured, so the record's own write is not part of the
+ * time it reports; that cost falls in the next frame's "other". A normal
+ * frame costs a few subtractions and two compares here. */
+static void serverLifecycleSlowTickCheck(uint32_t tick, Uint64 tickStart,
+                                         Uint64 tickEnd, double freq,
+                                         const SlowTickParts *parts) {
+  double totalMs = serverLifecycleCountsMs(tickEnd - tickStart, freq);
+  double gapMs;
+  double pauseMs;
+  uint8_t flags;
+
+  if (!s_slowTickRecordOn) {
+    return;
+  }
+  serverLifecycleSlowTickGap(tickStart, tickEnd, freq, &gapMs, &pauseMs);
+  flags = slowTickRecordReason(totalMs, gapMs, pauseMs);
+  if (flags == 0 || !logIsRecording()) {
+    return;
+  }
+  {
+    SlowTickRecord rec;
+    uint8_t payload[SLOW_TICK_RECORD_BYTES];
+    int len;
+    slowTickRecordFill(&rec, flags, tick, totalMs, gapMs, pauseMs, parts);
+    len = slowTickRecordEncode(&rec, payload, (int)sizeof(payload));
+    if (len > 0) {
+      threadsWaitForMutex();
+      logAddEvent(log_SlowTick, 0, 0, 0, 0, (unsigned short)len, (char *)payload);
+      threadsReleaseMutex();
+    }
+  }
 }
 
 /* The live delayed-stream ring for this instance, NULL when spectating is
@@ -937,16 +1011,30 @@ void serverInstanceTick(ServerSim *sim) {
    * the EWMA captures contention wait time too. Single bottom-of-function
    * end measurement; the function has no early-return paths. */
   Uint64 tickStart = SDL_GetPerformanceCounter();
+  /* The parts of this frame for the log_SlowTick record, in counts. Each
+   * is a pair of counter reads round work the frame does anyway. */
+  Uint64 partStart;
+  Uint64 partRecv      = 0;
+  Uint64 partLock      = 0;
+  Uint64 partRecording = 0;
+  Uint64 partSend      = 0;
+  Uint64 partLocal     = 0;
+  uint32_t frameTick   = serverSimGetTick(sim);
 
   trackerTime++;
   wbnTime++;
 
+  partStart = SDL_GetPerformanceCounter();
   transportUdpServerDrainPunchQueue();
+  partRecv += SDL_GetPerformanceCounter() - partStart;
 
+  partStart = SDL_GetPerformanceCounter();
   threadsWaitForMutex();
+  partLock += SDL_GetPerformanceCounter() - partStart;
   /* Reads sim state (player/base/pill counts, lobby phase) for the mDNS TXT
    * records, so it runs under the tick mutex to avoid a torn read. */
   transportUdpServerPollMdnsAdvertiser(sim);
+  partStart = SDL_GetPerformanceCounter();
   /* Receive packets — queues inputs for both ticks */
   if (transportUdpServerHasRecvThread()) {
     transportUdpServerDrainRecvQueue(sim);
@@ -958,6 +1046,7 @@ void serverInstanceTick(ServerSim *sim) {
    * queue overflow). Done here, after recv processing and outside any
    * publish, so serverSimRemovePlayer can safely fan its events out. */
   transportUdpServerDrainPendingRemovals(sim);
+  partRecv += SDL_GetPerformanceCounter() - partStart;
 
   /* Hand back whatever the WinBolo.net worker finished since the last tick.
    * Alongside the removal drain above for the same reason: deferred work
@@ -965,6 +1054,7 @@ void serverInstanceTick(ServerSim *sim) {
   winbolonetThreadDrainResults(serverLifecycleWbnResult, sim);
 
   ServerState preTickState = sim->state;
+  partStart = SDL_GetPerformanceCounter();
   if (preTickState == serverStateRunning) {
     /* First running tick of this game → open a fresh recording session
      * (deferred from startup so lobby/countdown time is excluded and the
@@ -1018,6 +1108,7 @@ void serverInstanceTick(ServerSim *sim) {
       }
     }
   }
+  partRecording += SDL_GetPerformanceCounter() - partStart;
 
   /* The lobby and round sequence: the bot tick and sim tick with the
    * game-over edge in the running state; the sim tick, balance proposal,
@@ -1027,8 +1118,13 @@ void serverInstanceTick(ServerSim *sim) {
    * to sit between its steps rides in the hooks above; the work that
    * follows an edge is keyed off the edge it returns. */
   double simMs = 0.0;
+  sim->tickPartBots      = 0;
+  sim->tickPartScenario  = 0;
+  sim->tickPartRecording = 0;
+  partStart = SDL_GetPerformanceCounter();
   ServerLocalEdge edge = serverSimLocalTick(sim, transportUdpServerGetTickCount(),
                                             &s_localTickHooks, &simMs);
+  partLocal = SDL_GetPerformanceCounter() - partStart;
 
   if (preTickState == serverStateRunning) {
     if (edge == serverLocalEdgeGameOver) {
@@ -1039,6 +1135,7 @@ void serverInstanceTick(ServerSim *sim) {
         serverLifecycleRotateRound(sim);
       }
     }
+    partStart = SDL_GetPerformanceCounter();
     if (sim->state == serverStateRunning) {
       if (instanceAcceptRemoteClients) {
         transportUdpServerDrainEvents(sim);
@@ -1051,6 +1148,7 @@ void serverInstanceTick(ServerSim *sim) {
         transportUdpServerSend(sim);
       }
     }
+    partSend += SDL_GetPerformanceCounter() - partStart;
   } else {
     if (edge == serverLocalEdgeGameStart) {
       /* Notify WBN that we are now in-game */
@@ -1078,12 +1176,16 @@ void serverInstanceTick(ServerSim *sim) {
        * reset on LOBBY to make that first snapshot run the init
        * branch (stocks, camera centre). */
       if (instanceAcceptRemoteClients) {
+        partStart = SDL_GetPerformanceCounter();
         transportUdpServerSend(sim);
+        partSend += SDL_GetPerformanceCounter() - partStart;
       }
     }
 
     /* Timeout check — not called via transportUdpServerSend() during lobby */
+    partStart = SDL_GetPerformanceCounter();
     transportUdpServerCheckTimeouts(sim);
+    partSend += SDL_GetPerformanceCounter() - partStart;
   }
 
   /* Auto-close / empty-rotation check — works in any state but game over.
@@ -1264,6 +1366,32 @@ void serverInstanceTick(ServerSim *sim) {
   double tickMs = (double)(tickEnd - tickStart) * 1000.0 / freq;
   serverLifecycleRecordTickMs(tickMs);
 
+  /* The log_SlowTick record, for a frame that took more than 20 ms or
+   * started late. The sim part is the two simulation steps less the
+   * scenario hook and the round log's tick, which run inside them. Out of
+   * the running state no step is timed on its own, and the whole local
+   * tick less the bots stands for it. */
+  {
+    SlowTickParts parts;
+    double botsMs     = serverLifecycleCountsMs(sim->tickPartBots, freq);
+    double scenarioMs = serverLifecycleCountsMs(sim->tickPartScenario, freq);
+    double logMs      = serverLifecycleCountsMs(sim->tickPartRecording, freq);
+    double stepsMs    = (preTickState == serverStateRunning)
+                            ? simMs
+                            : serverLifecycleCountsMs(partLocal, freq) - botsMs;
+    parts.netRecv   = serverLifecycleCountsMs(partRecv, freq);
+    parts.lockWait  = serverLifecycleCountsMs(partLock, freq);
+    parts.bots      = botsMs;
+    parts.sim       = stepsMs - scenarioMs - logMs;
+    if (parts.sim < 0.0) {
+      parts.sim = 0.0;
+    }
+    parts.scenario  = scenarioMs;
+    parts.recording = serverLifecycleCountsMs(partRecording, freq) + logMs;
+    parts.netSend   = serverLifecycleCountsMs(partSend, freq);
+    serverLifecycleSlowTickCheck(frameTick, tickStart, tickEnd, freq, &parts);
+  }
+
   /* The overrun lines on the console, once a minute into the round and then
    * every five minutes, and the overrun record in the round log, every 30
    * seconds of the round. After the tick's own time is recorded, so they
@@ -1279,6 +1407,9 @@ void serverInstanceTick(ServerSim *sim) {
 }
 
 void serverInstanceShutdown(ServerSim *sim) {
+  /* A second game hosted in this process must not see this game's last
+   * frame as its frame before. */
+  serverLifecycleSlowTickForget();
   /* Unregister + free the live ring first, so nothing taps it during the rest
    * of teardown. NULL-safe — a no-op for a sim that never had a ring. */
   serverInstanceDestroySpectatorRing();

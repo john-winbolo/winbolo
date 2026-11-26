@@ -41,6 +41,7 @@ extern "C" {
     void lv_windowCentreOnEvent(uint32_t ms, int hasCell, int mapX, int mapY, int team);
     void lv_screenEventTeams(int *team, int *otherTeam);
     int lv_screenEventPing(void);
+    int lv_screenEventOverrunMs(void);
     int lv_screenEventPlayer(void);
     int lv_screenEventChat(const char **from, const char **note, const char **text);
     int lv_screenBuilderAwayMs(int slot, uint32_t deathMs, uint32_t *awayMs);
@@ -110,6 +111,14 @@ static int s_last_divider_row = -1;
 static const char *const k_kinds_pref = "Events.Kinds";
 static const char *const k_old_filter_pref = "Events.Filter";
 
+/* "Hide overruns under 30 ms": a server overrun line (a log_SlowTick record)
+ * of less than this many ms is not shown while the box is ticked. Kept in
+ * the LOGVIEWER preference k_hide_overruns_pref, "1" or "0"; on at first. */
+static const int k_small_overrun_ms = 30;
+static const char *const k_hide_overruns_pref = "Events.HideSmallOverruns";
+static bool s_hide_small_overruns = true;
+static bool s_view_hide_small     = true;   /* s_hide_small_overruns the cache was built with */
+
 static void save_filter(void) {
     char val[256];
     lvOverlayMaskToText(s_filter, val, sizeof(val));
@@ -133,6 +142,12 @@ void lv_imgui_events_init(void) {
     lv_platform_config_get_string("LOGVIEWER", k_old_filter_pref, LV_EVK_KEY_ALL,
                                   old, sizeof(old));
     s_filter = lvEventsMaskFromPrefs(val, old);
+    {
+        char hide[8];
+        lv_platform_config_get_string("LOGVIEWER", k_hide_overruns_pref, "1", hide,
+                                      sizeof(hide));
+        s_hide_small_overruns = (hide[0] != '0');
+    }
     if (val[0] == '\0' && s_filter != LV_OVERLAY_ALL_MASK) {
         /* The old choice was taken over: keep it under the new key. */
         save_filter();
@@ -158,6 +173,7 @@ void lv_imgui_events_add(int eventType, int kind, int mapX, int mapY,
     lv_screenEventTeams(&e->team, &e->otherTeam);
     e->ping    = lv_screenEventPing();
     e->player  = lv_screenEventPlayer();
+    e->overrunMs = lv_screenEventOverrunMs();
     {
         /* A chat line keeps its parts for the Chat panel. */
         const char *from = nullptr, *note = nullptr, *text = nullptr;
@@ -343,6 +359,7 @@ static langid kind_label_id(int kind) {
         case LV_EVK_PLAYER:        return STR_LV_EVT_KIND_PLAYER;
         case LV_EVK_CHAT:          return STR_LV_EVT_KIND_CHAT;
         case LV_EVK_GAME:          return STR_LV_EVT_KIND_GAME;
+        case LV_EVK_OVERRUN:       return STR_LV_EVT_KIND_OVERRUN;
         case LV_EVK_HIGHLIGHT:     return STR_LV_EVT_KIND_HIGHLIGHT;
         default:                   return STR_LV_EVT_FILTER_ALL;
     }
@@ -386,7 +403,8 @@ static void refresh_view(void) {
             s_scroll_to_bottom = true;
         }
         count_kinds(windowStart, nowMs);
-    } else if (s_view_filter == s_filter) {
+    } else if (s_view_filter == s_filter &&
+               s_view_hide_small == s_hide_small_overruns) {
         return;
     }
     const unsigned filter = s_filter;
@@ -397,12 +415,15 @@ static void refresh_view(void) {
         const LvEvent &e = *lvEventListAt(i);
         if (event_is_hidden(e, windowStart, nowMs)) continue;
         if (!lvEventKindTicked(filter, e.kind)) continue;
+        if (s_hide_small_overruns && e.overrunMs > 0 &&
+            e.overrunMs < k_small_overrun_ms) continue;
         s_view.push_back(i);
         s_view_time.push_back(e.pinned ? 0u : e.timeMs);
     }
     s_view_version      = s_version;
     s_view_window_start = windowStart;
     s_view_filter       = filter;
+    s_view_hide_small   = s_hide_small_overruns;
     s_view_now_end      = nowEnd;
     /* The rows moved under the divider: let auto scroll find it again. */
     s_last_divider_row = -1;
@@ -545,6 +566,13 @@ void lv_imgui_events_window(void) {
         draw_filter_combo();
         refresh_view();
         ImGui::Checkbox(langGetText(STR_LV_AUTO_SCROLL), &s_auto_scroll);
+        ImGui::SameLine();
+        if (ImGui::Checkbox(langGetText(STR_LV_SLOW_TICK_HIDE_SMALL),
+                            &s_hide_small_overruns)) {
+            lv_platform_config_set_string("LOGVIEWER", k_hide_overruns_pref,
+                                          s_hide_small_overruns ? "1" : "0");
+            refresh_view();
+        }
         ImGui::Separator();
 
         /* A click that seeks is acted on after the list is drawn: while the

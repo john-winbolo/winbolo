@@ -92,12 +92,15 @@ void lv_windowEventsRewound(void) {}
  * lets a test tell how many lines a stretch of playback or a seek posted
  * (test_lv_presentation.c). */
 int g_lvStubEventsAdded = 0;
+/* The kind (lvEventKind) of the last line, -1 before the first. */
+int g_lvStubLastEventKind = -1;
 
 /* Declared in backend.h (already included). */
 void lv_finished(void) {}
 void lv_windowAddEvent(int eventType, int kind, int mapX, int mapY, char *msg) {
-  (void)eventType; (void)kind; (void)mapX; (void)mapY; (void)msg;
+  (void)eventType; (void)mapX; (void)mapY; (void)msg;
   g_lvStubEventsAdded++;
+  g_lvStubLastEventKind = kind;
 }
 void lv_windowAddHighlight(char *msg, uint32_t seekMs, int mapX, int mapY) {
   (void)msg; (void)seekMs; (void)mapX; (void)mapY;

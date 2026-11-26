@@ -32,6 +32,7 @@ typedef enum {
   LV_EVK_PLAYER,            /* joins, leaves, renames, teams, alliances */
   LV_EVK_CHAT,              /* chat lines and map pings */
   LV_EVK_GAME,              /* scenario, server, lobby, vote and end-of-log lines */
+  LV_EVK_OVERRUN,           /* a slow server frame (a log_SlowTick record) */
   LV_EVK_HIGHLIGHT,         /* load-time highlight clips and summary lines */
   LV_EVK_COUNT
 } lvEventKind;
@@ -51,6 +52,7 @@ static inline const char *lvEventKindKey(int kind) {
     case LV_EVK_PLAYER:        return "player";
     case LV_EVK_CHAT:          return "chat";
     case LV_EVK_GAME:          return "game";
+    case LV_EVK_OVERRUN:       return "overrun";
     case LV_EVK_HIGHLIGHT:     return "highlight";
     default:                   return LV_EVK_KEY_ALL;
   }

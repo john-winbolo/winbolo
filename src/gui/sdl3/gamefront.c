@@ -573,7 +573,14 @@ static Uint32 SDLCALL hostedServerTimerCb(void *userdata, SDL_TimerID id, Uint32
 }
 
 void gameFrontSetServerPaused(bool paused) {
+  threadsWaitForMutex();
+  /* On a resume, forget the frame before the pause, so the first frame
+   * after it does not get a false "started late" log_SlowTick record. */
+  if (spServerPaused && !paused) {
+    serverLifecycleSlowTickForget();
+  }
   spServerPaused = paused ? true : false;
+  threadsReleaseMutex();
 }
 
 /* UDP multiplayer transport state — the Transport handle itself now
