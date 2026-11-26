@@ -973,6 +973,11 @@ int run_autoclose_boot_does_not_close_while_empty(void);
 int run_autoclose_closes_after_last_player_leaves(void);
 int run_autoclose_lobby_boot_waits_for_a_joiner(void);
 int run_autoclose_failed_bot_add_leaves_check_armed(void);
+/* Only human players count, as for the empty reset: bots staying on does not
+ * hold the server open, and bots alone never close it. */
+int run_autoclose_human_leaves_bots_stay_closes(void);
+int run_autoclose_bots_only_never_closes(void);
+int run_autoclose_lobby_round_human_leaves_closes(void);
 
 /* Round transition off the tick thread (test_round_transition_tick.c). The
  * boundary queues server/quit, the round-log upload and server/register for

@@ -1093,7 +1093,10 @@ void serverInstanceTick(ServerSim *sim) {
 
   /* Auto-close / empty-rotation check — works in any state but game over.
    * The shared serverSimCheckAutoClose latches hadPlayersEver and fires once
-   * the server empties after having had players. In map-rotation mode an empty
+   * the server has no human player left after having had one. Bots and
+   * spectators do not count (the empty reset's rule), so the last person
+   * leaving closes or rotates the server even with bots still playing, and a
+   * server that only ever had bots never does. In map-rotation mode an empty
    * server rotates to a fresh round instead of shutting down; otherwise
    * -autoclose forces a no-lobby shutdown (no players to return to a lobby
    * for). Skipped in game over because the shutdown this triggers is already
