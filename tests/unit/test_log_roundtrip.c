@@ -1309,6 +1309,43 @@ int run_slow_tick_record_rule(void) {
     return 0;
 }
 
+/* The gap and pause of the frame before (serverLifecycleSlowTickGap), and
+ * serverLifecycleSlowTickForget, which serverInstanceShutdown and a
+ * single-player resume call: the first frame after a pause, or of a second
+ * hosted game, is not "started late" by the time no frame ran. A clock of
+ * 1000 counts a second, so one count is one ms. */
+int run_slow_tick_forget(void) {
+    const double freq = 1000.0;
+    double gap = -1.0;
+    double pause = -1.0;
+
+    serverLifecycleSlowTickForget();
+    /* The first frame: no frame before. */
+    serverLifecycleSlowTickGap(1000u, 1005u, freq, &gap, &pause);
+    UT_ASSERT_MSG(gap == 0.0 && pause == 0.0, "first frame: gap %g pause %g", gap, pause);
+    /* The next frame, on time. */
+    serverLifecycleSlowTickGap(1020u, 1024u, freq, &gap, &pause);
+    UT_ASSERT_MSG(gap == 20.0 && pause == 15.0, "second frame: gap %g pause %g", gap, pause);
+    UT_ASSERT(slowTickRecordReason(4.0, gap, pause) == 0);
+    /* A pause of 4 s with no forget: the next frame is late. */
+    serverLifecycleSlowTickGap(5040u, 5043u, freq, &gap, &pause);
+    UT_ASSERT_MSG(gap == 4020.0 && pause == 4016.0, "no forget: gap %g pause %g", gap, pause);
+    UT_ASSERT(slowTickRecordReason(3.0, gap, pause) == SLOW_TICK_FLAG_LATE);
+    /* The same pause with the forget of a resume: not late. */
+    serverLifecycleSlowTickForget();
+    serverLifecycleSlowTickGap(9000u, 9003u, freq, &gap, &pause);
+    UT_ASSERT_MSG(gap == 0.0 && pause == 0.0, "after forget: gap %g pause %g", gap, pause);
+    UT_ASSERT(slowTickRecordReason(3.0, gap, pause) == 0);
+    /* And the frame after it measures from it again. */
+    serverLifecycleSlowTickGap(9020u, 9022u, freq, &gap, &pause);
+    UT_ASSERT_MSG(gap == 20.0 && pause == 17.0, "after forget, next: gap %g pause %g", gap, pause);
+    /* A start before the end of the frame before (a clock that went back): 0. */
+    serverLifecycleSlowTickGap(9010u, 9012u, freq, &gap, &pause);
+    UT_ASSERT(gap == 0.0 && pause == 0.0);
+    serverLifecycleSlowTickForget();
+    return 0;
+}
+
 /* Every log_OverrunStats record in a log, in order, and whether one is the
  * log's last event before LOG_QUIT. Returns the count, or -1 when the stream
  * does not walk. */

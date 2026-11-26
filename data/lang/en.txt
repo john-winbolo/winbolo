@@ -3099,4 +3099,5 @@ STR_LV_SLOW_TICK_PART_NET_SEND=network out {number}
 STR_LV_SLOW_TICK_PART_OTHER=other {number}
 STR_LV_SLOW_TICK_LATE=; started late, {number} ms after the frame before ({number2} ms between them)
 STR_LV_SLOW_TICK_HIDE_SMALL=Hide overruns under 30 ms
+STR_LV_EVT_KIND_OVERRUN=Server overruns
 

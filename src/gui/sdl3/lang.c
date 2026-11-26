@@ -3013,6 +3013,7 @@ static const LangEntry langTable[] = {
     {3998, "other {number}"},
     {3999, "; started late, {number} ms after the frame before ({number2} ms between them)"},
     {4000, "Hide overruns under 30 ms"},
+    {4001, "Server overruns"},
     {2810, "Whether a pillbox may pick a tank as its target."},
     {2860, "+ {number} others"},
     {2861, "+ 1 other"},

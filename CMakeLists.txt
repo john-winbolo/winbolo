@@ -6122,6 +6122,7 @@ set(_unit_test_names
     lv_overrun_read
     log_roundtrip_slow_tick
     slow_tick_record_rule
+    slow_tick_forget
     lv_slow_tick_read
     log_roundtrip_ping
     log_roundtrip_snapshot_tank_stocks
@@ -8166,6 +8167,7 @@ set(_unit_test_names
     lv_ping_marker
     lv_ping_phase
     lv_dump_ping
+    lv_dump_slow_tick
     lv_time_fmt_sums
     lv_time_parse_sums
     lv_event_flash_sums

@@ -468,13 +468,40 @@ void serverLifecycleGetSimStats(double *outLastMs, double *outEwmaMs) {
 
 /* The start and end of the frame before, in SDL_GetPerformanceCounter
  * counts, for the log_SlowTick record's gap and pause. 0 until the first
- * frame ends. */
+ * frame ends, and again after serverLifecycleSlowTickForget. */
 static Uint64 s_prevTickStart = 0;
 static Uint64 s_prevTickEnd   = 0;
+
+/* FALSE: no log_SlowTick records (serverLifecycleSetSlowTickRecord). */
+static bool s_slowTickRecordOn = TRUE;
 
 /* Counts to ms. */
 static double serverLifecycleCountsMs(Uint64 counts, double freq) {
   return (double)counts * 1000.0 / freq;
+}
+
+void serverLifecycleSlowTickForget(void) {
+  s_prevTickStart = 0;
+  s_prevTickEnd   = 0;
+}
+
+void serverLifecycleSetSlowTickRecord(bool on) {
+  s_slowTickRecordOn = on;
+}
+
+void serverLifecycleSlowTickGap(uint64_t tickStart, uint64_t tickEnd, double freq,
+                                double *outGapMs, double *outPauseMs) {
+  double gapMs   = 0.0;
+  double pauseMs = 0.0;
+
+  if (s_prevTickStart != 0 && tickStart >= s_prevTickEnd) {
+    gapMs   = serverLifecycleCountsMs(tickStart - s_prevTickStart, freq);
+    pauseMs = serverLifecycleCountsMs(tickStart - s_prevTickEnd, freq);
+  }
+  s_prevTickStart = tickStart;
+  s_prevTickEnd   = tickEnd;
+  if (outGapMs)   *outGapMs   = gapMs;
+  if (outPauseMs) *outPauseMs = pauseMs;
 }
 
 /* The log_SlowTick record for the frame that has just ended, when it took
@@ -486,17 +513,14 @@ static void serverLifecycleSlowTickCheck(uint32_t tick, Uint64 tickStart,
                                          Uint64 tickEnd, double freq,
                                          const SlowTickParts *parts) {
   double totalMs = serverLifecycleCountsMs(tickEnd - tickStart, freq);
-  double gapMs   = 0.0;
-  double pauseMs = 0.0;
+  double gapMs;
+  double pauseMs;
   uint8_t flags;
 
-  if (s_prevTickStart != 0 && tickStart >= s_prevTickEnd) {
-    gapMs   = serverLifecycleCountsMs(tickStart - s_prevTickStart, freq);
-    pauseMs = serverLifecycleCountsMs(tickStart - s_prevTickEnd, freq);
+  if (!s_slowTickRecordOn) {
+    return;
   }
-  s_prevTickStart = tickStart;
-  s_prevTickEnd   = tickEnd;
-
+  serverLifecycleSlowTickGap(tickStart, tickEnd, freq, &gapMs, &pauseMs);
   flags = slowTickRecordReason(totalMs, gapMs, pauseMs);
   if (flags == 0 || !logIsRecording()) {
     return;
@@ -1383,6 +1407,9 @@ void serverInstanceTick(ServerSim *sim) {
 }
 
 void serverInstanceShutdown(ServerSim *sim) {
+  /* A second game hosted in this process must not see this game's last
+   * frame as its frame before. */
+  serverLifecycleSlowTickForget();
   /* Unregister + free the live ring first, so nothing taps it during the rest
    * of teardown. NULL-safe — a no-op for a sim that never had a ring. */
   serverInstanceDestroySpectatorRing();

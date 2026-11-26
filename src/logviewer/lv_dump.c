@@ -180,6 +180,7 @@ static const char *dumpRecordName(BYTE code) {
     DUMP_REC(ScnAnnounce);      DUMP_REC(ScnMarker);       DUMP_REC(ScnHint);
     DUMP_REC(ServerTick);       DUMP_REC(ScnStatus);       DUMP_REC(VoiceEveryone);
     DUMP_REC(MapName);          DUMP_REC(PlayerLag);       DUMP_REC(OverrunStats);
+    DUMP_REC(SlowTick);
 #undef DUMP_REC
     default: return "Unknown";
   }
@@ -369,6 +370,23 @@ static void dumpRecordFields(DumpCtx *c, BYTE code, const BYTE *b, int len) {
                     (unsigned)bot->overruns, (unsigned)bot->thinks);
           }
         }
+      }
+      break;
+    }
+    /* Times in tenths of a ms (slow_tick_record.h). long and late are the
+     * two reasons for the record. */
+    case log_SlowTick: {
+      SlowTickRecord rec;
+      if (slowTickRecordDecode(b, len, &rec)) {
+        fprintf(out, " version=%u long=%u late=%u server_tick=%u total=%u gap=%u pause=%u"
+                " net_recv=%u lock_wait=%u bots=%u sim=%u scenario=%u recording=%u"
+                " net_send=%u other=%u size_ms=%u",
+                rec.version, (rec.flags & SLOW_TICK_FLAG_LONG) ? 1u : 0u,
+                (rec.flags & SLOW_TICK_FLAG_LATE) ? 1u : 0u, (unsigned)rec.tick,
+                (unsigned)rec.total, (unsigned)rec.gap, (unsigned)rec.pause,
+                rec.netRecv, rec.lockWait, rec.bots, rec.sim, rec.scenario,
+                rec.recording, rec.netSend, rec.other,
+                (unsigned)slowTickRecordSizeMs(&rec));
       }
       break;
     }

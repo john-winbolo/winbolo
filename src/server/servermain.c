@@ -3060,6 +3060,9 @@ int main(int argc, char **argv) {
        minutes after. Only the dedicated server prints them; a game hosted
        from a client links the same tick and writes only the log record. */
     serverLifecycleSetOverrunConsolePrint(true);
+    /* -asap runs the frames back-to-back with no 20 ms clock, so a frame of
+       more than 20 ms is not late for anything: no log_SlowTick records. */
+    serverLifecycleSetSlowTickRecord(!isAsap);
     if (serverInstanceStartup(serverSim, &instCfg) == FALSE) {
       fprintf(stderr, "Error creating network transport\n");
       scenarioHostDetach(scenarioHost);
