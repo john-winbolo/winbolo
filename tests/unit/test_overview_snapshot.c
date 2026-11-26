@@ -19,6 +19,9 @@
  * the same order, an enemy outside the live set dropped, an explosion the
  * same, and the player's own dead tank dropped with selfDrawn false.
  *
+ * fogged_pill_keeps_number: a pill hidden by line of sight keeps its pill tile
+ * in the memory and its number in the list, and the number rule keeps it.
+ *
  * generation: a fill with the generation counter unchanged still yields the
  * live map, and does so without copying — a write to the live memory that
  * moves no counter is not seen until something does move it.
@@ -44,6 +47,7 @@
 #include "allience.h"
 #include "explosions.h"          /* explosionsAddItem — a bullet-list entry to place */
 #include "overview_camera.h"     /* overviewEntityIsVisible — the renderer's filter */
+#include "map_colours.h"         /* mapColourItemNumberOnTile — which squares carry a number */
 #include "test_harness.h"
 
 /* Rounds of the input-pair warm-up to run before the client's tank is
@@ -1033,6 +1037,125 @@ int run_overview_snapshot_corner_keeps_self(void) {
                   "selfDrawn is false with the tank in an inside corner");
     err = snapListsMatch(&f);
     UT_ASSERT_MSG(err == NULL, "%s", err);
+
+    snapFixtureStop(&f);
+    return 0;
+}
+
+/* A pillbox the player saw, then lost to line of sight behind a wall of
+ * buildings. Its square is hidden now, so it is not live, and the memory
+ * keeps the pill tile the player last saw there. The pill's number stays on
+ * it: the snapshot lists the pill at that square, the rule the full screen map
+ * picks numbers by (mapColourItemNumberOnTile, on the remembered tile alone)
+ * keeps it, and the lookup the classic view numbers a square by still finds
+ * the pill there. Before the change the full screen map also asked for a live
+ * square, and a pill in the fog lost its number. The wall square itself gets
+ * no number, and a pill tile never takes a base number. */
+int run_overview_snapshot_fogged_pill_keeps_number(void) {
+    SnapFixture f;
+    const char *err = snapFixtureStart(&f, "FogNums");
+    UT_ASSERT_MSG(err == NULL, "%s", err);
+
+    int dir = snapAwayFromEdge(f.tankMX);
+    BYTE pillX = (BYTE)((int)f.tankMX + 3 * dir);
+    BYTE pillY = f.tankMY;
+    BYTE wallX = (BYTE)((int)f.tankMX + dir);
+    UT_ASSERT_MSG(f.tankMY >= 3 && f.tankMY + 3 < MAP_ARRAY_SIZE,
+                  "the tank landed at %u,%u, too near the map edge for a wall",
+                  (unsigned)f.tankMX, (unsigned)f.tankMY);
+
+    /* One pill, three squares from the tank on open grass, with the ground
+     * between clear. The bases stay as the map put them. */
+    f.gs->pb->numPills = 1;
+    f.gs->pb->active[0] = TRUE;
+    f.gs->pb->item[0].x = pillX;
+    f.gs->pb->item[0].y = pillY;
+    f.gs->pb->item[0].inTank = FALSE;
+    f.gs->pb->posStale[0] = 0;
+    {
+        int x, y;
+        for (x = -1; x <= 4; x++) {
+            for (y = -3; y <= 3; y++) {
+                mapSetPos(f.gs, &f.gs->mp, (BYTE)((int)f.tankMX + x * dir),
+                          (BYTE)((int)f.tankMY + y), GRASS, TRUE, TRUE);
+            }
+        }
+    }
+
+    /* Seen first, with sight off: the memory takes the pill tile. */
+    f.cs->lineOfSight = (uint8_t)lineOfSightOff;
+    clientSimDisplayTick(f.cs, false);
+    clientSimFillOverviewSnapshot(f.cs, f.snap);
+    {
+        const OverviewMap *om = overviewSnapshotMap(f.snap);
+        UT_ASSERT_MSG(om != NULL, "the snapshot has no map");
+        UT_ASSERT_MSG(mapColourItemNumberOnTile(om->tile[pillX][pillY], false),
+                      "the pill at %u,%u was in plain sight, yet its square "
+                      "remembers tile %u", (unsigned)pillX, (unsigned)pillY,
+                      (unsigned)om->tile[pillX][pillY]);
+    }
+
+    /* Then a wall of buildings between the tank and the pill, and line of
+     * sight on. */
+    {
+        int y;
+        for (y = -3; y <= 3; y++) {
+            mapSetPos(f.gs, &f.gs->mp, wallX, (BYTE)((int)f.tankMY + y),
+                      BUILDING, TRUE, TRUE);
+        }
+    }
+    f.cs->lineOfSight = (uint8_t)lineOfSightBuildingsAndTrees;
+    clientSimDisplayTick(f.cs, false);
+    clientSimFillOverviewSnapshot(f.cs, f.snap);
+
+    const OverviewMap *om = overviewSnapshotMap(f.snap);
+    UT_ASSERT_MSG(om != NULL, "the snapshot has no map");
+    UT_ASSERT_MSG(om->hiddenActive == TRUE,
+                  "line of sight is on and the tank is live, yet the map is "
+                  "not hiding anything");
+    UT_ASSERT_MSG((om->flags[pillX][pillY] & OVERVIEW_F_HIDDEN) != 0 &&
+                      (om->flags[pillX][pillY] & OVERVIEW_F_LIVE) == 0,
+                  "the pill square %u,%u behind the wall is not in the fog "
+                  "(flags %02x), so this is not the case being pinned",
+                  (unsigned)pillX, (unsigned)pillY,
+                  (unsigned)om->flags[pillX][pillY]);
+    UT_ASSERT_MSG(mapColourItemNumberOnTile(om->tile[pillX][pillY], false),
+                  "the fogged pill square forgot its pill tile (tile %u)",
+                  (unsigned)om->tile[pillX][pillY]);
+    UT_ASSERT_MSG(!mapColourItemNumberOnTile(om->tile[pillX][pillY], true),
+                  "a pill tile (%u) would take a base number",
+                  (unsigned)om->tile[pillX][pillY]);
+    UT_ASSERT_MSG(!mapColourItemNumberOnTile(om->tile[wallX][pillY], false) &&
+                      !mapColourItemNumberOnTile(om->tile[wallX][pillY], true),
+                  "the wall square %u,%u (tile %u) would take a number",
+                  (unsigned)wallX, (unsigned)pillY,
+                  (unsigned)om->tile[wallX][pillY]);
+
+    /* The snapshot still lists the pill, at its square, as pill 1. */
+    {
+        int total = overviewSnapshotItemLabelCount(f.snap);
+        const OverviewItemLabel *labels = overviewSnapshotItemLabels(f.snap);
+        bool found = false;
+        int i;
+        for (i = 0; i < total; i++) {
+            if (labels[i].isBase == false && labels[i].mapX == pillX &&
+                labels[i].mapY == pillY) {
+                UT_ASSERT_MSG(labels[i].number == 0,
+                              "the fogged pill is numbered %u, wanted 0 "
+                              "(pill 1)", (unsigned)labels[i].number);
+                found = true;
+            }
+        }
+        UT_ASSERT_MSG(found, "the snapshot has no number for the fogged pill "
+                             "at %u,%u", (unsigned)pillX, (unsigned)pillY);
+    }
+
+    /* The classic view's lookup by square finds the remembered pill too. */
+    UT_ASSERT_MSG(pillsGetViewPillNum(&f.gs->pb, pillX, pillY, FALSE, FALSE) == 1,
+                  "the classic view's lookup finds pill %u at the fogged "
+                  "square, wanted 1",
+                  (unsigned)pillsGetViewPillNum(&f.gs->pb, pillX, pillY,
+                                                FALSE, FALSE));
 
     snapFixtureStop(&f);
     return 0;

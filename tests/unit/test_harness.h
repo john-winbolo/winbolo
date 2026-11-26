@@ -2402,6 +2402,7 @@ int run_overview_snapshot_removed_item_has_no_label(void);
  * sight on stays on the full screen map: the filter asks about the square
  * under the tank, not the hidden corner block its sprite starts in. */
 int run_overview_snapshot_corner_keeps_self(void);
+int run_overview_snapshot_fogged_pill_keeps_number(void);
 
 /* Sprite placement at a float scale (test_mapview_sprite_scale.c): the
  * arithmetic behind mapViewDrawShells / Tanks / LGMs, shared by the classic

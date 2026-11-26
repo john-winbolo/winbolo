@@ -934,12 +934,16 @@ static void overviewViewDrawItemViewBorder(SDL_Renderer *r, int viewW, int viewH
 }
 
 /* The pill and base numbers the shared pass draws. The snapshot lists every
- * pill and base at its square; one is kept only when the memory shows a pill
- * or base tile on that square and the square is live — the tile test the
- * classic view makes on its screen buffer, made here on the same copy the
- * sprites were filtered against. A carried pill, a destroyed one and a
- * remembered square all fail it, so none of them shows a number. The Pillbox
- * Labels and Base Labels switches apply as they do in the classic view. */
+ * pill and base at the square this client knows it on; one is kept when the
+ * memory shows a pill or base tile on that square — the tile test the classic
+ * view makes on its screen buffer, made here on the same copy the sprites
+ * were filtered against. Whether the square is live is not asked: a pill or
+ * base in the fog, hidden by line of sight or only remembered, keeps its
+ * number on the tile the player last saw, as the classic view does with the
+ * remembered tile on a hidden square. A square whose memory shows no pill or
+ * base tile, such as the one a carried pill left, shows no number. The
+ * Pillbox Labels and Base Labels switches apply as they do in the classic
+ * view. */
 static int overviewViewPickItemLabels(const OverviewSnapshot *snap,
                                       OverviewItemLabel *out, int cap) {
     const OverviewMap *om = overviewSnapshotMap(snap);
@@ -952,10 +956,7 @@ static int overviewViewPickItemLabels(const OverviewSnapshot *snap,
         const OverviewItemLabel *l = &all[i];
         bool wanted = l->isBase ? showBaseLabels : showPillLabels;
         if (!wanted) continue;
-        if ((om->flags[l->mapX][l->mapY] & OVERVIEW_F_LIVE) == 0) continue;
-        BYTE tile = om->tile[l->mapX][l->mapY];
-        bool onTile = l->isBase ? mapViewTileIsBase(tile) : mapViewTileIsPill(tile);
-        if (!onTile) continue;
+        if (!mapColourItemNumberOnTile(om->tile[l->mapX][l->mapY], l->isBase)) continue;
         out[n++] = *l;
     }
     return n;

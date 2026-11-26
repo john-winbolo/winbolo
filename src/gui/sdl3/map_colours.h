@@ -79,6 +79,26 @@ typedef enum MapColourItem {
 MapColourItem mapColourItemKind(BYTE tile);
 
 /*********************************************************
+*NAME:          mapColourItemNumberOnTile
+*PURPOSE:
+*  Whether a pillbox number (isBase false) or a base number
+*  (isBase true) goes on a square that draws this tile. The
+*  tile is all that is asked: a square in the fog keeps the
+*  tile the player last saw there, and a pill or base the
+*  player remembers keeps its number with it. Whether the
+*  square is in sight now is not asked, so the numbers stay
+*  on under line of sight.
+*
+*ARGUMENTS:
+*  tile   - the tile number drawn on the square
+*  isBase - true to ask about a base number
+*
+*RETURNS:
+*  true when the tile is a pill (or a base) tile
+*********************************************************/
+bool mapColourItemNumberOnTile(BYTE tile, bool isBase);
+
+/*********************************************************
 *NAME:          mapColourTerrain
 *PURPOSE:
 *  The flat colour for a square's ground.
