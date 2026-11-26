@@ -8050,6 +8050,9 @@ set(_unit_test_names
     autoclose_closes_after_last_player_leaves
     autoclose_lobby_boot_waits_for_a_joiner
     autoclose_failed_bot_add_leaves_check_armed
+    autoclose_human_leaves_bots_stay_closes
+    autoclose_bots_only_never_closes
+    autoclose_lobby_round_human_leaves_closes
     game_vote_state_codec_surrender_passed
     game_vote_state_codec_back_to_lobby
     game_vote_state_decoder_rejects_short

@@ -691,12 +691,21 @@ bool serverSimCheckGameWin(ServerSim *sim, bool printWinners) {
 }
 
 bool serverSimCheckAutoClose(ServerSim *sim) {
+    /* Only people count, by the rule the empty reset uses
+     * (serverSimCheckEmptyReset): a server bot or a Bot Host seat keeps the
+     * world busy, but it is server configuration, not someone playing, and a
+     * spectator holds no player seat at all. Counting every connected seat
+     * meant a server with bots never read as empty, so -autoclose never quit
+     * and -maprotate never rotated after the last person left. The latch
+     * goes on only while a person is here, so a server that only ever had
+     * bots never closes or rotates for being empty. */
+    BYTE numHumans = serverSimGetNumHumans(sim);
     if (!sim->hadPlayersEver) {
-        if (serverSimGetNumPlayers(sim) > 0) {
+        if (numHumans > 0) {
             sim->hadPlayersEver = TRUE;
         }
     } else {
-        if (serverSimGetNumPlayers(sim) == 0) {
+        if (numHumans == 0) {
             return TRUE;
         }
     }
@@ -1103,7 +1112,11 @@ void serverSimReturnToLobby(ServerSim *sim) {
             playersClearSlot(&sim->sim.plyrs, i);
         }
     }
-    sim->hadPlayersEver = TRUE;
+    /* The empty-server latch reads people only (serverSimCheckAutoClose):
+     * a lobby holding nothing but bots has had nobody to leave it. */
+    if (serverSimGetNumHumans(sim) > 0) {
+        sim->hadPlayersEver = TRUE;
+    }
     sim->gameLength = sim->originalGameLength;
     /* A time limit the scenario's lobby block fixes holds over the reset. */
     serverSimScenarioApplyLobbyFixes(sim, false);
@@ -1958,7 +1971,11 @@ void serverSimStartGame(ServerSim *sim) {
     for (i = 0; i < MAX_TANKS; i++) {
         sim->playerConnected[i] = savedConnected[i];
     }
-    sim->hadPlayersEver = TRUE;
+    /* Latched only when a person is in the round: a round of bots alone has
+     * had nobody to leave it (serverSimCheckAutoClose counts people only). */
+    if (serverSimGetNumHumans(sim) > 0) {
+        sim->hadPlayersEver = TRUE;
+    }
 
     /* Seed jitter target from lobby ping — localhost players start at minimum
      * buffer depth instead of waiting for the adaptive algorithm to shrink.
@@ -2119,10 +2136,12 @@ void serverSimMapRotateRound(ServerSim *sim) {
     serverSimScenarioApplyLobbyFixes(sim, false);
     sim->emptyResetTicks = -1;
 
-    /* serverSimStartGame latches hadPlayersEver = TRUE, which would make the
-     * lifecycle's empty-server check fire on the very next tick (the round
-     * starts with zero players) and rotate again immediately. Re-arm it so
-     * the empty trigger can only fire once someone joins and then leaves. */
+    /* serverSimStartGame latches hadPlayersEver when a person is in the
+     * round. The rotation has booted every person first, so it should not
+     * latch here, but a latch left set would make the lifecycle's
+     * empty-server check fire on the very next tick and rotate again
+     * immediately. Re-arm it so the empty trigger can only fire once a
+     * person joins and then leaves. */
     sim->hadPlayersEver = FALSE;
 
     serverSimConsoleMessage("Map rotation: started new round.");

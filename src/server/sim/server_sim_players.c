@@ -104,7 +104,11 @@ void addPlayerInternal(ServerSim *sim, BYTE playerNum, const char *playerName,
     posHistoryInit(&sim->lgmPosHistory[playerNum]);
 
     sim->playerConnected[playerNum] = TRUE;
-    sim->hadPlayersEver = TRUE;
+    /* hadPlayersEver is not latched here. Bots take their seat through this
+     * call too, and at this point a new bot seat is not yet marked as a bot,
+     * so a latch here would read every bot as a person who joined. The
+     * empty-server check (serverSimCheckAutoClose) latches it on its next
+     * call, when it sees a person connected. */
 
     /* Initialize lobby player state. Default-team assignment (Layout A):
      *   slot 0 (host)             → team 1

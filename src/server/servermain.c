@@ -1132,10 +1132,13 @@ void printArgs() {
   fprintf(stderr, "-no-voice     - Alias for -voice off. Wins when both are given.\n");
 
   fprintf(stderr, "\nLifecycle & shutdown:\n");
-  fprintf(stderr, "-autoclose    - Automatically quit the server when all players have left\n");
-  fprintf(stderr, "                the game\n");
+  fprintf(stderr, "-autoclose    - Automatically quit the server when all human players have\n");
+  fprintf(stderr, "                left. Bots and spectators do not count: the server quits\n");
+  fprintf(stderr, "                with bots still playing, and one that only ever had bots\n");
+  fprintf(stderr, "                does not quit.\n");
   fprintf(stderr, "-quitonwin    - Quit server when a player/alliance wins\n");
-  fprintf(stderr, "-maprotate    - No-lobby map rotation: on a win or when the server empties,\n");
+  fprintf(stderr, "-maprotate    - No-lobby map rotation: on a win or when the last human player\n");
+  fprintf(stderr, "                leaves (bots and spectators do not count),\n");
   fprintf(stderr, "                boot all players, pick the next -mapdir map and restart a\n");
   fprintf(stderr, "                fresh round. Never auto-quits (Ctrl-C / quit only). Implies\n");
   fprintf(stderr, "                -nolobby and requires -mapdir.\n");

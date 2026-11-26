@@ -1499,8 +1499,11 @@ bool serverSimCheckGameWin(ServerSim *sim, bool printWinners);
 /*********************************************************
  *NAME:          serverSimCheckAutoClose
  *PURPOSE:
- *  Returns TRUE if at least one player has connected and
- *  then all players have disconnected.
+ *  Returns TRUE if at least one human player has connected
+ *  and then all human players have disconnected. Bots
+ *  (server bots and Bot Host seats) and spectators do not
+ *  count, the same rule as serverSimCheckEmptyReset. A
+ *  server that only ever had bots never returns TRUE.
  *********************************************************/
 bool serverSimCheckAutoClose(ServerSim *sim);
 

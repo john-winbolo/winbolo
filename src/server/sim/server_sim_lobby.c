@@ -80,12 +80,13 @@ void serverSimApplyInstanceConfig(ServerSim *sim, const ServerInstanceConfig *cf
        this seats nothing, so a plain server is unchanged. */
     serverSimScenarioSeatLobby(sim);
     serverSimStartGame(sim);
-    /* serverSimStartGame latches hadPlayersEver = TRUE, but a no-lobby
+    /* serverSimStartGame latches hadPlayersEver when a person is in the
+     * round (none is at boot, so this is a guard), but a no-lobby
      * server's first round boots up empty and waits for joiners. Left set,
      * the lifecycle's empty-server check fires on the very next tick:
      * -maprotate rotates before anyone joins, and -autoclose shuts the
      * server down before anyone can connect. Re-arm it so both only fire
-     * once a player has joined and then left — serverSimMapRotateRound does
+     * once a person has joined and then left — serverSimMapRotateRound does
      * the same for every later round. */
     sim->hadPlayersEver = FALSE;
   } else if (cfg->lobbyEnabled) {

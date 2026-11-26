@@ -25,6 +25,13 @@
  * The other direction is pinned too: once somebody really has joined and left,
  * the check must still fire, in both lobby and no-lobby mode. That is the
  * flag's whole job and the re-arms must not cost it.
+ *
+ * Only people count, by the empty reset's rule (serverSimGetNumHumans): a
+ * server bot or a Bot Host seat is not someone playing. The check used to
+ * count every connected seat, so with bots on the server -autoclose never
+ * quit after the last person left, and -maprotate never rotated. The last
+ * three cases pin that: the last person leaving closes the server with the
+ * bots still on it, and a server that only ever had bots never closes.
  */
 
 #include <stdint.h>
@@ -38,6 +45,7 @@
 #include "server_sim_lifecycle.h"  /* serverSimApplyInstanceConfig, serverSimSetLobbyEnabled */
 #include "server_lifecycle.h"      /* ServerInstanceConfig */
 #include "bot_manager.h"           /* botManagerAddBot */
+#include "server_sim_scenario.h"   /* serverSimAddUnfieldedSeat */
 #include "everard_map.h"           /* E_MAP */
 #include "test_harness.h"
 
@@ -168,6 +176,124 @@ int run_autoclose_failed_bot_add_leaves_check_armed(void) {
     UT_ASSERT_MSG(serverSimCheckAutoClose(sim) == FALSE,
                   "a server whose bots all failed to build must stay up and "
                   "wait for joiners");
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* -- Only people count ------------------------------------------------ */
+
+#define AC_HUMAN_SLOT 0
+#define AC_BOT_SLOT   1
+#define AC_HELD_SLOT  2
+
+/* Two bot seats, as test_empty_reset.c makes them: a server bot (a seat with
+ * an active bot manager entry, no brain needed for the count) and a held
+ * seat, which is what the sim holds for a bot not on the field yet and what
+ * a Bot Host binds to. Both answer serverSimIsBot. */
+static bool add_bot_seats(ServerSim *sim) {
+    serverSimAddPlayer(sim, AC_BOT_SLOT, "Botty", false);
+    sim->botMgr.bots[AC_BOT_SLOT].active = true;
+    if (!serverSimAddUnfieldedSeat(sim, AC_HELD_SLOT, "Held", 2)) {
+        return false;
+    }
+    return serverSimIsBot(sim, AC_BOT_SLOT) && serverSimIsBot(sim, AC_HELD_SLOT);
+}
+
+/* The tester's case: a -nolobby -autoclose server with bots. A person joins
+ * and leaves; the bots play on. The server must close, as it does with no
+ * bots. */
+int run_autoclose_human_leaves_bots_stay_closes(void) {
+    ServerSim *sim = make_autoclose_sim();
+    UT_ASSERT(sim != NULL);
+
+    boot_sim(sim, /*skipLobby*/ true);
+    UT_ASSERT_MSG(add_bot_seats(sim), "setup: both bot seats must read as bots");
+    UT_ASSERT_MSG(serverSimCheckAutoClose(sim) == FALSE,
+                  "bots alone must not close the server");
+
+    serverSimAddPlayer(sim, AC_HUMAN_SLOT, "Person", false);
+    UT_ASSERT_MSG(serverSimCheckAutoClose(sim) == FALSE,
+                  "a server with a person in it must not close");
+    UT_ASSERT_MSG(sim->hadPlayersEver == TRUE,
+                  "a person on the server must latch the empty-server check");
+
+    serverSimRemovePlayer(sim, AC_HUMAN_SLOT);
+    UT_ASSERT_MSG(serverSimGetNumPlayers(sim) == 2 &&
+                  serverSimGetNumHumans(sim) == 0,
+                  "setup: the two bot seats stay, no person is left "
+                  "(%u seats, %u humans)",
+                  (unsigned)serverSimGetNumPlayers(sim),
+                  (unsigned)serverSimGetNumHumans(sim));
+    UT_ASSERT_MSG(serverSimCheckAutoClose(sim) == TRUE,
+                  "the last person left: -autoclose must close the server "
+                  "with the bots still on it");
+
+    sim->botMgr.bots[AC_BOT_SLOT].active = false;
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* A server that only ever had bots (a bench, a test arena, an idle server)
+ * never had anybody to leave it: it must not close while the bots play, nor
+ * once they have gone. */
+int run_autoclose_bots_only_never_closes(void) {
+    ServerSim *sim = make_autoclose_sim();
+    int i;
+    UT_ASSERT(sim != NULL);
+
+    boot_sim(sim, /*skipLobby*/ true);
+    UT_ASSERT_MSG(add_bot_seats(sim), "setup: both bot seats must read as bots");
+    UT_ASSERT_MSG(sim->hadPlayersEver == FALSE,
+                  "a bot taking its seat is not a person arriving");
+
+    for (i = 0; i < 100; i++) {
+        UT_ASSERT_MSG(serverSimCheckAutoClose(sim) == FALSE,
+                      "a bots-only server closed on check %d", i);
+    }
+    UT_ASSERT_MSG(sim->hadPlayersEver == FALSE,
+                  "bots alone must never latch the empty-server check");
+
+    /* The bots go too. Still nobody has been here. */
+    sim->botMgr.bots[AC_BOT_SLOT].active = false;
+    serverSimRemovePlayer(sim, AC_BOT_SLOT);
+    serverSimRemovePlayer(sim, AC_HELD_SLOT);
+    UT_ASSERT_MSG(serverSimGetNumPlayers(sim) == 0,
+                  "setup: the bot seats must be free again, %u connected",
+                  (unsigned)serverSimGetNumPlayers(sim));
+    UT_ASSERT_MSG(serverSimCheckAutoClose(sim) == FALSE,
+                  "bots leaving a server nobody joined must not close it");
+    UT_ASSERT_MSG(sim->hadPlayersEver == FALSE,
+                  "the check must stay armed for the first real joiner");
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* The old behaviour with no bots, through a lobby round: a person joins the
+ * lobby, the round starts (serverSimStartGame latches with a person in it),
+ * the person leaves, and the server closes. */
+int run_autoclose_lobby_round_human_leaves_closes(void) {
+    ServerSim *sim = make_autoclose_sim();
+    UT_ASSERT(sim != NULL);
+
+    boot_sim(sim, /*skipLobby*/ false);
+    UT_ASSERT(serverSimGetState(sim) == serverStateLobby);
+    UT_ASSERT(serverSimCheckAutoClose(sim) == FALSE);
+
+    serverSimAddPlayer(sim, AC_HUMAN_SLOT, "Person", false);
+    serverSimStartGame(sim);
+    UT_ASSERT_MSG(serverSimGetState(sim) == serverStateRunning,
+                  "setup: the round must start");
+    UT_ASSERT_MSG(sim->hadPlayersEver == TRUE,
+                  "a round started with a person in it must latch the check");
+    UT_ASSERT_MSG(serverSimCheckAutoClose(sim) == FALSE,
+                  "a round with a person in it must not close");
+
+    serverSimRemovePlayer(sim, AC_HUMAN_SLOT);
+    UT_ASSERT_MSG(serverSimCheckAutoClose(sim) == TRUE,
+                  "-autoclose must close the server once its last person has "
+                  "left the round");
 
     serverSimDestroy(sim);
     return 0;
