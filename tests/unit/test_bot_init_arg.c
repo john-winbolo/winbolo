@@ -23,6 +23,7 @@
 #include "bot_manager.h"      /* botInitArgAppend*, BRAIN_INIT_ARG_MAX */
 #include "brain_list.h"       /* BrainModes, brainListLoadModes */
 #include "server_sim.h"       /* BOT_DIFFICULTY_*, botDifficultyName/FromName */
+#include "server_sim_internal.h" /* sim->botMgr, for the [BOT] line name */
 
 #include "test_harness.h"
 
@@ -299,14 +300,13 @@ static void ia_cleanup(void) {
     SDL_RemovePath(p);
 }
 
-/* The stage's own gate and append (bot_manager.c botManagerStageInitArg). */
+/* The stage's own gate and append: botManagerStageInitArg calls the same
+ * botInitArgAppendForBrainPath, so a later change there shows up here. */
 static void ia_build(const char *brainPath, int modeIdx, int levelIdx,
                      char *arg, size_t argSz) {
-    BrainModes modes;
     arg[0] = '\0';
-    if (brainListLoadModesForPath(brainPath, &modes)) {
-        botInitArgAppendModeTokens(arg, argSz, &modes, modeIdx, levelIdx, 0);
-    }
+    botInitArgAppendForBrainPath(arg, argSz, brainPath, (uint8_t)modeIdx,
+                                 (uint8_t)levelIdx, 0);
 }
 
 int run_bot_init_arg_opt_brain_path(void) {
@@ -358,6 +358,33 @@ int run_bot_init_arg_opt_brain_path(void) {
     ia_build("brains/wbtest_no_such_brain_at_all/opt/init.lua", 1,
              BOT_DIFFICULTY_EASY, arg, sizeof(arg));
     UT_ASSERT_MSG(arg[0] == '\0', "manifest-less brain got '%s'", arg);
+
+    /* The [BOT] status line names the brain above opt/, not "opt". No Lua
+     * VM in this binary, so the bot context is filled in by hand: an active
+     * slot with a live brain flag and the path botManagerAddBot captured. */
+    {
+        ServerSim *sim = ut_make_running_sim("Human");
+        BotInfo info;
+        int slot = 1;
+        UT_ASSERT(sim != NULL);
+        sim->botMgr.bots[slot].active = true;
+        sim->botMgr.bots[slot].brain.running = true;
+        SDL_strlcpy(sim->botMgr.bots[slot].brainPath,
+                    "brains/GoalHunter/opt/init.lua",
+                    sizeof(sim->botMgr.bots[slot].brainPath));
+        UT_ASSERT(botManagerGetBotInfo(sim, (BYTE)slot, &info));
+        UT_ASSERT_MSG(strcmp(info.brainName, "GoalHunter") == 0,
+                      "[BOT] name for opt path '%s'", info.brainName);
+        SDL_strlcpy(sim->botMgr.bots[slot].brainPath,
+                    "Brains\\GoalHunter\\init.lua",
+                    sizeof(sim->botMgr.bots[slot].brainPath));
+        UT_ASSERT(botManagerGetBotInfo(sim, (BYTE)slot, &info));
+        UT_ASSERT_MSG(strcmp(info.brainName, "GoalHunter") == 0,
+                      "[BOT] name for plain path '%s'", info.brainName);
+        sim->botMgr.bots[slot].brain.running = false;
+        sim->botMgr.bots[slot].active = false;
+        serverSimDestroy(sim);
+    }
 
     ia_cleanup();
     return 0;

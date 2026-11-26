@@ -5991,6 +5991,7 @@ set(_unit_test_names
     brain_modes_about
     brain_modes_standard_levels
     brain_modes_opt_path
+    brain_modes_path_folder_first
     brain_view_data_edge_rect
     bot_init_arg_difficulty_token
     bot_init_arg_mode_tokens
