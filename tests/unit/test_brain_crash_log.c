@@ -21,7 +21,16 @@
  *   - brain_crash_log_file_note:
  *       debug mode off says no file was written and names no path, even
  *       when rate-limited; debug mode on keeps "see <path>" and the
- *       SUPPRESSED note.
+ *       SUPPRESSED note, and says "could not write <path>" when the
+ *       fopen failed.
+ *
+ * And two that read the console line brc_write_crash_log_to writes:
+ *   - brain_crash_log_line_debug_flag:
+ *       host debug mode off gives the "no crash file" note; on gives
+ *       "see <path>" for the file it wrote.
+ *   - brain_crash_log_line_unwritable:
+ *       host debug mode on with a session folder that does not exist
+ *       gives "could not write <path>", not "see <path>".
  *
  * And two for the message handler brainCoreCallThink installs,
  * brc_traceback_msgh, run through a lua_pcall of their own:
@@ -46,13 +55,6 @@
 #include "global.h"
 #include "test_harness.h"
 #include "braincore.h"
-
-/* Visible iff dropped to non-static in braincore.c. */
-extern void brc_write_crash_log(lua_State *L,
-                                const char *method,
-                                const char *err_or_traceback);
-extern void brc_crash_file_note(bool debug_mode, bool suppress_file,
-                                const char *path, char *out, size_t outsz);
 
 /* SDL3 directory enumeration callback: collect any brain_crash_*.log
  * filenames into a caller-owned buffer. Returns SDL_ENUM_CONTINUE
@@ -274,32 +276,121 @@ int run_brain_crash_log_file_note(void) {
     static const char *kPath = "./brain_crash_20261125_120000Z_pid42_bot3.log";
     char note[1200];
 
-    brc_crash_file_note(false, false, kPath, note, sizeof(note));
+    brc_crash_file_note(false, false, false, kPath, note, sizeof(note));
     UT_ASSERT_MSG(strstr(note, "no crash file written") != NULL,
                   "debug off: note should say no file was written: %s", note);
-    UT_ASSERT_MSG(strstr(note, "-brain-debug") != NULL,
-                  "debug off: note should name -brain-debug: %s", note);
+    UT_ASSERT_MSG(strstr(note, "the full error is on the next line") != NULL,
+                  "debug off: note should point at the next line: %s", note);
+    UT_ASSERT_MSG(strstr(note, "-brain-debug") == NULL,
+                  "debug off: note names -brain-debug: %s", note);
     UT_ASSERT_MSG(strstr(note, "brain_crash_") == NULL,
                   "debug off: note names a crash file: %s", note);
     UT_ASSERT_MSG(strstr(note, "SUPPRESSED") == NULL,
                   "debug off: note says SUPPRESSED: %s", note);
 
-    brc_crash_file_note(false, true, kPath, note, sizeof(note));
+    brc_crash_file_note(false, true, false, kPath, note, sizeof(note));
     UT_ASSERT_MSG(strstr(note, "no crash file written") != NULL,
                   "debug off, rate-limited: note should say no file was written: %s",
                   note);
     UT_ASSERT_MSG(strstr(note, "SUPPRESSED") == NULL,
                   "debug off, rate-limited: note says SUPPRESSED: %s", note);
 
-    brc_crash_file_note(true, false, kPath, note, sizeof(note));
+    brc_crash_file_note(true, false, true, kPath, note, sizeof(note));
     UT_ASSERT_MSG(strncmp(note, "see ", 4) == 0 && strstr(note, kPath) != NULL,
                   "debug on: note should be 'see <path>': %s", note);
 
-    brc_crash_file_note(true, true, kPath, note, sizeof(note));
+    brc_crash_file_note(true, false, false, kPath, note, sizeof(note));
+    UT_ASSERT_MSG(strncmp(note, "could not write ", 16) == 0 &&
+                  strstr(note, kPath) != NULL,
+                  "debug on, fopen failed: note should be 'could not write <path>': %s",
+                  note);
+
+    brc_crash_file_note(true, true, false, kPath, note, sizeof(note));
     UT_ASSERT_MSG(strstr(note, "file SUPPRESSED (rate-limit") != NULL,
                   "debug on, rate-limited: note should say SUPPRESSED: %s", note);
     UT_ASSERT_MSG(strstr(note, kPath) == NULL,
                   "debug on, rate-limited: note names the path: %s", note);
+    return 0;
+}
+
+/* Runs brc_write_crash_log_to with its console lines going to a file inside
+ * dir, and returns that file's text (caller frees), or NULL. */
+static char *crash_console_text(lua_State *L, const char *dir,
+                                const char *err) {
+    char console_path[FILENAME_MAX];
+    SDL_snprintf(console_path, sizeof(console_path), "%s/console.txt", dir);
+    FILE *out = fopen(console_path, "wb");
+    if (out == NULL) return NULL;
+    brc_write_crash_log_to(L, "think", err, out);
+    fclose(out);
+    return slurp_file(console_path, NULL);
+}
+
+/* brc_write_crash_log_to reads the host debug mode and gives it to the note:
+ * off says no file was written, on says "see <path>" for the file it wrote. */
+int run_brain_crash_log_line_debug_flag(void) {
+    static const char *TEMPDIR = "test_brain_crash_tmp_line";
+    cleanup_tempdir(TEMPDIR);
+    UT_ASSERT_MSG(SDL_CreateDirectory(TEMPDIR),
+                  "failed to create tempdir: %s", SDL_GetError());
+
+    lua_State *L = new_lua_state_with_globals(7, 12345, TEMPDIR);
+    UT_ASSERT(L != NULL);
+    brainCoreSetHostDebugMode(L, false);
+    char *text = crash_console_text(L, TEMPDIR, "TEST_LINE_OFF_MARKER");
+    lua_close(L);
+    UT_ASSERT_MSG(text != NULL, "debug off: no console text");
+    int ok_off = strstr(text, "no crash file written") != NULL &&
+                 strstr(text, "see ") == NULL &&
+                 strstr(text, "brain_crash_") == NULL &&
+                 strstr(text, "TEST_LINE_OFF_MARKER") != NULL;
+    if (!ok_off) fprintf(stderr, "debug off console text: %s\n", text);
+    free(text);
+    UT_ASSERT_MSG(ok_off, "debug off: line should say no crash file written");
+
+    L = new_lua_state_with_globals(7, 12345, TEMPDIR);
+    UT_ASSERT(L != NULL);
+    text = crash_console_text(L, TEMPDIR, "TEST_LINE_ON_MARKER");
+    lua_close(L);
+    UT_ASSERT_MSG(text != NULL, "debug on: no console text");
+    char want[256];
+    SDL_snprintf(want, sizeof(want), "see %s/brain_crash_", TEMPDIR);
+    int ok_on = strstr(text, want) != NULL &&
+                strstr(text, "no crash file written") == NULL &&
+                strstr(text, "could not write") == NULL;
+    if (!ok_on) fprintf(stderr, "debug on console text: %s\n", text);
+    free(text);
+    UT_ASSERT_MSG(ok_on, "debug on: line should say '%s<...>'", want);
+
+    CrashFileCollector c;
+    memset(&c, 0, sizeof(c));
+    SDL_EnumerateDirectory(TEMPDIR, collect_crash_files, &c);
+    UT_ASSERT_MSG(c.count == 1, "expected 1 crash file, got %d", c.count);
+    cleanup_tempdir(TEMPDIR);
+    return 0;
+}
+
+/* A debug host that cannot open the crash file must not say "see <path>":
+ * the line names the path it could not write. */
+int run_brain_crash_log_line_unwritable(void) {
+    static const char *TEMPDIR = "test_brain_crash_tmp_unwritable";
+    static const char *MISSING = "test_brain_crash_tmp_unwritable/no_such_dir";
+    cleanup_tempdir(TEMPDIR);
+    UT_ASSERT_MSG(SDL_CreateDirectory(TEMPDIR),
+                  "failed to create tempdir: %s", SDL_GetError());
+
+    lua_State *L = new_lua_state_with_globals(7, 12345, MISSING);
+    UT_ASSERT(L != NULL);
+    char *text = crash_console_text(L, TEMPDIR, "TEST_UNWRITABLE_MARKER");
+    lua_close(L);
+    UT_ASSERT_MSG(text != NULL, "no console text");
+    char want[256];
+    SDL_snprintf(want, sizeof(want), "could not write %s/brain_crash_", MISSING);
+    int ok = strstr(text, want) != NULL && strstr(text, "see ") == NULL;
+    if (!ok) fprintf(stderr, "console text: %s\n", text);
+    free(text);
+    UT_ASSERT_MSG(ok, "line should say '%s<...>'", want);
+    cleanup_tempdir(TEMPDIR);
     return 0;
 }
 

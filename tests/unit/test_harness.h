@@ -628,6 +628,8 @@ int run_brain_bounds_stamps_bad_tables(void);
 int run_brain_bounds_threat_range(void);
 int run_brain_crash_log_ignores_brain_globals(void);
 int run_brain_crash_log_file_note(void);
+int run_brain_crash_log_line_debug_flag(void);
+int run_brain_crash_log_line_unwritable(void);
 int run_brain_sandbox_hostile_native_preloads(void);
 int run_brain_sandbox_hostile_bytecode_init(void);
 int run_brain_sandbox_hostile_loaders_removed(void);
