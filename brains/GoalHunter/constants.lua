@@ -1542,10 +1542,12 @@ M.BLITZ_NO_DOUBLE_TAKE = true
 -- appends its inputs and the Lua result to the file, for the parity test
 -- cases. "" = off.
 M.PT2_CAPTURE_FILE = ""
--- PT2_PROF_LOG (debug only): true = each double-take run times its parts
+-- PT2_PROF_LOG (log only): true = each double-take run times its parts
 -- (the Lua around the v2 calls, every C part and callback) and writes a
--- PT2_DBL_PROF line to print2. The timers cost time, so it is off by
--- default. It does not change any result.
+-- PT2_DBL_PROF line to print2 (debug only). Each v2 evaluate and take plan
+-- also writes a plain PT2EVAL / PT2PLAN line to stderr, with or without
+-- -brain-debug. The timers cost time, so it is off by default. It does not
+-- change any result.
 M.PT2_PROF_LOG = false
 -- REPLAN_PROF_LOG (debug or -brain-profile-log only): true = each goal
 -- replan times its parts (replan_prof.lua: the pool evaluators, goals,
