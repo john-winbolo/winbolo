@@ -93,12 +93,11 @@ typedef struct MapViewOverlay {
    live in map_colours.h, which the marker passes classify squares with, so
    the numbers and the markers cannot disagree about what is on a square. */
 static inline bool mapViewTileIsPill(BYTE tile) {
-  MapColourItem kind = mapColourItemKind(tile);
-  return kind == MAP_COLOUR_ITEM_PILL_GOOD || kind == MAP_COLOUR_ITEM_PILL_EVIL;
+  return mapColourItemNumberOnTile(tile, false);
 }
 
 static inline bool mapViewTileIsBase(BYTE tile) {
-  return mapColourItemKind(tile) >= MAP_COLOUR_ITEM_BASE_GOOD;
+  return mapColourItemNumberOnTile(tile, true);
 }
 
 /* Draws the whole layer: the cursor, then mapViewDrawShells and
