@@ -63,6 +63,8 @@ local RS     = require("repair_standoff")  -- C.REPAIR_STANDOFF_ENABLED
 local QR     = require("quick_repair")     -- C.QUICK_REPAIR_ON_TAKE
 
 local M = {}
+-- Leaf zone timers for the profile (BRAIN_PROFILE only, optimize.zone*).
+local OPT = require("optimize")
 
 -- 2026-11-03 REPAIR_STANDOFF: pick (or keep) the repair_pill standoff square.
 -- init.lua calls this once per tick before steering; steering and the feeder
@@ -1928,9 +1930,16 @@ end
 -- has to show why. That is the always-show rule the other strips follow.
 -- -------------------------------------------------------------------------
 function M.update(state, world, info, now)
+  if BRAIN_PROFILE then OPT.zone_start("bp") end
   danger.update_fire_clock(state, info, now)
+  if BRAIN_PROFILE then OPT.zone("bp", "fire_clock") end
   M.update_job(state, world, info, now)
-  if not C.BUILDER_POOL_ENABLED then state._builder_pool = nil; return end
+  if BRAIN_PROFILE then OPT.zone("bp", "update_job") end
+  if not C.BUILDER_POOL_ENABLED then
+    state._builder_pool = nil
+    if BRAIN_PROFILE then OPT.zone_emit("bp") end
+    return
+  end
 
   -- Did LAST tick's winner actually go? The rung sits at Priority 1c, so
   -- decide() can return before ever reaching it -- the drowning road, the
@@ -1953,11 +1962,14 @@ function M.update(state, world, info, now)
 
   state._bp_seed = nil
   M.log_claims_rx(state, info, now)   -- REPAIR_CLAIM_RX (debug log only)
+  if BRAIN_PROFILE then OPT.zone("bp", "pre") end
   M.repair_feeder(state, world, info, now)
+  if BRAIN_PROFILE then OPT.zone("bp", "repair_feeder") end
   -- C.QUICK_REPAIR_ON_TAKE: the take blocker's repair window (quick_repair.lua).
   -- Only a "send" makes a quick row; every other answer leaves the pool as it
   -- was, with the blocker refused (take_blocker) like before.
   local quick = QR.evaluate(state, world, info, now)
+  if BRAIN_PROFILE then OPT.zone("bp", "quick_repair") end
   if quick and quick.result ~= "send" then quick = nil end
   local quick_pill = quick and world.pills and world.pills[quick.id] or nil
   if quick and not quick_pill then quick = nil end
@@ -1970,6 +1982,7 @@ function M.update(state, world, info, now)
   -- everything below that reads `force` is skipped and the pool is unchanged.
   local force, force_why, force_dist = M.ping_force(state, world, info, now)
   M.log_force(state, info, now, force, force_why, force_dist)
+  if BRAIN_PROFILE then OPT.zone("bp", "reserve_elig_force") end
 
   local bp = {
     tick = now,
@@ -2093,7 +2106,9 @@ function M.update(state, world, info, now)
                   reserve_eta = nil, waive_min = true, not_idle = true }
   end
 
+  if BRAIN_PROFILE then OPT.zone("bp", "ctx") end
   local rows = M.discover(state, world, info)
+  if BRAIN_PROFILE then OPT.zone("bp", "discover") end
   local seed_seen = false
   local force_seen = false
   local quick_seen = false
@@ -2229,8 +2244,10 @@ function M.update(state, world, info, now)
     end
     bp.force_harvest = best
   end
+  if BRAIN_PROFILE then OPT.zone("bp", "score_rows") end
   order_rows(rows)
   bp.rows = rows
+  if BRAIN_PROFILE then OPT.zone("bp", "order") end
 
   -- THE SHELL GATE. A HARD STOP at the moment of dispatch, not a score term,
   -- and deliberately the LAST thing asked: it is the only test here that flies
@@ -2368,6 +2385,7 @@ function M.update(state, world, info, now)
   end
 
   if winner then bp.dispatch = winner end
+  if BRAIN_PROFILE then OPT.zone("bp", "dispatch"); OPT.zone_emit("bp") end
   return bp
 end
 

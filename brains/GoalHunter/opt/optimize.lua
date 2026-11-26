@@ -233,6 +233,37 @@ function M.append(filename, text)
   end
 end
 
+-- Leaf zones (BRAIN_PROFILE only; timers, no decision reads them). A
+-- caller times the parts of one level-2 section: M.zone_start(set) at its
+-- top, M.zone(set, name) after each part (the time since the last mark is
+-- added to name), and M.zone_emit(set) before the section's own "done"
+-- line writes one level-3 line per part, "    <set>/<name> done X ms", in
+-- first-seen order. The section parser files them under that section.
+local zones = {}
+function M.zone_start(set)
+  if not profile_enabled() or not _clock_us then return end
+  local z = zones[set]
+  if not z then z = { order = {}, us = {} }; zones[set] = z end
+  for i = #z.order, 1, -1 do z.us[z.order[i]] = nil; z.order[i] = nil end
+  z.t = _clock_us()
+end
+function M.zone(set, name)
+  local z = zones[set]
+  if not z or not z.t then return end
+  local t = _clock_us()
+  if not z.us[name] then z.order[#z.order + 1] = name; z.us[name] = 0 end
+  z.us[name] = z.us[name] + (t - z.t)
+  z.t = t
+end
+function M.zone_emit(set)
+  local z = zones[set]
+  if not z or not z.t then return end
+  for _, name in ipairs(z.order) do
+    log_msg(string.format("    %s/%s done %.3f ms", set, name, z.us[name] / 1000))
+  end
+  z.t = nil
+end
+
 setmetatable(M, { __call = function(_, ...) log_msg(...) end })
 
 return M

@@ -3615,7 +3615,9 @@ function Brain.think(info)
   -- Focused spike pairs and spike care (spike.lua, through goals.spike so
   -- think() gets no new upvalue). A no-op with FOCUS_SPIKE_ENABLED and
   -- SPIKE_REPAIR_PRIORITY both off.
+  if BRAIN_PROFILE then opt.zone_start("ptl") end
   goals.spike.update(state, world, info, now)
+  if BRAIN_PROFILE then opt.zone("ptl", "spike.update") end
 
   -- ── Placement trip lifecycle ─────────────────────────────────────────────
   -- state._place_trip is set when a placement request goes out (after
@@ -3759,6 +3761,7 @@ function Brain.think(info)
   -- pathfinder. Moved here (right after danger load) so all downstream
   -- goal evaluation sees fresh overlays — previously ran much later and
   -- A* queries during eval would hit stale impassable stamps from dead pills.
+  if BRAIN_PROFILE then opt.zone("ptl", "trip"); opt.zone_emit("ptl") end
   local t_trip_life = BRAIN_PROFILE and clock_us() or 0
   if BRAIN_PROFILE then
     opt(string.format("  placement trip lifecycle done %.2f ms",
@@ -4176,6 +4179,7 @@ function Brain.think(info)
   if BRAIN_PROFILE then
     opt(string.format("  pillcontrib export done %.2f ms", (t_pillcontrib - t_ally_avoid) / 1000))
   end
+  if BRAIN_PROFILE then opt.zone_start("inf") end
 
   -- Populate influence grid (friendly = positive, hostile = negative).
   -- Rebuilt every tick — it's cheap and consumers expect fresh values.
@@ -4213,6 +4217,7 @@ function Brain.think(info)
       end
     end
   end
+  if BRAIN_PROFILE then opt.zone("inf", "stamps") end
   -- INF_CHANGE: fire only on ticks where the stamped set (and thus the grid)
   -- actually changes. sig is position-sensitive, so two allies with identical
   -- grids share a sig — diff the fire-tick across allies to see convergence lag.
@@ -4248,6 +4253,7 @@ function Brain.think(info)
         now, _tsig, C.EXPAND_DEEP_MARGIN or 0, tostring(C.INFLUENCE_ENEMY_TAIL ~= false),
         (clock_us() - _t_tail) / 1000))
     end
+    if BRAIN_PROFILE then opt.zone("inf", "tail_rebuild") end
     -- Merged unconditionally, even when _tsig says the tail is unchanged:
     -- cpf.clear_influence() above wipes influence_grid at the top of EVERY
     -- tick, so the merge is not re-applying an idempotent overlay, it is the
@@ -4257,6 +4263,7 @@ function Brain.think(info)
     -- won this tick. Skipping it on an unchanged stamp set would drop the tail
     -- from the grid entirely, so it stays.
     cpf.merge_influence_tail()
+    if BRAIN_PROFILE then opt.zone("inf", "tail_merge") end
     -- What the tail did this rebuild: how much ground each side's tail
     -- covers, how much of it actually won the merge (was not already
     -- stamped), and the front line -- sign-change cells -- on the stamps
@@ -4324,6 +4331,7 @@ function Brain.think(info)
       print2(string.format("KWDIAG t=%s pn=%s B[%s] P[%s]", tostring(now), tostring(info.player_number), table.concat(_bp, ","), table.concat(_pp, ",")))
     end
   end
+  if BRAIN_PROFILE then opt.zone("inf", "rest"); opt.zone_emit("inf") end
   local t_influence = BRAIN_PROFILE and clock_us() or 0
   if BRAIN_PROFILE then
     opt(string.format("  influence stamp done %.2f ms", (t_influence - t_pillcontrib) / 1000))
