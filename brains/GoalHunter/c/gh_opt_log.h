@@ -38,4 +38,14 @@ void naOptLogRegister(lua_State *L);
  */
 void naOptLogFlushSync(void);
 
+/*
+ * naOptLogFlushSync, then close every output file the writer keeps open. The
+ * next append opens its file again. Safe from any thread and a no-op when the
+ * writer isn't running. Installed as braincore's log release hook
+ * (brainCoreSetLogReleaseHook): the server calls it after it moves the bots'
+ * logs to a new -brain-debug block, so the old block's files are closed
+ * before they are compressed.
+ */
+void naOptLogReleaseFiles(void);
+
 #endif /* GH_OPT_LOG_H */

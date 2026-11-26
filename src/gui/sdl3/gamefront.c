@@ -127,6 +127,9 @@ bool spectatorRun(struct SDL_Window *window, struct SDL_Renderer *renderer,
 #include "dialogs/imgui_onboarding.h"
 #include "dialogs/imgui_lobby.h"
 
+#include "../../bothost/bothost_embed.h" /* botHostEmbedService / Leave */
+#include "../../bothost/bothost_optout.h" /* botHostMaxParse */
+
 #if defined(WINBOLO_VOICE)
 #include "../voice.h"
 
@@ -762,6 +765,8 @@ void gameFrontTickSteamPresenceGame(ClientSim *cs) {
  * openTutorial case and read where the single-player path builds the
  * server. */
 static bool isScenarioTutorial = FALSE;
+static void gameFrontApplySavedServerBotSlots(ServerSim *sim,
+                                              const char *key);
 
 /* Used to set the preferences — defined in winbolo.c */
 extern int frameRate;
@@ -1085,8 +1090,19 @@ void gameFrontSaveCurrentPrefs(void) {
 /* -------------------------------------------------------
  * gameFrontEnd — shutdown game subsystems
  * ------------------------------------------------------- */
+/* The Bot Host inside this program: it runs the server's bots while the
+ * player is in a game on a server (a UDP join), and stops when there is
+ * none. Once a frame, on the main thread. */
+void gameFrontBotHostService(ClientSim *cs) {
+  botHostEmbedService((udpTransportActive && cs != NULL && cs == humanSim)
+                          ? cs : NULL);
+}
+
 void gameFrontEnd(keyItems *keys, bool gamePlayed, bool isQuiting) {
   steam_clear_rich_presence();
+  /* The player leaves: this computer's Bot Host stops first, so the
+   * server takes its bots back before the player's own quit. */
+  botHostEmbedLeave("the player left the game");
   clientMutexWaitFor();
   /* No tank-readback here. The keys dialog persists useAutoslow /
    * useAutohide directly to INI on OK (immediate-flush) and nothing
@@ -2791,6 +2807,10 @@ bool gameFrontSetDlgState(openingStates newState) {
               clientSimSetInLobby(humanSim, true);
               clientSimSetNetStatus(humanSim, netLobby);
               clientSimSetMapDownloadComplete(humanSim, true);
+              /* The lobby's Server bot slots box opens on the player's
+               * last single player pick. */
+              gameFrontApplySavedServerBotSlots(spServerSim,
+                                                SERVER_BOT_SLOTS_SP_PREFS_KEY);
             } else {
               /* No lobby, but a single-player game all the same: the
                * scenario's popups pause it, as a solo session's do. */
@@ -4233,6 +4253,28 @@ static bool gameFrontStartServerSim(ServerSim *sim,
  * ServerVoiceMode would turn all three into off with no line changing. */
 BOLO_STATIC_ASSERT(serverVoiceOn == 0, server_voice_default_is_on);
 
+BOLO_STATIC_ASSERT(SERVER_BOT_SLOTS_TOP == MAX_TANKS,
+                   server_bot_slots_top_is_max_tanks);
+
+/* The player's last Server bot slots pick (key: SERVER_BOT_SLOTS_PREFS_KEY
+ * for a hosted game, SERVER_BOT_SLOTS_SP_PREFS_KEY for single player) on
+ * the server this process just started. Only this computer's own server
+ * gets it: a join to another server never comes here. No pick ("Auto")
+ * leaves the CPU test's answer. Under the mutex: the host timer already
+ * ticks the sim. */
+static void gameFrontApplySavedServerBotSlots(ServerSim *sim,
+                                              const char *key) {
+  char text[16];
+  int slots;
+  if (sim == NULL) return;
+  prefsGetString(BOT_HOST_MAX_PREFS_SECTION, key, "Auto", text, sizeof(text));
+  slots = serverBotSlotsParse(text);
+  if (slots < 0) return;
+  threadsWaitForMutex();
+  (void)serverSimSetServerBotSlots(sim, slots);
+  threadsReleaseMutex();
+}
+
 bool gameFrontSetupServer(void) {
   ServerInstanceConfig cfg;
   char scriptSessionDir[FILENAME_MAX];
@@ -4463,6 +4505,8 @@ bool gameFrontSetupServer(void) {
     serverSimScenarioApplyLobbyRules(spServerSim);
     threadsReleaseMutex();
   }
+  /* The host's last Server bot slots pick for a hosted game. */
+  gameFrontApplySavedServerBotSlots(spServerSim, SERVER_BOT_SLOTS_PREFS_KEY);
 
   /* The host-side flags previously set by gameFrontFinishLobbyHost
    * after the startup call. The lobby state itself is now driven by
@@ -4486,6 +4530,15 @@ bool gameFrontSetupServer(void) {
     if (!gameFrontHostingServeReplays) {
       serverDedicatedLogSetServeMode(ROUND_LOG_SERVE_OFF);
     }
+  }
+  {
+    /* The bot placement's numbers in the round log, for the Log Viewer's
+     * Bot Hosts window. Off unless the preferences file says Yes; the game
+     * has no menu item for it. */
+    char rec[16];
+    prefsGetString("SETTINGS", "Record Bot Host Data", "No", rec, sizeof(rec));
+    serverDedicatedLogSetBotHostData(gameFrontHostingLogging &&
+                                     YESNO_TO_TRUEFALSE(rec[0]));
   }
   return TRUE;
 }
@@ -4532,6 +4585,12 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   intToStr(DEFAULT_UDP_PORT, def, sizeof(def));
   prefsGetString("SETTINGS", "UDP Port", def, buff, FILENAME_MAX);
   gameFrontMyUdp = atoi(buff);
+
+  /* The Max slots of this computer's Bot Host (the lobby's own Bot Host
+   * row); a missing key is the brain's answer. */
+  prefsGetString(BOT_HOST_MAX_PREFS_SECTION, BOT_HOST_MAX_PREFS_KEY, "Auto",
+                 buff, FILENAME_MAX);
+  botHostEmbedSetMax(botHostMaxParse(buff));
 
   /* Hosting settings ([HOSTING] section — the port/spectator/upload knobs
    * for a game hosted from the finder). Clamp on read to the same ranges the

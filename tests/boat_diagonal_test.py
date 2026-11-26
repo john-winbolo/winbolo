@@ -26,6 +26,7 @@ from pathlib import Path
 # clock. Same seed -> byte-identical game, just faster. --no-asap (or
 # WINBOLO_ASAP=0) puts this run back on the 20 ms live-game pacing.
 from asap import asap_args, pacing_line, take_asap_flag  # noqa: E402
+from session_log_io import log_exists, read_log_text
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent
@@ -94,10 +95,10 @@ def run(ticks, build_dir):
         return 1
 
     log = sess / "print2_bot0.log"
-    if not log.exists():
+    if not log_exists(log):
         print("FAIL: no bot0 log")
         return 1
-    text = log.read_text(errors="ignore")
+    text = read_log_text(log)
 
     # Walk snapshots in order. The test verifies the BOAT NAVIGATION: the bot must
     # reach and capture the pill (carry>=1) without having died en route (armour

@@ -298,7 +298,7 @@ static CmdResult plSetTeam(ServerSim *sim, BYTE slot, BYTE team) {
 
 /* The lobby's Add Bot, with a team number on it. Returns the seat the bot
    took, or -1 if the command was refused. */
-static int plAddBotOnTeam(ServerSim *sim, BYTE team) {
+static int plAddBotOnTeamResult(ServerSim *sim, BYTE team, CmdResult *out) {
     ClientCommand cmd;
     bool before[MAX_TANKS];
     CmdResult r;
@@ -315,11 +315,26 @@ static int plAddBotOnTeam(ServerSim *sim, BYTE team) {
     threadsWaitForMutex();
     r = serverSimApplyCommand(sim, 0, &cmd);
     threadsReleaseMutex();
+    if (out != NULL) *out = r;
     if (r != CMD_OK) return -1;
     for (i = 0; i < MAX_TANKS; i++) {
         if (!before[i] && serverSimIsPlayerConnected(sim, (BYTE)i)) return i;
     }
     return -1;
+}
+
+static int plAddBotOnTeam(ServerSim *sim, BYTE team) {
+    return plAddBotOnTeamResult(sim, team, NULL);
+}
+
+/* How many slots are connected: a refused add must leave this alone. */
+static int plConnectedCount(const ServerSim *sim) {
+    int i, n = 0;
+
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (serverSimIsPlayerConnected(sim, (BYTE)i)) n++;
+    }
+    return n;
 }
 
 /* ================================================================
@@ -454,10 +469,11 @@ int run_scenario_policy_allow_base_win(void) {
 }
 
 /* ================================================================
- * 4. The add-bot arm's team write.
+ * 4. The add-bot arm's team question.
  *
- * The bot is seated either way — it is in its seat before the team is
- * written — so the refusal shows up as a seat with no team on it.
+ * The host's Add Bot asks before anything is made. A refused team refuses
+ * the whole add: the host hears CMD_REJECT_SCENARIO_TEAM, no bot is made
+ * and no seat is taken.
  *
  * The legs use two team numbers because the first add populates the one it
  * names: a second bot onto that team is joining a team that exists, which
@@ -469,6 +485,9 @@ int run_scenario_policy_allow_extra_teams(void) {
     ScenarioPolicy pol;
     PlCtx pc;
     int slot;
+    int connectedBefore;
+    unsigned botsBefore;
+    CmdResult r;
 
     UT_ASSERT(plMakeBrainFile("allow_extra_teams"));
     ut_brain_stub_arm(true);
@@ -486,12 +505,24 @@ int run_scenario_policy_allow_extra_teams(void) {
     pc.extraTeams = false;
     serverSimSetScenarioPolicy(sim, &pol);
 
-    /* Team 4 has nobody on it, so this add is what would make it. */
-    slot = plAddBotOnTeam(sim, 4);
-    UT_ASSERT_MSG(slot >= 0, "the add itself is not what is refused");
-    UT_ASSERT_MSG(sim->lobbyPlayers[slot].teamNumber == 0,
-                  "a refused team must leave the seat unassigned, is on %u",
-                  (unsigned)sim->lobbyPlayers[slot].teamNumber);
+    /* Team 4 has nobody on it, so this add is what would make it. The
+       whole add is refused. */
+    connectedBefore = plConnectedCount(sim);
+    botsBefore = (unsigned)serverSimGetLobbyBotCount(sim);
+    r = CMD_OK;
+    slot = plAddBotOnTeamResult(sim, 4, &r);
+    UT_ASSERT_MSG(slot < 0, "an add onto a new team the scenario refuses "
+                  "must fail, took slot %d", slot);
+    UT_ASSERT_MSG(r == CMD_REJECT_SCENARIO_TEAM,
+                  "the refused add returned %d, wanted "
+                  "CMD_REJECT_SCENARIO_TEAM (%d)",
+                  (int)r, (int)CMD_REJECT_SCENARIO_TEAM);
+    UT_ASSERT_MSG(plConnectedCount(sim) == connectedBefore,
+                  "a refused add must take no seat: %d connected, was %d",
+                  plConnectedCount(sim), connectedBefore);
+    UT_ASSERT_MSG((unsigned)serverSimGetLobbyBotCount(sim) == botsBefore,
+                  "a refused add must make no bot: %u bots, was %u",
+                  (unsigned)serverSimGetLobbyBotCount(sim), botsBefore);
 
     /* Team 3 has the first bot on it, so this add joins a team rather than
        making one: allowed under the same policy, without asking it. */
@@ -561,7 +592,7 @@ int run_scenario_policy_team_set_extra_teams(void) {
     UT_ASSERT(sim->lobbyPlayers[2].teamNumber == 2);
 
     /* An empty team: refused, and the roster does not move. */
-    UT_ASSERT_MSG(plSetTeam(sim, 2, 5) == CMD_REJECT_INVALID,
+    UT_ASSERT_MSG(plSetTeam(sim, 2, 5) == CMD_REJECT_SCENARIO_TEAM,
                   "a move onto an empty team must be refused");
     UT_ASSERT_MSG(sim->lobbyPlayers[2].teamNumber == 2,
                   "a refused move must leave the slot where it was, is on %u",
@@ -578,7 +609,7 @@ int run_scenario_policy_team_set_extra_teams(void) {
        it is making a team again and is refused. The number of teams in play
        would not rise, which is exactly the edge the slot-excluded count
        decides: the team being moved onto is the one under test. */
-    UT_ASSERT_MSG(plSetTeam(sim, 2, 2) == CMD_REJECT_INVALID,
+    UT_ASSERT_MSG(plSetTeam(sim, 2, 2) == CMD_REJECT_SCENARIO_TEAM,
                   "a team emptied by the move away must be refused on the "
                   "way back");
     UT_ASSERT(sim->lobbyPlayers[2].teamNumber == 1);

@@ -663,6 +663,7 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
     sim->pendingHarvestBuildX[playerNum] = 0;
     sim->pendingHarvestBuildY[playerNum] = 0;
     sim->playerPing[playerNum] = 0;
+    sim->lagCompPingMs[playerNum] = 0;
     sim->inputBufferFilled[playerNum] = 0;
     sim->inputDryTicks[playerNum] = 0;
     sim->jitterTarget[playerNum] = JITTER_BUFFER_DEFAULT;

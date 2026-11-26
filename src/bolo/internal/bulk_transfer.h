@@ -111,7 +111,33 @@ enum {
      * [status 1] then, for BULK_BOT_POOL_FOUND, the catalogue; nothing more
      * for BULK_BOT_POOL_NONE. So totalSize is 1 to
      * 1 + LOBBY_BOT_CATALOG_WIRE_MAX. */
-    BULK_KIND_BOT_POOL = 12
+    BULK_KIND_BOT_POOL = 12,
+    /* Server->Bot Host, on the host's control connection: the brain
+     * manifest (brain_sync.h). The header's gen is the manifest generation
+     * and its path is empty. Sent when the host connects and whenever the
+     * server's brain files change. totalSize is at most
+     * BRAIN_SYNC_MANIFEST_MAX. */
+    BULK_KIND_BRAIN_MANIFEST = 13,
+    /* Server->Bot Host, in answer to CTRL_BOT_HOST_FILE_REQ: one piece of
+     * one manifest file. The header's gen is the manifest generation and
+     * its path is "<brain>/<file>/<offset>" in decimal. The blob is
+     * brainSyncChunkPack's [rawLen 4][zlib stream], at most
+     * BRAIN_SYNC_CHUNK_BYTES raw. A file of size 0 is one empty piece. */
+    BULK_KIND_BRAIN_CHUNK = 14,
+    /* Bot Host->server, on the host's control connection: one piece of one
+     * brain recording file of a finished block (udp_server_botrec.c). The
+     * header's gen is the whole file size and its path is
+     * "<block>/<file>/<offset>" in decimal. The blob is the raw file
+     * bytes, at most 64 KB. Pieces of a file come in order; a file of size
+     * 0 is one empty piece. */
+    BULK_KIND_REC_CHUNK = 15,
+    /* Server->Bot Host, in answer to CTRL_BOT_HOST_PACK_REQ: one piece of
+     * the zstd stream of one brain's asked-for files (brain_pack.h). The
+     * header's gen is the manifest generation and its path is
+     * "<brain>/<seq>" in decimal, seq counting from 0. The blob is at most
+     * BRAIN_PACK_PIECE_MAX bytes of the stream. Only a host that sent
+     * BRAIN_PACK_CAP_PACKED is sent it. */
+    BULK_KIND_BRAIN_PACK = 16
 };
 
 /* The status byte that opens a BULK_KIND_BOT_POOL blob. */

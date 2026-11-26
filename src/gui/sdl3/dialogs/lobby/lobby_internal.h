@@ -126,6 +126,7 @@ extern "C" {
 #endif
 #include "client_net.h"
 #include "brain_list.h"      /* BrainModes — cached per catalogue entry below */
+#include "brain_capacity.h"  /* BrainCapacityAddState — Add Bot's capacity rule */
 #include "types.h"
 #include "imgui_mapchooser.h"
 /* VisibilitySettings, named by the value renderer the server browser and
@@ -485,6 +486,42 @@ unsigned int lobbyBotDifficultyTaglineId(uint8_t difficulty);
 unsigned int lobbyBotDifficultyDescId(uint8_t difficulty);
 void lobbyBotBrainBaseName(ClientSim *cs, int slot, char *out, size_t outSz);
 bool lobbyAddBotPending(ClientSim *cs);
+/* Add Bot's capacity rule (brainCapacityAddState): MEASURING while the CPU
+ * speed test runs, FULL once the bots reach the capacity: the server's over
+ * UDP, else the lobby's Server bot slots (single player) or the answer of
+ * the brain the next Add Bot adds. Only MEASURING turns Add Bot off
+ * (brainCapacityAddBlocks); FULL is a warning. capacityOut (may be NULL)
+ * gets the capacity, or BRAIN_CAPACITY_UNKNOWN. */
+BrainCapacityAddState lobbyAddBotState(ClientSim *cs, int *capacityOut);
+/* Why Add Bot is off (the CPU speed test runs), for its tooltip, or NULL
+ * when it is on. */
+const char *lobbyAddBotOffReason(ClientSim *cs);
+/* The capacity warning for the Server bot slots box's tooltip, or NULL
+ * below the capacity. */
+const char *lobbyAddBotWarning(ClientSim *cs);
+/* This machine's answer for the brain the next Add Bot adds, or
+ * BRAIN_CAPACITY_UNKNOWN; measuringOut (may be NULL): the CPU test runs. */
+int lobbyLocalBotCapacity(ClientSim *cs, bool *measuringOut);
+/* Single player's Server bot slots row, from the in-process server: false
+ * when not single player. The brain's answer is the recommendation. */
+bool lobbyLocalBotSlots(ClientSim *cs, ClientServerBotSlots *out);
+void lobbySetLocalBotSlots(ClientSim *cs, int slots);
+/* Saves a Server bot slots pick in the client config, so the next game
+ * this computer runs the server for starts there (gamefront.c applies it):
+ * the single player key, or the hosted game key. Only for a server on this
+ * computer: single player, or a hosted game (gameFrontHasLocalServer). */
+void lobbySaveServerBotSlots(bool singlePlayer, int slots);
+/* After an Add Bot button: shows reason (when not NULL) on mouse-over,
+ * the button being off. */
+void lobbyAddBotOffTooltip(const char *reason);
+/* The lobby's CPU speed test: Open when a lobby opens or is joined (starts
+ * the run when none is stored for this version), Poll each lobby frame
+ * (gives a finished run's result to the brains), Close when the game
+ * starts or the player leaves (stops a run, which then stores nothing).
+ * Nothing on builds without the test. */
+void lobbyCpuSpeedOpen(void);
+void lobbyCpuSpeedPoll(void);
+void lobbyCpuSpeedClose(void);
 void lobbySendAddBotDebounced(ClientSim *cs,
                               int namingPool, uint8_t teamNumber);
 void lobbySendRemoveBot(ClientSim *cs, uint8_t slot);
@@ -528,6 +565,16 @@ void lobbySendTeamSide(ClientSim *cs, uint8_t teamId, uint8_t startSide);
 void lobbySendSetting(ClientSim *cs,
                       uint8_t settingType,
                       const uint8_t *value, uint8_t valueLen);
+
+/* A bot slots box, 0 to MAX_TANKS: the Server bot slots row and the Max
+ * slots box of each Bot Host row. Values above recommended (-1: none yet)
+ * show greyer, in the list and on the closed box, with overTip on mouse-
+ * over; they stay selectable. tip shows on the closed box otherwise, or
+ * first when tipFirst; NULL for none. Read-only when !editable. Returns the
+ * value picked, or -1. */
+int lobbyBotSlotsCombo(const char *id, int value, const char *preview,
+                       int recommended, bool editable, const char *tip,
+                       bool tipFirst, const char *overTip);
 
 /* chooser */
 void lobbyChooserReset(void);

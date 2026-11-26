@@ -29,6 +29,7 @@
 #include "client_sim.h"
 #include "client_net.h"              /* clientSimGetViewTick */
 #include "input_packet.h"
+#include "transport_udp_server_internal.h" /* udpServer, BotHostSeat, BotHostConn */
 #include "test_harness.h"
 
 /* The pre-viewTick ping-based estimate, recomputed here so the fallback
@@ -106,5 +107,143 @@ int run_viewtick_displayed_tick(void) {
                   (unsigned)clientSimGetViewTick(cs));
 
     clientSimDestroy(cs);
+    return 0;
+}
+
+/* ── Bot Host bots get the same rewind as a human ──────────────────────────
+ *
+ * Until a client has applied two snapshots (at join and at each round
+ * start) it sends view tick 0, and the server rewinds by its ping estimate
+ * instead. A bot whose brain runs on a remote Bot Host also sends view tick 0
+ * then, but a bot connection shows ping 0, so it got (0 + 20) / 20 = 1 entry
+ * however far away its host was. The rewind must use the host's measured
+ * lag, as a human's uses his ping. The shown ping stays 0.
+ *
+ * Drives the real path: serverSimApplyInput reads the transport, and
+ * serverSimTick computes the rewind on each applied input
+ * (statLastRewindTicks). The transport state of slot 0 is set by hand and
+ * put back at the end. */
+
+#define VB_SLOT 0
+
+static uint32_t vb_next;
+
+/* Feeds two inputs (view tick 0) and runs one server tick, three times, so
+ * the last applied input's rewind is in statLastRewindTicks. */
+static uint8_t vb_rewind(ServerSim *sim) {
+    int frame;
+    for (frame = 0; frame < 3; frame++) {
+        int k;
+        for (k = 0; k < 2; k++) {
+            InputPacket pkt;
+            memset(&pkt, 0, sizeof(pkt));
+            pkt.tick = vb_next++;
+            pkt.playerNum = VB_SLOT;
+            pkt.viewTick = 0;
+            serverSimApplyInput(sim, &pkt);
+        }
+        serverSimTick(sim);
+    }
+    return sim->statLastRewindTicks[VB_SLOT];
+}
+
+int run_viewtick_rewind_bot_host(void) {
+    ServerSim *sim = ut_make_running_sim("BotHostRewind");
+    UdpServerClient savedClient;
+    BotHostSeat savedSeat;
+    BotHostConn savedHost;
+    UdpServerClient *c = &udpServer.clients[VB_SLOT];
+    BotHostSeat *seat = &udpServer.botSeats[VB_SLOT];
+    BotHostConn *hc = &udpServer.botHosts[0];
+    uint8_t r;
+    int fail = 0;
+
+    UT_ASSERT_MSG(sim != NULL, "ut_make_running_sim returned NULL");
+    savedClient = *c;
+    savedSeat = *seat;
+    savedHost = *hc;
+    vb_next = 1;
+
+    /* An in-process bot: no bot connection, seat LOCAL. One entry. */
+    c->connected = false;
+    c->botSlot = false;
+    seat->state = BOT_SEAT_LOCAL;
+    seat->host = -1;
+    r = vb_rewind(sim);
+    if (r != 1) {
+        fprintf(stderr, "  local bot rewind %u, expected 1\n", (unsigned)r);
+        fail = 1;
+    }
+
+    /* A human with ping 100: the ping estimate, as before. */
+    c->connected = true;
+    c->botSlot = false;
+    c->pingMs = 100;
+    r = vb_rewind(sim);
+    if (r != ping_fallback(100)) {
+        fprintf(stderr, "  human (ping 100) rewind %u, expected %u\n",
+                (unsigned)r, (unsigned)ping_fallback(100));
+        fail = 1;
+    }
+
+    /* A bot thinking on Bot Host 0, whose smoothed lag is 60 ms: the same
+     * estimate a human with 60 ms ping gets, (30 + 20) / 20 = 2. */
+    c->connected = true;
+    c->botSlot = true;
+    c->pingMs = 0;
+    seat->state = BOT_SEAT_REMOTE;
+    seat->host = 0;
+    hc->connected = true;
+    hc->lagKnown = true;
+    hc->lagMs = 60.0;
+    r = vb_rewind(sim);
+    if (r != ping_fallback(60) || r <= 1) {
+        fprintf(stderr, "  Bot Host bot (host lag 60) rewind %u, expected %u\n",
+                (unsigned)r, (unsigned)ping_fallback(60));
+        fail = 1;
+    }
+
+    /* A farther host, 200 ms: 6, the same as a human with 200 ms ping. */
+    hc->lagMs = 200.0;
+    r = vb_rewind(sim);
+    if (r != ping_fallback(200)) {
+        fprintf(stderr, "  Bot Host bot (host lag 200) rewind %u, expected %u\n",
+                (unsigned)r, (unsigned)ping_fallback(200));
+        fail = 1;
+    }
+
+    /* The shown ping of the Bot Host bot stays 0. */
+    if (sim->playerPing[VB_SLOT] != 0) {
+        fprintf(stderr, "  Bot Host bot shown ping %u, expected 0\n",
+                (unsigned)sim->playerPing[VB_SLOT]);
+        fail = 1;
+    }
+
+    /* No lag measured yet for the host: today's one entry. */
+    hc->lagKnown = false;
+    r = vb_rewind(sim);
+    if (r != 1) {
+        fprintf(stderr, "  Bot Host bot (lag not known) rewind %u, expected 1\n",
+                (unsigned)r);
+        fail = 1;
+    }
+
+    /* Bound but not yet thinking on the host: the brain still runs in the
+     * server, so one entry. */
+    hc->lagKnown = true;
+    hc->lagMs = 200.0;
+    seat->state = BOT_SEAT_BOUND;
+    r = vb_rewind(sim);
+    if (r != 1) {
+        fprintf(stderr, "  bound bot (brain in server) rewind %u, expected 1\n",
+                (unsigned)r);
+        fail = 1;
+    }
+
+    *c = savedClient;
+    *seat = savedSeat;
+    *hc = savedHost;
+    serverSimDestroy(sim);
+    UT_ASSERT_MSG(fail == 0, "Bot Host bot rewind does not match the human rule");
     return 0;
 }

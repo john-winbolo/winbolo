@@ -50,6 +50,30 @@
  *ARGUMENTS:
  *  buttons - The bitmask from InputPacket.buttons
  *********************************************************/
+/* -bothost-stale-keys-ms (serverSimSetBotHostStaleKeysMs). */
+static SDL_AtomicInt botHostStaleKeysMs = { BOT_HOST_STALE_KEYS_MS_DEFAULT };
+
+void serverSimSetBotHostStaleKeysMs(int ms) {
+    SDL_SetAtomicInt(&botHostStaleKeysMs, ms > 0 ? ms : 0);
+}
+
+int serverSimGetBotHostStaleKeysMs(void) {
+    return SDL_GetAtomicInt(&botHostStaleKeysMs);
+}
+
+/* True when a bot that runs on a Bot Host has sent no input for the stale
+ * time: its held keys are let go. dryTicks counts half-steps
+ * (GAME_TICK_LENGTH ms each). */
+static bool serverSimStaleKeysRelease(const ServerSim *sim, BYTE count) {
+    int ms = SDL_GetAtomicInt(&botHostStaleKeysMs);
+    if (ms <= 0) return false;
+    if ((uint64_t)sim->inputDryTicks[count] * GAME_TICK_LENGTH <
+        (uint64_t)ms) {
+        return false;
+    }
+    return botManagerIsRemote(sim, count);
+}
+
 static tankButton translateInputToTankButton(uint8_t buttons) {
     bool accel = (buttons & INPUT_BTN_ACCEL) != 0;
     bool decel = (buttons & INPUT_BTN_DECEL) != 0;
@@ -463,7 +487,7 @@ static void serverSimApplyOneInput(ServerSim *sim, BYTE count,
             sim->sim.lagCompTicks = 0;
         } else {
             uint8_t compTicks = serverSimComputeLagCompTicks(
-                sim->tick, applied.viewTick, sim->playerPing[count]);
+                sim->tick, applied.viewTick, sim->lagCompPingMs[count]);
             sim->sim.lagCompTicks = compTicks;
             sim->statLastRewindTicks[count] = compTicks;
         }
@@ -981,6 +1005,11 @@ static void simRunHalfStep(ServerSim *sim) {
                 synth.tick      = sim->lastProcessedInput[count] + 1;
                 synth.playerNum = count;
                 synth.buttons   = sim->lastInputButtons[count];
+                /* A Bot Host that sent nothing for the stale time (a
+                 * frozen laptop): its bot's keys are let go, so it does
+                 * not turn in place on held keys. The apply saves 0 as the
+                 * held buttons; the next real input brings them back. */
+                if (serverSimStaleKeysRelease(sim, count)) synth.buttons = 0;
                 serverSimApplyOneInput(sim, count, &synth, TRUE);
             } else {
                 /* A player that has not established an input stream still
@@ -1506,6 +1535,7 @@ void serverSimApplyInput(ServerSim *sim, const InputPacket *input) {
     sim->inputQueue[p][head & (SERVER_INPUT_QUEUE_SIZE - 1)] = sanitized;
     sim->inputQueueHead[p] = head + 1;
     sim->playerPing[p] = transportUdpServerGetClientPing(p);
+    sim->lagCompPingMs[p] = transportUdpServerGetLagCompPingMs(p);
 }
 
 #ifdef WB_NETDEBUG

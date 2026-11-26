@@ -20,7 +20,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include <zlib.h>
+#include "brain_record_io.h"
 
 #include "global.h"
 #include "server_sim.h"
@@ -162,15 +162,6 @@ int run_brain_removed_items_info_masks(void) {
 /* the rest of the round.                                                    */
 /* ------------------------------------------------------------------------ */
 
-static size_t brGzRead(void *ctx, void *dst, size_t len) {
-    int got = gzread((gzFile)ctx, dst, (unsigned)len);
-    return got > 0 ? (size_t)got : 0;
-}
-
-static bool brGzSkip(void *ctx, size_t len) {
-    return gzseek((gzFile)ctx, (z_off_t)len, SEEK_CUR) >= 0;
-}
-
 int run_brain_removed_items_recording_masks(void) {
     ServerSim *sim;
     ScenarioOp op;
@@ -236,7 +227,7 @@ int run_brain_removed_items_recording_masks(void) {
     /* Walk the file back. */
     snprintf(path, sizeof(path), "%s/%s", dir, BRAINREC_FILENAME);
     {
-        gzFile g = gzopen(path, "rb");
+        BrainRecIn *g = brainRecInOpen(path);
         BrainRecReader r;
         BrainRecFrameInfo fi;
         BrainRecWalkStatus st;
@@ -244,16 +235,13 @@ int run_brain_removed_items_recording_masks(void) {
         int after = 0;
 
         UT_ASSERT_MSG(g != NULL, "the recorder wrote no %s", path);
-        memset(&r, 0, sizeof(r));
-        r.ctx = g;
-        r.read = brGzRead;
-        r.skip = brGzSkip;
+        brainRecWalkReaderFromIn(&r, g);
         if (brainRecWalkPreamble(&r, NULL, NULL) != BRAINREC_WALK_OK) {
-            gzclose(g);
+            brainRecInClose(g);
             UT_ASSERT_MSG(false, "the recording's header did not read");
         }
         if (r.version != BRAINREC_VERSION) {
-            gzclose(g);
+            brainRecInClose(g);
             UT_ASSERT_MSG(false, "the recording is version %u, not %u",
                           (unsigned)r.version, (unsigned)BRAINREC_VERSION);
         }
@@ -261,7 +249,7 @@ int run_brain_removed_items_recording_masks(void) {
             uint32_t wantP = (fi.tick > lastBefore) ? (allPills & ~(uint32_t)2u) : allPills;
             uint32_t wantB = (fi.tick > lastBefore) ? (allBases & ~(uint32_t)2u) : allBases;
             if (fi.pillsOnMap != wantP || fi.basesOnMap != wantB) {
-                gzclose(g);
+                brainRecInClose(g);
                 UT_ASSERT_MSG(false,
                               "frame at tick %lu has pills 0x%lx bases 0x%lx, "
                               "wanted 0x%lx and 0x%lx (removal after tick %lu)",
@@ -275,7 +263,7 @@ int run_brain_removed_items_recording_masks(void) {
                 before++;
             }
         }
-        gzclose(g);
+        brainRecInClose(g);
         UT_ASSERT_MSG(st == BRAINREC_WALK_EOF, "the recording ended mid-frame");
         UT_ASSERT_MSG(before > 0 && after > 0,
                       "the recording has %d frames before the removal and %d after",

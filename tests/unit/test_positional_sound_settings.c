@@ -229,14 +229,15 @@ int run_positional_sound_lobby_event(void) {
                   "positional sound off did not survive the codec");
 
     /* A body that stops just before the byte reads as off, and keeps the
-     * mods byte ahead of it. */
+     * mods byte ahead of it. The host bot capacity byte follows this one,
+     * so the cut is two bytes. */
     memset(&in, 0, sizeof(in));
     in.type = CTRL_LOBBY_SETTINGS;
     in.u.lobbySettings.lobbyModsOff = true;
     in.u.lobbySettings.lobbyPositionalSound = true;
     UT_ASSERT(benc(&in, NULL, body, sizeof(body), &len) == ENCODE_OK);
     memset(&out, 0, sizeof(out));
-    UT_ASSERT_MSG(bdec(body, len - 1, &out),
+    UT_ASSERT_MSG(bdec(body, len - 2, &out),
                   "a body with no positional-sound byte failed to decode");
     UT_ASSERT_MSG(!out.u.lobbySettings.lobbyPositionalSound,
                   "a body with no positional-sound byte must read as off");

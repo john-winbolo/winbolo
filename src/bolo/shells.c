@@ -321,12 +321,17 @@ void shellsAddItem(GameSim *sim, shells *value, WORLD x, WORLD y, TURNTYPE angle
  *
  * It is taken off only a rewind longer than one tick, so it never takes a
  * rewind down to nothing. Single player sends no view tick and has no ping,
- * so its rewind is always one and single player is unchanged. A bot is the
- * same: view tick 0 and ping 0 give (0 + 20) / 20 = 1, so every bot shell is
- * rewound one tick against tanks and builders, although the bot reads the
- * server's present state. That is older than this rule and not changed
- * here. A rewind measured as exactly one, a client on a LAN, also keeps its
- * one against builders.
+ * so its rewind is always one and single player is unchanged. A bot whose
+ * brain runs in the server is the same: view tick 0 and ping 0 give
+ * (0 + 20) / 20 = 1, so its shells are rewound one tick against tanks and
+ * builders, although the bot reads the server's present state. That is older
+ * than this rule and not changed here. A bot whose brain runs on a remote
+ * Bot Host is not the same: it reads snapshots that come over the network,
+ * as a human does, and gets a human's rewind. It sends the view tick of the
+ * snapshot its think used, and before it has two snapshots the server uses
+ * its host's measured lag in place of a ping
+ * (transportUdpServerGetLagCompPingMs). A rewind measured as exactly one, a
+ * client on a LAN, also keeps its one against builders.
  *
  * Known small gap: a networked client that has not yet applied two snapshots
  * sends no view tick the server can use, and the server falls back to its

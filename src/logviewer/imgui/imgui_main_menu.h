@@ -33,6 +33,7 @@ extern bool lv_g_show_tank_window;
 extern bool lv_g_tank_show_base;
 extern bool lv_g_tank_show_lag;
 extern bool lv_g_show_chat_window;
+extern bool lv_g_show_bot_hosts_window;
 extern bool lv_g_reset_window_positions;
 
 /* Whether the map outlines the regions the recording's scripts.json

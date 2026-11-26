@@ -89,6 +89,12 @@ BrainRecWalkStatus brainRecWalkPreamble(BrainRecReader *r,
  * repeatedly after brainRecWalkPreamble until it returns EOF. */
 BrainRecWalkStatus brainRecWalkFrame(BrainRecReader *r, BrainRecFrameInfo *out);
 
+/* Point r at an open .btr container reader (brain_record_io.h), so a
+ * caller walks a zstd or a gzip file the same way. r->version is left 0
+ * for brainRecWalkPreamble to fill. */
+struct BrainRecIn;
+void brainRecWalkReaderFromIn(BrainRecReader *r, struct BrainRecIn *in);
+
 #ifdef __cplusplus
 }
 #endif

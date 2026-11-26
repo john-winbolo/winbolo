@@ -8,8 +8,8 @@
  *  materialises every frame when it loads one, so a long game costs more
  *  RAM than the machine has. Halving the frame count halves that cost.
  *
- *  Why a splitter and not a byte-chopper: brainrec.btr is a gzip stream
- *  of variable-length frames, and its map track is delta-encoded — only
+ *  Why a splitter and not a byte-chopper: brainrec.btr is a compressed
+ *  stream (zstd, or gzip for old files) of variable-length frames, and its map track is delta-encoded — only
  *  every BRAINREC_MAP_KEYFRAME_INTERVAL'th frame carries the whole map.
  *  A part that starts anywhere else replays with the terrain of whatever
  *  keyframe it never saw. So the tool walks real frames, cuts only on a
@@ -19,7 +19,7 @@
  *  Memory: the tool never holds a frame. It walks with the shared
  *  brain_record_walk.c walker, which hands every variable-length block
  *  to a reader that copies it through a fixed 256 KB buffer straight
- *  into the output gzip stream. Peak working set is a few MB regardless
+ *  into the output zstd stream. Peak working set is a few MB regardless
  *  of how big the recording is; the tool prints it when it finishes.
  *
  *  Companion logs are sliced to match. Careful: .btr frame ticks are ENGINE
@@ -51,7 +51,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <zlib.h>
-
+#include "brain_record_io.h"
 #include "brain_record_walk.h"
 
 #ifdef _WIN32
@@ -69,42 +69,42 @@
 
 /* ---- Byte source for the shared walker ---------------------------------- */
 
-/* One gzip input, optionally teed into one gzip output. `out` NULL means
- * "consume and discard", which is what the index and verify passes do. */
+/* One .btr input (zstd or gzip), optionally teed into one zstd output.
+ * `out` NULL means "consume and discard", which is what the index and verify
+ * passes do. */
 typedef struct {
-    gzFile         in;
-    gzFile         out;
+    BrainRecIn    *in;
+    BrainRecOut   *out;
     bool           writeFailed;
     unsigned char *buf;         /* SPLIT_COPY_BYTES scratch for skip() */
-} GzTee;
+} BtrTee;
 
-static size_t gzTeeRead(void *ctx, void *dst, size_t len) {
-    GzTee *t = (GzTee *)ctx;
-    int got = gzread(t->in, dst, (unsigned)len);
-    if (got <= 0) return 0;
-    if (t->out && gzwrite(t->out, dst, (unsigned)got) != got) t->writeFailed = true;
-    return (size_t)got;
+static size_t btrTeeRead(void *ctx, void *dst, size_t len) {
+    BtrTee *t = (BtrTee *)ctx;
+    size_t got = brainRecInRead(t->in, dst, len);
+    if (got && t->out && !brainRecOutWrite(t->out, dst, got)) t->writeFailed = true;
+    return got;
 }
 
-/* Consume len bytes. Deliberately a bounded read loop rather than gzseek:
- * gzseek costs the same inflate on a read stream, and this version is the
- * copy path too, so both directions go through one piece of code. */
-static bool gzTeeSkip(void *ctx, size_t len) {
-    GzTee *t = (GzTee *)ctx;
+/* Consume len bytes. Without an output this is the container's own skip,
+ * which can jump whole blocks; with one, a bounded read loop copies them. */
+static bool btrTeeSkip(void *ctx, size_t len) {
+    BtrTee *t = (BtrTee *)ctx;
+    if (!t->out) return brainRecInSkip(t->in, (uint64_t)len);
     while (len > 0) {
-        unsigned chunk = (unsigned)(len < SPLIT_COPY_BYTES ? len : SPLIT_COPY_BYTES);
-        int got = gzread(t->in, t->buf, chunk);
-        if (got != (int)chunk) return false;
-        if (t->out && gzwrite(t->out, t->buf, (unsigned)got) != got) t->writeFailed = true;
-        len -= (size_t)got;
+        size_t chunk = len < SPLIT_COPY_BYTES ? len : SPLIT_COPY_BYTES;
+        size_t got = brainRecInRead(t->in, t->buf, chunk);
+        if (got != chunk) return false;
+        if (!brainRecOutWrite(t->out, t->buf, got)) t->writeFailed = true;
+        len -= got;
     }
     return true;
 }
 
-static void gzTeeBind(BrainRecReader *r, GzTee *t) {
+static void btrTeeBind(BrainRecReader *r, BtrTee *t) {
     r->ctx     = t;
-    r->read    = gzTeeRead;
-    r->skip    = gzTeeSkip;
+    r->read    = btrTeeRead;
+    r->skip    = btrTeeSkip;
     r->version = 0;   /* the preamble walk sets the file's own */
 }
 
@@ -280,22 +280,79 @@ static bool copyFileWhole(const char *src, const char *dst, unsigned char *buf, 
 /* Hands a text file out in whole lines through a fixed window, so both the
  * analysis pass and the slicing pass see the same line boundaries and neither
  * has to hold the file. A line longer than the window comes out in pieces;
- * only the first piece reports isLineStart. */
+ * only the first piece reports isLineStart.
+ *
+ * The server compresses a block's brain logs when the block ends, so a log
+ * can be <name>, a compressed <name>.zst or <name>.gz (print2 logs are
+ * zstd; older builds and .jsonl logs are gzip), or a compressed copy and a
+ * plain one (the compressed copy holds the earlier lines). lineScanOpen
+ * reads the compressed copies and then <name>, whichever exist.
+ * brainRecInOpen detects the form, and reads a plain file as it is. */
 typedef struct {
-    FILE          *fp;
+    BrainRecIn    *src[3];
+    int            nSrc, cur;
     unsigned char *buf;
     size_t         len, pos;
     bool           eof;
+    bool           readError;
     bool           atLineStart;
 } LineScan;
 
-static void lineScanInit(LineScan *s, FILE *fp, unsigned char *buf) {
-    s->fp  = fp;
+static bool pathIsFile(const char *path) {
+    SDL_PathInfo pi;
+    return SDL_GetPathInfo(path, &pi) && pi.type == SDL_PATHTYPE_FILE;
+}
+
+/* The compressed form of <path>'s earlier lines: zstd when <path>.zst
+ * exists, else gzip when <path>.gz exists, else plain. The parts of a
+ * sliced log are written in this form. */
+static BrainLogFormat logCompressedForm(const char *path) {
+    char other[SPLIT_PATH_MAX];
+    SDL_snprintf(other, sizeof other, "%s%s", path, BRAINLOG_ZSTD_EXT);
+    if (pathIsFile(other)) return BRAINLOG_ZSTD;
+    SDL_snprintf(other, sizeof other, "%s%s", path, BRAINLOG_GZIP_EXT);
+    if (pathIsFile(other)) return BRAINLOG_GZIP;
+    return BRAINLOG_PLAIN;
+}
+
+static const char *logFormExt(BrainLogFormat f) {
+    return f == BRAINLOG_ZSTD ? BRAINLOG_ZSTD_EXT
+         : f == BRAINLOG_GZIP ? BRAINLOG_GZIP_EXT : "";
+}
+
+static void lineScanClose(LineScan *s) {
+    for (int k = 0; k < s->nSrc; k++) brainRecInClose(s->src[k]);
+    s->nSrc = 0;
+}
+
+static bool lineScanOpen(LineScan *s, const char *path, unsigned char *buf) {
+    memset(s, 0, sizeof *s);
     s->buf = buf;
-    s->len = 0;
-    s->pos = 0;
-    s->eof = false;
     s->atLineStart = true;
+    char zst[SPLIT_PATH_MAX], gz[SPLIT_PATH_MAX];
+    SDL_snprintf(zst, sizeof zst, "%s%s", path, BRAINLOG_ZSTD_EXT);
+    SDL_snprintf(gz, sizeof gz, "%s%s", path, BRAINLOG_GZIP_EXT);
+    const char *names[3] = { zst, gz, path };
+    for (int i = 0; i < 3; i++) {
+        if (!pathIsFile(names[i])) continue;
+        BrainRecIn *in = brainRecInOpen(names[i]);
+        if (!in) {
+            lineScanClose(s);
+            return false;
+        }
+        s->src[s->nSrc++] = in;
+    }
+    return s->nSrc > 0;
+}
+
+static size_t lineScanRead(LineScan *s, unsigned char *dst, size_t want) {
+    while (s->cur < s->nSrc) {
+        size_t got = brainRecInRead(s->src[s->cur], dst, want);
+        if (got > 0) return got;
+        if (brainRecInError(s->src[s->cur])) s->readError = true;
+        s->cur++;
+    }
+    return 0;
 }
 
 static bool lineScanNext(LineScan *s, char **chunk, size_t *chunkLen,
@@ -329,7 +386,7 @@ static bool lineScanNext(LineScan *s, char **chunk, size_t *chunkLen,
             s->pos  = 0;
         }
         if (s->eof) continue;   /* bytes left with no newline — emit them next */
-        size_t got = fread(s->buf + s->len, 1, SPLIT_TEXT_BYTES - s->len, s->fp);
+        size_t got = lineScanRead(s, s->buf + s->len, SPLIT_TEXT_BYTES - s->len);
         if (got == 0) s->eof = true;
         else          s->len += got;
     }
@@ -349,10 +406,26 @@ static bool lineScanNext(LineScan *s, char **chunk, size_t *chunkLen,
  * event with an engine tick: its Nth entry for a bot is the Nth "TICK KILLED"
  * banner in that bot's print2 log, so runStart = engineTick - 2*(brainTick-1).
  * Measured on 20260827_020243_1_survival, bot 8: killbot engine 522 against
- * print2 brain 11 gives runStart 502 — exactly the recording's first frame. */
+ * print2 brain 11 gives runStart 502 — exactly the recording's first frame.
+ *
+ * A brain now seeds its tick from the engine clock (state.tick starts at
+ * BRAIN_START_ENGINE_TICK / 2) and prints one line when it opens:
+ *   "BRAIN_OPEN t=<seed> engine_tick=<created at> ..."
+ * Brain tick seed+1 is its first think, at the engine tick it was created
+ * at, so runStart = engine_tick - 2*seed. That line is the best anchor.
+ *
+ * A log can also begin in the middle of a brain's life: a -brain-debug
+ * session opens a new block directory every 15 minutes and points print2
+ * at it, but the brain keeps running, so the new block's log starts at a
+ * tick such as 54056 and has no BRAIN_OPEN line. Such a first run is
+ * anchored on its first tick, which lines up with the block's first frame:
+ * runStart = firstEngineTick - 2*(firstTick-1). (The old rule put brain
+ * tick 1 at the block's first frame, so every cut fell far too early and
+ * the whole log went to the block's last part.) */
 typedef struct {
     long long startEngine;
     long long maxTick;
+    long long firstTick;   /* first tick marker of the run, -1 if none */
     bool      haveStart;
 } RunInfo;
 
@@ -395,10 +468,8 @@ static bool killAnchorsPush(KillAnchors *ka, int bot, long long tick) {
 
 /* "[<stamp>] tick=<engine> bot=<n> KILLED: ..." */
 static bool loadKillAnchors(const char *path, KillAnchors *ka, unsigned char *buf) {
-    FILE *fp = fopen(path, "rb");
-    if (!fp) return false;
     LineScan s;
-    lineScanInit(&s, fp, buf);
+    if (!lineScanOpen(&s, path, buf)) return false;
     char *chunk; size_t clen, avail; bool ls;
     bool ok = true;
     while (ok && lineScanNext(&s, &chunk, &clen, &ls, &avail)) {
@@ -413,8 +484,29 @@ static bool loadKillAnchors(const char *path, KillAnchors *ka, unsigned char *bu
         }
         if (tick >= 0 && bot >= 0) ok = killAnchorsPush(ka, (int)bot, tick);
     }
-    fclose(fp);
+    lineScanClose(&s);
     return ok;
+}
+
+/* "...BRAIN_OPEN t=<seed> engine_tick=<e> ..." in the first part of a line.
+ * Returns true and the two numbers if the line has them. */
+static bool lineBrainOpen(const char *p, size_t avail, long long *seed, long long *engine) {
+    size_t lim = avail < SPLIT_LINE_PREFIX ? avail : SPLIT_LINE_PREFIX;
+    for (size_t i = 0; i + 13 <= lim; i++) {
+        if (p[i] == '\n') break;
+        if (memcmp(p + i, "BRAIN_OPEN t=", 13) != 0) continue;
+        size_t j = i + 13;
+        long long t = scanNumber(p + j, lim - j);
+        if (t < 0) return false;
+        while (j < lim && p[j] >= '0' && p[j] <= '9') j++;
+        if (j + 13 > lim || memcmp(p + j, " engine_tick=", 13) != 0) return false;
+        long long e = scanNumber(p + j + 13, lim - j - 13);
+        if (e < 0) return false;
+        *seed = t;
+        *engine = e;
+        return true;
+    }
+    return false;
 }
 
 static bool lineIsTickKilled(const char *p, size_t avail) {
@@ -432,12 +524,11 @@ static bool lineIsTickKilled(const char *p, size_t avail) {
 static int scanBrainRuns(const char *path, TickKind kind, const long long *anchorE,
                          int nAnchors, long long firstEngineTick,
                          RunInfo *runs, unsigned char *buf) {
-    FILE *fp = fopen(path, "rb");
-    if (!fp) return -1;
     LineScan s;
-    lineScanInit(&s, fp, buf);
+    if (!lineScanOpen(&s, path, buf)) return -1;
 
     memset(runs, 0, (size_t)SPLIT_MAX_RUNS * sizeof *runs);
+    for (int r = 0; r < SPLIT_MAX_RUNS; r++) runs[r].firstTick = -1;
     int nRuns = 1;
     long long prevTick = -1, curTick = -1;
     int kills = 0;
@@ -449,8 +540,15 @@ static int scanBrainRuns(const char *path, TickKind kind, const long long *ancho
         if (t >= 0) {
             if (prevTick >= 0 && t < prevTick && nRuns < SPLIT_MAX_RUNS) nRuns++;
             prevTick = curTick = t;
+            if (runs[nRuns - 1].firstTick < 0) runs[nRuns - 1].firstTick = t;
             if (t > runs[nRuns - 1].maxTick) runs[nRuns - 1].maxTick = t;
             continue;
+        }
+        long long seed, eng;
+        if (kind == TICK_PRINT2 && !runs[nRuns - 1].haveStart &&
+            lineBrainOpen(chunk, avail, &seed, &eng)) {
+            runs[nRuns - 1].startEngine = eng - 2 * seed;
+            runs[nRuns - 1].haveStart = true;
         }
         if (kind == TICK_PRINT2 && curTick >= 0 && lineIsTickKilled(chunk, avail)) {
             if (!runs[nRuns - 1].haveStart && kills < nAnchors) {
@@ -460,12 +558,14 @@ static int scanBrainRuns(const char *path, TickKind kind, const long long *ancho
             kills++;
         }
     }
-    fclose(fp);
+    lineScanClose(&s);
 
-    /* A run with no kill in it gets chained off the previous run's end; so
-     * does an anchor that came out non-monotonic. */
+    /* A run with no anchor gets chained off the previous run's end; so does
+     * an anchor that came out non-monotonic. The first run has no previous
+     * run: it is anchored on its first tick at the first frame (see above). */
     for (int r = 0; r < nRuns; r++) {
-        long long chained = (r == 0) ? firstEngineTick
+        long long first0 = runs[0].firstTick > 1 ? runs[0].firstTick : 1;
+        long long chained = (r == 0) ? firstEngineTick - 2 * (first0 - 1)
                                      : runs[r - 1].startEngine + 2 * runs[r - 1].maxTick;
         if (!runs[r].haveStart || (r > 0 && runs[r].startEngine < chained)) {
             runs[r].startEngine = chained;
@@ -523,20 +623,22 @@ typedef struct {
  * Engine-tick logs (killbot, perf) compare their tick straight against
  * partStartEngine; brain logs compare (run, tick) against the cut points,
  * because their tick counter restarts. */
+/* Open a part's log for writing in the given form. */
+static BrainLogOut *openPartLog(const char *path, BrainLogFormat fmt) {
+    return brainLogOutOpen(path, fmt, 0);
+}
+
 static bool sliceTextFile(const char *inPath, TickKind kind, int nParts,
                           const long long *partStartEngine, const BotCuts *cuts,
-                          char outPaths[SPLIT_MAX_PARTS][SPLIT_PATH_MAX],
+                          char outPaths[SPLIT_MAX_PARTS][SPLIT_PATH_MAX], BrainLogFormat outFmt,
                           unsigned char *buf, SliceReport *rep) {
-    FILE *in = fopen(inPath, "rb");
-    if (!in) return false;
-    FILE *out = fopen(outPaths[0], "wb");
-    if (!out) { fclose(in); return false; }
+    LineScan s;
+    if (!lineScanOpen(&s, inPath, buf)) return false;
+    BrainLogOut *out = openPartLog(outPaths[0], outFmt);
+    if (!out) { lineScanClose(&s); return false; }
 
     memset(rep, 0, sizeof *rep);
     for (int p = 0; p < nParts; p++) { rep->firstTick[p] = -1; rep->lastTick[p] = -1; }
-
-    LineScan s;
-    lineScanInit(&s, in, buf);
     int  cur = 0, runIdx = 0;
     long long prevTick = -1;
     bool ok = true;
@@ -559,9 +661,9 @@ static bool sliceTextFile(const char *inPath, TickKind kind, int nParts,
                         past = (t >= partStartEngine[cur + 1]);
                     }
                     if (!past) break;
-                    if (fclose(out) != 0) ok = false;
+                    if (!brainLogOutClose(out)) ok = false;
                     cur++;
-                    out = fopen(outPaths[cur], "wb");
+                    out = openPartLog(outPaths[cur], outFmt);
                     if (!out) { ok = false; break; }
                 }
                 if (!ok) break;
@@ -571,19 +673,19 @@ static bool sliceTextFile(const char *inPath, TickKind kind, int nParts,
             }
             rep->partLines[cur]++;
         }
-        if (fwrite(chunk, 1, clen, out) != clen) { ok = false; break; }
+        if (clen > 0 && !brainLogOutWrite(out, chunk, clen)) { ok = false; break; }
     }
 
-    if (ferror(in)) ok = false;
-    fclose(in);
-    if (out && fclose(out) != 0) ok = false;
+    if (s.readError) ok = false;
+    lineScanClose(&s);
+    if (out && !brainLogOutClose(out)) ok = false;
 
     /* Parts the log never reached still need an (empty) file, so a part
      * directory never looks like it is missing a bot's log. */
     for (int p = cur + 1; p < nParts && ok; p++) {
-        FILE *f = fopen(outPaths[p], "wb");
+        BrainLogOut *f = openPartLog(outPaths[p], outFmt);
         if (!f) { ok = false; break; }
-        fclose(f);
+        if (!brainLogOutClose(f)) ok = false;
     }
     return ok;
 }
@@ -595,20 +697,20 @@ static bool sliceTextFile(const char *inPath, TickKind kind, int nParts,
  * so this costs 5 bytes per frame no matter how fat the frames are. */
 static bool indexFrames(const char *btrPath, FrameIxList *ix, char mapName[64],
                         uint32_t *legendLen, unsigned char *copyBuf) {
-    gzFile g = gzopen(btrPath, "rb");
+    BrainRecIn *g = brainRecInOpen(btrPath);
     if (!g) {
         fprintf(stderr, "brainrec_split: cannot open '%s'\n", btrPath);
         return false;
     }
-    GzTee tee;
+    BtrTee tee;
     memset(&tee, 0, sizeof tee);
     tee.in  = g;
     tee.buf = copyBuf;
     BrainRecReader r;
-    gzTeeBind(&r, &tee);
+    btrTeeBind(&r, &tee);
 
     if (brainRecWalkPreamble(&r, mapName, legendLen) != BRAINREC_WALK_OK) {
-        gzclose(g);
+        brainRecInClose(g);
         fprintf(stderr, "brainrec_split: '%s' is not a brainrec.btr this build reads (v6 to v%u)\n",
                 btrPath, (unsigned)brainRecWalkFormatVersion());
         return false;
@@ -628,7 +730,7 @@ static bool indexFrames(const char *btrPath, FrameIxList *ix, char mapName[64],
             break;
         }
         if (!frameIxPush(ix, fi.tick, fi.mapKeyframe)) {
-            gzclose(g);
+            brainRecInClose(g);
             fprintf(stderr, "brainrec_split: out of memory building frame index\n");
             return false;
         }
@@ -640,17 +742,21 @@ static bool indexFrames(const char *btrPath, FrameIxList *ix, char mapName[64],
             fflush(stdout);
         }
     }
-    gzclose(g);
+    brainRecInClose(g);
     return ix->count > 0;
 }
 
 /* Pass 2: copy frames [from,to) into an already-open output that has had the
  * preamble written. Frames go through the walker so the copy is made of whole
- * frames — a byte range guessed from file offsets could land mid-frame. */
-static bool copyFrameRange(BrainRecReader *r, size_t count, uint32_t *firstTick,
+ * frames — a byte range guessed from file offsets could land mid-frame. Every
+ * frame the index marks as a map keyframe starts a new zstd block, so the
+ * part has the same seek points as a recording. */
+static bool copyFrameRange(BrainRecReader *r, BrainRecOut *out, const FrameIx *ixFrom,
+                           size_t count, uint32_t *firstTick,
                            uint32_t *lastTick, bool *firstIsKeyframe) {
     for (size_t i = 0; i < count; i++) {
         BrainRecFrameInfo fi;
+        if (ixFrom[i].keyframe && !brainRecOutNewBlock(out)) return false;
         if (brainRecWalkFrame(r, &fi) != BRAINREC_WALK_OK) return false;
         if (i == 0) {
             *firstTick = fi.tick;
@@ -666,19 +772,19 @@ static bool copyFrameRange(BrainRecReader *r, size_t count, uint32_t *firstTick,
 static bool verifyPart(const char *btrPath, const char *expectMap, uint32_t expectLegendLen,
                        size_t *framesOut, uint32_t *firstTickOut, uint32_t *lastTickOut,
                        bool *firstKeyframeOut, unsigned char *copyBuf) {
-    gzFile g = gzopen(btrPath, "rb");
+    BrainRecIn *g = brainRecInOpen(btrPath);
     if (!g) return false;
-    GzTee tee;
+    BtrTee tee;
     memset(&tee, 0, sizeof tee);
     tee.in  = g;
     tee.buf = copyBuf;
     BrainRecReader r;
-    gzTeeBind(&r, &tee);
+    btrTeeBind(&r, &tee);
 
     char mapName[64];
     uint32_t llen = 0;
-    if (brainRecWalkPreamble(&r, mapName, &llen) != BRAINREC_WALK_OK) { gzclose(g); return false; }
-    if (strcmp(mapName, expectMap) != 0 || llen != expectLegendLen) { gzclose(g); return false; }
+    if (brainRecWalkPreamble(&r, mapName, &llen) != BRAINREC_WALK_OK) { brainRecInClose(g); return false; }
+    if (strcmp(mapName, expectMap) != 0 || llen != expectLegendLen) { brainRecInClose(g); return false; }
 
     size_t frames = 0;
     uint32_t first = 0, last = 0;
@@ -687,12 +793,12 @@ static bool verifyPart(const char *btrPath, const char *expectMap, uint32_t expe
         BrainRecFrameInfo fi;
         BrainRecWalkStatus st = brainRecWalkFrame(&r, &fi);
         if (st == BRAINREC_WALK_EOF) break;
-        if (st != BRAINREC_WALK_OK) { gzclose(g); return false; }
+        if (st != BRAINREC_WALK_OK) { brainRecInClose(g); return false; }
         if (frames == 0) { first = fi.tick; firstKf = fi.mapKeyframe; }
         last = fi.tick;
         frames++;
     }
-    gzclose(g);
+    brainRecInClose(g);
     *framesOut = frames;
     *firstTickOut = first;
     *lastTickOut = last;
@@ -728,7 +834,12 @@ static double peakResidentMB(void) {
     return -1.0;
 }
 
-int main(int argc, char **argv) {
+/* The unit tests compile this file with BRAINREC_SPLIT_ENTRY set to another
+ * name, so they can run the whole tool on a session they record. */
+#ifndef BRAINREC_SPLIT_ENTRY
+#define BRAINREC_SPLIT_ENTRY main
+#endif
+int BRAINREC_SPLIT_ENTRY(int argc, char **argv) {
     SDL_SetMainReady();
 
     const char *input = NULL;
@@ -798,7 +909,7 @@ int main(int argc, char **argv) {
     }
 
     long long srcBytes = fileSize(btrPath);
-    printf("Input: %s (%.1f MB gzipped)\n", btrPath, srcBytes / 1.0e6);
+    printf("Input: %s (%.1f MB compressed)\n", btrPath, srcBytes / 1.0e6);
     printf("Format version: %u\n", (unsigned)brainRecWalkFormatVersion());
 
     /* ---- Pass 1: index ---- */
@@ -929,7 +1040,7 @@ int main(int argc, char **argv) {
     /* Each part needs its own copy of the header + legend. They're read once
      * into a small buffer here, so the input is opened exactly once more. */
     bool ok = true;
-    gzFile in = companionsOnly ? NULL : gzopen(btrPath, "rb");
+    BrainRecIn *in = companionsOnly ? NULL : brainRecInOpen(btrPath);
     unsigned char *preamble = NULL;
     if (!companionsOnly) {
         if (!in) {
@@ -939,37 +1050,35 @@ int main(int argc, char **argv) {
         }
         size_t preambleLen = brainRecWalkHeaderSize() + 4 + legendLen;
         preamble = (unsigned char *)malloc(preambleLen);
-        if (!preamble || gzread(in, preamble, (unsigned)preambleLen) != (int)preambleLen) {
+        if (!preamble || brainRecInRead(in, preamble, preambleLen) != preambleLen) {
             fprintf(stderr, "brainrec_split: cannot read preamble\n");
-            gzclose(in); free(preamble); free(ix.v); free(copyBuf); free(textBuf);
+            brainRecInClose(in); free(preamble); free(ix.v); free(copyBuf); free(textBuf);
             return 1;
         }
 
         printf("\nWriting parts...\n");
         for (int p = 0; p < parts && ok; p++) {
-            /* "wb1": the same fastest-deflate level the recorder writes with —
-             * this data is zero-padded structs and repetitive JSON, so level 1
-             * keeps nearly all the ratio for a fraction of the CPU. */
-            gzFile out = gzopen(partBtr[p], "wb1");
+            /* The same zstd container and settings the recorder writes. */
+            BrainRecOut *out = brainRecOutOpen(partBtr[p]);
             if (!out) {
                 fprintf(stderr, "brainrec_split: cannot create '%s'\n", partBtr[p]);
                 ok = false;
                 break;
             }
-            if (gzwrite(out, preamble, (unsigned)preambleLen) != (int)preambleLen) {
+            if (!brainRecOutWrite(out, preamble, preambleLen)) {
                 fprintf(stderr, "brainrec_split: write failed on '%s'\n", partBtr[p]);
-                gzclose(out);
+                brainRecOutClose(out);
                 ok = false;
                 break;
             }
 
-            GzTee tee;
+            BtrTee tee;
             memset(&tee, 0, sizeof tee);
             tee.in  = in;
             tee.out = out;
             tee.buf = copyBuf;
             BrainRecReader r;
-            gzTeeBind(&r, &tee);
+            btrTeeBind(&r, &tee);
             /* The preamble was copied as bytes, not walked, so take the
              * file's version from the header in it: the frame tail depends
              * on it. */
@@ -978,13 +1087,14 @@ int main(int argc, char **argv) {
             uint32_t first = 0, last = 0;
             bool firstKf = false;
             size_t n = bound[p + 1] - bound[p];
-            if (!copyFrameRange(&r, n, &first, &last, &firstKf) || tee.writeFailed) {
+            if (!copyFrameRange(&r, out, &ix.v[bound[p]], n, &first, &last, &firstKf) ||
+                tee.writeFailed) {
                 fprintf(stderr, "brainrec_split: copy failed on part %d\n", p + 1);
-                gzclose(out);
+                brainRecOutClose(out);
                 ok = false;
                 break;
             }
-            if (gzclose(out) != Z_OK) {
+            if (!brainRecOutClose(out)) {
                 fprintf(stderr, "brainrec_split: close failed on '%s'\n", partBtr[p]);
                 ok = false;
                 break;
@@ -994,7 +1104,7 @@ int main(int argc, char **argv) {
                    firstKf ? "yes" : "NO", fileSize(partBtr[p]) / 1.0e6);
             fflush(stdout);
         }
-        gzclose(in);
+        brainRecInClose(in);
         free(preamble);
     }
 
@@ -1041,18 +1151,66 @@ int main(int argc, char **argv) {
         for (int order = 0; order < 2 && ok; order++) {
             for (int e = 0; e < n && ok; e++) {
                 if (strcmp(entries[e], "brainrec.btr") == 0) continue;
-                TickKind kind = classifyCompanion(entries[e]);
+
+                /* A finished block's brain logs are <name>.zst or <name>.gz
+                 * (see brainRecordCompressLogsAsync), maybe with a plain
+                 * <name> beside it. A tick-stamped log is sliced once under
+                 * its plain name and reads every form; its parts take the
+                 * compressed form that was there. */
+                char name[SPLIT_PATH_MAX];
+                SDL_strlcpy(name, entries[e], sizeof name);
+                bool isPackedEntry = false;   /* a .zst or .gz name */
+                if (hasSuffix(name, BRAINLOG_ZSTD_EXT)) {
+                    name[strlen(name) - strlen(BRAINLOG_ZSTD_EXT)] = '\0';
+                    isPackedEntry = true;
+                } else if (hasSuffix(name, BRAINLOG_GZIP_EXT)) {
+                    name[strlen(name) - strlen(BRAINLOG_GZIP_EXT)] = '\0';
+                    isPackedEntry = true;
+                }
+                TickKind kind = classifyCompanion(name);
+                if (kind == TICK_NONE) {
+                    SDL_strlcpy(name, entries[e], sizeof name);   /* copy as it is */
+                    isPackedEntry = false;
+                }
                 bool isPrint2 = (kind == TICK_PRINT2);
                 if (order == 0 && !isPrint2) continue;
                 if (order == 1 && isPrint2)  continue;
 
                 char src[SPLIT_PATH_MAX];
-                SDL_snprintf(src, sizeof src, "%s/%s", inputPath, entries[e]);
-                if (fileSize(src) < 0) continue;   /* subdirectory — skip */
+                SDL_snprintf(src, sizeof src, "%s/%s", inputPath, name);
+                if (isPackedEntry) {
+                    if (pathIsFile(src)) continue;   /* the plain entry reads all */
+                    /* With both .zst and .gz, slice once: at the .zst entry. */
+                    if (logCompressedForm(src) == BRAINLOG_ZSTD &&
+                        !hasSuffix(entries[e], BRAINLOG_ZSTD_EXT)) continue;
+                } else if (!pathIsFile(src)) {
+                    continue;                        /* subdirectory — skip */
+                }
+                BrainLogFormat outFmt = kind != TICK_NONE ? logCompressedForm(src)
+                                                          : BRAINLOG_PLAIN;
 
                 char dsts[SPLIT_MAX_PARTS][SPLIT_PATH_MAX];
-                for (int p = 0; p < parts; p++)
-                    SDL_snprintf(dsts[p], sizeof dsts[p], "%s/%s", partDir[p], entries[e]);
+                for (int p = 0; p < parts; p++) {
+                    SDL_snprintf(dsts[p], sizeof dsts[p], "%s/%s%s", partDir[p], name,
+                                 logFormExt(outFmt));
+                    /* Remove the other forms a previous run left, so a reader
+                     * never joins an old copy to the new one. */
+                    for (int f = BRAINLOG_PLAIN; kind != TICK_NONE && f <= BRAINLOG_ZSTD; f++) {
+                        if (f == (int)outFmt) continue;
+                        char other[SPLIT_PATH_MAX];
+                        SDL_snprintf(other, sizeof other, "%s/%s%s", partDir[p], name,
+                                     logFormExt((BrainLogFormat)f));
+                        if (pathIsFile(other)) {
+                            if (SDL_RemovePath(other)) {
+                                printf("  removed %s (left by an earlier run)\n",
+                                       other);
+                            } else {
+                                fprintf(stderr, "brainrec_split: cannot remove %s "
+                                        "(%s)\n", other, SDL_GetError());
+                            }
+                        }
+                    }
+                }
 
                 if (kind == TICK_NONE) {
                     for (int p = 0; p < parts && ok; p++) {
@@ -1069,8 +1227,8 @@ int main(int argc, char **argv) {
                 const BotCuts *cuts = NULL;
                 BotCuts shifted;
                 if (!tickKindIsEngine(kind)) {
-                    int bot = isPrint2 ? atoi(entries[e] + strlen("print2_bot"))
-                                       : atoi(entries[e] + strlen("player"));
+                    int bot = isPrint2 ? atoi(name + strlen("print2_bot"))
+                                       : atoi(name + strlen("player"));
                     if (bot < 0 || bot >= SPLIT_MAX_BOTS) bot = 0;
                     if (isPrint2 || !botCuts[bot].valid) {
                         int nRuns = scanBrainRuns(src, kind, anchors.v[bot], anchors.n[bot],
@@ -1106,7 +1264,7 @@ int main(int argc, char **argv) {
                 }
 
                 SliceReport rep;
-                if (!sliceTextFile(src, kind, parts, startEngine, cuts, dsts, textBuf, &rep)) {
+                if (!sliceTextFile(src, kind, parts, startEngine, cuts, dsts, outFmt, textBuf, &rep)) {
                     fprintf(stderr, "brainrec_split: slice failed for %s\n", entries[e]);
                     ok = false;
                     break;
