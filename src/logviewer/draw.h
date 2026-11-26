@@ -199,6 +199,10 @@ void lv_drawTankLabelsOver(LvTankLabelUse use, const struct SDL_FRect *src,
 
 void lv_drawDirtyScreen(void);
 
+/* True while the render target itself is the picture (a GIF capture): the
+ * flying shells then go into the target instead of over the zoomed map. */
+void lv_drawSetShellsInTarget(bool on);
+
 /* The two small bars over each live tank on the map: its armour, and under
  * that its shells (lv_tank_bars.h). Off until set. Drawn over the map in the
  * viewer's own window only: not in the game view, not when the viewer is

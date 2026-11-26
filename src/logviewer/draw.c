@@ -636,6 +636,9 @@ static void lvDrawBlitTargetToWindow(void) {
            map, and all that moves over it goes over them. */
         lvDrawPillNumbersOverBlit(&srcRect, &dstRect);
         lvDrawBaseNumbersOverBlit(&srcRect, &dstRect);
+        /* The flying shells, at the zoom the map shows at, as the game
+           draws them (lv_drawShells). */
+        lvDrawShellsOverBlit(&srcRect, &dstRect);
         /* The map pings first: the tank names, the bars and the ring of an
            event go over them. */
         lvDrawPingsOverBlit(&srcRect, &dstRect);
@@ -1678,7 +1681,72 @@ int lv_drawGetFrameRate(void) { return (int)g_dwFrameTotal; }
  * that point, not the picture's top left. The viewer calls it too, in the
  * Classic style the viewer draws in, so a shell is drawn where the game
  * draws it and where the server tests it. An explosion frame gets no tip
- * offset, as in the game. */
+ * offset, as in the game.
+ *
+ * The game calls spritePositionShell at its own zoom, straight onto the
+ * screen, so the half-pixel tip offsets (1.5 for N, E, S and W) are a whole
+ * number of screen pixels at 2x. The render target here is at 1x, and a
+ * shell drawn into it at x.5 is smeared over two pixels when the map is
+ * zoomed. So in the viewer's own window the flying shells are not drawn
+ * into the target: they are noted here and drawn over the zoomed map by
+ * lvDrawShellsOverBlit, with the same call at the zoom the map shows at.
+ * Where the target itself is the picture (embedded, a GIF capture) they go
+ * into the target at the pixel the game's renderer fills for x.5 at 1x: the
+ * floor. Explosions are whole tiles with no offset and stay in the target. */
+typedef struct {
+    BYTE mx, my, px, py, frame;
+    int srcX, srcY, srcW, srcH;
+} LvShellSprite;
+#define LV_MAX_SHELL_SPRITES 512
+static LvShellSprite s_shellSprite[LV_MAX_SHELL_SPRITES];
+static int           s_shellSpriteCount = 0;
+static bool          s_shellsInTarget = FALSE;
+
+void lv_drawSetShellsInTarget(bool on) {
+    if (s_shellsInTarget != on) {
+        s_shellsInTarget = on;
+        lv_drawDirtyScreen();
+    }
+}
+
+static void lvDrawShellsOverBlit(const SDL_FRect *src, const SDL_FRect *dst) {
+    float scale;
+    int i;
+    SDL_Rect clip, oldClip;
+    bool hadClip;
+
+    if (s_shellSpriteCount == 0 || textureTiles == NULL) return;
+    if (src == NULL || dst == NULL || src->w <= 0.0f || src->h <= 0.0f) return;
+    scale = dst->w / src->w;
+
+    hadClip = SDL_RenderClipEnabled(sdlRenderer);
+    SDL_GetRenderClipRect(sdlRenderer, &oldClip);
+    clip.x = (int)dst->x;
+    clip.y = (int)dst->y;
+    clip.w = (int)dst->w;
+    clip.h = (int)dst->h;
+    SDL_SetRenderClipRect(sdlRenderer, &clip);
+
+    for (i = 0; i < s_shellSpriteCount; i++) {
+        const LvShellSprite *s = &s_shellSprite[i];
+        float sx = 0.0f, sy = 0.0f;
+        SDL_FRect r, d;
+        /* The target's (0, 0) is where the map's square (0, 0) of the view
+           is drawn from; src is the slice of the target the blit took. */
+        spritePositionShell(dst->x - src->x * scale, dst->y - src->y * scale,
+                            GFX_ANIM_CLASSIC, scale, 1,
+                            s->mx, s->my, s->px, s->py,
+                            s->px << 4, s->py << 4, s->frame, &sx, &sy);
+        r.x = (float)s->srcX; r.y = (float)s->srcY;
+        r.w = (float)s->srcW; r.h = (float)s->srcH;
+        d.x = sx; d.y = sy;
+        d.w = (float)s->srcW * scale; d.h = (float)s->srcH * scale;
+        SDL_RenderTexture(sdlRenderer, textureTiles, &r, &d);
+    }
+
+    SDL_SetRenderClipRect(sdlRenderer, hadClip ? &oldClip : NULL);
+}
+
 void lv_drawShells(screenBullets *sBullets) {
     int total, count, srcX, srcY, srcW, srcH;
     float fx, fy;
@@ -1686,9 +1754,11 @@ void lv_drawShells(screenBullets *sBullets) {
     const LvHitBlastRec *newBlast = NULL;
     int newBlastCount = 0;
     BYTE viewX = 0, viewY = 0;
+    bool inTarget = g_embedded || s_shellsInTarget;
     
     total = lv_screenBulletsGetNumEntries(sBullets);
     zf = lv_windowGetZoomFactor();
+    s_shellSpriteCount = 0;
     s_hitBlastCount = 0;
     s_hitBlastZoom = zf;
     /* The explosions that are new on this map, in map squares: the shell
@@ -1761,6 +1831,18 @@ void lv_drawShells(screenBullets *sBullets) {
             int top  = (int)floorf(fy / (float)zf) - my * TILE_SIZE_Y;
             lv_drawMarkRedrawRect(mx, my, left, top,
                                   srcW / zf + 1, srcH / zf + 1);
+            if (!inTarget) {
+                if (s_shellSpriteCount < LV_MAX_SHELL_SPRITES) {
+                    LvShellSprite *s = &s_shellSprite[s_shellSpriteCount++];
+                    s->mx = mx; s->my = my; s->px = px; s->py = py;
+                    s->frame = frame;
+                    s->srcX = srcX; s->srcY = srcY;
+                    s->srcW = srcW; s->srcH = srcH;
+                }
+                continue;
+            }
+            fx = floorf(fx);
+            fy = floorf(fy);
         }
         drawRenderTextureF(textureTiles, srcX, srcY, srcW, srcH, fx, fy);
     }
