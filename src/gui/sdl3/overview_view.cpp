@@ -68,6 +68,7 @@ extern "C" {
 #include "tilenum.h"
 #include "mapview.h"         /* MapViewCtx */
 #include "mapview_overlay.h" /* mapViewDrawOverlay — the whole entity layer */
+#include "item_labels.h"     /* mapViewPickItemLabels — which numbers are drawn */
 #include "gfx_settings.h"    /* gfxGetFogStyle — the player's fog of war look */
 #include "../ping_kinds.h"   /* pingDisplayAlpha */
 #include "gfx_settings.h"   /* the simplified view setting */
@@ -934,31 +935,23 @@ static void overviewViewDrawItemViewBorder(SDL_Renderer *r, int viewW, int viewH
 }
 
 /* The pill and base numbers the shared pass draws. The snapshot lists every
- * pill and base at its square; one is kept only when the memory shows a pill
- * or base tile on that square and the square is live — the tile test the
- * classic view makes on its screen buffer, made here on the same copy the
- * sprites were filtered against. A carried pill, a destroyed one and a
- * remembered square all fail it, so none of them shows a number. The Pillbox
- * Labels and Base Labels switches apply as they do in the classic view. */
+ * pill and base at the square this client knows it on; one is kept when the
+ * memory shows a pill or base tile on that square — the tile test the classic
+ * view makes on its screen buffer, made here on the same copy the sprites
+ * were filtered against. Whether the square is live is not asked: a pill or
+ * base in the fog, hidden by line of sight or only remembered, keeps its
+ * number on the tile the player last saw, as the classic view does with the
+ * remembered tile on a hidden square. A square whose memory shows no pill or
+ * base tile, such as the one a carried pill left, shows no number. The
+ * Pillbox Labels and Base Labels switches apply as they do in the classic
+ * view. The pick itself is mapViewPickItemLabels (item_labels.h), so the unit
+ * tests run the same loop. */
 static int overviewViewPickItemLabels(const OverviewSnapshot *snap,
                                       OverviewItemLabel *out, int cap) {
-    const OverviewMap *om = overviewSnapshotMap(snap);
-    if (om == NULL) return 0;
-
-    int total = overviewSnapshotItemLabelCount(snap);
-    const OverviewItemLabel *all = overviewSnapshotItemLabels(snap);
-    int n = 0;
-    for (int i = 0; i < total && n < cap; i++) {
-        const OverviewItemLabel *l = &all[i];
-        bool wanted = l->isBase ? showBaseLabels : showPillLabels;
-        if (!wanted) continue;
-        if ((om->flags[l->mapX][l->mapY] & OVERVIEW_F_LIVE) == 0) continue;
-        BYTE tile = om->tile[l->mapX][l->mapY];
-        bool onTile = l->isBase ? mapViewTileIsBase(tile) : mapViewTileIsPill(tile);
-        if (!onTile) continue;
-        out[n++] = *l;
-    }
-    return n;
+    return mapViewPickItemLabels(overviewSnapshotMap(snap),
+                                 overviewSnapshotItemLabels(snap),
+                                 overviewSnapshotItemLabelCount(snap),
+                                 showPillLabels, showBaseLabels, out, cap);
 }
 
 /* The sprite overlay: everything that moves, on the squares the player can

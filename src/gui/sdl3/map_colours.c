@@ -26,6 +26,14 @@ MapColourItem mapColourItemKind(BYTE tile) {
     return MAP_COLOUR_ITEM_NONE;
 }
 
+bool mapColourItemNumberOnTile(BYTE tile, bool isBase) {
+    MapColourItem kind = mapColourItemKind(tile);
+    if (isBase) {
+        return kind >= MAP_COLOUR_ITEM_BASE_GOOD;
+    }
+    return kind == MAP_COLOUR_ITEM_PILL_GOOD || kind == MAP_COLOUR_ITEM_PILL_EVIL;
+}
+
 /* One entry per colour this module hands out. A family is reachable by two
    different numbers - the raw terrain a map file holds, and the shape variant
    a drawer picks for it - and the entry is what makes the two the same

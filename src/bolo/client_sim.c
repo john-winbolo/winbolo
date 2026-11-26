@@ -4652,8 +4652,8 @@ void clientSimFillOverviewSnapshot(ClientSim *cs, OverviewSnapshot *s) {
    * classic view draws — pillsGetViewPillNum / basesGetBaseNum at that
    * square, less one — so two pills the sim reports on one square number as
    * the classic view numbers them. Which squares show a number is decided at
-   * draw time from the memory copy above: the tile there, and whether it is
-   * live. An item a removal has taken off the map is left out here: its slot
+   * draw time from the memory copy above: only the remembered tile there is
+   * asked, not whether the square is live. An item a removal has taken off the map is left out here: its slot
    * still holds a record, but no lookup by square would find it, and the
    * number that lookup gives is nothing a label can draw. */
   {
