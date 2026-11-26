@@ -274,7 +274,7 @@ local function evaluate_vote(state, world, info, now, prop)
     return true, "human_allies", { humans = humans }
   end
 
-  if p and p._in_use then return true, "blocker" end
+  if p and (p._in_use or p._take_pend) then return true, "blocker" end
 
   -- Freshly placed pills are OFF LIMITS for a minute. A pill that just went
   -- down is the product of a decision someone made seconds ago (a strategic

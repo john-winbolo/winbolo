@@ -23,12 +23,15 @@ add_library(bolo_static STATIC
     bot_mem_report.c
     bot_worker_pool.c
     brain_data.c
+    brain_gc.c
     brain_list.c
     brain_overlay.c
     brain_record.c
+    brain_record_dij.c
     brain_pathfinder.c
     brain_pathfinder_serial.c
     brain_sandbox.c
+    brain_value_pack.c
     brain_worldsim.c
     braincore.c
     building.c
@@ -73,6 +76,7 @@ add_library(bolo_static STATIC
     obs_builder.c
     overview_map.c
     pillbox.c
+    pool_render_host.c
     ping_display.c
     playername_validate.c
     players.c

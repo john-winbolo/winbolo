@@ -215,6 +215,14 @@ typedef struct NaShieldStampCtx {
      * read by run_nb_for_cand to weight a friendly-pill blocker as PILL_SHOTS. */
     uint8_t    pill_map[17 * 17];
 
+    /* Knob PILL_COVER_BY_HEALTH (scan_c args 25/26). When pill_walls_mode is
+     * 1, pill_walls holds the walls of cover each pill square gives
+     * (naShieldPillCoverWalls, NA_SHIELD_NO_PILL = no pill), and a friendly
+     * pill weighs that many walls instead of pill_wall_equiv. Set by l_scan_c,
+     * cleared by l_run_neighbor_bonus. */
+    uint8_t    pill_walls_mode;
+    uint8_t    pill_walls[17 * 17];
+
     /* Per-scan candidate scoring buffer. memset at the top of every
      * l_scan_c so prior content is overwritten before any read. */
     ScanResult scan_buf[SCAN_MAX_CANDS];
@@ -583,12 +591,9 @@ static void run_nb_for_cand(const NaShieldStampCtx *ctx, const ScanCfg *cfg,
              * slot) is a wall worth WALL_SHOTS. built_bonus stays as a small
              * tiebreak that prefers existing cover over a slot we'd have to build. */
             int sub_na_pill = 0;
-            for (int sk = 0; sk < sub_n; sk++) {
-                if (sub_act[sk]) {
-                    int pci = lgm_cache_idx(sub_dx[sk], sub_dy[sk]);
-                    if (pci >= 0 && ctx->pill_map[pci] == 2) sub_na_pill++;
-                }
-            }
+            int sub_pill_walls = naShieldActualPillWalls(
+                ctx->pill_map, ctx->pill_walls_mode ? ctx->pill_walls : NULL,
+                sub_dx, sub_dy, sub_act, sub_n, &sub_na_pill);
             /* Wall-equivalents: a friendly pill is worth PILL_SHOTS/WALL_SHOTS
              * (=3) walls. Cover satisfices at COVER_TARGET, so ONE friendly pill
              * (3 welt = 15 shots) already counts as a full 3-wall shield and any
@@ -604,8 +609,13 @@ static void run_nb_for_cand(const NaShieldStampCtx *ctx, const ScanCfg *cfg,
             int sub_np_pill = (sub_np < cfg->num_pill_blockers)
                               ? sub_np : cfg->num_pill_blockers;
             if (sub_np_pill < 0) sub_np_pill = 0;
+            /* Knob PILL_COVER_BY_HEALTH: a friendly pill is worth
+             * floor(health / 5) walls (pill_walls), not pill_we. */
+            double pill_part = ctx->pill_walls_mode
+                             ? (double)sub_pill_walls
+                             : (double)sub_na_pill * pill_we;
             double welt = (double)(sub_na - sub_na_pill)   /* actual walls            */
-                        + (double)sub_na_pill * pill_we    /* actual friendly pills   */
+                        + pill_part                        /* actual friendly pills   */
                         + (double)(sub_np - sub_np_pill)   /* potential walls         */
                         + (double)sub_np_pill * pill_we;   /* potential dropped pills */
             double cover = welt * WALL_SHOTS;
@@ -714,6 +724,7 @@ static int l_run_neighbor_bonus(lua_State *L) {
      * clear any pill_map left over from a prior scan_c — blockers weight as
      * walls here. (The Lua fallback's own base aim_score handles pill weight.) */
     memset(ctx->pill_map, 0, sizeof(ctx->pill_map));
+    ctx->pill_walls_mode = 0;
 
     lua_createtable(L, n_cands * RESULT_STRIDE, 0);
     int out = 1;
@@ -783,6 +794,7 @@ static void reset_ctx_state(lua_State *L, NaShieldStampCtx *ctx) {
     memset(ctx->slate_ni_used, 0, sizeof(ctx->slate_ni_used));
     ctx->slate_ncands = 0;
     memset(ctx->scan_buf, 0, sizeof(ctx->scan_buf));
+    ctx->pill_walls_mode = 0;
 
     /* Drop any registered lgm callback — the brain will re-register
      * via set_lgm_func after a fresh configure_scan. */
@@ -875,6 +887,54 @@ static int lgm_reachable(lua_State *L, const NaShieldStampCtx *ctx,
     return result;
 }
 
+/* Does our own shell hit a pill before it reaches the target pill?
+ * pill_map is the 17x17 map centred on the target pill (0 = no pill,
+ * 1 = enemy or neutral, 2 = own or allied). dx/dy are the squares of the
+ * outgoing path, relative to the target pill, in flight order. The walk
+ * stops at the target square (0,0): the target pill never blocks itself.
+ * A shell hits a live pill of ANY owner, so every non-zero entry blocks.
+ * Squares outside the map window are ignored. */
+int naShieldOutgoingPillBlocks(const uint8_t *pill_map,
+                               const int8_t *dx, const int8_t *dy, int n) {
+    for (int i = 0; i < n; i++) {
+        if (dx[i] == 0 && dy[i] == 0) break;
+        int ci = lgm_cache_idx(dx[i], dy[i]);
+        if (ci >= 0 && pill_map[ci] != 0) return 1;
+    }
+    return 0;
+}
+
+int naShieldPillCoverWalls(int health) {
+    if (health <= 0) return 0;
+    return health / 5;
+}
+
+int naShieldPillSlotClass(const uint8_t *pill_map, const uint8_t *pill_walls,
+                          int dx, int dy) {
+    int ci = lgm_cache_idx(dx, dy);
+    if (ci < 0) return 0;
+    if (pill_walls == NULL) return (pill_map[ci] == 2) ? 1 : 0;
+    if (pill_walls[ci] == NA_SHIELD_NO_PILL) return 0;
+    if (pill_map[ci] == 2 && pill_walls[ci] >= 1) return 1;
+    return 2;
+}
+
+int naShieldActualPillWalls(const uint8_t *pill_map, const uint8_t *pill_walls,
+                            const int8_t *dx, const int8_t *dy,
+                            const int *is_act, int n, int *n_pill) {
+    int walls = 0, np = 0;
+    for (int k = 0; k < n; k++) {
+        if (!is_act[k]) continue;
+        int ci = lgm_cache_idx(dx[k], dy[k]);
+        if (ci < 0 || pill_map[ci] != 2) continue;
+        np++;
+        if (pill_walls != NULL && pill_walls[ci] != NA_SHIELD_NO_PILL)
+            walls += pill_walls[ci];
+    }
+    if (n_pill) *n_pill = np;
+    return walls;
+}
+
 static int in_outgoing(const OutgoingSet *os, int8_t dx, int8_t dy) {
     for (int i = 0; i < os->n; i++)
         if (os->dx[i] == dx && os->dy[i] == dy) return 1;
@@ -885,7 +945,9 @@ static int in_outgoing(const OutgoingSet *os, int8_t dx, int8_t dy) {
  * Returns 1 if this aim is usable (not blocked), 0 if blocked.
  * approach_mx/my = LGM dispatch origin for reachability check.
  * pmx/pmy = pill tile. pill_wx/wy = pill world position.
- * pill_map[17*17]: 0=none, 1=hostile/neutral, 2=friendly (centred on pill). */
+ * pill_map[17*17]: 0=none, 1=hostile/neutral, 2=friendly (centred on pill).
+ * pill_walls: NULL (knob PILL_COVER_BY_HEALTH off) or the walls map, see
+ * naShieldPillSlotClass. */
 static void score_one_aim(lua_State *L,
                           const NaShieldStampCtx *ctx,
                           int8_t *lgm_reach,
@@ -895,7 +957,7 @@ static void score_one_aim(lua_State *L,
                           float standoff_cx, float standoff_cy,
                           int approach_mx, int approach_my,
                           const uint8_t *pill_map,
-                          int target_is_pill,
+                          const uint8_t *pill_walls,
                           int no_builder,
                           ScanAimResult *res) {
     res->blocked = 0;
@@ -911,15 +973,18 @@ static void score_one_aim(lua_State *L,
         int tx = pmx + dx, ty = pmy + dy;
         int tt = naThreatRawTT(L, tx, ty);
         if (tt == ctx->t_building || tt == ctx->t_halfbuild) { res->blocked = 1; return; }
-        /* Non-target pill in outgoing path blocks the aim */
-        int ci = lgm_cache_idx(dx, dy);
-        if (ci >= 0) {
-            uint8_t pm = pill_map[ci];
-            if (pm != 0 && !target_is_pill) { res->blocked = 1; return; }
-        }
         if (os.n < STAMP_MAX_TILES) {
             os.dx[os.n] = dx; os.dy[os.n] = dy; os.n++;
         }
+    }
+    /* A pill of any owner on our own outgoing path (other than the target
+     * pill) takes the shell, so the aim is blocked. This used to be skipped
+     * whenever target_is_pill was set, and every caller set it, so a pill on
+     * the line never blocked an aim in the C scan (the Lua scorer, score_aim
+     * in attack_shield.lua, always blocked on it). */
+    if (naShieldOutgoingPillBlocks(pill_map, os.dx, os.dy, os.n)) {
+        res->blocked = 1;
+        return;
     }
 
     /* Distance gate: pill_to_standoff_d in tiles */
@@ -953,10 +1018,10 @@ static void score_one_aim(lua_State *L,
         if (d_standoff < ctx->blocker_min_dist) continue;
 
         /* Classify: actual (friendly pill or wall) vs potential (buildable) */
-        int ci = lgm_cache_idx(dx, dy);
-        uint8_t pm_val = (ci >= 0) ? pill_map[ci] : 0;
+        int pcls = naShieldPillSlotClass(pill_map, pill_walls, dx, dy);
+        if (pcls == 2) continue;  /* pill worth 0 walls: not a blocker, not buildable */
 
-        if (pm_val == 2) {
+        if (pcls == 1) {
             /* Friendly pill → actual blocker */
             if (res->actual.n < SCAN_MAX_BLOCKERS) {
                 res->actual.dx[res->actual.n] = dx;
@@ -1085,8 +1150,49 @@ static int l_scan_c(lua_State *L) {
                 pill_map[ci] = (own == 1) ? 2 : 1;  /* 2=friendly, 1=hostile/neutral */
         }
     }
+    /* Knob PILL_COVER_BY_HEALTH (args 25..26, optional). Arg 25 is a flat
+     * array of pill health, one per pill_table entry (same order). Arg 26 is
+     * a flat {mx1,my1, ...} array of squares that hold a pill NOT in
+     * pill_table (a dead pill: it does not take a shell, but no wall can be
+     * built on it). With arg 25 a friendly pill weighs
+     * naShieldPillCoverWalls(health) walls, and a pill worth 0 walls is
+     * neither a blocker nor a square to build on. Without it the scan is
+     * exactly as before. */
+    uint8_t pill_walls[17 * 17];
+    int walls_mode = (lua_gettop(L) >= 25 && lua_istable(L, 25) && lua_istable(L, 9));
+    if (walls_mode) {
+        memset(pill_walls, NA_SHIELD_NO_PILL, sizeof(pill_walls));
+        int len = (int)lua_rawlen(L, 9);
+        for (int i = 1, k = 1; i <= len - 2; i += 3, k++) {
+            lua_rawgeti(L, 9, i);   int tx  = (int)lua_tointeger(L, -1); lua_pop(L,1);
+            lua_rawgeti(L, 9, i+1); int ty  = (int)lua_tointeger(L, -1); lua_pop(L,1);
+            lua_rawgeti(L, 9, i+2); int own = (int)lua_tointeger(L, -1); lua_pop(L,1);
+            lua_rawgeti(L, 25, k);  int hp  = (int)lua_tointeger(L, -1); lua_pop(L,1);
+            int ci = lgm_cache_idx(tx - pmx, ty - pmy);
+            if (ci < 0) continue;
+            int w = (own == 1) ? naShieldPillCoverWalls(hp) : 0;
+            if (w > NA_SHIELD_NO_PILL - 1) w = NA_SHIELD_NO_PILL - 1;
+            if (pill_walls[ci] == NA_SHIELD_NO_PILL || w > pill_walls[ci])
+                pill_walls[ci] = (uint8_t)w;
+        }
+        if (lua_gettop(L) >= 26 && lua_istable(L, 26)) {
+            int dlen = (int)lua_rawlen(L, 26);
+            for (int i = 1; i <= dlen - 1; i += 2) {
+                lua_rawgeti(L, 26, i);   int tx = (int)lua_tointeger(L, -1); lua_pop(L,1);
+                lua_rawgeti(L, 26, i+1); int ty = (int)lua_tointeger(L, -1); lua_pop(L,1);
+                int ci = lgm_cache_idx(tx - pmx, ty - pmy);
+                if (ci >= 0 && pill_walls[ci] == NA_SHIELD_NO_PILL) pill_walls[ci] = 0;
+            }
+        }
+    } else {
+        memset(pill_walls, 0, sizeof(pill_walls));
+    }
+    const uint8_t *walls_arg = walls_mode ? pill_walls : NULL;
+
     /* Publish to ctx so run_nb_for_cand can weight friendly-pill blockers. */
     memcpy(ctx->pill_map, pill_map, sizeof(pill_map));
+    ctx->pill_walls_mode = (uint8_t)walls_mode;
+    memcpy(ctx->pill_walls, pill_walls, sizeof(pill_walls));
 
     /* Stack-local 17×17 LGM reachability cache for this scan only.
      * -1=unchecked, 0=unreachable, 1=reachable. */
@@ -1175,7 +1281,7 @@ static int l_scan_c(lua_State *L) {
             score_one_aim(L, ctx, lgm_reach,
                           &e0->aim[ai], &e0->pill_to_tank,
                           pmx, pmy, cx, cy, lgm_mx, lgm_my,
-                          pill_map, 1 /*target_is_pill*/, no_builder, ar);
+                          pill_map, walls_arg, no_builder, ar);
 
             /* Check if base shot hits pill — if not, find nudge */
             if (!ar->blocked && !e0->aim[ai].has_pill) {
@@ -1208,7 +1314,7 @@ static int l_scan_c(lua_State *L) {
                                   &en->aim[ai], &en->pill_to_tank,
                                   pmx, pmy, ncx, ncy,
                                   nlgm_mx, nlgm_my,
-                                  pill_map, 1, no_builder, ar);
+                                  pill_map, walls_arg, no_builder, ar);
                     ar->nudge_step = found_step;
                 } else {
                     /* No nudge works — mark blocked */

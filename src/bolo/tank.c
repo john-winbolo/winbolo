@@ -1648,12 +1648,15 @@ bool tankShellInHitZone(GameSim *sim, tank *value, WORLD tankX, WORLD tankY,
 		return FALSE;
 	}
 	/* Shell hit-zone test — circle by default (see tank_hit_radius in
-	 * internal/tank.h). The tank's WORLD coordinates are its centre, so a
-	 * hit is a shell centre within tank_hit_radius of it.
-	 * The rule is hitRulesTankShellInZone (hit_rules.h), the one the Log
-	 * Viewer draws its hit boxes from. */
-	return hitRulesTankShellInZone((int)tankX - (int)shellX, (int)tankY - (int)shellY,
-	                               (int) sim->rules.tank_hit_radius);
+	 * internal/tank.h), the 128 box under BOLO_LEGACY_SQUARE_COLLISION.
+	 * The tank's WORLD coordinates are its centre, so a hit is a shell
+	 * centre within tank_hit_radius of it. The test itself is
+	 * utilIsTankHit, the one the pill aim prediction and the brain's shot
+	 * simulator use too, so the three cannot drift apart.
+	 * utilIsTankHit applies hitRulesTankShellInZone (hit_rules.h), the
+	 * rule the Log Viewer draws its hit boxes from. */
+	return utilIsTankHit(tankX, tankY, 0, shellX, shellY, 0,
+	                     (WORLD) sim->rules.tank_hit_radius);
 }
 
 

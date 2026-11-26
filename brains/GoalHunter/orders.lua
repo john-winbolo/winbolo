@@ -39,6 +39,7 @@ local U          = require("util")
 local cpf        = require("cpathfinder")
 local ally_state = require("ally_state")
 local print2     = require("print2")
+local PR         = require("pool_render")   -- focus_label text
 local bit        = require('bitcompat')
 local CMDS       = require("commands")
 local GA         = require("decoy_getaway")
@@ -2767,8 +2768,7 @@ function M.focus_mult(state, kind)
 end
 -- The ONE breakdown string, so every panel spells it the same way.
 function M.focus_label(state)
-  return string.format("focus: x%.1f (%s)", C.FOCUS_OTHER_COST_MULT or 1.0,
-                       tostring(state and state._focus or "off"))
+  return PR.focus_label(state and state._focus)
 end
 
 -- REPOSITIONING with human allies.  `reposition on` / `off` overrides
@@ -5344,7 +5344,7 @@ function M.update(state, world, info, now)
           -- 2026-10-15 (Andrew): "if it's blocked, just say you're there and
           -- move on to the next goal".  A blocked square counts as arrived,
           -- and the order is over on this think: no hold, no park beside it,
-          -- and goal selection takes over at once.  On pilltag_fort_last_shot
+          -- and goal selection takes over at once.  On pilltag_fort_guard_kills_own_pillbox_to_keep_it
           -- (seed 42) a go-there onto the guard's own dead prize pill held
           -- beside it, then picked take_cover, and the pill was never picked
           -- up; with the order gone capture_pill picks it up.

@@ -26,6 +26,7 @@ local bit = require('bitcompat')
 local C = require("constants")
 local U = require("util")
 local viz = require("viz")
+local KL = require("kill_lgm")   -- shell model (C.SHELL_MODEL_RULES_ALL)
 
 local M = {}
 
@@ -70,9 +71,18 @@ M.MAX_LIFE_TICKS = 72
 -- spawn the OBJECT_SHOT. Give a few ticks for the snapshot to catch up.
 M.INITIAL_MATCH_TICKS = 8
 
+-- C.QUICK_REPAIR_LAG_AWARE: the view lag, in shell steps (= thinks), that
+-- the newest matched shot showed: how far the real shell we see is behind
+-- the shot we predict from the press. 0 inside the server. A measure of our
+-- own shells, not a tuned value. nil until a shot has matched: a shot that
+-- has not matched may then wait LGM_AIM_DELAY_MAX (the longest key delay
+-- the bot measures, the server's rewind cap) more thinks for its shell.
+M.view_lag = nil
+
 function M.reset()
   for i = #M.shots, 1, -1 do M.shots[i] = nil end
   M.prev_shells = nil
+  M.view_lag = nil
 end
 
 -- Build a new shot record for a fire that happened this tick.
@@ -87,7 +97,19 @@ local function make_shot(info, tick)
   -- SHELL_START_ADD = 5 (override in shells.c). Per-tick advance uses the
   -- same (xAdd, yAdd). Doing it this way gives us a bit-exact match with
   -- the engine's cs->sim shell positions.
+  -- C.SHELL_MODEL_RULES_ALL on: the start add and the speed come from the
+  -- game rules (info.rules.shell_start_add, shell_speed), like the engine
+  -- under a rules override; the classic 5 and C.SHELL_SPEED when a rule is
+  -- missing or out of range. Off: the classic values always. Display and
+  -- the hit record only.
   local SHELL_START_ADD = 5
+  local speed = C.SHELL_SPEED
+  if KL.all_on() then
+    local rules = info.rules or {}
+    local ra, rs = rules.shell_start_add, rules.shell_speed
+    if type(ra) == "number" and ra >= 0 then SHELL_START_ADD = ra end
+    if type(rs) == "number" and rs >= 1 then speed = rs end
+  end
   local a = dir - 64
   if a < 0 then a = a + 256 end
   local rad = a * (2 * math.pi / 256)
@@ -96,14 +118,15 @@ local function make_shot(info, tick)
     if x >= 0 then return math.floor(x + 0.5) end
     return -math.floor(-x + 0.5)
   end
-  local rad_step_x = rd(C.SHELL_SPEED * math.cos(rad))
-  local rad_step_y = rd(C.SHELL_SPEED * math.sin(rad))
+  local rad_step_x = rd(speed * math.cos(rad))
+  local rad_step_y = rd(speed * math.sin(rad))
   local fx = info.tankx + SHELL_START_ADD * rad_step_x
   local fy = info.tanky + SHELL_START_ADD * rad_step_y
-  -- Use the same gun_range (7.0) as the always-on yellow crosshair so the
-  -- recorded destination matches what the user sees on screen.
+  -- The burst of the longest sight (7.0 tiles = 128 * 14 wu with
+  -- C.SHELL_MODEL_RULES_ALL off; on: from the rules, like the always-on
+  -- yellow crosshair) so the recorded destination matches the screen.
   local cross_fx, cross_fy = U.crosshair_at(
-    info.tankx, info.tanky, dir, 7.0)
+    info.tankx, info.tanky, dir, KL.max_travel(KL.all_on()) / 256.0)
   -- crosshair_at returns float TILE coords; convert to world wu.
   cross_fx = cross_fx * 256
   cross_fy = cross_fy * 256
@@ -119,6 +142,12 @@ local function make_shot(info, tick)
     cur_fx    = fx,
     cur_fy    = fy,
     status    = "in_flight",
+    -- run_c7: the tank's place and its exact (float) angle at fire time,
+    -- for cpf.simulate_shot_angle (the engine fires at the float angle).
+    tank_fx   = info.tankx,
+    tank_fy   = info.tanky,
+    angle     = info.tank_angle,
+    speed     = speed,
   }
 end
 
@@ -132,19 +161,31 @@ end
 -- friendly OBJECT_SHOT is found near our simulated position. Also
 -- records the closest-shell distance + position on the shot record so
 -- callers can inspect how off the prediction is.
-local function verify_alive(shot, info)
+-- lag: test the place `lag` steps behind the predicted one (0 = the
+-- predicted place itself, the old test).
+local function verify_alive(shot, info, lag)
   local tol = M.MATCH_TOLERANCE_WU
   local tol2 = tol * tol
   local best2 = math.huge
-  local best_x, best_y, best_info, best_type
+  local best_x, best_y, best_info, best_type, best_life
   local seen_any_shot = false
+  local px, py = shot.cur_fx, shot.cur_fy
+  if lag and lag > 0 then
+    px = px - lag * shot.step_x
+    py = py - lag * shot.step_y
+  end
+  -- C.SHOT_TRACK_OWN_SHELLS_ONLY: a neutral pill's shell is not ours either.
+  -- It leaves the pill square where our shell has just hit, so it kept that
+  -- shell "in flight" one tick after the hit (see constants.lua).
+  local skip_mask = OBJECT_HOSTILE
+  if C.SHOT_TRACK_OWN_SHELLS_ONLY then skip_mask = bit.bor(OBJECT_HOSTILE, OBJECT_NEUTRAL or 0) end
   for _, ob in ipairs(info.objects or {}) do
     if ob.type == OBJECT_SHOT then
       seen_any_shot = true
-      local hostile = bit.band((ob.info or 0), OBJECT_HOSTILE)
+      local hostile = bit.band((ob.info or 0), skip_mask)
       if hostile == 0 then
-        local dx = ob.x - shot.cur_fx
-        local dy = ob.y - shot.cur_fy
+        local dx = ob.x - px
+        local dy = ob.y - py
         local d2 = dx * dx + dy * dy
         if d2 < best2 then
           best2     = d2
@@ -152,6 +193,7 @@ local function verify_alive(shot, info)
           best_y    = ob.y
           best_info = ob.info
           best_type = ob.type
+          best_life = ob.life
         end
       end
     end
@@ -160,8 +202,47 @@ local function verify_alive(shot, info)
   shot.closest_fx  = best_x
   shot.closest_fy  = best_y
   shot.closest_info = best_info
+  shot.closest_life = best_life
   shot._saw_any_shot = seen_any_shot
   return best2 <= tol2
+end
+
+M.make_shot = make_shot   -- for test_shell_model_all.lua
+
+-- C.QUICK_REPAIR_LAG_AWARE (Nov 25): with the own tank predicted (a bot
+-- that plays through the network), the shells count and the shot leave at
+-- the press, but the real shell shows in the view only a round trip later,
+-- that many steps behind the predicted shot (60 ms: 2 to 3 steps, 150 ms:
+-- about 8). The old test (lag 0) then lost the shell in flight, and the
+-- take's T_kill moved by one reload from tick to tick.
+-- This test: a shot that has not matched yet tries every lag from 0 to
+-- age - 1; a matched shot tries its lag - 1, lag and lag + 1 (lag 0: only
+-- 0, the old test). The nearest match wins, the smaller lag on a tie.
+-- Inside the server the shell is on the predicted place, so lag 0 wins and
+-- the answer is the old one. Returns matched, lag.
+local function verify_lagged(shot, info)
+  local lo, hi
+  if shot.was_matched then
+    local L = shot.lag or 0
+    lo, hi = L - 1, L + 1
+    if L == 0 then hi = 0 end
+    if lo < 0 then lo = 0 end
+  else
+    lo, hi = 0, shot.age - 1
+  end
+  local bj, bd, k1, k2, k3, k4, k5
+  for j = lo, hi do
+    if verify_alive(shot, info, j) and (not bd or shot.closest_d < bd) then
+      bj, bd = j, shot.closest_d
+      k1, k2, k3, k4, k5 = shot.closest_d, shot.closest_fx, shot.closest_fy,
+                           shot.closest_info, shot.closest_life
+      if bd == 0 then break end
+    end
+  end
+  if not bj then return false, shot.lag or 0 end
+  shot.closest_d, shot.closest_fx, shot.closest_fy = k1, k2, k3
+  shot.closest_info, shot.closest_life = k4, k5
+  return true, bj
 end
 
 function M.update(info, tick)
@@ -179,6 +260,7 @@ function M.update(info, tick)
   end
   M.prev_shells = cur_shells
 
+  local lag_aware = C.QUICK_REPAIR_LAG_AWARE
   -- 2. Advance all in-flight shots one step, then 3. verify each.
   --    A shot that has just been fired this tick gets one initial step
   --    so its cur_fx/fy moves off the tank center before the verify.
@@ -189,17 +271,46 @@ function M.update(info, tick)
       shot.matched = false
       -- Don't verify a shot fired this tick — the engine's OBJECT_SHOT
       -- may not appear in info.objects until the next snapshot.
+      local ok, lag
       if shot.fire_tick < tick then
-        if verify_alive(shot, info) then
+        if lag_aware then
+          ok, lag = verify_lagged(shot, info)
+        else
+          ok, lag = verify_alive(shot, info), 0
+        end
+      end
+      if shot.fire_tick < tick then
+        if ok then
           shot.matched = true
           shot.was_matched = true
+          -- run_c7: the real shell as the engine has it now (its place and
+          -- the moves it has left), for quick_repair.shell_real_walk.
+          shot.real_fx, shot.real_fy = shot.closest_fx, shot.closest_fy
+          shot.real_life, shot.real_tick = shot.closest_life, tick
+          if lag > 0 then
+            -- C.QUICK_REPAIR_LAG_AWARE: the shell we see is `lag` steps
+            -- late; walk it on to now, as the predicted shot is.
+            shot.lag = lag
+            shot.real_fx = shot.real_fx + lag * shot.step_x
+            shot.real_fy = shot.real_fy + lag * shot.step_y
+            if type(shot.real_life) == "number" then
+              shot.real_life = math.max(0, shot.real_life - lag)
+            end
+          elseif lag_aware then
+            shot.lag = 0
+          end
+          if lag_aware then M.view_lag = lag end
         elseif shot.was_matched then
           -- Green stopped matching — shot impacted or left perception. Kill it.
+          -- C.QUICK_REPAIR_LAG_AWARE: it died where the shell we see was,
+          -- `lag` steps behind the predicted place.
+          local L = (lag_aware and shot.lag) or 0
           shot.status   = "dead"
           shot.dead_tick = tick
-          shot.dead_fx  = shot.cur_fx
-          shot.dead_fy  = shot.cur_fy
-        elseif shot.age >= M.INITIAL_MATCH_TICKS then
+          shot.dead_fx  = shot.cur_fx - L * shot.step_x
+          shot.dead_fy  = shot.cur_fy - L * shot.step_y
+        elseif shot.age >= M.INITIAL_MATCH_TICKS + (lag_aware and (M.view_lag
+                 or C.LGM_AIM_DELAY_MAX or 14) or 0) then
           -- Never got a single green match — prediction diverged or snapshot
           -- missed the spawn. Clear the blue bubble rather than letting it
           -- drift for the full lifetime.

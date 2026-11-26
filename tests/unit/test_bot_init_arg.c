@@ -269,3 +269,32 @@ int run_bot_difficulty_names(void) {
 
     return 0;
 }
+
+/* -brain-lag-ms frame split (botLagSplitFrames): the round trip rounds to
+ * whole 20 ms frames, the snapshot leg takes the smaller half, the input leg
+ * the rest, and out-of-range values clamp instead of overrunning the ring. */
+int run_bot_lag_split_frames(void) {
+    static const struct { int rtt, down, up; } cases[] = {
+        {   0, 0, 0 },   /* off */
+        {   9, 0, 0 },   /* under half a frame */
+        {  10, 0, 1 },   /* half a frame rounds up, all of it on the input leg */
+        {  40, 1, 1 },
+        {  60, 1, 2 },   /* 3 frames */
+        { 100, 2, 3 },
+        { 150, 4, 4 },   /* 7.5 frames rounds to 8 */
+        { 600, 15, 15 }, /* the maximum */
+        { 900, 15, 15 }, /* clamped to the maximum */
+        { -50, 0, 0 },   /* clamped to 0 */
+    };
+    size_t n;
+    for (n = 0; n < sizeof(cases) / sizeof(cases[0]); n++) {
+        int down = -1, up = -1;
+        botLagSplitFrames(cases[n].rtt, &down, &up);
+        UT_ASSERT_MSG(down == cases[n].down && up == cases[n].up,
+                      "rtt %d gave %d down + %d up, expected %d + %d",
+                      cases[n].rtt, down, up, cases[n].down, cases[n].up);
+    }
+    /* Either output may be left out. */
+    botLagSplitFrames(60, NULL, NULL);
+    return 0;
+}

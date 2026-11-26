@@ -236,6 +236,13 @@ typedef struct {
 	   half-square circle (radius 128), 1 the Mac Bolo box (|dx| and |dy|
 	   under 128), 2 the Mac Bolo equivalent area circle (radius 144). */
 	int32_t lgm_blast_shape;
+	/* How a shell starts and what it hits: the steps of shell_speed it is
+	   moved out of the shooter before its first tick, the circle around a
+	   tank centre a shell has to reach (WORLD units), and how far a pill's
+	   shell flies (map squares). */
+	int32_t shell_start_add;
+	int32_t tank_hit_radius;
+	float   pill_fire_length;
 } BrainRules;
 
 /* This tank's own modifiers, each a percent of the classic figure. The
@@ -476,6 +483,11 @@ typedef struct
 	// once per tick. Appended, like everything else here.
 	BrainTankMods mods;
 	BYTE    reload_ticks;
+
+	// The round trip this brain plays with, in ms (info.ping_ms). Only the
+	// test option -brain-lag-ms sets it; 0 otherwise, and 0 is not pushed.
+	// Appended, like everything else here.
+	uint16_t ping_ms;
 
 	} BrainInfo;
 

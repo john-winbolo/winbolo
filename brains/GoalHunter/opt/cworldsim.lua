@@ -58,6 +58,109 @@ function M.configure(opts)
   end
 end
 
+-- The knob fixes last sent with wsim_set_fixes. A clear keeps them in the
+-- C sim, so they are sent again only when a knob value changes.
+local pushed_fixes = nil
+
+--- Send the world sim knob fixes (WSIM_DRIVE_WHILE_SLIDING,
+--- WSIM_HIT_FULL_DIST, WSIM_HIT_FAR_FRAC) when they change. An older exe
+--- without wsim_set_fixes keeps the old model.
+function M.push_fixes()
+  local set = rawget(_G, "wsim_set_fixes")
+  if type(set) ~= "function" then return end
+  local d = C.WSIM_DRIVE_WHILE_SLIDING and true or false
+  local f = C.WSIM_HIT_FULL_DIST or 0
+  local r = C.WSIM_HIT_FAR_FRAC or 0
+  local p = pushed_fixes
+  if p and p[1] == d and p[2] == f and p[3] == r then return end
+  set({ drive_while_sliding = d, hit_full_dist = f, hit_far_frac = r })
+  pushed_fixes = { d, f, r }
+end
+
+--- Forget what was sent (tests; a new sim).
+function M.reset_fixes()
+  pushed_fixes = nil
+end
+
+--- WSIM_CAPTURE_EXIT_MAX: the capture sim path. The incoming path ends ON
+--- the pill square (the pickup is instant): a path that ends next to it
+--- gets the pill square added. Then the exit leg: the incoming squares
+--- again in reverse, at most max_exit, back to the path start (the tank
+--- square too when it is next to the first waypoint). No square is made up.
+--- The C sim stops the exit leg when the tank is out of range of every pill
+--- that fired at it (wsim_set_exit_start).
+---
+--- @param path     table   flat {x1,y1,x2,y2,...}, after the tank square
+--- @param smx      number  tank square
+--- @param smy      number
+--- @param pmx      number  pill square
+--- @param pmy      number
+--- @param max_exit number  most exit squares
+--- @param cap      number|nil most waypoints in the result (default 250)
+--- @return table the new flat path, number incoming waypoints (the exit
+---   start for set_exit_start), number exit squares (0 = no exit leg)
+function M.capture_exit_path(path, smx, smy, pmx, pmy, max_exit, cap)
+  cap = cap or 250
+  local out = {}
+  local n = 0
+  local np = math.floor(#(path or {}) / 2)
+  for i = 1, np do
+    if n >= cap then break end
+    out[2 * n + 1] = path[2 * i - 1]
+    out[2 * n + 2] = path[2 * i]
+    n = n + 1
+  end
+  local function next_to(ax, ay, bx, by)
+    return math.abs(ax - bx) <= 1 and math.abs(ay - by) <= 1
+  end
+  if n == 0 then return out, 0, 0 end
+  if out[2 * n - 1] ~= pmx or out[2 * n] ~= pmy then
+    -- Onto the pill only from the square next to it, and only with room.
+    if n >= cap or not next_to(out[2 * n - 1], out[2 * n], pmx, pmy) then
+      return out, n, 0
+    end
+    out[2 * n + 1] = pmx
+    out[2 * n + 2] = pmy
+    n = n + 1
+  end
+  local incoming = n
+  local added = 0
+  for i = incoming - 1, 1, -1 do
+    if added >= max_exit or n >= cap then break end
+    out[2 * n + 1] = out[2 * i - 1]
+    out[2 * n + 2] = out[2 * i]
+    n = n + 1
+    added = added + 1
+  end
+  if added < max_exit and n < cap and smx and smy
+     and not (out[1] == smx and out[2] == smy)
+     and not (smx == pmx and smy == pmy)
+     and next_to(out[1], out[2], smx, smy) then
+    out[2 * n + 1] = smx
+    out[2 * n + 2] = smy
+    n = n + 1
+    added = added + 1
+  end
+  return out, incoming, added
+end
+
+--- The goal pool damage cost with an exit leg:
+--- (damage - exit_damage) x weight + exit_damage x weight x exit_weight.
+--- exit_damage 0 gives damage x weight, the old cost.
+function M.damage_cost(damage, exit_damage, weight, exit_weight)
+  exit_damage = exit_damage or 0
+  if exit_damage == 0 then return damage * weight end
+  return (damage - exit_damage) * weight + exit_damage * weight * (exit_weight or 1)
+end
+
+--- Mark where the exit leg starts: waypoints 1..n are the incoming path.
+--- Call it after snapshot (a snapshot clears it). An older exe without
+--- wsim_set_exit_start runs the whole path as one drive.
+function M.set_exit_start(n)
+  local set = rawget(_G, "wsim_set_exit_start")
+  if type(set) == "function" then set(n or 0) end
+end
+
 --- Populate the simulator from the current world state.
 --- Call this before wsim.run().
 ---
@@ -67,6 +170,7 @@ end
 --- @param attack_pill_idx number|nil  Pill index we're shooting at, or nil
 function M.snapshot(world, info, path, attack_pill_idx)
   wsim_clear()
+  M.push_fixes()
 
   -- Add hostile/neutral pills with current anger
   local pill_sim_idx = 0

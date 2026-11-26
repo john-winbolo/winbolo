@@ -66,6 +66,10 @@ typedef struct {
   int16_t  armour;          /* signed for death detection */
   float    slide_vx;        /* knockback X velocity (WU/tick) */
   float    slide_vy;        /* knockback Y velocity (WU/tick) */
+  /* The game's WinBolo push (tank.c bumpX/bumpY, 512ths of a WU), used
+   * instead of slide_vx/vy while drive_while_sliding is on. */
+  int32_t  bump_x;
+  int32_t  bump_y;
 } WSimTank;
 
 typedef struct {
@@ -107,6 +111,12 @@ typedef struct {
    * simulated. Callers must not read a low damage_taken from a truncated
    * run as evidence the trip is survivable. */
   uint8_t  truncated;
+  /* Exit leg (brainWorldSimSetExitStart): the subset of damage_taken
+   * taken from the arrival tick on, and the ticks the exit leg ran
+   * (arrival tick included). Both 0 when there was no exit leg or it
+   * ended at once because no pill that fired at us had us in range. */
+  int16_t  exit_damage;
+  int16_t  exit_ticks;
   uint8_t  lgm_survived;     /* 0=not dispatched, 1=survived, 2=killed */
   int16_t  lgm_arrival_tick;  /* when LGM reached dest, or -1 */
   int16_t  lgm_death_tick;    /* when LGM died, or -1 */
@@ -146,6 +156,22 @@ struct BrainWorldSim {
   int           tank_shoot_interval_base; /* our shot interval a clear restores (8) */
   int           pill_hit_damage;       /* health one shell takes off a pill (1) */
   int           forest_range;          /* WU a pill can see into forest (768) */
+  /* Knob fixes a brain pushes through brainWorldSimSetFixes. The defaults
+   * (0, 0, 0) are the old model, bit for bit, and a clear keeps them.
+   *   drive_while_sliding: our tank drives along its path while a shell
+   *     push moves it, and the push is the game's WinBolo push
+   *     (tank_slide_step along the shell angle, then each tick the
+   *     magnitude loses (magnitude >> tank_bump_decay_shift) + 1).
+   *     0 = the old 26 WU * 0.80 slide, with no driving while it lasts.
+   *   hit_full_dist / hit_far_frac: a moving tank hit at d squares from
+   *     the pill takes full shell damage up to hit_full_dist, then down
+   *     in a line to hit_far_frac of it at pill range. Both 0 = the old
+   *     1 - dist/range discount with its floor of 1. */
+  int           drive_while_sliding;
+  float         hit_full_dist;         /* squares */
+  float         hit_far_frac;          /* 0..1 */
+  int           tank_slide_step;       /* WU of the first push tick (32) */
+  int           tank_bump_decay_shift; /* push decay shift (2) */
   /* Ticks the tank stands still on the destination tile once it reaches the
    * end of its path. N gives exactly N parked ticks, counting the arrival
    * tick itself (the tank is already standing there when that tick's pills
@@ -159,6 +185,16 @@ struct BrainWorldSim {
    * (walk out + build + walk back). While parked the tank takes FULL shell
    * damage — see the distance discount in brainWorldSimRun. */
   int           dwell_ticks;
+
+  /* Exit leg (WSIM_CAPTURE_EXIT_MAX). path[0 .. exit_start-1] is the
+   * incoming path, and its last square is the arrival square;
+   * path[exit_start ..] is the exit leg. After the arrival the tank keeps
+   * driving the exit leg until it is out of pill_range of every live pill
+   * that fired at our tank in this run (shots_at_us > 0), or the exit leg
+   * ends. With no such pill in range at the arrival, the run ends there as
+   * before. 0 (the default, restored by a clear) = no exit leg. Ignored
+   * when dwell_ticks > 0 or exit_start is not inside the path. */
+  int           exit_start;
 
   /* Cooperative abort flag (SDL_AtomicInt *). Polled at the per-tick
    * checkpoint in brainWorldSimRun. NULL disables polling. void * so
@@ -190,6 +226,14 @@ void brainWorldSimSetRules(BrainWorldSim *sim, int shell_damage, int pill_range,
                            int pill_attack_ticks, int pill_attack_min_ticks,
                            int pill_cooldown_ticks, int pill_hit_damage,
                            int shoot_interval, int forest_range);
+/* Set the knob fixes (see the BrainWorldSim fields). (0, 0, 0) is the old
+ * model. A clear keeps them. hit_far_frac is clamped to 0..1 and
+ * hit_full_dist to >= 0. */
+void brainWorldSimSetFixes(BrainWorldSim *sim, int drive_while_sliding,
+                           float hit_full_dist, float hit_far_frac);
+/* The damage one pill shell does to a MOVING tank dsq (WU squared) from the
+ * pill, under the sim's rules and fixes. A parked tank takes shell_damage. */
+int brainWorldSimHitDamage(const BrainWorldSim *sim, int dsq);
 
 /* Set the cooperative abort flag the per-tick sim loop polls.
  * `flag` is an SDL_AtomicInt * (void * here so callers without SDL
@@ -211,6 +255,7 @@ void brainWorldSimSetLGM(BrainWorldSim *sim, int dispatch_tick,
  * the destination tile. 0 (default, and what brainWorldSimClear restores)
  * keeps the old stop-on-arrival behaviour. */
 void brainWorldSimSetDwell(BrainWorldSim *sim, int dwell_ticks);
+void brainWorldSimSetExitStart(BrainWorldSim *sim, int exit_start);
 
 /*********************************************************
  * Run simulation

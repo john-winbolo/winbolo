@@ -26,6 +26,7 @@ local cpf = require("cpathfinder")
 local viz = require("viz")
 local print2   = require("print2")
 local opt      = require("optimize")
+local PC       = require("pill_cover")
 local clock_us = clock_us or function() return 0 end
 
 local M = {}
@@ -131,6 +132,12 @@ do
     { t,        1.0 - t  },
     { 1.0 - t,  1.0 - t  },
   }
+  -- E3-15: v2's aims 6..9 (PT2_AIM_POINTS = 9, pilltake_v2.AIMS9: the
+  -- edge midpoints at 24 and 255 - 24 wu) for the overlay
+  M.AIM_OFFSETS_TILE[6] = { 0.5, M.AIM_INSET / 256.0 }
+  M.AIM_OFFSETS_TILE[7] = { (255 - M.AIM_INSET) / 256.0, 0.5 }
+  M.AIM_OFFSETS_TILE[8] = { 0.5, (255 - M.AIM_INSET) / 256.0 }
+  M.AIM_OFFSETS_TILE[9] = { M.AIM_INSET / 256.0, 0.5 }
   local f = M.AIM_INSET_FIRE / 256.0
   M.AIM_OFFSETS_TILE_FIRE = {
     { 0.5, 0.5 },
@@ -139,6 +146,19 @@ do
     { f,        1.0 - f  },
     { 1.0 - f,  1.0 - f  },
   }
+  -- PT2_AIM_POINTS = 9 (E3): the 5 above, then the edge midpoints (top,
+  -- right, bottom, left) at the same fire inset. Only the pill take v2 picks
+  -- aim 6..9 (pilltake_v2.AIMS9); the 5-aim loops keep the table above.
+  M.AIM_OFFSETS_TILE_FIRE9 = {}
+  for i, o in ipairs(M.AIM_OFFSETS_TILE_FIRE) do M.AIM_OFFSETS_TILE_FIRE9[i] = o end
+  M.AIM_OFFSETS_TILE_FIRE9[6] = { 0.5,      f        }
+  M.AIM_OFFSETS_TILE_FIRE9[7] = { 1.0 - f,  0.5      }
+  M.AIM_OFFSETS_TILE_FIRE9[8] = { 0.5,      1.0 - f  }
+  M.AIM_OFFSETS_TILE_FIRE9[9] = { f,        0.5      }
+end
+-- The fire offset of aim i (1..9), else the centre.
+function M.fire_aim(i)
+  return (i and M.AIM_OFFSETS_TILE_FIRE9[i]) or M.AIM_OFFSETS_TILE_FIRE[1]
 end
 M.AIM_NAMES = { "center", "TL", "TR", "BL", "BR" }
 -- Distinct colors for each aim (used by draw_overlay).
@@ -148,7 +168,17 @@ M.AIM_COLORS = {
   {  90, 230,  90, 220 },  -- 3: green
   { 110, 170, 255, 220 },  -- 4: blue
   { 230, 110, 230, 220 },  -- 5: magenta
+  -- E3-15: v2's aims 6..9 (top, right, bottom, left edge)
+  {  80, 220, 220, 220 },  -- 6: cyan
+  { 255, 160,  60, 220 },  -- 7: orange
+  { 200, 200, 200, 220 },  -- 8: grey
+  { 160, 120, 255, 220 },  -- 9: violet
 }
+-- v2's aim names 6..9, for the overlay only (AIM_NAMES stays 1..5)
+M.AIM_NAMES9 = { "center", "TL", "TR", "BL", "BR", "T", "R", "B", "L" }
+-- The highest aim index a scan may hold (v1: 5; v2: up to 9). The aims
+-- table of a v2 result holds only its best aim, so # is no length.
+M.AIM_MAX = 9
 
 -- ── Shield stamp cache — must be declared before score_aim/score_candidate ───
 -- Precomputed shot-path tile offsets (relative to pill) for every 0.25°
@@ -205,15 +235,17 @@ local function score_aim(spot_wx, spot_wy, origin_mx, origin_my,
         local plist = world.pill_at and world.pill_at[tmy * 256 + tmx]
         if plist then
           for _, e in ipairs(plist) do
-            if e.pill and (e.pill.mx ~= pmx or e.pill.my ~= pmy) then
+            -- SHOT_PATH_SKIP_DEAD_PILLS: a dead pill lets the shell pass
+            if e.pill and (e.pill.mx ~= pmx or e.pill.my ~= pmy)
+               and U.pill_entry_stops_shell(world, e, tmx, tmy) then
               outgoing_blocked_by_wall = true
               break
             end
           end
         end
-        -- A base of ANY owner is solid and blocks the shot (same rule shot_path_clear uses).
-        local bentry = world.base_at and world.base_at[tmy * 256 + tmx]
-        if bentry and bentry.base then
+        -- A base blocks the shot only under the engine rule
+        -- (U.base_stops_tank_shell, the same rule shot_path_clear uses).
+        if U.base_tile_stops_tank_shell(world, tmx, tmy, origin_mx, origin_my) then
           outgoing_blocked_by_wall = true
         end
       end
@@ -236,15 +268,16 @@ local function score_aim(spot_wx, spot_wy, origin_mx, origin_my,
           local plist = world.pill_at and world.pill_at[t.my * 256 + t.mx]
           if plist then
             for _, e in ipairs(plist) do
-              if e.pill and (e.pill.mx ~= pmx or e.pill.my ~= pmy) then
+              if e.pill and (e.pill.mx ~= pmx or e.pill.my ~= pmy)
+                 and U.pill_entry_stops_shell(world, e, t.mx, t.my) then
                 outgoing_blocked_by_wall = true
                 break
               end
             end
           end
-          -- A base of ANY owner is solid and blocks the shot (matches shot_path_clear).
-          local bentry = world.base_at and world.base_at[t.my * 256 + t.mx]
-          if bentry and bentry.base then
+          -- A base blocks the shot only under the engine rule
+          -- (U.base_stops_tank_shell, matches shot_path_clear).
+          if U.base_tile_stops_tank_shell(world, t.mx, t.my, origin_mx, origin_my) then
             outgoing_blocked_by_wall = true
           end
         end
@@ -321,22 +354,45 @@ local function score_aim(spot_wx, spot_wy, origin_mx, origin_my,
           dbgadd(tmx, tmy, "skip", string.format("behind standoff (pdist=%.2f >= pill->standoff %.2f)", pdist, pill_to_standoff_d))
         else
           local kind = nil
-          local plist = world.pill_at and world.pill_at[idx]
-          if plist then
-            for _, e in ipairs(plist) do
-              if e.pill and e.pill.owner == "friendly" then
+          -- Knob PILL_COVER_BY_HEALTH: a pill on the square is a blocker only
+          -- when it is friendly and worth a wall or more (pill_cover.lua,
+          -- floor(health / 5)). Any other pill (enemy, neutral, dead, or a
+          -- friendly pill under 5 health) is not a blocker, and no wall can
+          -- go on it, so the square is skipped.
+          local pill_skip = nil
+          if C.PILL_COVER_BY_HEALTH then
+            local sp = PC.pill_on_square(world, tmx, tmy)
+            if sp then
+              local pw = PC.pill_walls(sp)
+              if pw >= 1 then
                 kind = "friendly_pill"
-                break
+              else
+                pill_skip = string.format("pill worth 0 walls (owner=%s hp=%s)",
+                  tostring(sp.owner), tostring(sp.health))
+              end
+            end
+          else
+            local plist = world.pill_at and world.pill_at[idx]
+            if plist then
+              for _, e in ipairs(plist) do
+                if e.pill and e.pill.owner == "friendly" then
+                  kind = "friendly_pill"
+                  break
+                end
               end
             end
           end
-          if not kind then
+          if pill_skip then
+            dbgadd(tmx, tmy, "skip", pill_skip)
+          elseif not kind then
             local tt = U.ttype(tmx, tmy)
             if tt == C.T_BUILDING then kind = "wall_full"
             elseif tt == C.T_HALFBUILD then kind = "wall_half"
             end
           end
-          if kind then
+          if pill_skip then
+            -- skipped above
+          elseif kind then
             actual_blockers[#actual_blockers + 1] =
               { mx = tmx, my = tmy, kind = kind }
             dbgadd(tmx, tmy, "ACTUAL", kind)
@@ -473,15 +529,24 @@ local function score_candidate(cand, pill, world, pill_wx, pill_wy, no_builder, 
     local aim_score = 0
     if not blocked then
       -- Weight cover by shots-to-break (mirrors the C scorer): a friendly pill
-      -- blocker is worth PILLS_MAX_HEALTH (15) vs a wall's WALL_HP_FULL (5), so
+      -- blocker is worth PILLS_MAX_HEALTH (15) vs a wall's SHIELD_WALL_COVER_SHOTS (5), so
       -- one pill on the path covers as much as a three-wall shield.
-      local pill_n = 0
+      -- Knob PILL_COVER_BY_HEALTH: a friendly pill is worth floor(health / 5)
+      -- walls instead (pill_cover.lua), so pill_walls sums those.
+      local pill_n, pill_walls = 0, 0
       for _, b in ipairs(actual_blockers) do
-        local plist = world.pill_at and world.pill_at[b.my * 256 + b.mx]
-        if plist then
-          for _, e in ipairs(plist) do
-            if e.pill and e.pill.owner == "friendly" and (e.pill.health or 0) > 0 then
-              pill_n = pill_n + 1; break
+        if C.PILL_COVER_BY_HEALTH then
+          if b.kind == "friendly_pill" then
+            pill_n = pill_n + 1
+            pill_walls = pill_walls + PC.square_walls(world, b.mx, b.my)
+          end
+        else
+          local plist = world.pill_at and world.pill_at[b.my * 256 + b.mx]
+          if plist then
+            for _, e in ipairs(plist) do
+              if e.pill and e.pill.owner == "friendly" and (e.pill.health or 0) > 0 then
+                pill_n = pill_n + 1; break
+              end
             end
           end
         end
@@ -489,13 +554,15 @@ local function score_candidate(cand, pill, world, pill_wx, pill_wy, no_builder, 
       -- Cover satisfices at PPT_COVER_TARGET_SHOTS — one friendly pill (15) is a
       -- full shield, so extra blockers add nothing and built_bonus/fewer-builds
       -- break the tie toward the minimal subset (mirrors the C scorer).
-      local WALL_W, PILL_W = C.WALL_HP_FULL or 5, C.PILLS_MAX_HEALTH or 15
+      local WALL_W, PILL_W = C.SHIELD_WALL_COVER_SHOTS or 5, C.PILLS_MAX_HEALTH or 15
       -- Of the buildable (potential) slots, assume up to num_pill_blockers become
       -- dropped pillboxes worth pill_we walls each; the rest are plain walls.
       local _we = pill_we or 3.0
       local _npb = num_pill_blockers or 0
       local pot_pill = (potential_n < _npb) and potential_n or _npb
-      local cover = PILL_W * pill_n + WALL_W * (actual_n - pill_n)
+      local pill_cover_shots = C.PILL_COVER_BY_HEALTH and (WALL_W * pill_walls)
+                               or (PILL_W * pill_n)
+      local cover = pill_cover_shots + WALL_W * (actual_n - pill_n)
                     + WALL_W * (potential_n - pot_pill) + (WALL_W * _we) * pot_pill
       local target = C.PPT_COVER_TARGET_SHOTS or 15
       if cover > target then cover = target end
@@ -675,15 +742,31 @@ function M.scan(pill, world, standoff_mx, standoff_my, standoff_deg,
       min_chain = math.min(min_chain + 1, 3)
     end
 
+    -- Only LIVE pills go in: a shell passes over a dead pill (pillsHitSlot
+    -- needs armour > 0), so a dead pill neither blocks our own shot nor
+    -- shields us. scan_c blocks an aim on any pill in this table that sits
+    -- on our outgoing path.
     local pill_table = {}
+    -- Knob PILL_COVER_BY_HEALTH (scan_c args 25/26): the health of each
+    -- pill_table entry, in the same order, and the squares of dead pills
+    -- (no shell stops on them, but no wall can go there). Off: nil, nil, and
+    -- scan_c scores exactly as before.
+    local by_hp = C.PILL_COVER_BY_HEALTH
+    local pill_hp_table = by_hp and {} or nil
+    local dead_pill_sq  = by_hp and {} or nil
     if world.pill_at then
       for _, plist in pairs(world.pill_at) do
         for _, e in ipairs(plist) do
-          if e.pill then
+          if e.pill and (e.pill.health or 0) > 0 then
             local p = e.pill
             pill_table[#pill_table+1] = p.mx
             pill_table[#pill_table+1] = p.my
             pill_table[#pill_table+1] = (p.owner == "friendly") and 1 or 0
+            if by_hp then pill_hp_table[#pill_hp_table+1] = PC.cover_health(p) end
+          elseif by_hp and e.pill and not e.pill.in_tank then
+            local p = e.pill
+            dead_pill_sq[#dead_pill_sq+1] = p.mx
+            dead_pill_sq[#dead_pill_sq+1] = p.my
           end
         end
       end
@@ -698,7 +781,8 @@ function M.scan(pill, world, standoff_mx, standoff_my, standoff_deg,
       n_fav, fs1, fb1, fs2, fb2, min_chain, max_bonus,
       NUM, SDG,
       num_pill_blockers, PILL_WE,
-      C.SHIELD_ADJ_FRIENDLY_PENALTY or 3)   -- arg 24: C mirror of the adjacency penalty
+      C.SHIELD_ADJ_FRIENDLY_PENALTY or 3,   -- arg 24: C mirror of the adjacency penalty
+      pill_hp_table, dead_pill_sq)          -- args 25/26: PILL_COVER_BY_HEALTH (nil = off)
 
     if r then
       local standoff_cand = { cx = sx, cy = sy,
@@ -1723,13 +1807,15 @@ function M.draw_overlay(scan, now_tick)
           elseif r:find("off map") then return "m"
           else return "?" end
         end
-        for ai2 = 1, #c.aims do
+        for ai2 = 1, M.AIM_MAX do
           local a2 = c.aims[ai2]
-          local nm = M.AIM_NAMES[ai2] or tostring(ai2)
-          local win = (ai2 == c.best_aim_idx) and "*" or " "
-          local parts = {}
-          for _, t in ipairs(a2.debug_tiles or {}) do
-            parts[#parts + 1] = string.format("(%d,%d)%s", t.mx, t.my, fate_code(t))
+          if a2 then
+            local nm = M.AIM_NAMES9[ai2] or tostring(ai2)
+            local win = (ai2 == c.best_aim_idx) and "*" or " "
+            local parts = {}
+            for _, t in ipairs(a2.debug_tiles or {}) do
+              parts[#parts + 1] = string.format("(%d,%d)%s", t.mx, t.my, fate_code(t))
+            end
           end
         end
       end
@@ -1814,7 +1900,7 @@ function M.draw_overlay(scan, now_tick)
     -- top of black. grey=unreachable, yellow=potential, green=actual.
     for _, c in ipairs(cand_list) do
       if c and c.aims then
-        for ai = 1, #c.aims do
+        for ai = 1, M.AIM_MAX do
           local a = c.aims[ai]
           if a then
             for _, b in ipairs(a.blockers or {}) do mark(b.mx, b.my, 3) end
@@ -1911,6 +1997,7 @@ function M.draw_overlay(scan, now_tick)
     -- always sees the AIM THAT WON, not just an arbitrary one.
     local pmx = scan.pill and scan.pill.mx or 0
     local pmy = scan.pill and scan.pill.my or 0
+    -- E3-15: v2's aims 6..9 draw at their own points and colours
     local show_idx = viz_target.best_aim_idx
                   or (viz_target.aims[1] and not viz_target.aims[1].blocked and 1)
                   or 1
@@ -1936,7 +2023,7 @@ function M.draw_overlay(scan, now_tick)
     -- so they read as a "found a real blocker here" emphasis.
     do
       local seen = {}
-      for ai = 1, #viz_target.aims do
+      for ai = 1, M.AIM_MAX do
         local a = viz_target.aims[ai]
         if a and a.blockers then
           for _, b in ipairs(a.blockers) do
@@ -1955,7 +2042,7 @@ function M.draw_overlay(scan, now_tick)
     -- a thin hollow border in the aim's color — these are the tiles
     -- where building a wall would actually help.
     local border_inset_step = 0.05
-    for ai = 1, #viz_target.aims do
+    for ai = 1, M.AIM_MAX do
       local a = viz_target.aims[ai]
       if a then
         local col = M.AIM_COLORS[ai]
@@ -1991,11 +2078,14 @@ function M.draw_overlay(scan, now_tick)
     -- spot still tells you how many slots could be filled.
     local lx = viz_target.cx + 0.6
     local ly = viz_target.cy - 0.5
-    for ai = 1, #M.AIM_NAMES do
+    -- E3-15: v1's five rows; a v2 aim 6..9 gets its row too
+    for ai = 1, M.AIM_MAX do
       local col = M.AIM_COLORS[ai]
       local a = viz_target.aims[ai]
-      local n_act = (a and a.blockers) and #a.blockers or 0
-      local n_pot = (a and a.potential_blockers) and #a.potential_blockers or 0
+      if ai <= #M.AIM_NAMES or a then
+        local n_act = (a and a.blockers) and #a.blockers or 0
+        local n_pot = (a and a.potential_blockers) and #a.potential_blockers or 0
+      end
     end
 
     -- Build-queue highlight: thick orange outline + 1-based build order

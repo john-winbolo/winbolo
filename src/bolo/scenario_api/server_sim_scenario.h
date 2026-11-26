@@ -600,6 +600,52 @@ bool serverSimAddUnfieldedSeat(ServerSim *sim, BYTE playerNum,
                                const char *name, BYTE teamNumber);
 
 /*********************************************************
+ *NAME:          serverSimScenarioTeamIsHeld
+ *PURPOSE:
+ *  Whether the attached lobby template has this team and
+ *  says fielded = false for it: its bots sit in held seats
+ *  until a spawn fields them. False with no template, for
+ *  team 0, and for a team the template does not list.
+ *********************************************************/
+bool serverSimScenarioTeamIsHeld(const ServerSim *sim, BYTE team);
+
+/*********************************************************
+ *NAME:          serverSimScenarioTemplateHasTeam
+ *PURPOSE:
+ *  Whether the attached lobby template lists this team,
+ *  fielded or not. A team the template lists is not an
+ *  extra team, even while it has nobody on it.
+ *********************************************************/
+bool serverSimScenarioTemplateHasTeam(const ServerSim *sim, BYTE team);
+
+/*********************************************************
+ *NAME:          serverSimScenarioAddHeldSeat
+ *PURPOSE:
+ *  The seat the template seeds for a held team, made on
+ *  request: a free seat held for the team with the team's
+ *  brain, init table, mode and difficulty, marked keepSeat.
+ *  The template's own seating calls the same code, so the
+ *  two cannot differ. name NULL or "" takes "Bot N".
+ *  Returns false when the team is not held, the seat is
+ *  taken or out of range.
+ *********************************************************/
+bool serverSimScenarioAddHeldSeat(ServerSim *sim, BYTE slot,
+                                  const char *name, BYTE team);
+
+/*********************************************************
+ *NAME:          serverSimScenarioBotMovedTeam
+ *PURPOSE:
+ *  Called after a lobby bot's team is written. A bot now on
+ *  a held team becomes one of that team's held seats; a
+ *  held seat now on any other team becomes an ordinary bot
+ *  on the field, built as the lobby's Add Bot builds one.
+ *  Both keep the seat's name. No-op for a human, with no
+ *  template, when the team did not change (oldTeam), or
+ *  when the seat is already the kind its team asks for.
+ *********************************************************/
+void serverSimScenarioBotMovedTeam(ServerSim *sim, BYTE slot, BYTE oldTeam);
+
+/*********************************************************
  *NAME:          serverSimUnfieldBot
  *PURPOSE:
  *  Take a seat off the field without taking it out of the

@@ -772,6 +772,39 @@ static int scnLuaBuilder(lua_State *L) {
     return 1;
 }
 
+/* Every live shell in the round, as a list of { wx, wy, angle }: the
+ * engine's own shells (serverSimGetShellSnapshot), owner unknown. The list
+ * holds at most 256 shells.
+ *
+ * A shell that runs out does not move on its last tick (shellsUpdate: at
+ * SHELL_DEATH it bursts where it is and is marked dead, and the snapshot
+ * leaves dead shells out), so for it the last place seen IS the burst, and
+ * it is seen for L ticks (tests/scenario/shells_probe.scenario.lua: 12 of 12
+ * shells, 0 wu). A shell that hits something moves one more step and bursts
+ * there, or at the middle of the square it hit, in the same tick: its last
+ * place seen is short of its burst. */
+static int scnLuaShells(lua_State *L) {
+    enum { kScnShellCap = 256 };
+    const ScnLuaCtx *c = scnCtx(L);
+    ShellRender      buf[kScnShellCap];
+    int              n = serverSimGetShellSnapshot(c->sim, buf, kScnShellCap);
+    int              i;
+
+    if (n > kScnShellCap) {
+        n = kScnShellCap;
+    }
+    lua_createtable(L, n, 0);
+    for (i = 0; i < n; i++) {
+        lua_createtable(L, 0, 3);
+        scnSetInt(L, "wx", buf[i].x);
+        scnSetInt(L, "wy", buf[i].y);
+        lua_pushnumber(L, (lua_Number)buf[i].angle);
+        lua_setfield(L, -2, "angle");
+        lua_rawseti(L, -2, i + 1);
+    }
+    return 1;
+}
+
 static int scnLuaLobbySlot(lua_State *L) {
     const ScnLuaCtx    *c = scnCtx(L);
     ServerSimRosterSlot slot;
@@ -5272,6 +5305,7 @@ static const ScnLuaOpParam kScnOpArgs_tank[] = {
 static const ScnLuaOpParam kScnOpArgs_builder[] = {
     { "p", SCN_PARAM_SLOT, false }, SCN_OP_ARG_END
 };
+static const ScnLuaOpParam kScnOpArgs_shells[] = { SCN_OP_ARG_END };
 static const ScnLuaOpParam kScnOpArgs_lobby_slot[] = {
     { "p", SCN_PARAM_SLOT, false }, SCN_OP_ARG_END
 };
@@ -5682,6 +5716,12 @@ static const ScnLuaRow kScnLuaRows[] = {
       "builder(p) — player p's builder as { state, mx, my, wx, wy, job, "
       "trees, mines }, or nil when the seat has none.",
       SCN_OP_PARAMS(builder), SCN_OP_READS },
+    { "shells", scnLuaShells,
+      "shells() — every live shell as a list of { wx, wy, angle } (world "
+      "units, the angle in brads), owner unknown; for a shell that ran out "
+      "the last place seen is its burst, for one that hit something it is "
+      "one step short.",
+      SCN_OP_PARAMS(shells), SCN_OP_READS },
     { "lobby_slot", scnLuaLobbySlot,
       "lobby_slot(p) — seat p as { connected, bot, team, name, ready, "
       "fielded, alive }, or nil for an empty seat.",
