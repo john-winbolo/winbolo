@@ -213,7 +213,9 @@ void serverSimSetTeamMeta(ServerSim *sim, BYTE teamId,
 /* Give a team a bot naming pool that no other in-use team holds, and
  * return the pool the team then has. choice selects one of the free
  * pools (choice modulo the number of free pools), so a caller passes a
- * random number to get a random free pool. The write goes through
+ * random number to get a random free pool. Only the pools a draw may
+ * pick are offered (lobbyBotPoolDrawCount: all pools, or only the ones
+ * -botnames named by label). The write goes through
  * serverSimSetTeamMeta with the team's own colour, side and name, so
  * clients get the pool in CTRL_LOBBY_TEAM_META; a team not in use yet is
  * marked in use with the default colour and "Team N" name. An in-use

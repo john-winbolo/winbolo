@@ -190,3 +190,99 @@ bool lobbyBotPoolsLoadDefault(LobbyBotPoolLoadStats *stats) {
 
     return false;
 }
+
+/* Room for every label of the largest pool set, each with ", ". */
+#define LABEL_LIST_BYTES \
+    (LOBBY_BOT_POOL_MAX_POOLS * (LOBBY_BOT_POOL_MAX_LABEL_BYTES + 2) + 1)
+
+/* Labels of the active themed pools, joined with ", ", into buf. */
+static void joinActiveLabels(char *buf, size_t cap) {
+    int i;
+    int themed = lobbyBotPoolCount() - 1;   /* not "Numbered Bots" */
+    size_t used = 0;
+    if (cap == 0) return;
+    buf[0] = '\0';
+    for (i = 0; i < themed; i++) {
+        int w = snprintf(buf + used, cap - used, "%s%s",
+                         i > 0 ? ", " : "", lobbyBotPoolLabel(i));
+        if (w < 0 || (size_t)w >= cap - used) break;
+        used += (size_t)w;
+    }
+}
+
+/* Whether path names a regular file. A directory with the name of a
+ * label (fopen opens one on Linux) is not a pool file. */
+static bool fileExists(const char *path) {
+    SDL_PathInfo info;
+    if (!SDL_GetPathInfo(path, &info)) return false;
+    return info.type == SDL_PATHTYPE_FILE;
+}
+
+bool lobbyBotPoolsLoadFromArg(const char *arg, const char *defaultPath,
+                              FILE *warn, LobbyBotPoolLoadStats *stats) {
+    LobbyBotPoolLoadStats st;
+    LobbyBotPoolFilterResult fr;
+    char labels[LABEL_LIST_BYTES];
+    bool loaded;
+    int i;
+
+    memset(&st, 0, sizeof(st));
+
+    /* A pool file: an existing file, or a value that looks like a path
+     * (a missing file is not tried as a label). Same as before labels. */
+    if (arg != NULL &&
+        (arg[0] == '\0' || fileExists(arg) ||
+         lobbyBotNamesArgLooksLikePath(arg))) {
+        loaded = lobbyBotPoolsLoadFromFile(arg, &st);
+        if (!loaded && warn) {
+            fprintf(warn,
+                    "Warning: -botnames '%s' could not be loaded; "
+                    "using built-in bot names\n", arg);
+        }
+        if (stats) *stats = st;
+        return loaded;
+    }
+
+    /* No -botnames, or labels: start from the shipped file. */
+    loaded = defaultPath ? lobbyBotPoolsLoadFromFile(defaultPath, &st)
+                         : lobbyBotPoolsLoadDefault(&st);
+    if (arg == NULL) {
+        if (stats) *stats = st;
+        return loaded;
+    }
+    if (!loaded && warn) {
+        fprintf(warn, "Warning: -botnames: the shipped bot names file "
+                      "could not be loaded; choosing from the built-in "
+                      "pools\n");
+    }
+
+    joinActiveLabels(labels, sizeof(labels));
+    if (lobbyBotPoolLabelEqualsNoCase("?", arg, strlen(arg)) ||
+        lobbyBotPoolLabelEqualsNoCase("list", arg, strlen(arg))) {
+        if (warn) fprintf(warn, "Bot name pools: %s\n", labels);
+        if (stats) *stats = st;
+        return loaded;
+    }
+
+    lobbyBotPoolsFilterByLabels(arg, &fr);
+    if (warn) {
+        for (i = 0; i < fr.unknownCount &&
+                    i < LOBBY_BOT_POOL_FILTER_MAX_UNKNOWN; i++) {
+            fprintf(warn, "Warning: -botnames: no pool named '%s'; "
+                          "pools are: %s\n", fr.unknown[i], labels);
+        }
+        if (fr.poolsKept == 0) {
+            /* Also what a mistyped file name with no '/' and no
+             * ".json" gets, so the warning names both readings. */
+            fprintf(warn, "Warning: -botnames: '%s' is not a file and "
+                          "names no pool; using all pools\n", arg);
+        } else {
+            char kept[LABEL_LIST_BYTES];
+            joinActiveLabels(kept, sizeof(kept));
+            fprintf(warn, "Bot name pools chosen: %s\n", kept);
+        }
+    }
+    if (fr.poolsKept > 0) st.poolsKept = fr.poolsKept;
+    if (stats) *stats = st;
+    return loaded;
+}
