@@ -567,6 +567,7 @@ static void lvDrawBaseNumbersOverBlit(const SDL_FRect *src, const SDL_FRect *dst
 static void lvDrawHitBoxesOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
 static void lvDrawHitDotsOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
 static void lvDrawServerCheckOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
+static void lvDrawShellsOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
 
 /* Paint the world render target into the viewer's own window.
  *
