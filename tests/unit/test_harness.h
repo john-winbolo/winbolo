@@ -720,6 +720,8 @@ int run_gh_pt2_v2_parity(void);
 int run_gh_pt2_walk_jump(void);
 /* The reuse key of that walk (test_gh_pt2_walk_reuse.c). */
 int run_gh_pt2_walk_reuse(void);
+/* The change ticks of that walk by adds (test_gh_pt2_walk_dda.c). */
+int run_gh_pt2_walk_dda(void);
 /* Speed check of gh_pt2_old on recorded inputs; runs only with WB_PT2_BENCH set. */
 int run_gh_pt2_bench(void);
 int run_pf_tail_reaches_radius_and_stops(void);

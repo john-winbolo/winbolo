@@ -71,6 +71,91 @@ static inline int32_t pt2w_next2(int32_t x0, int32_t xs, int32_t y0, int32_t ys,
     return kx < ky ? kx : ky;
 }
 
+/*
+ * The same change ticks without a division per change (step without
+ * dividing). One axis keeps its square q (pt2w_pos >> 8, arithmetic)
+ * and k, the next tick the square changes. pt2w_next depends on t only
+ * through q, and each change moves q by one square, so the next k
+ * follows from the last one by adding a fixed step:
+ *
+ * Up (xs > 0): k = ceil(N / xs), N = 256 * d. The next square edge adds
+ * 65536 to N. With k * xs - N = r (0 <= r < xs) and 65536 = qa * xs + ra,
+ * the next k is k + qa + (r < ra) and r becomes r - ra (+ xs if r < ra).
+ *
+ * Down (xs < 0, s = -xs): k = floor(m / s) + 1. The next edge adds 65536
+ * to m. With m % s = u, the next k is k + qa + (u + ra >= s). Keeping
+ * r = s - 1 - u gives the same step as up: k + qa + (r < ra), and
+ * r becomes r - ra (+ s if r < ra).
+ *
+ * More than one square change on one tick (|xs| > 65536) gives the same
+ * k twice; the walk steps while k is the tick. The setup is the only
+ * division (one for k, one for qa and ra). The values stay well inside
+ * int32 for |x0| < 2^30, |xs| <= 2^20 and t <= PT2W_MAX_T.
+ */
+typedef struct {
+    int32_t q;      /* the square on this axis, pt2w_pos >> 8 (arithmetic) */
+    int32_t k;      /* the next tick the square changes, or PT2W_NEVER */
+    int32_t r;      /* the remainder (see above) */
+    int32_t s;      /* |xs| */
+    int32_t qa, ra; /* 65536 / s, 65536 % s */
+    int32_t dir;    /* +1, -1, or 0 for xs == 0 */
+} Pt2wAxis;
+
+/* The axis at tick 1 (the walk's first tick). */
+static inline void pt2w_ax_init(Pt2wAxis *a, int32_t x0, int32_t xs) {
+    a->q = pt2w_pos(x0, xs, 1) >> 8;
+    if (xs == 0) {
+        a->k = PT2W_NEVER; a->r = 0; a->s = 1; a->qa = 0; a->ra = 0; a->dir = 0;
+        return;
+    }
+    if (xs > 0) {
+        int32_t n = (int32_t)(256 * (((int64_t)a->q + 1) * 256 - x0));
+        a->s = xs; a->dir = 1;
+        a->k = (n + xs - 1) / xs;
+        a->r = a->k * xs - n;
+    } else {
+        int32_t s = -xs;
+        int32_t m = (int32_t)(256 * ((int64_t)x0 - (int64_t)a->q * 256));
+        a->s = s; a->dir = -1;
+        a->k = m / s + 1;
+        a->r = s - 1 - m % s;
+    }
+    a->qa = 65536 / a->s; a->ra = 65536 % a->s;
+}
+
+/* The square changes at tick a->k: move q one square and find the next k. */
+static inline void pt2w_ax_step(Pt2wAxis *a) {
+    int32_t c = a->r < a->ra;
+    a->q += a->dir;
+    a->k += a->qa + c;
+    a->r += (c ? a->s : 0) - a->ra;
+}
+
+/* The square index walk_step gives: the unsigned shift of the position,
+ * that is q modulo 2^24. */
+static inline int32_t pt2w_ax_sq(const Pt2wAxis *a) { return (int32_t)((uint32_t)a->q & 0xFFFFFFu); }
+
+/* pt2w_ax_step when a->k == t, else no change, with no branch: which
+ * axis changes square is hard to guess, so a branch there costs more
+ * than the step. */
+static inline void pt2w_ax_step_at(Pt2wAxis *a, int32_t t) {
+    int32_t m = -(int32_t)(a->k == t);
+    int32_t c = a->r < a->ra;
+    a->q += a->dir & m;
+    a->k += (a->qa + c) & m;
+    a->r += ((a->s & -c) - a->ra) & m;
+}
+
+/* Past tick t on both axes (t is the smaller k; t <= PT2W_MAX_T). After
+ * one step k is still t only when one tick crosses more than one square
+ * edge (|xs| > 65536). */
+static inline void pt2w_ax_pass(Pt2wAxis *ax, Pt2wAxis *ay, int32_t t) {
+    pt2w_ax_step_at(ax, t);
+    pt2w_ax_step_at(ay, t);
+    while (ax->k == t) pt2w_ax_step(ax);
+    while (ay->k == t) pt2w_ax_step(ay);
+}
+
 #include <string.h>
 
 /* The bits of a double: the keys below compare bit for bit (negative

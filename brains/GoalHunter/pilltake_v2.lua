@@ -827,6 +827,55 @@ end
 M.FIRE_AIMS = { { 128, 128 }, { 16, 16 }, { 240, 16 }, { 16, 240 }, { 240, 240 },
                 { 128, 16 }, { 240, 128 }, { 128, 240 }, { 16, 128 } }
 local AL = require("aim_lane")
+local f32 = SH.f32
+
+-- aim_wide's known clear shots (gh_pt2_v2.c aw_note, the same rules): the
+-- gun angles (float) of shots from (px, py) that reached A with the
+-- planned blockers x, in this step (ctx.aw_gen), with no tanks tested.
+-- The origin, A, the set (the table and its size) and the step are the
+-- key; a note with another key starts a new list of at most AW_N angles.
+local AW_N = 16
+local function aw_size(x)
+  if not x then return -1 end
+  local n = 0
+  for _ in pairs(x) do n = n + 1 end
+  return n
+end
+local function aw_note(ctx, px, py, a, A, x)
+  if ctx.aw_off then return end
+  local m, xn = ctx.awm, aw_size(x)
+  if not (m.on and m.px == px and m.py == py and m.tmx == A.mx and m.tmy == A.my
+          and m.x == (x or false) and m.xn == xn and m.gen == ctx.aw_gen) then
+    m.on, m.px, m.py, m.tmx, m.tmy, m.x, m.xn, m.gen, m.n = true, px, py, A.mx, A.my, x or false, xn, ctx.aw_gen, 0
+  end
+  if m.n < AW_N then m.n = m.n + 1; m[m.n] = a end
+end
+-- Is a known clear shot (same key) past gun angle f on this side of the
+-- clear centre shot c, less than 64 brad from c? Blockers are whole
+-- squares and the shells are checked every 32 wu, so no blocker stops a
+-- shell between two shells that reach A.
+local function aw_hit(ctx, px, py, A, x, c, f, side)
+  local m = ctx.awm
+  if ctx.aw_off or not m.on then return false end
+  if not (m.px == px and m.py == py and m.tmx == A.mx and m.tmy == A.my
+          and m.x == (x or false) and m.xn == aw_size(x) and m.gen == ctx.aw_gen) then return false end
+  local df = side * ((f - c + 128) % 256 - 128)
+  if not (df > 0) then return false end
+  for i = 1, m.n do
+    local d = side * ((m[i] - c + 128) % 256 - 128)
+    if d > df and d < 64 then return true end
+  end
+  return false
+end
+M._aw_note = aw_note
+
+-- aim_lane.wide_enough's answer with the same samples (step 1/16 brad,
+-- n = ceil(mlb / step) each side), and the shot count it takes. Each side
+-- tests the far sample first: when it reaches A so does every sample
+-- between it and the centre, and the side is wide enough; a known clear
+-- shot past it (aw_hit) gives the same with no walk. Only when the far
+-- sample is stopped are the inner ones walked, in the old order. n_shot
+-- (the slicer's work) counts the shots the one-by-one test takes.
 local function aim_wide(ctx, px, py, ai, extra)
   local mlb = ctx.inp.min_lane_brad
   if not mlb or mlb <= 0 then return true end
@@ -835,10 +884,37 @@ local function aim_wide(ctx, px, py, ai, extra)
   local dx, dy = A.mx * 256 + fo[1] - px, A.my * 256 + fo[2] - py
   local a0 = (atan2(dx, -dy) * 256 / TWO_PI) % 256
   local buf = ctx.side_lane
-  return (AL.wide_enough(function(a)
-    ctx.n_shot = ctx.n_shot + 1
-    return (SH.tank_shot_angle(env, px, py, a, A.mx, A.my, extra, buf))
-  end, a0, mlb))
+  local step = AL.STEP
+  ctx.n_shot = ctx.n_shot + 1
+  local ac = a0 % 256
+  if not SH.tank_shot_angle(env, px, py, ac, A.mx, A.my, extra, buf) then return false end
+  local c = f32(ac)
+  aw_note(ctx, px, py, c, A, extra)
+  local n = math.ceil(mlb / step - 1e-9)
+  local reach = {}
+  for side = -1, 1, 2 do
+    local r, cnt = 0, 0
+    if n >= 1 then
+      local fa = (a0 + side * n * step) % 256
+      if aw_hit(ctx, px, py, A, extra, c, f32(fa), side) then
+        r, cnt = n * step, n
+      elseif SH.tank_shot_angle(env, px, py, fa, A.mx, A.my, extra, buf) then
+        aw_note(ctx, px, py, f32(fa), A, extra)
+        r, cnt = n * step, n
+      else
+        cnt = n
+        for k = 1, n - 1 do
+          local ka = (a0 + side * k * step) % 256
+          if not SH.tank_shot_angle(env, px, py, ka, A.mx, A.my, extra, buf) then cnt = k; break end
+          aw_note(ctx, px, py, f32(ka), A, extra)
+          r = k * step
+        end
+      end
+    end
+    ctx.n_shot = ctx.n_shot + cnt
+    reach[side] = r
+  end
+  return reach[-1] >= mlb - 1e-9 and reach[1] >= mlb - 1e-9
 end
 M._aim_wide = aim_wide
 
@@ -865,6 +941,7 @@ local function nudge_aim(ctx, px, py, extra, shorts)
         local off = ctx.aims[ai]
         local ok, why, ln = SH.tank_shot(env, nx, ny, tx + off[1], ty + off[2], A.mx, A.my, extra, ctx.lane)
         ctx.n_shot = ctx.n_shot + 1
+        if ok then aw_note(ctx, nx, ny, SH.tank_angle(nx, ny, tx + off[1], ty + off[2]), A, extra) end
         if ok and not aim_wide(ctx, nx, ny, ai, extra) then ok, why = false, "narrow" end
         if ok then ctx.lane = {}; return nx, ny, nw, ai, ln end
         if why == "short" then n = n + 1; live[n] = ai end
@@ -899,6 +976,7 @@ local function eval_point(ctx, px, py, extra, aim_fixed, nudge, exact, lazy)
     local ok, why, ln = SH.tank_shot(env, px, py, A.mx * 256 + off[1], A.my * 256 + off[2], A.mx, A.my, extra,
                                      ctx.lane)
     ctx.n_shot = ctx.n_shot + 1
+    if ok then aw_note(ctx, px, py, SH.tank_angle(px, py, A.mx * 256 + off[1], A.my * 256 + off[2]), A, extra) end
     if ok and not aim_wide(ctx, px, py, ai, extra) then ok, why = false, "narrow" end
     if ok then aim_idx, lane = ai, ln; ctx.lane = {}; break end
     why_out = why
@@ -1051,6 +1129,10 @@ local function clear_aims_of(ctx, rec)
       local ok, _, ln = SH.tank_shot(env, rec.px, rec.py, A.mx * 256 + off[1], A.my * 256 + off[2],
                                      A.mx, A.my, rec.extra_in, ctx.lane)
       ctx.n_shot = ctx.n_shot + 1
+      if ok then
+        aw_note(ctx, rec.px, rec.py, SH.tank_angle(rec.px, rec.py, A.mx * 256 + off[1], A.my * 256 + off[2]),
+                A, rec.extra_in)
+      end
       if ok and not aim_wide(ctx, rec.px, rec.py, ai, rec.extra_in) then ok = false end
       if ok then rec.clear_aims[#rec.clear_aims + 1] = ai; rec.lanes[ai] = ln; ctx.lane = {} end
     end
@@ -2156,7 +2238,10 @@ local function new_ctx(inp, A)
                 -- M2: the aim tests' lane buffer; a clear aim keeps it
                 -- (its lane) and the next test gets a new one
                 lane = {},
-                side_lane = {} }  -- aim_wide's shells (their squares unused)
+                side_lane = {},   -- aim_wide's shells (their squares unused)
+                -- aim_wide's known clear shots (aw_note); aw_gen = the step
+                awm = { on = false, n = 0 }, aw_gen = 0,
+                aw_off = inp.env.ts_tanks ~= nil and #inp.env.ts_tanks > 0 }
   for _, p in ipairs(inp.pills) do
     if alive(p) and not inp.env.is_ally(p) then ctx.hostile[#ctx.hostile + 1] = p end
   end
@@ -2497,8 +2582,14 @@ function M.evaluate_lua(inp)
     return SLICE_W_CAST * (st.casts + st.casts_confirm) + SLICE_W_SHOT * ctx.n_shot
       + SLICE_W_NODE * (st.wall_nodes - ctx.memo_nodes) + SLICE_W_POINT * n_eval
   end
+  -- a slice the slicer starts is a new step: the map may change there
+  local slicer_st = slice_fn and SLICERS[slice_fn]
   local function unit(est, fin)
-    if slice_fn then paused = paused + (slice_fn(work(), est, fin) or 0) end
+    if slice_fn then
+      local s0 = slicer_st and slicer_st.slices
+      paused = paused + (slice_fn(work(), est, fin) or 0)
+      if not slicer_st or slicer_st.slices ~= s0 then ctx.aw_gen = ctx.aw_gen + 1 end
+    end
   end
   local pcx, pcy = A.mx + 0.5, A.my + 0.5
   local all, best = {}, nil

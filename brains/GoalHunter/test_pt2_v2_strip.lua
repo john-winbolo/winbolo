@@ -1496,5 +1496,144 @@ do
   clear()
 end
 
+-- ── 16. aim_wide: far sample first, known clear shots ───────────────────
+-- aim_wide tests each side's far sample first and walks the inner samples
+-- only when the far one is stopped; a known clear shot from the same
+-- origin past the far sample (aw_note) passes the side with no walk.
+-- The answer and the shot count (n_shot, the slicer's work) must be the
+-- ones of aim_lane.wide_enough's one-by-one test.
+print("aim_wide: far sample first and known clear shots = wide_enough")
+do
+  local AL = require("aim_lane")
+  local real_angle = SH.tank_shot_angle
+  local walks = 0
+  SH.tank_shot_angle = function(...) walks = walks + 1; return real_angle(...) end
+  local function old_wide(ctx, px, py, ai, extra)
+    local A, mlb = ctx.A, ctx.inp.min_lane_brad
+    if not mlb or mlb <= 0 then return true, 0 end
+    local fo = V.FIRE_AIMS[ai]
+    local dx, dy = A.mx * 256 + fo[1] - px, A.my * 256 + fo[2] - py
+    local a0 = (math.atan2(dx, -dy) * 256 / (2 * math.pi)) % 256
+    local n = 0
+    local ok = AL.wide_enough(function(a)
+      n = n + 1
+      return (real_angle(ctx.env, px, py, a, A.mx, A.my, extra))
+    end, a0, mlb)
+    return ok, n
+  end
+  local calls, bad, saved, wide, narrow = 0, 0, 0, 0, 0
+  for trial = 1, 40 do
+    clear()
+    local A = { mx = 126, my = 118, owner = "hostile", health = 15 }
+    for _ = 1, 4 + rnd(30) do
+      local t = ({ C.T_BUILDING, C.T_HALFBUILD, C.T_FOREST, C.T_BOAT })[rnd(4)]
+      local mx, my = 118 + rnd(16), 110 + rnd(16)
+      if not (mx == 126 and my == 118) then terrain[sq(mx, my)] = t end
+    end
+    local inp = make_inp(make_world({ A }), A, 0)
+    inp.min_lane_brad = ({ 0.0625, 0.1, 0.125, 0.25, 0.5 })[rnd(5)]
+    for _ = 1, 30 do
+      local ctx = V._new_ctx(inp, A)
+      local px, py = (118 + rnd(16)) * 256 + rnd(255), (110 + rnd(16)) * 256 + rnd(255)
+      local extra = nil
+      if rnd(2) == 1 then extra = { [sq(126 + rnd(3) - 2, 118 + rnd(3) - 2)] = 2 } end
+      -- known clear shots from this origin, as the aim tests note them
+      for _ = 1, rnd(4) - 1 do
+        local a = SH.f32((rnd(4096) - 1) / 16)
+        if real_angle(ctx.env, px, py, a, A.mx, A.my, extra) then V._aw_note(ctx, px, py, a, A, extra) end
+      end
+      for ai = 1, 9 do
+        local n0 = ctx.n_shot
+        walks = 0
+        local got = V._aim_wide(ctx, px, py, ai, extra)
+        local want, want_n = old_wide(ctx, px, py, ai, extra)
+        calls = calls + 1
+        if got ~= want or ctx.n_shot - n0 ~= want_n then
+          bad = bad + 1
+          if bad <= 5 then
+            print(string.format("    MISMATCH p=(%d,%d) ai=%d mlb=%g got=%s/%d want=%s/%d", px, py, ai,
+              inp.min_lane_brad, tostring(got), ctx.n_shot - n0, tostring(want), want_n))
+          end
+        end
+        saved = saved + (want_n - walks)
+        if want then wide = wide + 1 else narrow = narrow + 1 end
+      end
+    end
+  end
+  print(string.format("    %d calls (%d wide, %d narrow), %d walks saved, %d mismatches", calls, wide, narrow, saved, bad))
+  check("random worlds: same answer and shot count", bad == 0, bad)
+  check("random worlds: walks saved", saved > 0, saved)
+  check("random worlds: both answers seen", wide > 0 and narrow > 0, wide .. "/" .. narrow)
+
+  -- hand-made: open ground; one known clear shot past each side's far
+  -- sample passes both sides with no walk (only the centre is walked)
+  clear()
+  local A = { mx = 126, my = 118, owner = "hostile", health = 15 }
+  local inp = make_inp(make_world({ A }), A, 0)
+  inp.min_lane_brad = 0.125
+  local px, py = 126 * 256 + 128, 123 * 256 + 128
+  local ctx = V._new_ctx(inp, A)
+  local fo = V.FIRE_AIMS[1]
+  local a0 = (math.atan2(A.mx * 256 + fo[1] - px, -(A.my * 256 + fo[2] - py)) * 256 / (2 * math.pi)) % 256
+  V._aw_note(ctx, px, py, SH.f32((a0 - 1) % 256), A, nil)
+  V._aw_note(ctx, px, py, SH.f32((a0 + 1) % 256), A, nil)
+  walks = 0
+  local n0 = ctx.n_shot
+  local ok = V._aim_wide(ctx, px, py, 1, nil)
+  check("known shots: wide", ok == true, ok)
+  check("known shots: only the centre walked", walks == 1, walks)
+  check("known shots: shot count as one by one (1 + 2 + 2)", ctx.n_shot - n0 == 5, ctx.n_shot - n0)
+  -- the same with no known shots: the centre and one far sample each side
+  ctx = V._new_ctx(inp, A)
+  walks = 0
+  ok = V._aim_wide(ctx, px, py, 1, nil)
+  check("far first: wide", ok == true, ok)
+  check("far first: centre and two far samples walked", walks == 3, walks)
+  -- a known shot from another origin, another blocker set or past 64 brad
+  -- does not count
+  ctx = V._new_ctx(inp, A)
+  V._aw_note(ctx, px + 1, py, SH.f32((a0 - 1) % 256), A, nil)
+  walks = 0
+  V._aim_wide(ctx, px, py, 1, nil)
+  check("other origin: no short cut", walks == 3, walks)
+  ctx = V._new_ctx(inp, A)
+  local ex = { [sq(10, 10)] = 2 }
+  V._aw_note(ctx, px, py, SH.f32((a0 - 1) % 256), A, ex)
+  V._aw_note(ctx, px, py, SH.f32((a0 + 1) % 256), A, ex)
+  walks = 0
+  V._aim_wide(ctx, px, py, 1, nil)
+  check("other blocker set: no short cut", walks == 3, walks)
+  ctx = V._new_ctx(inp, A)
+  V._aw_note(ctx, px, py, SH.f32((a0 + 100) % 256), A, nil)
+  walks = 0
+  V._aim_wide(ctx, px, py, 1, nil)
+  check("known shot 100 brad out: no short cut", walks == 3, walks)
+  -- the far sample stopped: the inner samples are walked as before
+  -- (a wall just right of the line; the left side stays clear)
+  ctx = V._new_ctx(inp, A)
+  local old_ok, old_n = old_wide(ctx, px, py, 1, nil)
+  terrain[sq(127, 120)] = C.T_BUILDING
+  terrain[sq(127, 121)] = C.T_BUILDING
+  local w_ok, w_n = old_wide(ctx, px, py, 1, nil)
+  ctx = V._new_ctx(inp, A)
+  n0 = ctx.n_shot
+  ok = V._aim_wide(ctx, px, py, 1, nil)
+  check("wall beside: same answer as one by one", ok == w_ok, tostring(ok) .. " " .. tostring(w_ok))
+  check("wall beside: same shot count", ctx.n_shot - n0 == w_n, (ctx.n_shot - n0) .. " " .. w_n)
+  check("open ground was wide (" .. old_n .. " shots)", old_ok == true, old_ok)
+  -- tanks tested (env.ts_tanks): no short cut
+  clear()
+  inp.env.ts_tanks = { 1000, 1000 }
+  ctx = V._new_ctx(inp, A)
+  V._aw_note(ctx, px, py, SH.f32((a0 - 1) % 256), A, nil)
+  V._aw_note(ctx, px, py, SH.f32((a0 + 1) % 256), A, nil)
+  walks = 0
+  V._aim_wide(ctx, px, py, 1, nil)
+  check("tanks tested: no short cut", walks == 3, walks)
+  inp.env.ts_tanks = nil
+  SH.tank_shot_angle = real_angle
+  clear(); V.reset()
+end
+
 print(string.format("%d passed, %d failed", pass, fail))
 os.exit(fail == 0 and 0 or 1)
