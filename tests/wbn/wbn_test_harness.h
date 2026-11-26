@@ -105,5 +105,7 @@ bool wbnTestKeyStampedAtFireTime(void);
 bool wbnTestQueueCapRefusesPosts(void);
 bool wbnTestForcedUpdateFullQueue(void);
 bool wbnTestScenarioFields(void);
+bool wbnTestMapLookupRestartsHttp(void);
+bool wbnTestStopDuringLookup(void);
 
 #endif /* WINBOLO_TEST_WBN_HARNESS_H */

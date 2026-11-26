@@ -51,6 +51,7 @@
 #include <time.h>
 #include <curl/curl.h>
 #include <SDL3/SDL_atomic.h>
+#include <SDL3/SDL_mutex.h>
 #include <SDL3/SDL_thread.h>
 #include <SDL3/SDL_timer.h>
 #include "tweetnacl.h"
@@ -355,6 +356,65 @@ static void wbnLogRedactedJsonDebug(int cat, const char *prefix, const char *jso
 #endif
 }
 
+/* One lock for everything below that more than one thread reaches:
+ * httpStarted, the host strings, and when libcurl's global state is set up
+ * and torn down. The game finder's map preview workers, the server list
+ * fetch, the cloud-prefs sync and the WinBolo.net worker thread all call in
+ * here while the GUI thread starts and stops the module around a login
+ * check, a game and the map browser.
+ *
+ * The rule the lock keeps: libcurl's global state is up while the module is
+ * started OR any thread is using libcurl (s_curlUsers), and it is torn down
+ * only when both are over. curl_global_cleanup must not run while another
+ * thread is inside a transfer, so an httpDestroy that arrives during one
+ * marks the module stopped and leaves the teardown to the last user out.
+ * The lock is never held across a transfer.
+ *
+ * The mutex is made on first use; the spinlock only covers making it. */
+static SDL_SpinLock s_httpLockMake = 0;
+static SDL_Mutex   *s_httpLock = NULL;
+static bool         s_curlUp = false;      /* curl_global_init is in effect */
+static int          s_curlUsers = 0;       /* transfers in flight + the worker's kept handle */
+static bool         s_hostWrittenBack = false;
+
+static void httpLock(void) {
+  SDL_LockSpinlock(&s_httpLockMake);
+  if (s_httpLock == NULL) {
+    s_httpLock = SDL_CreateMutex();
+  }
+  SDL_UnlockSpinlock(&s_httpLockMake);
+  SDL_LockMutex(s_httpLock);
+}
+
+static void httpUnlock(void) {
+  SDL_UnlockMutex(s_httpLock);
+}
+
+/* Sets up libcurl's global state if it is not up. Lock held. */
+static bool httpCurlUpLocked(void) {
+  CURLcode res;
+  if (s_curlUp) {
+    return true;
+  }
+  res = curl_global_init(CURL_GLOBAL_ALL);
+  if (res != CURLE_OK) {
+    fprintf(stderr, "WinBolo.net: curl_global_init failed: %s\n",
+            curl_easy_strerror(res));
+    return false;
+  }
+  s_curlUp = true;
+  return true;
+}
+
+/* Tears libcurl's global state down once the module is stopped and no
+ * thread is using libcurl. Lock held. */
+static void httpCurlDownIfIdleLocked(void) {
+  if (s_curlUp && !httpStarted && s_curlUsers == 0) {
+    curl_global_cleanup();
+    s_curlUp = false;
+  }
+}
+
 /*********************************************************
 *NAME:          httpSetHostOverride
 *PURPOSE:
@@ -367,8 +427,10 @@ static void wbnLogRedactedJsonDebug(int cat, const char *prefix, const char *jso
 *        or include http:// or https:// scheme)
 *********************************************************/
 void httpSetHostOverride(const char *host) {
+  httpLock();
   strncpy(wbnHostOverride, host, FILENAME_MAX - 1);
   wbnHostOverride[FILENAME_MAX - 1] = '\0';
+  httpUnlock();
 }
 
 /*********************************************************
@@ -379,30 +441,36 @@ void httpSetHostOverride(const char *host) {
 * [WINBOLO.NET] Host from the INI file.
 * Returns success.
 *********************************************************/
-bool httpCreate(void) {
+/* The body of httpCreate, lock held. onDemand is true when a request found
+ * the module stopped and is starting it from whatever thread it is on: that
+ * start reuses the host an earlier start worked out, so it reads the
+ * preferences (which have no lock of their own) only when no start has run
+ * yet in this process. */
+static bool httpCreateLocked(bool onDemand) {
   char iniValue[FILENAME_MAX];
 
   if (wbnHostOverride[0] != '\0') {
     /* Use command-line override */
     strncpy(iniValue, wbnHostOverride, sizeof(iniValue) - 1);
     iniValue[sizeof(iniValue) - 1] = '\0';
-  } else {
+    buildBaseUrl(iniValue);
+  } else if (!onDemand || wbnBaseUrl[0] == '\0') {
     /* Read from preferences */
     iniValue[0] = '\0';
     prefsGetString("WINBOLO.NET", "Host", "wbn.winbolo.net",
                    iniValue, (unsigned int)sizeof(iniValue));
-    /* Write back so servers without a client config get a default entry */
-    prefsSetString("WINBOLO.NET", "Host", iniValue);
+    /* Write back so servers without a client config get a default entry.
+     * Once is enough: nothing here changes the value afterwards. */
+    if (!s_hostWrittenBack) {
+      prefsSetString("WINBOLO.NET", "Host", iniValue);
+      s_hostWrittenBack = true;
+    }
+    buildBaseUrl(iniValue);
   }
-
-  buildBaseUrl(iniValue);
 
   altIpAddress[0] = '\0';
 
-  CURLcode res = curl_global_init(CURL_GLOBAL_ALL);
-  if (res != CURLE_OK) {
-    fprintf(stderr, "WinBolo.net: curl_global_init failed: %s\n",
-            curl_easy_strerror(res));
+  if (!httpCurlUpLocked()) {
     httpStarted = false;
     return false;
   }
@@ -411,16 +479,98 @@ bool httpCreate(void) {
   return true;
 }
 
+bool httpCreate(void) {
+  bool ok;
+  httpLock();
+  ok = httpCreateLocked(false);
+  httpUnlock();
+  return ok;
+}
+
 /*********************************************************
 *NAME:          httpDestroy
 *PURPOSE:
-* Destroys the http module and releases libcurl global state.
+* Stops the http module. libcurl's global state is released
+* here when no thread is using libcurl, and otherwise by
+* the last transfer to finish (see s_httpLock).
 *********************************************************/
 void httpDestroy(void) {
-  if (httpStarted) {
-    curl_global_cleanup();
-    httpStarted = false;
+  httpLock();
+  httpStarted = false;
+  httpCurlDownIfIdleLocked();
+  httpUnlock();
+}
+
+/*********************************************************
+*NAME:          httpCurlIsUp
+*PURPOSE:
+* Whether libcurl's global state is set up. For the tests.
+*********************************************************/
+bool httpCurlIsUp(void) {
+  bool up;
+  httpLock();
+  up = s_curlUp;
+  httpUnlock();
+  return up;
+}
+
+/* Every request calls this before it touches libcurl and httpTransferEnd
+ * when it is done with it. It counts the caller as a libcurl user, so an
+ * httpDestroy on another thread cannot tear libcurl down under the
+ * transfer, and copies the base URL out under the lock, so the caller never
+ * reads wbnBaseUrl while a start is rewriting it.
+ *
+ * startIfStopped starts the module when it is stopped. False when the
+ * module is stopped and was not started; the caller must then not call
+ * httpTransferEnd. */
+static bool httpTransferBegin(bool startIfStopped, char *baseUrlOut,
+                              size_t baseUrlLen) {
+  httpLock();
+  if (!httpStarted && startIfStopped) {
+    (void)httpCreateLocked(true);
   }
+  if (!httpStarted) {
+    httpUnlock();
+    return false;
+  }
+  s_curlUsers++;
+  snprintf(baseUrlOut, baseUrlLen, "%s", wbnBaseUrl);
+  httpUnlock();
+  return true;
+}
+
+static void httpTransferEnd(void) {
+  httpLock();
+  if (s_curlUsers > 0) {
+    s_curlUsers--;
+  }
+  httpCurlDownIfIdleLocked();
+  httpUnlock();
+}
+
+/*********************************************************
+*NAME:          httpCurlHold / httpCurlRelease
+*PURPOSE:
+* For code that drives libcurl itself, outside the request
+* functions here (the news image fetch, and the WinBolo.net
+* worker's kept handle below). Between a hold that returned
+* true and its release, libcurl's global state is set up
+* and an httpDestroy on another thread will not tear it
+* down. The module does not have to be started.
+*********************************************************/
+bool httpCurlHold(void) {
+  bool up;
+  httpLock();
+  up = httpCurlUpLocked();
+  if (up) {
+    s_curlUsers++;
+  }
+  httpUnlock();
+  return up;
+}
+
+void httpCurlRelease(void) {
+  httpTransferEnd();
 }
 
 /*********************************************************
@@ -465,9 +615,16 @@ void httpWorkerPoolBegin(void) {
   if (s_workerCurl != NULL) {
     return;
   }
+  /* The kept handle is a libcurl user for as long as it exists: this thread
+   * can outlive the session that started it, and an httpDestroy must not
+   * tear libcurl's global state down while the handle is alive. */
+  if (!httpCurlHold()) {
+    return;
+  }
   s_workerCurl = curl_easy_init();
   if (s_workerCurl == NULL) {
     WB_LOG_WARN(WB_LOG_CAT_NET, "httpWorkerPoolBegin: curl_easy_init failed");
+    httpCurlRelease();
     return;
   }
   s_workerCurlThread = SDL_GetCurrentThreadID();
@@ -484,23 +641,23 @@ void httpWorkerPoolEnd(void) {
   if (s_workerCurl != NULL) {
     curl_easy_cleanup(s_workerCurl);
     s_workerCurl = NULL;
+    httpCurlRelease();
   }
   s_workerCurlThread = 0;
 }
 
 /*********************************************************
-*NAME:          wbn_api_post_impl
+*NAME:          wbn_api_post_run
 *PURPOSE:
-* Shared low-level POST body. extra_header is appended to
-* the curl slist when non-NULL (used to attach the bearer
-* Authorization line on server-scoped calls). All other
-* behavior matches wbn_api_post.
+* The POST itself, between httpTransferBegin and
+* httpTransferEnd. baseUrl is the copy httpTransferBegin
+* made. extra_header is appended to the curl slist when
+* non-NULL (used to attach the bearer Authorization line on
+* server-scoped calls).
 *********************************************************/
-static int wbn_api_post_impl(const char *endpoint, const char *json_body,
-                             const char *extra_header, char **response_out) {
-  if (response_out) *response_out = NULL;
-  if (!httpStarted) return -1;
-
+static int wbn_api_post_run(const char *baseUrl, const char *endpoint,
+                            const char *json_body, const char *extra_header,
+                            char **response_out) {
   /* An easy handle must not be used by two threads at once, so the kept
    * handle is taken only by the thread that created it. The GUI-thread
    * client callers come through here as well and keep taking their own
@@ -515,7 +672,7 @@ static int wbn_api_post_impl(const char *endpoint, const char *json_body,
 
   /* Build URL: <baseUrl>/api/v1/<endpoint> */
   char url[FILENAME_MAX + 64];
-  snprintf(url, sizeof(url), "%s/api/v1/%s", wbnBaseUrl, endpoint);
+  snprintf(url, sizeof(url), "%s/api/v1/%s", baseUrl, endpoint);
 
   /* Generate timestamp and Ed25519 signature */
   char timestamp_str[32];
@@ -601,6 +758,35 @@ static int wbn_api_post_impl(const char *endpoint, const char *json_body,
     free(respBuf.data);
   }
   return (int)http_code;
+}
+
+/*********************************************************
+*NAME:          wbn_api_post_impl
+*PURPOSE:
+* Shared low-level POST. All other behavior matches
+* wbn_api_post.
+*********************************************************/
+static int wbn_api_post_impl(const char *endpoint, const char *json_body,
+                             const char *extra_header, char **response_out) {
+  char baseUrl[FILENAME_MAX];
+  int  rc;
+  if (response_out) *response_out = NULL;
+  /* Start the module when nothing has yet, as wbn_api_get_impl does. The
+   * one-shot auth calls, leaving a game and closing the WinBolo.net map
+   * browser all end in httpDestroy(), and the game finder's map lookup
+   * posts here with no httpCreate() of its own, so without this the lookup
+   * returned -1 whenever one of those had run last. */
+  if (!httpTransferBegin(true, baseUrl, sizeof(baseUrl))) {
+    WB_LOG_WARN(WB_LOG_CAT_NET,
+        "wbn_api_post [%s]: SKIP — the http module would not start; "
+        "curl init or INI Host= is broken",
+        endpoint ? endpoint : "(null)");
+    return -1;
+  }
+  rc = wbn_api_post_run(baseUrl, endpoint, json_body, extra_header,
+                        response_out);
+  httpTransferEnd();
+  return rc;
 }
 
 /*********************************************************
@@ -768,21 +954,34 @@ void httpClearDeadline(void) {
 * Uploads a log file to WinBolo.net via HTTP(S) multipart
 * POST.  Returns TRUE on success.
 *********************************************************/
+static bool httpSendLogFileRun(const char *baseUrl, const char *fileName,
+                               char *key);
+
 bool httpSendLogFile(const char *fileName, char *key, bool wantFeedback) {
+  char baseUrl[FILENAME_MAX];
+  bool ok;
   (void)wantFeedback;
 
-  if (!httpStarted || fileName == NULL || key == NULL) {
-    WB_LOG_DEBUG(WB_LOG_CAT_NET, "httpSendLogFile: skipped (httpStarted=%d, fileName=%s, key=%s)",
-            httpStarted, fileName ? fileName : "NULL", key ? "(set)" : "NULL");
+  if (fileName == NULL || key == NULL ||
+      !httpTransferBegin(false, baseUrl, sizeof(baseUrl))) {
+    WB_LOG_DEBUG(WB_LOG_CAT_NET, "httpSendLogFile: skipped (stopped or no file or key; fileName=%s, key=%s)",
+            fileName ? fileName : "NULL", key ? "(set)" : "NULL");
     return false;
   }
+  ok = httpSendLogFileRun(baseUrl, fileName, key);
+  httpTransferEnd();
+  return ok;
+}
 
+/* The upload itself, between httpTransferBegin and httpTransferEnd. */
+static bool httpSendLogFileRun(const char *baseUrl, const char *fileName,
+                               char *key) {
   /* Build: <baseUrl>/log.php?key=<key> */
   char url[FILENAME_MAX + 64];
-  snprintf(url, sizeof(url), "%s/log.php?key=%s", wbnBaseUrl, key);
+  snprintf(url, sizeof(url), "%s/log.php?key=%s", baseUrl, key);
 
   /* Don't log the URL verbatim — the ?key= query is an upload secret. */
-  WB_LOG_DEBUG(WB_LOG_CAT_NET, "httpSendLogFile: POST %s/log.php?key=***", wbnBaseUrl);
+  WB_LOG_DEBUG(WB_LOG_CAT_NET, "httpSendLogFile: POST %s/log.php?key=***", baseUrl);
   WB_LOG_DEBUG(WB_LOG_CAT_NET, "httpSendLogFile: file=%s", fileName);
 
   /* Check file exists and log its size */
@@ -923,23 +1122,39 @@ static int wbnXferInfoProgress(void *userPtr,
  * default here: it is limited only for a caller that gives a limit. */
 #define WBN_API_GET_TIMEOUT_MS 30000L
 
+static int wbn_api_get_run(const char *baseUrl, const char *path,
+                           char **response_out, volatile int *cancel_flag,
+                           bool sign, const char *bearerToken,
+                           long timeout_ms, long connect_timeout_ms);
+
 static int wbn_api_get_impl(const char *path, char **response_out,
                             volatile int *cancel_flag, bool sign,
                             const char *bearerToken, long timeout_ms,
                             long connect_timeout_ms) {
+  char baseUrl[FILENAME_MAX];
+  int  rc;
   if (response_out) *response_out = NULL;
-  /* Lazy-init: the WBN map browser uses this API even when the
-   * client isn't logged in / WBN subsystem isn't otherwise active.
-   * httpCreate() is idempotent w.r.t. curl_global_init, so calling
-   * it here on first use is safe. */
-  if (!httpStarted) (void)httpCreate();
-  if (!httpStarted) {
+  /* Starts the module when it is stopped: the WBN map browser uses this
+   * API even when the client isn't logged in / WBN subsystem isn't
+   * otherwise active. */
+  if (!httpTransferBegin(true, baseUrl, sizeof(baseUrl))) {
     WB_LOG_WARN(WB_LOG_CAT_NET,
-        "wbn_api_get [%s]: SKIP — httpStarted=false after lazy httpCreate(); "
+        "wbn_api_get [%s]: SKIP — the http module would not start; "
         "curl init or INI Host= is broken",
         path ? path : "(null)");
     return -1;
   }
+  rc = wbn_api_get_run(baseUrl, path, response_out, cancel_flag, sign,
+                       bearerToken, timeout_ms, connect_timeout_ms);
+  httpTransferEnd();
+  return rc;
+}
+
+/* The GET itself, between httpTransferBegin and httpTransferEnd. */
+static int wbn_api_get_run(const char *baseUrl, const char *path,
+                           char **response_out, volatile int *cancel_flag,
+                           bool sign, const char *bearerToken,
+                           long timeout_ms, long connect_timeout_ms) {
   if (cancel_flag && *cancel_flag) return -2;
 
   CURL *curl = curl_easy_init();
@@ -947,7 +1162,7 @@ static int wbn_api_get_impl(const char *path, char **response_out,
 
   /* Build URL: <baseUrl>/api/v1/<path> */
   char url[FILENAME_MAX + 256];
-  snprintf(url, sizeof(url), "%s/api/v1/%s", wbnBaseUrl, path);
+  snprintf(url, sizeof(url), "%s/api/v1/%s", baseUrl, path);
 
   struct curl_slist *headers = NULL;
   if (sign) {
@@ -1083,25 +1298,38 @@ int wbn_api_get_bearer_cancellable(const char *path, const char *bearerToken,
 * response body via DynBuf like the other helpers.
 * Returns the HTTP status code, or -1 on transport error.
 *********************************************************/
+static int wbn_prefs_request_run(const char *baseUrl, const char *bearerToken,
+                                 bool is_put, const char *json_body,
+                                 char **response_out);
+
 static int wbn_prefs_request_impl(const char *bearerToken, bool is_put,
                                   const char *json_body, char **response_out) {
+  char baseUrl[FILENAME_MAX];
+  int  rc;
   if (response_out) *response_out = NULL;
   if (bearerToken == NULL || bearerToken[0] == '\0') {
     WB_LOG_WARN(WB_LOG_CAT_NET, "wbn_prefs %s: aborted — empty bearer token",
                 is_put ? "PUT" : "GET");
     return -1;
   }
-  /* Lazy-init like wbn_api_get: cloud-prefs sync can fire on a worker
-   * thread after a logout/re-login that left httpStarted false (httpDestroy
-   * clears it and a token-based re-login never re-runs httpCreate).
-   * httpCreate() is idempotent w.r.t. curl_global_init. */
-  if (!httpStarted) (void)httpCreate();
-  if (!httpStarted) {
+  /* Starts the module when it is stopped, like wbn_api_get: cloud-prefs
+   * sync can fire on a worker thread after a logout/re-login that left the
+   * module stopped (a token-based re-login never re-runs httpCreate). */
+  if (!httpTransferBegin(true, baseUrl, sizeof(baseUrl))) {
     WB_LOG_WARN(WB_LOG_CAT_NET, "wbn_prefs %s: aborted — http subsystem not started",
                 is_put ? "PUT" : "GET");
     return -1;
   }
+  rc = wbn_prefs_request_run(baseUrl, bearerToken, is_put, json_body,
+                             response_out);
+  httpTransferEnd();
+  return rc;
+}
 
+/* The request itself, between httpTransferBegin and httpTransferEnd. */
+static int wbn_prefs_request_run(const char *baseUrl, const char *bearerToken,
+                                 bool is_put, const char *json_body,
+                                 char **response_out) {
   const char *sign_body = is_put ? json_body : "";
 
   CURL *curl = curl_easy_init();
@@ -1109,7 +1337,7 @@ static int wbn_prefs_request_impl(const char *bearerToken, bool is_put,
 
   /* Build URL: <baseUrl>/api/v1/prefs */
   char url[FILENAME_MAX + 64];
-  snprintf(url, sizeof(url), "%s/api/v1/prefs", wbnBaseUrl);
+  snprintf(url, sizeof(url), "%s/api/v1/prefs", baseUrl);
 
   /* Generate timestamp and Ed25519 signature */
   char timestamp_str[32];
@@ -1235,10 +1463,30 @@ int wbn_api_download(const char *path, const char *dest_path) {
   return wbn_api_download_progress(path, dest_path, NULL, NULL, NULL);
 }
 
+static int wbn_api_download_run(const char *baseUrl, const char *path,
+                                const char *dest_path,
+                                WbnProgressFn progressFn,
+                                void *progressUserData,
+                                volatile int *cancel_flag);
+
 int wbn_api_download_progress(const char *path, const char *dest_path,
                               WbnProgressFn progressFn, void *progressUserData,
                               volatile int *cancel_flag) {
-  if (!httpStarted) return -1;
+  char baseUrl[FILENAME_MAX];
+  int  rc;
+  if (!httpTransferBegin(false, baseUrl, sizeof(baseUrl))) return -1;
+  rc = wbn_api_download_run(baseUrl, path, dest_path, progressFn,
+                            progressUserData, cancel_flag);
+  httpTransferEnd();
+  return rc;
+}
+
+/* The download itself, between httpTransferBegin and httpTransferEnd. */
+static int wbn_api_download_run(const char *baseUrl, const char *path,
+                                const char *dest_path,
+                                WbnProgressFn progressFn,
+                                void *progressUserData,
+                                volatile int *cancel_flag) {
   if (cancel_flag && *cancel_flag) return -2;
 
   FILE *fp = fopen(dest_path, "wb");
@@ -1248,7 +1496,7 @@ int wbn_api_download_progress(const char *path, const char *dest_path,
   if (!curl) { fclose(fp); return -1; }
 
   char url[FILENAME_MAX + 256];
-  snprintf(url, sizeof(url), "%s/api/v1/%s", wbnBaseUrl, path);
+  snprintf(url, sizeof(url), "%s/api/v1/%s", baseUrl, path);
 
   char timestamp_str[32];
   snprintf(timestamp_str, sizeof(timestamp_str), "%ld", (long)time(NULL));
@@ -1330,22 +1578,47 @@ int wbn_api_download_to_memory(const char *path, uint8_t **data_out, size_t *siz
                                              NULL, NULL, NULL);
 }
 
+static int wbn_api_download_to_memory_run(const char *baseUrl,
+                                          const char *path,
+                                          uint8_t **data_out, size_t *size_out,
+                                          size_t maxBytes,
+                                          WbnProgressFn progressFn,
+                                          void *progressUserData,
+                                          volatile int *cancel_flag);
+
 int wbn_api_download_to_memory_progress(const char *path,
                                         uint8_t **data_out, size_t *size_out,
                                         size_t maxBytes,
                                         WbnProgressFn progressFn,
                                         void *progressUserData,
                                         volatile int *cancel_flag) {
+  char baseUrl[FILENAME_MAX];
+  int  rc;
   if (data_out) *data_out = NULL;
   if (size_out) *size_out = 0;
-  if (!httpStarted) return -1;
+  if (!httpTransferBegin(false, baseUrl, sizeof(baseUrl))) return -1;
+  rc = wbn_api_download_to_memory_run(baseUrl, path, data_out, size_out,
+                                      maxBytes, progressFn, progressUserData,
+                                      cancel_flag);
+  httpTransferEnd();
+  return rc;
+}
+
+/* The download itself, between httpTransferBegin and httpTransferEnd. */
+static int wbn_api_download_to_memory_run(const char *baseUrl,
+                                          const char *path,
+                                          uint8_t **data_out, size_t *size_out,
+                                          size_t maxBytes,
+                                          WbnProgressFn progressFn,
+                                          void *progressUserData,
+                                          volatile int *cancel_flag) {
   if (cancel_flag && *cancel_flag) return -2;
 
   CURL *curl = curl_easy_init();
   if (!curl) return -1;
 
   char url[FILENAME_MAX + 256];
-  snprintf(url, sizeof(url), "%s/api/v1/%s", wbnBaseUrl, path);
+  snprintf(url, sizeof(url), "%s/api/v1/%s", baseUrl, path);
 
   char timestamp_str[32];
   snprintf(timestamp_str, sizeof(timestamp_str), "%ld", (long)time(NULL));

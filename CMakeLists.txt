@@ -1195,6 +1195,7 @@ set(IOS_GUI_SOURCES
     src/gui/sdl3/lobby_start_list.cpp
     src/gui/sdl3/map_preview_view.cpp
     src/gui/sdl3/map_preview_fetch.cpp
+    src/gui/sdl3/local_map_index.c
     src/gui/sdl3/overview_camera.cpp
     src/gui/sdl3/overview_fog.cpp
     src/gui/sdl3/overview_hud_layout.cpp
@@ -2130,6 +2131,9 @@ set(CLIENT_SOURCES
     src/gui/sdl3/lobby_start_list.cpp
     src/gui/sdl3/map_preview_view.cpp
     src/gui/sdl3/map_preview_fetch.cpp
+    # The .map files on this machine by md5, which map_preview_fetch.cpp
+    # looks in before it asks WinBolo.net.
+    src/gui/sdl3/local_map_index.c
     src/gui/sdl3/overview_camera.cpp
     src/gui/sdl3/overview_fog.cpp
     src/gui/sdl3/overview_hud_layout.cpp
@@ -4531,6 +4535,11 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_wbn_serverlist.c
     tests/unit/test_wbn_map.c
     tests/unit/test_wbn_map_fetch_policy.c
+    # The game finder's map preview: when a failed lookup is tried again
+    # (header-only), and finding a .map file on this machine by md5.
+    tests/unit/test_map_preview_fetch_policy.c
+    tests/unit/test_local_map_index.c
+    src/gui/sdl3/local_map_index.c
     tests/unit/test_brain_crash_log.c
     tests/unit/test_brain_binding_bounds.c
     tests/unit/test_brain_sandbox_hostile.c
@@ -5947,6 +5956,8 @@ set(_unit_test_names
     wbn_serverlist_server_text
     wbn_map_parse
     wbn_map_fetch_policy
+    map_preview_fetch_policy
+    local_map_index
     brain_crash_log_writes_file
     brain_crash_log_falls_back_to_luaptr
     brain_push_rules_written_on_change
@@ -8376,6 +8387,8 @@ add_executable(WinBoloWbnTests
     tests/wbn/test_wbn_queue_cap.c
     tests/wbn/test_wbn_forced_update_full_queue.c
     tests/wbn/test_wbn_scenario_fields.c
+    tests/wbn/test_wbn_map_lookup_restarts_http.c
+    tests/wbn/test_wbn_stop_during_lookup.c
     src/bolo/global.c
     src/common/prefs.c
     src/common/prefs_doc.c
@@ -8458,6 +8471,19 @@ set_tests_properties(wbn.forced_update_full_queue PROPERTIES TIMEOUT 120)
 add_test(NAME wbn.scenario_fields
          COMMAND $<TARGET_FILE:WinBoloWbnTests> scenario_fields)
 set_tests_properties(wbn.scenario_fields PROPERTIES TIMEOUT 60)
+
+# One map lookup after httpDestroy, the state the game finder posts in when a
+# login check, a game or the WinBolo.net map browser ended last. No hold.
+add_test(NAME wbn.map_lookup_restarts_http
+         COMMAND $<TARGET_FILE:WinBoloWbnTests> map_lookup_restarts_http)
+set_tests_properties(wbn.map_lookup_restarts_http PROPERTIES TIMEOUT 60)
+
+# httpDestroy, and a whole start and stop, while a map lookup is held open by
+# the listener: what joining or leaving a game does to a preview still on its
+# way. One 1.5 s hold.
+add_test(NAME wbn.stop_during_lookup
+         COMMAND $<TARGET_FILE:WinBoloWbnTests> stop_during_lookup)
+set_tests_properties(wbn.stop_during_lookup PROPERTIES TIMEOUT 60)
 
 # ---- Include-rule check: the scenario surface is invisible to a frontend --
 # src/bolo/scenario_api/ is on the include path of scenario_host, sim_owner

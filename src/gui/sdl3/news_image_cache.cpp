@@ -60,6 +60,11 @@ extern "C" {
 }
 #else
 #include <curl/curl.h>
+/* httpCurlHold: the fetch below drives libcurl itself, and the hold stops an
+ * httpDestroy on another thread tearing libcurl down under it. */
+extern "C" {
+#include "../../winbolonet/http.h"
+}
 #endif
 
 #include "stb_image.h"
@@ -265,7 +270,7 @@ void workerBody(std::string url) {
         }
     }
 #else
-    if (!g_shutdown.load(std::memory_order_acquire)) {
+    if (!g_shutdown.load(std::memory_order_acquire) && httpCurlHold()) {
         CURL *curl = curl_easy_init();
         if (curl) {
             curl_easy_setopt(curl, CURLOPT_URL,            url.c_str());
@@ -285,6 +290,7 @@ void workerBody(std::string url) {
             }
             curl_easy_cleanup(curl);
         }
+        httpCurlRelease();
     }
 #endif
 
