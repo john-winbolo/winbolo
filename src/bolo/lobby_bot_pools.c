@@ -617,8 +617,8 @@ static int serializeRaw(unsigned char *raw) {
 
     raw[0] = (unsigned char)written;
     /* The flags byte is written only when a flag is set, so a catalogue
-     * with no flag is byte for byte (and id for id) the one from before
-     * flags. Clients older than the flags byte ignore it. */
+     * with no flag is byte for byte (and id for id) the one with no
+     * flags byte. */
     if (s_drawThemedOnly && written > 0) {
         raw[pos++] = LOBBY_BOT_CATALOG_FLAG_THEMED_ONLY;
     }

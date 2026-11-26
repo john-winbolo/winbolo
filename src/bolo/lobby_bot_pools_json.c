@@ -191,6 +191,10 @@ bool lobbyBotPoolsLoadDefault(LobbyBotPoolLoadStats *stats) {
     return false;
 }
 
+/* Room for every label of the largest pool set, each with ", ". */
+#define LABEL_LIST_BYTES \
+    (LOBBY_BOT_POOL_MAX_POOLS * (LOBBY_BOT_POOL_MAX_LABEL_BYTES + 2) + 1)
+
 /* Labels of the active themed pools, joined with ", ", into buf. */
 static void joinActiveLabels(char *buf, size_t cap) {
     int i;
@@ -218,7 +222,7 @@ bool lobbyBotPoolsLoadFromArg(const char *arg, const char *defaultPath,
                               FILE *warn, LobbyBotPoolLoadStats *stats) {
     LobbyBotPoolLoadStats st;
     LobbyBotPoolFilterResult fr;
-    char labels[4096];
+    char labels[LABEL_LIST_BYTES];
     bool loaded;
     int i;
 
@@ -268,10 +272,12 @@ bool lobbyBotPoolsLoadFromArg(const char *arg, const char *defaultPath,
                           "pools are: %s\n", fr.unknown[i], labels);
         }
         if (fr.poolsKept == 0) {
-            fprintf(warn, "Warning: -botnames: no pool matched '%s'; "
-                          "using all pools\n", arg);
+            /* Also what a mistyped file name with no '/' and no
+             * ".json" gets, so the warning names both readings. */
+            fprintf(warn, "Warning: -botnames: '%s' is not a file and "
+                          "names no pool; using all pools\n", arg);
         } else {
-            char kept[4096];
+            char kept[LABEL_LIST_BYTES];
             joinActiveLabels(kept, sizeof(kept));
             fprintf(warn, "Bot name pools chosen: %s\n", kept);
         }
