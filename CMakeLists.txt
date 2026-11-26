@@ -8080,6 +8080,10 @@ set(_unit_test_names
     bot_pool_label_file_path_still_loads
     bot_pool_label_path_missing_not_label
     bot_pool_label_none_same_draws
+    bot_pool_label_dir_not_file
+    bot_pool_label_shipped_missing
+    bot_pool_label_catalog_carries_filter
+    bot_pool_label_unknown_cut_utf8
     voice_core_roundtrip
     voice_core_reset_matches_fresh
     voice_core_fade_apply

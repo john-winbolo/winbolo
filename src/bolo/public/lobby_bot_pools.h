@@ -164,8 +164,10 @@ bool lobbyBotPoolsLoadDefault(LobbyBotPoolLoadStats *stats);
  * 0..lobbyBotPoolDrawCount()-1. Normally this is lobbyBotPoolCount(),
  * so the generated "Numbered Bots" pool can be drawn as it always
  * could. After lobbyBotPoolsFilterByLabels keeps some pools, it is the
- * themed count only, so draws pick only from the chosen pools. Any
- * install or reset puts it back to lobbyBotPoolCount(). */
+ * themed count only, so draws pick only from the chosen pools. A client
+ * that installs such a server's catalogue gets the same draw count (see
+ * LOBBY_BOT_CATALOG_FLAG_THEMED_ONLY). Any other install, and a reset,
+ * put it back to lobbyBotPoolCount(). */
 int  lobbyBotPoolDrawCount(void);
 
 /* Unknown labels a filter call can report by name (more are counted). */
@@ -195,6 +197,11 @@ int  lobbyBotPoolsFilterByLabels(const char *labelList,
  * '\\' in it, or ends in ".json" (any case). Such a value is never read
  * as a list of labels. */
 bool lobbyBotNamesArgLooksLikePath(const char *arg);
+
+/* Whether label (NUL-terminated) equals the len bytes at s, ignoring
+ * ASCII case only (not the C locale). Returns 1 or 0. */
+int  lobbyBotPoolLabelEqualsNoCase(const char *label, const char *s,
+                                   size_t len);
 
 /* WinBoloDS -botnames handling, in one place so it can be tested.
  *   arg NULL          — load the shipped file (as with no -botnames).
@@ -233,7 +240,16 @@ bool lobbyBotPoolsLoadFromArg(const char *arg, const char *defaultPath,
  *   per pool: u8 labelLen, label bytes,
  *             u16 nameCount BE,
  *               per name: u8 nameLen, name bytes
+ *   u8  flags (optional; only present when a flag is set)
+ *
+ * Flags: LOBBY_BOT_CATALOG_FLAG_THEMED_ONLY says the server chose its
+ * pools by label, so random pool draws skip "Numbered Bots"; a client
+ * that installs the catalogue then gets the same lobbyBotPoolDrawCount.
+ * The byte is left out when no flag is set, so such a catalogue and its
+ * id are the same as before flags. Older clients stop reading after the
+ * last pool and ignore the byte.
  */
+#define LOBBY_BOT_CATALOG_FLAG_THEMED_ONLY 0x01u
 
 /* Cap on the *uncompressed* serialized payload. */
 #define LOBBY_BOT_CATALOG_MAX_BYTES (64u * 1024u)

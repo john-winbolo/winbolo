@@ -531,6 +531,10 @@ int run_bot_pool_label_mixed_known_unknown(void);
 int run_bot_pool_label_file_path_still_loads(void);
 int run_bot_pool_label_path_missing_not_label(void);
 int run_bot_pool_label_none_same_draws(void);
+int run_bot_pool_label_dir_not_file(void);
+int run_bot_pool_label_shipped_missing(void);
+int run_bot_pool_label_catalog_carries_filter(void);
+int run_bot_pool_label_unknown_cut_utf8(void);
 int run_lobby_map_list_chunked(void);
 /* The scripted byte on a map-list entry: the layout by hand-written bytes,
  * and a list carrying a mix of scripted and plain maps. */

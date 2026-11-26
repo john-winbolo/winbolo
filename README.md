@@ -94,19 +94,20 @@ from the in-game menu, without a separate server.
 
 Bots get their names from the themed pools in `data/bot_names.json`. To use
 only some of them, give `-botnames` one or more pool labels, comma separated
-(case and spaces around each label do not matter):
+(case and spaces around each label do not matter). Bots that the server
+starts with `-bots`, and bots that players add in the lobby, then get names
+only from those pools. Two exceptions: a player can still pick the "Numbered
+Bots" pool for a team by hand, and a client older than the server can still
+give it to the first bot it adds to a team.
 
 ```bash
 ./build/WinBoloDS -inbuilt -bots 4 -botnames "Classic AI"
 ./build/WinBoloDS -inbuilt -bots 8 -teams 2 -botnames "Famous Painters, Planes"
 ```
 
-The shipped labels are: Classic AI, Famous Painters, Famous Musicians,
-Martial Artists, Famous Scientists, Philosophers, Generals & Tacticians,
-Pilot Callsigns, Famous Authors, Aliens, Ancient Greeks, Australian Birds,
-Water Fountains and Planes. `-botnames list` prints them. A value that is an
-existing file, or that looks like a path (it has `/` or `\` in it, or ends in
-`.json`), is loaded as your own pool file in the same format instead.
+`-botnames list` prints the labels. A value that is an existing file, or
+that looks like a path (it has `/` or `\` in it, or ends in `.json`), is
+loaded as your own pool file in the same format instead.
 
 ## Tests
 

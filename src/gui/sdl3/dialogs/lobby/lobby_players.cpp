@@ -1507,10 +1507,13 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
                  * in_use at server init, so gating on in_use never
                  * fired — gate on "no bots yet" instead. Subsequent
                  * bots in the same team reuse the chosen pool; the
-                 * host can still override via the dropdown. */
+                 * host can still override via the dropdown. The draw
+                 * uses lobbyBotPoolDrawCount, so a server that chose
+                 * pools by label (-botnames) never gives this first bot
+                 * the "Numbered Bots" pool. */
                 int effectivePool = curPool;
-                if (botCount[teamId] == 0 && lobbyBotPoolCount() > 0) {
-                    effectivePool = (int)bolo_rand_below((uint32_t)lobbyBotPoolCount());
+                if (botCount[teamId] == 0 && lobbyBotPoolDrawCount() > 0) {
+                    effectivePool = (int)bolo_rand_below((uint32_t)lobbyBotPoolDrawCount());
                     const char *nameForMeta = clientSimGetLobbyTeamInUse(cs, (BYTE)(teamId))
                         ? clientSimGetLobbyTeamName(cs, (BYTE)(teamId)) : defaultName;
                     lobbySendTeamPool(cs, (uint8_t)teamId,
