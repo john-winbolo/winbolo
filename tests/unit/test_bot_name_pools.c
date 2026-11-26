@@ -502,9 +502,24 @@ int run_bot_pool_catalog_id(void) {
  * these cases hand it their own "shipped" file so they do not depend on
  * data/bot_names.json. */
 
-#define LABEL_TEST_FILE  "test_bot_names_labels_tmp.json"
-#define LABEL_OTHER_FILE "test_bot_names_other_tmp.json"
-#define LABEL_WARN_FILE  "test_bot_names_warn_tmp.txt"
+/* Each test has its own three files, named after the test, because ctest
+ * runs the tests in parallel in one directory. labelTestFiles sets the
+ * names; a test calls it before it touches a file. */
+static char s_labelTestFile[96];
+static char s_labelOtherFile[96];
+static char s_labelWarnFile[96];
+#define LABEL_TEST_FILE  s_labelTestFile
+#define LABEL_OTHER_FILE s_labelOtherFile
+#define LABEL_WARN_FILE  s_labelWarnFile
+
+static void labelTestFiles(const char *test) {
+    snprintf(s_labelTestFile, sizeof(s_labelTestFile),
+             "test_bot_names_%s_labels_tmp.json", test);
+    snprintf(s_labelOtherFile, sizeof(s_labelOtherFile),
+             "test_bot_names_%s_other_tmp.json", test);
+    snprintf(s_labelWarnFile, sizeof(s_labelWarnFile),
+             "test_bot_names_%s_warn_tmp.txt", test);
+}
 
 static int writeLabelFile(void) {
     return writeFile(LABEL_TEST_FILE,
@@ -539,6 +554,7 @@ int run_bot_pool_label_one(void) {
     char warn[2048];
     LobbyBotPoolLoadStats st;
 
+    labelTestFiles("one");
     lobbyBotPoolsReset();
     UT_ASSERT(writeLabelFile());
     UT_ASSERT(loadArgCapture("Classic AI", warn, sizeof(warn), &st));
@@ -566,6 +582,7 @@ int run_bot_pool_label_several_spaces_case(void) {
     LobbyBotPoolLoadStats st;
     LobbyBotPoolFilterResult fr;
 
+    labelTestFiles("several_spaces_case");
     lobbyBotPoolsReset();
     UT_ASSERT(writeLabelFile());
     /* Odd case, spaces and tabs around labels, an empty item, a repeat. */
@@ -597,6 +614,7 @@ int run_bot_pool_label_unknown_falls_back(void) {
     char warn[2048];
     LobbyBotPoolLoadStats st;
 
+    labelTestFiles("unknown_falls_back");
     lobbyBotPoolsReset();
     UT_ASSERT(writeLabelFile());
     UT_ASSERT(loadArgCapture("Zebras", warn, sizeof(warn), &st));
@@ -604,7 +622,8 @@ int run_bot_pool_label_unknown_falls_back(void) {
                   "Warning: -botnames: no pool named 'Zebras'; pools are: "
                   "Classic AI, Famous Painters, Planes") != NULL,
                   "warning was: %s", warn);
-    UT_ASSERT_MSG(strstr(warn, "using all pools") != NULL,
+    UT_ASSERT_MSG(strstr(warn, "'Zebras' is not a file and names no pool; "
+                  "using all pools") != NULL,
                   "warning was: %s", warn);
     /* All pools, and draws as with no -botnames. */
     UT_ASSERT(lobbyBotPoolCount() == 3 + 1);
@@ -620,6 +639,7 @@ int run_bot_pool_label_mixed_known_unknown(void) {
     char warn[2048];
     LobbyBotPoolLoadStats st;
 
+    labelTestFiles("mixed_known_unknown");
     lobbyBotPoolsReset();
     UT_ASSERT(writeLabelFile());
     UT_ASSERT(loadArgCapture("Planes, Zebras ,famous painters", warn,
@@ -643,6 +663,7 @@ int run_bot_pool_label_file_path_still_loads(void) {
     char warn[2048];
     LobbyBotPoolLoadStats st;
 
+    labelTestFiles("file_path_still_loads");
     lobbyBotPoolsReset();
     UT_ASSERT(writeLabelFile());
     UT_ASSERT(writeFile(LABEL_OTHER_FILE,
@@ -672,6 +693,7 @@ int run_bot_pool_label_path_missing_not_label(void) {
     UT_ASSERT(!lobbyBotNamesArgLooksLikePath("Classic AI,Planes"));
     UT_ASSERT(!lobbyBotNamesArgLooksLikePath(".js"));
 
+    labelTestFiles("path_missing_not_label");
     lobbyBotPoolsReset();
     UT_ASSERT(writeLabelFile());
     /* A missing path is never tried as a label, even when its stem is
@@ -701,6 +723,7 @@ int run_bot_pool_label_none_same_draws(void) {
 
     /* The reference: the shipped file loaded directly, as WinBoloDS did
      * before -botnames took labels, and the draws over the pool count. */
+    labelTestFiles("none_same_draws");
     lobbyBotPoolsReset();
     UT_ASSERT(writeLabelFile());
     UT_ASSERT(lobbyBotPoolsLoadFromFile(LABEL_TEST_FILE, NULL));
@@ -739,33 +762,43 @@ int run_bot_pool_label_none_same_draws(void) {
     return 0;
 }
 
+#define DIR_LABEL "test_bot_names_dir_label_tmp"
+
 int run_bot_pool_label_dir_not_file(void) {
     char warn[2048];
     LobbyBotPoolLoadStats st;
     SDL_PathInfo info;
-    bool made = false;
+    bool isDir, ok;
 
     /* A directory with a label's name is not a pool file: the value is
-     * still read as that label. (fopen opens a directory on Linux.) */
+     * still read as that label. (fopen opens a directory on Linux.) The
+     * label, and so the directory, is one only this test uses. */
+    labelTestFiles("dir_not_file");
     lobbyBotPoolsReset();
-    UT_ASSERT(writeLabelFile());
-    if (!SDL_GetPathInfo("Planes", &info)) {
-        UT_ASSERT(SDL_CreateDirectory("Planes"));
-        made = true;
+    UT_ASSERT(writeFile(LABEL_TEST_FILE,
+        "{ \"pools\": [\n"
+        "  { \"label\": \"Classic AI\", \"names\": [\"HAL\", \"Skynet\"] },\n"
+        "  { \"label\": \"" DIR_LABEL "\", \"names\": [\"Spitfire\", \"Mustang\"] }\n"
+        "] }\n"));
+    if (!SDL_GetPathInfo(DIR_LABEL, &info)) {
+        UT_ASSERT(SDL_CreateDirectory(DIR_LABEL));
     }
-    UT_ASSERT(SDL_GetPathInfo("Planes", &info));
-    UT_ASSERT(info.type == SDL_PATHTYPE_DIRECTORY);
+    isDir = SDL_GetPathInfo(DIR_LABEL, &info) &&
+            info.type == SDL_PATHTYPE_DIRECTORY;
 
-    UT_ASSERT(loadArgCapture("Planes", warn, sizeof(warn), &st));
-    if (made) SDL_RemovePath("Planes");
+    /* Remove the directory and the file before any check can return. */
+    ok = isDir && loadArgCapture(DIR_LABEL, warn, sizeof(warn), &st);
+    SDL_RemovePath(DIR_LABEL);
+    remove(LABEL_TEST_FILE);
+    UT_ASSERT(isDir);
+    UT_ASSERT(ok);
     UT_ASSERT_MSG(strstr(warn, "could not be loaded") == NULL,
                   "read the directory as a file: %s", warn);
     UT_ASSERT(lobbyBotPoolCount() == 1 + 1);
-    UT_ASSERT(strcmp(lobbyBotPoolLabel(0), "Planes") == 0);
+    UT_ASSERT(strcmp(lobbyBotPoolLabel(0), DIR_LABEL) == 0);
     UT_ASSERT(lobbyBotPoolDrawCount() == 1);
     UT_ASSERT(st.poolsKept == 1);
 
-    remove(LABEL_TEST_FILE);
     lobbyBotPoolsReset();
     return 0;
 }
@@ -779,6 +812,7 @@ int run_bot_pool_label_shipped_missing(void) {
 
     /* The shipped file is missing: a warning, and the labels then choose
      * from the built-in pools. */
+    labelTestFiles("shipped_missing");
     lobbyBotPoolsReset();
     remove("test_bot_names_no_such_file.json");
     w = fopen(LABEL_WARN_FILE, "w+b");
@@ -823,6 +857,7 @@ int run_bot_pool_label_catalog_carries_filter(void) {
     /* A server that chose pools by label: its catalogue says so, and a
      * client that installs it draws only from those pools too (the first
      * bot a player adds to a team in the lobby). */
+    labelTestFiles("catalog_carries_filter");
     lobbyBotPoolsReset();
     UT_ASSERT(writeLabelFile());
     UT_ASSERT(lobbyBotPoolsLoadFromFile(LABEL_TEST_FILE, NULL));

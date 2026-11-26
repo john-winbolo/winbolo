@@ -184,8 +184,9 @@ typedef struct {
 } LobbyBotPoolFilterResult;
 
 /* Keep only the active themed pools whose label is in labelList, a
- * comma-separated list ("Classic AI, famous painters"). Spaces and tabs
- * around each label are trimmed; matching ignores ASCII case. The kept
+ * comma-separated list ("Classic AI, famous painters"). Spaces, tabs
+ * and line ends around each label are trimmed; matching ignores ASCII
+ * case. The kept
  * pools stay in their file order, and random draws then pick only from
  * them (see lobbyBotPoolDrawCount). If no label matches, the active
  * pools are left as they were and 0 is returned. Returns the number of
@@ -216,7 +217,8 @@ int  lobbyBotPoolLabelEqualsNoCase(const char *label, const char *s,
  *                       the comma-separated labels name. Each unknown
  *                       label gets a warning that lists the pools; if no
  *                       label matches, all pools are used and the warning
- *                       says so.
+ *                       says so. A mistyped file name with no '/' and
+ *                       no ".json" is read this way too.
  * defaultPath is the shipped file to use (NULL = lobbyBotPoolsLoadDefault;
  * tests pass their own). Warnings go to `warn` (nullable = silent).
  * Returns true when pools were loaded from a file; stats->poolsKept is
