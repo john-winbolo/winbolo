@@ -84,7 +84,11 @@ typedef enum {
     CMD_PLAYER_PING_MUTE,
     CMD_LOBBY_RELOAD_SCENARIO,
     CMD_SET_SCRIPT_LIST,
-    CMD_SET_SCRIPT_SETTING
+    CMD_SET_SCRIPT_SETTING,
+    /* PACKET_PAUSE_SET. The host or an admin turns a manual pause on or off.
+     * The single-player menu sends it over the local transport; a remote
+     * host or admin tool sends it over UDP. */
+    CMD_PAUSE_SET
 } ClientCommandType;
 
 /* Reject codes returned by serverSimApplyCommand. The dispatcher
@@ -348,6 +352,15 @@ typedef struct {
     int32_t value;
 } CmdSetScriptSetting;
 
+/* CMD_PAUSE_SET — the host turning a manual pause on or off. target is a
+ * SimPauseTarget (server_sim.h): 0 = the bots, 1 = the whole game. Only a
+ * player who may edit the lobby (the host, an admin, or anyone on an open-host
+ * server) may send it. */
+typedef struct {
+    uint8_t target;
+    bool    paused;
+} CmdPauseSet;
+
 typedef struct {
     uint8_t _unused;
 } CmdLobbyPreviewCancel;
@@ -558,6 +571,7 @@ typedef struct ClientCommand {
         CmdPlayerPingMute      playerPingMute;
         CmdSetScriptList       setScriptList;
         CmdSetScriptSetting    setScriptSetting;
+        CmdPauseSet            pauseSet;
     } u;
 } ClientCommand;
 

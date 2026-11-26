@@ -824,6 +824,23 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
         }
         return CMD_OK;
     }
+    case CMD_PAUSE_SET: {
+        /* The manual pause of the bots or of the whole game. Only a human
+           who may edit the lobby (the host, an admin, or anyone on an
+           open-host server) may send it; a bot's queued command is never
+           one. It comes over UDP (PACKET_PAUSE_SET) or the local transport
+           of a single-player host. */
+        if (serverSimIsBot(sim, (BYTE)senderSlot) ||
+            !lobbyClientMayEdit(sim, senderSlot)) {
+            return CMD_REJECT_NOT_HOST;
+        }
+        const CmdPauseSet *p = &cmd->u.pauseSet;
+        if (p->target != SIM_PAUSE_BOTS && p->target != SIM_PAUSE_GAME) {
+            return CMD_REJECT_INVALID;
+        }
+        (void)serverSimSetManualPause(sim, (SimPauseTarget)p->target, p->paused);
+        return CMD_OK;
+    }
     case CMD_LOCK_TOGGLE: {
         if (!lobbyClientMayEdit(sim, senderSlot)) return CMD_REJECT_NOT_HOST;
         bool allow = cmd->u.lockToggle.allow;

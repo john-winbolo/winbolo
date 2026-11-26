@@ -306,6 +306,35 @@ static void consoleOpMemReport(bool deep) {
   serverMemReportRequest(deep);
 }
 
+/* pausebots / resumebots / pausegame / resumegame and the status line. The
+   pause state is the sim's, so both take the mutex for the whole call. */
+static void consoleOpSetPause(int target, bool paused, char *msg, size_t msgLen) {
+  SimPauseTarget t = (target == 1) ? SIM_PAUSE_GAME : SIM_PAUSE_BOTS;
+  threadsWaitForMutex();
+  bool changed = serverSimSetManualPause(serverSim, t, paused);
+  bool idle    = serverSimIsIdlePauseActive(serverSim) &&
+                 serverSimGetIdlePauseTarget(serverSim) == t;
+  threadsReleaseMutex();
+  const char *what = (t == SIM_PAUSE_GAME) ? "game" : "AI players";
+  if (paused) {
+    snprintf(msg, msgLen, changed ? "Manual pause of the %s is on."
+                                  : "The %s already had a manual pause.", what);
+  } else if (!changed) {
+    snprintf(msg, msgLen, "The %s had no manual pause.", what);
+  } else if (idle) {
+    snprintf(msg, msgLen, "Manual pause of the %s is off. The idle pause "
+             "keeps the %s paused until a human joins.", what, what);
+  } else {
+    snprintf(msg, msgLen, "Manual pause of the %s is off.", what);
+  }
+}
+
+static void consoleOpPauseStatus(char *msg, size_t msgLen) {
+  threadsWaitForMutex();
+  serverSimFormatPauseStatus(serverSim, msg, msgLen);
+  threadsReleaseMutex();
+}
+
 /* Positional, and the struct's own comment says why the newest entry goes
    last rather than beside a relative. */
 static const ServerConsoleOps serverConsoleOps = {
@@ -318,7 +347,9 @@ static const ServerConsoleOps serverConsoleOps = {
   consoleOpKick,
   consoleOpSetHost,
   consoleOpReloadScenario,
-  consoleOpMemReport
+  consoleOpMemReport,
+  consoleOpSetPause,
+  consoleOpPauseStatus
 };
 
 
@@ -497,7 +528,13 @@ static void processCmdStdin(CmdStdin *cs) {
         }
 
         uint32_t serverTick = serverSimGetTick(serverSim);
-        if (cmd.tick > serverTick) {
+        /* A paused game's tick stands still, so a line queued for a later
+         * tick would never come due: a resume_game, an exit or a shutdown
+         * would wait for ever. While the game is paused, every queued line
+         * is taken at once, in file order. A script that wants game time
+         * between two lines puts the resume_game first. */
+        bool dueNow = serverSimIsGamePaused(serverSim);
+        if (cmd.tick > serverTick && !dueNow) {
 #ifdef _WIN32
             Sleep(isAsap ? 0 : 10);
 #else
@@ -516,6 +553,24 @@ static void processCmdStdin(CmdStdin *cs) {
             case CMD_OP_REAPPLY_ALLIANCES:
                 serverSimReapplyTeamAlliances(serverSim);
                 break;
+            case CMD_OP_PAUSE_BOTS:
+            case CMD_OP_RESUME_BOTS:
+            case CMD_OP_PAUSE_GAME:
+            case CMD_OP_RESUME_GAME: {
+                SimPauseTarget t = (cmd.op == CMD_OP_PAUSE_GAME ||
+                                    cmd.op == CMD_OP_RESUME_GAME)
+                                       ? SIM_PAUSE_GAME : SIM_PAUSE_BOTS;
+                bool on = (cmd.op == CMD_OP_PAUSE_BOTS ||
+                           cmd.op == CMD_OP_PAUSE_GAME);
+                (void)serverSimSetManualPause(serverSim, t, on);
+                break;
+            }
+            case CMD_OP_PAUSE_STATUS: {
+                char line[256];
+                serverSimFormatPauseStatus(serverSim, line, sizeof(line));
+                fprintf(stderr, "cmd-stdin: pause status: %s\n", line);
+                break;
+            }
             case CMD_OP_SHUTDOWN:
             case CMD_OP_EXIT:
                 /* Both paths break the main loop. The cleanup code
@@ -946,6 +1001,17 @@ void printArgs() {
   fprintf(stderr, "-noemptyreset - Disable automatic lobby reset when server is empty\n");
   fprintf(stderr, "                (enabled by default, resets after 5 minutes)\n");
   fprintf(stderr, "-emptyresetmins <N> - Minutes before empty server resets to lobby (default: 5)\n");
+  fprintf(stderr, "-idlepause <S> - Pause when no human has been in the server for S seconds;\n");
+  fprintf(stderr, "                resume at once when a human joins. 0 pauses at once, -1\n");
+  fprintf(stderr, "                never pauses (default). Bots count as no one: -autoclose\n");
+  fprintf(stderr, "                and the empty reset still see them as players, so they do\n");
+  fprintf(stderr, "                not fire while bots are in, paused or not.\n");
+  fprintf(stderr, "-idlepausemode <bots|game> - What -idlepause stops (default: bots).\n");
+  fprintf(stderr, "                bots: no bot thinks and their tanks brake to a stop; the\n");
+  fprintf(stderr, "                game clock and -ticklimit go on. game: the whole game\n");
+  fprintf(stderr, "                stops; the clock, -ticklimit, the round time and the\n");
+  fprintf(stderr, "                recording stand still. In a lobby round that had a human,\n");
+  fprintf(stderr, "                the game mode waits for the return to the lobby.\n");
   fprintf(stderr, "-ticks <N>    - Exit cleanly after N game-ticks of running play.\n");
   fprintf(stderr, "                \"0\" or omitted means unlimited (default).\n");
   fprintf(stderr, "-ticklimit <N> - End the current game (transition to GAME_OVER) after N\n");
@@ -2412,6 +2478,37 @@ int main(int argc, char **argv) {
       fprintf(stderr, "%s\n", warn);
     }
     serverMemReportConfigure(memMins, deep);
+  }
+
+  /* Idle pause: off unless -idlepause gives the seconds. */
+  {
+    int secs = -1;
+    SimPauseTarget mode = SIM_PAUSE_BOTS;
+    int argNum = findArg(argc, argv, "idlepause");
+    if (argNum != ARG_NOT_FOUND) {
+      char *end = NULL;
+      long v = strtol((char *)argv[argNum], &end, 10);
+      if (end == (char *)argv[argNum] || *end != '\0' || v < -1 || v > 86400L * 365) {
+        fprintf(stderr, "-idlepause wants a number of seconds, 0 or more, or -1; "
+                "ignoring '%s'\n", (char *)argv[argNum]);
+      } else {
+        secs = (int)v;
+      }
+    }
+    argNum = findArg(argc, argv, "idlepausemode");
+    if (argNum != ARG_NOT_FOUND) {
+      const char *m = (const char *)argv[argNum];
+      if (SDL_strcasecmp(m, "game") == 0) {
+        mode = SIM_PAUSE_GAME;
+      } else if (SDL_strcasecmp(m, "bots") != 0) {
+        fprintf(stderr, "-idlepausemode is bots or game; using bots for '%s'\n", m);
+      }
+    }
+    serverSimSetIdlePause(serverSim, secs, mode);
+    if (secs >= 0) {
+      fprintf(stderr, "Idle pause: %s after %d s with no human.\n",
+              mode == SIM_PAUSE_GAME ? "game" : "bots", secs);
+    }
   }
 
   /* Empty reset configuration — on by default */

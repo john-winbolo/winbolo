@@ -865,6 +865,15 @@ static void clientApplyGameEventsInner(ClientSim *csPtr,
           case SERVER_MSG_GAME_UNLOCKED:
             clientSimNetStatusMessage(csPtr, "This game is now unlocked to new players (server unlock)");
             break;
+          default:
+            /* The pause state: the flags ride in the id. */
+            if (events[i].data[0] >= SERVER_MSG_PAUSE_STATE_BASE &&
+                events[i].data[0] <= SERVER_MSG_PAUSE_STATE_LAST) {
+              clientSimNoteServerPause(
+                  csPtr,
+                  (uint8_t)(events[i].data[0] - SERVER_MSG_PAUSE_STATE_BASE));
+            }
+            break;
           }
         }
         break;
@@ -1095,6 +1104,10 @@ void clientApplySnapshot(ClientSim *csPtr,
    * even when our own tank ships as a hidden stub). */
   csPtr->clientState.serverLastProcessedInput = hdr->lastProcessedInput;
 
+  /* One more server frame since the last pause notice. A notice in this
+   * frame's events, applied below, sets the age back to 0. */
+  clientSimServerPauseFrameApplied(csPtr);
+
   /* Track a 2-deep history of applied snapshot ticks. Interp renders curr,
    * which is one behind the newest applied frame, so the displayed view is the
    * second-newest applied snapshot's serverTick. prevAppliedServerTick is
@@ -1309,11 +1322,17 @@ void clientApplySnapshot(ClientSim *csPtr,
              * tick's travel one way and then back. */
             tankSetResidualSpeed(&MY_TANK(csPtr), tanks[i].residualSpeed);
 
-            /* Replay unacknowledged inputs (suppress sounds/side effects) */
+            /* Replay unacknowledged inputs (suppress sounds/side effects).
+             * In a game pause the server drops every input, so none is
+             * replayed: a replay would put the tank ahead of the server's
+             * frozen tank by the inputs still in flight. */
             csPtr->sim.isPredicting = TRUE;
             {
               uint32_t tick;
-              for (tick = csPtr->clientState.oldestUnacked; tick <= csPtr->clientState.newestInput; tick++) {
+              bool gamePaused = (clientSimGetServerPauseFlags(csPtr) &
+                                 SERVER_PAUSE_FLAG_GAME) != 0;
+              for (tick = csPtr->clientState.oldestUnacked;
+                   !gamePaused && tick <= csPtr->clientState.newestInput; tick++) {
                 uint8_t idx = tick & (CLIENT_INPUT_HISTORY_SIZE - 1);
                 InputPacket *histPkt = &csPtr->clientState.history[idx];
                 bool isKeysTick;

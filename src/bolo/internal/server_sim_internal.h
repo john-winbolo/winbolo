@@ -590,6 +590,26 @@ struct ServerSim {
     int          emptyResetMinutes;  /* Minutes before empty reset (default 5) */
     int32_t      emptyResetTicks;    /* Countdown remaining in 20 ms frames, 50/s: serverSimCheckEmptyReset runs once a frame (-1 = not counting) */
 
+    /* The bot pause and the game pause (server_sim_pause.c). A manual pause
+     * comes from the host, the console, the admin channel or a script and
+     * stays until a manual resume. The idle pause comes from -idlepause: it
+     * starts after the server has had no human for idleSeconds and stops
+     * when a human is back. frames counts every serverSimLocalTick call,
+     * so the "seconds" in the status are wall seconds, also while the game
+     * clock is stopped. */
+    struct {
+        bool     manual[SIM_PAUSE_TARGET_COUNT];
+        bool     idle;            /* the idle pause is on now */
+        int32_t  idleSeconds;     /* -1 = never (default), 0 = at once */
+        uint8_t  idleTarget;      /* SimPauseTarget the idle pause stops */
+        uint32_t noHumanFrames;   /* frames in a row with no human */
+        uint32_t frames;          /* frames since the sim was made */
+        uint32_t sinceFrame[SIM_PAUSE_TARGET_COUNT]; /* frames at the start */
+        uint8_t  flags;           /* SIM_PAUSE_FLAG_* now on */
+        uint32_t notifyFrame;     /* frames at the last client notice */
+        bool     notifyOwed;      /* a change not yet sent to clients */
+    } pause;
+
     /* Map reload — cached compressed map for between-round resets */
     BYTE        *cachedMapData;      /* Compressed map buffer (malloc'd) */
     int          cachedMapDataLen;   /* Length of compressed data */

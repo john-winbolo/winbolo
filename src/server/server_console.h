@@ -71,6 +71,15 @@ typedef struct {
    * bot's Lua tables. May be NULL, in which case the commands say the
    * report is not available. Last, for the reason given above. */
   void (*memReport)(bool deep);
+  /* pausebots / resumebots / pausegame / resumegame — turn a manual pause
+   * on or off. target 0 = the bots, 1 = the whole game (SimPauseTarget in
+   * server_sim.h). Writes one line into msg saying what changed. May be
+   * NULL, in which case the commands say pausing is not available. Last,
+   * for the reason given above. */
+  void (*setPause)(int target, bool paused, char *msg, size_t msgLen);
+  /* pausestatus / botstatus — write the pause state, one line, into msg.
+   * May be NULL. Last, for the reason given above. */
+  void (*pauseStatus)(char *msg, size_t msgLen);
 } ServerConsoleOps;
 
 /* Lower-case `s` in place. */

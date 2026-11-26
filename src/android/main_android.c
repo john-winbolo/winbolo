@@ -314,6 +314,10 @@ void windowDeckPause(ClientSim *cs, bool active) {
 void windowTutorialPause(ClientSim *cs, bool active) {
   androidSoloPause(cs, CLIENT_FRONT_PAUSE_TUTORIAL, active);
 }
+/* The host's Pause Game item. */
+void windowUserPause(ClientSim *cs, bool active) {
+  androidSoloPause(cs, CLIENT_FRONT_PAUSE_USER, active);
+}
 
 /* The move to and from the background. The shared suspend pauses a solo
    game's hosted server and mutes the sound with the state it had kept for

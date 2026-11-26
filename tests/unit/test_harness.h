@@ -3499,6 +3499,21 @@ int run_pascal_string_roundtrip(void);
  * (test_server_console.c). */
 int run_console_lock_unlock(void);
 int run_console_mem_report(void);
+int run_console_pause_commands(void);
+/* The bot pause and the game pause (test_sim_pause.c). */
+int run_sim_pause_idle_zero(void);
+int run_sim_pause_idle_seconds(void);
+int run_sim_pause_idle_never(void);
+int run_sim_pause_manual_not_resumed_by_join(void);
+int run_sim_pause_idle_game_mode(void);
+int run_sim_pause_command(void);
+int run_sim_pause_notice(void);
+int run_sim_pause_bots_no_budget_kill(void);
+int run_sim_pause_game_state_frozen(void);
+int run_sim_pause_recording_round_trip(void);
+int run_sim_pause_determinism(void);
+int run_client_pause_notice_age(void);
+int run_loopback_game_pause_prediction(void);
 int run_memreport_flags(void);
 int run_memreport_process_na(void);
 int run_memreport_deep_walk_cap(void);

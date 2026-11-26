@@ -1567,6 +1567,8 @@ void windowSuspendBackground(ClientSim *cs) { (void)cs; }
 void windowResumeForeground(ClientSim *cs) { (void)cs; }
 void windowControllerLostPause(ClientSim *cs, bool active) { (void)cs; (void)active; }
 void windowDeckPause(ClientSim *cs, bool active) { (void)cs; (void)active; }
+/* The web build has no single-player server pause; the menu item is not shown. */
+void windowUserPause(ClientSim *cs, bool active) { (void)cs; (void)active; }
 void windowTutorialPause(ClientSim *cs, bool active) {
   /* Opening pauses only the tutorial with its server in the page; closing
      always clears, so a pause can never outlive its dialog. */

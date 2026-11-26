@@ -98,6 +98,9 @@ extern "C" {
 
 extern "C" {
 #include "client_net.h"
+#ifndef __EMSCRIPTEN__
+#include "client_frontend_common.h" /* the Pause Game freeze */
+#endif
 #include "../clientmutex.h" /* the overview's render reads sim state */
 #include "../../server/server_lifecycle.h"
 #include "../../server/threads.h"
@@ -231,6 +234,8 @@ extern "C" void windowResumeForeground(struct ClientSim *cs);
 extern "C" void windowControllerLostPause(struct ClientSim *cs, bool active);
 extern "C" void windowDeckPause(struct ClientSim *cs, bool active);
 extern "C" void windowTutorialPause(struct ClientSim *cs, bool active);
+/* The host's Pause Game item: the solo freeze CLIENT_FRONT_PAUSE_USER. */
+extern "C" void windowUserPause(struct ClientSim *cs, bool active);
 /* The tutorial overlay's open state as windowTutorialPause last heard it:
    the render path's edge-detect, and the round-end close, which lifts the
    pause itself. */
@@ -8107,6 +8112,94 @@ static void renderSettingsPanel(ClientSim *cs) {
 }
 
 /* -------------------------------------------------------
+ * The host's pause of a single-player game: Pause AI Players
+ * (Ctrl+Shift+B) and Pause Game (Ctrl+Shift+G), and the note
+ * on the screen while a pause is on.
+ *
+ * The AI pause is a command to the in-process server
+ * (CMD_PAUSE_SET), and the server's pause notice tells the
+ * client it is on. The game pause is the solo freeze the pause
+ * menu uses: the client and its server both stop.
+ * ------------------------------------------------------- */
+static bool pauseItemsShown(ClientSim *cs) {
+    if (cs == nullptr || !clientSimIsSinglePlayer(cs) ||
+        !clientSimIsRunning(cs) || clientSimIsSpectator(cs)) {
+        return false;
+    }
+    BYTE host = clientSimGetLobbyHostSlot(cs);
+    return host >= MAX_TANKS || host == clientSimGetMyPlayerNum(cs);
+}
+
+/* Pause Game is the solo freeze, which the web build does not have, so
+   the item and its key are only on the other builds. */
+static bool gamePauseItemShown(ClientSim *cs) {
+#ifndef __EMSCRIPTEN__
+    return pauseItemsShown(cs);
+#else
+    (void)cs;
+    return false;
+#endif
+}
+
+static bool userGamePaused(void) {
+#ifndef __EMSCRIPTEN__
+    return clientFrontPauseIsOn(CLIENT_FRONT_PAUSE_USER);
+#else
+    return false;
+#endif
+}
+
+static bool serverBotsPaused(ClientSim *cs) {
+    return cs != nullptr &&
+           (clientSimGetServerPauseFlags(cs) & SERVER_PAUSE_FLAG_BOTS) != 0;
+}
+
+static void toggleBotPause(ClientSim *cs) {
+    if (!pauseItemsShown(cs)) return;
+    clientSimNetSendPauseSet(cs, 0, !serverBotsPaused(cs));
+}
+
+static void toggleGamePause(ClientSim *cs) {
+    if (!gamePauseItemShown(cs)) return;
+    windowUserPause(cs, !userGamePaused());
+}
+
+/* The note: one line for each pause that is on, in a dark box at the top
+   middle of the game window, over everything else. A remote client sees the
+   server's notice; the single-player host also sees its own game pause. */
+static void renderPauseNote(ClientSim *cs) {
+    if (cs == nullptr || !clientSimIsRunning(cs)) return;
+    uint8_t flags = clientSimGetServerPauseFlags(cs);
+    bool game = userGamePaused() || (flags & SERVER_PAUSE_FLAG_GAME) != 0;
+    bool bots = (flags & SERVER_PAUSE_FLAG_BOTS) != 0;
+    if (!game && !bots) return;
+    const char *lines[2];
+    int n = 0;
+    if (game) lines[n++] = langGetText(STR_PAUSE_NOTE_GAME);
+    if (bots) lines[n++] = langGetText(STR_PAUSE_NOTE_AI);
+    const float pad = 8.0f;
+    float w = 0.0f;
+    float lineH = ImGui::GetTextLineHeightWithSpacing();
+    for (int i = 0; i < n; i++) {
+        ImVec2 sz = ImGui::CalcTextSize(lines[i]);
+        if (sz.x > w) w = sz.x;
+    }
+    const ImGuiViewport *vp = ImGui::GetMainViewport();
+    float top = vp->WorkPos.y + 8.0f;
+    float left = vp->WorkPos.x + (vp->WorkSize.x - w) * 0.5f - pad;
+    ImVec2 boxMin(left, top);
+    ImVec2 boxMax(left + w + pad * 2.0f, top + lineH * (float)n + pad * 2.0f);
+    ImDrawList *dl = ImGui::GetForegroundDrawList();
+    dl->AddRectFilled(boxMin, boxMax, IM_COL32(0, 0, 0, 190), 4.0f);
+    for (int i = 0; i < n; i++) {
+        ImVec2 sz = ImGui::CalcTextSize(lines[i]);
+        dl->AddText(ImVec2(left + pad + (w - sz.x) * 0.5f,
+                           top + pad + lineH * (float)i),
+                    IM_COL32(255, 230, 120, 255), lines[i]);
+    }
+}
+
+/* -------------------------------------------------------
  * renderMenuBar — builds the ImGui main-menu-bar frame.
  * Called inside sdl3ImguiPumpAndRender between
  * ImGui::NewFrame() and ImGui::Render().
@@ -8634,6 +8727,22 @@ static void renderMenuBar(ClientSim *cs) {
                 if (ImGui::MenuItem(lbl))
                     clientSimSetGameVoteWidgetVisible(cs, vk, true);
             }
+        }
+        /* Only for the host of a single-player game. A multiplayer server
+           pauses from its console or the admin channel. */
+        if (pauseItemsShown(cs)) {
+            ImGui::Separator();
+            bool botsPaused = serverBotsPaused(cs);
+            if (ImGui::MenuItem(langGetText(botsPaused ? STR_MENU_RESUME_AI
+                                                       : STR_MENU_PAUSE_AI),
+                                KMOD_PRIMARY_LABEL "Shift+B"))
+                toggleBotPause(cs);
+            bool gamePaused = userGamePaused();
+            if (gamePauseItemShown(cs) &&
+                ImGui::MenuItem(langGetText(gamePaused ? STR_MENU_RESUME_GAME
+                                                       : STR_MENU_PAUSE_GAME),
+                                KMOD_PRIMARY_LABEL "Shift+G"))
+                toggleGamePause(cs);
         }
         ImGui::EndMenu();
     }
@@ -9715,7 +9824,11 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
                 windowSaveMap(cs);
                 break;
             case SDL_SCANCODE_G:
-                windowShowGunsight_toggle(cs);
+                /* Shift+G is Pause Game, for the single-player host. */
+                if ((ev.key.mod & SDL_KMOD_SHIFT) && gamePauseItemShown(cs))
+                    toggleGamePause(cs);
+                else
+                    windowShowGunsight_toggle(cs);
                 break;
             case SDL_SCANCODE_A:
                 windowAutomaticScrolling_toggle(cs);
@@ -9736,7 +9849,11 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
                 else                             windowShowPillLabels_toggle(cs);
                 break;
             case SDL_SCANCODE_B:
-                windowShowBaseLabels_toggle(cs);
+                /* Shift+B is Pause AI Players, for the single-player host. */
+                if ((ev.key.mod & SDL_KMOD_SHIFT) && pauseItemsShown(cs))
+                    toggleBotPause(cs);
+                else
+                    windowShowBaseLabels_toggle(cs);
                 break;
             case SDL_SCANCODE_R:
                 clientSimRequestAllianceSelected(cs);
@@ -11078,6 +11195,10 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
     renderChangeNameModal(cs);
     renderAllianceRequest(cs);
     renderGameVoteWidgets(cs);
+    /* A Pause Game left on when the game ends or the player leaves it must
+       not freeze the next game. */
+    if (userGamePaused() && !pauseItemsShown(cs)) windowUserPause(cs, false);
+    renderPauseNote(cs);
     /* Per-frame tick that emits the 3/2/1 newswire lines while a
      * vote-driven back-to-lobby is in-flight. Counts off the local
      * clock; no per-second server broadcast involved. */

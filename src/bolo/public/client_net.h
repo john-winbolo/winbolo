@@ -141,6 +141,12 @@ void clientSimNetSendPlayerMute(ClientSim *cs, BYTE targetPlayer, bool muted);
  * voice/chat mute above: the server stops delivering that player's EVENT_PING
  * to this client. Session-scoped. */
 void clientSimNetSendPlayerPingMute(ClientSim *cs, BYTE targetPlayer, bool muted);
+/* The host's manual pause (CMD_PAUSE_SET): target 0 = the bots, 1 = the
+ * whole game (SimPauseTarget). A server older than PACKET_PAUSE_SET cannot
+ * decode it: its command sequence for this client then stops, and it drops
+ * every later command from this client. So send it only on the host's own
+ * order. */
+void clientSimNetSendPauseSet(ClientSim *cs, uint8_t target, bool paused);
 /* Report this client's own mic status. hasMic is voice enabled with an input
  * device open; selfMuted is having one but not transmitting. The server keeps
  * it in the sender's clientFlags and shows it to the players who could hear

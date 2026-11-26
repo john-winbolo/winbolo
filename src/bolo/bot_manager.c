@@ -1596,6 +1596,41 @@ static void runBotThinkJobImpl(BotJobCtx *j, BotContext *bot, Uint64 t0) {
     j->hasInput = true;
 }
 
+/* A bot's frame while the bots are paused (botMgr.paused). The sync before
+ * this has already cleared the brain keys and the build order, so nothing
+ * the brain asked for last frame carries over. The brain is not run, and no
+ * budget hook is armed, so the bot cannot be budget-killed; lastThinkMs and
+ * the think count stay as they were, so the resume starts from the last
+ * real think and has no backlog of time to make up. The tank is sent a
+ * brake-only input: an empty frame would make the server repeat the last
+ * held buttons and keep the tank driving and turning. A brake never fires,
+ * lays a mine or builds, and the builder does what the engine does with no
+ * orders. */
+static void runBotPausedJob(BotJobCtx *j, BotContext *bot) {
+    ServerSim *sim = j->sim;
+    /* A dead tank gets no input, as in the normal job: it cannot act. The
+     * normal job clears newTank after a think, so the brain sees a respawn
+     * once. No think runs here, so newTank is left for the first think
+     * after the resume to see. */
+    if (MY_TANK(bot->cs) == NULL ||
+        tankGetDeathWait(&MY_TANK(bot->cs)) > 0) {
+        return;
+    }
+    unsigned long hold = 0;
+    setkey(hold, KEY_slower);
+    *clientSimGetBrainHoldKeys(bot->cs) = (uint32_t)hold;
+    *clientSimGetBrainTapKeys(bot->cs) = 0;
+    bool firstIsGame = (serverSimGetTick(sim) % 2) == 0;
+    clientBuildInputPacket(bot->cs, &j->pkt1, 0, FALSE, FALSE,
+                             TRUE, firstIsGame, bot->playerNum,
+                             serverSimGetTick(sim));
+    clientBuildInputPacket(bot->cs, &j->pkt2, 0, FALSE, FALSE,
+                             TRUE, !firstIsGame, bot->playerNum,
+                             serverSimGetTick(sim) + 1);
+    *clientSimGetBrainHoldKeys(bot->cs) = 0;
+    j->hasInput = true;
+}
+
 static void runBotThinkJob(int botIndex, void *userData) {
     ServerSim *sim = (ServerSim *)userData;
     BotJobCtx *j = &sim->botMgr.jobs[botIndex];
@@ -1607,6 +1642,14 @@ static void runBotThinkJob(int botIndex, void *userData) {
      * before t0/hook so its cost lands in the brain-phase wall-clock,
      * not the per-bot think deadline (lastThinkMs stays brain-only). */
     if (!botSyncSnapshotForJob(j)) {
+        return;
+    }
+
+    /* Read once: the flag only changes on the producer thread between
+     * ticks, under the server mutex. */
+    if (sim->botMgr.paused) {
+        if (j->poolJson) { free(j->poolJson); j->poolJson = NULL; }
+        runBotPausedJob(j, bot);
         return;
     }
 
@@ -1865,7 +1908,7 @@ void botManagerTick(ServerSim *sim, aiType ai) {
          * bot->lastThinkMs which the worker wrote — visible here via
          * the pool's release/acquire on the done semaphore. */
         double ms = sim->botMgr.bots[i].lastThinkMs;
-        if (ms > sim->botMgr.lastTargetMs * 1.5) {
+        if (!sim->botMgr.paused && ms > sim->botMgr.lastTargetMs * 1.5) {
             sim->botMgr.bots[i].overrunCount++;
             if ((serverSimGetTick(sim) - sim->botMgr.bots[i].lastOverrunWarnTick) > 50) {
                 WB_LOG_WARN(WB_LOG_CAT_LUA,
@@ -1896,7 +1939,9 @@ void botManagerTick(ServerSim *sim, aiType ai) {
     /* Brain-decision recorder (winbolods -braindebug). Inert unless enabled.
      * Runs here, after the worker pool joined and input was dispatched, so
      * every bot's overlay buffer + Lua state is settled and single-thread
-     * safe to read/eval. */
+     * safe to read/eval. It runs while the bots are paused too, so the world
+     * (and a human's play) stays in the recording; brainRecordTick writes no
+     * decision data for a paused bot. */
     brainRecordTick(sim);
 
     (void)ai;

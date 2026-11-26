@@ -1268,8 +1268,10 @@ void serverInstanceTick(ServerSim *sim) {
    * every five minutes, and the overrun record in the round log, every 30
    * seconds of the round. After the tick's own time is recorded, so they
    * include this frame and the work is not part of the time they report.
-   * Only a frame that ran the round counts. */
-  if (preTickState == serverStateRunning && sim->state == serverStateRunning) {
+   * Only a frame that ran the round counts, so a frame of a paused game,
+   * which ran no tick and wrote no log entry, does not. */
+  if (preTickState == serverStateRunning && sim->state == serverStateRunning &&
+      !serverSimIsGamePaused(sim)) {
     if (serverLifecycleCountRoundFrame()) {
       threadsWaitForMutex();
       serverLifecycleReportOverrunStats(sim);

@@ -49,6 +49,10 @@ typedef struct {
     bool reloadResult;
     int  memCalls;
     bool lastMemDeep;
+    int  pauseCalls;
+    int  lastPauseTarget;
+    bool lastPaused;
+    int  pauseStatusCalls;
 } ConsoleRec;
 
 static ConsoleRec g_rec;
@@ -103,11 +107,24 @@ static void recMemReport(bool deep) {
     g_rec.lastMemDeep = deep;
 }
 
+static void recSetPause(int target, bool paused, char *msg, size_t msgLen) {
+    g_rec.pauseCalls++;
+    g_rec.lastPauseTarget = target;
+    g_rec.lastPaused = paused;
+    snprintf(msg, msgLen, "pause %d %d", target, (int)paused);
+}
+
+static void recPauseStatus(char *msg, size_t msgLen) {
+    g_rec.pauseStatusCalls++;
+    snprintf(msg, msgLen, "status");
+}
+
 /* Positional, like the server's own list, so a new entry goes last. */
 static const ServerConsoleOps kRecOps = {
     recSetLock, recInfo, recSaveMap, recSay,
     recLogSay,  recStatus, recKick,  recSetHost,
-    recReloadScenario, recMemReport
+    recReloadScenario, recMemReport,
+    recSetPause, recPauseStatus
 };
 
 /* Fresh recorder; both "did it work" ops answer yes unless a test says
@@ -624,5 +641,64 @@ int run_console_read_timeout_then_eof(void) {
 
     fclose(f);
 #endif
+    return 0;
+}
+
+/* pausebots / resumebots / pausegame / resumegame each reach setPause with
+ * the right target (0 = bots, 1 = game) and on/off; pausestatus and its
+ * other name botstatus reach pauseStatus. Case does not matter, and a NULL
+ * op is not called. */
+int run_console_pause_commands(void) {
+    static const struct {
+        const char *line;
+        int         target;
+        bool        paused;
+    } kCases[] = {
+        { "pausebots\n",  0, true  },
+        { "resumebots\n", 0, false },
+        { "pausegame\n",  1, true  },
+        { "resumegame\n", 1, false },
+        { "PauseGame\n",  1, true  },
+        { "ResumeBots",   0, false },
+    };
+    for (size_t i = 0; i < sizeof(kCases) / sizeof(kCases[0]); i++) {
+        recReset();
+        runLine(kCases[i].line);
+        UT_ASSERT_MSG(g_rec.pauseCalls == 1 &&
+                      g_rec.lastPauseTarget == kCases[i].target &&
+                      g_rec.lastPaused == kCases[i].paused,
+                      "'%s' gave calls=%d target=%d paused=%d",
+                      kCases[i].line, g_rec.pauseCalls,
+                      g_rec.lastPauseTarget, (int)g_rec.lastPaused);
+        UT_ASSERT_MSG(g_rec.statusCalls == 0 && g_rec.pauseStatusCalls == 0,
+                      "'%s' must not run a status command", kCases[i].line);
+    }
+
+    recReset();
+    runLine("pausestatus\n");
+    UT_ASSERT_MSG(g_rec.pauseStatusCalls == 1 && g_rec.pauseCalls == 0,
+                  "pausestatus should print the pause status (calls=%d)",
+                  g_rec.pauseStatusCalls);
+    recReset();
+    runLine("BotStatus\n");
+    UT_ASSERT_MSG(g_rec.pauseStatusCalls == 1 && g_rec.statusCalls == 0,
+                  "botstatus should print the pause status, not the player "
+                  "list (calls=%d status=%d)",
+                  g_rec.pauseStatusCalls, g_rec.statusCalls);
+
+    {
+        ServerConsoleOps noPause = kRecOps;
+        char keyBuff[SERVER_CONSOLE_LINE] = "pausebots\n";
+        char saveBuff[SERVER_CONSOLE_LINE] = "pausebots\n";
+        recReset();
+        noPause.setPause = NULL;
+        noPause.pauseStatus = NULL;
+        serverConsoleDispatch(&noPause, keyBuff, saveBuff);
+        snprintf(keyBuff, sizeof(keyBuff), "pausestatus\n");
+        snprintf(saveBuff, sizeof(saveBuff), "pausestatus\n");
+        serverConsoleDispatch(&noPause, keyBuff, saveBuff);
+        UT_ASSERT_MSG(g_rec.pauseCalls == 0 && g_rec.pauseStatusCalls == 0,
+                      "NULL pause ops must not be called");
+    }
     return 0;
 }

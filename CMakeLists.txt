@@ -5086,6 +5086,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     # with recording callbacks instead of a live server (server_console.c
     # itself comes in with server_static).
     tests/unit/test_server_console.c
+    tests/unit/test_sim_pause.c
     # The T1 memory accessors on server_sim.h that the client's System Info
     # panel reads: the process figures, each bot's Lua heap and the world
     # list counts of a hosted sim.
@@ -7237,6 +7238,20 @@ set(_unit_test_names
     pascal_string_roundtrip
     console_lock_unlock
     console_mem_report
+    console_pause_commands
+    sim_pause_idle_zero
+    sim_pause_idle_seconds
+    sim_pause_idle_never
+    sim_pause_manual_not_resumed_by_join
+    sim_pause_idle_game_mode
+    sim_pause_command
+    sim_pause_notice
+    sim_pause_bots_no_budget_kill
+    sim_pause_game_state_frozen
+    sim_pause_recording_round_trip
+    sim_pause_determinism
+    client_pause_notice_age
+    loopback_game_pause_prediction
     memreport_flags
     memreport_process_na
     memreport_deep_walk_cap

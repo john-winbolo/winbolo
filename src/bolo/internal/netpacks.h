@@ -990,6 +990,21 @@ static inline ServerVoiceMode infoPacketReadVoiceMode(BYTE flags) {
                                               is dropped, and the client
                                               asks again. */
 
+#define PACKET_PAUSE_SET               232  /* client -> server
+                                              { target 1, paused 1 }
+                                              host / admin only: the manual
+                                              pause of the bots (target 0)
+                                              or of the whole game (target
+                                              1). The answer is the pause
+                                              notice (EVENT_SERVER_MSG ids
+                                              SERVER_MSG_PAUSE_STATE_*). A
+                                              server older than this cannot
+                                              decode it, so its command
+                                              sequence does not go on and it
+                                              drops every later command from
+                                              that client. A client sends it
+                                              only on the host's own order. */
+
 #define PACKET_LOBBY_BOT_POOL_REQ      231  /* client -> server
                                               { } (header only)
                                               the server's bot-name

@@ -308,6 +308,11 @@ bool clientFrontAnyPause(void) {
   return false;
 }
 
+bool clientFrontPauseIsOn(ClientFrontPause which) {
+  if (which < 0 || which >= CLIENT_FRONT_PAUSE_COUNT) return false;
+  return s_pauseOn[which];
+}
+
 /* Recompute the hosted-server pause gate.  The server tick only freezes for
    a solo session: a listen-server host must keep serving remote players, so
    multiplayer never pauses the server even when the host backgrounds the app
