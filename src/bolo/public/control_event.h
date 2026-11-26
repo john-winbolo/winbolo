@@ -688,10 +688,16 @@ typedef struct LobbyScriptEntry {
 #define CTRL_SIM_RULES_EXT2_U8_FIELDS(F) F(building_life)
 #define CTRL_SIM_RULES_BUILDING_LIFE_CLASSIC 4
 /* The third list, after building_life on the wire. Its classic value is
- * zero again: lgm_blast_shape is classic at LGM_BLAST_SHAPE_HALF_SQUARE (0).
- * A bot's brain reads it from the client's table, so it models the builder
- * blast the game it is in plays with. */
+ * not zero: lgm_blast_shape is classic at LGM_BLAST_SHAPE_MAC_AREA (2), the
+ * circle of 144. A bot's brain reads it from the client's table, so it
+ * models the builder blast the game it is in plays with. Zero is a value
+ * this row allows (the old WinBolo circle of 128), so unlike building_life
+ * a zero here is sent: only CTRL_SIM_RULES_LGM_BLAST_SHAPE_CLASSIC is left
+ * off the wire, and a body that stops short of the byte reads as it. An
+ * event built by hand must set the field; serverSimFillSimRulesEvent copies
+ * it from the table. */
 #define CTRL_SIM_RULES_EXT3_U8_FIELDS(F) F(lgm_blast_shape)
+#define CTRL_SIM_RULES_LGM_BLAST_SHAPE_CLASSIC 2
 
 /* Every carried rule, whatever its width, for the callers that do not care
  * how wide one goes — the check for whether a changed rule is one this

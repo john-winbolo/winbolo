@@ -1084,6 +1084,37 @@ static void lv_ruleChangesClear(void) {
   g_lv->ruleChangesTruncated = FALSE;
 }
 
+/* The value of a rule the recording never set. A recording holds only the
+ * rules a script set or changed, so a rule it does not hold played the
+ * classic value of the build that wrote it. lgm_blast_shape is the one rule
+ * whose classic value changed: releases before 2.2.2 played 0 (the circle of
+ * 128) and later ones 2 (the circle of 144), so for a recording loaded from a
+ * file or from memory it comes from the version in the header
+ * (simRulesLgmBlastShapeForVersion). A version of 0.0.0 says nothing.
+ *
+ * A live feed (lv_screenLoadFromStream, source LV_LOG_SOURCE_NONE) takes
+ * this build's classic value, not a value from a version. The feed does not
+ * get the server's version: the join accept carries none, and the version in
+ * the feed's header is this build's own (lv_screenLoadFromStream). The join
+ * check makes the server's version equal to this build's, but a build from
+ * main and a released build can both say 2.2.1, so the version cannot tell
+ * the shape. In the usual case the server runs the same code as the
+ * spectator, so this build's classic value is the shape it plays. With no
+ * recording open the answer is this build's classic value too. The game
+ * info panel's "Classic" column reads it. */
+double lv_screenRuleUnsetValue(int index) {
+  if (index == SIM_RULE_lgm_blast_shape && g_lv != NULL &&
+      g_lv->logLoaded == TRUE &&
+      lv_blocksGetSource(NULL, NULL, NULL) != LV_LOG_SOURCE_NONE &&
+      (g_lv->versionMajor != 0 || g_lv->versionMinor != 0 ||
+       g_lv->versionRevision != 0)) {
+    return (double) simRulesLgmBlastShapeForVersion(g_lv->versionMajor,
+                                                    g_lv->versionMinor,
+                                                    g_lv->versionRevision);
+  }
+  return simRulesClassicValue(index);
+}
+
 double lv_screenRuleValueAt(int index, uint32_t ms) {
   const LvRuleChange *c;
   bool                found  = FALSE;
@@ -1113,7 +1144,7 @@ double lv_screenRuleValueAt(int index, uint32_t ms) {
       return g_lv->scripts.rules[i].value;
     }
   }
-  return simRulesClassicValue(index);
+  return lv_screenRuleUnsetValue(index);
 }
 
 /* The table of the times each builder was away, further down. */
@@ -1177,14 +1208,14 @@ static void lv_rulesRefresh(void) {
       lv_screenRuleValueAt(SIM_RULE_tank_hit_radius, t), 1, 255);
   g_lv->rules.pillRange      = lv_rulesClampInt(
       lv_screenRuleValueAt(SIM_RULE_pill_range, t), 0, 65535);
-  /* The engine plays a value outside the three shapes as the half-square
-     circle (lgmBlastOpenGroundCatches), so the viewer does too. A NaN is
-     outside them. */
+  /* The engine plays a value outside the three shapes as shape 0, the
+     half-square circle of 128 (lgmBlastOpenGroundCatches), and not as the
+     classic shape, so the viewer does too. A NaN is outside them. */
   {
     double shape = lv_screenRuleValueAt(SIM_RULE_lgm_blast_shape, t);
     g_lv->rules.lgmBlastShape =
         (shape >= LGM_BLAST_SHAPE_HALF_SQUARE && shape <= LGM_BLAST_SHAPE_MAC_AREA)
-            ? (int)shape : LGM_BLAST_SHAPE_CLASSIC;
+            ? (int)shape : LGM_BLAST_SHAPE_HALF_SQUARE;
   }
   g_lv->rules.baseStatusRange = lv_rulesClampInt(
       lv_screenRuleValueAt(SIM_RULE_base_status_range, t), 0, 65535);
@@ -6465,7 +6496,9 @@ bool lv_screenLoadFromStream(const uint8_t *bytes, size_t len) {
     /* The spectator seed's synthesized header carries no real version, so
      * lv_logLoadCommon parsed zeros into g_lv->version*. The spectator runs a
      * protocol compatible with the server, so the client's own build version is
-     * the right thing to show — overwrite with it before publishing. */
+     * the right thing to show — overwrite with it before publishing. The
+     * rules do not read this version: a feed takes this build's classic
+     * lgm_blast_shape (lv_screenRuleUnsetValue). */
     g_lv->versionMajor    = BOLO_VERSION_MAJOR;
     g_lv->versionMinor    = BOLO_VERSION_MINOR;
     g_lv->versionRevision = BOLO_VERSION_REVISION;

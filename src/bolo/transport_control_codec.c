@@ -1735,7 +1735,8 @@ static bool decodeEntitySyncBody(const uint8_t *buf, size_t len,
  *    significant byte first]
  *   [the optional tail, one byte per rule: the CTRL_SIM_RULES_EXT_U8_FIELDS
  *    entries, then the CTRL_SIM_RULES_EXT2_U8_FIELDS entries, then the
- *    CTRL_SIM_RULES_EXT3_U8_FIELDS entries (classic at zero), up to the
+ *    CTRL_SIM_RULES_EXT3_U8_FIELDS entries (classic at
+ *    CTRL_SIM_RULES_LGM_BLAST_SHAPE_CLASSIC), up to the
  *    last one that is not at its classic value; none at all when every
  *    one is classic]
  *
@@ -1749,15 +1750,18 @@ static bool decodeEntitySyncBody(const uint8_t *buf, size_t len,
  * The tail is one ordered list (control_event.h). A first-list rule is
  * classic at zero; building_life is classic at
  * CTRL_SIM_RULES_BUILDING_LIFE_CLASSIC, and an unfilled zero counts as
- * classic too. So a classic game sends exactly the base body, and a game
- * that changes only building_life sends the whole tail with the first-list
+ * classic too; lgm_blast_shape is classic at
+ * CTRL_SIM_RULES_LGM_BLAST_SHAPE_CLASSIC, and its zero is a real value that
+ * is sent. So a classic game sends exactly the base body, and a game that
+ * changes only building_life sends the first two lists with the first-list
  * rules at zero.
  *
  * The base is fixed length, so the decoder rejects a body shorter than it,
  * or longer than the base and the whole tail, rather than reading a
  * truncated table. A tail rule the body stops short of reads its classic
  * value: zero for a first-list rule, CTRL_SIM_RULES_BUILDING_LIFE_CLASSIC
- * for building_life. Delivered body-only on CHANNEL_CONTROL, as
+ * for building_life and CTRL_SIM_RULES_LGM_BLAST_SHAPE_CLASSIC for
+ * lgm_blast_shape. Delivered body-only on CHANNEL_CONTROL, as
  * CTRL_ENTITY_SYNC is: there is no full-packet wrapper or PACKET_* type. */
 
 /* The float rules ride as their bit pattern, so the four bytes are exact
@@ -1790,7 +1794,10 @@ static EncodeResult encodeSimRulesBody(const ControlEvent *evt,
        not at its classic value, so a classic tail is not sent at all. A
        first-list rule is classic at zero. The second list holds only
        building_life, classic at CTRL_SIM_RULES_BUILDING_LIFE_CLASSIC, and
-       the zero of an event nobody filled counts as classic too. */
+       the zero of an event nobody filled counts as classic too. The third
+       holds only lgm_blast_shape, classic at
+       CTRL_SIM_RULES_LGM_BLAST_SHAPE_CLASSIC; its zero is the old WinBolo
+       circle, a real value, so it is sent. */
     size_t extCount = 0;
     size_t extIdx = 0;
     size_t bodyLen;
@@ -1802,11 +1809,16 @@ static EncodeResult encodeSimRulesBody(const ControlEvent *evt,
     if (evt->u.simRules.name != 0 &&                                         \
         evt->u.simRules.name != CTRL_SIM_RULES_BUILDING_LIFE_CLASSIC)        \
         extCount = extIdx;
+#define SIM_RULES_EXT3_LAST(name)                                            \
+    extIdx++;                                                                \
+    if (evt->u.simRules.name != CTRL_SIM_RULES_LGM_BLAST_SHAPE_CLASSIC)      \
+        extCount = extIdx;
     CTRL_SIM_RULES_EXT_U8_FIELDS(SIM_RULES_EXT_LAST)
     CTRL_SIM_RULES_EXT2_U8_FIELDS(SIM_RULES_EXT2_LAST)
-    CTRL_SIM_RULES_EXT3_U8_FIELDS(SIM_RULES_EXT_LAST)
+    CTRL_SIM_RULES_EXT3_U8_FIELDS(SIM_RULES_EXT3_LAST)
 #undef SIM_RULES_EXT_LAST
 #undef SIM_RULES_EXT2_LAST
+#undef SIM_RULES_EXT3_LAST
     bodyLen = CTRL_SIM_RULES_BASE_BODY_LEN + extCount;
     if (bufCap < bodyLen) return ENCODE_OVERFLOW;
 
@@ -1854,6 +1866,7 @@ static bool decodeSimRulesBody(const uint8_t *buf, size_t len,
     memset(outEvt, 0, sizeof(*outEvt));
     outEvt->type = CTRL_SIM_RULES;
     outEvt->u.simRules.building_life = CTRL_SIM_RULES_BUILDING_LIFE_CLASSIC;
+    outEvt->u.simRules.lgm_blast_shape = CTRL_SIM_RULES_LGM_BLAST_SHAPE_CLASSIC;
 
 #define SIM_RULES_UNPACK_U8(name)                                            \
     outEvt->u.simRules.name = (int32_t)buf[pos++];

@@ -360,7 +360,10 @@ Written by the scenario funnel's set-rule arm
 (`src/server/sim/server_sim_scenario.c`). The viewer collects every change
 when it loads the recording, with the time playback reaches it, and shows each
 rule's value at the playhead: the last change at or before it, else the value
-`scripts.json` says the round opened on, else the classic value. A record
+`scripts.json` says the round opened on, else the classic value. A recording
+with no `lgm_blast_shape` reads the classic value of the version in its
+header: 0 before 2.2.2, else 2. A live spectator feed gets no server version,
+so it reads this build's classic value, 2. A record
 whose length is not 8, whose rule index names no rule or whose value is not
 finite is consumed and ignored. A live feed has no file to walk, so there the
 changes are collected as playback reaches them.
