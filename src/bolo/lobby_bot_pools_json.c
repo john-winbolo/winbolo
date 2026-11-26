@@ -206,20 +206,12 @@ static void joinActiveLabels(char *buf, size_t cap) {
     }
 }
 
+/* Whether path names a regular file. A directory with the name of a
+ * label (fopen opens one on Linux) is not a pool file. */
 static bool fileExists(const char *path) {
-    FILE *f = fopen(path, "rb");
-    if (!f) return false;
-    fclose(f);
-    return true;
-}
-
-static bool asciiEqualsNoCase(const char *a, const char *b) {
-    for (; *a && *b; a++, b++) {
-        int ca = (*a >= 'A' && *a <= 'Z') ? *a + 32 : *a;
-        int cb = (*b >= 'A' && *b <= 'Z') ? *b + 32 : *b;
-        if (ca != cb) return false;
-    }
-    return *a == *b;
+    SDL_PathInfo info;
+    if (!SDL_GetPathInfo(path, &info)) return false;
+    return info.type == SDL_PATHTYPE_FILE;
 }
 
 bool lobbyBotPoolsLoadFromArg(const char *arg, const char *defaultPath,
@@ -261,7 +253,8 @@ bool lobbyBotPoolsLoadFromArg(const char *arg, const char *defaultPath,
     }
 
     joinActiveLabels(labels, sizeof(labels));
-    if (asciiEqualsNoCase(arg, "?") || asciiEqualsNoCase(arg, "list")) {
+    if (lobbyBotPoolLabelEqualsNoCase("?", arg, strlen(arg)) ||
+        lobbyBotPoolLabelEqualsNoCase("list", arg, strlen(arg))) {
         if (warn) fprintf(warn, "Bot name pools: %s\n", labels);
         if (stats) *stats = st;
         return loaded;

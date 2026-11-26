@@ -137,7 +137,8 @@ static DynPool *s_dyn = NULL;
 static int      s_dynCount = 0;
 static int      s_useDyn = 0;
 /* Set by lobbyBotPoolsFilterByLabels: random draws skip the generated
- * "Numbered Bots" pool. Cleared by every reset and install. */
+ * "Numbered Bots" pool. Cleared by every reset and install; a client sets
+ * it again when the server's catalogue carries the flag. */
 static int      s_drawThemedOnly = 0;
 
 static int themedCount(void) {
@@ -405,8 +406,9 @@ static int asciiLower(int c) {
 }
 
 /* Whether label (NUL-terminated) equals the len bytes at s, ignoring
- * ASCII case. */
-static int labelEqualsNoCase(const char *label, const char *s, size_t len) {
+ * ASCII case. Also used by lobby_bot_pools_json.c. */
+int lobbyBotPoolLabelEqualsNoCase(const char *label, const char *s,
+                                  size_t len) {
     size_t i;
     if (strlen(label) != len) return 0;
     for (i = 0; i < len; i++) {
@@ -452,7 +454,7 @@ int lobbyBotPoolsFilterByLabels(const char *labelList,
 
         r.labelsGiven++;
         for (i = 0; i < themed; i++) {
-            if (labelEqualsNoCase(lobbyBotPoolLabel(i), start, len)) {
+            if (lobbyBotPoolLabelEqualsNoCase(lobbyBotPoolLabel(i), start, len)) {
                 keep[i] = 1;
                 found = 1;
             }
@@ -464,6 +466,12 @@ int lobbyBotPoolsFilterByLabels(const char *labelList,
                 size_t n = len;
                 if (n > LOBBY_BOT_POOL_MAX_LABEL_BYTES) {
                     n = LOBBY_BOT_POOL_MAX_LABEL_BYTES;
+                    /* Do not cut a UTF-8 character: step back over
+                     * continuation bytes (10xxxxxx) to a lead byte. */
+                    while (n > 0 &&
+                           ((unsigned char)start[n] & 0xC0) == 0x80) {
+                        n--;
+                    }
                 }
                 memcpy(r.unknown[r.unknownCount], start, n);
                 r.unknown[r.unknownCount][n] = '\0';
@@ -525,7 +533,7 @@ bool lobbyBotNamesArgLooksLikePath(const char *arg) {
     if (arg == NULL) return false;
     if (strchr(arg, '/') != NULL || strchr(arg, '\\') != NULL) return true;
     n = strlen(arg);
-    return n >= 5 && labelEqualsNoCase(".json", arg + n - 5, 5);
+    return n >= 5 && lobbyBotPoolLabelEqualsNoCase(".json", arg + n - 5, 5);
 }
 
 /* ── Wire catalog (serialize / compress / install) ──────────────── */
@@ -556,6 +564,8 @@ static int serializeRaw(unsigned char *raw) {
     int pos = 1;          /* reserve byte 0 for the final pool count */
     int written = 0;
     int i, j;
+    /* Room kept at the end for the flags byte (see the header). */
+    int cap = (int)LOBBY_BOT_CATALOG_MAX_BYTES - (s_drawThemedOnly ? 1 : 0);
 
     if (themed > LOBBY_BOT_POOL_MAX_POOLS) themed = LOBBY_BOT_POOL_MAX_POOLS;
 
@@ -569,7 +579,7 @@ static int serializeRaw(unsigned char *raw) {
             labelLen = LOBBY_BOT_POOL_MAX_LABEL_BYTES;
 
         /* label */
-        if (pos + 1 + labelLen + 2 > (int)LOBBY_BOT_CATALOG_MAX_BYTES) break;
+        if (pos + 1 + labelLen + 2 > cap) break;
         raw[pos++] = (unsigned char)labelLen;
         memcpy(raw + pos, label, (size_t)labelLen);
         pos += labelLen;
@@ -585,7 +595,7 @@ static int serializeRaw(unsigned char *raw) {
                 if (!nm) continue;
                 nl = (int)strlen(nm);
                 if (nl > LOBBY_BOT_POOL_MAX_NAME_BYTES) continue;
-                if (pos + 1 + nl > (int)LOBBY_BOT_CATALOG_MAX_BYTES) break;
+                if (pos + 1 + nl > cap) break;
                 raw[pos++] = (unsigned char)nl;
                 memcpy(raw + pos, nm, (size_t)nl);
                 pos += nl;
@@ -602,6 +612,12 @@ static int serializeRaw(unsigned char *raw) {
     }
 
     raw[0] = (unsigned char)written;
+    /* The flags byte is written only when a flag is set, so a catalogue
+     * with no flag is byte for byte (and id for id) the one from before
+     * flags. Clients older than the flags byte ignore it. */
+    if (s_drawThemedOnly && written > 0) {
+        raw[pos++] = LOBBY_BOT_CATALOG_FLAG_THEMED_ONLY;
+    }
     return pos;
 }
 
@@ -729,6 +745,13 @@ static int parseInstallRaw(const unsigned char *raw, int len,
     }
 
     installed = lobbyBotPoolsInstall(defs, builtPools, stats);
+    /* The optional flags byte after the pools (see the header). The
+     * install above cleared the flag; set it again if the server says
+     * its draws skip "Numbered Bots". */
+    if (installed > 0 && pos < len &&
+        (raw[pos] & LOBBY_BOT_CATALOG_FLAG_THEMED_ONLY) != 0) {
+        s_drawThemedOnly = 1;
+    }
 
 cleanup:
     for (p = 0; p < builtPools; p++) {
