@@ -1450,9 +1450,10 @@ bool serverSimCheckGameWin(ServerSim *sim, bool printWinners);
  *PURPOSE:
  *  Returns TRUE if at least one human player has connected
  *  and then all human players have disconnected. Bots
- *  (server bots and Bot Host seats) and spectators do not
- *  count, the same rule as serverSimCheckEmptyReset. A
- *  server that only ever had bots never returns TRUE.
+ *  (server bots, and Bot Host seats once the server has
+ *  Bot Host connections) and spectators do not count, the
+ *  same rule as serverSimCheckEmptyReset. A server that
+ *  only ever had bots never returns TRUE.
  *********************************************************/
 bool serverSimCheckAutoClose(ServerSim *sim);
 
@@ -1824,8 +1825,9 @@ void serverSimResolveGameOver(ServerSim *sim);
  *NAME:          serverSimCheckEmptyReset
  *PURPOSE:
  *  Checks if the server has had no human player long
- *  enough to trigger an empty reset. Bots (server bots and
- *  Bot Host seats) and spectators do not count. Returns
+ *  enough to trigger an empty reset. Bots (server bots, and
+ *  Bot Host seats once the server has Bot Host
+ *  connections) and spectators do not count. Returns
  *  TRUE if the reset should happen: the host resets to the
  *  lobby, or with no lobby starts the next round.
  *********************************************************/

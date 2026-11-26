@@ -13,7 +13,8 @@
  * when its timer runs out.
  *
  *   empty_reset_bots_only_fires — a running round with a server bot and a
- *       held bot seat (what a Bot Host seat is in the sim) and no person.
+ *       held bot seat (what a Bot Host seat will be in the sim, once the
+ *       server has Bot Host connections) and no person.
  *       The timer starts on the first check and fires after exactly
  *       emptyResetMinutes of frames.
  *   empty_reset_human_holds_timer — the same round with a person in it.
@@ -29,6 +30,14 @@
  *       and a changed tile back as the map has it), the bot on the field
  *       with a tank, the spectator still connected, and the timer counting
  *       again from the full length.
+ *   empty_reset_lobby_bot_keeps_seat — a lobby server, a round that only a
+ *       bot plays (started as the start_game command starts it), watched by
+ *       a spectator. When the timer runs out the server goes back to the
+ *       lobby and the bot keeps its seat: the slot still reads connected and
+ *       as a bot, the bot manager entry is still on, and the lobby row is a
+ *       ready bot. The world reset marks every slot free, so without the
+ *       save and restore the bot's slot would read free while the bot stays
+ *       on, and the next joiner could be given it.
  *
  * Reads the ServerSim struct directly; the unittests profile permits it.
  */
@@ -68,7 +77,8 @@
 
 /* A running lobby round with two bot seats and no person: a server bot (an
    active bot manager entry) and a held seat, which is what the sim holds
-   for a bot that is not on the field yet and what a Bot Host binds to. */
+   for a bot that is not on the field yet, and what a Bot Host will bind to
+   once the server has Bot Host connections. */
 static ServerSim *erMakeBotRound(void) {
     BYTE       emap[6000] = E_MAP;
     ServerSim *sim = serverSimCreateCompressed(emap, E_MAP_LEN,
@@ -250,9 +260,9 @@ static bool erFindTile(ServerSim *sim, BYTE *outX, BYTE *outY, BYTE *outT) {
 int run_empty_reset_nolobby_starts_new_round(void) {
     LoopbackHarness h;
     BYTE            tx = 0, ty = 0, tOrig = 0, tNow;
-    uint32_t        tickBefore;
+    uint32_t        tickBefore, tickLast = 0;
     int             i, fireAt = -1;
-    bool            ok;
+    bool            ok, hasLobby;
 
     if (!erStartWatched(&h, 22u)) {
         loopbackHarnessStop(&h);
@@ -264,7 +274,14 @@ int run_empty_reset_nolobby_starts_new_round(void) {
     ut_brain_stub_arm(true);
     ut_brain_stub_tick_ok(true);
     threadsWaitForMutex();
-    UT_ASSERT_MSG(!h.sim->lobbyEnabled, "setup: the harness server has a lobby");
+    hasLobby = h.sim->lobbyEnabled;
+    threadsReleaseMutex();
+    if (hasLobby) {
+        loopbackHarnessStop(&h);
+        ut_brain_stub_arm(false);
+        UT_FAIL("setup: the harness server must have no lobby, but it has one");
+    }
+    threadsWaitForMutex();
     serverSimSetBotAiType(h.sim, aiFull);
     ok = serverSimAddBot(h.sim, ER_BOT_SLOT, &(ServerSimBotConfig){
                              .brainPath   = "brains/GoalHunter/init.lua",
@@ -321,6 +338,7 @@ int run_empty_reset_nolobby_starts_new_round(void) {
         threadsWaitForMutex();
         t = h.sim->tick;
         threadsReleaseMutex();
+        tickLast = t;
         if (t < tickBefore) {
             fireAt = i;
             break;
@@ -330,7 +348,7 @@ int run_empty_reset_nolobby_starts_new_round(void) {
         loopbackHarnessStop(&h);
         ut_brain_stub_arm(false);
         UT_FAIL("the timer ran out and no new round started (tick %u, "
-                "was %u)", (unsigned)h.sim->tick, (unsigned)tickBefore);
+                "was %u)", (unsigned)tickLast, (unsigned)tickBefore);
     }
 
     /* One more frame: the new round's own timer has started again. */
@@ -362,6 +380,126 @@ int run_empty_reset_nolobby_starts_new_round(void) {
                     "timer restarted), spectators=%d", (int)st, (int)botOn,
                     (int)tank, (unsigned)tAfter, (unsigned)tOrig, (int)ticks,
                     transportUdpServerGetSpectatorCount());
+        }
+    }
+
+    loopbackHarnessStop(&h);
+    ut_brain_stub_arm(false);
+    return 0;
+}
+
+static bool erPredLobby(LoopbackHarness *h, void *u) {
+    (void)u;
+    return serverSimGetState(h->sim) == serverStateLobby;
+}
+
+int run_empty_reset_lobby_bot_keeps_seat(void) {
+    LoopbackHarness h;
+    bool            ok, hasLobby;
+    int             i, at;
+
+    if (!loopbackHarnessStartSpectatorLobby(&h, "Watcher", 23u)) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("the spectator lobby harness did not start");
+    }
+    if (loopbackHarnessPumpUntil(&h, ER_SPEC_CONNECT_MAX, erPredSpectating,
+                                 NULL) < 0) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("the spectator never reached SPECTATING");
+    }
+
+    /* A server bot, as in the no-lobby case: the fixture brain stub, armed to
+       load and to tick without failing. */
+    ut_brain_stub_arm(true);
+    ut_brain_stub_tick_ok(true);
+    threadsWaitForMutex();
+    hasLobby = h.sim->lobbyEnabled;
+    threadsReleaseMutex();
+    if (!hasLobby) {
+        loopbackHarnessStop(&h);
+        ut_brain_stub_arm(false);
+        UT_FAIL("setup: the harness server must have a lobby, but it has none");
+    }
+    threadsWaitForMutex();
+    serverSimSetBotAiType(h.sim, aiFull);
+    /* A bot with its runner built (an active bot manager entry), as the
+       lobby's Add Bot makes one. A roster seat alone has no entry, and the
+       case here is the entry staying on while its slot reads free. */
+    ok = serverSimCreateBot(h.sim, ER_BOT_SLOT, "brains/GoalHunter/init.lua",
+                            "Botty", aiFull, gameOpen, false, 1, NULL) &&
+         h.sim->botMgr.bots[ER_BOT_SLOT].active;
+    if (ok) {
+        /* No person is in the lobby, so the all-ready check would not start
+           this round; the start_game command starts it this way. */
+        serverSimStartGame(h.sim);
+        serverSimSetEmptyResetMinutes(h.sim, 1);
+        serverSimSetEmptyResetEnabled(h.sim, true);
+    }
+    threadsReleaseMutex();
+    if (!ok) {
+        loopbackHarnessStop(&h);
+        ut_brain_stub_arm(false);
+        UT_FAIL("the bot could not be added");
+    }
+
+    /* One frame starts the timer, though the bot is on the field. */
+    loopbackHarnessPump(&h);
+    threadsWaitForMutex();
+    ok = (serverSimGetState(h.sim) == serverStateRunning &&
+          h.sim->emptyResetTicks == ER_FRAMES_PER_MIN - 1);
+    i  = (int)h.sim->emptyResetTicks;
+    /* Run the rest of the minute down to its last few frames. */
+    h.sim->emptyResetTicks = 3;
+    threadsReleaseMutex();
+    if (!ok) {
+        loopbackHarnessStop(&h);
+        ut_brain_stub_arm(false);
+        UT_FAIL("a bot-only lobby round did not start the timer: "
+                "emptyResetTicks=%d", i);
+    }
+
+    at = loopbackHarnessPumpUntil(&h, 10, erPredLobby, NULL);
+    if (at < 0) {
+        loopbackHarnessStop(&h);
+        ut_brain_stub_arm(false);
+        UT_FAIL("the timer ran out and the server did not go back to the "
+                "lobby");
+    }
+    /* A few lobby frames, so a slot the reset left wrong has time to show. */
+    loopbackHarnessPumpUntil(&h, 5, NULL, NULL);
+
+    threadsWaitForMutex();
+    {
+        bool     connected = h.sim->playerConnected[ER_BOT_SLOT];
+        bool     isBot     = serverSimIsBot(h.sim, ER_BOT_SLOT);
+        bool     active    = h.sim->botMgr.bots[ER_BOT_SLOT].active;
+        bool     rowBot    = h.sim->lobbyPlayers[ER_BOT_SLOT].isBot;
+        bool     rowReady  = h.sim->lobbyPlayers[ER_BOT_SLOT].ready;
+        unsigned players   = serverSimGetNumPlayers(h.sim);
+        int      orphan    = -1;
+        BYTE     s;
+        for (s = 0; s < MAX_TANKS; s++) {
+            if (h.sim->botMgr.bots[s].active && !h.sim->playerConnected[s]) {
+                orphan = (int)s;
+                break;
+            }
+        }
+        threadsReleaseMutex();
+
+        fprintf(stderr, "  lobby on pump %d; connected=%d bot=%d active=%d "
+                "row bot=%d ready=%d players=%u orphan=%d\n", at,
+                (int)connected, (int)isBot, (int)active, (int)rowBot,
+                (int)rowReady, players, orphan);
+
+        if (!connected || !isBot || !active || !rowBot || !rowReady ||
+            players != 1 || orphan >= 0) {
+            loopbackHarnessStop(&h);
+            ut_brain_stub_arm(false);
+            UT_FAIL("after the lobby empty reset with a bot: connected=%d "
+                    "bot=%d active=%d row bot=%d ready=%d players=%u (want "
+                    "1), active bot on a free slot=%d (want -1)",
+                    (int)connected, (int)isBot, (int)active, (int)rowBot,
+                    (int)rowReady, players, orphan);
         }
     }
 

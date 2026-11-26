@@ -27,11 +27,19 @@
  * flag's whole job and the re-arms must not cost it.
  *
  * Only people count, by the empty reset's rule (serverSimGetNumHumans): a
- * server bot or a Bot Host seat is not someone playing. The check used to
+ * server bot (or a Bot Host seat, once the server has Bot Host connections)
+ * is not someone playing. The check used to
  * count every connected seat, so with bots on the server -autoclose never
  * quit after the last person left, and -maprotate never rotated. The last
  * three cases pin that: the last person leaving closes the server with the
  * bots still on it, and a server that only ever had bots never closes.
+ *
+ * The last two cases run real server ticks on a lobby server, as WinBoloDS
+ * runs them: the last person leaving a round, or every person quitting in
+ * the game-over hold, ends the round, the hold runs out, the server goes
+ * back to the lobby, and there -autoclose must quit it. The world reset on
+ * the way back clears the empty-server latch, so the return to the lobby
+ * has to set it again for a round that had a person in it.
  */
 
 #include <stdint.h>
@@ -47,7 +55,11 @@
 #include "bot_manager.h"           /* botManagerAddBot */
 #include "server_sim_scenario.h"   /* serverSimAddUnfieldedSeat */
 #include "everard_map.h"           /* E_MAP */
+#include "client_net.h"            /* clientSimGetConnectState */
+#include "client_connect_state.h"  /* CLIENT_CONNECT_SPECTATING */
+#include "threads.h"
 #include "test_harness.h"
+#include "loopback_harness.h"
 
 /* A -autoclose ServerSim from the embedded Everard map, before any boot. */
 static ServerSim *make_autoclose_sim(void) {
@@ -189,8 +201,9 @@ int run_autoclose_failed_bot_add_leaves_check_armed(void) {
 
 /* Two bot seats, as test_empty_reset.c makes them: a server bot (a seat with
  * an active bot manager entry, no brain needed for the count) and a held
- * seat, which is what the sim holds for a bot not on the field yet and what
- * a Bot Host binds to. Both answer serverSimIsBot. */
+ * seat, which is what the sim holds for a bot not on the field yet, and what
+ * a Bot Host will bind to once the server has Bot Host connections. Both
+ * answer serverSimIsBot. */
 static bool add_bot_seats(ServerSim *sim) {
     serverSimAddPlayer(sim, AC_BOT_SLOT, "Botty", false);
     sim->botMgr.bots[AC_BOT_SLOT].active = true;
@@ -296,5 +309,160 @@ int run_autoclose_lobby_round_human_leaves_closes(void) {
                   "left the round");
 
     serverSimDestroy(sim);
+    return 0;
+}
+
+/* -- Real ticks on a lobby server ------------------------------------- */
+
+#define AC_SPEC_MAX  800   /* spectator join handshake */
+#define AC_RUN_MAX   1000  /* lobby readied -> countdown -> running */
+#define AC_CLOSE_MAX 800   /* round end -> game-over hold -> lobby -> close */
+
+static bool ac_pred_spectating(LoopbackHarness *h, void *u) {
+    (void)u;
+    return clientSimGetConnectState(h->cs) == CLIENT_CONNECT_SPECTATING;
+}
+
+static bool ac_pred_running(LoopbackHarness *h, void *u) {
+    (void)u;
+    return serverSimGetState(h->sim) == serverStateRunning;
+}
+
+static bool ac_pred_game_over(LoopbackHarness *h, void *u) {
+    (void)u;
+    return serverSimGetState(h->sim) == serverStateGameOver;
+}
+
+/* A -autoclose lobby server watched by one spectator (the harness's wire
+ * client, who holds no player seat), with one person seated in the sim and
+ * the round started from the lobby. Returns NULL with the round running, or
+ * a failure message (the harness is then stopped). */
+static const char *ac_start_lobby_round(LoopbackHarness *h, uint64_t seed) {
+    if (!loopbackHarnessStartSpectatorLobby(h, "Watcher", seed)) {
+        loopbackHarnessStop(h);
+        return "the spectator lobby harness did not start";
+    }
+    if (loopbackHarnessPumpUntil(h, AC_SPEC_MAX, ac_pred_spectating,
+                                 NULL) < 0) {
+        loopbackHarnessStop(h);
+        return "the spectator never reached SPECTATING";
+    }
+    threadsWaitForMutex();
+    serverSimSetAutoCloseOnEmpty(h->sim, true);
+    serverSimAddPlayer(h->sim, AC_HUMAN_SLOT, "Person", false);
+    serverSimSetReady(h->sim, AC_HUMAN_SLOT, true);
+    serverSimLobbyCheckAllReady(h->sim);
+    threadsReleaseMutex();
+    if (loopbackHarnessPumpUntil(h, AC_RUN_MAX, ac_pred_running, NULL) < 0) {
+        loopbackHarnessStop(h);
+        return "the round never started from the lobby";
+    }
+    /* A few frames of play, so the round has seen its person. */
+    loopbackHarnessPumpUntil(h, 10, NULL, NULL);
+    return NULL;
+}
+
+/* Pump until the server is in a game over that shuts it down. Returns the
+ * pump it closed on, or -1. sawLobby says whether a pump ended in the lobby;
+ * it is for the log only, as the return to the lobby and the close that
+ * follows it can fall in the same pump. */
+static int ac_pump_until_closed(LoopbackHarness *h, bool *sawLobby) {
+    int i;
+    *sawLobby = false;
+    for (i = 1; i <= AC_CLOSE_MAX; i++) {
+        bool closed;
+        loopbackHarnessPump(h);
+        threadsWaitForMutex();
+        if (serverSimGetState(h->sim) == serverStateLobby) *sawLobby = true;
+        closed = serverSimIsTerminalGameOver(h->sim);
+        threadsReleaseMutex();
+        if (closed) return i;
+    }
+    return -1;
+}
+
+/* The last person leaves a running lobby round. The round ends at once (the
+ * tick ends a round whose people have all gone), the hold runs out, and the
+ * server goes back to the lobby. There -autoclose must quit it. */
+int run_autoclose_lobby_round_ticks_to_lobby_closes(void) {
+    LoopbackHarness h;
+    const char     *err = ac_start_lobby_round(&h, 31u);
+    bool            sawLobby = false;
+    int             closedAt;
+    ServerState     st;
+
+    if (err != NULL) UT_FAIL("setup: %s", err);
+
+    threadsWaitForMutex();
+    serverSimRemovePlayer(h.sim, AC_HUMAN_SLOT);
+    threadsReleaseMutex();
+
+    closedAt = ac_pump_until_closed(&h, &sawLobby);
+    threadsWaitForMutex();
+    st = serverSimGetState(h.sim);
+    threadsReleaseMutex();
+    fprintf(stderr, "  closed on pump %d, through the lobby=%d, state=%d\n",
+            closedAt, (int)sawLobby, (int)st);
+    if (closedAt < 0) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("the last person left a lobby round: -autoclose must quit "
+                "the server once it is back in the lobby (closed on pump %d, "
+                "through the lobby=%d, state=%d)", closedAt, (int)sawLobby,
+                (int)st);
+    }
+
+    loopbackHarnessStop(&h);
+    return 0;
+}
+
+/* The round ends with the person still in it (here by its time limit, as a
+ * win would), and the person quits during the 3-second game-over hold. The
+ * server goes back to the lobby with nobody in it, and -autoclose must quit
+ * it there. */
+int run_autoclose_lobby_all_quit_in_hold_closes(void) {
+    LoopbackHarness h;
+    const char     *err = ac_start_lobby_round(&h, 32u);
+    bool            sawLobby = false;
+    int             closedAt;
+    ServerState     st;
+
+    if (err != NULL) UT_FAIL("setup: %s", err);
+
+    threadsWaitForMutex();
+    h.sim->gameLength = 2;
+    threadsReleaseMutex();
+    if (loopbackHarnessPumpUntil(&h, 20, ac_pred_game_over, NULL) < 0) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("setup: the round did not end on its time limit");
+    }
+    /* Part of the hold has run; the person quits in it. */
+    loopbackHarnessPumpUntil(&h, 10, NULL, NULL);
+    threadsWaitForMutex();
+    st = serverSimGetState(h.sim);
+    if (st == serverStateGameOver) {
+        serverSimRemovePlayer(h.sim, AC_HUMAN_SLOT);
+    }
+    threadsReleaseMutex();
+    if (st != serverStateGameOver) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("setup: the game-over hold ended too soon (state=%d)",
+                (int)st);
+    }
+
+    closedAt = ac_pump_until_closed(&h, &sawLobby);
+    threadsWaitForMutex();
+    st = serverSimGetState(h.sim);
+    threadsReleaseMutex();
+    fprintf(stderr, "  closed on pump %d, through the lobby=%d, state=%d\n",
+            closedAt, (int)sawLobby, (int)st);
+    if (closedAt < 0) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("every person quit in the game-over hold: -autoclose must "
+                "quit the server once it is back in the lobby (closed on "
+                "pump %d, through the lobby=%d, state=%d)", closedAt,
+                (int)sawLobby, (int)st);
+    }
+
+    loopbackHarnessStop(&h);
     return 0;
 }

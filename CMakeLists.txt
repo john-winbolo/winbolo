@@ -7151,6 +7151,8 @@ set(_unit_test_names
     autoclose_human_leaves_bots_stay_closes
     autoclose_bots_only_never_closes
     autoclose_lobby_round_human_leaves_closes
+    autoclose_lobby_round_ticks_to_lobby_closes
+    autoclose_lobby_all_quit_in_hold_closes
     game_vote_state_codec_surrender_passed
     game_vote_state_codec_back_to_lobby
     game_vote_state_decoder_rejects_short
@@ -7426,6 +7428,7 @@ set(_unit_test_names
     empty_reset_human_leaves_starts_timer
     empty_reset_spectator_counts_empty
     empty_reset_nolobby_starts_new_round
+    empty_reset_lobby_bot_keeps_seat
     scenario_map_rotation_redecides
     lobby_script_keeps_bots_mod
     lobby_script_keeps_bots_swap
