@@ -153,6 +153,10 @@ int lobbyBotPoolCount(void) {
     return themedCount() + 1;   /* +1 for the numbered pool */
 }
 
+int lobbyBotPoolThemedCount(void) {
+    return themedCount();
+}
+
 const char *lobbyBotPoolLabel(int poolIdx) {
     int themed = themedCount();
     if (poolIdx < 0 || poolIdx > themed) return "Unknown";

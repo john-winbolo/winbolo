@@ -3191,6 +3191,11 @@ int run_loopback_bot_pool_same_not_fetched(void);
 int run_bot_pool_refresh_retakes_catalogue(void);
 int run_bot_pool_label_team_picks_only_chosen(void);
 int run_loopback_bot_pool_survives_bulk_rebase(void);
+int run_bot_pool_ds_teams_skip_numbered_custom(void);
+int run_bot_pool_ds_teams_skip_numbered_default(void);
+int run_bot_pool_ds_start_names_from_pools(void);
+int run_bot_pool_ds_start_names_no_team(void);
+int run_bot_pool_lobby_team_meta_keeps_pool(void);
 int run_loopback_brain_docs_survives_bulk_rebase(void);
 /* Client->server map upload over CHANNEL_BULK (test_loopback_upload.c): a map
  * uploaded under loss completes and the server decodes the reassembled bytes. */
