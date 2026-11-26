@@ -367,6 +367,9 @@ enum {
     C_zw_walks,
     C_zw_jump,
     C_zw_ticks,
+    C_zw_tank_walks,   /* walks with other tanks in the evaluate */
+    C_zw_tank_kept,    /* tanks the path box kept, summed */
+    C_zw_tank_none,    /* walks with tanks where the box kept none */
     C_zw_lane_out,
     C_zw_boats,
     C_zw_extra_walks,
@@ -416,6 +419,9 @@ static const char *s_pc_name[] = {
     "zw_walks",
     "zw_jump",
     "zw_ticks",
+    "zw_tank_walks",
+    "zw_tank_kept",
+    "zw_tank_none",
     "zw_lane_out",
     "zw_boats",
     "zw_extra_walks",
@@ -947,6 +953,11 @@ struct St {
     double sh_speed, sh_add, sh_life, sh_hit_r, pill_len;
     int    ts_boats, ts_nt;
     double ts_t[2 * PT2_TS_MAX_TANKS];
+    /* the tanks one tank shot walk tests: the ones in its path box
+     * (tank_shot_walk_angle__p), ts_wn of them at ts_wt */
+    int    ts_wn;
+    const double *ts_wt;
+    double ts_f[2 * PT2_TS_MAX_TANKS];
     int    om_set, om_sent;
     double omx, omy, sent_omx, sent_omy;
     /* ctx */
@@ -1607,8 +1618,9 @@ static Ray *cast_walk(Ev *e, Arena *a, double sx, double sy, double tx, double t
 /* ── shadow.tank_shot ───────────────────────────────────────────────── */
 static int ts_tank_hit(const Ev *e, double x, double y) {
     double r = e->sh_hit_r, r2 = r * r;
-    for (int i = 0; i < e->ts_nt; i++) {
-        double dx = x - e->ts_t[2 * i], dy = y - e->ts_t[2 * i + 1];
+    const double *t = e->ts_wt;
+    for (int i = 0; i < e->ts_wn; i++) {
+        double dx = x - t[2 * i], dy = y - t[2 * i + 1];
         if (dx < r && dx > -r && dy < r && dy > -r && dx * dx + dy * dy < r2) return 1;
     }
     return 0;
@@ -1673,7 +1685,7 @@ static int ts_walk_ticks(Ev *e, Walk *w, double n, double omx, double omy, doubl
                 if (pill_on(e, mx, my)) { why = TS_PILL; break; }
             }
         }
-        if (e->ts_nt > 0 && ts_tank_hit(e, w->x, w->y)) { why = TS_TANK; break; }
+        if (e->ts_wn > 0 && ts_tank_hit(e, w->x, w->y)) { why = TS_TANK; break; }
         if (new_sq) {
             if (extra_find(extra, (int64_t)sq) >= 0) { why = TS_PLANNED; break; }
             double tt = ttype(e, mx, my);
@@ -2009,6 +2021,11 @@ static void zw_note(Ev *e, Pt2Prof *p, int zs, int64_t z0, int64_t zr, int64_t z
     double *k = p->cnt;
     k[C_zw_walks] += 1;
     k[jump ? C_zw_jump : C_zw_ticks] += 1;
+    if (e->ts_nt > 0) {
+        k[C_zw_tank_walks] += 1;
+        k[C_zw_tank_kept] += e->ts_wn;
+        if (e->ts_wn == 0) k[C_zw_tank_none] += 1;
+    }
     if (lane_out) k[C_zw_lane_out] += 1;
     if (e->ts_boats) k[C_zw_boats] += 1;
     k[C_zw_nl] += nl;
@@ -2062,6 +2079,36 @@ static void zw_note(Ev *e, Pt2Prof *p, int zs, int64_t z0, int64_t zr, int64_t z
     }
 }
 
+/* The tanks a tank shot walk can hit: the ones whose place is inside the
+ * box of the walk's path, made bigger by the hit radius. walk_step moves
+ * the shell by floor(t * xs / 256) after t ticks (the carry is exact on
+ * the integer path, and within a rounding on the other), so every place
+ * the walk tests lies between x0 and x0 + n * xs / 256 (and the same in
+ * y). A tank further than the hit radius from that box fails ts_tank_hit's
+ * |dx| < r or |dy| < r test on every tick, so leaving it out changes no
+ * walk. The box has 2 more world units each side for the rounding. With
+ * no tank left, the walk can take the jump walk, which is exact when no
+ * tank is tested. A life that is not a finite number keeps every tank. */
+static void ts_path_box(Ev *e, const Walk *w, double n) {
+    e->ts_wt = e->ts_t;
+    e->ts_wn = e->ts_nt;
+    if (e->ts_nt <= 0 || !(n >= 0 && n <= 1e6)) return;
+    double x0 = w->x, y0 = w->y;
+    double x1 = x0 + n * w->xs / 256, y1 = y0 + n * w->ys / 256;
+    double m = e->sh_hit_r + 2;
+    double xlo = (x0 < x1 ? x0 : x1) - m, xhi = (x0 < x1 ? x1 : x0) + m;
+    double ylo = (y0 < y1 ? y0 : y1) - m, yhi = (y0 < y1 ? y1 : y0) + m;
+    int k = 0;
+    for (int i = 0; i < e->ts_nt; i++) {
+        double tx = e->ts_t[2 * i], ty = e->ts_t[2 * i + 1];
+        /* a NaN place fails both tests and is kept */
+        if (tx < xlo || tx > xhi || ty < ylo || ty > yhi) continue;
+        e->ts_f[2 * k] = tx; e->ts_f[2 * k + 1] = ty; k++;
+    }
+    e->ts_wt = e->ts_f;
+    e->ts_wn = k;
+}
+
 /* shadow.tank_shot_angle: the shot at gun angle angle (brad, float). */
 static int tank_shot_walk_angle__p(Ev *e, double ox, double oy, double angle, double tmx, double tmy,
                                 const Extra *extra, Lane **lane_out) {
@@ -2088,8 +2135,9 @@ static int tank_shot_walk_angle__p(Ev *e, double ox, double oy, double angle, do
     int nl, why;
     TsStop st;
     double tt0 = e->tt_hits, tm0 = e->tt_miss_n, unc0 = e->unc_n;
+    ts_path_box(e, &w, n);
     /* n <= PT2W_MAX_T is false for a NaN life (no ticks either way). */
-    int jump = w.fast && e->ts_nt <= 0 && n <= PT2W_MAX_T;
+    int jump = w.fast && e->ts_wn <= 0 && n <= PT2W_MAX_T;
     if (zs) z1 = ZW_TSC();
 #if PT2_WALK_CHECK
     {
@@ -2099,15 +2147,26 @@ static int tank_shot_walk_angle__p(Ev *e, double ox, double oy, double angle, do
         Walk w2 = w;
         if (!s_wc.started) { s_wc.started = 1; s_wc.wall0 = wc_wall(); s_wc.tsc0 = wc_tsc(); atexit(wc_report); }
         s_wc.walks++;
-        if (jump) {
+        /* the walk made (jump, or ticks with the path box's tanks) against
+         * the per-tick walk with every tank (ts_path_box off) */
+        int boxed = e->ts_wn != e->ts_nt;
+        const double *wt = e->ts_wt; int wn = e->ts_wn;
+#define WC_REF() (e->ts_wt = e->ts_t, e->ts_wn = e->ts_nt, \
+        why2 = ts_walk_ticks(e, &w2, n, omx, omy, tmx, tmy, extra, lane2, &nl2, &st2), \
+        e->ts_wt = wt, e->ts_wn = wn)
+#define WC_RUN() (jump ? ts_walk_jump(e, &w, (int32_t)n, omx, omy, tmx, tmy, extra, lane, &nl, &st) \
+                       : ts_walk_ticks(e, &w, n, omx, omy, tmx, tmy, extra, lane, &nl, &st))
+        if (jump || boxed) {
             uint64_t a0, a1, b0, b1;
             if (s_wc.walks & 1) {
-                b0 = wc_tsc(); why = ts_walk_jump(e, &w, (int32_t)n, omx, omy, tmx, tmy, extra, lane, &nl, &st); b1 = wc_tsc();
-                a0 = wc_tsc(); why2 = ts_walk_ticks(e, &w2, n, omx, omy, tmx, tmy, extra, lane2, &nl2, &st2); a1 = wc_tsc();
+                b0 = wc_tsc(); why = WC_RUN(); b1 = wc_tsc();
+                a0 = wc_tsc(); WC_REF(); a1 = wc_tsc();
             } else {
-                a0 = wc_tsc(); why2 = ts_walk_ticks(e, &w2, n, omx, omy, tmx, tmy, extra, lane2, &nl2, &st2); a1 = wc_tsc();
-                b0 = wc_tsc(); why = ts_walk_jump(e, &w, (int32_t)n, omx, omy, tmx, tmy, extra, lane, &nl, &st); b1 = wc_tsc();
+                a0 = wc_tsc(); WC_REF(); a1 = wc_tsc();
+                b0 = wc_tsc(); why = WC_RUN(); b1 = wc_tsc();
             }
+#undef WC_REF
+#undef WC_RUN
             s_wc.tsc_ticks += a1 - a0; s_wc.tsc_jump += b1 - b0;
             s_wc.compared++;
             int same = why == why2 && nl == nl2 && st.t == st2.t && st.mx == st2.mx && st.my == st2.my;
@@ -5512,6 +5571,8 @@ static void ev_read_inp__p(Ev *e) {
         if (nn % 2 != 0) luaL_error(L, "gh_pt2_v2: env.ts_tanks has %d numbers", nn);
         e->ts_nt = nn / 2;
     }
+    e->ts_wt = e->ts_t;
+    e->ts_wn = e->ts_nt;
     lua_pop(L, 1);
     lua_getfield(L, S_INP, "ring_radii");
     e->nring = 0;
