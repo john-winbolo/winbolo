@@ -152,8 +152,16 @@ B.owner = "neutral"
 check("B owner change: run again", D.get(state, world, info, 1, A, 501) ~= nil and runs == n + 1, runs)
 B.owner = "hostile"
 fresh(600); n = runs
+-- PT2_V2_CACHE on: a carried trees change keeps the result (v2 reads no
+-- carried trees); off: it runs again, as before
+local o_pc = C.PT2_V2_CACHE
+C.PT2_V2_CACHE = true
 info.trees = 9
-check("trees change: run again", D.get(state, world, info, 1, A, 601) ~= nil and runs == n + 1, runs)
+check("trees change, cache on: kept", D.get(state, world, info, 1, A, 601) ~= nil and runs == n, runs)
+C.PT2_V2_CACHE = false
+info.trees = 10
+check("trees change, cache off: run again", D.get(state, world, info, 1, A, 602) ~= nil and runs == n + 1, runs)
+C.PT2_V2_CACHE = o_pc
 fresh(700); n = runs
 info.carried_pills = 0
 check("carried change: run again", D.get(state, world, info, 1, A, 701) ~= nil and runs == n + 1, runs)

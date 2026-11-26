@@ -3026,16 +3026,260 @@ function M.evaluate_lua(inp)
            v2 = { stat = st, tm = tm } }
 end
 
+-- ── PT2_V2_CACHE: the slow cache store ────────────────────────────────
+-- A group job's cache table (rays, square reads and the C job with its
+-- ring point store, gh_pt2_v2.c) is kept from run to run of one target:
+-- one entry per (source, goal pill), the newest last, at most
+-- PT2_V2_CACHE_MAX_ENTRIES per source. The source is "dbl" (pt2_dbl's
+-- shadow double-take runs) or "take" (the real take, pt2_attack). An
+-- entry is dropped when an input that v2's kept parts read has changed
+-- in the area (the goal pill +- PT2_V2_CACHE_AREA squares): a pill (place,
+-- alive, in tank, place unknown, owner, cover), a base (owner, dead,
+-- capture armour), the shell rules (in boat, base hit, base capture), the
+-- terrain (a forest square read as grass) or the age
+-- (PT2_V2_CACHE_MAX_AGE_TICKS). A forest change only (cut or grown)
+-- drops the kept plans (the builder's walk reads forest), and the rays
+-- stay: PT2_FOREST_TRANSPARENT. With PT2_FOREST_TRANSPARENT off a forest
+-- change drops the entry. Knob off: a new cache table for each job, as
+-- before.
+local PCK = require("constants")
+local PCS = {}                    -- [src] = { entry, ... }
+M.pc_count = { checks = 0, diffs = 0, kept = 0, new = 0, age = 0, pill = 0, base = 0,
+               rules = 0, terrain = 0, forest = 0, full = 0 }
+
+local function pc_src(inp)
+  if inp._v2_pc_off or not PCK.PT2_V2_CACHE or not inp.v2_c then return nil end
+  if not rawget(_G, "gh_pt2_v2") or not inp._world or not inp.A then return nil end
+  if (inp.capture_file and inp.capture_file ~= "") or inp.v2_mask_stats or inp.v2_loss_check
+     or inp.v2_confirm_check or inp.v2_confirm_drop then return nil end
+  local src = inp._v2_pc_src or "take"
+  if src == "take" and PCK.PT2_V2_CACHE_TAKE == false then return nil end
+  return src
+end
+
+-- The area's input strings (pills, bases, shell rules) and terrain hashes.
+local function pc_sigs(inp, w, A)
+  local R = PCK.PT2_V2_CACHE_AREA or 28
+  local x0, y0, x1, y1 = A.mx - R, A.my - R, A.mx + R, A.my + R
+  local env = inp.env
+  local t = {}
+  for _, p in ipairs(inp.pills or {}) do
+    local mx, my = p.mx or -1, p.my or -1
+    if mx >= x0 and mx <= x1 and my >= y0 and my <= y1 then
+      -- health as alive only: v2 reads no other health (A's 1 health for
+      -- finish is in the C key; an ally's cover is its own field)
+      t[#t + 1] = string.format("%d,%d,%s,%s,%s,%s,%s", mx, my, tostring((p.health or 0) > 0),
+        tostring(p.in_tank), tostring(p.pos_unknown), tostring(p.owner),
+        tostring(env.cover_of_pill and env.cover_of_pill(p)))
+    end
+  end
+  local sp = table.concat(t, ";")
+  local b = {}
+  local capmin = PCK.BASE_MIN_ARMOUR_CAPTURE or 0
+  for k, e in pairs(w.base_at or {}) do
+    local bx, by = k % 256, math.floor(k / 256)
+    if bx >= x0 and bx <= x1 and by >= y0 and by <= y1 then
+      local bs = e and e.base
+      b[#b + 1] = string.format("%d:%s:%s:%s", k, tostring(bs and bs.owner),
+        tostring(bs and (bs.health or 1) <= 0), tostring(bs and (bs.health or 0) > capmin))
+    end
+  end
+  table.sort(b)
+  local sb = table.concat(b, ";")
+  local sr = w._shell_rules
+  local ss = sr and (tostring(sr.inboat) .. "," .. tostring(sr.hit) .. "," .. tostring(sr.cap)) or "-"
+  local ht, hf = rawget(_G, "gh_pt2_v2").area_sig(x0, y0, x1, y1)
+  return sp, sb, ss, ht, hf
+end
+
+-- A dropped entry's C store is freed now: Lua does not see that memory, so
+-- the job's GC can come late (a busy job keeps it to its GC).
+local function pc_free(e)
+  local j = e.cache and e.cache.c_job
+  local f = rawget(_G, "gh_pt2_v2") and gh_pt2_v2.pc_free
+  if j and f then f(j) end
+end
+
+-- The cache table for a group job on inp.A.
+local function pc_cache(inp)
+  inp.v2_pcache = nil
+  local src = pc_src(inp)
+  if not src then return new_cache() end
+  local w, A = inp._world, inp.A
+  local now = inp._v2_pc_now or 0
+  local list = PCS[src]
+  if not list then list = {}; PCS[src] = list end
+  local sp, sb, ss, ht, hf = pc_sigs(inp, w, A)
+  -- no engine map (a test's world): no store
+  if ht == nil then return new_cache() end
+  -- PT2_V2_CACHE_CHECK_TMP (log only): a new entry that is not kept
+  if inp._v2_pc_tmp then
+    local e = { key = -1, tick = now, sp = sp, sb = sb, ss = ss, ht = ht, hf = hf, cache = new_cache() }
+    e.cache.pc_max_bytes = PCK.PT2_V2_CACHE_MAX_BYTES or 0
+    inp.v2_pcache = true
+    inp._v2_pc_entry = e
+    return e.cache
+  end
+  local cnt = M.pc_count
+  local maxage = PCK.PT2_V2_CACHE_MAX_AGE_TICKS or 3000
+  -- entries past the age go (their goal pill may not run again)
+  for i = #list, 1, -1 do
+    local x = list[i]
+    if now - x.tick > maxage then cnt.age = cnt.age + 1; pc_free(x); table.remove(list, i) end
+  end
+  local e, at
+  -- the goal pill by its square: each run's pill tables are new tables
+  local key = (A.mx or -1) * 256 + (A.my or -1)
+  for i, x in ipairs(list) do if x.key == key then e, at = x, i; break end end
+  local why
+  if e then
+    if e.sp ~= sp then why = "pill"
+    elseif e.sb ~= sb then why = "base"
+    elseif e.ss ~= ss then why = "rules"
+    elseif e.ht ~= ht then why = "terrain"
+    elseif e.hf ~= hf and inp.env.forest_transparent == false then why = "terrain" end
+    table.remove(list, at)
+    if why then cnt[why] = cnt[why] + 1; pc_free(e); e = nil end
+  end
+  if e then
+    cnt.kept = cnt.kept + 1
+    if e.hf ~= hf then
+      cnt.forest = cnt.forest + 1
+      e.cache.pc_drop_plans = true
+      e.hf = hf
+    end
+  else
+    -- full (entries or bytes): this run has no store, and the kept
+    -- entries stay (a player runs its targets in turn, so dropping the
+    -- oldest for each new one would keep none of them)
+    local tot = 0
+    for _, x in ipairs(list) do tot = tot + (x.bytes or 0) end
+    local maxb = PCK.PT2_V2_CACHE_MAX_TOTAL_BYTES or 0
+    if #list >= (PCK.PT2_V2_CACHE_MAX_ENTRIES or 16) or (maxb > 0 and tot >= maxb) then
+      cnt.full = cnt.full + 1
+      return new_cache()
+    end
+    cnt.new = cnt.new + 1
+    e = { key = key, tick = now, sp = sp, sb = sb, ss = ss, ht = ht, hf = hf, cache = new_cache() }
+  end
+  e.why = why
+  list[#list + 1] = e
+  e.cache.pc_max_bytes = PCK.PT2_V2_CACHE_MAX_BYTES or 0
+  inp.v2_pcache = true
+  inp._v2_pc_entry = e
+  return e.cache
+end
+
+-- The pc_* counters of a run's stat (gh_pt2_v2.c push_result) into job.pcst.
+local PC_F = { "pc_eh", "pc_em", "pc_et", "pc_en", "pc_ph", "pc_pm", "pc_pt", "pc_pn", "pc_wdrop" }
+local function pc_add(job, r)
+  local st = r and r.v2 and r.v2.stat
+  if not (job.pcst and st) then return end
+  for _, k in ipairs(PC_F) do job.pcst[k] = job.pcst[k] + (st[k] or 0) end
+  job.pcst.bytes = st.pc_bytes or job.pcst.bytes
+  local e = job.pc_entry
+  if e and st.pc_bytes then e.bytes = st.pc_bytes end
+end
+
+-- PT2_V2_CACHE_CHECK (log only): the same group again with no store, in
+-- the same think; a PT2_V2_CACHE_CHK line (stderr) says what differs.
+local function pc_best_str(res)
+  local b = res and res.best
+  if not b then return "none" end
+  local pl = {}
+  for _, s in ipairs(b.plan or {}) do pl[#pl + 1] = tostring(s.kind) .. "@" .. tostring(s.mx) .. "," .. tostring(s.my) end
+  local A = res.A
+  return string.format("A=%s,%s px=%s py=%s safe=%s kills=%s chain=%s base=%s aim=%s plan=%s",
+    tostring(A and A.mx), tostring(A and A.my), tostring(b.px), tostring(b.py), tostring(b.safe),
+    tostring(b.kills), tostring(b.chain and #b.chain), tostring(b.base), tostring(b.aim_idx),
+    table.concat(pl, "/"))
+end
+
+-- the keys of a source's entries, oldest first (the check line)
+local function pc_list_str(src)
+  local t = {}
+  for _, x in ipairs(PCS[src] or {}) do t[#t + 1] = tostring(x.key) end
+  return table.concat(t, "/")
+end
+
+local function pc_check(inp, job)
+  local cnt = M.pc_count
+  cnt.checks = cnt.checks + 1
+  local o_off, o_sl = inp._v2_pc_off, inp.v2_slice
+  inp._v2_pc_off, inp.v2_slice = true, nil
+  -- PT2_V2_CACHE_CHECK_NOMEMO (log only): the fresh run skips the two walk
+  -- memos as a run made for the store does (a test of those memos)
+  inp._v2_pc_nomemo = PCK.PT2_V2_CACHE_CHECK_NOMEMO or nil
+  local ok, j2 = pcall(function()
+    local j = M.group_begin(inp)
+    while not M.group_step(j) do end
+    return j
+  end)
+  inp._v2_pc_off, inp.v2_slice = o_off, o_sl
+  inp._v2_pc_nomemo = nil
+  inp.v2_pcache = true
+  if not ok then M.cprof_err("PT2_V2_CACHE_CHK error " .. tostring(j2)); return end
+  local a, b = pc_best_str(job.res), pc_best_str(j2.res)
+  local same = a == b
+  -- PT2_V2_CACHE_CHECK_TWICE / _TMP (log only): the run with no cache once
+  -- more, and a run with a new store that is not kept, against the first
+  -- run with no cache
+  local extra = ""
+  local function again(tmp)
+    local o_e, o_pc = inp._v2_pc_entry, inp.v2_pcache
+    inp._v2_pc_off, inp.v2_slice, inp._v2_pc_tmp = (not tmp) or nil, nil, tmp or nil
+    local ok2, j3 = pcall(function()
+      local j = M.group_begin(inp)
+      while not M.group_step(j) do end
+      return j
+    end)
+    local te = tmp and inp._v2_pc_entry
+    inp._v2_pc_off, inp.v2_slice, inp._v2_pc_tmp = o_off, o_sl, nil
+    inp._v2_pc_entry, inp.v2_pcache = o_e, o_pc
+    if te and te ~= o_e then pc_free(te) end
+    if not ok2 then return "error" end
+    local c = pc_best_str(j3.res)
+    return c == b and "same" or ("DIFF{" .. c .. "}")
+  end
+  if PCK.PT2_V2_CACHE_CHECK_TWICE then extra = extra .. " twice=" .. again(false) end
+  if PCK.PT2_V2_CACHE_CHECK_TMP then extra = extra .. " tmp=" .. again(true) end
+  if not same then cnt.diffs = cnt.diffs + 1 end
+  local e, s = inp._v2_pc_entry, job.pcst or {}
+  M.cprof_err(string.format("PT2_V2_CACHE_CHK %s %s src=%s why=%s eh=%d em=%d et=%d en=%d ph=%d pm=%d pt=%d pn=%d wd=%d"
+      .. " bytes=%d checks=%d diffs=%d kept=%d new=%d age=%d pill=%d base=%d rules=%d terrain=%d forest=%d full=%d"
+      .. " key=%s list=%s%s cached={%s}%s",
+    tostring(inp._prof_head or inp._v2_pc_head), same and "same" or "DIFF", tostring(inp._v2_pc_src or "take"),
+    tostring(e and e.why), s.pc_eh or 0, s.pc_em or 0, s.pc_et or 0, s.pc_en or 0,
+    s.pc_ph or 0, s.pc_pm or 0, s.pc_pt or 0, s.pc_pn or 0, s.pc_wdrop or 0, s.bytes or 0,
+    cnt.checks, cnt.diffs, cnt.kept, cnt.new, cnt.age, cnt.pill, cnt.base, cnt.rules, cnt.terrain,
+    cnt.forest, cnt.full, tostring(e and e.key), pc_list_str(inp._v2_pc_src or "take"), extra, a,
+    same and "" or (" fresh={" .. b .. "}")))
+end
+
+-- The old world_inp; PT2_V2_CACHE also keeps the world in inp (the area
+-- inputs of the store above).
+function M.world_inp(world, C, U, PC, cpf, inp, no_builder)
+  inp = OLD.world_inp(world, C, U, PC, cpf, inp, no_builder)
+  if C.PT2_V2_CACHE then inp._world = world end
+  return inp
+end
+
 -- ── evaluate_group (as the old one; rays and square reads kept per job) ──
 function M.evaluate_group(inp)
   local job = M.group_begin(inp)
   while not M.group_step(job) do end
+  if PCK.PT2_V2_CACHE_CHECK and inp.v2_pcache then pc_check(inp, job) end
   return job.res
 end
 
 function M.group_begin(inp)
   if inp.wall_memo then M.wall_memo_check(inp, inp.A) end
-  return { inp = inp, goalA = inp.A, list = nil, i = 1, res = nil, cache = new_cache() }
+  local job = { inp = inp, goalA = inp.A, list = nil, i = 1, res = nil, cache = pc_cache(inp) }
+  if inp.v2_pcache then
+    job.pcst = { pc_eh = 0, pc_em = 0, pc_et = 0, pc_en = 0, pc_ph = 0, pc_pm = 0, pc_pt = 0, pc_pn = 0, pc_wdrop = 0 }
+    job.pc_entry = inp._v2_pc_entry
+  end
+  return job
 end
 
 function M.group_parts_left(job)
@@ -3049,6 +3293,7 @@ local function eval_in_job(job, inp)
   local ok, r = pcall(M.evaluate, inp)
   inp._v2_cache, inp._xcover_later = old, oldx
   if not ok then error(r, 0) end
+  if job.pcst then pc_add(job, r) end
   return r
 end
 

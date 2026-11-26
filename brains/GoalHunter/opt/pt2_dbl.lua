@@ -136,7 +136,10 @@ M._tier_val = tier_val
 local function stale_why(e, world, info, now, state)
   if now - e.tick > tier_val(state, "dbl_cache", "PT2_DBL_CACHE_TICKS", 250) then return "age" end
   if (info.carried_pills or 0) ~= e.carried then return "carried" end
-  if (info.trees or 0) ~= e.trees then return "trees" end
+  -- PT2_V2_CACHE: the trees we carry are no v2 input, so a trees change
+  -- keeps the entry; it takes the trees now, and M.qualifies checks them
+  if C.PT2_V2_CACHE then e.trees = info.trees or 0
+  elseif (info.trees or 0) ~= e.trees then return "trees" end
   for i, id in ipairs(e.ids) do
     local p = world.pills and world.pills[id]
     if not p or (p.health or 0) ~= e.hp[i] or p.owner ~= e.owner[i] then return "pill" end
@@ -161,6 +164,8 @@ local function make_inp(state, world, info, pill, now)
   -- PT2_CHAINS_ONLY (S10): the entry counts only as a safe chain, so v2
   -- plans no single take here (the old evaluator ignores the field)
   if inp and inp.chains_only_runs then inp.chains_only = true end
+  -- PT2_V2_CACHE: this run's slow cache entries are the "dbl" ones
+  if inp and C.PT2_V2_CACHE then inp._v2_pc_src = "dbl" end
   -- cache study (log only): the profile lines of this run say src=dbl
   if inp and inp._prof_head then inp._prof_head = inp._prof_head .. " src=dbl" end
   return inp

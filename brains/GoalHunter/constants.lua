@@ -1507,6 +1507,60 @@ M.PT2_WALL_MEMO_MAX = 20000
 -- one the Lua gives (test_gh_pt2_v2_parity), with PT2_V2_SPLIT too. An
 -- older exe has no C copy and the Lua runs. false = the Lua copy.
 M.PT2_V2_C = true
+-- PT2_V2_CACHE (Nov 26, Andrew's design, speed only): v2's C copy keeps
+-- the slow parts of each ring point from run to run of one target (one
+-- slow cache entry per source and goal pill; pilltake_v2.lua pc_cache):
+-- the filter, the shot test, the stub or the full record, and the plan.
+-- score_fn, the sort, the band cut, score_of, rerank, leeway and the start
+-- checks run fresh each run. A part is made again when a tank we see is
+-- in the box of its shot walks. The entry is dropped when a pill, a base,
+-- the shell rules or the terrain in the area change, or at
+-- PT2_V2_CACHE_MAX_AGE_TICKS. A forest change only (cut or grown) drops
+-- the kept plans and keeps the rest (PT2_FOREST_TRANSPARENT). A change of a
+-- run input that the kept rays and square reads use (the builder dead or
+-- back, the stay area, a shell rule) drops those rays and reads. With the knob
+-- on, pt2_dbl keeps an entry when only our trees change (no v2 input).
+-- false = a new cache for each group run, as before. MAST: false.
+M.PT2_V2_CACHE = true
+-- PT2_V2_CACHE_MAX_AGE_TICKS: an entry older than this is dropped (a
+-- backstop; the inputs above drop it first). pt2_dbl's PT2_DBL_CACHE_TICKS
+-- (250) stays the refresh cadence: a refresh of a kept entry is cheap.
+M.PT2_V2_CACHE_MAX_AGE_TICKS = 3000
+-- PT2_V2_CACHE_MAX_ENTRIES: entries kept per source ("dbl", "take") per
+-- player. When full (this or PT2_V2_CACHE_MAX_TOTAL_BYTES), a new goal pill
+-- runs with no store and the kept entries stay; an entry goes when a drop
+-- rule or the age drops it. A 2v2 on Chew Toy 3 has about 16 goal pills per
+-- player in the shadow runs. Proposal, awaiting Andrew's value.
+M.PT2_V2_CACHE_MAX_ENTRIES = 16
+-- PT2_V2_CACHE_MAX_TOTAL_BYTES: the C store bytes of one source's entries
+-- per player; no new entry past this. 0 = no cap. Proposal, awaiting
+-- Andrew's value.
+M.PT2_V2_CACHE_MAX_TOTAL_BYTES = 160 * 1024 * 1024
+-- PT2_V2_CACHE_MAX_BYTES: an entry's C store past this many bytes is
+-- cleared (its points and plans are made again). 0 = no cap. Proposal,
+-- awaiting Andrew's value.
+M.PT2_V2_CACHE_MAX_BYTES = 32 * 1024 * 1024
+-- PT2_V2_CACHE_AREA: the area (squares from the goal pill, each way) whose
+-- pills, bases and terrain the entry checks. A chain pill is up to 8.5
+-- squares from the goal, its ring 7 more, and that ring's pills 8.5 more.
+-- Proposal, awaiting Andrew's value.
+M.PT2_V2_CACHE_AREA = 28
+-- PT2_V2_CACHE_TAKE: the real take (pt2_attack) uses the cache too ("take"
+-- entries). false = only the shadow double-take runs.
+M.PT2_V2_CACHE_TAKE = true
+-- PT2_V2_CACHE_CHECK (log only): each cached group run is run again with
+-- no cache in the same think; a PT2_V2_CACHE_CHK line says if the best
+-- point, its plan, safe and kills are the same. Slow: for tests only.
+M.PT2_V2_CACHE_CHECK = false
+-- PT2_V2_CACHE_CHECK_NOMEMO (log only): with PT2_V2_CACHE_CHECK, the run with
+-- no cache also skips the two walk memos (tank shot memo, aim_wide's clear
+-- shots), as a run made for the store does.
+M.PT2_V2_CACHE_CHECK_NOMEMO = false
+-- PT2_V2_CACHE_CHECK_TWICE / _TMP (log only): with PT2_V2_CACHE_CHECK, run
+-- the group with no cache once more (twice=), and with a new store that is
+-- not kept (tmp=); each is set against the first run with no cache.
+M.PT2_V2_CACHE_CHECK_TWICE = false
+M.PT2_V2_CACHE_CHECK_TMP = false
 -- PP_FRONT_C (Nov 25, speed only): pill_portfolio's front tests
 -- (on_front_line, near_front, the aggro neighbour count) run in C
 -- (braincore.c) on the same influence grid. The same answers. Measured
@@ -8728,6 +8782,8 @@ M.PRESETS = {
     PT2_V2_SPLIT = false,
     --   2026-11-24: pill take v2 in Lua only (no C copy).
     PT2_V2_C = false,
+    --   2026-11-26: no slow cache (a new cache for each group run).
+    PT2_V2_CACHE = false,
     --   2026-11-23: the old pill take evaluator (no shadow map).
     PT2_EVALUATOR = "old",
     PT2_EVAL_BY_TIER = false,
@@ -9132,6 +9188,7 @@ M.PRESETS.mast = {
   PT2_SPLIT_ONE_PART_PER_TICK       = false,  -- 2.2.1 had no pill take v2
   PT2_V2_SPLIT                      = false,  -- 2.2.1 had no pill take v2
   PT2_V2_C                          = false,  -- 2.2.1 had no pill take v2
+  PT2_V2_CACHE                      = false,  -- 2.2.1 had no pill take v2
   PT2_EVALUATOR                     = "old",  -- 2.2.1 had no pill take v2
   PT2_EVAL_BY_TIER                  = false,  -- 2.2.1 had no pill take v2
   WSIM_DRIVE_WHILE_SLIDING          = false,  -- 2.2.1 world sim: no driving while pushed

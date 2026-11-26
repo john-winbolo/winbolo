@@ -936,6 +936,9 @@ typedef struct Rec {
     int     aimnb;              /* RF_AIMNB: PT2_AIM_AVOID_CHAIN_NEIGHBOUR */
     double  bp_tier, wall_far;  /* RF_FBP: PT2_FAVOR_BLOCKER_PLACE */
     struct Rec *done;           /* the lone pass: the plan's record */
+    /* PT2_V2_CACHE: the point store key of the evaluate that made this
+     * record (has_ck = 0: not from the store, so its plan is not kept) */
+    uint64_t ck1, ck2; int has_ck;
     Memo    m, m_ri;
 } Rec;
 
@@ -992,6 +995,17 @@ typedef struct {
     Pill **pills;     /* 1-based */
     int    npills, cap_pills;
     int    freed;
+    uint64_t wsig;   /* PT2_V2_CACHE: pc_csig(e, 1) of the last run (rays, sqm, sqf read it) */
+    int    wsig_set;
+    /* PT2_V2_CACHE: an evaluate on this job has begun and not pushed its
+     * result (pc_free keeps the store of a busy job) */
+    int    busy;
+    /* PT2_V2_CACHE: the ring point store, kept with the job from run to
+     * run (pilltake_v2.lua keeps the job's cache table per target). par
+     * holds the kept records; pts: evaluate key -> PEnt *, pls: plan key
+     * -> PPlan *, flt: ring point key -> the quick filter's answer. */
+    Arena  par;
+    HMap   pts, pls, flt;
 } Job;
 
 /* ── The Lua stack of one step ─────────────────────────────────────── */
@@ -1027,6 +1041,7 @@ struct St {
     Pt2Ctx    *c;
     Job       *job;
     Arena      ar;          /* records, views, plans: this evaluate */
+    Arena     *arp;         /* where NEW allocates: &ar, or &job->par (PT2_V2_CACHE) */
     int        done;        /* the result was made */
     int        pc;          /* where step goes on */
     /* inp */
@@ -1169,6 +1184,19 @@ struct St {
     /* the wall search's scratch */
     HMap   wsmask, wslane, wsseen;
     double co_bc;
+    /* PT2_V2_CACHE (inp.v2_pcache): the ring point store is on; csig =
+     * the hash of every input the kept parts read that is the same for
+     * the whole run. rb_*: the box of the tank shot walks made while a
+     * part is made for the store (rb_on). */
+    int    pc_on;
+    uint64_t csig;
+    int    rb_on, rb_inf, rb_any;
+    int    pc_wdrop;      /* this run dropped the kept job's rays, sqm and sqf (pc_csig(e, 1) changed) */
+    int    pc_nomemo;     /* inp._v2_pc_nomemo (check runs, log only): as rb_on for the memos */
+    double rb_x0, rb_y0, rb_x1, rb_y1;
+    /* store stats: evaluate hits / misses / tank misses / not kept; plan
+     * hits / misses / tank misses / not kept */
+    double pc_eh, pc_em, pc_et, pc_en, pc_ph, pc_pm, pc_pt, pc_pn;
 };
 
 /* PT2_LINK_CLEAR_FRONT with PT2_LINK_CUT_MIN_SHOTS (OLD.link_cut). */
@@ -1377,8 +1405,10 @@ static void sync_om(Ev *e) {
     e->om_sent = 1; e->sent_omx = e->omx; e->sent_omy = e->omy;
 }
 
-#define NEW(e, T) ((T *)ar_alloc((e)->L, &(e)->ar, sizeof(T)))
-#define NEWN(e, T, n) ((T *)ar_alloc((e)->L, &(e)->ar, sizeof(T) * (size_t)((n) > 0 ? (n) : 1)))
+/* (e)->arp: the evaluate's arena (&e->ar), or the job's store arena
+ * while a part is made for the store (PT2_V2_CACHE) */
+#define NEW(e, T) ((T *)ar_alloc((e)->L, (e)->arp, sizeof(T)))
+#define NEWN(e, T, n) ((T *)ar_alloc((e)->L, (e)->arp, sizeof(T) * (size_t)((n) > 0 ? (n) : 1)))
 #define JNEW(e, T) ((T *)ar_alloc((e)->L, &(e)->job->ar, sizeof(T)))
 #define JNEWN(e, T, n) ((T *)ar_alloc((e)->L, &(e)->job->ar, sizeof(T) * (size_t)((n) > 0 ? (n) : 1)))
 
@@ -1753,15 +1783,15 @@ static int ts_tank_hit(const Ev *e, double x, double y) {
 typedef struct { Lane *l; Chunk *c; size_t off, end; } LaneRes;
 #define LANE_HDR ((sizeof(Lane) + 15) & ~(size_t)15)
 static int64_t *lane_reserve(Ev *e, LaneRes *r) {
-    unsigned char *p = (unsigned char *)ar_alloc(e->L, &e->ar, LANE_HDR + sizeof(int64_t) * PT2_MAX_T);
-    r->c = e->ar.cur;
+    unsigned char *p = (unsigned char *)ar_alloc(e->L, e->arp, LANE_HDR + sizeof(int64_t) * PT2_MAX_T);
+    r->c = e->arp->cur;
     r->off = (size_t)(p - (unsigned char *)r->c->data);
     r->end = r->c->used;
     r->l = (Lane *)p;
     return (int64_t *)(p + LANE_HDR);
 }
 static Lane *lane_done(Ev *e, LaneRes *r, int ok, int nl) {
-    int last = e->ar.cur == r->c && r->c->used == r->end;
+    int last = e->arp->cur == r->c && r->c->used == r->end;
     if (!ok) {
         if (last) r->c->used = r->off;
         return NULL;
@@ -2206,9 +2236,29 @@ static void zw_note(Ev *e, Pt2Prof *p, int zs, int64_t z0, int64_t zr, int64_t z
  * walk. The box has 2 more world units each side for the rounding. With
  * no tank left, the walk can take the jump walk, which is exact when no
  * tank is tested. A life that is not a finite number keeps every tank. */
+/* PT2_V2_CACHE: the walk's path box into the box of the part being made
+ * for the store (rb_on), with or without tanks now: a later run with a
+ * tank in the box makes the part again. A life that is not a finite
+ * number: every tank counts (rb_inf). */
+static void rb_note(Ev *e, const Walk *w, double n) {
+    if (!(n >= 0 && n <= 1e6)) { e->rb_inf = 1; return; }
+    double x0 = w->x, y0 = w->y;
+    double x1 = x0 + n * w->xs / 256, y1 = y0 + n * w->ys / 256;
+    double m = e->sh_hit_r + 2;
+    double xlo = (x0 < x1 ? x0 : x1) - m, xhi = (x0 < x1 ? x1 : x0) + m;
+    double ylo = (y0 < y1 ? y0 : y1) - m, yhi = (y0 < y1 ? y1 : y0) + m;
+    if (!(xlo == xlo && xhi == xhi && ylo == ylo && yhi == yhi)) { e->rb_inf = 1; return; }
+    if (!e->rb_any) { e->rb_any = 1; e->rb_x0 = xlo; e->rb_x1 = xhi; e->rb_y0 = ylo; e->rb_y1 = yhi; return; }
+    if (xlo < e->rb_x0) e->rb_x0 = xlo;
+    if (xhi > e->rb_x1) e->rb_x1 = xhi;
+    if (ylo < e->rb_y0) e->rb_y0 = ylo;
+    if (yhi > e->rb_y1) e->rb_y1 = yhi;
+}
+
 static void ts_path_box(Ev *e, const Walk *w, double n) {
     e->ts_wt = e->ts_t;
     e->ts_wn = e->ts_nt;
+    if (e->rb_on) rb_note(e, w, n);
     if (e->ts_nt <= 0 || !(n >= 0 && n <= 1e6)) return;
     double x0 = w->x, y0 = w->y;
     double x1 = x0 + n * w->xs / 256, y1 = y0 + n * w->ys / 256;
@@ -2346,7 +2396,9 @@ static int tank_shot_walk_angle(Ev *e, double ox, double oy, double angle, doubl
  * reason, with the ttype reads it would count. Else a new walk. */
 static int tank_shot_walk_again(Ev *e, double ox, double oy, double angle, double tmx, double tmy,
                                 const Extra *extra) {
-    if (e->tsm_ok) {
+    /* PT2_V2_CACHE: a part made for the store walks each shot, so its
+     * box has every walk (the walk gives the same stop reason) */
+    if (e->tsm_ok && !e->rb_on && !e->pc_nomemo) {
         Pt2wKey k;
         ts_key(e, ox, oy, f32(angle), tmx, tmy, extra, e->walk_serial, &k);
         if (pt2w_key_same(&k, &e->tsm_key)) {
@@ -2888,6 +2940,8 @@ static double aw_diff(double b, double c) { return luamod(b - c + 128, 256) - 12
 static int aw_hit(const Ev *e, double px, double py, double tmx, double tmy, const Extra *x,
                   double c, double f, double side) {
     if (e->ts_nt > 0 || !e->awm_on) return 0;
+    /* PT2_V2_CACHE: a part made for the store walks each shot (its box) */
+    if (e->rb_on || e->pc_nomemo) return 0;
     if (!(e->awm_ox == pt2w_bits(px) && e->awm_oy == pt2w_bits(py) && e->awm_tmx == tmx && e->awm_tmy == tmy
           && e->awm_x == x && e->awm_xn == (x ? x->n : -1) && e->awm_gen == e->c->gen)) return 0;
     double df = side * aw_diff(f, c);
@@ -3174,7 +3228,7 @@ static Rec *eval_point__p(Ev *e, double px, double py, Extra *extra, int aim_fix
         if (exact) {
             Pill *P = PI(e, X);
             double sx = P->mx * 256 + 128, sy = P->my * 256 + 128;
-            Ray *r = cast(e, &e->ar, sx, sy, px, py, e->pill_len, extra, 1, NULL);
+            Ray *r = cast(e, e->arp, sx, sy, px, py, e->pill_len, extra, 1, NULL);
             r->X = X;
             e->casts_confirm += 1;
             v = ray_view(e, r, NULL);
@@ -4978,7 +5032,7 @@ static int hold_safe__p(Ev *e, Rec *b, double hx, double hy, int *why_pill) {
             else if (p == e->A && !b->chain_mode) bar = e->bar_single;
             else if (ci) bar = e->bar_chain;
             else bar = e->bar_other;
-            Ray *r = cast(e, &e->ar, sx, sy, hx, hy, e->pill_len, NULL, 0, &scratch);
+            Ray *r = cast(e, e->arp, sx, sy, hx, hy, e->pill_len, NULL, 0, &scratch);
             int linked = e->link_covers && ci && r->link != 0 && ci < b->chain->n
                          && r->link == b->chain->v[ci]
                          && !(e->link_clear_front && link_cut(e, r->front));
@@ -5489,6 +5543,7 @@ static int job_gc(lua_State *L) {
     hm_free(&j->rays); hm_free(&j->sqm); hm_free(&j->sqf);
     free(j->pills); free(j->sqf_new);
     j->pills = NULL; j->sqf_new = NULL;
+    ar_free(&j->par); hm_free(&j->pts); hm_free(&j->pls); hm_free(&j->flt);
     j->freed = 1;
     return 0;
 }
@@ -5826,6 +5881,258 @@ static int co_lt(void *cx, void *pa, void *pb) {
     return a->deg < b->deg;
 }
 
+/* ── PT2_V2_CACHE: the ring point store ─────────────────────────────── */
+/* The slow parts of a ring point, kept in the job (Job.par, pts, pls)
+ * from run to run of one target: the point's evaluate (the shot test,
+ * the stub or the full record, or the reject) and the plan made from a
+ * full record. score_fn, the sort, the band cut, score_of, rerank and
+ * leeway run fresh each run. A part is kept only when no tank was in the
+ * box of its tank shot walks; a later run with a tank in that box makes
+ * the part again. pilltake_v2.lua drops the job's cache table when an
+ * input the parts read changes (pill, base, terrain, age). */
+typedef struct { int inf, any; double x0, y0, x1, y1; } PBox;
+typedef struct { Rec *r; int why, wa; PBox b; } PEnt;
+typedef struct {
+    Rec      *out;            /* NULL: the plan is on the record itself */
+    Aims     *clr;
+    Lanes    *lns;
+    double    aims_done;
+    WallBase *wb;
+    SlotMemo  sm; int has_sm;
+    Plan     *plan;
+    Extra    *extra;
+    PBox      b;
+} PPlan;
+
+static void rb_start(Ev *e) { e->rb_on = 1; e->rb_inf = 0; e->rb_any = 0; }
+static void rb_stop(Ev *e, PBox *b) {
+    e->rb_on = 0;
+    b->inf = e->rb_inf; b->any = e->rb_any;
+    b->x0 = e->rb_x0; b->y0 = e->rb_y0; b->x1 = e->rb_x1; b->y1 = e->rb_y1;
+}
+
+/* Is a tank of this run in box b? A place that is not a number is in
+ * every box, as ts_path_box keeps it. */
+static int pc_tank_in(const Ev *e, const PBox *b) {
+    if (e->ts_nt <= 0) return 0;
+    if (b->inf) return 1;
+    if (!b->any) return 0;
+    for (int i = 0; i < e->ts_nt; i++) {
+        double tx = e->ts_t[2 * i], ty = e->ts_t[2 * i + 1];
+        if (tx < b->x0 || tx > b->x1 || ty < b->y0 || ty > b->y1) continue;
+        return 1;
+    }
+    return 0;
+}
+
+static Aims *aims_copy(Ev *e, const Aims *a) {
+    if (!a) return NULL;
+    Aims *c = NEW(e, Aims);
+    *c = *a; c->m.memo = 0; c->m.mg = 0;
+    return c;
+}
+static Lanes *lanes_copy(Ev *e, const Lanes *a) {
+    if (!a) return NULL;
+    Lanes *c = NEW(e, Lanes);
+    *c = *a; c->m.memo = 0; c->m.mg = 0;
+    return c;
+}
+/* a kept record as a new record of this evaluate: its own clear aims and
+ * lanes (clear_aims_of adds to them); the rest is shared and read only */
+static Rec *rec_from_store(Ev *e, const Rec *s) {
+    Rec *c = NEW(e, Rec);
+    *c = *s;
+    memset(&c->m, 0, sizeof(c->m)); memset(&c->m_ri, 0, sizeof(c->m_ri));
+    c->clear = aims_copy(e, s->clear);
+    c->lanes = lanes_copy(e, s->lanes);
+    return c;
+}
+
+static void pc_key(const Ev *e, double px, double py, int aim_fixed, int nudge, int lazy,
+                   uint64_t *k1, uint64_t *k2) {
+    uint64_t f = (uint64_t)aim_fixed * 4 + (uint64_t)(nudge ? 2 : 0) + (uint64_t)(lazy ? 1 : 0);
+    *k1 = pt_mix(e->csig ^ dbits(px));
+    *k2 = pt_mix(dbits(py) ^ pt_mix(e->csig + 0x5bd1e995ull * (f + 1)));
+}
+
+/* eval_point(px, py, NULL, aim_fixed, nudge, 0, lazy) through the store */
+static Rec *eval_point_pc(Ev *e, double px, double py, int aim_fixed, int nudge, int lazy,
+                          int *why, int *why_arg) {
+    if (!e->pc_on) return eval_point(e, px, py, NULL, aim_fixed, nudge, 0, lazy, why, why_arg);
+    uint64_t k1, k2;
+    pc_key(e, px, py, aim_fixed, nudge, lazy, &k1, &k2);
+    HVal *hv = hm_find(&e->job->pts, k1, k2);
+    if (hv && hv->p) {
+        PEnt *pe = (PEnt *)hv->p;
+        if (!pc_tank_in(e, &pe->b)) {
+            e->pc_eh += 1;
+            *why = pe->why; *why_arg = pe->wa;
+            if (!pe->r) {
+                if (pe->why != W_A_OUT) set_om(e, floor(px / 256), floor(py / 256));
+                return NULL;
+            }
+            Rec *c = rec_from_store(e, pe->r);
+            set_om(e, floor(c->px / 256), floor(c->py / 256));
+            return c;
+        }
+        e->pc_et += 1;
+    } else e->pc_em += 1;
+    Arena *save = e->arp;
+    e->arp = &e->job->par;
+    rb_start(e);
+    Rec *r = eval_point(e, px, py, NULL, aim_fixed, nudge, 0, lazy, why, why_arg);
+    PBox b;
+    rb_stop(e, &b);
+    if (pc_tank_in(e, &b)) {
+        e->pc_en += 1;
+        if (hv) hv->p = NULL;
+    } else {
+        PEnt *pe = NEW(e, PEnt);
+        memset(pe, 0, sizeof(*pe));
+        pe->why = *why; pe->wa = *why_arg; pe->b = b;
+        if (r) {
+            r->ck1 = k1; r->ck2 = k2; r->has_ck = 1;
+            Rec *sn = NEW(e, Rec);
+            *sn = *r;
+            sn->clear = aims_copy(e, r->clear);
+            sn->lanes = lanes_copy(e, r->lanes);
+            pe->r = sn;
+        }
+        int isnew;
+        HVal *v = hm_put(e->L, &e->job->pts, k1, k2, &isnew);
+        v->p = pe;
+    }
+    e->arp = save;
+    return r;
+}
+
+static void plan_key(const Rec *rec, uint64_t *k1, uint64_t *k2) {
+    unsigned fl = rec->flags & (RF_KMAX | RF_OMXY | RF_EXTRA_IN);
+    uint64_t a = rec->ck1 ^ pt_mix(dbits(rec->omx) + 0x51ull) ^ pt_mix(dbits(rec->omy) * 3 + 0x77ull);
+    uint64_t b = rec->ck2 ^ pt_mix(((fl & RF_KMAX) ? dbits(rec->kmax) : 0x12345ull) + fl)
+               ^ pt_mix((uint64_t)rec->aims_done * 7 + (uint64_t)(rec->clear ? rec->clear->n : 0) * 131
+                        + dbits(rec->nudge_wu));
+    *k1 = pt_mix(a); *k2 = pt_mix(b + 0x2545F4914F6CDD1Dull);
+}
+
+/* plan_point(rec) through the store: a record from the store (has_ck)
+ * that is not covered */
+static Rec *plan_point_pc(Ev *e, Rec *rec) {
+    if (!e->pc_on || !rec->has_ck || rec->covered) return plan_point(e, rec);
+    uint64_t k1, k2;
+    plan_key(rec, &k1, &k2);
+    HVal *hv = hm_find(&e->job->pls, k1, k2);
+    if (hv && hv->p) {
+        PPlan *pp = (PPlan *)hv->p;
+        if (!pc_tank_in(e, &pp->b)) {
+            e->pc_ph += 1;
+            e->planned += 1;
+            Aims *ca = aims_copy(e, pp->clr);
+            Lanes *ls = lanes_copy(e, pp->lns);
+            rec->clear = ca; rec->lanes = ls; rec->aims_done = pp->aims_done;
+            rec->wb = pp->wb;
+            if (pp->has_sm) {
+                SlotMemo *m = NEW(e, SlotMemo);
+                *m = pp->sm; m->cap = m->n;   /* a new memo entry gets new arrays */
+                rec->sm = m;
+            } else rec->sm = NULL;
+            if (!pp->out) {
+                rec->plan = pp->plan; rec->extra = pp->extra; rec->flags |= RF_PLAN;
+                return rec;
+            }
+            Rec *c = NEW(e, Rec);
+            *c = *pp->out;
+            memset(&c->m, 0, sizeof(c->m)); memset(&c->m_ri, 0, sizeof(c->m_ri));
+            c->clear = ca; c->lanes = ls;
+            return c;
+        }
+        e->pc_pt += 1;
+    } else e->pc_pm += 1;
+    Arena *save = e->arp;
+    e->arp = &e->job->par;
+    rb_start(e);
+    Rec *res = plan_point(e, rec);
+    PBox b;
+    rb_stop(e, &b);
+    if (pc_tank_in(e, &b)) {
+        e->pc_pn += 1;
+        if (hv) hv->p = NULL;
+    } else {
+        PPlan *pp = NEW(e, PPlan);
+        memset(pp, 0, sizeof(*pp));
+        pp->b = b;
+        pp->clr = aims_copy(e, rec->clear);
+        pp->lns = lanes_copy(e, rec->lanes);
+        pp->aims_done = rec->aims_done;
+        pp->wb = rec->wb;
+        if (rec->sm) { pp->sm = *rec->sm; pp->has_sm = 1; }
+        if (res == rec) { pp->plan = rec->plan; pp->extra = rec->extra; }
+        else {
+            Rec *o = NEW(e, Rec);
+            *o = *res;
+            o->clear = NULL; o->lanes = NULL;
+            pp->out = o;
+        }
+        int isnew;
+        HVal *v = hm_put(e->L, &e->job->pls, k1, k2, &isnew);
+        v->p = pp;
+    }
+    e->arp = save;
+    return res;
+}
+
+/* the bytes of an arena's chunks */
+static double ar_bytes(const Arena *a) {
+    double n = 0;
+    for (const Chunk *c = a->head; c; c = c->next) n += (double)c->cap;
+    return n;
+}
+
+/* csig: the inputs of this run that the kept parts read and that are the
+ * same over the run. A change gives other keys (the old parts are not
+ * found). */
+static void cs_add(uint64_t *h, double v) { *h = pt_mix(*h ^ dbits(v)) + 0x9E3779B97F4A7C15ull; }
+static uint64_t pc_csig(Ev *e, int world) {
+    lua_State *L = e->L;
+    uint64_t h = 0x84222325CBF29CE4ull;
+    const double v[] = {
+        e->A, e->finish, e->co, e->lazy, e->chains, e->max_chain, e->link_covers, e->link_clear_front,
+        e->link_cut_min_shots, e->orth_only, e->aim_nudge, e->nudge_step_wu, e->nudge_max_steps,
+        e->pill_range, e->range_margin, e->blocker_min_dist, e->num_pill_blockers, e->pill_drop_shots,
+        e->wall_shots, e->build_max, e->build_cost, e->bar_single, e->bar_chain, e->bar_other,
+        e->aim_nb_on, e->min_lane_brad, e->naims, e->aim9, e->wall_memo, e->wall_memo_max, e->wkey,
+        e->T_BUILDING, e->T_HALFBUILD, e->T_BOAT, e->T_FOREST, e->e_wall_shots, e->e_half_wall_shots,
+        e->e_boat_shots, e->forest_transparent, e->sh_speed, e->sh_add, e->sh_life, e->sh_hit_r,
+        e->pill_len, e->ts_boats, e->no_builder, e->cr_on, e->cr_max, e->cr_stuck, e->bs_on, e->ba_tab,
+        e->n_map, e->n_stay, e->n_std, e->n_bld, e->nb_n, e->st_n, e->ts_life,
+        e->ts_s1, e->ts_slast, e->ts_step, e->ts_hit, e->ps_s1, e->ps_slast, e->ps_step, e->ps_hit,
+        e->has_env_speed, e->env_speed, e->keep_all, e->has_band, e->radius, e->approach_offset
+    };
+    /* world: the run inputs the job's rays, sqm and sqf read (not the
+     * goal pill, finish or the chain skip set) */
+    for (size_t i = world ? 2 : 0; i < sizeof(v) / sizeof(v[0]); i++) cs_add(&h, v[i]);
+    for (int i = 0; i < PT2_TT_N; i++) cs_add(&h, e->std_ok[i]);
+    for (int i = 0; i < e->nb_n; i++) cs_add(&h, e->nb[i]);
+    for (int i = 0; i < 4 * e->st_n; i++) cs_add(&h, e->st_r[i]);
+    if (world) return h;
+    /* the chain skip set (inp.chain_skip): its pills, in any order */
+    uint64_t sk = 0;
+    if (lua_istable(L, S_CHAIN_SKIP)) {
+        lua_pushnil(L);
+        while (lua_next(L, S_CHAIN_SKIP)) {
+            if (lua_toboolean(L, -1) && lua_istable(L, -2)) {
+                int k = pill_index(e, -2);
+                sk += pt_mix((uint64_t)k * 2654435761ull + 17);
+            }
+            lua_pop(L, 1);
+        }
+    }
+    cs_add(&h, (double)(sk >> 11));
+    return h;
+}
+
+static void pc_pill_remap(lua_State *L, Job *j);
+
 static double score_fn(Ev *e, double deg, double mx, double my, double cx, double cy) {
     lua_State *L = e->L;
     lua_pushvalue(L, S_SCORE_FN);
@@ -5864,19 +6171,45 @@ static void points_of_ring__p(Ev *e) {
         double cx = e->pcx + sin(deg * PT2_LUA_RAD) * e->R;
         double cy = e->pcy - cos(deg * PT2_LUA_RAD) * e->R;
         double mx = floor(cx), my = floor(cy);
-        if (in_map(e, mx, my) && stay_in(e, mx, my) && standable(e, mx, my)) {
+        /* PT2_V2_CACHE: the quick filter's answer for this ring point
+         * (bit 1 kept, 2 the point passes, 4 hasA, 8 cant); banned above
+         * stays fresh; a Lua stay_in or standable (no C list) stays fresh */
+        HVal *fv = NULL;
+        int64_t fa = 0;
+        uint64_t fk1 = 0, fk2 = 0;
+        int fon = e->pc_on && e->n_stay && e->n_std;
+        if (fon) {
+            fk1 = pt_mix(e->csig ^ dbits(cx) ^ 0x6a09e667f3bcc909ull);
+            fk2 = pt_mix(dbits(cy) + pt_mix(dbits(e->R) ^ dbits(deg)));
+            fv = hm_find(&e->job->flt, fk1, fk2);
+            if (fv) fa = fv->i;
+        }
+        int pass;
+        if (fa & 1) pass = (fa & 2) != 0;
+        else pass = in_map(e, mx, my) && stay_in(e, mx, my) && standable(e, mx, my);
+        if (pass) {
             e->n_eval += 1;
             PC(C_ring_points, 1);
             double px = floor(cx * 256), py = floor(cy * 256);
-            int hasA = A_in_range(e, px, py);
-            int is_cant = 0;
-            if (hasA) {
-                is_cant = cant(e, e->asets, px, py);
-                if (is_cant) e->cant += 1; else e->survive += 1;
+            int hasA, is_cant = 0;
+            if (fa & 1) { hasA = (fa & 4) != 0; is_cant = (fa & 8) != 0; }
+            else {
+                hasA = A_in_range(e, px, py);
+                if (hasA) is_cant = cant(e, e->asets, px, py);
+            }
+            if (hasA) { if (is_cant) e->cant += 1; else e->survive += 1; }
+            if (fon && !(fa & 1)) {
+                int isnew;
+                HVal *v = hm_put(L, &e->job->flt, fk1, fk2, &isnew);
+                v->i = 1 | 2 | (hasA ? 4 : 0) | (is_cant ? 8 : 0);
             }
             int q = e->np++;
             e->pp_deg[q] = deg; e->pp_cx[q] = cx; e->pp_cy[q] = cy; e->pp_mx[q] = mx; e->pp_my[q] = my;
             e->pp_px[q] = px; e->pp_py[q] = py; e->pp_hasA[q] = hasA; e->pp_cant[q] = is_cant;
+        } else if (fon && !(fa & 1)) {
+            int isnew;
+            HVal *v = hm_put(L, &e->job->flt, fk1, fk2, &isnew);
+            v->i = 1;
         }
     }
 }
@@ -5892,7 +6225,7 @@ static void point_of_ring__p(Ev *e, int q) {
     else {
         int64_t pt_e0 = t_pf ? pf_clock() : 0;
         if (t_pf) { t_pt_tank = 0; t_pt_aim = 0; }
-        rec = eval_point(e, px, py, NULL, 0, 1, 0, e->lazy, &why, &wa);
+        rec = eval_point_pc(e, px, py, 0, 1, e->lazy, &why, &wa);
         if (t_pf) {
             int64_t pt_e1 = pf_clock();
             int64_t pa = t_pt_aim ? t_pt_aim : pt_e1;
@@ -5933,7 +6266,7 @@ static void point_of_ring(Ev *e, int q) { PT_ENTER(C_pt_ring_t); if (t_pf) t_pf-
 /* the full record of a lazy stub q */
 static Rec *full_of__p(Ev *e, Rec *q) {
     int why, wa;
-    Rec *full = eval_point(e, q->px, q->py, NULL, q->aim_idx, 0, 0, 0, &why, &wa);
+    Rec *full = eval_point_pc(e, q->px, q->py, q->aim_idx, 0, 0, &why, &wa);
     if (!full) luaL_error(e->L, "gh_pt2_v2: a lazy point has no full record");
     full->nudge_wu = q->nudge_wu;
     full->deg = q->deg; full->cx = q->cx; full->cy = q->cy; full->mx = q->mx; full->my = q->my;
@@ -5998,7 +6331,7 @@ static int ev_run(Ev *e) {
                     rec = e->cands[e->ci];
                     if (rec->flags & RF_LAZY) { e->singles[++e->nsingles] = rec; continue; }
                     PT_PH(1);
-                    fin = plan_point(e, rec);
+                    fin = plan_point_pc(e, rec);
                     carry(fin, rec);
                     score_of(e, fin);
                     scored_push(e, fin);
@@ -6050,7 +6383,7 @@ static int ev_run(Ev *e) {
                                 full->kmax = kmax; full->flags |= RF_KMAX;
                             }
                         }
-                        if (!fin) fin = plan_point(e, full);
+                        if (!fin) fin = plan_point_pc(e, full);
                         carry(fin, full);
                         score_of(e, fin);
                         scored_push(e, fin);
@@ -6077,7 +6410,7 @@ static int ev_run(Ev *e) {
                     rec = e->order[e->ci];
                     if (e->has_m && rec->base > e->m + e->band) break;
                     PT_PH(3);
-                    fin = plan_point(e, rec);
+                    fin = plan_point_pc(e, rec);
                     carry(fin, rec);
                     score_of(e, fin);
                     rec->done = fin;
@@ -6101,7 +6434,7 @@ static int ev_run(Ev *e) {
                 for (e->ci = 1; e->ci <= e->ncands; e->ci++) {
                     rec = e->cands[e->ci];
                     PT_PH(4);
-                    fin = plan_point(e, rec);
+                    fin = plan_point_pc(e, rec);
                     carry(fin, rec);
                     score_of(e, fin);
                     scored_push(e, fin);
@@ -6185,7 +6518,7 @@ static int ev_run(Ev *e) {
                             if (t_pf && t_pf->pt_ncut < PT_CUT_MAX)
                                 t_pf->pt_cut[t_pf->pt_ncut++] = (1 << 20) + PT_KEY(e, e->singles[e->ci]->deg);
                             Rec *full = full_of(e, e->singles[e->ci]);
-                            fin = plan_point(e, full);
+                            fin = plan_point_pc(e, full);
                             carry(fin, full);
                             if (fin->safe) { e->no_chain = 1; break; }
                         }
@@ -6232,6 +6565,7 @@ static void stat_put(lua_State *L, const char *k, double v) { setnum(L, k, v); }
 
 static void push_result__p(Ev *e) {
     lua_State *L = e->L;
+    if (e->job) e->job->busy = 0;
     e->c->mgen++;
     if (e->c->mgen == 0) e->c->mgen = 1;
     lua_newtable(L);
@@ -6297,6 +6631,14 @@ static void push_result__p(Ev *e) {
     stat_put(L, "leeway_more", e->leeway_more); stat_put(L, "leeway_more_fail", e->leeway_more_fail);
     stat_put(L, "leeway_single", e->leeway_single);
     stat_put(L, "aimnb_moved", e->aimnb_moved);
+    if (e->pc_on) {
+        stat_put(L, "pc_eh", e->pc_eh); stat_put(L, "pc_em", e->pc_em);
+        stat_put(L, "pc_et", e->pc_et); stat_put(L, "pc_en", e->pc_en);
+        stat_put(L, "pc_ph", e->pc_ph); stat_put(L, "pc_pm", e->pc_pm);
+        stat_put(L, "pc_pt", e->pc_pt); stat_put(L, "pc_pn", e->pc_pn);
+        stat_put(L, "pc_bytes", ar_bytes(&e->job->par));
+        stat_put(L, "pc_wdrop", e->pc_wdrop);
+    }
     lua_setfield(L, -2, "stat");
     {
         static const char *tmk[] = { "wedges", "masks", "cast", "aim", "walls", "confirm", "leeway",
@@ -6332,6 +6674,7 @@ static int l_begin__p(lua_State *L) {
     /* 4: the state */
     Ev *e = (Ev *)lua_newuserdata(L, sizeof(Ev));
     memset(e, 0, sizeof(*e));
+    e->arp = &e->ar;
     if (luaL_newmetatable(L, "gh_pt2_v2_ev_mt")) {
         lua_pushcfunction(L, ev_gc);
         lua_setfield(L, -2, "__gc");
@@ -6402,6 +6745,45 @@ static int l_begin__p(lua_State *L) {
     e->L = L; e->c = c;
     Job *j = (Job *)lua_touserdata(L, S_JOB);
     e->job = j;
+    j->busy = 1;
+    /* PT2_V2_CACHE: the point store needs the job's cache table (a group
+     * run) and inp.v2_pcache. The kept job's pills are read again: their
+     * place and health now (pilltake_v2.lua drops the cache table when a
+     * pill the kept parts read has changed). */
+    lua_getfield(L, S_INP, "v2_pcache");
+    e->pc_on = has_cache && lua_toboolean(L, -1);
+    lua_pop(L, 1);
+    lua_getfield(L, S_INP, "_v2_pc_nomemo");
+    e->pc_nomemo = lua_toboolean(L, -1);
+    lua_pop(L, 1);
+    if (e->pc_on) {
+        lua_getfield(L, S_INP, "_v2_cache");
+        if (lua_istable(L, -1)) {
+            lua_getfield(L, -1, "pc_drop_plans");
+            int dp = lua_toboolean(L, -1);
+            lua_pop(L, 1);
+            if (dp) {
+                hm_clear(&j->pls);
+                lua_pushnil(L); lua_setfield(L, -2, "pc_drop_plans");
+            }
+            lua_getfield(L, -1, "pc_max_bytes");
+            double mb = lua_isnumber(L, -1) ? lua_tonumber(L, -1) : 0;
+            lua_pop(L, 1);
+            if (mb > 0 && ar_bytes(&j->par) > mb) {
+                hm_clear(&j->pts); hm_clear(&j->pls); hm_clear(&j->flt);
+                ar_free(&j->par);
+                lua_pushnumber(L, 1);
+                lua_setfield(L, -2, "pc_resets");
+            }
+        }
+        lua_pop(L, 1);
+        pc_pill_remap(L, j);
+        for (int k = 1; k <= j->npills; k++) {
+            lua_rawgeti(L, S_PILLS, k);
+            if (lua_istable(L, -1)) pill_read(L, lua_gettop(L), j->pills[k]);
+            lua_pop(L, 1);
+        }
+    }
     step_reads(e);
     std_setup(e);
     cr_setup(e);
@@ -6451,10 +6833,42 @@ static int l_begin__p(lua_State *L) {
     }
     Pill *A = PI(e, e->A);
     e->pcx = A->mx + 0.5; e->pcy = A->my + 0.5;
-    e->asets = aim_wedges(e, e->A);
     e->lazy = (!e->keep_all) && e->has_band && e->band > 0;
     e->co = e->chains_only;
     if (e->co) e->lazy = 1;
+    if (e->pc_on) {
+        e->csig = pc_csig(e, 0);
+        /* a kept job's rays, square reads and square facts are keyed by
+         * place only: a change of a run input they read (the builder dead
+         * or back, the stay area, a shell rule) drops them */
+        uint64_t ws = pc_csig(e, 1);
+        if (j->wsig_set && j->wsig != ws) {
+            hm_clear(&j->rays); hm_clear(&j->sqm); hm_clear(&j->sqf);
+            j->n_sqf_new = 0;
+            e->pc_wdrop = 1;
+            lua_getfield(L, S_INP, "_v2_cache");
+            if (lua_istable(L, -1)) {
+                static const char *tk[] = { "rays", "sqm", "sqf", NULL };
+                for (int i = 0; tk[i]; i++) {
+                    lua_getfield(L, -1, tk[i]);
+                    if (lua_istable(L, -1)) {
+                        int t = lua_gettop(L);
+                        lua_pushnil(L);
+                        while (lua_next(L, t)) {
+                            lua_pop(L, 1);
+                            lua_pushvalue(L, -1);
+                            lua_pushnil(L);
+                            lua_rawset(L, t);
+                        }
+                    }
+                    lua_pop(L, 1);
+                }
+            }
+            lua_pop(L, 1);
+        }
+        j->wsig = ws; j->wsig_set = 1;
+    }
+    e->asets = aim_wedges(e, e->A);
     step_end(e);
     lua_settop(L, 1);
     return 1;
@@ -6609,7 +7023,101 @@ static int l_slices(lua_State *L) {
     return 1;
 }
 
+/* gh_pt2_v2.area_sig(x0, y0, x1, y1) -> h_terrain, h_forest
+ * PT2_V2_CACHE: two hashes of the raw terrain in a map square box (the
+ * engine map, not the brain's terrain change detector). h_terrain has
+ * each forest square read as grass (a mined forest as a mined grass), so
+ * a forest that is cut or grows does not change it. h_forest has only
+ * the places of the forest squares. nil when there is no world. */
+/* gh_pt2_v2.pc_free(job): PT2_V2_CACHE, a cache entry pilltake_v2.lua
+ * drops: free the job's ring point store now (not at the job's GC, which
+ * can come late: Lua does not see this memory). A busy job keeps it.
+ * Returns true when freed. */
+static int l_pc_free(lua_State *L) {
+    Job *j = (Job *)luaL_checkudata(L, 1, "gh_pt2_v2_job_mt");
+    if (j->freed || j->busy) { lua_pushboolean(L, 0); return 1; }
+    hm_free(&j->pts); hm_free(&j->pls); hm_free(&j->flt);
+    ar_free(&j->par);
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
+/* PT2_V2_CACHE: a kept job meets the pills of a new run as new tables (the
+ * world makes them again). A new table of a placed pill (not in a tank)
+ * takes the index of the job's pill on the same square, so the kept parts
+ * (their pill indices: chains, square reads, rays) name the same pill, and
+ * the re-read and the callbacks (is_ally, cover) see the pill now. */
+static void pc_pill_remap(lua_State *L, Job *j) {
+    if (j->npills <= 0) return;
+    lua_getfield(L, S_INP, "pills");
+    if (!lua_istable(L, -1)) { lua_pop(L, 1); return; }
+    int lst = lua_gettop(L);
+    unsigned char *taken = (unsigned char *)calloc((size_t)j->npills + 1, 1);
+    if (!taken) { lua_pop(L, 1); return; }
+    int n = (int)lua_objlen(L, lst);
+    /* pass 0: the indices of tables the job knows; pass 1: the new tables */
+    for (int pass = 0; pass < 2; pass++)
+    for (int i = 1; i <= n; i++) {
+        lua_rawgeti(L, lst, i);
+        int t = lua_gettop(L);
+        if (lua_istable(L, t)) {
+            lua_pushvalue(L, t);
+            lua_rawget(L, S_PIDX);
+            int known = lua_type(L, -1) == LUA_TNUMBER;
+            if (known && pass == 0) { int k = (int)lua_tonumber(L, -1); if (k >= 1 && k <= j->npills) taken[k] = 1; }
+            lua_pop(L, 1);
+            if (!known && pass == 1) {
+                Pill q; memset(&q, 0, sizeof(q));
+                pill_read(L, t, &q);
+                if (q.has_mx && !q.in_tank) {
+                    for (int k = 1; k <= j->npills; k++) {
+                        const Pill *o = j->pills[k];
+                        if (taken[k] || !o->has_mx || o->in_tank || o->mx != q.mx || o->my != q.my) continue;
+                        taken[k] = 1;
+                        lua_pushvalue(L, t); lua_rawseti(L, S_PILLS, k);
+                        lua_pushvalue(L, t); lua_pushinteger(L, k); lua_rawset(L, S_PIDX);
+                        break;
+                    }
+                }
+            }
+        }
+        lua_pop(L, 1);
+    }
+    free(taken);
+    lua_pop(L, 1);
+}
+
+static int l_area_sig(lua_State *L) {
+    int x0 = (int)luaL_checknumber(L, 1), y0 = (int)luaL_checknumber(L, 2);
+    int x1 = (int)luaL_checknumber(L, 3), y1 = (int)luaL_checknumber(L, 4);
+    lua_getfield(L, LUA_REGISTRYINDEX, "winbolo_world_ptr_ptr");
+    const unsigned char **wpp = (const unsigned char **)lua_touserdata(L, -1);
+    lua_pop(L, 1);
+    if (!wpp || !*wpp) { lua_pushnil(L); return 1; }
+    const unsigned char *w = *wpp;
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    if (x1 > 255) x1 = 255;
+    if (y1 > 255) y1 = 255;
+    uint32_t ht = 2166136261u, hf = 2166136261u;
+    for (int y = y0; y <= y1; y++) {
+        for (int x = x0; x <= x1; x++) {
+            unsigned t = w[y * 256 + x] & 0x0F;
+            if (t == 5 || t == 13) {           /* FOREST, MINE_FOREST */
+                hf = (hf ^ (uint32_t)(y * 256 + x)) * 16777619u;
+                t += 2;                        /* GRASS, MINE_GRASS */
+            }
+            ht = (ht ^ t) * 16777619u;
+        }
+    }
+    lua_pushnumber(L, (double)ht);
+    lua_pushnumber(L, (double)hf);
+    return 2;
+}
+
 static const luaL_Reg gh_pt2_v2_lib[] = {
+    { "area_sig", l_area_sig },
+    { "pc_free", l_pc_free },
     { "begin", l_begin },
     { "step", l_step },
     { "evaluate", l_evaluate },
