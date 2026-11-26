@@ -1479,6 +1479,8 @@ static const UnitTestEntry s_tests[] = {
     { "bot_pool_ds_teams_skip_numbered_custom",  run_bot_pool_ds_teams_skip_numbered_custom  },
     { "bot_pool_ds_teams_skip_numbered_default", run_bot_pool_ds_teams_skip_numbered_default },
     { "bot_pool_ds_start_names_from_pools",      run_bot_pool_ds_start_names_from_pools      },
+    { "bot_pool_ds_start_names_no_team",         run_bot_pool_ds_start_names_no_team         },
+    { "bot_pool_lobby_team_meta_keeps_pool",     run_bot_pool_lobby_team_meta_keeps_pool     },
     { "loopback_brain_docs_survives_bulk_rebase", run_loopback_brain_docs_survives_bulk_rebase },
     { "loopback_map_upload",                     run_loopback_map_upload                     },
     { "loopback_map_change_busy_lifts",          run_loopback_map_change_busy_lifts          },

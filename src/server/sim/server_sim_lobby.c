@@ -999,7 +999,7 @@ uint8_t serverSimPickTeamNamingPool(ServerSim *sim, BYTE teamId, uint32_t choice
 void serverSimDrawStartBotNames(ServerSim *sim, int numBots,
                                 const int *botTeam,
                                 char names[][SERVER_START_BOT_NAME_LEN]) {
-    static char   usedStore[MAX_TANKS][SERVER_START_BOT_NAME_LEN];
+    char          usedStore[MAX_TANKS][SERVER_START_BOT_NAME_LEN];
     const char   *usedNames[MAX_TANKS];
     int           usedCount = 0;
     int           teamPool[MAX_TANKS];
