@@ -3301,8 +3301,18 @@ function Brain.think(info)
   if BRAIN_PROFILE then opt.zone_start("inf") end
 
   -- Populate influence grid (friendly = positive, hostile = negative).
-  -- Rebuilt every tick — it's cheap and consumers expect fresh values.
-  cpf.clear_influence()
+  -- INF_SKIP: rebuilt only when it can change. cpf.inf_stamps_same compares
+  -- the exact stamp list (ids, sides, places, constants) with the last
+  -- think's. The same list means the same stamps and the same tail
+  -- signature, so the tail rebuild below can only be due by
+  -- EXPAND_REFRESH_TICKS. With no rebuild due, the grid left by the last
+  -- think's merge IS this think's grid (nothing else writes it), so the
+  -- clear, the stamps and the merge are skipped. A state field, not a
+  -- local: think is at its upvalue cap.
+  state._inf_skip = cpf.inf_stamps_same(state, world)
+    and not (C.EXPAND_ENABLED
+             and (now - (state._tail_tick or -1e9)) >= (C.EXPAND_REFRESH_TICKS or 250))
+  if not state._inf_skip then cpf.clear_influence() end
   local _inf_bf, _inf_bh, _inf_pf, _inf_ph, _inf_sig = 0, 0, 0, 0, 0
   -- Neutral-pill signature for the influence tail below. Accumulated in the
   -- same pill walk as the friendly/hostile stamps rather than in a second
@@ -3311,10 +3321,10 @@ function Brain.think(info)
   local _nsig = 0
   for id, b in pairs(world.bases) do
     if b.owner == "friendly" then
-      cpf.stamp_influence(b.mx, b.my, C.BASE_INFLUENCE_RADIUS, C.BASE_INFLUENCE_STRENGTH)
+      if not state._inf_skip then cpf.stamp_influence(b.mx, b.my, C.BASE_INFLUENCE_RADIUS, C.BASE_INFLUENCE_STRENGTH) end
       _inf_bf = _inf_bf + 1; _inf_sig = _inf_sig + (id * 131 + 1 + b.mx * 7 + b.my * 13)
     elseif b.owner == "hostile" then
-      cpf.stamp_influence(b.mx, b.my, C.BASE_INFLUENCE_RADIUS, -C.BASE_INFLUENCE_STRENGTH)
+      if not state._inf_skip then cpf.stamp_influence(b.mx, b.my, C.BASE_INFLUENCE_RADIUS, -C.BASE_INFLUENCE_STRENGTH) end
       _inf_bh = _inf_bh + 1; _inf_sig = _inf_sig + (id * 131 + 2 + b.mx * 7 + b.my * 13)
     end
   end
@@ -3324,10 +3334,10 @@ function Brain.think(info)
     -- position differs per ally.)
     if pm.health > 0 and not pm.in_tank then
       if pm.owner == "friendly" then
-        cpf.stamp_influence(pm.mx, pm.my, C.PILL_INFLUENCE_RADIUS, C.PILL_INFLUENCE_STRENGTH)
+        if not state._inf_skip then cpf.stamp_influence(pm.mx, pm.my, C.PILL_INFLUENCE_RADIUS, C.PILL_INFLUENCE_STRENGTH) end
         _inf_pf = _inf_pf + 1; _inf_sig = _inf_sig + (id * 9173 + 1 + pm.mx * 7 + pm.my * 13)
       elseif pm.owner == "hostile" then
-        cpf.stamp_influence(pm.mx, pm.my, C.PILL_INFLUENCE_RADIUS, -C.PILL_INFLUENCE_STRENGTH)
+        if not state._inf_skip then cpf.stamp_influence(pm.mx, pm.my, C.PILL_INFLUENCE_RADIUS, -C.PILL_INFLUENCE_STRENGTH) end
         _inf_ph = _inf_ph + 1; _inf_sig = _inf_sig + (id * 9173 + 2 + pm.mx * 7 + pm.my * 13)
       elseif pm.owner == "neutral" then
         -- No stamp (a neutral pill holds no ground for either side); it only
@@ -3368,6 +3378,8 @@ function Brain.think(info)
       state._tail_rebuilt_tick = now
     end
     if BRAIN_PROFILE then opt.zone("inf", "tail_rebuild") end
+    -- Merged on every think that restamped (INF_SKIP above skips only a
+    -- think whose stamps and tail are both unchanged). Before INF_SKIP:
     -- Merged unconditionally, even when _tsig says the tail is unchanged:
     -- cpf.clear_influence() above wipes influence_grid at the top of EVERY
     -- tick, so the merge is not re-applying an idempotent overlay, it is the
@@ -3376,7 +3388,7 @@ function Brain.think(info)
     -- which brainPathfinderInfluenceTailStats reads to report what the tail
     -- won this tick. Skipping it on an unchanged stamp set would drop the tail
     -- from the grid entirely, so it stays.
-    cpf.merge_influence_tail()
+    if not state._inf_skip then cpf.merge_influence_tail() end
     if BRAIN_PROFILE then opt.zone("inf", "tail_merge") end
     -- What the tail did this rebuild: how much ground each side's tail
     -- covers, how much of it actually won the merge (was not already

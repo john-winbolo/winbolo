@@ -288,6 +288,52 @@ function M.rebuild_influence_tail(seed_min, radius, start, neutral_step, water_s
                              (enemy_tail == false) and 0 or 1)
 end
 function M.merge_influence_tail() cpf_merge_influence_tail() end
+
+--- Influence skip (think, before the stamp loop). The influence grid after
+--- the merge is a function of: the stamps (owner side, place, radius and
+--- strength, in stamp order) and the tail grid. The tail is rebuilt only when
+--- the stamped + neutral pill signature changes or EXPAND_REFRESH_TICKS pass.
+--- This builds the EXACT list of what the stamp loop and the signatures read
+--- (ids, sides, places, the 4 stamp constants, EXPAND_ENABLED), in the same
+--- pairs order the stamp loop walks, and compares it with the last list. True
+--- = the same list: the same stamps in the same order and the same tail
+--- signature, so the grid from the last think is already the grid this think
+--- would make. Two buffers in state are swapped, so no table per think.
+function M.inf_stamps_same(state, world)
+  local cur = state._inf_keys_b or {}
+  local prev = state._inf_keys
+  cur[1] = C.BASE_INFLUENCE_RADIUS; cur[2] = C.BASE_INFLUENCE_STRENGTH
+  cur[3] = C.PILL_INFLUENCE_RADIUS; cur[4] = C.PILL_INFLUENCE_STRENGTH
+  cur[5] = C.EXPAND_ENABLED and 1 or 0
+  local n = 5
+  for id, b in pairs(world.bases) do
+    local o = b.owner
+    if o == "friendly" or o == "hostile" then
+      cur[n + 1] = id; cur[n + 2] = (o == "friendly") and 1 or 2
+      cur[n + 3] = b.mx; cur[n + 4] = b.my
+      n = n + 4
+    end
+  end
+  for id, pm in pairs(world.pills) do
+    if pm.health > 0 and not pm.in_tank then
+      local o = pm.owner
+      local k = (o == "friendly" and 3) or (o == "hostile" and 4) or (o == "neutral" and 5) or nil
+      if k then
+        cur[n + 1] = id; cur[n + 2] = k; cur[n + 3] = pm.mx; cur[n + 4] = pm.my
+        n = n + 4
+      end
+    end
+  end
+  for i = #cur, n + 1, -1 do cur[i] = nil end
+  local same = prev ~= nil and #prev == n
+  if same then
+    for i = 1, n do
+      if prev[i] ~= cur[i] then same = false; break end
+    end
+  end
+  state._inf_keys, state._inf_keys_b = cur, prev
+  return same
+end
 --- Tail value at (x,y) if the tail won the merge there, else 0 (viz).
 function M.influence_tail_at(x, y) return cpf_influence_tail_at(x, y) end
 --- After a merge: tail cells (+,-), cells the tail won (+,-), front cells on
