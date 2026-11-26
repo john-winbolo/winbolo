@@ -540,6 +540,7 @@ static const UnitTestEntry s_tests[] = {
     { "gh_pt2_walk_jump",                            run_gh_pt2_walk_jump                            },
     { "gh_pt2_walk_reuse",                           run_gh_pt2_walk_reuse                           },
     { "gh_pt2_walk_dda",                             run_gh_pt2_walk_dda                             },
+    { "lgm_reach_flood",                             run_lgm_reach_flood                             },
     { "gh_pt2_bench",                            run_gh_pt2_bench                            },
     { "pf_tail_reaches_radius_and_stops",        run_pf_tail_reaches_radius_and_stops        },
     { "pf_tail_blocked_by_wall_and_sea",         run_pf_tail_blocked_by_wall_and_sea         },

@@ -53,6 +53,17 @@
 
 #include "gh_pt2_v2.h"
 #include "gh_pt2_walk.h"
+/* Two engine calls for the C lgm_reach (cr_reach). Declared here, not by
+ * including brain_lua_glue.h / brain_pathfinder.h: those bring windows.h
+ * into this file, whose near/far macros and QueryPerformanceCounter
+ * declaration clash with the names here. Same signatures as there. */
+typedef struct BrainPathfinder BrainPathfinder;
+BrainPathfinder *brainCoreLgmWalkPathfinder(lua_State *L, int idx);
+int brainPathfinderLgmTravelTicksMap(BrainPathfinder *pf,
+                                     unsigned char smx, unsigned char smy,
+                                     unsigned char dmx, unsigned char dmy,
+                                     unsigned char blessX, unsigned char blessY,
+                                     int maxTicks, int stuckTicks);
 
 #include <lauxlib.h>
 #include <math.h>
@@ -237,6 +248,7 @@ enum {
     P_push_result,
     P_push_rec,
     P_lsort,
+    P_lgm_reach_c,
     P_cb_anger_of,
     P_cb_banned,
     P_cb_count_reads,
@@ -320,6 +332,7 @@ static const char *s_pf_name[] = {
     "push_result",
     "push_rec",
     "lsort",
+    "lgm_reach_c",
     "cb_anger_of",
     "cb_banned",
     "cb_count_reads",
@@ -347,6 +360,7 @@ enum {
     C_ts_reuse,
     C_aw_short,
     C_aw_saved,
+    C_reach_c,
     C_N
 };
 static const char *s_pc_name[] = {
@@ -360,7 +374,8 @@ static const char *s_pc_name[] = {
     "steps",
     "ts_reuse",
     "aw_short",
-    "aw_saved"
+    "aw_saved",
+    "reach_c"
 };
 #define PF_DEPTH 64
 typedef struct {
@@ -867,6 +882,9 @@ struct St {
     int    aw_quiet;            /* the check's run of the old aim_wide: no notes */
 #endif
     HMap   reach;           /* reach_cache */
+    /* inp.c_reach (cr_setup): lgm_reach answered here, by the same walk */
+    int    cr_on, cr_max, cr_stuck;
+    BrainPathfinder *cr_pf;
     HMap   lgt;             /* lgm_ticks memo: value 0 = false, else t + 1 */
     HMap   lgt_v;
     /* c_std */
@@ -2970,6 +2988,69 @@ static int list_has(const int64_t *v, int n, int64_t s) {
     return 0;
 }
 
+/* ── inp.c_reach: lgm_reach in C ─────────────────────────────────────
+ * The live inp.lgm_reach (pilltake_v2_old.lua world_inp) is
+ *   |mx - omx| + |my - omy| <= 1, or else
+ *   cpf.lgm_travel_ticks_map(omx, omy, mx, my, 0, 0, max, stuck) ~= -1
+ * and world_inp puts { fn = that function, max, stuck, cpf, wrap } in
+ * inp.c_reach. cr_setup turns the C copy on only while all of these hold:
+ * inp.lgm_reach is still c_reach.fn (a capture or a bench replay puts its
+ * own function there and keeps the callback), cpf.lgm_travel_ticks_map is
+ * still the real wrapper (c_reach.wrap), and the global
+ * cpf_lgm_travel_ticks_map is still braincore's walk. The C then runs the
+ * same walk (brainPathfinderLgmTravelTicksMap) on the same pathfinder, with
+ * no Lua call between, so each answer is the callback's answer. It is
+ * checked again at each step. */
+static void cr_setup(Ev *e) {
+    lua_State *L = e->L;
+    int t0 = lua_gettop(L);
+    e->cr_on = 0;
+    e->cr_pf = NULL;
+    lua_getfield(L, S_INP, "c_reach");
+    if (lua_istable(L, -1)) {
+        int t = lua_gettop(L);
+        lua_getfield(L, t, "fn");                       /* t + 1 */
+        lua_getfield(L, t, "max");                      /* t + 2 */
+        lua_getfield(L, t, "stuck");                    /* t + 3 */
+        lua_getfield(L, t, "wrap");                     /* t + 4 */
+        lua_getfield(L, t, "cpf");                      /* t + 5 */
+        int ok = lua_rawequal(L, t + 1, S_LGM_REACH) && lua_isfunction(L, t + 1)
+            && lua_type(L, t + 2) == LUA_TNUMBER && lua_type(L, t + 3) == LUA_TNUMBER
+            && lua_isfunction(L, t + 4) && lua_istable(L, t + 5);
+        if (ok) {
+            lua_getfield(L, t + 5, "lgm_travel_ticks_map");
+            ok = lua_rawequal(L, -1, t + 4);
+            lua_pop(L, 1);
+        }
+        if (ok) {
+            double mx = lua_tonumber(L, t + 2), st = lua_tonumber(L, t + 3);
+            ok = mx == floor(mx) && st == floor(st) && fabs(mx) < 1e9 && fabs(st) < 1e9;
+            if (ok) { e->cr_max = (int)mx; e->cr_stuck = (int)st; }
+        }
+        if (ok) {
+            lua_getglobal(L, "cpf_lgm_travel_ticks_map");
+            e->cr_pf = brainCoreLgmWalkPathfinder(L, -1);
+            lua_pop(L, 1);
+            e->cr_on = e->cr_pf != NULL;
+        }
+    }
+    lua_settop(L, t0);
+}
+
+/* the C copy of the callback: 1 with *rc set, or 0 = ask the callback
+ * (a square the Lua would not pass to the walk as a map square) */
+static int cr_reach__p(Ev *e, double omx, double omy, double mx, double my, int *rc) {
+    if (!(omx >= 0 && omx <= 255 && omy >= 0 && omy <= 255 && mx >= 0 && mx <= 255
+          && my >= 0 && my <= 255 && omx == floor(omx) && omy == floor(omy)
+          && mx == floor(mx) && my == floor(my))) return 0;
+    PC(C_reach_c, 1);
+    if (fabs(mx - omx) + fabs(my - omy) <= 1) { *rc = 1; return 1; }
+    *rc = brainPathfinderLgmTravelTicksMap(e->cr_pf, (unsigned char)omx, (unsigned char)omy, (unsigned char)mx, (unsigned char)my,
+                                           0, 0, e->cr_max, e->cr_stuck) != -1;
+    return 1;
+}
+static int cr_reach(Ev *e, double omx, double omy, double mx, double my, int *rc) { PB(P_lgm_reach_c); int r_ = cr_reach__p(e, omx, omy, mx, my, rc); PE(); return r_; }
+
 /* slot_ok: may a planned blocker go on square k (0-based) of ray r? */
 static int slot_ok__p(Ev *e, Rec *rec, Ray *r, int k, const Lane *lane, const int64_t *forbid, int nf) {
     lua_State *L = e->L;
@@ -3001,14 +3082,16 @@ static int slot_ok__p(Ev *e, Rec *rec, Ray *r, int k, const Lane *lane, const in
     int rc;
     if (hv) rc = (int)hv->i;
     else {
-        lua_pushvalue(L, S_LGM_REACH);
-        if (om) { lua_pushnumber(L, rec->omx); lua_pushnumber(L, rec->omy); }
-        else { lua_pushnil(L); lua_pushnil(L); }
-        lua_pushnumber(L, mx);
-        lua_pushnumber(L, my);
-        PLC(P_cb_lgm_reach, L, 4, 1);
-        rc = lua_toboolean(L, -1);
-        lua_pop(L, 1);
+        if (!(om && e->cr_on && cr_reach(e, rec->omx, rec->omy, mx, my, &rc))) {
+            lua_pushvalue(L, S_LGM_REACH);
+            if (om) { lua_pushnumber(L, rec->omx); lua_pushnumber(L, rec->omy); }
+            else { lua_pushnil(L); lua_pushnil(L); }
+            lua_pushnumber(L, mx);
+            lua_pushnumber(L, my);
+            PLC(P_cb_lgm_reach, L, 4, 1);
+            rc = lua_toboolean(L, -1);
+            lua_pop(L, 1);
+        }
         int isnew;
         hv = hm_put(L, &e->reach, dbits(rk), 0, &isnew);
         hv->i = rc;
@@ -5922,6 +6005,7 @@ static int l_begin__p(lua_State *L) {
     e->job = j;
     step_reads(e);
     std_setup(e);
+    cr_setup(e);
     ev_read_inp(e);
     e->sl_on = has_ticks;
     e->sl_ticks = ticks; e->sl_slices = 1;
@@ -5987,6 +6071,7 @@ static int l_step__p(lua_State *L) {
     e->L = L;
     e->c = get_ctx(L);
     e->job = (Job *)lua_touserdata(L, S_JOB);
+    cr_setup(e);
     if (e->pc != 0) step_reads(e);
     else {
         /* the first step goes on from the setup's reads */

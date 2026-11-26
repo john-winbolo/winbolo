@@ -875,6 +875,10 @@ end
 function M.lgm_travel_ticks_map(smx, smy, dmx, dmy, bless_mx, bless_my, max_ticks, stuck_ticks)
   return cpf_lgm_travel_ticks_map(smx, smy, dmx, dmy, bless_mx, bless_my, max_ticks, stuck_ticks)
 end
+-- The wrapper above, kept: while M.lgm_travel_ticks_map is still this
+-- function (a test may put its own there), C may run the same walk itself
+-- (pilltake_v2_old.lua world_inp, inp.c_reach).
+M.LGM_TTM_WRAP = M.lgm_travel_ticks_map
 
 --- The SAME walk as lgm_travel_ticks_map, but handing back WHERE the man is
 --- on each tick instead of only how long he takes. `out` is a table the caller

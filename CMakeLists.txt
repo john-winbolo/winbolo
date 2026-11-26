@@ -4576,6 +4576,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_gh_pt2_walk_reuse.c
     # The square change ticks of that walk made by adds, not divisions.
     tests/unit/test_gh_pt2_walk_dda.c
+    # The builder reach flood against the builder walk, on real maps.
+    tests/unit/test_lgm_reach_flood.c
     # BrainTest Load Session next/prev-segment lookup. The finder is plain C
     # and ImGui-free precisely so it can be linked here; the rest of the
     # browser (braintest_loadbrowser.cpp) is not part of this target.
@@ -6063,6 +6065,7 @@ set(_unit_test_names
     gh_pt2_walk_jump
     gh_pt2_walk_reuse
     gh_pt2_walk_dda
+    lgm_reach_flood
     gh_pt2_bench
     pf_tail_reaches_radius_and_stops
     pf_tail_blocked_by_wall_and_sea
