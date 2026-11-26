@@ -3204,6 +3204,15 @@ BrainPathfinder *brainCoreGetPathfinder(lua_State *L) {
   return (ppf != NULL) ? *ppf : NULL;
 }
 
+BrainPathfinder *brainCoreLgmWalkPathfinder(lua_State *L, int idx) {
+  BrainPathfinder **ppf;
+  if (lua_tocfunction(L, idx) != l_cpf_lgm_travel_ticks_map) return NULL;
+  if (lua_getupvalue(L, idx, 1) == NULL) return NULL;
+  ppf = (BrainPathfinder **)lua_touserdata(L, -1);
+  lua_pop(L, 1);
+  return (ppf != NULL) ? *ppf : NULL;
+}
+
 /* ------------------------------------------------------------------ */
 /* C World Simulator Lua wrappers (wsim_* globals)                     */
 /* ------------------------------------------------------------------ */

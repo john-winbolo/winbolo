@@ -3620,7 +3620,9 @@ function Brain.think(info)
   -- Focused spike pairs and spike care (spike.lua, through goals.spike so
   -- think() gets no new upvalue). A no-op with FOCUS_SPIKE_ENABLED and
   -- SPIKE_REPAIR_PRIORITY both off.
+  if BRAIN_PROFILE then opt.zone_start("ptl") end
   goals.spike.update(state, world, info, now)
+  if BRAIN_PROFILE then opt.zone("ptl", "spike.update") end
 
   -- ── Placement trip lifecycle ─────────────────────────────────────────────
   -- state._place_trip is set when a placement request goes out (after
@@ -3764,6 +3766,7 @@ function Brain.think(info)
   -- pathfinder. Moved here (right after danger load) so all downstream
   -- goal evaluation sees fresh overlays — previously ran much later and
   -- A* queries during eval would hit stale impassable stamps from dead pills.
+  if BRAIN_PROFILE then opt.zone("ptl", "trip"); opt.zone_emit("ptl") end
   local t_trip_life = BRAIN_PROFILE and clock_us() or 0
   if BRAIN_PROFILE then
     opt(string.format("  placement trip lifecycle done %.2f ms",
@@ -4181,10 +4184,21 @@ function Brain.think(info)
   if BRAIN_PROFILE then
     opt(string.format("  pillcontrib export done %.2f ms", (t_pillcontrib - t_ally_avoid) / 1000))
   end
+  if BRAIN_PROFILE then opt.zone_start("inf") end
 
   -- Populate influence grid (friendly = positive, hostile = negative).
-  -- Rebuilt every tick — it's cheap and consumers expect fresh values.
-  cpf.clear_influence()
+  -- INF_SKIP: rebuilt only when it can change. cpf.inf_stamps_same compares
+  -- the exact stamp list (ids, sides, places, constants) with the last
+  -- think's. The same list means the same stamps and the same tail
+  -- signature, so the tail rebuild below can only be due by
+  -- EXPAND_REFRESH_TICKS. With no rebuild due, the grid left by the last
+  -- think's merge IS this think's grid (nothing else writes it), so the
+  -- clear, the stamps and the merge are skipped. A state field, not a
+  -- local: think is at its upvalue cap.
+  state._inf_skip = cpf.inf_stamps_same(state, world)
+    and not (C.EXPAND_ENABLED
+             and (now - (state._tail_tick or -1e9)) >= (C.EXPAND_REFRESH_TICKS or 250))
+  if not state._inf_skip then cpf.clear_influence() end
   local _inf_bf, _inf_bh, _inf_pf, _inf_ph, _inf_sig = 0, 0, 0, 0, 0
   -- Neutral-pill signature for the influence tail below. Accumulated in the
   -- same pill walk as the friendly/hostile stamps rather than in a second
@@ -4193,10 +4207,10 @@ function Brain.think(info)
   local _nsig = 0
   for id, b in pairs(world.bases) do
     if b.owner == "friendly" then
-      cpf.stamp_influence(b.mx, b.my, C.BASE_INFLUENCE_RADIUS, C.BASE_INFLUENCE_STRENGTH)
+      if not state._inf_skip then cpf.stamp_influence(b.mx, b.my, C.BASE_INFLUENCE_RADIUS, C.BASE_INFLUENCE_STRENGTH) end
       _inf_bf = _inf_bf + 1; _inf_sig = _inf_sig + (id * 131 + 1 + b.mx * 7 + b.my * 13)
     elseif b.owner == "hostile" then
-      cpf.stamp_influence(b.mx, b.my, C.BASE_INFLUENCE_RADIUS, -C.BASE_INFLUENCE_STRENGTH)
+      if not state._inf_skip then cpf.stamp_influence(b.mx, b.my, C.BASE_INFLUENCE_RADIUS, -C.BASE_INFLUENCE_STRENGTH) end
       _inf_bh = _inf_bh + 1; _inf_sig = _inf_sig + (id * 131 + 2 + b.mx * 7 + b.my * 13)
     end
   end
@@ -4206,10 +4220,10 @@ function Brain.think(info)
     -- position differs per ally.)
     if pm.health > 0 and not pm.in_tank then
       if pm.owner == "friendly" then
-        cpf.stamp_influence(pm.mx, pm.my, C.PILL_INFLUENCE_RADIUS, C.PILL_INFLUENCE_STRENGTH)
+        if not state._inf_skip then cpf.stamp_influence(pm.mx, pm.my, C.PILL_INFLUENCE_RADIUS, C.PILL_INFLUENCE_STRENGTH) end
         _inf_pf = _inf_pf + 1; _inf_sig = _inf_sig + (id * 9173 + 1 + pm.mx * 7 + pm.my * 13)
       elseif pm.owner == "hostile" then
-        cpf.stamp_influence(pm.mx, pm.my, C.PILL_INFLUENCE_RADIUS, -C.PILL_INFLUENCE_STRENGTH)
+        if not state._inf_skip then cpf.stamp_influence(pm.mx, pm.my, C.PILL_INFLUENCE_RADIUS, -C.PILL_INFLUENCE_STRENGTH) end
         _inf_ph = _inf_ph + 1; _inf_sig = _inf_sig + (id * 9173 + 2 + pm.mx * 7 + pm.my * 13)
       elseif pm.owner == "neutral" then
         -- No stamp (a neutral pill holds no ground for either side); it only
@@ -4218,6 +4232,7 @@ function Brain.think(info)
       end
     end
   end
+  if BRAIN_PROFILE then opt.zone("inf", "stamps") end
   -- INF_CHANGE: fire only on ticks where the stamped set (and thus the grid)
   -- actually changes. sig is position-sensitive, so two allies with identical
   -- grids share a sig — diff the fire-tick across allies to see convergence lag.
@@ -4253,6 +4268,9 @@ function Brain.think(info)
         now, _tsig, C.EXPAND_DEEP_MARGIN or 0, tostring(C.INFLUENCE_ENEMY_TAIL ~= false),
         (clock_us() - _t_tail) / 1000))
     end
+    if BRAIN_PROFILE then opt.zone("inf", "tail_rebuild") end
+    -- Merged on every think that restamped (INF_SKIP above skips only a
+    -- think whose stamps and tail are both unchanged). Before INF_SKIP:
     -- Merged unconditionally, even when _tsig says the tail is unchanged:
     -- cpf.clear_influence() above wipes influence_grid at the top of EVERY
     -- tick, so the merge is not re-applying an idempotent overlay, it is the
@@ -4261,7 +4279,8 @@ function Brain.think(info)
     -- which brainPathfinderInfluenceTailStats reads to report what the tail
     -- won this tick. Skipping it on an unchanged stamp set would drop the tail
     -- from the grid entirely, so it stays.
-    cpf.merge_influence_tail()
+    if not state._inf_skip then cpf.merge_influence_tail() end
+    if BRAIN_PROFILE then opt.zone("inf", "tail_merge") end
     -- What the tail did this rebuild: how much ground each side's tail
     -- covers, how much of it actually won the merge (was not already
     -- stamped), and the front line -- sign-change cells -- on the stamps
@@ -4329,6 +4348,7 @@ function Brain.think(info)
       print2(string.format("KWDIAG t=%s pn=%s B[%s] P[%s]", tostring(now), tostring(info.player_number), table.concat(_bp, ","), table.concat(_pp, ",")))
     end
   end
+  if BRAIN_PROFILE then opt.zone("inf", "rest"); opt.zone_emit("inf") end
   local t_influence = BRAIN_PROFILE and clock_us() or 0
   if BRAIN_PROFILE then
     opt(string.format("  influence stamp done %.2f ms", (t_influence - t_pillcontrib) / 1000))

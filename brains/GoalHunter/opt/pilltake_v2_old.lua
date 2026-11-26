@@ -1064,9 +1064,20 @@ function M.world_inp(world, C, U, PC, cpf, inp, no_builder)
   else
     inp.c_std = nil
   end
+  local reach_max, reach_stuck = 2000, 150
   inp.lgm_reach = function(omx, omy, mx, my)
     if abs(mx - omx) + abs(my - omy) <= 1 then return true end
-    return cpf.lgm_travel_ticks_map(omx, omy, mx, my, 0, 0, 2000, 150) ~= -1
+    return cpf.lgm_travel_ticks_map(omx, omy, mx, my, 0, 0, reach_max, reach_stuck) ~= -1
+  end
+  -- inp.c_reach: gh_pt2_v2.c answers lgm_reach itself, by the same walk
+  -- with the same numbers, while inp.lgm_reach is still fn and
+  -- cpf.lgm_travel_ticks_map is still the real wrapper (cr_setup). The
+  -- answers are the same; there is only no Lua call for each one.
+  if cpf.LGM_TTM_WRAP and rawequal(cpf.lgm_travel_ticks_map, cpf.LGM_TTM_WRAP) then
+    inp.c_reach = { fn = inp.lgm_reach, max = reach_max, stuck = reach_stuck,
+                    cpf = cpf, wrap = cpf.LGM_TTM_WRAP }
+  else
+    inp.c_reach = nil
   end
   return inp
 end

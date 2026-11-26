@@ -34,6 +34,8 @@ local print2  = require("print2")
 local clock_us = clock_us or function() return 0 end
 
 local M = {}
+-- Leaf zone timers for the profile (BRAIN_PROFILE only, optimize.zone*).
+local OPT = require("optimize")
 
 -- Sparse grids: only tiles near threat sources get entries.
 -- M.pill_grid[mkey]  = pill threat value
@@ -778,6 +780,7 @@ end
 M.rebuilt_this_tick = false
 
 function M.update(state, world, info)
+  if BRAIN_PROFILE then OPT.zone_start("tu") end
   M.rebuilt_this_tick = false
   -- Check if pill grid needs rebuilding
   if not M.pill_dirty then
@@ -791,6 +794,7 @@ function M.update(state, world, info)
   if _terrain_mult == nil then
     rebuild_terrain_factors()
   end
+  if BRAIN_PROFILE then OPT.zone("tu", "dirty") end
 
   -- Consume terrain changes (must happen regardless of dirty flag).
   -- gh_threat.terrain_update_around handles the 5-tile cross internally
@@ -840,6 +844,7 @@ function M.update(state, world, info)
       end
     end
   end
+  if BRAIN_PROFILE then OPT.zone("tu", "terrain_changes") end
   for idx = #tc, 1, -1 do tc[idx] = nil end
 
   -- A script that changes PILL_DANGER_MULT (cfg=) on a running brain needs
@@ -856,6 +861,7 @@ function M.update(state, world, info)
     gh_threat.pill_rebuild_begin()
     -- Clear per-pill contributions; stamp_pill repopulates them.
     for k in pairs(M.pill_contrib) do M.pill_contrib[k] = nil end
+    if BRAIN_PROFILE then OPT.zone("tu", "rb_clear") end
     local _t_clear = clock_us() - _t0
     -- Pass 1: stamp raw danger from each pill into C-side arrays.
     -- coverage is now also C-side (s_cov_grid_c) — no Lua table needed.
@@ -872,6 +878,7 @@ function M.update(state, world, info)
         fp_n = fp_n + 1; _fp_mx[fp_n] = pm.mx; _fp_my[fp_n] = pm.my
       end
     end
+    if BRAIN_PROFILE then OPT.zone("tu", "rb_stamp") end
     local _t_stamp = clock_us() - _t_stamp0
     -- Direct diagnostic line: write to optimize.log so we can see the
     -- subsection breakdown without needing print2 enabled.
@@ -883,11 +890,13 @@ function M.update(state, world, info)
         f:close()
       end
     end
+    if BRAIN_PROFILE then OPT.zone("tu", "rb_diag_io") end
     -- Pass 2: apply LOS occlusion in C (reads/writes s_pill_grid_c directly).
     -- Lua fallback: apply_occlusion_to_pill (kept below) for debugging.
     local _t_occl0 = clock_us()
     gh_threat.apply_occlusion_all(M.pill_contrib,
       _fp_mx, _fp_my, fp_n, _hp_mx, _hp_my, hp_n)
+    if BRAIN_PROFILE then OPT.zone("tu", "rb_occl") end
     local _t_occl = clock_us() - _t_occl0
     if BRAIN_PROFILE_LOG then
       local f = io.open((_G.DEBUG_SESSION_DIR or ".") .. "/optimize.log", "a")
@@ -896,6 +905,7 @@ function M.update(state, world, info)
         f:close()
       end
     end
+    if BRAIN_PROFILE then OPT.zone("tu", "rb_diag_io") end
 
     -- Pass 3: crossfire multiplier — multiply each tile by its coverage count.
     -- Done in C on s_pill_grid_c; no Lua table iteration.
@@ -903,6 +913,7 @@ function M.update(state, world, info)
     if C.CROSSFIRE_MULTIPLIER_ENABLED then
       gh_threat.apply_crossfire()
     end
+    if BRAIN_PROFILE then OPT.zone("tu", "rb_xfire") end
     local _t_cov = clock_us() - _t_cov0
 
     snapshot_pills(world)
@@ -910,6 +921,7 @@ function M.update(state, world, info)
     M.rebuilt_this_tick = true
     M.last_rebuild_tick = state.tick or 0
     -- Sync C-side pill_grid/cov_grid into gh_attack's arrays (memcpy).
+    if BRAIN_PROFILE then OPT.zone("tu", "rb_sync") end
     if gh_attack then gh_attack.sync_grids() end
 
     -- Per-section timing breakdown for diagnosing slow rebuilds. Only
@@ -935,6 +947,7 @@ function M.update(state, world, info)
       stamp_tank(omx, omy)
     end
   end
+  if BRAIN_PROFILE then OPT.zone("tu", "tanks"); OPT.zone_emit("tu") end
 end
 
 -- -------------------------------------------------------------------------

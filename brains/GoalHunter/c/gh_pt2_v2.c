@@ -53,6 +53,17 @@
 
 #include "gh_pt2_v2.h"
 #include "gh_pt2_walk.h"
+/* Two engine calls for the C lgm_reach (cr_reach). Declared here, not by
+ * including brain_lua_glue.h / brain_pathfinder.h: those bring windows.h
+ * into this file, whose near/far macros and QueryPerformanceCounter
+ * declaration clash with the names here. Same signatures as there. */
+typedef struct BrainPathfinder BrainPathfinder;
+BrainPathfinder *brainCoreLgmWalkPathfinder(lua_State *L, int idx);
+int brainPathfinderLgmTravelTicksMap(BrainPathfinder *pf,
+                                     unsigned char smx, unsigned char smy,
+                                     unsigned char dmx, unsigned char dmy,
+                                     unsigned char blessX, unsigned char blessY,
+                                     int maxTicks, int stuckTicks);
 
 #include <lauxlib.h>
 #include <math.h>
@@ -237,6 +248,7 @@ enum {
     P_push_result,
     P_push_rec,
     P_lsort,
+    P_lgm_reach_c,
     P_cb_anger_of,
     P_cb_banned,
     P_cb_count_reads,
@@ -320,6 +332,7 @@ static const char *s_pf_name[] = {
     "push_result",
     "push_rec",
     "lsort",
+    "lgm_reach_c",
     "cb_anger_of",
     "cb_banned",
     "cb_count_reads",
@@ -347,6 +360,47 @@ enum {
     C_ts_reuse,
     C_aw_short,
     C_aw_saved,
+    C_reach_c,
+    /* the tank shot walk split (tank_shot_walk_angle, log only): counts
+     * of every walk, and the zw_ns_* sums of the sampled walks (1 in
+     * ZW_SAMPLE), as TSC ticks here and ns in prof_take */
+    C_zw_walks,
+    C_zw_jump,
+    C_zw_ticks,
+    C_zw_tank_walks,   /* walks with other tanks in the evaluate */
+    C_zw_tank_kept,    /* tanks the path box kept, summed */
+    C_zw_tank_none,    /* walks with tanks where the box kept none */
+    C_zw_lane_out,
+    C_zw_boats,
+    C_zw_extra_walks,
+    C_zw_extra_n,
+    C_zw_extra_find,
+    C_zw_extra_scan,
+    C_zw_bs_calls,
+    C_zw_bs_lua,
+    C_zw_nl,
+    C_zw_why_ok,
+    C_zw_why_short,
+    C_zw_why_wall,
+    C_zw_why_pill,
+    C_zw_why_base,
+    C_zw_why_planned,
+    C_zw_why_boat,
+    C_zw_why_tank,
+    C_zw_smp,
+    C_zw_smp_jump,
+    C_zw_out,
+    C_zw_ns_out,
+    C_zw_ns_setup,
+    C_zw_ns_reserve,
+    C_zw_ns_loop,
+    C_zw_ns_loop_jump,
+    C_zw_ns_after,
+    C_zw_ns_whole,
+    C_zw_ns_timer,
+    C_zw_ns_qpc,
+    C_zw_ns_rewalk,
+    C_zw_tsc_mhz,
     C_N
 };
 static const char *s_pc_name[] = {
@@ -360,8 +414,47 @@ static const char *s_pc_name[] = {
     "steps",
     "ts_reuse",
     "aw_short",
-    "aw_saved"
+    "aw_saved",
+    "reach_c",
+    "zw_walks",
+    "zw_jump",
+    "zw_ticks",
+    "zw_tank_walks",
+    "zw_tank_kept",
+    "zw_tank_none",
+    "zw_lane_out",
+    "zw_boats",
+    "zw_extra_walks",
+    "zw_extra_n",
+    "zw_extra_find",
+    "zw_extra_scan",
+    "zw_bs_calls",
+    "zw_bs_lua",
+    "zw_nl",
+    "zw_why_ok",
+    "zw_why_short",
+    "zw_why_wall",
+    "zw_why_pill",
+    "zw_why_base",
+    "zw_why_planned",
+    "zw_why_boat",
+    "zw_why_tank",
+    "zw_smp",
+    "zw_smp_jump",
+    "zw_out",
+    "zw_ns_out",
+    "zw_ns_setup",
+    "zw_ns_reserve",
+    "zw_ns_loop",
+    "zw_ns_loop_jump",
+    "zw_ns_after",
+    "zw_ns_whole",
+    "zw_ns_timer",
+    "zw_ns_qpc",
+    "zw_ns_rewalk",
+    "zw_tsc_mhz"
 };
+typedef char pt2_pc_names_ok[(sizeof(s_pc_name) / sizeof(s_pc_name[0]) == C_N) ? 1 : -1];
 #define PF_DEPTH 64
 typedef struct {
     int     on;
@@ -371,6 +464,8 @@ typedef struct {
     int64_t tk[P_N];
     double  n[P_N];
     double  cnt[C_N];
+    uint64_t zw_n;              /* walks seen, for the 1 in ZW_SAMPLE pick */
+    int64_t  zw_tsc0, zw_qpc0;  /* the TSC calibration start */
 } Pt2Prof;
 #if defined(_WIN32)
 __declspec(dllimport) int __stdcall QueryPerformanceCounter(long long *count);
@@ -396,6 +491,23 @@ static double pf_tick_us(void) { return 1e-3; }
 #define PF_TLS __thread
 #endif
 static PF_TLS Pt2Prof *t_pf;
+/* The walk split timer: the TSC on x86 (a few ns a read), else pf_clock.
+ * prof_take turns the TSC sums to ns by the TSC rate against pf_clock
+ * since the first sample. */
+#define ZW_SAMPLE 64
+#define ZW_OUT_TSC 100000   /* TSC ticks: about 22 us at 4.6 GHz */
+#if defined(_MSC_VER) && (defined(_M_X64) || defined(_M_IX86))
+#include <intrin.h>
+#define ZW_TSC() ((int64_t)__rdtsc())
+#define ZW_HAS_TSC 1
+#elif defined(__x86_64__) || defined(__i386__)
+#include <x86intrin.h>
+#define ZW_TSC() ((int64_t)__rdtsc())
+#define ZW_HAS_TSC 1
+#else
+#define ZW_TSC() pf_clock()
+#define ZW_HAS_TSC 0
+#endif
 static void pf_push(int s) {
     Pt2Prof *p = t_pf;
     p->n[s] += 1;
@@ -841,6 +953,11 @@ struct St {
     double sh_speed, sh_add, sh_life, sh_hit_r, pill_len;
     int    ts_boats, ts_nt;
     double ts_t[2 * PT2_TS_MAX_TANKS];
+    /* the tanks one tank shot walk tests: the ones in its path box
+     * (tank_shot_walk_angle__p), ts_wn of them at ts_wt */
+    int    ts_wn;
+    const double *ts_wt;
+    double ts_f[2 * PT2_TS_MAX_TANKS];
     int    om_set, om_sent;
     double omx, omy, sent_omx, sent_omy;
     /* ctx */
@@ -867,6 +984,9 @@ struct St {
     int    aw_quiet;            /* the check's run of the old aim_wide: no notes */
 #endif
     HMap   reach;           /* reach_cache */
+    /* inp.c_reach (cr_setup): lgm_reach answered here, by the same walk */
+    int    cr_on, cr_max, cr_stuck;
+    BrainPathfinder *cr_pf;
     HMap   lgt;             /* lgm_ticks memo: value 0 = false, else t + 1 */
     HMap   lgt_v;
     /* c_std */
@@ -1313,6 +1433,7 @@ static int pill_on(Ev *e, double mx, double my) {
 
 static int base_stops(Ev *e, double mx, double my) {
     lua_State *L = e->L;
+    PC(C_zw_bs_calls, 1);
     if (!e->bs_on) return 0;
     if (e->ba_tab) {
         double key = my * 256 + mx;
@@ -1328,6 +1449,7 @@ static int base_stops(Ev *e, double mx, double my) {
         }
         if (!has) return 0;
     }
+    PC(C_zw_bs_lua, 1);
     e->unc_n += 1;
     sync_om(e);
     return call_b2(e, S_BASE_STOPS, mx, my);
@@ -1496,8 +1618,9 @@ static Ray *cast_walk(Ev *e, Arena *a, double sx, double sy, double tx, double t
 /* ── shadow.tank_shot ───────────────────────────────────────────────── */
 static int ts_tank_hit(const Ev *e, double x, double y) {
     double r = e->sh_hit_r, r2 = r * r;
-    for (int i = 0; i < e->ts_nt; i++) {
-        double dx = x - e->ts_t[2 * i], dy = y - e->ts_t[2 * i + 1];
+    const double *t = e->ts_wt;
+    for (int i = 0; i < e->ts_wn; i++) {
+        double dx = x - t[2 * i], dy = y - t[2 * i + 1];
         if (dx < r && dx > -r && dy < r && dy > -r && dx * dx + dy * dy < r2) return 1;
     }
     return 0;
@@ -1562,7 +1685,7 @@ static int ts_walk_ticks(Ev *e, Walk *w, double n, double omx, double omy, doubl
                 if (pill_on(e, mx, my)) { why = TS_PILL; break; }
             }
         }
-        if (e->ts_nt > 0 && ts_tank_hit(e, w->x, w->y)) { why = TS_TANK; break; }
+        if (e->ts_wn > 0 && ts_tank_hit(e, w->x, w->y)) { why = TS_TANK; break; }
         if (new_sq) {
             if (extra_find(extra, (int64_t)sq) >= 0) { why = TS_PLANNED; break; }
             double tt = ttype(e, mx, my);
@@ -1883,12 +2006,120 @@ static void ts_key(const Ev *e, double ox, double oy, double angle, double tmx, 
     k->gen = e->c->gen; k->serial = serial;
 }
 
+/* The walk split (log only, profiler on): the counts of every walk, and
+ * the parts' TSC ticks of a sampled walk (zs): setup (lane reserve to
+ * the origin square; reserve is the lane_reserve part of it), loop (the walk), after (the reuse key and the
+ * lane cut), whole (all three), timer (an empty pair of TSC reads),
+ * qpc (one pf_clock, the zone profiler's timer) and rewalk (the stamp
+ * reads of the lane's squares again, warm: memory reads only). The
+ * extra_find calls of a walk come from its stop: one per lane square
+ * past the pill test. Nothing here changes a read, a stamp or a call. */
+static volatile uint32_t zw_sink;
+static void zw_note(Ev *e, Pt2Prof *p, int zs, int64_t z0, int64_t zr, int64_t z1, int64_t z2, int jump, int why,
+                    int nl, const int64_t *lane, const Extra *extra, int lane_out) {
+    int64_t z3 = zs ? ZW_TSC() : 0;
+    double *k = p->cnt;
+    k[C_zw_walks] += 1;
+    k[jump ? C_zw_jump : C_zw_ticks] += 1;
+    if (e->ts_nt > 0) {
+        k[C_zw_tank_walks] += 1;
+        k[C_zw_tank_kept] += e->ts_wn;
+        if (e->ts_wn == 0) k[C_zw_tank_none] += 1;
+    }
+    if (lane_out) k[C_zw_lane_out] += 1;
+    if (e->ts_boats) k[C_zw_boats] += 1;
+    k[C_zw_nl] += nl;
+    int nf = nl - (why == TS_PILL ? 1 : 0);
+    if (nf < 0) nf = 0;
+    k[C_zw_extra_find] += nf;
+    if (extra) {
+        k[C_zw_extra_walks] += 1;
+        k[C_zw_extra_n] += extra->n;
+        k[C_zw_extra_scan] += (double)nf * extra->n;
+    }
+    switch (why) {
+    case TS_OK: k[C_zw_why_ok] += 1; break;
+    case TS_SHORT: k[C_zw_why_short] += 1; break;
+    case TS_WALL: k[C_zw_why_wall] += 1; break;
+    case TS_PILL: k[C_zw_why_pill] += 1; break;
+    case TS_BASE: k[C_zw_why_base] += 1; break;
+    case TS_PLANNED: k[C_zw_why_planned] += 1; break;
+    case TS_BOAT: k[C_zw_why_boat] += 1; break;
+    case TS_TANK: k[C_zw_why_tank] += 1; break;
+    default: break;
+    }
+    if (!zs) return;
+    if (!p->zw_tsc0) { p->zw_tsc0 = ZW_TSC(); p->zw_qpc0 = pf_clock(); }
+    /* a sample longer than ZW_OUT_TSC (a thread switch, a page fault
+     * storm) goes to zw_out / zw_ns_out, not to the parts */
+    if (z3 - z0 > ZW_OUT_TSC) { k[C_zw_out] += 1; k[C_zw_ns_out] += (double)(z3 - z0); return; }
+    k[C_zw_smp] += 1;
+    k[C_zw_ns_setup] += (double)(z1 - z0);
+    k[C_zw_ns_reserve] += (double)(zr - z0);
+    k[C_zw_ns_loop] += (double)(z2 - z1);
+    if (jump) { k[C_zw_smp_jump] += 1; k[C_zw_ns_loop_jump] += (double)(z2 - z1); }
+    k[C_zw_ns_after] += (double)(z3 - z2);
+    k[C_zw_ns_whole] += (double)(z3 - z0);
+    int64_t ta = ZW_TSC(), tb = ZW_TSC();
+    k[C_zw_ns_timer] += (double)(tb - ta);
+    ta = ZW_TSC(); (void)pf_clock(); tb = ZW_TSC();
+    k[C_zw_ns_qpc] += (double)(tb - ta);
+    {
+        const Pt2Ctx *c = e->c;
+        int m = nl < PT2_MAX_T ? nl : PT2_MAX_T;
+        uint32_t acc = 0;
+        ta = ZW_TSC();
+        for (int i = 0; i < m; i++) {
+            int q = (int)(lane[i] & (PT2_MAP_SQ - 1));
+            acc += c->po_stamp[q] + c->tt_stamp[q] + c->ba_stamp[q] + (uint32_t)c->po_val[q];
+        }
+        tb = ZW_TSC();
+        zw_sink = acc;
+        k[C_zw_ns_rewalk] += (double)(tb - ta);
+    }
+}
+
+/* The tanks a tank shot walk can hit: the ones whose place is inside the
+ * box of the walk's path, made bigger by the hit radius. walk_step moves
+ * the shell by floor(t * xs / 256) after t ticks (the carry is exact on
+ * the integer path, and within a rounding on the other), so every place
+ * the walk tests lies between x0 and x0 + n * xs / 256 (and the same in
+ * y). A tank further than the hit radius from that box fails ts_tank_hit's
+ * |dx| < r or |dy| < r test on every tick, so leaving it out changes no
+ * walk. The box has 2 more world units each side for the rounding. With
+ * no tank left, the walk can take the jump walk, which is exact when no
+ * tank is tested. A life that is not a finite number keeps every tank. */
+static void ts_path_box(Ev *e, const Walk *w, double n) {
+    e->ts_wt = e->ts_t;
+    e->ts_wn = e->ts_nt;
+    if (e->ts_nt <= 0 || !(n >= 0 && n <= 1e6)) return;
+    double x0 = w->x, y0 = w->y;
+    double x1 = x0 + n * w->xs / 256, y1 = y0 + n * w->ys / 256;
+    double m = e->sh_hit_r + 2;
+    double xlo = (x0 < x1 ? x0 : x1) - m, xhi = (x0 < x1 ? x1 : x0) + m;
+    double ylo = (y0 < y1 ? y0 : y1) - m, yhi = (y0 < y1 ? y1 : y0) + m;
+    int k = 0;
+    for (int i = 0; i < e->ts_nt; i++) {
+        double tx = e->ts_t[2 * i], ty = e->ts_t[2 * i + 1];
+        /* a NaN place fails both tests and is kept */
+        if (tx < xlo || tx > xhi || ty < ylo || ty > yhi) continue;
+        e->ts_f[2 * k] = tx; e->ts_f[2 * k + 1] = ty; k++;
+    }
+    e->ts_wt = e->ts_f;
+    e->ts_wn = k;
+}
+
 /* shadow.tank_shot_angle: the shot at gun angle angle (brad, float). */
 static int tank_shot_walk_angle__p(Ev *e, double ox, double oy, double angle, double tmx, double tmy,
                                 const Extra *extra, Lane **lane_out) {
+    /* the walk split (log only, profiler on): 1 walk in ZW_SAMPLE is timed */
+    Pt2Prof *zp = t_pf;
+    int zs = zp && ((++zp->zw_n) % ZW_SAMPLE) == 0;
+    int64_t z0 = zs ? ZW_TSC() : 0, z1 = 0, z2 = 0, zr;
     int64_t lane_tmp[PT2_MAX_T];
     LaneRes lres;
     int64_t *lane = lane_out ? lane_reserve(e, &lres) : lane_tmp;
+    zr = zs ? ZW_TSC() : 0;
     angle = f32(angle);
     e->ts_last_angle = angle;
     double xa, ya, xs, ys;
@@ -1904,8 +2135,10 @@ static int tank_shot_walk_angle__p(Ev *e, double ox, double oy, double angle, do
     int nl, why;
     TsStop st;
     double tt0 = e->tt_hits, tm0 = e->tt_miss_n, unc0 = e->unc_n;
+    ts_path_box(e, &w, n);
     /* n <= PT2W_MAX_T is false for a NaN life (no ticks either way). */
-    int jump = w.fast && e->ts_nt <= 0 && n <= PT2W_MAX_T;
+    int jump = w.fast && e->ts_wn <= 0 && n <= PT2W_MAX_T;
+    if (zs) z1 = ZW_TSC();
 #if PT2_WALK_CHECK
     {
         int64_t lane2[PT2_MAX_T];
@@ -1914,15 +2147,26 @@ static int tank_shot_walk_angle__p(Ev *e, double ox, double oy, double angle, do
         Walk w2 = w;
         if (!s_wc.started) { s_wc.started = 1; s_wc.wall0 = wc_wall(); s_wc.tsc0 = wc_tsc(); atexit(wc_report); }
         s_wc.walks++;
-        if (jump) {
+        /* the walk made (jump, or ticks with the path box's tanks) against
+         * the per-tick walk with every tank (ts_path_box off) */
+        int boxed = e->ts_wn != e->ts_nt;
+        const double *wt = e->ts_wt; int wn = e->ts_wn;
+#define WC_REF() (e->ts_wt = e->ts_t, e->ts_wn = e->ts_nt, \
+        why2 = ts_walk_ticks(e, &w2, n, omx, omy, tmx, tmy, extra, lane2, &nl2, &st2), \
+        e->ts_wt = wt, e->ts_wn = wn)
+#define WC_RUN() (jump ? ts_walk_jump(e, &w, (int32_t)n, omx, omy, tmx, tmy, extra, lane, &nl, &st) \
+                       : ts_walk_ticks(e, &w, n, omx, omy, tmx, tmy, extra, lane, &nl, &st))
+        if (jump || boxed) {
             uint64_t a0, a1, b0, b1;
             if (s_wc.walks & 1) {
-                b0 = wc_tsc(); why = ts_walk_jump(e, &w, (int32_t)n, omx, omy, tmx, tmy, extra, lane, &nl, &st); b1 = wc_tsc();
-                a0 = wc_tsc(); why2 = ts_walk_ticks(e, &w2, n, omx, omy, tmx, tmy, extra, lane2, &nl2, &st2); a1 = wc_tsc();
+                b0 = wc_tsc(); why = WC_RUN(); b1 = wc_tsc();
+                a0 = wc_tsc(); WC_REF(); a1 = wc_tsc();
             } else {
-                a0 = wc_tsc(); why2 = ts_walk_ticks(e, &w2, n, omx, omy, tmx, tmy, extra, lane2, &nl2, &st2); a1 = wc_tsc();
-                b0 = wc_tsc(); why = ts_walk_jump(e, &w, (int32_t)n, omx, omy, tmx, tmy, extra, lane, &nl, &st); b1 = wc_tsc();
+                a0 = wc_tsc(); WC_REF(); a1 = wc_tsc();
+                b0 = wc_tsc(); why = WC_RUN(); b1 = wc_tsc();
             }
+#undef WC_REF
+#undef WC_RUN
             s_wc.tsc_ticks += a1 - a0; s_wc.tsc_jump += b1 - b0;
             s_wc.compared++;
             int same = why == why2 && nl == nl2 && st.t == st2.t && st.mx == st2.mx && st.my == st2.my;
@@ -1953,6 +2197,7 @@ static int tank_shot_walk_angle__p(Ev *e, double ox, double oy, double angle, do
     if (jump) why = ts_walk_jump(e, &w, (int32_t)n, omx, omy, tmx, tmy, extra, lane, &nl, &st);
     else why = ts_walk_ticks(e, &w, n, omx, omy, tmx, tmy, extra, lane, &nl, &st);
 #endif
+    if (zs) z2 = ZW_TSC();
     /* Kept for the reuse: a walk again with the same key reads the same
      * squares, all from the stamps (every read here was stamped), so it
      * would add this walk's ttype reads to tt_hits and stop the same way. */
@@ -1973,6 +2218,7 @@ static int tank_shot_walk_angle__p(Ev *e, double ox, double oy, double angle, do
         if (l) s_dc.lane_ok++;
 #endif
     }
+    if (zp) zw_note(e, zp, zs, z0, zr, z1, z2, jump, why, nl, lane, extra, lane_out != NULL);
     return why;
 }
 
@@ -2970,6 +3216,69 @@ static int list_has(const int64_t *v, int n, int64_t s) {
     return 0;
 }
 
+/* ── inp.c_reach: lgm_reach in C ─────────────────────────────────────
+ * The live inp.lgm_reach (pilltake_v2_old.lua world_inp) is
+ *   |mx - omx| + |my - omy| <= 1, or else
+ *   cpf.lgm_travel_ticks_map(omx, omy, mx, my, 0, 0, max, stuck) ~= -1
+ * and world_inp puts { fn = that function, max, stuck, cpf, wrap } in
+ * inp.c_reach. cr_setup turns the C copy on only while all of these hold:
+ * inp.lgm_reach is still c_reach.fn (a capture or a bench replay puts its
+ * own function there and keeps the callback), cpf.lgm_travel_ticks_map is
+ * still the real wrapper (c_reach.wrap), and the global
+ * cpf_lgm_travel_ticks_map is still braincore's walk. The C then runs the
+ * same walk (brainPathfinderLgmTravelTicksMap) on the same pathfinder, with
+ * no Lua call between, so each answer is the callback's answer. It is
+ * checked again at each step. */
+static void cr_setup(Ev *e) {
+    lua_State *L = e->L;
+    int t0 = lua_gettop(L);
+    e->cr_on = 0;
+    e->cr_pf = NULL;
+    lua_getfield(L, S_INP, "c_reach");
+    if (lua_istable(L, -1)) {
+        int t = lua_gettop(L);
+        lua_getfield(L, t, "fn");                       /* t + 1 */
+        lua_getfield(L, t, "max");                      /* t + 2 */
+        lua_getfield(L, t, "stuck");                    /* t + 3 */
+        lua_getfield(L, t, "wrap");                     /* t + 4 */
+        lua_getfield(L, t, "cpf");                      /* t + 5 */
+        int ok = lua_rawequal(L, t + 1, S_LGM_REACH) && lua_isfunction(L, t + 1)
+            && lua_type(L, t + 2) == LUA_TNUMBER && lua_type(L, t + 3) == LUA_TNUMBER
+            && lua_isfunction(L, t + 4) && lua_istable(L, t + 5);
+        if (ok) {
+            lua_getfield(L, t + 5, "lgm_travel_ticks_map");
+            ok = lua_rawequal(L, -1, t + 4);
+            lua_pop(L, 1);
+        }
+        if (ok) {
+            double mx = lua_tonumber(L, t + 2), st = lua_tonumber(L, t + 3);
+            ok = mx == floor(mx) && st == floor(st) && fabs(mx) < 1e9 && fabs(st) < 1e9;
+            if (ok) { e->cr_max = (int)mx; e->cr_stuck = (int)st; }
+        }
+        if (ok) {
+            lua_getglobal(L, "cpf_lgm_travel_ticks_map");
+            e->cr_pf = brainCoreLgmWalkPathfinder(L, -1);
+            lua_pop(L, 1);
+            e->cr_on = e->cr_pf != NULL;
+        }
+    }
+    lua_settop(L, t0);
+}
+
+/* the C copy of the callback: 1 with *rc set, or 0 = ask the callback
+ * (a square the Lua would not pass to the walk as a map square) */
+static int cr_reach__p(Ev *e, double omx, double omy, double mx, double my, int *rc) {
+    if (!(omx >= 0 && omx <= 255 && omy >= 0 && omy <= 255 && mx >= 0 && mx <= 255
+          && my >= 0 && my <= 255 && omx == floor(omx) && omy == floor(omy)
+          && mx == floor(mx) && my == floor(my))) return 0;
+    PC(C_reach_c, 1);
+    if (fabs(mx - omx) + fabs(my - omy) <= 1) { *rc = 1; return 1; }
+    *rc = brainPathfinderLgmTravelTicksMap(e->cr_pf, (unsigned char)omx, (unsigned char)omy, (unsigned char)mx, (unsigned char)my,
+                                           0, 0, e->cr_max, e->cr_stuck) != -1;
+    return 1;
+}
+static int cr_reach(Ev *e, double omx, double omy, double mx, double my, int *rc) { PB(P_lgm_reach_c); int r_ = cr_reach__p(e, omx, omy, mx, my, rc); PE(); return r_; }
+
 /* slot_ok: may a planned blocker go on square k (0-based) of ray r? */
 static int slot_ok__p(Ev *e, Rec *rec, Ray *r, int k, const Lane *lane, const int64_t *forbid, int nf) {
     lua_State *L = e->L;
@@ -3001,14 +3310,16 @@ static int slot_ok__p(Ev *e, Rec *rec, Ray *r, int k, const Lane *lane, const in
     int rc;
     if (hv) rc = (int)hv->i;
     else {
-        lua_pushvalue(L, S_LGM_REACH);
-        if (om) { lua_pushnumber(L, rec->omx); lua_pushnumber(L, rec->omy); }
-        else { lua_pushnil(L); lua_pushnil(L); }
-        lua_pushnumber(L, mx);
-        lua_pushnumber(L, my);
-        PLC(P_cb_lgm_reach, L, 4, 1);
-        rc = lua_toboolean(L, -1);
-        lua_pop(L, 1);
+        if (!(om && e->cr_on && cr_reach(e, rec->omx, rec->omy, mx, my, &rc))) {
+            lua_pushvalue(L, S_LGM_REACH);
+            if (om) { lua_pushnumber(L, rec->omx); lua_pushnumber(L, rec->omy); }
+            else { lua_pushnil(L); lua_pushnil(L); }
+            lua_pushnumber(L, mx);
+            lua_pushnumber(L, my);
+            PLC(P_cb_lgm_reach, L, 4, 1);
+            rc = lua_toboolean(L, -1);
+            lua_pop(L, 1);
+        }
         int isnew;
         hv = hm_put(L, &e->reach, dbits(rk), 0, &isnew);
         hv->i = rc;
@@ -5260,6 +5571,8 @@ static void ev_read_inp__p(Ev *e) {
         if (nn % 2 != 0) luaL_error(L, "gh_pt2_v2: env.ts_tanks has %d numbers", nn);
         e->ts_nt = nn / 2;
     }
+    e->ts_wt = e->ts_t;
+    e->ts_wn = e->ts_nt;
     lua_pop(L, 1);
     lua_getfield(L, S_INP, "ring_radii");
     e->nring = 0;
@@ -5922,6 +6235,7 @@ static int l_begin__p(lua_State *L) {
     e->job = j;
     step_reads(e);
     std_setup(e);
+    cr_setup(e);
     ev_read_inp(e);
     e->sl_on = has_ticks;
     e->sl_ticks = ticks; e->sl_slices = 1;
@@ -5987,6 +6301,7 @@ static int l_step__p(lua_State *L) {
     e->L = L;
     e->c = get_ctx(L);
     e->job = (Job *)lua_touserdata(L, S_JOB);
+    cr_setup(e);
     if (e->pc != 0) step_reads(e);
     else {
         /* the first step goes on from the setup's reads */
@@ -6040,6 +6355,20 @@ static int l_prof_take(lua_State *L) {
         setnum(L, "us", (double)p->tk[i] * us);
         lua_setfield(L, -2, s_pf_name[i]);
     }
+    /* the walk split's TSC sums to ns (whole numbers) */
+    double tpu = 0;
+    if (p->zw_tsc0) {
+#if ZW_HAS_TSC
+        double qus = (double)(pf_clock() - p->zw_qpc0) * us;
+        tpu = qus > 0 ? (double)(ZW_TSC() - p->zw_tsc0) / qus : 0;
+#else
+        tpu = 1.0 / us;
+#endif
+    }
+    p->cnt[C_zw_ns_out] = tpu > 0 ? floor(p->cnt[C_zw_ns_out] * 1000.0 / tpu + 0.5) : 0;
+    for (int i = C_zw_ns_setup; i <= C_zw_ns_rewalk; i++)
+        p->cnt[i] = tpu > 0 ? floor(p->cnt[i] * 1000.0 / tpu + 0.5) : 0;
+    p->cnt[C_zw_tsc_mhz] = p->cnt[C_zw_smp] > 0 ? floor(tpu + 0.5) : 0;
     lua_createtable(L, 0, C_N);
     for (int i = 0; i < C_N; i++) {
         lua_pushnumber(L, p->cnt[i]);

@@ -72,7 +72,7 @@ local function chain_answer()
 end
 
 local saved = {}
-for _, k in ipairs({ "PT2_DOUBLE_TAKE_DISCOUNT", "PILLTAKE_V2_EVALUATOR", "PT2_CHAINS", "PT2_DBL_SPLIT", "PT2_DBL_PART_LEAVE_REST" }) do saved[k] = C[k] end
+for _, k in ipairs({ "PT2_DOUBLE_TAKE_DISCOUNT", "PILLTAKE_V2_EVALUATOR", "PT2_CHAINS", "PT2_DBL_SPLIT", "PT2_DBL_PART_LEAVE_REST", "PT2_DBL_PART_SLICE_TICKS" }) do saved[k] = C[k] end
 C.PT2_DBL_SPLIT = false   -- the one-go path first; the split has its own section
 
 -- ── knob off ──────────────────────────────────────────────────────────────
@@ -270,6 +270,64 @@ do
   D.pump(st, world, info, at(93))
   check("cap: dropped at the cap", s.job == nil and s.n_drop_cap == 1, s.n_drop_cap)
   st._capacity = nil
+  part_us, n_parts_job = 900, 3
+  C.PT2_DBL_SPLIT = false
+end
+
+-- ── PT2_DBL_PART_SLICE_TICKS: a part over several ticks ────────────────
+print("slice")
+do
+  C.PT2_DBL_SPLIT = true
+  local OLD = package.loaded["pilltake_v2_old"]
+  local step0 = OLD.group_step
+  -- the fake part: 3 slices (the slicer yields twice), then its old step
+  local made = 0
+  OLD.slicer = function(inp, n, yield)
+    made = made + 1
+    return { fn = function() yield() end, ticks = n }
+  end
+  OLD.group_step = function(job)
+    local fn = job.inp.v2_slice
+    if fn then fn(); fn() end
+    return step0(job)
+  end
+  local st = { tick = 100 }
+  local function at(t) st.tick = t; return t end
+  part_us, n_parts_job = 900, 2
+  -- off (0): the part runs in one call, as before
+  C.PT2_DBL_PART_SLICE_TICKS = 0
+  D.get(st, world, info, 1, A, at(100))
+  local s = st._pt2_dbl
+  check("off: no slicer", made == 0 and s.job and s.job.co == nil and s.job.n == 1)
+  D.pump(st, world, info, at(102))
+  check("off: done on tick 2 (part 2 of 2 due at floor(1 * 5 / 2))", s.job == nil and s.by_id[1] ~= nil)
+  -- on (3): each part goes on over 3 calls, one call per tick
+  C.PT2_DBL_PART_SLICE_TICKS = 3
+  s.by_id[1] = nil
+  local n0 = runs
+  check("on: no answer at start", D.get(st, world, info, 1, A, at(110)) == nil)
+  check("on: part 1 yielded", made == 1 and s.job and s.job.co ~= nil and s.job.n == 0 and runs == n0,
+        s.job and s.job.n)
+  D.pump(st, world, info, at(110))
+  check("on: no second slice on the same tick", s.job.slices == 1, s.job.slices)
+  D.pump(st, world, info, at(111))
+  check("on: slice 2", s.job.n == 0 and s.job.slices == 2, s.job.slices)
+  D.pump(st, world, info, at(112))
+  check("on: part 1 done, part 2 yielded", s.job.n == 1 and s.job.total == 2 and s.job.co ~= nil
+        and made == 2 and runs == n0 + 1, s.job.n)
+  D.pump(st, world, info, at(113))
+  D.pump(st, world, info, at(114))
+  check("on: done after 6 slices", s.job == nil and s.by_id[1] ~= nil and runs == n0 + 2)
+  check("on: inputs left clean", s.by_id[1] ~= nil)
+  -- a pill change drops a job with a part half done
+  s.by_id[1] = nil
+  D.get(st, world, info, 1, A, at(120))
+  A.health = 14
+  D.pump(st, world, info, at(121))
+  check("on: dropped half done", s.job == nil and s.by_id[1] == nil)
+  A.health = 15
+  C.PT2_DBL_PART_SLICE_TICKS = 0
+  OLD.group_step, OLD.slicer = step0, nil
   part_us, n_parts_job = 900, 3
   C.PT2_DBL_SPLIT = false
 end

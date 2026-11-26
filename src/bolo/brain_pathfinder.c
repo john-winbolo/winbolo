@@ -4542,6 +4542,39 @@ int brainPathfinderLgmManSpeed(BrainPathfinder *pf, BYTE mx, BYTE my) {
   return (int)lgmGetBrainManSpeed(pf, mx, my);
 }
 
+int brainPathfinderLgmReachFlood(BrainPathfinder *pf, BYTE smx, BYTE smy,
+                                 BYTE blessX, BYTE blessY, uint8_t *mark) {
+  uint16_t *queue;
+  int head = 0, tail = 0, count;
+  static const int dx[4] = { 1, -1, 0, 0 };
+  static const int dy[4] = { 0, 0, 1, -1 };
+  if (!pf || !pf->map || !mark) return -1;
+  queue = (uint16_t *)malloc(sizeof(uint16_t) * MAP_SIZE * MAP_SIZE);
+  if (!queue) return -1;
+  memset(mark, 0, MAP_SIZE * MAP_SIZE);
+  mark[smy * MAP_SIZE + smx] = 1;
+  queue[tail++] = (uint16_t)(smy * MAP_SIZE + smx);
+  count = 1;
+  while (head < tail) {
+    int i = queue[head++];
+    BYTE x = (BYTE)(i % MAP_SIZE), y = (BYTE)(i / MAP_SIZE);
+    int d;
+    if ((head & 1023) == 0 && BRAIN_PF_ABORTED(pf)) { free(queue); return -1; }
+    for (d = 0; d < 4; d++) {
+      BYTE nx = (BYTE)(x + dx[d]), ny = (BYTE)(y + dy[d]);
+      int ni = ny * MAP_SIZE + nx;
+      if (mark[ni]) continue;
+      if (lgmGetBrainManSpeed(pf, nx, ny) > 0 || (nx == blessX && ny == blessY)) {
+        mark[ni] = 1;
+        queue[tail++] = (uint16_t)ni;
+        count++;
+      }
+    }
+  }
+  free(queue);
+  return count;
+}
+
 /* ------------------------------------------------------------------ */
 /* Tank travel-time estimation (straight-line, tick-by-tick)            */
 /* ------------------------------------------------------------------ */

@@ -747,6 +747,9 @@ int run_gh_pt2_walk_jump(void);
 int run_gh_pt2_walk_reuse(void);
 /* The change ticks of that walk by adds (test_gh_pt2_walk_dda.c). */
 int run_gh_pt2_walk_dda(void);
+/* The builder reach flood against the builder walk on real maps
+ * (test_lgm_reach_flood.c). */
+int run_lgm_reach_flood(void);
 /* Speed check of gh_pt2_old on recorded inputs; runs only with WB_PT2_BENCH set. */
 int run_gh_pt2_bench(void);
 int run_pf_tail_reaches_radius_and_stops(void);

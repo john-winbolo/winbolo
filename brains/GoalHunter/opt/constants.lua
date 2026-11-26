@@ -1373,6 +1373,16 @@ M.PT2_DBL_SPREAD_TICKS = 5
 -- new job later. 2 x PT2_DBL_SPREAD_TICKS (Andrew, Nov 18). The tier
 -- row's dbl_split wins over this knob.
 M.PT2_DBL_SPLIT_MAX_TICKS = 10
+-- PT2_DBL_PART_SLICE_TICKS (Nov 26, overnight CPU step 3b): one part of a
+-- split job (one v2 evaluate) runs in a coroutine over up to this many
+-- calls, as PT2_V2_SPLIT does for the real take: pilltake_v2.slicer yields
+-- when the part's work for this tick is used (fixed work units, no timers,
+-- so the split is the same on every machine), and the next tick's pump
+-- resumes it. A yielded part goes on before a new part starts; a part that
+-- yields ends the tick's double-take work. The answer can differ from the
+-- part in one call only when the map changes between two slices. 0 = off,
+-- the part in one call (KEEL / MAST).
+M.PT2_DBL_PART_SLICE_TICKS = 0
 -- Bench log: PT2_DBL_CPU / PT2_DBL_RUN / PT2_DBL_DROP as plain print()
 -- lines without -brain-debug (log only, no play change). A release DS
 -- drops print(): with PT2_DBL_EVENT_FILE set to a file name the lines also
@@ -1553,11 +1563,24 @@ M.BLITZ_NO_DOUBLE_TAKE = true
 -- appends its inputs and the Lua result to the file, for the parity test
 -- cases. "" = off.
 M.PT2_CAPTURE_FILE = ""
--- PT2_PROF_LOG (debug only): true = each double-take run times its parts
+-- PT2_PROF_LOG (log only): true = each double-take run times its parts
 -- (the Lua around the v2 calls, every C part and callback) and writes a
--- PT2_DBL_PROF line to print2. The timers cost time, so it is off by
--- default. It does not change any result.
+-- PT2_DBL_PROF line to print2 (debug only). Each v2 evaluate and take plan
+-- also writes a plain PT2EVAL / PT2PLAN line to stderr, with or without
+-- -brain-debug. The timers cost time, so it is off by default. It does not
+-- change any result.
 M.PT2_PROF_LOG = false
+-- PT2_CPROF_LOG (log only, with PT2_PROF_LOG): true = each v2 evaluate
+-- writes the C evaluator's section table of that evaluate to stderr as one
+-- PT2ZONES line (name=calls/us, most time first), with or without
+-- -brain-debug. Add the lines of a game to get the game's table. Off by
+-- default. It does not change any result.
+M.PT2_CPROF_LOG = false
+-- PT2_PROF_ZONES (log only, with PT2_PROF_LOG): false = time each evaluate
+-- (PT2EVAL ms) with the C section profiler off, to see what the profiler
+-- itself costs. The section columns (walks, c_ms) are then 0. It does not
+-- change any result.
+M.PT2_PROF_ZONES = true
 -- REPLAN_PROF_LOG (debug or -brain-profile-log only): true = each goal
 -- replan times its parts (replan_prof.lua: the pool evaluators, goals,
 -- path searches, threat, ...) as self times and writes a REPLAN_PROF line;

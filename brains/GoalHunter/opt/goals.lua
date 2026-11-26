@@ -12086,7 +12086,9 @@ function M.step_eval_queue(state, world, info)
   -- PT2_DBL_SPLIT: the open double-take job runs its next parts every tick,
   -- before the queue (pt2_dbl.pump).
   if C.PT2_DBL_SPLIT and C.PT2_DOUBLE_TAKE_DISCOUNT then
+    local _zt = BRAIN_PROFILE and clock_us()
     require("pt2_dbl").pump(state, world, info, state.tick or 0)
+    if _zt then M._sqz_add("dbl_pump", clock_us() - _zt) end
   end
 
   -- Capacity tier eval_iv: pop a candidate only every Nth tick when
@@ -12161,6 +12163,7 @@ function M.step_eval_queue(state, world, info)
   --   3. else last tick's pool-4 leader (the one most likely to win).
   -- Everything else keeps the cheap Dijkstra lookup for the ranking pass.
   do
+    local _zt = BRAIN_PROFILE and clock_us()
     local _fp, _fid
     local _g = state.goal
     if _g and _g.kind == "capture_pill" and _g.target_id then
@@ -12190,6 +12193,7 @@ function M.step_eval_queue(state, world, info)
     if _fp and (_fp.health or 0) == 0 and not _fp.in_tank and not _fp.carrier then
       capture_route_probe(state, world, info, _fp, _fid, tmx, tmy)
     end
+    if _zt then M._sqz_add("focus_probe", clock_us() - _zt) end
   end
 
   local partial = state.pool_partial
@@ -12635,6 +12639,7 @@ function M.step_eval_queue(state, world, info)
       -- pool-6 cost in cost_cache. Our attack_pill target is always looked at.
       local _dbl_can_win = true
       if pool_idx == 6 and C.PT2_DOUBLE_TAKE_DISCOUNT and C.PT2_DBL_CAN_WIN then
+        local _zt = BRAIN_PROFILE and clock_us()
         local _cc = state.cost_cache
         local _prev = _cc and _cc["6:" .. id]
         local _g = state.goal
@@ -12649,6 +12654,7 @@ function M.step_eval_queue(state, world, info)
           end
           if _full * (C.PT2_DOUBLE_TAKE_MULT or 0.6) >= _best then _dbl_can_win = false end
         end
+        if _zt then M._sqz_add("p6/can_win", clock_us() - _zt) end
       end
       if pool_idx == 6 and C.PT2_DOUBLE_TAKE_DISCOUNT and _dbl_can_win then
         local D = require("pt2_dbl")
@@ -12667,6 +12673,7 @@ function M.step_eval_queue(state, world, info)
                    diff1 = 0, xfire_ex = 0, spot_ex = 0, travel_ex = 0 }
         end
         D.charge(state, now, clock_us() - t0)
+        if BRAIN_PROFILE then M._sqz_add("p6/dbl_get", clock_us() - t0) end
       end
       if pool_idx == 6 then
         -- Quick difficulty scan + best spot cost.
@@ -12781,9 +12788,11 @@ function M.step_eval_queue(state, world, info)
           -- Found 2026-09-03 by byte-comparing production vs recorded games of
           -- one seed (first divergence tick 46, then 53). Keep this a plain
           -- call: no `if BRAIN_DEBUG_MODE` with an else around decision code.
+          local _zt = BRAIN_PROFILE and clock_us()
           diff_score, _spots, best_spot =
             attack.evaluate_pill_difficulty(obj, world, force_detailed,
                                             _scan_step, state.phase, state, tmx, tmy)
+          if _zt then M._sqz_add("p6/diff_eval", clock_us() - _zt) end
           diff_cache[dck] = { score = diff_score, spot = best_spot,
                               spots = _spots,  -- nil unless force_detailed
                               mx = obj.mx, my = obj.my,
@@ -12806,6 +12815,7 @@ function M.step_eval_queue(state, world, info)
               tmx, tmy, nil, nil, nil, _dbl.ex)
             de._diff_for, de._diff = _dbl.ex.contrib, ds or 999
             require("pt2_dbl").charge(state, now, clock_us() - t0)
+            if BRAIN_PROFILE then M._sqz_add("p6/diff_dbl", clock_us() - t0) end
           end
           _dbl.diff1 = diff_cost
           diff_cost = de._diff
@@ -13221,10 +13231,12 @@ function M.step_eval_queue(state, world, info)
       -- scaled by, and whether the cluster discount was suppressed.
       local _cpill_mult_src, _cpill_free_mult, _cpill_cl_off = "none", 1, false
       if pool_idx == 4 then
+        local _zt4 = BRAIN_PROFILE and clock_us()
         c, _cpill_dist_raw, _cpill_dist_score, _cpill_danger_val, _cpill_intcpt, _cpill_lgm_mult, _cpill_dist_method, _cpill_free_disc, _cpill_route_dmg, _cpill_route_far,
         _cpill_cl_n, _cpill_cl_div, _cpill_cl_gn, _cpill_cl_gm, _cpill_cl_gids,
         _cpill_mult_src, _cpill_free_mult, _cpill_cl_off =
           compute_pool4_cost(state, world, info, obj, tmx, tmy)
+        if _zt4 then M._sqz_add("p4/cost", clock_us() - _zt4) end
         -- Pool 4 skipped the smart_cost block (see above), so backfill
         -- raw_cost from compute_pool4_cost's distance — keeps the panel
         -- formula breakdown showing a meaningful raw value.
@@ -13682,6 +13694,7 @@ function M.step_eval_queue(state, world, info)
 
     -- Per-candidate timing summary so we can see what's slow.
     local _t_total = clock_us() - _t0
+    if BRAIN_PROFILE then M._sqz_cand(pool_idx, _t_total, _t_raw, _diff_us, _spot_us) end
     -- Direct optimize.log diag for slow candidates so we can see them
     -- without needing print2 enabled. Threshold: 0.5 ms (anything that
     -- shows up on the per-tick summary). Includes sub-timings for the
@@ -16126,7 +16139,70 @@ function M.apply_reprice_queue(state)
   if #picked == 0 then state._atk_reprice = nil end
 end
 
+-- Profile zones inside update_pool_cache (BRAIN_PROFILE only; timers, no
+-- decision reads them). step_eval_queue adds microseconds by name with
+-- M._sqz_add; update_pool_cache writes them as third-level "done" lines
+-- (four spaces) before its own "step_eval_queue done" line, so the section
+-- parser files them under goals / step_eval_queue. The pool parts are
+-- written per pool: pN/raw (the cost before the pool's own code), pN/rest
+-- (the pool's own code), and for pool 6 the parts of its own code.
+M._sqz = nil
+function M._sqz_add(name, us)
+  local z = M._sqz
+  if not z then return end
+  z[name] = (z[name] or 0) + us
+end
+-- One priced candidate: its whole time and its raw part.
+function M._sqz_cand(pool, total_us, raw_us, diff_us, spot_us)
+  local z = M._sqz
+  if not z then return end
+  local p = "p" .. pool
+  z[p] = (z[p] or 0) + total_us
+  z[p .. "/raw"] = (z[p .. "/raw"] or 0) + raw_us
+  if pool == 6 then
+    z["p6/diff"] = (z["p6/diff"] or 0) + diff_us
+    z["p6/spot"] = (z["p6/spot"] or 0) + spot_us
+  end
+end
+function M._sqz_emit(z, seq_us)
+  local sum = 0
+  local function out(name, us)
+    if us < 0 then us = 0 end
+    sum = sum + us
+    opt(string.format("    %s done %.3f ms", name, us / 1000))
+  end
+  if z.dbl_pump then out("dbl_pump", z.dbl_pump) end
+  if z.focus_probe then out("focus_probe", z.focus_probe) end
+  for pool = 1, 16 do
+    local p = "p" .. pool
+    local tot = z[p]
+    if tot then
+      local raw = z[p .. "/raw"] or 0
+      out(p .. "/raw", raw)
+      local rest = tot - raw
+      if pool == 6 then
+        local cw, dg = z["p6/can_win"] or 0, z["p6/dbl_get"] or 0
+        local de, dd = z["p6/diff_eval"] or 0, z["p6/diff_dbl"] or 0
+        local diff, spot = z["p6/diff"] or 0, z["p6/spot"] or 0
+        out("p6/can_win", cw); out("p6/dbl_get", dg)
+        out("p6/diff_eval", de); out("p6/diff_dbl", dd)
+        out("p6/diff_misc", diff - de - dd)
+        out("p6/spot", spot)
+        rest = rest - cw - dg - diff - spot
+      elseif pool == 4 then
+        local pc = z["p4/cost"] or 0
+        out("p4/cost", pc)
+        rest = rest - pc
+      end
+      out(p .. "/rest", rest)
+    end
+  end
+  out("seq_other", seq_us - sum)
+end
+
 function M.update_pool_cache(state, world, info)
+  local _zt = BRAIN_PROFILE and clock_us()
+  if _zt then M._sqz = {} end
   -- Keep pool-8 stub fields fresh so get_pool_breakdown_json sees current state
   -- even between replans (e.g. tank just picked up a pill mid-cycle).
   if state._last_info then
@@ -16140,9 +16216,11 @@ function M.update_pool_cache(state, world, info)
   -- following tick — before step_eval_queue so the fresh queue is what we
   -- step through. update_pool_cache runs earlier in the tick than the
   -- replan block, so this never collides with the tick that set the flag.
+  local _ups_beq = 0
   if state._deferred_build_eval then
     state._deferred_build_eval = nil
     M.build_eval_queue(state, world, info)
+    if _zt then _ups_beq = clock_us() - _zt end
   end
 
   -- Event re-price (M.note_reprice_events): pending attack_pill ids go to the
@@ -16154,7 +16232,12 @@ function M.update_pool_cache(state, world, info)
   -- giving ~49 ticks to process before the next decision.
   local _t_seq0 = clock_us()
   M.step_eval_queue(state, world, info)
-  if BRAIN_PROFILE then opt(string.format("  step_eval_queue done %.2f ms", (clock_us() - _t_seq0) / 1000)) end
+  if BRAIN_PROFILE then
+    local _t_seq1 = clock_us()
+    if M._sqz then M._sqz_emit(M._sqz, _t_seq1 - _t_seq0) end
+    opt(string.format("  step_eval_queue done %.2f ms", (_t_seq1 - _t_seq0) / 1000))
+  end
+  local _zt2 = _zt and clock_us()
 
   -- KILL_PICKUP_LETHAL_REPLAN: a LETHAL verdict on the claimed body (stored
   -- by the probe just above, or on an earlier tick) asks for a replan now.
@@ -16172,7 +16255,18 @@ function M.update_pool_cache(state, world, info)
   -- Cache TTL is ~50 ticks, so the winner stays visible until the
   -- next re-eval refreshes the entry and the cycle restarts.
 
+  local _zt3 = _zt and clock_us()
   M.refresh_kill_lgm(state, info, world)
+  if _zt then
+    -- update_pool_cache's own parts (filed under goals / update_pool_cache)
+    local _zt4 = clock_us()
+    opt(string.format("    ups/build_eval_queue done %.3f ms", _ups_beq / 1000))
+    opt(string.format("    ups/pre_seq done %.3f ms", (_t_seq0 - _zt - _ups_beq) / 1000))
+    opt(string.format("    ups/step_eval_queue done %.3f ms", (_zt2 - _t_seq0) / 1000))
+    opt(string.format("    ups/after_seq done %.3f ms", (_zt3 - _zt2) / 1000))
+    opt(string.format("    ups/refresh_kill_lgm done %.3f ms", (_zt4 - _zt3) / 1000))
+    M._sqz = nil
+  end
 end
 
 -- =========================================================================

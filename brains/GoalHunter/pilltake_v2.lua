@@ -2436,9 +2436,10 @@ end
 -- An exe with no gh_pt2_v2 (an older exe) runs the Lua; so do the
 -- debug checks the C does not have (v2_mask_stats, v2_loss_check,
 -- v2_confirm_check, v2_confirm_drop).
--- PT2_C_PROF (inp.v2_prof: C.PT2_PROF_LOG in a debug brain, or the bench's
--- cprof=1): the C evaluator's section profile (gh_pt2_v2.prof). Log only:
--- it changes no result. Each evaluate writes one PT2_C_PROF line; the
+-- PT2_C_PROF (inp.v2_prof: C.PT2_PROF_LOG, or the bench's cprof=1): the C
+-- evaluator's section profile (gh_pt2_v2.prof). Log only: it changes no
+-- result. Each evaluate writes one PT2_C_PROF line (print2, debug only)
+-- and one PT2EVAL line (stderr, see M.cprof_err); the
 -- sums of a take plan (pt2_attack) and of the game are kept here:
 --   M.cprof_plan, M.cprof_game  { evals, us, c_us, steps, yields,
 --     sec = { [name] = { n, us } }, count = { [name] = n } }
@@ -2492,10 +2493,18 @@ function M.cprof_print(line)
   cprof_print2 = cprof_print2 or require("print2")
   cprof_print2(line)
 end
+-- PT2_PROF_LOG: the plain stderr lines PT2EVAL (each evaluate) and PT2PLAN
+-- (each take plan), also with no -brain-debug, for a timing bench. They go
+-- to io.stderr, not print(): a release DS drops brain print() output.
+function M.cprof_err(s)
+  local e = io and io.stderr
+  if e then e:write(s, "\n") end
+end
 -- the end of a take plan (pt2_attack): the plan's line and the game's sum
 function M.cprof_plan_end(head)
   local pl = M.cprof_plan
   if pl.evals == 0 then return end
+  M.cprof_err(string.format("PT2PLAN %sevals=%d ms=%.3f steps=%d", head or "", pl.evals, pl.us / 1000, pl.steps))
   M.cprof_print(M.cprof_line("PT2_C_PROF_PLAN", pl, head))
   M.cprof_print(M.cprof_line("PT2_C_PROF_GAME", M.cprof_game, head))
   M.cprof_plan = cprof_new()
@@ -2521,7 +2530,9 @@ function M.evaluate_c(inp)
   local s = fn and SLICERS[fn]
   if fn and not s then return M.evaluate_lua(inp) end
   local pf = inp.v2_prof and g.prof_take
-  if pf then
+  -- v2_nozones (C.PT2_PROF_ZONES false): timed, but the C sections off
+  local zones = pf and not inp.v2_nozones
+  if zones then
     g.prof(true)
     g.prof_take()
   end
@@ -2538,14 +2549,31 @@ function M.evaluate_c(inp)
       end
       if pf then
         local us = cprof_clock() - t0 - paused
-        local c = g.prof_take()
-        g.prof(false)
+        local c = {}
+        if zones then
+          c = g.prof_take()
+          g.prof(false)
+        end
         local one = cprof_new()
         M.cprof_add(one, us, c, steps, yields)
         M.cprof_add(M.cprof_plan, us, c, steps, yields)
         M.cprof_add(M.cprof_game, us, c, steps, yields)
         M.last_cprof = one
         local A = inp.A
+        -- _prof_head: set by pt2_attack.build_inp (C.PT2_PROF_LOG) only
+        if inp._prof_head then
+          local w = one.sec.tank_shot_walk_angle
+          M.cprof_err(string.format(
+            "PT2EVAL %s A=(%s,%s) ms=%.3f steps=%d slice_ms=%.3f yields=%d c_ms=%.3f walks=%d walk_ms=%.3f",
+            inp._prof_head, tostring(A and A.mx), tostring(A and A.my), us / 1000, steps,
+            us / 1000 / steps, yields, one.c_us / 1000, w and w.n or 0, (w and w.us or 0) / 1000))
+          -- inp.v2_zone_log (C.PT2_CPROF_LOG): this evaluate's section
+          -- table as one PT2ZONES line; the lines of a game add up to the
+          -- game's table
+          if zones and inp.v2_zone_log then
+            M.cprof_err(M.cprof_line("PT2ZONES", one, inp._prof_head .. " "))
+          end
+        end
         M.cprof_print(M.cprof_line("PT2_C_PROF", one, string.format("A=(%s,%s) ",
           tostring(A and A.mx), tostring(A and A.my))))
       end

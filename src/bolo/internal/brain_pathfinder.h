@@ -757,6 +757,23 @@ int brainPathfinderLgmWalkPath(BrainPathfinder *pf,
  * cannot walk there. */
 int brainPathfinderLgmManSpeed(BrainPathfinder *pf, BYTE mx, BYTE my);
 
+/* The squares the LGM walk above could ever end on, from start (smx, smy):
+ * one flood over the squares he can step onto (man speed > 0, or the
+ * blessed square), 4-way, with the map's edge wrapping as the walk's
+ * BYTE square maths does. mark[my * 256 + mx] is set to 1 on each
+ * such square and 0 on the rest (256 * 256 bytes). Returns the
+ * count of marked squares, or -1 (mark not filled) with no map, no memory,
+ * or an abort.
+ *
+ * It is NOT the same answer as the walk. The walk is not a search: each
+ * tick the man heads straight at the target and slides along what stops
+ * him, so he can get stuck on a square the flood reaches. What holds is
+ * one way only: a square left at 0 is one the walk never reaches
+ * (brainPathfinderLgmTravelTicksMap gives -1 for it, start square apart);
+ * a square at 1 may be reached or not. */
+int brainPathfinderLgmReachFlood(BrainPathfinder *pf, BYTE smx, BYTE smy,
+                                 BYTE blessX, BYTE blessY, uint8_t *mark);
+
 /* LGM overlay: clear all, then mark (mx,my) tiles the LGM can't cross
  * (live pills, enemy bases) and tiles he crosses at road speed whatever the
  * terrain (dead pills: mapGetManSpeed with man_dead_pill_terrain_speed 0).

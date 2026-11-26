@@ -78,6 +78,13 @@ void brainCoreRegisterPathfinder(struct lua_State *L, BrainPathfinder **pfPtr);
  * down; callers must handle that the way the cpf_* wrappers do. */
 #define BRAINCORE_PATHFINDER_REGKEY "braincore_pathfinder"
 BrainPathfinder *brainCoreGetPathfinder(struct lua_State *L);
+/* The pathfinder the value at stack index `idx` walks on, when that value
+ * is braincore's cpf_lgm_travel_ticks_map C function; NULL for any other
+ * value, or when its pathfinder is gone. Lets brain C run that same walk
+ * (brainPathfinderLgmTravelTicksMap) itself, with the answer the Lua call
+ * would give, and keep the Lua call when a test or a replay put its own
+ * function in that global. */
+BrainPathfinder *brainCoreLgmWalkPathfinder(struct lua_State *L, int idx);
 void brainCoreRegisterWorldSim(struct lua_State *L, BrainWorldSim **wsPtr);
 void brainCoreRegisterOverlay(struct lua_State *L, OverlayCmdBuffer **bufPtr);
 void brainCoreRegisterVizRegister(struct lua_State *L);
