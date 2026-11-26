@@ -957,9 +957,9 @@ the total, the gap and the pause are `u32`.
 | 22–23 | Bots | `u16` tenths of a ms. The bots' think (`serverSimLocalBotTick`) |
 | 24–25 | Simulation | `u16` tenths of a ms. The two simulation steps, less the scenario and the round log parts, which run inside them. Out of the running state, the lobby's one step |
 | 26–27 | Scenario | `u16` tenths of a ms. The scenario script's hook (Lua mods) and the fill and roster work it queues |
-| 28–29 | Recording | `u16` tenths of a ms. The round log's tick (`serverSimLogTick`: snapshots, records, the zip write) and the brain debug recording's block roll and disk check |
+| 28–29 | Recording | `u16` tenths of a ms. The round log's tick (`serverSimLogTick`: snapshots, records, the zip write) and the brain debug recording's block roll and disk check. Not in it: the brain debug block's close at game over and the round log's close at the end of the round, which are counted in Other |
 | 30–31 | Network send | `u16` tenths of a ms. Sending the snapshots and the events; out of the running state, the timeout check and a game-start send |
-| 32–33 | Other | `u16` tenths of a ms. The total less every part above: the mDNS and WinBolo.net work, the round's edges (game over, rotation, empty reset), the tracker and NAT work. 0 when the parts, each rounded on its own, add to more than the total |
+| 32–33 | Other | `u16` tenths of a ms. The total less every part above: the mDNS and WinBolo.net work, the round's edges (game over, rotation, empty reset), the brain debug block's close at game over, the round log's close at the end of the round, the tracker and NAT work. 0 when the parts, each rounded on its own, add to more than the total |
 
 The rule (`slowTickRecordReason`):
 
@@ -977,8 +977,14 @@ Written by the server's tick (`serverInstanceTick`,
 record's own write is not in the time it reports. The frame's own entry of
 the log is written during the frame, so the record lands in the next entry:
 about 20 ms after the frame it is about. A reader goes by the tick field, not
-by the entry. Written in every state while a round log is recording: in the
-lobby and the countdown too. The same hosts write it as `log_OverrunStats`:
+by the entry. The frame that closes a recording therefore has its record in
+the next recording, when one is open by then, or in no recording. Written in
+every state while a round log is recording: in the lobby and the countdown
+too. Not written with `-asap`, which runs the frames back-to-back with no
+20 ms clock (`serverLifecycleSetSlowTickRecord`). A frame after a
+single-player pause, and the first frame of a second game hosted in the same
+process, have a gap and a pause of 0 (`serverLifecycleSlowTickForget`), so
+the pause is not reported as a late start. The same hosts write it as `log_OverrunStats`:
 WinBoloDS and a game hosted from the desktop, iOS or Android client.
 WinBoloHeadless and the browser build write none.
 
@@ -986,6 +992,10 @@ A reader takes the fields it knows and skips the rest by the framed length. A
 record shorter than 34 bytes, or with version 0, is consumed and ignored. A
 viewer made before this record skips it by its framed length, the same as any
 other event it does not know, and a recording made before it has none.
+
+The Log Viewer posts each record as an events panel line of its own kind,
+"Server overruns" (`LV_EVK_OVERRUN`), so the events filter can hide them all,
+and `Log Viewer.exe -dump` prints each one's fields as text.
 
 ## Snapshot body
 

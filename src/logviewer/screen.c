@@ -295,8 +295,9 @@ static void lv_slowTickAppendPart(char *body, size_t size, bool *first,
 }
 
 /* The events panel line for one slow tick record: "Server overrun: tick
-   30498 took 61 ms (bots 4, simulation 2, ...)", every part of 1 ms or more
-   and "other" always, then the late start when the record says so. */
+   30498 took 61 ms (bots 4, sim 2, ...)", every part of 1 ms or more and
+   "other" always, then the late start when the record says so. The line is
+   of its own kind (LV_EVK_OVERRUN), so the events filter can hide them all. */
 static void lv_slowTickPostLine(const SlowTickRecord *rec) {
   char body[512];
   MessageArgs args = {0};
@@ -329,7 +330,7 @@ static void lv_slowTickPostLine(const SlowTickRecord *rec) {
     }
   }
   lv_messageTagOverrun((int)slowTickRecordSizeMs(rec));
-  lv_messageAddText(LV_EVK_GAME, body);
+  lv_messageAddText(LV_EVK_OVERRUN, body);
 }
 
 bool lv_screenSlowTickNear(uint32_t ms, uint32_t withinMs, LvSlowTickNow *out) {
@@ -351,6 +352,13 @@ bool lv_screenSlowTickNear(uint32_t ms, uint32_t withinMs, LvSlowTickNow *out) {
   out->ms = e->ms;
   out->rec = e->rec;
   return TRUE;
+}
+
+int lv_screenSlowTickCount(void) {
+  if (g_lv == NULL || g_lv->logLoaded == FALSE) {
+    return 0;
+  }
+  return s_slowTickTrack.count;
 }
 
 void lv_screenOverrunNow(LvOverrunNow *out) {

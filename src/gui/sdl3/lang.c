@@ -3132,6 +3132,7 @@ static const LangEntry langTable[] = {
     {3972, "View moved back {number} ms"},
     {3973, "View moved back {number} ms: {string1}'s lag {number2} -> {number3} ms behind (round trip {number4} -> {string2} ms)"},
     {3974, "Recording snapshot: game time moved {number} ms in {number2} ms of playback (tick {number3} to {number4})"},
+    {4001, "Server overruns"},
     {2810, "Whether a pillbox may pick a tank as its target."},
     {2860, "+ {number} others"},
     {2861, "+ 1 other"},

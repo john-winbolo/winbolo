@@ -21,6 +21,7 @@
 #include "global.h"         /* BYTE, for log.h */
 #include "input_packet.h"   /* PING_KIND_* */
 #include "log.h"            /* logAddEvent, log_Ping */
+#include "slow_tick_record.h" /* log_SlowTick payload */
 #include "test_harness.h"
 
 /* The whole dump file as one string, or NULL. The caller frees it. */
@@ -231,6 +232,77 @@ int run_lv_dump_ping(void) {
     UT_ASSERT_MSG(first != NULL, "the attack ping is not an event at its place");
     UT_ASSERT_MSG(second != NULL, "the on-my-way ping is not an event at its place");
     UT_ASSERT(first < second);
+    free(text);
+    return 0;
+}
+
+/* A log_SlowTick record written into a recorded round as the server writes
+   it, then the dump. The record's line has its name and every field, and
+   its events panel line is of the overrun kind. */
+int run_lv_dump_slow_tick(void) {
+    ReplayHarness h;
+    LvDumpOptions o;
+    SlowTickRecord rec;
+    SlowTickParts  parts;
+    uint8_t        payload[SLOW_TICK_RECORD_BYTES];
+    char           outPath[300];
+    char          *text = NULL;
+    uint32_t       endTick = 0;
+    bool           recorded;
+    int            len;
+    int            rc = -1;
+
+    memset(&parts, 0, sizeof(parts));
+    parts.netRecv   = 1.0;
+    parts.lockWait  = 0.5;
+    parts.bots      = 4.0;
+    parts.sim       = 2.0;
+    parts.scenario  = 0.3;
+    parts.recording = 50.0;
+    parts.netSend   = 0.7;
+    /* Long and late: 61.2 ms of its own, 95 ms after the start of the frame
+       before, 92 ms after its end. */
+    slowTickRecordFill(&rec, SLOW_TICK_FLAG_LONG | SLOW_TICK_FLAG_LATE, 30498u,
+                       61.2, 95.0, 92.0, &parts);
+    len = slowTickRecordEncode(&rec, payload, (int)sizeof(payload));
+    UT_ASSERT(len == SLOW_TICK_RECORD_BYTES);
+
+    memset(&h, 0, sizeof(h));
+    recorded = replayHarnessStartRecording(&h, "lv_dump_slow_tick", "Tester");
+    if (recorded) {
+        replayHarnessTick(&h, 200);
+        logAddEvent(log_SlowTick, 0, 0, 0, 0, (unsigned short)len, (char *)payload);
+        replayHarnessTick(&h, 200);
+        endTick  = replayHarnessServerTick(&h);
+        recorded = replayHarnessStopRecording(&h);
+    }
+    if (recorded) {
+        snprintf(outPath, sizeof(outPath), "%s.dump.txt", h.path);
+        remove(outPath);
+        memset(&o, 0, sizeof(o));
+        o.logPath  = h.path;
+        o.haveTick = 1;
+        o.tick     = (endTick / 2u) & ~1u;
+        o.span     = (int)endTick;
+        rc         = lvDumpRun(&o);
+        text       = lvdReadAll(outPath);
+        remove(outPath);
+    }
+    replayHarnessStop(&h);
+    UT_ASSERT_MSG(recorded, "the round could not be recorded");
+    UT_ASSERT_MSG(rc == LV_DUMP_OK, "the dump failed with %d", rc);
+    UT_ASSERT_MSG(text != NULL, "the dump wrote no file");
+    /* Every field, in tenths of a ms; the size is the late start: 95 less
+       the 20 ms slot. */
+    UT_ASSERT_MSG(strstr(text, " kind=SlowTick code=75") != NULL,
+                  "the record has no name in the dump");
+    UT_ASSERT_MSG(strstr(text, " version=1 long=1 late=1 server_tick=30498 total=612"
+                               " gap=950 pause=920 net_recv=10 lock_wait=5 bots=40"
+                               " sim=20 scenario=3 recording=500 net_send=7 other=27"
+                               " size_ms=75 bytes=") != NULL,
+                  "the record's fields are not in the dump");
+    UT_ASSERT_MSG(strstr(text, "event ") != NULL && strstr(text, " kind=overrun") != NULL,
+                  "the record's line is not of the overrun kind");
     free(text);
     return 0;
 }

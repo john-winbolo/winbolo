@@ -3929,6 +3929,9 @@
 #define STR_LV_SLOW_TICK_PART_OTHER              3998
 #define STR_LV_SLOW_TICK_LATE                    3999
 #define STR_LV_SLOW_TICK_HIDE_SMALL              4000
+/* The events filter's name for the kind of the slow tick lines
+ * (LV_EVK_OVERRUN). */
+#define STR_LV_EVT_KIND_OVERRUN                  4001
 
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler

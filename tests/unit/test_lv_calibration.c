@@ -48,6 +48,7 @@
 #include "lv_bolo_map.h"
 #include "lv_presentation.h" /* lv_screenServerTickAt */
 #include "lv_server_check.h" /* LvServerCheck, lvServerCheckLabel */
+#include "lv_event_kind.h"   /* LV_EVK_OVERRUN */
 #include "test_harness.h"
 #include "zip.h"
 
@@ -4056,6 +4057,7 @@ static int slowTickTestPayload(uint8_t *out, int cap, uint32_t tick, double tota
 }
 
 extern int g_lvStubEventsAdded;
+extern int g_lvStubLastEventKind;
 
 /* The viewer reads log_SlowTick records into a track, from the load's walk
  * and from playback, and lv_screenSlowTickNear gives the one near a time.
@@ -4110,6 +4112,8 @@ int run_lv_slow_tick_read(void) {
 
   lv = loadSynthetic(&b, path);
   UT_ASSERT_MSG(lv != NULL, "synthetic slow tick log failed to build/load");
+  UT_ASSERT_MSG(lv_screenSlowTickCount() == 2, "the walk's track has %d records (want 2)",
+                lv_screenSlowTickCount());
 
   /* The load's walk has every record before playback reaches it. */
   UT_ASSERT_MSG(lv_screenSlowTickNear(1000, 200, &now), "the walk missed the first record");
@@ -4136,6 +4140,9 @@ int run_lv_slow_tick_read(void) {
   }
   UT_ASSERT_MSG(g_lvStubEventsAdded - linesBefore == 1,
                 "%d lines for the first record (want 1)", g_lvStubEventsAdded - linesBefore);
+  /* The line is of its own kind, so the events filter can hide it. */
+  UT_ASSERT_MSG(g_lvStubLastEventKind == LV_EVK_OVERRUN, "the line's kind is %d (want %d)",
+                g_lvStubLastEventKind, (int)LV_EVK_OVERRUN);
   linesBefore = g_lvStubEventsAdded;
   for (i = 0; i < 60; i++) {
     lv_screenLogTick();
@@ -4154,6 +4161,8 @@ int run_lv_slow_tick_read(void) {
   UT_ASSERT_MSG(ovr.has && ovr.rec.roundFrames == 3000u,
                 "the overrun record after the slow tick record was not read");
   /* Playback read the same records again: the track still has two. */
+  UT_ASSERT_MSG(lv_screenSlowTickCount() == 2, "after playback the track has %d records (want 2)",
+                lv_screenSlowTickCount());
   UT_ASSERT(lv_screenSlowTickNear(1000, 200, &now) && now.rec.tick == 30498u);
   UT_ASSERT(!lv_screenSlowTickNear(2000, 200, &now));
 

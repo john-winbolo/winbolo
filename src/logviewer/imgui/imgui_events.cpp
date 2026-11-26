@@ -359,6 +359,7 @@ static langid kind_label_id(int kind) {
         case LV_EVK_PLAYER:        return STR_LV_EVT_KIND_PLAYER;
         case LV_EVK_CHAT:          return STR_LV_EVT_KIND_CHAT;
         case LV_EVK_GAME:          return STR_LV_EVT_KIND_GAME;
+        case LV_EVK_OVERRUN:       return STR_LV_EVT_KIND_OVERRUN;
         case LV_EVK_HIGHLIGHT:     return STR_LV_EVT_KIND_HIGHLIGHT;
         default:                   return STR_LV_EVT_FILTER_ALL;
     }

@@ -3246,4 +3246,5 @@ STR_LV_SC_ESTIMATE=estimate
 STR_LV_LAG_NOTICE_BACK=View moved back {number} ms
 STR_LV_LAG_NOTICE_LAG=View moved back {number} ms: {string1}'s lag {number2} -> {number3} ms behind (round trip {number4} -> {string2} ms)
 STR_LV_LAG_NOTICE_HOLD=Recording snapshot: game time moved {number} ms in {number2} ms of playback (tick {number3} to {number4})
+STR_LV_EVT_KIND_OVERRUN=Server overruns
 

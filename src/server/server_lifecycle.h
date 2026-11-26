@@ -353,6 +353,26 @@ void serverLifecycleSetOverrunConsolePrint(bool on);
  * round start at most, and none before the round's first running frame. */
 void serverLifecycleLogRoundEndOverrunStats(ServerSim *sim);
 
+/* The gap and the pause of the log_SlowTick record for a frame that started
+ * at tickStart and ended at tickEnd (SDL_GetPerformanceCounter counts, freq
+ * counts a second), in ms: the gap from the start of the frame before, the
+ * pause from the end of the frame before. Both 0 for the first frame, and
+ * for the first frame after serverLifecycleSlowTickForget. Then this frame
+ * is the frame before for the next call. serverInstanceTick calls it for
+ * each frame. */
+void serverLifecycleSlowTickGap(uint64_t tickStart, uint64_t tickEnd, double freq,
+                                double *outGapMs, double *outPauseMs);
+
+/* Forget the frame before, so the next frame is not "started late" by the
+ * time no frame ran. serverInstanceShutdown calls it (the next game hosted
+ * in the same process starts fresh), and so does a single-player resume
+ * from a pause (gameFrontSetServerPaused). */
+void serverLifecycleSlowTickForget(void);
+
+/* Turn the log_SlowTick records on or off. On by default. WinBoloDS turns
+ * them off for -asap, where frames run back-to-back with no 20 ms clock. */
+void serverLifecycleSetSlowTickRecord(bool on);
+
 /* Feed the EWMA with the wall-clock cost of the tick that just
  * completed. Producer-thread only — called from inside
  * serverInstanceTick after the final mutex release. */

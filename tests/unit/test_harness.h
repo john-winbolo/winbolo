@@ -1804,6 +1804,7 @@ int run_lv_overrun_read(void);
  * none). */
 int run_log_roundtrip_slow_tick(void);
 int run_slow_tick_record_rule(void);
+int run_slow_tick_forget(void);
 int run_lv_slow_tick_read(void);
 /* The viewer reads log_BotHostData records into its bot host track at load, every number of each probe, reading and decision, and adds none twice on playback. */
 int run_lv_bothost_read(void);
@@ -5425,6 +5426,7 @@ int run_lv_ping_store(void);
 int run_lv_ping_marker(void);
 int run_lv_ping_phase(void);
 int run_lv_dump_ping(void);
+int run_lv_dump_slow_tick(void);
 /* The log viewer's playback times as text and the ring flashed round an
  * event's place (test_lv_time_fmt.c); and a jump to an event stopping on the
  * event's own tick (test_lv_presentation.c). */

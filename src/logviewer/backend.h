@@ -896,6 +896,11 @@ const LvBotHostTrack *lv_screenBotHostTrack(void);
  * loaded file. Hold the client mutex. */
 bool lv_screenSlowTickNear(uint32_t ms, uint32_t withinMs, LvSlowTickNow *out);
 
+/* How many log_SlowTick records the loaded recording's track holds: each
+ * record once, however often playback reads it again. 0 when no log is
+ * loaded. Hold the client mutex. */
+int lv_screenSlowTickCount(void);
+
 /* The lag view ("see what this player saw"): the map draws the other tanks,
  * the builders and the shells as far behind as slot's player's screen was,
  * and that player's own tank and own shells at the present. Set turns it on for slot, or
