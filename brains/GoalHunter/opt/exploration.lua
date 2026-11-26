@@ -21,7 +21,9 @@ local M = {}
 -- same Lua state then runs think() again next tick. So a push or pop can stop
 -- half-way. The writes below are ordered so that a stop at any point leaves
 -- every slot 1..h.n holding a number, in heap order, and loses no entry: at
--- worst one entry is there twice. The old order (h.n before h[n] in
+-- worst one entry is there twice. (One exception: a stop inside
+-- _heap_rebuild can leave the slots out of order. h.dirty marks that case,
+-- and the next heap call rebuilds again.) The old order (h.n before h[n] in
 -- push; h[n]=nil before h.n in pop) could leave a nil at h[h.n], and the next
 -- pop then moved that nil to h[1] and crashed with "attempt to compare number
 -- with nil".
@@ -97,7 +99,11 @@ end
 
 -- Heal a desynced heap: keep every non-nil entry in 1..h.n (and h.hold), close
 -- the gaps, set h.n to the new count, then re-heapify. Only runs on a desync.
+-- h.dirty is set for the whole rebuild: a stop part way can leave the slots
+-- out of heap order (no entry lost, at worst one twice), so _heap_heal runs
+-- the rebuild again while h.dirty is set.
 local function _heap_rebuild(h)
+  h.dirty = true
   local n = h.n or 0
   local m = 0
   for i = 1, n do
@@ -113,6 +119,7 @@ local function _heap_rebuild(h)
   h.hold = nil
   for i = m + 1, n do h[i] = nil end
   for i = bit.rshift(m, 1), 1, -1 do _sift_down(h, i, m) end
+  h.dirty = nil
 end
 
 -- Push with no heal. v sits in h.hold until it is in its final slot. Slot n
@@ -136,9 +143,11 @@ local function _push_raw(h, v)
 end
 
 -- A stop inside an earlier push/pop can leave its moving entry only in
--- h.hold. Put it back. On a heap that was never stopped h.hold is nil and this
--- does nothing.
+-- h.hold. Put it back. A stop inside a rebuild leaves h.dirty set: rebuild
+-- again (that also takes h.hold back). On a heap that was never stopped both
+-- are nil and this does nothing.
 local function _heap_heal(h)
+  if h.dirty then _heap_rebuild(h); return end
   local x = h.hold
   if x ~= nil then _push_raw(h, x) end
 end
@@ -148,22 +157,17 @@ local function _heap_push(h, v)
   _push_raw(h, v)
 end
 
--- Remove the entry in slot i of a heap whose slot n is a number. The last
+-- Remove the entry in slot 1 of a heap whose slot n is a number. The last
 -- entry goes to h.hold, the count drops, its old slot is cleared, then it
--- fills the gap at i by a sift. Until the sift writes slot i the removed entry
--- is still there, so a stop before that removes nothing and loses nothing.
-local function _remove_slot(h, i, n, last)
+-- fills the gap at slot 1 by a sift. Until the sift writes slot 1 the removed
+-- entry is still there, so a stop before that removes nothing and loses
+-- nothing.
+local function _remove_top(h, n, last)
   h.hold = last
   h.n = n - 1
   h[n] = nil
-  if i == n then h.hold = nil; return true end
-  n = n - 1
-  if i > 1 then
-    local hp = h[bit.rshift(i, 1)]
-    if hp == nil then h[i] = last; h.hold = nil; return false end
-    if hp > last then return _sift_hole_up(h, i, last) end
-  end
-  return _sift_hole_down(h, i, n, last)
+  if n == 1 then h.hold = nil; return true end
+  return _sift_hole_down(h, 1, n - 1, last)
 end
 
 local function _heap_pop(h)
@@ -179,18 +183,8 @@ local function _heap_pop(h)
     top  = h[1]
     last = h[n]
   end
-  if not _remove_slot(h, 1, n, last) then _heap_rebuild(h) end
+  if not _remove_top(h, n, last) then _heap_rebuild(h) end
   return top
-end
-
--- Remove the entry in slot i. Returns false if the heap had to be rebuilt
--- first (then nothing was removed).
-local function _heap_remove_at(h, i)
-  local n = h.n
-  local last = h[n]
-  if last == nil then _heap_rebuild(h); return false end
-  if not _remove_slot(h, i, n, last) then _heap_rebuild(h) end
-  return true
 end
 
 -- Push every set-aside entry back, in the order they were set aside (the
@@ -209,32 +203,6 @@ end
 function M.new_frontier()             return { n = 0 } end
 function M.frontier_pop(h)            return _heap_pop(h) end
 function M.frontier_push(h, cost, mx, my) _heap_push(h, math.floor(cost) * 65536 + my * 256 + mx) end
-
--- Remove the entry for tile (mx, my), whatever its cost. Used when the caller
--- drops the tile best_frontier just returned. best_frontier may have pushed
--- set-aside danger tiles back after it chose, so the tile is not always at
--- h[1]. When it is at h[1] this is exactly frontier_pop. Returns true if an
--- entry was removed.
-function M.frontier_remove(h, mx, my)
-  local key = my * 256 + mx
-  for _ = 1, 2 do                        -- second pass only after a rebuild
-    _heap_heal(h)
-    local n = h.n
-    local hole = false
-    for i = 1, n do
-      local v = h[i]
-      if v == nil then hole = true; break end
-      if v % 65536 == key then
-        if i == 1 then _heap_pop(h); return true end
-        if _heap_remove_at(h, i) then return true end
-        hole = true; break               -- rebuilt: look again
-      end
-    end
-    if not hole then return false end
-    _heap_rebuild(h)
-  end
-  return false
-end
 
 function M.update(state, info)
   local tmx = bit.rshift(info.tankx, 8)
