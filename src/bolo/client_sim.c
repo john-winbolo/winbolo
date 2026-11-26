@@ -583,6 +583,12 @@ void clientSimDestroy(ClientSim *cs) {
   free(cs);
 }
 
+/* True while the server's last pause notice says the whole game is paused.
+ * The server then moves nothing, so the client predicts nothing. */
+static bool clientSimServerGamePaused(const ClientSim *cs) {
+  return (clientSimGetServerPauseFlags(cs) & SERVER_PAUSE_FLAG_GAME) != 0;
+}
+
 /*********************************************************
  *NAME:          clientSimKeysTick
  *PURPOSE:
@@ -598,6 +604,9 @@ void clientSimKeysTick(ClientSim *cs, const InputPacket *pkt) {
     return;
   }
   clientStateRecordInput(&cs->clientState, pkt);
+  if (clientSimServerGamePaused(cs)) {
+    return;
+  }
   clientStatePredictTick(cs, &cs->clientState, pkt, &MY_TANK(cs), &cs->sim, TRUE, FALSE);
 }
 
@@ -618,6 +627,13 @@ void clientSimGameTick(ClientSim *cs, const InputPacket *pkt, bool isBrain) {
   bool canFire = false;
 
   if (!cs->clientState.initialized || !cs->clientState.hasPredictedTank) {
+    return;
+  }
+  if (clientSimServerGamePaused(cs)) {
+    /* The server drops this input and counts it as processed, so it is
+     * recorded but not predicted: a predicted move would only be pulled
+     * back by the next snapshot, again and again while a key is held. */
+    clientStateRecordInput(&cs->clientState, pkt);
     return;
   }
 
@@ -2844,23 +2860,27 @@ void clientSimSetPingMuted(ClientSim *cs, uint8_t player, bool muted) {
   }
 }
 
-uint8_t clientSimGetServerPauseFlags(const ClientSim *cs, uint64_t nowMs) {
-  if (cs == NULL || cs->serverPauseFlags == 0) {
-    return 0;
-  }
-  if (nowMs >= cs->serverPauseSeenMs &&
-      nowMs - cs->serverPauseSeenMs > CLIENT_PAUSE_NOTICE_STALE_MS) {
+uint8_t clientSimGetServerPauseFlags(const ClientSim *cs) {
+  if (cs == NULL || cs->serverPauseFlags == 0 ||
+      cs->serverPauseAgeFrames > CLIENT_PAUSE_NOTICE_STALE_FRAMES) {
     return 0;
   }
   return cs->serverPauseFlags;
 }
 
-void clientSimNoteServerPause(ClientSim *cs, uint8_t flags, uint64_t nowMs) {
+void clientSimNoteServerPause(ClientSim *cs, uint8_t flags) {
   if (cs == NULL) {
     return;
   }
-  cs->serverPauseFlags  = flags;
-  cs->serverPauseSeenMs = nowMs;
+  cs->serverPauseFlags     = flags;
+  cs->serverPauseAgeFrames = 0;
+}
+
+void clientSimServerPauseFrameApplied(ClientSim *cs) {
+  if (cs != NULL && cs->serverPauseFlags != 0 &&
+      cs->serverPauseAgeFrames <= CLIENT_PAUSE_NOTICE_STALE_FRAMES) {
+    cs->serverPauseAgeFrames++;
+  }
 }
 
 bool clientSimIsPingMuted(const ClientSim *cs, uint8_t player) {

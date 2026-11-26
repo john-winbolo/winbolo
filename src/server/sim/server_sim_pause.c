@@ -35,6 +35,7 @@
 #include "global.h"
 #include "server_sim.h"
 #include "server_sim_internal.h"
+#include "server_sim_lifecycle.h"   /* the tick steps defined here */
 
 /* Frames (20 ms) a second. serverSimPauseFrame runs once a frame. */
 #define PAUSE_FRAMES_PER_SECOND 50u

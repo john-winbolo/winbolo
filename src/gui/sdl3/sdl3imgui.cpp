@@ -8130,6 +8130,17 @@ static bool pauseItemsShown(ClientSim *cs) {
     return host >= MAX_TANKS || host == clientSimGetMyPlayerNum(cs);
 }
 
+/* Pause Game is the solo freeze, which the web build does not have, so
+   the item and its key are only on the other builds. */
+static bool gamePauseItemShown(ClientSim *cs) {
+#ifndef __EMSCRIPTEN__
+    return pauseItemsShown(cs);
+#else
+    (void)cs;
+    return false;
+#endif
+}
+
 static bool userGamePaused(void) {
 #ifndef __EMSCRIPTEN__
     return clientFrontPauseIsOn(CLIENT_FRONT_PAUSE_USER);
@@ -8140,7 +8151,7 @@ static bool userGamePaused(void) {
 
 static bool serverBotsPaused(ClientSim *cs) {
     return cs != nullptr &&
-           (clientSimGetServerPauseFlags(cs, SDL_GetTicks()) & 0x01u) != 0;
+           (clientSimGetServerPauseFlags(cs) & SERVER_PAUSE_FLAG_BOTS) != 0;
 }
 
 static void toggleBotPause(ClientSim *cs) {
@@ -8149,7 +8160,7 @@ static void toggleBotPause(ClientSim *cs) {
 }
 
 static void toggleGamePause(ClientSim *cs) {
-    if (!pauseItemsShown(cs)) return;
+    if (!gamePauseItemShown(cs)) return;
     windowUserPause(cs, !userGamePaused());
 }
 
@@ -8158,9 +8169,9 @@ static void toggleGamePause(ClientSim *cs) {
    server's notice; the single-player host also sees its own game pause. */
 static void renderPauseNote(ClientSim *cs) {
     if (cs == nullptr || !clientSimIsRunning(cs)) return;
-    uint8_t flags = clientSimGetServerPauseFlags(cs, SDL_GetTicks());
-    bool game = userGamePaused() || (flags & 0x02u) != 0;
-    bool bots = (flags & 0x01u) != 0;
+    uint8_t flags = clientSimGetServerPauseFlags(cs);
+    bool game = userGamePaused() || (flags & SERVER_PAUSE_FLAG_GAME) != 0;
+    bool bots = (flags & SERVER_PAUSE_FLAG_BOTS) != 0;
     if (!game && !bots) return;
     const char *lines[2];
     int n = 0;
@@ -8727,7 +8738,8 @@ static void renderMenuBar(ClientSim *cs) {
                                 KMOD_PRIMARY_LABEL "Shift+B"))
                 toggleBotPause(cs);
             bool gamePaused = userGamePaused();
-            if (ImGui::MenuItem(langGetText(gamePaused ? STR_MENU_RESUME_GAME
+            if (gamePauseItemShown(cs) &&
+                ImGui::MenuItem(langGetText(gamePaused ? STR_MENU_RESUME_GAME
                                                        : STR_MENU_PAUSE_GAME),
                                 KMOD_PRIMARY_LABEL "Shift+G"))
                 toggleGamePause(cs);
@@ -9813,7 +9825,7 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
                 break;
             case SDL_SCANCODE_G:
                 /* Shift+G is Pause Game, for the single-player host. */
-                if ((ev.key.mod & SDL_KMOD_SHIFT) && pauseItemsShown(cs))
+                if ((ev.key.mod & SDL_KMOD_SHIFT) && gamePauseItemShown(cs))
                     toggleGamePause(cs);
                 else
                     windowShowGunsight_toggle(cs);

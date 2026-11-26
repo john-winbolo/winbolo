@@ -1248,13 +1248,14 @@ struct ClientSim {
     ClientScnScore scnPlayerScores[MAX_TANKS];
     ClientScnScore scnTeamScores[MAX_TANKS];
 
-    /* The server's pause state (SIM_PAUSE_FLAG_*), from the last
-     * SERVER_MSG_PAUSE_STATE notice, and the SDL_GetTicks time it came.
-     * The server repeats the notice every second while a pause is on, so a
-     * notice older than CLIENT_PAUSE_NOTICE_STALE_MS reads as no pause: a
-     * lost resume notice cannot leave the note up. */
+    /* The server's pause state (SERVER_PAUSE_FLAG_*), from the last
+     * SERVER_MSG_PAUSE_STATE notice, and the count of server frames
+     * (snapshots) applied after it. The server repeats the notice every
+     * second while a pause is on, so a notice more than
+     * CLIENT_PAUSE_NOTICE_STALE_FRAMES frames old reads as no pause: a lost
+     * resume notice cannot leave the note up. */
     uint8_t      serverPauseFlags;
-    uint64_t     serverPauseSeenMs;
+    uint32_t     serverPauseAgeFrames;
 };
 
 BOLO_STATIC_ASSERT(offsetof(struct ClientSim, sim) == 0,
@@ -1488,5 +1489,11 @@ void clientSimAddPing(ClientSim *cs, uint8_t sender, uint8_t kind,
 void clientSimEarlyBlastServerEnd(ClientSim *cs, uint32_t fireTick, uint16_t x, uint16_t y);
 bool clientSimEarlyBlastClaimExplosion(ClientSim *cs, BYTE mx, BYTE my, BYTE px, BYTE py);
 bool clientSimEarlyBlastClaimSound(ClientSim *cs, uint8_t sound, int8_t pan, BYTE dist);
+
+/* The server's pause notice (client_sim.c). Note records one, from the
+ * snapshot event path; FrameApplied ages it by one server frame, from
+ * clientApplySnapshot. */
+void clientSimNoteServerPause(ClientSim *cs, uint8_t flags);
+void clientSimServerPauseFrameApplied(ClientSim *cs);
 
 #endif /* CLIENT_SIM_INTERNAL_H */

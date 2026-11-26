@@ -311,4 +311,20 @@ ServerLocalEdge serverSimLocalTick(ServerSim *sim, uint32_t tickCount,
                                    const ServerSimLocalTickHooks *hooks,
                                    double *outSimMs);
 
+/* The steps of serverSimLocalTick for the bot pause and the game pause
+ * (server_sim_pause.c, server_sim_tick.c; the pause API is in
+ * server_sim.h). */
+/* Once a frame, from serverSimLocalTick, in every state: counts the frames
+ * with no human and turns the idle pause on and off. */
+void serverSimPauseFrame(ServerSim *sim);
+/* A running frame of a paused game, in place of the bot tick and
+ * serverSimTick: clears the frame's event buffers and takes every queued
+ * input off without running it, so the tanks stay still and nothing builds
+ * up for the resume. */
+void serverSimPausedGameFrame(ServerSim *sim);
+/* Adds the pause notice to the frame's events when the pause state has
+ * changed, or every SIM_PAUSE_NOTIFY_FRAMES while a pause is on. Running
+ * state only; the caller runs it after the frame's events are made. */
+void serverSimPauseNotify(ServerSim *sim);
+
 #endif

@@ -1488,10 +1488,10 @@ typedef enum {
     SIM_PAUSE_TARGET_COUNT
 } SimPauseTarget;
 
-/* Bits of the pause state as clients are told it (EVENT_SERVER_MSG,
- * SERVER_MSG_PAUSE_STATE, data[1]). */
-#define SIM_PAUSE_FLAG_BOTS 0x01u
-#define SIM_PAUSE_FLAG_GAME 0x02u
+/* Bits of the pause state as clients are told it: EVENT_SERVER_MSG with
+ * data[0] = SERVER_MSG_PAUSE_STATE_BASE + the flags (input_packet.h). */
+#define SIM_PAUSE_FLAG_BOTS SERVER_PAUSE_FLAG_BOTS
+#define SIM_PAUSE_FLAG_GAME SERVER_PAUSE_FLAG_GAME
 
 /* Frames (20 ms) between repeats of the pause notice while a pause is on.
  * The notice rides the snapshot event stream, so a lost one or a client
@@ -1525,18 +1525,6 @@ uint32_t serverSimGetPauseSeconds(const ServerSim *sim, SimPauseTarget target);
  * example "bots: paused (manual, 12 s); game: running; idle pause: 30 s,
  * mode bots, waiting". */
 void serverSimFormatPauseStatus(const ServerSim *sim, char *buf, size_t bufSize);
-/* Once a frame, from serverSimLocalTick, in every state: counts the frames
- * with no human and turns the idle pause on and off. */
-void serverSimPauseFrame(ServerSim *sim);
-/* A running frame of a paused game, in place of the bot tick and
- * serverSimTick: clears the frame's event buffers and takes every queued
- * input off without running it, so the tanks stay still and nothing builds
- * up for the resume. */
-void serverSimPausedGameFrame(ServerSim *sim);
-/* Adds the pause notice to the frame's events when the pause state has
- * changed, or every SIM_PAUSE_NOTIFY_FRAMES while a pause is on. Running
- * state only; the caller runs it after the frame's events are made. */
-void serverSimPauseNotify(ServerSim *sim);
 
 /*********************************************************
  *NAME:          serverSimGetNumFielded

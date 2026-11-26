@@ -554,5 +554,8 @@ static inline int gameEventDataSize(uint8_t type) {
  * an id it does not know. */
 #define SERVER_MSG_PAUSE_STATE_BASE 3
 #define SERVER_MSG_PAUSE_STATE_LAST 6
+/* The flag bits in a pause state id (id - SERVER_MSG_PAUSE_STATE_BASE). */
+#define SERVER_PAUSE_FLAG_BOTS 0x01u   /* the bots are paused */
+#define SERVER_PAUSE_FLAG_GAME 0x02u   /* the whole game is paused */
 
 #endif /* INPUT_PACKET_H */
