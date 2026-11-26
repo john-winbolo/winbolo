@@ -76,7 +76,9 @@
                                     * LOG_CONTROL_SNAPSHOT_MAX */
 #include "server_sim.h"
 #include "server_sim_internal.h"   /* botPoolId / botPoolBlobLen */
-#include "server_sim_lifecycle.h"  /* serverSimSetLobbyEnabled */
+#include "server_sim_lifecycle.h"  /* serverSimSetLobbyEnabled, serverSimDrawStartBotNames */
+#include "bolo_rand.h"             /* bolo_srand / save, for the -bots name draws */
+#include "start_sides.h"           /* START_SIDE_ANY */
 #include "server_lifecycle.h"      /* serverInstanceTick */
 #include "transport_udp.h"         /* transportUdpClientTestBotPoolArriving */
 #include "transport_udp_server_internal.h" /* serverRebaseBulkAndRearmDownload */
@@ -506,8 +508,10 @@ static bool installThreeLabelPools(void) {
 }
 
 /* A team draws its pool only from the pools -botnames named, and is never
- * moved onto the generated "Numbered Bots" pool; with every pool kept the
- * draw is the one from before labels, which can land on that pool. */
+ * moved onto the generated "Numbered Bots" pool. With every pool kept the
+ * draw is over every themed pool, and it never lands on that pool either
+ * (bots-real-name-pools); lobbyBotPoolDrawCount still counts it for the
+ * client's Add Bot draw. */
 int run_bot_pool_label_team_picks_only_chosen(void) {
     BYTE       emap[6000] = E_MAP;
     ServerSim *sim;
@@ -515,17 +519,17 @@ int run_bot_pool_label_team_picks_only_chosen(void) {
 
     if (!threadsCreate(TRUE)) UT_FAIL("threadsCreate failed");
 
-    /* All pools (no -botnames): team 1 can be given the numbered pool. */
+    /* All pools (no -botnames): team 1 is never given the numbered pool. */
     lobbyBotPoolsReset();
     UT_ASSERT(installThreeLabelPools());
     UT_ASSERT(lobbyBotPoolDrawCount() == 4);
     sim = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island", gameOpen,
                                     false, 0, -1);
     UT_ASSERT(sim != NULL);
-    /* Team 2 holds pool 0, so team 1's free pools are 1, 2, 3; choice 2
-     * names the third, the numbered pool. */
-    UT_ASSERT_MSG(serverSimPickTeamNamingPool(sim, 1, 2) == 3,
-                  "without labels the draw no longer matches the old one");
+    /* Team 2 holds pool 0, so team 1's free themed pools are 1 and 2;
+     * choice 2 names the first of them. Pool 3 (numbered) is not offered. */
+    UT_ASSERT_MSG(serverSimPickTeamNamingPool(sim, 1, 2) == 1,
+                  "without labels team 1 should take free themed pool 1");
     serverSimDestroy(sim);
 
     /* One label: every team gets it. */
@@ -564,4 +568,389 @@ int run_bot_pool_label_team_picks_only_chosen(void) {
     threadsDestroy();
     lobbyBotPoolsReset();
     return 0;
+}
+
+/* ── -bots teams never draw "Numbered Bots" ─────────────────────────
+ *
+ * Players reported a -bots 6 -teams 2 server where one team's bots had
+ * names from the pool file and the other team's were all "Bot-NN". The
+ * -bots team draw picked from every pool, the generated "Numbered Bots"
+ * pool included, and teams 1 and 2 both open on pool 0, so team 1 could
+ * not take pool 0. With one pool in the file team 1 always got
+ * "Numbered Bots"; with two pools it got it half the time; with the 14
+ * shipped pools about one game in seven had a numbered team. */
+
+#define DS_POOL_ONE_FILE "test_bot_names_ds_one_tmp.json"
+#define DS_POOL_TWO_FILE "test_bot_names_ds_two_tmp.json"
+
+static bool writeDsPoolFile(const char *path, const char *text) {
+    FILE *f = fopen(path, "wb");
+    size_t n;
+    if (f == NULL) return false;
+    n = fwrite(text, 1, strlen(text), f);
+    fclose(f);
+    return n == strlen(text);
+}
+
+static bool loadDsOnePoolFile(void) {
+    bool ok = writeDsPoolFile(DS_POOL_ONE_FILE,
+        "{ \"pools\": [ { \"label\": \"Solo\", \"names\": "
+        "[\"Alpha\", \"Bravo\", \"Charlie\", \"Delta\", \"Echo\", "
+        "\"Foxtrot\", \"Golf\", \"Hotel\"] } ] }\n");
+    ok = ok && lobbyBotPoolsLoadFromFile(DS_POOL_ONE_FILE, NULL);
+    remove(DS_POOL_ONE_FILE);
+    return ok;
+}
+
+static bool loadDsTwoPoolFile(void) {
+    bool ok = writeDsPoolFile(DS_POOL_TWO_FILE,
+        "{ \"pools\": [\n"
+        "  { \"label\": \"Solo\", \"names\": [\"Alpha\", \"Bravo\", \"Charlie\", "
+        "\"Delta\", \"Echo\", \"Foxtrot\"] },\n"
+        "  { \"label\": \"Duo\", \"names\": [\"Uno\", \"Dos\", \"Tres\", "
+        "\"Cuatro\", \"Cinco\", \"Seis\"] }\n"
+        "] }\n");
+    ok = ok && lobbyBotPoolsLoadFromFile(DS_POOL_TWO_FILE, NULL);
+    remove(DS_POOL_TWO_FILE);
+    return ok;
+}
+
+/* On one sim, pick a pool for teams 1..numTeams with this choice, as the
+ * -bots start-up does, and fail if a team gets "Numbered Bots". The
+ * caller creates and frees the sim. */
+static int dsTeamsNeverNumberedOnSim(ServerSim *sim, int numTeams,
+                                     uint32_t choice, const char *what) {
+    int numbered = lobbyBotPoolCount() - 1;
+    for (int team = 1; team <= numTeams; team++) {
+        uint8_t got = serverSimPickTeamNamingPool(
+            sim, (BYTE)team, choice * 7u + (uint32_t)team * 3u);
+        UT_ASSERT_MSG((int)got != numbered,
+                      "%s, %d teams: team %d got the Numbered Bots pool "
+                      "(choice %u)", what, numTeams, team, (unsigned)choice);
+        UT_ASSERT_MSG((int)got < numbered, "%s: team %d got pool %u",
+                      what, team, (unsigned)got);
+    }
+    return 0;
+}
+
+/* For many choices, run dsTeamsNeverNumberedOnSim on a fresh sim. */
+static int dsTeamsNeverNumbered(int numTeams, const char *what) {
+    BYTE emap[6000] = E_MAP;
+    for (uint32_t choice = 0; choice < 40; choice++) {
+        ServerSim *sim = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island",
+                                                   gameOpen, false, 0, -1);
+        int rc;
+        UT_ASSERT(sim != NULL);
+        rc = dsTeamsNeverNumberedOnSim(sim, numTeams, choice, what);
+        serverSimDestroy(sim);
+        if (rc != 0) return rc;
+    }
+    return 0;
+}
+
+/* Run body between threadsCreate and threadsDestroy, with the pools reset
+ * before and after. A failing body still gets the clean-up. */
+static int dsRunWithPools(int (*body)(void)) {
+    int rc;
+    if (!threadsCreate(TRUE)) UT_FAIL("threadsCreate failed");
+    lobbyBotPoolsReset();
+    rc = body();
+    threadsDestroy();
+    lobbyBotPoolsReset();
+    return rc;
+}
+
+static int dsSkipNumberedCustomBody(void) {
+    UT_ASSERT_MSG(loadDsOnePoolFile(), "setup: the one-pool file must load");
+    UT_ASSERT(lobbyBotPoolCount() == 2);
+    if (dsTeamsNeverNumbered(2, "one-pool file") != 0) return 1;
+    if (dsTeamsNeverNumbered(4, "one-pool file") != 0) return 1;
+    lobbyBotPoolsReset();
+    UT_ASSERT_MSG(loadDsTwoPoolFile(), "setup: the two-pool file must load");
+    UT_ASSERT(lobbyBotPoolCount() == 3);
+    if (dsTeamsNeverNumbered(2, "two-pool file") != 0) return 1;
+    if (dsTeamsNeverNumbered(3, "two-pool file") != 0) return 1;
+    return 0;
+}
+
+int run_bot_pool_ds_teams_skip_numbered_custom(void) {
+    return dsRunWithPools(dsSkipNumberedCustomBody);
+}
+
+static int dsSkipNumberedDefaultBody(void) {
+    LobbyBotPoolLoadStats st;
+    UT_ASSERT_MSG(lobbyBotPoolsLoadDefault(&st),
+                  "setup: the shipped data/bot_names.json must load");
+    UT_ASSERT_MSG(st.poolsKept >= 8, "setup: shipped file kept %d pools",
+                  st.poolsKept);
+    if (dsTeamsNeverNumbered(2, "shipped file") != 0) return 1;
+    if (dsTeamsNeverNumbered(4, "shipped file") != 0) return 1;
+    if (dsTeamsNeverNumbered(8, "shipped file") != 0) return 1;
+    /* The built-in pools (no file) the same. */
+    lobbyBotPoolsReset();
+    if (dsTeamsNeverNumbered(2, "built-in pools") != 0) return 1;
+    if (dsTeamsNeverNumbered(4, "built-in pools") != 0) return 1;
+    return 0;
+}
+
+int run_bot_pool_ds_teams_skip_numbered_default(void) {
+    return dsRunWithPools(dsSkipNumberedDefaultBody);
+}
+
+/* Whether name is in themed pool `pool`. */
+static bool dsNameInPool(const char *name, int pool) {
+    int n = lobbyBotPoolNameCount(pool);
+    for (int k = 0; k < n; k++) {
+        const char *c = lobbyBotPoolName(pool, k);
+        if (c != NULL && strcmp(c, name) == 0) return true;
+    }
+    return false;
+}
+
+/* On one sim and one seed, name numBots bots split round-robin into
+ * numTeams teams, as "-bots numBots -teams numTeams" does, and check that
+ * every bot has a name from its team's themed pool, that the names are
+ * unique, and that the game's random stream is not moved. numTeams 0 is
+ * "-bots numBots" with no -teams: every bot is on team 0, and all the
+ * names must come from one themed pool. The caller creates and frees the
+ * sim. */
+static int dsStartNamesOnSim(ServerSim *sim, int numBots, int numTeams,
+                             uint64_t seed, const char *what) {
+    int  themed = lobbyBotPoolThemedCount();
+    int  botTeam[MAX_TANKS];
+    char names[MAX_TANKS][SERVER_START_BOT_NAME_LEN];
+    BoloRandState before, after;
+    serverSimStartBotTeams(numBots, 0, NULL, 0, numTeams, botTeam);
+    bolo_srand(seed);
+    bolo_rand_save(&before);
+    serverSimDrawStartBotNames(sim, numBots, botTeam, names);
+    bolo_rand_save(&after);
+    UT_ASSERT_MSG(memcmp(&before, &after, sizeof(before)) == 0,
+                  "%s: the name draw moved the game's random stream", what);
+    for (int i = 0; i < numBots; i++) {
+        int team = botTeam[i];
+        if (numTeams == 0) {
+            UT_ASSERT_MSG(team == 0, "%s, no -teams: bot %d on team %d",
+                          what, i, team);
+        } else {
+            int pool;
+            /* Range-check the team before it indexes sim->teams. */
+            UT_ASSERT_MSG(team >= 1 && team <= numTeams && team < MAX_TANKS,
+                          "%s: bot %d on team %d", what, i, team);
+            pool = (int)sim->teams[team].namingPool;
+            UT_ASSERT_MSG(pool < themed && dsNameInPool(names[i], pool),
+                          "%s, -bots %d -teams %d, seed %u: bot %d (team %d) "
+                          "is '%s', not a name from a themed pool (team pool "
+                          "%d of %d themed)", what, numBots, numTeams,
+                          (unsigned)seed, i, team, names[i], pool, themed);
+        }
+        for (int j = 0; j < i; j++) {
+            UT_ASSERT_MSG(strcmp(names[i], names[j]) != 0,
+                          "%s: bots %d and %d are both '%s'", what, j, i,
+                          names[i]);
+        }
+    }
+    if (numTeams == 0) {
+        /* One themed pool must hold every name: none from "Numbered
+         * Bots", and no mix of pools. */
+        bool found = false;
+        for (int p = 0; p < themed && !found; p++) {
+            bool all = true;
+            for (int i = 0; i < numBots && all; i++) {
+                all = dsNameInPool(names[i], p);
+            }
+            found = all;
+        }
+        UT_ASSERT_MSG(found, "%s, -bots %d with no -teams, seed %u: the names "
+                      "('%s', '%s', ...) are not all from one themed pool",
+                      what, numBots, (unsigned)seed, names[0],
+                      numBots > 1 ? names[1] : "");
+    }
+    return 0;
+}
+
+/* For seeds 1-20, run dsStartNamesOnSim on a fresh sim. */
+static int dsStartNamesFromPools(int numBots, int numTeams, const char *what) {
+    BYTE emap[6000] = E_MAP;
+    for (uint64_t seed = 1; seed <= 20; seed++) {
+        ServerSim *sim = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island",
+                                                   gameOpen, false, 0, -1);
+        int rc;
+        UT_ASSERT(sim != NULL);
+        rc = dsStartNamesOnSim(sim, numBots, numTeams, seed, what);
+        serverSimDestroy(sim);
+        if (rc != 0) return rc;
+    }
+    return 0;
+}
+
+/* A pool with two names and six bots on two teams: the two real names go
+ * first, then "<label> N", never "Bot-NN". The caller frees the sim. */
+static int dsTinyPoolOnSim(ServerSim *sim) {
+    int  botTeam[MAX_TANKS];
+    char names[MAX_TANKS][SERVER_START_BOT_NAME_LEN];
+    int  real = 0, overflow = 0;
+    serverSimStartBotTeams(6, 0, NULL, 0, 2, botTeam);
+    serverSimDrawStartBotNames(sim, 6, botTeam, names);
+    for (int i = 0; i < 6; i++) {
+        if (strcmp(names[i], "Ant") == 0 || strcmp(names[i], "Bee") == 0) {
+            real++;
+        } else {
+            UT_ASSERT_MSG(strncmp(names[i], "Tiny ", 5) == 0,
+                          "bot %d is '%s', want a 'Tiny N' name", i, names[i]);
+            overflow++;
+        }
+        for (int j = 0; j < i; j++) {
+            UT_ASSERT(strcmp(names[i], names[j]) != 0);
+        }
+    }
+    UT_ASSERT_MSG(real == 2 && overflow == 4, "real %d overflow %d",
+                  real, overflow);
+    return 0;
+}
+
+static int dsStartNamesBody(void) {
+    LobbyBotPoolLoadStats st;
+    BYTE emap[6000] = E_MAP;
+
+    /* The shipped pools. */
+    UT_ASSERT_MSG(lobbyBotPoolsLoadDefault(&st),
+                  "setup: the shipped data/bot_names.json must load");
+    if (dsStartNamesFromPools(6, 2, "shipped file") != 0) return 1;
+    if (dsStartNamesFromPools(8, 4, "shipped file") != 0) return 1;
+    if (dsStartNamesFromPools(12, 6, "shipped file") != 0) return 1;
+
+    /* A custom file with one pool: both teams share it. */
+    lobbyBotPoolsReset();
+    UT_ASSERT(loadDsOnePoolFile());
+    if (dsStartNamesFromPools(6, 2, "one-pool file") != 0) return 1;
+
+    /* A custom file with two pools. */
+    lobbyBotPoolsReset();
+    UT_ASSERT(loadDsTwoPoolFile());
+    if (dsStartNamesFromPools(6, 2, "two-pool file") != 0) return 1;
+    if (dsStartNamesFromPools(9, 3, "two-pool file") != 0) return 1;
+
+    /* A pool that runs out. */
+    {
+        static const char *const tiny[] = { "Ant", "Bee" };
+        LobbyBotPoolDef def;
+        ServerSim *sim;
+        int rc;
+        def.label = "Tiny"; def.names = tiny; def.nameCount = 2;
+        lobbyBotPoolsReset();
+        UT_ASSERT(lobbyBotPoolsInstall(&def, 1, NULL) == 1);
+        sim = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island",
+                                        gameOpen, false, 0, -1);
+        UT_ASSERT(sim != NULL);
+        rc = dsTinyPoolOnSim(sim);
+        serverSimDestroy(sim);
+        if (rc != 0) return rc;
+    }
+    return 0;
+}
+
+int run_bot_pool_ds_start_names_from_pools(void) {
+    return dsRunWithPools(dsStartNamesBody);
+}
+
+/* "-bots N" with no -teams: every bot is on team 0 and draws from one
+ * pool picked for team 0. Every name must come from a themed pool, never
+ * from "Numbered Bots". */
+static int dsStartNamesNoTeamBody(void) {
+    LobbyBotPoolLoadStats st;
+    UT_ASSERT_MSG(loadDsOnePoolFile(), "setup: the one-pool file must load");
+    if (dsStartNamesFromPools(6, 0, "one-pool file") != 0) return 1;
+    lobbyBotPoolsReset();
+    UT_ASSERT_MSG(loadDsTwoPoolFile(), "setup: the two-pool file must load");
+    if (dsStartNamesFromPools(6, 0, "two-pool file") != 0) return 1;
+    lobbyBotPoolsReset();
+    UT_ASSERT_MSG(lobbyBotPoolsLoadDefault(&st),
+                  "setup: the shipped data/bot_names.json must load");
+    if (dsStartNamesFromPools(6, 0, "shipped file") != 0) return 1;
+    lobbyBotPoolsReset();
+    if (dsStartNamesFromPools(6, 0, "built-in pools") != 0) return 1;
+    return 0;
+}
+
+int run_bot_pool_ds_start_names_no_team(void) {
+    return dsRunWithPools(dsStartNamesNoTeamBody);
+}
+
+/* ── Lobby edits keep the pool they ask for ──────────────────────────
+ *
+ * serverSimSetTeamMeta moves a team off a pool another team holds, and
+ * lobby edits use it too. The move tries only the themed pools, so when
+ * every themed pool is held the team keeps the pool it asked for; it is
+ * not moved onto "Numbered Bots" (main did that). A host who picks
+ * "Numbered Bots" by hand keeps it. The caller frees the sim. */
+static int dsTeamMetaKeepsPoolOneFile(ServerSim *sim) {
+    int numbered = lobbyBotPoolThemedCount();   /* 1: Numbered Bots */
+    UT_ASSERT(numbered == 1);
+    UT_ASSERT_MSG(sim->teams[1].in_use && sim->teams[2].in_use &&
+                  sim->teams[1].namingPool == 0 && sim->teams[2].namingPool == 0,
+                  "setup: teams 1 and 2 must open in use on pool 0");
+    /* The host renames team 1. Its pool 0 is held by team 2 and no other
+     * themed pool is free, so team 1 keeps pool 0. */
+    serverSimSetTeamMeta(sim, 1, sim->teams[1].color, 0, sim->teams[1].startSide,
+                         (const uint8_t *)"Reds", 4);
+    UT_ASSERT_MSG(sim->teams[1].namingPool == 0,
+                  "one-pool file: renamed team 1 moved to pool %u, want 0 "
+                  "(the pool it asked for)", (unsigned)sim->teams[1].namingPool);
+    /* The host picks "Numbered Bots" for team 1 by hand: it keeps it. */
+    serverSimSetTeamMeta(sim, 1, sim->teams[1].color, (uint8_t)numbered,
+                         sim->teams[1].startSide, (const uint8_t *)"Reds", 4);
+    UT_ASSERT_MSG((int)sim->teams[1].namingPool == numbered,
+                  "one-pool file: team 1 picked Numbered Bots (%d) by hand "
+                  "but has pool %u", numbered, (unsigned)sim->teams[1].namingPool);
+    return 0;
+}
+
+static int dsTeamMetaKeepsPoolTwoFile(ServerSim *sim) {
+    int numbered = lobbyBotPoolThemedCount();   /* 2: Numbered Bots */
+    UT_ASSERT(numbered == 2);
+    /* Team 1 takes the free pool 1; team 2 keeps pool 0. */
+    serverSimSetTeamMeta(sim, 1, sim->teams[1].color, 1, sim->teams[1].startSide,
+                         (const uint8_t *)"Reds", 4);
+    UT_ASSERT(sim->teams[1].namingPool == 1);
+    UT_ASSERT(sim->teams[2].namingPool == 0);
+    /* Team 3 asks for pool 0. Both themed pools are held, so it keeps 0. */
+    serverSimSetTeamMeta(sim, 3, 2, 0, START_SIDE_ANY,
+                         (const uint8_t *)"Greens", 6);
+    UT_ASSERT_MSG(sim->teams[3].namingPool == 0,
+                  "two-pool file: team 3 moved to pool %u, want 0 (the pool "
+                  "it asked for)", (unsigned)sim->teams[3].namingPool);
+    /* The host picks "Numbered Bots" for team 3 by hand: it keeps it. */
+    serverSimSetTeamMeta(sim, 3, 2, (uint8_t)numbered, START_SIDE_ANY,
+                         (const uint8_t *)"Greens", 6);
+    UT_ASSERT_MSG((int)sim->teams[3].namingPool == numbered,
+                  "two-pool file: team 3 picked Numbered Bots (%d) by hand "
+                  "but has pool %u", numbered, (unsigned)sim->teams[3].namingPool);
+    return 0;
+}
+
+static int dsTeamMetaKeepsPoolBody(void) {
+    BYTE emap[6000] = E_MAP;
+    ServerSim *sim;
+    int rc;
+    UT_ASSERT_MSG(loadDsOnePoolFile(), "setup: the one-pool file must load");
+    sim = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island",
+                                    gameOpen, false, 0, -1);
+    UT_ASSERT(sim != NULL);
+    rc = dsTeamMetaKeepsPoolOneFile(sim);
+    serverSimDestroy(sim);
+    if (rc != 0) return rc;
+
+    lobbyBotPoolsReset();
+    UT_ASSERT_MSG(loadDsTwoPoolFile(), "setup: the two-pool file must load");
+    sim = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island",
+                                    gameOpen, false, 0, -1);
+    UT_ASSERT(sim != NULL);
+    rc = dsTeamMetaKeepsPoolTwoFile(sim);
+    serverSimDestroy(sim);
+    return rc;
+}
+
+int run_bot_pool_lobby_team_meta_keeps_pool(void) {
+    return dsRunWithPools(dsTeamMetaKeepsPoolBody);
 }

@@ -92,6 +92,12 @@ file instead. Running `WinBoloDS` without the required arguments prints the
 full list of options. A client can also host a game itself
 from the in-game menu, without a separate server.
 
+Bots that the server starts with `-bots` get their names from the themed
+pools in `data/bot_names.json` (or the file given with `-botnames`), never
+the numbered names ("Bot-01", "Bot-02"). Each team gets a pool of its own
+while there are free pools; with more teams than pools, teams share a pool.
+A pool that runs out of names gives "<label> 1", "<label> 2" and so on.
+
 Bots get their names from the themed pools in `data/bot_names.json`. To use
 only some of them, give `-botnames` one or more pool labels, comma separated
 (case and spaces around each label do not matter). Bots that the server
