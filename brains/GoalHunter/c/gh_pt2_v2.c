@@ -68,6 +68,26 @@
 #define PT2_WALK_CHECK 0
 #endif
 
+/* PT2_DDA_CHECK=1 (a check build only, never shipped): every jump walk
+ * also runs the jump walk as it was (ts_walk_jump_div, a division per
+ * square change), and the change ticks and squares of the whole life
+ * are made both ways (pt2w_next2 and Pt2wAxis). All results are
+ * compared; the counts go to stderr. */
+#ifndef PT2_DDA_CHECK
+#define PT2_DDA_CHECK 0
+#endif
+
+/* PT2_AIMW_CHECK=1 (a check build only, never shipped): every aim_wide
+ * call also runs aim_wide as it was (every 1/16 brad sample each side,
+ * no known clear shots) and compares the answer and the shot count; the
+ * counts go to stderr. */
+#ifndef PT2_AIMW_CHECK
+#define PT2_AIMW_CHECK 0
+#endif
+
+/* aim_wide's known clear shots kept for one origin (aw_note). */
+#define PT2_AWM_N 16
+
 /* ── Engine constants (shadow.lua) ──────────────────────────────────── */
 #define PT2_RADIANS_MAX   (2.0 * 3.14159)
 #define PT2_SHELL_SPEED   32.0
@@ -325,6 +345,8 @@ enum {
     C_ring_points,
     C_steps,
     C_ts_reuse,
+    C_aw_short,
+    C_aw_saved,
     C_N
 };
 static const char *s_pc_name[] = {
@@ -336,7 +358,9 @@ static const char *s_pc_name[] = {
     "po_miss",
     "ring_points",
     "steps",
-    "ts_reuse"
+    "ts_reuse",
+    "aw_short",
+    "aw_saved"
 };
 #define PF_DEPTH 64
 typedef struct {
@@ -832,6 +856,16 @@ struct St {
     double unc_n;               /* Lua reads a stamp does not keep */
     uint64_t walk_serial;
     Pt2wKey tsm_key; int tsm_ok, tsm_why; double tsm_tt;
+    double ts_last_angle;       /* the gun angle (float) of the last tank shot walk */
+    /* aim_wide's known clear shots (aw_note, aw_hit): the gun angles of
+     * the shots from one origin to A, with one planned blocker set, in
+     * one step, that reached A */
+    int    awm_on, awm_xn, awm_n;
+    uint64_t awm_ox, awm_oy; double awm_tmx, awm_tmy; const Extra *awm_x; uint32_t awm_gen;
+    double awm_a[PT2_AWM_N];
+#if PT2_AIMW_CHECK
+    int    aw_quiet;            /* the check's run of the old aim_wide: no notes */
+#endif
     HMap   reach;           /* reach_cache */
     HMap   lgt;             /* lgm_ticks memo: value 0 = false, else t + 1 */
     HMap   lgt_v;
@@ -1469,12 +1503,34 @@ static int ts_tank_hit(const Ev *e, double x, double y) {
     return 0;
 }
 
-static Lane *lane_make(Ev *e, const int64_t *lane, int nl) {
-    Lane *l = NEW(e, Lane);
+/* The lane of a walk that can give one (lane_out): the Lane and room for
+ * PT2_MAX_T squares are one arena block taken before the walk, so the
+ * walk writes the squares where they stay (no copy). After the walk the
+ * block is cut to the squares used (TS_OK) or given back (any other
+ * stop), but only while it is still the arena's last block: a block with
+ * anything allocated after it stays as it is. A lane lives as long as
+ * the arena, as before. */
+typedef struct { Lane *l; Chunk *c; size_t off, end; } LaneRes;
+#define LANE_HDR ((sizeof(Lane) + 15) & ~(size_t)15)
+static int64_t *lane_reserve(Ev *e, LaneRes *r) {
+    unsigned char *p = (unsigned char *)ar_alloc(e->L, &e->ar, LANE_HDR + sizeof(int64_t) * PT2_MAX_T);
+    r->c = e->ar.cur;
+    r->off = (size_t)(p - (unsigned char *)r->c->data);
+    r->end = r->c->used;
+    r->l = (Lane *)p;
+    return (int64_t *)(p + LANE_HDR);
+}
+static Lane *lane_done(Ev *e, LaneRes *r, int ok, int nl) {
+    int last = e->ar.cur == r->c && r->c->used == r->end;
+    if (!ok) {
+        if (last) r->c->used = r->off;
+        return NULL;
+    }
+    Lane *l = r->l;
     memset(l, 0, sizeof(*l));
     l->n = nl;
-    l->v = NEWN(e, int64_t, nl);
-    memcpy(l->v, lane, sizeof(int64_t) * (size_t)nl);
+    l->v = (int64_t *)((unsigned char *)l + LANE_HDR);
+    if (last) r->c->used = r->off + ((LANE_HDR + sizeof(int64_t) * (size_t)(nl > 0 ? nl : 1) + 15) & ~(size_t)15);
     return l;
 }
 
@@ -1527,8 +1583,66 @@ static int ts_walk_ticks(Ev *e, Walk *w, double n, double omx, double omy, doubl
  * integer fast path and the life is at most PT2W_MAX_T ticks: on the
  * ticks it skips, the per-tick walk only steps. The square reads use the
  * square's index once (pill_on, ttype and base_at stamps) and make the
- * same calls as before on a cache miss. */
+ * same calls as before on a cache miss. The next change tick on each
+ * axis comes from the last one by an add (Pt2wAxis), not a division:
+ * the same ticks and squares as pt2w_next2. */
 static int ts_walk_jump(Ev *e, const Walk *w, int32_t N, double omx, double omy, double tmx, double tmy,
+                        const Extra *extra, int64_t *lane, int *nl_out, TsStop *st) {
+    Pt2Ctx *c = e->c;
+    const int32_t x0 = w->xi, y0 = w->yi, xs = w->xsi, ys = w->ysi;
+    int nl = 0;
+    double last_sq = -1;
+    double mx = -1, my = -1;
+    int why = TS_SHORT;
+    int32_t t = 1;
+    Pt2wAxis ax, ay;
+    pt2w_ax_init(&ax, x0, xs);
+    pt2w_ax_init(&ay, y0, ys);
+    while (t <= N) {
+        int32_t mxi = pt2w_ax_sq(&ax), myi = pt2w_ax_sq(&ay);
+        mx = (double)mxi; my = (double)myi;
+        int64_t sqi = (int64_t)myi * 256 + mxi;
+        double sq = (double)sqi;
+        if (sq != last_sq) {
+            last_sq = sq;
+            if (mx == tmx && my == tmy) { why = TS_OK; break; }
+            if (!(mx == omx && my == omy)) {
+                if (nl < PT2_MAX_T) lane[nl] = sqi;
+                nl++;
+                /* mxi, myi >= 0 (unsigned shift): in the map when both <= 255. */
+                int in = mxi <= 255 && myi <= 255;
+                int k = (int)(sqi & (PT2_MAP_SQ - 1));
+                int p;
+                if (in && c->po_stamp[k] == c->gen) { PC(C_po_hit, 1); p = c->po_val[k]; }
+                else p = pill_on(e, mx, my);
+                if (p) { why = TS_PILL; break; }
+                if (extra_find(extra, sqi) >= 0) { why = TS_PLANNED; break; }
+                double tt;
+                if (in && c->tt_stamp[k] == c->gen) { e->tt_hits += 1; tt = c->tt_val[k]; }
+                else tt = ttype(e, mx, my);
+                if (tt == e->T_BUILDING || tt == e->T_HALFBUILD) { why = TS_WALL; break; }
+                if (e->ts_boats && tt == e->T_BOAT) { why = TS_BOAT; break; }
+                /* base_stops: no Lua call for a square with no base_at
+                 * stamp; a key past the stamp table goes the Lua way. */
+                if (e->bs_on && (!e->ba_tab || sqi >= PT2_MAP_SQ || c->ba_stamp[k] == c->gen)
+                    && base_stops(e, mx, my)) { why = TS_BASE; break; }
+            }
+        }
+        t = ax.k < ay.k ? ax.k : ay.k;
+        if (t > N) break;
+        pt2w_ax_pass(&ax, &ay, t);
+    }
+    if (why == TS_SHORT) t = N;
+    PC(C_walk_tshot_steps, t);
+    *nl_out = nl;
+    st->t = (double)t; st->mx = mx; st->my = my;
+    return why;
+}
+
+#if PT2_DDA_CHECK
+/* The check build only: the jump walk as it was, one pt2w_next2 (two
+ * divisions) per square change. */
+static int ts_walk_jump_div(Ev *e, const Walk *w, int32_t N, double omx, double omy, double tmx, double tmy,
                         const Extra *extra, int64_t *lane, int *nl_out, TsStop *st) {
     Pt2Ctx *c = e->c;
     const int32_t x0 = w->xi, y0 = w->yi, xs = w->xsi, ys = w->ysi;
@@ -1576,6 +1690,7 @@ static int ts_walk_jump(Ev *e, const Walk *w, int32_t N, double omx, double omy,
     st->t = (double)t; st->mx = mx; st->my = my;
     return why;
 }
+#endif
 
 #if PT2_WALK_CHECK
 /* The walk check build: every tank shot walk the jump can take runs both
@@ -1682,6 +1797,74 @@ static int wc_reuse_check(Ev *e, double ox, double oy, double angle, double tmx,
 }
 #endif
 
+#if PT2_DDA_CHECK && !PT2_WALK_CHECK
+/* The DDA check build: each jump walk against the division walk (stop
+ * reason, stop tick and square, lane), and the change ticks and squares
+ * of the whole life both ways. The division walk runs second, so the
+ * game reads are the same as a normal build's on the walk that counts. */
+static struct {
+    int      started;
+    uint64_t walks, ticks_walks, bad, seq_walks, seq_events, seq_bad, lane_out, lane_ok;
+} s_dc;
+static void dc_report(void) {
+    if (!s_dc.started) return;
+    fprintf(stderr, "PT2_DDA_CHECK jump_walks=%llu ticks_walks=%llu walk_mismatches=%llu seq_walks=%llu"
+            " seq_events=%llu seq_mismatches=%llu lane_walks=%llu lanes_kept=%llu fallbacks=0\n",
+            (unsigned long long)s_dc.walks, (unsigned long long)s_dc.ticks_walks, (unsigned long long)s_dc.bad,
+            (unsigned long long)s_dc.seq_walks, (unsigned long long)s_dc.seq_events,
+            (unsigned long long)s_dc.seq_bad, (unsigned long long)s_dc.lane_out, (unsigned long long)s_dc.lane_ok);
+    fflush(stderr);
+}
+static void dc_check(Ev *e, const Walk *w, int32_t N, double omx, double omy, double tmx, double tmy,
+                     const Extra *extra, int why, const int64_t *lane, int nl, const TsStop *st) {
+    if (!s_dc.started) { s_dc.started = 1; atexit(dc_report); }
+    s_dc.walks++;
+    /* The change ticks and squares of the whole life, both ways. */
+    {
+        const int32_t x0 = w->xi, y0 = w->yi, xs = w->xsi, ys = w->ysi;
+        Pt2wAxis ax, ay;
+        pt2w_ax_init(&ax, x0, xs);
+        pt2w_ax_init(&ay, y0, ys);
+        int32_t ta = 1, tb = 1;
+        int bad = 0;
+        s_dc.seq_walks++;
+        while (ta <= N || tb <= N) {
+            int32_t mxa = (int32_t)((uint32_t)pt2w_pos(x0, xs, ta) >> 8), mya = (int32_t)((uint32_t)pt2w_pos(y0, ys, ta) >> 8);
+            int32_t mxb = pt2w_ax_sq(&ax), myb = pt2w_ax_sq(&ay);
+            s_dc.seq_events++;
+            if (ta != tb || mxa != mxb || mya != myb) { bad = 1; break; }
+            ta = pt2w_next2(x0, xs, y0, ys, ta);
+            tb = ax.k < ay.k ? ax.k : ay.k;
+            if (tb > N) { if (ta <= N) bad = 1; break; }
+            pt2w_ax_pass(&ax, &ay, tb);
+        }
+        if (bad) {
+            s_dc.seq_bad++;
+            if (s_dc.seq_bad <= 20)
+                fprintf(stderr, "PT2_DDA_CHECK SEQ MISMATCH x0=%d y0=%d xs=%d ys=%d N=%d ta=%d tb=%d\n",
+                        (int)x0, (int)y0, (int)xs, (int)ys, (int)N, (int)ta, (int)tb);
+        }
+    }
+    /* The whole walk, the division way. */
+    int64_t lane2[PT2_MAX_T];
+    int nl2 = 0;
+    TsStop st2;
+    double h0 = e->tt_hits, m0 = e->tt_miss_n, u0 = e->unc_n;
+    int why2 = ts_walk_jump_div(e, w, N, omx, omy, tmx, tmy, extra, lane2, &nl2, &st2);
+    e->tt_hits = h0; e->tt_miss_n = m0; e->unc_n = u0;
+    int same = why == why2 && nl == nl2 && st->t == st2.t && st->mx == st2.mx && st->my == st2.my;
+    for (int i = 0; same && i < nl && i < PT2_MAX_T; i++) same = lane[i] == lane2[i];
+    if (!same) {
+        s_dc.bad++;
+        if (s_dc.bad <= 20)
+            fprintf(stderr, "PT2_DDA_CHECK MISMATCH x0=%d y0=%d xs=%d ys=%d N=%d dda: why=%d t=%g sq=(%g,%g) nl=%d"
+                    "  div: why=%d t=%g sq=(%g,%g) nl=%d\n", (int)w->xi, (int)w->yi, (int)w->xsi, (int)w->ysi,
+                    (int)N, why, st->t, st->mx, st->my, nl, why2, st2.t, st2.mx, st2.my, nl2);
+    }
+    if ((s_dc.walks & 262143) == 0) dc_report();
+}
+#endif
+
 /* rsh8 of the origin, kept for the last origin. */
 static void ts_origin(Ev *e, double ox, double oy, double *omx, double *omy) {
     uint64_t kx = pt2w_bits(ox), ky = pt2w_bits(oy);
@@ -1703,8 +1886,11 @@ static void ts_key(const Ev *e, double ox, double oy, double angle, double tmx, 
 /* shadow.tank_shot_angle: the shot at gun angle angle (brad, float). */
 static int tank_shot_walk_angle__p(Ev *e, double ox, double oy, double angle, double tmx, double tmy,
                                 const Extra *extra, Lane **lane_out) {
-    int64_t lane[PT2_MAX_T];
+    int64_t lane_tmp[PT2_MAX_T];
+    LaneRes lres;
+    int64_t *lane = lane_out ? lane_reserve(e, &lres) : lane_tmp;
     angle = f32(angle);
+    e->ts_last_angle = angle;
     double xa, ya, xs, ys;
     calc_distance_both(angle, e->sh_speed, &xa, &ya, &xs, &ys);
     Walk w;
@@ -1755,6 +1941,14 @@ static int tank_shot_walk_angle__p(Ev *e, double ox, double oy, double angle, do
         s_wc.why_n[why]++;
         if ((s_wc.walks & 262143) == 0) wc_report();
     }
+#elif PT2_DDA_CHECK
+    if (jump) {
+        why = ts_walk_jump(e, &w, (int32_t)n, omx, omy, tmx, tmy, extra, lane, &nl, &st);
+        dc_check(e, &w, (int32_t)n, omx, omy, tmx, tmy, extra, why, lane, nl, &st);
+    } else {
+        why = ts_walk_ticks(e, &w, n, omx, omy, tmx, tmy, extra, lane, &nl, &st);
+        s_dc.ticks_walks++;
+    }
 #else
     if (jump) why = ts_walk_jump(e, &w, (int32_t)n, omx, omy, tmx, tmy, extra, lane, &nl, &st);
     else why = ts_walk_ticks(e, &w, n, omx, omy, tmx, tmy, extra, lane, &nl, &st);
@@ -1770,9 +1964,14 @@ static int tank_shot_walk_angle__p(Ev *e, double ox, double oy, double angle, do
 #if PT2_WALK_CHECK
     wc_memo_keep(e, &st, nl, lane);
 #endif
-    if (why == TS_OK && lane_out) {
-        if (nl > PT2_MAX_T) luaL_error(e->L, "gh_pt2_v2: lane too long");
-        *lane_out = lane_make(e, lane, nl);
+    if (lane_out) {
+        if (why == TS_OK && nl > PT2_MAX_T) luaL_error(e->L, "gh_pt2_v2: lane too long");
+        Lane *l = lane_done(e, &lres, why == TS_OK, nl);
+        if (l) *lane_out = l;
+#if PT2_DDA_CHECK && !PT2_WALK_CHECK
+        s_dc.lane_out++;
+        if (l) s_dc.lane_ok++;
+#endif
     }
     return why;
 }
@@ -2295,10 +2494,119 @@ static PList *pills_in_range__p(Ev *e, double px, double py) {
 }
 static PList *pills_in_range(Ev *e, double px, double py) { PB(P_pills_in_range); PList * r_ = pills_in_range__p(e, px, py); PE(); return r_; }
 
+/* aim_wide's known clear shots. A shot from (px, py) at gun angle ang
+ * that reached A (TS_OK) with the planned blockers x, in this step, with
+ * no tanks tested: the origin bits, A, the set (pointer and size) and the
+ * step are the key. A note with another key starts a new list; the list
+ * keeps the first PT2_AWM_N angles. pilltake_v2.lua's aw_note is the same. */
+static void aw_note(Ev *e, double px, double py, double ang, double tmx, double tmy, const Extra *x) {
+    if (e->ts_nt > 0) return;
+#if PT2_AIMW_CHECK
+    if (e->aw_quiet) return;
+#endif
+    uint64_t kx = pt2w_bits(px), ky = pt2w_bits(py);
+    int xn = x ? x->n : -1;
+    if (!(e->awm_on && e->awm_ox == kx && e->awm_oy == ky && e->awm_tmx == tmx && e->awm_tmy == tmy
+          && e->awm_x == x && e->awm_xn == xn && e->awm_gen == e->c->gen)) {
+        e->awm_on = 1; e->awm_ox = kx; e->awm_oy = ky; e->awm_tmx = tmx; e->awm_tmy = tmy;
+        e->awm_x = x; e->awm_xn = xn; e->awm_gen = e->c->gen; e->awm_n = 0;
+    }
+    if (e->awm_n < PT2_AWM_N) e->awm_a[e->awm_n++] = ang;
+}
+
+/* (b - c) in brad, in [-128, 128). */
+static double aw_diff(double b, double c) { return luamod(b - c + 128, 256) - 128; }
+
+/* Is a known clear shot (same key) past gun angle f on this side (side
+ * -1 or 1) of the clear centre shot c, and less than 64 brad from c?
+ * Blockers are whole squares and the shells are checked every 32 wu, so
+ * no blocker stops a shell between two shells that reach A: every shot
+ * from c out to that shot, f and the samples before f too, reaches A. */
+static int aw_hit(const Ev *e, double px, double py, double tmx, double tmy, const Extra *x,
+                  double c, double f, double side) {
+    if (e->ts_nt > 0 || !e->awm_on) return 0;
+    if (!(e->awm_ox == pt2w_bits(px) && e->awm_oy == pt2w_bits(py) && e->awm_tmx == tmx && e->awm_tmy == tmy
+          && e->awm_x == x && e->awm_xn == (x ? x->n : -1) && e->awm_gen == e->c->gen)) return 0;
+    double df = side * aw_diff(f, c);
+    if (!(df > 0)) return 0;
+    for (int i = 0; i < e->awm_n; i++) {
+        double d = side * aw_diff(e->awm_a[i], c);
+        if (d > df && d < 64) return 1;
+    }
+    return 0;
+}
+
+#if PT2_AIMW_CHECK
+static struct {
+    int      started;
+    uint64_t calls, off, centre_fail, sides, short_hits[2], far_ok, far_fail, old_walks, new_walks, bad;
+} s_ac;
+#define AC(x) (x)
+#else
+#define AC(x) ((void)0)
+#endif
+
 /* pilltake_v2 aim_wide (C.BLOCKER_MIN_LANE_BRAD): the shell at the fire
  * aim of aim ai and at aim_lane.wide_enough's samples each side (step
- * 1/16 brad) must all reach A, as attack.lua's shield lane check asks. */
+ * 1/16 brad, n = ceil(mlb / step) of them) must all reach A, as
+ * attack.lua's shield lane check asks.
+ * Each side tests the far sample (n steps out) first: when it reaches A,
+ * so does every sample between it and the centre (whole square blockers,
+ * as aw_hit), and the side is wide enough. A known clear shot past the
+ * far sample (aw_hit) gives the same with no walk. Only when the far
+ * sample is stopped are the inner samples walked, in the old order, for
+ * how far the side reaches. n_shot counts the shots the old one-by-one
+ * test takes (the slicer's work), the same in every case. */
 static int aim_wide__p(Ev *e, double px, double py, int ai, const Extra *extra) {
+    double mlb = e->min_lane_brad;
+    if (!(mlb > 0)) return 1;
+    Pill *A = PI(e, e->A);
+    double dx = A->mx * 256 + s_fire9[ai - 1][0] - px, dy = A->my * 256 + s_fire9[ai - 1][1] - py;
+    double a0 = luamod(atan2(dx, -dy) * 256 / PT2_TWO_PI, 256);
+    const double step = 1.0 / 16.0;
+    e->n_shot += 1;
+    double ac = luamod(a0, 256);
+    if (tank_shot_walk_again(e, px, py, ac, A->mx, A->my, extra) != TS_OK) return 0;
+    double c = f32(ac);
+    aw_note(e, px, py, c, A->mx, A->my, extra);
+    double n = ceil(mlb / step - 1e-9);
+    double reach[2];
+    for (int s = 0; s < 2; s++) {
+        double side = s ? 1 : -1, r = 0, cnt = 0;
+        if (n >= 1) {
+            double fa = luamod(a0 + side * n * step, 256);
+            if (aw_hit(e, px, py, A->mx, A->my, extra, c, f32(fa), side)) {
+                r = n * step; cnt = n;
+                PC(C_aw_short, 1); PC(C_aw_saved, n);
+                AC(s_ac.short_hits[s]++);
+            } else if (AC(s_ac.new_walks++), tank_shot_walk_angle(e, px, py, fa, A->mx, A->my, extra, NULL) == TS_OK) {
+                aw_note(e, px, py, e->ts_last_angle, A->mx, A->my, extra);
+                r = n * step; cnt = n;
+                PC(C_aw_saved, n - 1);
+                AC(s_ac.far_ok++);
+            } else {
+                AC(s_ac.far_fail++);
+                cnt = n;
+                for (double k = 1; k < n; k++) {
+                    AC(s_ac.new_walks++);
+                    if (tank_shot_walk_angle(e, px, py, luamod(a0 + side * k * step, 256), A->mx, A->my, extra, NULL)
+                        != TS_OK) { cnt = k; break; }
+                    aw_note(e, px, py, e->ts_last_angle, A->mx, A->my, extra);
+                    r = k * step;
+                }
+                /* the old test: cnt walks; this one: the far one and cnt - 1 (or n - 1) inner ones */
+                PC(C_aw_saved, cnt - (1 + (cnt < n ? cnt : n - 1)));
+            }
+        }
+        e->n_shot += cnt;
+        reach[s] = r;
+    }
+    return reach[0] >= mlb - 1e-9 && reach[1] >= mlb - 1e-9;
+}
+
+#if PT2_AIMW_CHECK
+/* The check build only: aim_wide as it was, every sample in turn. */
+static int aim_wide_old(Ev *e, double px, double py, int ai, const Extra *extra) {
     double mlb = e->min_lane_brad;
     if (!(mlb > 0)) return 1;
     Pill *A = PI(e, e->A);
@@ -2321,7 +2629,55 @@ static int aim_wide__p(Ev *e, double px, double py, int ai, const Extra *extra) 
     }
     return reach[0] >= mlb - 1e-9 && reach[1] >= mlb - 1e-9;
 }
+
+static void ac_report(void) {
+    if (!s_ac.started) return;
+    fprintf(stderr, "PT2_AIMW_CHECK calls=%llu off=%llu centre_fail=%llu sides=%llu short_left=%llu short_right=%llu"
+            " far_ok=%llu far_fail=%llu old_side_walks=%llu new_side_walks=%llu mismatches=%llu\n",
+            (unsigned long long)s_ac.calls, (unsigned long long)s_ac.off, (unsigned long long)s_ac.centre_fail,
+            (unsigned long long)s_ac.sides, (unsigned long long)s_ac.short_hits[0],
+            (unsigned long long)s_ac.short_hits[1], (unsigned long long)s_ac.far_ok,
+            (unsigned long long)s_ac.far_fail, (unsigned long long)s_ac.old_walks,
+            (unsigned long long)s_ac.new_walks, (unsigned long long)s_ac.bad);
+    fflush(stderr);
+}
+
+/* The new aim_wide, then the old one beside it: the old one's walks
+ * leave no trace on the counts, the reuse key or the known clear shots,
+ * so the game goes on as in a normal build. */
+static int aim_wide(Ev *e, double px, double py, int ai, const Extra *extra) {
+    if (!s_ac.started) { s_ac.started = 1; atexit(ac_report); }
+    double ns0 = e->n_shot;
+    PB(P_aim_wide); int r_ = aim_wide__p(e, px, py, ai, extra); PE();
+    double ns1 = e->n_shot;
+    double h0 = e->tt_hits, m0 = e->tt_miss_n, u0 = e->unc_n;
+    uint64_t ws0 = e->walk_serial; Pt2wKey k0 = e->tsm_key; int ok0 = e->tsm_ok, why0 = e->tsm_why;
+    double tt0 = e->tsm_tt, la0 = e->ts_last_angle;
+    e->aw_quiet = 1;
+    int r2 = aim_wide_old(e, px, py, ai, extra);
+    e->aw_quiet = 0;
+    double ns2 = e->n_shot;
+    e->tt_hits = h0; e->tt_miss_n = m0; e->unc_n = u0;
+    e->walk_serial = ws0; e->tsm_key = k0; e->tsm_ok = ok0; e->tsm_why = why0; e->tsm_tt = tt0; e->ts_last_angle = la0;
+    e->n_shot = ns1;
+    s_ac.calls++;
+    if (!(e->min_lane_brad > 0)) s_ac.off++;
+    else if (ns2 - ns1 == 1) s_ac.centre_fail++;
+    else { s_ac.sides += 2; s_ac.old_walks += (uint64_t)(ns2 - ns1 - 1); }
+    if (r_ != r2 || ns1 - ns0 != ns2 - ns1) {
+        s_ac.bad++;
+        if (s_ac.bad <= 20) {
+            Pill *A = PI(e, e->A);
+            fprintf(stderr, "PT2_AIMW_CHECK MISMATCH p=(%.17g,%.17g) ai=%d A=(%g,%g) extra_n=%d new=%d/%g old=%d/%g\n",
+                    px, py, ai, A->mx, A->my, extra ? extra->n : -1, r_, ns1 - ns0, r2, ns2 - ns1);
+        }
+    }
+    if ((s_ac.calls & 262143) == 0) ac_report();
+    return r_;
+}
+#else
 static int aim_wide(Ev *e, double px, double py, int ai, const Extra *extra) { PB(P_aim_wide); int r_ = aim_wide__p(e, px, py, ai, extra); PE(); return r_; }
+#endif
 
 static int nudge_aim__p(Ev *e, double px, double py, const Extra *extra, const int *shorts, int nshorts,
                      double *onx, double *ony, double *onw, int *oai, Lane **oln) {
@@ -2349,6 +2705,7 @@ static int nudge_aim__p(Ev *e, double px, double py, const Extra *extra, const i
                 int why = tank_shot(e, nx, ny, tx + s_aims9[ai - 1][0], ty + s_aims9[ai - 1][1], A->mx, A->my,
                                     extra, &ln);
                 e->n_shot += 1;
+                if (why == TS_OK) aw_note(e, nx, ny, e->ts_last_angle, PI(e, e->A)->mx, PI(e, e->A)->my, extra);
                 if (why == TS_OK && !aim_wide(e, nx, ny, ai, extra)) why = TS_NARROW;
                 if (why == TS_OK) { *onx = nx; *ony = ny; *onw = nw; *oai = ai; *oln = ln; return 1; }
                 if (why == TS_SHORT) live[n++] = ai;
@@ -2391,6 +2748,7 @@ static Rec *eval_point__p(Ev *e, double px, double py, Extra *extra, int aim_fix
         int w = tank_shot(e, px, py, A->mx * 256 + s_aims9[ai - 1][0], A->my * 256 + s_aims9[ai - 1][1],
                           A->mx, A->my, extra, &ln);
         e->n_shot += 1;
+        if (w == TS_OK) aw_note(e, px, py, e->ts_last_angle, PI(e, e->A)->mx, PI(e, e->A)->my, extra);
         if (w == TS_OK && !aim_wide(e, px, py, ai, extra)) w = TS_NARROW;
         if (w == TS_OK) { aim_idx = ai; lane = ln; break; }
         why_out = w;
@@ -2537,6 +2895,9 @@ static Aims *clear_aims_of__p(Ev *e, Rec *rec) {
                               A->my * 256 + s_aims9[ai - 1][1], A->mx, A->my,
                               (rec->flags & RF_EXTRA_IN) ? rec->extra_in : NULL, &ln);
             e->n_shot += 1;
+            if (w == TS_OK)
+                aw_note(e, rec->px, rec->py, e->ts_last_angle, PI(e, e->A)->mx, PI(e, e->A)->my,
+                        (rec->flags & RF_EXTRA_IN) ? rec->extra_in : NULL);
             if (w == TS_OK && !aim_wide(e, rec->px, rec->py, ai, (rec->flags & RF_EXTRA_IN) ? rec->extra_in : NULL))
                 w = TS_NARROW;
             if (w == TS_OK) {

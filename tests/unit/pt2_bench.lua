@@ -18,6 +18,8 @@
 --                             and print the C part / callback breakdown
 --   dump=<file>               write each case's result digest to the file
 --   keep_all=1                inp.keep_all on (every spot in the result)
+--   mlb=<brad>                inp.min_lane_brad (C.BLOCKER_MIN_LANE_BRAD);
+--                             the cases captured before it have none (off)
 --   lua=1                     run pilltake_v2_old.evaluate_lua, not the C
 --   eval=v2                   time pilltake_v2.evaluate_lua instead (wedges
 --                             cold: dropped before each run; warm=1 keeps them)
@@ -260,6 +262,7 @@ local function game_inp(case)
     inp.anger_of = function() return v end
   end
   inp.keep_all = args.keep_all == "1" or nil
+  if tonumber(args.mlb or "") then inp.min_lane_brad = tonumber(args.mlb) end
   if args.cprof == "1" then inp.v2_prof = true end
   -- drop1=1: the first confirm at each point fails (tests the S6 retry)
   if args.drop1 == "1" then
