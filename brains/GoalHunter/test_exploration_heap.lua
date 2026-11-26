@@ -401,83 +401,55 @@ do
   DANGER_X = 0
 end
 
--- ── 10. Bug 2: drop the too-close tile best_frontier returned ───────────────
+-- ── 10. goals.lua explore pick: same as 2.2.1 ─────────────────────────────
+-- The pick loop in goals.lua is not changed by this fix: when the tile from
+-- best_frontier is too close it marks it visited and calls frontier_pop, which
+-- takes h[1]. After best_frontier pushed the danger tiles back, h[1] is the
+-- nearest danger tile, so 2.2.1 removes that tile for good. This test keeps
+-- that behaviour: the loop below is the goals.lua loop, run on the new code and
+-- on the 2.2.1 reference, and both must give the same picks and heap. (The
+-- goals.lua lines are the 2.2.1 lines, so they are copied here, not shared.)
 do
   _G.cpf_danger_at = danger_at
   DANGER_X = 10 + 6                  -- tiles 11..15 dangerous, 16 is the pick
-  local st = danger_state(20)
-  local fx, fy = expl.best_frontier(st)
-  local tk = key_of(fx or 0, fy or 0)
-  check("10a best_frontier skipped the danger tiles", fx == 16, tostring(fx))
-  check("10b after the re-push h[1] is a danger tile, not the pick", st.frontier[1] % 65536 ~= tk)
-  -- goals.lua explore pick: too close -> visited, unmark, remove that tile.
-  st.visited[tk] = true
-  st.frontier_set[tk] = nil
-  local removed = expl.frontier_remove(st.frontier, fx, fy)
-  local hk = heap_keys(st.frontier)
-  check("10c frontier_remove removed the pick", removed and not hk[tk])
-  local all_danger = true
-  for i = 1, 5 do if not hk[key_of(10 + i, 60 + (i % 3))] then all_danger = false end end
-  check("10d every danger tile is still in the heap", all_danger)
-  check("10e 19 entries left, heap valid", st.frontier.n == 19 and valid(st.frontier), "n=" .. st.frontier.n)
-  local ok, why = set_agrees(st)
-  check("10f frontier_set agrees with the heap", ok, why)
-  local nx = expl.best_frontier(st)
-  check("10g next pick is the next safe tile", nx == 17, tostring(nx))
+  local TOO_CLOSE_X = 18             -- tiles 16 and 17 are too close
+  local function pick(st, best, pop)
+    local fx, fy = best(st)
+    while fx and fx < TOO_CLOSE_X do
+      local nk = key_of(fx, fy)
+      st.visited[nk]      = true
+      st.frontier_set[nk] = nil
+      pop(st.frontier)
+      fx, fy = best(st)
+    end
+    return fx, fy
+  end
+  local a, b = danger_state(20), danger_state(20)
+  local fx, fy = pick(a, expl.best_frontier, expl.frontier_pop)
+  local gx, gy = pick(b, ref_best_frontier, ref_pop)
+  check("10a pick loop returns the same tile as 2.2.1", fx == gx and fy == gy and fx == 18,
+        tostring(fx) .. " vs " .. tostring(gx))
+  check("10b heap array identical to 2.2.1 after the pick loop", same_array(a.frontier, b.frontier))
+  local hk = heap_keys(a.frontier)
+  check("10c as in 2.2.1, the two nearest danger tiles were dropped",
+        not hk[key_of(11, 61)] and not hk[key_of(12, 62)] and hk[key_of(13, 60)]
+        and hk[key_of(14, 61)] and hk[key_of(15, 62)])
+  check("10d heap valid, nothing left in hold or aside",
+        valid(a.frontier) and a.frontier.hold == nil and a.frontier.aside.n == 0)
   DANGER_X = 0
 end
 
--- ── 11. frontier_remove on h[1] is exactly frontier_pop; any slot works ────
-do
-  _G.cpf_danger_at = nil
-  local same, okall = true, true
-  for t = 1, 300 do
-    local h, r = expl.new_frontier(), { n = 0 }
-    for i = 1, 1 + rnd(60) do local v = rnd_entry(); push_v(h, v); ref_push(r, v) end
-    local top = h[1]
-    expl.frontier_remove(h, top % 256, math.floor(top / 256) % 256)
-    ref_pop(r)
-    if not same_array(h, r) then same = false end
-    if h.n > 0 then
-      local i = 1 + rnd(h.n)
-      local v = h[i]
-      -- frontier_remove takes the first slot with that tile; find its value.
-      local gone
-      for j = 1, h.n do if h[j] % 65536 == v % 65536 then gone = h[j]; break end end
-      local rest = {}
-      local skipped = false
-      for j = 1, h.n do
-        if not skipped and h[j] == gone then skipped = true else rest[#rest + 1] = h[j] end
-      end
-      local removed = expl.frontier_remove(h, v % 256, math.floor(v / 256) % 256)
-      local good = valid(h)
-      local out = drain(h)
-      table.sort(rest)
-      local match = removed and good and out and #out == #rest
-      if match then for j = 1, #out do if out[j] ~= rest[j] then match = false end end end
-      if not match then okall = false end
-    end
-  end
-  check("11a frontier_remove of the h[1] tile matches frontier_pop exactly", same)
-  check("11b frontier_remove of any slot keeps every other entry, in order", okall)
-  check("11c frontier_remove of a tile not in the heap returns false",
-        expl.frontier_remove(expl.new_frontier(), 3, 4) == false)
-end
-
--- ── 12. Stop at every instruction of push / pop / remove: no entry lost ─────
+-- ── 11. Stop at every instruction of push / pop: no entry lost ─────────────
 do
   local lost, runs = 0, 0
-  for which = 1, 3 do
+  for which = 1, 2 do
     for k = 1, 2000 do
       local h, vals = build(40)
       local v = rnd_entry()
-      local target = h[1 + rnd(40)]
       local snap = { n = h.n }
       for i = 1, h.n + 2 do snap[i] = h[i] end
       local fired = run_killed(k, function()
-        if which == 1 then push_v(h, v)
-        elseif which == 2 then expl.frontier_pop(h)
-        else expl.frontier_remove(h, target % 256, math.floor(target / 256) % 256) end
+        if which == 1 then push_v(h, v) else expl.frontier_pop(h) end
       end)
       runs = runs + 1
       -- A push stopped before it took v (h.hold or a slot) must have left the
@@ -489,9 +461,8 @@ do
       local v_kept = v_in > v_before
       if which == 1 and not v_kept and not same_array(h, snap) then lost = lost + 1 end
       if not valid(h) then lost = lost + 1 end
-      -- Every value that should remain must still come out of the heap. The
-      -- op itself may take one entry: pop the smallest value, remove the
-      -- first entry for the target tile (any cost).
+      -- Every value that should remain must still come out of the heap. A pop
+      -- may take one entry: the smallest value.
       local out = drain(h) or {}
       local have = {}
       for _, x in ipairs(out) do have[x] = (have[x] or 0) + 1 end
@@ -508,17 +479,16 @@ do
       if #missing == 1 then
         local x = missing[1]
         if which == 2 and x == must[1] then allowed = 1 end
-        if which == 3 and x % 65536 == target % 65536 then allowed = 1 end
       end
       if #missing > allowed then lost = lost + 1 end
       if not fired then break end
     end
   end
-  check("12 push/pop/remove stopped at any instruction: heap valid, no entry lost", lost == 0,
+  check("11 push/pop stopped at any instruction: heap valid, no entry lost", lost == 0,
         lost .. " lost of " .. runs)
 end
 
--- ── 13. Stop at every instruction of update: all neighbours end up pushed ───
+-- ── 12. Stop at every instruction of update: all neighbours end up pushed ───
 do
   local bad, runs = 0, 0
   local info = { tankx = 100 * 256 + 128, tanky = 80 * 256 + 128, inboat = false }
@@ -538,8 +508,61 @@ do
     if cnt ~= 8 or not st.visited[key_of(100, 80)] or not valid(st.frontier) then bad = bad + 1 end
     if not fired then break end
   end
-  check("13 update stopped at any instruction then run again: all 8 neighbours kept", bad == 0,
+  check("12 update stopped at any instruction then run again: all 8 neighbours kept", bad == 0,
         bad .. " bad of " .. runs)
+end
+
+-- ── 13. Stop inside the rebuild of a holed heap: order restored, none lost ──
+-- A pop or push on a heap with a hole rebuilds it. A stop inside that rebuild
+-- can leave the slots out of order; h.dirty must make the next call rebuild
+-- again, so the heap drains in order with every entry kept.
+do
+  _G.cpf_danger_at = nil
+  local bad, runs, dirty_stops = 0, 0, 0
+  for which = 1, 2 do
+    for k = 1, 5000 do
+      local h, vals = build(60)
+      local hole = 2 + rnd(57)
+      local gone = h[hole]
+      h[hole] = nil                    -- a hole left by an old stop
+      local must = {}
+      for _, x in ipairs(vals) do must[#must + 1] = x end
+      for m = 1, #must do if must[m] == gone then table.remove(must, m); break end end
+      local v = rnd_entry()
+      if which == 1 then must[#must + 1] = v end
+      table.sort(must)
+      local fired = run_killed(k, function()
+        if which == 1 then push_v(h, v) else expl.frontier_pop(h) end
+      end)
+      runs = runs + 1
+      if fired and h.dirty then dirty_stops = dirty_stops + 1 end
+      -- Next tick: the first heap call heals, then pop everything.
+      local out = drain(h)
+      local ok = out ~= nil and sorted(out) and h.dirty == nil
+      if ok then
+        local have = {}
+        for _, x in ipairs(out) do have[x] = (have[x] or 0) + 1 end
+        local missing = {}
+        for _, x in ipairs(must) do
+          if (have[x] or 0) == 0 then missing[#missing + 1] = x else have[x] = have[x] - 1 end
+        end
+        -- A stopped push may not have taken v yet (the caller pushes it
+        -- again); a pop may have taken the smallest entry.
+        local allowed = 0
+        if #missing == 1 then
+          if which == 1 and missing[1] == v then allowed = 1 end
+          if which == 2 and missing[1] == must[1] then allowed = 1 end
+        end
+        if #missing > allowed then ok = false end
+      end
+      if not ok then bad = bad + 1 end
+      if not fired then break end
+    end
+  end
+  check("13a stop inside a rebuild then run again: heap in order, no entry lost", bad == 0,
+        bad .. " bad of " .. runs)
+  check("13b some stops landed inside the rebuild (h.dirty set)", dirty_stops > 0,
+        dirty_stops .. " stops")
 end
 
 print(string.format("\n%d passed, %d failed", passes, fails))
