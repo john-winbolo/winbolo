@@ -3083,7 +3083,8 @@ local function pc_take(inp, w)
       P[#P + 1] = { mx, my, string.format("%d,%d,%s,%s,%s,%s,%s", mx, my, tostring((p.health or 0) > 0),
         tostring(p.in_tank), tostring(p.pos_unknown), tostring(p.owner),
         tostring(env.cover_of_pill and env.cover_of_pill(p))),
-        PCK.PT2_V2_CACHE_DROP_LOG and inp.ids and inp.ids[p] or nil }
+        (PCK.PT2_V2_CACHE_DROP_LOG or PCK.PT2_V2_CACHE_PART_LOG) and inp.ids and inp.ids[p] or nil,
+        PCK.PT2_V2_CACHE_PART_LOG and (env.is_ally and env.is_ally(p) and true or false) or nil }
     end
   end
   local B = {}
@@ -3238,9 +3239,74 @@ local function pcl_detail(e, why, P, B, ss)
   return {}, 0
 end
 
+-- PT2_V2_CACHE_PART_LOG (log only): the pill changes from Pf to P by id,
+-- as pc_part_q takes them { o_mx, o_my, n_mx, n_my, fh, fa, ... } (fh: a
+-- hostile pill's place, alive, in_tank, pos_unknown, owner, or it comes or
+-- goes; fa: an ally pill's any change), and whether an ally pill's in_tank
+-- changed (a carried pill)
+local function pcp_pills(Pf, P)
+  local o, n, ids = {}, {}, {}
+  local function id_of(x) return x[4] or ("s" .. x[1] .. "," .. x[2]) end
+  for _, x in ipairs(Pf or {}) do local id = id_of(x); o[id] = x; ids[id] = true end
+  for _, x in ipairs(P or {}) do local id = id_of(x); n[id] = x; ids[id] = true end
+  local out, car, nh, na = {}, false, 0, 0
+  for id in pairs(ids) do
+    local a, b = o[id], n[id]
+    if not (a and b and a[3] == b[3] and a[5] == b[5]) then
+      local fh
+      if a and b then
+        local fa_, fb_ = pcl_split(a[3], ","), pcl_split(b[3], ",")
+        fh = a[5] ~= b[5]
+        for i = 1, 6 do if fa_[i] ~= fb_[i] then fh = true end end
+        if fa_[4] ~= fb_[4] and (a[5] or b[5]) then car = true end
+      else
+        fh = true
+        if (a and a[5]) or (b and b[5]) then car = car or ((a or b)[3]:match("^[^,]*,[^,]*,[^,]*,true") ~= nil) end
+      end
+      fh = fh and ((a and not a[5]) or (b and not b[5])) and 1 or 0
+      local fa = ((a and a[5]) or (b and b[5])) and 1 or 0
+      out[#out + 1] = a and a[1] or -1; out[#out + 1] = a and a[2] or -1
+      out[#out + 1] = b and b[1] or -1; out[#out + 1] = b and b[2] or -1
+      out[#out + 1] = fh; out[#out + 1] = fa
+      nh, na = nh + fh, na + fa
+    end
+  end
+  return out, car, nh, na
+end
+-- the changed bases from Bf to B { mx, my, ... }
+local function pcp_bases(Bf, B)
+  local o, out = {}, {}
+  for _, x in ipairs(Bf or {}) do o[x[2] * 256 + x[1]] = x end
+  local seen = {}
+  for _, x in ipairs(B or {}) do
+    local k = x[2] * 256 + x[1]
+    seen[k] = true
+    if not (o[k] and o[k][3] == x[3]) then out[#out + 1] = x[1]; out[#out + 1] = x[2] end
+  end
+  for k, x in pairs(o) do if not seen[k] then out[#out + 1] = x[1]; out[#out + 1] = x[2] end end
+  return out
+end
+local function pcp_reach(inp)
+  return ((inp.pill_range or 0) + (inp.range_margin or 0)) / 256, PCK.PT2_V2_CACHE_MARGIN or 3
+end
+-- one PT2_V2_CACHE_PART line: a lookup's result and what its parts keep
+local function pcp_line(inp, src, key, e, res, why, P, B, now)
+  local pills, car, nh, na = pcp_pills(e.Pf, P)
+  local bases = pcp_bases(e.Bf, B)
+  local reach, margin = pcp_reach(inp)
+  local st = gh_pt2_v2.pc_part_q(e.part, pills, bases, reach, margin, nil, car)
+  M.cprof_err(string.format("PT2_V2_CACHE_PART t=%d p=%s src=%s goal=%d,%d res=%s why=%s age=%d ph=%d pa=%d car=%s %s",
+    now, tostring(inp._v2_pc_pn), src, math.floor(key / 256), key % 256, res, why or "-", now - e.tick, nh, na,
+    tostring(car), st or "-"))
+end
+-- PXS[src][k] = the last parts of the evaluate with A on square k (any goal)
+local PXS = {}
+local PCP_RUN = 0
+
 -- The cache table for a group job on inp.A.
 local function pc_cache(inp)
   inp.v2_pcache = nil
+  inp._v2_pc_part = nil
   local src = pc_src(inp)
   if not src then return new_cache() end
   local w, A = inp._world, inp.A
@@ -3265,6 +3331,7 @@ local function pc_cache(inp)
   local cnt = M.pc_count
   local maxage = PCK.PT2_V2_CACHE_MAX_AGE_TICKS or 3000
   local dlog = PCK.PT2_V2_CACHE_DROP_LOG
+  local plog = PCK.PT2_V2_CACHE_PART_LOG and gh_pt2_v2.pc_part_q and true or false
   local hist = dlog and (PCH[src] or {})
   if dlog then PCH[src] = hist end
   -- the goal pill by its square: each run's pill tables are new tables
@@ -3299,6 +3366,18 @@ local function pc_cache(inp)
       elseif e.hf ~= hf and inp.env.forest_transparent == false then why = "terrain" end
     end
     table.remove(list, at)
+    if plog then
+      local lw = why
+      if why == "terrain" and e.ht == gh_pt2_v2.pc_wsig(e.W, false) then lw = "forest" end
+      if not why and e.hf ~= hf then lw = "forest_plans" end
+      if why == "open" or not e.part then
+        M.cprof_err(string.format("PT2_V2_CACHE_PART t=%d p=%s src=%s goal=%d,%d res=%s why=%s age=%d nopart",
+          now, tostring(inp._v2_pc_pn), src, math.floor(key / 256), key % 256, why and "drop" or "kept",
+          lw or "-", now - e.tick))
+      else
+        pcp_line(inp, src, key, e, why and "drop" or "kept", lw, P, B, now)
+      end
+    end
     if why and dlog then
       -- a forest only change with PT2_FOREST_TRANSPARENT off is "forest"
       local lw = (why == "terrain" and e.ht == gh_pt2_v2.pc_wsig(e.W, false)) and "forest" or why
@@ -3312,6 +3391,7 @@ local function pc_cache(inp)
   if dlog and aged then pcl_line(inp, src, key, "drop", "age", aged, {}, 0) end
   if e then
     cnt.kept = cnt.kept + 1
+    if plog then e.lk = "kept" end
     if e.hf ~= hf then
       cnt.forest = cnt.forest + 1
       e.cache.pc_drop_plans = true
@@ -3330,6 +3410,15 @@ local function pc_cache(inp)
     local maxb = PCK.PT2_V2_CACHE_MAX_TOTAL_BYTES or 0
     if #list >= (PCK.PT2_V2_CACHE_MAX_ENTRIES or 16) or (maxb > 0 and tot >= maxb) then
       cnt.full = cnt.full + 1
+      if plog then
+        -- the all-pills model has no full: does the goal pill's own last
+        -- parts (any goal) exist?
+        local XS = PXS[src]
+        local sh = XS and XS[key]
+        M.cprof_err(string.format("PT2_V2_CACHE_XFULL t=%d p=%s src=%s goal=%d,%d shadow=%s age=%s", now,
+          tostring(inp._v2_pc_pn), src, math.floor(key / 256), key % 256, tostring(sh ~= nil),
+          sh and tostring(now - sh.t) or "-"))
+      end
       if dlog then
         local h = hist[key]
         pcl_line(inp, src, key, "full", (#list >= (PCK.PT2_V2_CACHE_MAX_ENTRIES or 16)) and "entries" or "bytes",
@@ -3340,19 +3429,31 @@ local function pc_cache(inp)
       return new_cache()
     end
     cnt.new = cnt.new + 1
+    local lk = why and ("drop_" .. why) or (aged and "age") or "new"
     if dlog then
       local h = hist[key]
       pcl_line(inp, src, key, "new", h and ("after_" .. h.why) or "first", nil, {}, 0,
         h and string.format(" prev_t=%d", h.t) or nil)
     end
     e = { key = key, tick = now, W = W0, cache = new_cache() }
+    if plog then
+      local h = hist and hist[key]
+      e.lk = (lk == "new" and h) and ("new_after_" .. h.why) or lk
+    end
   end
   -- this run's start: the strings and the map that pc_finish hashes
   gh_pt2_v2.pc_snap(e.W)
   e.P, e.B, e.ss, e.open = P, B, ss, true
   e.why = why
   -- PT2_V2_CACHE_DROP_LOG: this start's lists, for the next lookup's diff
-  if dlog then e.Pf, e.Bf, e.run_t = P, B, now end
+  if dlog or plog then e.Pf, e.Bf, e.run_t = P, B, now end
+  if plog then
+    PCP_RUN = PCP_RUN + 1
+    inp._v2_pc_part = PCP_RUN
+    e.src = src
+  else
+    inp._v2_pc_part = nil
+  end
   list[#list + 1] = e
   e.cache.pc_max_bytes = PCK.PT2_V2_CACHE_MAX_BYTES or 0
   inp.v2_pcache = true
@@ -3365,6 +3466,57 @@ end
 -- The pc_* counters of a run's stat (gh_pt2_v2.c push_result).
 local PC_F = { "pc_eh", "pc_em", "pc_et", "pc_en", "pc_ph", "pc_pm", "pc_pt", "pc_pn", "pc_wdrop",
                "pc_lost_ts", "pc_lost_aw", "pc_lost_ts_us" }
+
+-- PT2_V2_CACHE_PART_LOG (log only): the run's parts into the entry (for
+-- the next lookup's PART line); each pill A's parts set against that pill
+-- A's last parts from any goal (an XPART line), and kept as its new last.
+local function pcp_finish(inp, e, j)
+  local now = inp._v2_pc_now or 0
+  local mk = gh_pt2_v2.pc_part_make
+  local part, info, slots = mk(j, e.W)
+  e.part = part
+  if not part then return end
+  local reach, margin = pcp_reach(inp)
+  local inf = {}
+  for k, v in pairs(info) do inf[#inf + 1] = k .. "=" .. string.format("%.0f", v) end
+  table.sort(inf)
+  local XS = PXS[e.src]
+  if not XS then XS = {}; PXS[e.src] = XS end
+  local maxage = PCK.PT2_V2_CACHE_MAX_AGE_TICKS or 3000
+  local nsh = 0
+  for k, x in pairs(XS) do if now - x.t > maxage then XS[k] = nil end end
+  for _, sl in ipairs(slots) do
+    local sh = XS[sl.k]
+    if sh then
+      nsh = nsh + 1
+      local pills, car, nh, na = pcp_pills(sh.P, e.P)
+      local bases = pcp_bases(sh.B, e.B)
+      local st, tab = gh_pt2_v2.pc_part_q(sh.part, pills, bases, reach, margin, part, car)
+      local ss = sh.slot or {}
+      M.cprof_err(string.format("PT2_V2_CACHE_XPART t=%d p=%s src=%s X=%d,%d goal=%d,%d sgoal=%d,%d age=%d rules=%s"
+          .. " fin=%s co=%s wsig=%s skh=%s st=%.1f ct=%.1f sh=%s ph=%d pa=%d car=%s %s",
+        now, tostring(inp._v2_pc_pn), e.src, sl.k % 256, math.floor(sl.k / 256), math.floor(e.key / 256), e.key % 256,
+        math.floor(sh.goal / 256), sh.goal % 256, now - sh.t, tostring(sh.ss == e.ss),
+        tostring(ss.finish == sl.finish), tostring(ss.co == sl.co), tostring(ss.wsig == sl.wsig),
+        tostring(ss.skh == sl.skh), ss.t or 0, sl.t or 0, tab and tab[sl.k] or "-", nh, na, tostring(car), st or "-"))
+    end
+    local p1, i1, s1 = mk(j, e.W, sl.k)
+    if p1 then
+      XS[sl.k] = { part = p1, P = e.P, B = e.B, ss = e.ss, goal = e.key, t = now, slot = s1 and s1[1],
+                   bytes = i1 and i1.bytes or 0, n_ray = i1 and i1.n_ray or 0, n_filt = i1 and i1.n_filt or 0,
+                   n_point = i1 and i1.n_point or 0 }
+    end
+  end
+  local xn, xb, xr, xf, xp = 0, 0, 0, 0, 0
+  for _, x in pairs(XS) do
+    xn, xb = xn + 1, xb + (x.bytes or 0)
+    xr, xf, xp = xr + (x.n_ray or 0), xf + (x.n_filt or 0), xp + (x.n_point or 0)
+  end
+  M.cprof_err(string.format("PT2_V2_CACHE_PINFO t=%d p=%s src=%s goal=%d,%d lk=%s slots=%d nshadow=%d"
+      .. " xs_n=%d xs_bytes=%.0f xs_ray=%d xs_filt=%d xs_point=%d %s", now,
+    tostring(inp._v2_pc_pn), e.src, math.floor(e.key / 256), e.key % 256, tostring(e.lk), #slots, nsh,
+    xn, xb, xr, xf, xp, table.concat(inf, " ")))
+end
 
 -- The end of a group run with a store: the entry's watch area from the
 -- C's marks, and its strings and hashes from the run's start.
@@ -3388,6 +3540,8 @@ local function pc_finish(job)
   end
   e.sp, e.sb = pc_wstr(e.P, e.B, e.W)
   e.ht, e.hf = gh_pt2_v2.pc_wsig(e.W, true)
+  local plog = PCK.PT2_V2_CACHE_PART_LOG
+  if j and plog and gh_pt2_v2.pc_part_make and e.src then pcp_finish(inp, e, j) end
   e.P, e.B, e.open = nil, nil, nil
   -- PT2_CPROF_LOG (log only): the store's sums, a line each 100 ends
   if PCK.PT2_CPROF_LOG and job.pcst and e.key ~= -1 then

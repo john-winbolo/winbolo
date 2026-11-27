@@ -1011,6 +1011,8 @@ typedef struct {
      * PCM_* bits below. */
     unsigned char *rpm;
     int    rp_n;
+    /* PT2_V2_CACHE_PART_LOG (log only): the parts' read cells */
+    struct PccJob *pcc;
 } Job;
 
 /* rpm bits: a ring point (raw, nudged or the builder's origin); a group
@@ -1210,6 +1212,14 @@ struct St {
     /* store stats: evaluate hits / misses / tank misses / not kept; plan
      * hits / misses / tank misses / not kept */
     double pc_eh, pc_em, pc_et, pc_en, pc_ph, pc_pm, pc_pt, pc_pn;
+    /* PT2_V2_CACHE_PART_LOG (log only): the part being made (pcc_stk),
+     * the context part (filter, post or A level), its ring point angle,
+     * this evaluate's slot (the A square) and the clock */
+    int    pcc_on, pcc_slot, pcc_n, pcc_run;
+    struct PObj *pcc_stk[32];
+    struct PObj *pcc_ctx, *pcc_alev, *pcc_last_pt;
+    double pcc_deg;
+    int64_t pcc_t0;
 };
 
 /* PT2_LINK_CLEAR_FRONT with PT2_LINK_CUT_MIN_SHOTS (OLD.link_cut). */
@@ -1480,8 +1490,208 @@ static int pill_index__p(Ev *e, int idx) {
 }
 static int pill_index(Ev *e, int idx) { PB(P_pill_index); int r_ = pill_index__p(e, idx); PE(); return r_; }
 
+/* ── PT2_V2_CACHE_PART_LOG (log only) ──────────────────────────────────
+ * Each part a store run makes or uses gets a PObj: a ray (base_ray), a
+ * ring point's evaluate (eval_point_pc), a centre wedge set, a ring
+ * angle's filter work (FILT) and its later work (POST: scores, plans
+ * with no store, leeway, hold), a plan (plan_point_pc) and the
+ * evaluate's A level work (ALEV). A PObj keeps the squares it read
+ * (also on a memo answer: then the memo's own part is its child), its
+ * children and its own C time. pc_part_make takes the parts the last run
+ * used; pc_part_q says which parts a change set hits. It changes no
+ * result: rpm and every memo stay as they are. */
+enum { PO_RAY = 1, PO_POINT, PO_CWM, PO_FILT, PO_POST, PO_PLAN, PO_ALEV, PO_N };
+enum { PR_T = 1, PR_P = 2, PR_B = 4, PR_W = 8 };
+typedef struct PObj PObj;
+struct PObj {
+    int kind, slot_k, deg10, run;
+    int x, y, ox, oy;             /* POINT: the ring point and its origin; RAY: the pill */
+    double t, t_run;              /* own C time in us (FILT, POST, ALEV, CWM: the most in one run) */
+    uint32_t *rd; int nrd, caprd, nsrt;   /* reads: square << 8 | PR_* */
+    PObj **ch; int nch, capch;
+    PObj *owner;
+    int qi;                       /* pc_part_make scratch */
+};
+#define PCC_MAXSLOT 64
+typedef struct {
+    int k, run;
+    double finish, co;
+    uint64_t wsig, skh;
+} PccSlot;
+typedef struct PccJob {
+    int run;
+    PObj **objs; int nobj, capobj;
+    HMap om;
+    PccSlot slot[PCC_MAXSLOT]; int nslot;
+} PccJob;
+typedef struct { PObj *ctx; double deg; } PccSave;
+
+static void pcc_free(Job *j) {
+    PccJob *pj = j->pcc;
+    if (!pj) return;
+    for (int i = 0; i < pj->nobj; i++) { free(pj->objs[i]->rd); free(pj->objs[i]->ch); free(pj->objs[i]); }
+    free(pj->objs);
+    hm_free(&pj->om);
+    free(pj);
+    j->pcc = NULL;
+}
+
+/* cap grows to hold need items of sz; 0 when out of memory */
+static int pcc_grow(void **p, int *cap, int need, size_t sz) {
+    if (need <= *cap) return 1;
+    int nc = *cap ? *cap * 2 : 8;
+    while (nc < need) nc *= 2;
+    void *q = realloc(*p, sz * (size_t)nc);
+    if (!q) return 0;
+    *p = q; *cap = nc;
+    return 1;
+}
+
+static PObj *pcc_tgt(Ev *e) { return e->pcc_n ? e->pcc_stk[e->pcc_n - 1] : e->pcc_ctx; }
+static int pcc_accum(int kind) { return kind == PO_FILT || kind == PO_POST || kind == PO_ALEV || kind == PO_CWM; }
+static void pcc_use(PccJob *pj, PObj *o) { if (o->run != pj->run) { o->run = pj->run; o->t_run = 0; } }
+
+/* the time since the last tick to the part now open */
+static void pcc_tick(Ev *e) {
+    if (!e->pcc_run) return;
+    int64_t now = pf_clock();
+    PObj *o = pcc_tgt(e);
+    if (o) {
+        pcc_use(e->job->pcc, o);
+        o->t_run += (double)(now - e->pcc_t0) * pf_tick_us();
+        if (!pcc_accum(o->kind) || o->t_run > o->t) o->t = o->t_run;
+    }
+    e->pcc_t0 = now;
+}
+
+static int pcc_slot_k(Ev *e) { return e->job->pcc->slot[e->pcc_slot].k; }
+
+static PObj *pcc_obj(Ev *e, int kind, uint64_t a, uint64_t b, int clear) {
+    PccJob *pj = e->job->pcc;
+    int isnew;
+    HVal *v = hm_put(e->L, &pj->om, pt_mix(a + (uint64_t)kind * 0x9E3779B97F4A7C15ull), b, &isnew);
+    PObj *o = (PObj *)v->p;
+    if (!o) {
+        o = (PObj *)calloc(1, sizeof(PObj));
+        if (!o) return NULL;
+        if (!pcc_grow((void **)&pj->objs, &pj->capobj, pj->nobj + 1, sizeof(PObj *))) { free(o); return NULL; }
+        pj->objs[pj->nobj++] = o;
+        o->kind = kind; o->slot_k = pcc_slot_k(e); o->deg10 = -1; o->run = -1;
+        o->x = o->y = o->ox = o->oy = -1;
+        v->p = o;
+    } else if (clear) {
+        o->nrd = 0; o->nsrt = 0; o->nch = 0; o->t = 0; o->t_run = 0;
+    }
+    pcc_use(pj, o);
+    return o;
+}
+
+static int pcc_rd_lt(const void *a, const void *b) {
+    uint32_t x = *(const uint32_t *)a >> 8, y = *(const uint32_t *)b >> 8;
+    return x < y ? -1 : x > y;
+}
+static void pcc_dedupe(PObj *o) {
+    if (o->nrd > 1) {
+        qsort(o->rd, (size_t)o->nrd, sizeof(uint32_t), pcc_rd_lt);
+        int n = 0;
+        for (int i = 0; i < o->nrd; i++) {
+            if (n && (o->rd[n - 1] >> 8) == (o->rd[i] >> 8)) o->rd[n - 1] |= o->rd[i] & 255u;
+            else o->rd[n++] = o->rd[i];
+        }
+        o->nrd = n;
+    }
+    o->nsrt = o->nrd;
+}
+
+static void pcc_mark(Ev *e, double mx, double my, int bits) {
+    if (!e->pcc_run || !bits) return;
+    if (!(mx >= 0 && mx <= 255 && my >= 0 && my <= 255)) return;
+    PObj *o = pcc_tgt(e);
+    if (!o) return;
+    uint32_t v = ((uint32_t)((int)my * 256 + (int)mx) << 8) | (uint32_t)bits;
+    if (o->nrd && o->rd[o->nrd - 1] == v) return;
+    if (!pcc_grow((void **)&o->rd, &o->caprd, o->nrd + 1, sizeof(uint32_t))) return;
+    o->rd[o->nrd++] = v;
+    if (o->nrd > 2 * o->nsrt + 256) pcc_dedupe(o);
+}
+static void pcc_box(Ev *e, double ax, double ay, double bx, double by) {
+    if (!e->pcc_run) return;
+    double x0 = (ax < bx ? ax : bx) - 1, x1 = (ax < bx ? bx : ax) + 1;
+    double y0 = (ay < by ? ay : by) - 1, y1 = (ay < by ? by : ay) + 1;
+    for (double y = y0; y <= y1; y++) for (double x = x0; x <= x1; x++) pcc_mark(e, x, y, PR_W | PR_T);
+}
+
+static void pcc_child(PObj *p, PObj *c) {
+    if (!p || !c || p == c) return;
+    for (int i = 0; i < p->nch; i++) if (p->ch[i] == c) return;
+    if (!pcc_grow((void **)&p->ch, &p->capch, p->nch + 1, sizeof(PObj *))) return;
+    p->ch[p->nch++] = c;
+    if (!c->owner) c->owner = p;
+}
+
+/* a part is made now: its reads and time go to it until pcc_pop */
+static PObj *pcc_push(Ev *e, int kind, uint64_t a, uint64_t b) {
+    if (!e->pcc_run || e->pcc_n >= 32) return NULL;
+    pcc_tick(e);
+    PObj *o = pcc_obj(e, kind, a, b, 1);
+    if (!o) return NULL;
+    if (e->pcc_deg >= 0 && (kind == PO_POINT || kind == PO_PLAN)) o->deg10 = (int)floor(e->pcc_deg * 10 + 0.5);
+    e->pcc_stk[e->pcc_n++] = o;
+    return o;
+}
+static void pcc_pop(Ev *e, PObj *o) {
+    if (!o || !e->pcc_run) return;
+    pcc_tick(e);
+    if (e->pcc_n && e->pcc_stk[e->pcc_n - 1] == o) e->pcc_n--;
+    pcc_dedupe(o);
+    pcc_child(pcc_tgt(e), o);
+}
+/* a memo answer: the part that made it is a child of the part open now */
+static PObj *pcc_ref(Ev *e, int kind, uint64_t a, uint64_t b) {
+    if (!e->pcc_run) return NULL;
+    PccJob *pj = e->job->pcc;
+    HVal *v = hm_find(&pj->om, pt_mix(a + (uint64_t)kind * 0x9E3779B97F4A7C15ull), b);
+    if (!v || !v->p) return NULL;
+    PObj *o = (PObj *)v->p;
+    pcc_use(pj, o);
+    pcc_child(pcc_tgt(e), o);
+    return o;
+}
+
+/* the context part: kind (FILT or POST) at ring angle deg, or the A
+ * level for deg < 0 */
+static PccSave pcc_enter(Ev *e, int kind, double deg) {
+    PccSave s = { e->pcc_ctx, e->pcc_deg };
+    if (!e->pcc_run) return s;
+    pcc_tick(e);
+    if (deg >= 0) {
+        int d10 = (int)floor(deg * 10 + 0.5);
+        PObj *o = pcc_obj(e, kind, (uint64_t)pcc_slot_k(e), (uint64_t)d10, 0);
+        if (o) { o->deg10 = d10; e->pcc_ctx = o; }
+        e->pcc_deg = deg;
+    } else {
+        e->pcc_ctx = e->pcc_alev; e->pcc_deg = -1;
+    }
+    return s;
+}
+static void pcc_leave(Ev *e, PccSave s) {
+    if (!e->pcc_run) return;
+    pcc_tick(e);
+    e->pcc_ctx = s.ctx; e->pcc_deg = s.deg;
+}
+
+static double pcc_rdeg(const Rec *r) { return (r && (r->flags & RF_POS)) ? r->deg : -1; }
+#define PCC_IN(e, kind, deg) PccSave pcs_ = pcc_enter((e), (kind), (deg))
+#define PCC_OUT(e) pcc_leave((e), pcs_)
+static void pcc_stop(Ev *e) { if (e->pcc_run) { pcc_tick(e); e->pcc_run = 0; } }
+
 /* PT2_V2_CACHE: mark what a store run reads on a square (rpm) */
 static void pc_mark(Ev *e, double mx, double my, int bit) {
+    if (e->pcc_run) {
+        int pb = ((bit & PCM_TT) ? PR_T : 0) | ((bit & PCM_PO) ? PR_P : 0) | ((bit & PCM_SQF) ? PR_T | PR_P : 0)
+               | ((bit & PCM_BASE) ? PR_B : 0) | ((bit & PCM_WALK) ? PR_W | PR_T : 0);
+        pcc_mark(e, mx, my, pb);
+    }
     if (!e->pc_on || !e->job || !e->job->rpm) return;
     if (!(mx >= 0 && mx <= 255 && my >= 0 && my <= 255)) return;
     unsigned char *q = &e->job->rpm[(int)my * 256 + (int)mx];
@@ -1567,7 +1777,7 @@ static double ttype(Ev *e, double mx, double my) {
     if (mx >= 0 && mx <= 255 && my >= 0 && my <= 255) {
         int k = (int)my * 256 + (int)mx;
         Pt2Ctx *c = e->c;
-        if (c->tt_stamp[k] == c->gen) { e->tt_hits += 1; return c->tt_val[k]; }
+        if (c->tt_stamp[k] == c->gen) { e->tt_hits += 1; if (e->pcc_run) pcc_mark(e, mx, my, PR_T); return c->tt_val[k]; }
         double v = call_ttype(e, mx, my);
         pc_mark(e, mx, my, PCM_TT);
         PC(C_tt_miss, 1);
@@ -1597,7 +1807,7 @@ static int pill_on(Ev *e, double mx, double my) {
     if (mx >= 0 && mx <= 255 && my >= 0 && my <= 255) {
         int k = (int)my * 256 + (int)mx;
         Pt2Ctx *c = e->c;
-        if (c->po_stamp[k] == c->gen) { PC(C_po_hit, 1); return c->po_val[k]; }
+        if (c->po_stamp[k] == c->gen) { PC(C_po_hit, 1); if (e->pcc_run) pcc_mark(e, mx, my, PR_P); return c->po_val[k]; }
         PC(C_po_miss, 1);
         int v = call_pill_on(e, mx, my);
         pc_mark(e, mx, my, PCM_PO);
@@ -1709,11 +1919,78 @@ static void ray_keep(Ev *e, Arena *a, Ray *res, const int64_t *sq_list, const do
 }
 
 /* keep = 0: scratch (hold_safe), only hit / link / cover are read. */
+/* PT2_V2_CACHE_PART_LOG (log only): doll 0, the walk's geometry. One
+ * ray cast and one tank shot walk in 16 (in a store run with the part log
+ * on) is walked once more with no reads: the steps, the target test and
+ * the square changes only. The C time of the real walk and of that
+ * geometry walk go to a per-thread sum, a PT2_V2_D0 line each 2048. */
+typedef struct {
+    double cast_n, cast_tot, cast_geo, cast_sq, cast_t;
+    double shot_n, shot_tot, shot_geo, shot_sq, shot_t, shot_jump;
+    int64_t tsc0, qpc0;
+    unsigned k, n;
+} D0St;
+static PF_TLS D0St t_d0;
+static volatile double d0_sink;
+static int d0_take(Ev *e) { return e->pcc_on && ((++t_d0.k) & 15u) == 0; }
+static void d0_note(void) {
+    D0St *d = &t_d0;
+    if (!d->tsc0) { d->tsc0 = ZW_TSC(); d->qpc0 = pf_clock(); }
+    if ((++d->n & 2047u) != 0) return;
+    double us = (double)(pf_clock() - d->qpc0) * pf_tick_us();
+    double tsc = (double)(ZW_TSC() - d->tsc0);
+    fprintf(stderr, "PT2_V2_D0 tid=%lu cast_n=%.0f cast_tot=%.0f cast_geo=%.0f cast_sq=%.0f cast_t=%.0f"
+            " shot_n=%.0f shot_tot=%.0f shot_geo=%.0f shot_sq=%.0f shot_t=%.0f shot_jump=%.0f us=%.0f tsc=%.0f\n",
+            (unsigned long)((uintptr_t)&t_d0 >> 4), d->cast_n, d->cast_tot, d->cast_geo, d->cast_sq, d->cast_t,
+            d->shot_n, d->shot_tot, d->shot_geo, d->shot_sq, d->shot_t, d->shot_jump, us, tsc);
+}
+/* the cast's geometry to tick n: the steps, the target test, the square changes */
+static void d0_cast_geo(double x, double y, double xs, double ys, double n, double tx, double ty, double r) {
+    Walk w;
+    walk_init(&w, x, y, xs, ys);
+    double r2 = r * r, last = -1, nsq = 0;
+    for (double t = 1; t <= n; t++) {
+        double mx, my, sq;
+        walk_step(&w, &mx, &my, &sq);
+        if (sq != last) { nsq++; last = sq; }
+        double dx = w.x - tx, dy = w.y - ty;
+        if (dx < r && dx > -r && dy < r && dy > -r && dx * dx + dy * dy < r2) break;
+    }
+    d0_sink += nsq;
+}
+/* the shot walk's geometry to tick n (the jump way or the tick way) */
+static void d0_shot_geo(const Walk *w0, int jump, double n) {
+    double nsq = 0;
+    if (jump) {
+        Pt2wAxis ax, ay;
+        pt2w_ax_init(&ax, w0->xi, w0->xsi);
+        pt2w_ax_init(&ay, w0->yi, w0->ysi);
+        int32_t t = 1, N = (int32_t)n;
+        while (t <= N) {
+            nsq += (double)(pt2w_ax_sq(&ax) + pt2w_ax_sq(&ay));
+            t = ax.k < ay.k ? ax.k : ay.k;
+            if (t > N) break;
+            pt2w_ax_pass(&ax, &ay, t);
+        }
+    } else {
+        Walk w = *w0;
+        double last = -1;
+        for (double t = 1; t <= n; t++) {
+            double mx, my, sq;
+            walk_step(&w, &mx, &my, &sq);
+            if (sq != last) { nsq++; last = sq; }
+        }
+    }
+    d0_sink += nsq;
+}
+
 static Ray *cast_walk__p(Ev *e, Arena *a, double sx, double sy, double tx, double ty, double len,
                       const Extra *extra, int keep, Ray *scratch) {
     int64_t sq_list[PT2_MAX_T];
     double  sq_t[PT2_MAX_T];
     Blk     block[PT2_MAX_T];
+    int d0 = d0_take(e);
+    int64_t d0a = d0 ? ZW_TSC() : 0;
     Ray *res = keep ? (Ray *)ar_alloc(e->L, a, sizeof(Ray)) : scratch;
     memset(res, 0, sizeof(*res));
     double angle = calc_angle(sx, sy, tx, ty);
@@ -1790,6 +2067,14 @@ static Ray *cast_walk__p(Ev *e, Arena *a, double sx, double sy, double tx, doubl
     res->n_sq = nsq; res->n_block = nblk;
     res->end_x = w.x; res->end_y = w.y;
     if (keep) ray_keep(e, a, res, sq_list, sq_t, block, nsq, nblk);
+    if (d0) {
+        int64_t d0b = ZW_TSC();
+        d0_cast_geo(sx + e->sh_add * xa, sy + e->sh_add * ya, xs, ys, n, tx, ty, r);
+        int64_t d0c = ZW_TSC();
+        t_d0.cast_n++; t_d0.cast_tot += (double)(d0b - d0a); t_d0.cast_geo += (double)(d0c - d0b);
+        t_d0.cast_sq += nsq; t_d0.cast_t += hit_t;
+        d0_note();
+    }
     return res;
 }
 static Ray *cast_walk(Ev *e, Arena *a, double sx, double sy, double tx, double ty, double len, const Extra *extra, int keep, Ray *scratch) { PB(P_cast_walk); Ray * r_ = cast_walk__p(e, a, sx, sy, tx, ty, len, extra, keep, scratch); PE(); return r_; }
@@ -2393,8 +2678,19 @@ static int tank_shot_walk_angle__p(Ev *e, double ox, double oy, double angle, do
         s_dc.ticks_walks++;
     }
 #else
+    int d0 = d0_take(e);
+    Walk d0w = w;
+    int64_t d0a = d0 ? ZW_TSC() : 0;
     if (jump) why = ts_walk_jump(e, &w, (int32_t)n, omx, omy, tmx, tmy, extra, lane, &nl, &st);
     else why = ts_walk_ticks(e, &w, n, omx, omy, tmx, tmy, extra, lane, &nl, &st);
+    if (d0) {
+        int64_t d0b = ZW_TSC();
+        d0_shot_geo(&d0w, jump, st.t);
+        int64_t d0c = ZW_TSC();
+        t_d0.shot_n++; t_d0.shot_tot += (double)(d0b - d0a); t_d0.shot_geo += (double)(d0c - d0b);
+        t_d0.shot_sq += nl; t_d0.shot_t += st.t; t_d0.shot_jump += jump;
+        d0_note();
+    }
 #endif
     if (zs) z2 = ZW_TSC();
     /* Kept for the reuse: a walk again with the same key reads the same
@@ -2658,7 +2954,7 @@ static SqV *sq_read__p(Ev *e, double mx, double my) {
     double key = my * 256 + mx;
     int isnew;
     HVal *hv = hm_put(e->L, &e->job->sqm, dbits(key), 0, &isnew);
-    if (!isnew) return (SqV *)hv->p;
+    if (!isnew) { if (e->pcc_run) pcc_mark(e, mx, my, PR_T | PR_P); return (SqV *)hv->p; }
     hv->p = NULL;
     SqV *v = JNEW(e, SqV);
     v->kind = K_NONE; v->shots = 0; v->pill = 0;
@@ -2688,9 +2984,11 @@ static SqV *sq_read(Ev *e, double mx, double my) { PB(P_sq_read); SqV * r_ = sq_
 static WSet *centre_wedges__p(Ev *e, int X) {
     int isnew;
     HVal *hv = hm_put(e->L, &e->cwm, (uint64_t)X, 0, &isnew);
-    if (!isnew) return (WSet *)hv->p;
+    if (!isnew) { if (e->pcc_run) pcc_ref(e, PO_CWM, (uint64_t)pcc_slot_k(e), (uint64_t)X); return (WSet *)hv->p; }
     hv->p = NULL;
     Pill *P = PI(e, X);
+    PObj *po_ = e->pcc_run ? pcc_push(e, PO_CWM, (uint64_t)pcc_slot_k(e), (uint64_t)X) : NULL;
+    if (po_) { po_->x = (int)P->mx; po_->y = (int)P->my; }
     double reach = e->pill_range + e->range_margin;
     Offs *o = offsets(e, reach);
     Wedge **ws = NEWN(e, Wedge *, o->n + 1);
@@ -2711,6 +3009,7 @@ static WSet *centre_wedges__p(Ev *e, int X) {
     }
     WSet *set = wedge_set(e, ws, n);
     set->X = X;
+    pcc_pop(e, po_);
     hv = hm_find(&e->cwm, (uint64_t)X, 0);
     hv->p = set;
     return set;
@@ -2848,10 +3147,13 @@ static void predict(Ev *e, WSet *set, double px, double py, Pred *out) { PB(P_pr
 static Ray *base_ray__p(Ev *e, int X, double px, double py) {
     double k = (py + 4096) * 131072 + (px + 4096);
     HVal *hv = hm_find(&e->job->rays, (uint64_t)X, dbits(k));
-    if (hv) { e->ray_reuse += 1; return (Ray *)hv->p; }
+    if (hv) { e->ray_reuse += 1; if (e->pcc_run) pcc_ref(e, PO_RAY, (uint64_t)X, dbits(k)); return (Ray *)hv->p; }
     Pill *P = PI(e, X);
     double sx = P->mx * 256 + 128, sy = P->my * 256 + 128;
+    PObj *po_ = e->pcc_run ? pcc_push(e, PO_RAY, (uint64_t)X, dbits(k)) : NULL;
+    if (po_) { po_->x = (int)P->mx; po_->y = (int)P->my; }
     Ray *r = cast(e, &e->job->ar, sx, sy, px, py, e->pill_len, NULL, 1, NULL);
+    pcc_pop(e, po_);
     r->X = X;
     int isnew;
     hv = hm_put(e->L, &e->job->rays, (uint64_t)X, dbits(k), &isnew);
@@ -3394,7 +3696,7 @@ static double sq_my(int64_t sq) { return floor((double)sq / 256); }
 static int sqf_get__p(Ev *e, int64_t sq, double mx, double my) {
     lua_State *L = e->L;
     HVal *hv = hm_find(&e->job->sqf, (uint64_t)sq, 0);
-    if (hv) return (int)hv->i;
+    if (hv) { if (e->pcc_run) pcc_mark(e, mx, my, PR_T | PR_P); return (int)hv->i; }
     int f = SF_NIL;
     int lt = lua_istable(L, S_SQF);
     if (lt) {
@@ -3409,6 +3711,7 @@ static int sqf_get__p(Ev *e, int64_t sq, double mx, double my) {
         } else if (lua_toboolean(L, -1)) f = SF_TRUE;
         lua_pop(L, 1);
     }
+    if (f != SF_NIL && e->pcc_run) pcc_mark(e, mx, my, PR_T | PR_P);
     if (f == SF_NIL) {
         pc_mark(e, mx, my, PCM_SQF);
         if (!in_map(e, mx, my) || !stay_in(e, mx, my)) f = SF_AREA;
@@ -3535,8 +3838,10 @@ static int slot_ok__p(Ev *e, Rec *rec, Ray *r, int k, const Lane *lane, const in
     double rk = ((om ? rec->omx : 0) * 256 + (om ? rec->omy : 0)) * 65536 + (double)sq;
     HVal *hv = hm_find(&e->reach, dbits(rk), 0);
     int rc;
-    if (hv) rc = (int)hv->i;
-    else {
+    if (hv) {
+        rc = (int)hv->i;
+        if (e->pcc_run) { if (om) pcc_box(e, rec->omx, rec->omy, mx, my); else pcc_mark(e, mx, my, PR_W | PR_T); }
+    } else {
         /* the builder's walk (brainPathfinderLgmTravelTicksMap) heads
          * straight at the square and slides on walls: it stays in the
          * box of its two ends, +1 */
@@ -4624,7 +4929,7 @@ static void extra_cover__p(Ev *e, Rec *rec) {
     }
     rec->n_xc = m;
 }
-static void extra_cover(Ev *e, Rec *rec) { PT_ENTER(C_pt_hold_t); PB(P_extra_cover); extra_cover__p(e, rec); PE(); PT_LEAVE(C_pt_hold_t); }
+static void extra_cover(Ev *e, Rec *rec) { PT_ENTER(C_pt_hold_t); PB(P_extra_cover); PCC_IN(e, PO_POST, pcc_rdeg(rec)); extra_cover__p(e, rec); PCC_OUT(e); PE(); PT_LEAVE(C_pt_hold_t); }
 
 /* ── Plans ──────────────────────────────────────────────────────────── */
 static int same_chain(const PList *a, const PList *b) {
@@ -4662,7 +4967,7 @@ static void plan_empty__p(Ev *e, Rec *rec) {
     rec->extra = extra_new(e);
     rec->flags |= RF_PLAN;
 }
-static void plan_empty(Ev *e, Rec *rec) { PT_ENTER(C_pt_plan_empty_t); PB(P_plan_empty); plan_empty__p(e, rec); PE(); PT_LEAVE(C_pt_plan_empty_t); }
+static void plan_empty(Ev *e, Rec *rec) { PT_ENTER(C_pt_plan_empty_t); PB(P_plan_empty); PCC_IN(e, PO_POST, pcc_rdeg(rec)); plan_empty__p(e, rec); PCC_OUT(e); PE(); PT_LEAVE(C_pt_plan_empty_t); }
 
 /* the items of solution so in its trip order */
 static PlanE *sol_items(Ev *e, const Sol *so) {
@@ -4864,7 +5169,7 @@ static double leeway__p(Ev *e, Rec *rec, double ring_wu, LeePt **out) {
     *out = res;
     return n;
 }
-static double leeway(Ev *e, Rec *rec, double ring_wu, LeePt **out) { PT_ENTER(C_pt_leeway_t); if (pt_mine_) t_pf->cnt[C_pt_leeway_n] += 1; PB(P_leeway); double r_ = leeway__p(e, rec, ring_wu, out); PE(); PT_LEAVE(C_pt_leeway_t); return r_; }
+static double leeway(Ev *e, Rec *rec, double ring_wu, LeePt **out) { PT_ENTER(C_pt_leeway_t); if (pt_mine_) t_pf->cnt[C_pt_leeway_n] += 1; PB(P_leeway); PCC_IN(e, PO_POST, pcc_rdeg(rec)); double r_ = leeway__p(e, rec, ring_wu, out); PCC_OUT(e); PE(); PT_LEAVE(C_pt_leeway_t); return r_; }
 
 /* PT2_FAVOR_BLOCKER_PLACE (Nov 24, Andrew's yes): blocker_place as the
  * Lua. bp_tier from the record's friendly blocker pills (its planned pill
@@ -4925,7 +5230,7 @@ static void score_of__p(Ev *e, Rec *fin) {
     blocker_place(e, fin);
     if (e->swb && fin->safe) start_check(e, fin);
 }
-static void score_of(Ev *e, Rec *fin) { PT_ENTER(C_pt_score_of_t); PB(P_score_of); score_of__p(e, fin); PE(); PT_LEAVE(C_pt_score_of_t); }
+static void score_of(Ev *e, Rec *fin) { PT_ENTER(C_pt_score_of_t); PB(P_score_of); PCC_IN(e, PO_POST, pcc_rdeg(fin)); score_of__p(e, fin); PCC_OUT(e); PE(); PT_LEAVE(C_pt_score_of_t); }
 
 static void carry(Rec *fin, const Rec *rec) {
     fin->deg = rec->deg; fin->cx = rec->cx; fin->cy = rec->cy; fin->mx = rec->mx; fin->my = rec->my;
@@ -5124,7 +5429,7 @@ static Hold *hold_point__p(Ev *e, Rec *b) {
     h->why_pill = first_why;
     return h;
 }
-static Hold *hold_point(Ev *e, Rec *b) { PT_ENTER(C_pt_hold_t); PB(P_hold_point); Hold * r_ = hold_point__p(e, b); PE(); PT_LEAVE(C_pt_hold_t); return r_; }
+static Hold *hold_point(Ev *e, Rec *b) { PT_ENTER(C_pt_hold_t); PB(P_hold_point); PCC_IN(e, PO_POST, pcc_rdeg(b)); Hold * r_ = hold_point__p(e, b); PCC_OUT(e); PE(); PT_LEAVE(C_pt_hold_t); return r_; }
 
 /* ── Output ─────────────────────────────────────────────────────────── */
 /* An object goes out once per output; later places get the same table. */
@@ -5594,6 +5899,7 @@ static int ctx_gc(lua_State *L) {
 }
 
 static void job_watch_free(Job *j) {
+    pcc_free(j);
     free(j->rpm);
     j->rpm = NULL;
     j->rp_n = 0;
@@ -6030,6 +6336,7 @@ static Rec *eval_point_pc(Ev *e, double px, double py, int aim_fixed, int nudge,
         PEnt *pe = (PEnt *)hv->p;
         if (!pc_tank_in(e, &pe->b)) {
             e->pc_eh += 1;
+            if (e->pcc_run) e->pcc_last_pt = pcc_ref(e, PO_POINT, k1, k2);
             *why = pe->why; *why_arg = pe->wa;
             if (!pe->r) {
                 if (pe->why != W_A_OUT) set_om(e, floor(px / 256), floor(py / 256));
@@ -6044,7 +6351,11 @@ static Rec *eval_point_pc(Ev *e, double px, double py, int aim_fixed, int nudge,
     Arena *save = e->arp;
     e->arp = &e->job->par;
     rb_start(e);
+    PObj *po_ = e->pcc_run ? pcc_push(e, PO_POINT, k1, k2) : NULL;
+    if (po_) { po_->x = (int)floor(px / 256); po_->y = (int)floor(py / 256); }
     Rec *r = eval_point(e, px, py, NULL, aim_fixed, nudge, 0, lazy, why, why_arg);
+    pcc_pop(e, po_);
+    if (e->pcc_run) e->pcc_last_pt = po_;
     PBox b;
     rb_stop(e, &b);
     if (pc_tank_in(e, &b)) {
@@ -6081,7 +6392,7 @@ static void plan_key(const Rec *rec, uint64_t *k1, uint64_t *k2) {
 
 /* plan_point(rec) through the store: a record from the store (has_ck)
  * that is not covered */
-static Rec *plan_point_pc(Ev *e, Rec *rec) {
+static Rec *plan_point_pc__p(Ev *e, Rec *rec) {
     if (!e->pc_on || !rec->has_ck || rec->covered) return plan_point(e, rec);
     uint64_t k1, k2;
     plan_key(rec, &k1, &k2);
@@ -6091,6 +6402,7 @@ static Rec *plan_point_pc(Ev *e, Rec *rec) {
         if (!pc_tank_in(e, &pp->b)) {
             e->pc_ph += 1;
             e->planned += 1;
+            if (e->pcc_run) pcc_ref(e, PO_PLAN, k1, k2);
             Aims *ca = aims_copy(e, pp->clr);
             Lanes *ls = lanes_copy(e, pp->lns);
             rec->clear = ca; rec->lanes = ls; rec->aims_done = pp->aims_done;
@@ -6115,7 +6427,9 @@ static Rec *plan_point_pc(Ev *e, Rec *rec) {
     Arena *save = e->arp;
     e->arp = &e->job->par;
     rb_start(e);
+    PObj *po_ = e->pcc_run ? pcc_push(e, PO_PLAN, k1, k2) : NULL;
     Rec *res = plan_point(e, rec);
+    pcc_pop(e, po_);
     PBox b;
     rb_stop(e, &b);
     if (pc_tank_in(e, &b)) {
@@ -6143,6 +6457,13 @@ static Rec *plan_point_pc(Ev *e, Rec *rec) {
     }
     e->arp = save;
     return res;
+}
+
+static Rec *plan_point_pc(Ev *e, Rec *rec) {
+    PCC_IN(e, PO_POST, pcc_rdeg(rec));
+    Rec *r_ = plan_point_pc__p(e, rec);
+    PCC_OUT(e);
+    return r_;
 }
 
 /* the bytes of an arena's chunks */
@@ -6196,6 +6517,7 @@ static uint64_t pc_csig(Ev *e, int world) {
 }
 
 static void pc_pill_remap(lua_State *L, Job *j);
+static void pcc_begin(Ev *e, Job *j, int prun);
 
 static double score_fn(Ev *e, double deg, double mx, double my, double cx, double cy) {
     lua_State *L = e->L;
@@ -6222,8 +6544,10 @@ static void points_of_ring__p(Ev *e) {
         e->pp_px = NEWN(e, double, need); e->pp_py = NEWN(e, double, need);
         e->pp_hasA = NEWN(e, int, need); e->pp_cant = NEWN(e, int, need);
     }
+    PccSave pfs_ = { e->pcc_ctx, e->pcc_deg };
     for (double s = 0; s <= e->nsteps - 1; s++) {
         double deg = s * e->angle_step;
+        if (e->pcc_run) (void)pcc_enter(e, PO_FILT, deg);
         if (lua_toboolean(L, S_BANNED)) {
             lua_pushvalue(L, S_BANNED);
             lua_pushnumber(L, deg);
@@ -6277,6 +6601,7 @@ static void points_of_ring__p(Ev *e) {
             v->i = 1;
         }
     }
+    pcc_leave(e, pfs_);
 }
 static void points_of_ring(Ev *e) { PT_ENTER(C_pt_filter_t); PB(P_points_of_ring); points_of_ring__p(e); PE(); PT_LEAVE(C_pt_filter_t); }
 
@@ -6290,6 +6615,7 @@ static void point_of_ring__p(Ev *e, int q) {
     else {
         int64_t pt_e0 = t_pf ? pf_clock() : 0;
         if (t_pf) { t_pt_tank = 0; t_pt_aim = 0; }
+        e->pcc_last_pt = NULL;
         rec = eval_point_pc(e, px, py, 0, 1, e->lazy, &why, &wa);
         if (t_pf) {
             int64_t pt_e1 = pf_clock();
@@ -6316,6 +6642,7 @@ static void point_of_ring__p(Ev *e, int q) {
         double ax = cx + sin(deg * PT2_LUA_RAD) * e->approach_offset;
         double ay = cy - cos(deg * PT2_LUA_RAD) * e->approach_offset;
         rec->omx = floor(ax); rec->omy = floor(ay); rec->flags |= RF_OMXY;
+        if (e->pcc_run && e->pcc_last_pt) { e->pcc_last_pt->ox = (int)rec->omx; e->pcc_last_pt->oy = (int)rec->omy; }
         pc_mark(e, mx, my, PCM_RING);
         pc_mark(e, rec->omx, rec->omy, PCM_RING);
         vec_push(e, &e->cands, &e->ncands, &e->cap_cands, rec);
@@ -6328,7 +6655,7 @@ static void point_of_ring__p(Ev *e, int q) {
         }
     }
 }
-static void point_of_ring(Ev *e, int q) { PT_ENTER(C_pt_ring_t); if (t_pf) t_pf->cnt[C_pt_ring_n] += 1; PB(P_point_of_ring); point_of_ring__p(e, q); PE(); PT_LEAVE(C_pt_ring_t); }
+static void point_of_ring(Ev *e, int q) { PT_ENTER(C_pt_ring_t); if (t_pf) t_pf->cnt[C_pt_ring_n] += 1; PB(P_point_of_ring); PCC_IN(e, PO_FILT, e->pp_deg[q]); point_of_ring__p(e, q); PCC_OUT(e); PE(); PT_LEAVE(C_pt_ring_t); }
 
 /* the full record of a lazy stub q */
 static Rec *full_of__p(Ev *e, Rec *q) {
@@ -6342,7 +6669,7 @@ static Rec *full_of__p(Ev *e, Rec *q) {
     full->omx = q->omx; full->omy = q->omy; full->flags |= RF_OMXY;
     return full;
 }
-static Rec *full_of(Ev *e, Rec *q) { PT_ENTER(C_pt_full_of_t); if (pt_mine_) t_pf->cnt[C_pt_full_of_n] += 1; PB(P_full_of); Rec * r_ = full_of__p(e, q); PE(); PT_LEAVE(C_pt_full_of_t); return r_; }
+static Rec *full_of(Ev *e, Rec *q) { PT_ENTER(C_pt_full_of_t); if (pt_mine_) t_pf->cnt[C_pt_full_of_n] += 1; PB(P_full_of); PCC_IN(e, PO_FILT, pcc_rdeg(q)); Rec * r_ = full_of__p(e, q); PCC_OUT(e); PE(); PT_LEAVE(C_pt_full_of_t); return r_; }
 
 static double qsf_key(const Rec *r) { return (r->safe ? 1000 : 0) + r->kills; }
 static int qsf_on(Ev *e) { return e->qsf && e->has_band && e->band > 0; }
@@ -6569,7 +6896,9 @@ static int ev_run(Ev *e) {
                     for (int i = 1; i <= e->nsingles; i++) {
                         Rec *q = e->singles[i];
                         if (!(q->flags & RF_ANEED)) {
+                            PCC_IN(e, PO_POST, pcc_rdeg(q));
                             Ray *v = ray_view(e, base_ray(e, e->A, q->px, q->py), NULL);
+                            PCC_OUT(e);
                             q->a_need = q->a_bar - v->cover;
                             q->flags |= RF_ANEED;
                         }
@@ -6943,10 +7272,66 @@ static int l_begin__p(lua_State *L) {
         Pill *GA = PI(e, e->A);
         pc_mark(e, GA->mx, GA->my, PCM_GROUP);
     }
+    e->pcc_on = 0; e->pcc_run = 0; e->pcc_n = 0; e->pcc_deg = -1;
+    if (e->pc_on) {
+        lua_getfield(L, S_INP, "_v2_pc_part");
+        int prun = lua_isnumber(L, -1) ? (int)lua_tointeger(L, -1) : 0;
+        lua_pop(L, 1);
+        if (prun > 0) pcc_begin(e, j, prun);
+    }
     e->asets = aim_wedges(e, e->A);
     step_end(e);
+    pcc_stop(e);
     lua_settop(L, 1);
     return 1;
+}
+
+/* PT2_V2_CACHE_PART_LOG (log only): this evaluate's slot (its A square)
+ * in the job's part list, for run prun (pilltake_v2.lua inp._v2_pc_part) */
+static void pcc_begin(Ev *e, Job *j, int prun) {
+    lua_State *L = e->L;
+    if (!j->pcc) {
+        j->pcc = (PccJob *)calloc(1, sizeof(PccJob));
+        if (!j->pcc) return;
+        j->pcc->run = -1;
+    }
+    PccJob *pj = j->pcc;
+    pj->run = prun;
+    Pill *A = PI(e, e->A);
+    int k = (int)A->my * 256 + (int)A->mx;
+    int si;
+    for (si = 0; si < pj->nslot; si++) if (pj->slot[si].k == k) break;
+    if (si == pj->nslot) {
+        if (pj->nslot >= PCC_MAXSLOT) return;
+        pj->nslot++;
+        memset(&pj->slot[si], 0, sizeof(PccSlot));
+        pj->slot[si].k = k;
+    }
+    PccSlot *sl = &pj->slot[si];
+    sl->run = prun; sl->finish = e->finish; sl->co = e->co; sl->wsig = j->wsig;
+    /* the chain skip set by its pills' squares */
+    uint64_t sk = 0;
+    if (lua_istable(L, S_CHAIN_SKIP)) {
+        lua_pushnil(L);
+        while (lua_next(L, S_CHAIN_SKIP)) {
+            if (lua_toboolean(L, -1) && lua_istable(L, -2)) {
+                lua_getfield(L, -2, "mx");
+                lua_getfield(L, -3, "my");
+                if (lua_isnumber(L, -2) && lua_isnumber(L, -1))
+                    sk += pt_mix((uint64_t)(lua_tonumber(L, -1) * 256 + lua_tonumber(L, -2)) * 2654435761ull + 17);
+                lua_pop(L, 2);
+            }
+            lua_pop(L, 1);
+        }
+    }
+    sl->skh = sk;
+    e->pcc_slot = si;
+    e->pcc_on = 1; e->pcc_run = 1; e->pcc_n = 0; e->pcc_deg = -1;
+    e->pcc_t0 = pf_clock();
+    e->pcc_alev = NULL; e->pcc_ctx = NULL;
+    PObj *o = pcc_obj(e, PO_ALEV, (uint64_t)k, 0, 0);
+    e->pcc_alev = o; e->pcc_ctx = o;
+    if (!o) e->pcc_on = e->pcc_run = 0;
 }
 
 /* gh_pt2_v2.step(st [, paused]): true, result when done; false when the
@@ -6959,14 +7344,18 @@ static int l_step__p(lua_State *L) {
     e->L = L;
     e->c = get_ctx(L);
     e->job = (Job *)lua_touserdata(L, S_JOB);
+    if (e->pcc_on && e->job && e->job->pcc) {
+        e->pcc_run = 1; e->pcc_n = 0; e->pcc_ctx = e->pcc_alev; e->pcc_deg = -1; e->pcc_t0 = pf_clock();
+    }
     cr_setup(e);
     if (e->pc != 0) step_reads(e);
     else {
         /* the first step goes on from the setup's reads */
         e->om_sent = 0;
     }
-    if (!ev_run(e)) { lua_pushboolean(L, 0); return 1; }
+    if (!ev_run(e)) { pcc_stop(e); lua_pushboolean(L, 0); return 1; }
     step_end(e);
+    pcc_stop(e);
     push_result(e);
     e->done = 1;
     lua_pushboolean(L, 1);
@@ -7367,6 +7756,500 @@ static int l_pc_watch(lua_State *L) {
     return 4;
 }
 
+
+/* ── PT2_V2_CACHE_PART_LOG (log only): the parts of a store run ─────── */
+typedef struct { int kind, slot_k, deg10, x, y, ox, oy, home; double t; int rd0, nrd, ch0, nch; } PPo;
+typedef struct {
+    int nobj; PPo *o; uint32_t *rd; int *ch;
+    int nslot; PccSlot slot[PCC_MAXSLOT];
+    unsigned char snap[PT2_MAP_SQ]; int has_snap;
+} PPart;
+
+static int part_gc(lua_State *L) {
+    PPart *p = (PPart *)lua_touserdata(L, 1);
+    free(p->o); free(p->rd); free(p->ch);
+    p->o = NULL; p->rd = NULL; p->ch = NULL; p->nobj = 0;
+    return 0;
+}
+
+static int pcc_member(int kind) {
+    return kind == PO_POINT || kind == PO_FILT || kind == PO_POST || kind == PO_PLAN || kind == PO_ALEV;
+}
+
+static int pcc_sel(PObj *o, PObj ***lst, int *n, int *cap) {
+    if (o->qi >= 0) return 1;
+    if (!pcc_grow((void **)lst, cap, *n + 1, sizeof(PObj *))) return 0;
+    o->qi = *n;
+    (*lst)[(*n)++] = o;
+    for (int i = 0; i < o->nch; i++) if (!pcc_sel(o->ch[i], lst, n, cap)) return 0;
+    return 1;
+}
+
+static void part_home(PPart *p, int i, int h) {
+    PPo *o = &p->o[i];
+    for (int c = 0; c < o->nch; c++) {
+        int ci = p->ch[o->ch0 + c];
+        PPo *q = &p->o[ci];
+        if (q->home < 0 && !pcc_member(q->kind)) { q->home = h; part_home(p, ci, h); }
+    }
+}
+
+static const char *s_po_name[PO_N] = { "-", "ray", "point", "cwm", "filt", "post", "plan", "alev" };
+
+/* pc_part_make(job, W [, k]): the parts the job's last run used (only
+ * slot k's, with k), and W's snap (the run's start). Returns the part (nil
+ * with no parts), an info table (counts and bytes, of the part and of the
+ * job's whole part list) and the slots { { k, finish, co, wsig, skh, t } }. */
+static int l_pc_part_make(lua_State *L) {
+    Job *j = (Job *)luaL_checkudata(L, 1, "gh_pt2_v2_job_mt");
+    PWatch *w = (PWatch *)luaL_checkudata(L, 2, "gh_pt2_v2_watch_mt");
+    int has_k = !lua_isnoneornil(L, 3);
+    int fk = has_k ? (int)luaL_checkinteger(L, 3) : -1;
+    PccJob *pj = j->pcc;
+    if (!pj || j->freed) { lua_pushnil(L); return 1; }
+    for (int i = 0; i < pj->nobj; i++) pj->objs[i]->qi = -1;
+    PObj **sel = NULL; int ns = 0, cap = 0, ok = 1;
+    for (int i = 0; i < pj->nobj && ok; i++) {
+        PObj *o = pj->objs[i];
+        if (pcc_member(o->kind) && o->run == pj->run && (!has_k || o->slot_k == fk)) ok = pcc_sel(o, &sel, &ns, &cap);
+    }
+    if (!ok || ns == 0) { free(sel); lua_pushnil(L); return 1; }
+    int nrd = 0, nch = 0;
+    for (int i = 0; i < ns; i++) { nrd += sel[i]->nrd; nch += sel[i]->nch; }
+    PPart *p = (PPart *)lua_newuserdata(L, sizeof(PPart));
+    memset(p, 0, sizeof(*p));
+    if (luaL_newmetatable(L, "gh_pt2_v2_part_mt")) {
+        lua_pushcfunction(L, part_gc);
+        lua_setfield(L, -2, "__gc");
+    }
+    lua_setmetatable(L, -2);
+    p->o = (PPo *)calloc((size_t)ns, sizeof(PPo));
+    p->rd = (uint32_t *)malloc(sizeof(uint32_t) * (size_t)(nrd > 0 ? nrd : 1));
+    p->ch = (int *)malloc(sizeof(int) * (size_t)(nch > 0 ? nch : 1));
+    if (!p->o || !p->rd || !p->ch) { free(sel); lua_pop(L, 1); lua_pushnil(L); return 1; }
+    p->nobj = ns;
+    int ri = 0, ci = 0;
+    for (int i = 0; i < ns; i++) {
+        PObj *s = sel[i];
+        PPo *o = &p->o[i];
+        o->kind = s->kind; o->slot_k = s->slot_k; o->deg10 = s->deg10;
+        o->x = s->x; o->y = s->y; o->ox = s->ox; o->oy = s->oy; o->t = s->t;
+        o->home = pcc_member(s->kind) ? i : -1;
+        o->rd0 = ri; o->nrd = s->nrd;
+        memcpy(p->rd + ri, s->rd, sizeof(uint32_t) * (size_t)s->nrd); ri += s->nrd;
+        o->ch0 = ci; o->nch = s->nch;
+        for (int c = 0; c < s->nch; c++) p->ch[ci++] = s->ch[c]->qi;
+    }
+    free(sel);
+    for (int i = 0; i < ns; i++) if (pcc_member(p->o[i].kind)) part_home(p, i, i);
+    memcpy(p->snap, w->snap, PT2_MAP_SQ);
+    p->has_snap = w->has_snap;
+    for (int s = 0; s < pj->nslot; s++) {
+        if (pj->slot[s].run != pj->run || (has_k && pj->slot[s].k != fk)) continue;
+        p->slot[p->nslot++] = pj->slot[s];
+    }
+    /* info */
+    lua_createtable(L, 0, 24);
+    int cnt[PO_N] = { 0 }, allc[PO_N] = { 0 };
+    double rdk[PO_N] = { 0 }, allrd = 0, allb = 0, b = 0;
+    for (int i = 0; i < ns; i++) {
+        cnt[p->o[i].kind]++; rdk[p->o[i].kind] += p->o[i].nrd;
+        b += (double)sizeof(PObj) + 4.0 * p->o[i].nrd + 8.0 * p->o[i].nch;
+    }
+    for (int i = 0; i < pj->nobj; i++) {
+        PObj *o = pj->objs[i];
+        allc[o->kind]++; allrd += o->nrd;
+        allb += (double)sizeof(PObj) + 4.0 * o->caprd + 8.0 * o->capch;
+    }
+    char nm[32];
+    for (int k = 1; k < PO_N; k++) {
+        snprintf(nm, sizeof(nm), "n_%s", s_po_name[k]); setnum(L, nm, cnt[k]);
+        snprintf(nm, sizeof(nm), "rd_%s", s_po_name[k]); setnum(L, nm, rdk[k]);
+        snprintf(nm, sizeof(nm), "all_%s", s_po_name[k]); setnum(L, nm, allc[k]);
+    }
+    setnum(L, "bytes", b); setnum(L, "all_rd", allrd); setnum(L, "all_bytes", allb);
+    setnum(L, "all_n", pj->nobj);
+    /* slots */
+    double *th = (double *)calloc((size_t)ns, sizeof(double));
+    lua_createtable(L, p->nslot, 0);
+    for (int s = 0; s < p->nslot; s++) {
+        double t = 0;
+        for (int i = 0; i < ns; i++) {
+            PPo *o = &p->o[i];
+            int h = o->home;
+            if (h >= 0 && p->o[h].slot_k == p->slot[s].k) t += o->t;
+        }
+        lua_createtable(L, 0, 6);
+        setnum(L, "k", p->slot[s].k);
+        setnum(L, "finish", p->slot[s].finish);
+        setnum(L, "co", p->slot[s].co);
+        char hx[40];
+        snprintf(hx, sizeof(hx), "%016llx", (unsigned long long)p->slot[s].wsig);
+        lua_pushstring(L, hx); lua_setfield(L, -2, "wsig");
+        snprintf(hx, sizeof(hx), "%016llx", (unsigned long long)p->slot[s].skh);
+        lua_pushstring(L, hx); lua_setfield(L, -2, "skh");
+        setnum(L, "t", t);
+        lua_rawseti(L, -2, s + 1);
+    }
+    free(th);
+    return 3;
+}
+
+enum { CH_T = 1, CH_F = 2, CH_B = 4, CH_PO = 8, CH_PA = 16 };
+enum { WH_P = 1, WH_B = 2, WH_T = 4, WH_F = 8 };
+#define WH_HIT (WH_P | WH_B | WH_T)
+typedef struct { int o, n, fh, fa; } PChg;   /* squares (-1 none) */
+
+static uint32_t part_h(const PPart *p, int i, const uint32_t *d, uint32_t *h, unsigned char *st) {
+    if (st[i] == 2) return h[i];
+    if (st[i] == 1) return d[i];   /* a loop: its own hits only */
+    st[i] = 1;
+    uint32_t f = d[i];
+    const PPo *o = &p->o[i];
+    for (int c = 0; c < o->nch; c++) f |= part_h(p, p->ch[o->ch0 + c], d, h, st);
+    h[i] = f; st[i] = 2;
+    return f;
+}
+
+static int part_slot(const PPart *p, int k) {
+    for (int s = 0; s < p->nslot; s++) if (p->slot[s].k == k) return s;
+    return -1;
+}
+
+typedef struct { int key, i; } PKey;
+static int pkey_lt(const void *a, const void *b) {
+    const PKey *x = (const PKey *)a, *y = (const PKey *)b;
+    if (x->key != y->key) return x->key < y->key ? -1 : 1;
+    return x->i < y->i ? -1 : x->i > y->i;
+}
+
+static void part_why(char *buf, size_t n, size_t *at, const char *name, int cells, int kept,
+                     const int *why, double T, double Tk) {
+    if (*at >= n) return;
+    int w = snprintf(buf + *at, n - *at, " %s=%d,%d,%d,%d,%d,%d,%.1f,%.1f", name, cells, kept,
+                     why[0], why[1], why[2], why[3], T, Tk);
+    if (w > 0) *at += (size_t)w;
+}
+static void part_doll(char *buf, size_t n, size_t *at, const char *name, int cells, int kept, int reasm,
+                      int rebuild, const int *why, double T, double Tk) {
+    if (*at >= n) return;
+    int w = snprintf(buf + *at, n - *at, " %s=%d,%d,%d,%d,%d,%d,%d,%d,%.1f,%.1f", name, cells, kept, reasm,
+                     rebuild, why[0], why[1], why[2], why[3], T, Tk);
+    if (w > 0) *at += (size_t)w;
+}
+static void why_add(int *why, int f) {
+    if (f & WH_P) why[0]++; else if (f & WH_B) why[1]++; else if (f & WH_T) why[2]++; else if (f & WH_F) why[3]++;
+}
+
+/* pc_part_q(part, pills, bases, reach, margin [, cmp [, carried]]): which
+ * parts the changes since the part's snap hit. pills: { o_mx, o_my, n_mx,
+ * n_my, fh, fa, ... } one change per 6 (a square -1 = none; fh: a hostile
+ * change as rule B counts it, fa: an ally change); bases: { mx, my, ... }
+ * the changed bases; the map: cmp's snap, else the map now. Rules: O (the
+ * read watch: a pill change on a read square or within reach + margin of a
+ * ring point), B (Andrew: a hostile change within reach of a ring point,
+ * an ally change on a ray's square), B1 (B with reach + margin). Returns
+ * the stats string and { [k] = "fO,fB,fB1,t" } (a slot's whole hits). */
+static int l_pc_part_q(lua_State *L) {
+    PPart *p = (PPart *)luaL_checkudata(L, 1, "gh_pt2_v2_part_mt");
+    luaL_checktype(L, 2, LUA_TTABLE);
+    luaL_checktype(L, 3, LUA_TTABLE);
+    double reach = luaL_checknumber(L, 4), margin = luaL_checknumber(L, 5);
+    PPart *cmp = lua_isuserdata(L, 6) ? (PPart *)luaL_checkudata(L, 6, "gh_pt2_v2_part_mt") : NULL;
+    int carried = lua_toboolean(L, 7);
+    double R1 = reach + margin;
+    const unsigned char *m = cmp ? (cmp->has_snap ? cmp->snap : NULL) : pc_world(L);
+    int ns = p->nobj;
+    unsigned char *chg = (unsigned char *)calloc(PT2_MAP_SQ, 1);
+    uint32_t *d = (uint32_t *)calloc((size_t)ns + 1, sizeof(uint32_t));
+    uint32_t *h = (uint32_t *)calloc((size_t)ns + 1, sizeof(uint32_t));
+    uint32_t *mg = (uint32_t *)calloc((size_t)ns + 1, sizeof(uint32_t));
+    double *th = (double *)calloc((size_t)ns + 1, sizeof(double));
+    unsigned char *st = (unsigned char *)calloc((size_t)ns + 1, 1);
+    PKey *ks = (PKey *)calloc((size_t)ns + 1, sizeof(PKey));
+    PChg pc[256]; int npc = 0;
+    if (!chg || !d || !h || !mg || !th || !st || !ks) {
+        free(chg); free(d); free(h); free(mg); free(th); free(st); free(ks);
+        lua_pushnil(L); return 1;
+    }
+    int nterr = 0, nfor = 0;
+    if (m && p->has_snap) {
+        for (int k = 0; k < PT2_MAP_SQ; k++) {
+            unsigned a = p->snap[k] & 0x0F, b = m[k] & 0x0F;
+            if (a == b) continue;
+            int fa = (a == 5 || a == 13), fb = (b == 5 || b == 13);
+            unsigned ga = fa ? a + 2 : a, gb = fb ? b + 2 : b;
+            if (ga != gb) { chg[k] |= CH_T; nterr++; }
+            else if (fa != fb) { chg[k] |= CH_F; nfor++; }
+        }
+    }
+    int nb = (int)lua_objlen(L, 3);
+    for (int i = 1; i + 1 <= nb; i += 2) {
+        lua_rawgeti(L, 3, i); lua_rawgeti(L, 3, i + 1);
+        int x = (int)lua_tonumber(L, -2), y = (int)lua_tonumber(L, -1);
+        lua_pop(L, 2);
+        if (x >= 0 && x <= 255 && y >= 0 && y <= 255) chg[y * 256 + x] |= CH_B;
+    }
+    int np = (int)lua_objlen(L, 2);
+    for (int i = 1; i + 5 <= np && npc < 256; i += 6) {
+        double v[6];
+        for (int q = 0; q < 6; q++) { lua_rawgeti(L, 2, i + q); v[q] = lua_tonumber(L, -1); lua_pop(L, 1); }
+        PChg *c = &pc[npc++];
+        c->o = (v[0] >= 0 && v[0] <= 255 && v[1] >= 0 && v[1] <= 255) ? (int)v[1] * 256 + (int)v[0] : -1;
+        c->n = (v[2] >= 0 && v[2] <= 255 && v[3] >= 0 && v[3] <= 255) ? (int)v[3] * 256 + (int)v[2] : -1;
+        c->fh = v[4] != 0; c->fa = v[5] != 0;
+        if (c->o >= 0) { chg[c->o] |= CH_PO; if (c->fa) chg[c->o] |= CH_PA; }
+        if (c->n >= 0) { chg[c->n] |= CH_PO; if (c->fa) chg[c->n] |= CH_PA; }
+    }
+    /* each part's own hits: d (O | B << 4 | B1 << 8), mg the margin disks */
+    int mr = (int)ceil(margin);
+    for (int i = 0; i < ns; i++) {
+        const PPo *o = &p->o[i];
+        int why = 0, pO = 0, pB = 0;
+        for (int r = 0; r < o->nrd; r++) {
+            uint32_t v = p->rd[o->rd0 + r];
+            int c = chg[v >> 8];
+            if (!c) continue;
+            int bits = (int)(v & 255u);
+            if ((c & CH_T) && (bits & (PR_T | PR_W))) why |= WH_T;
+            if ((c & CH_F) && (bits & PR_W)) why |= WH_F;
+            if ((c & CH_B) && (bits & PR_B)) why |= WH_B;
+            if (c & CH_PO) pO = 1;
+            if ((c & CH_PA) && o->kind == PO_RAY) pB = 1;
+        }
+        uint32_t f0 = (uint32_t)(why | (pO ? WH_P : 0)), f1 = (uint32_t)(why | (pB ? WH_P : 0)), f2 = f1;
+        if (o->kind == PO_POINT && o->x >= 0) {
+            for (int c = 0; c < npc; c++) {
+                int sq[2] = { pc[c].o, pc[c].n };
+                for (int q = 0; q < 2; q++) {
+                    if (sq[q] < 0) continue;
+                    double dx = (sq[q] & 255) - o->x, dy = (sq[q] >> 8) - o->y, d2 = dx * dx + dy * dy;
+                    if (d2 <= R1 * R1) { f0 |= WH_P; if (pc[c].fh) f2 |= WH_P; }
+                    if (pc[c].fh && d2 <= reach * reach) f1 |= WH_P;
+                }
+            }
+            int cx[2] = { o->x, o->ox }, cy[2] = { o->y, o->oy };
+            int mw = 0;
+            for (int q = 0; q < 2; q++) {
+                if (cx[q] < 0) continue;
+                for (int dy = -mr; dy <= mr; dy++) for (int dx = -mr; dx <= mr; dx++) {
+                    if ((double)(dx * dx + dy * dy) > margin * margin) continue;
+                    int x = cx[q] + dx, y = cy[q] + dy;
+                    if (x < 0 || x > 255 || y < 0 || y > 255) continue;
+                    int c = chg[y * 256 + x];
+                    if (c & CH_T) mw |= WH_T;
+                    if (c & CH_B) mw |= WH_B;
+                    if (c & CH_PO) mw |= WH_P;   /* O: a pill there is in reach + margin too */
+                }
+            }
+            mg[i] = (uint32_t)(mw | ((mw & ~WH_P) << 4) | ((mw & ~WH_P) << 8));
+        }
+        if (o->kind == PO_ALEV) {
+            for (int c = 0; c < npc; c++) {
+                if (pc[c].o != o->slot_k && pc[c].n != o->slot_k) continue;
+                f0 |= WH_P;
+                if (pc[c].fh) { f1 |= WH_P; f2 |= WH_P; }
+            }
+        }
+        d[i] = f0 | (f1 << 4) | (f2 << 8);
+    }
+    for (int i = 0; i < ns; i++) part_h(p, i, d, h, st);
+    for (int i = 0; i < ns; i++) if (p->o[i].home >= 0) th[p->o[i].home] += p->o[i].t;
+
+    char buf[4096]; size_t at = 0;
+    at += (size_t)snprintf(buf, sizeof(buf), "nobj=%d nterr=%d nfor=%d npill=%d nbase=%d", ns, nterr, nfor, npc, nb / 2);
+    /* the partitions: P1 (slot), P2 (slot, 60 deg), P3 (slot, 30 deg) */
+    int nsl = p->nslot > 0 ? p->nslot : 1;
+    uint32_t *cf = (uint32_t *)calloc((size_t)nsl * 13, sizeof(uint32_t));
+    double *ct = (double *)calloc((size_t)nsl * 13, sizeof(double));
+    unsigned char *cn = (unsigned char *)calloc((size_t)nsl * 13, 1);
+    int pushed = 0;
+    if (cf && ct && cn) {
+    static const char *rn[3] = { "O", "B", "B1" };
+    for (int part = 1; part <= 3; part++) {
+        memset(cf, 0, sizeof(uint32_t) * (size_t)nsl * 13);
+        memset(ct, 0, sizeof(double) * (size_t)nsl * 13);
+        memset(cn, 0, (size_t)nsl * 13);
+        for (int i = 0; i < ns; i++) {
+            const PPo *o = &p->o[i];
+            if (!pcc_member(o->kind)) continue;
+            int s = part_slot(p, o->slot_k);
+            if (s < 0) continue;
+            int c;
+            if (part == 1 || o->deg10 < 0) c = 12;
+            else {
+                int s12 = (o->deg10 / 300) % 12;
+                c = part == 2 ? s12 / 2 : s12;
+            }
+            cf[s * 13 + c] |= h[i] | mg[i];
+            ct[s * 13 + c] += th[i];
+            cn[s * 13 + c] = 1;
+        }
+        for (int r = 0; r < 3; r++) {
+            int cells = 0, kept = 0, why[4] = { 0, 0, 0, 0 };
+            double T = 0, Tk = 0;
+            for (int s = 0; s < p->nslot; s++) {
+                int fa = (int)((cf[s * 13 + 12] >> (4 * r)) & 15u);
+                if (part == 1) {
+                    cells++;
+                    T += ct[s * 13 + 12];
+                    why_add(why, fa);
+                    if (!(fa & WH_HIT)) { kept++; Tk += ct[s * 13 + 12]; }
+                    continue;
+                }
+                T += ct[s * 13 + 12];
+                if (!(fa & WH_HIT)) Tk += ct[s * 13 + 12];
+                for (int c = 0; c < 12; c++) {
+                    if (!cn[s * 13 + c]) continue;
+                    int f = (int)((cf[s * 13 + c] >> (4 * r)) & 15u) | fa;
+                    cells++;
+                    T += ct[s * 13 + c];
+                    why_add(why, f);
+                    if (!(f & WH_HIT)) { kept++; Tk += ct[s * 13 + c]; }
+                }
+            }
+            char nm[16];
+            snprintf(nm, sizeof(nm), "P%d%s", part, rn[r]);
+            part_why(buf, sizeof(buf), &at, nm, cells, kept, why, T, Tk);
+        }
+    }
+    /* the slot table: P1's hits per slot */
+    lua_pushnil(L);    /* the string goes here */
+    lua_createtable(L, 0, p->nslot);
+    {
+        /* again the P1 cells */
+        memset(cf, 0, sizeof(uint32_t) * (size_t)nsl * 13);
+        memset(ct, 0, sizeof(double) * (size_t)nsl * 13);
+        for (int i = 0; i < ns; i++) {
+            const PPo *o = &p->o[i];
+            if (!pcc_member(o->kind)) continue;
+            int s = part_slot(p, o->slot_k);
+            if (s < 0) continue;
+            cf[s * 13 + 12] |= h[i] | mg[i];
+            ct[s * 13 + 12] += th[i];
+        }
+        for (int s = 0; s < p->nslot; s++) {
+            char sv[96];
+            uint32_t f = cf[s * 13 + 12];
+            snprintf(sv, sizeof(sv), "%u,%u,%u,%.1f", f & 15u, (f >> 4) & 15u, (f >> 8) & 15u, ct[s * 13 + 12]);
+            lua_pushstring(L, sv);
+            lua_rawseti(L, -2, p->slot[s].k);
+        }
+    }
+    /* the dolls (no margin disks): D1 rays, D1c centre wedges, D2 ring
+     * points (a ring angle's evaluates and filter), D3 60 deg slices, D4 the
+     * slot's A level, D5 the slot's plans and later work */
+    {
+        int nk = 0;
+        for (int i = 0; i < ns; i++) {
+            const PPo *o = &p->o[i];
+            if ((o->kind == PO_POINT || o->kind == PO_FILT) && o->deg10 >= 0) {
+                int s = part_slot(p, o->slot_k);
+                if (s < 0) continue;
+                ks[nk].key = s * 4000 + o->deg10; ks[nk].i = i; nk++;
+            }
+        }
+        qsort(ks, (size_t)nk, sizeof(PKey), pkey_lt);
+        static const char *dn[2] = { "O", "B" };
+        for (int r = 0; r < 2; r++) {
+            int sh = 4 * r;
+            int why[4];
+            double Tall = 0, Tlost = 0;
+            for (int i = 0; i < ns; i++) Tall += p->o[i].t;
+            /* D1, D1c */
+            for (int kind = PO_RAY; kind <= PO_CWM; kind += 2) {
+                int cells = 0, kept = 0, reasm = 0, dir = 0; double T = 0, Tk = 0;
+                memset(why, 0, sizeof(why));
+                for (int i = 0; i < ns; i++) {
+                    const PPo *o = &p->o[i];
+                    if (o->kind != kind) continue;
+                    int f = (int)((d[i] >> sh) & 15u) & WH_HIT;
+                    int fi = (int)((h[i] >> sh) & 15u) & WH_HIT;
+                    cells++; T += o->t;
+                    if (f) { dir++; why_add(why, f); Tlost += o->t; }
+                    else { Tk += o->t; if (fi) reasm++; else kept++; }
+                }
+                char nm[16]; snprintf(nm, sizeof(nm), "%s%s", kind == PO_RAY ? "D1" : "D1c", dn[r]);
+                part_doll(buf, sizeof(buf), &at, nm, cells, kept, reasm, dir, why, T, Tk);
+            }
+            /* D2 and D3 from the sorted ring angles */
+            int c2 = 0, k2 = 0, a2 = 0, b2 = 0, w2[4] = { 0, 0, 0, 0 };
+            double T2 = 0, Tk2 = 0;
+            int c3 = 0, k3 = 0, a3 = 0;
+            double T3 = 0, Tk3 = 0;
+            int *slot_ch = (int *)calloc((size_t)nsl, sizeof(int));
+            for (int a = 0; a < nk;) {
+                int b = a;
+                int s = ks[a].key / 4000;
+                int s6 = ((ks[a].key % 4000) / 300) % 12 / 2;
+                /* a slice: from a while the same slot and 60 deg */
+                while (b < nk && ks[b].key / 4000 == s && ((ks[b].key % 4000) / 300) % 12 / 2 == s6) b++;
+                int sl_ch = 0; double sl_t = 0;
+                for (int g = a; g < b;) {
+                    int e2 = g;
+                    while (e2 < b && ks[e2].key == ks[g].key) e2++;
+                    int dir = 0, inner = 0; double t = 0;
+                    for (int q = g; q < e2; q++) {
+                        int i = ks[q].i;
+                        dir |= (int)((d[i] >> sh) & 15u) & WH_HIT;
+                        inner |= (int)((h[i] >> sh) & 15u) & WH_HIT;
+                        t += p->o[i].t;
+                    }
+                    c2++; T2 += t; sl_t += t;
+                    if (dir) { b2++; why_add(w2, dir); Tlost += t; sl_ch = 1; }
+                    else {
+                        Tk2 += t;
+                        if (inner) { a2++; sl_ch = 1; } else k2++;
+                    }
+                    g = e2;
+                }
+                c3++; T3 += sl_t;
+                if (sl_ch) { a3++; slot_ch[s] = 1; } else { k3++; Tk3 += sl_t; }
+                a = b;
+            }
+            part_doll(buf, sizeof(buf), &at, r ? "D2B" : "D2O", c2, k2, a2, b2, w2, T2, Tk2);
+            int z[4] = { 0, 0, 0, 0 };
+            part_doll(buf, sizeof(buf), &at, r ? "D3B" : "D3O", c3, k3, a3, 0, z, T3, Tk3);
+            /* D4, D5 per slot */
+            int c4 = 0, k4 = 0, a4 = 0, b4 = 0, w4[4] = { 0, 0, 0, 0 };
+            int c5 = 0, k5 = 0, a5 = 0, b5 = 0, w5[4] = { 0, 0, 0, 0 };
+            double T4 = 0, Tk4 = 0, T5 = 0, Tk5 = 0;
+            for (int s = 0; s < p->nslot; s++) {
+                int dir4 = 0, in4 = 0, dir5 = 0; double t4 = 0, t5 = 0;
+                for (int i = 0; i < ns; i++) {
+                    const PPo *o = &p->o[i];
+                    if (o->slot_k != p->slot[s].k || !pcc_member(o->kind)) continue;
+                    int f = (int)((d[i] >> sh) & 15u), fi = (int)((h[i] >> sh) & 15u);
+                    if (o->kind == PO_ALEV) { dir4 |= f & WH_HIT; in4 |= fi & WH_HIT; t4 += o->t; }
+                    else if (o->kind == PO_PLAN || o->kind == PO_POST) { dir5 |= f; t5 += o->t; }
+                }
+                if (carried) dir5 |= WH_P;
+                c4++; T4 += t4;
+                if (dir4) { b4++; why_add(w4, dir4); Tlost += t4; }
+                else { Tk4 += t4; if (in4 || slot_ch[s]) a4++; else k4++; }
+                c5++; T5 += t5;
+                if (dir5) { b5++; why_add(w5, dir5); Tlost += t5; }
+                else { Tk5 += t5; if (dir4 || in4 || slot_ch[s]) a5++; else k5++; }
+            }
+            free(slot_ch);
+            part_doll(buf, sizeof(buf), &at, r ? "D4B" : "D4O", c4, k4, a4, b4, w4, T4, Tk4);
+            part_doll(buf, sizeof(buf), &at, r ? "D5B" : "D5O", c5, k5, a5, b5, w5, T5, Tk5);
+            if (at < sizeof(buf)) {
+                int w = snprintf(buf + at, sizeof(buf) - at, " DA%s=%.1f,%.1f", dn[r], Tall, Tlost);
+                if (w > 0) at += (size_t)w;
+            }
+        }
+    }
+    lua_pushstring(L, buf);
+    lua_replace(L, -3);
+    pushed = 1;
+    }
+    free(cf); free(ct); free(cn);
+    free(chg); free(d); free(h); free(mg); free(th); free(st); free(ks);
+    if (!pushed) { lua_pushstring(L, buf); lua_pushnil(L); }
+    return 2;
+}
+
 static const luaL_Reg gh_pt2_v2_lib[] = {
     { "area_sig", l_area_sig },
     { "pc_watch_new", l_pc_watch_new },
@@ -7375,6 +8258,8 @@ static const luaL_Reg gh_pt2_v2_lib[] = {
     { "pc_wq", l_pc_wq },
     { "pc_wdiff", l_pc_wdiff },
     { "pc_watch", l_pc_watch },
+    { "pc_part_make", l_pc_part_make },
+    { "pc_part_q", l_pc_part_q },
     { "pc_free", l_pc_free },
     { "begin", l_begin },
     { "step", l_step },

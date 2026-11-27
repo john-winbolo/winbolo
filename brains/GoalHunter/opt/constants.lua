@@ -1573,6 +1573,13 @@ M.PT2_V2_CACHE_CHECK_TMP = false
 -- (kept, drop, new, full) and for a drop what changed (the pill or base
 -- field, the squares with their old and new tiles, the rules, the age).
 M.PT2_V2_CACHE_DROP_LOG = false
+-- PT2_V2_CACHE_PART_LOG (log only, Nov 26): with the store on, the C marks
+-- what each ring point, ray, plan and pill A level read (gh_pt2_v2.c
+-- pc_part_make). A PT2_V2_CACHE_PART line per lookup says which parts the
+-- changes since the entry's start hit; a PT2_V2_CACHE_XPART line per
+-- evaluate says the same for that pill A's parts shared over goal pills.
+-- It changes no result.
+M.PT2_V2_CACHE_PART_LOG = false
 -- PP_FRONT_C (Nov 25, speed only): pill_portfolio's front tests
 -- (on_front_line, near_front, the aggro neighbour count) run in C
 -- (braincore.c) on the same influence grid. The same answers. Measured
