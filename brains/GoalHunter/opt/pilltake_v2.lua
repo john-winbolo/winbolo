@@ -3117,6 +3117,10 @@ end
 local function pc_free(e)
   local j = e.cache and e.cache.c_job
   local f = rawget(_G, "gh_pt2_v2") and gh_pt2_v2.pc_free
+  -- PT2_V2_DOLL_MEM_LOG (log only): the job's records to the end sums
+  if j and PCK.PT2_V2_DOLL_MEM_LOG and gh_pt2_v2.dl_mem_end then
+    gh_pt2_v2.dl_mem_end(j, e.src == "take" and 0 or (e.src == "dbl" and 1 or 2))
+  end
   if j and f then f(j) end
 end
 
@@ -3426,6 +3430,32 @@ local function doll_cache(inp, src, now)
   return e.cache
 end
 
+-- PT2_V2_DOLL_MEM_LOG (log only): each N brain ticks a PT2_V2_DOLL_MEM
+-- line per kept doll job (gh_pt2_v2.dl_mem), or one with no job
+local DM_NEXT
+local function dm_sample(inp, now)
+  local K = PCK.PT2_V2_DOLL_MEM_LOG
+  if not K or not gh_pt2_v2.dl_mem then return end
+  if DM_NEXT == nil then gh_pt2_v2.dl_mem_on(true); DM_NEXT = now end
+  if now < DM_NEXT then return end
+  DM_NEXT = now + (type(K) == "number" and K or 500)
+  local kb = collectgarbage("count")
+  local any = false
+  for _, src in ipairs({ "take", "dbl" }) do
+    local e = PDS[src]
+    local j = e and e.cache and e.cache.c_job
+    if j then
+      any = true
+      M.cprof_err(string.format("PT2_V2_DOLL_MEM t=%d p=%s src=%s lua_kb=%.0f %s", now, tostring(inp._v2_pc_pn), src,
+        kb, gh_pt2_v2.dl_mem(j, src == "take" and 0 or 1)))
+    end
+  end
+  if not any then
+    M.cprof_err(string.format("PT2_V2_DOLL_MEM t=%d p=%s src=none lua_kb=%.0f %s", now, tostring(inp._v2_pc_pn),
+      kb, gh_pt2_v2.dl_mem(nil, 2)))
+  end
+end
+
 -- The cache table for a group job on inp.A.
 local function pc_cache(inp)
   inp.v2_pcache = nil
@@ -3435,6 +3465,7 @@ local function pc_cache(inp)
   if not src then return new_cache() end
   local w, A = inp._world, inp.A
   local now = inp._v2_pc_now or 0
+  if PCK.PT2_V2_DOLL_MEM_LOG then dm_sample(inp, now) end
   -- no engine map (a test's world): no store
   if PCK.PT2_V2_DOLL then
     if not gh_pt2_v2.doll_sync or gh_pt2_v2.pc_watch_new() == nil then return new_cache() end

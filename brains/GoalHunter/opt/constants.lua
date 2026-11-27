@@ -1647,6 +1647,13 @@ M.PT2_V2_DOLL_CHECK = false
 -- string value: that dir). Read it with tools/dl_events.py. No behaviour
 -- change.
 M.PT2_V2_DOLL_EVENT_LOG = false
+-- PT2_V2_DOLL_MEM_LOG (log only, Nov 27): a PT2_V2_DOLL_MEM line (stderr)
+-- per kept doll job each N brain ticks (true = 500, about 10 s): the
+-- job's bytes by part (rays, standoff points, plans, filter answers, part
+-- marks by kind, hash maps, arenas), each stored record's hits (a C side
+-- map: stored, dropped, never hit in a later run) and the process
+-- memory. No behaviour change. tools/doll_mem.py reads the lines.
+M.PT2_V2_DOLL_MEM_LOG = false
 -- PT2_V2_DOLL_KEEP_OPEN (Nov 26, speed only): a doll run that did not end
 -- (a split job dropped between evaluates) keeps its job; the next sync
 -- drops what changed. false: a new job, as before.
