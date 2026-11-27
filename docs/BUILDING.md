@@ -523,7 +523,7 @@ IPINFO_TOKEN=<your token> cmake -S . -B build
 
 The token is used only for the download: it is not saved in `CMakeCache.txt` or the generated build files, and the download URL is never printed.
 
-The file goes into a per-user cache shared by every build tree and worktree: `~/.cache/winbolo/` (or `$XDG_CACHE_HOME/winbolo/`) on Linux and macOS, `%LOCALAPPDATA%\winbolo\` on Windows. CMake downloads it again only when the cached copy is 30 days old, and the build copies it into `data/` beside WinBolo and WinBoloDS. These cache variables change that:
+The file goes into a per-user cache shared by every build tree and worktree: `~/.cache/winbolo/` (or `$XDG_CACHE_HOME/winbolo/`) on Linux and macOS, `%LOCALAPPDATA%\winbolo\` on Windows. CMake downloads it again only when the cached copy is 30 days old, and every build of WinBolo or WinBoloDS copies it into `data/` beside them, so a database downloaded after the programs were built is picked up by the next build. These cache variables change that:
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -531,7 +531,7 @@ The file goes into a per-user cache shared by every build tree and worktree: `~/
 | `WINBOLO_GEOIP_MAX_AGE_DAYS` | `30` | Download again once the copy is this many days old |
 | `WINBOLO_GEOIP_REFRESH` | `OFF` | `ON` downloads on the next configure whatever the copy's age, then resets to `OFF` |
 
-Without a token or a cached copy the build still works: CMake prints a warning, and every player's country shows as unknown, with no flag. The `dist` target is the exception: it fails rather than package a release without the database.
+Without a token or a cached copy the build still works: CMake prints a warning, and every player's country shows as unknown, with no flag. The `dist` target is the exception: it fails rather than package a release without the database, and warns when the database it packages is `WINBOLO_GEOIP_MAX_AGE_DAYS` old or older.
 
 The database is licensed CC BY-SA 4.0; attribution lives in `THIRD_PARTY_NOTICES.md`.
 

@@ -36,35 +36,23 @@ option(WINBOLO_GEOIP_REFRESH
 
 set(WINBOLO_GEOIP_DB "${WINBOLO_GEOIP_CACHE_DIR}/ipinfo_lite.mmdb")
 
-# TRUE when the file at _path ends with an MMDB metadata section. The marker
-# sits in the last 128 KiB of every MaxMind-format file; an error page saved
-# in its place does not have it.
-function(_geoip_is_mmdb _path _out)
-    set(${_out} FALSE PARENT_SCOPE)
-    if(NOT EXISTS "${_path}")
-        return()
-    endif()
-    file(SIZE "${_path}" _size)
-    if(_size LESS 1048576)
-        return()
-    endif()
-    math(EXPR _offset "${_size} - 131072")
-    file(READ "${_path}" _tail OFFSET ${_offset} HEX)
-    # "\xAB\xCD\xEFMaxMind.com"
-    string(FIND "${_tail}" "abcdef4d61784d696e642e636f6d" _pos)
-    if(NOT _pos EQUAL -1)
-        set(${_out} TRUE PARENT_SCOPE)
-    endif()
-endfunction()
+include("${CMAKE_CURRENT_LIST_DIR}/geoip_is_mmdb.cmake")
+
+# A value that is not a whole number would make the age test below false on
+# every configure, so the database would never be downloaded again.
+set(_geoip_max_age_days "${WINBOLO_GEOIP_MAX_AGE_DAYS}")
+if(NOT _geoip_max_age_days MATCHES "^[0-9]+$")
+    message(WARNING "GeoIP: WINBOLO_GEOIP_MAX_AGE_DAYS is \"${WINBOLO_GEOIP_MAX_AGE_DAYS}\", "
+        "which is not a whole number of days; using 30")
+    set(_geoip_max_age_days 30)
+endif()
 
 set(_geoip_want_download FALSE)
 if(WINBOLO_GEOIP_REFRESH OR NOT EXISTS "${WINBOLO_GEOIP_DB}")
     set(_geoip_want_download TRUE)
 else()
-    file(TIMESTAMP "${WINBOLO_GEOIP_DB}" _geoip_mtime "%s" UTC)
-    string(TIMESTAMP _geoip_now "%s" UTC)
-    math(EXPR _geoip_age_days "(${_geoip_now} - ${_geoip_mtime}) / 86400")
-    if(_geoip_age_days GREATER_EQUAL WINBOLO_GEOIP_MAX_AGE_DAYS)
+    _geoip_age_days("${WINBOLO_GEOIP_DB}" _geoip_days)
+    if(_geoip_days GREATER_EQUAL _geoip_max_age_days)
         set(_geoip_want_download TRUE)
     endif()
 endif()
@@ -80,8 +68,22 @@ if(_geoip_want_download)
         endif()
     else()
         file(MAKE_DIRECTORY "${WINBOLO_GEOIP_CACHE_DIR}")
-        set(_geoip_part "${WINBOLO_GEOIP_DB}.part")
-        file(REMOVE "${_geoip_part}")
+        # Each configure downloads to a file name of its own, so two
+        # configures running at once (two worktrees share this cache) cannot
+        # delete or overwrite each other's download. Whichever finishes last
+        # renames its complete file over the other's.
+        string(RANDOM LENGTH 8 _geoip_suffix)
+        set(_geoip_part "${WINBOLO_GEOIP_DB}.${_geoip_suffix}.part")
+        # A configure that was killed leaves its download behind. Remove any
+        # that are a day old; a newer one may belong to a configure still
+        # running.
+        file(GLOB _geoip_old_parts "${WINBOLO_GEOIP_DB}.*.part" "${WINBOLO_GEOIP_DB}.part")
+        foreach(_geoip_old_part IN LISTS _geoip_old_parts)
+            _geoip_age_days("${_geoip_old_part}" _geoip_part_days)
+            if(_geoip_part_days GREATER_EQUAL 1)
+                file(REMOVE "${_geoip_old_part}")
+            endif()
+        endforeach()
         message(STATUS "GeoIP: downloading the IPinfo Lite database to ${WINBOLO_GEOIP_DB}")
         # No LOG or SHOW_PROGRESS: either could put the URL, and so the token,
         # in the output.

@@ -217,7 +217,6 @@ tasks.register<Copy>("copyGameAssets") {
         include("ui/*.svg")
         include("ui/ping/*.svg")
         include("icons/*.png")
-        exclude("ipinfo_lite.mmdb")
     }
     into(assetsDataDir)
 }
