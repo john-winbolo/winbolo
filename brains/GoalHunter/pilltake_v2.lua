@@ -3315,7 +3315,11 @@ local PDS = {}
 M.dl_count = { runs = 0, new = 0, open = 0, time = 0, age = 0, rules = 0, lost = 0, busy = 0, nojob = 0,
                nomap = 0, sync = 0, changed = 0, sync_us = 0, own = 0, nsq = 0, nmid = 0, slots = 0,
                n_ray = 0, n_pt = 0, n_pl = 0, n_flt = 0, d_ray = 0, d_pt = 0, d_pl = 0, d_flt = 0,
-               d_sqm = 0, d_sqf = 0, bytes = 0, bytes_max = 0 }
+               d_sqm = 0, d_sqf = 0, bytes = 0, bytes_max = 0, btot_max = 0,
+               b_store = 0, b_rebuilt = 0, b_drop = 0, wn_us = 0, wn_tests = 0, wn_keep = 0, wn_fkeep = 0,
+               wn_slots = 0 }
+-- summed on each sync (changed or not)
+local DL_ADD2 = { "b_store", "b_rebuilt", "b_drop", "wn_us", "wn_tests", "wn_keep", "wn_fkeep", "wn_slots" }
 local DL_ADD = { "own", "nsq", "nmid", "slots", "n_ray", "n_pt", "n_pl", "n_flt", "d_ray", "d_pt", "d_pl",
                  "d_flt", "d_sqm", "d_sqf" }
 -- every kept job's bytes now (the C's count), by source
@@ -3379,7 +3383,8 @@ local function doll_cache(inp, src, now)
         S = (inp.pill_range or 0) / 256 + (PCK.PT2_V2_DOLL_PILL_SHOOT_R_EXTRA or 0.5)
       end
       local st = gh_pt2_v2.doll_sync(j, pills, bases, reach, margin, inp.env.forest_transparent ~= false,
-        PCK.PT2_V2_DOLL_RULE == "exact", now, PCK.PT2_V2_DOLL_SLOT_DEAD_MAX or 0, S)
+        PCK.PT2_V2_DOLL_RULE == "exact", now, PCK.PT2_V2_DOLL_SLOT_DEAD_MAX or 0, S,
+        PCK.PT2_V2_DOLL_WEDGE_NARROW or 0)
       if type(st) ~= "table" then why = tostring(st)
       else
         cnt.sync = cnt.sync + 1
@@ -3389,6 +3394,9 @@ local function doll_cache(inp, src, now)
         e.b_live, e.b_dead, e.sp_dropn = st.b_live or e.b_live, st.b_dead or e.b_dead, st.sp_dropn or e.sp_dropn
         e.n_pt, e.n_pl, e.n_ray = st.n_pt or e.n_pt, st.n_pl or e.n_pl, st.n_ray or e.n_ray
         if (st.bytes or 0) > cnt.bytes_max then cnt.bytes_max = st.bytes end
+        for _, k in ipairs(DL_ADD2) do cnt[k] = cnt[k] + (st[k] or 0) end
+        local nbt = M.dl_bytes()
+        if nbt > cnt.btot_max then cnt.btot_max = nbt end
         if st.changed == 1 then
           cnt.changed = cnt.changed + 1
           for _, k in ipairs(DL_ADD) do cnt[k] = cnt[k] + (st[k] or 0) end
@@ -3657,7 +3665,8 @@ local function dl_finish(job)
     local t = {}
     for _, k in ipairs({ "runs", "new", "open", "time", "age", "rules", "lost", "busy", "nojob", "nomap", "sync",
                          "changed", "sync_us", "own", "nsq", "nmid", "slots", "n_ray", "n_pt", "n_pl", "n_flt",
-                         "d_ray", "d_pt", "d_pl", "d_flt", "d_sqm", "d_sqf", "bytes_max" }) do
+                         "d_ray", "d_pt", "d_pl", "d_flt", "d_sqm", "d_sqf", "bytes_max", "btot_max",
+                         "b_store", "b_rebuilt", "b_drop", "wn_us", "wn_tests", "wn_keep", "wn_fkeep", "wn_slots" }) do
       t[#t + 1] = string.format("%s=%.0f", k, d[k] or 0)
     end
     for _, k in ipairs(DL_ST) do t[#t + 1] = string.format("s_%s=%.0f", k, d["s_" .. k] or 0) end

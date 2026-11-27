@@ -1618,6 +1618,21 @@ M.PT2_V2_DOLL_PILL_NARROW = true
 -- PT2_V2_DOLL_PILL_SHOOT_R_EXTRA (Andrew's value): squares past the pill
 -- range for PT2_V2_DOLL_PILL_NARROW (8 + 0.5 = 8.5).
 M.PT2_V2_DOLL_PILL_SHOOT_R_EXTRA = 0.5
+-- PT2_V2_DOLL_WEDGE_NARROW (Nov 27, Andrew's rule, speed only): a terrain
+-- change on square B that a wedge set read (the centre wedges of the goal
+-- pill, the aim wedges of the goal pill) changes only B's wedge in the
+-- set, so it drops only the parts that B's wedge can reach by angle:
+--   0 = the old rule (each standoff point, filter answer and plan of the
+--       goal pill slot that used the set drops).
+--   1 = per slice: the standoff points and filter answers in each of the
+--       12 slices (30 deg around the goal pill) that B's wedge meets.
+--   2 = per standoff point: the standoff points whose shell test bearing
+--       and distance B's wedge can meet, and the filter answers whose cant
+--       test B's wedge can block from one of the aim points.
+-- Plans drop only with a dropped standoff point. Rule "exact" stays as is.
+-- 1 (Nov 27): the same game as 0 and 2 (seed 20261125, 15 game-min);
+-- its angle test is half the time of 2 for almost the same drops.
+M.PT2_V2_DOLL_WEDGE_NARROW = 1
 -- PT2_V2_DOLL_CHECK (log only): each doll group run is run again with a new
 -- job in the same think; a PT2_V2_DOLL_CHK line (stderr) says if the best
 -- point, its plan, safe and kills are the same. On a DIFF it runs the doll

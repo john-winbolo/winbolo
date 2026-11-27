@@ -1058,6 +1058,14 @@ typedef struct {
     unsigned flt_gen;     /* PT2_V2_DOLL: 1 more each time flt loses entries (the pcc filter rows) */
     unsigned char *dsnap;
     unsigned char *dacc;  /* PT2_V2_DOLL: the change classes (CH_T, CH_F) seen inside a group run */
+    /* PT2_V2_DOLL_WEDGE_NARROW: the least ts_s1 (tank shell first step)
+     * of the job's evaluates, for the cant test bound in doll_sync */
+    double dl_s1min; int dl_s1set;
+    /* PT2_V2_DOLL (log): the bytes of the standoff points and plans stored,
+     * dropped by doll_sync and stored again after a drop, since the last
+     * sync; dlb_bits: a bit per key hash of the dropped ones (2^23 bits) */
+    double dlb_store, dlb_drop, dlb_rebuilt;
+    uint64_t *dlb_bits;
     int    dl_src, dl_p;  /* PT2_V2_DOLL_EVENT_LOG (log only): the source (0 take, 1 dbl) and player */
     /* PT2_V2_DOLL: the stored points and plans of each goal pill slot
      * (PccSlot) in their own arena: a slot whose parts all go frees it */
@@ -1571,7 +1579,9 @@ static int pill_index(Ev *e, int idx) { PB(P_pill_index); int r_ = pill_index__p
  * children and its own C time. pc_part_make takes the parts the last run
  * used; pc_part_q says which parts a change set hits. It changes no
  * result: rpm and every memo stay as they are. */
-enum { PO_RAY = 1, PO_POINT, PO_CWM, PO_FILT, PO_POST, PO_PLAN, PO_ALEV, PO_N };
+/* PO_AWS (PT2_V2_DOLL): the aim wedge set of goal pill A (aim_wedges, the
+ * cant test's wedges), a child of the A level */
+enum { PO_RAY = 1, PO_POINT, PO_CWM, PO_FILT, PO_POST, PO_PLAN, PO_ALEV, PO_AWS, PO_N };
 enum { PR_T = 1, PR_P = 2, PR_B = 4, PR_W = 8 };
 typedef struct PObj PObj;
 struct PObj {
@@ -1588,6 +1598,9 @@ struct PObj {
     int evrun;                    /* PT2_V2_DOLL_EVENT_LOG (log only): the group run of its last log record */
     PObj *lp; int lpi;            /* the last parent that took it as a child, and its index there */
     int edrun; unsigned egen;     /* PT2_V2_DOLL: a dl_emu walk in group run edrun at graph edit egen */
+    /* PT2_V2_DOLL_WEDGE_NARROW, POINT: the predict query on the centre
+     * wedge set (bearing from pill X, the distances wedge_state takes) */
+    double pq_th, pq_dmn, pq_dmx; int pq;
 };
 #define PCC_MAXSLOT 128
 #define PCC_CXN 361
@@ -1673,7 +1686,7 @@ static PObj *pcc_obj(Ev *e, int kind, uint64_t a, uint64_t b, int clear) {
         o->ka = a; o->kb = b;
         v->p = o;
     } else if (clear) {
-        o->nrd = 0; o->nsrt = 0; o->nch = 0; o->t = 0; o->t_run = 0;
+        o->nrd = 0; o->nsrt = 0; o->nch = 0; o->t = 0; o->t_run = 0; o->pq = 0;
         pj->gedit++;
     }
     pcc_use(pj, o);
@@ -3066,6 +3079,11 @@ static WSet *aim_wedges__p(Ev *e, int A) {
     SqV **fv = NEWN(e, SqV *, o->n);
     int nf = 0;
     double amx = P->mx, amy = P->my;
+    /* PT2_V2_DOLL: its reads go to its own part (PO_AWS), a child of the
+     * A level, so doll_sync can say which standoff points' cant tests a
+     * changed square can reach */
+    PObj *po_ = e->doll && e->pcc_run ? pcc_push(e, PO_AWS, (uint64_t)pcc_slot_k(e), 0) : NULL;
+    if (po_) { po_->x = (int)P->mx; po_->y = (int)P->my; }
     for (int i = 0; i < o->n; i++) {
         double mx = amx + o->o[2 * i], my = amy + o->o[2 * i + 1];
         SqV *v = sq_read(e, mx, my);
@@ -3074,6 +3092,7 @@ static WSet *aim_wedges__p(Ev *e, int A) {
             fmx[nf] = mx; fmy[nf] = my; fv[nf] = v; nf++;
         }
     }
+    pcc_pop(e, po_);
     WSet *sets = NEWN(e, WSet, e->naims);
     for (int ai = 0; ai < e->naims; ai++) {
         double ax = PI(e, A)->mx * 256 + s_aims9[ai][0], ay = PI(e, A)->my * 256 + s_aims9[ai][1];
@@ -3137,6 +3156,12 @@ static void predict__p(Ev *e, WSet *set, double px, double py, Pred *out) {
     else if (e->ps_slast < hit_at + e->ps_step + SLACK) out->sure = 0;
     double dmax_in = hit_at;
     double dmax_out = hit_at + e->ps_step;
+    /* PT2_V2_DOLL_WEDGE_NARROW: the query, on the point part that reads
+     * the set (a wedge that wedge_state gives 0 here is not used) */
+    if (e->pcc_run) {
+        PObj *t = pcc_tgt(e);
+        if (t && t->kind == PO_POINT) { t->pq_th = th; t->pq_dmn = e->ps_s1; t->pq_dmx = dmax_out; t->pq = 1; }
+    }
     int b = bin_of(th);
     int nb = set->bin_n[b];
     Wedge **ins = NEWN(e, Wedge *, nb), **maybe = NEWN(e, Wedge *, nb);
@@ -6269,6 +6294,7 @@ static int job_gc(lua_State *L) {
     j->pills = NULL; j->sqf_new = NULL;
     ar_free(&j->par); hm_free(&j->pts); hm_free(&j->pls); hm_free(&j->flt); j->flt_gen++;
     dl_spar_free_all(j); free(j->spar); j->spar = NULL;
+    free(j->dlb_bits); j->dlb_bits = NULL;
     j->freed = 1;
     return 0;
 }
@@ -6635,6 +6661,32 @@ typedef struct {
     PObj     *po;   /* its part (NULL: none made) */
 } PPlan;
 
+/* PT2_V2_DOLL (log): the stored and dropped bytes of standoff points and
+ * plans, and the bytes stored again for a key that doll_sync dropped (a
+ * bit per key hash: a hash shared by two keys can count wrong, rarely) */
+#define DLB_BITS (1u << 23)
+static uint32_t dlb_h(int kind, uint64_t a, uint64_t b) {
+    uint64_t h = a * 0x9E3779B97F4A7C15ull ^ (b + 0x632BE59BD9B4E019ull) * 0xC2B2AE3D27D4EB4Full ^ (uint64_t)kind;
+    h ^= h >> 31; h *= 0xBF58476D1CE4E5B9ull; h ^= h >> 29;
+    return (uint32_t)(h & (DLB_BITS - 1));
+}
+static void dlb_store(Job *j, int kind, uint64_t a, uint64_t b, double nb) {
+    j->dlb_store += nb;
+    if (!j->dlb_bits) return;
+    uint32_t h = dlb_h(kind, a, b);
+    uint64_t m = 1ull << (h & 63);
+    if (j->dlb_bits[h >> 6] & m) { j->dlb_rebuilt += nb; j->dlb_bits[h >> 6] &= ~m; }
+}
+static void dlb_drop(Job *j, HMap *hm, int kind, uint64_t a, uint64_t b) {
+    HVal *v = hm_find(hm, a, b);
+    if (!v || !v->p) return;
+    j->dlb_drop += kind == PO_POINT ? ((const PEnt *)v->p)->nb : ((const PPlan *)v->p)->nb;
+    if (!j->dlb_bits) j->dlb_bits = (uint64_t *)calloc(DLB_BITS / 64, sizeof(uint64_t));
+    if (!j->dlb_bits) return;
+    uint32_t h = dlb_h(kind, a, b);
+    j->dlb_bits[h >> 6] |= 1ull << (h & 63);
+}
+
 static void rb_start(Ev *e) { e->rb_on = 1; e->rb_inf = 0; e->rb_any = 0; }
 static void rb_stop(Ev *e, PBox *b) {
     e->rb_on = 0;
@@ -6918,6 +6970,7 @@ static Rec *eval_point_pc(Ev *e, double px, double py, int aim_fixed, int nudge,
     rb_start(e);
     PObj *po_ = e->pcc_run ? pcc_push(e, PO_POINT, k1, k2) : NULL;
     if (po_) { po_->x = (int)floor(px / 256); po_->y = (int)floor(py / 256); }
+    uint64_t dlb_k1 = k1, dlb_k2 = k2;
     Rec *r = eval_point(e, px, py, NULL, aim_fixed, nudge, 0, lazy, why, why_arg);
     pcc_pop(e, po_);
     if (e->pcc_run) e->pcc_last_pt = po_;
@@ -6949,7 +7002,7 @@ static Rec *eval_point_pc(Ev *e, double px, double py, int aim_fixed, int nudge,
     e->arp = save;
     {
         double tot_ = dar->ntot - dnt0;
-        if (dnb) *dnb = tot_ - e->dl_nbc;
+        if (dnb) { *dnb = tot_ - e->dl_nbc; if (e->doll) dlb_store(e->job, PO_POINT, dlb_k1, dlb_k2, *dnb); }
         e->dl_nbc = dnc0 + tot_;
     }
     if (dle) {
@@ -7061,6 +7114,7 @@ static Rec *plan_point_pc__p(Ev *e, Rec *rec) {
     e->arp = dar;
     rb_start(e);
     PObj *po_ = e->pcc_run ? pcc_push(e, PO_PLAN, k1, k2) : NULL;
+    uint64_t dlb_k1 = 0, dlb_k2 = 0;
     /* PT2_V2_DOLL: the plan takes the point's record (its clear aims,
      * lanes): the point's part is its child, so a dropped point drops it */
     if (po_ && e->doll) {
@@ -7105,11 +7159,12 @@ static Rec *plan_point_pc__p(Ev *e, Rec *rec) {
         int isnew;
         HVal *v = hm_put(e->L, &e->job->pls, k1, k2, &isnew);
         v->p = pp;
+        dlb_k1 = k1; dlb_k2 = k2;
     }
     e->arp = save;
     {
         double tot_ = dar->ntot - dnt0;
-        if (dnb) *dnb = tot_ - e->dl_nbc;
+        if (dnb) { *dnb = tot_ - e->dl_nbc; if (e->doll) dlb_store(e->job, PO_PLAN, dlb_k1, dlb_k2, *dnb); }
         e->dl_nbc = dnc0 + tot_;
     }
     if (dle) {
@@ -7342,7 +7397,10 @@ static void points_of_ring__p(Ev *e) {
             if (fon && !(fa & 1)) {
                 int isnew;
                 HVal *v = hm_put(L, &e->job->flt, fk1, fk2, &isnew);
-                v->i = (1 | 2 | (hasA ? 4 : 0) | (is_cant ? 8 : 0)) | fx;
+                /* PT2_V2_DOLL_WEDGE_NARROW: the standoff point in its square
+                 * (bits 40 to 55), for the cant test of doll_sync */
+                int64_t fo = fx ? ((((int64_t)(px - mx * 256) & 255) << 40) | (((int64_t)(py - my * 256) & 255) << 48)) : 0;
+                v->i = (1 | 2 | (hasA ? 4 : 0) | (is_cant ? 8 : 0)) | fx | fo;
                 flt_row_put(e, (int)s, fk1, fk2, v->i);
                 if (dle) {
                     dlr.us = dle_us(dlt0); dlr.field = (uint8_t)(1 | 2 | (hasA ? 4 : 0) | (is_cant ? 8 : 0));
@@ -8129,6 +8187,7 @@ static int l_begin__p(lua_State *L) {
         else if (e->doll) { e->pcc_time = 0; pcc_begin(e, j, j->drun); }
         if (e->doll && !e->pcc_run) j->dlost = 1;
     }
+    if (e->doll && (!j->dl_s1set || e->ts_s1 < j->dl_s1min)) { j->dl_s1min = e->ts_s1; j->dl_s1set = 1; }
     e->asets = aim_wedges(e, e->A);
     step_end(e);
     pcc_stop(e);
@@ -8649,7 +8708,7 @@ static void part_home(PPart *p, int i, int h) {
     }
 }
 
-static const char *s_po_name[PO_N] = { "-", "ray", "point", "cwm", "filt", "post", "plan", "alev" };
+static const char *s_po_name[PO_N] = { "-", "ray", "point", "cwm", "filt", "post", "plan", "alev", "aws" };
 
 /* pc_part_make(job, W [, k]): the parts the job's last run used (only
  * slot k's, with k), and W's snap (the run's start). Returns the part (nil
@@ -9171,8 +9230,209 @@ static double dl_bytes(const Job *j) {
 
 typedef struct { int sq; int c; } DlSq;
 /* DL_OWNP: a wedge set's own hit is pill changes on its squares only;
- * DL_PONLY: the part is dirty by such hits only (PT2_V2_DOLL_PILL_NARROW) */
-enum { DL_OWN = 1, DL_DIRTY = 2, DL_DONE = 4, DL_BUSY = 8, DL_OWNP = 16, DL_PONLY = 32 };
+ * DL_PONLY: the part is dirty by such hits only (PT2_V2_DOLL_PILL_NARROW).
+ * DL_OWNW: a wedge set's own hit has blocking-square changes (terrain on
+ * its read squares) that its users test by angle; DL_WONLY: the part is
+ * dirty by such hits (and maybe pill-only hits) only
+ * (PT2_V2_DOLL_WEDGE_NARROW) */
+enum { DL_OWN = 1, DL_DIRTY = 2, DL_DONE = 4, DL_BUSY = 8, DL_OWNP = 16, DL_PONLY = 32, DL_OWNW = 64, DL_WONLY = 128 };
+
+/* -- PT2_V2_DOLL_WEDGE_NARROW ------------------------------------------
+ * A terrain change on square B that a wedge set read (the centre wedges
+ * of pill X, PO_CWM; the aim wedges of goal pill A, PO_AWS) changes only
+ * B's wedge in the set: the old and the new wedge of B have the same
+ * angle range and distances (make_wedge reads only B's place; only the
+ * kind and shots differ), so their union is that one wedge. The set's
+ * other wedges, their nearest-first order (near, then square) and their
+ * bins stay as they were. A user of the set reads it at one bearing:
+ *   predict (a standoff point's lazy test, centre wedges of X = goal pill
+ *     A): only the wedges with wedge_state != 0 at the point's bearing
+ *     from X; the point keeps that query (pq_th, pq_dmn, pq_dmx).
+ *   cant (a standoff point's filter answer, aim wedges of A): from each
+ *     aim point, only the wedges with wedge_state == 2 at the standoff point.
+ * Mode 2 (per point) drops a standoff point whose query B's wedge can
+ * meet, and a filter answer (with cant read: bits 2 and 4) whose
+ * standoff point is in B's inner range from any of the 9 aim points and at least
+ * B's far distance + the least ts_s1 behind it. Mode 1 (per slice) drops
+ * each of the 12 slices (30 deg around the goal pill) that meets B's
+ * range: from X for the centre wedges (the slice of the point's bearing),
+ * from each aim point, widened by the most the bearing from the aim point
+ * and from the goal pill centre can differ there, for the aim wedges. No
+ * standoff point or plan reads the aim wedges (only cant does), so an A
+ * level dirty only by its aim wedge set does not drop its slot. Rays on
+ * B, a part whose own reads have B (not a wedge set), and a pill change of
+ * X itself drop as before. */
+typedef struct {
+    int qi, kind, x, y;        /* the wedge set part (its index, kind, the pill square) */
+    int s0, n;                 /* its changed squares B in t_dl_wsq[s0 .. s0 + n) */
+    Wedge *w; int wok;         /* B's wedges: CWM n (from X), AWS 9 n (from each aim point) */
+    unsigned char *wv;         /* 0: make_wedge gave none (the set has no such wedge) */
+    unsigned mask; int mok;    /* mode 1: the slices B's wedges meet */
+} DlW;
+static PF_TLS int t_dl_wn;            /* PT2_V2_DOLL_WEDGE_NARROW mode (0 off) */
+static PF_TLS int *t_dl_wsq; static PF_TLS int t_dl_wsqn, t_dl_wsqcap;
+static PF_TLS DlW *t_dl_wr; static PF_TLS int t_dl_wrn, t_dl_wrcap;
+static PF_TLS int *t_dl_wri;          /* part index -> record index + 1 */
+static PF_TLS int t_dl_wns;           /* the part count t_dl_wri has */
+static PF_TLS double t_dl_ws1;        /* the job's least ts_s1 (-1e9: not known) */
+static PF_TLS int64_t t_dl_wclk;      /* the test time (pf_clock ticks) */
+static PF_TLS double t_dl_wtests, t_dl_wpkeep;
+#define DLW_EPS 1e-7
+
+/* B (square sq) of wedge set part o (index o->qi): 0 when out of memory */
+static int dl_w_add(const PObj *o, int sq) {
+    if (!t_dl_wri) {
+        t_dl_wri = (int *)calloc((size_t)t_dl_wns + 1, sizeof(int));
+        if (!t_dl_wri) return 0;
+    }
+    int ri = t_dl_wri[o->qi] - 1;
+    if (ri < 0) {
+        if (!pcc_grow((void **)&t_dl_wr, &t_dl_wrcap, t_dl_wrn + 1, sizeof(DlW))) return 0;
+        ri = t_dl_wrn++;
+        DlW *r = &t_dl_wr[ri];
+        memset(r, 0, sizeof(*r));
+        r->qi = o->qi; r->kind = o->kind; r->x = o->x; r->y = o->y; r->s0 = t_dl_wsqn;
+        t_dl_wri[o->qi] = ri + 1;
+    }
+    if (!pcc_grow((void **)&t_dl_wsq, &t_dl_wsqcap, t_dl_wsqn + 1, sizeof(int))) return 0;
+    t_dl_wsq[t_dl_wsqn++] = sq;
+    t_dl_wr[ri].n++;
+    return 1;
+}
+static void dl_w_free(void) {
+    for (int i = 0; i < t_dl_wrn; i++) { free(t_dl_wr[i].w); free(t_dl_wr[i].wv); }
+    free(t_dl_wr); free(t_dl_wsq); free(t_dl_wri);
+    t_dl_wr = NULL; t_dl_wsq = NULL; t_dl_wri = NULL;
+    t_dl_wrn = t_dl_wrcap = t_dl_wsqn = t_dl_wsqcap = 0;
+}
+/* the wedges of B (as the set's maker made them); 0 when out of memory */
+static int dl_w_wedges(DlW *r) {
+    if (r->wok) return 1;
+    int na = r->kind == PO_AWS ? PT2_MAXAIMS : 1, nw = na * r->n;
+    r->w = (Wedge *)calloc((size_t)nw + 1, sizeof(Wedge));
+    r->wv = (unsigned char *)calloc((size_t)nw + 1, 1);
+    if (!r->w || !r->wv) return 0;
+    for (int b = 0; b < r->n; b++) {
+        int sq = t_dl_wsq[r->s0 + b];
+        double mx = sq & 255, my = sq >> 8;
+        for (int a = 0; a < na; a++) {
+            double ax, ay;
+            if (r->kind == PO_AWS) { ax = r->x * 256.0 + s_aims9[a][0]; ay = r->y * 256.0 + s_aims9[a][1]; }
+            else { ax = r->x * 256.0 + 128; ay = r->y * 256.0 + 128; }
+            r->wv[b * na + a] = (unsigned char)make_wedge(ax, ay, mx, my, K_WALL, 0, 0, &r->w[b * na + a]);
+        }
+    }
+    r->wok = 1;
+    return 1;
+}
+/* the 30 deg slice (0 to 11) of bearing th */
+static int dl_w_slice(double th) {
+    double deg = th * 180 / PT2_PI;
+    if (deg < 0) deg += 360;
+    int s = (int)floor(deg / 30);
+    return s < 0 ? 0 : (s > 11 ? 11 : s);
+}
+/* the slices that the bearings m - h .. m + h meet */
+static unsigned dl_w_smask(double m, double h) {
+    if (h >= PT2_PI) return 0xFFFu;
+    unsigned k = 0;
+    for (int s = 0; s < 12; s++) {
+        double ms = (30.0 * s + 15) * PT2_PI / 180;
+        if (fabs(wrap(m - ms)) <= h + PT2_PI / 12 + DLW_EPS) k |= 1u << s;
+    }
+    return k;
+}
+/* mode 1: the slices of r's B wedges */
+static unsigned dl_w_mask(DlW *r) {
+    if (r->mok) return r->mask;
+    unsigned k = 0;
+    if (!dl_w_wedges(r)) k = 0xFFFu;
+    int na = r->kind == PO_AWS ? PT2_MAXAIMS : 1;
+    for (int b = 0; k != 0xFFFu && b < r->n; b++) {
+        for (int a = 0; a < na; a++) {
+            if (!r->wv[b * na + a]) continue;
+            const Wedge *w = &r->w[b * na + a];
+            if (r->kind == PO_CWM) {
+                /* predict: the outer range, any distance */
+                k |= dl_w_smask(w->c + (w->lo_o + w->hi_o) / 2, (w->hi_o - w->lo_o) / 2);
+                continue;
+            }
+            /* cant: state 2 needs the inner range (none: never 2) and the
+             * standoff point P at least far + ts_s1 from the aim point a; seen
+             * from the goal pill centre O (v = |a - O| away) its bearing
+             * is at most asin(v / |P - O|) off, |P - O| >= that - v */
+            if (w->lo_i > w->hi_i) continue;
+            double vx = s_aims9[a][0] - 128, vy = s_aims9[a][1] - 128, v = sqrt(vx * vx + vy * vy);
+            double dlo = w->far + t_dl_ws1, del;
+            if (v <= 0) del = 0;
+            else if (dlo - v > v) del = asin(v / (dlo - v)) + DLW_EPS;
+            else { k = 0xFFFu; break; }
+            k |= dl_w_smask(w->c + (w->lo_i + w->hi_i) / 2, (w->hi_i - w->lo_i) / 2 + del);
+        }
+    }
+    r->mask = k; r->mok = 1;
+    return k;
+}
+/* a standoff point o whose centre wedge set ch has B hits: 1 when B's
+ * wedge can be in its predict query (it must be made again) */
+static int dl_w_point(const PObj *o, const PObj *ch) {
+    int64_t t0 = pf_clock();
+    t_dl_wtests += 1;
+    int hit = 1;
+    int ri = (t_dl_wri && ch->qi >= 0) ? t_dl_wri[ch->qi] - 1 : -1;
+    if (ri >= 0 && o->pq) {
+        DlW *r = &t_dl_wr[ri];
+        if (t_dl_wn == 1) hit = (int)((dl_w_mask(r) >> dl_w_slice(o->pq_th)) & 1u);
+        else if (!dl_w_wedges(r)) hit = 1;
+        else {
+            hit = 0;
+            for (int b = 0; !hit && b < r->n; b++) {
+                if (!r->wv[b]) continue;
+                const Wedge *w = &r->w[b];
+                /* wedge_state(w, th, dmn, dmx) != 0, with a hair of room */
+                double rel = wrap(o->pq_th - w->c);
+                if (rel < w->lo_o - DLW_EPS || rel > w->hi_o + DLW_EPS) continue;
+                if (w->near > o->pq_dmx + SLACK + DLW_EPS || w->far < o->pq_dmn - SLACK - DLW_EPS) continue;
+                hit = 1;
+            }
+        }
+    }
+    if (!hit) t_dl_wpkeep += 1;
+    t_dl_wclk += pf_clock() - t0;
+    return hit;
+}
+/* a filter answer (ring square sq, value v: bits 2 and 4 = cant read,
+ * bits 40 to 55 the standoff point in its square) of a slot whose aim wedge
+ * set r has B hits: 1 when it must go */
+static int dl_w_flt(DlW *r, int sq, int64_t v) {
+    if ((v & 6) != 6) return 0;   /* no cant test was read */
+    int64_t t0 = pf_clock();
+    t_dl_wtests += 1;
+    double px = (sq & 255) * 256.0 + (double)((v >> 40) & 255), py = (sq >> 8) * 256.0 + (double)((v >> 48) & 255);
+    int hit = 1;
+    if (t_dl_wn == 1) {
+        double ox = r->x * 256.0 + 128, oy = r->y * 256.0 + 128;
+        hit = (int)((dl_w_mask(r) >> dl_w_slice(bearing(px - ox, py - oy))) & 1u);
+    } else if (dl_w_wedges(r)) {
+        hit = 0;
+        for (int b = 0; !hit && b < r->n; b++) {
+            for (int a = 0; a < PT2_MAXAIMS; a++) {
+                if (!r->wv[b * PT2_MAXAIMS + a]) continue;
+                const Wedge *w = &r->w[b * PT2_MAXAIMS + a];
+                if (w->lo_i > w->hi_i) continue;
+                double ax = r->x * 256.0 + s_aims9[a][0], ay = r->y * 256.0 + s_aims9[a][1];
+                double dx = px - ax, dy = py - ay;
+                double rel = wrap(bearing(dx, dy) - w->c);
+                if (rel < w->lo_i - DLW_EPS || rel > w->hi_i + DLW_EPS) continue;
+                /* state 2: far <= d - ts_s1 - SLACK */
+                if (w->far > sqrt(dx * dx + dy * dy) - t_dl_ws1 + DLW_EPS) continue;
+                hit = 1; break;
+            }
+        }
+    }
+    t_dl_wclk += pf_clock() - t0;
+    return hit;
+}
 
 /* PT2_V2_DOLL_EVENT_LOG (log only): why a part was dropped */
 typedef struct { uint8_t code, flags, field; uint16_t csq, ckind; float ov, nv; } DlCause;
@@ -9198,7 +9458,32 @@ static int dl_own(const PObj *o, const unsigned char *chg, const DlSq *cs, int n
      * of its old or new square; a wedge set hit by pill changes on its
      * squares only is a pill-only hit (2), which a point or plan does not
      * take from it (its own S test has that pill change) */
-    int narrow = S >= 0 && !exact, pon = 0;
+    int narrow = S >= 0 && !exact, pon = 0, wq = 0;
+    /* PT2_V2_DOLL_WEDGE_NARROW: a terrain change on a wedge set's read
+     * square is a wedge hit (4) that its users test by angle */
+    int wn = t_dl_wn && !exact;
+    if (k == PO_AWS) {
+        /* the aim wedges: the A level's own reads before (a pill there
+         * counts only when exact, as for the A level) */
+        for (int r = 0; r < o->nrd; r++) {
+            uint32_t v = o->rd[r];
+            int sq = (int)(v >> 8), c = chg[sq], bits = (int)(v & 255u);
+            if (!c) continue;
+            if ((c & CH_T) && (bits & (PR_T | PR_W))) {
+                if (!wn) { dl_cz_sq(cz, DC_TERR, sq, k); return 1; }
+                if (!wq) dl_cz_sq(cz, DC_TERR, sq, k);
+                if (!dl_w_add(o, sq)) return 1;
+                wq = 1; continue;
+            }
+            if ((c & CH_F) && (bits & PR_W)) { dl_cz_sq(cz, DC_FOREST, sq, k); return 1; }
+            if ((c & CH_B) && (bits & PR_B)) { dl_cz_sq(cz, DC_BASE, sq, k); return 1; }
+            if ((c & CH_PO) && (bits & PR_P) && exact) {
+                if (cz) { for (int q = 0; q < npc; q++) if (pc[q].o == sq || pc[q].n == sq) { dl_cz_pc(cz, DC_PILLSQ, sq, k, &pc[q]); break; } }
+                return 1;
+            }
+        }
+        return wq ? 4 : 0;
+    }
     if (k != PO_RAY && k != PO_CWM && k != PO_POINT && k != PO_PLAN && k != PO_ALEV) return 0;
     int x0 = 256, y0 = 256, x1 = -1, y1 = -1;
     for (int r = 0; r < o->nrd; r++) {
@@ -9214,7 +9499,14 @@ static int dl_own(const PObj *o, const unsigned char *chg, const DlSq *cs, int n
         int c = chg[sq];
         if (!c) continue;
         int bits = (int)(v & 255u);
-        if ((c & CH_T) && (bits & (PR_T | PR_W))) { dl_cz_sq(cz, DC_TERR, sq, k); return 1; }
+        if ((c & CH_T) && (bits & (PR_T | PR_W))) {
+            if (wn && k == PO_CWM) {
+                if (!wq && !pon) dl_cz_sq(cz, DC_TERR, sq, k);
+                if (!dl_w_add(o, sq)) return 1;
+                wq = 1; continue;
+            }
+            dl_cz_sq(cz, DC_TERR, sq, k); return 1;
+        }
         if ((c & CH_F) && (bits & PR_W)) { dl_cz_sq(cz, DC_FOREST, sq, k); return 1; }
         if ((c & CH_B) && (bits & PR_B)) { dl_cz_sq(cz, DC_BASE, sq, k); return 1; }
         if ((c & CH_PO) && (bits & PR_P)) {
@@ -9222,7 +9514,7 @@ static int dl_own(const PObj *o, const unsigned char *chg, const DlSq *cs, int n
              * pill, ally cover): any pill change on them; rule B lets
              * the other parts take only the in-range test below */
             if (exact || k == PO_RAY || k == PO_CWM) {
-                if (cz && !pon) { for (int q = 0; q < npc; q++) if (pc[q].o == sq || pc[q].n == sq) { dl_cz_pc(cz, DC_PILLSQ, sq, k, &pc[q]); break; } }
+                if (cz && !pon && !wq) { for (int q = 0; q < npc; q++) if (pc[q].o == sq || pc[q].n == sq) { dl_cz_pc(cz, DC_PILLSQ, sq, k, &pc[q]); break; } }
                 if (narrow && k == PO_CWM) { pon = 1; continue; }
                 return 1;
             }
@@ -9234,7 +9526,7 @@ static int dl_own(const PObj *o, const unsigned char *chg, const DlSq *cs, int n
         if (cz) { dl_cz(cz, DC_CENTRE, sq, k, -1, -1, 0); for (int q = 0; q < npc; q++) if (pc[q].o == sq || pc[q].n == sq) { dl_cz_pc(cz, DC_CENTRE, sq, k, &pc[q]); break; } }
         return 1;
     }
-    if (pon) return 2;
+    if (pon || wq) return (pon ? 2 : 0) | (wq ? 4 : 0);
     if (k == PO_ALEV && o->slot_k >= 0 && o->slot_k < PT2_MAP_SQ && (chg[o->slot_k] & CH_PO)) {
         int sq = o->slot_k;
         if (cz) { dl_cz(cz, DC_SLOTPILL, sq, k, -1, -1, 0); for (int q = 0; q < npc; q++) if (pc[q].o == sq || pc[q].n == sq) { dl_cz_pc(cz, DC_SLOTPILL, sq, k, &pc[q]); break; } }
@@ -9297,27 +9589,44 @@ static int dl_dirty(PObj *o, unsigned char *fl) {
     if (fl[i] & DL_DONE) return (fl[i] & DL_DIRTY) != 0;
     if (fl[i] & DL_BUSY) return 0;
     fl[i] |= DL_BUSY;
-    int d = (fl[i] & DL_OWN) != 0;
-    /* full: a hit that is not pill-only (DL_OWNP is set only when narrow) */
-    int full = d && !(fl[i] & DL_OWNP);
+    int own = (fl[i] & DL_OWN) != 0;
+    /* full: a hit that is not pill-only (DL_OWNP is set only when narrow)
+     * or wedge-only (DL_OWNW, PT2_V2_DOLL_WEDGE_NARROW) */
+    int full = own && !(fl[i] & (DL_OWNP | DL_OWNW));
+    int hp = own && (fl[i] & DL_OWNP), hw = own && (fl[i] & DL_OWNW);
     /* narrow: a ring point or plan takes a pill change by its own S test,
      * not from a pill-only child (the wedge set of a pill X near it) */
     int skipp = t_dl_narrow && (o->kind == PO_POINT || o->kind == PO_PLAN);
     for (int c = 0; !full && c < o->nch; c++) {
         PObj *ch = o->ch[c];
         /* the A level runs again each run: only the rays and wedges it read */
-        if (o->kind == PO_ALEV && ch->kind != PO_RAY && ch->kind != PO_CWM) continue;
+        if (o->kind == PO_ALEV && ch->kind != PO_RAY && ch->kind != PO_CWM && ch->kind != PO_AWS) continue;
         if (dl_dirty(ch, fl)) {
-            /* the A level takes a pill-only child as a full hit (as before) */
-            int cp = ch->qi >= 0 && (fl[ch->qi] & DL_PONLY) && o->kind != PO_ALEV;
-            if (cp && skipp) continue;
-            if (t_dl_cz && ch->qi >= 0 && (!d || !cp)) { t_dl_cz[i] = t_dl_cz[ch->qi]; t_dl_cz[i].flags |= DF_CHILD; }
-            d = 1;
-            if (!cp) full = 1;
+            int cf = ch->qi >= 0 ? fl[ch->qi] : 0;
+            int d0 = full || hp || hw;
+            if (!(cf & (DL_PONLY | DL_WONLY))) full = 1;
+            else {
+                /* the wedge hits: a standoff point tests its predict query;
+                 * the A level keeps them for its slot's filter answers */
+                if (cf & DL_WONLY) {
+                    if (o->kind == PO_POINT && ch->kind == PO_CWM) { if (dl_w_point(o, ch)) full = 1; }
+                    else if (o->kind == PO_ALEV && ch->kind == PO_AWS) hw = 1;
+                    else full = 1;
+                }
+                /* the A level takes a pill-only child as a full hit (as before) */
+                if (cf & DL_PONLY) {
+                    if (o->kind == PO_ALEV) full = 1;
+                    else if (!skipp) hp = 1;
+                }
+            }
+            int d1 = full || hp || hw;
+            if (t_dl_cz && ch->qi >= 0 && d1 && (!d0 || full)) { t_dl_cz[i] = t_dl_cz[ch->qi]; t_dl_cz[i].flags |= DF_CHILD; }
         }
     }
-    int ponly = d && !full && o->kind != PO_ALEV;
-    fl[i] = (unsigned char)((fl[i] & ~DL_BUSY) | DL_DONE | (d ? DL_DIRTY : 0) | (ponly ? DL_PONLY : 0));
+    int d = full || hp || hw;
+    int ponly = d && !full && hp && o->kind != PO_ALEV;
+    int wonly = d && !full && hw;
+    fl[i] = (unsigned char)((fl[i] & ~DL_BUSY) | DL_DONE | (d ? DL_DIRTY : 0) | (ponly ? DL_PONLY : 0) | (wonly ? DL_WONLY : 0));
     return d;
 }
 
@@ -9337,6 +9646,9 @@ static int l_doll_sync(lua_State *L) {
     int ft = lua_toboolean(L, 6), exact = lua_toboolean(L, 7);
     double S = luaL_optnumber(L, 10, -1);
     if (exact) S = -1;
+    /* PT2_V2_DOLL_WEDGE_NARROW: 0 off, 1 per slice, 2 per standoff point */
+    int wn = (int)luaL_optnumber(L, 11, 0);
+    if (exact || wn < 0 || wn > 2) wn = 0;
     if (j->freed || j->busy || j->dlost || !j->doll || !j->dsnap_set || !j->dsnap) {
         lua_pushstring(L, j->dlost ? "lost" : (j->busy ? "busy" : "nojob"));
         return 1;
@@ -9349,6 +9661,9 @@ static int l_doll_sync(lua_State *L) {
     int same = nb == 0 && np == 0 && memcmp(j->dsnap, m, PT2_MAP_SQ) == 0;
     if (same && j->dacc) for (int k = 0; k < PT2_MAP_SQ; k++) if (j->dacc[k]) { same = 0; break; }
     lua_createtable(L, 0, 32);
+    /* the byte counts since the last sync (log) */
+    dl_stat(L, "b_store", j->dlb_store); dl_stat(L, "b_rebuilt", j->dlb_rebuilt);
+    j->dlb_store = 0; j->dlb_rebuilt = 0;
     if (same) {
         dl_stat(L, "changed", 0);
         dl_stat(L, "bytes", dl_bytes(j));
@@ -9453,19 +9768,49 @@ static int l_doll_sync(lua_State *L) {
     }
     t_dl_cz = cz;
     t_dl_narrow = S >= 0;
+    t_dl_wn = wn; t_dl_wns = ns; t_dl_ws1 = j->dl_s1set ? j->dl_s1min : -1e9;
+    t_dl_wclk = 0; t_dl_wtests = 0; t_dl_wpkeep = 0;
+    /* the slots whose A level is dirty by its aim wedge set only
+     * (sdirty 2): the record of each such set */
+    int *swl = NULL, nswl = 0, capswl = 0;
+    double wn_slots = 0, wn_fkeep = 0;
     if (ncs > 0 && ns > 0) {
         double R1 = reach + margin;
         for (int i = 0; i < ns; i++) pj->objs[i]->qi = i;
         for (int i = 0; i < ns; i++) {
             PObj *o = pj->objs[i];
             int ow = dl_own(o, chg, cs, ncs, pc, npc, R1, margin, exact, S, cz ? &cz[i] : NULL);
-            if (ow) { fl[i] |= DL_OWN | (ow == 2 ? DL_OWNP : 0); own_n++; own_k[o->kind]++; }
+            if (ow) {
+                fl[i] |= DL_OWN | (ow == 1 ? 0 : ((ow & 2 ? DL_OWNP : 0) | (ow & 4 ? DL_OWNW : 0)));
+                own_n++; own_k[o->kind]++;
+            }
         }
         for (int i = 0; i < ns; i++) {
             PObj *o = pj->objs[i];
-            if (o->kind == PO_ALEV && dl_dirty(o, fl) && o->slot_k >= 0 && o->slot_k < PT2_MAP_SQ && !sdirty[o->slot_k]) {
-                sdirty[o->slot_k] = 1; slots++;
-                if (sobj) sobj[o->slot_k] = i;
+            if (o->kind != PO_ALEV || !dl_dirty(o, fl) || o->slot_k < 0 || o->slot_k >= PT2_MAP_SQ) continue;
+            int sk = o->slot_k;
+            if (!(fl[i] & DL_WONLY)) {
+                if (sdirty[sk] != 1) {
+                    if (!sdirty[sk]) slots++;
+                    else wn_slots--;
+                    sdirty[sk] = 1;
+                    if (sobj) sobj[sk] = i;
+                }
+                continue;
+            }
+            if (sdirty[sk] == 1) continue;
+            if (!sdirty[sk]) { sdirty[sk] = 2; slots++; wn_slots++; if (sobj) sobj[sk] = i; }
+            /* the aim wedge sets of this A level with wedge hits */
+            for (int c = 0; c < o->nch; c++) {
+                PObj *ch = o->ch[c];
+                if (ch->kind != PO_AWS || ch->qi < 0 || !(fl[ch->qi] & DL_WONLY)) continue;
+                int ri = t_dl_wri ? t_dl_wri[ch->qi] - 1 : -1;
+                if (ri < 0 || !pcc_grow((void **)&swl, &capswl, nswl + 2, sizeof(int))) {
+                    /* no record: the slot drops whole */
+                    sdirty[sk] = 1; wn_slots--;
+                    break;
+                }
+                swl[nswl++] = sk; swl[nswl++] = ri;
             }
         }
         if (dle) {
@@ -9491,13 +9836,15 @@ static int l_doll_sync(lua_State *L) {
             if (k != PO_RAY && k != PO_POINT && k != PO_PLAN) continue;
             int d = dl_dirty(o, fl);
             int vslot = 0;
-            if (!d && k != PO_RAY && o->slot_k >= 0 && o->slot_k < PT2_MAP_SQ && sdirty[o->slot_k]) { d = 1; vslot = 1; }
+            /* a slot dirty by aim wedges only (2) keeps its points and plans:
+             * they do not read the aim wedges (only cant does) */
+            if (!d && k != PO_RAY && o->slot_k >= 0 && o->slot_k < PT2_MAP_SQ && sdirty[o->slot_k] == 1) { d = 1; vslot = 1; }
             if (!d) continue;
             dir_k[k]++;
             double del;
             if (k == PO_RAY) d_ray += (del = dl_hm_del(&j->rays, o->ka, o->kb));
-            else if (k == PO_POINT) d_pt += (del = dl_hm_del(&j->pts, o->ka, o->kb));
-            else d_pl += (del = dl_hm_del(&j->pls, o->ka, o->kb));
+            else if (k == PO_POINT) { dlb_drop(j, &j->pts, PO_POINT, o->ka, o->kb); d_pt += (del = dl_hm_del(&j->pts, o->ka, o->kb)); }
+            else { dlb_drop(j, &j->pls, PO_PLAN, o->ka, o->kb); d_pl += (del = dl_hm_del(&j->pls, o->ka, o->kb)); }
             if (dle && del > 0) {
                 int lvl = k == PO_RAY ? DLV_RAY : (k == PO_POINT ? DLV_PT : DLV_PL);
                 uint64_t key = dle_rk(dle, j->dl_src, lvl, o->ka, o->kb);
@@ -9551,12 +9898,12 @@ static int l_doll_sync(lua_State *L) {
             for (int i = 0; i < j->pts.cap; i++)
                 if (j->pts.u[i] && j->pts.v[i].p) {
                     int s = ((PEnt *)j->pts.v[i].p)->si;
-                    if (s >= 0 && s < PCC_MAXSLOT && drop[s]) { j->pts.v[i].p = NULL; d_pt += dl_hm_del(&j->pts, j->pts.k1[i], j->pts.k2[i]); i--; }
+                    if (s >= 0 && s < PCC_MAXSLOT && drop[s]) { dlb_drop(j, &j->pts, PO_POINT, j->pts.k1[i], j->pts.k2[i]); j->pts.v[i].p = NULL; d_pt += dl_hm_del(&j->pts, j->pts.k1[i], j->pts.k2[i]); i--; }
                 }
             for (int i = 0; i < j->pls.cap; i++)
                 if (j->pls.u[i] && j->pls.v[i].p) {
                     int s = ((PPlan *)j->pls.v[i].p)->si;
-                    if (s >= 0 && s < PCC_MAXSLOT && drop[s]) { j->pls.v[i].p = NULL; d_pl += dl_hm_del(&j->pls, j->pls.k1[i], j->pls.k2[i]); i--; }
+                    if (s >= 0 && s < PCC_MAXSLOT && drop[s]) { dlb_drop(j, &j->pls, PO_PLAN, j->pls.k1[i], j->pls.k2[i]); j->pls.v[i].p = NULL; d_pl += dl_hm_del(&j->pls, j->pls.k1[i], j->pls.k2[i]); i--; }
                 }
             j->sp_dropn += ndrop;
         }
@@ -9578,7 +9925,14 @@ static int l_doll_sync(lua_State *L) {
                 if (!j->flt.u[i]) continue;
                 int64_t v = j->flt.v[i].i;
                 int sq = (int)((v >> 8) & 0xFFFF), sk = (int)((v >> 24) & 0xFFFF);
-                int drop = (sq != 0xFFFF && chg[sq]) || sdirty[sk];
+                int drop = (sq != 0xFFFF && chg[sq]) || sdirty[sk] == 1;
+                /* PT2_V2_DOLL_WEDGE_NARROW: a slot dirty by aim wedges only
+                 * drops the answers whose cant test B's wedges can meet */
+                if (!drop && sdirty[sk] == 2 && sq != 0xFFFF) {
+                    for (int q = 0; !drop && q + 1 < nswl; q += 2)
+                        if (swl[q] == sk && dl_w_flt(&t_dl_wr[swl[q + 1]], sq, v)) drop = 1;
+                    if (!drop && (v & 6) == 6) wn_fkeep += 1;
+                }
                 DlCause fz;
                 memset(&fz, 0, sizeof(fz));
                 if (dle && drop) {
@@ -9628,6 +9982,11 @@ static int l_doll_sync(lua_State *L) {
     dl_stat(L, "n_ray", n_ray0); dl_stat(L, "n_pt", n_pt0); dl_stat(L, "n_pl", n_pl0); dl_stat(L, "n_flt", n_flt0);
     dl_stat(L, "d_ray", d_ray); dl_stat(L, "d_pt", d_pt); dl_stat(L, "d_pl", d_pl); dl_stat(L, "d_flt", d_flt);
     dl_stat(L, "d_sqm", d_sqm); dl_stat(L, "d_sqf", d_sqf);
+    dl_stat(L, "b_drop", j->dlb_drop); j->dlb_drop = 0;
+    dl_stat(L, "wn_us", (double)t_dl_wclk * pf_tick_us()); dl_stat(L, "wn_tests", t_dl_wtests);
+    dl_stat(L, "wn_keep", t_dl_wpkeep); dl_stat(L, "wn_fkeep", wn_fkeep); dl_stat(L, "wn_slots", wn_slots);
+    free(swl);
+    dl_w_free(); t_dl_wn = 0; t_dl_wns = 0;
     dl_stat(L, "bytes", dl_bytes(j));
     /* the parts of bytes: rays (ar), points and plans (par), part marks */
     dl_stat(L, "b_ar", ar_bytes(&j->ar)); dl_stat(L, "b_par", dl_par_bytes(j)); dl_stat(L, "b_pcc", dl_pcc_bytes(j));
