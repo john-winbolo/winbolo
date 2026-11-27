@@ -9170,7 +9170,9 @@ static double dl_bytes(const Job *j) {
 }
 
 typedef struct { int sq; int c; } DlSq;
-enum { DL_OWN = 1, DL_DIRTY = 2, DL_DONE = 4, DL_BUSY = 8 };
+/* DL_OWNP: a wedge set's own hit is pill changes on its squares only;
+ * DL_PONLY: the part is dirty by such hits only (PT2_V2_DOLL_PILL_NARROW) */
+enum { DL_OWN = 1, DL_DIRTY = 2, DL_DONE = 4, DL_BUSY = 8, DL_OWNP = 16, DL_PONLY = 32 };
 
 /* PT2_V2_DOLL_EVENT_LOG (log only): why a part was dropped */
 typedef struct { uint8_t code, flags, field; uint16_t csq, ckind; float ov, nv; } DlCause;
@@ -9189,8 +9191,14 @@ static void dl_cz_pc(DlCause *z, int code, int sq, int kind, const PChg *p) {
     dl_cz(z, code, sq, kind, p->o, p->n, (p->fh ? 1 : 0) | (p->fa ? 2 : 0));
 }
 static int dl_own(const PObj *o, const unsigned char *chg, const DlSq *cs, int ncs, const PChg *pc, int npc,
-                  double R1, double margin, int exact, DlCause *cz) {
+                  double R1, double margin, int exact, double S, DlCause *cz) {
     int k = o->kind;
+    /* S >= 0 (PT2_V2_DOLL_PILL_NARROW, rule B): a pill change hits a ring
+     * point or plan within S (pill range + PT2_V2_DOLL_PILL_SHOOT_R_EXTRA)
+     * of its old or new square; a wedge set hit by pill changes on its
+     * squares only is a pill-only hit (2), which a point or plan does not
+     * take from it (its own S test has that pill change) */
+    int narrow = S >= 0 && !exact, pon = 0;
     if (k != PO_RAY && k != PO_CWM && k != PO_POINT && k != PO_PLAN && k != PO_ALEV) return 0;
     int x0 = 256, y0 = 256, x1 = -1, y1 = -1;
     for (int r = 0; r < o->nrd; r++) {
@@ -9214,7 +9222,8 @@ static int dl_own(const PObj *o, const unsigned char *chg, const DlSq *cs, int n
              * pill, ally cover): any pill change on them; rule B lets
              * the other parts take only the in-range test below */
             if (exact || k == PO_RAY || k == PO_CWM) {
-                if (cz) { for (int q = 0; q < npc; q++) if (pc[q].o == sq || pc[q].n == sq) { dl_cz_pc(cz, DC_PILLSQ, sq, k, &pc[q]); break; } }
+                if (cz && !pon) { for (int q = 0; q < npc; q++) if (pc[q].o == sq || pc[q].n == sq) { dl_cz_pc(cz, DC_PILLSQ, sq, k, &pc[q]); break; } }
+                if (narrow && k == PO_CWM) { pon = 1; continue; }
                 return 1;
             }
         }
@@ -9225,19 +9234,23 @@ static int dl_own(const PObj *o, const unsigned char *chg, const DlSq *cs, int n
         if (cz) { dl_cz(cz, DC_CENTRE, sq, k, -1, -1, 0); for (int q = 0; q < npc; q++) if (pc[q].o == sq || pc[q].n == sq) { dl_cz_pc(cz, DC_CENTRE, sq, k, &pc[q]); break; } }
         return 1;
     }
+    if (pon) return 2;
     if (k == PO_ALEV && o->slot_k >= 0 && o->slot_k < PT2_MAP_SQ && (chg[o->slot_k] & CH_PO)) {
         int sq = o->slot_k;
         if (cz) { dl_cz(cz, DC_SLOTPILL, sq, k, -1, -1, 0); for (int q = 0; q < npc; q++) if (pc[q].o == sq || pc[q].n == sq) { dl_cz_pc(cz, DC_SLOTPILL, sq, k, &pc[q]); break; } }
         return 1;
     }
     if (k == PO_POINT && o->x >= 0) {
+        /* narrow: any pill (hostile or ally) within S; else a hostile
+         * pill within R1 */
+        double Rp = narrow ? S : R1;
         for (int c = 0; c < npc; c++) {
-            if (!pc[c].fh) continue;
+            if (!narrow && !pc[c].fh) continue;
             int sq[2] = { pc[c].o, pc[c].n };
             for (int q = 0; q < 2; q++) {
                 if (sq[q] < 0) continue;
                 double dx = (sq[q] & 255) - o->x, dy = (sq[q] >> 8) - o->y;
-                if (dx * dx + dy * dy <= R1 * R1) { dl_cz_pc(cz, DC_PILLREACH, sq[q], k, &pc[c]); return 1; }
+                if (dx * dx + dy * dy <= Rp * Rp) { dl_cz_pc(cz, DC_PILLREACH, sq[q], k, &pc[c]); return 1; }
             }
         }
         /* the margin disks of the point and its builder origin */
@@ -9255,12 +9268,13 @@ static int dl_own(const PObj *o, const unsigned char *chg, const DlSq *cs, int n
     if (k == PO_PLAN && x1 >= 0) {
         /* the plan's points test the hostile pills in range (by place,
          * not by a square read): a pill change in reach of its box */
+        double Rb = narrow ? S : R1;
         for (int c = 0; c < npc; c++) {
             int sq[2] = { pc[c].o, pc[c].n };
             for (int q = 0; q < 2; q++) {
                 if (sq[q] < 0) continue;
                 int x = sq[q] & 255, y = sq[q] >> 8;
-                if (x >= x0 - R1 && x <= x1 + R1 && y >= y0 - R1 && y <= y1 + R1) { dl_cz_pc(cz, DC_PILLBOX, sq[q], k, &pc[c]); return 1; }
+                if (x >= x0 - Rb && x <= x1 + Rb && y >= y0 - Rb && y <= y1 + Rb) { dl_cz_pc(cz, DC_PILLBOX, sq[q], k, &pc[c]); return 1; }
             }
         }
         /* a builder walk can leave its box: a terrain, forest or base
@@ -9276,6 +9290,7 @@ static int dl_own(const PObj *o, const unsigned char *chg, const DlSq *cs, int n
 }
 
 static PF_TLS DlCause *t_dl_cz;   /* doll_sync's causes by part (log only) */
+static PF_TLS int t_dl_narrow;    /* PT2_V2_DOLL_PILL_NARROW on (rule B) */
 static int dl_dirty(PObj *o, unsigned char *fl) {
     int i = o->qi;
     if (i < 0) return 0;
@@ -9283,23 +9298,34 @@ static int dl_dirty(PObj *o, unsigned char *fl) {
     if (fl[i] & DL_BUSY) return 0;
     fl[i] |= DL_BUSY;
     int d = (fl[i] & DL_OWN) != 0;
-    for (int c = 0; !d && c < o->nch; c++) {
+    /* full: a hit that is not pill-only (DL_OWNP is set only when narrow) */
+    int full = d && !(fl[i] & DL_OWNP);
+    /* narrow: a ring point or plan takes a pill change by its own S test,
+     * not from a pill-only child (the wedge set of a pill X near it) */
+    int skipp = t_dl_narrow && (o->kind == PO_POINT || o->kind == PO_PLAN);
+    for (int c = 0; !full && c < o->nch; c++) {
         PObj *ch = o->ch[c];
         /* the A level runs again each run: only the rays and wedges it read */
         if (o->kind == PO_ALEV && ch->kind != PO_RAY && ch->kind != PO_CWM) continue;
         if (dl_dirty(ch, fl)) {
+            /* the A level takes a pill-only child as a full hit (as before) */
+            int cp = ch->qi >= 0 && (fl[ch->qi] & DL_PONLY) && o->kind != PO_ALEV;
+            if (cp && skipp) continue;
+            if (t_dl_cz && ch->qi >= 0 && (!d || !cp)) { t_dl_cz[i] = t_dl_cz[ch->qi]; t_dl_cz[i].flags |= DF_CHILD; }
             d = 1;
-            if (t_dl_cz && ch->qi >= 0) { t_dl_cz[i] = t_dl_cz[ch->qi]; t_dl_cz[i].flags |= DF_CHILD; }
+            if (!cp) full = 1;
         }
     }
-    fl[i] = (unsigned char)((fl[i] & ~DL_BUSY) | DL_DONE | (d ? DL_DIRTY : 0));
+    int ponly = d && !full && o->kind != PO_ALEV;
+    fl[i] = (unsigned char)((fl[i] & ~DL_BUSY) | DL_DONE | (d ? DL_DIRTY : 0) | (ponly ? DL_PONLY : 0));
     return d;
 }
 
 static void dl_stat(lua_State *L, const char *k, double v) { lua_pushnumber(L, v); lua_setfield(L, -2, k); }
 
 /* gh_pt2_v2.doll_sync(job, pills, bases, reach, margin, forest_transparent,
- * exact): pills { o_mx, o_my, n_mx, n_my, fh, fa, ... } and bases { mx,
+ * exact, tick, dead_max, S): S (squares, PT2_V2_DOLL_PILL_NARROW; nil or
+ * < 0: the wide rule) is the pill shoot radius of rule B. pills { o_mx, o_my, n_mx, n_my, fh, fa, ... } and bases { mx,
  * my, ... } as pc_part_q takes them (reach and margin in squares). Returns
  * a stats table, or a string when the job must be new ("lost", "busy",
  * "nojob", "nomap"). */
@@ -9309,6 +9335,8 @@ static int l_doll_sync(lua_State *L) {
     luaL_checktype(L, 3, LUA_TTABLE);
     double reach = luaL_checknumber(L, 4), margin = luaL_checknumber(L, 5);
     int ft = lua_toboolean(L, 6), exact = lua_toboolean(L, 7);
+    double S = luaL_optnumber(L, 10, -1);
+    if (exact) S = -1;
     if (j->freed || j->busy || j->dlost || !j->doll || !j->dsnap_set || !j->dsnap) {
         lua_pushstring(L, j->dlost ? "lost" : (j->busy ? "busy" : "nojob"));
         return 1;
@@ -9424,12 +9452,14 @@ static int l_doll_sync(lua_State *L) {
         }
     }
     t_dl_cz = cz;
+    t_dl_narrow = S >= 0;
     if (ncs > 0 && ns > 0) {
         double R1 = reach + margin;
         for (int i = 0; i < ns; i++) pj->objs[i]->qi = i;
         for (int i = 0; i < ns; i++) {
             PObj *o = pj->objs[i];
-            if (dl_own(o, chg, cs, ncs, pc, npc, R1, margin, exact, cz ? &cz[i] : NULL)) { fl[i] |= DL_OWN; own_n++; own_k[o->kind]++; }
+            int ow = dl_own(o, chg, cs, ncs, pc, npc, R1, margin, exact, S, cz ? &cz[i] : NULL);
+            if (ow) { fl[i] |= DL_OWN | (ow == 2 ? DL_OWNP : 0); own_n++; own_k[o->kind]++; }
         }
         for (int i = 0; i < ns; i++) {
             PObj *o = pj->objs[i];
@@ -9487,6 +9517,7 @@ static int l_doll_sync(lua_State *L) {
         for (int i = 0; i < ns; i++) pj->objs[i]->qi = -1;
     }
     t_dl_cz = NULL;
+    t_dl_narrow = 0;
     /* PT2_V2_DOLL: a slot arena with no stored point or plan left goes */
     /* PT2_V2_DOLL_SLOT_DEAD_MAX (dead_max > 0): a slot arena whose dropped
      * bytes are more than dead_max x its stored bytes goes with all its
@@ -9534,10 +9565,13 @@ static int l_doll_sync(lua_State *L) {
     }
     /* the filter answers: their ring square changed, or their slot, or a
      * pill changed in reach of the ring square (the cant test reads the
-     * wedges of each hostile pill in range) */
+     * wedges of each hostile pill in range). PT2_V2_DOLL_PILL_NARROW:
+     * a pill change within S of the ring square (the cant test's pills in
+     * range, and the wedges of a pill X that a pill near the ring square
+     * shades) */
     if (j->flt.n > 0) {
         int cap = j->flt.cap, nd = 0;
-        double R1f = reach + margin;
+        double R1f = S >= 0 ? S : reach + margin;
         uint64_t *dk = (uint64_t *)malloc(sizeof(uint64_t) * 2 * (size_t)(j->flt.n + 1));
         if (dk) {
             for (int i = 0; i < cap; i++) {

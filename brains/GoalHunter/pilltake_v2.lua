@@ -3372,8 +3372,14 @@ local function doll_cache(inp, src, now)
       local pills = pcp_pills(e.P, P)
       local bases = pcp_bases(e.B, B)
       local reach, margin = pcp_reach(inp)
+      -- PT2_V2_DOLL_PILL_NARROW: the pill shoot radius S (squares) of
+      -- rule B; -1 = the wide rule
+      local S = -1
+      if PCK.PT2_V2_DOLL_PILL_NARROW and PCK.PT2_V2_DOLL_RULE ~= "exact" then
+        S = (inp.pill_range or 0) / 256 + (PCK.PT2_V2_DOLL_PILL_SHOOT_R_EXTRA or 0.5)
+      end
       local st = gh_pt2_v2.doll_sync(j, pills, bases, reach, margin, inp.env.forest_transparent ~= false,
-        PCK.PT2_V2_DOLL_RULE == "exact", now, PCK.PT2_V2_DOLL_SLOT_DEAD_MAX or 0)
+        PCK.PT2_V2_DOLL_RULE == "exact", now, PCK.PT2_V2_DOLL_SLOT_DEAD_MAX or 0, S)
       if type(st) ~= "table" then why = tostring(st)
       else
         cnt.sync = cnt.sync + 1

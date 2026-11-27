@@ -1603,6 +1603,21 @@ M.PT2_V2_DOLL = true
 -- pill change hits the rays and wedge sets that read its square; no other
 -- part. "exact": any pill change also hits each part that read its square.
 M.PT2_V2_DOLL_RULE = "B"
+-- PT2_V2_DOLL_PILL_NARROW (Nov 27, Andrew's rule, speed only): with rule
+-- B, a pill change (moved, dead, back, new owner) drops only the standoff
+-- points, filter answers and plans the pill can shoot at: a standoff
+-- point or filter answer within S of the pill's old or new square, a plan
+-- whose read box is within S of it. S = pill range +
+-- PT2_V2_DOLL_PILL_SHOOT_R_EXTRA squares. The centre wedge set of a pill X
+-- that read a changed pill square no longer drops every standoff point
+-- and plan that used it (their own S test has the change); a ray on that
+-- square, a change of pill X itself and the A level stay as before.
+-- false = the wide rule (a hostile pill within reach + PT2_V2_CACHE_MARGIN,
+-- any pill on a wedge set's square).
+M.PT2_V2_DOLL_PILL_NARROW = true
+-- PT2_V2_DOLL_PILL_SHOOT_R_EXTRA (Andrew's value): squares past the pill
+-- range for PT2_V2_DOLL_PILL_NARROW (8 + 0.5 = 8.5).
+M.PT2_V2_DOLL_PILL_SHOOT_R_EXTRA = 0.5
 -- PT2_V2_DOLL_CHECK (log only): each doll group run is run again with a new
 -- job in the same think; a PT2_V2_DOLL_CHK line (stderr) says if the best
 -- point, its plan, safe and kills are the same. On a DIFF it runs the doll
