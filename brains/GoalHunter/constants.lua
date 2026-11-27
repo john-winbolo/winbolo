@@ -1522,7 +1522,9 @@ M.PT2_V2_C = true
 -- back, the stay area, a shell rule) drops those rays and reads. With the knob
 -- on, pt2_dbl keeps an entry when only our trees change (no v2 input).
 -- false = a new cache for each group run, as before. MAST: false.
-M.PT2_V2_CACHE = true
+-- Default false (Nov 26, Andrew): this cache measured 9% slower than no
+-- cache and used more memory; a per-pill cache is the next design.
+M.PT2_V2_CACHE = false
 -- PT2_V2_CACHE_MAX_AGE_TICKS: an entry older than this is dropped (a
 -- backstop; the inputs above drop it first). pt2_dbl's PT2_DBL_CACHE_TICKS
 -- (250) stays the refresh cadence: a refresh of a kept entry is cheap.
