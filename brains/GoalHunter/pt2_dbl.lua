@@ -165,8 +165,9 @@ local function make_inp(state, world, info, pill, now)
   -- PT2_CHAINS_ONLY (S10): the entry counts only as a safe chain, so v2
   -- plans no single take here (the old evaluator ignores the field)
   if inp and inp.chains_only_runs then inp.chains_only = true end
-  -- PT2_V2_CACHE: this run's slow cache entries are the "dbl" ones
-  if inp and C.PT2_V2_CACHE then inp._v2_pc_src = "dbl" end
+  -- PT2_V2_CACHE / PT2_V2_DOLL: this run's slow cache entries (or kept
+  -- job) are the "dbl" ones
+  if inp and (C.PT2_V2_CACHE or C.PT2_V2_DOLL) then inp._v2_pc_src = "dbl" end
   -- cache study (log only): the profile lines of this run say src=dbl
   if inp and inp._prof_head then inp._prof_head = inp._prof_head .. " src=dbl" end
   return inp

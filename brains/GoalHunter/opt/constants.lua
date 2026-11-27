@@ -1582,6 +1582,35 @@ M.PT2_V2_CACHE_DROP_LOG = false
 -- evaluate says the same for that pill A's parts shared over goal pills.
 -- It changes no result.
 M.PT2_V2_CACHE_PART_LOG = false
+-- PT2_V2_DOLL (Nov 26, Andrew approved the design; speed only): one kept v2
+-- job per player and source (take, dbl) for the whole game, for all goal
+-- pills and all pills A. Before each group run the C (gh_pt2_v2.doll_sync)
+-- takes the map, pill and base changes since the last run and drops only
+-- the kept parts that they hit: the rays (D1), the ring points' evaluates
+-- (D2), the 30 deg slices and pill A rings they are in (D3, D4) and the
+-- plans (D5). The next read makes them again from the clean parts. score_fn
+-- (travel) always runs again. A part's answer from the store adds the work
+-- units it took when made, so the slicer yields at the same places. Only
+-- the age (PT2_V2_CACHE_MAX_AGE_TICKS), a shell rule change, a run that did
+-- not end, or a lost part mark makes a new job. PT2_V2_CACHE_MARGIN is the
+-- margin. Not with PT2_V2_CACHE (the doll wins). Same games as false
+-- (snapshots and final.json equal, 2 seeds); about 15% less v2 C time;
+-- about 150 MB more per bot (Nov 26 bench).
+-- false = a new job for each group run.
+M.PT2_V2_DOLL = true
+-- PT2_V2_DOLL_RULE: "B" (Andrew's pill rule B): a hostile pill change hits
+-- the ring points, filter answers and plans within its reach + margin; any
+-- pill change hits the rays and wedge sets that read its square; no other
+-- part. "exact": any pill change also hits each part that read its square.
+M.PT2_V2_DOLL_RULE = "B"
+-- PT2_V2_DOLL_CHECK (log only): each doll group run is run again with a new
+-- job in the same think; a PT2_V2_DOLL_CHK line (stderr) says if the best
+-- point, its plan, safe and kills are the same. On a DIFF it runs the doll
+-- again with some store finds skipped (skip1 to skip15) to say which part
+-- was stale. Slow: for tests only. Use with PT2_DBL_SPLIT = false and
+-- PT2_AFTER_SCAN_SPLIT = false: a split run spans ticks, and the new job at
+-- its end sees a later world.
+M.PT2_V2_DOLL_CHECK = false
 -- PP_FRONT_C (Nov 25, speed only): pill_portfolio's front tests
 -- (on_front_line, near_front, the aggro neighbour count) run in C
 -- (braincore.c) on the same influence grid. The same answers. Measured
@@ -8805,6 +8834,8 @@ M.PRESETS = {
     PT2_V2_C = false,
     --   2026-11-26: no slow cache (a new cache for each group run).
     PT2_V2_CACHE = false,
+    --   2026-11-26: no doll cache (a new v2 job for each group run).
+    PT2_V2_DOLL = false,
     --   2026-11-23: the old pill take evaluator (no shadow map).
     PT2_EVALUATOR = "old",
     PT2_EVAL_BY_TIER = false,
@@ -9209,7 +9240,7 @@ M.PRESETS.mast = {
   PT2_SPLIT_ONE_PART_PER_TICK       = false,  -- 2.2.1 had no pill take v2
   PT2_V2_SPLIT                      = false,  -- 2.2.1 had no pill take v2
   PT2_V2_C                          = false,  -- 2.2.1 had no pill take v2
-  PT2_V2_CACHE                      = false,  -- 2.2.1 had no pill take v2
+  PT2_V2_DOLL                       = false,  -- 2.2.1 had no pill take v2
   PT2_EVALUATOR                     = "old",  -- 2.2.1 had no pill take v2
   PT2_EVAL_BY_TIER                  = false,  -- 2.2.1 had no pill take v2
   WSIM_DRIVE_WHILE_SLIDING          = false,  -- 2.2.1 world sim: no driving while pushed

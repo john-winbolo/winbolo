@@ -241,8 +241,9 @@ build_inp_body = function(state, goal, info, world, pill, no_builder, npb, radiu
   if C.PT2_CHAIN_CLAIM then
     inp.chain_skip = require("pt2_claim").chain_skip(state, inp, now, (info and info.player_number) or -1)
   end
-  -- PT2_V2_CACHE: the tick (the store's age) and the log head of the check
-  if C.PT2_V2_CACHE then
+  -- PT2_V2_CACHE / PT2_V2_DOLL: the tick (the store's age) and the log head
+  -- of the check
+  if C.PT2_V2_CACHE or C.PT2_V2_DOLL then
     inp._v2_pc_now = now
     inp._v2_pc_pn = info and info.player_number
     inp._v2_pc_head = string.format("p=%s t=%s", tostring(info and info.player_number), tostring(now))

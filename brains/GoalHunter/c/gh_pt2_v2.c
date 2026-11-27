@@ -1013,6 +1013,15 @@ typedef struct {
     int    rp_n;
     /* PT2_V2_CACHE_PART_LOG (log only): the parts' read cells */
     struct PccJob *pcc;
+    /* PT2_V2_DOLL: the job is kept for the whole game (per player and
+     * source); its parts (pcc) say what each kept part read. drun: the
+     * group run (doll_sync adds 1); dlost: a part was not marked (no
+     * memory, too deep, too many slots), so pilltake_v2.lua starts a new
+     * job; dsnap: the map at the last sync. */
+    int    doll, drun, dlost, dsnap_set;
+    unsigned dvis;
+    unsigned char *dsnap;
+    unsigned char *dacc;  /* PT2_V2_DOLL: the change classes (CH_T, CH_F) seen inside a group run */
 } Job;
 
 /* rpm bits: a ring point (raw, nudged or the builder's origin); a group
@@ -1220,6 +1229,17 @@ struct St {
     struct PObj *pcc_ctx, *pcc_alev, *pcc_last_pt;
     double pcc_deg;
     int64_t pcc_t0;
+    int    pcc_time;      /* the parts get their C time (the part log); a doll run only marks */
+    /* PT2_V2_DOLL (inp._v2_doll): the job is the kept one; a store
+     * answer adds the work units its part took when made (the slicer sees
+     * the same work as with no store). dl_*: stats (rays from an earlier
+     * run, rays cast, casts counted for a kept part; the 30 deg slices of
+     * the ring points with a store answer / a part made again) */
+    int    doll;
+    int    dl_wdrop;
+    int    dl_skip;       /* PT2_V2_DOLL_CHECK (log only): store finds skipped (1 points, plans; 2 rays; 4 filter; 8 squares; 16 points; 32 plans) */
+    double dl_ray_old, dl_ray_cast, dl_emu_casts;
+    unsigned short dsl_h[12], dsl_m[12];
 };
 
 /* PT2_LINK_CLEAR_FRONT with PT2_LINK_CUT_MIN_SHOTS (OLD.link_cut). */
@@ -1511,8 +1531,11 @@ struct PObj {
     PObj **ch; int nch, capch;
     PObj *owner;
     int qi;                       /* pc_part_make scratch */
+    uint64_t ka, kb;              /* PT2_V2_DOLL: the store key (kind's map) */
+    int drun;                     /* PT2_V2_DOLL, RAY: the group run that last cast or counted it */
+    unsigned vis;                 /* PT2_V2_DOLL: walk scratch */
 };
-#define PCC_MAXSLOT 64
+#define PCC_MAXSLOT 128
 typedef struct {
     int k, run;
     double finish, co;
@@ -1553,7 +1576,7 @@ static void pcc_use(PccJob *pj, PObj *o) { if (o->run != pj->run) { o->run = pj-
 
 /* the time since the last tick to the part now open */
 static void pcc_tick(Ev *e) {
-    if (!e->pcc_run) return;
+    if (!e->pcc_run || !e->pcc_time) return;
     int64_t now = pf_clock();
     PObj *o = pcc_tgt(e);
     if (o) {
@@ -1578,6 +1601,7 @@ static PObj *pcc_obj(Ev *e, int kind, uint64_t a, uint64_t b, int clear) {
         pj->objs[pj->nobj++] = o;
         o->kind = kind; o->slot_k = pcc_slot_k(e); o->deg10 = -1; o->run = -1;
         o->x = o->y = o->ox = o->oy = -1;
+        o->ka = a; o->kb = b;
         v->p = o;
     } else if (clear) {
         o->nrd = 0; o->nsrt = 0; o->nch = 0; o->t = 0; o->t_run = 0;
@@ -1610,7 +1634,7 @@ static void pcc_mark(Ev *e, double mx, double my, int bits) {
     if (!o) return;
     uint32_t v = ((uint32_t)((int)my * 256 + (int)mx) << 8) | (uint32_t)bits;
     if (o->nrd && o->rd[o->nrd - 1] == v) return;
-    if (!pcc_grow((void **)&o->rd, &o->caprd, o->nrd + 1, sizeof(uint32_t))) return;
+    if (!pcc_grow((void **)&o->rd, &o->caprd, o->nrd + 1, sizeof(uint32_t))) { e->job->dlost = 1; return; }
     o->rd[o->nrd++] = v;
     if (o->nrd > 2 * o->nsrt + 256) pcc_dedupe(o);
 }
@@ -1621,20 +1645,21 @@ static void pcc_box(Ev *e, double ax, double ay, double bx, double by) {
     for (double y = y0; y <= y1; y++) for (double x = x0; x <= x1; x++) pcc_mark(e, x, y, PR_W | PR_T);
 }
 
-static void pcc_child(PObj *p, PObj *c) {
+static void pcc_child(Ev *e, PObj *p, PObj *c) {
     if (!p || !c || p == c) return;
     for (int i = 0; i < p->nch; i++) if (p->ch[i] == c) return;
-    if (!pcc_grow((void **)&p->ch, &p->capch, p->nch + 1, sizeof(PObj *))) return;
+    if (!pcc_grow((void **)&p->ch, &p->capch, p->nch + 1, sizeof(PObj *))) { e->job->dlost = 1; return; }
     p->ch[p->nch++] = c;
     if (!c->owner) c->owner = p;
 }
 
 /* a part is made now: its reads and time go to it until pcc_pop */
 static PObj *pcc_push(Ev *e, int kind, uint64_t a, uint64_t b) {
-    if (!e->pcc_run || e->pcc_n >= 32) return NULL;
+    if (!e->pcc_run) return NULL;
+    if (e->pcc_n >= 32) { e->job->dlost = 1; return NULL; }
     pcc_tick(e);
     PObj *o = pcc_obj(e, kind, a, b, 1);
-    if (!o) return NULL;
+    if (!o) { e->job->dlost = 1; return NULL; }
     if (e->pcc_deg >= 0 && (kind == PO_POINT || kind == PO_PLAN)) o->deg10 = (int)floor(e->pcc_deg * 10 + 0.5);
     e->pcc_stk[e->pcc_n++] = o;
     return o;
@@ -1644,17 +1669,17 @@ static void pcc_pop(Ev *e, PObj *o) {
     pcc_tick(e);
     if (e->pcc_n && e->pcc_stk[e->pcc_n - 1] == o) e->pcc_n--;
     pcc_dedupe(o);
-    pcc_child(pcc_tgt(e), o);
+    pcc_child(e, pcc_tgt(e), o);
 }
 /* a memo answer: the part that made it is a child of the part open now */
 static PObj *pcc_ref(Ev *e, int kind, uint64_t a, uint64_t b) {
     if (!e->pcc_run) return NULL;
     PccJob *pj = e->job->pcc;
     HVal *v = hm_find(&pj->om, pt_mix(a + (uint64_t)kind * 0x9E3779B97F4A7C15ull), b);
-    if (!v || !v->p) return NULL;
+    if (!v || !v->p) { e->job->dlost = 1; return NULL; }
     PObj *o = (PObj *)v->p;
     pcc_use(pj, o);
-    pcc_child(pcc_tgt(e), o);
+    pcc_child(e, pcc_tgt(e), o);
     return o;
 }
 
@@ -2954,7 +2979,7 @@ static SqV *sq_read__p(Ev *e, double mx, double my) {
     double key = my * 256 + mx;
     int isnew;
     HVal *hv = hm_put(e->L, &e->job->sqm, dbits(key), 0, &isnew);
-    if (!isnew) { if (e->pcc_run) pcc_mark(e, mx, my, PR_T | PR_P); return (SqV *)hv->p; }
+    if (!isnew && !(e->dl_skip & 8)) { if (e->pcc_run) pcc_mark(e, mx, my, PR_T | PR_P); return (SqV *)hv->p; }
     hv->p = NULL;
     SqV *v = JNEW(e, SqV);
     v->kind = K_NONE; v->shots = 0; v->pill = 0;
@@ -3146,8 +3171,17 @@ static void predict(Ev *e, WSet *set, double px, double py, Pred *out) { PB(P_pr
 /* ── Exact rays ─────────────────────────────────────────────────────── */
 static Ray *base_ray__p(Ev *e, int X, double px, double py) {
     double k = (py + 4096) * 131072 + (px + 4096);
-    HVal *hv = hm_find(&e->job->rays, (uint64_t)X, dbits(k));
-    if (hv) { e->ray_reuse += 1; if (e->pcc_run) pcc_ref(e, PO_RAY, (uint64_t)X, dbits(k)); return (Ray *)hv->p; }
+    HVal *hv = (e->dl_skip & 2) ? NULL : hm_find(&e->job->rays, (uint64_t)X, dbits(k));
+    if (hv) {
+        PObj *ro = e->pcc_run ? pcc_ref(e, PO_RAY, (uint64_t)X, dbits(k)) : NULL;
+        /* PT2_V2_DOLL: a ray kept from an earlier group run counts as a
+         * cast once per group run, as a new job per run casts it */
+        if (e->doll && ro && ro->drun != e->job->drun) {
+            ro->drun = e->job->drun;
+            e->casts += 1; e->dl_ray_old += 1;
+        } else e->ray_reuse += 1;
+        return (Ray *)hv->p;
+    }
     Pill *P = PI(e, X);
     double sx = P->mx * 256 + 128, sy = P->my * 256 + 128;
     PObj *po_ = e->pcc_run ? pcc_push(e, PO_RAY, (uint64_t)X, dbits(k)) : NULL;
@@ -3158,7 +3192,9 @@ static Ray *base_ray__p(Ev *e, int X, double px, double py) {
     int isnew;
     hv = hm_put(e->L, &e->job->rays, (uint64_t)X, dbits(k), &isnew);
     hv->p = r;
-    e->casts += 1;
+    /* PT2_V2_DOLL: a kept part's answer this run counted it already */
+    if (!(e->doll && po_ && po_->drun == e->job->drun)) e->casts += 1;
+    if (e->doll) { e->dl_ray_cast += 1; if (po_) po_->drun = e->job->drun; }
     return r;
 }
 static Ray *base_ray(Ev *e, int X, double px, double py) { PB(P_base_ray); Ray * r_ = base_ray__p(e, X, px, py); PE(); return r_; }
@@ -3695,10 +3731,10 @@ static double sq_my(int64_t sq) { return floor((double)sq / 256); }
  * Lua run on the same job (job_done's extra_cover) reads it there. */
 static int sqf_get__p(Ev *e, int64_t sq, double mx, double my) {
     lua_State *L = e->L;
-    HVal *hv = hm_find(&e->job->sqf, (uint64_t)sq, 0);
+    HVal *hv = (e->dl_skip & 8) ? NULL : hm_find(&e->job->sqf, (uint64_t)sq, 0);
     if (hv) { if (e->pcc_run) pcc_mark(e, mx, my, PR_T | PR_P); return (int)hv->i; }
     int f = SF_NIL;
-    int lt = lua_istable(L, S_SQF);
+    int lt = !(e->dl_skip & 8) && lua_istable(L, S_SQF);
     if (lt) {
         lua_pushnumber(L, (double)sq);
         lua_rawget(L, S_SQF);
@@ -5900,6 +5936,8 @@ static int ctx_gc(lua_State *L) {
 
 static void job_watch_free(Job *j) {
     pcc_free(j);
+    free(j->dsnap); j->dsnap = NULL; j->dsnap_set = 0;
+    free(j->dacc); j->dacc = NULL;
     free(j->rpm);
     j->rpm = NULL;
     j->rp_n = 0;
@@ -6261,7 +6299,9 @@ static int co_lt(void *cx, void *pa, void *pb) {
  * the part again. pilltake_v2.lua drops the job's cache table when an
  * input the parts read changes (pill, base, terrain, age). */
 typedef struct { int inf, any; double x0, y0, x1, y1; } PBox;
-typedef struct { Rec *r; int why, wa; PBox b; } PEnt;
+/* w_*: PT2_V2_DOLL, the work units the part took (n_shot, casts_confirm,
+ * wall_nodes, memo_nodes) */
+typedef struct { Rec *r; int why, wa; PBox b; double w_shot, w_conf, w_nodes, w_memo; } PEnt;
 typedef struct {
     Rec      *out;            /* NULL: the plan is on the record itself */
     Aims     *clr;
@@ -6272,6 +6312,7 @@ typedef struct {
     Plan     *plan;
     Extra    *extra;
     PBox      b;
+    double    w_shot, w_conf, w_nodes, w_memo;
 } PPlan;
 
 static void rb_start(Ev *e) { e->rb_on = 1; e->rb_inf = 0; e->rb_any = 0; }
@@ -6325,18 +6366,52 @@ static void pc_key(const Ev *e, double px, double py, int aim_fixed, int nudge, 
     *k2 = pt_mix(dbits(py) ^ pt_mix(e->csig + 0x5bd1e995ull * (f + 1)));
 }
 
+/* PT2_V2_DOLL: a store answer for part o (POINT or PLAN). The rays its
+ * making used (o's parts, all levels) count as casts once per group run,
+ * and the part's own work units are added: the slicer then sees the work
+ * a run with a new job does, and yields at the same places. */
+static void dl_emu_walk(Ev *e, PObj *o) {
+    Job *j = e->job;
+    for (int i = 0; i < o->nch; i++) {
+        PObj *c = o->ch[i];
+        if (c->vis == j->dvis) continue;
+        c->vis = j->dvis;
+        if (c->kind == PO_RAY) {
+            if (c->drun != j->drun) { c->drun = j->drun; e->casts += 1; e->dl_emu_casts += 1; }
+        } else dl_emu_walk(e, c);
+    }
+}
+static void dl_emu(Ev *e, PObj *o, double w_shot, double w_conf, double w_nodes, double w_memo) {
+    if (!o) { e->job->dlost = 1; return; }
+    e->job->dvis++;
+    o->vis = e->job->dvis;
+    dl_emu_walk(e, o);
+    e->n_shot += w_shot; e->casts_confirm += w_conf;
+    e->wall_nodes += w_nodes; e->memo_nodes += w_memo;
+}
+/* PT2_V2_DOLL stats: a ring point's store answer (hit) or new part, by
+ * its 30 deg slice */
+static void dl_slice(Ev *e, int hit) {
+    if (!e->doll || e->pcc_deg < 0) return;
+    int s = ((int)floor(e->pcc_deg * 10 + 0.5) / 300) % 12;
+    if (s < 0) s = 0;
+    if (hit) { if (e->dsl_h[s] < 65535) e->dsl_h[s]++; }
+    else if (e->dsl_m[s] < 65535) e->dsl_m[s]++;
+}
+
 /* eval_point(px, py, NULL, aim_fixed, nudge, 0, lazy) through the store */
 static Rec *eval_point_pc(Ev *e, double px, double py, int aim_fixed, int nudge, int lazy,
                           int *why, int *why_arg) {
     if (!e->pc_on) return eval_point(e, px, py, NULL, aim_fixed, nudge, 0, lazy, why, why_arg);
     uint64_t k1, k2;
     pc_key(e, px, py, aim_fixed, nudge, lazy, &k1, &k2);
-    HVal *hv = hm_find(&e->job->pts, k1, k2);
+    HVal *hv = (e->dl_skip & 17) ? NULL : hm_find(&e->job->pts, k1, k2);
     if (hv && hv->p) {
         PEnt *pe = (PEnt *)hv->p;
         if (!pc_tank_in(e, &pe->b)) {
             e->pc_eh += 1;
             if (e->pcc_run) e->pcc_last_pt = pcc_ref(e, PO_POINT, k1, k2);
+            if (e->doll) { dl_emu(e, e->pcc_run ? e->pcc_last_pt : NULL, pe->w_shot, pe->w_conf, pe->w_nodes, pe->w_memo); dl_slice(e, 1); }
             *why = pe->why; *why_arg = pe->wa;
             if (!pe->r) {
                 if (pe->why != W_A_OUT) set_om(e, floor(px / 256), floor(py / 256));
@@ -6348,6 +6423,8 @@ static Rec *eval_point_pc(Ev *e, double px, double py, int aim_fixed, int nudge,
         }
         e->pc_et += 1;
     } else e->pc_em += 1;
+    dl_slice(e, 0);
+    double w0s = e->n_shot, w0c = e->casts_confirm, w0n = e->wall_nodes, w0m = e->memo_nodes;
     Arena *save = e->arp;
     e->arp = &e->job->par;
     rb_start(e);
@@ -6365,6 +6442,8 @@ static Rec *eval_point_pc(Ev *e, double px, double py, int aim_fixed, int nudge,
         PEnt *pe = NEW(e, PEnt);
         memset(pe, 0, sizeof(*pe));
         pe->why = *why; pe->wa = *why_arg; pe->b = b;
+        pe->w_shot = e->n_shot - w0s; pe->w_conf = e->casts_confirm - w0c;
+        pe->w_nodes = e->wall_nodes - w0n; pe->w_memo = e->memo_nodes - w0m;
         if (r) {
             r->ck1 = k1; r->ck2 = k2; r->has_ck = 1;
             Rec *sn = NEW(e, Rec);
@@ -6396,13 +6475,14 @@ static Rec *plan_point_pc__p(Ev *e, Rec *rec) {
     if (!e->pc_on || !rec->has_ck || rec->covered) return plan_point(e, rec);
     uint64_t k1, k2;
     plan_key(rec, &k1, &k2);
-    HVal *hv = hm_find(&e->job->pls, k1, k2);
+    HVal *hv = (e->dl_skip & 33) ? NULL : hm_find(&e->job->pls, k1, k2);
     if (hv && hv->p) {
         PPlan *pp = (PPlan *)hv->p;
         if (!pc_tank_in(e, &pp->b)) {
             e->pc_ph += 1;
             e->planned += 1;
-            if (e->pcc_run) pcc_ref(e, PO_PLAN, k1, k2);
+            PObj *pro = e->pcc_run ? pcc_ref(e, PO_PLAN, k1, k2) : NULL;
+            if (e->doll) dl_emu(e, pro, pp->w_shot, pp->w_conf, pp->w_nodes, pp->w_memo);
             Aims *ca = aims_copy(e, pp->clr);
             Lanes *ls = lanes_copy(e, pp->lns);
             rec->clear = ca; rec->lanes = ls; rec->aims_done = pp->aims_done;
@@ -6424,10 +6504,26 @@ static Rec *plan_point_pc__p(Ev *e, Rec *rec) {
         }
         e->pc_pt += 1;
     } else e->pc_pm += 1;
+    double w0s = e->n_shot, w0c = e->casts_confirm, w0n = e->wall_nodes, w0m = e->memo_nodes;
     Arena *save = e->arp;
     e->arp = &e->job->par;
     rb_start(e);
     PObj *po_ = e->pcc_run ? pcc_push(e, PO_PLAN, k1, k2) : NULL;
+    /* PT2_V2_DOLL: the plan takes the point's record (its clear aims,
+     * lanes): the point's part is its child, so a dropped point drops it */
+    if (po_ && e->doll) {
+        HVal *pv = hm_find(&e->job->pcc->om, pt_mix(rec->ck1 + (uint64_t)PO_POINT * 0x9E3779B97F4A7C15ull), rec->ck2);
+        PObj *pto = pv ? (PObj *)pv->p : NULL;
+        if (!pto) e->job->dlost = 1;
+        else if (pto != po_) {
+            int have = 0;
+            for (int i = 0; i < po_->nch; i++) if (po_->ch[i] == pto) { have = 1; break; }
+            if (!have) {
+                if (!pcc_grow((void **)&po_->ch, &po_->capch, po_->nch + 1, sizeof(PObj *))) e->job->dlost = 1;
+                else po_->ch[po_->nch++] = pto;
+            }
+        }
+    }
     Rec *res = plan_point(e, rec);
     pcc_pop(e, po_);
     PBox b;
@@ -6439,6 +6535,8 @@ static Rec *plan_point_pc__p(Ev *e, Rec *rec) {
         PPlan *pp = NEW(e, PPlan);
         memset(pp, 0, sizeof(*pp));
         pp->b = b;
+        pp->w_shot = e->n_shot - w0s; pp->w_conf = e->casts_confirm - w0c;
+        pp->w_nodes = e->wall_nodes - w0n; pp->w_memo = e->memo_nodes - w0m;
         pp->clr = aims_copy(e, rec->clear);
         pp->lns = lanes_copy(e, rec->lanes);
         pp->aims_done = rec->aims_done;
@@ -6471,6 +6569,30 @@ static double ar_bytes(const Arena *a) {
     double n = 0;
     for (const Chunk *c = a->head; c; c = c->next) n += (double)c->cap;
     return n;
+}
+
+/* PT2_V2_DOLL: a group run goes over ticks, and the map can change and
+ * change back in it. Each evaluate start and step adds the map's changes
+ * from the job's snap to dacc (doll_sync takes them too) and snaps again.
+ * dacc keeps a forest only change as CH_F; doll_sync makes it CH_T when
+ * forest is not see-through. */
+static const unsigned char *pc_world(lua_State *L);
+static void dl_class(unsigned a, unsigned b, int ft, unsigned char *out) {
+    a &= 0x0F; b &= 0x0F;
+    if (a == b) return;
+    int fa = (a == 5 || a == 13), fb = (b == 5 || b == 13);
+    unsigned ga = fa ? a + 2 : a, gb = fb ? b + 2 : b;
+    if (ga != gb || (fa != fb && !ft)) *out |= 1;   /* CH_T */
+    else if (fa != fb) *out |= 2;                   /* CH_F */
+}
+static void dl_track(lua_State *L, Job *j) {
+    if (!j || !j->doll || !j->dsnap_set || !j->dsnap) return;
+    const unsigned char *m = pc_world(L);
+    if (!m || memcmp(j->dsnap, m, PT2_MAP_SQ) == 0) return;
+    if (!j->dacc) j->dacc = (unsigned char *)calloc(PT2_MAP_SQ, 1);
+    if (!j->dacc) { j->dlost = 1; return; }
+    for (int k = 0; k < PT2_MAP_SQ; k++) if (j->dsnap[k] != m[k]) dl_class(j->dsnap[k], m[k], 1, &j->dacc[k]);
+    memcpy(j->dsnap, m, PT2_MAP_SQ);
 }
 
 /* csig: the inputs of this run that the kept parts read and that are the
@@ -6518,6 +6640,7 @@ static uint64_t pc_csig(Ev *e, int world) {
 
 static void pc_pill_remap(lua_State *L, Job *j);
 static void pcc_begin(Ev *e, Job *j, int prun);
+static const unsigned char *pc_world(lua_State *L);
 
 static double score_fn(Ev *e, double deg, double mx, double my, double cx, double cy) {
     lua_State *L = e->L;
@@ -6570,8 +6693,17 @@ static void points_of_ring__p(Ev *e) {
         if (fon) {
             fk1 = pt_mix(e->csig ^ dbits(cx) ^ 0x6a09e667f3bcc909ull);
             fk2 = pt_mix(dbits(cy) + pt_mix(dbits(e->R) ^ dbits(deg)));
-            fv = hm_find(&e->job->flt, fk1, fk2);
+            fv = (e->dl_skip & 4) ? NULL : hm_find(&e->job->flt, fk1, fk2);
             if (fv) fa = fv->i;
+        }
+        /* PT2_V2_DOLL: the entry also keeps its ring square and its slot
+         * (the A square), for doll_sync (bits 8 and up; the answer is in
+         * bits 0 to 3) */
+        int64_t fx = 0;
+        if (fon && e->doll) {
+            Pill *GA = PI(e, e->A);
+            int64_t sqc = (mx >= 0 && mx <= 255 && my >= 0 && my <= 255) ? (int64_t)(my * 256 + mx) : 0xFFFF;
+            fx = (sqc << 8) | ((int64_t)(GA->my * 256 + GA->mx) << 24);
         }
         int pass;
         if (fa & 1) pass = (fa & 2) != 0;
@@ -6590,7 +6722,7 @@ static void points_of_ring__p(Ev *e) {
             if (fon && !(fa & 1)) {
                 int isnew;
                 HVal *v = hm_put(L, &e->job->flt, fk1, fk2, &isnew);
-                v->i = 1 | 2 | (hasA ? 4 : 0) | (is_cant ? 8 : 0);
+                v->i = (1 | 2 | (hasA ? 4 : 0) | (is_cant ? 8 : 0)) | fx;
             }
             int q = e->np++;
             e->pp_deg[q] = deg; e->pp_cx[q] = cx; e->pp_cy[q] = cy; e->pp_mx[q] = mx; e->pp_my[q] = my;
@@ -6598,7 +6730,7 @@ static void points_of_ring__p(Ev *e) {
         } else if (fon && !(fa & 1)) {
             int isnew;
             HVal *v = hm_put(L, &e->job->flt, fk1, fk2, &isnew);
-            v->i = 1;
+            v->i = 1 | fx;
         }
     }
     pcc_leave(e, pfs_);
@@ -7037,6 +7169,23 @@ static void push_result__p(Ev *e) {
         stat_put(L, "pc_lost_ts", e->pc_lost_ts); stat_put(L, "pc_lost_aw", e->pc_lost_aw);
         stat_put(L, "pc_lost_ts_us", e->pc_lost_ts_us);
     }
+    if (e->doll) {
+        /* D1 rays (from an earlier run / cast), D3 30 deg slices (with a
+         * ring point; all its points from the store), D4 the rings (all
+         * the evaluate's points from the store) */
+        int sl_n = 0, sl_clean = 0, tot = 0, miss = 0;
+        for (int i = 0; i < 12; i++) {
+            int h = e->dsl_h[i], m = e->dsl_m[i];
+            if (h + m == 0) continue;
+            sl_n++; if (m == 0) sl_clean++;
+            tot += h + m; miss += m;
+        }
+        stat_put(L, "dl_ray_old", e->dl_ray_old); stat_put(L, "dl_ray_cast", e->dl_ray_cast);
+        stat_put(L, "dl_emu_casts", e->dl_emu_casts);
+        stat_put(L, "dl_wdrop", e->dl_wdrop);
+        stat_put(L, "dl_sl_n", sl_n); stat_put(L, "dl_sl_clean", sl_clean);
+        stat_put(L, "dl_ring_n", tot > 0); stat_put(L, "dl_ring_clean", tot > 0 && miss == 0);
+    }
     lua_setfield(L, -2, "stat");
     {
         static const char *tmk[] = { "wedges", "masks", "cast", "aim", "walls", "confirm", "leeway",
@@ -7157,6 +7306,24 @@ static int l_begin__p(lua_State *L) {
     lua_getfield(L, S_INP, "_v2_pc_lost");
     e->pc_lost = lua_toboolean(L, -1);
     lua_pop(L, 1);
+    /* PT2_V2_DOLL: the kept job of the whole game (pilltake_v2.lua
+     * doll_cache); its first run snaps the map for doll_sync */
+    lua_getfield(L, S_INP, "_v2_doll");
+    e->doll = e->pc_on && lua_toboolean(L, -1);
+    lua_pop(L, 1);
+    lua_getfield(L, S_INP, "_v2_dl_skip");
+    e->dl_skip = e->doll && lua_isnumber(L, -1) ? (int)lua_tointeger(L, -1) : 0;
+    lua_pop(L, 1);
+    if (e->doll) {
+        if (!j->doll) { j->doll = 1; if (j->drun < 1) j->drun = 1; }
+        if (!j->dsnap_set) {
+            const unsigned char *wm = pc_world(L);
+            if (!j->dsnap) j->dsnap = (unsigned char *)malloc(PT2_MAP_SQ);
+            if (wm && j->dsnap) { memcpy(j->dsnap, wm, PT2_MAP_SQ); j->dsnap_set = 1; }
+            else j->dlost = 1;
+        }
+        else dl_track(L, j);
+    }
     if (e->pc_on) {
         lua_getfield(L, S_INP, "_v2_cache");
         if (lua_istable(L, -1)) {
@@ -7245,6 +7412,9 @@ static int l_begin__p(lua_State *L) {
         uint64_t ws = pc_csig(e, 1);
         if (j->wsig_set && j->wsig != ws) {
             hm_clear(&j->rays); hm_clear(&j->sqm); hm_clear(&j->sqf);
+            /* PT2_V2_DOLL: the kept parts' links to their rays are by
+             * place, so the points, plans and filter answers go too */
+            if (e->doll) { hm_clear(&j->pts); hm_clear(&j->pls); hm_clear(&j->flt); e->dl_wdrop = 1; }
             j->n_sqf_new = 0;
             e->pc_wdrop = 1;
             lua_getfield(L, S_INP, "_v2_cache");
@@ -7268,7 +7438,7 @@ static int l_begin__p(lua_State *L) {
             lua_pop(L, 1);
         }
         j->wsig = ws; j->wsig_set = 1;
-        if (!j->rpm) j->rpm = (unsigned char *)calloc(PT2_MAP_SQ, 1);
+        if (!j->rpm && !e->doll) j->rpm = (unsigned char *)calloc(PT2_MAP_SQ, 1);
         Pill *GA = PI(e, e->A);
         pc_mark(e, GA->mx, GA->my, PCM_GROUP);
     }
@@ -7277,7 +7447,10 @@ static int l_begin__p(lua_State *L) {
         lua_getfield(L, S_INP, "_v2_pc_part");
         int prun = lua_isnumber(L, -1) ? (int)lua_tointeger(L, -1) : 0;
         lua_pop(L, 1);
-        if (prun > 0) pcc_begin(e, j, prun);
+        /* the part log times its parts; a doll run only marks them */
+        if (prun > 0) { e->pcc_time = 1; pcc_begin(e, j, prun); }
+        else if (e->doll) { e->pcc_time = 0; pcc_begin(e, j, j->drun); }
+        if (e->doll && !e->pcc_run) j->dlost = 1;
     }
     e->asets = aim_wedges(e, e->A);
     step_end(e);
@@ -7330,6 +7503,9 @@ static void pcc_begin(Ev *e, Job *j, int prun) {
     e->pcc_t0 = pf_clock();
     e->pcc_alev = NULL; e->pcc_ctx = NULL;
     PObj *o = pcc_obj(e, PO_ALEV, (uint64_t)k, 0, 0);
+    /* PT2_V2_DOLL: the A level runs again each evaluate, so it keeps only
+     * this evaluate's reads (doll_sync checks them before the next) */
+    if (o && e->doll) { o->nrd = 0; o->nsrt = 0; o->nch = 0; }
     e->pcc_alev = o; e->pcc_ctx = o;
     if (!o) e->pcc_on = e->pcc_run = 0;
 }
@@ -7347,6 +7523,7 @@ static int l_step__p(lua_State *L) {
     if (e->pcc_on && e->job && e->job->pcc) {
         e->pcc_run = 1; e->pcc_n = 0; e->pcc_ctx = e->pcc_alev; e->pcc_deg = -1; e->pcc_t0 = pf_clock();
     }
+    if (e->doll) dl_track(L, e->job);
     cr_setup(e);
     if (e->pc != 0) step_reads(e);
     else {
@@ -8250,6 +8427,331 @@ static int l_pc_part_q(lua_State *L) {
     return 2;
 }
 
+/* â”€â”€ PT2_V2_DOLL: the kept job's sync â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+ * One job per player and source for the whole game (pilltake_v2.lua
+ * doll_cache). Before each group run, doll_sync takes the changes since
+ * the last sync (the map against the job's snap, the pill and base
+ * changes from the Lua) and drops each kept part they hit: a ray (D1), a
+ * ring point's evaluate (D2), a plan (D5), a filter answer, a square read
+ * or fact. A part is hit by its own reads, or when one of its parts (all
+ * levels) is hit. Pill rule B (Andrew): a hostile pill change hits a ring
+ * point within reach + margin; an ally pill change hits a ray that read
+ * its square; "exact" also lets any pill change on a read square hit.
+ * A ray or a pill's centre wedges: a change of that pill. The A level of
+ * a slot (D4): its reads and its rays; a hit drops the slot's points,
+ * plans and filter answers. The rest is made again from the kept parts
+ * on the next read. */
+static int dl_hm_del(HMap *m, uint64_t a, uint64_t b) {
+    if (!m->cap) return 0;
+    uint64_t mask = (uint64_t)m->cap - 1;
+    uint64_t i = hm_hash(a, b) & mask;
+    while (m->u[i]) {
+        if (m->k1[i] == a && m->k2[i] == b) break;
+        i = (i + 1) & mask;
+    }
+    if (!m->u[i]) return 0;
+    m->u[i] = 0; m->n--;
+    uint64_t q = i;
+    for (;;) {
+        q = (q + 1) & mask;
+        if (!m->u[q]) break;
+        uint64_t k = hm_hash(m->k1[q], m->k2[q]) & mask;
+        /* q stays when its home k is in (i, q] (cyclic) */
+        if (i <= q ? (i < k && k <= q) : (i < k || k <= q)) continue;
+        m->k1[i] = m->k1[q]; m->k2[i] = m->k2[q]; m->v[i] = m->v[q]; m->u[i] = 1;
+        m->u[q] = 0; i = q;
+    }
+    return 1;
+}
+
+static double dl_hm_bytes(const HMap *m) { return (double)m->cap * (2 * sizeof(uint64_t) + sizeof(HVal) + 1); }
+static double dl_pcc_bytes(const Job *j) {
+    double n = 0;
+    const PccJob *pj = j->pcc;
+    if (pj) {
+        n += sizeof(PccJob) + (double)pj->capobj * sizeof(PObj *) + dl_hm_bytes(&pj->om);
+        for (int i = 0; i < pj->nobj; i++) {
+            const PObj *o = pj->objs[i];
+            n += sizeof(PObj) + (double)o->caprd * sizeof(uint32_t) + (double)o->capch * sizeof(PObj *);
+        }
+    }
+    return n;
+}
+static double dl_bytes(const Job *j) {
+    double n = sizeof(Job) + ar_bytes(&j->ar) + ar_bytes(&j->par);
+    n += dl_hm_bytes(&j->rays) + dl_hm_bytes(&j->sqm) + dl_hm_bytes(&j->sqf)
+       + dl_hm_bytes(&j->pts) + dl_hm_bytes(&j->pls) + dl_hm_bytes(&j->flt);
+    n += dl_pcc_bytes(j);
+    if (j->dsnap) n += 2 * PT2_MAP_SQ;
+    n += (double)j->cap_pills * sizeof(Pill *);
+    return n;
+}
+
+typedef struct { int sq; int c; } DlSq;
+enum { DL_OWN = 1, DL_DIRTY = 2, DL_DONE = 4, DL_BUSY = 8 };
+
+static int dl_own(const PObj *o, const unsigned char *chg, const DlSq *cs, int ncs, const PChg *pc, int npc,
+                  double R1, double margin, int exact) {
+    int k = o->kind;
+    if (k != PO_RAY && k != PO_CWM && k != PO_POINT && k != PO_PLAN && k != PO_ALEV) return 0;
+    int x0 = 256, y0 = 256, x1 = -1, y1 = -1;
+    for (int r = 0; r < o->nrd; r++) {
+        uint32_t v = o->rd[r];
+        int sq = (int)(v >> 8);
+        if (k == PO_PLAN) {
+            int x = sq & 255, y = sq >> 8;
+            if (x < x0) x0 = x;
+            if (x > x1) x1 = x;
+            if (y < y0) y0 = y;
+            if (y > y1) y1 = y;
+        }
+        int c = chg[sq];
+        if (!c) continue;
+        int bits = (int)(v & 255u);
+        if ((c & CH_T) && (bits & (PR_T | PR_W))) return 1;
+        if ((c & CH_F) && (bits & PR_W)) return 1;
+        if ((c & CH_B) && (bits & PR_B)) return 1;
+        if ((c & CH_PO) && (bits & PR_P)) {
+            /* a ray or wedge set keeps what is on its squares (the link
+             * pill, ally cover): any pill change on them; rule B lets
+             * the other parts take only the in-range test below */
+            if (exact || k == PO_RAY || k == PO_CWM) return 1;
+        }
+    }
+    if ((k == PO_RAY || k == PO_CWM) && o->x >= 0 && o->x <= 255 && o->y >= 0 && o->y <= 255
+        && (chg[o->y * 256 + o->x] & CH_PO)) return 1;
+    if (k == PO_ALEV && o->slot_k >= 0 && o->slot_k < PT2_MAP_SQ && (chg[o->slot_k] & CH_PO)) return 1;
+    if (k == PO_POINT && o->x >= 0) {
+        for (int c = 0; c < npc; c++) {
+            if (!pc[c].fh) continue;
+            int sq[2] = { pc[c].o, pc[c].n };
+            for (int q = 0; q < 2; q++) {
+                if (sq[q] < 0) continue;
+                double dx = (sq[q] & 255) - o->x, dy = (sq[q] >> 8) - o->y;
+                if (dx * dx + dy * dy <= R1 * R1) return 1;
+            }
+        }
+        /* the margin disks of the point and its builder origin */
+        int cx[2] = { o->x, o->ox }, cy[2] = { o->y, o->oy };
+        for (int i = 0; i < ncs; i++) {
+            if (!(cs[i].c & (CH_T | CH_B))) continue;
+            int x = cs[i].sq & 255, y = cs[i].sq >> 8;
+            for (int q = 0; q < 2; q++) {
+                if (cx[q] < 0) continue;
+                double dx = x - cx[q], dy = y - cy[q];
+                if (dx * dx + dy * dy <= margin * margin) return 1;
+            }
+        }
+    }
+    if (k == PO_PLAN && x1 >= 0) {
+        /* the plan's points test the hostile pills in range (by place,
+         * not by a square read): a pill change in reach of its box */
+        for (int c = 0; c < npc; c++) {
+            int sq[2] = { pc[c].o, pc[c].n };
+            for (int q = 0; q < 2; q++) {
+                if (sq[q] < 0) continue;
+                int x = sq[q] & 255, y = sq[q] >> 8;
+                if (x >= x0 - R1 && x <= x1 + R1 && y >= y0 - R1 && y <= y1 + R1) return 1;
+            }
+        }
+        /* a builder walk can leave its box: a terrain, forest or base
+         * change in the box of the plan's reads + margin */
+        int mr = (int)ceil(margin);
+        for (int i = 0; i < ncs; i++) {
+            if (!(cs[i].c & (CH_T | CH_F | CH_B))) continue;
+            int x = cs[i].sq & 255, y = cs[i].sq >> 8;
+            if (x >= x0 - mr && x <= x1 + mr && y >= y0 - mr && y <= y1 + mr) return 1;
+        }
+    }
+    return 0;
+}
+
+static int dl_dirty(PObj *o, unsigned char *fl) {
+    int i = o->qi;
+    if (i < 0) return 0;
+    if (fl[i] & DL_DONE) return (fl[i] & DL_DIRTY) != 0;
+    if (fl[i] & DL_BUSY) return 0;
+    fl[i] |= DL_BUSY;
+    int d = (fl[i] & DL_OWN) != 0;
+    for (int c = 0; !d && c < o->nch; c++) {
+        PObj *ch = o->ch[c];
+        /* the A level runs again each run: only the rays and wedges it read */
+        if (o->kind == PO_ALEV && ch->kind != PO_RAY && ch->kind != PO_CWM) continue;
+        if (dl_dirty(ch, fl)) d = 1;
+    }
+    fl[i] = (unsigned char)((fl[i] & ~DL_BUSY) | DL_DONE | (d ? DL_DIRTY : 0));
+    return d;
+}
+
+static void dl_stat(lua_State *L, const char *k, double v) { lua_pushnumber(L, v); lua_setfield(L, -2, k); }
+
+/* gh_pt2_v2.doll_sync(job, pills, bases, reach, margin, forest_transparent,
+ * exact): pills { o_mx, o_my, n_mx, n_my, fh, fa, ... } and bases { mx,
+ * my, ... } as pc_part_q takes them (reach and margin in squares). Returns
+ * a stats table, or a string when the job must be new ("lost", "busy",
+ * "nojob", "nomap"). */
+static int l_doll_sync(lua_State *L) {
+    Job *j = (Job *)luaL_checkudata(L, 1, "gh_pt2_v2_job_mt");
+    luaL_checktype(L, 2, LUA_TTABLE);
+    luaL_checktype(L, 3, LUA_TTABLE);
+    double reach = luaL_checknumber(L, 4), margin = luaL_checknumber(L, 5);
+    int ft = lua_toboolean(L, 6), exact = lua_toboolean(L, 7);
+    if (j->freed || j->busy || j->dlost || !j->doll || !j->dsnap_set || !j->dsnap) {
+        lua_pushstring(L, j->dlost ? "lost" : (j->busy ? "busy" : "nojob"));
+        return 1;
+    }
+    const unsigned char *m = pc_world(L);
+    if (!m) { lua_pushstring(L, "nomap"); return 1; }
+    int64_t t0 = pf_clock();
+    j->drun++;
+    int nb = (int)lua_objlen(L, 3), np = (int)lua_objlen(L, 2);
+    int same = nb == 0 && np == 0 && memcmp(j->dsnap, m, PT2_MAP_SQ) == 0;
+    if (same && j->dacc) for (int k = 0; k < PT2_MAP_SQ; k++) if (j->dacc[k]) { same = 0; break; }
+    lua_createtable(L, 0, 32);
+    if (same) {
+        dl_stat(L, "changed", 0);
+        dl_stat(L, "bytes", dl_bytes(j));
+        dl_stat(L, "us", (double)(pf_clock() - t0) * pf_tick_us());
+        return 1;
+    }
+    unsigned char *chg = (unsigned char *)calloc(PT2_MAP_SQ, 1);
+    int npc_cap = np / 6 + 1;
+    PChg *pc = (PChg *)calloc((size_t)npc_cap, sizeof(PChg));
+    if (!chg || !pc) { free(chg); free(pc); lua_pop(L, 1); lua_pushstring(L, "lost"); return 1; }
+    int nterr = 0, nfor = 0, npc = 0;
+    for (int k = 0; k < PT2_MAP_SQ; k++) {
+        unsigned a = j->dsnap[k] & 0x0F, b = m[k] & 0x0F;
+        if (a == b) continue;
+        int fa = (a == 5 || a == 13), fb = (b == 5 || b == 13);
+        /* forest as grass (map types 5 to 7, 13 to 15), as pc_part_q does */
+        unsigned ga = fa ? a + 2 : a, gb = fb ? b + 2 : b;
+        if (ga != gb || (fa != fb && !ft)) { chg[k] |= CH_T; nterr++; }
+        else if (fa != fb) { chg[k] |= CH_F; nfor++; }
+    }
+    int nmid = 0;
+    if (j->dacc) {
+        for (int k = 0; k < PT2_MAP_SQ; k++) {
+            unsigned char c = j->dacc[k];
+            if (!c) continue;
+            nmid++;
+            /* a forest change: terrain if the run did not have forest as see-through */
+            if (c & 1) chg[k] |= CH_T;
+            if (c & 2) chg[k] |= ft ? CH_F : CH_T;
+        }
+        memset(j->dacc, 0, PT2_MAP_SQ);
+    }
+    for (int i = 1; i + 1 <= nb; i += 2) {
+        lua_rawgeti(L, 3, i); lua_rawgeti(L, 3, i + 1);
+        int x = (int)lua_tonumber(L, -2), y = (int)lua_tonumber(L, -1);
+        lua_pop(L, 2);
+        if (x >= 0 && x <= 255 && y >= 0 && y <= 255) chg[y * 256 + x] |= CH_B;
+    }
+    int nh = 0, na = 0;
+    for (int i = 1; i + 5 <= np && npc < npc_cap; i += 6) {
+        double v[6];
+        for (int q = 0; q < 6; q++) { lua_rawgeti(L, 2, i + q); v[q] = lua_tonumber(L, -1); lua_pop(L, 1); }
+        PChg *c = &pc[npc++];
+        c->o = (v[0] >= 0 && v[0] <= 255 && v[1] >= 0 && v[1] <= 255) ? (int)v[1] * 256 + (int)v[0] : -1;
+        c->n = (v[2] >= 0 && v[2] <= 255 && v[3] >= 0 && v[3] <= 255) ? (int)v[3] * 256 + (int)v[2] : -1;
+        c->fh = v[4] != 0; c->fa = v[5] != 0;
+        nh += c->fh; na += c->fa;
+        if (c->o >= 0) { chg[c->o] |= CH_PO; if (c->fa) chg[c->o] |= CH_PA; }
+        if (c->n >= 0) { chg[c->n] |= CH_PO; if (c->fa) chg[c->n] |= CH_PA; }
+    }
+    int ncs = 0;
+    for (int k = 0; k < PT2_MAP_SQ; k++) if (chg[k]) ncs++;
+    DlSq *cs = (DlSq *)malloc(sizeof(DlSq) * (size_t)(ncs + 1));
+    if (!cs) { free(chg); free(pc); lua_pop(L, 1); lua_pushstring(L, "lost"); return 1; }
+    ncs = 0;
+    for (int k = 0; k < PT2_MAP_SQ; k++) if (chg[k]) { cs[ncs].sq = k; cs[ncs].c = chg[k]; ncs++; }
+    double n_ray0 = j->rays.n, n_pt0 = j->pts.n, n_pl0 = j->pls.n, n_flt0 = j->flt.n;
+    double d_ray = 0, d_pt = 0, d_pl = 0, d_flt = 0, d_sqm = 0, d_sqf = 0, own_n = 0, slots = 0;
+    double own_k[PO_N] = { 0 }, dir_k[PO_N] = { 0 };
+    PccJob *pj = j->pcc;
+    int ns = pj ? pj->nobj : 0;
+    unsigned char *fl = (unsigned char *)calloc((size_t)ns + 1, 1);
+    unsigned char *sdirty = (unsigned char *)calloc(PT2_MAP_SQ, 1);
+    if (!fl || !sdirty) { free(chg); free(pc); free(cs); free(fl); free(sdirty); lua_pop(L, 1); lua_pushstring(L, "lost"); return 1; }
+    if (ncs > 0 && ns > 0) {
+        double R1 = reach + margin;
+        for (int i = 0; i < ns; i++) pj->objs[i]->qi = i;
+        for (int i = 0; i < ns; i++) {
+            PObj *o = pj->objs[i];
+            if (dl_own(o, chg, cs, ncs, pc, npc, R1, margin, exact)) { fl[i] |= DL_OWN; own_n++; own_k[o->kind]++; }
+        }
+        for (int i = 0; i < ns; i++) {
+            PObj *o = pj->objs[i];
+            if (o->kind == PO_ALEV && dl_dirty(o, fl) && o->slot_k >= 0 && o->slot_k < PT2_MAP_SQ && !sdirty[o->slot_k]) {
+                sdirty[o->slot_k] = 1; slots++;
+            }
+        }
+        for (int i = 0; i < ns; i++) {
+            PObj *o = pj->objs[i];
+            int k = o->kind;
+            if (k != PO_RAY && k != PO_POINT && k != PO_PLAN) continue;
+            int d = dl_dirty(o, fl);
+            if (!d && k != PO_RAY && o->slot_k >= 0 && o->slot_k < PT2_MAP_SQ && sdirty[o->slot_k]) d = 1;
+            if (!d) continue;
+            dir_k[k]++;
+            if (k == PO_RAY) d_ray += dl_hm_del(&j->rays, o->ka, o->kb);
+            else if (k == PO_POINT) d_pt += dl_hm_del(&j->pts, o->ka, o->kb);
+            else d_pl += dl_hm_del(&j->pls, o->ka, o->kb);
+        }
+        for (int i = 0; i < ns; i++) pj->objs[i]->qi = -1;
+    }
+    /* the filter answers: their ring square changed, or their slot, or a
+     * pill changed in reach of the ring square (the cant test reads the
+     * wedges of each hostile pill in range) */
+    if (j->flt.n > 0) {
+        int cap = j->flt.cap, nd = 0;
+        double R1f = reach + margin;
+        uint64_t *dk = (uint64_t *)malloc(sizeof(uint64_t) * 2 * (size_t)(j->flt.n + 1));
+        if (dk) {
+            for (int i = 0; i < cap; i++) {
+                if (!j->flt.u[i]) continue;
+                int64_t v = j->flt.v[i].i;
+                int sq = (int)((v >> 8) & 0xFFFF), sk = (int)((v >> 24) & 0xFFFF);
+                int drop = (sq != 0xFFFF && chg[sq]) || sdirty[sk];
+                for (int c = 0; !drop && sq != 0xFFFF && c < npc; c++) {
+                    int ps[2] = { pc[c].o, pc[c].n };
+                    for (int q = 0; q < 2; q++) {
+                        if (ps[q] < 0) continue;
+                        double dx = (ps[q] & 255) - (sq & 255), dy = (ps[q] >> 8) - (sq >> 8);
+                        if (dx * dx + dy * dy <= R1f * R1f) { drop = 1; break; }
+                    }
+                }
+                if (drop) { dk[2 * nd] = j->flt.k1[i]; dk[2 * nd + 1] = j->flt.k2[i]; nd++; }
+            }
+            for (int i = 0; i < nd; i++) d_flt += dl_hm_del(&j->flt, dk[2 * i], dk[2 * i + 1]);
+            free(dk);
+        } else j->dlost = 1;
+    }
+    /* the square reads and facts of each changed square */
+    for (int i = 0; i < ncs; i++) {
+        d_sqm += dl_hm_del(&j->sqm, dbits((double)cs[i].sq), 0);
+        d_sqf += dl_hm_del(&j->sqf, (uint64_t)(int64_t)cs[i].sq, 0);
+    }
+    memcpy(j->dsnap, m, PT2_MAP_SQ);
+    dl_stat(L, "changed", 1);
+    dl_stat(L, "nterr", nterr); dl_stat(L, "nfor", nfor); dl_stat(L, "nbase", nb / 2);
+    dl_stat(L, "nhost", nh); dl_stat(L, "nally", na); dl_stat(L, "nsq", ncs); dl_stat(L, "nmid", nmid);
+    dl_stat(L, "nobj", ns); dl_stat(L, "own", own_n);
+    dl_stat(L, "own_ray", own_k[PO_RAY]); dl_stat(L, "own_cwm", own_k[PO_CWM]); dl_stat(L, "own_point", own_k[PO_POINT]);
+    dl_stat(L, "own_plan", own_k[PO_PLAN]); dl_stat(L, "own_alev", own_k[PO_ALEV]);
+    dl_stat(L, "dir_ray", dir_k[PO_RAY]); dl_stat(L, "dir_point", dir_k[PO_POINT]); dl_stat(L, "dir_plan", dir_k[PO_PLAN]);
+    dl_stat(L, "slots", slots);
+    dl_stat(L, "n_ray", n_ray0); dl_stat(L, "n_pt", n_pt0); dl_stat(L, "n_pl", n_pl0); dl_stat(L, "n_flt", n_flt0);
+    dl_stat(L, "d_ray", d_ray); dl_stat(L, "d_pt", d_pt); dl_stat(L, "d_pl", d_pl); dl_stat(L, "d_flt", d_flt);
+    dl_stat(L, "d_sqm", d_sqm); dl_stat(L, "d_sqf", d_sqf);
+    dl_stat(L, "bytes", dl_bytes(j));
+    /* the parts of bytes: rays (ar), points and plans (par), part marks */
+    dl_stat(L, "b_ar", ar_bytes(&j->ar)); dl_stat(L, "b_par", ar_bytes(&j->par)); dl_stat(L, "b_pcc", dl_pcc_bytes(j));
+    dl_stat(L, "n_obj", pj ? pj->nobj : 0);
+    free(chg); free(pc); free(cs); free(fl); free(sdirty);
+    dl_stat(L, "us", (double)(pf_clock() - t0) * pf_tick_us());
+    return 1;
+}
+
 static const luaL_Reg gh_pt2_v2_lib[] = {
     { "area_sig", l_area_sig },
     { "pc_watch_new", l_pc_watch_new },
@@ -8261,6 +8763,7 @@ static const luaL_Reg gh_pt2_v2_lib[] = {
     { "pc_part_make", l_pc_part_make },
     { "pc_part_q", l_pc_part_q },
     { "pc_free", l_pc_free },
+    { "doll_sync", l_doll_sync },
     { "begin", l_begin },
     { "step", l_step },
     { "evaluate", l_evaluate },

@@ -3062,12 +3062,12 @@ M.pc_count = { checks = 0, diffs = 0, kept = 0, new = 0, age = 0, pill = 0, base
                w_out = { tt = 0, po = 0, sqf = 0, base = 0, walk = 0 }, w_out_max = 0 }
 
 local function pc_src(inp)
-  if inp._v2_pc_off or not PCK.PT2_V2_CACHE or not inp.v2_c then return nil end
+  if inp._v2_pc_off or not (PCK.PT2_V2_CACHE or PCK.PT2_V2_DOLL) or not inp.v2_c then return nil end
   if not rawget(_G, "gh_pt2_v2") or not inp._world or not inp.A then return nil end
   if (inp.capture_file and inp.capture_file ~= "") or inp.v2_mask_stats or inp.v2_loss_check
      or inp.v2_confirm_check or inp.v2_confirm_drop then return nil end
   local src = inp._v2_pc_src or "take"
-  if src == "take" and PCK.PT2_V2_CACHE_TAKE == false then return nil end
+  if src == "take" and PCK.PT2_V2_CACHE_TAKE == false and not PCK.PT2_V2_DOLL then return nil end
   return src
 end
 
@@ -3083,8 +3083,8 @@ local function pc_take(inp, w)
       P[#P + 1] = { mx, my, string.format("%d,%d,%s,%s,%s,%s,%s", mx, my, tostring((p.health or 0) > 0),
         tostring(p.in_tank), tostring(p.pos_unknown), tostring(p.owner),
         tostring(env.cover_of_pill and env.cover_of_pill(p))),
-        (PCK.PT2_V2_CACHE_DROP_LOG or PCK.PT2_V2_CACHE_PART_LOG) and inp.ids and inp.ids[p] or nil,
-        PCK.PT2_V2_CACHE_PART_LOG and (env.is_ally and env.is_ally(p) and true or false) or nil }
+        (PCK.PT2_V2_CACHE_DROP_LOG or PCK.PT2_V2_CACHE_PART_LOG or PCK.PT2_V2_DOLL) and inp.ids and inp.ids[p] or nil,
+        (PCK.PT2_V2_CACHE_PART_LOG or PCK.PT2_V2_DOLL) and (env.is_ally and env.is_ally(p) and true or false) or nil }
     end
   end
   local B = {}
@@ -3303,14 +3303,94 @@ end
 local PXS = {}
 local PCP_RUN = 0
 
+-- ── PT2_V2_DOLL: one kept job per source for the whole game ──────────
+-- PDS[src] = { cache, t0, last, P, B, ss, open }. Each group run first
+-- syncs the C job (gh_pt2_v2.doll_sync) with the changes since the last
+-- run: the C drops the parts they hit. A new job when the entry is older
+-- than PT2_V2_CACHE_MAX_AGE_TICKS, the shell rules changed, the last run
+-- did not end, the clock went back, or the C lost a part's marks.
+local PDS = {}
+M.dl_count = { runs = 0, new = 0, open = 0, time = 0, age = 0, rules = 0, lost = 0, busy = 0, nojob = 0,
+               nomap = 0, sync = 0, changed = 0, sync_us = 0, own = 0, nsq = 0, nmid = 0, slots = 0,
+               n_ray = 0, n_pt = 0, n_pl = 0, n_flt = 0, d_ray = 0, d_pt = 0, d_pl = 0, d_flt = 0,
+               d_sqm = 0, d_sqf = 0, bytes = 0, bytes_max = 0 }
+local DL_ADD = { "own", "nsq", "nmid", "slots", "n_ray", "n_pt", "n_pl", "n_flt", "d_ray", "d_pt", "d_pl",
+                 "d_flt", "d_sqm", "d_sqf" }
+-- every kept job's bytes now (the C's count), by source
+function M.dl_bytes()
+  local t, n = {}, 0
+  for src, e in pairs(PDS) do t[src] = e.bytes or 0; n = n + (e.bytes or 0) end
+  return n, t
+end
+local function doll_cache(inp, src, now)
+  local cnt = M.dl_count
+  local P, B, ss = pc_take(inp, inp._world)
+  local e = PDS[src]
+  local why
+  if e then
+    if e.open then why = "open"
+    elseif now < e.last then why = "time"
+    elseif now - e.t0 > (PCK.PT2_V2_CACHE_MAX_AGE_TICKS or 3000) then why = "age"
+    elseif e.ss ~= ss then why = "rules" end
+    local j = e.cache.c_job
+    if not why and j then
+      local pills = pcp_pills(e.P, P)
+      local bases = pcp_bases(e.B, B)
+      local reach, margin = pcp_reach(inp)
+      local st = gh_pt2_v2.doll_sync(j, pills, bases, reach, margin, inp.env.forest_transparent ~= false,
+        PCK.PT2_V2_DOLL_RULE == "exact")
+      if type(st) ~= "table" then why = tostring(st)
+      else
+        cnt.sync = cnt.sync + 1
+        cnt.sync_us = cnt.sync_us + (st.us or 0)
+        e.bytes = st.bytes or e.bytes
+        e.b_ar, e.b_par, e.b_pcc, e.n_obj = st.b_ar or e.b_ar, st.b_par or e.b_par, st.b_pcc or e.b_pcc, st.n_obj or e.n_obj
+        e.n_pt, e.n_pl, e.n_ray = st.n_pt or e.n_pt, st.n_pl or e.n_pl, st.n_ray or e.n_ray
+        if (st.bytes or 0) > cnt.bytes_max then cnt.bytes_max = st.bytes end
+        if st.changed == 1 then
+          cnt.changed = cnt.changed + 1
+          for _, k in ipairs(DL_ADD) do cnt[k] = cnt[k] + (st[k] or 0) end
+          -- the Lua copies of the rays and square facts (a Lua run on
+          -- the job reads them) are made again
+          local c = e.cache
+          c.rays, c.sqm, c.sqf = {}, {}, {}
+        end
+      end
+    end
+    if why then
+      cnt[why] = (cnt[why] or 0) + 1
+      pc_free(e)
+      e = nil
+    end
+  end
+  if not e then
+    e = { cache = new_cache(), t0 = now, doll = true, src = src }
+    PDS[src] = e
+    cnt.new = cnt.new + 1
+  end
+  e.P, e.B, e.ss, e.last, e.open = P, B, ss, now, true
+  cnt.runs = cnt.runs + 1
+  inp.v2_pcache = true
+  inp._v2_doll = true
+  inp._v2_pc_entry = e
+  inp._v2_pc_lost = (PCK.PT2_CPROF_LOG or PCK.PT2_V2_DOLL_CHECK) and true or nil
+  return e.cache
+end
+
 -- The cache table for a group job on inp.A.
 local function pc_cache(inp)
   inp.v2_pcache = nil
   inp._v2_pc_part = nil
+  inp._v2_doll = nil
   local src = pc_src(inp)
   if not src then return new_cache() end
   local w, A = inp._world, inp.A
   local now = inp._v2_pc_now or 0
+  -- no engine map (a test's world): no store
+  if PCK.PT2_V2_DOLL then
+    if not gh_pt2_v2.doll_sync or gh_pt2_v2.pc_watch_new() == nil then return new_cache() end
+    return doll_cache(inp, src, now)
+  end
   local list = PCS[src]
   if not list then list = {}; PCS[src] = list end
   -- no engine map (a test's world): no store
@@ -3520,8 +3600,40 @@ end
 
 -- The end of a group run with a store: the entry's watch area from the
 -- C's marks, and its strings and hashes from the run's start.
+-- PT2_V2_DOLL: the evaluates' doll stats (gh_pt2_v2.c push_result)
+local DL_ST = { "dl_ray_old", "dl_ray_cast", "dl_emu_casts", "dl_sl_n", "dl_sl_clean", "dl_ring_n",
+                "dl_ring_clean", "dl_wdrop", "pc_eh", "pc_em", "pc_et", "pc_ph", "pc_pm", "pc_pt" }
+local function dl_finish(job)
+  local e = job.pc_entry
+  e.open = nil
+  local d = M.dl_count
+  d.ends = (d.ends or 0) + 1
+  -- PT2_CPROF_LOG (log only): the doll's sums, a line each 100 ends
+  if PCK.PT2_CPROF_LOG and d.ends % 100 == 0 then
+    local t = {}
+    for _, k in ipairs({ "runs", "new", "open", "time", "age", "rules", "lost", "busy", "nojob", "nomap", "sync",
+                         "changed", "sync_us", "own", "nsq", "nmid", "slots", "n_ray", "n_pt", "n_pl", "n_flt",
+                         "d_ray", "d_pt", "d_pl", "d_flt", "d_sqm", "d_sqf", "bytes_max" }) do
+      t[#t + 1] = string.format("%s=%.0f", k, d[k] or 0)
+    end
+    for _, k in ipairs(DL_ST) do t[#t + 1] = string.format("s_%s=%.0f", k, d["s_" .. k] or 0) end
+    local nb, bs = M.dl_bytes()
+    for _, src in ipairs({ "take", "dbl" }) do
+      local x = PDS[src]
+      if x then
+        t[#t + 1] = string.format("%s_ar=%.0f %s_par=%.0f %s_pcc=%.0f %s_obj=%.0f %s_npt=%.0f %s_npl=%.0f %s_nray=%.0f",
+          src, x.b_ar or 0, src, x.b_par or 0, src, x.b_pcc or 0, src, x.n_obj or 0, src, x.n_pt or 0,
+          src, x.n_pl or 0, src, x.n_ray or 0)
+      end
+    end
+    M.cprof_err(string.format("PT2_V2_DOLL_SUM %s ends=%d bytes=%.0f take=%.0f dbl=%.0f %s",
+      tostring(job.inp._prof_head or job.inp._v2_pc_head), d.ends, nb, bs.take or 0, bs.dbl or 0, table.concat(t, " ")))
+  end
+end
+
 local function pc_finish(job)
   local e = job.pc_entry
+  if e and e.doll then dl_finish(job); return end
   if not (e and e.open and e.P) then return end
   local inp = job.inp
   local j = e.cache and e.cache.c_job
@@ -3570,6 +3682,10 @@ local function pc_add(job, r)
   job.pcst.bytes = st.pc_bytes or job.pcst.bytes
   local e = job.pc_entry
   if e and st.pc_bytes then e.bytes = st.pc_bytes end
+  if e and e.doll then
+    local d = M.dl_count
+    for _, k in ipairs(DL_ST) do d["s_" .. k] = (d["s_" .. k] or 0) + (st[k] or 0) end
+  end
 end
 
 -- PT2_V2_CACHE_CHECK (log only): the same group again with no store, in
@@ -3595,6 +3711,7 @@ end
 
 local function pc_check(inp, job)
   local cnt = M.pc_count
+  local doll = job.pc_entry and job.pc_entry.doll
   cnt.checks = cnt.checks + 1
   local o_off, o_sl = inp._v2_pc_off, inp.v2_slice
   inp._v2_pc_off, inp.v2_slice = true, nil
@@ -3636,6 +3753,33 @@ local function pc_check(inp, job)
   if PCK.PT2_V2_CACHE_CHECK_TMP then extra = extra .. " tmp=" .. again(true) end
   if not same then cnt.diffs = cnt.diffs + 1 end
   local e, s = inp._v2_pc_entry, job.pcst or {}
+  -- PT2_V2_DOLL_CHECK: on a DIFF, the doll run again with some store
+  -- finds skipped (1 points and plans, 2 rays, 4 filter, 8 squares, 15
+  -- all, 16 points, 32 plans): which one gives the new job's answer
+  local skip = ""
+  if doll and not same then
+    for _, k in ipairs({ 16, 32, 1, 2, 4, 8, 15 }) do
+      inp._v2_dl_skip = k
+      local ok3, j4 = pcall(function()
+        local j = M.group_begin(inp)
+        while not M.group_step(j) do end
+        return j
+      end)
+      inp._v2_dl_skip = nil
+      local c = ok3 and pc_best_str(j4.res) or "error"
+      skip = skip .. string.format(" skip%d=%s", k, c == b and "same" or "DIFF")
+    end
+  end
+  if doll then
+    local d = M.dl_count
+    M.cprof_err(string.format("PT2_V2_DOLL_CHK %s %s src=%s rule=%s eh=%d em=%d et=%d ph=%d pm=%d pt=%d wd=%d"
+        .. " checks=%d diffs=%d runs=%d new=%d open=%d age=%d rules=%d lost=%d time=%d bytes=%s cached={%s}%s",
+      tostring(inp._prof_head or inp._v2_pc_head), same and "same" or "DIFF", tostring(inp._v2_pc_src or "take"),
+      tostring(PCK.PT2_V2_DOLL_RULE), s.pc_eh or 0, s.pc_em or 0, s.pc_et or 0, s.pc_ph or 0, s.pc_pm or 0,
+      s.pc_pt or 0, s.pc_wdrop or 0, cnt.checks, cnt.diffs, d.runs, d.new, d.open, d.age, d.rules, d.lost,
+      d.time, tostring(e and e.bytes), a, same and "" or (" fresh={" .. b .. "}" .. skip)))
+    return
+  end
   M.cprof_err(string.format("PT2_V2_CACHE_CHK %s %s src=%s why=%s eh=%d em=%d et=%d en=%d ph=%d pm=%d pt=%d pn=%d wd=%d"
       .. " bytes=%d checks=%d diffs=%d kept=%d new=%d age=%d pill=%d base=%d rules=%d terrain=%d forest=%d full=%d"
       .. " open=%d wsq=%s wout=%s lt=%d la=%d ltu=%.0f"
@@ -3653,7 +3797,7 @@ end
 -- inputs of the store above).
 function M.world_inp(world, C, U, PC, cpf, inp, no_builder)
   inp = OLD.world_inp(world, C, U, PC, cpf, inp, no_builder)
-  if C.PT2_V2_CACHE then inp._world = world end
+  if C.PT2_V2_CACHE or C.PT2_V2_DOLL then inp._world = world end
   return inp
 end
 
@@ -3661,7 +3805,9 @@ end
 function M.evaluate_group(inp)
   local job = M.group_begin(inp)
   while not M.group_step(job) do end
-  if PCK.PT2_V2_CACHE_CHECK and inp.v2_pcache then pc_check(inp, job) end
+  if PCK.PT2_V2_CACHE_CHECK and inp.v2_pcache and not (job.pc_entry and job.pc_entry.doll) then
+    pc_check(inp, job)
+  end
   return job.res
 end
 
@@ -3696,7 +3842,12 @@ end
 local job_done_x
 local function job_done(job)
   job_done_x(job)
-  if job.pc_entry then pc_finish(job) end
+  if job.pc_entry then
+    pc_finish(job)
+    -- PT2_V2_DOLL_CHECK (log only): the same group with a new job (also
+    -- for a run in slices)
+    if PCK.PT2_V2_DOLL_CHECK and job.pc_entry.doll and not job.inp._v2_dl_skip then pc_check(job.inp, job) end
+  end
 end
 job_done_x = function(job)
   local inp, res = job.inp, job.res
