@@ -1686,8 +1686,9 @@ M.PT2_V2_DOLL_REAL_FILL = true
 M.PT2_V2_DOLL_TAKE_STORE = false
 -- PT2_V2_DOLL_JOB_CAP_MB (Nov 27, memory only): a number N = a doll job of
 -- any source starts again when its bytes pass N MB (at the next sync).
--- The same results. false = no cap.
-M.PT2_V2_DOLL_JOB_CAP_MB = 80
+-- The same results. false = no cap. 150: 58 MB less doll peak (4 bots),
+-- the same C ms/eval; 80: 204 MB less, but 12% slower (fewer cache hits).
+M.PT2_V2_DOLL_JOB_CAP_MB = 150
 -- PT2_V2_DOLL_SCRATCH_OUT (Nov 27, memory only): a stored standoff point
 -- or plan is made in the evaluate's own arena, and only its kept record
 -- is copied to the goal pill's slot arena. Before, the making's scratch
