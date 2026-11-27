@@ -856,8 +856,10 @@ typedef struct {
      * poison     PT2_V2_DOLL_SCRATCH_POISON (debug): the evaluate's arena
      *            is filled with 0xA5 before it is freed
      * copy_share PT2_V2_DOLL_COPY_SHARE: one copy map per evaluate and
-     *            slot arena, so a part two kept records reach is copied once */
-    int       dl_real_fill, dl_scratch_out, dl_poison, dl_copy_share;
+     *            slot arena, so a part two kept records reach is copied once
+     * pobj_small PT2_V2_DOLL_POBJ_SMALL: a part that is not a POINT is made
+     *            without the predict query fields (PO_SMALL bytes) */
+    int       dl_real_fill, dl_scratch_out, dl_poison, dl_copy_share, dl_pobj_small;
 } Pt2Ctx;
 
 typedef struct { int64_t sq; double shots; int kind; double t; int pill; Memo m; } Blk;
@@ -1247,6 +1249,7 @@ struct St {
     /* PT2_V2_DOLL_COPY_SHARE: the copy map of each slot arena (rl_ms, rl_nm)
      * and the scratch the copies are made in first (rl_tmp) */
     struct RlMap *rl_ms; int rl_nm, rl_cm; Arena rl_tmp; int dl_cs;
+    int        dl_ps;       /* PT2_V2_DOLL_POBJ_SMALL */
     int        done;        /* the result was made */
     int        pc;          /* where step goes on */
     /* inp */
@@ -1716,24 +1719,33 @@ static int pill_index(Ev *e, int idx) { PB(P_pill_index); int r_ = pill_index__p
 enum { PO_RAY = 1, PO_POINT, PO_CWM, PO_FILT, PO_POST, PO_PLAN, PO_ALEV, PO_AWS, PO_N };
 enum { PR_T = 1, PR_P = 2, PR_B = 4, PR_W = 8 };
 typedef struct PObj PObj;
+/* Nov 27 (PT2_V2_DOLL_POBJ_SMALL): the fields in size order, the times
+ * as float (a time is only shown), the squares as int16 (0..255, -1), and
+ * the predict query (pq_th ..) last: only a POINT has it, so the other
+ * kinds are made without it (PO_SMALL bytes, 128 against 192 before). */
 struct PObj {
-    int kind, slot_k, deg10, run;
-    int x, y, ox, oy;             /* POINT: the ring point and its origin; RAY: the pill */
-    double t, t_run;              /* own C time in us (FILT, POST, ALEV, CWM: the most in one run) */
-    uint32_t *rd; int nrd, caprd, nsrt;   /* reads: square << 8 | PR_* */
-    PObj **ch; int nch, capch;
+    PObj **ch; uint32_t *rd;      /* children; reads: square << 8 | PR_* */
     PObj *owner;
-    int qi;                       /* pc_part_make scratch */
+    PObj *lp;                     /* the last parent that took it as a child (lpi: its index there) */
     uint64_t ka, kb;              /* PT2_V2_DOLL: the store key (kind's map) */
+    int slot_k, run;
     int drun;                     /* PT2_V2_DOLL, RAY: the group run that last cast or counted it */
-    unsigned vis;                 /* PT2_V2_DOLL: walk scratch */
+    int edrun;                    /* PT2_V2_DOLL: a dl_emu walk in group run edrun at graph edit egen */
     int evrun;                    /* PT2_V2_DOLL_EVENT_LOG (log only): the group run of its last log record */
-    PObj *lp; int lpi;            /* the last parent that took it as a child, and its index there */
-    int edrun; unsigned egen;     /* PT2_V2_DOLL: a dl_emu walk in group run edrun at graph edit egen */
+    int nrd, caprd, nsrt, nch, capch, lpi;
+    int qi;                       /* pc_part_make scratch */
+    unsigned vis;                 /* PT2_V2_DOLL: walk scratch */
+    unsigned egen;
+    float t, t_run;               /* own C time in us (FILT, POST, ALEV, CWM: the most in one run) */
+    int16_t x, y, ox, oy;         /* POINT: the ring point and its origin; RAY: the pill */
+    int16_t deg10;
+    uint8_t kind, pq, big;        /* big: made with the predict query fields */
     /* PT2_V2_DOLL_WEDGE_NARROW, POINT: the predict query on the centre
      * wedge set (bearing from pill X, the distances wedge_state takes) */
-    double pq_th, pq_dmn, pq_dmx; int pq;
+    double pq_th, pq_dmn, pq_dmx;
 };
+#define PO_SMALL (offsetof(PObj, pq_th))
+#define PO_BYTES(o) ((double)((o)->big ? sizeof(PObj) : PO_SMALL))
 #define PCC_MAXSLOT 128
 #define PCC_CXN 361
 #define PCC_FRN 8
@@ -1795,7 +1807,7 @@ static void pcc_tick(Ev *e) {
     PObj *o = pcc_tgt(e);
     if (o) {
         pcc_use(e->job->pcc, o);
-        o->t_run += (double)(now - e->pcc_t0) * pf_tick_us();
+        o->t_run += (float)((double)(now - e->pcc_t0) * pf_tick_us());
         if (!pcc_accum(o->kind) || o->t_run > o->t) o->t = o->t_run;
     }
     e->pcc_t0 = now;
@@ -1809,11 +1821,13 @@ static PObj *pcc_obj(Ev *e, int kind, uint64_t a, uint64_t b, int clear) {
     HVal *v = hm_put(e->L, &pj->om, pt_mix(a + (uint64_t)kind * 0x9E3779B97F4A7C15ull), b, &isnew);
     PObj *o = (PObj *)v->p;
     if (!o) {
-        o = (PObj *)calloc(1, sizeof(PObj));
+        size_t osz = (kind == PO_POINT || !e->dl_ps) ? sizeof(PObj) : PO_SMALL;
+        o = (PObj *)calloc(1, osz);
         if (!o) return NULL;
+        o->big = osz == sizeof(PObj);
         if (!pcc_grow((void **)&pj->objs, &pj->capobj, pj->nobj + 1, sizeof(PObj *))) { free(o); return NULL; }
         pj->objs[pj->nobj++] = o;
-        o->kind = kind; o->slot_k = pcc_slot_k(e); o->deg10 = -1; o->run = -1;
+        o->kind = (uint8_t)kind; o->slot_k = pcc_slot_k(e); o->deg10 = -1; o->run = -1;
         o->x = o->y = o->ox = o->oy = -1;
         o->ka = a; o->kb = b;
         v->p = o;
@@ -1879,7 +1893,7 @@ static PObj *pcc_push(Ev *e, int kind, uint64_t a, uint64_t b) {
     pcc_tick(e);
     PObj *o = pcc_obj(e, kind, a, b, 1);
     if (!o) { e->job->dlost = 1; return NULL; }
-    if (e->pcc_deg >= 0 && (kind == PO_POINT || kind == PO_PLAN)) o->deg10 = (int)floor(e->pcc_deg * 10 + 0.5);
+    if (e->pcc_deg >= 0 && (kind == PO_POINT || kind == PO_PLAN)) o->deg10 = (int16_t)floor(e->pcc_deg * 10 + 0.5);
     e->pcc_stk[e->pcc_n++] = o;
     return o;
 }
@@ -8439,7 +8453,7 @@ static int l_begin__p(lua_State *L) {
     lua_pushnil(L);
     slots_push(L);
     e->L = L; e->c = c;
-    e->dl_so = c->dl_scratch_out; e->dl_poison = c->dl_poison; e->dl_cs = c->dl_copy_share;
+    e->dl_so = c->dl_scratch_out; e->dl_poison = c->dl_poison; e->dl_cs = c->dl_copy_share; e->dl_ps = c->dl_pobj_small;
     Job *j = (Job *)lua_touserdata(L, S_JOB);
     e->job = j;
     j->busy = 1;
@@ -9250,7 +9264,7 @@ static int l_pc_part_make(lua_State *L) {
     for (int i = 0; i < pj->nobj; i++) {
         PObj *o = pj->objs[i];
         allc[o->kind]++; allrd += o->nrd;
-        allb += (double)sizeof(PObj) + 4.0 * o->caprd + 8.0 * o->capch;
+        allb += PO_BYTES(o) + 4.0 * o->caprd + 8.0 * o->capch;
     }
     char nm[32];
     for (int k = 1; k < PO_N; k++) {
@@ -9686,7 +9700,7 @@ static double dl_pcc_bytes(const Job *j) {
         n += sizeof(PccJob) + (double)pj->capobj * sizeof(PObj *) + dl_hm_bytes(&pj->om);
         for (int i = 0; i < pj->nobj; i++) {
             const PObj *o = pj->objs[i];
-            n += sizeof(PObj) + (double)o->caprd * sizeof(uint32_t) + (double)o->capch * sizeof(PObj *);
+            n += PO_BYTES(o) + (double)o->caprd * sizeof(uint32_t) + (double)o->capch * sizeof(PObj *);
         }
         for (int s = 0; s < PCC_MAXSLOT; s++) {
             n += (pj->cx[s][0] ? PCC_CXN * sizeof(PObj *) : 0) + (pj->cx[s][1] ? PCC_CXN * sizeof(PObj *) : 0);
@@ -9814,7 +9828,7 @@ static void dm_put_ar(char *b, size_t cap, size_t *at, const char *nm, const Are
 }
 /* gh_pt2_v2.dl_mem_on(on): PT2_V2_DOLL_MEM_LOG; the side maps start now */
 static int l_dl_mem_on(lua_State *L) { g_dm_on = lua_toboolean(L, 1); return 0; }
-/* gh_pt2_v2.doll_opts(real_fill, scratch_out, poison, copy_share): the doll cache's memory knobs (Pt2Ctx);
+/* gh_pt2_v2.doll_opts(real_fill, scratch_out, poison, copy_share, pobj_small): the doll cache's memory knobs (Pt2Ctx);
  * none changes a result */
 static int l_doll_opts(lua_State *L) {
     Pt2Ctx *c = get_ctx(L);
@@ -9822,6 +9836,7 @@ static int l_doll_opts(lua_State *L) {
     c->dl_scratch_out = lua_toboolean(L, 2);
     c->dl_poison = lua_toboolean(L, 3);
     c->dl_copy_share = lua_toboolean(L, 4);
+    c->dl_pobj_small = lua_toboolean(L, 5);
     return 0;
 }
 /* gh_pt2_v2.dl_mem_end(job, src): a doll job pilltake_v2.lua drops (before pc_free) */
@@ -9947,17 +9962,17 @@ static int l_dl_mem(lua_State *L) {
         PccJob *pj = j->pcc;
         if (pj) {
             double n[PO_N] = { 0 }, rdc[PO_N] = { 0 }, rdu[PO_N] = { 0 }, chc[PO_N] = { 0 }, chu[PO_N] = { 0 };
-            double dn[PO_N] = { 0 }, db[PO_N] = { 0 };
+            double dn[PO_N] = { 0 }, db[PO_N] = { 0 }, nb[PO_N] = { 0 };
             for (int i = 0; i < pj->nobj; i++) {
                 const PObj *o = pj->objs[i];
                 int k = o->kind > 0 && o->kind < PO_N ? o->kind : 0;
-                n[k]++; rdc[k] += (double)o->caprd * 4; rdu[k] += (double)o->nrd * 4;
+                n[k]++; nb[k] += PO_BYTES(o); rdc[k] += (double)o->caprd * 4; rdu[k] += (double)o->nrd * 4;
                 chc[k] += (double)o->capch * 8; chu[k] += (double)o->nch * 8;
                 /* a ray, standoff point or plan part whose record is not stored now */
                 HMap *m = k == PO_RAY ? &j->rays : (k == PO_POINT ? &j->pts : (k == PO_PLAN ? &j->pls : NULL));
                 if (m) {
                     HVal *v = hm_find(m, o->ka, o->kb);
-                    if (!v || !v->p) { dn[k]++; db[k] += sizeof(PObj) + (double)o->caprd * 4 + (double)o->capch * 8; }
+                    if (!v || !v->p) { dn[k]++; db[k] += PO_BYTES(o) + (double)o->caprd * 4 + (double)o->capch * 8; }
                 }
             }
             int ncx = 0, nfr = 0;
@@ -9971,7 +9986,7 @@ static int l_dl_mem(lua_State *L) {
             dm_put_hm(b, cap, &at, "om", &pj->om);
             static const char *pn[PO_N] = { "x", "ray", "point", "cwm", "filt", "post", "plan", "alev", "aws" };
             for (int k = 1; k < PO_N; k++)
-                dm_put_k(b, cap, &at, " o_%s=%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f", pn[k], n[k], rdc[k], rdu[k], chc[k], chu[k], dn[k], db[k]);
+                dm_put_k(b, cap, &at, " o_%s=%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f", pn[k], n[k], rdc[k], rdu[k], chc[k], chu[k], dn[k], db[k], nb[k]);
         }
         if (j->dm) {
             /* the live records: n, bytes, never hit in a later run, never hit */

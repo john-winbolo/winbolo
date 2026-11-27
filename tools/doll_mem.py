@@ -64,7 +64,9 @@ def parts(d):
     po = 0
     for k in POK:
         n = num(d, "o_" + k, 0)
-        po += n * SIZEOF_POBJ + num(d, "o_" + k, 1) + num(d, "o_" + k, 3)
+        # the 9th number: the part bytes (Nov 27, PT2_V2_DOLL_POBJ_SMALL); else n x sizeof
+        nb = num(d, "o_" + k, 8) if len(d.get("o_" + k, "").split(",")) > 8 else n * (num(d, "sizeof_pobj") or SIZEOF_POBJ)
+        po += nb + num(d, "o_" + k, 1) + num(d, "o_" + k, 3)
     p["pobj"] = po
     p["pobj_map+cap"] = num(d, "om_b") + num(d, "capobj") * 8
     p["slot_tables"] = num(d, "cx_b") + num(d, "fr_b") + num(d, "pccjob")

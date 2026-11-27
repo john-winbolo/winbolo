@@ -1699,6 +1699,11 @@ M.PT2_V2_DOLL_SCRATCH_POISON = false
 -- and its plan both reach is copied once (a part that changed after its
 -- copy is copied again). The same results. false = a map per record.
 M.PT2_V2_DOLL_COPY_SHARE = true
+-- PT2_V2_DOLL_POBJ_SMALL (Nov 27, memory only): a doll part (PObj) that is
+-- not a standoff point is made without the 3 predict query numbers only a
+-- point uses (128 bytes, a point 152; all were 192 before the smaller
+-- field types). The same results. false = every part made with them.
+M.PT2_V2_DOLL_POBJ_SMALL = true
 -- PT2_V2_DOLL_VIZ_RECORD (debug only): a headless -brain-debug run records
 -- the doll cache layers pt2_d1 .. pt2_d5 and pt2_dchg (pt2_viz.lua).
 -- It also writes the PT2_V2_DOLL_EVENT_LOG file dl_p<player>.bin in the
