@@ -6017,6 +6017,9 @@ set(_unit_test_names
     brain_bounds_stamps_bad_tables
     brain_bounds_threat_range
     brain_crash_log_ignores_brain_globals
+    brain_crash_log_file_note
+    brain_crash_log_line_debug_flag
+    brain_crash_log_line_unwritable
     brain_sandbox_hostile_native_preloads
     brain_sandbox_hostile_bytecode_init
     brain_sandbox_hostile_loaders_removed

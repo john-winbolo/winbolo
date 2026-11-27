@@ -1281,9 +1281,39 @@ static void (*s_log_flush_hook)(void) = NULL;
 
 void brainCoreSetLogFlushHook(void (*fn)(void)) { s_log_flush_hook = fn; }
 
+/* The end of the stderr crash line: what happened to the crash file. A host
+ * not in brain debug mode writes no file at all, so the line must not name
+ * one. A debug host whose fopen failed names the path it could not write.
+ * Not static so tests/unit/test_brain_crash_log.c can check each case. */
+void brc_crash_file_note(bool debug_mode, bool suppress_file,
+                         bool file_written, const char *path,
+                         char *out, size_t outsz) {
+  if (out == NULL || outsz == 0) return;
+  if (!debug_mode) {
+    SDL_snprintf(out, outsz,
+                 "no crash file written; the full error is on the next line");
+  } else if (suppress_file) {
+    SDL_snprintf(out, outsz,
+                 "file SUPPRESSED (rate-limit: same brain crashed within %ds)",
+                 BRC_CRASH_RATE_LIMIT_SECS);
+  } else if (!file_written) {
+    SDL_snprintf(out, outsz, "could not write %s", path ? path : "?");
+  } else {
+    SDL_snprintf(out, outsz, "see %s", path ? path : "?");
+  }
+}
+
 void brc_write_crash_log(lua_State *L,
                          const char *method,
                          const char *err_or_traceback) {
+  brc_write_crash_log_to(L, method, err_or_traceback, stderr);
+}
+
+void brc_write_crash_log_to(lua_State *L,
+                            const char *method,
+                            const char *err_or_traceback,
+                            FILE *err_out) {
+  if (err_out == NULL) err_out = stderr;
   if (err_or_traceback == NULL) err_or_traceback = "(no error message)";
   if (method == NULL) method = "?";
 
@@ -1316,7 +1346,7 @@ void brc_write_crash_log(lua_State *L,
   char session_dir[512];
   bool has_session = brc_read_session_dir(L, session_dir, sizeof(session_dir));
 
-  /* File writes are gated to debug hosts (BRAIN_DEBUG_MODE, set by -braindebug);
+  /* File writes are gated to debug hosts (BRAIN_DEBUG_MODE, set by -brain-debug);
    * production WinBolo / WinBoloDS write NO crash files to disk. The stderr
    * surface below still fires so a production crash is never silent. */
   bool debug_mode = brc_debug_mode(L);
@@ -1347,6 +1377,7 @@ void brc_write_crash_log(lua_State *L,
    * crashing brain can't fill the disk. Production (debug off) writes nothing;
    * the stderr surface below still fires. */
   FILE *f = (suppress_file || !debug_mode) ? NULL : fopen(path, "wb");
+  bool file_written = (f != NULL);
   if (f) {
     fprintf(f, "===== BRAIN CRASH =====\n");
     fprintf(f, "[BRAIN_CRASH] method=brain.%s\n", method);
@@ -1367,7 +1398,7 @@ void brc_write_crash_log(lua_State *L,
 
   /* Combined append-only crash log: EVERY Lua crash's full traceback appended
    * here (ignoring the per-crash-file rate-limit) so one file is the complete
-   * chronological record of a run. Debug hosts only (-braindebug); one growing
+   * chronological record of a run. Debug hosts only (-brain-debug); one growing
    * file rather than 1500 separate ones, bounded in practice by bot_manager
    * kicking a brain that crashes every tick. Same prefix as the per-crash files
    * (session dir if set, else CWD). */
@@ -1393,23 +1424,20 @@ void brc_write_crash_log(lua_State *L,
   /* Stderr surface so the failure is visible without grepping. Always
    * fires (even when the file was suppressed) so a chronically-crashing
    * brain stays loud in the console — just with a clear note that the
-   * file isn't being re-emitted. */
-  if (suppress_file) {
-    fprintf(stderr,
-            "[BRAIN_CRASH] brain.%s() crashed at %s (bot_index=%d tick=%d L=%p) "
-            "— file SUPPRESSED (rate-limit: same brain crashed within %ds)\n",
-            method, ts_local, bot_idx, tick, (void *)lptr,
-            BRC_CRASH_RATE_LIMIT_SECS);
-  } else {
-    fprintf(stderr,
-            "[BRAIN_CRASH] brain.%s() crashed at %s (bot_index=%d tick=%d L=%p) — see %s\n",
-            method, ts_local, bot_idx, tick, (void *)lptr, path);
-  }
-  fprintf(stderr, "[BRAIN_CRASH] %s\n", err_or_traceback);
-  fflush(stderr);
+   * file isn't being re-emitted, or that none is written at all when the
+   * host is not in brain debug mode. */
+  char file_note[1200];
+  brc_crash_file_note(debug_mode, suppress_file, file_written, path,
+                      file_note, sizeof(file_note));
+  fprintf(err_out,
+          "[BRAIN_CRASH] brain.%s() crashed at %s (bot_index=%d tick=%d L=%p) — %s\n",
+          method, ts_local, bot_idx, tick, (void *)lptr, file_note);
+  fprintf(err_out, "[BRAIN_CRASH] %s\n", err_or_traceback);
+  fflush(err_out);
 
   /* One-line index entry in brain_error.log (inside the session dir if
-   * applicable) for tail-watchers; back-points at the full crash file.
+   * applicable) for tail-watchers; back-points at the full crash file, or
+   * says "(not written)" when that file could not be opened.
    * Skipped on rate-limit so the index doesn't grow without bound, and
    * skipped entirely in production (BRAIN_DEBUG_MODE off). */
   if (!suppress_file && debug_mode) {
@@ -1419,7 +1447,8 @@ void brc_write_crash_log(lua_State *L,
     if (idx) {
       fprintf(idx,
               "[BRAIN_CRASH] %s (%s) bot=%d tick=%d pid=%d L=%p method=%s file=%s\n",
-              ts_utc, ts_local, bot_idx, tick, pid, (void *)lptr, method, path);
+              ts_utc, ts_local, bot_idx, tick, pid, (void *)lptr, method,
+              file_written ? path : "(not written)");
       fclose(idx);
     }
   }

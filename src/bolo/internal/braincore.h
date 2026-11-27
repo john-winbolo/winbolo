@@ -30,6 +30,7 @@
 #ifndef BRAINCORE_H
 #define BRAINCORE_H
 
+#include <stdio.h>
 #include <lua.h>
 #include <lualib.h>
 #include <lauxlib.h>
@@ -235,6 +236,37 @@ bool brainCoreCallMethod(lua_State *L, BrainInfo *info, const char *method);
 void brc_write_crash_log(lua_State *L,
                          const char *method,
                          const char *err_or_traceback);
+
+/*********************************************************
+ *NAME:          brc_write_crash_log_to
+ *PURPOSE:
+ *  The same as brc_write_crash_log, but the two console
+ *  lines go to err_out instead of stderr (stderr when
+ *  err_out is NULL). brc_write_crash_log calls it with
+ *  stderr. Exposed so tests/unit/test_brain_crash_log.c
+ *  can read the console line back from a file.
+ *********************************************************/
+void brc_write_crash_log_to(lua_State *L,
+                            const char *method,
+                            const char *err_or_traceback,
+                            FILE *err_out);
+
+/*********************************************************
+ *NAME:          brc_crash_file_note
+ *PURPOSE:
+ *  Writes the end of the console crash line into out:
+ *  what happened to the crash file. Debug mode off: no
+ *  file was written, and the full error is on the next
+ *  line. Debug mode on: "file SUPPRESSED" when
+ *  suppress_file is set, "could not write <path>" when
+ *  the fopen failed (file_written false), else
+ *  "see <path>". Does nothing when out is NULL or outsz
+ *  is 0. Exposed so tests/unit/test_brain_crash_log.c can
+ *  check each case.
+ *********************************************************/
+void brc_crash_file_note(bool debug_mode, bool suppress_file,
+                         bool file_written, const char *path,
+                         char *out, size_t outsz);
 
 /*********************************************************
  *NAME:          brc_traceback_msgh
