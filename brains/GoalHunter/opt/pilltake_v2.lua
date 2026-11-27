@@ -3410,6 +3410,10 @@ local function doll_cache(inp, src, now)
         -- PT2_V2_DOLL_TAKE_STORE = N (MB): a take job past N MB starts again
         local tcap = PCK.PT2_V2_DOLL_TAKE_STORE
         if src == "take" and type(tcap) == "number" and (st.bytes or 0) > tcap * 1048576 then why = "cap" end
+        -- PT2_V2_DOLL_JOB_CAP_MB = N (MB): a doll job of any source past
+        -- N MB starts again (memory only; the results stay the same)
+        local jcap = PCK.PT2_V2_DOLL_JOB_CAP_MB
+        if not why and type(jcap) == "number" and (st.bytes or 0) > jcap * 1048576 then why = "cap" end
         if st.changed == 1 then
           cnt.changed = cnt.changed + 1
           for _, k in ipairs(DL_ADD) do cnt[k] = cnt[k] + (st[k] or 0) end
