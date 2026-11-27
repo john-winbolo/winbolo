@@ -123,7 +123,7 @@ enum {
     VCAT_HUD = 0, VCAT_CHARGE, VCAT_PILLTAKE, VCAT_SQUAD, VCAT_NAV,
     VCAT_LGM, VCAT_TANKCBT, VCAT_THREAT, VCAT_CIRCLES, VCAT_PLACEMENT,
     VCAT_ALLY, VCAT_SHELLS, VCAT_REPOSITION, VCAT_DECOY, VCAT_FOCUS, VCAT_QUICKREPAIR,
-    VCAT_PILLTAKE2,
+    VCAT_PILLTAKE2, VCAT_DOLL,
     VCAT_MISC, VCAT_COUNT
 };
 
@@ -131,7 +131,7 @@ static const char *kVizCatLabel[VCAT_COUNT] = {
     "Core HUD", "Charge", "Pill take", "Squad/Blitz", "Nav",
     "LGM", "Tank combat", "Threat", "Circles", "Placement",
     "Ally/Comms", "Shells/Hitbox", "Reposition", "Decoy", "Focused spike",
-    "Quick repair", "Pill take v2", "Misc",
+    "Quick repair", "Pill take v2", "Doll caching", "Misc",
 };
 
 struct VizMeta { const char *id; unsigned char cat; bool hud; };
@@ -163,6 +163,10 @@ static const VizMeta kVizMeta[] = {
     {"pt2_rays", VCAT_PILLTAKE2, false},          {"pt2_chain", VCAT_PILLTAKE2, false},
     {"pt2_candidates", VCAT_PILLTAKE2, false},    {"pt2_leeway", VCAT_PILLTAKE2, false},
     {"pt2_blocker", VCAT_PILLTAKE2, false},       {"pt2_compare", VCAT_PILLTAKE2, false},
+    /* Doll caching (pill take v2 doll cache, pt2_viz.lua) */
+    {"pt2_d1", VCAT_DOLL, false},   {"pt2_d2", VCAT_DOLL, false},
+    {"pt2_d3", VCAT_DOLL, false},   {"pt2_d4", VCAT_DOLL, false},
+    {"pt2_d5", VCAT_DOLL, false},   {"pt2_dchg", VCAT_DOLL, false},
     {"wall_build_queue", VCAT_PILLTAKE, false},  {"build_status", VCAT_PILLTAKE, false},
     {"build_decision_banner", VCAT_PILLTAKE, false}, {"wall_skip_reason", VCAT_PILLTAKE, false},
     {"pill_take_target", VCAT_PILLTAKE, false},  {"base_shield_viz", VCAT_PILLTAKE, false},
