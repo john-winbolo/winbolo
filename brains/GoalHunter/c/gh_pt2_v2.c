@@ -263,6 +263,13 @@ enum {
     P_cb_square_test,
     P_cb_ttype,
     P_cb_v2_wkey,
+    P_hit_key,
+    P_hit_ref,
+    P_hit_emu,
+    P_hit_copy,
+    P_pcc_part,
+    P_plan_pc,
+    P_dl_track,
     P_N
 };
 static const char *s_pf_name[] = {
@@ -346,7 +353,14 @@ static const char *s_pf_name[] = {
     "cb_score_fn",
     "cb_square_test",
     "cb_ttype",
-    "cb_v2_wkey"
+    "cb_v2_wkey",
+    "hit_key",
+    "hit_ref",
+    "hit_emu",
+    "hit_copy",
+    "pcc_part",
+    "plan_pc",
+    "dl_track"
 };
 enum {
     C_walk_cast_steps,
@@ -643,6 +657,16 @@ static void pf_leave(void) {
 }
 #define PB(s) do { if (t_pf) pf_push(s); } while (0)
 #define PE() do { if (t_pf) pf_pop(); } while (0)
+/* the hit path's own zones (hit_*, pcc_part, plan_pc, dl_track): their
+ * timer calls cost about 600 us per evaluate, so they are in a build
+ * with PT2_V2_HIT_ZONES only */
+#ifdef PT2_V2_HIT_ZONES
+#define HB(s) PB(s)
+#define HE() PE()
+#else
+#define HB(s) do { } while (0)
+#define HE() do { } while (0)
+#endif
 #define PC(c, k) do { if (t_pf) t_pf->cnt[c] += (k); } while (0)
 #define PLC(s, L, na, nr) do { PB(s); lua_call((L), (na), (nr)); PE(); } while (0)
 /* The cache study parts (log only, with the profiler on): the time of the
@@ -674,12 +698,16 @@ typedef struct Chunk {
 
 typedef struct {
     Chunk *head, *cur;
+    size_t csz;   /* the chunk size; 0: 1 MB */
+    double ntot;  /* bytes given out since the last free */
+    double cb;    /* the bytes of its chunks (ar_bytes) */
 } Arena;
 
 static void ar_free(Arena *a) {
     Chunk *c = a->head;
     while (c) { Chunk *n = c->next; free(c); c = n; }
     a->head = a->cur = NULL;
+    a->ntot = 0; a->cb = 0;
 }
 
 static void *ar_alloc(lua_State *L, Arena *a, size_t n) {
@@ -689,6 +717,7 @@ static void *ar_alloc(lua_State *L, Arena *a, size_t n) {
         if (c && c->used + n <= c->cap) {
             void *p = (unsigned char *)c->data + c->used;
             c->used += n;
+            a->ntot += (double)n;
             return p;
         }
         if (c && c->next) {
@@ -696,10 +725,12 @@ static void *ar_alloc(lua_State *L, Arena *a, size_t n) {
             a->cur->used = 0;
             continue;
         }
-        size_t cap = n > (size_t)(1u << 20) ? n : (size_t)(1u << 20);
+        size_t base = a->csz ? a->csz : (size_t)(1u << 20);
+        size_t cap = n > base ? n : base;
         Chunk *nc = (Chunk *)malloc(sizeof(Chunk) + cap);
         if (!nc) { luaL_error(L, "gh_pt2_v2: out of memory"); return NULL; }
         nc->next = NULL; nc->used = 0; nc->cap = cap;
+        a->cb += (double)cap;
         if (c) c->next = nc; else a->head = nc;
         a->cur = nc;
     }
@@ -813,6 +844,7 @@ typedef struct {
     Offs     *offs; int n_offs, cap_offs;
     uint32_t  mgen;         /* output generation */
     Pt2Prof   pf;           /* PT2_C_PROF (gh_pt2_v2.prof) */
+    void     *dle;          /* PT2_V2_DOLL_EVENT_LOG (log only): DlEv */
 } Pt2Ctx;
 
 typedef struct { int64_t sq; double shots; int kind; double t; int pill; Memo m; } Blk;
@@ -939,6 +971,9 @@ typedef struct Rec {
     /* PT2_V2_CACHE: the point store key of the evaluate that made this
      * record (has_ck = 0: not from the store, so its plan is not kept) */
     uint64_t ck1, ck2; int has_ck;
+    /* PT2_V2_DOLL: clear and lanes are a stored record's (read only; a
+     * write makes own copies first) */
+    int     alsh;
     Memo    m, m_ri;
 } Rec;
 
@@ -1020,8 +1055,16 @@ typedef struct {
      * job; dsnap: the map at the last sync. */
     int    doll, drun, dlost, dsnap_set;
     unsigned dvis;
+    unsigned flt_gen;     /* PT2_V2_DOLL: 1 more each time flt loses entries (the pcc filter rows) */
     unsigned char *dsnap;
     unsigned char *dacc;  /* PT2_V2_DOLL: the change classes (CH_T, CH_F) seen inside a group run */
+    int    dl_src, dl_p;  /* PT2_V2_DOLL_EVENT_LOG (log only): the source (0 take, 1 dbl) and player */
+    /* PT2_V2_DOLL: the stored points and plans of each goal pill slot
+     * (PccSlot) in their own arena: a slot whose parts all go frees it */
+    Arena *spar;          /* PCC_MAXSLOT arenas, or NULL */
+    double sp_freed;      /* bytes freed so far (log) */
+    double sp_live, sp_dead;  /* at the last sync: the stored and the dropped bytes in the slot arenas */
+    double sp_dropn;      /* slot arenas dropped by PT2_V2_DOLL_SLOT_DEAD_MAX */
 } Job;
 
 /* rpm bits: a ring point (raw, nudged or the builder's origin); a group
@@ -1240,6 +1283,14 @@ struct St {
     int    dl_skip;       /* PT2_V2_DOLL_CHECK (log only): store finds skipped (1 points, plans; 2 rays; 4 filter; 8 squares; 16 points; 32 plans) */
     double dl_ray_old, dl_ray_cast, dl_emu_casts;
     unsigned short dsl_h[12], dsl_m[12];
+    /* PT2_V2_DOLL_EVENT_LOG (log only): this evaluate's log fields */
+    int    dle_on, dle_p, dle_src, dle_asq;
+    uint32_t dle_ev;
+    double dle_tick;
+    uint64_t dle_csig;
+    const void *dle_cv;
+    double dl_nbc;        /* PT2_V2_DOLL: the bytes of the parts made inside the part being made */
+    int    dl_narrow;     /* PT2_V2_DOLL_NARROW_KEYS: the world signature and filter key leave out what they do not read */
 };
 
 /* PT2_LINK_CLEAR_FRONT with PT2_LINK_CUT_MIN_SHOTS (OLD.link_cut). */
@@ -1534,8 +1585,15 @@ struct PObj {
     uint64_t ka, kb;              /* PT2_V2_DOLL: the store key (kind's map) */
     int drun;                     /* PT2_V2_DOLL, RAY: the group run that last cast or counted it */
     unsigned vis;                 /* PT2_V2_DOLL: walk scratch */
+    int evrun;                    /* PT2_V2_DOLL_EVENT_LOG (log only): the group run of its last log record */
+    PObj *lp; int lpi;            /* the last parent that took it as a child, and its index there */
+    int edrun; unsigned egen;     /* PT2_V2_DOLL: a dl_emu walk in group run edrun at graph edit egen */
 };
 #define PCC_MAXSLOT 128
+#define PCC_CXN 361
+#define PCC_FRN 8
+#define PCC_FSN 361
+typedef struct PccFlt { uint64_t k1, k2; int64_t v; unsigned g; } PccFlt;
 typedef struct {
     int k, run;
     double finish, co;
@@ -1546,6 +1604,13 @@ typedef struct PccJob {
     PObj **objs; int nobj, capobj;
     HMap om;
     PccSlot slot[PCC_MAXSLOT]; int nslot;
+    unsigned gedit;                       /* 1 more at each new child link or cleared child list */
+    /* the FILT (0) and POST (1) parts of each slot by ring angle (deg10 / 10,
+     * PCC_CXN) without the om look up */
+    PObj **cx[PCC_MAXSLOT][2];
+    /* the filter answers (flt) of each slot, ring kind (far) and ring index
+     * by ring step: a copy of flt entries, good while g == flt_gen + 1 */
+    struct PccFlt *fr[PCC_MAXSLOT][2][PCC_FRN];
 } PccJob;
 typedef struct { PObj *ctx; double deg; } PccSave;
 
@@ -1555,6 +1620,10 @@ static void pcc_free(Job *j) {
     for (int i = 0; i < pj->nobj; i++) { free(pj->objs[i]->rd); free(pj->objs[i]->ch); free(pj->objs[i]); }
     free(pj->objs);
     hm_free(&pj->om);
+    for (int s = 0; s < PCC_MAXSLOT; s++) {
+        free(pj->cx[s][0]); free(pj->cx[s][1]);
+        for (int f = 0; f < 2; f++) for (int r = 0; r < PCC_FRN; r++) free(pj->fr[s][f][r]);
+    }
     free(pj);
     j->pcc = NULL;
 }
@@ -1605,6 +1674,7 @@ static PObj *pcc_obj(Ev *e, int kind, uint64_t a, uint64_t b, int clear) {
         v->p = o;
     } else if (clear) {
         o->nrd = 0; o->nsrt = 0; o->nch = 0; o->t = 0; o->t_run = 0;
+        pj->gedit++;
     }
     pcc_use(pj, o);
     return o;
@@ -1647,10 +1717,14 @@ static void pcc_box(Ev *e, double ax, double ay, double bx, double by) {
 
 static void pcc_child(Ev *e, PObj *p, PObj *c) {
     if (!p || !c || p == c) return;
-    for (int i = 0; i < p->nch; i++) if (p->ch[i] == c) return;
+    /* the link of the last call (checked: the list can change) */
+    if (c->lp == p && c->lpi < p->nch && p->ch[c->lpi] == c) return;
+    for (int i = 0; i < p->nch; i++) if (p->ch[i] == c) { c->lp = p; c->lpi = i; return; }
     if (!pcc_grow((void **)&p->ch, &p->capch, p->nch + 1, sizeof(PObj *))) { e->job->dlost = 1; return; }
+    c->lp = p; c->lpi = p->nch;
     p->ch[p->nch++] = c;
     if (!c->owner) c->owner = p;
+    e->job->pcc->gedit++;
 }
 
 /* a part is made now: its reads and time go to it until pcc_pop */
@@ -1682,22 +1756,50 @@ static PObj *pcc_ref(Ev *e, int kind, uint64_t a, uint64_t b) {
     pcc_child(e, pcc_tgt(e), o);
     return o;
 }
+/* pcc_ref with the part itself (kept in the store entry) */
+static PObj *pcc_ref_o(Ev *e, PObj *o) {
+    pcc_use(e->job->pcc, o);
+    pcc_child(e, pcc_tgt(e), o);
+    return o;
+}
+/* the context part of kind at deg10 (pcc_obj, no clear) */
+static PObj *pcc_ctx_obj(Ev *e, int kind, int d10) {
+    PccJob *pj = e->job->pcc;
+    int ki = kind == PO_FILT ? 0 : (kind == PO_POST ? 1 : -1), si = e->pcc_slot;
+    if (ki < 0 || d10 < 0 || d10 % 10 || d10 / 10 >= PCC_CXN || si < 0 || si >= PCC_MAXSLOT)
+        return pcc_obj(e, kind, (uint64_t)pcc_slot_k(e), (uint64_t)d10, 0);
+    PObj **a = pj->cx[si][ki];
+    if (!a) {
+        a = (PObj **)calloc(PCC_CXN, sizeof(PObj *));
+        if (!a) return pcc_obj(e, kind, (uint64_t)pcc_slot_k(e), (uint64_t)d10, 0);
+        pj->cx[si][ki] = a;
+    }
+    PObj *o = a[d10 / 10];
+    if (o) { pcc_use(pj, o); return o; }
+    o = pcc_obj(e, kind, (uint64_t)pcc_slot_k(e), (uint64_t)d10, 0);
+    a[d10 / 10] = o;
+    return o;
+}
 
 /* the context part: kind (FILT or POST) at ring angle deg, or the A
  * level for deg < 0 */
-static PccSave pcc_enter(Ev *e, int kind, double deg) {
+static PccSave pcc_enter__p(Ev *e, int kind, double deg) {
     PccSave s = { e->pcc_ctx, e->pcc_deg };
     if (!e->pcc_run) return s;
     pcc_tick(e);
     if (deg >= 0) {
         int d10 = (int)floor(deg * 10 + 0.5);
-        PObj *o = pcc_obj(e, kind, (uint64_t)pcc_slot_k(e), (uint64_t)d10, 0);
+        PObj *o = pcc_ctx_obj(e, kind, d10);
         if (o) { o->deg10 = d10; e->pcc_ctx = o; }
         e->pcc_deg = deg;
     } else {
         e->pcc_ctx = e->pcc_alev; e->pcc_deg = -1;
     }
     return s;
+}
+static PccSave pcc_enter(Ev *e, int kind, double deg) {
+    if (!e->pcc_run) { PccSave s = { e->pcc_ctx, e->pcc_deg }; return s; }
+    HB(P_pcc_part); PccSave s_ = pcc_enter__p(e, kind, deg); HE(); return s_;
 }
 static void pcc_leave(Ev *e, PccSave s) {
     if (!e->pcc_run) return;
@@ -1944,78 +2046,11 @@ static void ray_keep(Ev *e, Arena *a, Ray *res, const int64_t *sq_list, const do
 }
 
 /* keep = 0: scratch (hold_safe), only hit / link / cover are read. */
-/* PT2_V2_CACHE_PART_LOG (log only): doll 0, the walk's geometry. One
- * ray cast and one tank shot walk in 16 (in a store run with the part log
- * on) is walked once more with no reads: the steps, the target test and
- * the square changes only. The C time of the real walk and of that
- * geometry walk go to a per-thread sum, a PT2_V2_D0 line each 2048. */
-typedef struct {
-    double cast_n, cast_tot, cast_geo, cast_sq, cast_t;
-    double shot_n, shot_tot, shot_geo, shot_sq, shot_t, shot_jump;
-    int64_t tsc0, qpc0;
-    unsigned k, n;
-} D0St;
-static PF_TLS D0St t_d0;
-static volatile double d0_sink;
-static int d0_take(Ev *e) { return e->pcc_on && ((++t_d0.k) & 15u) == 0; }
-static void d0_note(void) {
-    D0St *d = &t_d0;
-    if (!d->tsc0) { d->tsc0 = ZW_TSC(); d->qpc0 = pf_clock(); }
-    if ((++d->n & 2047u) != 0) return;
-    double us = (double)(pf_clock() - d->qpc0) * pf_tick_us();
-    double tsc = (double)(ZW_TSC() - d->tsc0);
-    fprintf(stderr, "PT2_V2_D0 tid=%lu cast_n=%.0f cast_tot=%.0f cast_geo=%.0f cast_sq=%.0f cast_t=%.0f"
-            " shot_n=%.0f shot_tot=%.0f shot_geo=%.0f shot_sq=%.0f shot_t=%.0f shot_jump=%.0f us=%.0f tsc=%.0f\n",
-            (unsigned long)((uintptr_t)&t_d0 >> 4), d->cast_n, d->cast_tot, d->cast_geo, d->cast_sq, d->cast_t,
-            d->shot_n, d->shot_tot, d->shot_geo, d->shot_sq, d->shot_t, d->shot_jump, us, tsc);
-}
-/* the cast's geometry to tick n: the steps, the target test, the square changes */
-static void d0_cast_geo(double x, double y, double xs, double ys, double n, double tx, double ty, double r) {
-    Walk w;
-    walk_init(&w, x, y, xs, ys);
-    double r2 = r * r, last = -1, nsq = 0;
-    for (double t = 1; t <= n; t++) {
-        double mx, my, sq;
-        walk_step(&w, &mx, &my, &sq);
-        if (sq != last) { nsq++; last = sq; }
-        double dx = w.x - tx, dy = w.y - ty;
-        if (dx < r && dx > -r && dy < r && dy > -r && dx * dx + dy * dy < r2) break;
-    }
-    d0_sink += nsq;
-}
-/* the shot walk's geometry to tick n (the jump way or the tick way) */
-static void d0_shot_geo(const Walk *w0, int jump, double n) {
-    double nsq = 0;
-    if (jump) {
-        Pt2wAxis ax, ay;
-        pt2w_ax_init(&ax, w0->xi, w0->xsi);
-        pt2w_ax_init(&ay, w0->yi, w0->ysi);
-        int32_t t = 1, N = (int32_t)n;
-        while (t <= N) {
-            nsq += (double)(pt2w_ax_sq(&ax) + pt2w_ax_sq(&ay));
-            t = ax.k < ay.k ? ax.k : ay.k;
-            if (t > N) break;
-            pt2w_ax_pass(&ax, &ay, t);
-        }
-    } else {
-        Walk w = *w0;
-        double last = -1;
-        for (double t = 1; t <= n; t++) {
-            double mx, my, sq;
-            walk_step(&w, &mx, &my, &sq);
-            if (sq != last) { nsq++; last = sq; }
-        }
-    }
-    d0_sink += nsq;
-}
-
 static Ray *cast_walk__p(Ev *e, Arena *a, double sx, double sy, double tx, double ty, double len,
                       const Extra *extra, int keep, Ray *scratch) {
     int64_t sq_list[PT2_MAX_T];
     double  sq_t[PT2_MAX_T];
     Blk     block[PT2_MAX_T];
-    int d0 = d0_take(e);
-    int64_t d0a = d0 ? ZW_TSC() : 0;
     Ray *res = keep ? (Ray *)ar_alloc(e->L, a, sizeof(Ray)) : scratch;
     memset(res, 0, sizeof(*res));
     double angle = calc_angle(sx, sy, tx, ty);
@@ -2092,14 +2127,6 @@ static Ray *cast_walk__p(Ev *e, Arena *a, double sx, double sy, double tx, doubl
     res->n_sq = nsq; res->n_block = nblk;
     res->end_x = w.x; res->end_y = w.y;
     if (keep) ray_keep(e, a, res, sq_list, sq_t, block, nsq, nblk);
-    if (d0) {
-        int64_t d0b = ZW_TSC();
-        d0_cast_geo(sx + e->sh_add * xa, sy + e->sh_add * ya, xs, ys, n, tx, ty, r);
-        int64_t d0c = ZW_TSC();
-        t_d0.cast_n++; t_d0.cast_tot += (double)(d0b - d0a); t_d0.cast_geo += (double)(d0c - d0b);
-        t_d0.cast_sq += nsq; t_d0.cast_t += hit_t;
-        d0_note();
-    }
     return res;
 }
 static Ray *cast_walk(Ev *e, Arena *a, double sx, double sy, double tx, double ty, double len, const Extra *extra, int keep, Ray *scratch) { PB(P_cast_walk); Ray * r_ = cast_walk__p(e, a, sx, sy, tx, ty, len, extra, keep, scratch); PE(); return r_; }
@@ -2703,19 +2730,8 @@ static int tank_shot_walk_angle__p(Ev *e, double ox, double oy, double angle, do
         s_dc.ticks_walks++;
     }
 #else
-    int d0 = d0_take(e);
-    Walk d0w = w;
-    int64_t d0a = d0 ? ZW_TSC() : 0;
     if (jump) why = ts_walk_jump(e, &w, (int32_t)n, omx, omy, tmx, tmy, extra, lane, &nl, &st);
     else why = ts_walk_ticks(e, &w, n, omx, omy, tmx, tmy, extra, lane, &nl, &st);
-    if (d0) {
-        int64_t d0b = ZW_TSC();
-        d0_shot_geo(&d0w, jump, st.t);
-        int64_t d0c = ZW_TSC();
-        t_d0.shot_n++; t_d0.shot_tot += (double)(d0b - d0a); t_d0.shot_geo += (double)(d0c - d0b);
-        t_d0.shot_sq += nl; t_d0.shot_t += st.t; t_d0.shot_jump += jump;
-        d0_note();
-    }
 #endif
     if (zs) z2 = ZW_TSC();
     /* Kept for the reuse: a walk again with the same key reads the same
@@ -3168,10 +3184,282 @@ static void predict__p(Ev *e, WSet *set, double px, double py, Pred *out) {
 }
 static void predict(Ev *e, WSet *set, double px, double py, Pred *out) { PB(P_predict); predict__p(e, set, px, py, out); PE(); }
 
+static double ar_bytes(const Arena *a);
+/* PT2_V2_DOLL: the arena a stored point or plan of this evaluate goes in:
+ * its goal pill slot's, else par */
+#define DL_SPAR_CHUNK ((size_t)64 * 1024)
+static Arena *dl_arena(Ev *e, int *si) {
+    Job *j = e->job;
+    *si = -1;
+    if (!e->doll || !e->pcc_on || !j->pcc || e->pcc_slot < 0 || e->pcc_slot >= PCC_MAXSLOT) return &j->par;
+    if (!j->spar) {
+        j->spar = (Arena *)calloc(PCC_MAXSLOT, sizeof(Arena));
+        if (!j->spar) return &j->par;
+    }
+    Arena *a = &j->spar[e->pcc_slot];
+    a->csz = DL_SPAR_CHUNK;
+    *si = e->pcc_slot;
+    return a;
+}
+static double dl_par_bytes(const Job *j) {
+    double n = ar_bytes(&j->par);
+    if (j->spar) for (int s = 0; s < PCC_MAXSLOT; s++) n += ar_bytes(&j->spar[s]);
+    return n;
+}
+static void dl_spar_free_all(Job *j) {
+    if (!j->spar) return;
+    for (int s = 0; s < PCC_MAXSLOT; s++) { j->sp_freed += ar_bytes(&j->spar[s]); ar_free(&j->spar[s]); }
+}
+
+/* ── PT2_V2_DOLL_EVENT_LOG (log only) ─────────────────────────────────
+ * Each doll store lookup (ray, filter answer, ring point, plan) writes a
+ * 48-byte record: a hit, or the why of a miss (made again after a drop
+ * and the change that dropped it, a cold job and why it was new, a new
+ * key and the key field that changed, first use). doll_sync writes the
+ * changes it saw and the A levels (rings) they hit; a new job writes a
+ * reset record. The keys here are this log's own (pill squares, not the
+ * job's pill numbers), so they hold over a new job. It changes no
+ * result: the store, the parts and the work units are as with no log. */
+enum { DLV_CHG = 1, DLV_PILL, DLV_SYNC, DLV_RESET, DLV_RING, DLV_RAY = 10, DLV_FLT, DLV_PT, DLV_PL };
+enum { DLR_HIT = 0, DLR_HITRUN, DLR_DROP, DLR_NEWKEY, DLR_COLD, DLR_FIRST, DLR_TANK, DLR_GONE };
+/* drop codes (code), for DLR_DROP and DLV_RING */
+enum { DC_NONE = 0, DC_TERR, DC_FOREST, DC_BASE, DC_PILLSQ, DC_PILLREACH, DC_PILLBOX, DC_MARGIN, DC_BOX,
+       DC_CENTRE, DC_SLOTPILL, DC_FRING, DC_FSLOT, DC_FREACH, DC_WDROP, DC_MAXB, DC_DROPPLANS, DC_SQ };
+enum { DF_CHILD = 1, DF_SLOT = 2, DF_NOTKEPT = 4, DF_STALE = 8 };
+#pragma pack(push, 1)
+typedef struct {
+    uint32_t tick, ev;
+    float    us, ov, nv;
+    uint32_t bytes;
+    uint16_t asq, xsq, osq, deg10, csq, ckind;
+    uint8_t  p, src, lvl, res, code, flags, depth, field;
+    uint32_t run;
+} DlRec;
+#pragma pack(pop)
+typedef char dl_rec_size_ok[(sizeof(DlRec) == 48) ? 1 : -1];
+typedef struct { uint8_t st, code, flags, field; uint16_t csq, ckind; float ov, nv, us; uint32_t tick; } DlSeen;
+enum { DS_LIVE = 1, DS_DROP, DS_COLD };
+#define DLE_NCSV 160
+typedef struct { int n, pad; double v[DLE_NCSV]; } DlCsv;
+typedef struct DlEv {
+    FILE    *f;
+    unsigned char *buf; size_t nb;
+    HMap     seen[2], loose[2], rk[2], csv;
+    Arena    pool;
+    lua_State *L;
+    uint32_t nev;
+    double   nrec, bytes;
+    const void *wlast[2];   /* the last run inputs (DlCsv) by source: the why of a wsig drop */
+    /* BrainTest doll layers (debug only): a copy of each record since the
+     * last dl_viz_take; f is NULL when only the layers asked for records */
+    DlRec   *vz;
+    uint32_t vzn, vzcap;
+    double   vz_lost;
+} DlEv;
+
+static void dle_flush(DlEv *d) {
+    if (d->f && d->nb) { fwrite(d->buf, 1, d->nb, d->f); d->bytes += (double)d->nb; fflush(d->f); }
+    d->nb = 0;
+}
+static void dle_put(DlEv *d, const DlRec *r) {
+    if (!d) return;
+    if (d->vz) {
+        if (d->vzn < d->vzcap) d->vz[d->vzn++] = *r;
+        else d->vz_lost += 1;
+    }
+    if (!d->f) return;
+    if (d->nb + sizeof(DlRec) > (1u << 20)) dle_flush(d);
+    memcpy(d->buf + d->nb, r, sizeof(DlRec));
+    d->nb += sizeof(DlRec);
+    d->nrec += 1;
+}
+static void dle_close(DlEv *d) {
+    if (!d) return;
+    dle_flush(d);
+    if (d->f) fclose(d->f);
+    free(d->buf);
+    free(d->vz);
+    for (int s = 0; s < 2; s++) { hm_free(&d->seen[s]); hm_free(&d->loose[s]); hm_free(&d->rk[s]); }
+    hm_free(&d->csv);
+    ar_free(&d->pool);
+    free(d);
+}
+
+static const char *s_dle_csv_name[] = {
+    "A", "finish", "co", "lazy", "chains", "max_chain", "link_covers", "link_clear_front",
+    "link_cut_min_shots", "orth_only", "aim_nudge", "nudge_step_wu", "nudge_max_steps",
+    "pill_range", "range_margin", "blocker_min_dist", "num_pill_blockers", "pill_drop_shots",
+    "wall_shots", "build_max", "build_cost", "bar_single", "bar_chain", "bar_other",
+    "aim_nb_on", "min_lane_brad", "naims", "aim9", "wall_memo", "wall_memo_max", "wkey",
+    "T_BUILDING", "T_HALFBUILD", "T_BOAT", "T_FOREST", "e_wall_shots", "e_half_wall_shots",
+    "e_boat_shots", "forest_transparent", "sh_speed", "sh_add", "sh_life", "sh_hit_r",
+    "pill_len", "ts_boats", "no_builder", "cr_on", "cr_max", "cr_stuck", "bs_on", "ba_tab",
+    "n_map", "n_stay", "n_std", "n_bld", "nb_n", "st_n", "ts_life",
+    "ts_s1", "ts_slast", "ts_step", "ts_hit", "ps_s1", "ps_slast", "ps_step", "ps_hit",
+    "has_env_speed", "env_speed", "keep_all", "has_band", "radius", "approach_offset", NULL
+};
+#define DLE_NV ((int)(sizeof(s_dle_csv_name) / sizeof(s_dle_csv_name[0])) - 1)
+/* a pill's square by the job's pill number (no PI: no pill gen change) */
+static uint32_t dle_sq_of(Ev *e, int k) {
+    if (!e->job || k < 1 || k > e->job->npills || !e->job->pills[k]) return 0xFFFF;
+    const Pill *p = e->job->pills[k];
+    if (!(p->mx >= 0 && p->mx <= 255 && p->my >= 0 && p->my <= 255)) return 0xFFFF;
+    return (uint32_t)((int)p->my * 256 + (int)p->mx);
+}
+/* pc_csig(e, 0)'s inputs in its order, with the goal pill as its square
+ * and the chain skip set by its pills' squares (the job's pill numbers
+ * change with a new job). Fields: 0.. the list above, 100 + i std_ok,
+ * 130 nb, 140 st_r, 200 the chain skip set. */
+static void dle_csv(Ev *e, DlCsv *o) {
+    lua_State *L = e->L;
+    const double v[] = {
+        (double)dle_sq_of(e, (int)e->A), e->finish, e->co, e->lazy, e->chains, e->max_chain, e->link_covers, e->link_clear_front,
+        e->link_cut_min_shots, e->orth_only, e->aim_nudge, e->nudge_step_wu, e->nudge_max_steps,
+        e->pill_range, e->range_margin, e->blocker_min_dist, e->num_pill_blockers, e->pill_drop_shots,
+        e->wall_shots, e->build_max, e->build_cost, e->bar_single, e->bar_chain, e->bar_other,
+        e->aim_nb_on, e->min_lane_brad, e->naims, e->aim9, e->wall_memo, e->wall_memo_max, e->wkey,
+        e->T_BUILDING, e->T_HALFBUILD, e->T_BOAT, e->T_FOREST, e->e_wall_shots, e->e_half_wall_shots,
+        e->e_boat_shots, e->forest_transparent, e->sh_speed, e->sh_add, e->sh_life, e->sh_hit_r,
+        e->pill_len, e->ts_boats, e->no_builder, e->cr_on, e->cr_max, e->cr_stuck, e->bs_on, e->ba_tab,
+        e->n_map, e->n_stay, e->n_std, e->n_bld, e->nb_n, e->st_n, e->ts_life,
+        e->ts_s1, e->ts_slast, e->ts_step, e->ts_hit, e->ps_s1, e->ps_slast, e->ps_step, e->ps_hit,
+        e->has_env_speed, e->env_speed, e->keep_all, e->has_band, e->radius, e->approach_offset
+    };
+    typedef char dle_nv_ok[(sizeof(v) / sizeof(v[0]) == (size_t)DLE_NV) ? 1 : -1];
+    int n = 0;
+    for (size_t i = 0; i < sizeof(v) / sizeof(v[0]) && n < DLE_NCSV; i++) o->v[n++] = v[i];
+    for (int i = 0; i < PT2_TT_N && n < DLE_NCSV; i++) o->v[n++] = e->std_ok[i];
+    for (int i = 0; i < e->nb_n && n < DLE_NCSV; i++) o->v[n++] = e->nb[i];
+    for (int i = 0; i < 4 * e->st_n && n < DLE_NCSV; i++) o->v[n++] = e->st_r[i];
+    uint64_t sk = 0;
+    if (lua_istable(L, S_CHAIN_SKIP)) {
+        lua_pushnil(L);
+        while (lua_next(L, S_CHAIN_SKIP)) {
+            if (lua_toboolean(L, -1) && lua_istable(L, -2)) {
+                lua_getfield(L, -2, "mx");
+                lua_getfield(L, -3, "my");
+                if (lua_isnumber(L, -2) && lua_isnumber(L, -1))
+                    sk += pt_mix((uint64_t)(lua_tonumber(L, -1) * 256 + lua_tonumber(L, -2)) * 2654435761ull + 17);
+                lua_pop(L, 2);
+            }
+            lua_pop(L, 1);
+        }
+    }
+    if (n < DLE_NCSV) o->v[n++] = (double)(sk >> 11);
+    o->n = n;
+}
+static int dle_field_of(const Ev *e, int i) {
+    if (i < DLE_NV) return i;
+    i -= DLE_NV;
+    if (i < PT2_TT_N) return 100 + i;
+    i -= PT2_TT_N;
+    if (i < e->nb_n) return 130;
+    i -= e->nb_n;
+    if (i < 4 * e->st_n) return 140;
+    return 200;
+}
+static uint64_t dle_csv_hash(const DlCsv *c) {
+    uint64_t h = 0x84222325CBF29CE4ull ^ (uint64_t)c->n;
+    for (int i = 0; i < c->n; i++) h = pt_mix(h ^ dbits(c->v[i])) + 0x9E3779B97F4A7C15ull;
+    return h;
+}
+static uint64_t dle_k(uint64_t h, double v) { return pt_mix(h ^ dbits(v)) + 0x632BE59BD9B4E019ull; }
+
+static DlEv *dle_of(Ev *e) { return (e && e->c && e->dle_on) ? (DlEv *)e->c->dle : NULL; }
+static void dle_rec0(Ev *e, DlRec *r, int lvl) {
+    memset(r, 0, sizeof(*r));
+    r->tick = (uint32_t)e->dle_tick; r->ev = e->dle_ev; r->p = (uint8_t)e->dle_p; r->src = (uint8_t)e->dle_src;
+    r->lvl = (uint8_t)lvl; r->asq = (uint16_t)e->dle_asq; r->xsq = 0xFFFF; r->osq = 0xFFFF; r->deg10 = 0xFFFF;
+    r->csq = 0xFFFF; r->depth = (uint8_t)e->pcc_n; r->run = e->job ? (uint32_t)e->job->drun : 0;
+}
+static DlSeen *dle_seen(DlEv *d, int src, int lvl, uint64_t key, int make) {
+    HMap *m = &d->seen[src & 1];
+    uint64_t a = pt_mix(key + (uint64_t)lvl * 0x9E3779B97F4A7C15ull);
+    if (!make) { HVal *v = hm_find(m, a, (uint64_t)lvl); return v ? (DlSeen *)v->p : NULL; }
+    int isnew;
+    HVal *v = hm_put(d->L, m, a, (uint64_t)lvl, &isnew);
+    if (isnew || !v->p) {
+        DlSeen *s = (DlSeen *)ar_alloc(d->L, &d->pool, sizeof(DlSeen));
+        memset(s, 0, sizeof(*s));
+        v->p = s;
+    }
+    return (DlSeen *)v->p;
+}
+/* the why of a miss: from what this log saw of the key; else the loose
+ * key (the same place, other run inputs): the first field that changed */
+static void dle_why(Ev *e, DlEv *d, DlRec *r, uint64_t key, uint64_t loose, const DlCsv *now) {
+    DlSeen *s = dle_seen(d, e->dle_src, r->lvl, key, 0);
+    if (s && s->st == DS_DROP) {
+        r->res = DLR_DROP; r->code = s->code; r->flags |= s->flags; r->field = s->field; r->csq = s->csq;
+        r->ckind = s->ckind; r->ov = s->ov; r->nv = s->nv;
+        return;
+    }
+    if (s && s->st == DS_COLD) { r->res = DLR_COLD; r->code = s->code; return; }
+    if (s && s->st == DS_LIVE) { r->res = DLR_GONE; return; }
+    if (loose) {
+        HVal *lv = hm_find(&d->loose[e->dle_src & 1], pt_mix(loose + (uint64_t)r->lvl * 0x51ull), (uint64_t)r->lvl);
+        if (lv && lv->p && now) {
+            const DlCsv *old = (const DlCsv *)lv->p;
+            int n = old->n < now->n ? old->n : now->n;
+            for (int i = 0; i < n; i++) {
+                if (old->v[i] != now->v[i] && !(old->v[i] != old->v[i] && now->v[i] != now->v[i])) {
+                    r->res = DLR_NEWKEY; r->field = (uint8_t)(r->lvl == DLV_PL ? 220 + i : dle_field_of(e, i));
+                    r->ov = (float)old->v[i]; r->nv = (float)now->v[i];
+                    return;
+                }
+            }
+            if (old->n != now->n) { r->res = DLR_NEWKEY; r->field = 255; r->ov = (float)old->n; r->nv = (float)now->n; return; }
+            /* the same inputs: another key part (the plan's record) */
+            r->res = DLR_NEWKEY; r->field = 254;
+            return;
+        }
+    }
+    r->res = DLR_FIRST;
+}
+static const DlCsv *dle_csv_ref(DlEv *d, const DlCsv *c) {
+    int isnew;
+    HVal *v = hm_put(d->L, &d->csv, dle_csv_hash(c), (uint64_t)c->n, &isnew);
+    if (isnew || !v->p) {
+        DlCsv *n = (DlCsv *)ar_alloc(d->L, &d->pool, sizeof(int) * 2 + sizeof(double) * (size_t)c->n);
+        n->n = c->n;
+        memcpy(n->v, c->v, sizeof(double) * (size_t)c->n);
+        v->p = n;
+    }
+    return (const DlCsv *)v->p;
+}
+static void dle_loose_set(Ev *e, DlEv *d, int lvl, uint64_t loose, const DlCsv *c) {
+    if (!loose || !c) return;
+    int isnew;
+    HVal *v = hm_put(d->L, &d->loose[e->dle_src & 1], pt_mix(loose + (uint64_t)lvl * 0x51ull), (uint64_t)lvl, &isnew);
+    v->p = (void *)c;
+}
+/* the key is in the store now; rk: the job's key to this log's key (for doll_sync) */
+static void dle_live(Ev *e, DlEv *d, int lvl, uint64_t key, uint64_t rk1, uint64_t rk2, float us) {
+    DlSeen *s = dle_seen(d, e->dle_src, lvl, key, 1);
+    s->st = DS_LIVE; s->code = 0; s->flags = 0; s->us = us; s->tick = (uint32_t)e->dle_tick;
+    int isnew;
+    HVal *v = hm_put(d->L, &d->rk[e->dle_src & 1], pt_mix(rk1 + (uint64_t)lvl * 0x9E3779B97F4A7C15ull), rk2, &isnew);
+    v->i = (int64_t)key;
+}
+static uint64_t dle_rk(DlEv *d, int src, int lvl, uint64_t rk1, uint64_t rk2) {
+    HVal *v = hm_find(&d->rk[src & 1], pt_mix(rk1 + (uint64_t)lvl * 0x9E3779B97F4A7C15ull), rk2);
+    return v ? (uint64_t)v->i : 0;
+}
+/* the bytes used in an arena's chunks so far */
+static double dle_ar_used(const Arena *a) {
+    double n = 0;
+    for (const Chunk *c = a->head; c; c = c->next) { n += (double)c->used; if (c == a->cur) break; }
+    return n;
+}
+static int64_t dle_t0(DlEv *d) { return d ? pf_clock() : 0; }
+static float dle_us(int64_t t0) { return (float)((double)(pf_clock() - t0) * pf_tick_us()); }
+
 /* ── Exact rays ─────────────────────────────────────────────────────── */
 static Ray *base_ray__p(Ev *e, int X, double px, double py) {
     double k = (py + 4096) * 131072 + (px + 4096);
     HVal *hv = (e->dl_skip & 2) ? NULL : hm_find(&e->job->rays, (uint64_t)X, dbits(k));
+    DlEv *dle = dle_of(e);
+    uint64_t dlk = dle ? dle_k(dle_k(0x7261790000000001ull, (double)dle_sq_of(e, X)), k) : 0;
     if (hv) {
         PObj *ro = e->pcc_run ? pcc_ref(e, PO_RAY, (uint64_t)X, dbits(k)) : NULL;
         /* PT2_V2_DOLL: a ray kept from an earlier group run counts as a
@@ -3179,8 +3467,25 @@ static Ray *base_ray__p(Ev *e, int X, double px, double py) {
         if (e->doll && ro && ro->drun != e->job->drun) {
             ro->drun = e->job->drun;
             e->casts += 1; e->dl_ray_old += 1;
+            if (dle) {
+                DlRec r; dle_rec0(e, &r, DLV_RAY);
+                r.xsq = (uint16_t)dle_sq_of(e, X);
+                r.osq = (uint16_t)((int)floor(py / 256) * 256 + (int)floor(px / 256));
+                DlSeen *s = dle_seen(dle, e->dle_src, DLV_RAY, dlk, 0);
+                r.res = DLR_HIT; r.us = s ? s->us : 0;
+                dle_put(dle, &r);
+            }
         } else e->ray_reuse += 1;
         return (Ray *)hv->p;
+    }
+    DlRec dlr;
+    int64_t dlt0 = 0;
+    if (dle) {
+        dle_rec0(e, &dlr, DLV_RAY);
+        dlr.xsq = (uint16_t)dle_sq_of(e, X);
+        dlr.osq = (uint16_t)((int)floor(py / 256) * 256 + (int)floor(px / 256));
+        dle_why(e, dle, &dlr, dlk, 0, NULL);
+        dlt0 = pf_clock();
     }
     Pill *P = PI(e, X);
     double sx = P->mx * 256 + 128, sy = P->my * 256 + 128;
@@ -3195,6 +3500,11 @@ static Ray *base_ray__p(Ev *e, int X, double px, double py) {
     /* PT2_V2_DOLL: a kept part's answer this run counted it already */
     if (!(e->doll && po_ && po_->drun == e->job->drun)) e->casts += 1;
     if (e->doll) { e->dl_ray_cast += 1; if (po_) po_->drun = e->job->drun; }
+    if (dle) {
+        dlr.us = dle_us(dlt0);
+        dle_put(dle, &dlr);
+        dle_live(e, dle, DLV_RAY, dlk, (uint64_t)X, dbits(k), dlr.us);
+    }
     return r;
 }
 static Ray *base_ray(Ev *e, int X, double px, double py) { PB(P_base_ray); Ray * r_ = base_ray__p(e, X, px, py); PE(); return r_; }
@@ -3694,9 +4004,13 @@ static Rec *eval_point__p(Ev *e, double px, double py, Extra *extra, int aim_fix
 }
 static Rec *eval_point(Ev *e, double px, double py, Extra *extra, int aim_fixed, int nudge, int exact, int lazy, int *why, int *why_arg) { PB(P_eval_point); Rec * r_ = eval_point__p(e, px, py, extra, aim_fixed, nudge, exact, lazy, why, why_arg); PE(); return r_; }
 
+static Aims *aims_copy(Ev *e, const Aims *a);
+static Lanes *lanes_copy(Ev *e, const Lanes *a);
+
 /* Every clear aim of a record (clear_aims_of). */
 static Aims *clear_aims_of__p(Ev *e, Rec *rec) {
     if (rec->aims_done < e->naims) {
+        if (rec->alsh) { rec->clear = aims_copy(e, rec->clear); rec->lanes = lanes_copy(e, rec->lanes); rec->alsh = 0; }
         set_om(e, floor(rec->px / 256), floor(rec->py / 256));
         for (int ai = (int)rec->aims_done + 1; ai <= e->naims; ai++) {
             Pill *A = PI(e, e->A);
@@ -4991,7 +5305,7 @@ static Rec *confirm_plan__p(Ev *e, Rec *rec, int ai, const PlanE *items, int n) 
         f->plan = plan; f->extra = extra; f->flags |= RF_PLAN;
         if (rec->flags & RF_OMXY) { f->omx = rec->omx; f->omy = rec->omy; f->flags |= RF_OMXY; }
         else f->flags &= ~RF_OMXY;
-        f->clear = rec->clear; f->lanes = rec->lanes;
+        f->clear = rec->clear; f->lanes = rec->lanes; f->alsh = rec->alsh;
         return f;
     }
     return NULL;
@@ -5925,8 +6239,10 @@ static Pt2Ctx *get_ctx(lua_State *L) {
     return c;
 }
 
+static void dle_close_ctx(Pt2Ctx *c);
 static int ctx_gc(lua_State *L) {
     Pt2Ctx *c = (Pt2Ctx *)lua_touserdata(L, 1);
+    dle_close_ctx(c);
     free(c->tt_stamp); free(c->tt_val); free(c->po_stamp); free(c->po_val); free(c->ba_stamp);
     for (int i = 0; i < c->n_offs; i++) free(c->offs[i].o);
     free(c->offs);
@@ -5951,7 +6267,8 @@ static int job_gc(lua_State *L) {
     hm_free(&j->rays); hm_free(&j->sqm); hm_free(&j->sqf);
     free(j->pills); free(j->sqf_new);
     j->pills = NULL; j->sqf_new = NULL;
-    ar_free(&j->par); hm_free(&j->pts); hm_free(&j->pls); hm_free(&j->flt);
+    ar_free(&j->par); hm_free(&j->pts); hm_free(&j->pls); hm_free(&j->flt); j->flt_gen++;
+    dl_spar_free_all(j); free(j->spar); j->spar = NULL;
     j->freed = 1;
     return 0;
 }
@@ -6301,7 +6618,7 @@ static int co_lt(void *cx, void *pa, void *pb) {
 typedef struct { int inf, any; double x0, y0, x1, y1; } PBox;
 /* w_*: PT2_V2_DOLL, the work units the part took (n_shot, casts_confirm,
  * wall_nodes, memo_nodes) */
-typedef struct { Rec *r; int why, wa; PBox b; double w_shot, w_conf, w_nodes, w_memo; } PEnt;
+typedef struct { Rec *r; int why, wa; PBox b; double w_shot, w_conf, w_nodes, w_memo; int si; double nb; PObj *po; } PEnt;
 typedef struct {
     Rec      *out;            /* NULL: the plan is on the record itself */
     Aims     *clr;
@@ -6313,6 +6630,9 @@ typedef struct {
     Extra    *extra;
     PBox      b;
     double    w_shot, w_conf, w_nodes, w_memo;
+    int       si;   /* PT2_V2_DOLL: its slot arena (-1: par) */
+    double    nb;   /* PT2_V2_DOLL: the bytes its making took in that arena */
+    PObj     *po;   /* its part (NULL: none made) */
 } PPlan;
 
 static void rb_start(Ev *e) { e->rb_on = 1; e->rb_inf = 0; e->rb_any = 0; }
@@ -6354,8 +6674,10 @@ static Rec *rec_from_store(Ev *e, const Rec *s) {
     Rec *c = NEW(e, Rec);
     *c = *s;
     memset(&c->m, 0, sizeof(c->m)); memset(&c->m_ri, 0, sizeof(c->m_ri));
-    c->clear = aims_copy(e, s->clear);
-    c->lanes = lanes_copy(e, s->lanes);
+    /* every aim done: no write comes, so the stored lists are shared */
+    c->alsh = s->aims_done >= e->naims;
+    c->clear = c->alsh ? s->clear : aims_copy(e, s->clear);
+    c->lanes = c->alsh ? s->lanes : lanes_copy(e, s->lanes);
     return c;
 }
 
@@ -6364,6 +6686,123 @@ static void pc_key(const Ev *e, double px, double py, int aim_fixed, int nudge, 
     uint64_t f = (uint64_t)aim_fixed * 4 + (uint64_t)(nudge ? 2 : 0) + (uint64_t)(lazy ? 1 : 0);
     *k1 = pt_mix(e->csig ^ dbits(px));
     *k2 = pt_mix(dbits(py) ^ pt_mix(e->csig + 0x5bd1e995ull * (f + 1)));
+}
+
+
+/* every live key of src: now st (cold, or dropped by code) */
+static void dle_mark_all(DlEv *d, int src, int st, int code) {
+    HMap *m = &d->seen[src & 1];
+    for (int i = 0; i < m->cap; i++) {
+        if (!m->u[i] || !m->v[i].p) continue;
+        DlSeen *s = (DlSeen *)m->v[i].p;
+        if (s->st != DS_LIVE) continue;
+        s->st = (uint8_t)st; s->code = (uint8_t)code; s->flags = 0; s->csq = 0xFFFF; s->ckind = 0;
+    }
+}
+static void dle_close_ctx(Pt2Ctx *c) {
+    if (c && c->dle) { dle_close((DlEv *)c->dle); c->dle = NULL; }
+}
+/* gh_pt2_v2.dl_ev_open(path): this lua_State's event log (log only).
+ * Writes path .. ".fields" (the key field names) too. */
+static int l_dl_ev_open(lua_State *L) {
+    const char *path = luaL_checkstring(L, 1);
+    Pt2Ctx *c = get_ctx(L);
+    if (c->dle) { lua_pushboolean(L, 1); return 1; }
+    DlEv *d = (DlEv *)calloc(1, sizeof(DlEv));
+    if (!d) { lua_pushboolean(L, 0); return 1; }
+    d->buf = (unsigned char *)malloc(1u << 20);
+    d->f = fopen(path, "wb");
+    if (!d->buf || !d->f) { if (d->f) fclose(d->f); free(d->buf); free(d); lua_pushboolean(L, 0); return 1; }
+    d->L = L;
+    char fp[1024];
+    snprintf(fp, sizeof(fp), "%s.fields", path);
+    FILE *ff = fopen(fp, "w");
+    if (ff) {
+        for (int i = 0; s_dle_csv_name[i]; i++) fprintf(ff, "%d %s\n", i, s_dle_csv_name[i]);
+        for (int i = 0; i < PT2_TT_N; i++) fprintf(ff, "%d std_ok_%d\n", 100 + i, i);
+        fprintf(ff, "130 nb\n140 st_r\n200 chain_skip\n220 plan_point_key\n221 omx\n222 omy\n223 kmax\n224 aims_done\n"
+                    "225 clear_n\n226 nudge_flags\n254 other_key_part\n255 csv_len\n");
+        fclose(ff);
+    }
+    c->dle = d;
+    lua_pushboolean(L, 1);
+    return 1;
+}
+/* gh_pt2_v2.dl_ev_reset(src, code, tick, player): a new job for src (code:
+ * 1 open, 2 time, 3 age, 4 rules, 5 lost, 6 busy, 7 nojob, 8 nomap) */
+static int l_dl_ev_reset(lua_State *L) {
+    Pt2Ctx *c = get_ctx(L);
+    DlEv *d = (DlEv *)c->dle;
+    if (!d) return 0;
+    int src = (int)luaL_checkinteger(L, 1) & 1, code = (int)luaL_checkinteger(L, 2);
+    dle_mark_all(d, src, DS_COLD, code);
+    DlRec r;
+    memset(&r, 0, sizeof(r));
+    r.tick = (uint32_t)luaL_optnumber(L, 3, 0); r.p = (uint8_t)luaL_optinteger(L, 4, 255);
+    r.src = (uint8_t)src; r.lvl = DLV_RESET; r.code = (uint8_t)code;
+    r.asq = r.xsq = r.osq = r.deg10 = r.csq = 0xFFFF;
+    dle_put(d, &r);
+    return 0;
+}
+/* gh_pt2_v2.dl_ev_stats(): records, bytes written */
+static int l_dl_ev_stats(lua_State *L) {
+    Pt2Ctx *c = get_ctx(L);
+    DlEv *d = (DlEv *)c->dle;
+    if (!d) return 0;
+    lua_pushnumber(L, d->nrec);
+    lua_pushnumber(L, d->bytes + (double)d->nb);
+    return 2;
+}
+/* gh_pt2_v2.dl_viz(): the BrainTest doll layers (debug only) want the
+ * records: keep a copy of each (with no event log, the records are made
+ * for the layers only, no file). Returns true when on. */
+#define DLV_VZCAP (1u << 18)
+static int l_dl_viz(lua_State *L) {
+    Pt2Ctx *c = get_ctx(L);
+    DlEv *d = (DlEv *)c->dle;
+    if (!d) {
+        d = (DlEv *)calloc(1, sizeof(DlEv));
+        if (!d) { lua_pushboolean(L, 0); return 1; }
+        d->L = L;
+        c->dle = d;
+    }
+    if (!d->vz) {
+        d->vz = (DlRec *)malloc(sizeof(DlRec) * DLV_VZCAP);
+        d->vzcap = d->vz ? DLV_VZCAP : 0;
+        d->vzn = 0;
+    }
+    lua_pushboolean(L, d->vz != NULL);
+    return 1;
+}
+/* gh_pt2_v2.dl_viz_take(): the records kept since the last take, as a
+ * list of tables (the DlRec fields by name), and the count lost (list
+ * full). Empties the list. */
+static int l_dl_viz_take(lua_State *L) {
+    Pt2Ctx *c = get_ctx(L);
+    DlEv *d = (DlEv *)c->dle;
+    if (!d || !d->vz) { lua_newtable(L); lua_pushnumber(L, 0); return 2; }
+    lua_createtable(L, (int)d->vzn, 0);
+    for (uint32_t i = 0; i < d->vzn; i++) {
+        const DlRec *r = &d->vz[i];
+        lua_createtable(L, 0, 18);
+#define VZF(nm, v) (lua_pushnumber(L, (lua_Number)(v)), lua_setfield(L, -2, nm))
+        VZF("tick", r->tick); VZF("ev", r->ev); VZF("us", r->us); VZF("ov", r->ov); VZF("nv", r->nv);
+        VZF("asq", r->asq); VZF("xsq", r->xsq); VZF("osq", r->osq); VZF("deg10", r->deg10);
+        VZF("csq", r->csq); VZF("ckind", r->ckind); VZF("src", r->src); VZF("lvl", r->lvl);
+        VZF("res", r->res); VZF("code", r->code); VZF("flags", r->flags); VZF("field", r->field);
+        VZF("run", r->run);
+#undef VZF
+        lua_rawseti(L, -2, (int)i + 1);
+    }
+    lua_pushnumber(L, d->vz_lost);
+    d->vzn = 0; d->vz_lost = 0;
+    return 2;
+}
+/* gh_pt2_v2.dl_ev_flush() */
+static int l_dl_ev_flush(lua_State *L) {
+    Pt2Ctx *c = get_ctx(L);
+    if (c->dle) dle_flush((DlEv *)c->dle);
+    return 0;
 }
 
 /* PT2_V2_DOLL: a store answer for part o (POINT or PLAN). The rays its
@@ -6383,9 +6822,15 @@ static void dl_emu_walk(Ev *e, PObj *o) {
 }
 static void dl_emu(Ev *e, PObj *o, double w_shot, double w_conf, double w_nodes, double w_memo) {
     if (!o) { e->job->dlost = 1; return; }
-    e->job->dvis++;
-    o->vis = e->job->dvis;
-    dl_emu_walk(e, o);
+    Job *j = e->job;
+    /* a walk of o in this group run with no graph edit since found every
+     * ray counted: a new walk adds no cast */
+    if (!(o->edrun == j->drun && o->egen == j->pcc->gedit)) {
+        j->dvis++;
+        o->vis = j->dvis;
+        dl_emu_walk(e, o);
+        o->edrun = j->drun; o->egen = j->pcc->gedit;
+    }
     e->n_shot += w_shot; e->casts_confirm += w_conf;
     e->wall_nodes += w_nodes; e->memo_nodes += w_memo;
 }
@@ -6404,29 +6849,72 @@ static Rec *eval_point_pc(Ev *e, double px, double py, int aim_fixed, int nudge,
                           int *why, int *why_arg) {
     if (!e->pc_on) return eval_point(e, px, py, NULL, aim_fixed, nudge, 0, lazy, why, why_arg);
     uint64_t k1, k2;
+    HB(P_hit_key);
     pc_key(e, px, py, aim_fixed, nudge, lazy, &k1, &k2);
     HVal *hv = (e->dl_skip & 17) ? NULL : hm_find(&e->job->pts, k1, k2);
+    int tin_ = hv && hv->p ? pc_tank_in(e, &((PEnt *)hv->p)->b) : 0;
+    HE();
+    DlEv *dle = dle_of(e);
+    DlRec dlr;
+    uint64_t dlk = 0, dll = 0;
+    double dlf = (double)aim_fixed * 4 + (nudge ? 2 : 0) + (lazy ? 1 : 0);
+    if (dle) {
+        dlk = dle_k(dle_k(dle_k(e->dle_csig, px), py), dlf);
+        dll = dle_k(dle_k(dle_k(0x706f696e74000001ull + (uint64_t)e->dle_asq, px), py), dlf);
+        dle_rec0(e, &dlr, DLV_PT);
+        dlr.osq = (uint16_t)((int)floor(py / 256) * 256 + (int)floor(px / 256));
+        dlr.deg10 = (uint16_t)(e->pcc_deg >= 0 ? (int)floor(e->pcc_deg * 10 + 0.5) : 0xFFFF);
+        dlr.field = (uint8_t)dlf;
+    }
     if (hv && hv->p) {
         PEnt *pe = (PEnt *)hv->p;
-        if (!pc_tank_in(e, &pe->b)) {
+        if (!tin_) {
             e->pc_eh += 1;
-            if (e->pcc_run) e->pcc_last_pt = pcc_ref(e, PO_POINT, k1, k2);
+            if (dle) {
+                PObj *po = e->pcc_run ? (PObj *)NULL : NULL;
+                HVal *pv = e->job->pcc ? hm_find(&e->job->pcc->om, pt_mix(k1 + (uint64_t)PO_POINT * 0x9E3779B97F4A7C15ull), k2) : NULL;
+                po = pv ? (PObj *)pv->p : NULL;
+                DlSeen *s = dle_seen(dle, e->dle_src, DLV_PT, dlk, 0);
+                dlr.res = (po && po->evrun == e->job->drun) ? DLR_HITRUN : DLR_HIT;
+                if (po) po->evrun = e->job->drun;
+                dlr.us = s ? s->us : 0;
+                dle_put(dle, &dlr);
+                dle_loose_set(e, dle, DLV_PT, dll, (const DlCsv *)e->dle_cv);
+            }
+            HB(P_hit_ref);
+            if (e->pcc_run) e->pcc_last_pt = pe->po ? pcc_ref_o(e, pe->po) : pcc_ref(e, PO_POINT, k1, k2);
+            HE();
+            HB(P_hit_emu);
             if (e->doll) { dl_emu(e, e->pcc_run ? e->pcc_last_pt : NULL, pe->w_shot, pe->w_conf, pe->w_nodes, pe->w_memo); dl_slice(e, 1); }
+            HE();
             *why = pe->why; *why_arg = pe->wa;
             if (!pe->r) {
                 if (pe->why != W_A_OUT) set_om(e, floor(px / 256), floor(py / 256));
                 return NULL;
             }
+            HB(P_hit_copy);
             Rec *c = rec_from_store(e, pe->r);
+            HE();
             set_om(e, floor(c->px / 256), floor(c->py / 256));
             return c;
         }
         e->pc_et += 1;
-    } else e->pc_em += 1;
+        if (dle) dlr.res = DLR_TANK;
+    } else {
+        e->pc_em += 1;
+        if (dle) dle_why(e, dle, &dlr, dlk, dll, (const DlCsv *)e->dle_cv);
+    }
     dl_slice(e, 0);
+    int dsi;
+    Arena *dar = dl_arena(e, &dsi);
+    double dnt0 = dar->ntot, *dnb = NULL;
+    double dnc0 = e->dl_nbc;   /* the parts made inside this one count as theirs */
+    e->dl_nbc = 0;
+    int64_t dlt0 = dle ? pf_clock() : 0;
+    double dlb0 = dle ? dle_ar_used(dar) : 0;
     double w0s = e->n_shot, w0c = e->casts_confirm, w0n = e->wall_nodes, w0m = e->memo_nodes;
     Arena *save = e->arp;
-    e->arp = &e->job->par;
+    e->arp = dar;
     rb_start(e);
     PObj *po_ = e->pcc_run ? pcc_push(e, PO_POINT, k1, k2) : NULL;
     if (po_) { po_->x = (int)floor(px / 256); po_->y = (int)floor(py / 256); }
@@ -6441,7 +6929,8 @@ static Rec *eval_point_pc(Ev *e, double px, double py, int aim_fixed, int nudge,
     } else {
         PEnt *pe = NEW(e, PEnt);
         memset(pe, 0, sizeof(*pe));
-        pe->why = *why; pe->wa = *why_arg; pe->b = b;
+        pe->why = *why; pe->wa = *why_arg; pe->b = b; pe->si = dsi; pe->po = po_;
+        dnb = &pe->nb;
         pe->w_shot = e->n_shot - w0s; pe->w_conf = e->casts_confirm - w0c;
         pe->w_nodes = e->wall_nodes - w0n; pe->w_memo = e->memo_nodes - w0m;
         if (r) {
@@ -6450,6 +6939,7 @@ static Rec *eval_point_pc(Ev *e, double px, double py, int aim_fixed, int nudge,
             *sn = *r;
             sn->clear = aims_copy(e, r->clear);
             sn->lanes = lanes_copy(e, r->lanes);
+            sn->alsh = 0;
             pe->r = sn;
         }
         int isnew;
@@ -6457,6 +6947,21 @@ static Rec *eval_point_pc(Ev *e, double px, double py, int aim_fixed, int nudge,
         v->p = pe;
     }
     e->arp = save;
+    {
+        double tot_ = dar->ntot - dnt0;
+        if (dnb) *dnb = tot_ - e->dl_nbc;
+        e->dl_nbc = dnc0 + tot_;
+    }
+    if (dle) {
+        dlr.us = dle_us(dlt0);
+        double b1 = dle_ar_used(dar);
+        dlr.bytes = (uint32_t)(b1 > dlb0 ? b1 - dlb0 : 0);
+        if (pc_tank_in(e, &b)) dlr.flags |= DF_NOTKEPT;
+        if (po_) po_->evrun = e->job->drun;
+        dle_put(dle, &dlr);
+        if (!(dlr.flags & DF_NOTKEPT)) dle_live(e, dle, DLV_PT, dlk, k1, k2, dlr.us);
+        dle_loose_set(e, dle, DLV_PT, dll, (const DlCsv *)e->dle_cv);
+    }
     return r;
 }
 
@@ -6476,16 +6981,50 @@ static Rec *plan_point_pc__p(Ev *e, Rec *rec) {
     uint64_t k1, k2;
     plan_key(rec, &k1, &k2);
     HVal *hv = (e->dl_skip & 33) ? NULL : hm_find(&e->job->pls, k1, k2);
+    DlEv *dle = dle_of(e);
+    DlRec dlr;
+    uint64_t dlk = 0, dll = 0;
+    DlCsv dlc;
+    if (dle) {
+        unsigned fl = rec->flags & (RF_KMAX | RF_OMXY | RF_EXTRA_IN);
+        uint64_t pk = dle_rk(dle, e->dle_src, DLV_PT, rec->ck1, rec->ck2);
+        dlc.n = 7;
+        dlc.v[0] = (double)(pk >> 11); dlc.v[1] = rec->omx; dlc.v[2] = rec->omy;
+        dlc.v[3] = (fl & RF_KMAX) ? rec->kmax : -1; dlc.v[4] = rec->aims_done;
+        dlc.v[5] = rec->clear ? rec->clear->n : 0; dlc.v[6] = rec->nudge_wu * 16 + fl;
+        dlk = dle_csv_hash(&dlc) ^ 0x706c616e00000001ull;
+        dll = dle_k(dle_k(0x706c616e6c000001ull + (uint64_t)e->dle_asq, rec->px), rec->py);
+        dle_rec0(e, &dlr, DLV_PL);
+        dlr.osq = (uint16_t)((int)floor(rec->py / 256) * 256 + (int)floor(rec->px / 256));
+        dlr.deg10 = (uint16_t)((rec->flags & RF_POS) ? (int)floor(rec->deg * 10 + 0.5) : 0xFFFF);
+    }
     if (hv && hv->p) {
         PPlan *pp = (PPlan *)hv->p;
         if (!pc_tank_in(e, &pp->b)) {
             e->pc_ph += 1;
+            if (dle) {
+                DlSeen *s = dle_seen(dle, e->dle_src, DLV_PL, dlk, 0);
+                HVal *pv = e->job->pcc ? hm_find(&e->job->pcc->om, pt_mix(k1 + (uint64_t)PO_PLAN * 0x9E3779B97F4A7C15ull), k2) : NULL;
+                PObj *po = pv ? (PObj *)pv->p : NULL;
+                dlr.res = (po && po->evrun == e->job->drun) ? DLR_HITRUN : DLR_HIT;
+                if (po) po->evrun = e->job->drun;
+                dlr.us = s ? s->us : 0;
+                dle_put(dle, &dlr);
+                dle_loose_set(e, dle, DLV_PL, dll, dle_csv_ref(dle, &dlc));
+            }
             e->planned += 1;
-            PObj *pro = e->pcc_run ? pcc_ref(e, PO_PLAN, k1, k2) : NULL;
+            HB(P_hit_ref);
+            PObj *pro = e->pcc_run ? (pp->po ? pcc_ref_o(e, pp->po) : pcc_ref(e, PO_PLAN, k1, k2)) : NULL;
+            HE();
+            HB(P_hit_emu);
             if (e->doll) dl_emu(e, pro, pp->w_shot, pp->w_conf, pp->w_nodes, pp->w_memo);
-            Aims *ca = aims_copy(e, pp->clr);
-            Lanes *ls = lanes_copy(e, pp->lns);
-            rec->clear = ca; rec->lanes = ls; rec->aims_done = pp->aims_done;
+            HE();
+            HB(P_hit_copy);
+            /* every aim done: no write comes, so the stored lists are shared */
+            int ash = pp->aims_done >= e->naims;
+            Aims *ca = ash ? pp->clr : aims_copy(e, pp->clr);
+            Lanes *ls = ash ? pp->lns : lanes_copy(e, pp->lns);
+            rec->clear = ca; rec->lanes = ls; rec->aims_done = pp->aims_done; rec->alsh = ash;
             rec->wb = pp->wb;
             if (pp->has_sm) {
                 SlotMemo *m = NEW(e, SlotMemo);
@@ -6494,19 +7033,32 @@ static Rec *plan_point_pc__p(Ev *e, Rec *rec) {
             } else rec->sm = NULL;
             if (!pp->out) {
                 rec->plan = pp->plan; rec->extra = pp->extra; rec->flags |= RF_PLAN;
+                HE();
                 return rec;
             }
             Rec *c = NEW(e, Rec);
             *c = *pp->out;
             memset(&c->m, 0, sizeof(c->m)); memset(&c->m_ri, 0, sizeof(c->m_ri));
-            c->clear = ca; c->lanes = ls;
+            c->clear = ca; c->lanes = ls; c->alsh = ash;
+            HE();
             return c;
         }
         e->pc_pt += 1;
-    } else e->pc_pm += 1;
+        if (dle) dlr.res = DLR_TANK;
+    } else {
+        e->pc_pm += 1;
+        if (dle) dle_why(e, dle, &dlr, dlk, dll, &dlc);
+    }
+    int dsi;
+    Arena *dar = dl_arena(e, &dsi);
+    double dnt0 = dar->ntot, *dnb = NULL;
+    double dnc0 = e->dl_nbc;   /* the parts made inside this one count as theirs */
+    e->dl_nbc = 0;
+    int64_t dlt0 = dle ? pf_clock() : 0;
+    double dlb0 = dle ? dle_ar_used(dar) : 0;
     double w0s = e->n_shot, w0c = e->casts_confirm, w0n = e->wall_nodes, w0m = e->memo_nodes;
     Arena *save = e->arp;
-    e->arp = &e->job->par;
+    e->arp = dar;
     rb_start(e);
     PObj *po_ = e->pcc_run ? pcc_push(e, PO_PLAN, k1, k2) : NULL;
     /* PT2_V2_DOLL: the plan takes the point's record (its clear aims,
@@ -6520,7 +7072,7 @@ static Rec *plan_point_pc__p(Ev *e, Rec *rec) {
             for (int i = 0; i < po_->nch; i++) if (po_->ch[i] == pto) { have = 1; break; }
             if (!have) {
                 if (!pcc_grow((void **)&po_->ch, &po_->capch, po_->nch + 1, sizeof(PObj *))) e->job->dlost = 1;
-                else po_->ch[po_->nch++] = pto;
+                else { po_->ch[po_->nch++] = pto; e->job->pcc->gedit++; }
             }
         }
     }
@@ -6534,7 +7086,8 @@ static Rec *plan_point_pc__p(Ev *e, Rec *rec) {
     } else {
         PPlan *pp = NEW(e, PPlan);
         memset(pp, 0, sizeof(*pp));
-        pp->b = b;
+        pp->b = b; pp->si = dsi; pp->po = po_;
+        dnb = &pp->nb;
         pp->w_shot = e->n_shot - w0s; pp->w_conf = e->casts_confirm - w0c;
         pp->w_nodes = e->wall_nodes - w0n; pp->w_memo = e->memo_nodes - w0m;
         pp->clr = aims_copy(e, rec->clear);
@@ -6546,7 +7099,7 @@ static Rec *plan_point_pc__p(Ev *e, Rec *rec) {
         else {
             Rec *o = NEW(e, Rec);
             *o = *res;
-            o->clear = NULL; o->lanes = NULL;
+            o->clear = NULL; o->lanes = NULL; o->alsh = 0;
             pp->out = o;
         }
         int isnew;
@@ -6554,22 +7107,35 @@ static Rec *plan_point_pc__p(Ev *e, Rec *rec) {
         v->p = pp;
     }
     e->arp = save;
+    {
+        double tot_ = dar->ntot - dnt0;
+        if (dnb) *dnb = tot_ - e->dl_nbc;
+        e->dl_nbc = dnc0 + tot_;
+    }
+    if (dle) {
+        dlr.us = dle_us(dlt0);
+        double b1 = dle_ar_used(dar);
+        dlr.bytes = (uint32_t)(b1 > dlb0 ? b1 - dlb0 : 0);
+        if (pc_tank_in(e, &b)) dlr.flags |= DF_NOTKEPT;
+        if (po_) po_->evrun = e->job->drun;
+        dle_put(dle, &dlr);
+        if (!(dlr.flags & DF_NOTKEPT)) dle_live(e, dle, DLV_PL, dlk, k1, k2, dlr.us);
+        dle_loose_set(e, dle, DLV_PL, dll, dle_csv_ref(dle, &dlc));
+    }
     return res;
 }
 
 static Rec *plan_point_pc(Ev *e, Rec *rec) {
+    HB(P_plan_pc);
     PCC_IN(e, PO_POST, pcc_rdeg(rec));
     Rec *r_ = plan_point_pc__p(e, rec);
     PCC_OUT(e);
+    HE();
     return r_;
 }
 
 /* the bytes of an arena's chunks */
-static double ar_bytes(const Arena *a) {
-    double n = 0;
-    for (const Chunk *c = a->head; c; c = c->next) n += (double)c->cap;
-    return n;
-}
+static double ar_bytes(const Arena *a) { return a->cb; }
 
 /* PT2_V2_DOLL: a group run goes over ticks, and the map can change and
  * change back in it. Each evaluate start and step adds the map's changes
@@ -6616,8 +7182,13 @@ static uint64_t pc_csig(Ev *e, int world) {
         e->has_env_speed, e->env_speed, e->keep_all, e->has_band, e->radius, e->approach_offset
     };
     /* world: the run inputs the job's rays, sqm and sqf read (not the
-     * goal pill, finish or the chain skip set) */
-    for (size_t i = world ? 2 : 0; i < sizeof(v) / sizeof(v[0]); i++) cs_add(&h, v[i]);
+     * goal pill, finish or the chain skip set; not co, lazy or
+     * num_pill_blockers either: only the points and plans read them, and
+     * their keys hold the full csig) */
+    for (size_t i = world ? 2 : 0; i < sizeof(v) / sizeof(v[0]); i++) {
+        if (world && e->dl_narrow && (i == 2 || i == 3 || i == 16)) continue;
+        cs_add(&h, v[i]);
+    }
     for (int i = 0; i < PT2_TT_N; i++) cs_add(&h, e->std_ok[i]);
     for (int i = 0; i < e->nb_n; i++) cs_add(&h, e->nb[i]);
     for (int i = 0; i < 4 * e->st_n; i++) cs_add(&h, e->st_r[i]);
@@ -6640,6 +7211,32 @@ static uint64_t pc_csig(Ev *e, int world) {
 
 static void pc_pill_remap(lua_State *L, Job *j);
 static void pcc_begin(Ev *e, Job *j, int prun);
+
+/* PT2_V2_DOLL: the filter answer row of this slot, ring kind and ring
+ * index (NULL: none, or out of range) */
+static PccFlt *flt_row(Ev *e) {
+    PccJob *pj = e->pcc_run ? e->job->pcc : NULL;
+    int si = e->pcc_slot, f = e->far ? 1 : 0, r = e->ri;
+    if (!pj || si < 0 || si >= PCC_MAXSLOT || r < 0 || r >= PCC_FRN || e->nsteps > PCC_FSN) return NULL;
+    PccFlt *row = pj->fr[si][f][r];
+    if (!row) row = pj->fr[si][f][r] = (PccFlt *)calloc(PCC_FSN, sizeof(PccFlt));
+    return row;
+}
+/* flt look up through the row (exact: an entry of the row is in flt) */
+static int flt_get(Ev *e, int s, uint64_t k1, uint64_t k2, int64_t *out) {
+    PccFlt *row = flt_row(e);
+    unsigned g = e->job->flt_gen + 1;
+    if (row && row[s].g == g && row[s].k1 == k1 && row[s].k2 == k2) { *out = row[s].v; return 1; }
+    HVal *v = hm_find(&e->job->flt, k1, k2);
+    if (!v) return 0;
+    *out = v->i;
+    if (row) { row[s].k1 = k1; row[s].k2 = k2; row[s].v = v->i; row[s].g = g; }
+    return 1;
+}
+static void flt_row_put(Ev *e, int s, uint64_t k1, uint64_t k2, int64_t v) {
+    PccFlt *row = flt_row(e);
+    if (row) { row[s].k1 = k1; row[s].k2 = k2; row[s].v = v; row[s].g = e->job->flt_gen + 1; }
+}
 static const unsigned char *pc_world(lua_State *L);
 
 static double score_fn(Ev *e, double deg, double mx, double my, double cx, double cy) {
@@ -6686,15 +7283,38 @@ static void points_of_ring__p(Ev *e) {
         /* PT2_V2_CACHE: the quick filter's answer for this ring point
          * (bit 1 kept, 2 the point passes, 4 hasA, 8 cant); banned above
          * stays fresh; a Lua stay_in or standable (no C list) stays fresh */
-        HVal *fv = NULL;
         int64_t fa = 0;
         uint64_t fk1 = 0, fk2 = 0;
         int fon = e->pc_on && e->n_stay && e->n_std;
+        DlEv *dle = fon && e->doll ? dle_of(e) : NULL;
+        DlRec dlr;
+        uint64_t dlk = 0, dll = 0;
+        int64_t dlt0 = 0;
         if (fon) {
-            fk1 = pt_mix(e->csig ^ dbits(cx) ^ 0x6a09e667f3bcc909ull);
+            /* PT2_V2_DOLL: the answer reads only the world inputs (wsig),
+             * the goal pill A and the map (doll_sync drops changed ring
+             * squares and pills), so its key is narrower than csig */
+            uint64_t fsig = e->doll && e->dl_narrow ? pt_mix(e->job->wsig ^ pt_mix(dbits(e->A) + 0x243f6a8885a308d3ull)) : e->csig;
+            fk1 = pt_mix(fsig ^ dbits(cx) ^ 0x6a09e667f3bcc909ull);
             fk2 = pt_mix(dbits(cy) + pt_mix(dbits(e->R) ^ dbits(deg)));
-            fv = (e->dl_skip & 4) ? NULL : hm_find(&e->job->flt, fk1, fk2);
-            if (fv) fa = fv->i;
+            if (!(e->dl_skip & 4)) (void)flt_get(e, (int)s, fk1, fk2, &fa);
+        }
+        if (dle) {
+            dlk = dle_k(dle_k(dle_k(dle_k(e->dle_csig ^ 0x666c740000000001ull, cx), cy), e->R), deg);
+            dll = dle_k(dle_k(dle_k(dle_k(0x666c746c00000001ull + (uint64_t)e->dle_asq, cx), cy), e->R), deg);
+            dle_rec0(e, &dlr, DLV_FLT);
+            dlr.osq = (uint16_t)((mx >= 0 && mx <= 255 && my >= 0 && my <= 255) ? (int)(my * 256 + mx) : 0xFFFF);
+            dlr.deg10 = (uint16_t)(int)floor(deg * 10 + 0.5);
+            if (fa & 1) {
+                DlSeen *s = dle_seen(dle, e->dle_src, DLV_FLT, dlk, 0);
+                dlr.res = DLR_HIT; dlr.us = s ? s->us : 0; dlr.field = (uint8_t)(fa & 15);
+                dle_put(dle, &dlr);
+                dle_loose_set(e, dle, DLV_FLT, dll, (const DlCsv *)e->dle_cv);
+                dle = NULL;
+            } else {
+                dle_why(e, dle, &dlr, dlk, dll, (const DlCsv *)e->dle_cv);
+                dlt0 = pf_clock();
+            }
         }
         /* PT2_V2_DOLL: the entry also keeps its ring square and its slot
          * (the A square), for doll_sync (bits 8 and up; the answer is in
@@ -6723,6 +7343,13 @@ static void points_of_ring__p(Ev *e) {
                 int isnew;
                 HVal *v = hm_put(L, &e->job->flt, fk1, fk2, &isnew);
                 v->i = (1 | 2 | (hasA ? 4 : 0) | (is_cant ? 8 : 0)) | fx;
+                flt_row_put(e, (int)s, fk1, fk2, v->i);
+                if (dle) {
+                    dlr.us = dle_us(dlt0); dlr.field = (uint8_t)(1 | 2 | (hasA ? 4 : 0) | (is_cant ? 8 : 0));
+                    dle_put(dle, &dlr);
+                    dle_live(e, dle, DLV_FLT, dlk, fk1, fk2, dlr.us);
+                    dle_loose_set(e, dle, DLV_FLT, dll, (const DlCsv *)e->dle_cv);
+                }
             }
             int q = e->np++;
             e->pp_deg[q] = deg; e->pp_cx[q] = cx; e->pp_cy[q] = cy; e->pp_mx[q] = mx; e->pp_my[q] = my;
@@ -6731,6 +7358,13 @@ static void points_of_ring__p(Ev *e) {
             int isnew;
             HVal *v = hm_put(L, &e->job->flt, fk1, fk2, &isnew);
             v->i = 1 | fx;
+            flt_row_put(e, (int)s, fk1, fk2, v->i);
+            if (dle) {
+                dlr.us = dle_us(dlt0); dlr.field = 1;
+                dle_put(dle, &dlr);
+                dle_live(e, dle, DLV_FLT, dlk, fk1, fk2, dlr.us);
+                dle_loose_set(e, dle, DLV_FLT, dll, (const DlCsv *)e->dle_cv);
+            }
         }
     }
     pcc_leave(e, pfs_);
@@ -7164,7 +7798,7 @@ static void push_result__p(Ev *e) {
         stat_put(L, "pc_et", e->pc_et); stat_put(L, "pc_en", e->pc_en);
         stat_put(L, "pc_ph", e->pc_ph); stat_put(L, "pc_pm", e->pc_pm);
         stat_put(L, "pc_pt", e->pc_pt); stat_put(L, "pc_pn", e->pc_pn);
-        stat_put(L, "pc_bytes", ar_bytes(&e->job->par));
+        stat_put(L, "pc_bytes", dl_par_bytes(e->job));
         stat_put(L, "pc_wdrop", e->pc_wdrop);
         stat_put(L, "pc_lost_ts", e->pc_lost_ts); stat_put(L, "pc_lost_aw", e->pc_lost_aw);
         stat_put(L, "pc_lost_ts_us", e->pc_lost_ts_us);
@@ -7337,9 +7971,9 @@ static int l_begin__p(lua_State *L) {
             lua_getfield(L, -1, "pc_max_bytes");
             double mb = lua_isnumber(L, -1) ? lua_tonumber(L, -1) : 0;
             lua_pop(L, 1);
-            if (mb > 0 && ar_bytes(&j->par) > mb) {
-                hm_clear(&j->pts); hm_clear(&j->pls); hm_clear(&j->flt);
-                ar_free(&j->par);
+            if (mb > 0 && dl_par_bytes(j) > mb) {
+                hm_clear(&j->pts); hm_clear(&j->pls); hm_clear(&j->flt); j->flt_gen++;
+                ar_free(&j->par); dl_spar_free_all(j);
                 lua_pushnumber(L, 1);
                 lua_setfield(L, -2, "pc_resets");
             }
@@ -7401,11 +8035,34 @@ static int l_begin__p(lua_State *L) {
     }
     Pill *A = PI(e, e->A);
     e->pcx = A->mx + 0.5; e->pcy = A->my + 0.5;
+    e->dl_narrow = getnum(L, S_INP, "_v2_dl_narrow", 0, NULL) != 0;
     e->lazy = (!e->keep_all) && e->has_band && e->band > 0;
     e->co = e->chains_only;
     if (e->co) e->lazy = 1;
     if (e->pc_on) {
         e->csig = pc_csig(e, 0);
+        /* PT2_V2_DOLL_EVENT_LOG (log only) */
+        e->dle_on = 0;
+        if (e->doll && e->c->dle) {
+            DlEv *d = (DlEv *)e->c->dle;
+            lua_getfield(L, S_INP, "_v2_dl_src");
+            e->dle_src = lua_isnumber(L, -1) ? (int)lua_tointeger(L, -1) & 1 : 1;
+            lua_pop(L, 1);
+            lua_getfield(L, S_INP, "_v2_pc_now");
+            e->dle_tick = lua_isnumber(L, -1) ? lua_tonumber(L, -1) : 0;
+            lua_pop(L, 1);
+            lua_getfield(L, S_INP, "_v2_pc_pn");
+            e->dle_p = lua_isnumber(L, -1) ? (int)lua_tointeger(L, -1) : 255;
+            lua_pop(L, 1);
+            e->dle_asq = (int)dle_sq_of(e, (int)e->A);
+            e->dle_ev = ++d->nev;
+            DlCsv cv;
+            dle_csv(e, &cv);
+            e->dle_cv = dle_csv_ref(d, &cv);
+            e->dle_csig = dle_csv_hash(&cv);
+            j->dl_src = e->dle_src; j->dl_p = e->dle_p;
+            e->dle_on = 1;
+        }
         /* a kept job's rays, square reads and square facts are keyed by
          * place only: a change of a run input they read (the builder dead
          * or back, the stay area, a shell rule) drops them */
@@ -7414,7 +8071,26 @@ static int l_begin__p(lua_State *L) {
             hm_clear(&j->rays); hm_clear(&j->sqm); hm_clear(&j->sqf);
             /* PT2_V2_DOLL: the kept parts' links to their rays are by
              * place, so the points, plans and filter answers go too */
-            if (e->doll) { hm_clear(&j->pts); hm_clear(&j->pls); hm_clear(&j->flt); e->dl_wdrop = 1; }
+            if (e->doll) { hm_clear(&j->pts); hm_clear(&j->pls); hm_clear(&j->flt); j->flt_gen++; e->dl_wdrop = 1; dl_spar_free_all(j); }
+            if (e->dle_on) {
+                DlEv *d = (DlEv *)e->c->dle;
+                dle_mark_all(d, e->dle_src, DS_DROP, DC_WDROP);
+                /* a RESET record, code 20: the first world input that changed */
+                DlRec r;
+                dle_rec0(e, &r, DLV_RESET);
+                r.code = 20; r.field = 254;
+                const DlCsv *o = (const DlCsv *)d->wlast[e->dle_src & 1], *n = (const DlCsv *)e->dle_cv;
+                if (o && n) {
+                    int nn = (o->n < n->n ? o->n : n->n) - 1;   /* not the chain skip (the last) */
+                    for (int i = 2; i < nn; i++)
+                        if (o->v[i] != n->v[i] && !(o->v[i] != o->v[i] && n->v[i] != n->v[i])) {
+                            r.field = (uint8_t)dle_field_of(e, i); r.ov = (float)o->v[i]; r.nv = (float)n->v[i];
+                            break;
+                        }
+                    if (r.field == 254 && o->n != n->n) { r.field = 255; r.ov = (float)o->n; r.nv = (float)n->n; }
+                }
+                dle_put(d, &r);
+            }
             j->n_sqf_new = 0;
             e->pc_wdrop = 1;
             lua_getfield(L, S_INP, "_v2_cache");
@@ -7438,6 +8114,7 @@ static int l_begin__p(lua_State *L) {
             lua_pop(L, 1);
         }
         j->wsig = ws; j->wsig_set = 1;
+        if (e->dle_on) ((DlEv *)e->c->dle)->wlast[e->dle_src & 1] = e->dle_cv;
         if (!j->rpm && !e->doll) j->rpm = (unsigned char *)calloc(PT2_MAP_SQ, 1);
         Pill *GA = PI(e, e->A);
         pc_mark(e, GA->mx, GA->my, PCM_GROUP);
@@ -7505,7 +8182,7 @@ static void pcc_begin(Ev *e, Job *j, int prun) {
     PObj *o = pcc_obj(e, PO_ALEV, (uint64_t)k, 0, 0);
     /* PT2_V2_DOLL: the A level runs again each evaluate, so it keeps only
      * this evaluate's reads (doll_sync checks them before the next) */
-    if (o && e->doll) { o->nrd = 0; o->nsrt = 0; o->nch = 0; }
+    if (o && e->doll) { o->nrd = 0; o->nsrt = 0; o->nch = 0; pj->gedit++; }
     e->pcc_alev = o; e->pcc_ctx = o;
     if (!o) e->pcc_on = e->pcc_run = 0;
 }
@@ -7523,7 +8200,7 @@ static int l_step__p(lua_State *L) {
     if (e->pcc_on && e->job && e->job->pcc) {
         e->pcc_run = 1; e->pcc_n = 0; e->pcc_ctx = e->pcc_alev; e->pcc_deg = -1; e->pcc_t0 = pf_clock();
     }
-    if (e->doll) dl_track(L, e->job);
+    if (e->doll) { HB(P_dl_track); dl_track(L, e->job); HE(); }
     cr_setup(e);
     if (e->pc != 0) step_reads(e);
     else {
@@ -7677,8 +8354,9 @@ static int l_slices(lua_State *L) {
 static int l_pc_free(lua_State *L) {
     Job *j = (Job *)luaL_checkudata(L, 1, "gh_pt2_v2_job_mt");
     if (j->freed || j->busy) { lua_pushboolean(L, 0); return 1; }
-    hm_free(&j->pts); hm_free(&j->pls); hm_free(&j->flt);
+    hm_free(&j->pts); hm_free(&j->pls); hm_free(&j->flt); j->flt_gen++;
     ar_free(&j->par);
+    dl_spar_free_all(j); free(j->spar); j->spar = NULL;
     job_watch_free(j);
     lua_pushboolean(L, 1);
     return 1;
@@ -8474,11 +9152,15 @@ static double dl_pcc_bytes(const Job *j) {
             const PObj *o = pj->objs[i];
             n += sizeof(PObj) + (double)o->caprd * sizeof(uint32_t) + (double)o->capch * sizeof(PObj *);
         }
+        for (int s = 0; s < PCC_MAXSLOT; s++) {
+            n += (pj->cx[s][0] ? PCC_CXN * sizeof(PObj *) : 0) + (pj->cx[s][1] ? PCC_CXN * sizeof(PObj *) : 0);
+            for (int f = 0; f < 2; f++) for (int r = 0; r < PCC_FRN; r++) if (pj->fr[s][f][r]) n += PCC_FSN * sizeof(PccFlt);
+        }
     }
     return n;
 }
 static double dl_bytes(const Job *j) {
-    double n = sizeof(Job) + ar_bytes(&j->ar) + ar_bytes(&j->par);
+    double n = sizeof(Job) + ar_bytes(&j->ar) + dl_par_bytes(j);
     n += dl_hm_bytes(&j->rays) + dl_hm_bytes(&j->sqm) + dl_hm_bytes(&j->sqf)
        + dl_hm_bytes(&j->pts) + dl_hm_bytes(&j->pls) + dl_hm_bytes(&j->flt);
     n += dl_pcc_bytes(j);
@@ -8490,8 +9172,24 @@ static double dl_bytes(const Job *j) {
 typedef struct { int sq; int c; } DlSq;
 enum { DL_OWN = 1, DL_DIRTY = 2, DL_DONE = 4, DL_BUSY = 8 };
 
+/* PT2_V2_DOLL_EVENT_LOG (log only): why a part was dropped */
+typedef struct { uint8_t code, flags, field; uint16_t csq, ckind; float ov, nv; } DlCause;
+static PF_TLS const unsigned char *t_dl_om, *t_dl_nm;   /* doll_sync's old and new map (log only) */
+static void dl_cz(DlCause *z, int code, int sq, int kind, double ov, double nv, int field) {
+    if (!z) return;
+    z->code = (uint8_t)code; z->csq = (uint16_t)(sq < 0 ? 0xFFFF : sq); z->ckind = (uint16_t)kind;
+    z->ov = (float)ov; z->nv = (float)nv; z->field = (uint8_t)field; z->flags = 0;
+}
+static void dl_cz_sq(DlCause *z, int code, int sq, int kind) {
+    if (!z) return;
+    dl_cz(z, code, sq, kind, t_dl_om ? (t_dl_om[sq] & 0x0F) : -1, t_dl_nm ? (t_dl_nm[sq] & 0x0F) : -1, 0);
+}
+static void dl_cz_pc(DlCause *z, int code, int sq, int kind, const PChg *p) {
+    if (!z) return;
+    dl_cz(z, code, sq, kind, p->o, p->n, (p->fh ? 1 : 0) | (p->fa ? 2 : 0));
+}
 static int dl_own(const PObj *o, const unsigned char *chg, const DlSq *cs, int ncs, const PChg *pc, int npc,
-                  double R1, double margin, int exact) {
+                  double R1, double margin, int exact, DlCause *cz) {
     int k = o->kind;
     if (k != PO_RAY && k != PO_CWM && k != PO_POINT && k != PO_PLAN && k != PO_ALEV) return 0;
     int x0 = 256, y0 = 256, x1 = -1, y1 = -1;
@@ -8508,19 +9206,30 @@ static int dl_own(const PObj *o, const unsigned char *chg, const DlSq *cs, int n
         int c = chg[sq];
         if (!c) continue;
         int bits = (int)(v & 255u);
-        if ((c & CH_T) && (bits & (PR_T | PR_W))) return 1;
-        if ((c & CH_F) && (bits & PR_W)) return 1;
-        if ((c & CH_B) && (bits & PR_B)) return 1;
+        if ((c & CH_T) && (bits & (PR_T | PR_W))) { dl_cz_sq(cz, DC_TERR, sq, k); return 1; }
+        if ((c & CH_F) && (bits & PR_W)) { dl_cz_sq(cz, DC_FOREST, sq, k); return 1; }
+        if ((c & CH_B) && (bits & PR_B)) { dl_cz_sq(cz, DC_BASE, sq, k); return 1; }
         if ((c & CH_PO) && (bits & PR_P)) {
             /* a ray or wedge set keeps what is on its squares (the link
              * pill, ally cover): any pill change on them; rule B lets
              * the other parts take only the in-range test below */
-            if (exact || k == PO_RAY || k == PO_CWM) return 1;
+            if (exact || k == PO_RAY || k == PO_CWM) {
+                if (cz) { for (int q = 0; q < npc; q++) if (pc[q].o == sq || pc[q].n == sq) { dl_cz_pc(cz, DC_PILLSQ, sq, k, &pc[q]); break; } }
+                return 1;
+            }
         }
     }
     if ((k == PO_RAY || k == PO_CWM) && o->x >= 0 && o->x <= 255 && o->y >= 0 && o->y <= 255
-        && (chg[o->y * 256 + o->x] & CH_PO)) return 1;
-    if (k == PO_ALEV && o->slot_k >= 0 && o->slot_k < PT2_MAP_SQ && (chg[o->slot_k] & CH_PO)) return 1;
+        && (chg[o->y * 256 + o->x] & CH_PO)) {
+        int sq = o->y * 256 + o->x;
+        if (cz) { dl_cz(cz, DC_CENTRE, sq, k, -1, -1, 0); for (int q = 0; q < npc; q++) if (pc[q].o == sq || pc[q].n == sq) { dl_cz_pc(cz, DC_CENTRE, sq, k, &pc[q]); break; } }
+        return 1;
+    }
+    if (k == PO_ALEV && o->slot_k >= 0 && o->slot_k < PT2_MAP_SQ && (chg[o->slot_k] & CH_PO)) {
+        int sq = o->slot_k;
+        if (cz) { dl_cz(cz, DC_SLOTPILL, sq, k, -1, -1, 0); for (int q = 0; q < npc; q++) if (pc[q].o == sq || pc[q].n == sq) { dl_cz_pc(cz, DC_SLOTPILL, sq, k, &pc[q]); break; } }
+        return 1;
+    }
     if (k == PO_POINT && o->x >= 0) {
         for (int c = 0; c < npc; c++) {
             if (!pc[c].fh) continue;
@@ -8528,7 +9237,7 @@ static int dl_own(const PObj *o, const unsigned char *chg, const DlSq *cs, int n
             for (int q = 0; q < 2; q++) {
                 if (sq[q] < 0) continue;
                 double dx = (sq[q] & 255) - o->x, dy = (sq[q] >> 8) - o->y;
-                if (dx * dx + dy * dy <= R1 * R1) return 1;
+                if (dx * dx + dy * dy <= R1 * R1) { dl_cz_pc(cz, DC_PILLREACH, sq[q], k, &pc[c]); return 1; }
             }
         }
         /* the margin disks of the point and its builder origin */
@@ -8539,7 +9248,7 @@ static int dl_own(const PObj *o, const unsigned char *chg, const DlSq *cs, int n
             for (int q = 0; q < 2; q++) {
                 if (cx[q] < 0) continue;
                 double dx = x - cx[q], dy = y - cy[q];
-                if (dx * dx + dy * dy <= margin * margin) return 1;
+                if (dx * dx + dy * dy <= margin * margin) { dl_cz_sq(cz, DC_MARGIN, cs[i].sq, k); return 1; }
             }
         }
     }
@@ -8551,7 +9260,7 @@ static int dl_own(const PObj *o, const unsigned char *chg, const DlSq *cs, int n
             for (int q = 0; q < 2; q++) {
                 if (sq[q] < 0) continue;
                 int x = sq[q] & 255, y = sq[q] >> 8;
-                if (x >= x0 - R1 && x <= x1 + R1 && y >= y0 - R1 && y <= y1 + R1) return 1;
+                if (x >= x0 - R1 && x <= x1 + R1 && y >= y0 - R1 && y <= y1 + R1) { dl_cz_pc(cz, DC_PILLBOX, sq[q], k, &pc[c]); return 1; }
             }
         }
         /* a builder walk can leave its box: a terrain, forest or base
@@ -8560,12 +9269,13 @@ static int dl_own(const PObj *o, const unsigned char *chg, const DlSq *cs, int n
         for (int i = 0; i < ncs; i++) {
             if (!(cs[i].c & (CH_T | CH_F | CH_B))) continue;
             int x = cs[i].sq & 255, y = cs[i].sq >> 8;
-            if (x >= x0 - mr && x <= x1 + mr && y >= y0 - mr && y <= y1 + mr) return 1;
+            if (x >= x0 - mr && x <= x1 + mr && y >= y0 - mr && y <= y1 + mr) { dl_cz_sq(cz, DC_BOX, cs[i].sq, k); return 1; }
         }
     }
     return 0;
 }
 
+static PF_TLS DlCause *t_dl_cz;   /* doll_sync's causes by part (log only) */
 static int dl_dirty(PObj *o, unsigned char *fl) {
     int i = o->qi;
     if (i < 0) return 0;
@@ -8577,7 +9287,10 @@ static int dl_dirty(PObj *o, unsigned char *fl) {
         PObj *ch = o->ch[c];
         /* the A level runs again each run: only the rays and wedges it read */
         if (o->kind == PO_ALEV && ch->kind != PO_RAY && ch->kind != PO_CWM) continue;
-        if (dl_dirty(ch, fl)) d = 1;
+        if (dl_dirty(ch, fl)) {
+            d = 1;
+            if (t_dl_cz && ch->qi >= 0) { t_dl_cz[i] = t_dl_cz[ch->qi]; t_dl_cz[i].flags |= DF_CHILD; }
+        }
     }
     fl[i] = (unsigned char)((fl[i] & ~DL_BUSY) | DL_DONE | (d ? DL_DIRTY : 0));
     return d;
@@ -8612,6 +9325,15 @@ static int l_doll_sync(lua_State *L) {
         dl_stat(L, "changed", 0);
         dl_stat(L, "bytes", dl_bytes(j));
         dl_stat(L, "us", (double)(pf_clock() - t0) * pf_tick_us());
+        DlEv *dle0 = (DlEv *)get_ctx(L)->dle;
+        if (dle0) {
+            DlRec r;
+            memset(&r, 0, sizeof(r));
+            r.tick = (uint32_t)luaL_optnumber(L, 8, 0); r.p = (uint8_t)j->dl_p; r.src = (uint8_t)j->dl_src;
+            r.lvl = DLV_SYNC; r.run = (uint32_t)j->drun; r.asq = r.xsq = r.osq = r.deg10 = r.csq = 0xFFFF;
+            r.us = (float)((double)(pf_clock() - t0) * pf_tick_us()); r.bytes = (uint32_t)(dl_bytes(j) / 1024);
+            dle_put(dle0, &r);
+        }
         return 1;
     }
     unsigned char *chg = (unsigned char *)calloc(PT2_MAP_SQ, 1);
@@ -8672,17 +9394,65 @@ static int l_doll_sync(lua_State *L) {
     unsigned char *fl = (unsigned char *)calloc((size_t)ns + 1, 1);
     unsigned char *sdirty = (unsigned char *)calloc(PT2_MAP_SQ, 1);
     if (!fl || !sdirty) { free(chg); free(pc); free(cs); free(fl); free(sdirty); lua_pop(L, 1); lua_pushstring(L, "lost"); return 1; }
+    /* PT2_V2_DOLL_EVENT_LOG (log only) */
+    DlEv *dle = (DlEv *)get_ctx(L)->dle;
+    uint32_t dtick = (uint32_t)luaL_optnumber(L, 8, 0);
+    DlCause *cz = NULL;
+    int *sobj = NULL;
+    if (dle) {
+        cz = (DlCause *)calloc((size_t)ns + 1, sizeof(DlCause));
+        sobj = (int *)malloc(sizeof(int) * PT2_MAP_SQ);
+        if (!cz || !sobj) { free(cz); free(sobj); cz = NULL; sobj = NULL; dle = NULL; }
+        else for (int k = 0; k < PT2_MAP_SQ; k++) sobj[k] = -1;
+        t_dl_om = j->dsnap; t_dl_nm = m;
+        if (dle) {
+            DlRec r;
+            for (int i = 0; i < ncs; i++) {
+                memset(&r, 0, sizeof(r));
+                r.tick = dtick; r.p = (uint8_t)j->dl_p; r.src = (uint8_t)j->dl_src; r.lvl = DLV_CHG; r.run = (uint32_t)j->drun;
+                r.asq = r.xsq = r.osq = r.deg10 = 0xFFFF; r.csq = (uint16_t)cs[i].sq; r.field = (uint8_t)cs[i].c;
+                r.ov = (float)(j->dsnap[cs[i].sq] & 0x0F); r.nv = (float)(m[cs[i].sq] & 0x0F);
+                dle_put(dle, &r);
+            }
+            for (int i = 0; i < npc; i++) {
+                memset(&r, 0, sizeof(r));
+                r.tick = dtick; r.p = (uint8_t)j->dl_p; r.src = (uint8_t)j->dl_src; r.lvl = DLV_PILL; r.run = (uint32_t)j->drun;
+                r.asq = r.xsq = r.osq = r.deg10 = r.csq = 0xFFFF;
+                r.ov = (float)pc[i].o; r.nv = (float)pc[i].n; r.field = (uint8_t)((pc[i].fh ? 1 : 0) | (pc[i].fa ? 2 : 0));
+                dle_put(dle, &r);
+            }
+        }
+    }
+    t_dl_cz = cz;
     if (ncs > 0 && ns > 0) {
         double R1 = reach + margin;
         for (int i = 0; i < ns; i++) pj->objs[i]->qi = i;
         for (int i = 0; i < ns; i++) {
             PObj *o = pj->objs[i];
-            if (dl_own(o, chg, cs, ncs, pc, npc, R1, margin, exact)) { fl[i] |= DL_OWN; own_n++; own_k[o->kind]++; }
+            if (dl_own(o, chg, cs, ncs, pc, npc, R1, margin, exact, cz ? &cz[i] : NULL)) { fl[i] |= DL_OWN; own_n++; own_k[o->kind]++; }
         }
         for (int i = 0; i < ns; i++) {
             PObj *o = pj->objs[i];
             if (o->kind == PO_ALEV && dl_dirty(o, fl) && o->slot_k >= 0 && o->slot_k < PT2_MAP_SQ && !sdirty[o->slot_k]) {
                 sdirty[o->slot_k] = 1; slots++;
+                if (sobj) sobj[o->slot_k] = i;
+            }
+        }
+        if (dle) {
+            /* D4: each A level (ring), dirty or clean */
+            for (int i = 0; i < ns; i++) {
+                PObj *o = pj->objs[i];
+                if (o->kind != PO_ALEV) continue;
+                DlRec r;
+                memset(&r, 0, sizeof(r));
+                r.tick = dtick; r.p = (uint8_t)j->dl_p; r.src = (uint8_t)j->dl_src; r.lvl = DLV_RING; r.run = (uint32_t)j->drun;
+                r.asq = (uint16_t)(o->slot_k >= 0 && o->slot_k < PT2_MAP_SQ ? o->slot_k : 0xFFFF);
+                r.xsq = r.osq = r.deg10 = 0xFFFF; r.csq = 0xFFFF;
+                if (fl[i] & DL_DIRTY) {
+                    r.res = DLR_DROP; r.code = cz[i].code; r.flags = cz[i].flags; r.csq = cz[i].csq;
+                    r.ckind = cz[i].ckind; r.ov = cz[i].ov; r.nv = cz[i].nv; r.field = cz[i].field;
+                } else r.res = DLR_HIT;
+                dle_put(dle, &r);
             }
         }
         for (int i = 0; i < ns; i++) {
@@ -8690,14 +9460,77 @@ static int l_doll_sync(lua_State *L) {
             int k = o->kind;
             if (k != PO_RAY && k != PO_POINT && k != PO_PLAN) continue;
             int d = dl_dirty(o, fl);
-            if (!d && k != PO_RAY && o->slot_k >= 0 && o->slot_k < PT2_MAP_SQ && sdirty[o->slot_k]) d = 1;
+            int vslot = 0;
+            if (!d && k != PO_RAY && o->slot_k >= 0 && o->slot_k < PT2_MAP_SQ && sdirty[o->slot_k]) { d = 1; vslot = 1; }
             if (!d) continue;
             dir_k[k]++;
-            if (k == PO_RAY) d_ray += dl_hm_del(&j->rays, o->ka, o->kb);
-            else if (k == PO_POINT) d_pt += dl_hm_del(&j->pts, o->ka, o->kb);
-            else d_pl += dl_hm_del(&j->pls, o->ka, o->kb);
+            double del;
+            if (k == PO_RAY) d_ray += (del = dl_hm_del(&j->rays, o->ka, o->kb));
+            else if (k == PO_POINT) d_pt += (del = dl_hm_del(&j->pts, o->ka, o->kb));
+            else d_pl += (del = dl_hm_del(&j->pls, o->ka, o->kb));
+            if (dle && del > 0) {
+                int lvl = k == PO_RAY ? DLV_RAY : (k == PO_POINT ? DLV_PT : DLV_PL);
+                uint64_t key = dle_rk(dle, j->dl_src, lvl, o->ka, o->kb);
+                DlSeen *s = key ? dle_seen(dle, j->dl_src, lvl, key, 0) : NULL;
+                if (s) {
+                    DlCause z = cz[i];
+                    if (vslot) {
+                        int si = sobj[o->slot_k];
+                        z = si >= 0 ? cz[si] : z;
+                        z.flags |= DF_SLOT;
+                    }
+                    s->st = DS_DROP; s->code = z.code; s->flags = z.flags; s->field = z.field; s->csq = z.csq;
+                    s->ckind = z.ckind; s->ov = z.ov; s->nv = z.nv; s->tick = dtick;
+                }
+            }
         }
         for (int i = 0; i < ns; i++) pj->objs[i]->qi = -1;
+    }
+    t_dl_cz = NULL;
+    /* PT2_V2_DOLL: a slot arena with no stored point or plan left goes */
+    /* PT2_V2_DOLL_SLOT_DEAD_MAX (dead_max > 0): a slot arena whose dropped
+     * bytes are more than dead_max x its stored bytes goes with all its
+     * points and plans (they are made again when asked) */
+    double dead_max = luaL_optnumber(L, 9, 0);
+    if (j->spar && (d_pt > 0 || d_pl > 0 || dead_max > 0 || dle)) {
+        j->sp_dead = 0; j->sp_live = 0;
+        int live[PCC_MAXSLOT];
+        double lb[PCC_MAXSLOT], drop[PCC_MAXSLOT];
+        memset(live, 0, sizeof(live));
+        memset(lb, 0, sizeof(lb));
+        memset(drop, 0, sizeof(drop));
+        for (int i = 0; i < j->pts.cap; i++)
+            if (j->pts.u[i] && j->pts.v[i].p) {
+                const PEnt *pe = (const PEnt *)j->pts.v[i].p;
+                int s = pe->si; if (s >= 0 && s < PCC_MAXSLOT) { live[s]++; lb[s] += pe->nb; }
+            }
+        for (int i = 0; i < j->pls.cap; i++)
+            if (j->pls.u[i] && j->pls.v[i].p) {
+                const PPlan *pp = (const PPlan *)j->pls.v[i].p;
+                int s = pp->si; if (s >= 0 && s < PCC_MAXSLOT) { live[s]++; lb[s] += pp->nb; }
+            }
+        int ndrop = 0;
+        for (int s = 0; s < PCC_MAXSLOT; s++) {
+            if (!j->spar[s].head) continue;
+            double dead = j->spar[s].ntot - lb[s];
+            if (live[s] && dead_max > 0 && dead > dead_max * lb[s]) { drop[s] = 1; ndrop++; live[s] = 0; }
+            else { j->sp_live += lb[s]; j->sp_dead += dead > 0 ? dead : 0; }
+        }
+        if (ndrop) {
+            for (int i = 0; i < j->pts.cap; i++)
+                if (j->pts.u[i] && j->pts.v[i].p) {
+                    int s = ((PEnt *)j->pts.v[i].p)->si;
+                    if (s >= 0 && s < PCC_MAXSLOT && drop[s]) { j->pts.v[i].p = NULL; d_pt += dl_hm_del(&j->pts, j->pts.k1[i], j->pts.k2[i]); i--; }
+                }
+            for (int i = 0; i < j->pls.cap; i++)
+                if (j->pls.u[i] && j->pls.v[i].p) {
+                    int s = ((PPlan *)j->pls.v[i].p)->si;
+                    if (s >= 0 && s < PCC_MAXSLOT && drop[s]) { j->pls.v[i].p = NULL; d_pl += dl_hm_del(&j->pls, j->pls.k1[i], j->pls.k2[i]); i--; }
+                }
+            j->sp_dropn += ndrop;
+        }
+        for (int s = 0; s < PCC_MAXSLOT; s++)
+            if (!live[s] && j->spar[s].head) { j->sp_freed += ar_bytes(&j->spar[s]); ar_free(&j->spar[s]); }
     }
     /* the filter answers: their ring square changed, or their slot, or a
      * pill changed in reach of the ring square (the cant test reads the
@@ -8712,16 +9545,34 @@ static int l_doll_sync(lua_State *L) {
                 int64_t v = j->flt.v[i].i;
                 int sq = (int)((v >> 8) & 0xFFFF), sk = (int)((v >> 24) & 0xFFFF);
                 int drop = (sq != 0xFFFF && chg[sq]) || sdirty[sk];
+                DlCause fz;
+                memset(&fz, 0, sizeof(fz));
+                if (dle && drop) {
+                    if (sq != 0xFFFF && chg[sq]) { dl_cz_sq(&fz, DC_FRING, sq, PO_FILT); fz.field = chg[sq]; }
+                    else if (sobj && sobj[sk] >= 0) { fz = cz[sobj[sk]]; fz.flags |= DF_SLOT; }
+                    else dl_cz(&fz, DC_FSLOT, sk, PO_FILT, -1, -1, 0);
+                }
                 for (int c = 0; !drop && sq != 0xFFFF && c < npc; c++) {
                     int ps[2] = { pc[c].o, pc[c].n };
                     for (int q = 0; q < 2; q++) {
                         if (ps[q] < 0) continue;
                         double dx = (ps[q] & 255) - (sq & 255), dy = (ps[q] >> 8) - (sq >> 8);
-                        if (dx * dx + dy * dy <= R1f * R1f) { drop = 1; break; }
+                        if (dx * dx + dy * dy <= R1f * R1f) { drop = 1; if (dle) dl_cz_pc(&fz, DC_FREACH, ps[q], PO_FILT, &pc[c]); break; }
                     }
                 }
-                if (drop) { dk[2 * nd] = j->flt.k1[i]; dk[2 * nd + 1] = j->flt.k2[i]; nd++; }
+                if (drop) {
+                    dk[2 * nd] = j->flt.k1[i]; dk[2 * nd + 1] = j->flt.k2[i]; nd++;
+                    if (dle) {
+                        uint64_t key = dle_rk(dle, j->dl_src, DLV_FLT, j->flt.k1[i], j->flt.k2[i]);
+                        DlSeen *s = key ? dle_seen(dle, j->dl_src, DLV_FLT, key, 0) : NULL;
+                        if (s) {
+                            s->st = DS_DROP; s->code = fz.code; s->flags = fz.flags; s->field = fz.field; s->csq = fz.csq;
+                            s->ckind = fz.ckind; s->ov = fz.ov; s->nv = fz.nv; s->tick = dtick;
+                        }
+                    }
+                }
             }
+            if (nd) j->flt_gen++;
             for (int i = 0; i < nd; i++) d_flt += dl_hm_del(&j->flt, dk[2 * i], dk[2 * i + 1]);
             free(dk);
         } else j->dlost = 1;
@@ -8745,10 +9596,25 @@ static int l_doll_sync(lua_State *L) {
     dl_stat(L, "d_sqm", d_sqm); dl_stat(L, "d_sqf", d_sqf);
     dl_stat(L, "bytes", dl_bytes(j));
     /* the parts of bytes: rays (ar), points and plans (par), part marks */
-    dl_stat(L, "b_ar", ar_bytes(&j->ar)); dl_stat(L, "b_par", ar_bytes(&j->par)); dl_stat(L, "b_pcc", dl_pcc_bytes(j));
+    dl_stat(L, "b_ar", ar_bytes(&j->ar)); dl_stat(L, "b_par", dl_par_bytes(j)); dl_stat(L, "b_pcc", dl_pcc_bytes(j));
+    dl_stat(L, "b_live", j->sp_live); dl_stat(L, "b_dead", j->sp_dead); dl_stat(L, "sp_dropn", j->sp_dropn);
     dl_stat(L, "n_obj", pj ? pj->nobj : 0);
     free(chg); free(pc); free(cs); free(fl); free(sdirty);
-    dl_stat(L, "us", (double)(pf_clock() - t0) * pf_tick_us());
+    double us_ = (double)(pf_clock() - t0) * pf_tick_us();
+    if (dle) {
+        DlRec r;
+        memset(&r, 0, sizeof(r));
+        r.tick = dtick; r.p = (uint8_t)j->dl_p; r.src = (uint8_t)j->dl_src; r.lvl = DLV_SYNC; r.run = (uint32_t)j->drun;
+        r.asq = r.xsq = r.osq = r.deg10 = r.csq = 0xFFFF; r.field = 1; r.us = (float)us_;
+        r.ov = (float)ncs; r.nv = (float)own_n; r.bytes = (uint32_t)(dl_bytes(j) / 1024);
+        /* the slot arenas: stored and dropped MB */
+        r.csq = (uint16_t)fmin(65534, floor(j->sp_live / 1048576 + 0.5));
+        r.ckind = (uint16_t)fmin(65534, floor(j->sp_dead / 1048576 + 0.5));
+        dle_put(dle, &r);
+    }
+    free(cz); free(sobj);
+    t_dl_om = t_dl_nm = NULL;
+    dl_stat(L, "us", us_);
     return 1;
 }
 
@@ -8764,6 +9630,12 @@ static const luaL_Reg gh_pt2_v2_lib[] = {
     { "pc_part_q", l_pc_part_q },
     { "pc_free", l_pc_free },
     { "doll_sync", l_doll_sync },
+    { "dl_ev_open", l_dl_ev_open },
+    { "dl_ev_reset", l_dl_ev_reset },
+    { "dl_ev_stats", l_dl_ev_stats },
+    { "dl_ev_flush", l_dl_ev_flush },
+    { "dl_viz", l_dl_viz },
+    { "dl_viz_take", l_dl_viz_take },
     { "begin", l_begin },
     { "step", l_step },
     { "evaluate", l_evaluate },

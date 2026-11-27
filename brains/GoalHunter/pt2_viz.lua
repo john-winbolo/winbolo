@@ -14,7 +14,8 @@
 -- points are v2's records.
 --
 -- Layers: pt2_light, pt2_shadow, pt2_rays, pt2_chain, pt2_candidates,
--- pt2_leeway, pt2_blocker, pt2_compare. All default off.
+-- pt2_leeway, pt2_blocker, pt2_compare; the doll cache layers pt2_d1 ..
+-- pt2_d5 and pt2_dchg (dl_draw). All default off.
 -- =========================================================================
 
 local viz = require("viz")
@@ -349,6 +350,292 @@ local function draw_compare(cap)
     local A = cap.inp.A
     viz.detail("pt2_cmp", "rect", { A.mx, A.my, A.mx + 1, A.my + 1 }, "pt2_cmp", { cap.cmp })
   end
+end
+
+-- =========================================================================
+-- Doll cache layers (PT2_V2_DOLL, 2026-11-26): pt2_d1 .. pt2_d5 and
+-- pt2_dchg. They draw the C store's own records (the event log records,
+-- gh_pt2_v2.dl_viz_take): each lookup of the last run of each source
+-- (take, dbl) and the changes of the last sync. Nothing here is a second
+-- model: a square is coloured by the result the C store gave.
+-- =========================================================================
+
+M.DL_LAYERS = { "pt2_d1", "pt2_d2", "pt2_d3", "pt2_d4", "pt2_d5", "pt2_dchg" }
+
+-- PT2_V2_DOLL_VIZ_RECORD (debug only): a headless -brain-debug run (winbolods)
+-- records these layers too (viz.RECORD_ON), for a BrainTest replay.
+if require("constants").PT2_V2_DOLL_VIZ_RECORD then
+  for _, id in ipairs(M.DL_LAYERS) do viz.RECORD_ON[id] = true end
+end
+
+-- True when any doll layer is on (debug runs only).
+function M.dl_any_on()
+  for _, id in ipairs(M.DL_LAYERS) do
+    if viz.is_on(id) then return true end
+  end
+  return false
+end
+
+-- The C record fields (gh_pt2_v2.c DlRec): lvl 1 change, 2 pill, 3 sync,
+-- 4 new job, 5 ring (D4), 10 ray (D1), 11 filter (D2), 12 ring point
+-- (D2/D3), 13 plan (D5). res 0 kept, 1 kept again in the run, 2 dropped by
+-- a change, 3 new key, 4 new job, 5 first use, 6 tank in, 7 gone.
+local NOSQ = 0xFFFF
+local RES_COL = {
+  [0] = { 60, 220, 60 }, [1] = { 60, 220, 60 }, [2] = { 255, 60, 60 }, [3] = { 255, 220, 40 },
+  [4] = { 80, 140, 255 }, [5] = { 230, 230, 230 }, [6] = { 150, 150, 150 }, [7] = { 150, 150, 150 },
+}
+local RES_NAME = { [0] = "kept", "kept", "dropped", "new key", "new job", "first", "tank", "gone" }
+local DC_NAME = { [0] = "none", "terrain", "forest", "base", "pill_on_square", "pill_reach", "pill_box", "margin",
+  "box", "centre_pill", "slot_pill", "filter_square", "filter_slot", "filter_reach", "wsig_drop", "max_bytes",
+  "drop_plans", "square" }
+local COLD_NAME = { [0] = "first_job", "open", "time", "age", "rules", "lost", "busy", "nojob", "nomap", "other",
+  [20] = "world input" }
+
+local function sq_xy(sq) return sq % 256, floor(sq / 256) end
+
+-- per source (0 take, 1 dbl): the records of the last run, the last sync
+local dls = { run = {}, sync = {}, lost = 0 }
+
+local function dl_take()
+  local recs, lost = gh_pt2_v2.dl_viz_take()
+  dls.lost = dls.lost + (lost or 0)
+  for i = 1, #recs do
+    local r = recs[i]
+    if r.lvl >= 10 then
+      local s = dls.run[r.src]
+      if not s or s.run ~= r.run then
+        s = { run = r.run, recs = {} }
+        dls.run[r.src] = s
+      end
+      s.recs[#s.recs + 1] = r
+    else
+      local s = dls.sync[r.src]
+      if not s or s.tick ~= r.tick then
+        s = { tick = r.tick, recs = {} }
+        dls.sync[r.src] = s
+      end
+      s.recs[#s.recs + 1] = r
+    end
+  end
+end
+
+local SRC_NAME = { [0] = "take", [1] = "dbl" }
+
+local function hud_lines(id, lines)
+  for i, ln in ipairs(lines) do
+    viz.hud_text(id, 10, 10 + (i - 1) * 12, ln[1], "topright", ln[2], ln[3], ln[4])
+  end
+end
+
+local function mark_A(id, s, src)
+  local a = s.recs[1] and s.recs[1].asq
+  if a and a ~= NOSQ then
+    local ax, ay = sq_xy(a)
+    viz.text(id, ax + 0.5, ay - 0.6, SRC_NAME[src] .. " A", "center", 255, 255, 255, 230, 0.8)
+  end
+end
+
+local function res_count(lines, title, cnt, tot)
+  local t = {}
+  for rs = 0, 7 do if cnt[rs] then t[#t + 1] = string.format("%s %d", RES_NAME[rs], cnt[rs]) end end
+  lines[#lines + 1] = { string.format("%s: %d lookups: %s", title, tot, table.concat(t, ", ")), 230, 230, 230 }
+end
+
+-- pt2_d1: the rays (pill X to the point's square) by store result.
+local function draw_d1()
+  local id = "pt2_d1"
+  local cnt, tot = {}, 0
+  for src, s in pairs(dls.run) do
+    mark_A(id, s, src)
+    for _, r in ipairs(s.recs) do
+      if r.lvl == 10 and r.res ~= 1 and r.xsq ~= NOSQ and r.osq ~= NOSQ then
+        tot = tot + 1; cnt[r.res] = (cnt[r.res] or 0) + 1
+        local x0, y0 = sq_xy(r.xsq)
+        local x1, y1 = sq_xy(r.osq)
+        local c = RES_COL[r.res] or RES_COL[6]
+        viz.line(id, x0 + 0.5, y0 + 0.5, x1 + 0.5, y1 + 0.5, c[1], c[2], c[3], r.res == 0 and 70 or 170)
+      end
+    end
+  end
+  local L = {}
+  res_count(L, "D1 rays", cnt, tot)
+  L[#L + 1] = { "green kept / red dropped by a change / yellow new key / blue new job / white first use", 200, 200, 200 }
+  hud_lines(id, L)
+end
+
+-- the worst result per square (kept < first < new job < new key < dropped)
+local RANK = { [0] = 0, [1] = 0, [5] = 1, [4] = 2, [3] = 3, [6] = 3, [7] = 3, [2] = 4 }
+local function worst(t, sq, rs)
+  local o = t[sq]
+  if o == nil or (RANK[rs] or 0) > (RANK[o] or 0) then t[sq] = rs end
+end
+
+-- pt2_d2: filter answers (outline) and ring points (filled) by square.
+local function draw_d2()
+  local id = "pt2_d2"
+  local fl, pt, cf, cp, nf, np = {}, {}, {}, {}, 0, 0
+  for src, s in pairs(dls.run) do
+    mark_A(id, s, src)
+    for _, r in ipairs(s.recs) do
+      if r.res ~= 1 and r.osq ~= NOSQ then
+        if r.lvl == 11 then worst(fl, r.osq, r.res); nf = nf + 1; cf[r.res] = (cf[r.res] or 0) + 1
+        elseif r.lvl == 12 then worst(pt, r.osq, r.res); np = np + 1; cp[r.res] = (cp[r.res] or 0) + 1 end
+      end
+    end
+  end
+  for sq, rs in pairs(fl) do
+    local x, y = sq_xy(sq); local c = RES_COL[rs]
+    viz.rect(id, x + 0.08, y + 0.08, x + 0.92, y + 0.92, c[1], c[2], c[3], 200, false)
+  end
+  for sq, rs in pairs(pt) do
+    local x, y = sq_xy(sq); local c = RES_COL[rs]
+    viz.rect(id, x + 0.3, y + 0.3, x + 0.7, y + 0.7, c[1], c[2], c[3], 200, true)
+  end
+  local L = {}
+  res_count(L, "D2 filter (outline)", cf, nf)
+  res_count(L, "D2 ring point (fill)", cp, np)
+  L[#L + 1] = { "a square shows its worst result: green kept, white first, blue new job, yellow new key, red dropped", 200, 200, 200 }
+  hud_lines(id, L)
+end
+
+-- pt2_d3: 12 slices of 30 degrees around A; kept = every point lookup in it kept.
+local function draw_d3()
+  local id = "pt2_d3"
+  local kept, tot = 0, 0
+  for src, s in pairs(dls.run) do
+    mark_A(id, s, src)
+    local sl = {}
+    for _, r in ipairs(s.recs) do
+      if r.lvl == 12 and r.res ~= 1 and r.deg10 ~= NOSQ and r.asq ~= NOSQ and r.osq ~= NOSQ then
+        local i = floor(r.deg10 / 300) % 12
+        local k = r.asq * 16 + i
+        local e = sl[k]
+        if not e then e = { asq = r.asq, i = i, n = 0, miss = 0, d = 0 }; sl[k] = e end
+        e.n = e.n + 1
+        if r.res ~= 0 then e.miss = e.miss + 1 end
+        local ax, ay = sq_xy(r.asq); local x, y = sq_xy(r.osq)
+        e.d = e.d + sqrt((x - ax) ^ 2 + (y - ay) ^ 2)
+      end
+    end
+    for _, e in pairs(sl) do
+      tot = tot + 1
+      if e.miss == 0 then kept = kept + 1 end
+      local ax, ay = sq_xy(e.asq)
+      ax, ay = ax + 0.5, ay + 0.5
+      local R = e.d / e.n
+      local c = e.miss == 0 and { 60, 220, 60 } or { 255, 60, 60 }
+      -- deg: 0 = north, clockwise (the ring's own angle)
+      local a0, a1 = math.rad(e.i * 30), math.rad(e.i * 30 + 30)
+      local px, py
+      for k = 0, 6 do
+        local a = a0 + (a1 - a0) * k / 6
+        local x, y = ax + math.sin(a) * R, ay - math.cos(a) * R
+        if px then viz.line(id, px, py, x, y, c[1], c[2], c[3], 230) end
+        px, py = x, y
+      end
+      viz.line(id, ax, ay, ax + math.sin(a0) * R, ay - math.cos(a0) * R, c[1], c[2], c[3], 90)
+      local am = (a0 + a1) / 2
+      viz.text(id, ax + math.sin(am) * (R + 0.6), ay - math.cos(am) * (R + 0.6),
+        string.format("%d/%d", e.n - e.miss, e.n), "center", c[1], c[2], c[3], 255, 0.6)
+    end
+  end
+  hud_lines(id, {
+    { string.format("D3 slices: %d of %d kept", kept, tot), 230, 230, 230 },
+    { "arc at the slice's mean point distance: green = every point lookup in it kept, red = not; label kept/points", 200, 200, 200 },
+  })
+end
+
+-- pt2_d4: at the last sync, each A level (the ring of a goal pill slot).
+local function draw_d4()
+  local id = "pt2_d4"
+  local kept, tot = 0, 0
+  for _, s in pairs(dls.sync) do
+    for _, r in ipairs(s.recs) do
+      if r.lvl == 5 and r.asq ~= NOSQ then
+        tot = tot + 1
+        local x, y = sq_xy(r.asq)
+        if r.res == 0 then
+          kept = kept + 1
+          viz.circle(id, x + 0.5, y + 0.5, 1.2, 60, 220, 60, 230, false)
+        else
+          viz.circle(id, x + 0.5, y + 0.5, 1.2, 255, 60, 60, 255, false)
+          viz.text(id, x + 0.5, y + 1.9, DC_NAME[r.code] or tostring(r.code), "center", 255, 90, 90, 255, 0.7)
+          if r.csq ~= NOSQ then
+            local cx, cy = sq_xy(r.csq)
+            viz.line(id, x + 0.5, y + 0.5, cx + 0.5, cy + 0.5, 255, 90, 90, 200)
+            viz.rect(id, cx + 0.1, cy + 0.1, cx + 0.9, cy + 0.9, 255, 90, 90, 230, false)
+          end
+        end
+      end
+    end
+  end
+  hud_lines(id, {
+    { string.format("D4 pill X ring (last sync): %d of %d kept", kept, tot), 230, 230, 230 },
+    { "circle on each goal pill slot: green kept, red dropped (cause under it, line to the square that changed)", 200, 200, 200 },
+  })
+end
+
+-- pt2_d5: the plans by the point's square.
+local function draw_d5()
+  local id = "pt2_d5"
+  local pl, cnt, tot = {}, {}, 0
+  for src, s in pairs(dls.run) do
+    mark_A(id, s, src)
+    for _, r in ipairs(s.recs) do
+      if r.lvl == 13 and r.res ~= 1 and r.osq ~= NOSQ then
+        worst(pl, r.osq, r.res); tot = tot + 1; cnt[r.res] = (cnt[r.res] or 0) + 1
+      end
+    end
+  end
+  for sq, rs in pairs(pl) do
+    local x, y = sq_xy(sq); local c = RES_COL[rs]
+    viz.rect(id, x + 0.18, y + 0.18, x + 0.82, y + 0.82, c[1], c[2], c[3], 230, false)
+    viz.rect(id, x + 0.22, y + 0.22, x + 0.78, y + 0.78, c[1], c[2], c[3], 230, false)
+  end
+  local L = {}
+  res_count(L, "D5 plans", cnt, tot)
+  L[#L + 1] = { "double outline on the point's square, its worst result; colours as D1", 200, 200, 200 }
+  hud_lines(id, L)
+end
+
+-- pt2_dchg: what the last sync saw change, and new jobs.
+local function draw_dchg()
+  local id = "pt2_dchg"
+  local nc, np, L = 0, 0, {}
+  for src, s in pairs(dls.sync) do
+    for _, r in ipairs(s.recs) do
+      if r.lvl == 1 and r.csq ~= NOSQ then
+        nc = nc + 1
+        local x, y = sq_xy(r.csq)
+        viz.rect(id, x, y, x + 1, y + 1, 255, 230, 40, 120, true)
+        viz.text(id, x + 0.5, y + 0.5, string.format("%d>%d", r.ov, r.nv), "center", 0, 0, 0, 255, 0.6)
+      elseif r.lvl == 2 then
+        np = np + 1
+      elseif r.lvl == 4 then
+        L[#L + 1] = { string.format("%s: new job at tick %d (%s)", SRC_NAME[src] or "?", r.tick,
+          COLD_NAME[r.code] or tostring(r.code)), 80, 140, 255 }
+      elseif r.lvl == 3 and r.field == 1 then
+        L[#L + 1] = { string.format("%s sync tick %d: %d squares changed, %d parts hit; doll %d kB (slot arenas: %d MB stored, %d MB dropped)",
+          SRC_NAME[src] or "?", r.tick, r.ov, r.nv, r.bytes, r.csq, r.ckind), 230, 230, 230 }
+      end
+    end
+  end
+  table.insert(L, 1, { string.format("Changes (last sync): %d squares (yellow, old>new terrain), %d pill changes", nc, np), 255, 230, 40 })
+  if dls.lost > 0 then L[#L + 1] = { string.format("records lost (list full): %d", dls.lost), 255, 60, 60 } end
+  hud_lines(id, L)
+end
+
+-- Every tick (init.lua): take the new records, draw the layers that are on.
+function M.dl_draw(now)
+  if not M.dl_any_on() or not (gh_pt2_v2 and gh_pt2_v2.dl_viz_take) then return end
+  dl_take()
+  if viz.is_on("pt2_d1") then draw_d1() end
+  if viz.is_on("pt2_d2") then draw_d2() end
+  if viz.is_on("pt2_d3") then draw_d3() end
+  if viz.is_on("pt2_d4") then draw_d4() end
+  if viz.is_on("pt2_d5") then draw_d5() end
+  if viz.is_on("pt2_dchg") then draw_dchg() end
 end
 
 -- Draw the kept data while the goal still targets the same pill.

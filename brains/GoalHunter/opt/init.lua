@@ -2616,6 +2616,8 @@ function Brain.think(info)
   -- HUD: tank stats in bottom-left (offset up so the kill-attempt
   -- indicator can sit under it without overlap on shorter window heights).
 
+  -- Pill take v2 doll cache layers (pt2_viz.lua): the C store records.
+
   -- HUD: last attack-goal clear (set by attack.clear_attack_goal). Stays
   -- visible for ~300 ticks after the abort so a silent "goal went to
   -- none mid-finetune" leaves a breadcrumb pointing at the cause.

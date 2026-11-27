@@ -3329,6 +3329,9 @@ function Brain.think(info)
       "bottomleft", info.inboat and 100 or 200, info.inboat and 200 or 200, 255)
   end
 
+  -- Pill take v2 doll cache layers (pt2_viz.lua): the C store records.
+  if BRAIN_DEBUG_MODE then require("pt2_viz").dl_draw(state.tick) end
+
   -- HUD: last attack-goal clear (set by attack.clear_attack_goal). Stays
   -- visible for ~300 ticks after the abort so a silent "goal went to
   -- none mid-finetune" leaves a breadcrumb pointing at the cause.

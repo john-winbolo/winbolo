@@ -2539,6 +2539,8 @@ function M.evaluate_c(inp)
   end
   local t0 = pf and cprof_clock()
   local paused, steps, yields = 0, 0, 0
+  local DK = require("constants")
+  inp._v2_dl_narrow = DK.PT2_V2_DOLL_NARROW_KEYS ~= false and 1 or 0
   local st = g.begin(inp, M, OLD, s and s.ticks or nil)
   while true do
     local done, res = g.step(st)
@@ -3322,29 +3324,55 @@ function M.dl_bytes()
   for src, e in pairs(PDS) do t[src] = e.bytes or 0; n = n + (e.bytes or 0) end
   return n, t
 end
+-- PT2_V2_DOLL_EVENT_LOG (log only): each C store lookup, drop and reset
+-- in a binary file dl_p<player>.bin in the debug session dir (a string
+-- knob value: that dir). tools/dl_events.py reads it.
+local DLE_CODE = { open = 1, time = 2, age = 3, rules = 4, lost = 5, busy = 6, nojob = 7, nomap = 8 }
+local dle_state
+local function dle_open(inp)
+  if dle_state ~= nil then return dle_state end
+  dle_state = false
+  local K = PCK.PT2_V2_DOLL_EVENT_LOG
+  if not K or not gh_pt2_v2.dl_ev_open then return false end
+  local dir = type(K) == "string" and K or rawget(_G, "DEBUG_SESSION_DIR")
+  if not dir then return false end
+  local path = dir .. "/dl_p" .. tostring(inp._v2_pc_pn or "x") .. ".bin"
+  dle_state = gh_pt2_v2.dl_ev_open(path) and true or false
+  return dle_state
+end
 local function doll_cache(inp, src, now)
   local cnt = M.dl_count
+  local dle = PCK.PT2_V2_DOLL_EVENT_LOG and dle_open(inp)
+  -- BrainTest doll layers (pt2_viz.lua, debug only): C keeps a copy of
+  -- each record for them (with no event log: no file)
+  local dsrc = src == "take" and 0 or 1
+  inp._v2_dl_src = dsrc
   local P, B, ss = pc_take(inp, inp._world)
   local e = PDS[src]
   local why
   if e then
-    if e.open then why = "open"
+    local j = e.cache.c_job
+    -- PT2_V2_DOLL_KEEP_OPEN: a run that did not end (a split job dropped
+    -- between evaluates) keeps the job: each evaluate is whole, and the
+    -- sync drops what the world changes hit. A run dropped inside an
+    -- evaluate leaves the C job busy: the sync says "busy", a new job.
+    if e.open and not (j and PCK.PT2_V2_DOLL_KEEP_OPEN ~= false) then why = "open"
     elseif now < e.last then why = "time"
     elseif now - e.t0 > (PCK.PT2_V2_CACHE_MAX_AGE_TICKS or 3000) then why = "age"
     elseif e.ss ~= ss then why = "rules" end
-    local j = e.cache.c_job
     if not why and j then
       local pills = pcp_pills(e.P, P)
       local bases = pcp_bases(e.B, B)
       local reach, margin = pcp_reach(inp)
       local st = gh_pt2_v2.doll_sync(j, pills, bases, reach, margin, inp.env.forest_transparent ~= false,
-        PCK.PT2_V2_DOLL_RULE == "exact")
+        PCK.PT2_V2_DOLL_RULE == "exact", now, PCK.PT2_V2_DOLL_SLOT_DEAD_MAX or 0)
       if type(st) ~= "table" then why = tostring(st)
       else
         cnt.sync = cnt.sync + 1
         cnt.sync_us = cnt.sync_us + (st.us or 0)
         e.bytes = st.bytes or e.bytes
         e.b_ar, e.b_par, e.b_pcc, e.n_obj = st.b_ar or e.b_ar, st.b_par or e.b_par, st.b_pcc or e.b_pcc, st.n_obj or e.n_obj
+        e.b_live, e.b_dead, e.sp_dropn = st.b_live or e.b_live, st.b_dead or e.b_dead, st.sp_dropn or e.sp_dropn
         e.n_pt, e.n_pl, e.n_ray = st.n_pt or e.n_pt, st.n_pl or e.n_pl, st.n_ray or e.n_ray
         if (st.bytes or 0) > cnt.bytes_max then cnt.bytes_max = st.bytes end
         if st.changed == 1 then
@@ -3359,6 +3387,7 @@ local function doll_cache(inp, src, now)
     end
     if why then
       cnt[why] = (cnt[why] or 0) + 1
+      if dle then gh_pt2_v2.dl_ev_reset(dsrc, DLE_CODE[why] or 9, now, inp._v2_pc_pn) end
       pc_free(e)
       e = nil
     end
@@ -3367,6 +3396,7 @@ local function doll_cache(inp, src, now)
     e = { cache = new_cache(), t0 = now, doll = true, src = src }
     PDS[src] = e
     cnt.new = cnt.new + 1
+    if dle and not why then gh_pt2_v2.dl_ev_reset(dsrc, 0, now, inp._v2_pc_pn) end
   end
   e.P, e.B, e.ss, e.last, e.open = P, B, ss, now, true
   cnt.runs = cnt.runs + 1
@@ -3621,9 +3651,10 @@ local function dl_finish(job)
     for _, src in ipairs({ "take", "dbl" }) do
       local x = PDS[src]
       if x then
-        t[#t + 1] = string.format("%s_ar=%.0f %s_par=%.0f %s_pcc=%.0f %s_obj=%.0f %s_npt=%.0f %s_npl=%.0f %s_nray=%.0f",
+        t[#t + 1] = string.format("%s_ar=%.0f %s_par=%.0f %s_pcc=%.0f %s_obj=%.0f %s_npt=%.0f %s_npl=%.0f %s_nray=%.0f"
+          .. " %s_live=%.0f %s_dead=%.0f %s_dropn=%.0f",
           src, x.b_ar or 0, src, x.b_par or 0, src, x.b_pcc or 0, src, x.n_obj or 0, src, x.n_pt or 0,
-          src, x.n_pl or 0, src, x.n_ray or 0)
+          src, x.n_pl or 0, src, x.n_ray or 0, src, x.b_live or 0, src, x.b_dead or 0, src, x.sp_dropn or 0)
       end
     end
     M.cprof_err(string.format("PT2_V2_DOLL_SUM %s ends=%d bytes=%.0f take=%.0f dbl=%.0f %s",

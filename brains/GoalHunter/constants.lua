@@ -1611,6 +1611,31 @@ M.PT2_V2_DOLL_RULE = "B"
 -- PT2_AFTER_SCAN_SPLIT = false: a split run spans ticks, and the new job at
 -- its end sees a later world.
 M.PT2_V2_DOLL_CHECK = false
+-- PT2_V2_DOLL_EVENT_LOG (log only, Nov 26): each doll store lookup (hit,
+-- rebuilt, new key, cold), each drop with its change square and each job
+-- reset in a binary file dl_p<player>.bin in the debug session dir (a
+-- string value: that dir). Read it with tools/dl_events.py. No behaviour
+-- change.
+M.PT2_V2_DOLL_EVENT_LOG = false
+-- PT2_V2_DOLL_KEEP_OPEN (Nov 26, speed only): a doll run that did not end
+-- (a split job dropped between evaluates) keeps its job; the next sync
+-- drops what changed. false: a new job, as before.
+M.PT2_V2_DOLL_KEEP_OPEN = true
+-- PT2_V2_DOLL_NARROW_KEYS (Nov 26, speed only): the doll job's world
+-- signature leaves out co, lazy and num_pill_blockers (only the points and
+-- plans read them, and their keys hold them), and a ring point's filter
+-- answer is keyed by the world signature and the goal pill only (what it
+-- reads). Fewer drops and new keys. false: the keys as before.
+M.PT2_V2_DOLL_NARROW_KEYS = true
+-- PT2_V2_DOLL_SLOT_DEAD_MAX (memory): a goal pill's slot arena whose
+-- dropped bytes are more than this x its stored bytes is freed with all
+-- its stored points and plans (they are made again when asked). 0 = off.
+-- The same results. 1 (Andrew's yes, 2026-11-26): a 15 min 2v2 game peaks
+-- at 863 MB, not 1076 MB, for 1% more C time per evaluate.
+M.PT2_V2_DOLL_SLOT_DEAD_MAX = 1
+-- PT2_V2_DOLL_VIZ_RECORD (debug only): a headless -brain-debug run records
+-- the doll cache layers pt2_d1 .. pt2_d5 and pt2_dchg (pt2_viz.lua).
+M.PT2_V2_DOLL_VIZ_RECORD = false
 -- PP_FRONT_C (Nov 25, speed only): pill_portfolio's front tests
 -- (on_front_line, near_front, the aggro neighbour count) run in C
 -- (braincore.c) on the same influence grid. The same answers. Measured
