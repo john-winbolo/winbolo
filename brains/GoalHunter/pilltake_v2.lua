@@ -3070,6 +3070,8 @@ local function pc_src(inp)
      or inp.v2_confirm_check or inp.v2_confirm_drop then return nil end
   local src = inp._v2_pc_src or "take"
   if src == "take" and PCK.PT2_V2_CACHE_TAKE == false and not PCK.PT2_V2_DOLL then return nil end
+  -- PT2_V2_DOLL_TAKE_STORE = false: a single pill take keeps no doll job
+  if src == "take" and PCK.PT2_V2_DOLL and PCK.PT2_V2_DOLL_TAKE_STORE == false then return nil end
   return src
 end
 
@@ -3403,6 +3405,9 @@ local function doll_cache(inp, src, now)
         for _, k in ipairs(DL_ADD2) do cnt[k] = cnt[k] + (st[k] or 0) end
         local nbt = M.dl_bytes()
         if nbt > cnt.btot_max then cnt.btot_max = nbt end
+        -- PT2_V2_DOLL_TAKE_STORE = N (MB): a take job past N MB starts again
+        local tcap = PCK.PT2_V2_DOLL_TAKE_STORE
+        if src == "take" and type(tcap) == "number" and (st.bytes or 0) > tcap * 1048576 then why = "cap" end
         if st.changed == 1 then
           cnt.changed = cnt.changed + 1
           for _, k in ipairs(DL_ADD) do cnt[k] = cnt[k] + (st[k] or 0) end

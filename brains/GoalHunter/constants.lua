@@ -1676,6 +1676,14 @@ M.PT2_V2_DOLL_SLOT_DEAD_MAX = 1
 -- again" byte counts use the bytes really kept (the old count was about
 -- 2.6 x too high). The same results. false = the old count.
 M.PT2_V2_DOLL_REAL_FILL = true
+-- PT2_V2_DOLL_TAKE_STORE (Nov 27, memory only): the doll job of a single
+-- pill take (source "take"). Its records almost never hit again (a 15 min
+-- 2v2 game: 90% of its standoff points and 89% of its plans had no later
+-- hit). true = kept as before; false = no doll job for a take (each take
+-- evaluate makes its parts fresh); a number N = the take job starts again
+-- when its bytes pass N MB. The same results. false: 75 MB less doll peak,
+-- and no slower; a cap of 8 MB saved nothing (the take job stays small).
+M.PT2_V2_DOLL_TAKE_STORE = false
 -- PT2_V2_DOLL_VIZ_RECORD (debug only): a headless -brain-debug run records
 -- the doll cache layers pt2_d1 .. pt2_d5 and pt2_dchg (pt2_viz.lua).
 -- It also writes the PT2_V2_DOLL_EVENT_LOG file dl_p<player>.bin in the
