@@ -850,11 +850,11 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
         /* Android assets can't be mmap'd.  Extract the mmdb file from
          * the APK asset to a real filesystem path in the cache dir. */
         {
-            const char *assetPath = "data/dbip-country-lite.mmdb";
+            const char *assetPath = "data/ipinfo_lite.mmdb";
             const char *prefPath = SDL_GetPrefPath("winbolo", "winbolo");
             char cachePath[1024] = {};
             if (prefPath) {
-                SDL_snprintf(cachePath, sizeof(cachePath), "%sdbip-country-lite.mmdb", prefPath);
+                SDL_snprintf(cachePath, sizeof(cachePath), "%sipinfo_lite.mmdb", prefPath);
                 SDL_IOStream *src = SDL_IOFromFile(assetPath, "rb");
                 if (src) {
                     Sint64 sz = SDL_GetIOSize(src);
@@ -877,9 +877,9 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
             }
         }
 #else
-        if (!geoLookupCreate("data/dbip-country-lite.mmdb")) {
+        if (!geoLookupCreate("data/ipinfo_lite.mmdb")) {
             /* Try without data/ prefix */
-            geoLookupCreate("dbip-country-lite.mmdb");
+            geoLookupCreate("ipinfo_lite.mmdb");
         }
 #endif
         WB_LOG_INFO(WB_LOG_CAT_ASSET, "[GameBrowser] GeoIP database loaded: %s", geoLookupIsLoaded() ? "yes" : "no");

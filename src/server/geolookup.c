@@ -19,8 +19,8 @@
  *Name:          GeoLookup
  *Filename:      geolookup.c
  *Purpose:
- *  IP-to-country lookup using libmaxminddb and DB-IP Lite.
- *  IP geolocation by DB-IP (https://db-ip.com).
+ *  IP-to-country lookup using libmaxminddb and IPinfo Lite.
+ *  IP address data powered by IPinfo (https://ipinfo.io).
  *********************************************************/
 
 #include <string.h>
@@ -81,13 +81,18 @@ bool geoLookupCountry(const char *ipStr, char countryCode[3]) {
     return false;
   }
 
-  status = MMDB_get_value(&result.entry, &entryData, "country", "iso_code", NULL);
-  if (status != MMDB_SUCCESS) {
-    return false;
-  }
-
-  if (!entryData.has_data || entryData.type != MMDB_DATA_TYPE_UTF8_STRING) {
-    return false;
+  /* IPinfo Lite keeps the code in a top-level "country_code" field, and
+     "country" there is the country's name. MaxMind-layout databases
+     (GeoLite2, DB-IP) keep it at country/iso_code instead; that is tried
+     second so a database in either layout can be dropped in. */
+  status = MMDB_get_value(&result.entry, &entryData, "country_code", NULL);
+  if (status != MMDB_SUCCESS || !entryData.has_data ||
+      entryData.type != MMDB_DATA_TYPE_UTF8_STRING) {
+    status = MMDB_get_value(&result.entry, &entryData, "country", "iso_code", NULL);
+    if (status != MMDB_SUCCESS || !entryData.has_data ||
+        entryData.type != MMDB_DATA_TYPE_UTF8_STRING) {
+      return false;
+    }
   }
 
   if (entryData.data_size >= 2) {

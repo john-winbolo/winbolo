@@ -654,6 +654,12 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     set(MAXMINDDB_BUILD_BINARIES OFF CACHE BOOL "" FORCE)
     FetchContent_MakeAvailable(libmaxminddb)
     set(BUILD_SHARED_LIBS "${BUILD_SHARED_LIBS_SAVE}" CACHE BOOL "" FORCE)
+
+    # The country database libmaxminddb reads. Not in the repository: it is
+    # downloaded into a per-user cache and copied into the build outputs.
+    if(NOT EMSCRIPTEN)
+        include(cmake/fetch_geoip.cmake)
+    endif()
 endif()
 
 # libopus — voice codec, forced static.  Outside the guard above, as is
@@ -2823,15 +2829,40 @@ if(HAVE_SENTRY)
     endif()
 endif()
 
-# Copy geo database to server output directory
-if(EXISTS "${CMAKE_SOURCE_DIR}/data/dbip-country-lite.mmdb")
-    add_custom_command(TARGET WinBoloDS POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:WinBoloDS>/data"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${CMAKE_SOURCE_DIR}/data/dbip-country-lite.mmdb"
-            "$<TARGET_FILE_DIR:WinBoloDS>/data/dbip-country-lite.mmdb"
-        COMMENT "Copying geo database to server output directory"
+# Copy the GeoIP database beside WinBoloDS (the server looks up each joining
+# player's country) and beside WinBolo (the game browser looks up each LAN
+# game it finds).
+#
+# This is a target of its own that both programs depend on, not a POST_BUILD
+# step, because a POST_BUILD step only runs when its program relinks: a
+# database downloaded after the programs were built would never be copied.
+# A custom target runs on every build, and the copy does nothing when the
+# file beside the program is already the same.
+#
+# The destinations are written out instead of using $<TARGET_FILE_DIR:...>,
+# which would make this target depend on the programs that depend on it.
+# Both programs are put in CMAKE_BINARY_DIR by set_flat_output below.
+if(DEFINED WINBOLO_GEOIP_DB)
+    set(_geoip_copy_cmds
+        COMMAND ${CMAKE_COMMAND}
+            "-DSOURCE=${WINBOLO_GEOIP_DB}"
+            "-DDEST_DIR=${CMAKE_BINARY_DIR}/data"
+            -P "${CMAKE_SOURCE_DIR}/cmake/copy_geoip.cmake")
+    if(APPLE)
+        # WinBolo.app reads its data from Contents/Resources.
+        list(APPEND _geoip_copy_cmds
+            COMMAND ${CMAKE_COMMAND}
+                "-DSOURCE=${WINBOLO_GEOIP_DB}"
+                "-DDEST_DIR=${CMAKE_BINARY_DIR}/WinBolo.app/Contents/Resources/data"
+                -P "${CMAKE_SOURCE_DIR}/cmake/copy_geoip.cmake")
+    endif()
+    add_custom_target(winbolo_geoip_copy
+        ${_geoip_copy_cmds}
+        COMMENT "Copying the GeoIP database beside WinBolo and WinBoloDS"
+        VERBATIM
     )
+    add_dependencies(WinBolo winbolo_geoip_copy)
+    add_dependencies(WinBoloDS winbolo_geoip_copy)
 endif()
 
 # Copy shared libraries next to WinBoloDS (all platforms)
@@ -3856,6 +3887,14 @@ add_custom_target(dist
 
     # Data assets (includes data/lang)
     COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/data" "${DIST_DIR}/data"
+
+    # The GeoIP database, which a release must carry
+    COMMAND ${CMAKE_COMMAND}
+        "-DSOURCE=${WINBOLO_GEOIP_DB}"
+        "-DDEST_DIR=${DIST_DIR}/data"
+        -DREQUIRED=ON
+        "-DMAX_AGE_DAYS=${WINBOLO_GEOIP_MAX_AGE_DAYS}"
+        -P "${CMAKE_SOURCE_DIR}/cmake/copy_geoip.cmake"
 
     # Steam Input action manifest (Steam reads from controller_config/)
     COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/controller_config" "${DIST_DIR}/controller_config"

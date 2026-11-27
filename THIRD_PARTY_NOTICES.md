@@ -324,12 +324,13 @@ that can be combined with it, except the Steamworks SDK, which is covered by
 
 ## Data Files
 
-### DB-IP IP-to-Country Lite
-- Location: data/dbip-country-lite.mmdb
-- License: Creative Commons Attribution 4.0 International (CC BY 4.0)
-- https://db-ip.com/db/download/ip-to-country-lite
-- Author: DB-IP (https://db-ip.com)
-- Used by the server (and the in-client game browser) for IP-to-country lookups via libmaxminddb. Rebuilt monthly; download the latest .mmdb and replace the file in place.
+### IPinfo Lite
+- IP address data powered by [IPinfo](https://ipinfo.io).
+- Location: data/ipinfo_lite.mmdb in a built or released copy of WinBolo. It is not in this repository: the build downloads it from IPinfo (see [docs/BUILDING.md](docs/BUILDING.md#geoip-lookups)).
+- License: Creative Commons Attribution-ShareAlike 4.0 International (CC BY-SA 4.0), https://creativecommons.org/licenses/by-sa/4.0/
+- https://ipinfo.io/lite
+- Author: IPinfo (https://ipinfo.io)
+- Used by the server (and the in-client game browser) for IP-to-country lookups via libmaxminddb. WinBolo reads only each network's country code. The file is shipped unmodified, under its own licence; it is not covered by the GPL.
 
 ### Codicons (GitHub icon)
 - Location: data/ui/github.svg, data/ui/github-outline.svg

@@ -515,9 +515,25 @@ OpenMP is detected automatically by CMake. If not found, the gym library still b
 
 ### GeoIP lookups
 
-If `data/dbip-country-lite.mmdb` is present, the server will use it for IP-to-country lookups via libmaxminddb (built automatically).
+The server, and the game browser for LAN games, look up each player's country in the **IPinfo Lite** database (`ipinfo_lite.mmdb`) through libmaxminddb (built automatically). The database is not in the repository. CMake downloads it at configure time, which needs a free IPinfo token in the `IPINFO_TOKEN` environment variable:
 
-The database is the **DB-IP IP-to-Country Lite** file, distributed under CC BY 4.0 and rebuilt monthly. To refresh it, download the latest MaxMind-format (.mmdb) file from https://db-ip.com/db/download/ip-to-country-lite, gunzip it, and drop it in at `data/dbip-country-lite.mmdb`. Attribution lives in `THIRD_PARTY_NOTICES.md`.
+```bash
+IPINFO_TOKEN=<your token> cmake -S . -B build
+```
+
+The token is used only for the download: it is not saved in `CMakeCache.txt` or the generated build files, and the download URL is never printed.
+
+The file goes into a per-user cache shared by every build tree and worktree: `~/.cache/winbolo/` (or `$XDG_CACHE_HOME/winbolo/`) on Linux and macOS, `%LOCALAPPDATA%\winbolo\` on Windows. CMake downloads it again only when the cached copy is 30 days old, and every build of WinBolo or WinBoloDS copies it into `data/` beside them, so a database downloaded after the programs were built is picked up by the next build. These cache variables change that:
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `WINBOLO_GEOIP_CACHE_DIR` | as above | Where the cached copy lives |
+| `WINBOLO_GEOIP_MAX_AGE_DAYS` | `30` | Download again once the copy is this many days old |
+| `WINBOLO_GEOIP_REFRESH` | `OFF` | `ON` downloads on the next configure whatever the copy's age, then resets to `OFF` |
+
+Without a token or a cached copy the build still works: CMake prints a warning, and every player's country shows as unknown, with no flag. The `dist` target is the exception: it fails rather than package a release without the database, and warns when the database it packages is `WINBOLO_GEOIP_MAX_AGE_DAYS` old or older.
+
+The database is licensed CC BY-SA 4.0; attribution lives in `THIRD_PARTY_NOTICES.md`.
 
 ### Steam integration
 
