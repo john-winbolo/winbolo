@@ -499,6 +499,16 @@ void botInitArgAppendModeTokens(char *arg, size_t argSz,
                                 uint8_t modeIdx, uint8_t levelIdx,
                                 int playerNumForLog);
 
+/* The gate and append botManagerStageInitArg runs on a staged arg: when the
+ * brain at brainPath ships a modes.txt (brainListLoadModesForPath, opt/
+ * paths included), append its mode and difficulty tokens with
+ * botInitArgAppendModeTokens; otherwise leave arg untouched. Kept as its own
+ * function so the unit test drives the same code the stage runs. */
+void botInitArgAppendForBrainPath(char *arg, size_t argSz,
+                                  const char *brainPath,
+                                  uint8_t modeIdx, uint8_t levelIdx,
+                                  int playerNumForLog);
+
 /*********************************************************
  *NAME:          botManagerAddBot
  *PURPOSE:

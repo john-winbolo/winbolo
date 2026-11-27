@@ -286,6 +286,21 @@ bool brainListLoadModes(const char *name, BrainModes *out);
  * single-player seed and the bot manager all hold. */
 bool brainListLoadModesForPath(const char *brainPath, BrainModes *out);
 
+/* The brain an init.lua path belongs to. "Brains/GoalHunter/init.lua" gives
+ * dir "Brains/GoalHunter" and name "GoalHunter". The stripped production
+ * copy "Brains/GoalHunter/opt/init.lua" gives the SAME dir and name: a
+ * holding folder called opt (any case) gives way to the folder above it,
+ * where modes.txt, announce.txt and commands.txt live. Either slash works.
+ * Because of this rule a brain folder cannot be named opt: "Brains/opt/
+ * init.lua" gives dir and name "Brains". The rule does not go up when the
+ * folder above opt is empty, ".", ".." or ends with ':' ("C:\opt\init.lua",
+ * "./opt/init.lua", "../opt/init.lua" keep dir ".../opt" and name "opt").
+ * Both return false (and an empty string) when the path has no directory
+ * part; DirFromPath also fails when the dir will not fit, NameFromPath
+ * truncates. */
+bool brainListDirFromPath(const char *brainPath, char *dir, size_t dirSz);
+bool brainListNameFromPath(const char *brainPath, char *name, size_t nameSz);
+
 /* Key -> index lookups, case-insensitive. Return -1 when the key is
  * absent (or any argument is NULL), so a caller can warn about an unknown
  * key instead of silently running a different mode. */

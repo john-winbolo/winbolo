@@ -23,6 +23,7 @@
 #include "bot_manager.h"      /* botInitArgAppend*, BRAIN_INIT_ARG_MAX */
 #include "brain_list.h"       /* BrainModes, brainListLoadModes */
 #include "server_sim.h"       /* BOT_DIFFICULTY_*, botDifficultyName/FromName */
+#include "server_sim_internal.h" /* sim->botMgr, for the [BOT] line name */
 
 #include "test_harness.h"
 
@@ -267,5 +268,124 @@ int run_bot_difficulty_names(void) {
     UT_ASSERT(!botDifficultyFromName(NULL, &d));
     UT_ASSERT(!botDifficultyFromName("easy ", &d));   /* the parse is exact */
 
+    return 0;
+}
+
+/* The init arg a bot running a stripped opt/ brain is handed. The bot's
+ * brain path is then brains/<brain>/opt/init.lua, and botManagerStageInitArg
+ * appends the tokens only when brainListLoadModesForPath finds the brain's
+ * modes.txt. That lookup used to take the name "opt", find no manifest and
+ * append nothing, so the server logged "brain init arg ''" and the lobby's
+ * mode and difficulty never reached the bot. This builds the arg the same
+ * way the stage does, against a fixture brain shaped like GoalHunter's
+ * manifest (modes.txt beside init.lua, none in opt/). */
+#if defined(_WIN32)
+#  define IA_SEP '\\'
+#else
+#  define IA_SEP '/'
+#endif
+
+/* Short on purpose: the path lookup keeps only BRAIN_LIST_NAME_LEN - 1
+ * chars of the name. Only this test uses it. */
+static const char *ia_brain_name(void) {
+    return "wbt_optpath_ia";
+}
+
+static void ia_cleanup(void) {
+    char p[512];
+    SDL_snprintf(p, sizeof(p), "brains%c%s%cmodes.txt", IA_SEP,
+                 ia_brain_name(), IA_SEP);
+    SDL_RemovePath(p);
+    SDL_snprintf(p, sizeof(p), "brains%c%s", IA_SEP, ia_brain_name());
+    SDL_RemovePath(p);
+}
+
+/* The stage's own gate and append: botManagerStageInitArg calls the same
+ * botInitArgAppendForBrainPath, so a later change there shows up here. */
+static void ia_build(const char *brainPath, int modeIdx, int levelIdx,
+                     char *arg, size_t argSz) {
+    arg[0] = '\0';
+    botInitArgAppendForBrainPath(arg, argSz, brainPath, (uint8_t)modeIdx,
+                                 (uint8_t)levelIdx, 0);
+}
+
+int run_bot_init_arg_opt_brain_path(void) {
+    char arg[BRAIN_INIT_ARG_MAX];
+    char p[512];
+    FILE *f;
+
+    ia_cleanup();
+    UT_ASSERT(SDL_CreateDirectory("brains"));
+    SDL_snprintf(p, sizeof(p), "brains%c%s", IA_SEP, ia_brain_name());
+    UT_ASSERT(SDL_CreateDirectory(p));
+    SDL_snprintf(p, sizeof(p), "brains%c%s%cmodes.txt", IA_SEP,
+                 ia_brain_name(), IA_SEP);
+    f = fopen(p, "wb");
+    UT_ASSERT(f != NULL);
+    fputs("open_default = turtle\n"
+          "[default]\n"
+          "label = Default\n"
+          "levels = easy:Easy:1, medium:Medium:2, hard:Hard:3\n"
+          "default = hard\n"
+          "[turtle]\n"
+          "label = Turtle\n"
+          "levels = easy:Easy:1, medium:Medium:2, hard:Hard:3\n"
+          "default = hard\n"
+          "standard_levels = yes\n", f);
+    fclose(f);
+
+    /* Opt path, forward slashes: Turtle / Easy from the lobby reaches it. */
+    SDL_snprintf(p, sizeof(p), "brains/%s/opt/init.lua", ia_brain_name());
+    ia_build(p, 1, BOT_DIFFICULTY_EASY, arg, sizeof(arg));
+    UT_ASSERT_MSG(strcmp(arg, "mode=turtle;difficulty=easy") == 0,
+                  "opt path (/) built '%s'", arg);
+    UT_ASSERT(strstr(arg, "mode=") != NULL);
+    UT_ASSERT(strstr(arg, "difficulty=") != NULL);
+
+    /* Opt path, back slashes: Default / Medium. */
+    SDL_snprintf(p, sizeof(p), "brains\\%s\\opt\\init.lua", ia_brain_name());
+    ia_build(p, 0, BOT_DIFFICULTY_MEDIUM, arg, sizeof(arg));
+    UT_ASSERT_MSG(strcmp(arg, "mode=default;difficulty=medium") == 0,
+                  "opt path (\\) built '%s'", arg);
+
+    /* The normal source path builds the same arg it always did. */
+    SDL_snprintf(p, sizeof(p), "brains/%s/init.lua", ia_brain_name());
+    ia_build(p, 1, BOT_DIFFICULTY_EASY, arg, sizeof(arg));
+    UT_ASSERT_MSG(strcmp(arg, "mode=turtle;difficulty=easy") == 0,
+                  "plain path built '%s'", arg);
+
+    /* A brain with no modes.txt still gets no tokens, opt or not. */
+    ia_build("brains/wbtest_no_such_brain_at_all/opt/init.lua", 1,
+             BOT_DIFFICULTY_EASY, arg, sizeof(arg));
+    UT_ASSERT_MSG(arg[0] == '\0', "manifest-less brain got '%s'", arg);
+
+    /* The [BOT] status line names the brain above opt/, not "opt". No Lua
+     * VM in this binary, so the bot context is filled in by hand: an active
+     * slot with a live brain flag and the path botManagerAddBot captured. */
+    {
+        ServerSim *sim = ut_make_running_sim("Human");
+        BotInfo info;
+        int slot = 1;
+        UT_ASSERT(sim != NULL);
+        sim->botMgr.bots[slot].active = true;
+        sim->botMgr.bots[slot].brain.running = true;
+        SDL_strlcpy(sim->botMgr.bots[slot].brainPath,
+                    "brains/GoalHunter/opt/init.lua",
+                    sizeof(sim->botMgr.bots[slot].brainPath));
+        UT_ASSERT(botManagerGetBotInfo(sim, (BYTE)slot, &info));
+        UT_ASSERT_MSG(strcmp(info.brainName, "GoalHunter") == 0,
+                      "[BOT] name for opt path '%s'", info.brainName);
+        SDL_strlcpy(sim->botMgr.bots[slot].brainPath,
+                    "Brains\\GoalHunter\\init.lua",
+                    sizeof(sim->botMgr.bots[slot].brainPath));
+        UT_ASSERT(botManagerGetBotInfo(sim, (BYTE)slot, &info));
+        UT_ASSERT_MSG(strcmp(info.brainName, "GoalHunter") == 0,
+                      "[BOT] name for plain path '%s'", info.brainName);
+        sim->botMgr.bots[slot].brain.running = false;
+        sim->botMgr.bots[slot].active = false;
+        serverSimDestroy(sim);
+    }
+
+    ia_cleanup();
     return 0;
 }

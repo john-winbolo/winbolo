@@ -452,3 +452,224 @@ int run_brain_modes_standard_levels(void) {
     UT_ASSERT(brainModeUsesStandardLevels(&m.modes[0]));
     return 0;
 }
+
+/* A stripped production brain loads from brains/<brain>/opt/init.lua, and
+ * that path names the SAME brain: the folder called opt gives way to the
+ * one above it, which holds modes.txt. Before this, the name came out as
+ * "opt", no manifest was found and the bot got no mode= / difficulty=
+ * tokens at all. Both slash kinds, any case of opt; a normal path is
+ * unchanged; a bare opt folder with nothing above it stays "opt". */
+int run_brain_modes_opt_path(void) {
+    char name[64];
+    char dir[256];
+    char path[256];
+    BrainModes m;
+
+    UT_ASSERT(brainListNameFromPath("brains/GoalHunter/opt/init.lua",
+                                    name, sizeof(name)));
+    UT_ASSERT_MSG(strcmp(name, "GoalHunter") == 0, "fwd opt gave '%s'", name);
+    UT_ASSERT(brainListNameFromPath("D:\\x\\Brains\\GoalHunter\\OPT\\init.lua",
+                                    name, sizeof(name)));
+    UT_ASSERT_MSG(strcmp(name, "GoalHunter") == 0, "back OPT gave '%s'", name);
+    UT_ASSERT(brainListDirFromPath("brains/GoalHunter/opt/init.lua",
+                                   dir, sizeof(dir)));
+    UT_ASSERT_MSG(strcmp(dir, "brains/GoalHunter") == 0, "opt dir '%s'", dir);
+    UT_ASSERT(brainListDirFromPath("Brains\\GoalHunter\\opt\\init.lua",
+                                   dir, sizeof(dir)));
+    UT_ASSERT_MSG(strcmp(dir, "Brains\\GoalHunter") == 0, "opt dir '%s'", dir);
+
+    /* Normal paths: unchanged. */
+    UT_ASSERT(brainListNameFromPath("brains/GoalHunter/init.lua",
+                                    name, sizeof(name)));
+    UT_ASSERT_MSG(strcmp(name, "GoalHunter") == 0, "plain gave '%s'", name);
+    UT_ASSERT(brainListDirFromPath("brains\\GoalHunter\\init.lua",
+                                   dir, sizeof(dir)));
+    UT_ASSERT_MSG(strcmp(dir, "brains\\GoalHunter") == 0, "plain dir '%s'", dir);
+    /* Only a folder named exactly opt: "optimus" and "noopt" stay. */
+    UT_ASSERT(brainListNameFromPath("brains/optimus/init.lua",
+                                    name, sizeof(name)));
+    UT_ASSERT(strcmp(name, "optimus") == 0);
+    UT_ASSERT(brainListNameFromPath("brains/x/noopt/init.lua",
+                                    name, sizeof(name)));
+    UT_ASSERT(strcmp(name, "noopt") == 0);
+    /* No folder above opt: nothing to give way to. */
+    UT_ASSERT(brainListNameFromPath("opt/init.lua", name, sizeof(name)));
+    UT_ASSERT(strcmp(name, "opt") == 0);
+    UT_ASSERT(!brainListNameFromPath("init.lua", name, sizeof(name)));
+    UT_ASSERT(name[0] == '\0');
+    UT_ASSERT(!brainListDirFromPath("init.lua", dir, sizeof(dir)));
+    UT_ASSERT(!brainListNameFromPath(NULL, name, sizeof(name)));
+
+    /* A brain folder cannot be named opt: "Brains/opt/init.lua" is read as
+     * the opt copy of a brain named Brains (brain_list.h says so). */
+    UT_ASSERT(brainListNameFromPath("Brains/opt/init.lua", name,
+                                    sizeof(name)));
+    UT_ASSERT_MSG(strcmp(name, "Brains") == 0, "Brains/opt gave '%s'", name);
+    UT_ASSERT(brainListDirFromPath("Brains/opt/init.lua", dir, sizeof(dir)));
+    UT_ASSERT_MSG(strcmp(dir, "Brains") == 0, "Brains/opt dir '%s'", dir);
+    /* The folder above opt is a drive, ".", ".." or empty: opt stays the
+     * brain folder, so no bad name ("C:", ".", "..") comes out. */
+    UT_ASSERT(brainListNameFromPath("C:\\opt\\init.lua", name, sizeof(name)));
+    UT_ASSERT_MSG(strcmp(name, "opt") == 0, "C:\\opt gave '%s'", name);
+    UT_ASSERT(brainListDirFromPath("C:\\opt\\init.lua", dir, sizeof(dir)));
+    UT_ASSERT_MSG(strcmp(dir, "C:\\opt") == 0, "C:\\opt dir '%s'", dir);
+    UT_ASSERT(brainListNameFromPath("C:/opt/init.lua", name, sizeof(name)));
+    UT_ASSERT_MSG(strcmp(name, "opt") == 0, "C:/opt gave '%s'", name);
+    UT_ASSERT(brainListNameFromPath("./opt/init.lua", name, sizeof(name)));
+    UT_ASSERT_MSG(strcmp(name, "opt") == 0, "./opt gave '%s'", name);
+    UT_ASSERT(brainListDirFromPath("./opt/init.lua", dir, sizeof(dir)));
+    UT_ASSERT_MSG(strcmp(dir, "./opt") == 0, "./opt dir '%s'", dir);
+    UT_ASSERT(brainListNameFromPath("../opt/init.lua", name, sizeof(name)));
+    UT_ASSERT_MSG(strcmp(name, "opt") == 0, "../opt gave '%s'", name);
+    UT_ASSERT(brainListDirFromPath("..\\opt\\init.lua", dir, sizeof(dir)));
+    UT_ASSERT_MSG(strcmp(dir, "..\\opt") == 0, "..\\opt dir '%s'", dir);
+    UT_ASSERT(brainListNameFromPath("brains/../opt/init.lua", name,
+                                    sizeof(name)));
+    UT_ASSERT_MSG(strcmp(name, "opt") == 0, "brains/../opt gave '%s'", name);
+    UT_ASSERT(brainListNameFromPath("brains//opt/init.lua", name,
+                                    sizeof(name)));
+    UT_ASSERT_MSG(strcmp(name, "opt") == 0, "brains//opt gave '%s'", name);
+    UT_ASSERT(brainListNameFromPath("/opt/init.lua", name, sizeof(name)));
+    UT_ASSERT_MSG(strcmp(name, "opt") == 0, "/opt gave '%s'", name);
+    /* A real brain on a drive root still gives way: "D:\GH\opt". */
+    UT_ASSERT(brainListNameFromPath("D:\\GH\\opt\\init.lua", name,
+                                    sizeof(name)));
+    UT_ASSERT_MSG(strcmp(name, "GH") == 0, "D:\\GH\\opt gave '%s'", name);
+
+    /* The opt path loads the parent's modes.txt, both slash kinds. The
+     * path lookup keeps only BRAIN_LIST_NAME_LEN - 1 chars of the name, so
+     * this fixture has a short name of its own (unique to this test, so a
+     * parallel ctest run cannot share it). */
+    {
+        static const char *const kName = "wbt_optpath_bm";
+        char p[512];
+        FILE *f;
+        SDL_snprintf(p, sizeof(p), "brains%c%s%cmodes.txt", SEP, kName, SEP);
+        SDL_RemovePath(p);
+        UT_ASSERT(SDL_CreateDirectory("brains"));
+        SDL_snprintf(p, sizeof(p), "brains%c%s", SEP, kName);
+        UT_ASSERT(SDL_CreateDirectory(p));
+        SDL_snprintf(p, sizeof(p), "brains%c%s%cmodes.txt", SEP, kName, SEP);
+        f = fopen(p, "wb");
+        UT_ASSERT(f != NULL);
+        fputs("[default]\n"
+              "levels = easy:Easy, medium:Medium, hard:Hard\n"
+              "[turtle]\n"
+              "levels = easy:Easy, hard:Hard\n", f);
+        fclose(f);
+
+        SDL_snprintf(path, sizeof(path), "brains/%s/opt/init.lua", kName);
+        UT_ASSERT_MSG(brainListLoadModesForPath(path, &m),
+                      "no manifest found for '%s'", path);
+        UT_ASSERT_MSG(m.modeCount == 2, "got %d modes, expected 2",
+                      m.modeCount);
+        UT_ASSERT(strcmp(m.modes[1].key, "turtle") == 0);
+        SDL_snprintf(path, sizeof(path), "brains\\%s\\opt\\init.lua", kName);
+        UT_ASSERT_MSG(brainListLoadModesForPath(path, &m),
+                      "no manifest found for '%s'", path);
+        UT_ASSERT(m.modeCount == 2);
+        /* And the normal path still loads the same manifest. */
+        SDL_snprintf(path, sizeof(path), "brains/%s/init.lua", kName);
+        UT_ASSERT(brainListLoadModesForPath(path, &m));
+        UT_ASSERT(m.modeCount == 2);
+
+        SDL_snprintf(p, sizeof(p), "brains%c%s%cmodes.txt", SEP, kName, SEP);
+        SDL_RemovePath(p);
+        SDL_snprintf(p, sizeof(p), "brains%c%s", SEP, kName);
+        SDL_RemovePath(p);
+    }
+    return 0;
+}
+
+/* The modes lookup reads the folder the brain path itself points to first,
+ * the same folder the announce and commands lookup reads. A brain kept
+ * outside the fixed brains folders gets its own modes.txt, and a same-named
+ * copy in a fixed folder with a different modes.txt cannot stand in for it.
+ * Only when the path's folder has no modes.txt does the name lookup in the
+ * fixed folders answer. */
+#define PF_ROOT "wbtest_modes_outside"
+#define PF_NAME "wbt_pathfirst"
+
+static void pf_cleanup(void) {
+    char p[512];
+    SDL_snprintf(p, sizeof(p), "%s%c%s%cmodes.txt", PF_ROOT, SEP, PF_NAME, SEP);
+    SDL_RemovePath(p);
+    SDL_snprintf(p, sizeof(p), "%s%c%s", PF_ROOT, SEP, PF_NAME);
+    SDL_RemovePath(p);
+    SDL_RemovePath(PF_ROOT);
+    SDL_snprintf(p, sizeof(p), "brains%c%s%cmodes.txt", SEP, PF_NAME, SEP);
+    SDL_RemovePath(p);
+    SDL_snprintf(p, sizeof(p), "brains%c%s", SEP, PF_NAME);
+    SDL_RemovePath(p);
+}
+
+static int pf_write(const char *path, const char *text) {
+    FILE *f = fopen(path, "wb");
+    if (f == NULL) return -1;
+    fputs(text, f);
+    fclose(f);
+    return 0;
+}
+
+int run_brain_modes_path_folder_first(void) {
+    char p[512];
+    char path[512];
+    BrainModes m;
+
+    pf_cleanup();
+    UT_ASSERT(SDL_CreateDirectory(PF_ROOT));
+    SDL_snprintf(p, sizeof(p), "%s%c%s", PF_ROOT, SEP, PF_NAME);
+    UT_ASSERT(SDL_CreateDirectory(p));
+    SDL_snprintf(p, sizeof(p), "%s%c%s%cmodes.txt", PF_ROOT, SEP, PF_NAME, SEP);
+    UT_ASSERT(pf_write(p, "[solo]\n"
+                          "levels = easy:Easy, hard:Hard\n") == 0);
+
+    /* No brain of this name in the fixed folders: the path's own folder
+     * still gives the list, for the plain and the opt/ path. */
+    SDL_snprintf(path, sizeof(path), "%s/%s/init.lua", PF_ROOT, PF_NAME);
+    UT_ASSERT_MSG(brainListLoadModesForPath(path, &m),
+                  "no manifest found for '%s'", path);
+    UT_ASSERT_MSG(m.modeCount == 1, "got %d modes, expected 1", m.modeCount);
+    UT_ASSERT(strcmp(m.modes[0].key, "solo") == 0);
+    SDL_snprintf(path, sizeof(path), "%s\\%s\\opt\\init.lua", PF_ROOT, PF_NAME);
+    UT_ASSERT_MSG(brainListLoadModesForPath(path, &m),
+                  "no manifest found for '%s'", path);
+    UT_ASSERT(m.modeCount == 1);
+    UT_ASSERT(strcmp(m.modes[0].key, "solo") == 0);
+
+    /* A same-named copy in a fixed folder with a different modes.txt. */
+    UT_ASSERT(SDL_CreateDirectory("brains"));
+    SDL_snprintf(p, sizeof(p), "brains%c%s", SEP, PF_NAME);
+    UT_ASSERT(SDL_CreateDirectory(p));
+    SDL_snprintf(p, sizeof(p), "brains%c%s%cmodes.txt", SEP, PF_NAME, SEP);
+    UT_ASSERT(pf_write(p, "[default]\n"
+                          "levels = easy:Easy, medium:Medium, hard:Hard\n"
+                          "[turtle]\n"
+                          "levels = easy:Easy, hard:Hard\n") == 0);
+
+    /* The path's folder wins over the fixed copy, plain and opt/. */
+    SDL_snprintf(path, sizeof(path), "%s/%s/init.lua", PF_ROOT, PF_NAME);
+    UT_ASSERT(brainListLoadModesForPath(path, &m));
+    UT_ASSERT_MSG(m.modeCount == 1 && strcmp(m.modes[0].key, "solo") == 0,
+                  "fixed copy won for '%s' (%d modes)", path, m.modeCount);
+    SDL_snprintf(path, sizeof(path), "%s/%s/opt/init.lua", PF_ROOT, PF_NAME);
+    UT_ASSERT(brainListLoadModesForPath(path, &m));
+    UT_ASSERT_MSG(m.modeCount == 1 && strcmp(m.modes[0].key, "solo") == 0,
+                  "fixed copy won for '%s' (%d modes)", path, m.modeCount);
+    /* The fixed copy's own path reads the fixed copy. */
+    SDL_snprintf(path, sizeof(path), "brains/%s/opt/init.lua", PF_NAME);
+    UT_ASSERT(brainListLoadModesForPath(path, &m));
+    UT_ASSERT_MSG(m.modeCount == 2, "fixed path got %d modes", m.modeCount);
+
+    /* No modes.txt in the path's folder: the name lookup answers. */
+    SDL_snprintf(p, sizeof(p), "%s%c%s%cmodes.txt", PF_ROOT, SEP, PF_NAME, SEP);
+    SDL_RemovePath(p);
+    SDL_snprintf(path, sizeof(path), "%s/%s/init.lua", PF_ROOT, PF_NAME);
+    UT_ASSERT_MSG(brainListLoadModesForPath(path, &m),
+                  "no fallback to the fixed copy for '%s'", path);
+    UT_ASSERT_MSG(m.modeCount == 2, "fallback got %d modes", m.modeCount);
+    UT_ASSERT(strcmp(m.modes[1].key, "turtle") == 0);
+
+    pf_cleanup();
+    return 0;
+}

@@ -132,6 +132,22 @@ int run_brain_list_texts_read(void) {
     UT_ASSERT(strcmp(announce, kAnnounceWant) == 0);
     UT_ASSERT(strcmp(docs, "HEADING\n\nA line.\n") == 0);
 
+    /* The stripped opt/ copy reads the same texts, from the folder above
+     * opt/ (no opt folder needs to exist for the lookup). */
+    SDL_snprintf(initPath, sizeof(initPath), "%s%copt%cinit.lua", dir, SEP,
+                 SEP);
+    announce[0] = '\0';
+    docs[0] = '\0';
+    UT_ASSERT_MSG(brainListLoadTextsForPath(initPath,
+                                            announce,
+                                            (size_t)BRAIN_ANNOUNCE_MAX + 1,
+                                            docs, (size_t)BRAIN_DOCS_MAX + 1,
+                                            NULL) == true,
+                  "ForPath must find the texts above opt/ for '%s'",
+                  initPath);
+    UT_ASSERT(strcmp(announce, kAnnounceWant) == 0);
+    UT_ASSERT(strcmp(docs, "HEADING\n\nA line.\n") == 0);
+
     /* A path with no directory part has nowhere to look. */
     UT_ASSERT(brainListLoadTextsForPath("init.lua", announce,
                                         (size_t)BRAIN_ANNOUNCE_MAX + 1,
