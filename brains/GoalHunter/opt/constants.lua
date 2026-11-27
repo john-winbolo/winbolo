@@ -1731,6 +1731,36 @@ M.PT2_V2_DOLL_SPAR_CHUNK_KB = 0
 -- process keeps goes 80 -> 62 MB (median), working set median 415 -> 386 MB,
 -- the same C ms/eval. false = off.
 M.PT2_V2_DOLL_HEAP_TRIM = true
+-- PT2_DG_* (Nov 27, degraded search study, speed only; ALL OFF): cheaper
+-- pill take v2 searches. Each one changes play, so none is on without
+-- Andrew's yes. The study: D:/Development/pt2_prof_nov25/degraded.
+--   PT2_DG_REUSE      banned and score_fn answers kept across the rings
+--   PT2_DG_STEP       every Nth standoff point (1 deg each) only
+--   PT2_DG_STAGGER    with STEP: the kept points move one per ring
+--   PT2_DG_FINE       with STEP: a skipped point in a blocker shadow runs
+--                     too (the centre wedges of each pill X in range)
+--   PT2_DG_EARLY      stop after a ring whose safe best builds nothing
+--                     (or is a chain)
+--   PT2_DG_RINGS3     three rings: the second ring of the radii is left out
+--   PT2_DG_LOCAL_WIN  deg: only the points this near the last best of the
+--                     same player, source and A; a full run each
+--                     PT2_DG_LOCAL_EVERY runs, after a run with no safe
+--                     take and after 200 ticks
+--   PT2_DG_KCAP       the wall search builds at most this many blockers
+--   PT2_DG_TRIES      at most this many plan confirm tries; with KCAP or
+--                     TRIES a run with no safe best runs again in full
+-- A number knob is off at 0. The shadow harness (log only, the played game
+-- stays the same) is the env var WINBOLO_PT2_DG_SHADOW=1 (pt2_dgshadow.lua).
+M.PT2_DG_REUSE = false
+M.PT2_DG_STEP = 0
+M.PT2_DG_STAGGER = false
+M.PT2_DG_FINE = false
+M.PT2_DG_EARLY = false
+M.PT2_DG_RINGS3 = false
+M.PT2_DG_LOCAL_WIN = 0
+M.PT2_DG_LOCAL_EVERY = 8
+M.PT2_DG_KCAP = 0
+M.PT2_DG_TRIES = 0
 -- PT2_V2_DOLL_VIZ_RECORD (debug only): a headless -brain-debug run records
 -- the doll cache layers pt2_d1 .. pt2_d5 and pt2_dchg (pt2_viz.lua).
 -- It also writes the PT2_V2_DOLL_EVENT_LOG file dl_p<player>.bin in the

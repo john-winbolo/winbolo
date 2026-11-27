@@ -1286,6 +1286,21 @@ struct St {
     int    chains, link_covers, leeway_on, own_pill_rank, orth_only, aim_nudge, keep_all;
     int    link_clear_front;
     double link_cut_min_shots;
+    /* PT2_DG_* (degraded search study, all off by default): dg_step keeps
+     * every dg_step-th standoff point (dg_stagger: the phase moves one per
+     * ring), dg_fine also keeps a skipped point in a blocker shadow,
+     * dg_win/dg_center keep only the points near the last best (local
+     * search), dg_early stops after a ring with a safe best that needs no
+     * built blocker (or a chain), dg_kcap/dg_tries cap the wall search
+     * and its retries (a second full pass when no safe best), dg_reuse
+     * keeps banned and score_fn answers across the rings */
+    int    dg_step, dg_stagger, dg_fine, dg_early, dg_kcap, dg_tries, dg_reuse;
+    double dg_win, dg_center;
+    int    dg_fb;               /* 1 = the full second pass ran */
+    int    dg_kcap_now, dg_tries_now;
+    signed char *dg_ban;        /* per step index: -1 unknown, 0 or 1 */
+    int    dg_nban;
+    double *dg_sk, *dg_sv; int dg_scap;   /* score_fn reuse: keys, values */
     double max_chain, leeway_ring_wu, leeway_top, pill_range, range_margin;
     double blocker_min_dist, nudge_step_wu, nudge_max_steps;
     int    has_leeway_min; double leeway_min;
@@ -4760,6 +4775,7 @@ static WSOut *ws_run__p(Ev *e, Rec *rec, const Aims *aims, UPath *U, int nU) {
     double P = e->pill_drop_shots, W = e->wall_shots;
     double kcap = e->build_max;
     if ((rec->flags & RF_KMAX) && rec->kmax < kcap) kcap = rec->kmax;
+    if (e->dg_kcap_now > 0 && e->dg_kcap_now < kcap) kcap = e->dg_kcap_now;   /* PT2_DG_KCAP */
     if (kcap < 1) return out;
     double bp = dmin(npb, kcap);
     double bw = kcap - bp;
@@ -5686,6 +5702,7 @@ static Rec *plan_point__p(Ev *e, Rec *rec) {
         int tries = 1;
         for (int i = 2; i <= np; i++) {
             if (tries >= S6_TRIES) break;
+            if (e->dg_tries_now > 0 && tries >= e->dg_tries_now) break;   /* PT2_DG_TRIES */
             S6Pair *q = (S6Pair *)pp[i];
             tries++;
             e->confirm_retry += 1;
@@ -6622,6 +6639,16 @@ static void ev_read_inp__p(Ev *e) {
     e->orth_only = getbool(L, S_INP, "orth_only");
     e->aim_nudge = getbool(L, S_INP, "aim_nudge");
     e->keep_all = getbool(L, S_INP, "keep_all");
+    e->dg_step = (int)getnum(L, S_INP, "dg_step", 0, NULL);
+    e->dg_stagger = getbool(L, S_INP, "dg_stagger");
+    e->dg_fine = getbool(L, S_INP, "dg_fine");
+    e->dg_early = getbool(L, S_INP, "dg_early");
+    e->dg_kcap = (int)getnum(L, S_INP, "dg_kcap", 0, NULL);
+    e->dg_tries = (int)getnum(L, S_INP, "dg_tries", 0, NULL);
+    e->dg_reuse = getbool(L, S_INP, "dg_reuse");
+    e->dg_win = getnum(L, S_INP, "dg_win", 0, NULL);
+    e->dg_center = getnum(L, S_INP, "dg_center", 0, NULL);
+    e->dg_kcap_now = e->dg_kcap; e->dg_tries_now = e->dg_tries;
     e->max_chain = getnum(L, S_INP, "max_chain", 0, NULL);
     e->leeway_ring_wu = getnum(L, S_INP, "leeway_ring_wu", 0, NULL);
     e->leeway_top = getnum(L, S_INP, "leeway_top", 0, NULL);
@@ -7759,6 +7786,9 @@ static uint64_t pc_csig(Ev *e, int world) {
     for (int i = 0; i < e->nb_n; i++) cs_add(&h, e->nb[i]);
     for (int i = 0; i < 4 * e->st_n; i++) cs_add(&h, e->st_r[i]);
     if (world) return h;
+    /* PT2_DG_KCAP / PT2_DG_TRIES: a capped pass keeps its own plans */
+    if (e->dg_kcap_now > 0) cs_add(&h, 1000 + e->dg_kcap_now);
+    if (e->dg_tries_now > 0) cs_add(&h, 2000 + e->dg_tries_now);
     /* the chain skip set (inp.chain_skip): its pills, in any order */
     uint64_t sk = 0;
     if (lua_istable(L, S_CHAIN_SKIP)) {
@@ -7806,7 +7836,31 @@ static void flt_row_put(Ev *e, int s, uint64_t k1, uint64_t k2, int64_t v) {
 }
 static const unsigned char *pc_world(lua_State *L);
 
+static double score_fn_call(Ev *e, double deg, double mx, double my, double cx, double cy);
+/* PT2_DG_REUSE: score_fn reads only deg, mx and my (not cx, cy), and its
+ * inputs do not change in one evaluate, so a repeat (deg, mx, my) on
+ * another ring takes the first answer */
 static double score_fn(Ev *e, double deg, double mx, double my, double cx, double cy) {
+    if (!e->dg_reuse) return score_fn_call(e, deg, mx, my, cx, cy);
+    if (!e->dg_sk) {
+        e->dg_scap = 4096;
+        e->dg_sk = NEWN(e, double, e->dg_scap); e->dg_sv = NEWN(e, double, e->dg_scap);
+        for (int i = 0; i < e->dg_scap; i++) e->dg_sk[i] = -1;
+    }
+    double key = floor(deg * 16 + 0.5) * 65536 + my * 256 + mx;
+    uint64_t h = pt_mix(dbits(key)) & (uint64_t)(e->dg_scap - 1);
+    for (int n = 0; n < e->dg_scap; n++) {
+        if (e->dg_sk[h] == key) return e->dg_sv[h];
+        if (e->dg_sk[h] < 0) {
+            double v = score_fn_call(e, deg, mx, my, cx, cy);
+            e->dg_sk[h] = key; e->dg_sv[h] = v;
+            return v;
+        }
+        h = (h + 1) & (uint64_t)(e->dg_scap - 1);
+    }
+    return score_fn_call(e, deg, mx, my, cx, cy);
+}
+static double score_fn_call(Ev *e, double deg, double mx, double my, double cx, double cy) {
     lua_State *L = e->L;
     lua_pushvalue(L, S_SCORE_FN);
     lua_pushnumber(L, deg); lua_pushnumber(L, mx); lua_pushnumber(L, my);
@@ -7817,6 +7871,20 @@ static double score_fn(Ev *e, double deg, double mx, double my, double cx, doubl
     double v = lua_tonumber(L, -1);
     lua_pop(L, 1);
     return v;
+}
+
+/* PT2_DG_FINE: is the standoff point in a blocker shadow? A pill X in
+ * range has a wedge (wall, forest, boat, ally pill) that covers or may
+ * cover its shell path to the point (predict on the centre wedges of X;
+ * built blockers are not in the wedges). */
+static int dg_shadow(Ev *e, double px, double py) {
+    PList *T = pills_in_range(e, px, py);
+    for (int i = 0; i < T->n; i++) {
+        Pred pr;
+        predict(e, centre_wedges(e, T->v[i]), px, py, &pr);
+        if (pr.cover > 0 || !pr.sure) return 1;
+    }
+    return 0;
 }
 
 static void points_of_ring__p(Ev *e) {
@@ -7832,19 +7900,43 @@ static void points_of_ring__p(Ev *e) {
         e->pp_hasA = NEWN(e, int, need); e->pp_cant = NEWN(e, int, need);
     }
     PccSave pfs_ = { e->pcc_ctx, e->pcc_deg };
+    if (e->dg_reuse && !e->dg_ban) {
+        e->dg_nban = need;
+        e->dg_ban = NEWN(e, signed char, need);
+        memset(e->dg_ban, -1, (size_t)need);
+    }
     for (double s = 0; s <= e->nsteps - 1; s++) {
         double deg = s * e->angle_step;
+        /* PT2_DG_LOCAL_WIN: only the points near dg_center */
+        if (e->dg_win > 0) {
+            double dd = fabs(fmod(deg - e->dg_center + 540.0, 360.0) - 180.0);
+            if (dd > e->dg_win + 1e-9) continue;
+        }
+        /* PT2_DG_STEP: a coarse point, else (PT2_DG_FINE) only a point in
+         * a blocker shadow (dg_shadow) */
+        int dg_skip = 0;
+        if (e->dg_step > 1) {
+            int ph = e->dg_stagger ? (e->ri % e->dg_step) : 0;
+            dg_skip = (((int)s + e->dg_step - ph) % e->dg_step) != 0;
+            if (dg_skip && !e->dg_fine) continue;
+        }
         if (e->pcc_run) (void)pcc_enter(e, PO_FILT, deg);
         if (lua_toboolean(L, S_BANNED)) {
-            lua_pushvalue(L, S_BANNED);
-            lua_pushnumber(L, deg);
-            PLC(P_cb_banned, L, 1, 1);
-            int ban = lua_toboolean(L, -1);
-            lua_pop(L, 1);
+            int ban = -1;
+            if (e->dg_ban && (int)s < e->dg_nban) ban = e->dg_ban[(int)s];
+            if (ban < 0) {
+                lua_pushvalue(L, S_BANNED);
+                lua_pushnumber(L, deg);
+                PLC(P_cb_banned, L, 1, 1);
+                ban = lua_toboolean(L, -1);
+                lua_pop(L, 1);
+                if (e->dg_ban && (int)s < e->dg_nban) e->dg_ban[(int)s] = (signed char)ban;
+            }
             if (ban) continue;
         }
         double cx = e->pcx + sin(deg * PT2_LUA_RAD) * e->R;
         double cy = e->pcy - cos(deg * PT2_LUA_RAD) * e->R;
+        if (dg_skip && !dg_shadow(e, floor(cx * 256), floor(cy * 256))) continue;
         double mx = floor(cx), my = floor(cy);
         pc_mark(e, mx, my, PCM_RING);
         /* PT2_V2_CACHE: the quick filter's answer for this ring point
@@ -8033,6 +8125,7 @@ static int ev_run(Ev *e) {
     Rec *rec, *fin;
     switch (e->pc) {
     case 0:
+    dg_again:
         /* PT2_FARTHEST_RING: the rings are ring_radii (absolute, far to
          * near), every one runs; else radius + radii_offsets */
         for (e->ri = 0; e->ri < (e->far ? e->nring : e->nradii); e->ri++) {
@@ -8275,12 +8368,24 @@ static int ev_run(Ev *e) {
                 if (e->nscored >= 1 && (!e->best || better(e, e->scored[1], e->best, 0))) e->best = e->scored[1];
                 e->has_cmpf = 0;
                 if (e->best && e->best->safe && !e->far) break;
+                /* PT2_DG_EARLY: a safe best that builds nothing, or a chain */
+                if (e->dg_early && e->best && e->best->safe
+                    && (e->best->kills >= 2 || !((e->best->flags & RF_PLAN) && e->best->plan->n > 0))) break;
             }
         }
         if (e->far_single && !(e->best && e->best->safe && e->best->kills >= 2)) {
             e->no_chain = 1;
             e->co_stop += 1;
             e->best = NULL;
+        }
+        /* PT2_DG_KCAP / PT2_DG_TRIES: no safe best on the capped pass, so
+         * the full pass runs (with its own plan keys) */
+        if ((e->dg_kcap_now > 0 || e->dg_tries_now > 0) && !e->no_chain && !(e->best && e->best->safe)) {
+            e->dg_fb = 1;
+            e->dg_kcap_now = 0; e->dg_tries_now = 0;
+            if (e->pc_on) e->csig = pc_csig(e, 0);
+            e->best = NULL; e->far_single = 0; e->nall = 0;
+            goto dg_again;
         }
         if (e->best && e->best->safe && (e->best->flags & RF_PLAN) && e->best->plan->n > 0) {
             e->best->hold = hold_point(e, e->best);
@@ -8365,6 +8470,7 @@ static void push_result__p(Ev *e) {
     stat_put(L, "leeway_more", e->leeway_more); stat_put(L, "leeway_more_fail", e->leeway_more_fail);
     stat_put(L, "leeway_single", e->leeway_single);
     stat_put(L, "aimnb_moved", e->aimnb_moved);
+    if (e->dg_kcap || e->dg_tries) stat_put(L, "dg_fb", e->dg_fb);
     if (e->pc_on) {
         stat_put(L, "pc_eh", e->pc_eh); stat_put(L, "pc_em", e->pc_em);
         stat_put(L, "pc_et", e->pc_et); stat_put(L, "pc_en", e->pc_en);

@@ -11,6 +11,16 @@ if math.atan2 then
   math.atan = function(y, x) if x == nil then return _atan1(y) else return _atan2(y, x) end end
 end
 
+-- PT2_DG_SHADOW (degraded search study, log only): env
+-- WINBOLO_PT2_DG_SHADOW=1 runs the pt2_dgshadow searches. Their time is
+-- left out of clock_us (and of brain.lastThinkMs in Brain.think), so the
+-- game's own time checks see the think they see without the shadow.
+if os and os.getenv and os.getenv("WINBOLO_PT2_DG_SHADOW") == "1" and rawget(_G, "clock_us") then
+  local raw = clock_us
+  _G._dg_shadow_on, _G._dg_hide_us, _G._dg_think_us, _G._dg_clock_raw = true, 0, 0, raw
+  _G.clock_us = function() return raw() - _G._dg_hide_us end
+end
+
 -- =========================================================================
 -- GoalHunter/init.lua — Brain entry point (open/think/close/settings)
 -- =========================================================================
@@ -1640,6 +1650,14 @@ end
 -- =========================================================================
 
 function Brain.think(info)
+  -- PT2_DG_SHADOW: the last think less its shadow time
+  if _G._dg_shadow_on then
+    local br = _G.brain
+    if br and br.lastThinkMs and _G._dg_think_us > 0 then
+      br.lastThinkMs = math.max(0.001, br.lastThinkMs - _G._dg_think_us / 1000)
+    end
+    _G._dg_think_us = 0
+  end
   -- ── PERFORMANCE MARKER: START ──
   -- First instruction in Brain.think when --perf-log is on: capture
   -- a real tick-start clock so the Y panel can compute total_ms as

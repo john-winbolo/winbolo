@@ -168,69 +168,75 @@ build_inp_body = function(state, goal, info, world, pill, no_builder, npb, radiu
     inp.lgm_ticks = lgm_ticks
   end
   local goalA = inp.A
-  local curA = goalA
-  inp.banned = function(deg)
-    local bans = state.banned_pill_angles and state.banned_pill_angles[curA.my * 256 + curA.mx]
-    if not bans then return false end
-    local exp = bans[floor((deg % 360) / 5) * 5]
-    return exp ~= nil and now < exp
-  end
-  -- evaluate_group: another pill of the group as A. The goal's scan spots
-  -- are angles around the target, so they count only for the target.
-  inp.set_A = function(p) curA = p end
-  local spots = goal.scan_spots
-  local greens = green_set(spots)
-  local boat = info.inboat and 1 or 0
-  local tmx = floor((info.tankx or 0) / 256)
-  local tmy = floor((info.tanky or 0) / 256)
-  -- A finish (PT2_FINISH_NO_COVER_MAX_ANGER: A's ray needs no cover) is
-  -- a charge with a swerve: v1's green filter is a blocker-era ranking, so
-  -- it must not push the finish to a far spot. A finish point costs its
-  -- travel only. pen_n / pen_skip_n count the points for the log.
-  -- The travel of a finish point also leaves out A's own danger: the
-  -- Dijkstra cost along the same path less A's stamped danger on it
-  -- (threat.pill_contrib[A], the C subtract lookup goals.lua uses for a
-  -- pill it will kill on the way). The danger of every other hostile pill
-  -- stays in. noA_n counts the points priced so, for the log.
-  inp.pen_n, inp.pen_skip_n, inp.noA_n = 0, 0, 0
-  local th = package.loaded["threat"]
-  local contrib_A, contrib_of = nil, nil
-  -- nearest_spot per angle (the scan spots do not change) and finish_ok
-  -- once per A: asked again when A changes, so a later group part (a
-  -- later tick) reads the pill's health and anger again
-  local spot_of, fin_A, fin_v = {}, nil, false
-  inp.score_fn = function(deg, mx, my, cx, cy)
-    local s = nil
-    if curA == goalA then
-      s = spot_of[deg]
-      if s == nil then s = nearest_spot(spots, deg) or false; spot_of[deg] = s end
-      s = s or nil
+  -- the callbacks (banned, set_A, score_fn) and their state; the
+  -- degraded search shadow (pt2_dgshadow) binds a fresh set on its copy
+  local function bind(inp)
+    local curA = goalA
+    inp.banned = function(deg)
+      local bans = state.banned_pill_angles and state.banned_pill_angles[curA.my * 256 + curA.mx]
+      if not bans then return false end
+      local exp = bans[floor((deg % 360) / 5) * 5]
+      return exp ~= nil and now < exp
     end
-    if fin_A ~= curA then fin_A, fin_v = curA, V2.finish_ok(inp, curA) or false end
-    local fin = fin_v
-    if s and not greens[s] then
+    -- evaluate_group: another pill of the group as A. The goal's scan spots
+    -- are angles around the target, so they count only for the target.
+    inp.set_A = function(p) curA = p end
+    local spots = goal.scan_spots
+    local greens = green_set(spots)
+    local boat = info.inboat and 1 or 0
+    local tmx = floor((info.tankx or 0) / 256)
+    local tmy = floor((info.tanky or 0) / 256)
+    -- A finish (PT2_FINISH_NO_COVER_MAX_ANGER: A's ray needs no cover) is
+    -- a charge with a swerve: v1's green filter is a blocker-era ranking, so
+    -- it must not push the finish to a far spot. A finish point costs its
+    -- travel only. pen_n / pen_skip_n count the points for the log.
+    -- The travel of a finish point also leaves out A's own danger: the
+    -- Dijkstra cost along the same path less A's stamped danger on it
+    -- (threat.pill_contrib[A], the C subtract lookup goals.lua uses for a
+    -- pill it will kill on the way). The danger of every other hostile pill
+    -- stays in. noA_n counts the points priced so, for the log.
+    inp.pen_n, inp.pen_skip_n, inp.noA_n = 0, 0, 0
+    local th = package.loaded["threat"]
+    local contrib_A, contrib_of = nil, nil
+    -- nearest_spot per angle (the scan spots do not change) and finish_ok
+    -- once per A: asked again when A changes, so a later group part (a
+    -- later tick) reads the pill's health and anger again
+    local spot_of, fin_A, fin_v = {}, nil, false
+    inp.score_fn = function(deg, mx, my, cx, cy)
+      local s = nil
+      if curA == goalA then
+        s = spot_of[deg]
+        if s == nil then s = nearest_spot(spots, deg) or false; spot_of[deg] = s end
+        s = s or nil
+      end
+      if fin_A ~= curA then fin_A, fin_v = curA, V2.finish_ok(inp, curA) or false end
+      local fin = fin_v
+      if s and not greens[s] then
+        if fin then
+          inp.pen_skip_n = inp.pen_skip_n + 1
+        else
+          inp.pen_n = inp.pen_n + 1
+          return 10000 + (s._adj_score or 1000)
+        end
+      end
+      local dij
       if fin then
-        inp.pen_skip_n = inp.pen_skip_n + 1
-      else
-        inp.pen_n = inp.pen_n + 1
-        return 10000 + (s._adj_score or 1000)
+        if contrib_of ~= curA then
+          contrib_of = curA
+          contrib_A = th and th.pill_contrib and th.pill_contrib[curA.my * 256 + curA.mx] or nil
+        end
+        if contrib_A then
+          dij = cpf.dijkstra_lookup_subtract_by_kind(cpf.KIND_NORMAL, mx, my, boat, contrib_A)
+          inp.noA_n = inp.noA_n + 1
+        end
       end
+      if not dij then dij = cpf.dijkstra_lookup_by_kind(cpf.KIND_NORMAL, mx, my, boat) end
+      if dij >= 1e29 then dij = cpf.estimate_cost(tmx, tmy, mx, my, boat) end
+      return dij + ((s and s._hd_cost) or 0)
     end
-    local dij
-    if fin then
-      if contrib_of ~= curA then
-        contrib_of = curA
-        contrib_A = th and th.pill_contrib and th.pill_contrib[curA.my * 256 + curA.mx] or nil
-      end
-      if contrib_A then
-        dij = cpf.dijkstra_lookup_subtract_by_kind(cpf.KIND_NORMAL, mx, my, boat, contrib_A)
-        inp.noA_n = inp.noA_n + 1
-      end
-    end
-    if not dij then dij = cpf.dijkstra_lookup_by_kind(cpf.KIND_NORMAL, mx, my, boat) end
-    if dij >= 1e29 then dij = cpf.estimate_cost(tmx, tmy, mx, my, boat) end
-    return dij + ((s and s._hd_cost) or 0)
   end
+  bind(inp)
+  if _G._dg_shadow_on then inp._dg_rebind = bind end
   -- PT2_CHAIN_CLAIM: chain pills an ally holds against us (pt2_claim.keep)
   if C.PT2_CHAIN_CLAIM then
     inp.chain_skip = require("pt2_claim").chain_skip(state, inp, now, (info and info.player_number) or -1)

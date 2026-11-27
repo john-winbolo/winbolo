@@ -112,7 +112,60 @@ function M.knob_inp(C, inp)
   inp.wall_memo_max = C.PT2_WALL_MEMO_MAX or 2000
   -- PT2_V2_C: run the C copy (gh_pt2_v2.c) when the exe has it
   inp.v2_c = C.PT2_V2_C ~= false
+  -- PT2_DG_* (degraded search study, all off): see constants.lua
+  M.dg_knobs(C, inp)
   return inp
+end
+
+-- PT2_DG_*: the knobs into inp (nothing when all are off)
+function M.dg_knobs(C, inp)
+  if C.PT2_DG_REUSE then inp.dg_reuse = true end
+  if C.PT2_DG_STEP and C.PT2_DG_STEP > 1 then
+    inp.dg_step = C.PT2_DG_STEP
+    if C.PT2_DG_STAGGER then inp.dg_stagger = true end
+    if C.PT2_DG_FINE then inp.dg_fine = true end
+  end
+  if C.PT2_DG_EARLY then inp.dg_early = true end
+  if C.PT2_DG_RINGS3 and #inp.ring_radii == 4 then table.remove(inp.ring_radii, 2) end
+  if (C.PT2_DG_LOCAL_WIN or 0) > 0 then
+    inp.dg_local_win, inp.dg_local_every = C.PT2_DG_LOCAL_WIN, C.PT2_DG_LOCAL_EVERY or 8
+  end
+  if (C.PT2_DG_KCAP or 0) > 0 then inp.dg_kcap = C.PT2_DG_KCAP end
+  if (C.PT2_DG_TRIES or 0) > 0 then inp.dg_tries = C.PT2_DG_TRIES end
+  return inp
+end
+
+-- PT2_DG_LOCAL_WIN: the last best per player, source, goal pill and A. A run near
+-- it (inp.dg_win, inp.dg_center) or in full: the first run, each
+-- dg_local_every runs, after a run with no safe take, after 200 ticks.
+M.DG_LOCAL = {}
+local function dg_local_pre(inp, goalA)
+  inp.dg_win, inp.dg_center = nil, nil
+  local w = inp.dg_local_win
+  if not w or not inp.A then return nil end
+  local st = inp._dg_local or M.DG_LOCAL
+  local g = goalA or inp.A
+  local k = string.format("%s|%s|%d|%d", tostring(inp._v2_pc_pn), tostring(inp._v2_pc_src or "take"),
+                          g.my * 256 + g.mx, inp.A.my * 256 + inp.A.mx)
+  local e = st[k]
+  local now = inp._v2_pc_now or 0
+  if e and e.deg and e.n < (inp.dg_local_every or 8) and now - e.t <= 200 then
+    inp.dg_win, inp.dg_center = w, e.deg
+  end
+  return k
+end
+local function dg_local_post(inp, k, r)
+  if not k then return end
+  local st = inp._dg_local or M.DG_LOCAL
+  local b = r and r.best
+  local ok = b and b.safe and not b.why_unsafe and not r.no_chain and b.deg
+  local e = st[k] or { n = 0 }
+  st[k] = e
+  e.t = inp._v2_pc_now or 0
+  if not ok then e.deg = nil; return end
+  e.n = inp.dg_win and e.n + 1 or 0
+  e.deg = b.deg
+  inp.dg_win, inp.dg_center = nil, nil
 end
 
 -- PT2_AIM_POINTS = 9 (Nov 23, Andrew's yes, E3): the old 5 aims (centre,
@@ -3911,6 +3964,8 @@ function M.evaluate_group(inp)
 end
 
 function M.group_begin(inp)
+  -- PT2_DG_SHADOW (log only): the degraded searches on copies of inp
+  if _G._dg_shadow_on and not inp._dg_copy then require("pt2_dgshadow").run(inp, M) end
   if inp.wall_memo then M.wall_memo_check(inp, inp.A) end
   local job = { inp = inp, goalA = inp.A, list = nil, i = 1, res = nil, cache = pc_cache(inp) }
   if inp.v2_pcache then
@@ -3929,9 +3984,11 @@ end
 local function eval_in_job(job, inp)
   local old, oldx = inp._v2_cache, inp._xcover_later
   inp._v2_cache, inp._xcover_later = job.cache, true
+  local dgk = inp.dg_local_win and dg_local_pre(inp, job.goalA)
   local ok, r = pcall(M.evaluate, inp)
   inp._v2_cache, inp._xcover_later = old, oldx
   if not ok then error(r, 0) end
+  if dgk then dg_local_post(inp, dgk, r) end
   if job.pcst then pc_add(job, r) end
   return r
 end
@@ -3941,6 +3998,8 @@ end
 local job_done_x
 local function job_done(job)
   job_done_x(job)
+  -- PT2_DG_SHADOW (log only): the played group's result
+  if _G._dg_shadow_on and not job.inp._dg_copy then require("pt2_dgshadow").played(job, M) end
   if job.pc_entry then
     pc_finish(job)
     -- PT2_V2_DOLL_CHECK (log only): the same group with a new job (also
