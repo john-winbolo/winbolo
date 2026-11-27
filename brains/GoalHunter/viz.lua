@@ -163,8 +163,8 @@ M.IDS = {
   -- Pill interaction.
   pill_range_circle = { short = "Pill range circles",
                         long  = "Red max-range + green standoff circles around target pill" },
-  pill_id_label     = { short = "Pill/base IDs",
-                        long  = "Numeric ID labels overlaid on every pill/base tile" },
+  pill_id_label     = { short = "Pill/base IDs (pill numbers)",
+                        long  = "Pill numbers and base numbers: numeric ID labels overlaid on every pill/base tile" },
   defend_pill_viz   = { short = "Defend pill tiers",
                         long  = "Per team pill: ring + label colored by the defend threat tier that priced it (red=siege, orange=setup tell, yellow=sighting, blue=worn/damaged-quiet, grey=quiet undamaged, green=HEAT bid, cyan=ARRIVED REPAIR bid (the pill is damaged, the shelling stopped REPAIR_QUIET_TICKS ago and the LGM has wood), steel blue=ARRIVED WATCH hold, pale green=well-defended clamp, dark=arrived no-bid) with the pool cost. Quiet/worn pills are priced by the DEFEND_QUIET_DMG_COST curve on hits taken (0 hits ~1500, easing to the 250 floor as the pill gets chewed up), not by base+travel. On the ACTIVE defend goal's pill: the Euclidean DEFEND_ARRIVE_RADIUS circle where the travel phase hands off to the heat gate. Mirrors eval_defend_pill's actual tiers/radius." },
   defend_alarm_viz  = { short = "Defend ALARM state",
