@@ -1708,6 +1708,13 @@ M.PT2_V2_DOLL_POBJ_SMALL = true
 -- makes a job hash map that is under 30% full smaller again (at most 70%
 -- full). A map never got smaller before. The same results. false = off.
 M.PT2_V2_DOLL_HM_FIT = true
+-- PT2_V2_DOLL_POBJ_FREE (Nov 27, memory only): doll_sync frees the doll
+-- parts (PObj) that no kept store entry needs (a part of a dropped
+-- point, plan or ray that no kept part has as a child), when there are
+-- 25% more parts than after the last free. A part's read and child
+-- lists also get smaller when they are more than 2 times too big. The
+-- same results. false = a part is kept until its job is freed.
+M.PT2_V2_DOLL_POBJ_FREE = true
 -- PT2_V2_DOLL_VIZ_RECORD (debug only): a headless -brain-debug run records
 -- the doll cache layers pt2_d1 .. pt2_d5 and pt2_dchg (pt2_viz.lua).
 -- It also writes the PT2_V2_DOLL_EVENT_LOG file dl_p<player>.bin in the

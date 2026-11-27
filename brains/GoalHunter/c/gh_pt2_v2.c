@@ -869,8 +869,11 @@ typedef struct {
      * pobj_small PT2_V2_DOLL_POBJ_SMALL: a part that is not a POINT is made
      *            without the predict query fields (PO_SMALL bytes)
      * hm_fit     PT2_V2_DOLL_HM_FIT: doll_sync makes a job map under 30%
-     *            full smaller (70% full at most) */
-    int       dl_real_fill, dl_scratch_out, dl_poison, dl_copy_share, dl_pobj_small, dl_hm_fit;
+     *            full smaller (70% full at most)
+     * pobj_free  PT2_V2_DOLL_POBJ_FREE: doll_sync frees the parts no store
+     *            entry needs; a part's read and child lists get smaller at
+     *            pcc_pop */
+    int       dl_real_fill, dl_scratch_out, dl_poison, dl_copy_share, dl_pobj_small, dl_hm_fit, dl_pobj_free;
 } Pt2Ctx;
 
 typedef struct { int64_t sq; double shots; int kind; double t; int pill; Memo m; } Blk;
@@ -1751,6 +1754,7 @@ struct PObj {
     int16_t x, y, ox, oy;         /* POINT: the ring point and its origin; RAY: the pill */
     int16_t deg10;
     uint8_t kind, pq, big;        /* big: made with the predict query fields */
+    uint8_t gc;                   /* PT2_V2_DOLL_POBJ_FREE: pcc_sweep mark */
     /* PT2_V2_DOLL_WEDGE_NARROW, POINT: the predict query on the centre
      * wedge set (bearing from pill X, the distances wedge_state takes) */
     double pq_th, pq_dmn, pq_dmx;
@@ -1770,6 +1774,7 @@ typedef struct {
 typedef struct PccJob {
     int run;
     PObj **objs; int nobj, capobj;
+    int sweep_n;                          /* PT2_V2_DOLL_POBJ_FREE: nobj after the last pcc_sweep */
     HMap om;
     PccSlot slot[PCC_MAXSLOT]; int nslot;
     unsigned gedit;                       /* 1 more at each new child link or cleared child list */
@@ -1908,11 +1913,25 @@ static PObj *pcc_push(Ev *e, int kind, uint64_t a, uint64_t b) {
     e->pcc_stk[e->pcc_n++] = o;
     return o;
 }
+/* PT2_V2_DOLL_POBJ_FREE: a read or child list at most 2 times too big */
+static void pcc_trim(PObj *o) {
+    if (o->caprd > 16 && o->caprd > 2 * o->nrd) {
+        int nc = o->nrd < 8 ? 8 : o->nrd;
+        void *q = realloc(o->rd, sizeof(uint32_t) * (size_t)nc);
+        if (q) { o->rd = (uint32_t *)q; o->caprd = nc; }
+    }
+    if (o->capch > 16 && o->capch > 2 * o->nch) {
+        int nc = o->nch < 8 ? 8 : o->nch;
+        void *q = realloc(o->ch, sizeof(PObj *) * (size_t)nc);
+        if (q) { o->ch = (PObj **)q; o->capch = nc; }
+    }
+}
 static void pcc_pop(Ev *e, PObj *o) {
     if (!o || !e->pcc_run) return;
     pcc_tick(e);
     if (e->pcc_n && e->pcc_stk[e->pcc_n - 1] == o) e->pcc_n--;
     pcc_dedupe(o);
+    if (e->c && e->c->dl_pobj_free) pcc_trim(o);
     pcc_child(e, pcc_tgt(e), o);
 }
 /* a memo answer: the part that made it is a child of the part open now */
@@ -9839,7 +9858,7 @@ static void dm_put_ar(char *b, size_t cap, size_t *at, const char *nm, const Are
 }
 /* gh_pt2_v2.dl_mem_on(on): PT2_V2_DOLL_MEM_LOG; the side maps start now */
 static int l_dl_mem_on(lua_State *L) { g_dm_on = lua_toboolean(L, 1); return 0; }
-/* gh_pt2_v2.doll_opts(real_fill, scratch_out, poison, copy_share, pobj_small, hm_fit): the doll cache's memory knobs (Pt2Ctx);
+/* gh_pt2_v2.doll_opts(real_fill, scratch_out, poison, copy_share, pobj_small, hm_fit, pobj_free): the doll cache's memory knobs (Pt2Ctx);
  * none changes a result */
 static int l_doll_opts(lua_State *L) {
     Pt2Ctx *c = get_ctx(L);
@@ -9849,6 +9868,7 @@ static int l_doll_opts(lua_State *L) {
     c->dl_copy_share = lua_toboolean(L, 4);
     c->dl_pobj_small = lua_toboolean(L, 5);
     c->dl_hm_fit = lua_toboolean(L, 6);
+    c->dl_pobj_free = lua_toboolean(L, 7);
     return 0;
 }
 /* gh_pt2_v2.dl_mem_end(job, src): a doll job pilltake_v2.lua drops (before pc_free) */
@@ -10380,6 +10400,48 @@ static int dl_own(const PObj *o, const unsigned char *chg, const DlSq *cs, int n
 
 static PF_TLS DlCause *t_dl_cz;   /* doll_sync's causes by part (log only) */
 static PF_TLS int t_dl_narrow;    /* PT2_V2_DOLL_PILL_NARROW on (rule B) */
+/* PT2_V2_DOLL_POBJ_FREE: free the parts that no store entry needs. Live
+ * parts: the context kinds (FILT, POST, ALEV, AWS, CWM), a RAY, POINT or
+ * PLAN with its store entry, and each child of a live part. It runs when
+ * nobj is 25% (and 4096) more than after the last sweep. Only doll_sync
+ * calls it (never in an evaluate: a busy job does not sync). */
+static void pcc_sweep(Job *j) {
+    PccJob *pj = j->pcc;
+    if (!pj || pj->nobj < pj->sweep_n + pj->sweep_n / 4 + 4096) return;
+    PObj **stk = (PObj **)malloc(sizeof(PObj *) * (size_t)pj->nobj);
+    if (!stk) return;
+    int ns = 0;
+    for (int i = 0; i < pj->nobj; i++) pj->objs[i]->gc = 0;
+    for (int i = 0; i < pj->nobj; i++) {
+        PObj *o = pj->objs[i];
+        HMap *m = o->kind == PO_RAY ? &j->rays : (o->kind == PO_POINT ? &j->pts : (o->kind == PO_PLAN ? &j->pls : NULL));
+        int live = 1;
+        if (m) { HVal *v = hm_find(m, o->ka, o->kb); live = v && v->p; }
+        if (live && !o->gc) { o->gc = 1; stk[ns++] = o; }
+    }
+    while (ns) {
+        PObj *o = stk[--ns];
+        for (int i = 0; i < o->nch; i++) {
+            PObj *c = o->ch[i];
+            if (c && !c->gc) { c->gc = 1; stk[ns++] = c; }
+        }
+    }
+    free(stk);
+    int n = 0;
+    for (int i = 0; i < pj->nobj; i++) {
+        PObj *o = pj->objs[i];
+        if (o->gc) { pj->objs[n++] = o; continue; }
+        dl_hm_del(&pj->om, pt_mix(o->ka + (uint64_t)o->kind * 0x9E3779B97F4A7C15ull), o->kb);
+        free(o->rd); free(o->ch); free(o);
+    }
+    pj->nobj = n; pj->sweep_n = n;
+    if (pj->capobj > 2 * n + 1024) {
+        int nc = n + n / 4 + 64;
+        void *q = realloc(pj->objs, sizeof(PObj *) * (size_t)nc);
+        if (q) { pj->objs = (PObj **)q; pj->capobj = nc; }
+    }
+}
+
 static int dl_dirty(PObj *o, unsigned char *fl) {
     int i = o->qi;
     if (i < 0) return 0;
@@ -10768,6 +10830,9 @@ static int l_doll_sync(lua_State *L) {
         d_sqm += dl_hm_del(&j->sqm, dbits((double)cs[i].sq), 0);
         d_sqf += dl_hm_del(&j->sqf, (uint64_t)(int64_t)cs[i].sq, 0);
     }
+    /* PT2_V2_DOLL_POBJ_FREE: the parts no store entry needs (before the
+     * map fit, so om can get smaller) */
+    if (get_ctx(L)->dl_pobj_free) pcc_sweep(j);
     /* PT2_V2_DOLL_HM_FIT: the job's maps after the drops */
     if (get_ctx(L)->dl_hm_fit) {
         hm_fit(L, &j->rays); hm_fit(L, &j->sqm); hm_fit(L, &j->sqf);
