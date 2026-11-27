@@ -242,6 +242,10 @@ struct ServerSim {
      * ROUND_LOG_START_UNSET until that first write, and reset to it whenever
      * tick is. */
     uint32_t     roundLogStartTick;
+    /* Both in 20 ms frames, 50 a second (GAME_NUMGAMETICKS_SEC), not in
+     * half-steps: the running state takes one off each on the world
+     * half-step only, once a frame. gameLength is UNLIMITED_GAME_TIME for a
+     * round with no time limit. */
     int32_t      startDelay;
     int32_t      gameLength;
     int32_t      tickLimit;          /* 0 = unlimited; counts running game-ticks */
@@ -540,7 +544,7 @@ struct ServerSim {
     uint16_t timeMinutes;          /* user-facing minutes (display + edit) */
 
     int32_t      countdownTicks;     /* Countdown timer (in ticks) */
-    int32_t      originalGameLength; /* Cached for reset between rounds */
+    int32_t      originalGameLength; /* Cached for reset between rounds; frames, 50/s */
 
     /* Operator-configured lobby settings captured once at startup (end of
      * serverSimApplyInstanceConfig). Restored by serverSimResetLobbyToDefaults
@@ -584,7 +588,7 @@ struct ServerSim {
     char         pendingWinMessage[512]; /* Win message to send after returning to lobby */
     bool         emptyResetEnabled;  /* Reset to lobby when empty for emptyResetMinutes */
     int          emptyResetMinutes;  /* Minutes before empty reset (default 5) */
-    int32_t      emptyResetTicks;    /* Countdown ticks remaining (-1 = not counting) */
+    int32_t      emptyResetTicks;    /* Countdown remaining in 20 ms frames, 50/s: serverSimCheckEmptyReset runs once a frame (-1 = not counting) */
 
     /* Map reload — cached compressed map for between-round resets */
     BYTE        *cachedMapData;      /* Compressed map buffer (malloc'd) */
@@ -753,6 +757,16 @@ struct ServerSim {
     GameEvent    mapEvents[MAX_MAP_EVENTS];
     uint16_t     mapEventCount;
 
+    /* Map changes made while a running round is between ticks: a player who
+     * quits, is kicked or times out is removed during packet receive, and the
+     * pills his tank drops can clear a square (pillsDropSpiralFind). Those
+     * changes cannot go in mapEvents, because serverSimTick clears it at the
+     * top of the next frame, before anything sends it. They wait here and
+     * serverSimTick copies them in right after that clear, so clients and
+     * the shadow maps get them with the next frame. */
+    GameEvent    pendingMapEvents[MAX_MAP_EVENTS];
+    uint16_t     pendingMapEventCount;
+
     /* What each connected client's copy of the terrain looks like: every
      * tile the server has actually sent it. Identical to the real map for a
      * slot that is handed every map event, and behind it by whatever a culled
@@ -907,6 +921,32 @@ struct ServerSim {
      * a leaver's own row and every other row's bit for the leaver, when a slot
      * is released (server_sim_players.c). */
     PlayerBitMap pingMuteMask[MAX_TANKS];
+
+    /* The team a rejoining player was on when leaving, read from the rejoin
+     * record when the player joins again (addPlayerInternal) and used once,
+     * by serverSimPlaceJoiner and serverSimRestoreRejoinTeam, to put the
+     * player back on it. 0 when the join is not a rejoin or no team was kept. */
+    BYTE         rejoinTeam[MAX_TANKS];
+
+    /* True for a seat that rejoined under the name of a player who was
+     * signed in to WinBolo.net when leaving. Its team, pillboxes and bases
+     * stay in the rejoin record until WinBolo.net confirms the seat under
+     * that name (serverSimRejoinSignedIn). Cleared when that happens, when
+     * the seat leaves and at every round reset. */
+    bool         rejoinAwaitSignIn[MAX_TANKS];
+
+    /* The team serverSimPlaceJoiner gave a rejoining seat, 0 for none. The
+     * restore puts the seat back on its old team only while it is still
+     * on this team, so a script that moved the seat in on_player_join
+     * keeps its choice. */
+    BYTE         rejoinJoinTeam[MAX_TANKS];
+
+    /* The address of the person in each seat, given by the transport
+     * (serverSimSetRejoinAddress). The rejoin record made when the seat
+     * leaves keeps it, so that a rejoin on a locked game can be matched by
+     * address (host only, never port). Empty when not known, and for bots.
+     * Cleared when the seat leaves. */
+    BoloAddr     rejoinAddr[MAX_TANKS];
 
     /* Bot configuration — cached from CLI args for lobby bot creation */
     char         botBrainPath[260];       /* Brain path for lobby bot creation */
@@ -1549,6 +1589,16 @@ BOLO_STATIC_ASSERT(offsetof(struct ServerSim, sim) == 0,
  * scenario's. */
 void serverSimScenarioPolicyEnter(ServerSim *sim);
 void serverSimScenarioPolicyLeave(ServerSim *sim);
+
+/* Whether the scenario lets player ally with other: player is the one who
+ * asked, or the one who joins the team, and other is the seat asked. Put to
+ * the policy at a player's alliance request and accept
+ * (server_command_dispatch.c) and when a rejoiner goes back to their old
+ * team (serverSimRestoreRejoinTeam). Alliances a script makes itself
+ * (set_team, spawning a bot onto a team, seating) are not asked. With no
+ * policy, a policy with no opinion, or a seat out of range, the answer is
+ * yes. Defined in server_sim_scenario.c. */
+bool serverSimScenarioAllowsAlliance(ServerSim *sim, BYTE player, BYTE other);
 
 /* Carry a queued fill-rect forward by whatever is left of this tick's
  * tile budget, then hand the budget back for the next tick. serverSimTick

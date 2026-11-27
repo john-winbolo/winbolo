@@ -7,6 +7,7 @@
  */
 
 #include <stdint.h>
+#include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 #include <SDL3/SDL.h>
@@ -826,6 +827,15 @@ bool winbolonetApplyVerifyResult(int status, const char *response,
   return TRUE;
 }
 
+/* The real one stores the key of a player that WinBolo.net accepted before
+ * the seat (the locked game's sign-in check), as the apply above does. */
+void winbolonetSetPlayerKey(BYTE playerNum, const char *playerKey) {
+  if (playerNum < MAX_TANKS) {
+    SDL_strlcpy(wbnStubPlayerKey[playerNum], playerKey ? playerKey : "",
+                WINBOLONET_KEY_LEN);
+  }
+}
+
 uint32_t winbolonetThreadAddUpload(const char *fileName, const char *key) {
   uint32_t id;
   (void)fileName; (void)key;
@@ -965,12 +975,21 @@ int wbn_api_get_public(const char *path, char **response_out) {
 }
 
 /* POST transport lives in http.c; stubbed to keep curl out of the link.
- * wbnMapFetchByMd5 is never exercised by the unit tests — only the pure
- * wbnMapParseResponse is. */
+ * It answers with whatever test_wbn_map.c put in these two, and with a
+ * transport failure (-1, no body) when left alone. */
+int         g_stubWbnApiPostCode = -1;
+const char *g_stubWbnApiPostBody = NULL;
 int wbn_api_post(const char *endpoint, const char *json_body, char **response_out) {
   (void)endpoint; (void)json_body;
-  if (response_out) *response_out = NULL;
-  return -1;
+  if (response_out) {
+    *response_out = NULL;
+    if (g_stubWbnApiPostBody != NULL) {
+      size_t n = strlen(g_stubWbnApiPostBody) + 1;
+      *response_out = malloc(n);
+      if (*response_out != NULL) memcpy(*response_out, g_stubWbnApiPostBody, n);
+    }
+  }
+  return g_stubWbnApiPostCode;
 }
 
 /* GET transport lives in http.c; stubbed to keep curl out of the link. The

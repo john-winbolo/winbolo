@@ -611,6 +611,26 @@ void winbolonetServerUpdate(BYTE numPlayers, BYTE numFreeBases, BYTE numFreePill
 }
 
 /*********************************************************
+*NAME:          winbolonetSetPlayerKey
+*PURPOSE:
+* Stores a player_key that a client/verify has already
+* accepted at the player's slot, as an accepted verify
+* would. An empty key clears the slot. Does nothing when
+* WinBolo.net is not running.
+*
+*ARGUMENTS:
+* playerNum - Player slot number
+* playerKey - The accepted key, or "" to clear
+*********************************************************/
+void winbolonetSetPlayerKey(BYTE playerNum, const char *playerKey) {
+  if (winboloNetRunning != TRUE || playerNum >= MAX_TANKS || playerKey == NULL) {
+    return;
+  }
+  strncpy(winboloNetPlayerKey[playerNum], playerKey, WINBOLONET_KEY_LEN - 1);
+  winboloNetPlayerKey[playerNum][WINBOLONET_KEY_LEN - 1] = '\0';
+}
+
+/*********************************************************
 *NAME:          winboloNetIsPlayerParticipant
 *PURPOSE:
 * Returns if this player number is a winbolo.net
@@ -669,7 +689,8 @@ static void copyWireError(char *errorMsg, const char *src) {
 *
 * Writes winboloNetPlayerKey[playerNum] on acceptance, so
 * whichever thread calls this is the thread the slot's key
-* is written on.
+* is written on. A playerNum of MAX_TANKS or more writes
+* nothing: the reply is only read.
 *
 *ARGUMENTS:
 * status      - HTTP status, or -1 when the post never sent
@@ -693,8 +714,10 @@ static bool applyVerifyResponse(int status, cJSON *resp, const char *playerKey,
     if (errObj && cJSON_IsString(errObj)) {
       copyWireError(errorMsg, errObj->valuestring);
     } else {
-      strncpy(winboloNetPlayerKey[playerNum], playerKey, WINBOLONET_KEY_LEN - 1);
-      winboloNetPlayerKey[playerNum][WINBOLONET_KEY_LEN - 1] = '\0';
+      if (playerNum < MAX_TANKS) {
+        strncpy(winboloNetPlayerKey[playerNum], playerKey, WINBOLONET_KEY_LEN - 1);
+        winboloNetPlayerKey[playerNum][WINBOLONET_KEY_LEN - 1] = '\0';
+      }
       ok = TRUE;
       if (hasSteam) {
         cJSON *steamObj = cJSON_GetObjectItem(resp, "has_steam");

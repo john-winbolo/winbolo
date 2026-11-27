@@ -113,6 +113,17 @@ const char *clientSimGetConnectErrorReason(const ClientSim *cs);
  * frontend compares it with STR_REJECT_INCORRECT_PASSWORD to decide whether
  * to ask for the password again. */
 langid      clientSimGetConnectErrorLangId(const ClientSim *cs);
+/* ask true makes the next UDP JOIN carry JOIN_FLAG_ASK_REJOIN: this
+ * frontend can show the rejoin question. A Join under the name of a player
+ * who left a short time ago then fails with STR_REJECT_CAN_REJOIN, and the
+ * frontend asks the player whether to rejoin. Call it after clientSimCreate
+ * and before clientSimConnectUdp. */
+void        clientSimSetAskRejoin(ClientSim *cs, bool ask);
+/* on true makes the next UDP JOIN carry JOIN_FLAG_SIGN_IN_FIRST: this
+ * client can answer PACKET_JOIN_SIGN_IN. A rejoin into a locked game is
+ * then checked with WinBolo.net before the server seats it. Call it after
+ * clientSimCreate and before clientSimConnectUdp. */
+void        clientSimSetSignInFirst(ClientSim *cs, bool on);
 BYTE        clientSimGetServerPlayerNum(const ClientSim *cs);
 const BYTE *clientSimGetServerMapData(const ClientSim *cs, int *outLen);
 /* serverTick of the frame interp is currently displaying (second-newest applied
@@ -565,6 +576,15 @@ void     clientSimNetReportMapChecksum(ClientSim *cs, bool matched);
 void clientSimGetReconcileStats(ClientSim *cs, int *countPerSec,
                                 float *avgErrPx, float *maxErrPx,
                                 float *renderOffsetPx);
+/* How many snapshots this round left the local tank, once the unacknowledged
+ * inputs were replayed, somewhere other than where it had been predicted:
+ * the corrections a player can feel, where the reconcile count above also
+ * takes in every snapshot that merely arrived while the tank was moving.
+ * pred and post are the last one's two positions in world units, and may be
+ * NULL. 0 for a NULL sim. */
+uint32_t clientSimGetPredictionCorrections(ClientSim *cs,
+                                           WORLD *predX, WORLD *predY,
+                                           WORLD *postX, WORLD *postY);
 
 /* Measurement-only client timing estimates: clock offset (10ms server-tick
  * units), snapshot inter-arrival jitter (ms), RTT floor (ms), and pipeline

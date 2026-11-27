@@ -148,6 +148,7 @@ void srvSendToWire(const uint8_t *buf, int len, const BoloAddr *addr) {
  * the packet goes straight onto the wire through srvSendToWire. */
 void srvSendTo(const uint8_t *buf, int len, const BoloAddr *addr) {
     if (netImpairEnabled(&srvImpairOut) &&
+        srvImpairPeer(&srvImpairOut, addr) &&
         netImpairOffer(&srvImpairOut, buf, len, addr, srvNow())) {
         return;
     }

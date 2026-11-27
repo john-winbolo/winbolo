@@ -119,9 +119,33 @@ bool httpCreate(void);
 /*********************************************************
 *NAME:          httpDestroy
 *PURPOSE:
-* Destroys the http module and releases libcurl resources.
+* Stops the http module. Safe to call while another thread
+* is inside a request: libcurl's global state is released
+* here when no thread is using libcurl, and otherwise when
+* the last request in flight finishes.
 *********************************************************/
 void httpDestroy(void);
+
+/*********************************************************
+*NAME:          httpCurlHold / httpCurlRelease
+*PURPOSE:
+* libcurl builds only (http.c). For code that drives libcurl
+* itself instead of calling the request functions here.
+* Between a hold that returned true and its release,
+* libcurl's global state is set up and an httpDestroy on
+* another thread will not tear it down. The module does not
+* have to be started. Every true hold needs one release.
+*********************************************************/
+bool httpCurlHold(void);
+void httpCurlRelease(void);
+
+/*********************************************************
+*NAME:          httpCurlIsUp
+*PURPOSE:
+* libcurl builds only (http.c). Whether libcurl's global
+* state is set up. For the tests.
+*********************************************************/
+bool httpCurlIsUp(void);
 
 /*********************************************************
 *NAME:          httpWorkerPoolBegin

@@ -100,8 +100,12 @@ static inline bool    pillPosCurrentFromByte(uint8_t b) {
 /* A pillbox range is 8 map squares or 2048 world units */
 #define PILLBOX_RANGE 2048
 
-/* A pillbox fires 9 map squares this value is 8.5 becuase winbolo targets from the center of the pillbox*/
-#define PILLBOX_FIRE_DISTANCE 8.5
+/* How far a pillbox's shell flies, in map squares. The shell starts 160
+   world units from the middle of the pillbox and lands 2176 out, 8.5
+   squares. This was 8.5, which landed it 2208 out; Mac Bolo's lands 2143
+   to 2192 out by direction, 2166 on average, and 8.375 is the nearest
+   this comes to that. */
+#define PILLBOX_FIRE_DISTANCE 8.375
 
 /* Pillbox not found return Value */
 #define PILL_NOT_FOUND 254
@@ -1083,12 +1087,16 @@ void pillsClampToRules(struct GameSim *sim, pillboxes *value);
 void pillsFillToRules(struct GameSim *sim, pillboxes *value);
 
 /* The search for somewhere to put down a pillbox that was being carried:
-   Mac Bolo's gen_scatter spiral, a utilSpiralCursor that starts each ring
+   the spiral Mac Bolo searches in, a utilSpiralCursor that starts each ring
    on the square straight north of the centre (UTIL_SPIRAL_NORTH). The walk
-   ends after the last ring that touches the minable area. */
+   ends after the last ring that touches the minable area. If no square will
+   hold a pill, the walk starts again in a second pass that clears a square
+   (see pillsDropSpiralFind). */
 typedef struct {
   utilSpiralCursor cursor;
   int maxRing;  /* Last ring holding any minable square */
+  int pass;     /* 0 for the first pass, 1 for the second */
+  BYTE dropper; /* Player whose tank is dropping, or NEUTRAL */
 } pillsDropSpiral;
 
 /*********************************************************
@@ -1111,11 +1119,15 @@ bool pillsDropCanLand(struct GameSim *sim, int mx, int my);
 *  Starts a drop search with its cursor on the centre.
 *
 *ARGUMENTS:
-*  s  - The search
-*  cx - X map square to search round
-*  cy - Y map square to search round
+*  s       - The search
+*  cx      - X map square to search round
+*  cy      - Y map square to search round
+*  dropper - The player whose tank drops the pills, or
+*            NEUTRAL. The second pass of the search does
+*            not clear a square under a live tank, except
+*            this one: it is dying or leaving the game.
 *********************************************************/
-void pillsDropSpiralStart(pillsDropSpiral *s, BYTE cx, BYTE cy);
+void pillsDropSpiralStart(pillsDropSpiral *s, BYTE cx, BYTE cy, BYTE dropper);
 
 /*********************************************************
 *NAME:          pillsDropSpiralFind
@@ -1125,8 +1137,16 @@ void pillsDropSpiralStart(pillsDropSpiral *s, BYTE cx, BYTE cy);
 *  answers it. Put the pill down there before asking for
 *  the next square: the cursor stays put, so one search
 *  serves several pills the way Mac Bolo's single cursor
-*  does. Answers FALSE once the spiral has walked past
-*  the minable area without finding one.
+*  does.
+*
+*  If no square in the minable area will hold a pill,
+*  the search starts again from the centre. This second
+*  pass takes the first square in the minable area with
+*  no pill, no base and no live tank other than the
+*  dropper's, and turns a building or half-building there
+*  to rubble and a boat to river. Answers FALSE only if
+*  that pass also finds nothing, which needs a minable
+*  area full of pills, bases and tanks.
 *
 *ARGUMENTS:
 *  sim - The game

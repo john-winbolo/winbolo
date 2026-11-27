@@ -1795,8 +1795,8 @@ typedef struct OverviewSnapshot OverviewSnapshot;
 
 /* One pill or base and the number the views draw on it, at its absolute map
    square. The snapshot lists every one the sim has; whether a square shows
-   its number is the render's decision, made against the memory's tile and
-   live flag for that square. */
+   its number is the render's decision, made against the memory's tile for
+   that square alone. Whether the square is live is not asked. */
 typedef struct OverviewItemLabel {
   BYTE mapX;
   BYTE mapY;

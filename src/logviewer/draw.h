@@ -199,6 +199,10 @@ void lv_drawTankLabelsOver(LvTankLabelUse use, const struct SDL_FRect *src,
 
 void lv_drawDirtyScreen(void);
 
+/* True while the render target itself is the picture (a GIF capture): the
+ * flying shells then go into the target instead of over the zoomed map. */
+void lv_drawSetShellsInTarget(bool on);
+
 /* The two small bars over each live tank on the map: its armour, and under
  * that its shells (lv_tank_bars.h). Off until set. Drawn over the map in the
  * viewer's own window only: not in the game view, not when the viewer is
@@ -219,6 +223,22 @@ BYTE lv_drawGetBuilderStatus(void);
  * viewer's own window, not in the game view. */
 void lv_drawSetPillNumbers(BYTE on);
 BYTE lv_drawGetPillNumbers(void);
+
+/* The number of each base on the map, beside it, in the look and the place
+ * of the pillbox numbers. Off until set. Drawn where the pillbox numbers
+ * are drawn. */
+void lv_drawSetBaseNumbers(BYTE on);
+BYTE lv_drawGetBaseNumbers(void);
+
+/* The hit area round each live tank and each builder out of his tank, as
+ * thin outlines (lv_hitbox.h): the circle a shell must reach to hit the
+ * tank, and the area an explosion must be in to kill the builder. Drawn at
+ * the places the tanks and the builders are drawn, so with the lag view on
+ * they are where the chosen player's screen had them. Off until set. Drawn
+ * where the bars are drawn: in the viewer's own window, not in the game
+ * view. */
+void lv_drawSetHitBoxes(BYTE on);
+BYTE lv_drawGetHitBoxes(void);
 
 /* The slot of the live tank drawn at a point of the window (in points, as
  * the mouse is), or -1 for none. The box tested is the tank's picture, and

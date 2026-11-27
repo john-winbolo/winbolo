@@ -68,6 +68,7 @@ extern "C" {
 #include "tilenum.h"
 #include "mapview.h"         /* MapViewCtx */
 #include "mapview_overlay.h" /* mapViewDrawOverlay — the whole entity layer */
+#include "item_labels.h"     /* mapViewPickItemLabels — which numbers are drawn */
 #include "gfx_settings.h"    /* gfxGetFogStyle — the player's fog of war look */
 #include "../ping_kinds.h"   /* pingDisplayAlpha */
 #include "gfx_settings.h"   /* the simplified view setting */
@@ -79,8 +80,7 @@ extern "C" {
 #include "../lang.h"         /* the camera readout's words */
 #include "../ui_mode.h"      /* uiShouldUseControllerMode — no key hint there */
 }
-#include "sdl3draw_status.h" /* sdl3DrawGetMessageFont, sdl3DrawGetLabelFont,
-                                sdl3DrawGetTinyFont — the main window's faces */
+#include "sdl3draw_status.h" /* sdl3DrawGetMessageFont — the main window's face */
 #include "sdl3draw.h"        /* sdl3DrawGetZoomFactor — the size they are opened at */
 #include "tank_label.h"      /* the cache the shared drawer fills for this view */
 
@@ -307,9 +307,6 @@ struct OverviewView {
      * different text for it — the note in sdl3draw_status.c has the whole
      * story. */
     TankLabelCache pingNameCache;
-    /* The pill and base numbers, on this view's renderer for the same reason
-     * the tank names are: the pop-out has its own. */
-    ItemLabelCache itemLabelCache;
 };
 
 /* Where the camera readout is in its life at `now`: 1 while held solid,
@@ -938,31 +935,23 @@ static void overviewViewDrawItemViewBorder(SDL_Renderer *r, int viewW, int viewH
 }
 
 /* The pill and base numbers the shared pass draws. The snapshot lists every
- * pill and base at its square; one is kept only when the memory shows a pill
- * or base tile on that square and the square is live — the tile test the
- * classic view makes on its screen buffer, made here on the same copy the
- * sprites were filtered against. A carried pill, a destroyed one and a
- * remembered square all fail it, so none of them shows a number. The Pillbox
- * Labels and Base Labels switches apply as they do in the classic view. */
+ * pill and base at the square this client knows it on; one is kept when the
+ * memory shows a pill or base tile on that square — the tile test the classic
+ * view makes on its screen buffer, made here on the same copy the sprites
+ * were filtered against. Whether the square is live is not asked: a pill or
+ * base in the fog, hidden by line of sight or only remembered, keeps its
+ * number on the tile the player last saw, as the classic view does with the
+ * remembered tile on a hidden square. A square whose memory shows no pill or
+ * base tile, such as the one a carried pill left, shows no number. The
+ * Pillbox Labels and Base Labels switches apply as they do in the classic
+ * view. The pick itself is mapViewPickItemLabels (item_labels.h), so the unit
+ * tests run the same loop. */
 static int overviewViewPickItemLabels(const OverviewSnapshot *snap,
                                       OverviewItemLabel *out, int cap) {
-    const OverviewMap *om = overviewSnapshotMap(snap);
-    if (om == NULL) return 0;
-
-    int total = overviewSnapshotItemLabelCount(snap);
-    const OverviewItemLabel *all = overviewSnapshotItemLabels(snap);
-    int n = 0;
-    for (int i = 0; i < total && n < cap; i++) {
-        const OverviewItemLabel *l = &all[i];
-        bool wanted = l->isBase ? showBaseLabels : showPillLabels;
-        if (!wanted) continue;
-        if ((om->flags[l->mapX][l->mapY] & OVERVIEW_F_LIVE) == 0) continue;
-        BYTE tile = om->tile[l->mapX][l->mapY];
-        bool onTile = l->isBase ? mapViewTileIsBase(tile) : mapViewTileIsPill(tile);
-        if (!onTile) continue;
-        out[n++] = *l;
-    }
-    return n;
+    return mapViewPickItemLabels(overviewSnapshotMap(snap),
+                                 overviewSnapshotItemLabels(snap),
+                                 overviewSnapshotItemLabelCount(snap),
+                                 showPillLabels, showBaseLabels, out, cap);
 }
 
 /* The sprite overlay: everything that moves, on the squares the player can
@@ -972,6 +961,8 @@ static int overviewViewPickItemLabels(const OverviewSnapshot *snap,
  * what is drawn — only where, through the same pass the classic view uses. */
 static void overviewViewDrawEntities(OverviewView *v,
                                      SDL_Renderer *r, SDL_Texture *tiles, int ss,
+                                     SDL_Texture *sprites,
+                                     const SpriteAtlas *atlas,
                                      SDL_Texture *crosshair,
                                      const OverviewCamera *cam,
                                      int viewW, int viewH,
@@ -1012,14 +1003,14 @@ static void overviewViewDrawEntities(OverviewView *v,
     ctx.zoomFactor = 1;
     ctx.sheetScale = ss;
     ctx.scale      = zoomScale;
-    /* The full screen map draws from the host's sheet and has no padded copy
-       of its own, so its sprites still sample the packed layout. Its camera
-       is continuous, which is the condition the leak needs, so this is the
-       next one to hand an atlas — it wants the builder plumbed through
-       overviewViewRenderOffscreen and through the copy sdl3imgui.cpp builds
-       for the pop-out. */
-    ctx.spritesTex = NULL;
-    ctx.sprites    = NULL;
+    /* The host's padded copy of the moving sprites. The camera is
+       continuous, so a tank sits at a fractional position and a filtered
+       sample off the packed sheet would blend in the sprite next door — the
+       pillbox's bottom row above a tank on a boat. Both NULL when the host
+       has none, and the sprites draw from the sheet as before. precise is
+       read only by mapViewRenderCentered, which this view does not call. */
+    ctx.spritesTex = sprites;
+    ctx.sprites    = atlas;
     ctx.precise    = NULL;
 
     SDL_memset(&ov, 0, sizeof(ov));
@@ -1061,15 +1052,12 @@ static void overviewViewDrawEntities(OverviewView *v,
         ov.labelFont  = sdl3DrawGetMessageFont();
     }
 
-    /* The pill and base numbers, from the same zoom up, in the main window's
-     * faces scaled the same way as the names. */
+    /* The pill and base numbers, from the same zoom up, in the Log Viewer's
+     * small digits (mapview_overlay.c). */
     ov.itemLabelCount    = overviewViewPickItemLabels(snap, items,
                                                       (int)(MAX_PILLS + MAX_BASES));
     ov.itemLabels        = items;
-    ov.pillFont          = sdl3DrawGetLabelFont();
-    ov.baseFont          = sdl3DrawGetTinyFont();
     ov.itemLabelMinScale = OVERVIEW_LABEL_MIN_ZOOM;
-    ov.itemLabelCache    = &v->itemLabelCache;
 
     ov.clipLeft   = 0.0f;
     ov.clipTop    = 0.0f;
@@ -1097,7 +1085,6 @@ extern "C" void overviewViewDestroy(OverviewView *v) {
     if (!v) return;
     tankLabelCacheFlush(&v->labelCache);
     tankLabelCacheFlush(&v->pingNameCache);
-    itemLabelCacheFlush(&v->itemLabelCache);
     if (v->fog) {
         SDL_DestroyTexture(v->fog);
         v->fog = NULL;
@@ -1130,6 +1117,8 @@ extern "C" void overviewViewSetHudInsets(OverviewView *v, float left, float top,
 
 extern "C" void overviewViewRenderOffscreen(OverviewView *v, SDL_Renderer *r,
                                             SDL_Texture *tiles, int sheetScale,
+                                            SDL_Texture *sprites,
+                                            const SpriteAtlas *atlas,
                                             SDL_Texture *crosshair,
                                             int w, int h,
                                             const OverviewSnapshot *snap,
@@ -1221,6 +1210,12 @@ extern "C" void overviewViewRenderOffscreen(OverviewView *v, SDL_Renderer *r,
          * to that filter too. */
         SDL_SetTextureScaleMode(
             tiles, sdl3DrawScaleModeForFilter(gfxGetTextureFilter()));
+        /* The sprite atlas is bound by the same passes and clobbered by the
+           same ImGui draws, so it needs the same answer. */
+        if (sprites != NULL) {
+            SDL_SetTextureScaleMode(
+                sprites, sdl3DrawScaleModeForFilter(gfxGetTextureFilter()));
+        }
 
         /* How long since the last frame, taken whether or not a scroll is
          * running: a scroll started after the view sat idle would otherwise
@@ -1385,8 +1380,8 @@ extern "C" void overviewViewRenderOffscreen(OverviewView *v, SDL_Renderer *r,
         /* Sprites on top of the fog: a tank only stands on a live square, and
          * the build cursor and the gunsight are the player's own marks, so
          * neither wants dimming. */
-        overviewViewDrawEntities(v, r, tiles, sheetScale, crosshair, &v->cam,
-                                 w, h, snap, simple);
+        overviewViewDrawEntities(v, r, tiles, sheetScale, sprites, atlas,
+                                 crosshair, &v->cam, w, h, snap, simple);
     }
 
     /* Only where this view has replaced the classic one: beside the pop-out

@@ -36,7 +36,7 @@
 #include "server_sim_join.h"        /* serverSimRepickAllLobbyStarts — the start re-pick when a team's side changes */
 #include "netpacks.h"               /* lobbyTimeMinutesIsValid — the LST_TIME_MINUTES range check */
 #include "wire_limits.h"            /* the LST_* selectors carried in PACKET_LOBBY_SET_SETTING */
-#include "lobby_bot_pools.h"        /* lobbyBotPoolCount — the per-team naming-pool uniqueness pass */
+#include "lobby_bot_pools.h"        /* lobbyBotPoolDrawCount — the per-team naming-pool uniqueness pass */
 #include "brain_list.h"             /* BrainModes — the remembered mode/level keys */
 #include "start_sides.h"            /* START_SIDE_ANY / START_SIDE_COUNT — the team start-side range */
 
@@ -897,9 +897,11 @@ void serverSimSetTeamMeta(ServerSim *sim, BYTE teamId,
     /* Per-team uniqueness on namingPool: if another in_use team
      * already owns this pool, pick the lowest pool index not
      * used by any other team. Falls back to the requested value
-     * if every pool is taken. */
+     * if every pool is taken. Only the pools a draw may pick are
+     * tried, so a server that chose pools by label (-botnames) never
+     * moves a team onto the generated "Numbered Bots" pool. */
     {
-        int poolCount = lobbyBotPoolCount();
+        int poolCount = lobbyBotPoolDrawCount();
         if (lobbyPoolHeldByOtherTeam(sim, teamId, namingPool) && poolCount > 0) {
             for (int p = 0; p < poolCount; p++) {
                 if (!lobbyPoolHeldByOtherTeam(sim, teamId, p)) {
@@ -941,7 +943,7 @@ void serverSimSetTeamMeta(ServerSim *sim, BYTE teamId,
 
 uint8_t serverSimPickTeamNamingPool(ServerSim *sim, BYTE teamId, uint32_t choice) {
     TeamMetadata *t;
-    int           poolCount = lobbyBotPoolCount();
+    int           poolCount = lobbyBotPoolDrawCount();
     int           freeCount = 0;
     int           want      = 0;
     int           p;

@@ -112,5 +112,7 @@ bool wbnTestAnnounceHostsRule(void);
 bool wbnTestApiUrlForHost(void);
 bool wbnTestHostedJobHost(void);
 bool wbnTestAnnouncePosts(void);
+bool wbnTestMapLookupRestartsHttp(void);
+bool wbnTestStopDuringLookup(void);
 
 #endif /* WINBOLO_TEST_WBN_HARNESS_H */

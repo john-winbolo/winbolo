@@ -92,11 +92,20 @@ typedef struct LvScripts {
  *
  * lv_screenRuleValueAt answers rule index's value at absolute log time ms:
  * the last change at or before ms, else the value the round opened on in
- * scripts.json, else the classic value. lv_screenGetRuleChanges points *out
+ * scripts.json, else lv_screenRuleUnsetValue (for lgm_blast_shape in a
+ * recording, the classic value of the version that wrote it: 0 before
+ * 2.2.2, else 2).
+ * lv_screenGetRuleChanges points *out
  * at the recording's changes and returns how many there are.
  * lv_screenGetScripts returns the recording's scripts.json holder, or NULL
  * while no log is loaded. */
 double lv_screenRuleValueAt(int index, uint32_t ms);
+/* lv_screenRuleUnsetValue answers the value rule index played while the
+ * recording never set it: for a recording from a file or from memory, the
+ * classic value of the version that wrote the recording (for
+ * lgm_blast_shape, 0 before 2.2.2, else 2); for a live feed or with no
+ * recording open, this build's classic value. */
+double lv_screenRuleUnsetValue(int index);
 int lv_screenGetRuleChanges(const LvRuleChange **out);
 const LvScripts *lv_screenGetScripts(void);
 

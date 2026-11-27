@@ -17,8 +17,9 @@
  *  A field's name is the name a scenario uses for it, so a
  *  rule has exactly one spelling. Integer fields are
  *  int32_t whatever the engine stores the value in; the
- *  four tank rates, the ten terrain turn rates and the two
- *  half-tick refuel intervals are float.
+ *  four tank rates, the ten terrain turn rates, the two
+ *  half-tick refuel intervals, the parachute's speed and a
+ *  few pillbox and tank numbers are float.
  *
  *  Every field is declared here, including the ones whose
  *  use sites still read their constant. The table is
@@ -141,7 +142,7 @@ typedef struct SimRules {
     int32_t lgm_cost_mine;
     int32_t lgm_pill_repair_load;
     int32_t lgm_gather_trees;
-    int32_t lgm_helicopter_speed;  /* also the parachute delay: distance / speed */
+    float   lgm_helicopter_speed;  /* world units the parachute flies a tick */
     int32_t lgm_arrive_tolerance;  /* how near his goal counts as arrived */
     int32_t lgm_return_tolerance;  /* the same, coming back to the tank */
     int32_t lgm_pill_drop_search;  /* read by nothing; see lgm.h */
@@ -262,6 +263,14 @@ typedef struct SimRules {
     int32_t man_dead_pill_terrain_speed; /* a builder on a dead pillbox's
                                             square walks at the speed of the
                                             terrain under it, not road */
+
+    /* ---- Builder blast shape ---- appended to preserve rule indices */
+    int32_t lgm_blast_shape;         /* the open-ground area an explosion
+                                        catches a builder in: 0 the
+                                        half-square circle, 1 the Mac Bolo
+                                        box, 2 the Mac Bolo equivalent area
+                                        circle, the classic value
+                                        (LGM_BLAST_SHAPE_*) */
 
 } SimRules;
 

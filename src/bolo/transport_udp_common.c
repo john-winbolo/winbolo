@@ -27,7 +27,9 @@
 /* Packet-information control messages. glibc declares struct in6_pktinfo only
  * under _GNU_SOURCE, and macOS declares IPV6_RECVPKTINFO and gives
  * IPV6_PKTINFO its RFC 3542 meaning only under __APPLE_USE_RFC_3542. Both
- * have to be set before the first system header. */
+ * have to be set before the first system header. In a LuaJIT build the
+ * forced include of luajit_compat.h comes first, so on Linux the build also
+ * passes _GNU_SOURCE on the command line (src/bolo/CMakeLists.txt). */
 #if defined(__linux__) && !defined(_GNU_SOURCE)
 #define _GNU_SOURCE
 #endif
@@ -166,6 +168,7 @@ uint8_t getPacketType(const uint8_t *buf, int len) {
     X(PACKET_LOBBY_SCENARIO_DETAILS_REQ, "LOBBY_SCENARIO_DETAILS_REQ") \
     X(PACKET_LOBBY_BRAIN_DOCS_REQ, "LOBBY_BRAIN_DOCS_REQ") \
     X(PACKET_LOBBY_BOT_POOL_REQ, "LOBBY_BOT_POOL_REQ") \
+    X(PACKET_JOIN_SIGN_IN, "JOIN_SIGN_IN") \
     X(PACKET_LOBBY_SCRIPT_FETCH_REQ, "LOBBY_SCRIPT_FETCH_REQ") \
     X(PACKET_LOBBY_PREVIEW_COMMIT, "LOBBY_PREVIEW_COMMIT") \
     X(PACKET_LOBBY_PREVIEW_RANDOM, "LOBBY_PREVIEW_RANDOM") \

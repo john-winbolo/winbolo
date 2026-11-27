@@ -281,7 +281,7 @@ int            gameFrontHostingUploadMaxStorage = 8;
 /* Persist upload dir. Empty until gameFrontGetPrefs seeds the default
  * (<prefs path>uploads) or the user picks one. */
 char           gameFrontHostingUploadDir[FILENAME_MAX] = "";
-int            gameFrontHostingScriptUploadPolicy     = SCRIPT_UPLOAD_ALLOW;
+int            gameFrontHostingScriptUploadPolicy     = SCRIPT_UPLOAD_OFF;
 bool           gameFrontHostingShareScripts           = TRUE;
 int            gameFrontHostingScriptUploadMaxFiles   = 32;
 int            gameFrontHostingScriptUploadMaxStorage = 64;
@@ -1851,6 +1851,12 @@ static void gameFrontValidateWbnBeforeJoin(void) {
  * for each without blocking.
  * ------------------------------------------------------- */
 
+/* The answer to the rejoin question for the join being made: not asked
+ * yet, Rejoin, or Join as new. gameFrontJoinPreflight starts each join at
+ * not asked. */
+enum { JOIN_REJOIN_NOT_ASKED = 0, JOIN_REJOIN_CHOSEN, JOIN_NEW_CHOSEN };
+static int s_joinRejoinAnswer = JOIN_REJOIN_NOT_ASKED;
+
 /* gameFrontJoinPreflight — after the server's info reply: refuse a
  * version mismatch and ask for the password when the server wants one.
  * Returns FALSE when the join ends here, having cleaned up. */
@@ -1890,6 +1896,7 @@ static bool gameFrontJoinPreflight(const DiscoveryPingResult *dpr,
    * like the version and reachability failures above but with no
    * error box. */
   password[0] = '\0';
+  s_joinRejoinAnswer = JOIN_REJOIN_NOT_ASKED;
   if (dpr->password && !gameFrontAskJoinPassword(FALSE)) {
     gameFrontShutdownServer();
     dlgState = prevState;
@@ -1917,6 +1924,15 @@ static void gameFrontJoinStartClient(void) {
 #endif
   frontEndSetActiveClientSim(humanSim);
   if (gameFrontRemeber) clientSimSetMyLastPlayerName(humanSim, gameFrontName);
+  /* A Join to another player's server may be asked whether to rejoin
+   * instead. Not once the player has answered, and not for the host
+   * joining its own server. */
+  clientSimSetAskRejoin(humanSim, !spServerSimActive && !wantRejoin &&
+                        s_joinRejoinAnswer == JOIN_REJOIN_NOT_ASKED);
+  /* A rejoin into another player's locked game may be checked with
+   * WinBolo.net first. The client answers that itself, while the join
+   * screen waits. */
+  clientSimSetSignInFirst(humanSim, !spServerSimActive);
   fprintf(stderr, "[gameFront] openUdpJoin: addr=%s port=%u myPort=%u\n",
           gameFrontUdpAddress, (unsigned)gameFrontTargetUdp, (unsigned)gameFrontMyUdp);
   fflush(stderr);
@@ -1940,7 +1956,7 @@ static void gameFrontJoinStartClient(void) {
                       password,
                       (!s_isLanOnly && gameFrontWbnUse) ? gameFrontWbnToken : "",
                       "",
-                      wantRejoin,
+                      wantRejoin || s_joinRejoinAnswer == JOIN_REJOIN_CHOSEN,
                       !s_isLanOnly ? gameFrontTrackerAddr : "",
                       gameFrontTrackerPort,
                       /*spectator*/ false);
@@ -2008,6 +2024,26 @@ static bool gameFrontJoinFailedAskAgain(const char *failFallback) {
     clientSimDestroy(humanSim);
     humanSim = NULL;
     if (gameFrontAskJoinPassword(TRUE)) return TRUE;
+  } else if (!spServerSimActive &&
+             clientSimGetConnectErrorLangId(humanSim) == STR_REJECT_CAN_REJOIN) {
+    /* A player of this name left the game a short time ago, and the
+     * server did not seat the player. Ask whether to rejoin that tank or
+     * join as a new player, then join again with the answer. */
+    char msg[256];
+    const char *reason = clientSimGetConnectErrorReason(humanSim);
+    SDL_strlcpy(msg, reason ? reason : "", sizeof(msg));
+    frontEndSetActiveClientSim(NULL);
+    clientSimDestroy(humanSim);
+    humanSim = NULL;
+    if (imguiMessageBoxYesNoLabels(DIALOG_BOX_TITLE, msg, IMGUI_MSG_INFO,
+                                   langGetText(STR_DLGTCP_REJOIN),
+                                   langGetText(STR_JOIN_AS_NEW)) ==
+        IMGUI_MSG_RESULT_YES) {
+      s_joinRejoinAnswer = JOIN_REJOIN_CHOSEN;
+    } else {
+      s_joinRejoinAnswer = JOIN_NEW_CHOSEN;
+    }
+    return TRUE;
   } else {
     const char *reason = clientSimGetConnectErrorReason(humanSim);
     imguiMessageBoxEx(DIALOG_BOX_TITLE,
@@ -4513,7 +4549,7 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   gameFrontHostingAllowSpec = YESNO_TO_TRUEFALSE(buff[0]);
   prefsGetString("HOSTING", "Run Map Scripts", "Yes", buff, FILENAME_MAX);
   gameFrontHostingScripts = YESNO_TO_TRUEFALSE(buff[0]);
-  prefsGetString("HOSTING", "Script Upload Policy", "Allow", buff, FILENAME_MAX);
+  prefsGetString("HOSTING", "Script Upload Policy", "Off", buff, FILENAME_MAX);
   gameFrontHostingScriptUploadPolicy = scriptUploadPolicyResolve(buff);
   prefsGetString("HOSTING", "Share Scripts", "Yes", buff, FILENAME_MAX);
   gameFrontHostingShareScripts = YESNO_TO_TRUEFALSE(buff[0]);

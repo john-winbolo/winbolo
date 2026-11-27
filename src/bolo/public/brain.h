@@ -218,7 +218,7 @@ typedef struct {
 	int32_t lgm_cost_pill_new;
 	int32_t lgm_cost_mine;
 	int32_t lgm_gather_trees;
-	int32_t lgm_helicopter_speed;
+	float   lgm_helicopter_speed;
 	/* The cap the builder's walk clamps to on each terrain. */
 	int32_t man_speed_road;
 	int32_t man_speed_grass;
@@ -232,6 +232,10 @@ typedef struct {
 	int32_t man_speed_refuel_base;
 	/* Shell hits a wall stands before it falls to rubble. */
 	int32_t building_life;
+	/* The open-ground area an explosion catches a builder in: 0 the
+	   half-square circle (radius 128), 1 the Mac Bolo box (|dx| and |dy|
+	   under 128), 2 the Mac Bolo equivalent area circle (radius 144). */
+	int32_t lgm_blast_shape;
 } BrainRules;
 
 /* This tank's own modifiers, each a percent of the classic figure. The

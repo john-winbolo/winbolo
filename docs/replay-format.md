@@ -156,7 +156,7 @@ Selected event types (see the `logitem` enum for the complete list):
 | 57 | `log_EntityChange` | One pillbox, base or start joined the map or left it (below) |
 | 58 | `log_EntityMasks` | Which pillboxes, bases and starts are on the map (below) |
 | 59 | `log_ServerText` | A server line a scenario wrote: `destTeam:u8` (0 = everyone), `destPlayer:u8` (0xFF = everyone), Pascal text |
-| 60 | `log_GameTimeSet` | The round's game time after a scenario changed it: `ticks:i32` big-endian |
+| 60 | `log_GameTimeSet` | The round's game time after a scenario changed it: `frames:i32` big-endian, 20 ms each, the unit of the snapshot's game length. A recording made before this record carried frames holds 10 ms ticks here, twice the number, and nothing in the record tells the two apart, so a viewer shows double the time left for it |
 | 61 | `log_RuleSet` | One simulation rule a scenario changed (below) |
 | 62 | `log_ScnPanel` | One scenario panel's display list (below) |
 | 63 | `log_ScnScore` | A scenario's score for one player or one team (below) |
@@ -360,7 +360,10 @@ Written by the scenario funnel's set-rule arm
 (`src/server/sim/server_sim_scenario.c`). The viewer collects every change
 when it loads the recording, with the time playback reaches it, and shows each
 rule's value at the playhead: the last change at or before it, else the value
-`scripts.json` says the round opened on, else the classic value. A record
+`scripts.json` says the round opened on, else the classic value. A recording
+with no `lgm_blast_shape` reads the classic value of the version in its
+header: 0 before 2.2.2, else 2. A live spectator feed gets no server version,
+so it reads this build's classic value, 2. A record
 whose length is not 8, whose rule index names no rule or whose value is not
 finite is consumed and ignored. A live feed has no file to walk, so there the
 changes are collected as playback reaches them.
@@ -759,8 +762,8 @@ initial frame and for periodic resyncs:
 
 | Field | Size | Notes |
 |---|---|---|
-| Start delay | 4 | Big-endian int32, ms until game start |
-| Game length | 4 | Big-endian int32, total ms |
+| Start delay | 4 | Big-endian int32, 20 ms frames (50 a second) until game start |
+| Game length | 4 | Big-endian int32, 20 ms frames (50 a second) the round has left; -1 for no time limit |
 | Pills block | 1 + N | Length byte + pillbox network data |
 | Bases block | 1 + N | Length byte + base network data |
 | Starts block | 1 + N | Length byte + start-square network data |

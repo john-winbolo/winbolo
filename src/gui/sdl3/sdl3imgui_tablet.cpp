@@ -479,15 +479,29 @@ void tabletLayoutConfigure(TabletLayoutConfig *cfg, int screenW, int screenH,
   /* --- Status grids (left gutter) --- */
   /* The grids themselves are drawn by SDL in sdl3DrawMainScreen, at the
      status panels' own size for the effective zoom (STATUS_TANKS_WIDTH x
-     STATUS_TANKS_HEIGHT times the zoom), 4 units in from the safe area with
-     4 units between them. The frames drawn here must sit on exactly those
-     rectangles, so the geometry is the same as sdl3draw.c's, not a scaled
-     design-space size. */
+     STATUS_TANKS_HEIGHT times the zoom), centred between the safe area and
+     the game view's frame with a bevel's width between them, and the kills and
+     deaths panel under them. The frames drawn here must sit on exactly those
+     rectangles, so the column's place is read from sdl3draw.c, which draws
+     them, not worked out again here. */
   cfg->tanksGridX = cfg->safeLeft + 4.0f;
   cfg->tanksGridY = cfg->safeTop + 4.0f;
+  cfg->kdPanelX = cfg->kdPanelY = cfg->kdPanelW = cfg->kdPanelH = 0.0f;
+  {
+    float colX = 0.0f, colY = 0.0f;
+    SDL_FRect kd;
+    if (sdl3DrawGetTabletStatusColumn(&colX, &colY, &kd)) {
+      cfg->tanksGridX = colX;
+      cfg->tanksGridY = colY;
+      cfg->kdPanelX = kd.x;
+      cfg->kdPanelY = kd.y;
+      cfg->kdPanelW = kd.w;
+      cfg->kdPanelH = kd.h;
+    }
+  }
   cfg->statusGridScale = 1.0f;
   float gridH = (float)(STATUS_TANKS_HEIGHT * effectiveZoom);
-  float gridGap = 4.0f;
+  float gridGap = (float)sdl3DrawGetTabletBevel();
   cfg->pillsGridX = cfg->tanksGridX;
   cfg->pillsGridY = cfg->tanksGridY + gridH + gridGap;
   cfg->basesGridX = cfg->tanksGridX;
@@ -715,106 +729,138 @@ static void drawInsetRect(ImDrawList *dl, float x, float y, float w, float h,
                     ImVec2(x + w - border, y + h - border), colFill);
 }
 
-/* Draw a raised (outset) beveled rectangle — light top/left, dark bottom/right,
-   medium gray fill inside. */
-static void drawRaisedRect(ImDrawList *dl, float x, float y, float w, float h,
-                           float border, ImU32 colLight, ImU32 colDark, ImU32 colFill) {
-  /* Light edge on top and left */
-  dl->AddRectFilled(ImVec2(x, y), ImVec2(x + w, y + border), colLight);             /* top */
-  dl->AddRectFilled(ImVec2(x, y + border), ImVec2(x + border, y + h), colLight);    /* left */
-  /* Dark edge on bottom and right */
-  dl->AddRectFilled(ImVec2(x, y + h - border), ImVec2(x + w, y + h), colDark);      /* bottom */
-  dl->AddRectFilled(ImVec2(x + w - border, y), ImVec2(x + w, y + h - border), colDark); /* right */
-  /* Fill */
-  dl->AddRectFilled(ImVec2(x + border, y + border),
-                    ImVec2(x + w - border, y + h - border), colFill);
-}
-
 static void renderTabletBackground(void) {
-  /* Panel borders for the gutter UI elements.  The chrome gray fill and
-     viewport bevel are drawn earlier via SDL in sdl3DrawMainScreen()
-     (sdl3draw.c) so they appear behind the game tiles.  These borders
-     use ImGui's BackgroundDrawList which renders behind ImGui windows
-     but on top of SDL content — correct for the gutter panels which
-     are all ImGui-drawn. */
+  /* The frames in the gutters.  The chrome gray fill and the game view's
+     frame are drawn earlier via SDL (tabletChromeDraw in sdl3draw.c) so they
+     appear behind the game tiles.  These use ImGui's BackgroundDrawList,
+     which renders behind ImGui windows but on top of SDL content: the right
+     gutter's controls are all ImGui-drawn, and the left gutter's frames are
+     outlines round the grids SDL drew. */
   const TabletLayoutConfig &c = s_cfg;
   float ps = (float)c.screenH / 480.0f;
   if (ps < 0.7f) ps = 0.7f;
-  float border = 2.0f * ps;  /* bevel thickness — 2px at reference 480p */
+  /* The frames in the full screen map, laid over the map: thin, 2px at
+     reference 480p. */
+  float border = 2.0f * ps;
+  /* The frames on the gray chrome: as wide as the frame round the game view,
+     which is the background art's bevel at the view's zoom (sdl3draw.c). */
+  float bevel = (float)sdl3DrawGetTabletBevel();
+  float half  = bevel * 0.5f;
 
-  ImU32 colLight  = IM_COL32(160, 160, 160, 255);  /* highlight edge */
-  ImU32 colDark   = IM_COL32(64,  64,  64,  255);  /* shadow edge */
+  /* The background art's two bevel grays. */
+  ImU32 colLight  = IM_COL32(165, 165, 165, 255);  /* highlight edge */
+  ImU32 colDark   = IM_COL32(49,  49,  49,  255);  /* shadow edge */
   ImU32 colBlack  = IM_COL32(0,   0,   0,   255);  /* recessed fill */
 
   ImDrawList *dl = ImGui::GetBackgroundDrawList();
 
   /* In full screen the panels lie over the map. A frame there is the bevel
-     alone, at its panel's piece alpha: the backing under each panel is its
-     own window's background, at the backing alpha, and a black fill here as
-     well would darken the map through it twice. The button groups (top row,
-     fire and mine, gunsight) and the newswire get no frame, since their
-     buttons and the newswire's window carry their own backing. */
+     alone, at its panel's piece alpha, with nothing filled inside it: the
+     backing under each panel is its own window's background, at the backing
+     alpha, and a black fill here as well would darken the map through it
+     twice. The button groups (top row, fire and mine, gunsight) get no frame
+     there, since their buttons carry their own backing. Outside full screen
+     the piece alphas are 1. */
   ImU32 colNone = IM_COL32(0, 0, 0, 0);
   ImU32 statusLight = scaleAlpha(colLight, s_statusAlpha.piece);
   ImU32 statusDark  = scaleAlpha(colDark, s_statusAlpha.piece);
-  ImU32 statusFill  = s_fullScreen ? colNone : colBlack;
   ImU32 buildLight  = scaleAlpha(colLight, s_buildAlpha.piece);
   ImU32 buildDark   = scaleAlpha(colDark, s_buildAlpha.piece);
-  ImU32 buildFill   = s_fullScreen ? colNone : colBlack;
 
-  /* --- Left gutter: status grids (tanks, pills, bases) --- */
+  /* --- Left gutter: status grids (tanks, pills, bases), kills and deaths --- */
   if (c.showStatusGrids) {
-    /* The grids were drawn by SDL before this list, so the frame's fill is
-       transparent: a black fill here is drawn over them and hides them,
-       which is what the phone showed. The frame is one border wide outside
-       the grid, so it covers no part of it. */
+    /* The grids and the kills and deaths panel were drawn by SDL before this
+       list, so nothing here is filled over them: a black fill hid the grids
+       on the phone. The column is framed as one recess, a bevel wide outside
+       it, and the bevel-wide gap between two panels is a bar, light over
+       dark, as the bars between the desktop's status panels are. In full
+       screen the grids lie over the map and the kills and deaths panel is
+       not drawn, so the column ends under the bases grid. */
     float gridW = (float)(STATUS_TANKS_WIDTH * c.effectiveZoom);
     float gridH = (float)(STATUS_TANKS_HEIGHT * c.effectiveZoom);
+    bool  kd    = !s_fullScreen && c.kdPanelW > 0.0f;
+    float top    = c.tanksGridY;
+    float bottom = kd ? c.kdPanelY + c.kdPanelH : c.basesGridY + gridH;
 
     drawInsetRect(dl,
-      c.tanksGridX - border, c.tanksGridY - border,
-      gridW + border * 2, gridH + border * 2,
-      border, statusLight, statusDark, colNone);
+      c.tanksGridX - bevel, top - bevel,
+      gridW + bevel * 2, (bottom - top) + bevel * 2,
+      bevel, statusLight, statusDark, colNone);
 
-    drawInsetRect(dl,
-      c.pillsGridX - border, c.pillsGridY - border,
-      gridW + border * 2, gridH + border * 2,
-      border, statusLight, statusDark, colNone);
-
-    drawInsetRect(dl,
-      c.basesGridX - border, c.basesGridY - border,
-      gridW + border * 2, gridH + border * 2,
-      border, statusLight, statusDark, colNone);
+    float barY[3] = { c.tanksGridY + gridH, c.pillsGridY + gridH,
+                      c.basesGridY + gridH };
+    for (int i = 0; i < (kd ? 3 : 2); i++) {
+      dl->AddRectFilled(ImVec2(c.tanksGridX, barY[i]),
+                        ImVec2(c.tanksGridX + gridW, barY[i] + half), statusLight);
+      dl->AddRectFilled(ImVec2(c.tanksGridX, barY[i] + half),
+                        ImVec2(c.tanksGridX + gridW, barY[i] + bevel), statusDark);
+    }
   }
 
-  /* --- Right gutter: top buttons row --- */
+  /* --- Right gutter: one black panel, top to bottom --- */
+  /* Everything in the right gutter sits in one recessed panel, as the
+     desktop's panels fill its screen, so no gray shows between the controls.
+     It runs from the game view's frame to the right safe edge. The view's
+     frame is the bar between the two: SDL drew it light, the view's right
+     edge, and its right half is drawn dark here, the panel's left edge. Bars
+     across the panel part the top buttons, the stock bars and build buttons,
+     the scroll stick's zone and the fire controls. Not in full screen, where
+     the controls lie over the map and only the bars and the build buttons
+     keep a frame. */
   if (!s_fullScreen) {
-    float rowX = c.playersBtnX - 3.0f * ps;
-    float rowY = c.topBtnY - 3.0f * ps;
-    float rowW = (c.cogBtnX + c.topBtnSize) - c.playersBtnX + 6.0f * ps;
-    float rowH = c.topBtnSize + 6.0f * ps;
-    drawInsetRect(dl, rowX - border, rowY - border,
-      rowW + border * 2, rowH + border * 2,
-      border, colLight, colDark, colBlack);
+    float gutterLeft = (float)(c.viewportX + c.viewportW);
+    float rightEdge  = (float)c.screenW - c.safeRight;
+    float pad = (rightEdge - gutterLeft) * 0.03f;   /* tabletLayoutConfigure's */
+    if (pad < 4.0f) pad = 4.0f;
+    float x0 = gutterLeft + bevel;                  /* the panel's inside */
+    float x1 = rightEdge - bevel;
+    float y0 = bevel;
+    float y1 = (float)c.screenH - bevel;
+    dl->AddRectFilled(ImVec2(x0, y0), ImVec2(x1, y1), colBlack);
+    dl->AddRectFilled(ImVec2(gutterLeft + half, 0.0f), ImVec2(rightEdge, y0), colDark);   /* top */
+    dl->AddRectFilled(ImVec2(gutterLeft + half, y0), ImVec2(x0, (float)c.screenH), colDark); /* left */
+    dl->AddRectFilled(ImVec2(x0, y1), ImVec2(rightEdge, (float)c.screenH), colLight);     /* bottom */
+    dl->AddRectFilled(ImVec2(x1, y0), ImVec2(rightEdge, y1), colLight);                   /* right */
+
+    /* A bar a bevel wide, centred on y: light over dark. */
+    auto bar = [&](float y) {
+      dl->AddRectFilled(ImVec2(x0, y - half), ImVec2(x1, y), colLight);
+      dl->AddRectFilled(ImVec2(x0, y), ImVec2(x1, y + half), colDark);
+    };
+    /* Under the top buttons, half way to the bars and the build buttons. */
+    bar(c.topBtnY + c.topBtnSize + pad);
+    /* Over the scroll stick's zone, half way up to the build buttons. */
+    float zoneTop = c.scrollJoyY - pad;
+    if (c.scrollJoyH > 10.0f) bar(zoneTop);
+    /* Over the fire controls: above whichever of the gunsight row, the talk
+       button and the view buttons' column reaches highest. */
+    float ctlTop = c.gsDecCenterY - c.gsDecRadius;
+    if (c.talkRadius > 0.0f && c.talkCenterY - c.talkRadius < ctlTop) {
+      ctlTop = c.talkCenterY - c.talkRadius;
+    }
+    if (c.tankViewCenterY - c.tankViewRadius < ctlTop) {
+      ctlTop = c.tankViewCenterY - c.tankViewRadius;
+    }
+    if (ctlTop - pad > zoneTop + bevel * 2.0f) bar(ctlTop - pad);
   }
 
-  /* --- Right gutter: resource bars area --- */
-  {
+  /* --- Right gutter: resource bars area (full screen only) --- */
+  if (s_fullScreen) {
     float pad = 3.0f * ps;
     drawInsetRect(dl,
       c.tankBarsX - pad - border, c.tankBarsY - pad - border,
       c.topBtnSize + (pad + border) * 2, c.barsH + (pad + border) * 2,
-      border, statusLight, statusDark, statusFill);
+      border, statusLight, statusDark, colNone);
 
     float baseH = c.barsH - 16.0f;
     drawInsetRect(dl,
       c.baseBarsX - pad - border, c.baseBarsY - pad - border,
       c.topBtnSize + (pad + border) * 2, baseH + (pad + border) * 2,
-      border, statusLight, statusDark, statusFill);
+      border, statusLight, statusDark, colNone);
   }
 
-  /* --- Right gutter: build bar area --- */
-  {
+  /* --- Right gutter: build bar area (full screen only) --- */
+  if (s_fullScreen) {
     float iconSize = c.buildIconSize;
     float btnPadX = 8.0f;
     float btnPadY = 8.0f;
@@ -838,49 +884,11 @@ static void renderTabletBackground(void) {
       c.buildBarX - pad - border, c.buildBarY - pad - border,
       gridW + winPadX * 2 + (pad + border) * 2,
       gridH + winPadY * 2 + (pad + border) * 2,
-      border, buildLight, buildDark, buildFill);
+      border, buildLight, buildDark, colNone);
   }
 
-  /* --- Right gutter: fire/mine button area --- */
-  if (!s_fullScreen) {
-    float pad = 3.0f * ps;
-    /* Encompass fire, mine, pill view, and tank view buttons */
-    float leftEdge = c.pillViewCenterX - c.pillViewRadius;
-    float topEdge = c.tankViewCenterY - c.tankViewRadius;
-    float rightEdge = c.fireCenterX + c.fireRadius;
-    float bottomEdge = c.fireCenterY + c.fireRadius;
-    drawInsetRect(dl,
-      leftEdge - pad - border, topEdge - pad - border,
-      (rightEdge - leftEdge) + (pad + border) * 2,
-      (bottomEdge - topEdge) + (pad + border) * 2,
-      border, colLight, colDark, colBlack);
-  }
-
-  /* --- Right gutter: gunsight +/- buttons --- */
-  if (!s_fullScreen) {
-    float pad = 3.0f * ps;
-    float leftEdge = c.gsDecCenterX - c.gsDecRadius;
-    float topEdge = c.gsDecCenterY - c.gsDecRadius;
-    float rightEdge = c.gsIncCenterX + c.gsIncRadius;
-    float bottomEdge = c.gsIncCenterY + c.gsIncRadius;
-    drawInsetRect(dl,
-      leftEdge - pad - border, topEdge - pad - border,
-      (rightEdge - leftEdge) + (pad + border) * 2,
-      (bottomEdge - topEdge) + (pad + border) * 2,
-      border, colLight, colDark, colBlack);
-  }
-
-  /* --- Bottom: messages overlay area --- */
-  if (!s_fullScreen) {
-    float pad = 3.0f * ps;
-    float msgH = 76.0f * ps;  /* matches renderMessagesOverlay height */
-    /* The bevel alone: the strip SDL draws inside it carries its own
-       backing, and slides away to show the game view under it. */
-    drawInsetRect(dl,
-      c.msgOverlayX - pad - border, c.msgOverlayY - pad - border,
-      c.msgOverlayW + (pad + border) * 2, msgH + (pad + border) * 2,
-      border, colLight, colDark, colNone);
-  }
+  /* The newswire has no frame here: the bar along its top is drawn with the
+     strip (sdl3DrawNewswireStrip), so it slides away with it. */
 }
 
 /* -------------------------------------------------------
@@ -1365,10 +1373,13 @@ static void renderBuildSelectBar(ClientSim *cs) {
                         ImVec4(0.0f, 0.0f, 0.0f,
                                s_fullScreen ? s_buildAlpha.backing : 0.5f));
 
+  /* NoBringToFrontOnFocus: a tap on a build button must not lift this window
+     over a widget that lies across it, such as a vote's yes and no. */
   if (ImGui::Begin("##BuildBar", nullptr,
                     ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
                     ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
-                    ImGuiWindowFlags_NoScrollWithMouse)) {
+                    ImGuiWindowFlags_NoScrollWithMouse |
+                    ImGuiWindowFlags_NoBringToFrontOnFocus)) {
     ImDrawList *barDl = ImGui::GetWindowDrawList();
     int barVtxStart = barDl->VtxBuffer.Size;
 
@@ -1549,6 +1560,75 @@ static void renderTopBarButtons(ClientSim *cs) {
  * Resource bars — Tank (S/M/A/T) and Closest Base (S/M/A)
  * ------------------------------------------------------- */
 
+/* The stock bars' icons, as the classic screen has them under its tank bars:
+   shells, mines, armour and trees, cut from the background art, each 7 wide
+   and 8 high there. */
+#define STOCK_ICON_SRC_Y   246
+#define STOCK_ICON_SRC_W     7
+#define STOCK_ICON_SRC_H     8
+#define STOCK_ART_W      515.0f
+#define STOCK_ART_H      325.0f
+static const int kStockIconSrcX[4] = { 444, 456, 468, 480 };
+
+/* The share of a bars box's width that four stock icons may take. The icons
+   are the largest whole multiple of their art that fits it, the bars stand
+   one icon and a small gap apart, and what is left of the box is split
+   between the two sides. */
+#define STOCK_GROUP_SHARE 0.8f
+/* A bar's width as a share of its icon's. */
+#define STOCK_BAR_SHARE 0.7f
+
+/* How the bars' box of width w and height h is laid out: the bars at the top
+   and a row of stock icons under them. The column pitch and the icon size
+   come from four bars for both boxes, so the base's three bars stand as close
+   together as the tank's four and the icons are one size. A box too short
+   for the icon row goes without it and the bars take the room. */
+struct StockBoxLayout {
+  float iconW, iconH;   /* one stock icon; zero when there is no row */
+  float barW;           /* one bar */
+  float pitch;          /* from one bar's centre to the next */
+  float barTop, barH;   /* the bars, relative to the box's top */
+  float iconTop;        /* the stock icon row, relative to the box's top */
+};
+static StockBoxLayout stockBoxLayout(float w, float h, float winPad) {
+  StockBoxLayout l = {};
+  float gap = 4.0f;
+  float zoom = floorf(w * STOCK_GROUP_SHARE / 4.0f / (float)STOCK_ICON_SRC_W);
+  if (zoom < 1.0f) zoom = 1.0f;
+  l.iconW = zoom * (float)STOCK_ICON_SRC_W;
+  l.iconH = zoom * (float)STOCK_ICON_SRC_H;
+  l.pitch = l.iconW + zoom;
+  l.barW = floorf(l.iconW * STOCK_BAR_SHARE);
+  float minBar = 40.0f;
+  if (h - winPad * 2 - l.iconH - gap < minBar) l.iconW = l.iconH = 0.0f;
+  l.barTop = winPad;
+  float bottom = h - winPad - (l.iconH > 0.0f ? l.iconH + gap : 0.0f);
+  l.barH = bottom - l.barTop;
+  l.iconTop = bottom + gap;
+  return l;
+}
+
+/* The centre of bar i of n in a box of width w, the n bars together centred
+   in the box. */
+static float stockBarCentre(const StockBoxLayout &l, float w, int i, int n) {
+  return w * 0.5f + ((float)i - (float)(n - 1) * 0.5f) * l.pitch;
+}
+
+/* Stock icon i (shells, mines, armour, trees) centred on cx, top at y. */
+static void stockIcon(ImDrawList *dl, int i, float cx, float y,
+                      const StockBoxLayout &l, ImU32 tint) {
+  SDL_Texture *art = sdl3DrawGetBackgroundTexture();
+  if (!art || l.iconW <= 0.0f) return;
+  ImVec2 uv0((float)kStockIconSrcX[i] / STOCK_ART_W,
+             (float)STOCK_ICON_SRC_Y / STOCK_ART_H);
+  ImVec2 uv1((float)(kStockIconSrcX[i] + STOCK_ICON_SRC_W) / STOCK_ART_W,
+             (float)(STOCK_ICON_SRC_Y + STOCK_ICON_SRC_H) / STOCK_ART_H);
+  imguiPushNearestSamplingOn(dl);
+  dl->AddImage((ImTextureID)art, ImVec2(cx - l.iconW * 0.5f, y),
+               ImVec2(cx + l.iconW * 0.5f, y + l.iconH), uv0, uv1, tint);
+  imguiPopNearestSamplingOn(dl);
+}
+
 static void renderResourceBars(ClientSim *cs) {
   BYTE shells, mines, armour, trees;
   sdl3DrawGetCachedTankStats(&shells, &mines, &armour, &trees);
@@ -1568,8 +1648,6 @@ static void renderResourceBars(ClientSim *cs) {
     float w = s_cfg.topBtnSize;  /* same width as top bar buttons */
     float h = s_cfg.barsH;
     float winPad = 4.0f;
-    float barW = 12.0f;
-    float barGap = (w - winPad * 2 - barW * 4) / 3.0f;
 
     ImGui::SetNextWindowPos(ImVec2(x, y));
     ImGui::SetNextWindowSize(ImVec2(w, h));
@@ -1585,9 +1663,12 @@ static void renderResourceBars(ClientSim *cs) {
       int vtxStart = dl->VtxBuffer.Size;
       ImVec2 winPos = ImGui::GetWindowPos();
 
-      /* 4 vertical bars: S M A T */
-      float maxBarH = h - winPad * 2;
-      float barTop = winPos.y + winPad;
+      /* 4 vertical bars: S M A T, each over its icon. */
+      StockBoxLayout lay = stockBoxLayout(w, h, winPad);
+      float maxBarH = lay.barH;
+      float barW = lay.barW;
+      float barTop = winPos.y + lay.barTop;
+      ImU32 white = IM_COL32(255, 255, 255, 255);
       ImU32 barColor = IM_COL32(0, 200, 0, 200);
       ImU32 bgColor = IM_COL32(40, 40, 40, 180);
 
@@ -1599,12 +1680,13 @@ static void renderResourceBars(ClientSim *cs) {
       BYTE fulls[4] = { fullShells, fullMines, fullArmour, fullTrees };
 
       for (int i = 0; i < 4; i++) {
-        float bx = winPos.x + winPad + i * (barW + barGap);
+        float bx = winPos.x + stockBarCentre(lay, w, i, 4) - barW * 0.5f;
         dl->AddRectFilled(ImVec2(bx, barTop), ImVec2(bx + barW, barTop + maxBarH), bgColor);
         float fillH = fulls[i] ? (vals[i] / (float)fulls[i]) * maxBarH : 0.0f;
         if (fillH > maxBarH) fillH = maxBarH;
         dl->AddRectFilled(ImVec2(bx, barTop + maxBarH - fillH),
                            ImVec2(bx + barW, barTop + maxBarH), barColor);
+        stockIcon(dl, i, bx + barW * 0.5f, winPos.y + lay.iconTop, lay, white);
       }
       scaleDrawListAlphaSince(dl, vtxStart, s_statusAlpha.piece);
     }
@@ -1620,8 +1702,6 @@ static void renderResourceBars(ClientSim *cs) {
     float w = s_cfg.topBtnSize;  /* same width as top bar buttons */
     float h = s_cfg.barsH - 16.0f;  /* slightly shorter, only 3 bars */
     float winPad = 4.0f;
-    float barW = 12.0f;
-    float barGap = (w - winPad * 2 - barW * 3) / 2.0f;
 
     ImGui::SetNextWindowPos(ImVec2(x, y));
     ImGui::SetNextWindowSize(ImVec2(w, h));
@@ -1635,8 +1715,14 @@ static void renderResourceBars(ClientSim *cs) {
       int vtxStart = dl->VtxBuffer.Size;
       ImVec2 winPos = ImGui::GetWindowPos();
 
-      float maxBarH = h - winPad * 2;
-      float barTop = winPos.y + winPad;
+      /* 3 vertical bars: S M A, each over its icon, all faint while the
+         tank is on no base. */
+      StockBoxLayout lay = stockBoxLayout(w, h, winPad);
+      float maxBarH = lay.barH;
+      float barW = lay.barW;
+      float barTop = winPos.y + lay.barTop;
+      ImU32 tint = hasBase ? IM_COL32(255, 255, 255, 255)
+                           : IM_COL32(255, 255, 255, 90);
       ImU32 barColor = hasBase ? IM_COL32(0, 200, 0, 200) : IM_COL32(60, 60, 60, 120);
       ImU32 bgColor = IM_COL32(40, 40, 40, 180);
 
@@ -1648,12 +1734,13 @@ static void renderResourceBars(ClientSim *cs) {
       BYTE fulls[3] = { fullShells, fullMines, fullArmour };
 
       for (int i = 0; i < 3; i++) {
-        float bx = winPos.x + winPad + i * (barW + barGap);
+        float bx = winPos.x + stockBarCentre(lay, w, i, 3) - barW * 0.5f;
         dl->AddRectFilled(ImVec2(bx, barTop), ImVec2(bx + barW, barTop + maxBarH), bgColor);
         float fillH = (hasBase && fulls[i]) ? (vals[i] / (float)fulls[i]) * maxBarH : 0.0f;
         if (fillH > maxBarH) fillH = maxBarH;
         dl->AddRectFilled(ImVec2(bx, barTop + maxBarH - fillH),
                            ImVec2(bx + barW, barTop + maxBarH), barColor);
+        stockIcon(dl, i, bx + barW * 0.5f, winPos.y + lay.iconTop, lay, tint);
       }
       scaleDrawListAlphaSince(dl, vtxStart, s_statusAlpha.piece);
     }

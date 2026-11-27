@@ -1034,6 +1034,24 @@ static inline ServerVoiceMode infoPacketReadVoiceMode(BYTE flags) {
                                               dropped, and the client asks
                                               again. */
 
+#define PACKET_JOIN_SIGN_IN            240  /* server -> joiner
+                                              { serverKey[WBN_JOIN_KEY_WIRE_LEN] }
+                                              answer to a rejoin JOIN into
+                                              a locked game whose rejoin
+                                              record is a WinBolo.net
+                                              signed-in player, from an
+                                              address that is not the
+                                              record's. Nobody is seated.
+                                              The joiner gets a player_key
+                                              for serverKey and sends the
+                                              JOIN again with the key. The
+                                              server checks the key on its
+                                              WinBolo.net worker and sends
+                                              this packet again while the
+                                              check runs. Sent only to a
+                                              JOIN with
+                                              JOIN_FLAG_SIGN_IN_FIRST. */
+
 #ifndef GAME_VOTE_KIND_BACK_TO_LOBBY
 #define GAME_VOTE_KIND_BACK_TO_LOBBY  1
 #define GAME_VOTE_KIND_SURRENDER      2

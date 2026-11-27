@@ -208,6 +208,8 @@ static void lvGifSeek(void *user, uint32_t ms) {
  * real time, and their sounds would all play at once). Off: they go back. */
 static void lvGifCaptureMode(void *user, bool on) {
     (void)user;
+    /* The GIF reads the render target, so the shells must be in it. */
+    lv_drawSetShellsInTarget(on);
     if (on) {
         s_gif.restoreSound = (g_lv != NULL && g_lv->isSoundsPlaying);
         if (g_lv != NULL) {

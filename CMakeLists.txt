@@ -1195,6 +1195,7 @@ set(IOS_GUI_SOURCES
     src/gui/sdl3/lobby_start_list.cpp
     src/gui/sdl3/map_preview_view.cpp
     src/gui/sdl3/map_preview_fetch.cpp
+    src/gui/sdl3/local_map_index.c
     src/gui/sdl3/overview_camera.cpp
     src/gui/sdl3/overview_fog.cpp
     src/gui/sdl3/overview_hud_layout.cpp
@@ -2130,6 +2131,9 @@ set(CLIENT_SOURCES
     src/gui/sdl3/lobby_start_list.cpp
     src/gui/sdl3/map_preview_view.cpp
     src/gui/sdl3/map_preview_fetch.cpp
+    # The .map files on this machine by md5, which map_preview_fetch.cpp
+    # looks in before it asks WinBolo.net.
+    src/gui/sdl3/local_map_index.c
     src/gui/sdl3/overview_camera.cpp
     src/gui/sdl3/overview_fog.cpp
     src/gui/sdl3/overview_hud_layout.cpp
@@ -4365,6 +4369,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # not do — and the game-time change, the four lengths it refuses, and the
     # new length on the sim, at a subscriber and in a recording.
     tests/unit/test_scenario_flow_arms.c
+    # The round's time limit and start delay against real time: each loses
+    # one a 20 ms frame, so a round set in minutes lasts that many minutes.
+    tests/unit/test_game_time_limit.c
     # The rules op: the index list against the table it indexes, a rule
     # written and read back, a rate the op's double carries and an int32
     # could not, the value outside a row and the value that breaks a pair
@@ -4528,6 +4535,11 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_wbn_serverlist.c
     tests/unit/test_wbn_map.c
     tests/unit/test_wbn_map_fetch_policy.c
+    # The game finder's map preview: when a failed lookup is tried again
+    # (header-only), and finding a .map file on this machine by md5.
+    tests/unit/test_map_preview_fetch_policy.c
+    tests/unit/test_local_map_index.c
+    src/gui/sdl3/local_map_index.c
     tests/unit/test_brain_crash_log.c
     tests/unit/test_brain_binding_bounds.c
     tests/unit/test_brain_sandbox_hostile.c
@@ -4568,6 +4580,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_client_frontend_tick.c
     tests/unit/test_await_join.c
     tests/unit/test_net_impair.c
+    tests/unit/test_srv_impair_peer.c
     tests/unit/test_lobby_runtime_fixes.c
     tests/unit/test_bot_chat_routing.c
     tests/unit/test_bot_ping.c
@@ -4668,6 +4681,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # What Alt+Enter does in a game the server keeps in classic mode;
     # header-only logic (fullscreen_key.h).
     tests/unit/test_fullscreen_key.c
+    # Which status panel draws wait for the frame (status_draw_hold.h) and
+    # which slot of the text texture cache a string uses (text_cache_pick.h);
+    # both header-only logic.
+    tests/unit/test_status_draw_hold.c
     tests/unit/test_overview_hud_layout.cpp
     tests/unit/test_newswire_slide.c
     tests/unit/test_sight.c
@@ -4689,6 +4706,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_lgm_quit_pill.c
     tests/unit/test_lgm_start_offset.c
     tests/unit/test_lgm_absent_on_shooter_screen.c
+    tests/unit/test_lgm_blast_dead_pill.c
     tests/unit/test_braindbg_round_dir.c
     tests/unit/test_jitter_buffer_grow.c
     tests/unit/test_shell_projection.c
@@ -4747,6 +4765,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     # A server hitch and its catch-up burst, over an impaired path: the slot
     # it locks out has to start applying real inputs again and keep doing it.
     tests/unit/test_loopback_hitch.c
+    tests/unit/test_prediction_slow_tank.c
     # A client-initiated quit while a peer is playing: the peer keeps its
     # session and its inputs keep applying.
     tests/unit/test_loopback_quit_keeps_peer.c
@@ -4789,6 +4808,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     # A builder walled in behind his own tank while a pillbox shoots at it,
     # over a lagged link and a clean one.
     tests/unit/test_lgm_under_fire.c
+    # The server rewinding a builder when a shell goes off near him.
+    tests/unit/test_lgm_kill_rewind.c
     # The client's own check of the rules table before it keeps one.
     tests/unit/test_sim_rules_client_check.c
     # The sixteen pillbox pictures against a pill armour cap above 15.
@@ -4803,6 +4824,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_gate1_integration.c
     tests/unit/test_interp_jitter_e2e.c
     tests/unit/test_join_version_gate.c
+    tests/unit/test_join_ask_rejoin.c
+    tests/unit/test_join_locked_rejoin.c
     tests/unit/test_join_rate_limit.c
     # A password-protected server: the INFO ping flag, the incorrect-password
     # reject's langid at the client, and a join with the right password.
@@ -5015,6 +5038,12 @@ set(WINBOLO_UNITTESTS_SOURCES
     # man_dead_pill_terrain_speed: the builder's speed on the square of a
     # dead pillbox.
     tests/unit/test_man_dead_pill_speed.c
+    # lgm_helicopter_speed: the parachute flies the rule's own speed on
+    # every heading, and the rule takes a fraction.
+    tests/unit/test_lgm_parachute_speed.c
+    # lgm_blast_shape: the open-ground area round an explosion that kills a
+    # builder.
+    tests/unit/test_lgm_blast_shape.c
     tests/unit/test_teleport_clears_rewind.c
     tests/unit/test_shell_rewind_rules.c
     tests/unit/test_input_gate.c
@@ -5167,6 +5196,11 @@ set(WINBOLO_UNITTESTS_SOURCES
     # clip-time fit resolves base cells from the log's own snapshots
     # (test_lv_calibration.c).
     tests/unit/test_lv_calibration.c
+    # The lag view's shell owner matcher against the game's shell code
+    # (test_lv_shell_owner.c).
+    tests/unit/test_lv_shell_owner.c
+    # The lag view's early blast toggle (test_lv_early_blast.c).
+    tests/unit/test_lv_early_blast.c
     # Log viewer snapshot index: time lookups and a ten-day log's worth of
     # entries (test_lv_snapshot_index.c).
     tests/unit/test_lv_snapshot_index.c
@@ -5255,6 +5289,11 @@ set(WINBOLO_UNITTESTS_SOURCES
     # The bars the viewer draws over each tank: where they go, how full
     # they are and their colours (lv_tank_bars.h, header only).
     tests/unit/test_lv_tank_bars.c
+    # The hit areas the viewer draws round each tank and each builder: the
+    # engine's own rules (lv_hitbox.h and hit_rules.h, header only).
+    tests/unit/test_lv_hitbox.c
+    # The hit rules the engine and the log viewer share (hit_rules.h).
+    tests/unit/test_hit_rules.c
     # A click on a tank on the viewer's map: which tank a point is on and
     # the mark round the selected one (lv_tank_pick.h, header only).
     tests/unit/test_lv_tank_pick.c
@@ -5305,6 +5344,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # how many steps, the log time of each and which is due when
     # (lv_jump_anim.h, header only).
     tests/unit/test_lv_jump_anim.c
+    # The base the viewer's Tank panel shows under the gauges: picked as
+    # the game picks it, and its bars (lv_base_near.h, header only).
+    tests/unit/test_lv_base_near.c
     # The builder marker over each tank on the viewer's map: where it goes,
     # the arrow's direction, the countdown and the table of the times a
     # builder was away (lv_builder_status.h, header only).
@@ -5422,6 +5464,12 @@ if(WB_NETDEBUG)
 endif()
 
 add_executable(WinBoloUnitTests ${WINBOLO_UNITTESTS_SOURCES})
+# struct in6_pktinfo needs _GNU_SOURCE before the forced luajit_compat.h
+# include; see the same setting in src/bolo/CMakeLists.txt.
+if(UNIX AND NOT APPLE AND NOT EMSCRIPTEN)
+    set_source_files_properties(src/bolo/transport_udp_common.c PROPERTIES
+        COMPILE_DEFINITIONS _GNU_SOURCE)
+endif()
 target_sources(WinBoloUnitTests PRIVATE src/steam/steam_wrapper_stub.c
     src/bolo/lobby_bot_pools_json.c
     tests/unit/test_bot_name_pools.c
@@ -5933,6 +5981,8 @@ set(_unit_test_names
     wbn_serverlist_fetch_path
     wbn_map_parse
     wbn_map_fetch_policy
+    map_preview_fetch_policy
+    local_map_index
     brain_crash_log_writes_file
     brain_crash_log_falls_back_to_luaptr
     brain_push_rules_written_on_change
@@ -5957,6 +6007,8 @@ set(_unit_test_names
     brain_sandbox_hostile_astar_log_removed
     brain_sandbox_hostile_file_jail
     brain_sandbox_hostile_off_map_terrain
+    brain_sandbox_jit_limits
+    brain_sandbox_luajit_no_ffi
     brain_msgh_budget_kill_no_traceback
     brain_msgh_real_error_keeps_traceback
     brain_inbox_push_peek_fifo
@@ -6075,8 +6127,33 @@ set(_unit_test_names
     lv_player_lag_read
     lv_lag_track
     lv_lag_ring
+    lv_lag_rtt_back
+    lv_lag_ring_back
+    lv_lag_map_undo
+    lv_lag_view_toggle
     lv_lag_feature_default_off
     lv_lag_view_draw
+    lv_lag_view_own_shells
+    lv_lag_view_lost_owner
+    lv_lag_view_shell_snapshot
+    lv_lag_view_map
+    lv_base_spots
+    lv_shell_owner_recording
+    lv_shell_owner_rules
+    lv_shell_owner_real_flight
+    lv_shell_owner_start
+    lv_shell_owner_link
+    lv_shell_owner_one_line
+    lv_shell_owner_ids
+    lv_early_blast_rules
+    lv_early_blast_ended
+    lv_early_blast_frames
+    lv_early_blast_match
+    lv_early_blast_hide
+    lv_early_blast_needs_own_shells
+    lv_early_blast_same_place
+    lv_early_blast_many_players
+    lv_early_blast_watch_miss
     lv_lag_view_rename
     lv_overrun_read
     log_roundtrip_ping
@@ -6241,6 +6318,29 @@ set(_unit_test_names
     team_sides_panels_follow_team
     team_sides_infection_puts_leaver_back
     team_sides_rejoin_is_a_joiner
+    team_sides_rejoin_keeps_team
+    team_sides_rejoin_keeps_team_no_pills
+    team_sides_rejoin_solo_keeps_team
+    team_sides_join_without_rejoin_is_new
+    team_sides_rejoin_next_round_is_new
+    team_sides_rejoin_can_ally_refused
+    team_sides_rejoin_ranked_keeps_team
+    team_sides_rejoin_full_table_drops_oldest
+    team_sides_rejoin_team_waits_for_rejoiner
+    team_sides_rejoin_all_numbers_held
+    team_sides_rejoin_timed_out_frees_team
+    team_sides_rejoin_age_counts_frames
+    team_sides_rejoin_unsigned_restores_at_join
+    team_sides_rejoin_signed_in_waits
+    team_sides_rejoin_signed_in_restored
+    team_sides_rejoin_signed_in_solo_keeps_team
+    team_sides_rejoin_signed_in_moved_seat_kept
+    team_sides_rejoin_signed_in_leave_clears
+    team_sides_rejoin_signed_in_outlives_same_name_join
+    team_sides_rejoin_signed_in_outlives_same_name_rejoin
+    team_sides_rejoin_signed_in_keeps_address
+    team_sides_rejoin_signed_in_name_taken_restored
+    team_sides_rejoin_no_record_confirm_changes_nothing
     team_sides_joiner_slot_before_join
     team_sides_lobby_joiner_keeps_rule
     team_sides_lobby_drops_empty_teams
@@ -6527,6 +6627,8 @@ set(_unit_test_names
     fog_road_edges
     fog_road_edge_masks
     fullscreen_key_action
+    status_draw_hold
+    text_cache_slot_pick
     overview_hud_layout
     newswire_slide
     sight
@@ -6544,6 +6646,8 @@ set(_unit_test_names
     overview_snapshot_generation
     overview_snapshot_removed_item_has_no_label
     overview_snapshot_corner_keeps_self
+    overview_snapshot_fogged_pill_keeps_number
+    item_labels_not_found
     mapview_sprite_classic
     mapview_sprite_ladder
     mapview_sprite_shell_tip
@@ -6596,6 +6700,20 @@ set(_unit_test_names
     lgm_kill_seen_out_already_dead
     lgm_kill_seen_out_tank_hit_blast
     lgm_kill_seen_out_dead_tank
+    lgm_blast_dead_pill_edge
+    lgm_blast_dead_pill_far_corner
+    lgm_blast_live_pill_unchanged
+    lgm_blast_pill_kill_shot
+    lgm_blast_wall_rubble_shot
+    lgm_blast_forest_shot
+    lgm_blast_boat_shot
+    lgm_blast_shore_shot
+    lgm_blast_bridge_shot
+    lgm_blast_road_open_ground
+    lgm_blast_mined_bridge_shot
+    lgm_blast_shell_runs_out_dead_pill
+    lgm_blast_shell_hits_tank_dead_pill
+    lgm_blast_tank_explosion_kills_pill
     lgm_start_offset
     braindbg_second_round_new_dir
     lgm_draw_own_matches_wire
@@ -6698,6 +6816,19 @@ set(_unit_test_names
     man_dead_pill_walk_across_water
     man_dead_pill_lifted_waits_for_tank
     man_dead_pill_brain_walk
+    lgm_parachute_speed_same_on_every_heading
+    lgm_parachute_speed_takes_a_fraction
+    lgm_parachute_wide_step_lands
+    lgm_parachute_moved_in_flight
+    lgm_parachute_put_back_starts_exact
+    lgm_blast_shape_half_square
+    lgm_blast_shape_mac_box
+    lgm_blast_shape_mac_area
+    lgm_blast_shape_solid_square
+    lgm_blast_shape_classic_matches_old
+    lgm_blast_shape_pill_range
+    lgm_blast_shape_classic_144
+    lgm_blast_shape_for_version
     teleport_erases_tank_rewind_record
     teleport_shell_hits_new_place
     teleport_rewind_refills
@@ -6723,6 +6854,13 @@ set(_unit_test_names
     lgm_wall_behind_tank_under_fire_lagged
     lgm_wall_behind_tank_under_fire_nolag
     loopback_password
+    # The server rewinding a builder when a shell goes off near him: a lagged
+    # shooter, its clean-link control, the rewind window's bound, and a pill
+    # shell testing the man where he is, whatever his owner's lag.
+    lgm_kill_rewind_lagged_shooter
+    lgm_kill_rewind_nolag_control
+    lgm_kill_rewind_bounded
+    lgm_kill_rewind_pill_owner_lag
     loopback_lobby_running_loss
     loopback_quiet_lobby_control_loss
     loopback_command_liveness
@@ -6730,6 +6868,7 @@ set(_unit_test_names
     loopback_command_submitted_during_rejoin
     loopback_channel
     loopback_hitch_recovers
+    prediction_slow_tank_no_corrections
     loopback_quit_keeps_peer
     loopback_join_accept_lost_ready
     send_drains_channels_multi_frame
@@ -6758,6 +6897,7 @@ set(_unit_test_names
     loopback_bot_pool_fetch
     loopback_bot_pool_same_not_fetched
     bot_pool_refresh_retakes_catalogue
+    bot_pool_label_team_picks_only_chosen
     loopback_bot_pool_survives_bulk_rebase
     loopback_brain_docs_survives_bulk_rebase
     loopback_map_upload
@@ -6801,6 +6941,20 @@ set(_unit_test_names
     gate1_host_noop
     interp_jitter_e2e
     join_version_gate
+    join_ask_rejoin_live_record_asks
+    join_ask_rejoin_without_flag_joins
+    join_ask_rejoin_want_rejoin_joins
+    join_ask_rejoin_no_record_joins
+    join_ask_rejoin_timed_out_joins
+    join_locked_rejoin_address_seats
+    join_locked_rejoin_no_match_rejects
+    join_locked_rejoin_wbn_sign_in_not_seated
+    join_locked_rejoin_wbn_verified_seats
+    join_locked_rejoin_wbn_fail_rejects
+    join_locked_rejoin_wbn_other_name_rejects
+    join_locked_rejoin_wbn_timeout_rejects
+    join_locked_rejoin_ask_gets_question
+    join_locked_rejoin_unlocked_unchanged
     join_rate_limit
     join_rate_limit_v6_same_prefix
     join_rate_limit_v6_other_prefix
@@ -7036,6 +7190,7 @@ set(_unit_test_names
     md5_block_boundaries
     md5_streaming_matches_oneshot
     net_impair
+    srv_impair_peer_lanonly
     lobby_time_minutes_valid
     lobby_time_limit_reaches_round
     lobby_time_limit_removed_reaches_round
@@ -7094,6 +7249,17 @@ set(_unit_test_names
     empty_return_to_lobby_removes_bots_and_unlocks
     bot_pool_wire_chunk_transport
     bot_pool_catalog_id
+    bot_pool_label_one
+    bot_pool_label_several_spaces_case
+    bot_pool_label_unknown_falls_back
+    bot_pool_label_mixed_known_unknown
+    bot_pool_label_file_path_still_loads
+    bot_pool_label_path_missing_not_label
+    bot_pool_label_none_same_draws
+    bot_pool_label_dir_not_file
+    bot_pool_label_shipped_missing
+    bot_pool_label_catalog_carries_filter
+    bot_pool_label_unknown_cut_utf8
     voice_core_roundtrip
     voice_core_reset_matches_fresh
     voice_core_fade_apply
@@ -7237,10 +7403,14 @@ set(_unit_test_names
     tank_drop_pills_map_edge
     tank_drop_pills_hostile_map
     tank_drop_pills_no_room
+    tank_drop_pills_quit_no_room
+    tank_drop_pills_quit_map_event
+    tank_drop_pills_no_room_other_tank
     lgm_drop_pill_spiral
     lgm_drop_pill_no_room
     util_spiral_north
     util_spiral_north_west
+    util_spiral_rings
     scenario_lgm_dispatch
     scenario_lgm_recall
     scenario_lgm_kill
@@ -7453,6 +7623,9 @@ set(_unit_test_names
     scenario_flow_set_game_time
     scenario_flow_set_game_time_refusals
     scenario_flow_arm_records
+    game_time_limit_counts_frames
+    game_time_start_delay_counts_frames
+    game_time_lobby_minutes
     scenario_rule_index_matches_table
     scenario_rule_set
     scenario_rule_set_float
@@ -7638,6 +7811,8 @@ set(_unit_test_names
     scenario_validate_trigger_announce_clear
     scenario_validate_trigger_arg_literal
     scenario_validate_rule_pair_key
+    scenario_validate_rule_pair_mended
+    scenario_validate_rule_pair_alone
     scenario_validate_needs_bots_missing
     scenario_validate_needs_bots_declared
     scenario_lua_every_row_answers
@@ -8000,6 +8175,7 @@ set(_unit_test_names
     lv_scripts_json_hostile_values
     lv_scripts_json_over_cap
     lv_scripts_json_close_clears
+    lv_scripts_json_blast_shape_by_version
     lv_rule_changes_collected
     lv_rule_changes_seek
     lv_rule_changes_plain_round
@@ -8007,6 +8183,7 @@ set(_unit_test_names
     lv_rule_changes_live_feed
     lv_rule_changes_armour_levels
     lv_rule_changes_live_same_tick
+    lv_rule_changes_lgm_blast_shape_outside
     lv_presentation_seek
     lv_presentation_hostile
     lv_presentation_scripted_round
@@ -8045,6 +8222,13 @@ set(_unit_test_names
     lv_overview_neutral_row
     lv_tank_status_sums
     lv_tank_bars_sums
+    lv_hitbox_sums
+    lv_hitbox_lgm_fit
+    lv_hitbox_lgm_pick
+    lv_hitbox_outline
+    lv_hitbox_zone_from_version
+    hit_rules_builder_matches_engine
+    hit_rules_tank_matches_engine
     lv_tank_pick_sums
     lv_marks_fade
     lv_window_size_parse
@@ -8054,6 +8238,7 @@ set(_unit_test_names
     lv_dock_clear_rects
     lv_dock_clear_map
     lv_dock_clear_prefs
+    lv_dock_clear_room_len
     lv_dock_default_layout
     lv_dump_recorded_round
     lv_spmap_owner_table
@@ -8107,6 +8292,7 @@ set(_unit_test_names
     lv_pill_numbers_list
     lv_pill_numbers_layout
     lv_pill_numbers_overview
+    lv_pill_numbers_batched
     lv_controls_top_row
     lv_controls_bottom_row
     lv_controls_wheel_step
@@ -8132,6 +8318,11 @@ set(_unit_test_names
     lv_jump_anim_lands
     lv_jump_anim_steps
     lv_jump_anim_time
+    lv_jump_anim_retarget
+    lv_base_near_pick
+    lv_base_near_range
+    lv_base_near_bars
+    lv_base_near_game_screen
     scn_presentation_codec_bodies
     scn_presentation_codec_refuses_short
     scn_presentation_decoder_sets_broadcast
@@ -8208,6 +8399,42 @@ set(_unit_test_names
 # wbv_summary_capture is omitted for the same reason: it (re)writes the
 # committed tests/fixtures/wbv/*.summary files that wbv_fixture_summaries
 # compares against, via `WinBoloUnitTests --test wbv_summary_capture`.
+
+# unit_test_names_match: every test registered in tests/unit/test_main.c
+# must be in _unit_test_names, so CTest runs it. Left out on purpose: the
+# fixture writers above (test_main.c s_fixtureWriters) and the netdebug_*
+# tests, which the WB_NETDEBUG block further down registers. A test that is
+# missing stops the configure with its name. The match ends at the comma
+# after the name, so a registration wrapped onto two lines is read too.
+set(_unit_test_on_demand
+    wire_corpus_capture
+    spectator_seed_capture
+    wbv_v2_capture
+    wbv_summary_capture
+)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+             "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/test_main.c")
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/test_main.c"
+     _unit_test_main_lines
+     REGEX "^[ \t]*{[ \t]*\"[^\"]+\"[ \t]*,")
+set(_unit_test_missing "")
+foreach(_line IN LISTS _unit_test_main_lines)
+    string(REGEX REPLACE "^[ \t]*{[ \t]*\"([^\"]+)\".*$" "\\1"
+           _unit_test_main_name "${_line}")
+    if(NOT _unit_test_main_name IN_LIST _unit_test_names
+       AND NOT _unit_test_main_name IN_LIST _unit_test_on_demand
+       AND NOT _unit_test_main_name MATCHES "^netdebug_")
+        list(APPEND _unit_test_missing ${_unit_test_main_name})
+    endif()
+endforeach()
+if(_unit_test_missing)
+    list(JOIN _unit_test_missing ", " _unit_test_missing_text)
+    message(FATAL_ERROR
+            "unit_test_names_match: tests/unit/test_main.c registers tests "
+            "that are not in _unit_test_names: ${_unit_test_missing_text}. "
+            "Add each one to _unit_test_names in CMakeLists.txt.")
+endif()
+
 foreach(_name IN LISTS _unit_test_names)
     add_test(NAME unit.${_name}
              COMMAND $<TARGET_FILE:WinBoloUnitTests> --test ${_name})
@@ -8218,6 +8445,9 @@ endforeach()
 # A 4 MiB package over the loopback bulk channel is a few thousand pumps of
 # at least a millisecond each; give it room on a loaded machine.
 set_tests_properties(unit.loopback_script_upload_at_cap PROPERTIES TIMEOUT 180)
+# A test that needs an input given on ask returns UT_SKIP_RC (test_harness.h)
+# without it, which CTest then shows as skipped.
+set_tests_properties(unit.lv_shell_owner_recording PROPERTIES SKIP_RETURN_CODE 77)
 
 # ---------------------------------------------------------------------------
 # WinBoloWbnTests -- the WinBolo.net HTTP layer against a local TCP listener.
@@ -8251,6 +8481,8 @@ add_executable(WinBoloWbnTests
     tests/wbn/test_wbn_forced_update_full_queue.c
     tests/wbn/test_wbn_scenario_fields.c
     tests/wbn/test_wbn_announce.c
+    tests/wbn/test_wbn_map_lookup_restarts_http.c
+    tests/wbn/test_wbn_stop_during_lookup.c
     src/bolo/global.c
     src/common/prefs.c
     src/common/prefs_doc.c
@@ -8349,6 +8581,18 @@ set_tests_properties(wbn.hosted_job_host PROPERTIES TIMEOUT 60)
 add_test(NAME wbn.announce_posts
          COMMAND $<TARGET_FILE:WinBoloWbnTests> announce_posts)
 set_tests_properties(wbn.announce_posts PROPERTIES TIMEOUT 60)
+# One map lookup after httpDestroy, the state the game finder posts in when a
+# login check, a game or the WinBolo.net map browser ended last. No hold.
+add_test(NAME wbn.map_lookup_restarts_http
+         COMMAND $<TARGET_FILE:WinBoloWbnTests> map_lookup_restarts_http)
+set_tests_properties(wbn.map_lookup_restarts_http PROPERTIES TIMEOUT 60)
+
+# httpDestroy, and a whole start and stop, while a map lookup is held open by
+# the listener: what joining or leaving a game does to a preview still on its
+# way. One 1.5 s hold.
+add_test(NAME wbn.stop_during_lookup
+         COMMAND $<TARGET_FILE:WinBoloWbnTests> stop_during_lookup)
+set_tests_properties(wbn.stop_during_lookup PROPERTIES TIMEOUT 60)
 
 # ---- Include-rule check: the scenario surface is invisible to a frontend --
 # src/bolo/scenario_api/ is on the include path of scenario_host, sim_owner

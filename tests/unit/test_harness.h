@@ -24,6 +24,17 @@
         return 1;                                                           \
     } while (0)
 
+/* A test that has nothing to check here (an input it needs is not given)
+ * returns UT_SKIP_RC through UT_SKIP. The runner prints SKIP for it, it is
+ * not a failure, and CTest shows it as skipped for a test with
+ * SKIP_RETURN_CODE set to this value in CMakeLists.txt. */
+#define UT_SKIP_RC 77
+#define UT_SKIP(fmt, ...)                                                   \
+    do {                                                                    \
+        fprintf(stderr, "  skipped: " fmt "\n", ##__VA_ARGS__);             \
+        return UT_SKIP_RC;                                                  \
+    } while (0)
+
 #define UT_ASSERT(cond)                                                     \
     do {                                                                    \
         if (!(cond)) {                                                      \
@@ -506,6 +517,17 @@ int run_await_join_lobby_latch(void);
 int run_await_join_timeout_and_error(void);
 int run_bot_pool_wire_chunk_transport(void);
 int run_bot_pool_catalog_id(void);
+int run_bot_pool_label_one(void);
+int run_bot_pool_label_several_spaces_case(void);
+int run_bot_pool_label_unknown_falls_back(void);
+int run_bot_pool_label_mixed_known_unknown(void);
+int run_bot_pool_label_file_path_still_loads(void);
+int run_bot_pool_label_path_missing_not_label(void);
+int run_bot_pool_label_none_same_draws(void);
+int run_bot_pool_label_dir_not_file(void);
+int run_bot_pool_label_shipped_missing(void);
+int run_bot_pool_label_catalog_carries_filter(void);
+int run_bot_pool_label_unknown_cut_utf8(void);
 int run_lobby_map_list_chunked(void);
 /* The scripted byte on a map-list entry: the layout by hand-written bytes,
  * and a list carrying a mix of scripted and plain maps. */
@@ -587,6 +609,8 @@ int run_wbn_serverlist_pick_address(void);
 int run_wbn_serverlist_fetch_path(void);
 int run_wbn_map_parse(void);
 int run_wbn_map_fetch_policy(void);
+int run_map_preview_fetch_policy(void);
+int run_local_map_index(void);
 int run_brain_crash_log_writes_file(void);
 int run_brain_crash_log_falls_back_to_luaptr(void);
 int run_brain_push_rules_written_on_change(void);
@@ -611,6 +635,8 @@ int run_brain_sandbox_hostile_loaders_removed(void);
 int run_brain_sandbox_hostile_astar_log_removed(void);
 int run_brain_sandbox_hostile_file_jail(void);
 int run_brain_sandbox_hostile_off_map_terrain(void);
+int run_brain_sandbox_jit_limits(void);
+int run_brain_sandbox_luajit_no_ffi(void);
 int run_brain_msgh_budget_kill_no_traceback(void);
 int run_brain_msgh_real_error_keeps_traceback(void);
 int run_brain_inbox_push_peek_fifo(void);
@@ -686,6 +712,8 @@ int run_loadbrowser_rename_rejections(void);
 int run_loadbrowser_rename_applies(void);
 
 int run_net_impair(void);
+/* srvImpairPeer with lanonly on and off (test_srv_impair_peer.c). */
+int run_srv_impair_peer_lanonly(void);
 
 /* ChannelMux reliability primitive (test_channel_mux.c): the full
  * off-socket loss/reorder/dup/window/boundary matrix over two ChannelMux
@@ -1348,6 +1376,29 @@ int run_team_sides_team_chat_follows_sides(void);
 int run_team_sides_panels_follow_team(void);
 int run_team_sides_infection_puts_leaver_back(void);
 int run_team_sides_rejoin_is_a_joiner(void);
+int run_team_sides_rejoin_keeps_team(void);
+int run_team_sides_rejoin_keeps_team_no_pills(void);
+int run_team_sides_rejoin_solo_keeps_team(void);
+int run_team_sides_join_without_rejoin_is_new(void);
+int run_team_sides_rejoin_next_round_is_new(void);
+int run_team_sides_rejoin_can_ally_refused(void);
+int run_team_sides_rejoin_ranked_keeps_team(void);
+int run_team_sides_rejoin_full_table_drops_oldest(void);
+int run_team_sides_rejoin_team_waits_for_rejoiner(void);
+int run_team_sides_rejoin_all_numbers_held(void);
+int run_team_sides_rejoin_timed_out_frees_team(void);
+int run_team_sides_rejoin_age_counts_frames(void);
+int run_team_sides_rejoin_unsigned_restores_at_join(void);
+int run_team_sides_rejoin_signed_in_waits(void);
+int run_team_sides_rejoin_signed_in_restored(void);
+int run_team_sides_rejoin_signed_in_solo_keeps_team(void);
+int run_team_sides_rejoin_signed_in_moved_seat_kept(void);
+int run_team_sides_rejoin_signed_in_leave_clears(void);
+int run_team_sides_rejoin_signed_in_outlives_same_name_join(void);
+int run_team_sides_rejoin_signed_in_outlives_same_name_rejoin(void);
+int run_team_sides_rejoin_signed_in_keeps_address(void);
+int run_team_sides_rejoin_signed_in_name_taken_restored(void);
+int run_team_sides_rejoin_no_record_confirm_changes_nothing(void);
 int run_team_sides_joiner_slot_before_join(void);
 int run_team_sides_lobby_joiner_keeps_rule(void);
 int run_team_sides_lobby_drops_empty_teams(void);
@@ -1390,8 +1441,41 @@ int run_server_overrun_stats_due(void);
 int run_lv_player_lag_read(void);
 int run_lv_lag_track(void);
 int run_lv_lag_ring(void);
+/* The lag view's pillboxes and map, one round trip back (lv_lag.h). */
+int run_lv_lag_rtt_back(void);
+int run_lv_lag_ring_back(void);
+int run_lv_lag_map_undo(void);
+int run_lv_lag_view_map(void);
+/* Options > Base Numbers: the bases in the view (test_lv_calibration.c). */
+int run_lv_base_spots(void);
+int run_lv_lag_view_toggle(void);
 int run_lv_lag_feature_default_off(void);
 int run_lv_lag_view_draw(void);
+/* The lag view draws the chosen player's own shells at the present
+ * (test_lv_calibration.c), and the shell owner matcher on a recording, on
+ * ask only (WB_LV_OWNER_WBV). */
+int run_lv_lag_view_own_shells(void);
+int run_lv_lag_view_lost_owner(void);
+int run_lv_lag_view_shell_snapshot(void);
+int run_lv_shell_owner_recording(void);
+/* The shell owner matcher (lv_shell_owner.h), against the game's shell code
+ * (test_lv_shell_owner.c). */
+int run_lv_shell_owner_rules(void);
+int run_lv_shell_owner_real_flight(void);
+int run_lv_shell_owner_start(void);
+int run_lv_shell_owner_link(void);
+int run_lv_shell_owner_one_line(void);
+int run_lv_shell_owner_ids(void);
+/* The lag view's early blast toggle (test_lv_early_blast.c). */
+int run_lv_early_blast_rules(void);
+int run_lv_early_blast_ended(void);
+int run_lv_early_blast_frames(void);
+int run_lv_early_blast_match(void);
+int run_lv_early_blast_hide(void);
+int run_lv_early_blast_needs_own_shells(void);
+int run_lv_early_blast_same_place(void);
+int run_lv_early_blast_many_players(void);
+int run_lv_early_blast_watch_miss(void);
 int run_lv_lag_view_rename(void);
 /* The viewer reads log_OverrunStats records and gives the one at the playhead. */
 int run_lv_overrun_read(void);
@@ -2216,6 +2300,14 @@ int run_fog_road_edge_masks(void);
  * does nothing where the window does not own the flag. */
 int run_fullscreen_key_action(void);
 
+/* The game window's held status panel draws and its text texture cache
+ * (test_status_draw_hold.c): a draw asked for before the frame waits and is
+ * dropped when the frame repaints the panels (status_draw_hold.h), and a
+ * string reuses its own slot, then an empty one, then the one drawn longest
+ * ago (text_cache_pick.h). */
+int run_status_draw_hold(void);
+int run_text_cache_slot_pick(void);
+
 /* Line of sight (test_sight.c): the square the player stands on is seen even
  * when it is itself a building, a building across the line hides everything
  * behind it while the building itself is seen, the same building beside the
@@ -2314,6 +2406,8 @@ int run_overview_snapshot_removed_item_has_no_label(void);
  * sight on stays on the full screen map: the filter asks about the square
  * under the tank, not the hidden corner block its sprite starts in. */
 int run_overview_snapshot_corner_keeps_self(void);
+int run_overview_snapshot_fogged_pill_keeps_number(void);
+int run_item_labels_not_found(void);
 
 /* Sprite placement at a float scale (test_mapview_sprite_scale.c): the
  * arithmetic behind mapViewDrawShells / Tanks / LGMs, shared by the classic
@@ -2448,6 +2542,26 @@ int run_lgm_kill_seen_out_no_record(void);
 int run_lgm_kill_seen_out_already_dead(void);
 int run_lgm_kill_seen_out_tank_hit_blast(void);
 int run_lgm_kill_seen_out_dead_tank(void);
+
+/* A blast on a pillbox's square against a builder (test_lgm_blast_dead_pill.c):
+ * a dead pill's square is open ground, so the blast kills within half a
+ * square across its edge and not in its far corner; a live pill's square is
+ * still solid. Shell hits on a wall, a forest, a boat, the shore or a bridge
+ * are hits on the square. */
+int run_lgm_blast_dead_pill_edge(void);
+int run_lgm_blast_dead_pill_far_corner(void);
+int run_lgm_blast_live_pill_unchanged(void);
+int run_lgm_blast_pill_kill_shot(void);
+int run_lgm_blast_wall_rubble_shot(void);
+int run_lgm_blast_forest_shot(void);
+int run_lgm_blast_boat_shot(void);
+int run_lgm_blast_shore_shot(void);
+int run_lgm_blast_bridge_shot(void);
+int run_lgm_blast_road_open_ground(void);
+int run_lgm_blast_mined_bridge_shot(void);
+int run_lgm_blast_shell_runs_out_dead_pill(void);
+int run_lgm_blast_shell_hits_tank_dead_pill(void);
+int run_lgm_blast_tank_explosion_kills_pill(void);
 
 /* A -braindebug server records each round into its own session dir
  * (test_braindbg_round_dir.c): the dir it named is cleared at game over, so
@@ -2609,6 +2723,14 @@ int run_loopback_join_loss(void);
 int run_lgm_wall_behind_tank_under_fire_lagged(void);
 int run_lgm_wall_behind_tank_under_fire_nolag(void);
 int run_loopback_password(void);
+/* The server rewinding a builder to where the firing side saw him when a
+ * shell goes off near him (test_lgm_kill_rewind.c): a lagged shooter, its
+ * clean-link control, the rewind window's bound, and a pill shell that tests
+ * the man where he is, whatever his owner's lag. */
+int run_lgm_kill_rewind_lagged_shooter(void);
+int run_lgm_kill_rewind_nolag_control(void);
+int run_lgm_kill_rewind_bounded(void);
+int run_lgm_kill_rewind_pill_owner_lag(void);
 int run_loopback_lobby_running_loss(void);
 /* Quiet-lobby reliable control delivery under loss with no input flowing:
  * proves control acks ride the standalone PACKET_CHANNEL trailer. */
@@ -2627,6 +2749,10 @@ int run_loopback_channel(void);
  * value no substitute can invent has to reach the server again and keep
  * reaching it as the client changes it. */
 int run_loopback_hitch_recovers(void);
+/* A tank moving slower than tank_min_move, under 80ms of delay each way, is
+ * never moved off its predicted position by a snapshot
+ * (test_prediction_slow_tank.c). */
+int run_prediction_slow_tank_no_corrections(void);
 /* One client quits while another keeps playing (test_loopback_quit_keeps_peer.c):
  * the peer sees the slot leave its roster, stays connected for 600 pumps, and
  * its own inputs keep being applied on tick numbers it actually sent. */
@@ -2694,6 +2820,7 @@ int run_lobby_bot_pool_join_sends_only_the_id(void);
 int run_loopback_bot_pool_fetch(void);
 int run_loopback_bot_pool_same_not_fetched(void);
 int run_bot_pool_refresh_retakes_catalogue(void);
+int run_bot_pool_label_team_picks_only_chosen(void);
 int run_loopback_bot_pool_survives_bulk_rebase(void);
 int run_loopback_brain_docs_survives_bulk_rebase(void);
 /* Client->server map upload over CHANNEL_BULK (test_loopback_upload.c): a map
@@ -2781,6 +2908,20 @@ int run_gate1_host_noop(void);
 int run_interp_jitter_e2e(void);
 
 int run_join_version_gate(void);
+int run_join_ask_rejoin_live_record_asks(void);
+int run_join_ask_rejoin_without_flag_joins(void);
+int run_join_ask_rejoin_want_rejoin_joins(void);
+int run_join_ask_rejoin_no_record_joins(void);
+int run_join_ask_rejoin_timed_out_joins(void);
+int run_join_locked_rejoin_address_seats(void);
+int run_join_locked_rejoin_no_match_rejects(void);
+int run_join_locked_rejoin_wbn_sign_in_not_seated(void);
+int run_join_locked_rejoin_wbn_verified_seats(void);
+int run_join_locked_rejoin_wbn_fail_rejects(void);
+int run_join_locked_rejoin_wbn_other_name_rejects(void);
+int run_join_locked_rejoin_wbn_timeout_rejects(void);
+int run_join_locked_rejoin_ask_gets_question(void);
+int run_join_locked_rejoin_unlocked_unchanged(void);
 
 /* Per-source-IP JOIN rate limit (test_join_rate_limit.c): a burst of valid
  * JOINs from distinct loopback ephemeral ports (one source IP) draws at most
@@ -3186,6 +3327,28 @@ int run_man_dead_pill_walk_ticks(void);
 int run_man_dead_pill_walk_across_water(void);
 int run_man_dead_pill_lifted_waits_for_tank(void);
 int run_man_dead_pill_brain_walk(void);
+/* lgm_helicopter_speed: a parachuting builder flies the rule's own speed on
+ * every heading, the rule takes a fraction, a step wider than the arrival
+ * tolerance still lands, a man moved in flight flies on from where he was
+ * put, and one a script puts back where he is starts from exactly there
+ * (test_lgm_parachute_speed.c). */
+int run_lgm_parachute_speed_same_on_every_heading(void);
+int run_lgm_parachute_speed_takes_a_fraction(void);
+int run_lgm_parachute_wide_step_lands(void);
+int run_lgm_parachute_moved_in_flight(void);
+int run_lgm_parachute_put_back_starts_exact(void);
+/* lgm_blast_shape: the half-square circle, the Mac Bolo box and the Mac
+ * Bolo equivalent area circle at 127/128/129 and 143/144/145 across and at
+ * 100 and 120 on the diagonal; an explosion on a building still kills only
+ * a builder on its square (test_lgm_blast_shape.c). */
+int run_lgm_blast_shape_half_square(void);
+int run_lgm_blast_shape_mac_box(void);
+int run_lgm_blast_shape_mac_area(void);
+int run_lgm_blast_shape_solid_square(void);
+int run_lgm_blast_shape_classic_matches_old(void);
+int run_lgm_blast_shape_pill_range(void);
+int run_lgm_blast_shape_classic_144(void);
+int run_lgm_blast_shape_for_version(void);
 int run_teleport_erases_tank_rewind_record(void);
 int run_teleport_shell_hits_new_place(void);
 int run_teleport_rewind_refills(void);
@@ -3535,10 +3698,14 @@ int run_tank_drop_pills_blocked(void);
 int run_tank_drop_pills_map_edge(void);
 int run_tank_drop_pills_hostile_map(void);
 int run_tank_drop_pills_no_room(void);
+int run_tank_drop_pills_quit_no_room(void);
+int run_tank_drop_pills_quit_map_event(void);
+int run_tank_drop_pills_no_room_other_tank(void);
 int run_lgm_drop_pill_spiral(void);
 int run_lgm_drop_pill_no_room(void);
 int run_util_spiral_north(void);
 int run_util_spiral_north_west(void);
+int run_util_spiral_rings(void);
 
 int run_scenario_lgm_dispatch(void);
 int run_scenario_lgm_recall(void);
@@ -3873,6 +4040,13 @@ int run_scenario_flow_set_game_time(void);
 int run_scenario_flow_set_game_time_refusals(void);
 int run_scenario_flow_arm_records(void);
 
+/* The round's clocks against real time (test_game_time_limit.c): the time
+ * limit and the start delay each lose one a 20 ms frame, so a round set in
+ * minutes lasts that many minutes. */
+int run_game_time_limit_counts_frames(void);
+int run_game_time_start_delay_counts_frames(void);
+int run_game_time_lobby_minutes(void);
+
 /* The rules op (test_scenario_rule_arms.c). The index list against the table
  * it indexes, a rule written and read back, a rate the op's double carries
  * and an int32 could not, the two refusals and the table each leaves
@@ -4153,6 +4327,8 @@ int run_scenario_validate_trigger_field_team(void);
 int run_scenario_validate_trigger_announce_clear(void);
 int run_scenario_validate_trigger_arg_literal(void);
 int run_scenario_validate_rule_pair_key(void);
+int run_scenario_validate_rule_pair_mended(void);
+int run_scenario_validate_rule_pair_alone(void);
 int run_scenario_validate_needs_bots_missing(void);
 int run_scenario_validate_needs_bots_declared(void);
 
@@ -4701,6 +4877,7 @@ int run_lv_scripts_json_wrong_version(void);
 int run_lv_scripts_json_hostile_values(void);
 int run_lv_scripts_json_over_cap(void);
 int run_lv_scripts_json_close_clears(void);
+int run_lv_scripts_json_blast_shape_by_version(void);
 /* The log viewer's rules at the playhead (test_lv_rule_changes.c, with the
  * rule-change round recorded by lv_scripts_fixture.c): a mid-round change
  * collected at load, LvRules right after seeking either way, a plain round
@@ -4713,6 +4890,7 @@ int run_lv_rule_changes_hostile(void);
 int run_lv_rule_changes_live_feed(void);
 int run_lv_rule_changes_armour_levels(void);
 int run_lv_rule_changes_live_same_tick(void);
+int run_lv_rule_changes_lgm_blast_shape_outside(void);
 /* The log viewer's scenario panels, scores, announcement and markers at the
  * playhead (test_lv_presentation.c, with the presentation round recorded by
  * lv_scripts_fixture.c): a hand-written log played through and seeked both
@@ -4797,6 +4975,19 @@ int run_lv_tank_status_sums(void);
 /* The bars the log viewer draws over each tank (test_lv_tank_bars.c): their
  * size and place for a size of map square, the filled part, the colours. */
 int run_lv_tank_bars_sums(void);
+/* The hit areas the log viewer draws round each tank and each builder
+ * (test_lv_hitbox.c): the engine's tank circle and builder catch test. */
+int run_lv_hitbox_sums(void);
+int run_lv_hitbox_lgm_fit(void);
+int run_lv_hitbox_lgm_pick(void);
+int run_lv_hitbox_outline(void);
+/* The tank's hit zone from a recording's version (test_lv_calibration.c). */
+int run_lv_hitbox_zone_from_version(void);
+/* The hit rules the engine and the log viewer share (test_hit_rules.c):
+ * the builder rule against the engine's death test today, and the tank
+ * rule against the engine's sums before they moved to hit_rules.h. */
+int run_hit_rules_builder_matches_engine(void);
+int run_hit_rules_tank_matches_engine(void);
 /* A click on a tank on the log viewer's map (test_lv_tank_pick.c): which
  * tank a point is on, and where the mark round the selected one goes. */
 int run_lv_tank_pick_sums(void);
@@ -4814,6 +5005,8 @@ int run_lv_dock_clear_layout(void);
 int run_lv_dock_clear_rects(void);
 int run_lv_dock_clear_map(void);
 int run_lv_dock_clear_prefs(void);
+/* The Tank panel's length there follows its lag section. */
+int run_lv_dock_clear_room_len(void);
 /* The arrangement of the sidebars a new user starts with
  * (test_lv_dock_clear.c, lv_dock_default.h). */
 int run_lv_dock_default_layout(void);
@@ -4896,6 +5089,7 @@ int run_lv_pill_numbers_sums(void);
 int run_lv_pill_numbers_list(void);
 int run_lv_pill_numbers_layout(void);
 int run_lv_pill_numbers_overview(void);
+int run_lv_pill_numbers_batched(void);
 /* Where the items of the log viewer's Controls panel go
  * (test_lv_controls_layout.c). */
 int run_lv_controls_top_row(void);
@@ -4937,6 +5131,11 @@ int run_lv_jump_targets(void);
 int run_lv_jump_anim_lands(void);
 int run_lv_jump_anim_steps(void);
 int run_lv_jump_anim_time(void);
+int run_lv_jump_anim_retarget(void);
+int run_lv_base_near_pick(void);
+int run_lv_base_near_range(void);
+int run_lv_base_near_bars(void);
+int run_lv_base_near_game_screen(void);
 
 /* The four presentation control events (test_scenario_presentation_codec.c):
  * their body codecs against hand-written bytes, the refusals a short or

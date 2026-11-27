@@ -47,39 +47,6 @@
 extern "C" {
 #endif
 
-/* Numbers a pill or base can carry: the sim indexes both from 0, so the
-   highest is one less than the larger of the two counts. A number outside
-   this range is drawn without the cache — the classic view builds its list
-   from the screen buffer's tiles, so a pill tile on a square the sim has no
-   pill for still produces the not-found number the view has always drawn. */
-#define ITEM_LABEL_MAX_NUM ((MAX_PILLS) > (MAX_BASES) ? (MAX_PILLS) : (MAX_BASES))
-
-/* The rendered numbers, one texture per number per face. Rasterising a
-   glyph is cheap; making and destroying a GPU texture for it every frame is
-   not, and the overview can put a number on every pill and base at once.
-   Kept by the host rather than this file because textures belong to the
-   renderer that made them and the overview may be on the pop-out's, the
-   same reason TankLabelCache is passed in.
-
-   Zero-initialise to start empty. Rebuilt from nothing when the renderer or
-   either face changes under it — which is what a zoom change reopening the
-   fonts looks like from here. The draw scales the glyphs, so one texture
-   serves every zoom the face itself did not change for. */
-typedef struct ItemLabelCache {
-  SDL_Renderer *renderer;
-  TTF_Font     *pillFont;
-  TTF_Font     *baseFont;
-  float         pillFontSize;   /* size the pill textures were rendered at */
-  float         baseFontSize;
-  SDL_Texture  *pillTex[ITEM_LABEL_MAX_NUM];
-  SDL_Texture  *baseTex[ITEM_LABEL_MAX_NUM];
-} ItemLabelCache;
-
-/* Destroys every texture and forgets what they were built against. Call from
-   the host's teardown, ahead of the renderer; the draw flushes on its own
-   when the renderer or a face changes. */
-void itemLabelCacheFlush(ItemLabelCache *c);
-
 /* Squares and game pixels here are in the sprite lists' frame: the classic
    view's 17x17 buffer squares, the overview's absolute map squares. */
 typedef struct MapViewOverlay {
@@ -109,17 +76,12 @@ typedef struct MapViewOverlay {
   float            labelDisplayScale;
 
   /* Pill and base numbers; drawn only when ctx->scale >= itemLabelMinScale.
-     A base's number sits in the top-left of its square in baseFont, a
-     pill's centred in pillFont, each on a black backing. The glyphs and the
-     backing scale by labelDisplayScale as the names do. */
+     Each is drawn as the Log Viewer draws its pillbox numbers: the small
+     square-cell digits of its builder marker (logviewer/lv_builder_draw.h),
+     white with a black edge, at the bottom right corner of the square. */
   const OverviewItemLabel *itemLabels;
   int                      itemLabelCount;
-  TTF_Font                *pillFont;
-  TTF_Font                *baseFont;
   float                    itemLabelMinScale;
-  /* Where the rendered numbers are kept between frames. NULL draws them the
-     slow way, rebuilding and destroying a texture per number per frame. */
-  ItemLabelCache          *itemLabelCache;
 
   /* Labels are clipped to this box in renderer coordinates: a name's left
      edge is held at clipLeft, and nothing is drawn outside the box. */
@@ -131,12 +93,11 @@ typedef struct MapViewOverlay {
    live in map_colours.h, which the marker passes classify squares with, so
    the numbers and the markers cannot disagree about what is on a square. */
 static inline bool mapViewTileIsPill(BYTE tile) {
-  MapColourItem kind = mapColourItemKind(tile);
-  return kind == MAP_COLOUR_ITEM_PILL_GOOD || kind == MAP_COLOUR_ITEM_PILL_EVIL;
+  return mapColourItemNumberOnTile(tile, false);
 }
 
 static inline bool mapViewTileIsBase(BYTE tile) {
-  return mapColourItemKind(tile) >= MAP_COLOUR_ITEM_BASE_GOOD;
+  return mapColourItemNumberOnTile(tile, true);
 }
 
 /* Draws the whole layer: the cursor, then mapViewDrawShells and

@@ -208,7 +208,10 @@ uint32_t winbolonetQueueVerifyClientKey(const char *playerKey,
 * exactly as winboloNetVerifyClientKey reads its own, and
 * stores the player_key at winboloNetPlayerKey[playerNum] on
 * acceptance — so the slot's key is written on the thread
-* that drains the result, not on the worker.
+* that drains the result, not on the worker. A playerNum of
+* MAX_TANKS or more stores nothing: the reply is only read,
+* for a joiner that has no slot yet (winbolonetSetPlayerKey
+* stores the key once it has one).
 *
 *ARGUMENTS:
 * status      - HTTP status the worker got, or -1
@@ -365,6 +368,20 @@ void winboloNetClientLeaveGame(BYTE playerNum, BYTE numPlayers, BYTE freeBases, 
 * spectatorKey - spectator_key stored at verify time
 *********************************************************/
 void winboloNetSpectatorLeaveGame(const char *spectatorKey);
+
+/*********************************************************
+*NAME:          winbolonetSetPlayerKey
+*PURPOSE:
+* Stores a player_key that a client/verify has already
+* accepted at the player's slot, as an accepted verify
+* would. An empty key clears the slot. Does nothing when
+* WinBolo.net is not running.
+*
+*ARGUMENTS:
+* playerNum - Player slot number
+* playerKey - The accepted key, or "" to clear
+*********************************************************/
+void winbolonetSetPlayerKey(BYTE playerNum, const char *playerKey);
 
 /*********************************************************
 *NAME:          winboloNetIsPlayerParticipant

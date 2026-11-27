@@ -425,7 +425,9 @@ BYTE serverSimGetMapTerrain(const ServerSim *sim, BYTE x, BYTE y) {
 /* Shots a wall square still takes before it is rubble, or 0 for a square
  * that is not a wall. A wall the shells have not touched has no entry in
  * the building list: its first hit makes the entry with building_life left,
- * so it takes one shot more than that. A damaged wall's entry holds what is
+ * so it takes one shot more than that. A half building with no entry (on the
+ * map from the start, or written by a scenario) takes building_life: its
+ * first hit comes off the life. A damaged wall's entry holds what is
  * left, and so does an intact one a builder repaired after it was hit, which
  * keeps its old entry (buildingAddItem in building.c). */
 int serverSimWallShotsLeft(const ServerSim *sim, BYTE x, BYTE y) {
@@ -440,6 +442,9 @@ int serverSimWallShotsLeft(const ServerSim *sim, BYTE x, BYTE y) {
         if (b->x == x && b->y == y) {
             return (int)b->life;
         }
+    }
+    if (terrain == HALFBUILDING) {
+        return (int)gs->rules.building_life;
     }
     return (int)gs->rules.building_life + 1;
 }
@@ -1101,7 +1106,7 @@ void serverSimSetScriptUploadPolicy(ServerSim *sim, ScriptUploadPolicy p) {
 }
 
 ScriptUploadPolicy serverSimGetScriptUploadPolicy(const ServerSim *sim) {
-    return sim ? sim->scriptUploadPolicy : SCRIPT_UPLOAD_ALLOW;
+    return sim ? sim->scriptUploadPolicy : SCRIPT_UPLOAD_OFF;
 }
 
 void serverSimSetScriptSharing(ServerSim *sim, bool on) {
@@ -1188,21 +1193,21 @@ int serverSimEmptyScriptSessionDir(ServerSim *sim) {
 
 ScriptUploadPolicy scriptUploadPolicyResolve(const char *word) {
     if (word == NULL || word[0] == '\0') {
-        return SCRIPT_UPLOAD_ALLOW;
+        return SCRIPT_UPLOAD_OFF;
     }
     if (SDL_strcasecmp(word, "off") == 0)     return SCRIPT_UPLOAD_OFF;
     if (SDL_strcasecmp(word, "allow") == 0)   return SCRIPT_UPLOAD_ALLOW;
     if (SDL_strcasecmp(word, "persist") == 0) return SCRIPT_UPLOAD_PERSIST;
-    fprintf(stderr, "Warning: unknown script upload policy '%s', using allow\n",
+    fprintf(stderr, "Warning: unknown script upload policy '%s', using off\n",
             word);
-    return SCRIPT_UPLOAD_ALLOW;
+    return SCRIPT_UPLOAD_OFF;
 }
 
 const char *scriptUploadPolicyWord(ScriptUploadPolicy p) {
     switch (p) {
-        case SCRIPT_UPLOAD_OFF:     return "Off";
+        case SCRIPT_UPLOAD_ALLOW:   return "Allow";
         case SCRIPT_UPLOAD_PERSIST: return "Persist";
-        default:                    return "Allow";
+        default:                    return "Off";
     }
 }
 

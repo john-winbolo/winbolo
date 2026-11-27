@@ -44,6 +44,7 @@
 #include "server_sim.h"
 #include "pillbox.h"
 #include "bolo_map.h"
+#include "building.h"
 #include "game_sim.h"
 #include "client_sim.h"
 #include "client_sim_internal.h"
@@ -459,17 +460,54 @@ bool pillsDropCanLand(GameSim *sim, int mx, int my) {
 }
 
 /*********************************************************
+*NAME:          pillsDropTankOn
+*PURPOSE:
+*  Whether a live tank other than the dropper's is on a
+*  square. The second pass of the drop search leaves such
+*  a square alone: turning a boat to river under a tank
+*  would leave that tank marked as on a boat.
+*
+*ARGUMENTS:
+*  sim     - The game
+*  dropper - Player whose tank is dropping, or NEUTRAL
+*  x       - X map square
+*  y       - Y map square
+*********************************************************/
+static bool pillsDropTankOn(GameSim *sim, BYTE dropper, BYTE x, BYTE y) {
+  BYTE i;
+  WORLD wx;
+  WORLD wy;
+
+  for (i = 0; i < MAX_TANKS; i++) {
+    if (i == dropper || sim->tanks[i] == NULL ||
+        tankIsDestroyed(&sim->tanks[i])) {
+      continue;
+    }
+    tankGetWorld(&sim->tanks[i], &wx, &wy);
+    if ((BYTE) (wx >> TANK_SHIFT_MAPSIZE) == x &&
+        (BYTE) (wy >> TANK_SHIFT_MAPSIZE) == y) {
+      return TRUE;
+    }
+  }
+  return FALSE;
+}
+
+/*********************************************************
 *NAME:          pillsDropSpiralStart
 *PURPOSE:
 *  Starts a drop search with its cursor on the centre.
 *
 *ARGUMENTS:
-*  s  - The search
-*  cx - X map square to search round
-*  cy - Y map square to search round
+*  s       - The search
+*  cx      - X map square to search round
+*  cy      - Y map square to search round
+*  dropper - The player whose tank drops the pills, or
+*            NEUTRAL
 *********************************************************/
-void pillsDropSpiralStart(pillsDropSpiral *s, BYTE cx, BYTE cy) {
+void pillsDropSpiralStart(pillsDropSpiral *s, BYTE cx, BYTE cy, BYTE dropper) {
   utilSpiralStart(&s->cursor, cx, cy, UTIL_SPIRAL_NORTH);
+  s->pass = 0;
+  s->dropper = dropper;
   /* The farthest the minable area reaches from the centre along
      either axis. Every ring beyond it is off the area entirely. */
   s->maxRing = cx - (MAP_MINE_EDGE_LEFT + 1);
@@ -489,8 +527,18 @@ void pillsDropSpiralStart(pillsDropSpiral *s, BYTE cx, BYTE cy) {
 *PURPOSE:
 *  Moves the cursor on to the first square from where it
 *  is, that one included, that a pillbox may land on, and
-*  answers it. Answers FALSE once the spiral has walked
-*  past the minable area without finding one.
+*  answers it.
+*
+*  If the spiral walks past the minable area without
+*  finding one, the search starts again from the centre
+*  in a second pass. The second pass takes the first
+*  square in the minable area with no pill, no base and
+*  no live tank other than the dropper's on it. A
+*  building or half-building there turns to rubble and a
+*  boat turns to river, so the pill can land. Answers
+*  FALSE only if every square in the minable area has a
+*  pill, a base or a tank on it, which a map of at most
+*  16 pills, 16 bases and 16 tanks never has.
 *
 *ARGUMENTS:
 *  sim - The game
@@ -499,13 +547,47 @@ void pillsDropSpiralStart(pillsDropSpiral *s, BYTE cx, BYTE cy) {
 *  my  - Receives the Y map square
 *********************************************************/
 bool pillsDropSpiralFind(GameSim *sim, pillsDropSpiral *s, BYTE *mx, BYTE *my) {
+  BYTE x;
+  BYTE y;
+  BYTE pos;
+
   while (utilSpiralRing(&s->cursor) <= s->maxRing) {
-    if (pillsDropCanLand(sim, s->cursor.x, s->cursor.y)) {
-      *mx = (BYTE) s->cursor.x;
-      *my = (BYTE) s->cursor.y;
-      return TRUE;
+    if (s->pass == 0) {
+      if (pillsDropCanLand(sim, s->cursor.x, s->cursor.y)) {
+        *mx = (BYTE) s->cursor.x;
+        *my = (BYTE) s->cursor.y;
+        return TRUE;
+      }
+    } else if (s->cursor.x > MAP_MINE_EDGE_LEFT &&
+               s->cursor.x < MAP_MINE_EDGE_RIGHT &&
+               s->cursor.y > MAP_MINE_EDGE_TOP &&
+               s->cursor.y < MAP_MINE_EDGE_BOTTOM) {
+      x = (BYTE) s->cursor.x;
+      y = (BYTE) s->cursor.y;
+      if (pillsExistPos(&sim->pb, x, y) == FALSE &&
+          basesExistPos(&sim->bs, x, y) == FALSE &&
+          pillsDropTankOn(sim, s->dropper, x, y) == FALSE) {
+        /* Clear the square so pillsDropCanLand accepts it. */
+        pos = mapGetPos(&sim->mp, x, y);
+        if (pos == BUILDING || pos == HALFBUILDING) {
+          buildingRemovePos(&sim->blds, x, y);
+          mapSetPos(sim, &sim->mp, x, y, RUBBLE, TRUE, FALSE);
+        } else if (pos == BOAT) {
+          mapSetPos(sim, &sim->mp, x, y, RIVER, TRUE, FALSE);
+        }
+        *mx = x;
+        *my = y;
+        return TRUE;
+      }
     }
     utilSpiralStep(&s->cursor);
+    if (s->pass == 0 && utilSpiralRing(&s->cursor) > s->maxRing) {
+      /* No square will hold a pill as it is. Start again from the centre
+         and clear one. */
+      s->pass = 1;
+      utilSpiralStart(&s->cursor, s->cursor.cx, s->cursor.cy,
+                      UTIL_SPIRAL_NORTH);
+    }
   }
   return FALSE;
 }
@@ -1023,8 +1105,15 @@ BYTE pillsGetScreenHealth(GameSim *sim, pillboxes *value, BYTE xValue, BYTE yVal
   return returnValue;
 }
 
-/* Mac Bolo 0.99.7's quarter-wave table: trunc(128*sin(b*pi/128)),
- * clipped to 127. Used by both its lead vector and its integer aim search. */
+/* A quarter of a sine wave: 128 * sin(b * pi / 128) for b from 0 to 64,
+ * rounded down and no more than 127. The pill_aim_mac rule reads it for
+ * the tank's facing and for the tangents it aims by.
+ *
+ * The values were worked out from the positions of pillbox shells in
+ * several hundred recorded Mac Bolo games: a pillbox's position is known
+ * exactly, and these are the only values that give every shell's path.
+ * The last value is 127 and not 128 because a shell fired due north or
+ * due west moves 63 world units an update in those games, not 64. */
 static const BYTE pillMacSine[65] = {
   0, 3, 6, 9, 12, 15, 18, 21, 24, 28, 31, 34, 37, 40, 43, 46,
   48, 51, 54, 57, 60, 63, 65, 68, 71, 73, 76, 78, 81, 83, 85, 88,
@@ -1039,64 +1128,140 @@ static int pillsMacSin(int angle) {
   return (angle & 128) ? -value : value;
 }
 
-/* Arithmetic right shift, including floor rounding for negative products. */
-static int32_t pillsMacShift(int32_t value, int bits) {
-  int32_t divisor = (int32_t)1 << bits;
-  return value >= 0 ? value / divisor : -((-value + divisor - 1) / divisor);
+/* How many whole pixels (16 world units) a is past b, rounded down */
+static int32_t pillsMacPixelsPast(WORLD a, WORLD b) {
+  int32_t units = (int32_t)a - (int32_t)b;
+
+  return units >= 0 ? units / 16 : -((15 - units) / 16);
 }
 
-static int32_t pillsMacPixelDelta(WORLD a, WORLD b) {
-  int32_t delta = (uint16_t)(a - b);
-  if (delta >= 32768) delta -= 65536;
-  return pillsMacShift(delta, 4);
-}
-
+/* The distance between a pillbox and a tank in whole pixels, rounded down */
 static int pillsMacRange(WORLD px, WORLD py, WORLD tx, WORLD ty) {
-  int32_t dx = pillsMacPixelDelta(px, tx);
-  int32_t dy = pillsMacPixelDelta(py, ty);
-  int32_t squared = dx * dx + dy * dy;
-  /* Equivalent to Mac's floor(sqrt(256*i)) lookup table and its three
-   * buckets. The input to sqrt is an exact integer no larger than 65280. */
-  if (squared > 0xFFFFF) return 0x7FFF;
-  if (squared > 0xFFFF) return (int)sqrt((double)((squared >> 12) * 256)) * 4;
-  if (squared > 0xFFF) return (int)sqrt((double)((squared >> 8) * 256));
-  return (int)sqrt((double)((squared >> 4) * 256)) / 4;
+  int32_t dx = pillsMacPixelsPast(px, tx);
+  int32_t dy = pillsMacPixelsPast(py, ty);
+
+  return (int)sqrt((double)(dx * dx + dy * dy));
 }
 
+/*********************************************************
+*NAME:          pillsMacAim
+*PURPOSE:
+*  The direction a pillbox fires in, under the pill_aim_mac
+*  rule, at a point x east and y south of it.
+*
+*  A Mac Bolo pillbox fires in the 128 odd directions only
+*  (1, 3 ... 255 of the 256 in a turn). Fold the point into
+*  one quarter, so it is some way across (east or west) and
+*  some way along (north or south). The answer is then one
+*  of the 32 odd angles 1 to 63 from the north-south line,
+*  and between each two of them is an even angle, 2 to 62.
+*  The point is past an even angle when its across is more
+*  than its along times that angle's tangent, which
+*  pillMacSine gives as sine over cosine. The diagonal, 32,
+*  is judged on the two distances alone, and a point on it
+*  counts as past it.
+*
+*ARGUMENTS:
+*  x - How far east of the pillbox the point is
+*  y - How far south of the pillbox the point is
+*********************************************************/
 static TURNTYPE pillsMacAim(int32_t x, int32_t y) {
-  bool negativeX = x < 0, negativeY = y < 0;
-  int angle, delta;
-  if (negativeX) x = -x;
-  if (negativeY) y = -y;
-  angle = x < y ? 16 : 48;
-  for (delta = 8; delta != 0; delta >>= 1) {
-    if (y * pillMacSine[angle] - x * pillMacSine[64 - angle] < 0) {
-      angle += delta;
+  const bool west = x < 0;
+  const bool north = y < 0;
+  const int32_t across = west ? -x : x;
+  const int32_t along = north ? -y : y;
+  /* The point is past this many of the 31 even angles, somewhere from low
+   * to high. The diagonal is the 16th of them. */
+  int low = 0;
+  int high = 15;
+  int angle;
+  int bearing;
+
+  if (across >= along) {
+    low = 16;
+    high = 31;
+  }
+  /* Halve what is left until one count remains */
+  while (low < high) {
+    int middle = (low + high + 1) / 2;
+
+    angle = 2 * middle;
+    if (across * pillMacSine[64 - angle] > along * pillMacSine[angle]) {
+      low = middle;
     } else {
-      angle -= delta;
+      high = middle - 1;
     }
   }
-  if (!negativeY) angle = -128 - angle;
-  if (negativeX) angle = -angle;
-  return (TURNTYPE)(uint8_t)angle;
+
+  /* The odd angle just past the last even one, and from that the bearing:
+   * 0 is north, 64 east, 128 south and 192 west */
+  angle = 2 * low + 1;
+  bearing = north ? angle : 128 - angle;
+  if (west) {
+    bearing = 256 - bearing;
+  }
+  return (TURNTYPE)bearing;
 }
 
+/* value / 256, rounded up whatever its sign */
+static int32_t pillsMacCeil256(int32_t value) {
+  return value >= 0 ? (value + 255) / 256 : -((-value) / 256);
+}
+
+/*********************************************************
+*NAME:          pillsTargetTankMac
+*PURPOSE:
+*  The direction a pillbox fires in at a tank, under the
+*  pill_aim_mac rule.
+*
+*  The pillbox aims at a point ahead of the tank, along
+*  the way it faces. How far ahead is the lead: the tank's
+*  distance past one square (16 pixels), times its speed,
+*  a quarter of that. A tank that is stopped, or was
+*  obstructed on its last move, has no lead. A moving tank
+*  less than one square away is missed: the pillbox aims
+*  about 32 squares ahead of it along the way it faces,
+*  the pill massage. That comes from working the lead out
+*  as a 16-bit number with no sign, in which a distance
+*  short of one square reads as a very long one.
+*
+*  The lead was worked out from recorded Mac Bolo games.
+*
+*ARGUMENTS:
+*  px         - X position of the pillbox
+*  py         - Y position of the pillbox
+*  tx         - X position of the tank
+*  ty         - Y position of the tank
+*  heading    - The way the tank faces
+*  speed      - The tank's speed
+*  obstructed - Whether the tank's last move was blocked
+*********************************************************/
 static TURNTYPE pillsTargetTankMac(WORLD px, WORLD py, WORLD tx, WORLD ty,
                                   TURNTYPE heading, BYTE speed, bool obstructed) {
-  int distance = pillsMacRange(px, py, tx, ty);
-  /* Mac Bolo rounds a heading exactly halfway between two sectors up; this
-   * rounds it down, the way the tank drives. */
-  int direction = utilGet16Dir(heading);
-  /* WinBolo moves speed WU per 20 ms; Mac moves speed*127/256 WU
-   * per 40 ms. Its road speed 64 corresponds to WinBolo's 16. Preserve
-   * the Mac byte's range for scenarios with unusually high speeds. */
-  int macSpeed = speed > 63 ? 255 : speed * 4;
-  uint16_t lead = obstructed ? 0 : (uint16_t)((distance - 16) * macSpeed) >> 2;
-  /* Keep these signed and wider than WORLD: wrapping the distant aim point
-   * at a map edge would reverse shots. The original only wraps the lead. */
-  int32_t x = (int32_t)tx - pillsMacShift(lead * -pillsMacSin(direction), 8) - px;
-  int32_t y = (int32_t)ty - pillsMacShift(lead * pillsMacSin(direction + 64), 8) - py;
-  return pillsMacAim(x, y);
+  const int distance = pillsMacRange(px, py, tx, ty);
+  /* A heading exactly halfway between two of the sixteen directions counts
+   * as the lower one, the way the tank drives. */
+  const int direction = utilGet16Dir(heading);
+  /* The tank's facing, as its east and south parts out of 128 */
+  const int east = pillsMacSin(direction);
+  const int south = -pillsMacSin(direction + 64);
+  /* The lead takes four times the tank's speed, so road speed, 16, counts
+   * as 64. It stops at 255, so a scenario with unusually high speeds still
+   * gets a lead. */
+  const int macSpeed = speed > 63 ? 255 : speed * 4;
+  unsigned int lead = 0;
+  int32_t aimX;
+  int32_t aimY;
+
+  if (!obstructed) {
+    lead = ((unsigned int)((distance - 16) * macSpeed) & 0xFFFFu) / 4;
+  }
+  /* The point aimed at is worked out wider than a WORLD, so one past the
+   * edge of the map stays past it and does not come back on the far side,
+   * which would turn the shot round. */
+  aimX = (int32_t)tx + pillsMacCeil256((int32_t)lead * east);
+  aimY = (int32_t)ty + pillsMacCeil256((int32_t)lead * south);
+  return pillsMacAim(aimX - (int32_t)px, aimY - (int32_t)py);
 }
 
 /*********************************************************

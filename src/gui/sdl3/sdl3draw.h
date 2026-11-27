@@ -58,6 +58,7 @@ extern "C" {
  * side can work from the same rectangles. */
 #include "overview_hud_layout.h"
 #include "gfx_settings.h"    /* GfxTextureFilter */
+#include "sprite_atlas.h"    /* SpriteAtlas */
 
 /* Portable RECT when not compiling on Windows */
 #ifndef _WIN32
@@ -84,6 +85,11 @@ int sdl3DrawGetZoomFactor(void);
 SDL_Window *sdl3DrawGetWindow(void);
 SDL_Renderer *sdl3DrawGetRenderer(void);
 SDL_Texture *sdl3DrawGetTilesTexture(void);
+/* The main renderer's padded copy of the moving sprites, built off the
+   sheet sdl3DrawGetTilesTexture returns (sprite_atlas.h says why). Writes
+   its index to *atlas when atlas is not NULL. Both NULL when there is none,
+   and a caller then draws its sprites from the sheet. */
+SDL_Texture *sdl3DrawGetSpritesTexture(const SpriteAtlas **atlas);
 
 /* In-window Map Overview mode: the overview fills the game window and the
    classic 15x15 view and chrome are not drawn. */
@@ -504,6 +510,22 @@ bool sdl3DrawGetItemViewLabel(ClientSim *cs, char *out, size_t outLen);
 *  15x15 view's square, which the map is drawn beyond.
 *********************************************************/
 void sdl3DrawGetTabletViewport(int *x, int *y, int *w, int *h, int *zoom);
+
+/* The touch layout's left column, in the layout's units: the top left of the
+   tanks grid (the pills and bases grids follow below it) and the kills and
+   deaths panel under the three, whose width is zero when there is no room
+   for it. False with no view laid out. */
+bool sdl3DrawGetTabletStatusColumn(float *outX, float *outY, SDL_FRect *outKd);
+
+/* How wide the touch layout's frames are, in the layout's units: the bevels
+   round the game view, the status column and the right gutter's panel, and
+   the bar between two panels of a column. Zero with no view laid out. */
+int sdl3DrawGetTabletBevel(void);
+
+/* The background art (the active skin's, or data/background.bmp), loaded if
+   it is not yet; NULL when it cannot be. The touch layout cuts the classic
+   screen's small icons out of it. Render thread only. */
+SDL_Texture *sdl3DrawGetBackgroundTexture(void);
 
 /*********************************************************
 *NAME:          sdl3DrawSetDragOffset / GetDragOffset

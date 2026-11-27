@@ -38,9 +38,10 @@
 
 /* Defined in winbolonet_core.c; consulted before httpDestroy() so the
  * one-shot auth calls below don't tear down a shared HTTP handle that
- * a running server/client session owns. Without the guard, the next
- * wbn_api_post short-circuits to -1 on !httpStarted, which masquerades
- * as "no response from WinBolo.net" for things like server/balance. */
+ * a running server/client session owns. Without the guard the session's
+ * log upload and downloads, which do not start the module themselves,
+ * return -1 until something starts it again. (wbn_api_post and wbn_api_get
+ * start it on demand.) */
 extern bool winboloNetRunning;
 
 /*********************************************************

@@ -182,6 +182,11 @@ extern BYTE lv_screenGetYOffset(void);
  * both update this via lv_screenPanToTotalPixels. */
 extern void lv_screenGetSubOffset(int *x, int *y);
 
+/* The stock of the base the game shows for the tank in slot: the same base
+ * as the Tank panel's near base (screen.c). FALSE and zeros when none is
+ * near. */
+extern bool lv_screenNearBaseStock(BYTE slot, BYTE *shells, BYTE *mines, BYTE *armour);
+
 /* --- Module statics ----------------------------------------------- */
 
 /* Mirrors live-game openInGameFonts: 4 primary + 4 SlabK fallback. */
@@ -632,9 +637,9 @@ void lv_drawGameViewSetup(int zoomFactor) {
                      /* tiny  */ s_fonts[0],
                      /* msg   */ s_fonts[1],
                      /* kd    */ s_fonts[2],
-                     /* label */ s_fonts[3],
-                     /* fallbacks */
-                     s_fonts[4], s_fonts[5], s_fonts[6], s_fonts[7],
+                     /* fallbacks; the label face (s_fonts[3] and [7]) is
+                        the region names', not the status panel's */
+                     s_fonts[4], s_fonts[5], s_fonts[6],
                      s_tankBarsTex,
                      s_baseBarsTex);
 
@@ -1063,8 +1068,9 @@ void lv_drawGameViewFrame(void *screenView, void *mineView,
    * snapshot's player block carries the camera tank's stocks and a
    * log_TankSetStock record carries each change between snapshots. A
    * recording written before either was recorded reads as zero and the bars
-   * draw empty. Base bars stay empty — the camera tank's view doesn't
-   * spectate a specific base. */
+   * draw empty. The base bars show the base the Tank panel shows for the
+   * camera tank (lv_screenNearBaseStock): the nearest neutral or allied one
+   * in base_status_range, none while the tank is dead. */
   {
     BYTE shells = 0, mines = 0, armour = 0, trees = 0;
     if (lv_gameViewIsHudAlive(camera)) {
@@ -1074,9 +1080,11 @@ void lv_drawGameViewFrame(void *screenView, void *mineView,
     lv_gameViewGetTankFulls(&fullShells, &fullMines, &fullArmour, &fullTrees);
     sdl3DrawStatusTankBars(0, 0, shells, mines, armour, trees,
                            fullShells, fullMines, fullArmour, fullTrees);
+    BYTE baseShells = 0, baseMines = 0, baseArmour = 0;
+    lv_screenNearBaseStock(camera, &baseShells, &baseMines, &baseArmour);
     BYTE baseFullShells, baseFullMines, baseFullArmour;
     lv_gameViewGetBaseFulls(&baseFullShells, &baseFullMines, &baseFullArmour);
-    sdl3DrawStatusBaseBars(0, 0, /* shells */ 0, /* mines */ 0, /* armour */ 0,
+    sdl3DrawStatusBaseBars(0, 0, baseShells, baseMines, baseArmour,
                            baseFullShells, baseFullMines, baseFullArmour, FALSE);
   }
 

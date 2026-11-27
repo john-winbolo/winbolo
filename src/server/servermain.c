@@ -834,8 +834,9 @@ void printArgs() {
   fprintf(stderr, "-scriptuploads <P> - Player script handling: \"off\" refuses script uploads\n");
   fprintf(stderr, "                and does not run a script carried by a map a client\n");
   fprintf(stderr, "                uploaded (those maps play plainly, and each script turned\n");
-  fprintf(stderr, "                down is named), \"allow\" keeps them for the session\n");
-  fprintf(stderr, "                (default), \"persist\" keeps them for good.\n");
+  fprintf(stderr, "                down is named) (default), \"allow\" keeps them for the\n");
+  fprintf(stderr, "                session, \"persist\" keeps them for good. Scripts run on\n");
+  fprintf(stderr, "                this computer, so only turn this on for players you trust.\n");
   fprintf(stderr, "-scriptuploaddir <Dir> - Directory persisted scripts are written to.\n");
   fprintf(stderr, "                (default <map root>/Uploads/Scripts).\n");
   fprintf(stderr, "-scriptuploadmaxfiles <N> - Max stored script files in persist mode\n");
@@ -867,8 +868,15 @@ void printArgs() {
   fprintf(stderr, "                that bot's BRAIN_INIT Lua table: ';'-separated key=value\n");
   fprintf(stderr, "                pairs, a bare word being the value '1'. Ids not listed use\n");
   fprintf(stderr, "                -brain. E.g. -bot-init 0-3=brains/A/init.lua,4=brains/B/init.lua[llm]\n");
-  fprintf(stderr, "-botnames <path> - JSON file of bot name pools (themed name lists) for\n");
-  fprintf(stderr, "                naming auto-added bots. Defaults to data/bot_names.json.\n");
+  fprintf(stderr, "-botnames <path|labels> - Bot name pools (themed name lists) for naming\n");
+  fprintf(stderr, "                bots. A JSON file path, or one or more pool labels from\n");
+  fprintf(stderr, "                data/bot_names.json, comma separated (case and spaces\n");
+  fprintf(stderr, "                around labels do not matter): -botnames \"Classic AI\" or\n");
+  fprintf(stderr, "                -botnames \"Classic AI,Famous Painters\". Each team then\n");
+  fprintf(stderr, "                draws its pool only from those, for bots started with\n");
+  fprintf(stderr, "                -bots and for bots added in the lobby (a player can still\n");
+  fprintf(stderr, "                pick Numbered Bots by hand). -botnames list prints the\n");
+  fprintf(stderr, "                labels. Default: every pool in data/bot_names.json.\n");
   fprintf(stderr, "-allybots [N] - Place all -bots on the same team (1-16, default 1) so\n");
   fprintf(stderr, "                they start allied. Pick the same team in the lobby to join\n");
   fprintf(stderr, "                them, or a different one to fight against them.\n");
@@ -1003,6 +1011,15 @@ void printArgs() {
   fprintf(stderr, "                spec is comma-separated keys, e.g.\n");
   fprintf(stderr, "                -netimpair delay=75,jitter=30,loss=2,burst=2\n");
   fprintf(stderr, "                (delay/jitter in ms, loss in %%, burst = drops per loss event).\n");
+  fprintf(stderr, "                lanonly=1 impairs only loopback, private-LAN and\n");
+  fprintf(stderr, "                link-local peers (127/8, 10/8, 172.16/12, 192.168/16,\n");
+  fprintf(stderr, "                169.254/16); internet peers pass with no delay or loss.\n");
+#ifdef BOT_HOST_LINK_H
+  /* -bothosts comes with Bot Host support. BOT_HOST_LINK_H is the include
+   * guard of bot_host_link.h; srvImpairPeer in udp_server_recv.c uses the
+   * same test for the exemption this line describes. */
+  fprintf(stderr, "                A -bothosts address is never impaired.\n");
+#endif
   fprintf(stderr, "                Combine with -seed for a reproducible impaired run.\n");
 #endif
   fprintf(stderr, "-quiet        - No screen input or output (silent mode)\n");
@@ -2715,28 +2732,30 @@ int main(int argc, char **argv) {
       brainPath[MAX_PATH - 1] = '\0';
     }
 
-    /* Bot naming pools: a custom file via -botnames, otherwise the
-     * shipped data/bot_names.json. These supply the themed names for
-     * the auto-add loop below. Bot names travel on the wire as
-     * strings, so a server's choice of pool is always rendered
-     * correctly on every client regardless of which file the client
-     * has. Silent fallback to the built-in names on any failure. */
+    /* Bot naming pools: a custom file via -botnames, or pool labels
+     * from the shipped data/bot_names.json (-botnames "Classic AI,
+     * Famous Painters"), otherwise the whole shipped file. These supply
+     * the themed names for the auto-add loop below. Bot names travel on
+     * the wire as strings, so a server's choice of pool is always
+     * rendered correctly on every client regardless of which file the
+     * client has. A file that cannot be loaded falls back to the
+     * built-in names; lobbyBotPoolsLoadFromArg has the rules. */
     {
       int bnArg = findArg(argc, argv, "botnames");
+      const char *bnValue = NULL;
       LobbyBotPoolLoadStats poolStats;
-      bool poolsLoaded = false;
+      bool poolsLoaded;
       if (bnArg != ARG_NOT_FOUND) {
-        poolsLoaded =
-            lobbyBotPoolsLoadFromFile((char *)argv[bnArg], &poolStats);
-        if (!poolsLoaded) {
-          fprintf(stderr,
-                  "Warning: -botnames '%s' could not be loaded; "
-                  "using built-in bot names\n",
-                  (char *)argv[bnArg]);
+        if (argv[bnArg][0] != '-') {
+          bnValue = (const char *)argv[bnArg];
+        } else {
+          /* "-botnames -bots 4": the next word is a switch, not a value. */
+          fprintf(stderr, "Warning: -botnames given with no value; "
+                          "using every pool\n");
         }
-      } else {
-        poolsLoaded = lobbyBotPoolsLoadDefault(&poolStats);
       }
+      poolsLoaded = lobbyBotPoolsLoadFromArg(bnValue, NULL, stderr,
+                                             &poolStats);
       if (poolsLoaded) {
         fprintf(stderr, "Loaded %d bot name pool(s)\n", poolStats.poolsKept);
       }
@@ -3500,7 +3519,7 @@ int main(int argc, char **argv) {
           int botPool;
           if (team == 0) {
             if (noTeamPool < 0) {
-              noTeamPool = (int)bolo_rand_below((uint32_t)lobbyBotPoolCount());
+              noTeamPool = (int)bolo_rand_below((uint32_t)lobbyBotPoolDrawCount());
             }
             botPool = noTeamPool;
           } else {

@@ -219,20 +219,12 @@ bool utilIsTankHit(WORLD xTank, WORLD yTank, TURNTYPE tankAngle, WORLD x, WORLD 
    * signature for a future per-facing check that isn't wired up yet. */
   (void)tankAngle;
   (void)angle;
-#ifdef BOLO_LEGACY_SQUARE_COLLISION
-  (void)hitRadius;
-  return (abs(xTank - x) < 128 && abs(yTank - y) < 128);
-#else
-  {
-    int dx = (int)xTank - (int)x;
-    int dy = (int)yTank - (int)y;
-    /* Bounding-box pre-test bounds dx/dy before squaring; see tankIsTankHit.
-     * Never rejects a real hit, prevents int overflow for far-apart pairs
-     * (pillbox aim prediction steps a shell from far away toward the tank). */
-    const int r = (int) hitRadius;
-    return (abs(dx) < r && abs(dy) < r && (dx * dx + dy * dy) < r * r);
-  }
-#endif
+  /* The rule is hitRulesTankShellInZone (hit_rules.h), the circle by
+   * default and the square under BOLO_LEGACY_SQUARE_COLLISION. Its test on
+   * each axis bounds dx and dy before they are squared, so far-apart pairs
+   * (pillbox aim prediction steps a shell from far away toward the tank)
+   * cannot overflow. */
+  return hitRulesTankShellInZone((int)xTank - (int)x, (int)yTank - (int)y, (int) hitRadius);
 }
 
 /*********************************************************
@@ -640,11 +632,90 @@ int utilSpiralRing(const utilSpiralCursor *s) {
 }
 
 /*********************************************************
+*NAME:          utilSpiralPlace
+*PURPOSE:
+*  A ring of the spiral is the square outline ring squares
+*  out from the centre, 8 * ring squares in all. This
+*  numbers them clockwise from the ring's north-west
+*  corner, 0 to 8 * ring - 1, and answers the number of
+*  the square dx, dy from the centre.
+*
+*ARGUMENTS:
+*  ring - The ring, 1 or more
+*  dx   - The square's X less the centre's
+*  dy   - The square's Y less the centre's
+*********************************************************/
+static int utilSpiralPlace(int ring, int dx, int dy) {
+  if (dy == -ring) {
+    return dx + ring;               /* The top side, west to east */
+  }
+  if (dx == ring) {
+    return 2 * ring + (dy + ring);  /* The east side, north to south */
+  }
+  if (dy == ring) {
+    return 4 * ring + (ring - dx);  /* The bottom side, east to west */
+  }
+  return 6 * ring + (ring - dy);    /* The west side, south to north */
+}
+
+/*********************************************************
+*NAME:          utilSpiralSquare
+*PURPOSE:
+*  The other way round from utilSpiralPlace: the square
+*  that has a number on a ring.
+*
+*ARGUMENTS:
+*  ring  - The ring, 1 or more
+*  place - The square's number, 0 to 8 * ring - 1
+*  dx    - Receives the square's X less the centre's
+*  dy    - Receives the square's Y less the centre's
+*********************************************************/
+static void utilSpiralSquare(int ring, int place, int *dx, int *dy) {
+  int side = place / (2 * ring);   /* 0 top, 1 east, 2 bottom, 3 west */
+  int along = place % (2 * ring);  /* Squares on from the side's first corner */
+
+  switch (side) {
+  case 0:
+    *dx = along - ring;
+    *dy = -ring;
+    break;
+  case 1:
+    *dx = ring;
+    *dy = along - ring;
+    break;
+  case 2:
+    *dx = ring - along;
+    *dy = ring;
+    break;
+  default:
+    *dx = -ring;
+    *dy = ring - along;
+    break;
+  }
+}
+
+/*********************************************************
+*NAME:          utilSpiralFirst
+*PURPOSE:
+*  The number (utilSpiralPlace) of the square a ring
+*  begins on: its north-west corner, or the square due
+*  north of the centre, which is ring squares east of that
+*  corner.
+*
+*ARGUMENTS:
+*  startAt - Where each ring begins
+*  ring    - The ring, 1 or more
+*********************************************************/
+static int utilSpiralFirst(utilSpiralStartAt startAt, int ring) {
+  return startAt == UTIL_SPIRAL_NORTH_WEST ? 0 : ring;
+}
+
+/*********************************************************
 *NAME:          utilSpiralStep
 *PURPOSE:
 *  Moves the cursor to the next square of the spiral.
 *
-*  UTIL_SPIRAL_NORTH is Mac Bolo's gen_scatter in int:
+*  UTIL_SPIRAL_NORTH is the order Mac Bolo searches in:
 *  from the centre to due north of it, along a ring
 *  clockwise, and from the square just west of due north
 *  round to due north of the next ring.
@@ -655,51 +726,37 @@ int utilSpiralRing(const utilSpiralCursor *s) {
 *  just south of that corner, and from it the cursor steps
 *  out to the north-west corner of the next ring.
 *
+*  Both are one walk. The squares of a ring are numbered
+*  clockwise (utilSpiralPlace), a step goes to the next
+*  number, and the ring is done when that comes back round
+*  to the square it began on. The two orders differ only
+*  in which square that is.
+*
 *ARGUMENTS:
 *  s - The walk
 *********************************************************/
 void utilSpiralStep(utilSpiralCursor *s) {
-  int dx = s->x - s->cx;
-  int dy = s->y - s->cy;
   int ring = utilSpiralRing(s);
+  int place;
+  int dx;
+  int dy;
 
-  if (s->startAt == UTIL_SPIRAL_NORTH_WEST) {
-    if (ring == 0) {
-      s->x--;
-      s->y--;
-    } else if (dx == -ring && dy == -ring + 1) {
-      s->x--;       /* The last square: out to the next ring's corner */
-      s->y -= 2;
-    } else if (dy == -ring && dx < ring) {
-      s->x++;       /* East along the top */
-    } else if (dx == ring && dy < ring) {
-      s->y++;       /* South down the east side */
-    } else if (dy == ring && dx > -ring) {
-      s->x--;       /* West along the bottom */
-    } else {
-      s->y--;       /* North up the west side */
+  if (ring > 0) {
+    place = (utilSpiralPlace(ring, s->x - s->cx, s->y - s->cy) + 1) % (8 * ring);
+    if (place != utilSpiralFirst(s->startAt, ring)) {
+      utilSpiralSquare(ring, place, &dx, &dy);
+      s->x = s->cx + dx;
+      s->y = s->cy + dy;
+      return;
     }
-    return;
   }
 
-  if (ring == 0) {
-    s->y--;
-  } else if (dy == -ring && dx < 0) {
-    /* East along the top, short of due north: the last stretch of a ring.
-       Reaching due north steps out to the start of the next one. */
-    s->x++;
-    if (s->x == s->cx) {
-      s->y--;
-    }
-  } else if (dx == -ring) {
-    s->y--;       /* North up the west side */
-  } else if (dy == ring) {
-    s->x--;       /* West along the bottom */
-  } else if (dx == ring) {
-    s->y++;       /* South down the east side */
-  } else {
-    s->x++;       /* East along the top, from due north */
-  }
+  /* On the centre, or on the last square of a ring: out to where the next
+     ring begins */
+  ring++;
+  utilSpiralSquare(ring, utilSpiralFirst(s->startAt, ring), &dx, &dy);
+  s->x = s->cx + dx;
+  s->y = s->cy + dy;
 }
 
 uint8_t bolo_detect_client_type(void) {

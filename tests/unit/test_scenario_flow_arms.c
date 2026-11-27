@@ -82,9 +82,13 @@ extern uint16_t wbnStubWinEventMask;
  * the resolve left it alone. */
 #define FA_WIN_LINE "*** The scenario called the round. ***"
 
-/* Five minutes at 50 ticks a second, and a minute on top of it. */
-#define FA_ABS_TICKS 15000
-#define FA_REL_DELTA 3000
+/* Five minutes in game.tick()'s units (100 a second), the unit the op
+ * carries, and a minute on top of it. */
+#define FA_ABS_TICKS 30000
+#define FA_REL_DELTA 6000
+/* The round's length those come to: gameLength is in frames, 50 a second, so
+ * the op's half-steps are halved, an odd count rounding up. */
+#define FA_FRAMES(t) (((t) + 1) / 2)
 
 /* ── Fixtures ─────────────────────────────────────────────────────────── */
 
@@ -317,36 +321,50 @@ int run_scenario_flow_set_game_time(void) {
     /* Absolute: the length becomes the number the op carries. */
     UT_ASSERT_MSG(faSetGameTime(sim, FA_ABS_TICKS, false) == SCN_OP_OK,
                   "an absolute length inside the range must be accepted");
-    UT_ASSERT_MSG(sim->gameLength == FA_ABS_TICKS,
-                  "the round's length is %d, expected %d",
-                  (int)sim->gameLength, FA_ABS_TICKS);
+    UT_ASSERT_MSG(sim->gameLength == FA_FRAMES(FA_ABS_TICKS),
+                  "the round's length is %d frames, expected %d",
+                  (int)sim->gameLength, FA_FRAMES(FA_ABS_TICKS));
     UT_ASSERT_MSG(cap.count == 1,
                   "an absolute set published %d settings event(s), expected 1",
                   cap.count);
-    UT_ASSERT_MSG(cap.lastLimit == FA_ABS_TICKS,
+    UT_ASSERT_MSG(cap.lastLimit == FA_FRAMES(FA_ABS_TICKS),
                   "the settings event carries lobbyTimeLimit %d, expected %d",
-                  (int)cap.lastLimit, FA_ABS_TICKS);
+                  (int)cap.lastLimit, FA_FRAMES(FA_ABS_TICKS));
 
     /* Relative: the delta lands on the length that is there now. */
     UT_ASSERT_MSG(faSetGameTime(sim, FA_REL_DELTA, true) == SCN_OP_OK,
                   "a delta that keeps the length inside the range must be "
                   "accepted");
-    UT_ASSERT_MSG(sim->gameLength == FA_ABS_TICKS + FA_REL_DELTA,
-                  "the round's length is %d, expected %d",
-                  (int)sim->gameLength, FA_ABS_TICKS + FA_REL_DELTA);
+    UT_ASSERT_MSG(sim->gameLength == FA_FRAMES(FA_ABS_TICKS + FA_REL_DELTA),
+                  "the round's length is %d frames, expected %d",
+                  (int)sim->gameLength, FA_FRAMES(FA_ABS_TICKS + FA_REL_DELTA));
     UT_ASSERT_MSG(cap.count == 2,
                   "a relative set published %d settings event(s) in total, "
                   "expected 2", cap.count);
-    UT_ASSERT_MSG(cap.lastLimit == FA_ABS_TICKS + FA_REL_DELTA,
+    UT_ASSERT_MSG(cap.lastLimit == FA_FRAMES(FA_ABS_TICKS + FA_REL_DELTA),
                   "the settings event carries lobbyTimeLimit %d, expected %d",
-                  (int)cap.lastLimit, FA_ABS_TICKS + FA_REL_DELTA);
+                  (int)cap.lastLimit, FA_FRAMES(FA_ABS_TICKS + FA_REL_DELTA));
 
     /* A negative delta shortens it. */
     UT_ASSERT_MSG(faSetGameTime(sim, -FA_REL_DELTA, true) == SCN_OP_OK,
                   "a delta that shortens the round must be accepted");
-    UT_ASSERT_MSG(sim->gameLength == FA_ABS_TICKS,
-                  "the round's length is %d, expected %d",
-                  (int)sim->gameLength, FA_ABS_TICKS);
+    UT_ASSERT_MSG(sim->gameLength == FA_FRAMES(FA_ABS_TICKS),
+                  "the round's length is %d frames, expected %d",
+                  (int)sim->gameLength, FA_FRAMES(FA_ABS_TICKS));
+
+    /* An odd count of half-steps rounds up to the next frame, and the
+       smallest length there is, one half-step, is still a round of one
+       frame rather than of none. */
+    UT_ASSERT_MSG(faSetGameTime(sim, 101, false) == SCN_OP_OK,
+                  "an odd length must be accepted");
+    UT_ASSERT_MSG(sim->gameLength == 51,
+                  "101 half-steps came to %d frames, expected 51",
+                  (int)sim->gameLength);
+    UT_ASSERT_MSG(faSetGameTime(sim, 1, false) == SCN_OP_OK,
+                  "a length of one half-step must be accepted");
+    UT_ASSERT_MSG(sim->gameLength == 1,
+                  "one half-step came to %d frames, expected 1",
+                  (int)sim->gameLength);
 
     serverSimDestroy(sim);
     return 0;
@@ -392,8 +410,24 @@ int run_scenario_flow_set_game_time_refusals(void) {
 
     /* Past the end of the field, reached by a delta rather than by a number
        the op could not have carried. */
+    /* The op's int32 of half-steps halves into 2^30 frames, so the end of
+       the frame field is reached by deltas. */
     UT_ASSERT_MSG(faSetGameTime(sim, INT32_MAX, false) == SCN_OP_OK,
-                  "the longest length the field holds must be accepted");
+                  "the longest length the op carries must be accepted");
+    UT_ASSERT_MSG(sim->gameLength == 1073741824,
+                  "INT32_MAX half-steps came to %d frames, expected 2^30",
+                  (int)sim->gameLength);
+    UT_ASSERT_MSG(faSetGameTime(sim, INT32_MAX, true) == SCN_OP_RANGE,
+                  "a delta one frame past the end of the field must be "
+                  "refused rather than wrapping into a short round");
+    UT_ASSERT_MSG(sim->gameLength == 1073741824,
+                  "the refused delta wrote a length of %d",
+                  (int)sim->gameLength);
+    UT_ASSERT_MSG(faSetGameTime(sim, INT32_MAX - 2, true) == SCN_OP_OK,
+                  "a delta to the last frame the field holds must be accepted");
+    UT_ASSERT_MSG(sim->gameLength == INT32_MAX,
+                  "the round's length is %d frames, expected INT32_MAX",
+                  (int)sim->gameLength);
     UT_ASSERT_MSG(faSetGameTime(sim, 1, true) == SCN_OP_RANGE,
                   "a delta past the end of the field must be refused rather "
                   "than wrapping into a short round");
@@ -592,9 +626,9 @@ int run_scenario_flow_arm_records(void) {
                          ((uint32_t)hits.payload[last][1] << 16) |
                          ((uint32_t)hits.payload[last][2] << 8)  |
                          (uint32_t)hits.payload[last][3]);
-    UT_ASSERT_MSG(recorded == FA_ABS_TICKS,
-                  "the length change recorded %d ticks, expected %d",
-                  (int)recorded, FA_ABS_TICKS);
+    UT_ASSERT_MSG(recorded == FA_FRAMES(FA_ABS_TICKS),
+                  "the length change recorded %d frames, expected %d",
+                  (int)recorded, FA_FRAMES(FA_ABS_TICKS));
 
     replayHarnessStop(&h);
     return 0;

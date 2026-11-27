@@ -45,6 +45,7 @@
 #include "../../common/md5.h"       /* the BMAPBOLO map hash WinBolo.net matches against */
 #include "../../common/wb_log.h"    /* WB_LOG_INFO — the lobby-reset trace */
 #include "log.h"                    /* logAddEvent, logIsRecording — the overrun record */
+#include "playersrejoin.h"          /* playersRejoinCreate — the rejoin records end with the round */
 #include "overrun_record.h"         /* OverrunRecord — that record's payload */
 #include "bolo_addr.h"              /* BOLO_ADDR_STR_LEN — the client address text */
 
@@ -1342,6 +1343,7 @@ void serverSimResetGameWorld(ServerSim *sim) {
        bound and would write nothing for as long as the lobby lasted. */
     sim->eventCount = 0;
     sim->mapEventCount = 0;
+    sim->pendingMapEventCount = 0;
     /* And any fill a scenario still had squares owing on. Its rectangle was
        aimed at the map that has just been replaced above, so carrying it on
        would paint the reloaded one. The roster changes it had queued name
@@ -1438,6 +1440,14 @@ void serverSimResetGameWorld(ServerSim *sim) {
     /* A request belongs to the round it was made in. This runs at round
      * start and at the return to the lobby. */
     memset(sim->allianceAskedBy, 0, sizeof(sim->allianceAskedBy));
+    /* So does every rejoin record. Its team, pill and base numbers name
+     * this round's teams, pills and bases, which mean other things in the
+     * next round. The records count down only while a round runs, so
+     * without this one could be used in a later round. */
+    playersRejoinCreate();
+    memset(sim->rejoinTeam, 0, sizeof(sim->rejoinTeam));
+    memset(sim->rejoinAwaitSignIn, 0, sizeof(sim->rejoinAwaitSignIn));
+    memset(sim->rejoinJoinTeam, 0, sizeof(sim->rejoinJoinTeam));
 
     /* 11. Reset player connection state and per-slot round/world state.
      * Connection identity (name, country, clientType, clientFlags, bot/WBN
@@ -1730,6 +1740,7 @@ void serverSimStartGameInPlace(ServerSim *sim) {
      * snapshot's own arrays, not these queues, so flushing loses nothing. */
     sim->eventCount = 0;
     sim->mapEventCount = 0;
+    sim->pendingMapEventCount = 0;
     /* A fill queued by a lobby hook is lobby work too, and this path does not
        reload the map, so nothing else would drop it: without this the squares
        it still owes land partway into the round that is starting. The

@@ -130,6 +130,16 @@ endif()
 
 set_target_properties(bolo_static PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
+# glibc declares struct in6_pktinfo only under _GNU_SOURCE, which has to be
+# set before the first system header. The define at the top of
+# transport_udp_common.c comes too late in a LuaJIT build: the forced
+# -include of luajit_compat.h has already pulled in <stdio.h>. The root
+# CMakeLists.txt sets the same for the unit tests' own copy of the file.
+if(UNIX AND NOT APPLE AND NOT EMSCRIPTEN)
+    set_source_files_properties(transport_udp_common.c PROPERTIES
+        COMPILE_DEFINITIONS _GNU_SOURCE)
+endif()
+
 # Map Maker must make the same map from the same seed on every compiler
 # and CPU. Stop GCC and Clang from fusing a multiply and an add into one
 # step there. MSVC from Visual Studio 2022 (MSVC 19.30, _MSC_VER 1930)

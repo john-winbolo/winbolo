@@ -98,6 +98,11 @@ bool winbolonetApplyVerifyResult(int status, const char *response,
   return FALSE;
 }
 
+/* The gym has no WinBolo.net, so there is no slot key to store. */
+void winbolonetSetPlayerKey(BYTE playerNum, const char *playerKey) {
+  (void)playerNum; (void)playerKey;
+}
+
 /* A web slot's join_code takes the same route: queued for the worker and
    placed when the reply lands. The gym has no WinBolo.net and no web
    clients, so nothing is queued and no result ever arrives. */

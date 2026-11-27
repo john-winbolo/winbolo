@@ -52,6 +52,7 @@
 #include "cursor.h"
 #include "mapview.h"
 #include "mapview_overlay.h"
+#include "item_labels.h"     /* mapViewItemLabelNumber — no number when the lookup finds none */
 #include "newswire_slide.h"
 #include "overview_hud_layout.h"
 #include "overview_view.h"
@@ -360,13 +361,6 @@ static void micIndicatorDraw(float x, float y, int px,
 }
 #endif
 
-/* The classic view's pill and base numbers, kept between frames. On this
-   window's renderer, so it is this file's rather than the overview's — that
-   one may be drawing on the pop-out's. Emptied in sdl3DrawCleanup ahead of
-   the renderer, and by the draw itself when a zoom change reopens the
-   faces. */
-static ItemLabelCache     gItemLabelCache;
-
 /* The HUD geometry the last frame blitted, kept so the ImGui side hit-tests
    the panels on exactly the rectangles that were drawn. Only meaningful while
    the flag is set: a frame that drew no HUD clears it. */
@@ -472,13 +466,11 @@ static DWORD g_dwFrameTotal = 0;
 static TTF_Font    *gFontMsg  = NULL;
 static TTF_Font    *gFontKD   = NULL;
 static TTF_Font    *gFontTiny  = NULL;  /* tiny font for pill/base status panel labels */
-static TTF_Font    *gFontLabel = NULL;  /* larger font for pill/base labels in main view */
 /* SarasaMonoK chained via TTF_AddFallbackFont so hangul renders when
  * the primary is J/SC/TC. Owned here; closed alongside the primaries. */
 static TTF_Font    *gFallbackFontMsg   = NULL;
 static TTF_Font    *gFallbackFontKD    = NULL;
 static TTF_Font    *gFallbackFontTiny  = NULL;
-static TTF_Font    *gFallbackFontLabel = NULL;
 
 /* Last scroll offsets used when rendering tank labels (set each frame).
    Tank-label cache (gLabelTex/gLabelStr) moved to sdl3draw_status.c. */
@@ -580,6 +572,104 @@ static void tabletViewportUpdate(void) {
   gTabletVpW = gamePixW;
   gTabletVpH = gamePixH;
   gTabletVpZoom = zoom;
+}
+
+/* The background art's panel bevels are 4 or 5 of its pixels wide. The touch
+   layout draws its frames 3 wide at the view's zoom: the widest that leaves
+   the status column a strip of gray either side on a phone. */
+#define TABLET_BEVEL_SRC 3
+
+/* The kills and deaths icons in the background art, and the row the touch
+   layout's panel draws them in: both 9x9, the numbers' 13 px font is 15 rows
+   high and starts 2 rows above its icon, as on the classic screen. The panel
+   is as wide as a status grid (90), so the columns below are out of 90. */
+#define TABLET_KD_ICON_SRC_X     447
+#define TABLET_KD_KILLS_SRC_Y     87
+#define TABLET_KD_DEATHS_SRC_Y   102
+#define TABLET_KD_ICON_SIZE        9
+#define TABLET_KD_ROW_H           15
+#define TABLET_KD_ICON_DROP        2
+#define TABLET_KD_KILLS_ICON_X    10
+#define TABLET_KD_KILLS_NUM_X     25
+#define TABLET_KD_DEATHS_ICON_X   51
+#define TABLET_KD_DEATHS_NUM_X    66
+
+/* Where the touch layout's left column goes: the top left of the tanks grid,
+   with the pills and bases grids below it a grid and a bevel apart, and the
+   kills and deaths panel under those, down to a bevel above the screen's
+   bottom edge. The column is centred between the left safe inset and the
+   frame round the game view, so the gray either side of it is one even
+   border; it never starts less than a bevel in from the safe inset. kd's width
+   is zero when the screen has no room below the bases grid for the numbers'
+   row. Every draw site and the frames in sdl3imgui_tablet.cpp read this, so
+   they cannot disagree. False with no view laid out. */
+static void sdl3GetSafeAreaInsets(float *outLeft, float *outTop,
+                                  float *outRight, float *outBottom);
+
+/* How wide the touch layout's frames are, in the layout's units: the bevel
+   round the game view, round the status column and round the right gutter's
+   panel, and the bar between two panels of a column. A whole number, since
+   the status grids' texture is laid out with it. Never wider than the
+   controls' padding in the right gutter (3% of the gutter, at least 4,
+   tabletLayoutConfigure), which is all the room the panel's bevel has
+   between the view and the first control. Zero with no view laid out. */
+int sdl3DrawGetTabletBevel(void) {
+  if (!gRenderer || gTabletVpZoom <= 0) return 0;
+  int scrW = 0, scrH = 0;
+  SDL_RendererLogicalPresentation logMode;
+  SDL_GetRenderLogicalPresentation(gRenderer, &scrW, &scrH, &logMode);
+  if (scrW <= 0 || scrH <= 0) {
+    SDL_GetCurrentRenderOutputSize(gRenderer, &scrW, &scrH);
+  }
+  float safeR = 0;
+  sdl3GetSafeAreaInsets(NULL, NULL, &safeR, NULL);
+  float gutterW = (float)scrW - safeR - (float)(gTabletVpX + gTabletVpW);
+  float pad = gutterW * 0.03f;
+  if (pad < 4.0f) pad = 4.0f;
+  int bevel = TABLET_BEVEL_SRC * gTabletVpZoom;
+  if (bevel > (int)pad) bevel = (int)pad;
+  return bevel;
+}
+
+bool sdl3DrawGetTabletStatusColumn(float *outX, float *outY, SDL_FRect *outKd) {
+  if (outX) *outX = 0.0f;
+  if (outY) *outY = 0.0f;
+  if (outKd) SDL_zerop(outKd);
+  if (!gRenderer || gTabletVpZoom <= 0) return false;
+
+  int scrW = 0, scrH = 0;
+  SDL_RendererLogicalPresentation logMode;
+  SDL_GetRenderLogicalPresentation(gRenderer, &scrW, &scrH, &logMode);
+  if (scrW <= 0 || scrH <= 0) {
+    SDL_GetCurrentRenderOutputSize(gRenderer, &scrW, &scrH);
+  }
+  float safeL = 0, safeT = 0;
+  sdl3GetSafeAreaInsets(&safeL, &safeT, NULL, NULL);
+
+  /* The view's frame is one bevel wide, outside the view
+     (sdl3DrawMainScreen). */
+  float bevel = (float)sdl3DrawGetTabletBevel();
+  float frameLeft = (float)gTabletVpX - bevel;
+
+  float gridW = (float)(gTabletVpZoom * STATUS_TANKS_WIDTH);
+  float gridH = (float)(gTabletVpZoom * STATUS_TANKS_HEIGHT);
+  float x = SDL_floorf(safeL + (frameLeft - safeL - gridW) * 0.5f);
+  if (x < safeL + bevel) x = safeL + bevel;
+  float y = safeT + bevel;
+
+  if (outX) *outX = x;
+  if (outY) *outY = y;
+  if (outKd) {
+    float top = y + 3.0f * (gridH + bevel);
+    float h   = (float)scrH - bevel - top;
+    if (h >= (float)(gTabletVpZoom * (TABLET_KD_ROW_H + 4))) {
+      outKd->x = x;
+      outKd->y = top;
+      outKd->w = gridW;
+      outKd->h = h;
+    }
+  }
+  return true;
 }
 
 /* Drag scroll pixel offset — applied on top of engine edgeX/edgeY
@@ -718,26 +808,8 @@ static void sdl3DrawFitSafeArea(float menuBarHeight, float aspect,
 /* SDL3_SCREEN_W / SDL3_SCREEN_H are defined in sdl3draw.h */
 
 
-/*********************************************************
-*NAME:          sdl3RenderText
-*PURPOSE:
-*  Renders a text string with the game font directly onto
-*  the current render target at (x, y) in screen pixels.
-*  No-op if font is NULL or text is NULL/empty.
-*********************************************************/
-static void sdl3RenderText(TTF_Font *font, const char *text, SDL_Color fg, float x, float y) {
-  if (!font || !gRenderer || !text || text[0] == '\0') return;
-
-  SDL_Surface *sSurf = TTF_RenderText_Blended(font, text, 0, fg);
-  if (!sSurf) return;
-  SDL_Texture *tTex = SDL_CreateTextureFromSurface(gRenderer, sSurf);
-  if (tTex) {
-    SDL_FRect d = { x, y, (float)sSurf->w, (float)sSurf->h };
-    SDL_RenderTexture(gRenderer, tTex, NULL, &d);
-    SDL_DestroyTexture(tTex);
-  }
-  SDL_DestroySurface(sSurf);
-}
+/* Text goes through sdl3DrawStatusRenderText (sdl3draw_status.c), which keeps
+   each string's texture rather than making one every frame. */
 
 /* sdl3UpdateTextCache moved to sdl3draw_status.c (private helper for
    sdl3RenderCachedText). */
@@ -872,10 +944,9 @@ void sdl3DrawReloadTiles(void) {
 }
 
 /* Drops the cached background (for a skin change) so the next frame reads it
- * again.  Destroys and clears only: the three draw sites call
- * sdl3LoadBackground() themselves and each is behind !tabletMode, so leaving
- * the load to them keeps tablet mode from building a texture it never draws,
- * and makes no assumption about which thread the caller is on or where in the
+ * again.  Destroys and clears only: the draw sites call sdl3LoadBackground()
+ * themselves (the touch layout only for its kills and deaths icons), so
+ * leaving the load to them makes no assumption about which thread the caller is on or where in the
  * frame it calls from. */
 void sdl3DrawReloadBackground(void) {
   if (gBackgroundTex) {
@@ -937,6 +1008,52 @@ static bool sdl3LoadBackground(void) {
   }
   SDL_SetTextureScaleMode(gBackgroundTex, SDL_SCALEMODE_NEAREST);
   return TRUE;
+}
+
+SDL_Texture *sdl3DrawGetBackgroundTexture(void) {
+  return sdl3LoadBackground() ? gBackgroundTex : NULL;
+}
+
+/* The touch layout's kills and deaths panel, under the bases grid: black, the
+   kills icon and number in its left half and the deaths pair in its right.
+   The icons are the classic screen's, cut from the background art, so a skin
+   that redraws them is followed here too; this is the one thing the touch
+   layout loads the background for. The row is centred in the part of the
+   panel above the bottom safe inset (the home indicator), or in the whole
+   panel when that part is too short for it. The frame round the panel is
+   drawn with the grids' frames (renderTabletBackground). */
+static void tabletKillsDeathsDraw(void) {
+  SDL_FRect kd;
+  if (!sdl3DrawGetTabletStatusColumn(NULL, NULL, &kd) || kd.w <= 0.0f) return;
+
+  float zf   = (float)gTabletVpZoom;
+  float rowH = zf * (float)TABLET_KD_ROW_H;
+  float safeB = 0;
+  sdl3GetSafeAreaInsets(NULL, NULL, NULL, &safeB);
+  float clearH = kd.h + (float)sdl3DrawGetTabletBevel() - safeB;
+  if (clearH < rowH) clearH = kd.h;
+  float rowY = SDL_floorf(kd.y + (clearH - rowH) * 0.5f);
+
+  SDL_SetRenderDrawBlendMode(gRenderer, SDL_BLENDMODE_NONE);
+  SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
+  SDL_RenderFillRect(gRenderer, &kd);
+
+  if (sdl3LoadBackground()) {
+    float iconY = rowY + zf * (float)TABLET_KD_ICON_DROP;
+    float size  = zf * (float)TABLET_KD_ICON_SIZE;
+    SDL_FRect killsSrc  = { TABLET_KD_ICON_SRC_X, TABLET_KD_KILLS_SRC_Y,
+                            TABLET_KD_ICON_SIZE, TABLET_KD_ICON_SIZE };
+    SDL_FRect deathsSrc = { TABLET_KD_ICON_SRC_X, TABLET_KD_DEATHS_SRC_Y,
+                            TABLET_KD_ICON_SIZE, TABLET_KD_ICON_SIZE };
+    SDL_FRect killsDst  = { kd.x + zf * (float)TABLET_KD_KILLS_ICON_X, iconY,
+                            size, size };
+    SDL_FRect deathsDst = { kd.x + zf * (float)TABLET_KD_DEATHS_ICON_X, iconY,
+                            size, size };
+    SDL_RenderTexture(gRenderer, gBackgroundTex, &killsSrc, &killsDst);
+    SDL_RenderTexture(gRenderer, gBackgroundTex, &deathsSrc, &deathsDst);
+  }
+  sdl3DrawKillsDeathsAt(kd.x + zf * (float)TABLET_KD_KILLS_NUM_X, rowY,
+                        kd.x + zf * (float)TABLET_KD_DEATHS_NUM_X, rowY);
 }
 
 /*********************************************************
@@ -1102,6 +1219,11 @@ SDL_Texture *sdl3DrawGetTilesTexture(void) {
   return gTilesTex;
 }
 
+SDL_Texture *sdl3DrawGetSpritesTexture(const SpriteAtlas **atlas) {
+  if (atlas) *atlas = gSpriteAtlas;
+  return gSpritesTex;
+}
+
 /* The single place the mode is turned on and off, so the pointer the view may
    have switched to the game crosshair is handed back on every way out — the
    menu toggle, the end of a game and teardown all come through here. */
@@ -1208,7 +1330,12 @@ SDL_Texture *sdl3DrawGetManStatusTexture(bool *ready) {
 }
 
 bool sdl3DrawGetManStatusState(bool *isDead, TURNTYPE *angle) {
-  if (!gManStatusReady) return false;
+  /* Whether there is a status to show, not whether the classic screen's
+     texture of it has been drawn: the touch layout draws the shape itself
+     from this state and never builds that texture (sdl3RenderStatusPanels
+     returns early there), so a test on the texture left its indicator
+     blank. */
+  if (!gManStatusValid) return false;
   if (isDead) *isDead = gManStatusDead;
   if (angle)  *angle  = gManStatusAngle;
   return true;
@@ -1786,7 +1913,6 @@ static void openInGameFonts(void) {
   gFontMsg   = TTF_OpenFont(sarasaPath, 13 * gZoomFactor);
   gFontKD    = TTF_OpenFont(sarasaPath, 13 * gZoomFactor);
   gFontTiny  = TTF_OpenFont(sarasaPath,  8 * gZoomFactor);
-  gFontLabel = TTF_OpenFont(sarasaPath, 10 * gZoomFactor);
   if (!gFontMsg) {
     WB_LOG_ERROR(WB_LOG_CAT_ASSET, "openInGameFonts: failed to open primary %s — text will not render",
             sarasaPath);
@@ -1797,11 +1923,9 @@ static void openInGameFonts(void) {
     gFallbackFontMsg   = TTF_OpenFont(sarasaKPath, 13 * gZoomFactor);
     gFallbackFontKD    = TTF_OpenFont(sarasaKPath, 13 * gZoomFactor);
     gFallbackFontTiny  = TTF_OpenFont(sarasaKPath,  8 * gZoomFactor);
-    gFallbackFontLabel = TTF_OpenFont(sarasaKPath, 10 * gZoomFactor);
     if (gFontMsg   && gFallbackFontMsg)   TTF_AddFallbackFont(gFontMsg,   gFallbackFontMsg);
     if (gFontKD    && gFallbackFontKD)    TTF_AddFallbackFont(gFontKD,    gFallbackFontKD);
     if (gFontTiny  && gFallbackFontTiny)  TTF_AddFallbackFont(gFontTiny,  gFallbackFontTiny);
-    if (gFontLabel && gFallbackFontLabel) TTF_AddFallbackFont(gFontLabel, gFallbackFontLabel);
     if (!gFallbackFontMsg) {
       WB_LOG_WARN(WB_LOG_CAT_ASSET, "openInGameFonts: failed to open SlabK fallback %s — hangul will tofu",
               sarasaKPath);
@@ -1814,9 +1938,9 @@ static void openInGameFonts(void) {
   /* Push the new font handles into sdl3draw_status's private copies
      (covers both the initial sdl3DrawSetup path and the
      sdl3DrawAdaptRenderTarget reload path). */
-  sdl3DrawStatusSetFonts(gFontTiny, gFontMsg, gFontKD, gFontLabel,
+  sdl3DrawStatusSetFonts(gFontTiny, gFontMsg, gFontKD,
                          gFallbackFontTiny, gFallbackFontMsg,
-                         gFallbackFontKD, gFallbackFontLabel);
+                         gFallbackFontKD);
 }
 
 /* The touch layout's newswire: the face it is drawn in, opened at the size
@@ -1895,9 +2019,14 @@ static void tabletNewswireDraw(void) {
   TTF_Font *font = tabletNewswireFont(gTabletNewswirePx);
   float slide = sdl3DrawNewswireSlideStep();
   if (slide >= 1.0f) return;
-  sdl3DrawNewswireStrip(font, gTabletNewswireX, gTabletNewswireY,
+  /* Over the game view the strip has a bar along its top, a bevel wide, and
+     starts that much higher so the lines stay where they were. Not in the
+     touch layout's full screen map, where no panel has the wide bevel. */
+  float frame = sdl3DrawIsTabletMapFullScreen()
+                  ? 0.0f : (float)sdl3DrawGetTabletBevel();
+  sdl3DrawNewswireStrip(font, gTabletNewswireX, gTabletNewswireY - frame,
                         gTabletNewswireW, gTabletNewswireEdge, slide,
-                        gTabletNewswireText, gTabletNewswireBack);
+                        gTabletNewswireText, gTabletNewswireBack, frame);
 }
 
 bool sdl3DrawSetup(int zoomFactor) {
@@ -2100,9 +2229,9 @@ bool sdl3DrawSetup(int zoomFactor) {
      sdl3LoadTiles above already pushed fonts and atlas individually;
      Init covers the gRenderer and bar textures and re-asserts the rest. */
   sdl3DrawStatusInit(gRenderer, gTilesTex, gSheetScale, gZoomFactor,
-                     gFontTiny, gFontMsg, gFontKD, gFontLabel,
+                     gFontTiny, gFontMsg, gFontKD,
                      gFallbackFontTiny, gFallbackFontMsg,
-                     gFallbackFontKD, gFallbackFontLabel,
+                     gFallbackFontKD,
                      gTankBarsTex, gBaseBarsTex);
 
   /* Desktop, wasm and the mobile tablets' desktop layout: create a render
@@ -2142,6 +2271,9 @@ void sdl3DrawCleanup(void) {
 
   /* ImGui cleanup before destroying renderer/window */
   sdl3ImguiCleanup();
+  /* The pop-out windows outlive each game (sdl3ImguiCleanup only hides
+     them) and go here, with the main renderer and window. */
+  sdl3ImguiDestroyPopOuts();
 
 #if !defined(__ANDROID__) && !defined(__IPHONEOS__)
   /* News popup teardown sits in this process-exit hook (not in
@@ -2161,11 +2293,9 @@ void sdl3DrawCleanup(void) {
   closeTabletNewswireFont();
   if (gFontKD)   { TTF_CloseFont(gFontKD);   gFontKD   = NULL; }
   if (gFontTiny)  { TTF_CloseFont(gFontTiny);  gFontTiny  = NULL; }
-  if (gFontLabel) { TTF_CloseFont(gFontLabel); gFontLabel = NULL; }
   if (gFallbackFontMsg)   { TTF_CloseFont(gFallbackFontMsg);   gFallbackFontMsg   = NULL; }
   if (gFallbackFontKD)    { TTF_CloseFont(gFallbackFontKD);    gFallbackFontKD    = NULL; }
   if (gFallbackFontTiny)  { TTF_CloseFont(gFallbackFontTiny);  gFallbackFontTiny  = NULL; }
-  if (gFallbackFontLabel) { TTF_CloseFont(gFallbackFontLabel); gFallbackFontLabel = NULL; }
   TTF_Quit();
 
   /* Glyph cache textures must be destroyed before the renderer. */
@@ -2204,7 +2334,6 @@ void sdl3DrawCleanup(void) {
   overviewSnapshotDestroy(gOverviewSnapshot);
   gOverviewSnapshot    = NULL;
   gOverviewPrepPending = FALSE;
-  itemLabelCacheFlush(&gItemLabelCache);
   if (gRenderer) {
     SDL_DestroyRenderer(gRenderer);
     gRenderer = NULL;
@@ -2283,11 +2412,9 @@ void sdl3DrawReconfigureZoom(int explicitZoom) {
   closeTabletNewswireFont();
   if (gFontKD)    { TTF_CloseFont(gFontKD);    gFontKD    = NULL; }
   if (gFontTiny)  { TTF_CloseFont(gFontTiny);  gFontTiny  = NULL; }
-  if (gFontLabel) { TTF_CloseFont(gFontLabel); gFontLabel = NULL; }
   if (gFallbackFontMsg)   { TTF_CloseFont(gFallbackFontMsg);   gFallbackFontMsg   = NULL; }
   if (gFallbackFontKD)    { TTF_CloseFont(gFallbackFontKD);    gFallbackFontKD    = NULL; }
   if (gFallbackFontTiny)  { TTF_CloseFont(gFallbackFontTiny);  gFallbackFontTiny  = NULL; }
-  if (gFallbackFontLabel) { TTF_CloseFont(gFallbackFontLabel); gFallbackFontLabel = NULL; }
 
   /* Update zoom factor */
   gZoomFactor = needZoom;
@@ -2301,9 +2428,9 @@ void sdl3DrawReconfigureZoom(int explicitZoom) {
      after Shutdown nulled them out. (gTilesTex is reloaded lazily by
      sdl3LoadTiles, which calls SetAtlas.) */
   sdl3DrawStatusInit(gRenderer, gTilesTex, gSheetScale, gZoomFactor,
-                     gFontTiny, gFontMsg, gFontKD, gFontLabel,
+                     gFontTiny, gFontMsg, gFontKD,
                      gFallbackFontTiny, gFallbackFontMsg,
-                     gFallbackFontKD, gFallbackFontLabel,
+                     gFallbackFontKD,
                      gTankBarsTex, gBaseBarsTex);
 
   /* Tiles will be reloaded lazily by sdl3LoadTiles() at new gZoomFactor */
@@ -2429,6 +2556,90 @@ void sdl3DrawHudPanelAlphas(int transparency, float *pieceAlpha,
   if (backingAlpha) *backingAlpha = (float)hudBackingAlpha(transparency) / 255.0f;
 }
 
+/* The touch layout's chrome: the gray field, black beyond the safe insets
+   and the frame round the game view with black inside it, for the view (or
+   a caption) to be drawn over. The view must be laid out first
+   (tabletViewportUpdate). The game frame and the download and returning to
+   lobby screens all start with it. */
+static void tabletChromeDraw(void) {
+  /* Tablet chrome: beveled gray background matching desktop background.bmp style.
+     Draw via SDL so it appears behind the game tiles (which draw next).
+     Panel borders in the gutters are drawn later by renderTabletBackground()
+     in sdl3imgui_tablet.cpp via ImGui's BackgroundDrawList. */
+  int scrW, scrH;
+  {
+    SDL_RendererLogicalPresentation logMode;
+    SDL_GetRenderLogicalPresentation(gRenderer, &scrW, &scrH, &logMode);
+    if (scrW <= 0 || scrH <= 0)
+      SDL_GetCurrentRenderOutputSize(gRenderer, &scrW, &scrH);
+  }
+  /* The frame round the view: one bevel wide and tight against the view,
+     as the background art's is. */
+  float border = (float)sdl3DrawGetTabletBevel();
+  float vpPad = 0.0f;
+
+  /* Fill entire screen with chrome gray */
+  SDL_SetRenderDrawColor(gRenderer, 107, 107, 107, 255);
+  SDL_FRect fullScr = { 0, 0, (float)scrW, (float)scrH };
+  SDL_RenderFillRect(gRenderer, &fullScr);
+
+  /* Black beyond the left and right safe insets, the cutout's side and
+     the margin on the other, as the lobby draws them. The insets are in
+     window points; this is drawn in the logical units. */
+  if (gWindow) {
+    int winW = 0, winH = 0;
+    SDL_GetWindowSize(gWindow, &winW, &winH);
+    if (winW > 0) {
+      const SafeInsets safe = safeInsetsGet(gWindow);
+      const float toLog = (float)scrW / (float)winW;
+      /* The status column and the controls are laid out inside
+         sdl3GetSafeAreaInsets, which on iOS is the system's safe area and
+         is wider on the side away from the cutout than the lobby's margin
+         there. Black runs in to whichever is further, so no gray strip is
+         left between the black and the panels. */
+      float blackL = safe.left * toLog, blackR = safe.right * toLog;
+      float layL = 0, layR = 0;
+      sdl3GetSafeAreaInsets(&layL, NULL, &layR, NULL);
+      if (layL > blackL) blackL = layL;
+      if (layR > blackR) blackR = layR;
+      SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
+      if (blackL > 0.0f) {
+        SDL_FRect l = { 0, 0, blackL, (float)scrH };
+        SDL_RenderFillRect(gRenderer, &l);
+      }
+      if (blackR > 0.0f) {
+        SDL_FRect r = { (float)scrW - blackR, 0, blackR, (float)scrH };
+        SDL_RenderFillRect(gRenderer, &r);
+      }
+    }
+  }
+
+  /* Inset bevel around the game viewport */
+  float gamePixW = (float)(MAIN_SCREEN_SIZE_X * TILE_SIZE_X * gTabletVpZoom);
+  float gamePixH = (float)(MAIN_SCREEN_SIZE_Y * TILE_SIZE_Y * gTabletVpZoom);
+  float bx = (float)gTabletVpX - vpPad - border;
+  float by = (float)gTabletVpY - vpPad - border;
+  float bw = gamePixW + (vpPad + border) * 2;
+  float bh = gamePixH + (vpPad + border) * 2;
+  /* Dark edge on top and left, in the background art's two bevel grays */
+  SDL_SetRenderDrawColor(gRenderer, 49, 49, 49, 255);
+  SDL_FRect topE  = { bx, by, bw, border };
+  SDL_FRect leftE = { bx, by + border, border, bh - border };
+  SDL_RenderFillRect(gRenderer, &topE);
+  SDL_RenderFillRect(gRenderer, &leftE);
+  /* Light edge on bottom and right */
+  SDL_SetRenderDrawColor(gRenderer, 165, 165, 165, 255);
+  SDL_FRect botE   = { bx, by + bh - border, bw, border };
+  SDL_FRect rightE = { bx + bw - border, by, border, bh - border };
+  SDL_RenderFillRect(gRenderer, &botE);
+  SDL_RenderFillRect(gRenderer, &rightE);
+  /* Black fill inside bevel (game tiles draw over this) */
+  SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
+  SDL_FRect inner = { bx + border, by + border,
+                      bw - border * 2, bh - border * 2 };
+  SDL_RenderFillRect(gRenderer, &inner);
+}
+
 /* The touch layout's tanks, pills and bases grids for its full screen map,
    drawn by the same calls as the classic frame's left gutter but into a
    texture of their own, stacked with the classic frame's gap between them, so
@@ -2443,7 +2654,7 @@ static bool tabletGridsRender(ClientSim *cs) {
   int zf    = gTabletVpZoom;
   int gridW = zf * STATUS_TANKS_WIDTH;
   int gridH = zf * STATUS_TANKS_HEIGHT;
-  int gap   = 4;
+  int gap   = sdl3DrawGetTabletBevel();
   int texW  = gridW;
   int texH  = 3 * gridH + 2 * gap;
 
@@ -2482,12 +2693,12 @@ static bool tabletGridsRender(ClientSim *cs) {
 
   /* Where the classic frame puts them: 4 units in from the safe area, tanks
      at the top, then pills, then bases. */
-  float safeL = 0, safeT = 0;
-  sdl3GetSafeAreaInsets(&safeL, &safeT, NULL, NULL);
+  float colX = 0, colY = 0;
+  sdl3DrawGetTabletStatusColumn(&colX, &colY, NULL);
   for (int i = 0; i < 3; i++) {
     SDL_FRect src = { 0.0f, (float)(i * (gridH + gap)),
                       (float)gridW, (float)gridH };
-    SDL_FRect dst = { safeL + 4.0f, safeT + 4.0f + (float)(i * (gridH + gap)),
+    SDL_FRect dst = { colX, colY + (float)(i * (gridH + gap)),
                       (float)gridW, (float)gridH };
     gOverviewPrepGridSrc[i] = src;
     gOverviewPrepGridDst[i] = dst;
@@ -2803,6 +3014,7 @@ void sdl3DrawFlushOverviewInWindow(void) {
   OverviewHudLayout hud = gOverviewPrepHud;
 
   overviewViewRenderOffscreen(gOverviewView, gRenderer, gTilesTex, gSheetScale,
+                              gSpritesTex, gSpriteAtlas,
                               gCrosshairTex, w, h, gOverviewSnapshot, true);
 
   if (drawHud) {
@@ -3090,7 +3302,7 @@ void sdl3DrawFlushOverviewInWindow(void) {
       SDL_SetRenderDrawBlendMode(gRenderer, SDL_BLENDMODE_NONE);
 
       SDL_Color white = {200, 200, 200, 255};
-      sdl3RenderText(gFontMsg, label, white, tx, ty);
+      sdl3DrawStatusRenderText(gFontMsg, label, white, tx, ty);
     }
   }
 
@@ -3162,73 +3374,7 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
                          (float)(gZoomFactor * SDL3_SCREEN_H) };
     SDL_RenderTexture(gRenderer, gBackgroundTex, NULL, &bgDest);
   } else if (tabletMode) {
-    /* Tablet chrome: beveled gray background matching desktop background.bmp style.
-       Draw via SDL so it appears behind the game tiles (which draw next).
-       Panel borders in the gutters are drawn later by renderTabletBackground()
-       in sdl3imgui_tablet.cpp via ImGui's BackgroundDrawList. */
-    int scrW, scrH;
-    {
-      SDL_RendererLogicalPresentation logMode;
-      SDL_GetRenderLogicalPresentation(gRenderer, &scrW, &scrH, &logMode);
-      if (scrW <= 0 || scrH <= 0)
-        SDL_GetCurrentRenderOutputSize(gRenderer, &scrW, &scrH);
-    }
-    float ps = (float)scrH / 480.0f;
-    if (ps < 0.7f) ps = 0.7f;
-    float border = 2.0f * ps;
-    float vpPad = 3.0f * ps;
-
-    /* Fill entire screen with chrome gray */
-    SDL_SetRenderDrawColor(gRenderer, 107, 107, 107, 255);
-    SDL_FRect fullScr = { 0, 0, (float)scrW, (float)scrH };
-    SDL_RenderFillRect(gRenderer, &fullScr);
-
-    /* Black beyond the left and right safe insets, the cutout's side and
-       the margin on the other, as the lobby draws them. The insets are in
-       window points; this is drawn in the logical units. */
-    if (gWindow) {
-      int winW = 0, winH = 0;
-      SDL_GetWindowSize(gWindow, &winW, &winH);
-      if (winW > 0) {
-        const SafeInsets safe = safeInsetsGet(gWindow);
-        const float toLog = (float)scrW / (float)winW;
-        SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
-        if (safe.left > 0.0f) {
-          SDL_FRect l = { 0, 0, safe.left * toLog, (float)scrH };
-          SDL_RenderFillRect(gRenderer, &l);
-        }
-        if (safe.right > 0.0f) {
-          SDL_FRect r = { (float)scrW - safe.right * toLog, 0,
-                          safe.right * toLog, (float)scrH };
-          SDL_RenderFillRect(gRenderer, &r);
-        }
-      }
-    }
-
-    /* Inset bevel around the game viewport */
-    float gamePixW = (float)(MAIN_SCREEN_SIZE_X * TILE_SIZE_X * effectiveZoom);
-    float gamePixH = (float)(MAIN_SCREEN_SIZE_Y * TILE_SIZE_Y * effectiveZoom);
-    float bx = (float)tabletOriginX - vpPad - border;
-    float by = (float)tabletOriginY - vpPad - border;
-    float bw = gamePixW + (vpPad + border) * 2;
-    float bh = gamePixH + (vpPad + border) * 2;
-    /* Dark edge on top and left */
-    SDL_SetRenderDrawColor(gRenderer, 64, 64, 64, 255);
-    SDL_FRect topE  = { bx, by, bw, border };
-    SDL_FRect leftE = { bx, by + border, border, bh - border };
-    SDL_RenderFillRect(gRenderer, &topE);
-    SDL_RenderFillRect(gRenderer, &leftE);
-    /* Light edge on bottom and right */
-    SDL_SetRenderDrawColor(gRenderer, 160, 160, 160, 255);
-    SDL_FRect botE   = { bx, by + bh - border, bw, border };
-    SDL_FRect rightE = { bx + bw - border, by, border, bh - border };
-    SDL_RenderFillRect(gRenderer, &botE);
-    SDL_RenderFillRect(gRenderer, &rightE);
-    /* Black fill inside bevel (game tiles draw over this) */
-    SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
-    SDL_FRect inner = { bx + border, by + border,
-                        bw - border * 2, bh - border * 2 };
-    SDL_RenderFillRect(gRenderer, &inner);
+    tabletChromeDraw();
   }
 
   /* In tablet mode, temporarily override gZoomFactor so that sprite
@@ -3332,12 +3478,17 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
         long secs = srtDelay / GAME_NUMGAMETICKS_SEC;
         snprintf(str, sizeof(str), "Game Starts in %ld", secs);
         SDL_Color white = {200, 200, 200, 255};
-        SDL_Surface *sMeasure = TTF_RenderText_Blended(gFontMsg, str, 0, white);
-        if (sMeasure) {
-          float tx = (float)originX + ((float)gameW - (float)sMeasure->w) * 0.5f;
-          float ty = (float)originY + ((float)gameH - (float)sMeasure->h) * 0.5f;
-          SDL_DestroySurface(sMeasure);
-          sdl3RenderText(gFontMsg, str, white, tx, ty);
+        int textW = 0;
+        int textH = 0;
+        SDL_Texture *tex = sdl3DrawStatusTextTexture(gFontMsg, str, white,
+                                                     &textW, &textH);
+        if (tex) {
+          SDL_FRect d = {
+            (float)originX + ((float)gameW - (float)textW) * 0.5f,
+            (float)originY + ((float)gameH - (float)textH) * 0.5f,
+            (float)textW, (float)textH
+          };
+          SDL_RenderTexture(gRenderer, tex, NULL, &d);
         }
       }
     } else if (!isItemView && clientSimGetMyTankDeathWait(cs) != 0 &&
@@ -3484,10 +3635,13 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
 
       /* The pill and base numbers, from the 17x17 screen buffer: a square
          showing a pill or base tile asks the sim which one it is. The
-         shared pass below draws them. */
+         shared pass below draws them, in the Log Viewer's small digits, so
+         no font is needed. A hidden square can show a remembered pill tile
+         after its pill moved away; the lookup then finds no pill, and the
+         square gets no number. */
       OverviewItemLabel itemLabels[MAX_PILLS + MAX_BASES];
       int itemLabelCount = 0;
-      if (gFontLabel) {
+      {
         BYTE lx = 0, ly = 0;
         bool lDone = FALSE;
         while (!lDone) {
@@ -3496,9 +3650,9 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
           bool isBase = mapViewTileIsBase(pos);
           int labelNum = -1;
           if (isPill && showPillLabels) {
-            labelNum = clientSimGetPillNumPos(cs, lx, ly) - 1;
+            labelNum = mapViewItemLabelNumber(clientSimGetPillNumPos(cs, lx, ly), false);
           } else if (isBase && showBaseLabels) {
-            labelNum = clientSimGetBaseNumPos(cs, lx, ly) - 1;
+            labelNum = mapViewItemLabelNumber(clientSimGetBaseNumPos(cs, lx, ly), true);
           }
           if (labelNum >= 0 && itemLabelCount < (int)(MAX_PILLS + MAX_BASES)) {
             OverviewItemLabel *l = &itemLabels[itemLabelCount++];
@@ -3582,10 +3736,7 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
       ov.labelDisplayScale = 1.0f;
       ov.itemLabels        = itemLabels;
       ov.itemLabelCount    = itemLabelCount;
-      ov.pillFont          = gFontLabel;
-      ov.baseFont          = gFontTiny;
       ov.itemLabelMinScale = 1.0f;
-      ov.itemLabelCache    = &gItemLabelCache;
       ov.clipLeft          = (float)originX;
       ov.clipTop           = (float)originY;
       ov.clipRight         = (float)(originX + gameW);
@@ -3616,18 +3767,17 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
     int leftGutter = tabletOriginX;
     if (leftGutter >= 100) {
       int zf = gZoomFactor; /* currently set to effectiveZoom */
-      float safeL = 0, safeT = 0;
-      sdl3GetSafeAreaInsets(&safeL, &safeT, NULL, NULL);
-      float gutterX = safeL + 4.0f;
-      float gutterY = safeT + 4.0f;
+      float gutterX = 0, gutterY = 0;
+      sdl3DrawGetTabletStatusColumn(&gutterX, &gutterY, NULL);
       float gridH = (float)(zf * STATUS_TANKS_HEIGHT);
-      float gridGap = 4.0f;
+      float gridGap = (float)sdl3DrawGetTabletBevel();
       sdl3DrawSetStatusPanelOrigins(
         gutterX, gutterY,                         /* tanks */
         gutterX, gutterY + gridH + gridGap,        /* pills */
         gutterX, gutterY + 2*(gridH + gridGap));   /* bases */
       sdl3DrawTabletStatusGrids(cs);
       sdl3DrawSetStatusPanelOrigins(-1,-1,-1,-1,-1,-1); /* reset */
+      tabletKillsDeathsDraw();
     }
     /* Over the game view, under the map when the map is up: the map's
        frame half puts it back over the map (sdl3DrawFlushOverviewInWindow). */
@@ -3805,17 +3955,16 @@ void sdl3DrawRedrawAll(ClientSim *cs, buildSelect value, RECT *rcWindow,
     /* Tablet: render status grids in gutter if space allows */
     if (gTabletVpX >= 100) {
       int zf = gZoomFactor;
-      float safeL = 0, safeT = 0;
-      sdl3GetSafeAreaInsets(&safeL, &safeT, NULL, NULL);
-      float gutterX = safeL + 4.0f;
-      float gutterY = safeT + 4.0f;
+      float gutterX = 0, gutterY = 0;
+      sdl3DrawGetTabletStatusColumn(&gutterX, &gutterY, NULL);
       float gridH = (float)(zf * STATUS_TANKS_HEIGHT);
-      float gridGap = 4.0f;
+      float gridGap = (float)sdl3DrawGetTabletBevel();
       sdl3DrawSetStatusPanelOrigins(gutterX, gutterY,
                                     gutterX, gutterY + gridH + gridGap,
                                     gutterX, gutterY + 2*(gridH + gridGap));
       sdl3DrawTabletStatusGrids(cs);
       sdl3DrawSetStatusPanelOrigins(-1,-1,-1,-1,-1,-1);
+      tabletKillsDeathsDraw();
     }
   } else {
     sdl3DrawSetBasesStatusClear();
@@ -3971,19 +4120,22 @@ static void sdl3DrawDownloadScreenContent(ClientSim *cs, bool justBlack) {
   }
 
   if (tabletMode) {
+    /* The same chrome as the game frame, so the screen does not change
+       round the view when a round ends or a map downloads. */
+    tabletViewportUpdate();
+    tabletChromeDraw();
     if (gTabletVpX >= 100) {
       int gridZf = gZoomFactor;
-      float safeL = 0, safeT = 0;
-      sdl3GetSafeAreaInsets(&safeL, &safeT, NULL, NULL);
-      float gutterX = safeL + 4.0f;
-      float gutterY = safeT + 4.0f;
+      float gutterX = 0, gutterY = 0;
+      sdl3DrawGetTabletStatusColumn(&gutterX, &gutterY, NULL);
       float gridH = (float)(gridZf * STATUS_TANKS_HEIGHT);
-      float gridGap = 4.0f;
+      float gridGap = (float)sdl3DrawGetTabletBevel();
       sdl3DrawSetStatusPanelOrigins(gutterX, gutterY,
                                     gutterX, gutterY + gridH + gridGap,
                                     gutterX, gutterY + 2*(gridH + gridGap));
       sdl3DrawTabletStatusGrids(cs);
       sdl3DrawSetStatusPanelOrigins(-1,-1,-1,-1,-1,-1);
+      tabletKillsDeathsDraw();
     }
   } else {
     sdl3DrawSetBasesStatusClear();
@@ -4129,9 +4281,9 @@ void sdl3DrawReturningToLobby(ClientSim *cs) {
          there is nothing to centre on and the caption waits a frame. */
       if (gOverviewRect.w > 0.0f && gOverviewRect.h > 0.0f) {
         SDL_Color white = {200, 200, 200, 255};
-        sdl3RenderText(gFontMsg, caption, white,
-                       gOverviewRect.x + (gOverviewRect.w - (float)textW) * 0.5f,
-                       gOverviewRect.y + (gOverviewRect.h - (float)textH) * 0.5f);
+        sdl3DrawStatusRenderText(gFontMsg, caption, white,
+            gOverviewRect.x + (gOverviewRect.w - (float)textW) * 0.5f,
+            gOverviewRect.y + (gOverviewRect.h - (float)textH) * 0.5f);
       }
     }
     return;
@@ -4149,22 +4301,29 @@ void sdl3DrawReturningToLobby(ClientSim *cs) {
    * the white screen. */
   sdl3DrawDownloadScreenContent(cs, TRUE);
 
-  /* Centred caption in the playfield. Tablet mode uses a different
-   * playfield rect; only the desktop layout matters for this transition
-   * (the mobile UIs don't expose a vote-to-lobby flow). */
-  if (!tabletMode) {
-    int zf = gZoomFactor;
-    int originX = MAIN_OFFSET_X * zf;
-    int originY = MAIN_OFFSET_Y * zf;
-    int playfieldW = MAIN_SCREEN_SIZE_X * TILE_SIZE_X * zf;
-    int playfieldH = MAIN_SCREEN_SIZE_Y * TILE_SIZE_Y * zf;
+  /* Centred caption in the playfield: the classic screen's, or the touch
+   * layout's game view. */
+  {
+    float originX, originY, playfieldW, playfieldH;
+    if (tabletMode) {
+      originX    = (float)gTabletVpX;
+      originY    = (float)gTabletVpY;
+      playfieldW = (float)gTabletVpW;
+      playfieldH = (float)gTabletVpH;
+    } else {
+      int zf = gZoomFactor;
+      originX    = (float)(MAIN_OFFSET_X * zf);
+      originY    = (float)(MAIN_OFFSET_Y * zf);
+      playfieldW = (float)(MAIN_SCREEN_SIZE_X * TILE_SIZE_X * zf);
+      playfieldH = (float)(MAIN_SCREEN_SIZE_Y * TILE_SIZE_Y * zf);
+    }
     const char *caption = langGetText(STR_RETURNING_TO_LOBBY);
     int textW = 0, textH = 0;
     if (gFontMsg && TTF_GetStringSize(gFontMsg, caption, 0, &textW, &textH)) {
-      float tx = (float)(originX + (playfieldW - textW) / 2);
-      float ty = (float)(originY + (playfieldH - textH) / 2);
+      float tx = SDL_floorf(originX + (playfieldW - (float)textW) * 0.5f);
+      float ty = SDL_floorf(originY + (playfieldH - (float)textH) * 0.5f);
       SDL_Color white = {200, 200, 200, 255};
-      sdl3RenderText(gFontMsg, caption, white, tx, ty);
+      sdl3DrawStatusRenderText(gFontMsg, caption, white, tx, ty);
     }
   }
 
@@ -4414,13 +4573,17 @@ void sdl3DrawStartDelay(RECT *rcWindow, int32_t srtDelay) {
     long secs = srtDelay / GAME_NUMGAMETICKS_SEC;
     snprintf(str, sizeof(str), "Game Starts in %ld", secs);
     SDL_Color white = {200, 200, 200, 255};
-    /* Measure text width to centre it */
-    SDL_Surface *sMeasure = TTF_RenderText_Blended(gFontMsg, str, 0, white);
-    if (sMeasure) {
-      float tx = (float)originX + ((float)areaW - (float)sMeasure->w) * 0.5f;
-      float ty = (float)originY + ((float)areaH - (float)sMeasure->h) * 0.5f;
-      SDL_DestroySurface(sMeasure);
-      sdl3RenderText(gFontMsg, str, white, tx, ty);
+    int textW = 0;
+    int textH = 0;
+    SDL_Texture *tex = sdl3DrawStatusTextTexture(gFontMsg, str, white,
+                                                 &textW, &textH);
+    if (tex) {
+      SDL_FRect d = {
+        (float)originX + ((float)areaW - (float)textW) * 0.5f,
+        (float)originY + ((float)areaH - (float)textH) * 0.5f,
+        (float)textW, (float)textH
+      };
+      SDL_RenderTexture(gRenderer, tex, NULL, &d);
     }
   }
 }
@@ -4436,7 +4599,7 @@ void sdl3DrawNetFailed(void) {
   int originY = MAIN_OFFSET_Y * gZoomFactor;
   float tx = (float)(originX + 3 * TILE_SIZE_X * gZoomFactor);
   float ty = (float)(originY + 8 * TILE_SIZE_Y * gZoomFactor);
-  sdl3RenderText(gFontMsg, "Network Failed - Resyncing", white, tx, ty);
+  sdl3DrawStatusRenderText(gFontMsg, "Network Failed - Resyncing", white, tx, ty);
 }
 
 /* The one place the three view names are spelled. The classic corner label
@@ -4480,7 +4643,7 @@ void sdl3DrawItemInView(ClientSim *cs) {
   int fontH = 13 * gZoomFactor;
   float tx = (float)(originX + 2 * gZoomFactor);
   float ty = (float)(originY + MAIN_SCREEN_SIZE_Y * TILE_SIZE_Y * gZoomFactor - fontH - 2 * gZoomFactor);
-  sdl3RenderText(gFontMsg, label, white, tx, ty);
+  sdl3DrawStatusRenderText(gFontMsg, label, white, tx, ty);
 }
 
 /* sdl3DrawResetCachedText, sdl3DrawMessages, sdl3DrawGetCachedMessages,

@@ -486,13 +486,18 @@ int main(int argc, char **argv) {
     ok = wbnTestHostedJobHost();
   } else if (strcmp(name, "announce_posts") == 0) {
     ok = wbnTestAnnouncePosts();
+  } else if (strcmp(name, "map_lookup_restarts_http") == 0) {
+    ok = wbnTestMapLookupRestartsHttp();
+  } else if (strcmp(name, "stop_during_lookup") == 0) {
+    ok = wbnTestStopDuringLookup();
   } else {
     fprintf(stderr,
             "usage: %s posts_share_connection|leave_returns_at_once|"
             "worker_outlives_session|job_result_returns|log_upload_runs|"
             "key_stamped_at_fire_time|queue_cap_refuses_posts|"
             "forced_update_full_queue|scenario_fields|announce_hosts_rule|"
-            "api_url_for_host|hosted_job_host|announce_posts\n",
+            "api_url_for_host|hosted_job_host|announce_posts|"
+            "map_lookup_restarts_http|stop_during_lookup\n",
             argv[0]);
     SDL_Quit();
     bolo_net_cleanup();

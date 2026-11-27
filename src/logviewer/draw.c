@@ -51,7 +51,10 @@
 #include "lv_tank_pick.h"
 #include "lv_event_flash.h"
 #include "lv_builder_status.h"
+#include "lv_builder_draw.h"
 #include "lv_pill_numbers.h"
+#include "lv_hitbox.h"
+#include "lv_pillbox.h"
 #include "lv_zoom_text.h"
 #include "clientmutex.h"
 #include "../gui/sdl3/sdl_bmp.h"
@@ -150,6 +153,30 @@ static bool         s_tankBars = FALSE;
 static bool         s_builderStatus = FALSE;
 /* The number of each pillbox on the map (lv_pill_numbers.h). On until set. */
 static bool         s_pillNumbers = TRUE;
+/* The number of each base on the map, drawn as the pillbox numbers are.
+   Off until set. */
+static bool         s_baseNumbers = FALSE;
+/* The hit areas (lv_hitbox.h). Off until set. Like the bars they are drawn
+   over the blit, from places lv_drawTanks and lv_drawLGMs note in
+   render-target pixels. */
+static bool         s_hitBoxes = FALSE;
+/* A tank's hit area goes round his place, the one shells are tested against
+   (tankShellInHitZone): the middle of the art pixel the recording holds.
+   The game draws the tank's picture centred on the same pixel, so the
+   place is the picture's top left in s_tankBarPos and
+   lvHitboxTankCentreInPicture art pixels on each axis. */
+/* A builder out of his tank: his place, the top left of his square, and the
+   3 by 3 squares round his that stop the open-ground test
+   (lvHitboxBuilderCaught). */
+typedef struct {
+    double   bx, by;               /* his place, world units from his square's top left */
+    float    sqX, sqY;             /* his square's top left, render-target pixels */
+    unsigned solid;
+} LvHitLgmPos;
+static LvHitLgmPos  s_hitLgmPos[MAX_TANKS];
+static int          s_hitLgmCount = 0;
+/* The zoom factor the places were noted at: target pixels per art pixel. */
+static BYTE         s_hitZoom = 1;
 /* The last blit of the map into the window: the slice of the target it took
  * and where it went, in framebuffer pixels. A click on the map is matched
  * against the tanks with these (lv_drawTankAtPoint). */
@@ -523,10 +550,21 @@ float lv_drawZoomPercent(void) {
 static void lvDrawTankLabelsOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
 static void lvDrawTankBarsOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
 static void lvDrawTankMarkOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
+static void lvDrawBaseMarkOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
 static void lvDrawBuilderStatusOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
 static void lvDrawEventFlashOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
 static void lvDrawPingsOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
 static void lvDrawPillNumbersOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
+static void lvDrawBaseNumbersOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
+static void lvDrawHitBoxesOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
+static void lvDrawShellsOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
+
+static void lvDrawSpriteSheetsNearest(void) {
+    if (textureTiles) SDL_SetTextureScaleMode(textureTiles, SDL_SCALEMODE_NEAREST);
+    if (textureTanks) SDL_SetTextureScaleMode(textureTanks, SDL_SCALEMODE_NEAREST);
+    if (textureBoats) SDL_SetTextureScaleMode(textureBoats, SDL_SCALEMODE_NEAREST);
+    if (textureItems) SDL_SetTextureScaleMode(textureItems, SDL_SCALEMODE_NEAREST);
+}
 
 /* Paint the world render target into the viewer's own window.
  *
@@ -595,10 +633,18 @@ static void lvDrawBlitTargetToWindow(void) {
         /* The pillbox numbers before everything else: they belong to the
            map, and all that moves over it goes over them. */
         lvDrawPillNumbersOverBlit(&srcRect, &dstRect);
+        lvDrawBaseNumbersOverBlit(&srcRect, &dstRect);
+        /* The flying shells, at the zoom the map shows at, as the game
+           draws them (lv_drawShells). */
+        lvDrawShellsOverBlit(&srcRect, &dstRect);
         /* The map pings first: the tank names, the bars and the ring of an
            event go over them. */
         lvDrawPingsOverBlit(&srcRect, &dstRect);
+        lvDrawBaseMarkOverBlit(&srcRect, &dstRect);
         lvDrawTankMarkOverBlit(&srcRect, &dstRect);
+        /* Under the bars and the names: thin lines that should not hide
+           them. */
+        lvDrawHitBoxesOverBlit(&srcRect, &dstRect);
         /* The bars first, so a name is never under one. */
         lvDrawTankBarsOverBlit(&srcRect, &dstRect);
         lvDrawBuilderStatusOverBlit(&srcRect, &dstRect);
@@ -1157,6 +1203,14 @@ static void drawRenderTexture(SDL_Texture *texture, int srcX, int srcY, int srcW
     SDL_RenderTexture(sdlRenderer, texture, &srcRect, &dstRect);
 }
 
+/* drawRenderTexture with the place on the target as floats, for a picture
+   placed by a half art pixel, as a shell's tip offset can be. */
+static void drawRenderTextureF(SDL_Texture *texture, int srcX, int srcY, int srcW, int srcH, float dstX, float dstY) {
+    SDL_FRect srcRect = { (float)srcX, (float)srcY, (float)srcW, (float)srcH };
+    SDL_FRect dstRect = { dstX, dstY, (float)srcW, (float)srcH };
+    SDL_RenderTexture(sdlRenderer, texture, &srcRect, &dstRect);
+}
+
 /* The markers the followed player would see, into the overview's render
  * target, whose square (0, 0) is the viewport's top-left. A marker's square
  * and the one above it, where the pointer sits, are marked for redraw the
@@ -1399,6 +1453,17 @@ void lv_drawMainScreen(screen *value, screenMines *mineView, screenTanks *tks, s
     (void)isPillView; (void)edgeX; (void)edgeY; (void)useCursor;
     (void)cursorLeft; (void)cursorTop;
 
+    /* Point sampling for the map's sprite sheets, set again every frame.
+     * The viewer's panels draw these same textures through ImGui::Image,
+     * and the ImGui SDL renderer backend writes its own scale mode (LINEAR
+     * unless a draw callback says otherwise) into every texture it binds
+     * (imgui_impl_sdlrenderer3.cpp). The mode stays on the texture after
+     * ImGui is done, so without this the map samples them LINEAR: a sprite
+     * that does not sit on whole pixels (the N, E, S and W shells, and the
+     * zoomed shells over the blit) comes out smeared. The game view draws
+     * the same tile sheet, so this is set before the game view returns. */
+    lvDrawSpriteSheetsNearest();
+
     /* Game-view path: routes the same per-frame pointers lv_screenUpdate
      * built into the direct-render game-look frame. Serves both the
      * standalone viewer and the embedded "Watch a Log" flow — game-view
@@ -1591,9 +1656,10 @@ void lv_drawMarkRedraw(int mx, int my, int px, int py, int itemSize) {
 
 /* Mark every square a w by h pixel sprite drawn px, py pixels into square
  * mx, my covers. lv_drawMarkRedraw only reaches the next square over, which
- * is one short for a tank: it is drawn two pixels further in than its offset,
- * so at an offset of 15 it reaches one pixel into the square two along, and
- * that pixel was left behind when the tank moved on. A negative px or py is
+ * is one short for some sprites: the viewer once drew a tank two pixels
+ * further in than its offset, so at an offset of 15 it reached one pixel
+ * into the square two along, and that pixel was left behind when the tank
+ * moved on. A negative px or py is
  * a box that starts before the square's own edge, as a marker centred near
  * it gives: it is moved into the square it really starts in. */
 static void lv_drawMarkRedrawRect(int mx, int my, int px, int py, int w, int h) {
@@ -1617,17 +1683,96 @@ static void lv_drawMarkRedrawRect(int mx, int my, int px, int py, int w, int h) 
 
 int lv_drawGetFrameRate(void) { return (int)g_dwFrameTotal; }
 
+/* A shell's place is its front tip, the point the engine tests for hits.
+ * spritePositionShell (src/gui/sdl3/sprite_positions.c) is what the game
+ * draws a shell with: it puts the tip pixel of each direction's picture on
+ * that point, not the picture's top left. The viewer calls it too, in the
+ * Classic style the viewer draws in, so a shell is drawn where the game
+ * draws it and where the server tests it. An explosion frame gets no tip
+ * offset, as in the game.
+ *
+ * The game calls spritePositionShell at its own zoom, straight onto the
+ * screen, so a shell is placed as the game places it at that zoom, half-pixel
+ * tip offsets (1.5 for N, E, S and W) included. The sprite sheet is sampled
+ * NEAREST, which keeps the picture sharp. The render target here is at 1x,
+ * and a shell drawn into it at x.5 is smeared over two pixels when the map
+ * is zoomed. So in the viewer's own window the flying shells are not drawn
+ * into the target: they are noted here and drawn over the zoomed map by
+ * lvDrawShellsOverBlit, with the same call at the zoom the map shows at.
+ * Where the target itself is the picture (embedded, a GIF capture) they go
+ * into the target at the pixel the game's renderer fills for x.5 at 1x: the
+ * floor. Explosions are whole tiles with no offset and stay in the target.
+ * A shell past the list's cap also goes into the target, floored, so that
+ * it is not lost. */
+typedef struct {
+    BYTE mx, my, px, py, frame;
+    int srcX, srcY, srcW, srcH;
+} LvShellSprite;
+#define LV_MAX_SHELL_SPRITES 512
+static LvShellSprite s_shellSprite[LV_MAX_SHELL_SPRITES];
+static int           s_shellSpriteCount = 0;
+static bool          s_shellsInTarget = FALSE;
+
+void lv_drawSetShellsInTarget(bool on) {
+    if (s_shellsInTarget != on) {
+        s_shellsInTarget = on;
+        lv_drawDirtyScreen();
+    }
+}
+
+static void lvDrawShellsOverBlit(const SDL_FRect *src, const SDL_FRect *dst) {
+    float scale;
+    int i;
+    SDL_Rect clip, oldClip;
+    bool hadClip;
+
+    if (s_shellSpriteCount == 0 || textureTiles == NULL) return;
+    SDL_SetTextureScaleMode(textureTiles, SDL_SCALEMODE_NEAREST);
+    if (src == NULL || dst == NULL || src->w <= 0.0f || src->h <= 0.0f) return;
+    scale = dst->w / src->w;
+
+    hadClip = SDL_RenderClipEnabled(sdlRenderer);
+    SDL_GetRenderClipRect(sdlRenderer, &oldClip);
+    clip.x = (int)dst->x;
+    clip.y = (int)dst->y;
+    clip.w = (int)dst->w;
+    clip.h = (int)dst->h;
+    SDL_SetRenderClipRect(sdlRenderer, &clip);
+
+    for (i = 0; i < s_shellSpriteCount; i++) {
+        const LvShellSprite *s = &s_shellSprite[i];
+        float sx = 0.0f, sy = 0.0f;
+        SDL_FRect r, d;
+        /* The target's (0, 0) is where the map's square (0, 0) of the view
+           is drawn from; src is the slice of the target the blit took. */
+        spritePositionShell(dst->x - src->x * scale, dst->y - src->y * scale,
+                            GFX_ANIM_CLASSIC, scale, 1,
+                            s->mx, s->my, s->px, s->py,
+                            s->px << 4, s->py << 4, s->frame, &sx, &sy);
+        r.x = (float)s->srcX; r.y = (float)s->srcY;
+        r.w = (float)s->srcW; r.h = (float)s->srcH;
+        d.x = sx; d.y = sy;
+        d.w = (float)s->srcW * scale; d.h = (float)s->srcH * scale;
+        SDL_RenderTexture(sdlRenderer, textureTiles, &r, &d);
+    }
+
+    SDL_SetRenderClipRect(sdlRenderer, hadClip ? &oldClip : NULL);
+}
+
 void lv_drawShells(screenBullets *sBullets) {
-    int total, count, x, y, srcX, srcY, srcW, srcH;
+    int total, count, srcX, srcY, srcW, srcH;
+    float fx, fy;
     BYTE px, py, frame, mx, my, zf;
-    
+    bool inTarget = g_embedded || s_shellsInTarget;
+
     total = lv_screenBulletsGetNumEntries(sBullets);
     zf = lv_windowGetZoomFactor();
-    
+    s_shellSpriteCount = 0;
+
     for (count = 1; count <= total; count++) {
         lv_screenBulletsGetItem(sBullets, count, &mx, &my, &px, &py, &frame);
-        x = (mx * zf * TILE_SIZE_X) + zf * px;
-        y = (my * zf * TILE_SIZE_Y) + zf * py;
+        spritePositionShell(0.0f, 0.0f, GFX_ANIM_CLASSIC, (float)zf, 1,
+                            mx, my, px, py, px << 4, py << 4, frame, &fx, &fy);
         
         switch (frame) {
         case SHELL_EXPLOSION8: srcX = zf*EXPLOSION8_X; srcY = zf*EXPLOSION8_Y; srcW = zf*TILE_SIZE_X; srcH = zf*TILE_SIZE_Y; break;
@@ -1656,9 +1801,34 @@ void lv_drawShells(screenBullets *sBullets) {
         default: srcX = zf*SHELL_15_X; srcY = zf*SHELL_15_Y; srcW = zf*SHELL_15_WIDTH; srcH = zf*SHELL_15_HEIGHT; break;
         }
         
-        if (frame >= SHELL_EXPLOSION8 && frame <= SHELL_EXPLOSION1) lv_drawMarkRedraw(mx, my, px, py, 0);
-        else lv_drawMarkRedraw(mx, my, px, py, 10);
-        drawRenderTexture(textureTiles, srcX, srcY, srcW, srcH, x, y);
+        if (frame >= SHELL_EXPLOSION8 && frame <= SHELL_EXPLOSION1) {
+            lv_drawMarkRedraw(mx, my, px, py, 0);
+        } else {
+            int left, top;
+            if (!inTarget && s_shellSpriteCount < LV_MAX_SHELL_SPRITES) {
+                /* Drawn over the blit, not into the target: nothing is
+                   left in the target to clear, so no redraw marks. */
+                LvShellSprite *s = &s_shellSprite[s_shellSpriteCount++];
+                s->mx = mx; s->my = my; s->px = px; s->py = py;
+                s->frame = frame;
+                s->srcX = srcX; s->srcY = srcY;
+                s->srcW = srcW; s->srcH = srcH;
+                continue;
+            }
+            /* Into the target: an embedded viewer, a GIF capture, or a
+               shell past the list's cap, which is drawn here floored
+               rather than not at all. The tip offset moves the picture up
+               to 4 art pixels left of and above px, py, which can be in the
+               square before: mark every square the picture is on, one pixel
+               more each way for the half-pixel offsets. */
+            left = (int)floorf(fx / (float)zf) - mx * TILE_SIZE_X;
+            top  = (int)floorf(fy / (float)zf) - my * TILE_SIZE_Y;
+            lv_drawMarkRedrawRect(mx, my, left, top,
+                                  srcW / zf + 1, srcH / zf + 1);
+            fx = floorf(fx);
+            fy = floorf(fy);
+        }
+        drawRenderTextureF(textureTiles, srcX, srcY, srcW, srcH, fx, fy);
     }
 }
 
@@ -1699,6 +1869,7 @@ void lv_drawTanks(screenTanks *tks) {
     zoomFactor = lv_windowGetZoomFactor();
     s_tankLabelCount = 0;
     s_tankBarCount = 0;
+    s_hitZoom = zoomFactor;
 
     /* The same answer the ground pass used this frame, so the tanks and the
        squares under them cannot end up in different styles. */
@@ -1716,7 +1887,11 @@ void lv_drawTanks(screenTanks *tks) {
 
     for (count = 1; count <= total; count++) {
         lv_screenTanksGetItem(tks, count, &mx, &my, &px, &py, &frame, &team, &dir, &onBoat, playerName);
-        px += 2; py += 2;
+        /* The picture goes at px, py, as the game draws it
+           (mapViewDrawTanks): its middle is the tank's place. The viewer
+           drew it 2 art pixels right and down of that before, as the old
+           Win32 game did. The name keeps its place against the picture
+           (lvDrawRecordTankLabel). */
         x = mx * (zoomFactor * TILE_SIZE_X) + (zoomFactor * px);
         y = my * (zoomFactor * TILE_SIZE_Y) + (zoomFactor * py);
         if (s_tankBarCount < MAX_TANKS) {
@@ -1780,23 +1955,108 @@ void lv_drawTanks(screenTanks *tks) {
     if (simple) SDL_SetRenderDrawBlendMode(sdlRenderer, oldBlend);
 }
 
+/* Note a builder's hit area: his place, his square, and which of the 3 by 3
+   squares round his are a building, a half building, a live pillbox (armour
+   above 0, as pillsIsPillHit) or a base (lgmBlastCatches). mx, my are his
+   square on the screen; the screen starts at the view's offset, as
+   lv_playersMakeScreenLgm made the list. The squares are read now, as the
+   map is drawn. */
+static void lvDrawNoteLgmHit(BYTE mx, BYTE my, BYTE px, BYTE py, BYTE slot, BYTE zf) {
+    LogViewerState *lv = lv_screenGetState();
+    LvHitLgmPos *h = &s_hitLgmPos[s_hitLgmCount];
+    unsigned solid = 0;
+    int col, row;
+    int sqMx, sqMy, scrMx, scrMy;
+
+    if (lv == NULL) return;
+    /* His place. A recording holds it to the art pixel, so the closest guess
+       is from the line his last recorded pixels walk along
+       (lv_playersLgmPlace). With no notes for that pixel it is the middle of
+       the pixel: the recorded place is lgmGetPX / lgmGetPY's, his place less
+       1 world unit across and 2 down, rounded down to an art pixel, and
+       lvHitboxBuilderPlaceX/Y put the 1 and the 2 back. */
+    sqMx = (int)lv->xOffset + (int)mx;
+    sqMy = (int)lv->yOffset + (int)my;
+    {
+        double wx, wy;
+        if (sqMx <= 255 && sqMy <= 255 &&
+            lv_playersLgmPlace(slot, (BYTE)sqMx, (BYTE)sqMy, px, py, &wx, &wy)) {
+            h->bx = wx - (double)(sqMx * LV_HITBOX_WU_PER_SQUARE);
+            h->by = wy - (double)(sqMy * LV_HITBOX_WU_PER_SQUARE);
+        } else {
+            h->bx = lvHitboxBuilderPlaceX(px);
+            h->by = lvHitboxBuilderPlaceY(py);
+        }
+    }
+    /* His own square is the engine's: the one his place is in, which can be
+       the square after the recorded one (lvHitboxBuilderOwnSquare). */
+    scrMx = sqMx;
+    scrMy = sqMy;
+    if (sqMx <= 255 && sqMy <= 255) {
+        lvHitboxBuilderOwnSquare(&h->bx, &sqMx);
+        lvHitboxBuilderOwnSquare(&h->by, &sqMy);
+    }
+    scrMx = (int)mx + (sqMx - scrMx);
+    scrMy = (int)my + (sqMy - scrMy);
+    for (row = 0; row < 3; row++) {
+        for (col = 0; col < 3; col++) {
+            int ax = sqMx + col - 1;
+            int ay = sqMy + row - 1;
+            BYTE pos;
+            if (ax < 0 || ay < 0 || ax > 255 || ay > 255) continue;
+            pos = lv_mapGetPos(&lv->mp, (BYTE)ax, (BYTE)ay);
+            if (pos == BUILDING || pos == HALFBUILDING ||
+                lv_pillsIsPillHit(&lv->pb, (BYTE)ax, (BYTE)ay) ||
+                lv_basesExistPos(&lv->bs, (BYTE)ax, (BYTE)ay)) {
+                solid |= 1u << (row * 3 + col);
+            }
+        }
+    }
+    h->sqX = (float)(zf * scrMx * TILE_SIZE_X);
+    h->sqY = (float)(zf * scrMy * TILE_SIZE_Y);
+    h->solid = solid;
+    s_hitLgmCount++;
+}
+
 void lv_drawLGMs(screenLgm *lgms) {
     BYTE total, count, frame, mx, my, px, py, zf;
     int x, y, srcX, srcY, srcW, srcH;
     
     total = lv_screenLgmGetNumEntries(lgms);
     zf = lv_windowGetZoomFactor();
+    s_hitLgmCount = 0;
     
     for (count = 1; count <= total; count++) {
+        int picX, picY;            /* the picture's top left, art pixels into his square */
         lv_screenLgmGetItem(lgms, count, &mx, &my, &px, &py, &frame);
-        switch (frame) {
-        case LGM0: srcX = zf*LGM0_X; srcY = zf*LGM0_Y; srcW = zf*LGM_WIDTH; srcH = zf*LGM_HEIGHT; lv_drawMarkRedraw(mx,my,px,py,12); break;
-        case LGM1: srcX = zf*LGM1_X; srcY = zf*LGM1_Y; srcW = zf*LGM_WIDTH; srcH = zf*LGM_HEIGHT; lv_drawMarkRedraw(mx,my,px,py,12); break;
-        case LGM2: srcX = zf*LGM2_X; srcY = zf*LGM2_Y; srcW = zf*LGM_WIDTH; srcH = zf*LGM_HEIGHT; lv_drawMarkRedraw(mx,my,px,py,12); break;
-        default: srcX = zf*LGM_HELICOPTER_X; srcY = zf*LGM_HELICOPTER_Y; srcW = zf*TILE_SIZE_X; srcH = zf*TILE_SIZE_Y; lv_drawMarkRedraw(mx,my,px,py,1); break;
+        /* A builder on his parachute is dead: lgmDeathCheckAtPosition tests
+           no dead builder, so he has no hit area. The area is noted only
+           while hit boxes are on; turning them on asks for a redraw, which
+           notes them again. */
+        if (s_hitBoxes && frame != LGM_HELICOPTER_FRAME && s_hitLgmCount < MAX_TANKS) {
+            lvDrawNoteLgmHit(mx, my, px, py, lv_screenLgmGetSlot(lgms, count), zf);
         }
-        x = (zf * mx * TILE_SIZE_X) + (zf * px);
-        y = (zf * my * TILE_SIZE_Y) + (zf * py);
+        /* A walking builder's picture goes 1 art pixel left of and above his
+           recorded pixel, as the game draws it (spritePositionLgm), so it
+           sits round his place. The parachute is drawn from its own top
+           left, as in the game. */
+        picX = px;
+        picY = py;
+        switch (frame) {
+        case LGM0: srcX = zf*LGM0_X; srcY = zf*LGM0_Y; srcW = zf*LGM_WIDTH; srcH = zf*LGM_HEIGHT; break;
+        case LGM1: srcX = zf*LGM1_X; srcY = zf*LGM1_Y; srcW = zf*LGM_WIDTH; srcH = zf*LGM_HEIGHT; break;
+        case LGM2: srcX = zf*LGM2_X; srcY = zf*LGM2_Y; srcW = zf*LGM_WIDTH; srcH = zf*LGM_HEIGHT; break;
+        default: srcX = zf*LGM_HELICOPTER_X; srcY = zf*LGM_HELICOPTER_Y; srcW = zf*TILE_SIZE_X; srcH = zf*TILE_SIZE_Y; break;
+        }
+        if (frame == LGM0 || frame == LGM1 || frame == LGM2) {
+            picX += LV_HITBOX_LGM_PICTURE_X;
+            picY += LV_HITBOX_LGM_PICTURE_Y;
+            lv_drawMarkRedrawRect(mx, my, picX, picY, LGM_WIDTH, LGM_HEIGHT);
+        } else {
+            lv_drawMarkRedraw(mx,my,px,py,1);
+        }
+        x = (zf * mx * TILE_SIZE_X) + (zf * picX);
+        y = (zf * my * TILE_SIZE_Y) + (zf * picY);
         drawRenderTexture(textureTiles, srcX, srcY, srcW, srcH, x, y);
     }
 }
@@ -2112,34 +2372,17 @@ BYTE lv_drawGetBuilderStatus(void) {
 /* The cells of one small picture, with its top left at x, y: each cell a
    square of `cell` pixels, grown by `grow` pixels on every side (the dark
    pass under the coloured one uses that for the edge). The colour is the
-   renderer's. */
+   renderer's. The game draws its pillbox and base numbers with the same
+   code (lv_builder_draw.h). */
 static void lvDrawBuilderGlyph(const LvBuilderGlyph *g, float x, float y,
                                float cell, float grow) {
-    int row, col;
-
-    if (g == NULL) return;
-    for (row = 0; row < g->height; row++) {
-        for (col = 0; col < g->width; col++) {
-            SDL_FRect r;
-            if (!lvBuilderGlyphCell(g, col, row)) continue;
-            r.x = x + (float)col * cell - grow;
-            r.y = y + (float)row * cell - grow;
-            r.w = cell + grow * 2.0f;
-            r.h = cell + grow * 2.0f;
-            SDL_RenderFillRect(sdlRenderer, &r);
-        }
-    }
+    lvBuilderDrawGlyph(sdlRenderer, g, x, y, cell, grow);
 }
 
 /* The countdown's characters from x, with their tops at y. */
 static void lvDrawBuilderText(const char *text, float x, float y, float cell,
                               float grow) {
-    for (; *text != '\0'; text++) {
-        const LvBuilderGlyph *g = lvBuilderChar(*text);
-        if (g == NULL) continue;
-        lvDrawBuilderGlyph(g, x, y, cell, grow);
-        x += (float)(g->width + 1) * cell;
-    }
+    lvBuilderDrawText(sdlRenderer, text, x, y, cell, grow);
 }
 
 /* The arrow: a dart with its middle at cx, cy and its point `radius` pixels
@@ -2328,34 +2571,112 @@ BYTE lv_drawGetPillNumbers(void) {
     return s_pillNumbers ? TRUE : FALSE;
 }
 
-/* The number of each pillbox that stands on the map, at the bottom right
-   corner of its square (lvPillLabelLayout): white digits with a black edge,
-   the builder marker's, drawn over the blit at the screen's own pixels so
-   they are sharp and of a size to read at every zoom. A pillbox a tank
-   carries has none. The list is the one at the playback time, copied out
-   under the client mutex. */
-static void lvDrawPillNumbersOverBlit(const SDL_FRect *src, const SDL_FRect *dst) {
-    LvPillSpot spots[MAX_PILLS];
-    float scale, tilePx, pxScale, edge;
-    int n, i, pass;
-    BYTE zf;
+void lv_drawSetBaseNumbers(BYTE on) {
+    s_baseNumbers = on ? TRUE : FALSE;
+}
+
+BYTE lv_drawGetBaseNumbers(void) {
+    return s_baseNumbers ? TRUE : FALSE;
+}
+
+void lv_drawSetHitBoxes(BYTE on) {
+    s_hitBoxes = on ? TRUE : FALSE;
+}
+
+BYTE lv_drawGetHitBoxes(void) {
+    return s_hitBoxes ? TRUE : FALSE;
+}
+
+static void lvDrawRingBand(float cx, float cy, float rIn, float rOut, SDL_FColor col);
+
+/* Each builder's outline (lvHitboxBuilderOutline) on the screen, worked out
+   again every frame the hit areas are drawn (not kept from one frame to the
+   next) and then drawn twice, dark and in its colour. The cost is small:
+   one outline for each builder out of his tank, a few hundred tests each. */
+#define LV_HIT_SCREEN_PTS (MAX_TANKS * LV_HITBOX_OUTLINE_MAX_PTS)
+#define LV_HIT_SCREEN_RUNS (MAX_TANKS * LV_HITBOX_OUTLINE_MAX_RUNS)
+static SDL_FPoint s_hitPts[LV_HIT_SCREEN_PTS];
+static SDL_FPoint s_hitShadow[LV_HITBOX_OUTLINE_MAX_PTS];
+static int        s_hitRunStart[LV_HIT_SCREEN_RUNS + 1];
+static LvHitOutline s_hitOutline;
+
+/* Draw the runs of s_hitPts from run first to run last - 1, moved by shift
+   pixels on both axes. */
+static void lvDrawHitRuns(int first, int last, float shift) {
+    int run;
+    for (run = first; run < last; run++) {
+        int a = s_hitRunStart[run], n = s_hitRunStart[run + 1] - a, i;
+        if (n < 2) continue;
+        if (shift == 0.0f) {
+            SDL_RenderLines(sdlRenderer, &s_hitPts[a], n);
+            continue;
+        }
+        for (i = 0; i < n && i < LV_HITBOX_OUTLINE_MAX_PTS; i++) {
+            s_hitShadow[i].x = s_hitPts[a + i].x + shift;
+            s_hitShadow[i].y = s_hitPts[a + i].y + shift;
+        }
+        SDL_RenderLines(sdlRenderer, s_hitShadow, i);
+    }
+}
+
+/* The hit areas over the blit: src is the slice of the target it took, dst
+   where it went. Each line is drawn twice, first dark and one pixel down and
+   right, then in its colour, so it shows on every kind of ground. Tanks are
+   magenta, builders yellow. A tank's area is the zone the recording's game
+   used (lvHitboxTankZoneFor): the circle, the square of games before it, or
+   none when that cannot be known. */
+static void lvDrawHitBoxesOverBlit(const SDL_FRect *src, const SDL_FRect *dst) {
+    LogViewerState *lv = lv_screenGetState();
+    float scale, k, tankCentre;
+    int i, pass, nRuns, nPts;
     SDL_Rect clip, oldClip;
     bool hadClip;
     SDL_BlendMode oldBlend = SDL_BLENDMODE_NONE;
     Uint8 oldR, oldG, oldB, oldA;
+    bool alive[MAX_TANKS];
+    int tankZone, tankSize, builderShape, pillRange;
 
-    if (!s_pillNumbers) return;
+    if (!s_hitBoxes || lv == NULL) return;
+    if (s_tankBarCount == 0 && s_hitLgmCount == 0) return;
     if (src->w <= 0.0f || src->h <= 0.0f) return;
+    /* What playback writes, copied out under its mutex, as the bars do. */
     lv_clientMutexWaitFor();
-    n = lv_screenPillSpots(spots, MAX_PILLS);
+    for (i = 0; i < MAX_TANKS; i++) {
+        alive[i] = lv_screenTankShownAlive(i);
+    }
+    tankZone = lv->rules.tankHitZone;
+    tankSize = lvHitboxTankZoneSize(tankZone, lv->rules.tankHitRadius);
+    builderShape = lv->rules.lgmBlastShape;
+    pillRange = lv->rules.pillRange;
     lv_clientMutexRelease();
-    if (n <= 0) return;
 
-    zf = lv_windowGetZoomFactor();
     scale = dst->w / src->w;
-    tilePx = (float)(zf * TILE_SIZE_X) * scale;
-    pxScale = lvDrawPixelScale();
-    edge = lvTankBarPointsToPixels(LV_BUILDER_EDGE_POINTS, pxScale);
+    /* Screen pixels to one world unit. */
+    k = (float)s_hitZoom * scale / (float)LV_HITBOX_WU_PER_PIXEL;
+    tankCentre = (float)s_hitZoom * (float)lvHitboxTankCentreInPicture();
+
+    /* The builders' outlines, once for both passes. */
+    nRuns = 0;
+    nPts = 0;
+    s_hitRunStart[0] = 0;
+    for (i = 0; i < s_hitLgmCount; i++) {
+        const LvHitLgmPos *h = &s_hitLgmPos[i];
+        float ox = dst->x + (h->sqX - src->x) * scale;
+        float oy = dst->y + (h->sqY - src->y) * scale;
+        int run, p;
+        lvHitboxBuilderOutline(h->bx, h->by, h->solid, builderShape, pillRange,
+                               &s_hitOutline);
+        for (run = 0; run < s_hitOutline.nRuns && nRuns < LV_HIT_SCREEN_RUNS; run++) {
+            int a = s_hitOutline.runStart[run], b = s_hitOutline.runStart[run + 1];
+            if (nPts + (b - a) > LV_HIT_SCREEN_PTS) break;
+            for (p = a; p < b; p++) {
+                s_hitPts[nPts].x = ox + (float)s_hitOutline.pt[p].x * k;
+                s_hitPts[nPts].y = oy + (float)s_hitOutline.pt[p].y * k;
+                nPts++;
+            }
+            s_hitRunStart[++nRuns] = nPts;
+        }
+    }
 
     hadClip = SDL_RenderClipEnabled(sdlRenderer);
     SDL_GetRenderClipRect(sdlRenderer, &oldClip);
@@ -2368,28 +2689,206 @@ static void lvDrawPillNumbersOverBlit(const SDL_FRect *src, const SDL_FRect *dst
     SDL_GetRenderDrawColor(sdlRenderer, &oldR, &oldG, &oldB, &oldA);
     SDL_SetRenderDrawBlendMode(sdlRenderer, SDL_BLENDMODE_BLEND);
 
-    /* Every edge first, then every white over them, so the edge of one
-       number never covers the digits of a number beside it. */
     for (pass = 0; pass < 2; pass++) {
-        LvBuilderColour c = (pass == 0) ? lvBuilderEdgeColour()
-                                        : lvBuilderMarkColour(false, 0);
-        SDL_SetRenderDrawColorFloat(sdlRenderer, c.r, c.g, c.b, c.a);
-        for (i = 0; i < n; i++) {
-            char text[LV_PILL_NUMBER_TEXT_MAX];
-            LvPillLabelLayout l;
-            float left = dst->x + ((float)(spots[i].viewX * zf * TILE_SIZE_X) - src->x) * scale;
-            float top = dst->y + ((float)(spots[i].viewY * zf * TILE_SIZE_Y) - src->y) * scale;
+        float shift = (pass == 0) ? 1.0f : 0.0f;
 
-            if (lvPillNumberText(spots[i].number, text, sizeof(text)) == 0) continue;
-            l = lvPillLabelLayout(left, top, tilePx, pxScale, lvBuilderTextCells(text));
-            if (!l.visible) continue;
-            lvDrawBuilderText(text, l.x, l.y, l.cell, (pass == 0) ? edge : 0.0f);
+        SDL_FColor tankCol;
+
+        /* Tanks: the zone of tankShellInHitZone, round the centre. */
+        if (pass == 0) {
+            tankCol.r = 0.0f; tankCol.g = 0.0f; tankCol.b = 0.0f; tankCol.a = 200.0f / 255.0f;
+        } else {
+            tankCol.r = 1.0f; tankCol.g = 64.0f / 255.0f; tankCol.b = 1.0f; tankCol.a = 1.0f;
         }
+        SDL_SetRenderDrawColorFloat(sdlRenderer, tankCol.r, tankCol.g, tankCol.b, tankCol.a);
+        for (i = 0; i < s_tankBarCount && tankSize > 0; i++) {
+            BYTE slot = s_tankBarPos[i].slot;
+            float cx, cy, r;
+            if (slot >= MAX_TANKS || !alive[slot]) continue;
+            cx = dst->x + ((float)s_tankBarPos[i].x + tankCentre - src->x) * scale + shift;
+            cy = dst->y + ((float)s_tankBarPos[i].y + tankCentre - src->y) * scale + shift;
+            r = (float)tankSize * k;
+            if (tankZone == LV_HITBOX_TANK_CIRCLE) {
+                lvDrawRingBand(cx, cy, r - 0.5f, r + 0.5f, tankCol);
+            } else {
+                SDL_FPoint sq[5];
+                sq[0].x = cx - r; sq[0].y = cy - r;
+                sq[1].x = cx + r; sq[1].y = cy - r;
+                sq[2].x = cx + r; sq[2].y = cy + r;
+                sq[3].x = cx - r; sq[3].y = cy + r;
+                sq[4] = sq[0];
+                SDL_RenderLines(sdlRenderer, sq, 5);
+            }
+        }
+
+        /* Builders: the area of lgmBlastCatches, worked out above. */
+        if (pass == 0) {
+            SDL_SetRenderDrawColor(sdlRenderer, 0, 0, 0, 200);
+        } else {
+            SDL_SetRenderDrawColor(sdlRenderer, 255, 230, 0, 255);
+        }
+        lvDrawHitRuns(0, nRuns, shift);
     }
 
     SDL_SetRenderDrawColor(sdlRenderer, oldR, oldG, oldB, oldA);
     SDL_SetRenderDrawBlendMode(sdlRenderer, oldBlend);
     SDL_SetRenderClipRect(sdlRenderer, hadClip ? &oldClip : NULL);
+}
+
+/* A number at the bottom right corner of each of n squares of the view
+   (lvPillLabelLayout): white digits with a black edge, the builder
+   marker's, drawn over the blit at the screen's own pixels so they are
+   sharp and of a size to read at every zoom. The pillbox numbers and the
+   base numbers both use it. Each number's place is worked out once, and
+   lvBuilderDrawNumbers draws them all with one fill call a pass, the same
+   code the game draws its pillbox and base numbers with. */
+#define LV_MAP_NUMBERS_MAX ((MAX_PILLS > MAX_BASES) ? MAX_PILLS : MAX_BASES)
+static void lvDrawMapNumbersOverBlit(const LvPillSpot *spots, int n, const SDL_FRect *src,
+                                     const SDL_FRect *dst) {
+    LvBuilderNumber nums[LV_MAP_NUMBERS_MAX];
+    float scale, tilePx, pxScale, edge;
+    int i, count = 0;
+    BYTE zf;
+    SDL_Rect clip, oldClip;
+    bool hadClip;
+
+    if (n <= 0) return;
+    if (n > LV_MAP_NUMBERS_MAX) n = LV_MAP_NUMBERS_MAX;
+
+    zf = lv_windowGetZoomFactor();
+    scale = dst->w / src->w;
+    tilePx = (float)(zf * TILE_SIZE_X) * scale;
+    pxScale = lvDrawPixelScale();
+    edge = lvTankBarPointsToPixels(LV_BUILDER_EDGE_POINTS, pxScale);
+
+    /* The place of each number once, for both passes. */
+    for (i = 0; i < n; i++) {
+        LvBuilderNumber *num = &nums[count];
+        LvPillLabelLayout l;
+        float left = dst->x + ((float)(spots[i].viewX * zf * TILE_SIZE_X) - src->x) * scale;
+        float top = dst->y + ((float)(spots[i].viewY * zf * TILE_SIZE_Y) - src->y) * scale;
+
+        if (lvPillNumberText(spots[i].number, num->text, sizeof(num->text)) == 0) continue;
+        l = lvPillLabelLayout(left, top, tilePx, pxScale, lvBuilderTextCells(num->text));
+        if (!l.visible) continue;
+        num->x = l.x;
+        num->y = l.y;
+        num->cell = l.cell;
+        count++;
+    }
+    if (count <= 0) return;
+
+    hadClip = SDL_RenderClipEnabled(sdlRenderer);
+    SDL_GetRenderClipRect(sdlRenderer, &oldClip);
+    clip.x = (int)dst->x;
+    clip.y = (int)dst->y;
+    clip.w = (int)dst->w;
+    clip.h = (int)dst->h;
+    SDL_SetRenderClipRect(sdlRenderer, &clip);
+
+    /* Every edge first, then every white over them, so the edge of one
+       number never covers the digits of a number beside it. One fill call
+       a pass (lvBuilderDrawNumbers), the same code the game draws its
+       pillbox and base numbers with. */
+    lvBuilderDrawNumbers(sdlRenderer, nums, count, edge);
+
+    SDL_SetRenderClipRect(sdlRenderer, hadClip ? &oldClip : NULL);
+}
+
+/* The number of each pillbox that stands on the map (lvDrawMapNumbersOverBlit).
+   A pillbox a tank carries has none. The list is the one at the playback
+   time, copied out under the client mutex. */
+static void lvDrawPillNumbersOverBlit(const SDL_FRect *src, const SDL_FRect *dst) {
+    LvPillSpot spots[MAX_PILLS];
+    int n;
+
+    if (!s_pillNumbers) return;
+    if (src->w <= 0.0f || src->h <= 0.0f) return;
+    lv_clientMutexWaitFor();
+    n = lv_screenPillSpots(spots, MAX_PILLS);
+    lv_clientMutexRelease();
+    lvDrawMapNumbersOverBlit(spots, n, src, dst);
+}
+
+/* The number of each base on the map (lvDrawMapNumbersOverBlit), in the
+   same place and look as a pillbox's. The list is the one at the playback
+   time, copied out under the client mutex. */
+static void lvDrawBaseNumbersOverBlit(const SDL_FRect *src, const SDL_FRect *dst) {
+    LvPillSpot spots[MAX_BASES];
+    int n;
+
+    if (!s_baseNumbers) return;
+    if (src->w <= 0.0f || src->h <= 0.0f) return;
+    lv_clientMutexWaitFor();
+    n = lv_screenBaseSpots(spots, MAX_BASES);
+    lv_clientMutexRelease();
+    lvDrawMapNumbersOverBlit(spots, n, src, dst);
+}
+
+/* The four white corners of a mark (lvTankMarkLayout), 75% solid, cut to
+   the view's picture, dst. */
+static void lvDrawMarkCorners(const LvTankMark *m, const SDL_FRect *dst) {
+    SDL_FRect r[8];
+    SDL_Rect clip, oldClip;
+    bool hadClip;
+    SDL_BlendMode oldBlend = SDL_BLENDMODE_NONE;
+    Uint8 oldR, oldG, oldB, oldA;
+
+    /* Each corner: an arm along the top or bottom, and one down or up
+       the side. */
+    r[0].x = m->x;                     r[0].y = m->y;                     r[0].w = m->arm;   r[0].h = m->thick;
+    r[1].x = m->x;                     r[1].y = m->y;                     r[1].w = m->thick; r[1].h = m->arm;
+    r[2].x = m->x + m->side - m->arm;   r[2].y = m->y;                     r[2].w = m->arm;   r[2].h = m->thick;
+    r[3].x = m->x + m->side - m->thick; r[3].y = m->y;                     r[3].w = m->thick; r[3].h = m->arm;
+    r[4].x = m->x;                     r[4].y = m->y + m->side - m->thick; r[4].w = m->arm;   r[4].h = m->thick;
+    r[5].x = m->x;                     r[5].y = m->y + m->side - m->arm;   r[5].w = m->thick; r[5].h = m->arm;
+    r[6].x = m->x + m->side - m->arm;   r[6].y = m->y + m->side - m->thick; r[6].w = m->arm;   r[6].h = m->thick;
+    r[7].x = m->x + m->side - m->thick; r[7].y = m->y + m->side - m->arm;   r[7].w = m->thick; r[7].h = m->arm;
+
+    hadClip = SDL_RenderClipEnabled(sdlRenderer);
+    SDL_GetRenderClipRect(sdlRenderer, &oldClip);
+    clip.x = (int)dst->x;
+    clip.y = (int)dst->y;
+    clip.w = (int)dst->w;
+    clip.h = (int)dst->h;
+    SDL_SetRenderClipRect(sdlRenderer, &clip);
+    SDL_GetRenderDrawBlendMode(sdlRenderer, &oldBlend);
+    SDL_GetRenderDrawColor(sdlRenderer, &oldR, &oldG, &oldB, &oldA);
+    SDL_SetRenderDrawBlendMode(sdlRenderer, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColor(sdlRenderer, 255, 255, 255,
+                           (Uint8)(LV_TANK_MARK_ALPHA * 255.0f + 0.5f));
+    SDL_RenderFillRects(sdlRenderer, r, 8);
+    SDL_SetRenderDrawColor(sdlRenderer, oldR, oldG, oldB, oldA);
+    SDL_SetRenderDrawBlendMode(sdlRenderer, oldBlend);
+    SDL_SetRenderClipRect(sdlRenderer, hadClip ? &oldClip : NULL);
+}
+
+/* The mark round the base under the mouse over the Tank panel's base bars:
+   the selected tank's four corners, just outside the base's square. Only
+   while the mouse stays there (lv_screenHoverBase): a base selected by a
+   click on the map or in the HUD panel has none. It follows the tank mark's
+   rule: none when the squares are too small to read. */
+static void lvDrawBaseMarkOverBlit(const SDL_FRect *src, const SDL_FRect *dst) {
+    float scale, tilePx, pxScale, left, top;
+    int vx = 0, vy = 0;
+    bool shown;
+    BYTE zf;
+    LvTankMark m;
+
+    if (src->w <= 0.0f || src->h <= 0.0f) return;
+    lv_clientMutexWaitFor();
+    shown = lv_screenSelectedBaseSquare(&vx, &vy);
+    lv_clientMutexRelease();
+    if (!shown) return;
+    zf = lv_windowGetZoomFactor();
+    scale = dst->w / src->w;
+    tilePx = (float)(zf * TILE_SIZE_X) * scale;
+    pxScale = lvDrawPixelScale();
+    if (!lvTankBarsVisible(tilePx, pxScale)) return;
+    left = dst->x + ((float)(vx * zf * TILE_SIZE_X) - src->x) * scale;
+    top = dst->y + ((float)(vy * zf * TILE_SIZE_Y) - src->y) * scale;
+    m = lvTankMarkLayout(left, top, tilePx, pxScale);
+    lvDrawMarkCorners(&m, dst);
 }
 
 /* The mark round the selected tank: four corners just outside its picture,
@@ -2402,10 +2901,6 @@ static void lvDrawTankMarkOverBlit(const SDL_FRect *src, const SDL_FRect *dst) {
     float scale, tilePx, pxScale;
     int i, selected;
     bool alive;
-    SDL_Rect clip, oldClip;
-    bool hadClip;
-    SDL_BlendMode oldBlend = SDL_BLENDMODE_NONE;
-    Uint8 oldR, oldG, oldB, oldA;
 
     if (s_tankBarCount == 0 || lv == NULL) return;
     if (src->w <= 0.0f || src->h <= 0.0f) return;
@@ -2421,38 +2916,11 @@ static void lvDrawTankMarkOverBlit(const SDL_FRect *src, const SDL_FRect *dst) {
 
     for (i = 0; i < s_tankBarCount; i++) {
         LvTankMark m;
-        SDL_FRect r[8];
         if (s_tankBarPos[i].slot != (BYTE)selected) continue;
         m = lvTankMarkLayout(dst->x + ((float)s_tankBarPos[i].x - src->x) * scale,
                              dst->y + ((float)s_tankBarPos[i].y - src->y) * scale,
                              tilePx, pxScale);
-        /* Each corner: an arm along the top or bottom, and one down or up
-           the side. */
-        r[0].x = m.x;                  r[0].y = m.y;                    r[0].w = m.arm;   r[0].h = m.thick;
-        r[1].x = m.x;                  r[1].y = m.y;                    r[1].w = m.thick; r[1].h = m.arm;
-        r[2].x = m.x + m.side - m.arm; r[2].y = m.y;                    r[2].w = m.arm;   r[2].h = m.thick;
-        r[3].x = m.x + m.side - m.thick; r[3].y = m.y;                  r[3].w = m.thick; r[3].h = m.arm;
-        r[4].x = m.x;                  r[4].y = m.y + m.side - m.thick; r[4].w = m.arm;   r[4].h = m.thick;
-        r[5].x = m.x;                  r[5].y = m.y + m.side - m.arm;   r[5].w = m.thick; r[5].h = m.arm;
-        r[6].x = m.x + m.side - m.arm; r[6].y = m.y + m.side - m.thick; r[6].w = m.arm;   r[6].h = m.thick;
-        r[7].x = m.x + m.side - m.thick; r[7].y = m.y + m.side - m.arm; r[7].w = m.thick; r[7].h = m.arm;
-
-        hadClip = SDL_RenderClipEnabled(sdlRenderer);
-        SDL_GetRenderClipRect(sdlRenderer, &oldClip);
-        clip.x = (int)dst->x;
-        clip.y = (int)dst->y;
-        clip.w = (int)dst->w;
-        clip.h = (int)dst->h;
-        SDL_SetRenderClipRect(sdlRenderer, &clip);
-        SDL_GetRenderDrawBlendMode(sdlRenderer, &oldBlend);
-        SDL_GetRenderDrawColor(sdlRenderer, &oldR, &oldG, &oldB, &oldA);
-        SDL_SetRenderDrawBlendMode(sdlRenderer, SDL_BLENDMODE_BLEND);
-        SDL_SetRenderDrawColor(sdlRenderer, 255, 255, 255,
-                               (Uint8)(LV_TANK_MARK_ALPHA * 255.0f + 0.5f));
-        SDL_RenderFillRects(sdlRenderer, r, 8);
-        SDL_SetRenderDrawColor(sdlRenderer, oldR, oldG, oldB, oldA);
-        SDL_SetRenderDrawBlendMode(sdlRenderer, oldBlend);
-        SDL_SetRenderClipRect(sdlRenderer, hadClip ? &oldClip : NULL);
+        lvDrawMarkCorners(&m, dst);
         break;
     }
 }
