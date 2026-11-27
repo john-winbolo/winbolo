@@ -676,9 +676,12 @@ bool mapGenImguiControls(MapGenConfig *cfg) {
         int savedX2 = cfg->x2, savedY2 = cfg->y2;
 
         /* The first switch to Map Maker takes the size and counts of
-         * its first preset, the same as picking that preset. Otherwise
-         * they carry over. */
+         * its first preset, the same as picking that preset. A switch
+         * away from Map Maker takes the new type's own size and counts,
+         * from its last use or its defaults, because a Map Maker
+         * preset set them, not the player. Otherwise they carry over. */
         bool firstMaker = cfg->genType == MAPGEN_MAKER && !hasSaved[cfg->genType];
+        bool leavingMaker = prevGenType == MAPGEN_MAKER;
         if (hasSaved[cfg->genType]) {
             *cfg = savedConfigs[cfg->genType];
         } else {
@@ -686,13 +689,13 @@ bool mapGenImguiControls(MapGenConfig *cfg) {
         }
         cfg->seed = savedSeed;
         cfg->locks = savedLocks;
-        if (!firstMaker) {
+        if (firstMaker) {
+            nameVariedOutline(cfg);
+        } else if (!leavingMaker) {
             cfg->bases = savedBases;
             cfg->pills = savedPills;
             cfg->starts = savedStarts;
             cfg->size = savedSize;
-        } else {
-            nameVariedOutline(cfg);
         }
         cfg->x1 = savedX1; cfg->y1 = savedY1;
         cfg->x2 = savedX2; cfg->y2 = savedY2;
