@@ -283,6 +283,12 @@ bool mapEditorImguiValidationErrorModal(int errorCount);
  * Returns true if the config changed and the caller should regenerate. */
 bool mapGenImguiControls(MapGenConfig *cfg);
 
+/* The settings the panel starts from on Famous map maker style: the
+ * first preset, its size and counts, and a named outline in place of
+ * the preset's Varied, the same as picking the style from the list.
+ * The caller sets the seed. */
+MapGenConfig mapGenImguiMakerDefault(void);
+
 bool mapEditorImguiGenerateDialog(bool *open, MapGenConfig *cfg,
                                   bool hasSelection,
                                   int selX1, int selY1, int selX2, int selY2,

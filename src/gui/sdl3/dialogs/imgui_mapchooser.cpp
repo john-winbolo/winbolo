@@ -1593,10 +1593,7 @@ static void generateRandomPreview(MapChooserState *state, SDL_Renderer *renderer
 
 static void initGenConfig(MapChooserState *state) {
     if (state->genConfigInit) return;
-    state->genConfig = mapGenDefaultConfig(MAPGEN_TOURNAMENT);
-    state->genConfig.bases = 16;
-    state->genConfig.pills = 16;
-    state->genConfig.starts = 16;
+    state->genConfig = mapGenImguiMakerDefault();
     state->genConfig.seed = (uint32_t)time(NULL) ^ ((uint32_t)SDL_GetTicks() << 16);
     if (state->genConfig.seed == 0) state->genConfig.seed = 1;
     state->genSeedBuf[0] = '\0';

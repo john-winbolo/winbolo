@@ -287,6 +287,12 @@ static void nameVariedOutline(MapGenConfig *cfg) {
     if (o >= 0) k.outline = o;
 }
 
+MapGenConfig mapGenImguiMakerDefault(void) {
+    MapGenConfig cfg = mapGenDefaultConfig(MAPGEN_MAKER);
+    nameVariedOutline(&cfg);
+    return cfg;
+}
+
 /* After a preset is picked: put back the locked panel values. The
  * preset always sets the symmetry, size, bases, pillboxes and
  * starts, and sets each style lever to From seed. A locked style
@@ -628,16 +634,31 @@ bool mapGenImguiControls(MapGenConfig *cfg) {
      * its size and the counts of bases, pillboxes and starts.
      * They have no lock and Randomize does not change them. ---- */
 
-    /* Generator type */
+    /* Generator type. The list shows Famous map maker style first, so
+     * its order is not the MAPGEN_* numbering; genType keeps the
+     * numbers, which the seed string and saved settings store. */
     int prevGenType = cfg->genType;
+    static const int s_genTypeOrder[MAPGEN_TYPE_COUNT] = {
+        MAPGEN_MAKER,
+        MAPGEN_TOURNAMENT,
+        MAPGEN_NATURAL,
+        MAPGEN_MAZE,
+        MAPGEN_FRACTAL,
+    };
     const char *s_genTypeNames[MAPGEN_TYPE_COUNT] = {
+        langGetText(STR_MAPGEN_TYPE_MAKER),
         langGetText(STR_MAPGEN_TYPE_TOURNAMENT),
         langGetText(STR_MAPGEN_TYPE_NATURAL),
         langGetText(STR_MAPGEN_TYPE_MAZE),
         langGetText(STR_MAPGEN_TYPE_FRACTAL),
-        langGetText(STR_MAPGEN_TYPE_MAKER),
     };
-    ImGui::Combo(langGetText(STR_MAPGEN_GENERATOR), &cfg->genType, s_genTypeNames, MAPGEN_TYPE_COUNT);
+    int genTypeRow = 0;
+    for (int i = 0; i < MAPGEN_TYPE_COUNT; i++) {
+        if (s_genTypeOrder[i] == cfg->genType) genTypeRow = i;
+    }
+    if (ImGui::Combo(langGetText(STR_MAPGEN_GENERATOR), &genTypeRow, s_genTypeNames, MAPGEN_TYPE_COUNT)) {
+        cfg->genType = s_genTypeOrder[genTypeRow];
+    }
     if (cfg->genType != prevGenType) {
         static MapGenConfig savedConfigs[MAPGEN_TYPE_COUNT];
         static bool hasSaved[MAPGEN_TYPE_COUNT] = {};
