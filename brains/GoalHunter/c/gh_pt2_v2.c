@@ -773,8 +773,8 @@ static HVal *hm_find(HMap *m, uint64_t a, uint64_t b) {
     return NULL;
 }
 
-static void hm_grow(lua_State *L, HMap *m) {
-    int oc = m->cap, nc = oc ? oc * 2 : 256;
+static void hm_resize(lua_State *L, HMap *m, int nc) {
+    int oc = m->cap;
     uint64_t *k1 = (uint64_t *)malloc(sizeof(uint64_t) * (size_t)nc);
     uint64_t *k2 = (uint64_t *)malloc(sizeof(uint64_t) * (size_t)nc);
     HVal *v = (HVal *)malloc(sizeof(HVal) * (size_t)nc);
@@ -793,6 +793,15 @@ static void hm_grow(lua_State *L, HMap *m) {
     }
     free(m->k1); free(m->k2); free(m->v); free(m->u);
     m->k1 = k1; m->k2 = k2; m->v = v; m->u = u; m->cap = nc;
+}
+static void hm_grow(lua_State *L, HMap *m) { hm_resize(L, m, m->cap ? m->cap * 2 : 256); }
+/* PT2_V2_DOLL_HM_FIT: a map under 30% full is made again at the smallest
+ * size (from 256) that holds its keys at 70% full at most */
+static void hm_fit(lua_State *L, HMap *m) {
+    if (m->cap <= 256 || (double)m->n * 10 >= (double)m->cap * 3) return;
+    int nc = 256;
+    while ((double)nc * 7 < (double)m->n * 10) nc *= 2;
+    if (nc < m->cap) hm_resize(L, m, nc);
 }
 
 /* The slot of key (a, b), made when new (*isnew = 1). */
@@ -858,8 +867,10 @@ typedef struct {
      * copy_share PT2_V2_DOLL_COPY_SHARE: one copy map per evaluate and
      *            slot arena, so a part two kept records reach is copied once
      * pobj_small PT2_V2_DOLL_POBJ_SMALL: a part that is not a POINT is made
-     *            without the predict query fields (PO_SMALL bytes) */
-    int       dl_real_fill, dl_scratch_out, dl_poison, dl_copy_share, dl_pobj_small;
+     *            without the predict query fields (PO_SMALL bytes)
+     * hm_fit     PT2_V2_DOLL_HM_FIT: doll_sync makes a job map under 30%
+     *            full smaller (70% full at most) */
+    int       dl_real_fill, dl_scratch_out, dl_poison, dl_copy_share, dl_pobj_small, dl_hm_fit;
 } Pt2Ctx;
 
 typedef struct { int64_t sq; double shots; int kind; double t; int pill; Memo m; } Blk;
@@ -9828,7 +9839,7 @@ static void dm_put_ar(char *b, size_t cap, size_t *at, const char *nm, const Are
 }
 /* gh_pt2_v2.dl_mem_on(on): PT2_V2_DOLL_MEM_LOG; the side maps start now */
 static int l_dl_mem_on(lua_State *L) { g_dm_on = lua_toboolean(L, 1); return 0; }
-/* gh_pt2_v2.doll_opts(real_fill, scratch_out, poison, copy_share, pobj_small): the doll cache's memory knobs (Pt2Ctx);
+/* gh_pt2_v2.doll_opts(real_fill, scratch_out, poison, copy_share, pobj_small, hm_fit): the doll cache's memory knobs (Pt2Ctx);
  * none changes a result */
 static int l_doll_opts(lua_State *L) {
     Pt2Ctx *c = get_ctx(L);
@@ -9837,6 +9848,7 @@ static int l_doll_opts(lua_State *L) {
     c->dl_poison = lua_toboolean(L, 3);
     c->dl_copy_share = lua_toboolean(L, 4);
     c->dl_pobj_small = lua_toboolean(L, 5);
+    c->dl_hm_fit = lua_toboolean(L, 6);
     return 0;
 }
 /* gh_pt2_v2.dl_mem_end(job, src): a doll job pilltake_v2.lua drops (before pc_free) */
@@ -10755,6 +10767,12 @@ static int l_doll_sync(lua_State *L) {
     for (int i = 0; i < ncs; i++) {
         d_sqm += dl_hm_del(&j->sqm, dbits((double)cs[i].sq), 0);
         d_sqf += dl_hm_del(&j->sqf, (uint64_t)(int64_t)cs[i].sq, 0);
+    }
+    /* PT2_V2_DOLL_HM_FIT: the job's maps after the drops */
+    if (get_ctx(L)->dl_hm_fit) {
+        hm_fit(L, &j->rays); hm_fit(L, &j->sqm); hm_fit(L, &j->sqf);
+        hm_fit(L, &j->pts); hm_fit(L, &j->pls); hm_fit(L, &j->flt);
+        if (j->pcc) hm_fit(L, &j->pcc->om);
     }
     memcpy(j->dsnap, m, PT2_MAP_SQ);
     dl_stat(L, "changed", 1);

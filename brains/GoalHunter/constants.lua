@@ -1704,6 +1704,10 @@ M.PT2_V2_DOLL_COPY_SHARE = true
 -- point uses (128 bytes, a point 152; all were 192 before the smaller
 -- field types). The same results. false = every part made with them.
 M.PT2_V2_DOLL_POBJ_SMALL = true
+-- PT2_V2_DOLL_HM_FIT (Nov 27, memory only): after its drops, doll_sync
+-- makes a job hash map that is under 30% full smaller again (at most 70%
+-- full). A map never got smaller before. The same results. false = off.
+M.PT2_V2_DOLL_HM_FIT = true
 -- PT2_V2_DOLL_VIZ_RECORD (debug only): a headless -brain-debug run records
 -- the doll cache layers pt2_d1 .. pt2_d5 and pt2_dchg (pt2_viz.lua).
 -- It also writes the PT2_V2_DOLL_EVENT_LOG file dl_p<player>.bin in the
