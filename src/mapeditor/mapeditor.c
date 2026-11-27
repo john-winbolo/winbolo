@@ -5215,14 +5215,17 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
             ed->showImageImportDialog = true;
         }
         if (menuAction.wantGenerate) {
-            /* Only reset to defaults on first use; preserve previous settings */
+            /* Only reset to defaults on first use; preserve previous
+             * settings. The first use starts on Famous map maker style
+             * and keeps its first preset's counts. After that, full-map
+             * always sets bases/pills/starts to 16. */
             if (ed->genConfig.seed == 0) {
-                ed->genConfig = mapGenDefaultConfig(MAPGEN_TOURNAMENT);
+                ed->genConfig = mapGenImguiMakerDefault();
+            } else {
+                ed->genConfig.bases = 16;
+                ed->genConfig.pills = 16;
+                ed->genConfig.starts = 16;
             }
-            /* Full-map: always set bases/pills/starts to 16 */
-            ed->genConfig.bases = 16;
-            ed->genConfig.pills = 16;
-            ed->genConfig.starts = 16;
             /* Refresh the seed so consecutive generates differ */
             ed->genConfig.seed = (uint32_t)SDL_GetTicksNS();
             /* Menu always uses full-map scope */

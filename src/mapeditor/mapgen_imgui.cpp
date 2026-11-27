@@ -287,6 +287,12 @@ static void nameVariedOutline(MapGenConfig *cfg) {
     if (o >= 0) k.outline = o;
 }
 
+MapGenConfig mapGenImguiMakerDefault(void) {
+    MapGenConfig cfg = mapGenDefaultConfig(MAPGEN_MAKER);
+    nameVariedOutline(&cfg);
+    return cfg;
+}
+
 /* After a preset is picked: put back the locked panel values. The
  * preset always sets the symmetry, size, bases, pillboxes and
  * starts, and sets each style lever to From seed. A locked style
@@ -628,16 +634,31 @@ bool mapGenImguiControls(MapGenConfig *cfg) {
      * its size and the counts of bases, pillboxes and starts.
      * They have no lock and Randomize does not change them. ---- */
 
-    /* Generator type */
+    /* Generator type. The list shows Famous map maker style first, so
+     * its order is not the MAPGEN_* numbering; genType keeps the
+     * numbers, which the seed string and saved settings store. */
     int prevGenType = cfg->genType;
+    static const int s_genTypeOrder[MAPGEN_TYPE_COUNT] = {
+        MAPGEN_MAKER,
+        MAPGEN_TOURNAMENT,
+        MAPGEN_NATURAL,
+        MAPGEN_MAZE,
+        MAPGEN_FRACTAL,
+    };
     const char *s_genTypeNames[MAPGEN_TYPE_COUNT] = {
+        langGetText(STR_MAPGEN_TYPE_MAKER),
         langGetText(STR_MAPGEN_TYPE_TOURNAMENT),
         langGetText(STR_MAPGEN_TYPE_NATURAL),
         langGetText(STR_MAPGEN_TYPE_MAZE),
         langGetText(STR_MAPGEN_TYPE_FRACTAL),
-        langGetText(STR_MAPGEN_TYPE_MAKER),
     };
-    ImGui::Combo(langGetText(STR_MAPGEN_GENERATOR), &cfg->genType, s_genTypeNames, MAPGEN_TYPE_COUNT);
+    int genTypeRow = 0;
+    for (int i = 0; i < MAPGEN_TYPE_COUNT; i++) {
+        if (s_genTypeOrder[i] == cfg->genType) genTypeRow = i;
+    }
+    if (ImGui::Combo(langGetText(STR_MAPGEN_GENERATOR), &genTypeRow, s_genTypeNames, MAPGEN_TYPE_COUNT)) {
+        cfg->genType = s_genTypeOrder[genTypeRow];
+    }
     if (cfg->genType != prevGenType) {
         static MapGenConfig savedConfigs[MAPGEN_TYPE_COUNT];
         static bool hasSaved[MAPGEN_TYPE_COUNT] = {};
@@ -655,9 +676,12 @@ bool mapGenImguiControls(MapGenConfig *cfg) {
         int savedX2 = cfg->x2, savedY2 = cfg->y2;
 
         /* The first switch to Map Maker takes the size and counts of
-         * its first preset, the same as picking that preset. Otherwise
-         * they carry over. */
+         * its first preset, the same as picking that preset. A switch
+         * away from Map Maker takes the new type's own size and counts,
+         * from its last use or its defaults, because a Map Maker
+         * preset set them, not the player. Otherwise they carry over. */
         bool firstMaker = cfg->genType == MAPGEN_MAKER && !hasSaved[cfg->genType];
+        bool leavingMaker = prevGenType == MAPGEN_MAKER;
         if (hasSaved[cfg->genType]) {
             *cfg = savedConfigs[cfg->genType];
         } else {
@@ -665,13 +689,13 @@ bool mapGenImguiControls(MapGenConfig *cfg) {
         }
         cfg->seed = savedSeed;
         cfg->locks = savedLocks;
-        if (!firstMaker) {
+        if (firstMaker) {
+            nameVariedOutline(cfg);
+        } else if (!leavingMaker) {
             cfg->bases = savedBases;
             cfg->pills = savedPills;
             cfg->starts = savedStarts;
             cfg->size = savedSize;
-        } else {
-            nameVariedOutline(cfg);
         }
         cfg->x1 = savedX1; cfg->y1 = savedY1;
         cfg->x2 = savedX2; cfg->y2 = savedY2;
