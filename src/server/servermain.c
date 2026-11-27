@@ -1951,7 +1951,7 @@ int main(int argc, char **argv) {
     SDL_SetLogPriority(SDL_LOG_CATEGORY_SYSTEM, sysPrio);
   }
 #endif
-  /* IP-to-country geolocation (DB-IP Lite). Resolve the database relative to
+  /* IP-to-country geolocation (IPinfo Lite). Resolve the database relative to
      the executable directory so the server works regardless of the CWD it was
      launched from; fall back to the CWD-relative path if that fails. */
   bool geoLookupOk = FALSE;
@@ -1960,14 +1960,14 @@ int main(int argc, char **argv) {
     const char *basePath = SDL_GetBasePath();
     if (basePath != NULL) {
       char mmdbPath[FILENAME_MAX];
-      snprintf(mmdbPath, sizeof(mmdbPath), "%sdata/dbip-country-lite.mmdb",
+      snprintf(mmdbPath, sizeof(mmdbPath), "%sdata/ipinfo_lite.mmdb",
                basePath);
       geoLookupOk = geoLookupCreate(mmdbPath);
     }
   }
 #endif
   if (geoLookupOk == FALSE) {
-    geoLookupOk = geoLookupCreate("data/dbip-country-lite.mmdb");
+    geoLookupOk = geoLookupCreate("data/ipinfo_lite.mmdb");
   }
 
   /* Create server simulation */

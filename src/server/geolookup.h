@@ -19,9 +19,9 @@
  *Name:          GeoLookup
  *Filename:      geolookup.h
  *Purpose:
- *  IP-to-country lookup using libmaxminddb and DB-IP Lite.
+ *  IP-to-country lookup using libmaxminddb and IPinfo Lite.
  *  Returns 2-letter ISO 3166-1 alpha-2 country codes.
- *  IP geolocation by DB-IP (https://db-ip.com).
+ *  IP address data powered by IPinfo (https://ipinfo.io).
  *********************************************************/
 
 #ifndef GEOLOOKUP_H
@@ -35,7 +35,7 @@
  *  Open the MaxMind DB (.mmdb) file for IP-to-country lookups.
  *
  *ARGUMENTS:
- *  mmdbPath - Path to the .mmdb database file (e.g., "data/dbip-country-lite.mmdb")
+ *  mmdbPath - Path to the .mmdb database file (e.g., "data/ipinfo_lite.mmdb")
  *RETURNS:
  *  true on success, false if the file could not be opened.
  *  If this returns false, all lookups will return "XX".

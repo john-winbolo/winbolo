@@ -654,6 +654,12 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     set(MAXMINDDB_BUILD_BINARIES OFF CACHE BOOL "" FORCE)
     FetchContent_MakeAvailable(libmaxminddb)
     set(BUILD_SHARED_LIBS "${BUILD_SHARED_LIBS_SAVE}" CACHE BOOL "" FORCE)
+
+    # The country database libmaxminddb reads. Not in the repository: it is
+    # downloaded into a per-user cache and copied into the build outputs.
+    if(NOT EMSCRIPTEN)
+        include(cmake/fetch_geoip.cmake)
+    endif()
 endif()
 
 # libopus — voice codec, forced static.  Outside the guard above, as is
@@ -2578,6 +2584,17 @@ add_custom_command(TARGET WinBolo POST_BUILD
     COMMENT "Copying WinBolo data files to output directory"
 )
 
+# The game browser looks up the country of each LAN game it finds.
+if(DEFINED WINBOLO_GEOIP_DB)
+    add_custom_command(TARGET WinBolo POST_BUILD
+        COMMAND ${CMAKE_COMMAND}
+            "-DSOURCE=${WINBOLO_GEOIP_DB}"
+            "-DDEST_DIR=${WINBOLO_DATA_DIR}/data"
+            -P "${CMAKE_SOURCE_DIR}/cmake/copy_geoip.cmake"
+        COMMENT "Copying the GeoIP database to the WinBolo output directory"
+    )
+endif()
+
 # Ship the top-level docs (Third Party Notices, Authors) inside data/
 # so the About box can find them via SDL_GetBasePath()/data/. The licence
 # and its additional permissions go with them: the GPL requires every copy
@@ -2824,13 +2841,13 @@ if(HAVE_SENTRY)
 endif()
 
 # Copy geo database to server output directory
-if(EXISTS "${CMAKE_SOURCE_DIR}/data/dbip-country-lite.mmdb")
+if(DEFINED WINBOLO_GEOIP_DB)
     add_custom_command(TARGET WinBoloDS POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:WinBoloDS>/data"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${CMAKE_SOURCE_DIR}/data/dbip-country-lite.mmdb"
-            "$<TARGET_FILE_DIR:WinBoloDS>/data/dbip-country-lite.mmdb"
-        COMMENT "Copying geo database to server output directory"
+        COMMAND ${CMAKE_COMMAND}
+            "-DSOURCE=${WINBOLO_GEOIP_DB}"
+            "-DDEST_DIR=$<TARGET_FILE_DIR:WinBoloDS>/data"
+            -P "${CMAKE_SOURCE_DIR}/cmake/copy_geoip.cmake"
+        COMMENT "Copying the GeoIP database to the server output directory"
     )
 endif()
 
@@ -3856,6 +3873,13 @@ add_custom_target(dist
 
     # Data assets (includes data/lang)
     COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/data" "${DIST_DIR}/data"
+
+    # The GeoIP database, which a release must carry
+    COMMAND ${CMAKE_COMMAND}
+        "-DSOURCE=${WINBOLO_GEOIP_DB}"
+        "-DDEST_DIR=${DIST_DIR}/data"
+        -DREQUIRED=ON
+        -P "${CMAKE_SOURCE_DIR}/cmake/copy_geoip.cmake"
 
     # Steam Input action manifest (Steam reads from controller_config/)
     COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/controller_config" "${DIST_DIR}/controller_config"
