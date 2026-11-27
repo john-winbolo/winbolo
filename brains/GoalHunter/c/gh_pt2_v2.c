@@ -6784,13 +6784,13 @@ static int l_dl_viz_take(lua_State *L) {
     lua_createtable(L, (int)d->vzn, 0);
     for (uint32_t i = 0; i < d->vzn; i++) {
         const DlRec *r = &d->vz[i];
-        lua_createtable(L, 0, 18);
+        lua_createtable(L, 0, 21);
 #define VZF(nm, v) (lua_pushnumber(L, (lua_Number)(v)), lua_setfield(L, -2, nm))
         VZF("tick", r->tick); VZF("ev", r->ev); VZF("us", r->us); VZF("ov", r->ov); VZF("nv", r->nv);
         VZF("asq", r->asq); VZF("xsq", r->xsq); VZF("osq", r->osq); VZF("deg10", r->deg10);
         VZF("csq", r->csq); VZF("ckind", r->ckind); VZF("src", r->src); VZF("lvl", r->lvl);
         VZF("res", r->res); VZF("code", r->code); VZF("flags", r->flags); VZF("field", r->field);
-        VZF("run", r->run);
+        VZF("run", r->run); VZF("bytes", r->bytes); VZF("p", r->p); VZF("depth", r->depth);
 #undef VZF
         lua_rawseti(L, -2, (int)i + 1);
     }
