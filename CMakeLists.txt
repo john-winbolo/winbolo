@@ -4359,6 +4359,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_lobby_template.c
     # A lobby map change keeping the bots and the host's script list.
     tests/unit/test_lobby_map_keeps_bots.c
+    # The empty reset counting only human players, and a no-lobby server
+    # starting a new round when it fires.
+    tests/unit/test_empty_reset.c
     tests/unit/test_survival_lobby_round.c
     # What a real client draws when a held seat is taken off the field: the
     # tank has to go with it, though the roster row stays.
@@ -7212,6 +7215,11 @@ set(_unit_test_names
     autoclose_closes_after_last_player_leaves
     autoclose_lobby_boot_waits_for_a_joiner
     autoclose_failed_bot_add_leaves_check_armed
+    autoclose_human_leaves_bots_stay_closes
+    autoclose_bots_only_never_closes
+    autoclose_lobby_round_human_leaves_closes
+    autoclose_lobby_round_ticks_to_lobby_closes
+    autoclose_lobby_all_quit_in_hold_closes
     game_vote_state_codec_surrender_passed
     game_vote_state_codec_back_to_lobby
     game_vote_state_decoder_rejects_short
@@ -7493,6 +7501,12 @@ set(_unit_test_names
     lobby_random_map_clears_map_md5
     lobby_cancel_file_preview_keeps_random_map
     lobby_map_rotate_holds_seats_again
+    empty_reset_bots_only_fires
+    empty_reset_human_holds_timer
+    empty_reset_human_leaves_starts_timer
+    empty_reset_spectator_counts_empty
+    empty_reset_nolobby_starts_new_round
+    empty_reset_lobby_bot_keeps_seat
     scenario_map_rotation_redecides
     lobby_script_keeps_bots_mod
     lobby_script_keeps_bots_swap

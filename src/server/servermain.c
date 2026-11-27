@@ -936,16 +936,32 @@ void printArgs() {
   fprintf(stderr, "-no-voice     - Alias for -voice off. Wins when both are given.\n");
 
   fprintf(stderr, "\nLifecycle & shutdown:\n");
-  fprintf(stderr, "-autoclose    - Automatically quit the server when all players have left\n");
-  fprintf(stderr, "                the game\n");
+  fprintf(stderr, "-autoclose    - Automatically quit the server when all human players have\n");
+  fprintf(stderr, "                left. Bots and spectators do not count: the server quits\n");
+  fprintf(stderr, "                with bots still playing, and one that only ever had bots\n");
+  fprintf(stderr, "                does not quit.\n");
   fprintf(stderr, "-quitonwin    - Quit server when a player/alliance wins\n");
-  fprintf(stderr, "-maprotate    - No-lobby map rotation: on a win or when the server empties,\n");
+  fprintf(stderr, "-maprotate    - No-lobby map rotation: on a win or when the last human player\n");
+  fprintf(stderr, "                leaves (bots and spectators do not count),\n");
   fprintf(stderr, "                boot all players, pick the next -mapdir map and restart a\n");
   fprintf(stderr, "                fresh round. Never auto-quits (Ctrl-C / quit only). Implies\n");
   fprintf(stderr, "                -nolobby and requires -mapdir.\n");
-  fprintf(stderr, "-noemptyreset - Disable automatic lobby reset when server is empty\n");
-  fprintf(stderr, "                (enabled by default, resets after 5 minutes)\n");
-  fprintf(stderr, "-emptyresetmins <N> - Minutes before empty server resets to lobby (default: 5)\n");
+  fprintf(stderr, "-noemptyreset - Disable the automatic reset when no human player is connected\n");
+  fprintf(stderr, "                (with a lobby: on by default, 5 minutes; with -nolobby:\n");
+  fprintf(stderr, "                off unless -emptyresetmins is given). Bots and\n");
+  fprintf(stderr, "                spectators do not count as players. With a lobby the\n");
+  fprintf(stderr, "                server goes back to the lobby; with -nolobby it starts a\n");
+  fprintf(stderr, "                new round (next -mapdir map, or the same map reloaded).\n");
+  fprintf(stderr, "-emptyresetmins <N> - Minutes with no human player before the reset (default: 5)\n");
+  fprintf(stderr, "                With -nolobby the reset is off unless this is given.\n");
+  fprintf(stderr, "                With -nolobby, a server that nobody joins starts a new\n");
+  fprintf(stderr, "                round every N minutes, with no end. Each new round starts\n");
+  fprintf(stderr, "                a new round log (and, with -brain-debug, a new recording\n");
+  fprintf(stderr, "                folder). With WinBolo.net on, each one also ends the\n");
+  fprintf(stderr, "                session, uploads the round log and registers again.\n");
+  fprintf(stderr, "                Not used with -maprotate, which has its own empty rotation.\n");
+  fprintf(stderr, "                A value that is not a whole number from 1 to 715827 is\n");
+  fprintf(stderr, "                ignored, with a warning.\n");
   fprintf(stderr, "-ticks <N>    - Exit cleanly after N game-ticks of running play.\n");
   fprintf(stderr, "                \"0\" or omitted means unlimited (default).\n");
   fprintf(stderr, "-ticklimit <N> - End the current game (transition to GAME_OVER) after N\n");
@@ -2416,13 +2432,29 @@ int main(int argc, char **argv) {
 
   /* Empty reset configuration — on by default */
   bool emptyResetEnabled = (argExist(argc, argv, "noemptyreset") == FALSE);
+  bool emptyResetMinsGiven = false;
   {
     int argNum = findArg(argc, argv, "emptyresetmins");
     if (argNum != ARG_NOT_FOUND) {
-      int mins = atoi((char *)argv[argNum]);
-      if (mins > 0) {
-        serverSimSetEmptyResetMinutes(serverSim, mins);
+      /* A whole number of minutes, 1 or more. The timer counts frames in an
+       * int (minutes * 60 * 50), so the top limit keeps that from wrapping. */
+      const char *text = (const char *)argv[argNum];
+      char       *end  = NULL;
+      long        mins = strtol(text, &end, 10);
+      if (end != text && *end == '\0' && mins > 0 && mins <= 715827L) {
+        serverSimSetEmptyResetMinutes(serverSim, (int)mins);
+        emptyResetMinsGiven = true;
+      } else {
+        fprintf(stderr,
+                "Warning: -emptyresetmins '%s' is not a whole number of "
+                "minutes from 1 to 715827; the value is ignored (with a "
+                "lobby the reset stays at 5 minutes, with -nolobby it stays "
+                "off)\n", text);
       }
+    } else if (argExist(argc, argv, "emptyresetmins") == TRUE) {
+      fprintf(stderr,
+              "Warning: -emptyresetmins needs a number of minutes after it; "
+              "it is ignored\n");
     }
   }
 
@@ -2658,9 +2690,13 @@ int main(int argc, char **argv) {
 
   /* -nolobby: skip lobby, start running immediately (backward-compatible
    * mode). serverInstanceStartup runs SetLobbyEnabled(false) + StartGame
-   * from cfg.skipLobby; emptyReset is force-disabled in this mode. */
+   * from cfg.skipLobby. With no lobby the empty reset starts a new round,
+   * and only when -emptyresetmins asks for it: a -nolobby server with bots
+   * and nobody else on it (a bench, a test arena, a recording) has always
+   * run its one round to the end, and a reset five minutes in would cut it
+   * short. -maprotate keeps it off, as it has its own empty-server rotation. */
   bool skipLobby = (argExist(argc, argv, "nolobby") == TRUE) || mapRotate;
-  if (skipLobby) {
+  if (skipLobby && (mapRotate || !emptyResetMinsGiven)) {
     emptyResetEnabled = false;
   }
 

@@ -989,6 +989,15 @@ int run_autoclose_boot_does_not_close_while_empty(void);
 int run_autoclose_closes_after_last_player_leaves(void);
 int run_autoclose_lobby_boot_waits_for_a_joiner(void);
 int run_autoclose_failed_bot_add_leaves_check_armed(void);
+/* Only human players count, as for the empty reset: bots staying on does not
+ * hold the server open, and bots alone never close it. */
+int run_autoclose_human_leaves_bots_stay_closes(void);
+int run_autoclose_bots_only_never_closes(void);
+int run_autoclose_lobby_round_human_leaves_closes(void);
+/* The same with real ticks on a lobby server: the round ends, the hold runs
+ * and the server goes back to the lobby, where it must quit. */
+int run_autoclose_lobby_round_ticks_to_lobby_closes(void);
+int run_autoclose_lobby_all_quit_in_hold_closes(void);
 
 /* Round transition off the tick thread (test_round_transition_tick.c). The
  * boundary queues server/quit, the round-log upload and server/register for
@@ -3853,6 +3862,14 @@ int run_lobby_random_map_drops_map_own_script(void);
 int run_lobby_random_map_clears_map_md5(void);
 int run_lobby_cancel_file_preview_keeps_random_map(void);
 int run_lobby_map_rotate_holds_seats_again(void);
+/* The empty reset (test_empty_reset.c): only human players count, bots and
+ * spectators do not, and a server with no lobby starts a new round. */
+int run_empty_reset_bots_only_fires(void);
+int run_empty_reset_human_holds_timer(void);
+int run_empty_reset_human_leaves_starts_timer(void);
+int run_empty_reset_spectator_counts_empty(void);
+int run_empty_reset_nolobby_starts_new_round(void);
+int run_empty_reset_lobby_bot_keeps_seat(void);
 /* A map rotation decides the scenario again: a plain map leaves none
  * attached, and the scripted map brings its own back. */
 int run_scenario_map_rotation_redecides(void);

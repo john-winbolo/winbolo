@@ -757,9 +757,9 @@ static void simRunHalfStep(ServerSim *sim) {
     }
 
     /* End the round once the last human leaves, so the server drops back
-     * to the lobby instead of looping a bot-only game forever (which it
-     * otherwise does — the empty/auto-close checks count bots via
-     * serverSimGetNumPlayers). Gated on roundHadHuman so a game that
+     * to the lobby at once instead of playing on with bots only (with
+     * -noemptyreset nothing else would end such a round, and the empty
+     * reset waits its full timer). Gated on roundHadHuman so a game that
      * legitimately started with only bots (all bots ready) isn't ended
      * the instant it starts, which would loop start<->gameover. Only for
      * lobby-enabled servers; a no-lobby game-over means shutdown, which a

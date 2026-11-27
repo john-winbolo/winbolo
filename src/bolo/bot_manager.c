@@ -1373,12 +1373,14 @@ bool botManagerAddBot(ServerSim *sim, BYTE playerNum,
        The build takes back its own allocations; the roster is this call's. */
     if (!botBuildRunner(sim, bot, brainPath, brainName, ai)) {
         serverSimRemovePlayer(sim, playerNum);
-        /* Taking the seat latched hadPlayersEver, and giving it back does not
-           clear it — the empty-server checks would then read a bot that never
-           reached the field as a player who joined and left. A server whose
-           bots all fail to build (an unreadable brain) would close under
-           -autoclose, or rotate under -maprotate, on its first tick with
-           nobody having connected. */
+        /* Taking a seat no longer latches hadPlayersEver (only a person seen
+           by serverSimCheckAutoClose does), so this restore puts back the
+           value it already has. It stays as a guard: if taking the seat ever
+           latched it again, the empty-server checks would read a bot that
+           never reached the field as a player who joined and left, and a
+           server whose bots all fail to build (an unreadable brain) would
+           close under -autoclose, or rotate under -maprotate, on its first
+           tick with nobody having connected. */
         sim->hadPlayersEver = hadPlayersBefore;
         return false;
     }
