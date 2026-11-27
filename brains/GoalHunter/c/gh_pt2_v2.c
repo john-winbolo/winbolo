@@ -849,8 +849,13 @@ typedef struct {
     void     *dm;           /* PT2_V2_DOLL_MEM_LOG (log only): DmAgg */
     /* gh_pt2_v2.doll_opts (memory only, no result change):
      * real_fill  PT2_V2_DOLL_REAL_FILL: an arena's given-out count (ntot)
-     *            leaves out the lane block bytes a walk gives back */
-    int       dl_real_fill;
+     *            leaves out the lane block bytes a walk gives back
+     * scratch_out PT2_V2_DOLL_SCRATCH_OUT: a stored part is made in the
+     *            evaluate's arena and only its kept record is copied to
+     *            the slot arena
+     * poison     PT2_V2_DOLL_SCRATCH_POISON (debug): the evaluate's arena
+     *            is filled with 0xA5 before it is freed */
+    int       dl_real_fill, dl_scratch_out, dl_poison;
 } Pt2Ctx;
 
 typedef struct { int64_t sq; double shots; int kind; double t; int pill; Memo m; } Blk;
@@ -1230,6 +1235,11 @@ struct St {
     Job       *job;
     Arena      ar;          /* records, views, plans: this evaluate */
     Arena     *arp;         /* where NEW allocates: &ar, or &job->par (PT2_V2_CACHE) */
+    /* PT2_V2_DOLL_SCRATCH_OUT: the knob (from Pt2Ctx at begin), the chunk
+     * ranges of ar (sorted; rl_cb: ar.cb when made) and the poison knob */
+    int        dl_so, dl_poison;
+    struct RlRange *rl_r; int rl_nr, rl_cap; double rl_cb;
+    HMap       rl_map;      /* the copy map, cleared for each kept record */
     int        done;        /* the result was made */
     int        pc;          /* where step goes on */
     /* inp */
@@ -6428,7 +6438,11 @@ static int job_gc(lua_State *L) {
 
 static int ev_gc(lua_State *L) {
     Ev *e = (Ev *)lua_touserdata(L, 1);
+    /* PT2_V2_DOLL_SCRATCH_POISON (debug): a kept pointer into this arena
+     * reads 0xA5 bytes after this (a wrong answer or a crash) */
+    if (e->dl_poison) for (Chunk *c = e->ar.head; c; c = c->next) memset(c->data, 0xA5, c->cap);
     ar_free(&e->ar);
+    free(e->rl_r); e->rl_r = NULL; hm_free(&e->rl_map);
     hm_free(&e->reach); hm_free(&e->lgt); hm_free(&e->lgt_v); hm_free(&e->cwm);
     hm_free(&e->wsmask); hm_free(&e->wslane); hm_free(&e->wsseen);
     return 0;
@@ -6860,6 +6874,190 @@ static Rec *rec_from_store(Ev *e, const Rec *s) {
     return c;
 }
 
+/* -- PT2_V2_DOLL_SCRATCH_OUT -------------------------------------------
+ * A stored part (standoff point, plan) is made in the evaluate's arena
+ * (e->ar). Then its kept record is copied to the slot arena: each object
+ * the record reaches that is in e->ar is copied once (rl map: old place
+ * and size to the copy) and the copy's pointers are set the same way.
+ * What is not in e->ar (the job's rays, other stored records) is shared,
+ * as before. The scratch of the making stays in e->ar and goes with the
+ * evaluate. The copy is the record as it was made, so the same results. */
+typedef struct RlRange { uintptr_t lo, hi; } RlRange;
+typedef struct { Ev *e; Arena *dst; HMap *map; } Rl;
+static int rl_rng_lt(const void *a, const void *b) {
+    uintptr_t x = ((const RlRange *)a)->lo, y = ((const RlRange *)b)->lo;
+    return x < y ? -1 : x > y;
+}
+/* e->ar's chunk ranges, made again when a chunk was added */
+static void rl_ranges(Ev *e) {
+    if (e->rl_r && e->rl_cb == e->ar.cb) return;
+    int n = 0;
+    for (const Chunk *c = e->ar.head; c; c = c->next) n++;
+    if (n + 1 > e->rl_cap) {
+        int nc = n * 2 + 8;
+        RlRange *r = (RlRange *)realloc(e->rl_r, sizeof(RlRange) * (size_t)nc);
+        if (!r) { luaL_error(e->L, "gh_pt2_v2: out of memory"); return; }
+        e->rl_r = r; e->rl_cap = nc;
+    }
+    n = 0;
+    for (const Chunk *c = e->ar.head; c; c = c->next) {
+        e->rl_r[n].lo = (uintptr_t)c->data; e->rl_r[n].hi = (uintptr_t)c->data + c->cap; n++;
+    }
+    qsort(e->rl_r, (size_t)n, sizeof(RlRange), rl_rng_lt);
+    e->rl_nr = n; e->rl_cb = e->ar.cb;
+}
+static int rl_in(const Ev *e, const void *p) {
+    uintptr_t a = (uintptr_t)p;
+    int lo = 0, hi = e->rl_nr - 1;
+    while (lo <= hi) {
+        int m = (lo + hi) / 2;
+        if (a < e->rl_r[m].lo) hi = m - 1;
+        else if (a >= e->rl_r[m].hi) lo = m + 1;
+        else return 1;
+    }
+    return 0;
+}
+/* p (sz bytes): its copy in dst when p is in e->ar (*nw = 1 the first
+ * time: the caller sets the copy's pointers), else p */
+static void *rl_mem(Rl *x, const void *p, size_t sz, int *nw) {
+    *nw = 0;
+    if (!p || !rl_in(x->e, p)) return (void *)p;
+    int isnew;
+    HVal *v = hm_put(x->e->L, x->map, (uint64_t)(uintptr_t)p, (uint64_t)sz, &isnew);
+    if (!isnew) return v->p;
+    void *d = ar_alloc(x->e->L, x->dst, sz > 0 ? sz : 1);
+    if (sz) memcpy(d, p, sz);
+    v->p = d;
+    *nw = 1;
+    return d;
+}
+static size_t rl_n(int n) { return n > 0 ? (size_t)n : 0; }
+#define RL_ARR(x, f, T, n) do { int nw_; (f) = (T *)rl_mem((x), (f), sizeof(T) * rl_n(n), &nw_); } while (0)
+static Ray *rl_ray(Rl *x, Ray *r) {
+    int nw;
+    Ray *c = (Ray *)rl_mem(x, r, sizeof(Ray), &nw);
+    if (!nw) return c;
+    RL_ARR(x, c->sq, int64_t, c->n_sq);
+    RL_ARR(x, c->sq_t, double, c->n_sq);
+    if (c->blk) {
+        Blk **b = (Blk **)rl_mem(x, c->blk, sizeof(Blk *) * rl_n(c->n_block), &nw);
+        if (nw) for (int i = 0; i < c->n_block; i++) RL_ARR(x, b[i], Blk, 1);
+        c->blk = b;
+    }
+    c->src = rl_ray(x, c->src);
+    return c;
+}
+static void rl_lane_f(Rl *x, Lane *l) { RL_ARR(x, l->v, int64_t, l->n); }
+static Lane *rl_lane(Rl *x, Lane *l) {
+    int nw;
+    Lane *c = (Lane *)rl_mem(x, l, sizeof(Lane), &nw);
+    if (nw) rl_lane_f(x, c);
+    return c;
+}
+static void rl_lanes_f(Rl *x, Lanes *l) {
+    for (int i = 0; i < l->n && i < PT2_MAXAIMS; i++) l->ln[i] = rl_lane(x, l->ln[i]);
+}
+static Lanes *rl_lanes(Rl *x, Lanes *l) {
+    int nw;
+    Lanes *c = (Lanes *)rl_mem(x, l, sizeof(Lanes), &nw);
+    if (nw) rl_lanes_f(x, c);
+    return c;
+}
+static PList *rl_plist(Rl *x, PList *l) {
+    int nw;
+    PList *c = (PList *)rl_mem(x, l, sizeof(PList), &nw);
+    if (nw) RL_ARR(x, c->v, int, c->cap);
+    return c;
+}
+static Extra *rl_extra(Rl *x, Extra *l) {
+    int nw;
+    Extra *c = (Extra *)rl_mem(x, l, sizeof(Extra), &nw);
+    if (nw) { RL_ARR(x, c->sq, int64_t, c->cap); RL_ARR(x, c->shots, double, c->cap); }
+    return c;
+}
+static Plan *rl_plan(Rl *x, Plan *l) {
+    int nw;
+    Plan *c = (Plan *)rl_mem(x, l, sizeof(Plan), &nw);
+    if (nw) RL_ARR(x, c->v, PlanE, c->cap);
+    return c;
+}
+static void rl_sm_f(Rl *x, SlotMemo *m) { RL_ARR(x, m->sq, int64_t, m->cap); RL_ARR(x, m->v, uint8_t, m->cap); }
+static WallBase *rl_wb(Rl *x, WallBase *b) {
+    int nw;
+    WallBase *c = (WallBase *)rl_mem(x, b, sizeof(WallBase), &nw);
+    if (!nw) return c;
+    RL_ARR(x, c->forbid, int64_t, c->nf);
+    if (c->U) {
+        UBase *u = (UBase *)rl_mem(x, c->U, sizeof(UBase) * rl_n(c->nU), &nw);
+        if (nw) for (int i = 0; i < c->nU; i++) {
+            RL_ARR(x, u[i].on_sq, int64_t, u[i].n_on);
+            RL_ARR(x, u[i].on_v, double, u[i].n_on);
+            u[i].r = rl_ray(x, u[i].r);
+        }
+        c->U = u;
+    }
+    return c;
+}
+static Rec *rl_rec(Rl *x, Rec *r);
+/* the pointers of a record copy */
+static void rl_rec_f(Rl *x, Rec *c) {
+    int nw;
+    c->T = rl_plist(x, c->T);
+    c->chain = rl_plist(x, c->chain);
+    if (c->rays) {
+        RayList *rl = (RayList *)rl_mem(x, c->rays, sizeof(RayList), &nw);
+        if (nw && rl->v) {
+            Ray **v = (Ray **)rl_mem(x, rl->v, sizeof(Ray *) * rl_n(rl->n), &nw);
+            if (nw) for (int i = 0; i < rl->n; i++) v[i] = rl_ray(x, v[i]);
+            rl->v = v;
+        }
+        c->rays = rl;
+    }
+    c->lane = rl_lane(x, c->lane);
+    RL_ARR(x, c->clear, Aims, 1);
+    c->lanes = rl_lanes(x, c->lanes);
+    c->extra_in = rl_extra(x, c->extra_in);
+    if (c->uncovered) {
+        IList *u = (IList *)rl_mem(x, c->uncovered, sizeof(IList), &nw);
+        if (nw) RL_ARR(x, u->v, int, u->n);
+        c->uncovered = u;
+    }
+    c->plan = rl_plan(x, c->plan);
+    c->extra = rl_extra(x, c->extra);
+    RL_ARR(x, c->lpts, LeePt, 8);
+    RL_ARR(x, c->hold, Hold, 1);
+    if (c->sp) {
+        StartPill *sp = (StartPill *)rl_mem(x, c->sp, sizeof(StartPill) * rl_n(c->n_sp), &nw);
+        if (nw) for (int i = 0; i < c->n_sp; i++) RL_ARR(x, sp[i].pl, PlanSq, sp[i].np);
+        c->sp = sp;
+    }
+    if (c->sc) {
+        StartLink *sc = (StartLink *)rl_mem(x, c->sc, sizeof(StartLink) * rl_n(c->n_sc), &nw);
+        if (nw) for (int i = 0; i < c->n_sc; i++) RL_ARR(x, sc[i].pl, PlanSq, sc[i].np);
+        c->sc = sc;
+    }
+    RL_ARR(x, c->xc, XWall, c->n_xc);
+    c->wb = rl_wb(x, c->wb);
+    if (c->sm) {
+        SlotMemo *m = (SlotMemo *)rl_mem(x, c->sm, sizeof(SlotMemo), &nw);
+        if (nw) rl_sm_f(x, m);
+        c->sm = m;
+    }
+    c->done = rl_rec(x, c->done);
+}
+static Rec *rl_rec(Rl *x, Rec *r) {
+    int nw;
+    Rec *c = (Rec *)rl_mem(x, r, sizeof(Rec), &nw);
+    if (nw) rl_rec_f(x, c);
+    return c;
+}
+static void rl_start(Rl *x, Ev *e, Arena *dst) {
+    memset(x, 0, sizeof(*x));
+    x->e = e; x->dst = dst; x->map = &e->rl_map;
+    rl_ranges(e);
+}
+static void rl_end(Rl *x) { if (x->map->n) hm_clear(x->map); }
+
 static void pc_key(const Ev *e, double px, double py, int aim_fixed, int nudge, int lazy,
                    uint64_t *k1, uint64_t *k2) {
     uint64_t f = (uint64_t)aim_fixed * 4 + (uint64_t)(nudge ? 2 : 0) + (uint64_t)(lazy ? 1 : 0);
@@ -7094,7 +7292,9 @@ static Rec *eval_point_pc(Ev *e, double px, double py, int aim_fixed, int nudge,
     double dlb0 = dle ? dle_ar_used(dar) : 0;
     double w0s = e->n_shot, w0c = e->casts_confirm, w0n = e->wall_nodes, w0m = e->memo_nodes;
     Arena *save = e->arp;
-    e->arp = dar;
+    /* PT2_V2_DOLL_SCRATCH_OUT: made in e->ar, the kept record copied */
+    int so = e->dl_so && e->doll;
+    e->arp = so ? &e->ar : dar;
     rb_start(e);
     PObj *po_ = e->pcc_run ? pcc_push(e, PO_POINT, k1, k2) : NULL;
     if (po_) { po_->x = (int)floor(px / 256); po_->y = (int)floor(py / 256); }
@@ -7108,6 +7308,7 @@ static Rec *eval_point_pc(Ev *e, double px, double py, int aim_fixed, int nudge,
         e->pc_en += 1;
         if (hv) { hv->p = NULL; dm_drop(e->L, e->job, DMK_PT, k1, k2); }
     } else {
+        e->arp = dar;
         PEnt *pe = NEW(e, PEnt);
         memset(pe, 0, sizeof(*pe));
         pe->why = *why; pe->wa = *why_arg; pe->b = b; pe->si = dsi; pe->po = po_;
@@ -7121,6 +7322,13 @@ static Rec *eval_point_pc(Ev *e, double px, double py, int aim_fixed, int nudge,
             sn->clear = aims_copy(e, r->clear);
             sn->lanes = lanes_copy(e, r->lanes);
             sn->alsh = 0;
+            if (so) {
+                /* sn and its clear and lanes are in dar: set their pointers */
+                Rl x; rl_start(&x, e, dar);
+                rl_rec_f(&x, sn);
+                if (sn->lanes) rl_lanes_f(&x, sn->lanes);
+                rl_end(&x);
+            }
             pe->r = sn;
         }
         int isnew;
@@ -7240,7 +7448,9 @@ static Rec *plan_point_pc__p(Ev *e, Rec *rec) {
     double dlb0 = dle ? dle_ar_used(dar) : 0;
     double w0s = e->n_shot, w0c = e->casts_confirm, w0n = e->wall_nodes, w0m = e->memo_nodes;
     Arena *save = e->arp;
-    e->arp = dar;
+    /* PT2_V2_DOLL_SCRATCH_OUT: made in e->ar, the kept record copied */
+    int so = e->dl_so && e->doll;
+    e->arp = so ? &e->ar : dar;
     rb_start(e);
     PObj *po_ = e->pcc_run ? pcc_push(e, PO_PLAN, k1, k2) : NULL;
     uint64_t dlb_k1 = 0, dlb_k2 = 0;
@@ -7267,6 +7477,7 @@ static Rec *plan_point_pc__p(Ev *e, Rec *rec) {
         e->pc_pn += 1;
         if (hv) { hv->p = NULL; dm_drop(e->L, e->job, DMK_PL, k1, k2); }
     } else {
+        e->arp = dar;
         PPlan *pp = NEW(e, PPlan);
         memset(pp, 0, sizeof(*pp));
         pp->b = b; pp->si = dsi; pp->po = po_;
@@ -7284,6 +7495,16 @@ static Rec *plan_point_pc__p(Ev *e, Rec *rec) {
             *o = *res;
             o->clear = NULL; o->lanes = NULL; o->alsh = 0;
             pp->out = o;
+        }
+        if (so) {
+            Rl x; rl_start(&x, e, dar);
+            if (pp->lns) rl_lanes_f(&x, pp->lns);
+            pp->wb = rl_wb(&x, pp->wb);
+            if (pp->has_sm) rl_sm_f(&x, &pp->sm);
+            pp->plan = rl_plan(&x, pp->plan);
+            pp->extra = rl_extra(&x, pp->extra);
+            if (pp->out) rl_rec_f(&x, pp->out);
+            rl_end(&x);
         }
         int isnew;
         HVal *v = hm_put(e->L, &e->job->pls, k1, k2, &isnew);
@@ -8114,6 +8335,7 @@ static int l_begin__p(lua_State *L) {
     lua_pushnil(L);
     slots_push(L);
     e->L = L; e->c = c;
+    e->dl_so = c->dl_scratch_out; e->dl_poison = c->dl_poison;
     Job *j = (Job *)lua_touserdata(L, S_JOB);
     e->job = j;
     j->busy = 1;
@@ -9488,11 +9710,13 @@ static void dm_put_ar(char *b, size_t cap, size_t *at, const char *nm, const Are
 }
 /* gh_pt2_v2.dl_mem_on(on): PT2_V2_DOLL_MEM_LOG; the side maps start now */
 static int l_dl_mem_on(lua_State *L) { g_dm_on = lua_toboolean(L, 1); return 0; }
-/* gh_pt2_v2.doll_opts(real_fill): the doll cache's memory knobs (Pt2Ctx);
+/* gh_pt2_v2.doll_opts(real_fill, scratch_out, poison): the doll cache's memory knobs (Pt2Ctx);
  * none changes a result */
 static int l_doll_opts(lua_State *L) {
     Pt2Ctx *c = get_ctx(L);
     c->dl_real_fill = lua_toboolean(L, 1);
+    c->dl_scratch_out = lua_toboolean(L, 2);
+    c->dl_poison = lua_toboolean(L, 3);
     return 0;
 }
 /* gh_pt2_v2.dl_mem_end(job, src): a doll job pilltake_v2.lua drops (before pc_free) */

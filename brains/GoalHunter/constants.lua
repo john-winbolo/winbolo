@@ -1682,8 +1682,18 @@ M.PT2_V2_DOLL_REAL_FILL = true
 -- hit). true = kept as before; false = no doll job for a take (each take
 -- evaluate makes its parts fresh); a number N = the take job starts again
 -- when its bytes pass N MB. The same results. false: 75 MB less doll peak,
--- and no slower; a cap of 8 MB saved nothing (the take job stays small).
+-- and no slower; a cap of 8 MB saved nothing (same peak as true).
 M.PT2_V2_DOLL_TAKE_STORE = false
+-- PT2_V2_DOLL_SCRATCH_OUT (Nov 27, memory only): a stored standoff point
+-- or plan is made in the evaluate's own arena, and only its kept record
+-- is copied to the goal pill's slot arena. Before, the making's scratch
+-- (about 40% of the slot arena bytes) stayed there with the record.
+-- The same results. false = made in the slot arena, as before.
+M.PT2_V2_DOLL_SCRATCH_OUT = true
+-- PT2_V2_DOLL_SCRATCH_POISON (debug only): the evaluate's arena is filled
+-- with 0xA5 bytes before it is freed, so a kept pointer into it gives a
+-- wrong answer or a crash (a check of PT2_V2_DOLL_SCRATCH_OUT).
+M.PT2_V2_DOLL_SCRATCH_POISON = false
 -- PT2_V2_DOLL_VIZ_RECORD (debug only): a headless -brain-debug run records
 -- the doll cache layers pt2_d1 .. pt2_d5 and pt2_dchg (pt2_viz.lua).
 -- It also writes the PT2_V2_DOLL_EVENT_LOG file dl_p<player>.bin in the
