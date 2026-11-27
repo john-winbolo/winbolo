@@ -1694,6 +1694,11 @@ M.PT2_V2_DOLL_SCRATCH_OUT = true
 -- with 0xA5 bytes before it is freed, so a kept pointer into it gives a
 -- wrong answer or a crash (a check of PT2_V2_DOLL_SCRATCH_OUT).
 M.PT2_V2_DOLL_SCRATCH_POISON = false
+-- PT2_V2_DOLL_COPY_SHARE (Nov 27, memory only): with SCRATCH_OUT, one copy
+-- map per evaluate and slot arena, so a part that a stored standoff point
+-- and its plan both reach is copied once (a part that changed after its
+-- copy is copied again). The same results. false = a map per record.
+M.PT2_V2_DOLL_COPY_SHARE = true
 -- PT2_V2_DOLL_VIZ_RECORD (debug only): a headless -brain-debug run records
 -- the doll cache layers pt2_d1 .. pt2_d5 and pt2_dchg (pt2_viz.lua).
 -- It also writes the PT2_V2_DOLL_EVENT_LOG file dl_p<player>.bin in the

@@ -3360,7 +3360,7 @@ local function doll_cache(inp, src, now)
   -- the doll's memory knobs (C, per Lua state; no result change)
   if gh_pt2_v2.doll_opts then
     gh_pt2_v2.doll_opts(PCK.PT2_V2_DOLL_REAL_FILL ~= false, PCK.PT2_V2_DOLL_SCRATCH_OUT ~= false,
-      PCK.PT2_V2_DOLL_SCRATCH_POISON == true)
+      PCK.PT2_V2_DOLL_SCRATCH_POISON == true, PCK.PT2_V2_DOLL_COPY_SHARE ~= false)
   end
   local dle = dle_on() and dle_open(inp)
   -- BrainTest doll layers (pt2_viz.lua, debug only): C keeps a copy of

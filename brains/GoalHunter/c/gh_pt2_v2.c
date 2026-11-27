@@ -854,8 +854,10 @@ typedef struct {
      *            evaluate's arena and only its kept record is copied to
      *            the slot arena
      * poison     PT2_V2_DOLL_SCRATCH_POISON (debug): the evaluate's arena
-     *            is filled with 0xA5 before it is freed */
-    int       dl_real_fill, dl_scratch_out, dl_poison;
+     *            is filled with 0xA5 before it is freed
+     * copy_share PT2_V2_DOLL_COPY_SHARE: one copy map per evaluate and
+     *            slot arena, so a part two kept records reach is copied once */
+    int       dl_real_fill, dl_scratch_out, dl_poison, dl_copy_share;
 } Pt2Ctx;
 
 typedef struct { int64_t sq; double shots; int kind; double t; int pill; Memo m; } Blk;
@@ -1229,6 +1231,8 @@ struct St;
 typedef struct St Ev;
 
 /* ── The evaluate state (one evaluate; a userdata) ─────────────────── */
+/* PT2_V2_DOLL_COPY_SHARE: a slot arena's copy map (gen: its job's sp_freed then) */
+typedef struct RlMap { Arena *dst; HMap m; double gen; } RlMap;
 struct St {
     lua_State *L;
     Pt2Ctx    *c;
@@ -1240,6 +1244,9 @@ struct St {
     int        dl_so, dl_poison;
     struct RlRange *rl_r; int rl_nr, rl_cap; double rl_cb;
     HMap       rl_map;      /* the copy map, cleared for each kept record */
+    /* PT2_V2_DOLL_COPY_SHARE: the copy map of each slot arena (rl_ms, rl_nm)
+     * and the scratch the copies are made in first (rl_tmp) */
+    struct RlMap *rl_ms; int rl_nm, rl_cm; Arena rl_tmp; int dl_cs;
     int        done;        /* the result was made */
     int        pc;          /* where step goes on */
     /* inp */
@@ -6443,6 +6450,8 @@ static int ev_gc(lua_State *L) {
     if (e->dl_poison) for (Chunk *c = e->ar.head; c; c = c->next) memset(c->data, 0xA5, c->cap);
     ar_free(&e->ar);
     free(e->rl_r); e->rl_r = NULL; hm_free(&e->rl_map);
+    for (int i = 0; i < e->rl_nm; i++) hm_free(&e->rl_ms[i].m);
+    free(e->rl_ms); e->rl_ms = NULL; e->rl_nm = e->rl_cm = 0; ar_free(&e->rl_tmp);
     hm_free(&e->reach); hm_free(&e->lgt); hm_free(&e->lgt_v); hm_free(&e->cwm);
     hm_free(&e->wsmask); hm_free(&e->wslane); hm_free(&e->wsseen);
     return 0;
@@ -6883,7 +6892,12 @@ static Rec *rec_from_store(Ev *e, const Rec *s) {
  * as before. The scratch of the making stays in e->ar and goes with the
  * evaluate. The copy is the record as it was made, so the same results. */
 typedef struct RlRange { uintptr_t lo, hi; } RlRange;
-typedef struct { Ev *e; Arena *dst; HMap *map; } Rl;
+/* PT2_V2_DOLL_COPY_SHARE (x->share): the map lives the whole evaluate
+ * (one per slot arena), so a part an earlier kept record took is not
+ * copied again. A part can change after its copy, so each object is first
+ * made in scratch (x->tmp) with its pointers set, and the earlier copy is
+ * taken only when its bytes are the same; else a new copy. */
+typedef struct { Ev *e; Arena *dst; HMap *map; int share, depth; } Rl;
 static int rl_rng_lt(const void *a, const void *b) {
     uintptr_t x = ((const RlRange *)a)->lo, y = ((const RlRange *)b)->lo;
     return x < y ? -1 : x > y;
@@ -6922,6 +6936,12 @@ static int rl_in(const Ev *e, const void *p) {
 static void *rl_mem(Rl *x, const void *p, size_t sz, int *nw) {
     *nw = 0;
     if (!p || !rl_in(x->e, p)) return (void *)p;
+    if (x->share) {
+        void *t = ar_alloc(x->e->L, &x->e->rl_tmp, sz > 0 ? sz : 1);
+        if (sz) memcpy(t, p, sz);
+        *nw = 1;
+        return t;
+    }
     int isnew;
     HVal *v = hm_put(x->e->L, x->map, (uint64_t)(uintptr_t)p, (uint64_t)sz, &isnew);
     if (!isnew) return v->p;
@@ -6931,27 +6951,51 @@ static void *rl_mem(Rl *x, const void *p, size_t sz, int *nw) {
     *nw = 1;
     return d;
 }
+/* share: c (the scratch made for p, its pointers set) to its place in
+ * dst: the earlier copy when its bytes are the same, else a new copy */
+static void *rl_done(Rl *x, const void *p, void *c, size_t sz) {
+    if (!x->share) return c;
+    int isnew;
+    HVal *v = hm_put(x->e->L, x->map, (uint64_t)(uintptr_t)p, (uint64_t)sz, &isnew);
+    if (!isnew && v->p && (sz == 0 || memcmp(v->p, c, sz) == 0)) return v->p;
+    void *d = ar_alloc(x->e->L, x->dst, sz > 0 ? sz : 1);
+    if (sz) memcpy(d, c, sz);
+    v->p = d;
+    return d;
+}
 static size_t rl_n(int n) { return n > 0 ? (size_t)n : 0; }
-#define RL_ARR(x, f, T, n) do { int nw_; (f) = (T *)rl_mem((x), (f), sizeof(T) * rl_n(n), &nw_); } while (0)
+/* an array with no pointers: share compares p itself with the earlier copy */
+static void *rl_leaf(Rl *x, const void *p, size_t sz) {
+    if (!x->share) { int nw; return rl_mem(x, p, sz, &nw); }
+    if (!p || !rl_in(x->e, p)) return (void *)p;
+    return rl_done(x, p, (void *)p, sz);
+}
+#define RL_ARR(x, f, T, n) do { (f) = (T *)rl_leaf((x), (f), sizeof(T) * rl_n(n)); } while (0)
 static Ray *rl_ray(Rl *x, Ray *r) {
     int nw;
     Ray *c = (Ray *)rl_mem(x, r, sizeof(Ray), &nw);
     if (!nw) return c;
+    if (++x->depth > 100000) luaL_error(x->e->L, "gh_pt2_v2: copy too deep");
     RL_ARR(x, c->sq, int64_t, c->n_sq);
     RL_ARR(x, c->sq_t, double, c->n_sq);
     if (c->blk) {
-        Blk **b = (Blk **)rl_mem(x, c->blk, sizeof(Blk *) * rl_n(c->n_block), &nw);
-        if (nw) for (int i = 0; i < c->n_block; i++) RL_ARR(x, b[i], Blk, 1);
+        Blk **b0 = c->blk;
+        Blk **b = (Blk **)rl_mem(x, b0, sizeof(Blk *) * rl_n(c->n_block), &nw);
+        if (nw) {
+            for (int i = 0; i < c->n_block; i++) RL_ARR(x, b[i], Blk, 1);
+            b = (Blk **)rl_done(x, b0, b, sizeof(Blk *) * rl_n(c->n_block));
+        }
         c->blk = b;
     }
     c->src = rl_ray(x, c->src);
-    return c;
+    x->depth--;
+    return (Ray *)rl_done(x, r, c, sizeof(Ray));
 }
 static void rl_lane_f(Rl *x, Lane *l) { RL_ARR(x, l->v, int64_t, l->n); }
 static Lane *rl_lane(Rl *x, Lane *l) {
     int nw;
     Lane *c = (Lane *)rl_mem(x, l, sizeof(Lane), &nw);
-    if (nw) rl_lane_f(x, c);
+    if (nw) { rl_lane_f(x, c); c = (Lane *)rl_done(x, l, c, sizeof(Lane)); }
     return c;
 }
 static void rl_lanes_f(Rl *x, Lanes *l) {
@@ -6960,25 +7004,28 @@ static void rl_lanes_f(Rl *x, Lanes *l) {
 static Lanes *rl_lanes(Rl *x, Lanes *l) {
     int nw;
     Lanes *c = (Lanes *)rl_mem(x, l, sizeof(Lanes), &nw);
-    if (nw) rl_lanes_f(x, c);
+    if (nw) { rl_lanes_f(x, c); c = (Lanes *)rl_done(x, l, c, sizeof(Lanes)); }
     return c;
 }
 static PList *rl_plist(Rl *x, PList *l) {
     int nw;
     PList *c = (PList *)rl_mem(x, l, sizeof(PList), &nw);
-    if (nw) RL_ARR(x, c->v, int, c->cap);
+    if (nw) { RL_ARR(x, c->v, int, c->cap); c = (PList *)rl_done(x, l, c, sizeof(PList)); }
     return c;
 }
 static Extra *rl_extra(Rl *x, Extra *l) {
     int nw;
     Extra *c = (Extra *)rl_mem(x, l, sizeof(Extra), &nw);
-    if (nw) { RL_ARR(x, c->sq, int64_t, c->cap); RL_ARR(x, c->shots, double, c->cap); }
+    if (nw) {
+        RL_ARR(x, c->sq, int64_t, c->cap); RL_ARR(x, c->shots, double, c->cap);
+        c = (Extra *)rl_done(x, l, c, sizeof(Extra));
+    }
     return c;
 }
 static Plan *rl_plan(Rl *x, Plan *l) {
     int nw;
     Plan *c = (Plan *)rl_mem(x, l, sizeof(Plan), &nw);
-    if (nw) RL_ARR(x, c->v, PlanE, c->cap);
+    if (nw) { RL_ARR(x, c->v, PlanE, c->cap); c = (Plan *)rl_done(x, l, c, sizeof(Plan)); }
     return c;
 }
 static void rl_sm_f(Rl *x, SlotMemo *m) { RL_ARR(x, m->sq, int64_t, m->cap); RL_ARR(x, m->v, uint8_t, m->cap); }
@@ -6988,15 +7035,19 @@ static WallBase *rl_wb(Rl *x, WallBase *b) {
     if (!nw) return c;
     RL_ARR(x, c->forbid, int64_t, c->nf);
     if (c->U) {
-        UBase *u = (UBase *)rl_mem(x, c->U, sizeof(UBase) * rl_n(c->nU), &nw);
-        if (nw) for (int i = 0; i < c->nU; i++) {
-            RL_ARR(x, u[i].on_sq, int64_t, u[i].n_on);
-            RL_ARR(x, u[i].on_v, double, u[i].n_on);
-            u[i].r = rl_ray(x, u[i].r);
+        UBase *u0 = c->U;
+        UBase *u = (UBase *)rl_mem(x, u0, sizeof(UBase) * rl_n(c->nU), &nw);
+        if (nw) {
+            for (int i = 0; i < c->nU; i++) {
+                RL_ARR(x, u[i].on_sq, int64_t, u[i].n_on);
+                RL_ARR(x, u[i].on_v, double, u[i].n_on);
+                u[i].r = rl_ray(x, u[i].r);
+            }
+            u = (UBase *)rl_done(x, u0, u, sizeof(UBase) * rl_n(c->nU));
         }
         c->U = u;
     }
-    return c;
+    return (WallBase *)rl_done(x, b, c, sizeof(WallBase));
 }
 static Rec *rl_rec(Rl *x, Rec *r);
 /* the pointers of a record copy */
@@ -7005,11 +7056,19 @@ static void rl_rec_f(Rl *x, Rec *c) {
     c->T = rl_plist(x, c->T);
     c->chain = rl_plist(x, c->chain);
     if (c->rays) {
-        RayList *rl = (RayList *)rl_mem(x, c->rays, sizeof(RayList), &nw);
-        if (nw && rl->v) {
-            Ray **v = (Ray **)rl_mem(x, rl->v, sizeof(Ray *) * rl_n(rl->n), &nw);
-            if (nw) for (int i = 0; i < rl->n; i++) v[i] = rl_ray(x, v[i]);
-            rl->v = v;
+        RayList *rl0 = c->rays;
+        RayList *rl = (RayList *)rl_mem(x, rl0, sizeof(RayList), &nw);
+        if (nw) {
+            if (rl->v) {
+                Ray **v0 = rl->v;
+                Ray **v = (Ray **)rl_mem(x, v0, sizeof(Ray *) * rl_n(rl->n), &nw);
+                if (nw) {
+                    for (int i = 0; i < rl->n; i++) v[i] = rl_ray(x, v[i]);
+                    v = (Ray **)rl_done(x, v0, v, sizeof(Ray *) * rl_n(rl->n));
+                }
+                rl->v = v;
+            }
+            rl = (RayList *)rl_done(x, rl0, rl, sizeof(RayList));
         }
         c->rays = rl;
     }
@@ -7018,8 +7077,9 @@ static void rl_rec_f(Rl *x, Rec *c) {
     c->lanes = rl_lanes(x, c->lanes);
     c->extra_in = rl_extra(x, c->extra_in);
     if (c->uncovered) {
-        IList *u = (IList *)rl_mem(x, c->uncovered, sizeof(IList), &nw);
-        if (nw) RL_ARR(x, u->v, int, u->n);
+        IList *u0 = c->uncovered;
+        IList *u = (IList *)rl_mem(x, u0, sizeof(IList), &nw);
+        if (nw) { RL_ARR(x, u->v, int, u->n); u = (IList *)rl_done(x, u0, u, sizeof(IList)); }
         c->uncovered = u;
     }
     c->plan = rl_plan(x, c->plan);
@@ -7027,20 +7087,29 @@ static void rl_rec_f(Rl *x, Rec *c) {
     RL_ARR(x, c->lpts, LeePt, 8);
     RL_ARR(x, c->hold, Hold, 1);
     if (c->sp) {
-        StartPill *sp = (StartPill *)rl_mem(x, c->sp, sizeof(StartPill) * rl_n(c->n_sp), &nw);
-        if (nw) for (int i = 0; i < c->n_sp; i++) RL_ARR(x, sp[i].pl, PlanSq, sp[i].np);
+        StartPill *sp0 = c->sp;
+        StartPill *sp = (StartPill *)rl_mem(x, sp0, sizeof(StartPill) * rl_n(c->n_sp), &nw);
+        if (nw) {
+            for (int i = 0; i < c->n_sp; i++) RL_ARR(x, sp[i].pl, PlanSq, sp[i].np);
+            sp = (StartPill *)rl_done(x, sp0, sp, sizeof(StartPill) * rl_n(c->n_sp));
+        }
         c->sp = sp;
     }
     if (c->sc) {
-        StartLink *sc = (StartLink *)rl_mem(x, c->sc, sizeof(StartLink) * rl_n(c->n_sc), &nw);
-        if (nw) for (int i = 0; i < c->n_sc; i++) RL_ARR(x, sc[i].pl, PlanSq, sc[i].np);
+        StartLink *sc0 = c->sc;
+        StartLink *sc = (StartLink *)rl_mem(x, sc0, sizeof(StartLink) * rl_n(c->n_sc), &nw);
+        if (nw) {
+            for (int i = 0; i < c->n_sc; i++) RL_ARR(x, sc[i].pl, PlanSq, sc[i].np);
+            sc = (StartLink *)rl_done(x, sc0, sc, sizeof(StartLink) * rl_n(c->n_sc));
+        }
         c->sc = sc;
     }
     RL_ARR(x, c->xc, XWall, c->n_xc);
     c->wb = rl_wb(x, c->wb);
     if (c->sm) {
-        SlotMemo *m = (SlotMemo *)rl_mem(x, c->sm, sizeof(SlotMemo), &nw);
-        if (nw) rl_sm_f(x, m);
+        SlotMemo *m0 = c->sm;
+        SlotMemo *m = (SlotMemo *)rl_mem(x, m0, sizeof(SlotMemo), &nw);
+        if (nw) { rl_sm_f(x, m); m = (SlotMemo *)rl_done(x, m0, m, sizeof(SlotMemo)); }
         c->sm = m;
     }
     c->done = rl_rec(x, c->done);
@@ -7048,15 +7117,50 @@ static void rl_rec_f(Rl *x, Rec *c) {
 static Rec *rl_rec(Rl *x, Rec *r) {
     int nw;
     Rec *c = (Rec *)rl_mem(x, r, sizeof(Rec), &nw);
-    if (nw) rl_rec_f(x, c);
+    if (nw) {
+        if (++x->depth > 100000) luaL_error(x->e->L, "gh_pt2_v2: copy too deep");
+        rl_rec_f(x, c);
+        x->depth--;
+        c = (Rec *)rl_done(x, r, c, sizeof(Rec));
+    }
     return c;
 }
 static void rl_start(Rl *x, Ev *e, Arena *dst) {
     memset(x, 0, sizeof(*x));
     x->e = e; x->dst = dst; x->map = &e->rl_map;
+    if (e->dl_cs && e->job) {
+        /* the map of dst; all maps start again when a slot arena was freed */
+        double gen = e->job->sp_freed;
+        int i;
+        for (i = 0; i < e->rl_nm; i++) if (e->rl_ms[i].dst == dst) break;
+        if (i == e->rl_nm) {
+            if (e->rl_nm == e->rl_cm) {
+                int nc = e->rl_cm ? e->rl_cm * 2 : 8;
+                RlMap *m = (RlMap *)realloc(e->rl_ms, sizeof(RlMap) * (size_t)nc);
+                if (!m) { luaL_error(e->L, "gh_pt2_v2: out of memory"); return; }
+                e->rl_ms = m; e->rl_cm = nc;
+            }
+            memset(&e->rl_ms[i], 0, sizeof(RlMap));
+            e->rl_ms[i].dst = dst; e->rl_ms[i].gen = gen;
+            e->rl_nm++;
+        }
+        for (int k = 0; k < e->rl_nm; k++)
+            if (e->rl_ms[k].gen != gen) { if (e->rl_ms[k].m.n) hm_clear(&e->rl_ms[k].m); e->rl_ms[k].gen = gen; }
+        x->map = &e->rl_ms[i].m;
+        x->share = 1;
+        e->rl_tmp.csz = (size_t)64 * 1024;
+    }
     rl_ranges(e);
 }
-static void rl_end(Rl *x) { if (x->map->n) hm_clear(x->map); }
+static void rl_end(Rl *x) {
+    if (x->share) {
+        /* the scratch is used again by the next copy */
+        Arena *t = &x->e->rl_tmp;
+        if (t->head) { t->head->used = 0; t->cur = t->head; t->ntot = 0; }
+        return;
+    }
+    if (x->map->n) hm_clear(x->map);
+}
 
 static void pc_key(const Ev *e, double px, double py, int aim_fixed, int nudge, int lazy,
                    uint64_t *k1, uint64_t *k2) {
@@ -8335,7 +8439,7 @@ static int l_begin__p(lua_State *L) {
     lua_pushnil(L);
     slots_push(L);
     e->L = L; e->c = c;
-    e->dl_so = c->dl_scratch_out; e->dl_poison = c->dl_poison;
+    e->dl_so = c->dl_scratch_out; e->dl_poison = c->dl_poison; e->dl_cs = c->dl_copy_share;
     Job *j = (Job *)lua_touserdata(L, S_JOB);
     e->job = j;
     j->busy = 1;
@@ -9710,13 +9814,14 @@ static void dm_put_ar(char *b, size_t cap, size_t *at, const char *nm, const Are
 }
 /* gh_pt2_v2.dl_mem_on(on): PT2_V2_DOLL_MEM_LOG; the side maps start now */
 static int l_dl_mem_on(lua_State *L) { g_dm_on = lua_toboolean(L, 1); return 0; }
-/* gh_pt2_v2.doll_opts(real_fill, scratch_out, poison): the doll cache's memory knobs (Pt2Ctx);
+/* gh_pt2_v2.doll_opts(real_fill, scratch_out, poison, copy_share): the doll cache's memory knobs (Pt2Ctx);
  * none changes a result */
 static int l_doll_opts(lua_State *L) {
     Pt2Ctx *c = get_ctx(L);
     c->dl_real_fill = lua_toboolean(L, 1);
     c->dl_scratch_out = lua_toboolean(L, 2);
     c->dl_poison = lua_toboolean(L, 3);
+    c->dl_copy_share = lua_toboolean(L, 4);
     return 0;
 }
 /* gh_pt2_v2.dl_mem_end(job, src): a doll job pilltake_v2.lua drops (before pc_free) */
