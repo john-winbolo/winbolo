@@ -11,6 +11,15 @@ Usage:
   dl_events.py list <files> [filters]       one line per record
   dl_events.py counts <files> [filters]     counts by level / result / reason
   dl_events.py table <dir> --out live       live.md, live.json, live.png (model vs live)
+  dl_events.py at <session dir> --player N --tick T [--pill K]
+      what the BrainTest doll layers (pt2_d1..pt2_d5, pt2_dchg) draw at tick T
+      for bot N: the same records pt2_viz.lua takes (the last run of each
+      source, the last sync), counts per result, and per not-kept record the
+      reason, the change behind it and its distance from the goal pill and the
+      pills X. T is the BrainTest HUD "Tick" (the brain tick, engine tick / 2).
+      K is the pill_id_label pill number (from the run's snap.jsonl, else the
+      bot's brain log); with K also the pill's earlier evaluates, the last one
+      all kept, and the changes since.
 Filters: --tick A:B  --player N  --src take|dbl  --lvl ray|flt|pt|pl|ring|chg|pill|sync|reset
          --res hit|hitrun|drop|newkey|cold|first|tank|gone  --pill SQ (goal pill square)
          --x SQ (hostile pill X square)  --sq SQ (part square)  --limit N
@@ -484,9 +493,332 @@ def cmd_mem(a):
             pass
 
 
+# ── at: what the BrainTest doll layers draw at one tick, and why ─────────
+
+def sq_dist(a, b):
+    if a == 0xFFFF or b == 0xFFFF:
+        return None
+    return ((a % 256 - b % 256) ** 2 + (a // 256 - b // 256) ** 2) ** 0.5
+
+
+def fd(v):
+    return "-" if v is None else "%.1f" % v
+
+
+def at_pill_squares(sess, player, tick):
+    """pill number (world.pills id = the engine pill index, 0-based, the
+    pill_id_label number) -> (square, where from). From the run's
+    snap.jsonl (the last snapshot at or before the engine tick 2 * tick),
+    else the bot's brain log world records."""
+    eng = 2 * tick
+    for d in (sess, os.path.dirname(sess), os.path.dirname(os.path.dirname(sess))):
+        p = os.path.join(d, "snap.jsonl")
+        if not os.path.exists(p):
+            continue
+        best = None
+        for ln in open(p):
+            try:
+                s = json.loads(ln)
+            except ValueError:
+                continue
+            if s.get("tick", 1 << 30) <= eng and "pillboxes" in s:
+                best = s
+        if best:
+            out = {}
+            for i, pb in enumerate(best["pillboxes"]):
+                out[i] = (pb["ty"] * 256 + pb["tx"], "snap.jsonl engine tick %d%s" % (
+                    best["tick"], " (in a tank)" if pb.get("in_tank") else ""))
+            return out
+    for d in (sess, os.path.dirname(sess), os.path.dirname(os.path.dirname(sess))):
+        for p in sorted(glob.glob(os.path.join(d, "player%d*.jsonl" % player))):
+            best = None
+            for ln in open(p):
+                if '"type":"world"' not in ln[:20]:
+                    continue
+                s = json.loads(ln)
+                if s.get("t", 0) <= tick or best is None:
+                    best = s
+            if best:
+                return {pl["id"]: (pl["y"] * 256 + pl["x"], os.path.basename(p) + " world record")
+                        for pl in best.get("pills", [])}
+    return {}
+
+
+def at_runs(q):
+    """pt2_viz.lua dl_take: per source the records of the last run (a
+    lookup record with another run id starts a new one) and of the last
+    sync (a record of another tick starts a new one)."""
+    run, sync = {}, {}
+    for i in range(len(q)):
+        x = q[i]
+        s = int(x["src"])
+        if x["lvl"] >= 10:
+            e = run.get(s)
+            if e is None or e["run"] != int(x["run"]):
+                e = run[s] = dict(run=int(x["run"]), idx=[])
+            e["idx"].append(i)
+        else:
+            e = sync.get(s)
+            if e is None or e["tick"] != int(x["tick"]):
+                e = sync[s] = dict(tick=int(x["tick"]), idx=[])
+            e["idx"].append(i)
+    return run, sync
+
+
+def at_cause_change(r, i, fields):
+    """the change record behind a dropped lookup r[i]: the last sync of its
+    source at or before the lookup with a change on the cause square (a
+    terrain/base change, or a pill change from or to that square); a
+    world input drop: the last RESET record with code 20"""
+    x = r[i]
+    src, p, code, csq = int(x["src"]), int(x["p"]), int(x["code"]), int(x["csq"])
+    m = (r["src"] == src) & (r["p"] == p) & (np.arange(len(r)) < i)
+    if code == 14:   # wsig_drop
+        z = np.nonzero(m & (r["lvl"] == 4) & (r["code"] == 20))[0]
+        if len(z):
+            y = r[z[-1]]
+            return dict(tick=int(y["tick"]), what="world input %s %g>%g" % (
+                fields.get(int(y["field"]), str(y["field"])), y["ov"], y["nv"]), sq=0xFFFF)
+        return None
+    if csq == 0xFFFF:
+        return None
+    if code in (4, 5, 6, 9, 10, 13):   # the pill change codes
+        z = np.nonzero(m & (r["lvl"] == 2) & ((r["ov"] == csq) | (r["nv"] == csq)))[0]
+        if len(z):
+            y = r[z[-1]]
+            fl = int(y["field"])
+            who = "hostile" if fl & 1 else ("ally" if fl & 2 else "neutral/none")
+            return dict(tick=int(y["tick"]), what="pill %s>%s (%s)" % (
+                sqs(int(y["ov"]) if y["ov"] >= 0 else 0xFFFF), sqs(int(y["nv"]) if y["nv"] >= 0 else 0xFFFF), who),
+                sq=csq)
+    z = np.nonzero(m & (r["lvl"] == 1) & (r["csq"] == csq))[0]
+    if len(z):
+        y = r[z[-1]]
+        return dict(tick=int(y["tick"]), what="square %s kind=%d terrain %g>%g" % (
+            sqs(csq), y["field"], y["ov"], y["nv"]), sq=csq)
+    return None
+
+
+def at_reason(r, i, fields):
+    x = r[i]
+    res = int(x["res"])
+    if res == 2:
+        s = DC[x["code"]] if x["code"] < len(DC) else str(x["code"])
+        fl = []
+        if x["flags"] & 1:
+            fl.append("via a child part")
+        if x["flags"] & 2:
+            fl.append("its slot")
+        return "%s sq=%s%s" % (s, sqs(x["csq"]), (" (" + ", ".join(fl) + ")") if fl else "")
+    if res == 3:
+        return "new key: field %s %g>%g" % (fields.get(int(x["field"]), str(x["field"])), x["ov"], x["nv"])
+    if res == 4:
+        return "new job: " + COLD.get(int(x["code"]), str(x["code"]))
+    return {5: "first use", 6: "tank inside its box", 7: "gone (the log had it live)"}.get(res, RES[res])
+
+
+def cmd_at(a):
+    sess = a.files[0]
+    tick = int(a.tick)
+    p = a.player if a.player is not None else 0
+    f = sess if os.path.isfile(sess) else os.path.join(sess, "dl_p%d.bin" % p)
+    if os.path.isfile(sess):
+        sess = os.path.dirname(sess)
+    if not os.path.exists(f):
+        print("no event log %s (the game needs PT2_V2_DOLL_VIZ_RECORD or PT2_V2_DOLL_EVENT_LOG)" % f)
+        return
+    fields = load_fields(f)
+    r, job = load(f)
+    r = r[r["p"] == p] if len(r) and np.any(r["p"] == p) else r
+    q_idx = np.nonzero(r["tick"] <= tick)[0]
+    q = r[q_idx]
+    pills = at_pill_squares(sess, p, tick)
+    num_of = {v[0]: k for k, v in pills.items()}
+    pn = lambda s: ("#%d" % num_of[s]) if s in num_of else "#?"
+    resets = r[(r["lvl"] == 4) & (r["code"] != 20) & (r["tick"] <= tick)]
+    print("Session %s, player %d, tick %d (BrainTest HUD Tick = brain tick = engine tick / 2 = %d)." % (
+        sess, p, tick, 2 * tick))
+    goal = None
+    if a.pill is not None:
+        if a.pill in pills:
+            goal = pills[a.pill][0]
+            print("Pill #%d (pill_id_label number) = square %s (from %s)." % (a.pill, sqs(goal), pills[a.pill][1]))
+        else:
+            print("Pill #%d: no square found (no snap.jsonl or brain log world record)." % a.pill)
+    run, sync = at_runs(q)
+    if not run:
+        print("No doll lookup records at or before this tick: the layers are empty.")
+        return
+    print("\nThe layers draw the LAST run of each source (not the last run of a goal pill), and the last sync.")
+    for s, e in sorted(run.items()):
+        z = q[e["idx"]]
+        ts = sorted(set(z["tick"].tolist()))
+        goals = sorted(set(z["asq"].tolist()))
+        jr = resets[resets["src"] == s]
+        print("  %s: run %d at tick %s, %d lookups, goal pills %s; job since tick %s (%s)" % (
+            SRC[s], e["run"], ",".join(map(str, ts)), len(z),
+            ", ".join("%s %s" % (pn(g), sqs(g)) for g in goals),
+            int(jr["tick"][-1]) if len(jr) else "?", COLD.get(int(jr["code"][-1]), "?") if len(jr) else "?"))
+        for ev in sorted(set(z["ev"].tolist())):
+            w = z[z["ev"] == ev]
+            X = sorted(set(int(v) for v in w["xsq"] if v != 0xFFFF))
+            print("    evaluate %d: goal %s %s, pills X %s, depth %s" % (
+                ev, pn(int(w["asq"][0])), sqs(w["asq"][0]), ", ".join("%s %s" % (pn(v), sqs(v)) for v in X) or "-",
+                sorted(set(w["depth"].tolist()))))
+        if goal is not None and goal not in goals:
+            print("    NOTE: pill #%d is not in this run: the layers show other goal pills" % a.pill)
+
+    def recs_of(lvls, need_x=False):
+        out = []
+        for s, e in sorted(run.items()):
+            for k in e["idx"]:
+                x = q[k]
+                if x["lvl"] in lvls and x["res"] != 1 and x["osq"] != 0xFFFF and (not need_x or x["xsq"] != 0xFFFF):
+                    out.append(k)
+        return out
+
+    def counts(ks):
+        out = []
+        for s in sorted(set(int(q[k]["src"]) for k in ks)):
+            c = {}
+            for k in ks:
+                if q[k]["src"] == s:
+                    c[RES[q[k]["res"]]] = c.get(RES[q[k]["res"]], 0) + 1
+            out.append("%s run at tick %s: %s" % (
+                SRC[s], ",".join(map(str, sorted(set(int(q[k]["tick"]) for k in run[s]["idx"])))),
+                ", ".join("%s %d" % (n, c[n]) for n in RES if n in c)))
+        return "; ".join(out) or "none"
+
+    def explain(ks, title):
+        bad = [k for k in ks if q[k]["res"] not in (0, 1)]
+        if not bad:
+            return
+        grp = {}
+        for k in bad:
+            x = q[k]
+            key = (int(x["src"]), int(x["lvl"]), int(x["res"]), at_reason(q, k, fields))
+            grp.setdefault(key, []).append(k)
+        print("    not kept, by reason:")
+        for (s, lv, rs, why), ks2 in sorted(grp.items(), key=lambda kv: (kv[0][0], -len(kv[1]))):
+            k = ks2[0]
+            x = q[k]
+            line = "      %5d %-4s %-4s %-7s %s" % (len(ks2), SRC[s], LVL[lv], RES[rs], why)
+            if rs == 2:
+                ch = at_cause_change(r, int(q_idx[k]), fields)
+                jr = resets[(resets["src"] == x["src"]) & (resets["tick"] <= x["tick"])]
+                if ch:
+                    dA = sq_dist(ch["sq"], int(x["asq"]))
+                    Xs = sorted(set(int(q[j]["xsq"]) for j in run[int(x["src"])]["idx"]
+                                    if q[j]["asq"] == x["asq"] and q[j]["xsq"] != 0xFFFF))
+                    dX = ", ".join("%s %s" % (pn(v), fd(sq_dist(ch["sq"], v))) for v in Xs)
+                    line += "\n            change: tick %d, %s" % (ch["tick"], ch["what"])
+                    if ch["sq"] != 0xFFFF:
+                        line += "; distance from goal %s: %s, from pills X: %s" % (pn(int(x["asq"])), fd(dA), dX or "-")
+                    if len(jr) and ch["tick"] < int(jr["tick"][-1]):
+                        line += ("\n            NOTE: that change is older than this job (new job at tick %d):"
+                                 " the job never made this part, so read it as a new job miss" % int(jr["tick"][-1]))
+                else:
+                    line += "\n            change: not found in the log"
+            print(line)
+
+    print("\npt2_d1 rays (pill X to the point's square):")
+    k1 = recs_of((10,), need_x=True)
+    print("    %d lookups: %s" % (len(k1), counts(k1)))
+    explain(k1, "D1")
+    print("\npt2_d2 filter answers (outline) and ring points (fill):")
+    k2f, k2p = recs_of((11,)), recs_of((12,))
+    print("    filter %d lookups: %s" % (len(k2f), counts(k2f)))
+    print("    ring points %d lookups: %s" % (len(k2p), counts(k2p)))
+    explain(k2f + k2p, "D2")
+    print("\npt2_d3 slices (12 x 30 deg around each goal pill; red when ANY point lookup in it is not kept):")
+    sl = {}
+    for k in k2p:
+        x = q[k]
+        if x["deg10"] == 0xFFFF or x["asq"] == 0xFFFF:
+            continue
+        key = (int(x["src"]), int(x["asq"]), (int(x["deg10"]) // 300) % 12)
+        e = sl.setdefault(key, {})
+        e[RES[x["res"]]] = e.get(RES[x["res"]], 0) + 1
+    nk = sum(1 for e in sl.values() if set(e) <= {"hit"})
+    print("    %d of %d slices kept (green)" % (nk, len(sl)))
+    for (s, A, i), e in sorted(sl.items()):
+        if set(e) <= {"hit"}:
+            continue
+        print("      %s goal %s slice %3d-%3d deg: %s" % (SRC[s], pn(A), i * 30, i * 30 + 30,
+                                                         ", ".join("%s %d" % kv for kv in sorted(e.items()))))
+    print("\npt2_d4 pill X rings (the last sync):")
+    for s, e in sorted(sync.items()):
+        z = [k for k in e["idx"] if q[k]["lvl"] == 5 and q[k]["asq"] != 0xFFFF]
+        print("    %s sync at tick %d: %d of %d kept" % (SRC[s], e["tick"], sum(1 for k in z if q[k]["res"] == 0), len(z)))
+        for k in z:
+            x = q[k]
+            if x["res"] != 0:
+                print("      slot %s %s: %s sq=%s (distance %s)" % (pn(int(x["asq"])), sqs(x["asq"]),
+                      DC[x["code"]] if x["code"] < len(DC) else x["code"], sqs(x["csq"]),
+                      fd(sq_dist(int(x["csq"]), int(x["asq"])))))
+    print("\npt2_d5 plans:")
+    k5 = recs_of((13,))
+    print("    %d lookups: %s" % (len(k5), counts(k5)))
+    explain(k5, "D5")
+    print("\npt2_dchg (the last sync):")
+    for s, e in sorted(sync.items()):
+        for k in e["idx"]:
+            x = q[k]
+            if x["lvl"] in (1, 2, 4) or (x["lvl"] == 3):
+                print("    %s %d %-5s %s" % (SRC[s], x["tick"], LVL[int(x["lvl"])], why(x, fields)))
+
+    if goal is None:
+        return
+    # the goal pill's last earlier evaluate with every lookup kept, and what changed since
+    print("\nPill #%d %s: its evaluates up to tick %d (newest last; kept = every lookup kept):" % (a.pill, sqs(goal), tick))
+    gq = q[(q["asq"] == goal) & (q["lvl"] >= 10) & (q["res"] != 1)]
+    evs = []
+    for ev in np.unique(gq["ev"]):
+        w = gq[gq["ev"] == ev]
+        X = tuple(sorted(set(int(v) for v in w["xsq"] if v != 0xFFFF)))
+        evs.append(dict(ev=int(ev), tick=int(w["tick"][0]), src=int(w["src"][0]), run=int(w["run"][0]), X=X,
+                        depth=tuple(sorted(set(w["depth"].tolist()))), n=len(w), kept=int(np.sum(w["res"] == 0))))
+    evs.sort(key=lambda e: (e["tick"], e["ev"]))
+    for e in evs[-12:]:
+        print("    tick %5d %s run %-4d evaluate %-5d X %-26s depth %-7s kept %d/%d" % (
+            e["tick"], SRC[e["src"]], e["run"], e["ev"], ",".join(pn(v) for v in e["X"]), ",".join(map(str, e["depth"])),
+            e["kept"], e["n"]))
+    if not evs:
+        return
+    last = evs[-1]
+    prev = [e for e in evs[:-1] if e["kept"] == e["n"]]
+    same = [e for e in prev if e["X"] == last["X"] and e["depth"] == last["depth"]]
+    for lab, lst in (("any kind", prev), ("the same kind (same pills X and depth)", same)):
+        if not lst:
+            print("  last earlier all-kept evaluate, %s: none" % lab)
+            continue
+        e = lst[-1]
+        print("  last earlier all-kept evaluate, %s: tick %d (%s run %d, evaluate %d, X %s)" % (
+            lab, e["tick"], SRC[e["src"]], e["run"], e["ev"], ",".join(pn(v) for v in e["X"])))
+    if prev and (prev[-1]["X"] != last["X"] or prev[-1]["depth"] != last["depth"]):
+        print("  NOTE: the newest evaluate is another kind than the last all-kept one (pills X %s depth %s vs %s depth %s):"
+              " its parts have other keys" % (",".join(pn(v) for v in last["X"]), ",".join(map(str, last["depth"])),
+                                              ",".join(pn(v) for v in prev[-1]["X"]), ",".join(map(str, prev[-1]["depth"]))))
+    kind = [e for e in evs[:-1] if e["X"] == last["X"] and e["depth"] == last["depth"]]
+    t0 = kind[-1]["tick"] if kind else (prev[-1]["tick"] if prev else 0)
+    print("  changes the %s syncs saw from tick %d (the last evaluate of the same kind) to %d:" % (
+        SRC[last["src"]], t0, last["tick"]))
+    cz = r[(r["src"] == last["src"]) & (r["tick"] > t0) & (r["tick"] <= last["tick"]) & np.isin(r["lvl"], (1, 2, 4))]
+    if not len(cz):
+        print("    none")
+    for x in cz:
+        d = ""
+        if x["lvl"] == 1:
+            d = " (distance from goal %s)" % fd(sq_dist(int(x["csq"]), goal))
+        elif x["lvl"] == 2:
+            d = " (distance from goal %s / %s)" % (fd(sq_dist(int(x["ov"]), goal) if x["ov"] >= 0 else None),
+                                                   fd(sq_dist(int(x["nv"]), goal) if x["nv"] >= 0 else None))
+        print("    %5d %-5s %s%s" % (x["tick"], LVL[int(x["lvl"])], why(x, fields), d))
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("cmd", choices=["list", "counts", "summary", "table", "mem"])
+    ap.add_argument("cmd", choices=["list", "counts", "summary", "table", "mem", "at"])
     ap.add_argument("files", nargs="+")
     ap.add_argument("--tick")
     ap.add_argument("--player", type=int)
@@ -505,6 +837,8 @@ def main():
         cmd_counts(a)
     elif a.cmd == "mem":
         cmd_mem(a)
+    elif a.cmd == "at":
+        cmd_at(a)
     else:
         cmd_table(a)
 

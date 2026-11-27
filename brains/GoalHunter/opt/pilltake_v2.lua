@@ -3326,13 +3326,18 @@ function M.dl_bytes()
 end
 -- PT2_V2_DOLL_EVENT_LOG (log only): each C store lookup, drop and reset
 -- in a binary file dl_p<player>.bin in the debug session dir (a string
--- knob value: that dir). tools/dl_events.py reads it.
+-- knob value: that dir). tools/dl_events.py reads it. A -brain-debug run
+-- with PT2_V2_DOLL_VIZ_RECORD (debug only) writes it too, so
+-- "dl_events.py at" can say why each recorded layer has its colour.
 local DLE_CODE = { open = 1, time = 2, age = 3, rules = 4, lost = 5, busy = 6, nojob = 7, nomap = 8 }
+local function dle_on()
+  return PCK.PT2_V2_DOLL_EVENT_LOG or (rawget(_G, "BRAIN_DEBUG_MODE") and PCK.PT2_V2_DOLL_VIZ_RECORD) or false
+end
 local dle_state
 local function dle_open(inp)
   if dle_state ~= nil then return dle_state end
   dle_state = false
-  local K = PCK.PT2_V2_DOLL_EVENT_LOG
+  local K = dle_on()
   if not K or not gh_pt2_v2.dl_ev_open then return false end
   local dir = type(K) == "string" and K or rawget(_G, "DEBUG_SESSION_DIR")
   if not dir then return false end
@@ -3342,7 +3347,7 @@ local function dle_open(inp)
 end
 local function doll_cache(inp, src, now)
   local cnt = M.dl_count
-  local dle = PCK.PT2_V2_DOLL_EVENT_LOG and dle_open(inp)
+  local dle = dle_on() and dle_open(inp)
   -- BrainTest doll layers (pt2_viz.lua, debug only): C keeps a copy of
   -- each record for them (with no event log: no file)
   local dsrc = src == "take" and 0 or 1

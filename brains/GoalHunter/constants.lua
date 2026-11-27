@@ -1635,6 +1635,8 @@ M.PT2_V2_DOLL_NARROW_KEYS = true
 M.PT2_V2_DOLL_SLOT_DEAD_MAX = 1
 -- PT2_V2_DOLL_VIZ_RECORD (debug only): a headless -brain-debug run records
 -- the doll cache layers pt2_d1 .. pt2_d5 and pt2_dchg (pt2_viz.lua).
+-- It also writes the PT2_V2_DOLL_EVENT_LOG file dl_p<player>.bin in the
+-- debug session dir (log only): "tools/dl_events.py at" reads it.
 M.PT2_V2_DOLL_VIZ_RECORD = false
 -- PP_FRONT_C (Nov 25, speed only): pill_portfolio's front tests
 -- (on_front_line, near_front, the aggro neighbour count) run in C
