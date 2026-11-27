@@ -1346,7 +1346,7 @@ void brc_write_crash_log_to(lua_State *L,
   char session_dir[512];
   bool has_session = brc_read_session_dir(L, session_dir, sizeof(session_dir));
 
-  /* File writes are gated to debug hosts (BRAIN_DEBUG_MODE, set by -braindebug);
+  /* File writes are gated to debug hosts (BRAIN_DEBUG_MODE, set by -brain-debug);
    * production WinBolo / WinBoloDS write NO crash files to disk. The stderr
    * surface below still fires so a production crash is never silent. */
   bool debug_mode = brc_debug_mode(L);
@@ -1398,7 +1398,7 @@ void brc_write_crash_log_to(lua_State *L,
 
   /* Combined append-only crash log: EVERY Lua crash's full traceback appended
    * here (ignoring the per-crash-file rate-limit) so one file is the complete
-   * chronological record of a run. Debug hosts only (-braindebug); one growing
+   * chronological record of a run. Debug hosts only (-brain-debug); one growing
    * file rather than 1500 separate ones, bounded in practice by bot_manager
    * kicking a brain that crashes every tick. Same prefix as the per-crash files
    * (session dir if set, else CWD). */
@@ -1436,7 +1436,8 @@ void brc_write_crash_log_to(lua_State *L,
   fflush(err_out);
 
   /* One-line index entry in brain_error.log (inside the session dir if
-   * applicable) for tail-watchers; back-points at the full crash file.
+   * applicable) for tail-watchers; back-points at the full crash file, or
+   * says "(not written)" when that file could not be opened.
    * Skipped on rate-limit so the index doesn't grow without bound, and
    * skipped entirely in production (BRAIN_DEBUG_MODE off). */
   if (!suppress_file && debug_mode) {
@@ -1446,7 +1447,8 @@ void brc_write_crash_log_to(lua_State *L,
     if (idx) {
       fprintf(idx,
               "[BRAIN_CRASH] %s (%s) bot=%d tick=%d pid=%d L=%p method=%s file=%s\n",
-              ts_utc, ts_local, bot_idx, tick, pid, (void *)lptr, method, path);
+              ts_utc, ts_local, bot_idx, tick, pid, (void *)lptr, method,
+              file_written ? path : "(not written)");
       fclose(idx);
     }
   }
