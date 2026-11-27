@@ -1720,6 +1720,17 @@ M.PT2_V2_DOLL_HM_FIT = true
 -- lists also get smaller when they are more than 2 times too big. The
 -- same results. false = a part is kept until its job is freed.
 M.PT2_V2_DOLL_POBJ_FREE = true
+-- PT2_V2_DOLL_SPAR_CHUNK_KB (Nov 27, memory only): the chunk size (KB)
+-- of a goal pill slot's doll arena; 0 = 64 KB. The same results.
+-- 1024 (1 MB chunks the system frees at once): 33 MB more doll peak and
+-- no better working set peak, so 0 stays.
+M.PT2_V2_DOLL_SPAR_CHUNK_KB = 0
+-- PT2_V2_DOLL_HEAP_TRIM (Nov 27, memory only): after each 16 MB of doll
+-- frees, the C heap gives its free pages back to the system (Windows
+-- _heapmin, Linux malloc_trim). The same results. The free heap the
+-- process keeps goes 80 -> 62 MB (median), working set median 415 -> 386 MB,
+-- the same C ms/eval. false = off.
+M.PT2_V2_DOLL_HEAP_TRIM = true
 -- PT2_V2_DOLL_VIZ_RECORD (debug only): a headless -brain-debug run records
 -- the doll cache layers pt2_d1 .. pt2_d5 and pt2_dchg (pt2_viz.lua).
 -- It also writes the PT2_V2_DOLL_EVENT_LOG file dl_p<player>.bin in the

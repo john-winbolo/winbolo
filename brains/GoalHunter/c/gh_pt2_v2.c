@@ -72,6 +72,11 @@ int brainPathfinderLgmTravelTicksMap(BrainPathfinder *pf,
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#if defined(_WIN32)
+#include <malloc.h>   /* _heapmin (PT2_V2_DOLL_HEAP_TRIM) */
+#elif defined(__GLIBC__)
+#include <malloc.h>   /* malloc_trim (PT2_V2_DOLL_HEAP_TRIM) */
+#endif
 
 /* PT2_WALK_CHECK=1 (a check build only, never shipped): every tank shot
  * walk runs both ways (ts_walk_ticks and ts_walk_jump) and the results
@@ -872,8 +877,15 @@ typedef struct {
      *            full smaller (70% full at most)
      * pobj_free  PT2_V2_DOLL_POBJ_FREE: doll_sync frees the parts no store
      *            entry needs; a part's read and child lists get smaller at
-     *            pcc_pop */
+     *            pcc_pop
+     * spar_kb    PT2_V2_DOLL_SPAR_CHUNK_KB: the slot arena chunk size (KB;
+     *            0 = DL_SPAR_CHUNK, 64 KB)
+     * heap_trim  PT2_V2_DOLL_HEAP_TRIM: after 16 MB of doll frees, the C
+     *            heap gives its free pages back to the system (trim_acc:
+     *            the bytes freed since the last trim) */
     int       dl_real_fill, dl_scratch_out, dl_poison, dl_copy_share, dl_pobj_small, dl_hm_fit, dl_pobj_free;
+    int       dl_spar_kb, dl_heap_trim;
+    double    dl_trim_acc, dl_trim_n;
 } Pt2Ctx;
 
 typedef struct { int64_t sq; double shots; int kind; double t; int pill; Memo m; } Blk;
@@ -1130,6 +1142,7 @@ typedef struct DlMem { HMap h[DMK_N]; int src; } DlMem;
 static int dl_hm_del(HMap *m, uint64_t a, uint64_t b);
 static Pt2Ctx *get_ctx(lua_State *L);
 static double dl_hm_bytes(const HMap *m);
+static void dl_trim(lua_State *L, double freed);
 /* v: nb (bits 0-27) | store drun (28-47) | later hits (48-55) | any hits (56-63) */
 static DmAgg *dm_agg(Pt2Ctx *c) {
     if (!c) return NULL;
@@ -3404,7 +3417,7 @@ static Arena *dl_arena(Ev *e, int *si) {
         if (!j->spar) return &j->par;
     }
     Arena *a = &j->spar[e->pcc_slot];
-    a->csz = DL_SPAR_CHUNK;
+    a->csz = e->c && e->c->dl_spar_kb > 0 ? (size_t)e->c->dl_spar_kb * 1024 : DL_SPAR_CHUNK;
     *si = e->pcc_slot;
     return a;
 }
@@ -8927,10 +8940,12 @@ static int l_pc_free(lua_State *L) {
     Job *j = (Job *)luaL_checkudata(L, 1, "gh_pt2_v2_job_mt");
     if (j->freed || j->busy) { lua_pushboolean(L, 0); return 1; }
     dm_end(L, j);
+    double fr0 = dl_hm_bytes(&j->pts) + dl_hm_bytes(&j->pls) + dl_hm_bytes(&j->flt) + ar_bytes(&j->par) + dl_par_bytes(j);
     hm_free(&j->pts); hm_free(&j->pls); hm_free(&j->flt); j->flt_gen++;
     ar_free(&j->par);
     dl_spar_free_all(j); free(j->spar); j->spar = NULL;
     job_watch_free(j);
+    dl_trim(L, fr0);
     /* PT2_V2_DOLL_MEM_LOG: what stays until the job's GC (rays, square reads) */
     if (g_dm_on && j->dm_zb == 0) {
         DmAgg *g = dm_agg(get_ctx(L));
@@ -9858,7 +9873,7 @@ static void dm_put_ar(char *b, size_t cap, size_t *at, const char *nm, const Are
 }
 /* gh_pt2_v2.dl_mem_on(on): PT2_V2_DOLL_MEM_LOG; the side maps start now */
 static int l_dl_mem_on(lua_State *L) { g_dm_on = lua_toboolean(L, 1); return 0; }
-/* gh_pt2_v2.doll_opts(real_fill, scratch_out, poison, copy_share, pobj_small, hm_fit, pobj_free): the doll cache's memory knobs (Pt2Ctx);
+/* gh_pt2_v2.doll_opts(real_fill, scratch_out, poison, copy_share, pobj_small, hm_fit, pobj_free, spar_kb, heap_trim): the doll cache's memory knobs (Pt2Ctx);
  * none changes a result */
 static int l_doll_opts(lua_State *L) {
     Pt2Ctx *c = get_ctx(L);
@@ -9869,6 +9884,9 @@ static int l_doll_opts(lua_State *L) {
     c->dl_pobj_small = lua_toboolean(L, 5);
     c->dl_hm_fit = lua_toboolean(L, 6);
     c->dl_pobj_free = lua_toboolean(L, 7);
+    c->dl_spar_kb = (int)luaL_optnumber(L, 8, 0);
+    if (c->dl_spar_kb < 0 || c->dl_spar_kb > 65536) c->dl_spar_kb = 0;
+    c->dl_heap_trim = lua_toboolean(L, 9);
     return 0;
 }
 /* gh_pt2_v2.dl_mem_end(job, src): a doll job pilltake_v2.lua drops (before pc_free) */
@@ -10405,11 +10423,12 @@ static PF_TLS int t_dl_narrow;    /* PT2_V2_DOLL_PILL_NARROW on (rule B) */
  * PLAN with its store entry, and each child of a live part. It runs when
  * nobj is 25% (and 4096) more than after the last sweep. Only doll_sync
  * calls it (never in an evaluate: a busy job does not sync). */
-static void pcc_sweep(Job *j) {
+static double pcc_sweep(Job *j) {
     PccJob *pj = j->pcc;
-    if (!pj || pj->nobj < pj->sweep_n + pj->sweep_n / 4 + 4096) return;
+    if (!pj || pj->nobj < pj->sweep_n + pj->sweep_n / 4 + 4096) return 0;
     PObj **stk = (PObj **)malloc(sizeof(PObj *) * (size_t)pj->nobj);
-    if (!stk) return;
+    if (!stk) return 0;
+    double fb = 0;
     int ns = 0;
     for (int i = 0; i < pj->nobj; i++) pj->objs[i]->gc = 0;
     for (int i = 0; i < pj->nobj; i++) {
@@ -10432,6 +10451,7 @@ static void pcc_sweep(Job *j) {
         PObj *o = pj->objs[i];
         if (o->gc) { pj->objs[n++] = o; continue; }
         dl_hm_del(&pj->om, pt_mix(o->ka + (uint64_t)o->kind * 0x9E3779B97F4A7C15ull), o->kb);
+        fb += PO_BYTES(o) + (double)o->caprd * sizeof(uint32_t) + (double)o->capch * sizeof(PObj *);
         free(o->rd); free(o->ch); free(o);
     }
     pj->nobj = n; pj->sweep_n = n;
@@ -10440,6 +10460,24 @@ static void pcc_sweep(Job *j) {
         void *q = realloc(pj->objs, sizeof(PObj *) * (size_t)nc);
         if (q) { pj->objs = (PObj **)q; pj->capobj = nc; }
     }
+    return fb;
+}
+
+/* PT2_V2_DOLL_HEAP_TRIM: freed bytes of the doll; after 16 MB the C heap
+ * gives its free pages back to the system (Windows _heapmin, glibc
+ * malloc_trim) */
+static void dl_trim(lua_State *L, double freed) {
+    Pt2Ctx *c = get_ctx(L);
+    if (!c || !c->dl_heap_trim || !(freed > 0)) return;
+    c->dl_trim_acc += freed;
+    if (c->dl_trim_acc < 16.0 * 1048576) return;
+    c->dl_trim_acc = 0;
+    c->dl_trim_n++;
+#if defined(_WIN32)
+    _heapmin();
+#elif defined(__GLIBC__)
+    malloc_trim(0);
+#endif
 }
 
 static int dl_dirty(PObj *o, unsigned char *fl) {
@@ -10515,6 +10553,7 @@ static int l_doll_sync(lua_State *L) {
     const unsigned char *m = pc_world(L);
     if (!m) { lua_pushstring(L, "nomap"); return 1; }
     int64_t t0 = pf_clock();
+    double spf0 = j->sp_freed, swf = 0;
     j->drun++;
     int nb = (int)lua_objlen(L, 3), np = (int)lua_objlen(L, 2);
     int same = nb == 0 && np == 0 && memcmp(j->dsnap, m, PT2_MAP_SQ) == 0;
@@ -10832,7 +10871,7 @@ static int l_doll_sync(lua_State *L) {
     }
     /* PT2_V2_DOLL_POBJ_FREE: the parts no store entry needs (before the
      * map fit, so om can get smaller) */
-    if (get_ctx(L)->dl_pobj_free) pcc_sweep(j);
+    if (get_ctx(L)->dl_pobj_free) swf = pcc_sweep(j);
     /* PT2_V2_DOLL_HM_FIT: the job's maps after the drops */
     if (get_ctx(L)->dl_hm_fit) {
         hm_fit(L, &j->rays); hm_fit(L, &j->sqm); hm_fit(L, &j->sqf);
@@ -10862,6 +10901,8 @@ static int l_doll_sync(lua_State *L) {
     dl_stat(L, "b_live", j->sp_live); dl_stat(L, "b_dead", j->sp_dead); dl_stat(L, "sp_dropn", j->sp_dropn);
     dl_stat(L, "n_obj", pj ? pj->nobj : 0);
     free(chg); free(pc); free(cs); free(fl); free(sdirty);
+    dl_trim(L, j->sp_freed - spf0 + swf);
+    dl_stat(L, "trim_n", get_ctx(L)->dl_trim_n);
     double us_ = (double)(pf_clock() - t0) * pf_tick_us();
     if (dle) {
         DlRec r;
