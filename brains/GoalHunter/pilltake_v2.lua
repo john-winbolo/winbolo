@@ -3355,6 +3355,8 @@ local function dle_open(inp)
 end
 local function doll_cache(inp, src, now)
   local cnt = M.dl_count
+  -- the doll's memory knobs (C, per Lua state; no result change)
+  if gh_pt2_v2.doll_opts then gh_pt2_v2.doll_opts(PCK.PT2_V2_DOLL_REAL_FILL ~= false) end
   local dle = dle_on() and dle_open(inp)
   -- BrainTest doll layers (pt2_viz.lua, debug only): C keeps a copy of
   -- each record for them (with no event log: no file)

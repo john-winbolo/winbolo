@@ -1670,6 +1670,12 @@ M.PT2_V2_DOLL_NARROW_KEYS = true
 -- The same results. 1 (Andrew's yes, 2026-11-26): a 15 min 2v2 game peaks
 -- at 863 MB, not 1076 MB, for 1% more C time per evaluate.
 M.PT2_V2_DOLL_SLOT_DEAD_MAX = 1
+-- PT2_V2_DOLL_REAL_FILL (Nov 27, memory only): a slot arena's given-out
+-- byte count leaves out the lane block bytes a tank shot walk takes (1 KB)
+-- and gives back, so PT2_V2_DOLL_SLOT_DEAD_MAX and the stored and "stored
+-- again" byte counts use the bytes really kept (the old count was about
+-- 2.6 x too high). The same results. false = the old count.
+M.PT2_V2_DOLL_REAL_FILL = true
 -- PT2_V2_DOLL_VIZ_RECORD (debug only): a headless -brain-debug run records
 -- the doll cache layers pt2_d1 .. pt2_d5 and pt2_dchg (pt2_viz.lua).
 -- It also writes the PT2_V2_DOLL_EVENT_LOG file dl_p<player>.bin in the

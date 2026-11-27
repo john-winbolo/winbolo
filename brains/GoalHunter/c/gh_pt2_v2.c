@@ -847,6 +847,10 @@ typedef struct {
     Pt2Prof   pf;           /* PT2_C_PROF (gh_pt2_v2.prof) */
     void     *dle;          /* PT2_V2_DOLL_EVENT_LOG (log only): DlEv */
     void     *dm;           /* PT2_V2_DOLL_MEM_LOG (log only): DmAgg */
+    /* gh_pt2_v2.doll_opts (memory only, no result change):
+     * real_fill  PT2_V2_DOLL_REAL_FILL: an arena's given-out count (ntot)
+     *            leaves out the lane block bytes a walk gives back */
+    int       dl_real_fill;
 } Pt2Ctx;
 
 typedef struct { int64_t sq; double shots; int kind; double t; int pill; Memo m; } Blk;
@@ -2273,27 +2277,33 @@ static int ts_tank_hit(const Ev *e, double x, double y) {
  * stop), but only while it is still the arena's last block: a block with
  * anything allocated after it stays as it is. A lane lives as long as
  * the arena, as before. */
-typedef struct { Lane *l; Chunk *c; size_t off, end; } LaneRes;
+typedef struct { Lane *l; Chunk *c; Arena *a; size_t off, end; } LaneRes;
 #define LANE_HDR ((sizeof(Lane) + 15) & ~(size_t)15)
 static int64_t *lane_reserve(Ev *e, LaneRes *r) {
     unsigned char *p = (unsigned char *)ar_alloc(e->L, e->arp, LANE_HDR + sizeof(int64_t) * PT2_MAX_T);
+    r->a = e->arp;
     r->c = e->arp->cur;
     r->off = (size_t)(p - (unsigned char *)r->c->data);
     r->end = r->c->used;
     r->l = (Lane *)p;
     return (int64_t *)(p + LANE_HDR);
 }
+/* PT2_V2_DOLL_REAL_FILL: the bytes given back leave the arena's ntot */
+static void lane_cut(Ev *e, LaneRes *r, size_t used) {
+    if (e->c && e->c->dl_real_fill && r->c->used > used) r->a->ntot -= (double)(r->c->used - used);
+    r->c->used = used;
+}
 static Lane *lane_done(Ev *e, LaneRes *r, int ok, int nl) {
-    int last = e->arp->cur == r->c && r->c->used == r->end;
+    int last = r->a->cur == r->c && r->c->used == r->end;
     if (!ok) {
-        if (last) r->c->used = r->off;
+        if (last) lane_cut(e, r, r->off);
         return NULL;
     }
     Lane *l = r->l;
     memset(l, 0, sizeof(*l));
     l->n = nl;
     l->v = (int64_t *)((unsigned char *)l + LANE_HDR);
-    if (last) r->c->used = r->off + ((LANE_HDR + sizeof(int64_t) * (size_t)(nl > 0 ? nl : 1) + 15) & ~(size_t)15);
+    if (last) lane_cut(e, r, r->off + ((LANE_HDR + sizeof(int64_t) * (size_t)(nl > 0 ? nl : 1) + 15) & ~(size_t)15));
     return l;
 }
 
@@ -9478,6 +9488,13 @@ static void dm_put_ar(char *b, size_t cap, size_t *at, const char *nm, const Are
 }
 /* gh_pt2_v2.dl_mem_on(on): PT2_V2_DOLL_MEM_LOG; the side maps start now */
 static int l_dl_mem_on(lua_State *L) { g_dm_on = lua_toboolean(L, 1); return 0; }
+/* gh_pt2_v2.doll_opts(real_fill): the doll cache's memory knobs (Pt2Ctx);
+ * none changes a result */
+static int l_doll_opts(lua_State *L) {
+    Pt2Ctx *c = get_ctx(L);
+    c->dl_real_fill = lua_toboolean(L, 1);
+    return 0;
+}
 /* gh_pt2_v2.dl_mem_end(job, src): a doll job pilltake_v2.lua drops (before pc_free) */
 static int l_dl_mem_end(lua_State *L) {
     Job *j = (Job *)luaL_checkudata(L, 1, "gh_pt2_v2_job_mt");
@@ -10449,6 +10466,7 @@ static const luaL_Reg gh_pt2_v2_lib[] = {
     { "pc_free", l_pc_free },
     { "doll_sync", l_doll_sync },
     { "dl_mem_on", l_dl_mem_on },
+    { "doll_opts", l_doll_opts },
     { "dl_mem_end", l_dl_mem_end },
     { "dl_mem", l_dl_mem },
     { "dl_ev_open", l_dl_ev_open },
