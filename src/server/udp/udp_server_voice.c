@@ -344,8 +344,7 @@ void serverPumpVoice(ServerSim *sim) {
             int talker = talkers[t].slot;
 
             if (talker == to) continue;
-            /* This recipient has muted the talker. The same bit gates
-             * their chat, so one toggle covers both. */
+            /* This recipient has muted the talker. */
             if ((udpServer.clients[to].voiceMuteMask &
                  ((PlayerBitMap)1u << talker)) != 0) {
                 continue;

@@ -917,7 +917,7 @@ struct ServerSim {
      * muted sender's EVENT_PING never reaches r (its own copy is unaffected —
      * a player cannot mute itself). Set through serverSimSetPingMute from the
      * CMD_PLAYER_PING_MUTE dispatch arm; independent of the transport's
-     * voiceMuteMask, which gates voice and chat. Session-scoped: cleared, both
+     * voiceMuteMask, which gates voice. Session-scoped: cleared, both
      * a leaver's own row and every other row's bit for the leaver, when a slot
      * is released (server_sim_players.c). */
     PlayerBitMap pingMuteMask[MAX_TANKS];

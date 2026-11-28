@@ -532,7 +532,7 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
         const CmdPlayerMute *p = &cmd->u.playerMute;
         if (p->targetPlayer >= MAX_TANKS) return CMD_REJECT_INVALID;
         /* Muting yourself is meaningless — you never receive your own
-         * voice or chat. */
+         * voice. */
         if ((int)p->targetPlayer == senderSlot) return CMD_REJECT_INVALID;
         transportUdpServerSetVoiceMute((BYTE)senderSlot, p->targetPlayer,
                                        p->muted != 0);
