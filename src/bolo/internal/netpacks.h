@@ -811,9 +811,9 @@ static inline ServerVoiceMode infoPacketReadVoiceMode(BYTE flags) {
                                               { targetPlayer 1, muted 1 }
                                               per-recipient mute: the
                                               server stops forwarding
-                                              that player's voice and
-                                              chat to the sender. Not
-                                              echoed to anyone else. */
+                                              that player's voice to the
+                                              sender. Chat is not muted.
+                                              Not echoed to anyone else. */
 
 #define PACKET_VOICE_STATE             217  /* client → server
                                               { hasMic 1, selfMuted 1 }

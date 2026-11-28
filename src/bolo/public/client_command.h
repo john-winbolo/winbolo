@@ -425,8 +425,8 @@ typedef struct {
     char key[ROUND_STATS_LOGKEY_LEN];
 } CmdRatingPosted;
 /* CMD_PLAYER_MUTE — mute or unmute one player for the sending client
- * only. The server stops forwarding that player's voice and chat to the
- * sender. Session-scoped: nothing is persisted, and the mask is cleared
+ * only. The server stops forwarding that player's voice to the sender;
+ * their chat still arrives. Session-scoped: nothing is persisted, and the mask is cleared
  * when the sender's slot is released. */
 typedef struct {
     uint8_t targetPlayer;
@@ -434,7 +434,7 @@ typedef struct {
 } CmdPlayerMute;
 
 /* CMD_PLAYER_PING_MUTE — mute or unmute one player's smart pings for the
- * sending client only, independent of the voice/chat mute above. The server
+ * sending client only, independent of the voice mute above. The server
  * stops delivering that player's EVENT_PING to the sender. Session-scoped:
  * nothing is persisted, and the mask is cleared when the sender's slot is
  * released. Mirrors CmdPlayerMute so the two read as siblings. */

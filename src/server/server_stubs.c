@@ -95,7 +95,7 @@ void transportUdpServerKickPlayer(struct ServerSim *sim, const char *name) {
 }
 /* server_command_dispatch.c's CMD_PLAYER_MUTE arm records the mute in
  * the UDP server's per-client table. The non-server binaries have no
- * such table — and no remote voice or chat to gate — so the stub is a
+ * such table — and no remote voice to gate — so the stub is a
  * no-op. */
 void transportUdpServerSetVoiceMute(BYTE clientSlot, BYTE targetPlayer,
                                     bool muted) {

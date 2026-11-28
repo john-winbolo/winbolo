@@ -57,7 +57,7 @@ bool serverSimPingReachesClient(ServerSim *sim, BYTE recipient, BYTE sender) {
     /* The recipient has muted this sender's pings. Checked after the own-copy
      * short-circuit above, so a player always sees their own ping even while
      * others have muted them, and before the team/ally rules below so a muted
-     * teammate is dropped exactly as a muted voice/chat line is. A player
+     * teammate is dropped exactly as a muted voice is. A player
      * cannot mute itself (the dispatch arm rejects it), so this never fires on
      * recipient == sender in any case. */
     if ((sim->pingMuteMask[recipient] & ((PlayerBitMap)1u << sender)) != 0) {
