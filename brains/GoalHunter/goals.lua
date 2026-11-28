@@ -13746,6 +13746,15 @@ function M.step_eval_queue(state, world, info)
           c = c * _danger_nearby_mult
         end
       end
+      -- PT2_TEAM_LOG (log only): this pool-6 cost and its parts on stderr
+      if pool_idx == 6 and C.PT2_TEAM_LOG then
+        local _dc = state._pill_diff_cache and state._pill_diff_cache[obj.mx .. ":" .. obj.my .. ":" .. (state.phase or "")]
+        require("team_log").pool6(state, info, world, now, obj, id, {
+          c = c, spot = spot_cost, diff = diff_cost, travel = travel,
+          mult = hp_mult * wound_mult * spike_mult * capture_mult,
+          post = (spike_pen_mult or 1) * (_dbl and c < 1e29 and _dbl.mult or 1) * _danger_nearby_mult,
+          dbl = _dbl ~= nil, fresh = _dc ~= nil and _dc.tick == now, diff_us = _diff_us })
+      end
       -- IMMINENT BASE STEAL (pool 7): the per-replan steal pick gets a snap cost
       -- floor so "one shell, then the existing armour-0 IMMINENT capture" wins
       -- the pool outright instead of losing to routine errands. refresh_base_steal

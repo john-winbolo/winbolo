@@ -169,6 +169,11 @@ local function make_inp(state, world, info, pill, now)
   if inp and (C.PT2_V2_CACHE or C.PT2_V2_DOLL) then inp._v2_pc_src = "dbl" end
   -- cache study (log only): the profile lines of this run say src=dbl
   if inp and inp._prof_head then inp._prof_head = inp._prof_head .. " src=dbl" end
+  -- PT2_TEAM_LOG (log only): the C record dump on every n-th run
+  if inp and C.PT2_TEAM_LOG then
+    inp.team_dump = nil
+    require("team_log").mark_dump(inp, state, "dbl")
+  end
   return inp
 end
 

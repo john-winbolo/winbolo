@@ -2620,9 +2620,11 @@ function M.evaluate_c(inp)
         if inp._prof_head then
           local w = one.sec.tank_shot_walk_angle
           M.cprof_err(string.format(
-            "PT2EVAL %s A=(%s,%s) ms=%.3f steps=%d slice_ms=%.3f yields=%d c_ms=%.3f walks=%d walk_ms=%.3f",
+            "PT2EVAL %s A=(%s,%s) ms=%.3f steps=%d slice_ms=%.3f yields=%d c_ms=%.3f walks=%d walk_ms=%.3f%s",
             inp._prof_head, tostring(A and A.mx), tostring(A and A.my), us / 1000, steps,
-            us / 1000 / steps, yields, one.c_us / 1000, w and w.n or 0, (w and w.us or 0) / 1000))
+            us / 1000 / steps, yields, one.c_us / 1000, w and w.n or 0, (w and w.us or 0) / 1000,
+            -- PT2_TEAM_LOG (log only): the view hashes of A's area
+            DK.PT2_TEAM_LOG and require("team_log").eval_tag(inp) or ""))
           -- inp.v2_zone_log (C.PT2_CPROF_LOG): this evaluate's section
           -- table as one PT2ZONES line; the lines of a game add up to the
           -- game's table

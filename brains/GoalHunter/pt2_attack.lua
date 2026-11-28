@@ -129,6 +129,8 @@ function M.build_inp(state, goal, info, world, pill, no_builder, npb, radius, no
     -- PT2_CPROF_LOG: each evaluate's section table on stderr (PT2ZONES)
     if C.PT2_CPROF_LOG then inp.v2_zone_log = true end
     inp._prof_head = string.format("p=%s t=%s", tostring(info and info.player_number), tostring(now))
+    -- PT2_TEAM_LOG (log only): the C record dump of this take evaluate
+    if C.PT2_TEAM_LOG then require("team_log").mark_dump(inp, state, "take") end
   end
   return inp
 end

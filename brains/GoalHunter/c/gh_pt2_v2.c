@@ -1284,6 +1284,7 @@ struct St {
     double radius, angle_step, approach_offset, num_pill_blockers, pill_drop_shots;
     double wall_shots, build_max, build_cost, bar_single, bar_chain, bar_other;
     int    chains, link_covers, leeway_on, own_pill_rank, orth_only, aim_nudge, keep_all;
+    int    team_dump;   /* PT2_TEAM_LOG (log only): write the scored points to stderr */
     int    link_clear_front;
     double link_cut_min_shots;
     /* PT2_DG_* (degraded search study, all off by default): dg_step keeps
@@ -6639,6 +6640,7 @@ static void ev_read_inp__p(Ev *e) {
     e->orth_only = getbool(L, S_INP, "orth_only");
     e->aim_nudge = getbool(L, S_INP, "aim_nudge");
     e->keep_all = getbool(L, S_INP, "keep_all");
+    e->team_dump = getbool(L, S_INP, "team_dump");
     e->dg_step = (int)getnum(L, S_INP, "dg_step", 0, NULL);
     e->dg_stagger = getbool(L, S_INP, "dg_stagger");
     e->dg_fine = getbool(L, S_INP, "dg_fine");
@@ -8402,9 +8404,62 @@ static int ev_run(Ev *e) {
 
 static void stat_put(lua_State *L, const char *k, double v) { setnum(L, k, v); }
 
+/* PT2_TEAM_LOG (log only): one PT2TALL line with this evaluate's ranking
+ * inputs and every scored standoff point (e->all), for the offline team
+ * take summary study. It reads only; it changes no record and no result.
+ * Per point: deg radius px py safe kills score base tier_min bp_tier
+ * wall_far aimnb n_built start_now depth blk leeway exposure shells_through
+ * need have nT flags; -1 = not set (its flag is off). */
+static void team_dump(Ev *e) {
+    lua_State *L = e->L;
+    const char *head = "?";
+    lua_getfield(L, S_INP, "_prof_head");
+    if (lua_type(L, -1) == LUA_TSTRING) head = lua_tostring(L, -1);
+    double amx = -1, amy = -1;
+    lua_getfield(L, S_INP, "A");
+    if (lua_istable(L, -1)) {
+        lua_getfield(L, -1, "mx"); amx = lua_isnumber(L, -1) ? lua_tonumber(L, -1) : -1; lua_pop(L, 1);
+        lua_getfield(L, -1, "my"); amy = lua_isnumber(L, -1) ? lua_tonumber(L, -1) : -1; lua_pop(L, 1);
+    }
+    lua_pop(L, 1);
+    int bi = -1, n = 0;
+    for (int i = 0; i < e->nall; i++) if (e->all[i].rec) { if (e->all[i].rec == e->best) bi = n; n++; }
+    size_t cap = 512 + (size_t)n * 200, len = 0;
+    char *buf = (char *)malloc(cap);
+    if (!buf) { lua_pop(L, 1); return; }
+    len += (size_t)snprintf(buf + len, cap - len,
+        "PT2TALL %s A=(%.0f,%.0f) n=%d best=%d bestdeg=%.1f bestrad=%.3f lazy=%d band=%g has_band=%d cmpf=%g has_cmpf=%d"
+        " qsf=%d pec=%d swb=%d far=%d mtie=%d lmin=%g has_lmin=%d prev=%d,%.0f,%.0f tank=%d,%.0f,%.0f |",
+        head, amx, amy, n, bi, e->best ? e->best->deg : -1, e->best ? e->best->radius : -1, e->lazy,
+        e->band, e->has_band, e->has_cmpf ? e->cmpf : 0, e->has_cmpf,
+        e->qsf, e->pec, e->swb, e->far, e->mtie, e->has_leeway_min ? e->leeway_min : 0, e->has_leeway_min,
+        e->has_prev, e->prev_px, e->prev_py, e->has_tank, e->tank_wx, e->tank_wy);
+    if (len >= cap) len = cap - 1;
+    for (int i = 0; i < e->nall && len < cap - 220; i++) {
+        Rec *r = e->all[i].rec;
+        if (!r) continue;
+        unsigned f = r->flags;
+        len += (size_t)snprintf(buf + len, cap - len,
+            " %.1f,%.3f,%.0f,%.0f,%d,%g,%.7g,%.7g,%.7g,%g,%g,%d,%g,%d,%g,%g,%g,%g,%g,%g,%g,%d,%x;",
+            (f & RF_POS) ? r->deg : -1, (f & RF_POS) ? r->radius : -1, r->px, r->py, r->safe, r->kills,
+            (f & RF_SCORED) ? r->score : -1, (f & RF_BASE) ? r->base : -1,
+            (f & RF_BAND) ? r->tier_min : -1, (f & RF_FBP) ? r->bp_tier : -1, (f & RF_FBP) ? r->wall_far : -1,
+            (f & RF_AIMNB) ? r->aimnb : -1, (f & RF_SCORED) ? r->n_built : -1,
+            (f & RF_START) ? r->start_now : -1, r->depth, (f & RF_SCORED) ? r->blk : -1,
+            (f & RF_LEEWAY) ? r->leeway : -1, (f & RF_START) ? r->exposure : -1,
+            (f & RF_START) ? r->shells_through : -1, r->need, r->have, r->T ? r->T->n : 0, f);
+        if (len >= cap) len = cap - 1;
+    }
+    if (len < cap - 2) { buf[len++] = 10; buf[len] = 0; }
+    fputs(buf, stderr);
+    fflush(stderr);
+    free(buf);
+    lua_pop(L, 1);
+}
 static void push_result__p(Ev *e) {
     lua_State *L = e->L;
     if (e->job) e->job->busy = 0;
+    if (e->team_dump) team_dump(e);
     e->c->mgen++;
     if (e->c->mgen == 0) e->c->mgen = 1;
     lua_newtable(L);

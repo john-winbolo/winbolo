@@ -1853,6 +1853,14 @@ M.PT2_PROF_LOG = false
 -- -brain-debug. Add the lines of a game to get the game's table. Off by
 -- default. It does not change any result.
 M.PT2_CPROF_LOG = false
+-- PT2_TEAM_LOG (log only, with PT2_PROF_LOG): the team take summary study
+-- (team_log.lua). true = each PT2EVAL line gets the view hashes of the goal
+-- pill's area (TSIG), each pool-6 candidate cost writes a TSG line, and the
+-- C evaluator writes its scored standoff points (PT2TALL) on every take
+-- evaluate and on every PT2_TEAM_DUMP_EVERY-th double-take run. All to
+-- stderr. Off by default. It does not change any result.
+M.PT2_TEAM_LOG = false
+M.PT2_TEAM_DUMP_EVERY = 8
 -- PT2_PROF_ZONES (log only, with PT2_PROF_LOG): false = time each evaluate
 -- (PT2EVAL ms) with the C section profiler off, to see what the profiler
 -- itself costs. The section columns (walks, c_ms) are then 0. It does not
