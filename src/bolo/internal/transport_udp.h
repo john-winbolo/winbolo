@@ -615,9 +615,9 @@ typedef struct UdpServerClient {
     char wbnWebName[PACKET_MAX_PLAYER_NAME];    /* cached WBN player_name */
     char wbnWebCountry[3];                      /* cached ISO-2 + NUL */
     int  wbnWebUserId;                          /* cached user_id, -1 when null */
-    /* Bit N set = this client has muted player N. Both voice fan-out and
-     * CTRL_CHAT delivery consult it. Slots are recycled, so it is cleared on
-     * disconnect. */
+    /* Bit N set = this client has muted player N's voice. The voice fan-out
+     * consults it; chat delivery does not. Slots are recycled, so it is
+     * cleared on disconnect. */
     PlayerBitMap voiceMuteMask;
     SubscriberHandle controlSub; /* per-client subscription on the server's
                                   * control-event bus; the deliver callback
@@ -910,8 +910,7 @@ void transportUdpServerSetVoiceMute(BYTE clientSlot, BYTE targetPlayer,
                                     bool muted);
 
 /* Read clientSlot's mute bitmask (0 for an invalid or disconnected slot).
- * Exists for the unit test — the fan-out and delivery paths read the field
- * directly. */
+ * Exists for the unit test — the voice fan-out reads the field directly. */
 PlayerBitMap transportUdpServerGetVoiceMuteMask(BYTE clientSlot);
 
 /* Turn voice forwarding on or off for the whole server. Off still drains

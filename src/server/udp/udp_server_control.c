@@ -185,17 +185,9 @@ void udpClientDeliverControl(void *ctx, const ControlEvent *evt) {
                 return;
             }
         }
-        /* Per-recipient mute, applied after the destination rules so it can
-         * only ever remove a line this client would otherwise have seen.
-         * Guarded on a real player slot: server-source messages arrive with
-         * fromPlayer 0xFF (localized) or 0xFE (raw English) and must stay
-         * unsilenceable — no player may suppress a server announcement. */
-        if (from < MAX_TANKS &&
-            (client->voiceMuteMask & ((PlayerBitMap)1u << from)) != 0) {
-            mpDiagLog("[srv] deliver FILTER slot=%d type=CHAT reason=muted from=%d",
-                      idx, (int)from);
-            return;
-        }
+        /* The client's voiceMuteMask is not consulted here: muting a player
+         * stops their voice (udp_server_voice.c) and leaves their chat
+         * alone. */
     }
     if (evt->type == CTRL_SERVER_TEXT && evt->u.serverText.destTeam != 0) {
         /* Team-scoped server text (e.g. a private surrender-vote notice):
