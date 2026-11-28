@@ -615,9 +615,9 @@ typedef struct UdpServerClient {
     char wbnWebName[PACKET_MAX_PLAYER_NAME];    /* cached WBN player_name */
     char wbnWebCountry[3];                      /* cached ISO-2 + NUL */
     int  wbnWebUserId;                          /* cached user_id, -1 when null */
-    /* Bit N set = this client has muted player N. Both voice fan-out and
-     * CTRL_CHAT delivery consult it. Slots are recycled, so it is cleared on
-     * disconnect. */
+    /* Bit N set = this client has muted player N's voice. Only the voice
+     * fan-out consults it; chat is never muted. Slots are recycled, so it is
+     * cleared on disconnect. */
     PlayerBitMap voiceMuteMask;
     SubscriberHandle controlSub; /* per-client subscription on the server's
                                   * control-event bus; the deliver callback

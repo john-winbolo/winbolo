@@ -2,8 +2,8 @@
  * Per-recipient mute over the real loopback transport.
  *
  * CMD_PLAYER_MUTE is a reliable command, so the client-side call must land
- * as a bit in the server's per-client voiceMuteMask — the single piece of
- * state both the voice fan-out and the CTRL_CHAT delivery filter read.
+ * as a bit in the server's per-client voiceMuteMask — the state the voice
+ * fan-out reads. Chat is not muted.
  * This drives the whole path (client send wrapper -> command codec ->
  * command tick -> dispatcher -> transport) and observes the mask.
  *
@@ -11,8 +11,8 @@
  *   2. A mute of the sender's own slot is rejected — the bit never appears.
  *   3. A mute is released when its TARGET leaves: the muter keeps its mask,
  *      but the departed player's bit is swept out of it, so the next
- *      occupant of that recycled slot is not silenced (voice and chat both,
- *      since they read the one bit) by a mute it never earned. A bit for an
+ *      occupant of that recycled slot is not silenced by a mute it never
+ *      earned. A bit for an
  *      unrelated slot in the same mask must survive the sweep.
  *   4. The whole mask goes with the muter's own slot when the muter leaves.
  *
@@ -147,7 +147,7 @@ int run_player_mute_mask_roundtrip(void) {
     /* 3. A mute is released when its target leaves. Join a second client,
      * mute it, kick it, and watch its bit go from the FIRST client's mask —
      * the direction a recycled slot would otherwise hand a stranger someone
-     * else's mute, silently and on both voice and chat. */
+     * else's mute, silently. */
     if (!loopbackHarnessAddClient(&h, kOtherName)) {
         loopbackHarnessStop(&h);
         UT_FAIL("second client (the mute target) failed to connect");

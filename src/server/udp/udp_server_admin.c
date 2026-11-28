@@ -286,7 +286,7 @@ void serverDisconnectClient(ServerSim *sim, int idx, bool graceful) {
     /* The other direction of the same hazard, and the one that is invisible
      * to the player it hits: everyone who muted THIS player still holds the
      * bit for this slot, so the next occupant would arrive already muted for
-     * them — no voice, and no chat either, since both read this one bit.
+     * them, and nobody would hear the new occupant's voice.
      * Sweeping the leaver's bit out of every mask is what makes a mute
      * belong to the player rather than to the slot they sat in. */
     {

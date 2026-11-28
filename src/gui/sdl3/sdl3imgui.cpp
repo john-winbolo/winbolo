@@ -12363,7 +12363,7 @@ void renderPlayerMicCell(ClientSim *cs, int playerNum, uint8_t clientFlags,
             } else {
                 /* Both legs, always: the local one covers the round trip
                  * while the server is being told, and the server is the
-                 * authority — it also stops that player's chat. */
+                 * authority. Voice only — that player's chat still shows. */
                 voiceSetPlayerMuted(playerNum, !voiceIsPlayerMuted(playerNum));
                 clientSimNetSendPlayerMute(cs, (BYTE)playerNum, voiceIsPlayerMuted(playerNum));
             }

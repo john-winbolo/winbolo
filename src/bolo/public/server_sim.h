@@ -628,7 +628,7 @@ bool   serverSimIsBot(ServerSim *sim, BYTE playerNum);
 void   serverSimSetSoundSquares(ServerSim *sim, BYTE playerNum, bool keep);
 /* Set or clear muterSlot's smart-ping mute bit for targetPlayer. Both indices
  * are bounds-checked; the mute is private to muterSlot and independent of the
- * voice/chat mute. Called from the CMD_PLAYER_PING_MUTE dispatch arm. */
+ * voice mute. Called from the CMD_PLAYER_PING_MUTE dispatch arm. */
 void   serverSimSetPingMute(ServerSim *sim, BYTE muterSlot, BYTE targetPlayer,
                             bool muted);
 double serverSimGetBotLastThinkMs(ServerSim *sim, BYTE playerNum);

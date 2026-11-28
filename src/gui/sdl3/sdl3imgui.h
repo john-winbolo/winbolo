@@ -627,7 +627,7 @@ void renderPlayerMicCell(struct ClientSim *cs, int playerNum, uint8_t clientFlag
 *  row, beside the voice cell: a size x size button that
 *  hides or shows that player's smart pings for this client,
 *  locally and on the server (CMD_PLAYER_PING_MUTE). Muting
-*  is independent of the voice/chat mute, so this is not
+*  is independent of the voice mute, so this is not
 *  gated on WINBOLO_VOICE. The local player's own row draws a
 *  blank of the same size — you always see your own pings.
 *  Draws only; the caller owns layout (SameLine, sizing).
