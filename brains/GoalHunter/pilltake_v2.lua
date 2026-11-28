@@ -3123,8 +3123,11 @@ local function pc_src(inp)
      or inp.v2_confirm_check or inp.v2_confirm_drop then return nil end
   local src = inp._v2_pc_src or "take"
   if src == "take" and PCK.PT2_V2_CACHE_TAKE == false and not PCK.PT2_V2_DOLL then return nil end
-  -- PT2_V2_DOLL_TAKE_STORE = false: a single pill take keeps no doll job
-  if src == "take" and PCK.PT2_V2_DOLL and PCK.PT2_V2_DOLL_TAKE_STORE == false then return nil end
+  -- PT2_V2_DOLL_TAKE_STORE = false: a single pill take keeps no doll job,
+  -- but for PT2_DG_COARSE a coarse pass and its full pass share one (the
+  -- pair job, freed by M.dg_pair_end)
+  if src == "take" and PCK.PT2_V2_DOLL and PCK.PT2_V2_DOLL_TAKE_STORE == false
+     and not ((inp._dg_coarse or inp._dg_refine) and (PCK.PT2_DG_COARSE or 0) > 0) then return nil end
   return src
 end
 
@@ -3527,6 +3530,45 @@ local function dm_sample(inp, now)
     M.cprof_err(string.format("PT2_V2_DOLL_MEM t=%d p=%s src=none lua_kb=%.0f %s", now, tostring(inp._v2_pc_pn),
       kb, gh_pt2_v2.dl_mem(nil, 2)))
   end
+end
+
+-- PT2_DG_COARSE (coarse first, then full; constants.lua): is the goal
+-- pill A cold in the doll job of inp's source? Cold: no doll store, no
+-- job yet, or no full group run on A in the job (a new job or a new goal
+-- pill). Read only (the job's sync and reset come in group_begin).
+function M.dg_cold(inp)
+  local src = pc_src(inp)
+  if not src or not PCK.PT2_V2_DOLL then return true, "nostore" end
+  local e = PDS[src]
+  if not e then return true, "nojob" end
+  local A = inp.A
+  if not (e.dg_warm and A and e.dg_warm[A.my * 256 + A.mx]) then return true, "goal" end
+  return false, "warm"
+end
+-- PT2_DG_COARSE with PT2_V2_DOLL_TAKE_STORE = false: the take doll job
+-- lives only from a coarse pass to the end of its full pass
+function M.dg_pair_end()
+  if PCK.PT2_V2_DOLL_TAKE_STORE ~= false then return end
+  local e = PDS.take
+  if e then pc_free(e); PDS.take = nil end
+end
+-- a full group run (not the coarse pass, not a shadow copy) on goal pill A
+function M.dg_warm(job)
+  local e, inp, A = job.pc_entry, job.inp, job.goalA
+  if not (e and e.doll and A) or inp._dg_coarse or inp._dg_copy then return end
+  e.dg_warm = e.dg_warm or {}
+  e.dg_warm[A.my * 256 + A.mx] = true
+end
+-- the coarse search on inp: 1 step2 (the even standoff points), 2 rings3
+-- (the second ring left out), 3 both. inp._dg_full keeps the full search's
+-- fields (the shadow's full copy puts them back).
+function M.dg_coarse_apply(inp, set)
+  local rr = {}
+  for i, r in ipairs(inp.ring_radii or {}) do rr[i] = r end
+  inp._dg_full = { dg_step = inp.dg_step, ring_radii = rr }
+  inp._dg_coarse = set
+  if set == 1 or set == 3 then inp.dg_step = 2 end
+  if (set == 2 or set == 3) and inp.ring_radii and #inp.ring_radii == 4 then table.remove(inp.ring_radii, 2) end
 end
 
 -- The cache table for a group job on inp.A.
@@ -4008,6 +4050,8 @@ local function job_done(job)
     -- PT2_V2_DOLL_CHECK (log only): the same group with a new job (also
     -- for a run in slices)
     if PCK.PT2_V2_DOLL_CHECK and job.pc_entry.doll and not job.inp._v2_dl_skip then pc_check(job.inp, job) end
+    -- PT2_DG_COARSE: a full run warms its goal pill in the doll job
+    if (PCK.PT2_DG_COARSE or 0) > 0 or PCK.PT2_DG_COARSE_LOG then M.dg_warm(job) end
   end
 end
 job_done_x = function(job)

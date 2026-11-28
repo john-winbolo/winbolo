@@ -1293,7 +1293,8 @@ local function run_part(sp, a)
     if not sp.co then
       sp.save = { g.i, inp.pen_n, inp.pen_skip_n, inp.noA_n }
       sp.co = coroutine.create(function() return V2.group_step(g) end)
-      local sl = g.ev.slicer(inp, C.PT2_V2_SPLIT_TICKS or 5, coroutine.yield)
+      -- PT2_DG_COARSE: the coarse pass has its own slicer ticks
+      local sl = g.ev.slicer(inp, (sp.co_set and M.coarse_ticks(sp.co_set)) or C.PT2_V2_SPLIT_TICKS or 5, coroutine.yield)
       sp.slicer = sl
       inp.v2_slice = sl.fn
     end
@@ -1326,6 +1327,8 @@ local function run_part(sp, a)
     ok, r = pcall(function()
       local i = M.build_inp(a.state, a.goal, a.info, a.world, a.pill, a.no_builder, a.npb, a.radius, a.now)
       if i and BRAIN_DEBUG_MODE and PV.any_on() then i.keep_all = true end
+      -- PT2_DG_COARSE: a cold plan runs the coarse search first
+      if i and ((C.PT2_DG_COARSE or 0) > 0 or C.PT2_DG_COARSE_LOG) then M.coarse_begin(sp, i, a) end
       if i then sp.g, sp.snap = V2.group_begin(i), snap_pills(i) end
       sp.inp, sp.a = i or false, a
       return not i
@@ -1433,6 +1436,8 @@ function M.split_step(sp, a, key)
   local out = finish(sp.a, sp.inp or nil, sp.g and sp.g.res, sp.us)
   sp.in_part = nil
   sp.out = out
+  -- PT2_DG_COARSE: the first answer; after a coarse pass the full pass is next
+  if sp.co_seen then M.coarse_first(sp, a, out, now) end
   M.last_run = { parts = sp.n, work = sp.work, kills = sp.n_kill, ticks = now - sp.t0 }
   goal._pt2_split_drops = nil
   cprof_plan_end(now, a.pill)
@@ -1527,6 +1532,261 @@ function M.finish_recheck(goal, info, pill, now, sub)
   goal._pt2_fin_q = q
   if q == planned or prev == q then return false end
   return true
+end
+
+-- ── PT2_DG_COARSE: coarse first, then full (constants.lua) ───────────────
+-- A cold take plan (pilltake_v2.dg_cold: the take doll job has no full run
+-- on the goal pill) runs the coarse search (pilltake_v2.dg_coarse_apply) in
+-- the split run, and the take goes on with its answer (coarse_first). On
+-- the next ticks refine_step (called by attack.lua each tick while
+-- goal._pt2_refine is set) runs the full search in parts, as the split run
+-- does; the standoff point records of the coarse points come from the doll
+-- job. Then the take switches to the full best by the rules in
+-- constants.lua (co_apply sets the plan as attack.lua does after a scan).
+local CO_TICKS = { 3, 4, 2 }
+function M.coarse_ticks(set)
+  local t = C.PT2_DG_COARSE_TICKS or 0
+  if t > 0 then return t end
+  return CO_TICKS[set] or C.PT2_V2_SPLIT_TICKS or 5
+end
+
+local function co_log(s)
+  if not C.PT2_DG_COARSE_LOG then return end
+  local e = io and io.stderr
+  if e then e:write("PT2CO ", s, "\n") end
+end
+
+-- eff: an effective take; blk: with a blocker (as pt2_dgshadow counts them)
+local function co_class(res)
+  local b = res and res.best
+  if not b then return false, false end
+  local eff = (b.safe and not b.why_unsafe and not res.no_chain) and true or false
+  local _, nk = require("pt2_dgshadow").kinds_of(b)
+  return eff, (eff and nk > 0) or false
+end
+
+local function co_desc(res)
+  local b = res and res.best
+  local eff, blk = co_class(res)
+  if not b then return "eff=0 blk=0 A=- deg=- r=- k=0 sc=0 nb=0" end
+  local A = res.A
+  return string.format("eff=%d blk=%d A=%s,%s deg=%s r=%s k=%d sc=%.2f nb=%d", eff and 1 or 0, blk and 1 or 0,
+    tostring(A and A.mx), tostring(A and A.my), tostring(b.deg), tostring(b.radius), b.kills or 0, b.score or 0,
+    b.plan and #b.plan or 0)
+end
+
+local function co_hits(g)
+  local p = g and g.pcst
+  if not p then return "eh=- em=-" end
+  return string.format("eh=%d em=%d", p.pc_eh or 0, p.pc_em or 0)
+end
+
+-- run_part's part 0 (inside its pcall): the plan's cold test and coarse pass
+function M.coarse_begin(sp, i, a)
+  if sp.refine then i._dg_refine = true; return end
+  local NV = require("pilltake_v2")
+  local cold, why = NV.dg_cold(i)
+  sp.co_seen, sp.co_cold = true, cold
+  local set = C.PT2_DG_COARSE or 0
+  if cold and set > 0 then
+    -- a fresh pair job (an old one of a full pass that did not end goes)
+    NV.dg_pair_end()
+    NV.dg_coarse_apply(i, set)
+    sp.co_set = set
+  end
+  co_log(string.format("ev=start p=%s t=%d g=%d,%d t0=%d cold=%d why=%s set=%d",
+    tostring(a.info and a.info.player_number), a.now or 0, i.A.mx, i.A.my, sp.t0 or -1, cold and 1 or 0, why,
+    sp.co_set or 0))
+end
+
+-- split_step: the plan's first answer is made (finish). After a coarse
+-- pass, the full pass starts on the next tick.
+function M.coarse_first(sp, a, out, now)
+  local goal = a.goal
+  local res = sp.g and sp.g.res
+  co_log(string.format("ev=first p=%s t=%d g=%d,%d t0=%d dt=%d cold=%d set=%d %s parts=%d us=%d drive=%d %s",
+    tostring(a.info and a.info.player_number), now, a.pill.mx, a.pill.my, sp.t0 or -1, now - (sp.t0 or now),
+    sp.co_cold and 1 or 0, sp.co_set or 0, co_desc(res), sp.n or 0, floor(sp.us or 0),
+    (out and out.pt2) and 1 or 0, co_hits(sp.g)))
+  goal._pt2_refine = nil
+  if not sp.co_set then return end
+  local ceff, cblk = co_class(res)
+  -- gid: the goal pill of the plan (finish may retarget the take to a pill
+  -- of its group: tid)
+  local gt = goal._pt2 and goal._pt2.goal_target
+  goal._pt2_refine = { t0 = now, plan_t0 = sp.t0, set = sp.co_set, cres = res, ceff = ceff, cblk = cblk,
+                       gid = (gt and gt.id) or goal.target_id, tid = goal.target_id, no_builder = a.no_builder, npb = a.npb, radius = a.radius,
+                       sscan = out, sp = { n = 0, ms = {}, us = 0, refine = true, kills = 0 } }
+end
+
+-- the full answer for the take, set as attack.lua sets a scan's winner.
+-- Returns nil when set, else why not.
+local function co_apply(state, goal, world, info, pill, r, now)
+  local sp = r.sp
+  local res = sp.g.res
+  local b = res.best
+  if not (C.PILLTAKE_V2_EVALUATOR and goal._is_ppt and b and b.safe) then return "noppt" end
+  -- the pill the tank shoots (finish retargets the take to it)
+  local A = res.A or pill
+  local pmx, pmy = A.mx, A.my
+  local wb = state.banned_pill_angles and state.banned_pill_angles[pmy * 256 + pmx]
+  if wb and b.deg then
+    local exp = wb[floor((b.deg % 360) / 5) * 5]
+    if exp and (state.tick or 0) < exp then return "banned" end
+  end
+  local off = shield.fire_aim(b.aim_idx or 1)
+  local awx, awy = pmx * 256 + floor(off[1] * 256), pmy * 256 + floor(off[2] * 256)
+  local mlb = C.BLOCKER_MIN_LANE_BRAD or 0
+  if mlb > 0 then
+    local ok = require("attack").aim_lane_wide(floor(b.cx * 256 + 0.5), floor(b.cy * 256 + 0.5), pmx, pmy, world,
+                                               awx, awy, mlb)
+    if not ok then return "lane" end
+  end
+  local a = { state = state, goal = goal, info = info, world = world, pill = pill, sscan = r.sscan,
+              no_builder = r.no_builder, npb = r.npb, radius = r.radius, now = now }
+  local out = finish(a, sp.inp, res, sp.us)
+  if not (out and out.pt2 and out.best) then return "nodrive" end
+  out.created_tick = now
+  if out.num_pill_blockers == nil then out.num_pill_blockers = r.npb end
+  goal._shield_scan = out
+  local w = out.best
+  local o_ax, o_ay = goal.approach_fx, goal.approach_fy
+  goal.standoff_mx, goal.standoff_my = w.mx, w.my
+  goal.standoff_fx, goal.standoff_fy = w.cx, w.cy
+  goal._chosen_deg = w.deg
+  goal._scan_tick = state.tick
+  local dxn, dyn = w.cx - (pmx + 0.5), w.cy - (pmy + 0.5)
+  local dn = sqrt(dxn * dxn + dyn * dyn)
+  if dn > 0.01 then
+    local ux, uy = dxn / dn, dyn / dn
+    goal.approach_fx = w.cx + ux * C.ATTACK_APPROACH_OFFSET
+    goal.approach_fy = w.cy + uy * C.ATTACK_APPROACH_OFFSET
+    goal.approach_mx = U.mclamp(floor(goal.approach_fx))
+    goal.approach_my = U.mclamp(floor(goal.approach_fy))
+  end
+  if out.hold and out.hold.safe then
+    goal.approach_fx, goal.approach_fy = out.hold.fx, out.hold.fy
+    goal.approach_mx = U.mclamp(floor(goal.approach_fx))
+    goal.approach_my = U.mclamp(floor(goal.approach_fy))
+  end
+  off = shield.fire_aim(w.best_aim_idx or 1)
+  goal.aim_mx, goal.aim_my = pmx + off[1], pmy + off[2]
+  goal.aim_wx, goal.aim_wy = pmx * 256 + floor(off[1] * 256), pmy * 256 + floor(off[2] * 256)
+  goal.aim_idx = w.best_aim_idx or 1
+  r.mv = string.format("ap=%.2f,%.2f>%.2f,%.2f", o_ax or -1, o_ay or -1, goal.approach_fx or -1, goal.approach_fy or -1)
+  -- the new plan's walls: build_walls starts again from the approach; the
+  -- trees for them first when the tank has too few
+  if goal.substate == "build_walls" then
+    goal._wall_build_list, goal._wall_build_idx, goal._wall_build_done = nil, nil, nil
+    goal.substate = "approach"
+  end
+  if goal.substate == "approach" then goal._approach_start = nil end
+  local ai = w.best_aim_idx or 1
+  local pots = w.aims[ai] and w.aims[ai].potential_blockers
+  local need = (pots and #pots > 0) and M.plan_trees(pots) or 0
+  if goal.substate ~= "plan_position" and not goal._charge_now and (info.trees or 0) < need then
+    goal.substate = "gather_trees"
+    goal._trees_for_walls = need
+    goal._gather_start = now
+    goal._gather_last_progress = now
+    goal._gather_last_trees = info.trees or 0
+  elseif goal.substate == "gather_trees" then
+    goal._trees_for_walls = need
+  end
+  return nil
+end
+
+local CO_SUB = { plan_position = true, gather_trees = true, approach = true, build_walls = true }
+local CO_PRE = { plan_position = true, gather_trees = true, approach = true }
+
+-- attack.lua, each tick of an attack_pill goal with goal._pt2_refine set
+function M.refine_step(state, goal, world, info, now)
+  local r = goal._pt2_refine
+  if not r then return end
+  local sub = goal.substate
+  -- the plan's goal pill (the full pass runs on it, as the coarse pass did)
+  local pill = r.gid and world.pills and world.pills[r.gid]
+  local why
+  if (C.PT2_DG_COARSE or 0) <= 0 then why = "off"
+  elseif goal._shield_scan_pending or goal._pt2_split then why = "replan"
+  elseif goal.target_id ~= r.tid then why = "target"
+  elseif not CO_SUB[sub] then why = "late:" .. tostring(sub)
+  elseif now - r.t0 > (C.PT2_DG_COARSE_REFINE_MAX_TICKS or 500) then why = "age"
+  elseif not pill or (pill.health or 0) <= 0 or pill.in_tank then why = "nopill"
+  elseif now < r.t0 then why = "time" end
+  local sp = r.sp
+  if not why and sp.in_part then
+    -- a budget kill inside the last part: that part again, once
+    sp.kills = sp.kills + 1
+    sp.in_part = nil
+    if sp.kills >= (C.SHIELD_SCAN_BLACKLIST_TRIES or 2) then why = "kills" else restore(sp) end
+  end
+  if why then
+    co_log(string.format("ev=rdrop p=%s t=%d g=%s,%s t0=%d why=%s parts=%d sub=%s",
+      tostring(info.player_number), now, tostring(pill and pill.mx), tostring(pill and pill.my), r.plan_t0 or -1, why,
+      sp.n or 0, tostring(sub)))
+    goal._pt2_refine = nil
+    require("pilltake_v2").dg_pair_end()
+    return
+  end
+  if sp.n > 0 and not may_part(state, (state and state._pt2_split_est_ms) or 0) then return end
+  local done, err, heavy = false, nil, 0
+  repeat
+    if heavy >= 1 then break end
+    if sp.n >= 1 then heavy = heavy + 1 end
+    local yielded
+    local a = sp.a
+    if sp.n == 0 then
+      a = { state = state, goal = goal, info = info, world = world, pill = pill, sscan = r.sscan,
+            no_builder = r.no_builder, npb = r.npb, radius = r.radius, now = now }
+    end
+    done, err, yielded = run_part(sp, a)
+    if err then break end
+    if sp.n == 1 and sp.inp == false then err = "noinp"; break end
+    if yielded then break end
+  until done
+  if err then
+    co_log(string.format("ev=rdrop p=%s t=%d g=%d,%d t0=%d why=err parts=%d sub=%s",
+      tostring(info.player_number), now, pill.mx, pill.my, r.plan_t0 or -1, sp.n or 0, tostring(sub)))
+    goal._pt2_refine = nil
+    require("pilltake_v2").dg_pair_end()
+    return
+  end
+  if not done then return end
+  goal._pt2_refine = nil
+  require("pilltake_v2").dg_pair_end()
+  -- the full answer: switch or keep the coarse take
+  local res = sp.g and sp.g.res
+  local fb, cb = res and res.best, r.cres and r.cres.best
+  local feff, fblk = co_class(res)
+  local fA, cA = res and res.A, r.cres and r.cres.A
+  local sameA = fA and cA and fA.mx == cA.mx and fA.my == cA.my
+  local same = fb and cb and sameA and fb.px == cb.px and fb.py == cb.py and fb.aim_idx == cb.aim_idx
+  local rule, diff
+  local margin = C.PT2_DG_COARSE_SWITCH_MARGIN or 10
+  if same then why = "same"
+  elseif not feff then why = "full_noeff"
+  elseif fblk and not r.cblk then rule = "a"
+  elseif r.ceff and sameA and cb and sp.inp and sp.inp.score_fn then
+    local inp = sp.inp
+    -- score_fn prices for the group's current A: the full best's A
+    if inp.set_A and fA then inp.set_A(fA) end
+    local cnow = inp.score_fn(cb.deg, floor(cb.cx), floor(cb.cy), cb.cx, cb.cy) + (cb.plan and #cb.plan or 0) * (inp.build_cost or 10)
+    diff = cnow - (fb.score or 0)
+    if diff + 1e-9 < margin then why = "margin"
+    elseif not CO_PRE[sub] then why = "reached"
+    else rule = "b" end
+  else why = "no_b" end
+  if rule and (goal._blitz or goal._blitz_committed) then why, rule = "blitz", nil end
+  if rule then
+    local e = co_apply(state, goal, world, info, pill, r, now)
+    if e then why, rule = e, nil end
+  end
+  co_log(string.format("ev=rdone p=%s t=%d g=%d,%d t0=%d dt=%d ft=%d set=%d sw=%s why=%s sub=%s mid=%d diff=%s ceff=%d cblk=%d %s parts=%d us=%d %s %s",
+    tostring(info.player_number), now, pill.mx, pill.my, r.plan_t0 or -1, now - (r.plan_t0 or now), now - r.t0, r.set,
+    rule or "-", why or "-", tostring(sub), (rule and sub == "approach") and 1 or 0,
+    diff and string.format("%.2f", diff) or "-", r.ceff and 1 or 0, r.cblk and 1 or 0, co_desc(res), sp.n or 0,
+    floor(sp.us or 0), co_hits(sp.g), r.mv or "ap=-"))
 end
 
 return M

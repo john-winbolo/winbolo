@@ -5726,6 +5726,8 @@ local function update_attack_substate_body(goal, state, world, info)
   local pmx, pmy = goal.mx, goal.my
 
   if not goal.substate then goal.substate = "plan_position" end
+  -- PT2_DG_COARSE: the full pass after a coarse first answer (pt2_attack)
+  if goal._pt2_refine then require("pt2_attack").refine_step(state, goal, world, info, now) end
   -- Person's attack order: has the blitz-wait cap run out? (M.human_blitz_cap_over)
   goal._hcap_over = M.human_blitz_cap_over(goal, state, now or 0)
 

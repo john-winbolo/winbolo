@@ -62,6 +62,13 @@ local function copy_inp(inp, v)
   cp.v2_slice, cp.v2_prof, cp._prof_head, cp.v2_zone_log, cp.v2_nozones = nil, nil, nil, nil, nil
   cp.ring_radii = {}
   for i, r in ipairs(inp.ring_radii or {}) do cp.ring_radii[i] = r end
+  -- PT2_DG_COARSE: a coarse played run; the copies start from the full search
+  local fu = inp._dg_full
+  if fu then
+    cp._dg_coarse, cp._dg_full, cp.dg_step = nil, nil, fu.dg_step
+    cp.ring_radii = {}
+    for i, r in ipairs(fu.ring_radii) do cp.ring_radii[i] = r end
+  end
   inp._dg_rebind(cp)
   if v then
     for k, x in pairs(v.f or {}) do cp[k] = x end
@@ -93,6 +100,8 @@ local function kinds_of(b)
   if b.plan and #b.plan > 0 and not kinds.built then kinds.built = true; nk = nk + 1 end
   return kinds, nk, mg
 end
+
+M.kinds_of = kinds_of
 
 local function kinds_str(kinds)
   local l = {}
@@ -210,6 +219,8 @@ end
 local run_body
 function M.run(inp, V2)
   if not inp._dg_rebind or not inp.A then M.n_skip = M.n_skip + 1; return end
+  -- ONLY=...,coarse: only the coarse played runs (PT2_DG_COARSE) get a shadow
+  if ONLY_SET and ONLY_SET.coarse and not inp._dg_coarse then return end
   -- test only: WINBOLO_PT2_DG_AT=p:t0:t1 runs the shadow only for player p
   -- on ticks t0..t1 (finding which run changes the played game)
   local at = os and os.getenv and os.getenv("WINBOLO_PT2_DG_AT")
@@ -324,7 +335,8 @@ function M.played(job, V2)
   local head = string.format("p=%s t=%s src=%s g=%d,%d", tostring(inp._v2_pc_pn), tostring(inp._v2_pc_now),
     tostring(inp._v2_pc_src or "take"), g.mx, g.my)
   local t0 = raw_us()
-  err(line("DGP", head, "played", 0, job.res, ""))
+  -- co: 1..3 the coarse pass (PT2_DG_COARSE), r the full pass after it
+  err(line("DGP", head, "played", 0, job.res, string.format(" co=%s", tostring(inp._dg_coarse or (inp._dg_refine and "r") or 0))))
   local dt = raw_us() - t0
   _G._dg_hide_us = (_G._dg_hide_us or 0) + dt
   _G._dg_think_us = (_G._dg_think_us or 0) + dt

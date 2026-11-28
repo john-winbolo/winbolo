@@ -1761,6 +1761,35 @@ M.PT2_DG_LOCAL_WIN = 0
 M.PT2_DG_LOCAL_EVERY = 8
 M.PT2_DG_KCAP = 0
 M.PT2_DG_TRIES = 0
+-- PT2_DG_COARSE (Nov 28, coarse first then full; OFF): a cold take plan
+-- (the take doll job has no full run on this goal pill: a new job or a new
+-- goal pill) runs a coarse search first, and the take goes on with its best.
+-- 0 off, 1 step2 (the even degrees), 2 rings3 (the second ring left out),
+-- 3 both. On the next ticks the full search runs (sliced, as a plan does)
+-- and reads the coarse run's standoff point records from the doll job
+-- (same keys). With PT2_V2_DOLL_TAKE_STORE = false (the default) a take
+-- keeps no doll job, so every take plan is cold, and one "pair" job lives
+-- from the coarse pass to the end of its full pass only.
+-- Then the take switches to the full best only if
+--   (a) full has a blocker take and coarse had none or an exposed one
+--       (allowed until the tank fires: plan_position, gather_trees,
+--       approach, build_walls), or
+--   (b) full's score beats the coarse point's score now by at least
+--       PT2_DG_COARSE_SWITCH_MARGIN (score units, 1 = 16 ticks of road;
+--       10 = one built wall), and the tank has not reached the coarse
+--       standoff point (plan_position, gather_trees or approach).
+-- A blitz take does not switch. The full run is dropped after
+-- PT2_DG_COARSE_REFINE_MAX_TICKS or when the take plans again.
+-- PT2_DG_COARSE_TICKS: the coarse pass's slicer ticks (0 = by the setting:
+-- step2 3, rings3 4, both 2; the full pass has PT2_V2_SPLIT_TICKS).
+-- PT2_DG_COARSE_LOG (log only): PT2CO lines on stderr, also with the knob
+-- at 0 (then the plan start, cold or not, and the first answer).
+-- The study: D:/Development/pt2_prof_nov25/coarse.
+M.PT2_DG_COARSE = 0
+M.PT2_DG_COARSE_SWITCH_MARGIN = 10
+M.PT2_DG_COARSE_TICKS = 0
+M.PT2_DG_COARSE_REFINE_MAX_TICKS = 500
+M.PT2_DG_COARSE_LOG = false
 -- PT2_V2_DOLL_VIZ_RECORD (debug only): a headless -brain-debug run records
 -- the doll cache layers pt2_d1 .. pt2_d5 and pt2_dchg (pt2_viz.lua).
 -- It also writes the PT2_V2_DOLL_EVENT_LOG file dl_p<player>.bin in the
